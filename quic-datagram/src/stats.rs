@@ -17,15 +17,15 @@ pub struct ClientStats {
     /// A connection failed abnormally: connect setup error, protocol-level
     /// connection fault, or a non-transient `send_datagram` failure.
     pub(crate) connect_failed: AtomicU64,
-    /// A peer in the peerlist had no resolvable address.
+    /// A peer in the peer_list had no resolvable address.
     pub(crate) connect_no_route: AtomicU64,
     /// Connections closed because the local identity (TLS cert / pubkey) was
     /// rotated.
     pub(crate) connection_evicted_identity_rotated: AtomicU64,
     /// Existing connection closed because the peer's gossip address changed.
     pub(crate) connection_evicted_peer_moved: AtomicU64,
-    /// Connections closed because the peer is no longer in the peerlist.
-    pub(crate) connection_evicted_peerlist: AtomicU64,
+    /// Connections closed because the peer is no longer in the peer_list.
+    pub(crate) connection_evicted_peer_list: AtomicU64,
 }
 
 /// Counters for the inbound (we-accept, receive-only) direction.
@@ -45,7 +45,7 @@ pub struct ServerStats {
     /// authenticated connection.
     pub(crate) handshakes_completed: AtomicU64,
     /// Handshake refused because the peer is not permitted: not in the
-    /// peerlist, or currently banned.
+    /// peer_list, or currently banned.
     pub(crate) handshake_rejected_unauthorized: AtomicU64,
     /// Handshake refused due to a resource limit: connection table full.
     pub(crate) handshake_rejected_overload: AtomicU64,
@@ -56,7 +56,7 @@ pub struct ServerStats {
     pub(crate) handshake_timed_out: AtomicU64,
     /// Connections closed because the peer is no longer
     /// admitted (e.g. evicted at an epoch boundary).
-    pub(crate) connection_evicted_peerlist: AtomicU64,
+    pub(crate) connection_evicted_peer_list: AtomicU64,
     /// Connections closed because the peer was banned by the sig-verifier.
     pub(crate) connection_evicted_banned: AtomicU64,
     /// Connections closed because the local identity (TLS cert / pubkey) was
@@ -171,8 +171,8 @@ pub(crate) fn report_client(stats: &ClientStats, live_connections: u64) {
             i64
         ),
         (
-            "connection_evicted_peerlist",
-            swap!(stats.connection_evicted_peerlist),
+            "connection_evicted_peer_list",
+            swap!(stats.connection_evicted_peer_list),
             i64
         ),
         (
@@ -228,8 +228,8 @@ pub(crate) fn report_server(stats: &ServerStats, live_connections: u64) {
         ),
         ("handshake_timed_out", swap!(stats.handshake_timed_out), i64),
         (
-            "connection_evicted_peerlist",
-            swap!(stats.connection_evicted_peerlist),
+            "connection_evicted_peer_list",
+            swap!(stats.connection_evicted_peer_list),
             i64
         ),
         (

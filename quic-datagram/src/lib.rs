@@ -19,11 +19,11 @@ use {
 /// carry the sentinel IP set to `0.0.0.0:0`.
 ///
 /// Inbound admission uses membership only (the address is ignored).
-pub type PeerlistSnapshot = Arc<HashMap<Pubkey, SocketAddr>>;
+pub type PeerListSnapshot = Arc<HashMap<Pubkey, SocketAddr>>;
 
-pub type PeerlistSender = watch::Sender<PeerlistSnapshot>;
+pub type PeerListSender = watch::Sender<PeerListSnapshot>;
 
-pub type PeerlistReceiver = watch::Receiver<PeerlistSnapshot>;
+pub type PeerListReceiver = watch::Receiver<PeerListSnapshot>;
 
 /// Maximum number of unique peer pubkeys we expect in steady state.
 /// Used to size buffers and channels, actual peer count is controlled

@@ -46,7 +46,10 @@ use {
 
 /// Ask the endpoint to ban `peer` for [`BAN_TIMEOUT`].
 pub(super) fn send_ban_request(ban_sender: &mpsc::Sender<BanCommand>, peer: Pubkey) {
-    match ban_sender.try_send((peer, BAN_TIMEOUT)) {
+    match ban_sender.try_send(BanCommand {
+        peer,
+        duration: BAN_TIMEOUT,
+    }) {
         Ok(()) => info!("requested ban for sender={peer}"),
         Err(mpsc::error::TrySendError::Full(_)) => {
             warn!("ban channel full; dropping ban request for sender={peer}")
@@ -368,7 +371,7 @@ fn recv_batches(
             Ok(datagram) => break datagram_to_batch(datagram),
             Err(TryRecvError::Empty) => {
                 sleeps = sleeps.saturating_add(1);
-                std::thread::sleep(Duration::from_millis(1))
+                thread::sleep(Duration::from_millis(1))
             }
             Err(TryRecvError::Disconnected) => return Err(()),
         }
@@ -447,7 +450,7 @@ mod tests {
         /// Drain pending ban requests and collect the banned pubkeys.
         fn banned_pubkeys(&mut self) -> HashSet<Pubkey> {
             let mut banned = HashSet::new();
-            while let Ok((peer, _timeout)) = self.ban_receiver.try_recv() {
+            while let Ok(BanCommand { peer, .. }) = self.ban_receiver.try_recv() {
                 banned.insert(peer);
             }
             banned

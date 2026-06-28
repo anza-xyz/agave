@@ -2,7 +2,7 @@
 use {
     crate::{
         ALPENGLOW_ALPN, CONN_EVENT_CHANNEL_CAP, HANDSHAKE_BURST, HANDSHAKE_GLOBAL_RATE,
-        MAX_INFLIGHT_HANDSHAKES, PeerlistReceiver,
+        MAX_INFLIGHT_HANDSHAKES, PeerListReceiver,
         client::OutboundLoop,
         error::Error,
         server::{AcceptLoop, InboundEvent, InboundLoop},
@@ -29,7 +29,10 @@ use {
 };
 
 /// Command to temporarily ban a peer.
-pub type BanCommand = (Pubkey, Duration);
+pub struct BanCommand {
+    pub peer: Pubkey,
+    pub duration: Duration,
+}
 
 /// Handle for caller-driven identity rotation.
 pub struct KeyUpdater {
@@ -67,37 +70,37 @@ pub struct QuicDatagramEndpoint {
 }
 
 impl QuicDatagramEndpoint {
-    /// Construct a datagram-only QUIC endpoint. `server_sockets` back the
+    /// Construct a datagram-only QUIC endpoint. `inbound_sockets` back the
     /// inbound (we-accept) direction and are expected to be SO_REUSEPORT
     /// bound to the same port to load-balance inbound datagrams. The outbound
-    /// (send-only) direction runs on a dedicated `client_socket` bound to its
+    /// (send-only) direction runs on a dedicated `outbound_socket` bound to its
     /// own port.
     ///
     /// Spawns the inbound and outbound loops on `runtime`; dropping the handle
     /// cancels them.
-    /// Received datagrams flow into `ingress`, per-peer receive rate is capped
-    /// by `max_datagrams_per_second_per_peer`.
-    /// `peerlist_receiver` carries desired peer set updates: inbound evicts
+    /// Received datagrams flow into `inbound_datagrams`, per-peer receive rate is
+    /// capped by `max_datagrams_per_second_per_peer`.
+    /// `desired_peers` carries desired peer set updates: inbound evicts
     /// peers no longer in the set, outbound connects to peers in it.
-    /// `ban_receiver` carries temporary per-peer ban commands (banning also closes
+    /// `ban_commands` carries temporary per-peer ban commands (banning also closes
     /// the peer's connections).
-    /// `peerlist_receiver` can be `None` , then inbound
+    /// `desired_peers` can be `None` , then inbound
     /// admits all peers and outbound connects to nobody.
     pub fn spawn(
         runtime: &Handle,
         keypair: &Keypair,
-        server_sockets: Vec<UdpSocket>,
-        client_socket: UdpSocket,
-        ingress: Sender<Datagram>,
-        peerlist_receiver: Option<PeerlistReceiver>,
-        ban_receiver: mpsc::Receiver<BanCommand>,
+        inbound_sockets: Vec<UdpSocket>,
+        outbound_socket: UdpSocket,
+        inbound_datagrams: Sender<Datagram>,
+        desired_peers: Option<PeerListReceiver>,
+        ban_commands: mpsc::Receiver<BanCommand>,
         max_datagrams_per_second_per_peer: f64,
     ) -> Result<Self, Error> {
         assert!(
-            cfg!(feature = "dev-context-only-utils") || peerlist_receiver.is_some(),
-            "peerlist receiver must be set in release builds",
+            cfg!(feature = "dev-context-only-utils") || desired_peers.is_some(),
+            "peer_list receiver must be set in release builds",
         );
-        assert!(!server_sockets.is_empty(), "Must have sockets provided");
+        assert!(!inbound_sockets.is_empty(), "Must have sockets provided");
 
         let server_stats: Arc<ServerStats> = Arc::default();
         // Egress channel carries *distinct* messages to be sent.
@@ -117,10 +120,10 @@ impl QuicDatagramEndpoint {
         let client_config = new_client_config(cert, key, ALPENGLOW_ALPN);
 
         // Spawn a quinn endpoint for each socket.
-        let (endpoints, mut outbound_endpoint) = {
+        let (inbound_endpoints, mut outbound_endpoint) = {
             // Endpoint::new requires the runtime context.
             let _guard = runtime.enter();
-            let endpoints = server_sockets
+            let inbound_endpoints = inbound_sockets
                 .into_iter()
                 .map(|socket| {
                     Endpoint::new(
@@ -135,23 +138,23 @@ impl QuicDatagramEndpoint {
             let outbound_endpoint = Endpoint::new(
                 EndpointConfig::default(),
                 None, // No server_config on this endpoint
-                client_socket,
+                outbound_socket,
                 Arc::new(TokioRuntime),
             )
             .map_err(Error::Endpoint)?;
-            (endpoints, outbound_endpoint)
+            (inbound_endpoints, outbound_endpoint)
         };
         outbound_endpoint.set_default_client_config(client_config);
 
-        // A receive-only endpoint with no peerlist has nothing to connect to
+        // A receive-only endpoint with no peer_list has nothing to connect to
         // so we don't spawn OutboundLoop at all.
-        if let Some(peerlist_receiver) = peerlist_receiver.clone() {
+        if let Some(peer_list_receiver) = desired_peers.clone() {
             let outbound = OutboundLoop::new(
                 outbound_endpoint,
                 local_pubkey,
                 egress_receiver,
                 identity_receiver.clone(),
-                peerlist_receiver,
+                peer_list_receiver,
                 shutdown.clone(),
             );
             runtime.spawn(outbound.run());
@@ -163,7 +166,7 @@ impl QuicDatagramEndpoint {
             mpsc::channel::<InboundEvent>(CONN_EVENT_CHANNEL_CAP);
         // One accept loop per endpoint. Splits the global handshake budgets
         // evenly so the aggregate matches limits regardless of how many endpoints exist.
-        let num_endpoints = endpoints.len();
+        let num_endpoints = inbound_endpoints.len();
         let handshake_burst = HANDSHAKE_BURST
             .checked_div(num_endpoints as u64)
             .expect("num_endpoints can not be zero");
@@ -175,7 +178,7 @@ impl QuicDatagramEndpoint {
             handshake_burst,
             HANDSHAKE_GLOBAL_RATE / num_endpoints as f64,
         );
-        for endpoint in endpoints {
+        for endpoint in inbound_endpoints {
             let accept = AcceptLoop::new(
                 endpoint,
                 identity_receiver.clone(),
@@ -188,9 +191,9 @@ impl QuicDatagramEndpoint {
             runtime.spawn(accept.run());
         }
         let inbound = InboundLoop::new(
-            ingress,
-            ban_receiver,
-            peerlist_receiver,
+            inbound_datagrams,
+            ban_commands,
+            desired_peers,
             inbound_events_sender,
             inbound_events_receiver,
             identity_receiver,

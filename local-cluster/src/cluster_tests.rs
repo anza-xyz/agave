@@ -602,7 +602,7 @@ pub fn start_datagram_listener_for_alpenglow_votor(
         .build()
         .expect("tokio runtime");
     let (sender, receiver) = bounded(1024);
-    // Listener admits all peers (no peerlist) and never bans; the ban sender
+    // Listener admits all peers (no peer_list) and never bans; the ban sender
     // is dropped so no commands ever arrive.
     let (_ban_tx, ban_receiver) = tokio::sync::mpsc::channel(1);
     // Listener never connects.

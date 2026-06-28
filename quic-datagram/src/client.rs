@@ -1,7 +1,7 @@
 //! Outbound (client) direction: we initiate, send-only.
 use {
     crate::{
-        ALPENGLOW_ALPN, CONN_EVENT_CHANNEL_CAP, METRICS_INTERVAL, PeerlistReceiver, close_codes,
+        ALPENGLOW_ALPN, CONN_EVENT_CHANNEL_CAP, METRICS_INTERVAL, PeerListReceiver, close_codes,
         error::Error,
         stats::{self, ClientStats, add, record_client_error},
         transport::{IdentitySnapshot, new_client_config},
@@ -26,7 +26,7 @@ use {
 };
 
 /// How often the outbound loop reconciles its connection table against the
-/// peerlist. Doubles as the retry interval for failed connects.
+/// peer_list. Doubles as the retry interval for failed connects.
 const RECONCILE_INTERVAL: Duration = Duration::from_secs(1);
 
 /// State of a peer's entry in the outbound table.
@@ -97,7 +97,7 @@ impl ClientConnection {
 }
 
 /// Outbound control loop for the egress direction(we-connect, send-only).
-/// Strives to ensure open connections to everyone in the peerlist.
+/// Strives to ensure open connections to everyone in the peer_list.
 pub(crate) struct OutboundLoop {
     pub(crate) endpoint: Endpoint,
     pub(crate) local_pubkey: Pubkey,
@@ -106,9 +106,9 @@ pub(crate) struct OutboundLoop {
     /// Channel for outbound messages to be broadcast
     pub(crate) egress_receiver: mpsc::Receiver<Bytes>,
     pub(crate) identity_receiver: watch::Receiver<Option<Arc<IdentitySnapshot>>>,
-    pub(crate) peerlist_receiver: PeerlistReceiver,
+    pub(crate) peer_list_receiver: PeerListReceiver,
     /// Per-peer send-only connection state.
-    /// Size is limited to the peerlist size by reconcile task.
+    /// Size is limited to the peer_list size by reconcile task.
     pub(crate) peer_state: HashMap<Pubkey, PeerState, PubkeyHasherBuilder>,
     /// Sender to clone into freshly spawned per-connection tasks
     pub(crate) events_sender: mpsc::Sender<ConnectEvent>,
@@ -124,7 +124,7 @@ impl OutboundLoop {
         local_pubkey: Pubkey,
         egress_receiver: mpsc::Receiver<Bytes>,
         identity_receiver: watch::Receiver<Option<Arc<IdentitySnapshot>>>,
-        peerlist_receiver: PeerlistReceiver,
+        peer_list_receiver: PeerListReceiver,
         shutdown: CancellationToken,
     ) -> Self {
         let (events_sender, events_receiver) =
@@ -135,7 +135,7 @@ impl OutboundLoop {
             generation: 0,
             egress_receiver,
             identity_receiver,
-            peerlist_receiver,
+            peer_list_receiver,
             peer_state: HashMap::with_hasher(PubkeyHasherBuilder::default()),
             events_sender,
             events_receiver,
@@ -156,8 +156,8 @@ impl OutboundLoop {
         let mut id_closed = false;
 
         // A separate receiver clone drives change notifications, the snapshot
-        // reads in `reconcile` go through `self.peerlist_receiver`.
-        let mut peerlist_receiver = self.peerlist_receiver.clone();
+        // reads in `reconcile` go through `self.peer_list_receiver`.
+        let mut peer_list_receiver = self.peer_list_receiver.clone();
 
         loop {
             tokio::select! {
@@ -175,9 +175,9 @@ impl OutboundLoop {
                     }
                 }
                 // The peer set changed: reconcile the connection table right away.
-                changed = peerlist_receiver.changed() => {
+                changed = peer_list_receiver.changed() => {
                     if changed.is_err() {
-                        info!("peerlist channel closed; outbound loop exiting");
+                        info!("peer_list channel closed; outbound loop exiting");
                         break;
                     }
                     self.reconcile();
@@ -234,13 +234,13 @@ impl OutboundLoop {
         );
     }
 
-    /// Reconcile the connection table against the current peerlist.
+    /// Reconcile the connection table against the current peer_list.
     fn reconcile(&mut self) {
         // Clone the Arc so the operation is coherent (next call to reconcile will
-        // pick up a new peerlist if it gets published before this operation finishes).
-        let snapshot = self.peerlist_receiver.borrow().clone();
+        // pick up a new peer_list if it gets published before this operation finishes).
+        let snapshot = self.peer_list_receiver.borrow().clone();
 
-        // 1. Drop connections for peers that left the peerlist.
+        // 1. Drop connections for peers that left the peer_list.
         let mut evicted = 0u64;
         self.peer_state.retain(|peer, state| {
             if snapshot.contains_key(peer) {
@@ -253,7 +253,7 @@ impl OutboundLoop {
             false
         });
         self.stats
-            .connection_evicted_peerlist
+            .connection_evicted_peer_list
             .fetch_add(evicted, Ordering::Relaxed);
 
         // 2. Ensure a connection for every addressable peer.

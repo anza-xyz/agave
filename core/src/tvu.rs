@@ -308,10 +308,10 @@ impl Tvu {
         // Inbound bans flow from the sig-verifier to the endpoint over this
         // channel: sized very generously to avoid any drops while keeping unbounded semantics.
         let (votor_ban_tx, votor_ban_receiver) = mpsc::channel(MAX_ALPENGLOW_VOTE_ACCOUNTS * 2);
-        // Seed the peerlist from the last rooted bank so inbound votor
+        // Seed the peer_list from the last rooted bank so inbound votor
         // connections from staked peers are admitted during ledger replay and
         // wait_for_supermajority.
-        let peerlist_seed = {
+        let peer_list_seed = {
             let root_bank = bank_forks.read().unwrap().root_bank();
             let unresolved = SocketAddr::new(IpAddr::V4(Ipv4Addr::UNSPECIFIED), 0);
             let map: HashMap<Pubkey, SocketAddr> = root_bank
@@ -320,14 +320,14 @@ impl Tvu {
                 .unwrap_or_default();
             Arc::new(map)
         };
-        let (votor_peerlist_tx, votor_peerlist_receiver) = watch::channel(peerlist_seed);
+        let (votor_peer_list_tx, votor_peer_list_receiver) = watch::channel(peer_list_seed);
         let endpoint = QuicDatagramEndpoint::spawn(
             &votor_rt_handle,
             &cluster_info.keypair(),
             alpenglow_sockets,
             alpenglow_client_socket,
             ingress_tx,
-            Some(votor_peerlist_receiver),
+            Some(votor_peer_list_receiver),
             votor_ban_receiver,
             VOTOR_RATE_LIMIT_PPS as f64,
         )
@@ -609,7 +609,7 @@ impl Tvu {
             cluster_info.clone(),
             vote_history_storage,
             votor_egress,
-            votor_peerlist_tx,
+            votor_peer_list_tx,
             bank_forks.clone(),
             highest_finalized,
             #[cfg(feature = "dev-context-only-utils")]

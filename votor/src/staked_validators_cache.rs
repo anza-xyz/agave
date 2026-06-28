@@ -1,7 +1,7 @@
 #[cfg(feature = "dev-context-only-utils")]
 use arc_swap::ArcSwap;
 use {
-    agave_quic_datagram::PeerlistSender,
+    agave_quic_datagram::PeerListSender,
     solana_clock::Epoch,
     solana_gossip::cluster_info::ClusterInfo,
     solana_pubkey::Pubkey,
@@ -14,19 +14,19 @@ use {
 };
 
 /// Slots on either side of an epoch boundary during which the adjacent epoch's
-/// staked set is merged into the peerlist, so peers transitioning across the
+/// staked set is merged into the peer_list, so peers transitioning across the
 /// boundary are not transiently rejected.
 const EPOCH_BOUNDARY_SLOTS: u64 = 100;
 
-/// Builds and publishes the votor datagram endpoint's peerlist: the set of
+/// Builds and publishes the votor datagram endpoint's peer_list: the set of
 /// staked validators (merged across an epoch boundary) paired with each peer's
 /// votor server sockets from gossip. The QUIC endpoint uses it to filter
 /// inbound connections, to initiate outbound connections and to fan out packets.
 pub struct StakedValidatorsCache {
     sharable_banks: SharableBanks,
 
-    /// Publisher for the endpoint's peerlist snapshot.
-    peerlist: Option<PeerlistSender>,
+    /// Publisher for the endpoint's peer_list snapshot.
+    peer_list: Option<PeerListSender>,
 
     /// Live, shared override of the (pubkey -> socket) set
     #[cfg(feature = "dev-context-only-utils")]
@@ -36,14 +36,14 @@ pub struct StakedValidatorsCache {
 impl StakedValidatorsCache {
     pub fn new(
         sharable_banks: SharableBanks,
-        peerlist: Option<PeerlistSender>,
+        peer_list: Option<PeerListSender>,
         #[cfg(feature = "dev-context-only-utils")] test_overrides: Arc<
             ArcSwap<HashMap<Pubkey, SocketAddr>>,
         >,
     ) -> Self {
         Self {
             sharable_banks,
-            peerlist,
+            peer_list,
             #[cfg(feature = "dev-context-only-utils")]
             test_overrides,
         }
@@ -98,7 +98,7 @@ impl StakedValidatorsCache {
             .flatten()
     }
 
-    /// Publish the peerlist for the QUIC endpoint.
+    /// Publish the peer_list for the QUIC endpoint.
     ///
     /// Near an epoch boundary (within [`EPOCH_BOUNDARY_SLOTS`] on either side)
     /// the adjacent epoch's staked set is merged in so peers transitioning
@@ -107,8 +107,8 @@ impl StakedValidatorsCache {
     /// Each peer's votor socket is resolved from gossip (or a test override).
     /// Peers that have no address yet are added with UNSPECIFIED address such
     /// that connections from them are admitted.
-    pub fn refresh_peerlist(&self, cluster_info: &ClusterInfo) {
-        let Some(peerlist) = self.peerlist.as_ref() else {
+    pub fn refresh_peer_list(&self, cluster_info: &ClusterInfo) {
+        let Some(peer_list) = self.peer_list.as_ref() else {
             return;
         };
         let working = self.sharable_banks.working();
@@ -147,7 +147,7 @@ impl StakedValidatorsCache {
             })
             .collect();
         // `send` failing means the endpoint is gone, we must be exiting.
-        let _ = peerlist.send(Arc::new(snapshot));
+        let _ = peer_list.send(Arc::new(snapshot));
     }
 }
 
@@ -283,10 +283,10 @@ mod tests {
         )
     }
 
-    /// A refresh publishes one peerlist entry per staked node, each resolved to
+    /// A refresh publishes one peer_list entry per staked node, each resolved to
     /// its gossip votor socket.
     #[test]
-    fn test_refresh_peerlist_resolves_staked_sockets() {
+    fn test_refresh_peer_list_resolves_staked_sockets() {
         let slot_num = 325_000_000_u64;
         let num_nodes = 10_usize;
         let num_zero_stake_nodes = 2_usize;
@@ -300,7 +300,7 @@ mod tests {
             Arc::new(ArcSwap::default()),
         );
 
-        svc.refresh_peerlist(&cluster_info);
+        svc.refresh_peer_list(&cluster_info);
 
         let snapshot = rx.borrow();
         assert_eq!(snapshot.len(), num_nodes - num_zero_stake_nodes);
@@ -308,9 +308,9 @@ mod tests {
         assert!(snapshot.values().all(|addr| !addr.ip().is_unspecified()));
     }
 
-    /// With no peerlist sender, a refresh is a no-op and must not panic.
+    /// With no peer_list sender, a refresh is a no-op and must not panic.
     #[test]
-    fn test_refresh_peerlist_without_sender_is_noop() {
+    fn test_refresh_peer_list_without_sender_is_noop() {
         let slot_num = 325_000_000_u64;
         let (bank_forks, cluster_info, _) = create_bank_forks_and_cluster_info(4, 0, slot_num);
         let svc = StakedValidatorsCache::new(
@@ -318,6 +318,6 @@ mod tests {
             None,
             Arc::new(ArcSwap::default()),
         );
-        svc.refresh_peerlist(&cluster_info);
+        svc.refresh_peer_list(&cluster_info);
     }
 }

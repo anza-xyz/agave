@@ -4,7 +4,7 @@ use {
     crate::{
         ALPENGLOW_ALPN, BANLIST_PRUNE_INTERVAL, HANDSHAKE_TIMEOUT,
         MAX_INBOUND_CONNECTIONS_PER_PEER, METRICS_INTERVAL, PEER_RATE_LIMIT_BURST_WINDOW,
-        PEER_RATE_LIMIT_DOS_WINDOW, PeerlistReceiver, close_codes,
+        PEER_RATE_LIMIT_DOS_WINDOW, PeerListReceiver, close_codes,
         endpoint::{BanCommand, Datagram},
         error::Error,
         stats::{self, ServerStats, record_server_error},
@@ -317,7 +317,7 @@ pub(crate) struct InboundLoop {
     pub(crate) ban_receiver: mpsc::Receiver<BanCommand>,
     /// Latest admitted-peer snapshot, or `None` to admit all peers (dev/test).
     /// A change publishes a new snapshot and triggers an eviction sweep.
-    pub(crate) peerlist_receiver: Option<PeerlistReceiver>,
+    pub(crate) peer_list_receiver: Option<PeerListReceiver>,
     /// Identity-rotation channel. On change the whole table is evicted so peers
     /// re-handshake.
     pub(crate) identity_receiver: watch::Receiver<Option<Arc<IdentitySnapshot>>>,
@@ -342,7 +342,7 @@ impl InboundLoop {
     pub(crate) fn new(
         ingress: Sender<Datagram>,
         ban_receiver: mpsc::Receiver<BanCommand>,
-        peerlist_receiver: Option<PeerlistReceiver>,
+        peer_list_receiver: Option<PeerListReceiver>,
         inbound_events_sender: mpsc::Sender<InboundEvent>,
         inbound_events_receiver: mpsc::Receiver<InboundEvent>,
         identity_receiver: watch::Receiver<Option<Arc<IdentitySnapshot>>>,
@@ -360,7 +360,7 @@ impl InboundLoop {
             ingress,
             banlist: Banlist::default(),
             ban_receiver,
-            peerlist_receiver,
+            peer_list_receiver,
             identity_receiver,
             peer_state: HashMap::with_hasher(PubkeyHasherBuilder::default()),
             events_sender: inbound_events_sender,
@@ -373,10 +373,10 @@ impl InboundLoop {
         }
     }
 
-    /// Whether `peer` is currently admitted. With no peerlist (dev/test), all
+    /// Whether `peer` is currently admitted. With no peer_list (dev/test), all
     /// peers are admitted.
     fn is_allowed(&self, peer: &Pubkey) -> bool {
-        match &self.peerlist_receiver {
+        match &self.peer_list_receiver {
             Some(receiver) => receiver.borrow().contains_key(peer),
             None => true,
         }
@@ -408,7 +408,7 @@ impl InboundLoop {
         let mut metrics = interval(METRICS_INTERVAL);
         metrics.set_missed_tick_behavior(MissedTickBehavior::Skip);
 
-        let mut peerlist_receiver = self.peerlist_receiver.clone();
+        let mut peer_list_receiver = self.peer_list_receiver.clone();
         let mut identity_receiver = self.identity_receiver.clone();
         // Some local-cluster tests drop the KeyUpdater sender; once the identity
         // channel closes we stop polling that arm.
@@ -421,7 +421,7 @@ impl InboundLoop {
                 // per-connection read tasks.
                 Some(event) = self.events_receiver.recv() => self.handle_event(event),
                 // A peer was banned by the sig-verifier.
-                Some((peer, timeout)) = self.ban_receiver.recv() => self.apply_ban(peer, timeout),
+                Some(BanCommand { peer, duration }) = self.ban_receiver.recv() => self.apply_ban(peer, duration),
                 // The local identity rotated: evict the table so peers
                 // re-handshake under the new cert.
                 changed = identity_receiver.changed(), if !id_closed => {
@@ -435,7 +435,7 @@ impl InboundLoop {
                 }
                 // The admitted-peer set changed.
                 changed = async {
-                    match peerlist_receiver.as_mut() {
+                    match peer_list_receiver.as_mut() {
                         Some(receiver) => receiver.changed().await,
                         None => std::future::pending().await,
                     }
@@ -444,11 +444,11 @@ impl InboundLoop {
                         Ok(()) => self.evict_not_allowed(),
                         Err(_) => {
                             warn!(
-                                "peerlist channel closed; inbound admission frozen at last \
+                                "peer_list channel closed; inbound admission frozen at last \
                                  snapshot"
                             );
                             // Disarm: parks the arm via the `None` branch above.
-                            peerlist_receiver = None;
+                            peer_list_receiver = None;
                         }
                     }
                 }
@@ -486,25 +486,25 @@ impl InboundLoop {
         info!("inbound identity rotated ({evicted} connection(s) evicted)");
     }
 
-    /// Table-wide admission sweep, driven by a peerlist change. Closes every
+    /// Table-wide admission sweep, driven by a peer_list change. Closes every
     /// connection whose peer is no longer admitted.
     fn evict_not_allowed(&mut self) {
-        // Disjoint field borrows so the membership check can read `peerlist_receiver`
+        // Disjoint field borrows so the membership check can read `peer_list_receiver`
         // while iterating `peer_state` mutably.
         let Self {
             peer_state,
-            peerlist_receiver,
+            peer_list_receiver,
             stats,
             ..
         } = self;
         // `None` means admit-all; nothing to evict.
-        let Some(peerlist_receiver) = peerlist_receiver.as_ref() else {
+        let Some(peer_list_receiver) = peer_list_receiver.as_ref() else {
             return;
         };
-        let peerlist = peerlist_receiver.borrow();
-        let mut evicted_peerlist = 0u64;
+        let peer_list = peer_list_receiver.borrow();
+        let mut evicted_peer_list = 0u64;
         for (peer, entry) in peer_state.iter_mut() {
-            if entry.connections.is_empty() || peerlist.contains_key(peer) {
+            if entry.connections.is_empty() || peer_list.contains_key(peer) {
                 continue;
             }
             let closed = entry
@@ -512,11 +512,11 @@ impl InboundLoop {
                 .drain(..)
                 .inspect(|connection| close_codes::NOT_ADMITTED.close(connection))
                 .count() as u64;
-            evicted_peerlist = evicted_peerlist.saturating_add(closed);
+            evicted_peer_list = evicted_peer_list.saturating_add(closed);
         }
         stats
-            .connection_evicted_peerlist
-            .fetch_add(evicted_peerlist, Ordering::Relaxed);
+            .connection_evicted_peer_list
+            .fetch_add(evicted_peer_list, Ordering::Relaxed);
     }
 
     /// Apply the ban command and close any open connections

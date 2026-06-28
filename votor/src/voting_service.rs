@@ -3,7 +3,7 @@ use {
         staked_validators_cache::StakedValidatorsCache,
         vote_history_storage::{SavedVoteHistoryVersions, VoteHistoryStorage},
     },
-    agave_quic_datagram::PeerlistSender,
+    agave_quic_datagram::PeerListSender,
     agave_votor_messages::{
         certificate::Certificate, consensus_message::VoteMessage,
         wire::VersionedWireConsensusMessage,
@@ -49,9 +49,9 @@ const STANDSTILL_REFRESH_BATCH_SIZE: usize = VOTOR_RATE_LIMIT_PPS as usize - NEW
 /// How often we should refresh messages from the standstill queue
 const STANDSTILL_REFRESH_INTERVAL: Duration = Duration::from_secs(1);
 
-/// How often the endpoint peerlist is refreshed from the current epoch's
+/// How often the endpoint peer_list is refreshed from the current epoch's
 /// staked set and gossip-resolved sockets.
-const PEERLIST_REFRESH_INTERVAL: Duration = Duration::from_secs(5);
+const PEER_LIST_REFRESH_INTERVAL: Duration = Duration::from_secs(5);
 
 #[derive(Debug)]
 pub enum BLSOp {
@@ -211,7 +211,7 @@ impl VotingService {
         cluster_info: Arc<ClusterInfo>,
         vote_history_storage: Arc<dyn VoteHistoryStorage>,
         egress: mpsc::Sender<Bytes>,
-        peerlist: PeerlistSender,
+        peer_list: PeerListSender,
         bank_forks: Arc<RwLock<BankForks>>,
         highest_finalized: Arc<RwLock<Option<ValidatedBlockFinalizationCert>>>,
         #[cfg(feature = "dev-context-only-utils")] test_override: Option<VotingServiceOverride>,
@@ -222,7 +222,7 @@ impl VotingService {
             .spawn(move || {
                 let staked_validators_cache = StakedValidatorsCache::new(
                     bank_forks.read().unwrap().sharable_banks(),
-                    Some(peerlist),
+                    Some(peer_list),
                     #[cfg(feature = "dev-context-only-utils")]
                     test_override
                         .map(|v| v.override_listeners)
@@ -230,13 +230,13 @@ impl VotingService {
                 );
 
                 info!("AlpenglowVotingService has started");
-                // Populate the peerlist immediately at startup for admission control.
-                staked_validators_cache.refresh_peerlist(&cluster_info);
-                let mut last_peerlist_refresh = Instant::now();
+                // Populate the peer_list immediately at startup for admission control.
+                staked_validators_cache.refresh_peer_list(&cluster_info);
+                let mut last_peer_list_refresh = Instant::now();
                 loop {
-                    if last_peerlist_refresh.elapsed() >= PEERLIST_REFRESH_INTERVAL {
-                        staked_validators_cache.refresh_peerlist(&cluster_info);
-                        last_peerlist_refresh = Instant::now();
+                    if last_peer_list_refresh.elapsed() >= PEER_LIST_REFRESH_INTERVAL {
+                        staked_validators_cache.refresh_peer_list(&cluster_info);
+                        last_peer_list_refresh = Instant::now();
                     }
                     Self::maybe_handle_standstill_queue(
                         &mut standstill_queue,
@@ -408,7 +408,7 @@ mod tests {
             NullVoteHistoryStorage, SavedVoteHistory, SavedVoteHistoryVersions,
         },
         agave_quic_datagram::{
-            PeerlistReceiver, PeerlistSender,
+            PeerListReceiver, PeerListSender,
             endpoint::{Datagram, QuicDatagramEndpoint},
         },
         agave_votor_messages::{
@@ -537,11 +537,11 @@ mod tests {
     }
 
     /// Spin up a quic-datagram "spy" endpoint with the given keypair.
-    /// With `peerlist_receiver: None` it admits all inbound peers; with `Some`,
-    /// inbound admission and outbound dialing follow that peerlist.
+    /// With `peer_list_receiver: None` it admits all inbound peers; with `Some`,
+    /// inbound admission and outbound dialing follow that peer_list.
     fn spawn_endpoint(
         keypair: Keypair,
-        peerlist_receiver: Option<PeerlistReceiver>,
+        peer_list_receiver: Option<PeerListReceiver>,
     ) -> (
         QuicDatagramEndpoint,
         Receiver<Datagram>,
@@ -563,7 +563,7 @@ mod tests {
             vec![socket],
             client_socket,
             ingress_tx,
-            peerlist_receiver,
+            peer_list_receiver,
             ban_receiver,
             VOTOR_RATE_LIMIT_PPS as f64,
         )
@@ -575,7 +575,7 @@ mod tests {
         bls_receiver: Receiver<BLSOp>,
         spy_listener: (Pubkey, SocketAddr),
         egress: mpsc::Sender<Bytes>,
-        peerlist: PeerlistSender,
+        peer_list: PeerListSender,
     ) -> (VotingService, Vec<ValidatorVoteKeypairs>, Arc<ClusterInfo>) {
         let validator_keypairs = (0..10)
             .map(|_| ValidatorVoteKeypairs::new_rand())
@@ -601,7 +601,7 @@ mod tests {
                 cluster_info.clone(),
                 Arc::new(NullVoteHistoryStorage::default()),
                 egress,
-                peerlist,
+                peer_list,
                 bank_forks,
                 Arc::new(RwLock::new(None)),
                 Some(VotingServiceOverride {
@@ -645,11 +645,11 @@ mod tests {
         let listener_pubkey = listener_kp.pubkey();
         let (endpoint, ingress_rx, listener_addr, _rt) = spawn_endpoint(listener_kp, None);
 
-        // Seed the client's peerlist empty; create_voting_service installs a test
+        // Seed the client's peer_list empty; create_voting_service installs a test
         // override that injects the listener.
-        let (peerlist_tx, peerlist_receiver) = watch::channel(Arc::new(HashMap::new()));
+        let (peer_list_tx, peer_list_receiver) = watch::channel(Arc::new(HashMap::new()));
         let (client_endpoint, _client_ingress_rx, _client_addr, _client_rt) =
-            spawn_endpoint(Keypair::new(), Some(peerlist_receiver));
+            spawn_endpoint(Keypair::new(), Some(peer_list_receiver));
         let egress = client_endpoint.egress.clone();
 
         let (bls_sender, bls_receiver) = unbounded();
@@ -657,10 +657,10 @@ mod tests {
             bls_receiver,
             (listener_pubkey, listener_addr),
             egress.clone(),
-            peerlist_tx,
+            peer_list_tx,
         );
 
-        // Wait for the peerlist-driven connection to land, broadcast disposable
+        // Wait for the peer_list-driven connection to land, broadcast disposable
         // packets until one reaches the listener, confirming the connection is
         // up.
         let warmup = Bytes::from_static(b"warmup");
