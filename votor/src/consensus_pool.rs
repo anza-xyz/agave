@@ -23,7 +23,10 @@ use {
     solana_clock::Slot,
     solana_gossip::cluster_info::ClusterInfo,
     solana_pubkey::Pubkey,
-    solana_runtime::{bank::Bank, validated_block_finalization::ValidatedBlockFinalizationCert},
+    solana_runtime::{
+        bank::Bank, epoch_stakes::BLSPubkeyToRankMap,
+        validated_block_finalization::ValidatedBlockFinalizationCert,
+    },
     std::{collections::BTreeMap, num::NonZero, sync::Arc},
     thiserror::Error,
 };
@@ -92,9 +95,9 @@ fn is_pubkey_present(
     Ok(*aggregate.ranks().get(rank as usize).unwrap())
 }
 
-fn get_max_validators(bank: &Bank, slot: Slot) -> Result<usize, AddVoteError> {
+fn get_rank_map(bank: &Bank, slot: Slot) -> Result<&BLSPubkeyToRankMap, AddVoteError> {
     match bank.epoch_stakes_from_slot(slot) {
-        Some(stakes) => Ok(stakes.bls_pubkey_to_rank_map().len()),
+        Some(stakes) => Ok(stakes.bls_pubkey_to_rank_map()),
         None => Err(AddVoteError::EpochStakesNotFound {
             root_slot: bank.slot(),
             slot,
@@ -168,14 +171,14 @@ impl ConsensusPool {
         total_stake: NonZero<u64>,
         aggregate: &VoteAggregate,
     ) -> Result<(u64, Vec<Certificate>), AddVoteError> {
-        let max_validators = get_max_validators(root_bank, aggregate.vote().slot())?;
+        let rank_map = get_rank_map(root_bank, aggregate.vote().slot())?;
         let slot = aggregate.vote().slot();
         let pool = self
             .vote_pools
             .entry(slot)
-            .or_insert_with(|| VotePool::new(slot, max_validators));
+            .or_insert_with(|| VotePool::new(slot, rank_map.len()));
         pool.add_aggregate(
-            root_bank,
+            rank_map,
             total_stake,
             aggregate,
             &self.completed_certificates,

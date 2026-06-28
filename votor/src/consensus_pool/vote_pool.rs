@@ -22,7 +22,7 @@
 //! many aggregates from the conflicted set as possible.
 
 use {
-    crate::consensus_pool::vote_pool::conflicted_aggregates::ConflictedAggregates,
+    crate::consensus_pool::vote_pool::pool_vote_aggregate::PoolVoteAggregate,
     agave_bls_sigverify::sig_verified_messages::VoteAggregate,
     agave_votor_messages::{
         certificate::{Certificate, CertificateType},
@@ -37,7 +37,7 @@ use {
     solana_clock::Slot,
     solana_hash::Hash,
     solana_pubkey::Pubkey,
-    solana_runtime::bank::Bank,
+    solana_runtime::epoch_stakes::BLSPubkeyToRankMap,
     solana_signer_store::{EncodeError, encode_base2, encode_base3},
     std::{
         collections::{BTreeMap, HashMap, HashSet, hash_map::Entry as HashMapEntry},
@@ -47,7 +47,7 @@ use {
     thiserror::Error,
 };
 
-mod conflicted_aggregates;
+mod pool_vote_aggregate;
 
 const MAX_NOTAR_FALLBACK_PER_VALIDATOR: usize = 3;
 
@@ -55,41 +55,10 @@ fn default_bitvec(max_validators: usize) -> BitVec<u8> {
     BitVec::repeat(false, max_validators)
 }
 
-fn get_validators(
-    root_bank: &Bank,
-    aggregate: &VoteAggregate,
-) -> Result<impl Iterator<Item = Result<Pubkey, VotePoolAddVoteError>>, VotePoolAddVoteError> {
-    let vote_slot = aggregate.vote().slot();
-    let rank_map = match root_bank.epoch_stakes_from_slot(vote_slot) {
-        None => {
-            return Err(VotePoolAddVoteError::NoEpochStakes {
-                root_slot: root_bank.slot(),
-                vote_slot,
-            });
-        }
-        Some(epoch_stakes) => epoch_stakes.bls_pubkey_to_rank_map(),
-    };
-    Ok(aggregate
-        .ranks()
-        .iter_ones()
-        .map(|rank| match rank_map.get_pubkey_stake_entry(rank) {
-            None => Err(VotePoolAddVoteError::NoRankFound),
-            Some(e) => Ok(e.vote_account_pubkey),
-        }))
-}
-
 #[derive(Debug, PartialEq, Eq, Error)]
 pub(crate) enum VotePoolAddVoteError {
-    #[error("duplicate vote")]
-    Duplicate,
-    #[error("invalid votes")]
-    Invalid,
     #[error("Signature aggregation failed with {0}")]
     SignatureAggregationFailed(BlsError),
-    #[error("in root_slot:{root_slot}, didn't find epoch stakes for vote_slot:{vote_slot}")]
-    NoEpochStakes { root_slot: Slot, vote_slot: Slot },
-    #[error("could not find rank")]
-    NoRankFound,
     #[error("encoding failed with {0:?}")]
     EncodingFailed(EncodeError),
 }
@@ -111,35 +80,29 @@ impl NotarVoteEntry {
         }
     }
 
-    fn add_aggregate(&mut self, aggregate: &VoteAggregate) -> Result<u64, VotePoolAddVoteError> {
+    fn add_aggregate(
+        &mut self,
+        rank_map: &BLSPubkeyToRankMap,
+        mut aggregate: PoolVoteAggregate,
+    ) -> Result<u64, VotePoolAddVoteError> {
         debug_assert_eq!(self.slot, aggregate.vote().slot());
         let block_id = *aggregate.vote().block_id().unwrap();
-        if has_common_bits(&self.ranks, aggregate.ranks()) {
-            self.add_conflicted_aggregate(aggregate);
-            return Err(VotePoolAddVoteError::Invalid);
-        }
-        let stake = match self.entries.entry(block_id) {
+        aggregate.subtract_ranks(rank_map, &self.ranks);
+        match self.entries.entry(block_id) {
             HashMapEntry::Occupied(mut e) => {
                 let entry = e.get_mut();
-                entry.add_aggregate(aggregate)?
+                let stake = entry.add_aggregate(rank_map, aggregate)?;
+                self.ranks |= &entry.ranks;
+                Ok(stake)
             }
             HashMapEntry::Vacant(e) => {
                 let entry = VoteEntry::new_with_aggregate(self.max_validators, aggregate);
                 let stake = entry.stake;
+                self.ranks |= &entry.ranks;
                 e.insert(entry);
-                stake
+                Ok(stake)
             }
-        };
-        self.ranks |= aggregate.ranks();
-        Ok(stake)
-    }
-
-    fn add_conflicted_aggregate(&mut self, aggregate: &VoteAggregate) {
-        self.entries
-            .entry(*aggregate.vote().block_id().unwrap())
-            .or_insert_with(|| VoteEntry::new(self.max_validators))
-            .conflicted
-            .add_aggregate(aggregate.clone());
+        }
     }
 }
 
@@ -160,35 +123,29 @@ impl GenesisVoteEntry {
         }
     }
 
-    fn add_aggregate(&mut self, aggregate: &VoteAggregate) -> Result<u64, VotePoolAddVoteError> {
+    fn add_aggregate(
+        &mut self,
+        rank_map: &BLSPubkeyToRankMap,
+        mut aggregate: PoolVoteAggregate,
+    ) -> Result<u64, VotePoolAddVoteError> {
         debug_assert_eq!(self.slot, aggregate.vote().slot());
         let block_id = *aggregate.vote().block_id().unwrap();
-        if has_common_bits(&self.ranks, aggregate.ranks()) {
-            self.add_conflicted_aggregate(aggregate);
-            return Err(VotePoolAddVoteError::Duplicate);
-        }
-        let stake = match self.entries.entry(block_id) {
+        aggregate.subtract_ranks(rank_map, &self.ranks);
+        match self.entries.entry(block_id) {
             HashMapEntry::Occupied(mut e) => {
                 let entry = e.get_mut();
-                entry.add_aggregate(aggregate)?
+                let stake = entry.add_aggregate(rank_map, aggregate)?;
+                self.ranks |= &entry.ranks;
+                Ok(stake)
             }
             HashMapEntry::Vacant(e) => {
                 let entry = VoteEntry::new_with_aggregate(self.max_validators, aggregate);
                 let stake = entry.stake;
+                self.ranks |= &entry.ranks;
                 e.insert(entry);
-                stake
+                Ok(stake)
             }
-        };
-        self.ranks |= aggregate.ranks();
-        Ok(stake)
-    }
-
-    fn add_conflicted_aggregate(&mut self, aggregate: &VoteAggregate) {
-        self.entries
-            .entry(*aggregate.vote().block_id().unwrap())
-            .or_insert_with(|| VoteEntry::new(self.max_validators))
-            .conflicted
-            .add_aggregate(aggregate.clone());
+        }
     }
 }
 
@@ -213,29 +170,35 @@ impl NotarFallbackVoteEntry {
 
     fn add_aggregate(
         &mut self,
-        root_bank: &Bank,
-        aggregate: &VoteAggregate,
+        rank_map: &BLSPubkeyToRankMap,
+        mut aggregate: PoolVoteAggregate,
     ) -> Result<u64, VotePoolAddVoteError> {
         debug_assert_eq!(self.slot, aggregate.vote().slot());
+        let block_id = *aggregate.vote().block_id().unwrap();
         let mut validators = vec![];
-        for validator in get_validators(root_bank, aggregate)? {
-            let validator = validator?;
+        // TODO: can we remove the collect below?
+        for rank in aggregate.ranks().iter_ones().collect::<Vec<_>>() {
+            // TODO: handle unwrap
+            let stake_entry = rank_map.get_pubkey_stake_entry(rank).unwrap();
+            let validator = stake_entry.vote_account_pubkey;
             if let Some(set) = self.validators.get(&validator)
                 && set.len() >= MAX_NOTAR_FALLBACK_PER_VALIDATOR
             {
-                self.add_conflicted_aggregate(aggregate);
-                return Err(VotePoolAddVoteError::Invalid);
+                aggregate.subtract_rank(rank_map, rank);
             }
             validators.push(validator);
         }
-        let stake = match self.entries.entry(*aggregate.vote().block_id().unwrap()) {
+        let stake = match self.entries.entry(block_id) {
             HashMapEntry::Occupied(mut e) => {
                 let entry = e.get_mut();
-                entry.add_aggregate(aggregate)?
+                let stake = entry.add_aggregate(rank_map, aggregate)?;
+                self.ranks |= &entry.ranks;
+                stake
             }
             HashMapEntry::Vacant(e) => {
                 let entry = VoteEntry::new_with_aggregate(self.max_validators, aggregate);
                 let stake = entry.stake;
+                self.ranks |= &entry.ranks;
                 e.insert(entry);
                 stake
             }
@@ -244,18 +207,9 @@ impl NotarFallbackVoteEntry {
             self.validators
                 .entry(validator)
                 .or_default()
-                .insert(*aggregate.vote().block_id().unwrap());
+                .insert(block_id);
         }
-        self.ranks |= aggregate.ranks();
         Ok(stake)
-    }
-
-    fn add_conflicted_aggregate(&mut self, aggregate: &VoteAggregate) {
-        self.entries
-            .entry(*aggregate.vote().block_id().unwrap())
-            .or_insert_with(|| VoteEntry::new(self.max_validators))
-            .conflicted
-            .add_aggregate(aggregate.clone());
     }
 }
 
@@ -264,7 +218,6 @@ struct VoteEntry {
     ranks: BitVec<u8>,
     signature: SignatureProjective,
     stake: u64,
-    conflicted: ConflictedAggregates,
 }
 
 impl VoteEntry {
@@ -273,38 +226,36 @@ impl VoteEntry {
             ranks: default_bitvec(max_validators),
             signature: SignatureProjective::identity(),
             stake: 0,
-            conflicted: ConflictedAggregates::default(),
         }
     }
 
-    fn new_with_aggregate(max_validators: usize, aggregate: &VoteAggregate) -> Self {
+    fn new_with_aggregate(max_validators: usize, aggregate: PoolVoteAggregate) -> Self {
         let mut ranks = default_bitvec(max_validators);
         ranks |= aggregate.ranks();
         Self {
             ranks,
             signature: aggregate.signature().try_as_projective().unwrap(),
-            stake: aggregate.stake().get(),
-            conflicted: ConflictedAggregates::default(),
+            stake: aggregate.stake(),
         }
     }
 
-    fn add_aggregate(&mut self, aggregate: &VoteAggregate) -> Result<u64, VotePoolAddVoteError> {
-        if has_common_bits(&self.ranks, aggregate.ranks()) {
-            self.conflicted.add_aggregate(aggregate.clone());
-            return Err(VotePoolAddVoteError::Duplicate);
-        }
+    fn add_aggregate(
+        &mut self,
+        rank_map: &BLSPubkeyToRankMap,
+        mut aggregate: PoolVoteAggregate,
+    ) -> Result<u64, VotePoolAddVoteError> {
+        aggregate.subtract_ranks(rank_map, &self.ranks);
         self.signature
             .aggregate_with(std::iter::once(aggregate.signature()))
             .map_err(VotePoolAddVoteError::SignatureAggregationFailed)?;
         self.ranks |= aggregate.ranks();
-        self.stake = self.stake.saturating_add(aggregate.stake().get());
+        self.stake = self.stake.saturating_add(aggregate.stake());
         Ok(self.stake)
     }
 
     fn try_build_cert(
         &self,
         cert_type: CertificateType,
-        vote: &Vote,
         total_stake: NonZero<u64>,
         completed_certs: &BTreeMap<CertificateType, Arc<Certificate>>,
     ) -> Result<Option<Certificate>, VotePoolAddVoteError> {
@@ -316,27 +267,16 @@ impl VoteEntry {
             return Ok(None);
         }
         let mut ranks = self.ranks.clone();
-        let mut signature = self.signature;
-        self.conflicted
-            .add_to_cert(vote, &mut signature, &mut ranks);
         let new_len = ranks.last_one().map_or(0, |i| i.saturating_add(1));
         ranks.resize(new_len, false);
         let bitmap = encode_base2(&ranks).map_err(VotePoolAddVoteError::EncodingFailed)?;
-        let signature = BLSSignature::from(signature);
+        let signature = BLSSignature::from(self.signature);
         Ok(Some(Certificate {
             cert_type,
             signature,
             bitmap,
         }))
     }
-}
-
-fn has_common_bits(a: &BitVec<u8>, b: &BitVec<u8>) -> bool {
-    assert_eq!(a.len(), b.len());
-    a.as_raw_slice()
-        .iter()
-        .zip(b.as_raw_slice())
-        .any(|(&x, &y)| (x & y) != 0)
 }
 
 pub(super) struct VotePool {
@@ -374,19 +314,14 @@ impl VotePool {
             self.notar_fallback.entries.get(&block.block_id),
         ) {
             (None, None) => Ok(None),
-            (Some(entry), None) | (None, Some(entry)) => entry.try_build_cert(
-                cert_type,
-                &Vote::new_notarization_fallback_vote(block),
-                total_stake,
-                completed_certs,
-            ),
+            (Some(entry), None) | (None, Some(entry)) => {
+                entry.try_build_cert(cert_type, total_stake, completed_certs)
+            }
             (Some(notar_entry), Some(nf_entry)) => try_build_from_entries(
                 cert_type,
                 total_stake,
                 notar_entry,
                 nf_entry,
-                &Vote::new_notarization_vote(block),
-                &Vote::new_notarization_fallback_vote(block),
                 completed_certs,
             ),
         }
@@ -395,12 +330,12 @@ impl VotePool {
     fn try_produce_finalize_cert(
         &mut self,
         total_stake: NonZero<u64>,
-        aggregate: &VoteAggregate,
+        vote: &Vote,
         completed_certs: &BTreeMap<CertificateType, Arc<Certificate>>,
     ) -> Result<Option<Certificate>, VotePoolAddVoteError> {
-        let cert_type = CertificateType::Finalize(aggregate.vote().slot());
+        let cert_type = CertificateType::Finalize(vote.slot());
         self.finalize
-            .try_build_cert(cert_type, aggregate.vote(), total_stake, completed_certs)
+            .try_build_cert(cert_type, total_stake, completed_certs)
     }
 
     fn try_produce_finalize_fast_cert(
@@ -413,12 +348,7 @@ impl VotePool {
             return Ok(None);
         };
         let cert_type = CertificateType::FinalizeFast(block);
-        entry.try_build_cert(
-            cert_type,
-            &Vote::new_notarization_vote(block),
-            total_stake,
-            completed_certs,
-        )
+        entry.try_build_cert(cert_type, total_stake, completed_certs)
     }
 
     fn try_produce_notar_cert(
@@ -431,47 +361,32 @@ impl VotePool {
         let Some(entry) = self.notar.entries.get(&block.block_id) else {
             return Ok(None);
         };
-        entry.try_build_cert(
-            cert_type,
-            &Vote::new_notarization_vote(block),
-            total_stake,
-            completed_certs,
-        )
+        entry.try_build_cert(cert_type, total_stake, completed_certs)
     }
 
     fn try_produce_skip_cert(
         &mut self,
         total_stake: NonZero<u64>,
-        aggregate: &VoteAggregate,
+        slot: Slot,
         completed_certs: &BTreeMap<CertificateType, Arc<Certificate>>,
     ) -> Result<Option<Certificate>, VotePoolAddVoteError> {
-        let cert_type = CertificateType::Skip(aggregate.vote().slot());
+        let cert_type = CertificateType::Skip(slot);
         match (self.skip.stake > 0, self.skip_fallback.stake > 0) {
             (false, false) => Ok(None),
-            (true, false) => self.skip.try_build_cert(
-                cert_type,
-                &Vote::new_skip_vote(aggregate.vote().slot()),
-                total_stake,
-                completed_certs,
-            ),
-            (false, true) => self.skip_fallback.try_build_cert(
-                cert_type,
-                &Vote::new_skip_fallback_vote(aggregate.vote().slot()),
-                total_stake,
-                completed_certs,
-            ),
-            (true, true) => {
-                let slot = aggregate.vote().slot();
-                try_build_from_entries(
-                    cert_type,
-                    total_stake,
-                    &self.skip,
-                    &self.skip_fallback,
-                    &Vote::new_skip_vote(slot),
-                    &Vote::new_skip_fallback_vote(slot),
-                    completed_certs,
-                )
+            (true, false) => self
+                .skip
+                .try_build_cert(cert_type, total_stake, completed_certs),
+            (false, true) => {
+                self.skip_fallback
+                    .try_build_cert(cert_type, total_stake, completed_certs)
             }
+            (true, true) => try_build_from_entries(
+                cert_type,
+                total_stake,
+                &self.skip,
+                &self.skip_fallback,
+                completed_certs,
+            ),
         }
     }
 
@@ -485,21 +400,16 @@ impl VotePool {
         let Some(entry) = self.genesis.entries.get(&block.block_id) else {
             return Ok(None);
         };
-        entry.try_build_cert(
-            cert_type,
-            &Vote::new_genesis_vote(block),
-            total_stake,
-            completed_certs,
-        )
+        entry.try_build_cert(cert_type, total_stake, completed_certs)
     }
 
     fn try_produce_certs(
         &mut self,
         total_stake: NonZero<u64>,
-        aggregate: &VoteAggregate,
+        vote: Vote,
         completed_certs: &BTreeMap<CertificateType, Arc<Certificate>>,
     ) -> Result<Vec<Certificate>, VotePoolAddVoteError> {
-        match aggregate.vote() {
+        match vote {
             Vote::Notarize(notar) => Ok([
                 self.try_produce_notar_fallback_cert(total_stake, notar.block, completed_certs)?,
                 self.try_produce_notar_cert(total_stake, notar.block, completed_certs)?,
@@ -513,11 +423,11 @@ impl VotePool {
                 .into_iter()
                 .collect()),
             Vote::Finalize(_) => Ok(self
-                .try_produce_finalize_cert(total_stake, aggregate, completed_certs)?
+                .try_produce_finalize_cert(total_stake, &vote, completed_certs)?
                 .into_iter()
                 .collect()),
             Vote::Skip(_) | Vote::SkipFallback(_) => Ok(self
-                .try_produce_skip_cert(total_stake, aggregate, completed_certs)?
+                .try_produce_skip_cert(total_stake, vote.slot(), completed_certs)?
                 .into_iter()
                 .collect()),
             Vote::Genesis(genesis) => Ok(self
@@ -530,94 +440,65 @@ impl VotePool {
     /// Adds votes and if some certs can be produced and they are not already included in the completed certs, produces them.
     pub(super) fn add_aggregate(
         &mut self,
-        root_bank: &Bank,
+        rank_map: &BLSPubkeyToRankMap,
         total_stake: NonZero<u64>,
         aggregate: &VoteAggregate,
         completed_certs: &BTreeMap<CertificateType, Arc<Certificate>>,
     ) -> Result<(u64, Vec<Certificate>), VotePoolAddVoteError> {
         debug_assert_eq!(self.slot, aggregate.vote().slot());
+        let mut aggregate = PoolVoteAggregate::new(aggregate);
+        let vote = *aggregate.vote();
         let stake = match aggregate.vote() {
             Vote::Notarize(_) => {
-                if has_common_bits(&self.skip.ranks, aggregate.ranks())
-                    || has_common_bits(&self.genesis.ranks, aggregate.ranks())
-                {
-                    self.notar.add_conflicted_aggregate(aggregate);
-                    return Err(VotePoolAddVoteError::Invalid);
-                }
+                aggregate.subtract_ranks(rank_map, &self.skip.ranks);
+                aggregate.subtract_ranks(rank_map, &self.genesis.ranks);
                 if let Some(entry) = self
                     .notar_fallback
                     .entries
                     .get(aggregate.vote().block_id().unwrap())
-                    && has_common_bits(&entry.ranks, aggregate.ranks())
                 {
-                    self.notar.add_conflicted_aggregate(aggregate);
-                    return Err(VotePoolAddVoteError::Invalid);
+                    aggregate.subtract_ranks(rank_map, &entry.ranks);
                 }
-                self.notar.add_aggregate(aggregate)
+                self.notar.add_aggregate(rank_map, aggregate)
             }
             Vote::NotarizeFallback(_) => {
-                if has_common_bits(&self.finalize.ranks, aggregate.ranks())
-                    || has_common_bits(&self.genesis.ranks, aggregate.ranks())
-                {
-                    self.notar_fallback.add_conflicted_aggregate(aggregate);
-                    return Err(VotePoolAddVoteError::Invalid);
+                aggregate.subtract_ranks(rank_map, &self.finalize.ranks);
+                aggregate.subtract_ranks(rank_map, &self.genesis.ranks);
+                if let Some(entry) = self.notar.entries.get(aggregate.vote().block_id().unwrap()) {
+                    aggregate.subtract_ranks(rank_map, &entry.ranks);
                 }
-                if let Some(entry) = self.notar.entries.get(aggregate.vote().block_id().unwrap())
-                    && has_common_bits(&entry.ranks, aggregate.ranks())
-                {
-                    self.notar_fallback.add_conflicted_aggregate(aggregate);
-                    return Err(VotePoolAddVoteError::Invalid);
-                }
-                self.notar_fallback.add_aggregate(root_bank, aggregate)
-            }
-            Vote::Skip(_) => {
-                if has_common_bits(&self.notar.ranks, aggregate.ranks())
-                    || has_common_bits(&self.finalize.ranks, aggregate.ranks())
-                    || has_common_bits(&self.skip_fallback.ranks, aggregate.ranks())
-                    || has_common_bits(&self.genesis.ranks, aggregate.ranks())
-                {
-                    self.skip.conflicted.add_aggregate(aggregate.clone());
-                    return Err(VotePoolAddVoteError::Invalid);
-                }
-                self.skip.add_aggregate(aggregate)
-            }
-            Vote::SkipFallback(_) => {
-                if has_common_bits(&self.finalize.ranks, aggregate.ranks())
-                    || has_common_bits(&self.skip.ranks, aggregate.ranks())
-                    || has_common_bits(&self.genesis.ranks, aggregate.ranks())
-                {
-                    self.skip_fallback
-                        .conflicted
-                        .add_aggregate(aggregate.clone());
-                    return Err(VotePoolAddVoteError::Invalid);
-                }
-                self.skip_fallback.add_aggregate(aggregate)
-            }
-            Vote::Finalize(_) => {
-                if has_common_bits(&self.skip.ranks, aggregate.ranks())
-                    || has_common_bits(&self.skip_fallback.ranks, aggregate.ranks())
-                    || has_common_bits(&self.notar_fallback.ranks, aggregate.ranks())
-                    || has_common_bits(&self.genesis.ranks, aggregate.ranks())
-                {
-                    self.finalize.conflicted.add_aggregate(aggregate.clone());
-                    return Err(VotePoolAddVoteError::Invalid);
-                }
-                self.finalize.add_aggregate(aggregate)
+                self.notar_fallback.add_aggregate(rank_map, aggregate)
             }
             Vote::Genesis(_) => {
-                if has_common_bits(&self.skip.ranks, aggregate.ranks())
-                    || has_common_bits(&self.skip_fallback.ranks, aggregate.ranks())
-                    || has_common_bits(&self.notar_fallback.ranks, aggregate.ranks())
-                    || has_common_bits(&self.notar.ranks, aggregate.ranks())
-                    || has_common_bits(&self.finalize.ranks, aggregate.ranks())
-                {
-                    self.genesis.add_conflicted_aggregate(aggregate);
-                    return Err(VotePoolAddVoteError::Invalid);
-                }
-                self.genesis.add_aggregate(aggregate)
+                aggregate.subtract_ranks(rank_map, &self.skip.ranks);
+                aggregate.subtract_ranks(rank_map, &self.skip_fallback.ranks);
+                aggregate.subtract_ranks(rank_map, &self.notar.ranks);
+                aggregate.subtract_ranks(rank_map, &self.notar_fallback.ranks);
+                aggregate.subtract_ranks(rank_map, &self.finalize.ranks);
+                self.genesis.add_aggregate(rank_map, aggregate)
+            }
+            Vote::Skip(_) => {
+                aggregate.subtract_ranks(rank_map, &self.notar.ranks);
+                aggregate.subtract_ranks(rank_map, &self.finalize.ranks);
+                aggregate.subtract_ranks(rank_map, &self.skip_fallback.ranks);
+                aggregate.subtract_ranks(rank_map, &self.genesis.ranks);
+                self.skip.add_aggregate(rank_map, aggregate)
+            }
+            Vote::SkipFallback(_) => {
+                aggregate.subtract_ranks(rank_map, &self.finalize.ranks);
+                aggregate.subtract_ranks(rank_map, &self.skip.ranks);
+                aggregate.subtract_ranks(rank_map, &self.genesis.ranks);
+                self.skip_fallback.add_aggregate(rank_map, aggregate)
+            }
+            Vote::Finalize(_) => {
+                aggregate.subtract_ranks(rank_map, &self.skip.ranks);
+                aggregate.subtract_ranks(rank_map, &self.skip_fallback.ranks);
+                aggregate.subtract_ranks(rank_map, &self.notar_fallback.ranks);
+                aggregate.subtract_ranks(rank_map, &self.genesis.ranks);
+                self.finalize.add_aggregate(rank_map, aggregate)
             }
         }?;
-        let certs = self.try_produce_certs(total_stake, aggregate, completed_certs)?;
+        let certs = self.try_produce_certs(total_stake, vote, completed_certs)?;
         Ok((stake, certs))
     }
 }
@@ -628,8 +509,6 @@ fn try_build_from_entries(
     total_stake: NonZero<u64>,
     entry0: &VoteEntry,
     entry1: &VoteEntry,
-    vote0: &Vote,
-    vote1: &Vote,
     completed_certs: &BTreeMap<CertificateType, Arc<Certificate>>,
 ) -> Result<Option<Certificate>, VotePoolAddVoteError> {
     if completed_certs.contains_key(&cert_type) {
@@ -641,14 +520,8 @@ fn try_build_from_entries(
     }
     let mut signature0 = entry0.signature;
     let mut ranks0 = entry0.ranks.clone();
-    entry0
-        .conflicted
-        .add_to_cert(vote0, &mut signature0, &mut ranks0);
-    let mut signature1 = entry1.signature;
+    let signature1 = entry1.signature;
     let mut ranks1 = entry1.ranks.clone();
-    entry1
-        .conflicted
-        .add_to_cert(vote1, &mut signature1, &mut ranks1);
     let last_one_0 = ranks0.last_one().map_or(0, |i| i.saturating_add(1));
     let last_one_1 = ranks1.last_one().map_or(0, |i| i.saturating_add(1));
     let new_length = last_one_0.max(last_one_1);
@@ -679,7 +552,7 @@ mod tests {
             wire::get_vote_payload_to_sign,
         },
         solana_bls_signatures::Keypair as BLSKeypair,
-        solana_runtime::{bank_forks::BankForks, genesis_utils::ValidatorVoteKeypairs},
+        solana_runtime::{bank::Bank, bank_forks::BankForks, genesis_utils::ValidatorVoteKeypairs},
         std::sync::RwLock,
     };
 
