@@ -223,6 +223,7 @@ impl SigVerifier {
         let root_slot = root_bank.slot();
         let mut certs = Vec::new();
         let mut votes: HashMap<VotePayloadToSign, Vec<UnverifiedVotePayload>> = HashMap::new();
+        let mut deduped_votes = HashSet::new();
         let mut num_pkts = 0u64;
         let my_shred_version = self.cluster_info.my_shred_version();
         for packet in batches.iter().flatten() {
@@ -257,8 +258,11 @@ impl SigVerifier {
                         self.keep_vote(&vote, &unverified_vote, root_bank)
                     {
                         if let Some(validators) = self.received_votes.get(&vote)
-                            && !validators.contains(&sender_vote_account_pubkey)
+                            && validators.contains(&sender_vote_account_pubkey)
                         {
+                            continue;
+                        }
+                        if deduped_votes.insert(unverified_vote.clone()) {
                             let vote_payload_to_sign = VotePayloadToSign::new_from_vote(
                                 unverified_vote.vote,
                                 unverified_vote.shred_version,
