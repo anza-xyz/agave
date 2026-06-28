@@ -106,17 +106,14 @@ impl StakedValidatorsCache {
         let near_start = slot_index < EPOCH_BOUNDARY_SLOTS;
         let near_end = slot_index >= slots_in_epoch.saturating_sub(EPOCH_BOUNDARY_SLOTS);
 
-        let mut staked_nodes = {
-            self.epoch_staked_nodes(epoch)
-                .map(|nodes| (*nodes).clone())
-                .unwrap_or_else(|| {
-                    error!(
-                        "StakedValidatorsCache: unknown Bank::epoch_staked_nodes for epoch: \
-                         {epoch}"
-                    );
-                    HashMap::default()
-                })
+        let Some(base) = self.epoch_staked_nodes(epoch) else {
+            error!(
+                "StakedValidatorsCache can not update the peer list: epoch_staked_nodes not \
+                 available for epoch {epoch}."
+            );
+            return;
         };
+        let mut staked_nodes = (*base).clone();
         if near_start && epoch > 0 {
             if let Some(prev) = self.epoch_staked_nodes(epoch.saturating_sub(1)) {
                 for (pubkey, stake) in prev.iter() {
