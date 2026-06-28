@@ -51,22 +51,9 @@ impl StakedValidatorsCache {
 
     /// Lookup an epoch's staked node set. `None` if neither the root
     /// nor working bank knows this epoch.
-    fn epoch_staked_nodes_raw(&self, epoch: Epoch) -> Option<Arc<HashMap<Pubkey, u64>>> {
+    fn epoch_staked_nodes(&self, epoch: Epoch) -> Option<Arc<HashMap<Pubkey, u64>>> {
         let banks = [self.sharable_banks.root(), self.sharable_banks.working()];
         banks.iter().find_map(|bank| bank.epoch_staked_nodes(epoch))
-    }
-
-    /// Clone an epoch's staked node set, falling back to an empty set
-    /// if the epoch is unknown.
-    fn epoch_staked_nodes_cloned(&self, epoch: Epoch) -> HashMap<Pubkey, u64> {
-        self.epoch_staked_nodes_raw(epoch)
-            .map(|nodes| (*nodes).clone())
-            .unwrap_or_else(|| {
-                error!(
-                    "StakedValidatorsCache: unknown Bank::epoch_staked_nodes for epoch: {epoch}"
-                );
-                HashMap::default()
-            })
     }
 
     /// Inject the test-only override pubkeys into `map` (dev builds only).
@@ -119,24 +106,34 @@ impl StakedValidatorsCache {
         let near_start = slot_index < EPOCH_BOUNDARY_SLOTS;
         let near_end = slot_index >= slots_in_epoch.saturating_sub(EPOCH_BOUNDARY_SLOTS);
 
-        let mut staked = self.epoch_staked_nodes_cloned(epoch);
+        let mut staked_nodes = {
+            self.epoch_staked_nodes(epoch)
+                .map(|nodes| (*nodes).clone())
+                .unwrap_or_else(|| {
+                    error!(
+                        "StakedValidatorsCache: unknown Bank::epoch_staked_nodes for epoch: \
+                         {epoch}"
+                    );
+                    HashMap::default()
+                })
+        };
         if near_start && epoch > 0 {
-            if let Some(prev) = self.epoch_staked_nodes_raw(epoch.saturating_sub(1)) {
+            if let Some(prev) = self.epoch_staked_nodes(epoch.saturating_sub(1)) {
                 for (pubkey, stake) in prev.iter() {
-                    staked.entry(*pubkey).or_insert(*stake);
+                    staked_nodes.entry(*pubkey).or_insert(*stake);
                 }
             }
         }
         if near_end {
-            if let Some(next) = self.epoch_staked_nodes_raw(epoch.saturating_add(1)) {
+            if let Some(next) = self.epoch_staked_nodes(epoch.saturating_add(1)) {
                 for (pubkey, stake) in next.iter() {
-                    staked.entry(*pubkey).or_insert(*stake);
+                    staked_nodes.entry(*pubkey).or_insert(*stake);
                 }
             }
         }
-        self.inject_overrides(&mut staked);
+        self.inject_overrides(&mut staked_nodes);
 
-        let snapshot: HashMap<Pubkey, SocketAddr> = staked
+        let snapshot = staked_nodes
             .into_keys()
             .map(|pubkey| {
                 let addr = self
@@ -146,8 +143,11 @@ impl StakedValidatorsCache {
                 (pubkey, addr)
             })
             .collect();
-        // `send` failing means the endpoint is gone, we must be exiting.
-        let _ = peer_list.send(Arc::new(snapshot));
+        // Publish the latest version via watch channel - this never blocks.
+        if peer_list.send(Arc::new(snapshot)).is_err() {
+            // This can only happen if the receievers are all dropped.
+            error!("Could not send updated peer list to QUIC endpoint!");
+        }
     }
 }
 

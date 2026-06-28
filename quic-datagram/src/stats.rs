@@ -101,11 +101,7 @@ pub(crate) fn record_client_error(err: &Error, stats: &ClientStats) {
             | SendDatagramError::UnsupportedByPeer
             | SendDatagramError::Disabled,
         ) => add(&stats.connect_failed),
-        Error::NotAdmitted(_)
-        | Error::Banned(_)
-        | Error::TableFull
-        | Error::IdentityRotated(_)
-        | Error::Endpoint(_) => {
+        Error::NotAdmitted(_) | Error::Banned(_) | Error::TableFull | Error::Endpoint(_) => {
             debug_assert!(false, "outbound direction does not produce {err:?}");
         }
     }
@@ -129,10 +125,7 @@ pub(crate) fn record_server_error(err: &Error, stats: &ServerStats) {
         | Error::InvalidIdentity(_) => add(&stats.connection_failed),
         Error::NotAdmitted(_) | Error::Banned(_) => add(&stats.handshake_rejected_unauthorized),
         Error::TableFull => add(&stats.handshake_rejected_overload),
-        Error::Connect(_)
-        | Error::SendDatagram(_)
-        | Error::IdentityRotated(_)
-        | Error::Endpoint(_) => {
+        Error::Connect(_) | Error::SendDatagram(_) | Error::Endpoint(_) => {
             debug_assert!(false, "inbound direction does not produce {err:?}");
         }
     }

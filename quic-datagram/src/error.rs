@@ -39,9 +39,9 @@ pub(crate) mod close_codes {
         reason: b"BANNED",
     };
 
-    pub(crate) const TABLE_FULL: Spec = Spec {
+    pub(crate) const TOO_MANY_CONNECTIONS: Spec = Spec {
         code: VarInt::from_u32(5),
-        reason: b"TABLE_FULL",
+        reason: b"TOO_MANY_CONNECTIONS",
     };
 
     /// Peer exhausted its flood-control budget.
@@ -91,12 +91,6 @@ pub enum Error {
 
     #[error(transparent)]
     SendDatagram(#[from] SendDatagramError),
-
-    /// Identity rotated between handshake start and the post-handshake
-    /// install. The completed connection is authenticated under our previous
-    /// cert and was closed.
-    #[error("identity rotated mid-handshake; connection to {0} aborted")]
-    IdentityRotated(Pubkey),
 
     /// `quinn::Endpoint::new` failed. Construction-time only.
     #[error(transparent)]

@@ -34,7 +34,7 @@ use {
 };
 
 /// The maximum amount of packets per second we expect from an honest node
-pub const VOTOR_RATE_LIMIT_PPS: u64 = 50;
+pub const VOTOR_RATE_LIMIT_PPS: usize = 50;
 
 /// Max new packets per second in steady state:
 /// - Notarize + Finalize votes
@@ -44,7 +44,7 @@ pub const VOTOR_RATE_LIMIT_PPS: u64 = 50;
 const NEW_PACKETS_PER_SECOND: usize = 30;
 
 /// The amount of packets we should send per second from the standstill queue
-const STANDSTILL_REFRESH_BATCH_SIZE: usize = VOTOR_RATE_LIMIT_PPS as usize - NEW_PACKETS_PER_SECOND;
+const STANDSTILL_REFRESH_BATCH_SIZE: usize = VOTOR_RATE_LIMIT_PPS - NEW_PACKETS_PER_SECOND;
 
 /// How often we should refresh messages from the standstill queue
 const STANDSTILL_REFRESH_INTERVAL: Duration = Duration::from_secs(1);
@@ -565,7 +565,7 @@ mod tests {
             ingress_tx,
             peer_list_receiver,
             ban_receiver,
-            VOTOR_RATE_LIMIT_PPS as f64,
+            VOTOR_RATE_LIMIT_PPS,
         )
         .expect("QuicDatagramEndpoint::spawn");
         (endpoint, ingress_rx, addr, rt)

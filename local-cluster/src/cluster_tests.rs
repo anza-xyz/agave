@@ -6,6 +6,7 @@ use log::*;
 use {
     crate::{cluster::QuicTpuClient, local_cluster::LocalCluster},
     agave_quic_datagram::endpoint::{Datagram, QuicDatagramEndpoint},
+    agave_votor::voting_service::VOTOR_RATE_LIMIT_PPS,
     agave_votor_messages::{
         consensus_message::VoteMessage, unverified_vote_message::DecodedWireConsensusMessage,
         wire::VersionedWireConsensusMessage,
@@ -615,7 +616,7 @@ pub fn start_datagram_listener_for_alpenglow_votor(
         sender,
         None,
         ban_receiver,
-        agave_votor::voting_service::VOTOR_RATE_LIMIT_PPS as f64,
+        VOTOR_RATE_LIMIT_PPS,
     )
     .expect("alpenglow datagram listener");
     (endpoint, receiver, rt)

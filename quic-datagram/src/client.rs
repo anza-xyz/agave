@@ -307,19 +307,19 @@ impl OutboundLoop {
     /// dropped from the table so the next reconcile remakes them.
     fn handle_broadcast(&mut self, message: Bytes) {
         let mut sent = 0u64;
-        let mut dead: Vec<Pubkey> = Vec::new();
+        let mut dead_peers = Vec::new();
         for (peer, state) in self.peer_state.iter() {
             let PeerState::Established { connection, .. } = state else {
                 continue;
             };
             match connection.send_datagram(message.clone()) {
                 Ok(()) => sent = sent.saturating_add(1),
-                Err(SendDatagramError::ConnectionLost(_)) => dead.push(*peer),
+                Err(SendDatagramError::ConnectionLost(_)) => dead_peers.push(*peer),
                 Err(e) => record_client_error(&Error::from(e), &self.stats),
             }
         }
         self.stats.datagrams_sent.fetch_add(sent, Ordering::Relaxed);
-        for peer in dead {
+        for peer in dead_peers {
             self.peer_state.remove(&peer);
         }
     }

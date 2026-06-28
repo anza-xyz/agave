@@ -364,7 +364,7 @@ fn recv_batches(
 ) -> Result<Vec<PacketBatch>, ()> {
     let mut sleeps: u32 = 0;
     let batch = loop {
-        if sleeps > 1000 {
+        if sleeps >= 1000 {
             return Ok(vec![]);
         }
         match receiver.try_recv() {

@@ -304,10 +304,10 @@ impl Tvu {
                 (Some(rt), handle)
             }
         };
-        let (ingress_tx, votor_ingress) = bounded(MAX_ALPENGLOW_PACKET_NUM);
+        let (votor_ingress_sender, votor_ingress_receiver) = bounded(MAX_ALPENGLOW_PACKET_NUM);
         // Inbound bans flow from the sig-verifier to the endpoint over this
         // channel: sized very generously to avoid any drops while keeping unbounded semantics.
-        let (votor_ban_tx, votor_ban_receiver) = mpsc::channel(MAX_ALPENGLOW_VOTE_ACCOUNTS * 2);
+        let (votor_ban_sender, votor_ban_receiver) = mpsc::channel(MAX_ALPENGLOW_VOTE_ACCOUNTS * 2);
         // Seed the peer_list from the last rooted bank so inbound votor
         // connections from staked peers are admitted during ledger replay and
         // wait_for_supermajority.
@@ -326,10 +326,10 @@ impl Tvu {
             &cluster_info.keypair(),
             alpenglow_sockets,
             alpenglow_client_socket,
-            ingress_tx,
+            votor_ingress_sender,
             Some(votor_peer_list_receiver),
             votor_ban_receiver,
-            VOTOR_RATE_LIMIT_PPS as f64,
+            VOTOR_RATE_LIMIT_PPS,
         )
         .map_err(|e| format!("alpenglow endpoint: {e:?}"))?;
         key_notifiers
@@ -342,7 +342,7 @@ impl Tvu {
             exit.clone(),
             SigVerifierContext {
                 migration_status: migration_status.clone(),
-                ban_sender: votor_ban_tx,
+                ban_sender: votor_ban_sender,
                 sharable_banks,
                 cluster_info: cluster_info.clone(),
                 leader_schedule: leader_schedule_cache.clone(),
@@ -350,7 +350,7 @@ impl Tvu {
                 generated_cert_types: generated_cert_types.clone(),
             },
             SigVerifierChannels {
-                packet_receiver: votor_ingress,
+                packet_receiver: votor_ingress_receiver,
                 channel_to_repair: verified_voter_slots_sender,
                 channel_to_reward: reward_votes_sender,
                 channel_to_pool: consensus_message_sender,

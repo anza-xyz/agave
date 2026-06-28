@@ -255,16 +255,14 @@ impl ConnectionReader {
                 Ok(bytes) => {
                     match rate_limiter.consume_tokens(1) {
                         // normal operation
-                        Ok(remaining) if remaining > rate_limit_watermark => {}
+                        Ok(remaining) if remaining >= rate_limit_watermark => {}
                         // drop excess packets if peer exceeds normal rate
                         Ok(_) => {
-                            drop(bytes);
                             stats.datagram_rate_limited.fetch_add(1, Ordering::Relaxed);
                             continue;
                         }
                         // peer drained bucket dry - kick them
                         Err(_) => {
-                            drop(bytes);
                             let _ = events_sender
                                 .send(InboundEvent::FloodDetected { peer })
                                 .await;
@@ -323,14 +321,14 @@ pub(crate) struct InboundLoop {
     pub(crate) identity_receiver: watch::Receiver<Option<Arc<IdentitySnapshot>>>,
     /// Per-peer receive-only connection state.
     pub(crate) peer_state: HashMap<Pubkey, PeerEntry, PubkeyHasherBuilder>,
-    /// Clone of event_sender.
+    /// Cloned into spawned tasks.
     pub(crate) events_sender: mpsc::Sender<InboundEvent>,
     /// Channel for read tasks to report their lifetime events.
     pub(crate) events_receiver: mpsc::Receiver<InboundEvent>,
     pub(crate) stats: Arc<ServerStats>,
     pub(crate) shutdown: CancellationToken,
     /// Sustained datagrams-per-second each peer is allowed to send.
-    pub(crate) max_datagrams_per_second_per_peer: f64,
+    pub(crate) max_datagrams_per_second_per_peer: usize,
     /// Burst headroom above the sustained rate, in tokens.
     pub(crate) peer_rate_limit_burst: u64,
     /// Bucket capacity; draining it dry trips flood control.
@@ -348,10 +346,10 @@ impl InboundLoop {
         identity_receiver: watch::Receiver<Option<Arc<IdentitySnapshot>>>,
         stats: Arc<ServerStats>,
         shutdown: CancellationToken,
-        max_datagrams_per_second_per_peer: f64,
+        max_datagrams_per_second_per_peer: usize,
     ) -> Self {
         let tokens_over = |window: Duration| {
-            (max_datagrams_per_second_per_peer * window.as_secs_f64()).ceil() as u64
+            (max_datagrams_per_second_per_peer as f64 * window.as_secs_f64()).ceil() as u64
         };
         let peer_rate_limit_burst = tokens_over(PEER_RATE_LIMIT_BURST_WINDOW).max(1);
         let peer_rate_limit_burst_dos =
@@ -373,17 +371,8 @@ impl InboundLoop {
         }
     }
 
-    /// Whether `peer` is currently admitted. With no peer_list (dev/test), all
-    /// peers are admitted.
-    fn is_allowed(&self, peer: &Pubkey) -> bool {
-        match &self.peer_list_receiver {
-            Some(receiver) => receiver.borrow().contains_key(peer),
-            None => true,
-        }
-    }
-
     /// Live inbound connections (each pubkey may hold several).
-    fn connection_count(&self) -> u64 {
+    fn count_connections(&self) -> u64 {
         self.peer_state
             .values()
             .map(|e| e.connections.len())
@@ -453,7 +442,7 @@ impl InboundLoop {
                     }
                 }
                 // Metrics are quite handy to have even if we are flooded with incoming.
-                _ = metrics.tick() => stats::report_server(&self.stats, self.connection_count()),
+                _ = metrics.tick() => stats::report_server(&self.stats, self.count_connections()),
                 // When idle we can take care of bookkeeping.
                 _ = prune.tick() => {
                     self.banlist.prune();
@@ -501,7 +490,8 @@ impl InboundLoop {
         let Some(peer_list_receiver) = peer_list_receiver.as_ref() else {
             return;
         };
-        let peer_list = peer_list_receiver.borrow();
+        // Take a snapshow of the peer list to avoid holding locks.
+        let peer_list = peer_list_receiver.borrow().clone();
         let mut evicted_peer_list = 0u64;
         for (peer, entry) in peer_state.iter_mut() {
             if entry.connections.is_empty() || peer_list.contains_key(peer) {
@@ -570,7 +560,15 @@ impl InboundLoop {
             record_server_error(&Error::Banned(peer), &self.stats);
             return;
         }
-        if !self.is_allowed(&peer) {
+
+        if self
+            .peer_list_receiver
+            .as_ref()
+            // not in the peerlist
+            .map(|rx| !rx.borrow().contains_key(&peer))
+            // or no peerlist provided
+            .unwrap_or(false)
+        {
             close_codes::NOT_ADMITTED.close(&connection);
             record_server_error(&Error::NotAdmitted(peer), &self.stats);
             return;
@@ -581,7 +579,7 @@ impl InboundLoop {
                 let rate_limiter = Arc::new(TokenBucket::new(
                     self.peer_rate_limit_burst_dos,
                     self.peer_rate_limit_burst_dos,
-                    self.max_datagrams_per_second_per_peer,
+                    self.max_datagrams_per_second_per_peer as f64,
                 ));
                 let mut connections = ArrayVec::new();
                 connections.push(connection.clone());
@@ -596,14 +594,14 @@ impl InboundLoop {
                 match entry.connections.try_push(connection.clone()) {
                     Ok(()) => Arc::clone(&entry.rate_limiter),
                     Err(_) => {
-                        close_codes::TABLE_FULL.close(&connection);
+                        close_codes::TOO_MANY_CONNECTIONS.close(&connection);
                         record_server_error(&Error::TableFull, &self.stats);
                         return;
                     }
                 }
             }
         };
-        stats::record_connection_count(&self.stats.peak_connections, self.connection_count());
+        stats::record_connection_count(&self.stats.peak_connections, self.count_connections());
         // The read loop reports [`InboundEvent::Closed`] when it exits so this
         // loop can reap the table slot.
         spawn(

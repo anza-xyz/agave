@@ -94,7 +94,7 @@ impl QuicDatagramEndpoint {
         inbound_datagrams: Sender<Datagram>,
         desired_peers: Option<PeerListReceiver>,
         ban_commands: mpsc::Receiver<BanCommand>,
-        max_datagrams_per_second_per_peer: f64,
+        max_datagrams_per_second_per_peer: usize,
     ) -> Result<Self, Error> {
         assert!(
             cfg!(feature = "dev-context-only-utils") || desired_peers.is_some(),
@@ -102,11 +102,10 @@ impl QuicDatagramEndpoint {
         );
         assert!(!inbound_sockets.is_empty(), "Must have sockets provided");
 
-        let server_stats: Arc<ServerStats> = Arc::default();
+        let server_stats = Arc::new(ServerStats::default());
         // Egress channel carries *distinct* messages to be sent.
         // Size it to 5 seconds of the votor max send rate (these rates are quite low).
-        let egress_channel_capacity =
-            (max_datagrams_per_second_per_peer.ceil() as usize).saturating_mul(5);
+        let egress_channel_capacity = max_datagrams_per_second_per_peer.saturating_mul(5);
         let (egress_sender, egress_receiver) = mpsc::channel(egress_channel_capacity);
         let shutdown = CancellationToken::new();
         let (identity_sender, identity_receiver) = watch::channel(None);
