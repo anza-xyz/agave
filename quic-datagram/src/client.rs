@@ -146,10 +146,10 @@ impl OutboundLoop {
 
     pub(crate) async fn run(mut self) {
         let mut metrics = interval(METRICS_INTERVAL);
-        metrics.set_missed_tick_behavior(MissedTickBehavior::Skip);
+        metrics.set_missed_tick_behavior(MissedTickBehavior::Delay);
 
         let mut reconcile_timer = interval(RECONCILE_INTERVAL);
-        reconcile_timer.set_missed_tick_behavior(MissedTickBehavior::Skip);
+        reconcile_timer.set_missed_tick_behavior(MissedTickBehavior::Delay);
 
         // The identity arm tolerates the `KeyUpdater` sender being dropped (some
         // local-cluster tests drop it), once closed we stop polling that arm.

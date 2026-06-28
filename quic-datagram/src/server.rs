@@ -403,10 +403,10 @@ impl InboundLoop {
 
     pub(crate) async fn run(mut self) {
         let mut prune = interval(BANLIST_PRUNE_INTERVAL);
-        prune.set_missed_tick_behavior(MissedTickBehavior::Skip);
+        prune.set_missed_tick_behavior(MissedTickBehavior::Delay);
 
         let mut metrics = interval(METRICS_INTERVAL);
-        metrics.set_missed_tick_behavior(MissedTickBehavior::Skip);
+        metrics.set_missed_tick_behavior(MissedTickBehavior::Delay);
 
         let mut peer_list_receiver = self.peer_list_receiver.clone();
         let mut identity_receiver = self.identity_receiver.clone();
@@ -523,7 +523,9 @@ impl InboundLoop {
     /// from that peer.
     fn apply_ban(&mut self, peer: Pubkey, timeout: Duration) {
         self.banlist.ban(peer, timeout);
+        // if peer has any open connections...
         if let Some(mut entry) = self.peer_state.remove(&peer) {
+            // ... we go over them and close each.
             let closed = entry
                 .connections
                 .drain(..)
