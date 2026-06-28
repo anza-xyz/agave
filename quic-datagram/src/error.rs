@@ -5,7 +5,7 @@ use {
     thiserror::Error,
 };
 
-/// Application close codes and reason strings, paired.
+/// Application close codes and matching reason strings.
 ///
 /// Numeric codes are part of the wire format - adding a new one is fine,
 /// changing the value of an existing one is a breaking protocol change.
@@ -44,8 +44,7 @@ pub(crate) mod close_codes {
         reason: b"TABLE_FULL",
     };
 
-    /// Peer exhausted its flood-control budget. Not a ban: the rate-limiter
-    /// tombstone persists, so a reconnecting flooder is throttled again quickly.
+    /// Peer exhausted its flood-control budget.
     pub(crate) const FLOODING: Spec = Spec {
         code: VarInt::from_u32(6),
         reason: b"FLOODING",
@@ -62,8 +61,8 @@ pub(crate) mod close_codes {
     };
 }
 
-/// All errors observed by the endpoint. Returned from public APIs and stamped
-/// into the stats counters via `record_client_error` / `record_server_error`.
+/// All errors observed by the endpoint.
+/// Fed into the stats via `record_client_error` and `record_server_error`.
 #[derive(Error, Debug)]
 pub enum Error {
     #[error(transparent)]
@@ -99,8 +98,7 @@ pub enum Error {
     #[error("identity rotated mid-handshake; connection to {0} aborted")]
     IdentityRotated(Pubkey),
 
-    /// `quinn::Endpoint::new` failed (e.g. socket already bound by another
-    /// process). Construction-time only.
+    /// `quinn::Endpoint::new` failed. Construction-time only.
     #[error(transparent)]
     Endpoint(#[from] io::Error),
 }

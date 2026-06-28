@@ -32,32 +32,30 @@ use {
     tokio_util::sync::CancellationToken,
 };
 
-/// State for one peer
+/// Tracks resource use by one peer
 pub(crate) struct PeerEntry {
     connections: ArrayVec<Connection, MAX_INBOUND_CONNECTIONS_PER_PEER>,
+    /// Shared ingress data ratelimiter for all connections of this peer.
     rate_limiter: Arc<TokenBucket>,
 }
 
-/// Event reported to the InboundLoop by other tasks.
+/// Event reported to the InboundLoop.
 pub(crate) enum InboundEvent {
-    /// A TLS handshake completed and yielded an authenticated peer. The accept
-    /// loop has already dropped any handshake that completed across a rotation,
-    /// so anything that arrives here is current.
+    /// A TLS handshake completed and yielded a valid, authenticated peer.
     Accepted {
         peer: Pubkey,
         connection: Connection,
     },
-    /// An inbound connection terminated. Reaped by `stable_id`, which quinn
-    /// guarantees unique per connection, so a late report is a harmless no-op.
+    /// An inbound connection terminated. `stable_id` identifies the connection.
     Closed { peer: Pubkey, stable_id: usize },
     /// The ingress traffic shaping bucket was drained by a sustained flood.
     FloodDetected { peer: Pubkey },
 }
 
-/// Accept loop: one per endpoint. Pulls connection attempts off its endpoint,
-/// runs the server side of the TLS handshake (`Incoming::accept()` — the
-/// CPU-bound ECDHE + certificate signature), then spawns a task that awaits the
-/// client's reply. This coarsely bounds the number of cores that can be dedicated
+/// AcceptLoop pulls connection attempts off its endpoint,
+/// runs the server side of the TLS handshake, then
+/// spawns a task that awaits the client's reply.
+/// This coarsely bounds the number of cores that can be dedicated
 /// to handshake work to the number of accept loops (one per endpoint).
 pub(crate) struct AcceptLoop {
     endpoint: Endpoint,
@@ -103,13 +101,12 @@ impl AcceptLoop {
             max_inflight_handshakes,
         } = self;
 
-        // A time to reopen the admission of Incoming from Endpoint once `limiter`
-        // has refilled.
+        // Timer to reopen the admission of Incoming from Endpoint after limiter was exhausted.
         let mut accept_gate = Box::pin(sleep(Duration::ZERO));
         let mut rate_limited = false;
 
         // In-flight handshake tasks. We use this to be notified whenever any of the
-        // per-peer admission tasks complete.
+        // per-peer admission tasks complete and to track total count.
         let mut handshakes = FuturesUnordered::new();
 
         // Some local-cluster tests drop the KeyUpdater sender; once the identity
@@ -119,7 +116,7 @@ impl AcceptLoop {
             tokio::select! {
                 biased;
                 // Identity rotation: swap this endpoint's server config so new
-                // handshakes present the new cert. In-flight handshakes that
+                // handshakes observe the new cert. In-flight handshakes that
                 // complete under the old cert are harmless and ignored here.
                 changed = identity_receiver.changed(), if !id_closed => {
                     if changed.is_err() {

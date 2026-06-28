@@ -6,7 +6,7 @@ use {
         client::OutboundLoop,
         error::Error,
         server::{AcceptLoop, InboundEvent, InboundLoop},
-        stats::{ClientStats, ServerStats},
+        stats::ServerStats,
         transport::{IdentitySnapshot, new_client_config, new_server_config},
     },
     bytes::Bytes,
@@ -28,12 +28,10 @@ use {
     tokio_util::sync::CancellationToken,
 };
 
-/// Command to temporarily ban a peer, sent from the sig-verifier to the
-/// endpoint over a channel. The endpoint owns the banlist; this channel is the
-/// only way to mutate it.
+/// Command to temporarily ban a peer.
 pub type BanCommand = (Pubkey, Duration);
 
-/// Handle for caller-driven identity rotation. Cloneable and thread-safe.
+/// Handle for caller-driven identity rotation.
 pub struct KeyUpdater {
     sender: watch::Sender<Option<Arc<IdentitySnapshot>>>,
 }
@@ -58,14 +56,13 @@ pub struct Datagram {
     pub message: Bytes,
 }
 
-/// Datagram-only QUIC endpoint bound to a UDP socket.
+/// Datagram-only QUIC endpoint.
 pub struct QuicDatagramEndpoint {
     /// Egress is broadcast: one queued message is fanned out to every live
-    /// outbound connection by the loop. The caller does not address peers.
+    /// outbound connection.
     pub egress: mpsc::Sender<Bytes>,
     /// Handle for rotating the local identity (TLS cert / pubkey).
     pub key_updater: Arc<KeyUpdater>,
-    pub server_stats: Arc<ServerStats>,
     shutdown: CancellationToken,
 }
 
@@ -80,11 +77,11 @@ impl QuicDatagramEndpoint {
     /// cancels them.
     /// Received datagrams flow into `ingress`, per-peer receive rate is capped
     /// by `max_datagrams_per_second_per_peer`.
-    ///
     /// `peerlist_receiver` carries desired peer set updates: inbound evicts
     /// peers no longer in the set, outbound connects to peers in it.
     /// `ban_receiver` carries temporary per-peer ban commands (banning also closes
-    /// the peer's connections). `peerlist_receiver` can be `None` , then inbound
+    /// the peer's connections).
+    /// `peerlist_receiver` can be `None` , then inbound
     /// admits all peers and outbound connects to nobody.
     pub fn spawn(
         runtime: &Handle,
@@ -102,7 +99,6 @@ impl QuicDatagramEndpoint {
         );
         assert!(!server_sockets.is_empty(), "Must have sockets provided");
 
-        let client_stats: Arc<ClientStats> = Arc::default();
         let server_stats: Arc<ServerStats> = Arc::default();
         // Egress channel carries *distinct* messages to be sent.
         // Size it to 5 seconds of the votor max send rate (these rates are quite low).
@@ -157,7 +153,6 @@ impl QuicDatagramEndpoint {
                 identity_receiver.clone(),
                 peerlist_receiver,
                 shutdown.clone(),
-                client_stats,
             );
             runtime.spawn(outbound.run());
         }
@@ -199,7 +194,7 @@ impl QuicDatagramEndpoint {
             inbound_events_sender,
             inbound_events_receiver,
             identity_receiver,
-            server_stats.clone(),
+            server_stats,
             shutdown.clone(),
             max_datagrams_per_second_per_peer,
         );
@@ -208,7 +203,6 @@ impl QuicDatagramEndpoint {
         Ok(Self {
             egress: egress_sender,
             key_updater,
-            server_stats,
             shutdown,
         })
     }

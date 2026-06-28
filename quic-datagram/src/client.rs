@@ -33,15 +33,16 @@ const RECONCILE_INTERVAL: Duration = Duration::from_secs(1);
 pub(crate) enum PeerState {
     /// Connection initiated but is not ready yet.
     Connecting,
-    /// Live send-only connection. `addr` is cached at install so reconcile can
-    /// detect an address change (peer moved) without locking quinn state.
+    /// Live send-only connection.
     Established {
         connection: Connection,
-        addr: SocketAddr,
+        // This is cached at install so reconcile can
+        // detect an address change without locking quinn state.
+        target_address: SocketAddr,
     },
 }
 
-/// Connect result reported by a connect task to the outbound control loop.
+/// Connect result reported by a ClientConnection task to the OubtoundLoop.
 pub(crate) struct ConnectEvent {
     pub(crate) peer: Pubkey,
     pub(crate) generation: u64,
@@ -95,26 +96,23 @@ impl ClientConnection {
     }
 }
 
-/// Outbound control loop: client egress (we-connect, send-only). Owns the
-/// per-peer send-only connection state. Keeps open connections to everyone
-/// in the peerlist.
+/// Outbound control loop for the egress direction(we-connect, send-only).
+/// Strives to ensure open connections to everyone in the peerlist.
 pub(crate) struct OutboundLoop {
     pub(crate) endpoint: Endpoint,
     pub(crate) local_pubkey: Pubkey,
-    /// Identity-rotation counter, local to this loop.
+    /// Identity-rotation counter.
     pub(crate) generation: u64,
+    /// Channel for outbound messages to be broadcast
     pub(crate) egress_receiver: mpsc::Receiver<Bytes>,
     pub(crate) identity_receiver: watch::Receiver<Option<Arc<IdentitySnapshot>>>,
-    /// Receiver for updated peer lists. The loop is purely peerlist-driven, so
-    /// it is only spawned when a peerlist exists; a receive-only endpoint with
-    /// no peerlist simply omits the outbound loop.
     pub(crate) peerlist_receiver: PeerlistReceiver,
-    /// Per-peer send-only connection state, owned solely by this loop.
-    /// Sized by the peerlist size by reconcile task.
+    /// Per-peer send-only connection state.
+    /// Size is limited to the peerlist size by reconcile task.
     pub(crate) peer_state: HashMap<Pubkey, PeerState, PubkeyHasherBuilder>,
-    /// Channel for spawned tasks to report their lifetime events
+    /// Sender to clone into freshly spawned per-connection tasks
     pub(crate) events_sender: mpsc::Sender<ConnectEvent>,
-    /// Channel for spawned tasks to report their lifetime events
+    /// Per-connection tasks report their outcome here
     pub(crate) events_receiver: mpsc::Receiver<ConnectEvent>,
     pub(crate) shutdown: CancellationToken,
     pub(crate) stats: Arc<ClientStats>,
@@ -128,7 +126,6 @@ impl OutboundLoop {
         identity_receiver: watch::Receiver<Option<Arc<IdentitySnapshot>>>,
         peerlist_receiver: PeerlistReceiver,
         shutdown: CancellationToken,
-        stats: Arc<ClientStats>,
     ) -> Self {
         let (events_sender, events_receiver) =
             mpsc::channel::<ConnectEvent>(CONN_EVENT_CHANNEL_CAP);
@@ -143,7 +140,7 @@ impl OutboundLoop {
             events_sender,
             events_receiver,
             shutdown,
-            stats,
+            stats: Arc::default(),
         }
     }
 
@@ -155,17 +152,17 @@ impl OutboundLoop {
         reconcile_timer.set_missed_tick_behavior(MissedTickBehavior::Skip);
 
         // The identity arm tolerates the `KeyUpdater` sender being dropped (some
-        // local-cluster tests drop it); once closed we stop polling that arm.
+        // local-cluster tests drop it), once closed we stop polling that arm.
         let mut id_closed = false;
 
-        // A separate receiver clone drives change-notifications; the snapshot
+        // A separate receiver clone drives change notifications, the snapshot
         // reads in `reconcile` go through `self.peerlist_receiver`.
         let mut peerlist_receiver = self.peerlist_receiver.clone();
 
         loop {
             tokio::select! {
                 biased;
-                // ID changes are rare but very important
+                // ID changes are rare but very important and must be acted on immediately
                 changed = self.identity_receiver.changed(), if !id_closed => {
                     if changed.is_err() {
                         warn!("identity rotation channel closed; outbound loop running without rotation support");
@@ -206,15 +203,15 @@ impl OutboundLoop {
     }
 
     /// Rebuild the client TLS config against the new identity, swap it into the
-    /// quinn endpoint, evict the peer-state table so peers are re-connected, and
-    /// adopt the new pubkey. The next reconcile will reconnect to everyone.
+    /// quinn endpoint, evict every existing connection (since they use old ID),
+    /// and adopt the new pubkey. The next reconcile will reconnect to everyone.
     fn apply_identity_change(&mut self, snap: Arc<IdentitySnapshot>) {
         let client_config =
             new_client_config(snap.cert.clone(), snap.key.clone_key(), ALPENGLOW_ALPN);
         self.local_pubkey = snap.pubkey;
         self.endpoint.set_default_client_config(client_config);
         // Bump generation so any in-flight connect that completes after this point is
-        // dropped (its event carries the old generation).
+        // dropped (it carries the old ID).
         self.generation = self.generation.wrapping_add(1);
         let evicted = self
             .peer_state
@@ -239,8 +236,8 @@ impl OutboundLoop {
 
     /// Reconcile the connection table against the current peerlist.
     fn reconcile(&mut self) {
-        // Clone the Arc so the watch borrow is released before we mutate the
-        // table (and so `snapshot` is independent of `self`).
+        // Clone the Arc so the operation is coherent (next call to reconcile will
+        // pick up a new peerlist if it gets published before this operation finishes).
         let snapshot = self.peerlist_receiver.borrow().clone();
 
         // 1. Drop connections for peers that left the peerlist.
@@ -273,7 +270,7 @@ impl OutboundLoop {
                 Some(PeerState::Connecting) => false,
                 Some(PeerState::Established {
                     connection,
-                    addr: cur,
+                    target_address: cur,
                 }) => {
                     // desired peer address has changed
                     if cur != addr {
@@ -327,8 +324,7 @@ impl OutboundLoop {
         }
     }
 
-    /// Install a freshly connected peer, or drop the placeholder on failure so
-    /// reconcile reconnects to it.
+    /// React to a ConnectEvent.
     fn handle_connect_event(&mut self, event: ConnectEvent) {
         let ConnectEvent {
             peer,
@@ -348,7 +344,7 @@ impl OutboundLoop {
             Ok(connection) => match self.peer_state.get_mut(&peer) {
                 Some(slot @ PeerState::Connecting) => {
                     *slot = PeerState::Established {
-                        addr: connection.remote_address(),
+                        target_address: connection.remote_address(),
                         connection,
                     };
                     stats::record_connection_count(

@@ -43,32 +43,40 @@ pub const MAX_INBOUND_CONNECTIONS_PER_PEER: usize = 2;
 /// Picked to absorb several slots worth of work.
 pub(crate) const CONN_EVENT_CHANNEL_CAP: usize = MAX_ALPENGLOW_VOTE_ACCOUNTS;
 
-/// Tolerance to burst as window over the nominal per-peer send rate.
+/// Votor should bace broadcasts to each peer. This window is the
+/// instantaneous burst headroom (`window × nominal rate`) we allow to
+/// absorb votor's transient bursts before we start dropping at ingress.
 pub const PEER_RATE_LIMIT_BURST_WINDOW: Duration = Duration::from_secs(2);
-/// Used to compute number of packets to allow at over-limit rate before dropping
-/// the connection.
+/// A peer that sustains above-nominal rate long enough to drain this much
+/// budget (`window × nominal rate`) is not following votor's self-pacing; we
+/// treat it as abusive and close the connection rather than just shaping.
 pub const PEER_RATE_LIMIT_DOS_WINDOW: Duration = Duration::from_secs(20);
 
-/// Sustained rate at which we start inbound TLS handshakes in (handshakes/second).
-/// This is consulted before we call `Endpoint::accept()`, so it bounds the rate
-/// at which we begin any kind of handshake crypto at all.
+/// Sustained rate at which we start inbound TLS handshakes (handshakes/second),
+/// consulted before `Endpoint::accept()` so it bounds when we begin handshake
+/// crypto at all. Sized to the validator set: the whole set may (re)connect at
+/// once after a coordinated restart and should be admitted within ~1 second.
 pub const HANDSHAKE_GLOBAL_RATE: f64 = MAX_ALPENGLOW_VOTE_ACCOUNTS as f64;
 
 /// Burst of inbound handshakes tolerated above [`HANDSHAKE_GLOBAL_RATE`] before
-/// new attempts are shed. Sized to ensure that reasonable load spikes are tolerated.
-pub(crate) const HANDSHAKE_BURST: u64 = 500;
+/// new attempts are shed: 200ms of the sustained rate. Kept small to cap the
+/// synchronous handshake-crypto spike on the accept loop.
+pub(crate) const HANDSHAKE_BURST: u64 = 400;
 
-/// Maximum inbound handshakes allowed in flight. Once this many are
-/// pending we stop pulling new attempts off the endpoint.
-/// This is the limiter on handshake memory use.
+/// Maximum inbound handshakes allowed in flight; once reached we stop pulling
+/// new ones off the endpoint. Bounds handshake memory use. Sized to the
+/// validator set, which may be handshaking all at once after a restart.
 pub const MAX_INFLIGHT_HANDSHAKES: usize = MAX_ALPENGLOW_VOTE_ACCOUNTS;
 
-/// Hard timeout for inbound handshake. During handshakes connections
-/// may be kept alive, this explicit cap reclaims the resources
-/// regardless of what the peer sends.
+/// Hard timeout for an inbound handshake, operates regardless of what
+/// the peer sends. ~1s suffices for a 300ms-RTT handshake with no packet
+/// loss -> 2s to have margin for retransmits.
 pub(crate) const HANDSHAKE_TIMEOUT: Duration = Duration::from_secs(2);
 
-/// How often expired banlist entries are pruned.
+/// How often expired banlist entries are pruned. Bans last for hours,
+/// and their duration is chosen by BLS sigverify, this prune only
+/// reclaims hashmap slots for pubkeys which are no longer banned, i.e.
+/// it never affects whether a ban is active or not.
 pub(crate) const BANLIST_PRUNE_INTERVAL: Duration = Duration::from_hours(1);
 
 /// How often endpoint metrics are reported.
