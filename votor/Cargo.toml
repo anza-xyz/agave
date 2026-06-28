@@ -33,8 +33,8 @@ frozen-abi = [
 agave-bls-sigverify = { workspace = true }
 agave-logger = { workspace = true }
 agave-math-utils = { workspace = true }
-agave-quic-datagram = { workspace = true }
 agave-votor-messages = { workspace = true }
+agave-votor-transport = { workspace = true }
 arc-swap = { workspace = true }
 bitvec = { workspace = true }
 bytes = { workspace = true }
@@ -77,8 +77,8 @@ tokio = { workspace = true, features = ["sync", "rt"] }
 wincode = { workspace = true, features = ["alloc"] }
 
 [dev-dependencies]
-agave-quic-datagram = { workspace = true, features = ["dev-context-only-utils"] }
 agave-votor = { path = ".", features = ["dev-context-only-utils"] }
+agave-votor-transport = { workspace = true, features = ["dev-context-only-utils"] }
 rand = { workspace = true }
 solana-net-utils = { path = "../net-utils", features = ["agave-unstable-api"] }
 solana-perf = { path = "../perf", features = ["agave-unstable-api", "dev-context-only-utils"] }

@@ -11,7 +11,6 @@ use {
             send_votes_to_metrics, send_votes_to_pool, send_votes_to_repair, send_votes_to_rewards,
         },
     },
-    agave_quic_datagram::endpoint::BanCommand,
     agave_votor_messages::{
         consensus_message::VoteMessage,
         metric_types::ConsensusMetricsEvent,
@@ -20,6 +19,7 @@ use {
         vote::Vote,
         wire::{VotePayloadToSign, get_vote_payload_to_sign},
     },
+    agave_votor_transport::endpoint::BanCommand,
     rayon::{
         ThreadPool,
         iter::{Either, IntoParallelIterator, ParallelIterator},

@@ -25,8 +25,8 @@ dev-context-only-utils = [
 [dependencies]
 agave-bls-cert-verify = { workspace = true }
 agave-math-utils = { workspace = true }
-agave-quic-datagram = { workspace = true }
 agave-votor-messages = { workspace = true }
+agave-votor-transport = { workspace = true }
 bitvec = { workspace = true }
 crossbeam-channel = { workspace = true }
 log = { workspace = true }

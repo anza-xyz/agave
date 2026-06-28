@@ -30,7 +30,6 @@ use {
         bls_sigverifier::{self, SigVerifierChannels, SigVerifierContext},
         generated_cert_types::GeneratedCertTypes,
     },
-    agave_quic_datagram::endpoint::QuicDatagramEndpoint,
     agave_votor::{
         event::{LatestSwitchRequest, LeaderWindowInfo, VotorEventReceiver, VotorEventSender},
         vote_history::VoteHistory,
@@ -42,6 +41,7 @@ use {
         VerifiedVoterSlotsReceiver, VerifiedVoterSlotsSender, consensus_message::Block,
         metric_types::MAX_IN_FLIGHT_CONSENSUS_EVENTS, reward_certificate::AddVoteMessage,
     },
+    agave_votor_transport::endpoint::QuicDatagramEndpoint,
     crossbeam_channel::{Receiver, Sender, bounded, unbounded},
     solana_client::connection_cache::ConnectionCache,
     solana_clock::Slot,

@@ -5,12 +5,12 @@
 use log::*;
 use {
     crate::{cluster::QuicTpuClient, local_cluster::LocalCluster},
-    agave_quic_datagram::endpoint::{Datagram, QuicDatagramEndpoint},
     agave_votor::voting_service::VOTOR_RATE_LIMIT_PPS,
     agave_votor_messages::{
         consensus_message::VoteMessage, unverified_vote_message::DecodedWireConsensusMessage,
         wire::VersionedWireConsensusMessage,
     },
+    agave_votor_transport::endpoint::{Datagram, QuicDatagramEndpoint},
     crossbeam_channel::{Receiver, bounded},
     rand::{Rng, rng},
     rayon::{ThreadPool, prelude::*},
@@ -584,7 +584,7 @@ pub fn check_for_new_processed(
     );
 }
 
-/// Spawn a votor quic-datagram endpoint to sniff vote / cert traffic.
+/// Spawn a votor endpoint to sniff vote / cert traffic.
 /// This function is for tests only.
 ///
 /// Returns the endpoint, the ingress receiver, and a tokio runtime

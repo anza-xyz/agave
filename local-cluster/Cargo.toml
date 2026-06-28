@@ -21,16 +21,16 @@ dev-context-only-utils = [
     "solana-core/dev-context-only-utils",
     "agave-votor-messages/dev-context-only-utils",
     "solana-tpu-client-next/dev-context-only-utils",
-    "agave-quic-datagram/dev-context-only-utils",
+    "agave-votor-transport/dev-context-only-utils",
 ]
 
 [dependencies]
 agave-feature-set = { workspace = true }
 agave-logger = { workspace = true }
-agave-quic-datagram = { workspace = true }
 agave-snapshots = { workspace = true }
 agave-votor = { workspace = true }
 agave-votor-messages = { workspace = true }
+agave-votor-transport = { workspace = true }
 arc-swap = { workspace = true }
 crossbeam-channel = { workspace = true }
 itertools = { workspace = true }

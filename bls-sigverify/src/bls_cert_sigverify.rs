@@ -7,11 +7,11 @@ use {
         utils::send_certs_to_pool,
     },
     agave_bls_cert_verify::cert_verify::Error as BlsCertVerifyError,
-    agave_quic_datagram::endpoint::BanCommand,
     agave_votor_messages::{
         certificate::{Certificate, CertificateType},
         unverified_vote_message::UnverifiedCertificate,
     },
+    agave_votor_transport::endpoint::BanCommand,
     crossbeam_channel::Sender,
     rayon::{
         ThreadPool,

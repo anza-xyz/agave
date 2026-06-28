@@ -10,7 +10,6 @@ use {
         sig_verified_messages::SigVerifiedBatch,
         stats::SigVerifierStats,
     },
-    agave_quic_datagram::endpoint::{BanCommand, Datagram},
     agave_votor_messages::{
         VerifiedVoterSlotsSender,
         certificate::CertificateType,
@@ -21,6 +20,7 @@ use {
         vote::Vote,
         wire::{VersionedWireConsensusMessage, VotePayloadToSign},
     },
+    agave_votor_transport::endpoint::{BanCommand, Datagram},
     crossbeam_channel::{Receiver, Sender, TryRecvError},
     log::{error, info, warn},
     rayon::{ThreadPool, ThreadPoolBuilder},

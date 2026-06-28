@@ -3,11 +3,11 @@ use {
         staked_validators_cache::StakedValidatorsCache,
         vote_history_storage::{SavedVoteHistoryVersions, VoteHistoryStorage},
     },
-    agave_quic_datagram::PeerListSender,
     agave_votor_messages::{
         certificate::Certificate, consensus_message::VoteMessage,
         wire::VersionedWireConsensusMessage,
     },
+    agave_votor_transport::PeerListSender,
     bytes::Bytes,
     crossbeam_channel::{Receiver, RecvTimeoutError},
     solana_clock::Slot,
@@ -407,14 +407,14 @@ mod tests {
         crate::vote_history_storage::{
             NullVoteHistoryStorage, SavedVoteHistory, SavedVoteHistoryVersions,
         },
-        agave_quic_datagram::{
-            PeerListReceiver, PeerListSender,
-            endpoint::{Datagram, QuicDatagramEndpoint},
-        },
         agave_votor_messages::{
             certificate::{Certificate, CertificateType},
             consensus_message::{ConsensusMessage, VoteMessage},
             vote::Vote,
+        },
+        agave_votor_transport::{
+            PeerListReceiver, PeerListSender,
+            endpoint::{Datagram, QuicDatagramEndpoint},
         },
         bytes::Bytes,
         crossbeam_channel::{Receiver, bounded, unbounded},
@@ -536,7 +536,7 @@ mod tests {
         assert_eq!(queue.next_messages(10), vec![(7, vote_7)]);
     }
 
-    /// Spin up a quic-datagram "spy" endpoint with the given keypair.
+    /// Spin up a votor transport endpoint with the given keypair.
     /// Inbound admission follows `peer_list_receiver`.
     fn spawn_endpoint(
         keypair: Keypair,

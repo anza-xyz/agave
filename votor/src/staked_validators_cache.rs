@@ -1,7 +1,7 @@
 #[cfg(feature = "dev-context-only-utils")]
 use arc_swap::ArcSwap;
 use {
-    agave_quic_datagram::PeerListSender,
+    agave_votor_transport::PeerListSender,
     solana_clock::Epoch,
     solana_gossip::cluster_info::ClusterInfo,
     solana_pubkey::Pubkey,
@@ -20,7 +20,7 @@ const EPOCH_BOUNDARY_SLOTS: u64 = 100;
 
 /// Builds and publishes the votor datagram endpoint's peer_list: the set of
 /// staked validators (merged across an epoch boundary) paired with each peer's
-/// votor server sockets from gossip. The QUIC endpoint uses it to filter
+/// votor server sockets from gossip. The transport endpoint uses it to filter
 /// inbound connections, to initiate outbound connections and to fan out packets.
 pub struct StakedValidatorsCache {
     sharable_banks: SharableBanks,
@@ -85,7 +85,7 @@ impl StakedValidatorsCache {
             .flatten()
     }
 
-    /// Publish the peer_list for the QUIC endpoint.
+    /// Publish the peer_list for the votor transport endpoint.
     ///
     /// Near an epoch boundary (within [`EPOCH_BOUNDARY_SLOTS`] on either side)
     /// the adjacent epoch's staked set is merged in so peers transitioning
@@ -143,7 +143,7 @@ impl StakedValidatorsCache {
         // Publish the latest version via watch channel - this never blocks.
         if peer_list.send(Arc::new(snapshot)).is_err() {
             // This can only happen if the receievers are all dropped.
-            error!("Could not send updated peer list to QUIC endpoint!");
+            error!("Could not send updated peer list to the transport endpoint!");
         }
     }
 }

@@ -82,8 +82,8 @@ version = "4.3.0-alpha.0"
 dependencies = [
  "agave-bls-cert-verify",
  "agave-math-utils",
- "agave-quic-datagram",
  "agave-votor-messages",
+ "agave-votor-transport",
  "bitvec",
  "crossbeam-channel",
  "log",
@@ -201,27 +201,6 @@ dependencies = [
  "solana-sdk-ids",
  "solana-secp256k1-program",
  "solana-secp256r1-program",
-]
-
-[[package]]
-name = "agave-quic-datagram"
-version = "4.2.0-alpha.0"
-dependencies = [
- "arrayvec",
- "bytes",
- "crossbeam-channel",
- "futures 0.3.32",
- "log",
- "quinn",
- "rustls",
- "solana-keypair",
- "solana-metrics",
- "solana-net-utils",
- "solana-pubkey 4.2.0",
- "solana-tls-utils",
- "thiserror 2.0.18",
- "tokio",
- "tokio-util 0.7.18",
 ]
 
 [[package]]
@@ -398,8 +377,8 @@ dependencies = [
  "agave-bls-sigverify",
  "agave-logger",
  "agave-math-utils",
- "agave-quic-datagram",
  "agave-votor-messages",
+ "agave-votor-transport",
  "arc-swap",
  "bitvec",
  "bytes",
@@ -454,6 +433,27 @@ dependencies = [
  "solana-signer-store",
  "thiserror 2.0.18",
  "wincode",
+]
+
+[[package]]
+name = "agave-votor-transport"
+version = "4.2.0-alpha.0"
+dependencies = [
+ "arrayvec",
+ "bytes",
+ "crossbeam-channel",
+ "futures 0.3.32",
+ "log",
+ "quinn",
+ "rustls",
+ "solana-keypair",
+ "solana-metrics",
+ "solana-net-utils",
+ "solana-pubkey 4.2.0",
+ "solana-tls-utils",
+ "thiserror 2.0.18",
+ "tokio",
+ "tokio-util 0.7.18",
 ]
 
 [[package]]
@@ -6544,13 +6544,13 @@ dependencies = [
  "agave-fs",
  "agave-logger",
  "agave-math-utils",
- "agave-quic-datagram",
  "agave-scheduler-bindings",
  "agave-scheduling-utils",
  "agave-snapshots",
  "agave-transaction-view",
  "agave-votor",
  "agave-votor-messages",
+ "agave-votor-transport",
  "agave-xdp",
  "ahash 0.8.12",
  "anyhow",

@@ -1,7 +1,7 @@
 [package]
-name = "agave-quic-datagram"
+name = "agave-votor-transport"
 description = "QUIC datagram transport for Solana consensus traffic"
-documentation = "https://docs.rs/agave-quic-datagram"
+documentation = "https://docs.rs/agave-votor-transport"
 version = { workspace = true }
 authors = { workspace = true }
 repository = { workspace = true }
