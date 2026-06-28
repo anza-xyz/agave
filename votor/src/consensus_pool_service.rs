@@ -424,7 +424,7 @@ impl ConsensusPoolService {
         stats: &mut ConsensusPoolServiceStats,
     ) -> Result<(Option<Slot>, Vec<Arc<Certificate>>), AddVoteError> {
         let (new_finalized_slot, new_certificates_to_send) =
-            consensus_pool.add_batch(root_bank, my_vote_pubkey, batch, votor_events)?;
+            consensus_pool.add_batch(root_bank, my_vote_pubkey, batch, votor_events);
         let Some(new_finalized_slot) = new_finalized_slot else {
             return Ok((None, new_certificates_to_send));
         };
