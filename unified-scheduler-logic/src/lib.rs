@@ -1685,6 +1685,7 @@ mod tests {
                 .map(|t| t.task_id()),
             Some(102)
         );
+
         assert_eq!(state_machine.unblocked_task_count(), 1);
 
         // there's no blocked task anymore; calling schedule_next_unblocked_task should be noop and

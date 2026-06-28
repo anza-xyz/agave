@@ -223,7 +223,8 @@ impl<Tx: TransactionWithMeta> StateContainer<Tx> for TransactionStateContainer<T
 
 impl<Tx: TransactionWithMeta> TransactionStateContainer<Tx> {
     /// Insert a new transaction into the container's queues and maps.
-    /// Returns `true` if a packet was dropped due to capacity limits.
+    /// The packet may or may not make it to the queue depending on capacity limits
+    /// (lowest priority transactions are evicted when over capacity).
     #[cfg(test)]
     pub(crate) fn insert_new_transaction(
         &mut self,
@@ -231,7 +232,7 @@ impl<Tx: TransactionWithMeta> TransactionStateContainer<Tx> {
         max_age: crate::banking_stage::scheduler_messages::MaxAge,
         priority: u64,
         cost: u64,
-    ) -> bool {
+    ) {
         let priority_id = {
             let entry = self.get_vacant_map_entry();
             let transaction_id = entry.key();
@@ -239,7 +240,7 @@ impl<Tx: TransactionWithMeta> TransactionStateContainer<Tx> {
             TransactionPriorityId::new(priority, transaction_id)
         };
 
-        self.push_ids_into_queue(std::iter::once(priority_id)) > 0
+        self.push_ids_into_queue(std::iter::once(priority_id));
     }
 
     fn get_vacant_map_entry(&mut self) -> VacantEntry<'_, TransactionState<Tx>> {
