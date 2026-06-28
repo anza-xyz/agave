@@ -84,22 +84,16 @@ impl QuicDatagramEndpoint {
     /// peers no longer in the set, outbound connects to peers in it.
     /// `ban_commands` carries temporary per-peer ban commands (banning also closes
     /// the peer's connections).
-    /// `desired_peers` can be `None` , then inbound
-    /// admits all peers and outbound connects to nobody.
     pub fn spawn(
         runtime: &Handle,
         keypair: &Keypair,
         inbound_sockets: Vec<UdpSocket>,
         outbound_socket: UdpSocket,
         inbound_datagrams: Sender<Datagram>,
-        desired_peers: Option<PeerListReceiver>,
+        peer_list: PeerListReceiver,
         ban_commands: mpsc::Receiver<BanCommand>,
         max_datagrams_per_second_per_peer: usize,
     ) -> Result<Self, Error> {
-        assert!(
-            cfg!(feature = "dev-context-only-utils") || desired_peers.is_some(),
-            "peer_list receiver must be set in release builds",
-        );
         assert!(!inbound_sockets.is_empty(), "Must have sockets provided");
 
         let server_stats = Arc::new(ServerStats::default());
@@ -145,19 +139,15 @@ impl QuicDatagramEndpoint {
         };
         outbound_endpoint.set_default_client_config(client_config);
 
-        // A receive-only endpoint with no peer_list has nothing to connect to
-        // so we don't spawn OutboundLoop at all.
-        if let Some(peer_list_receiver) = desired_peers.clone() {
-            let outbound = OutboundLoop::new(
-                outbound_endpoint,
-                local_pubkey,
-                egress_receiver,
-                identity_receiver.clone(),
-                peer_list_receiver,
-                shutdown.clone(),
-            );
-            runtime.spawn(outbound.run());
-        }
+        let outbound = OutboundLoop::new(
+            outbound_endpoint,
+            local_pubkey,
+            egress_receiver,
+            identity_receiver.clone(),
+            peer_list.clone(),
+            shutdown.clone(),
+        );
+        runtime.spawn(outbound.run());
 
         // Inbound event channel allows the accept loops to forward authenticated
         // connections, and per-connection tasks report lifecycle events.
@@ -192,7 +182,7 @@ impl QuicDatagramEndpoint {
         let inbound = InboundLoop::new(
             inbound_datagrams,
             ban_commands,
-            desired_peers,
+            peer_list,
             inbound_events_sender,
             inbound_events_receiver,
             identity_receiver,

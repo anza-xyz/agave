@@ -11,7 +11,7 @@ use {
         consensus_message::VoteMessage, unverified_vote_message::DecodedWireConsensusMessage,
         wire::VersionedWireConsensusMessage,
     },
-    crossbeam_channel::bounded,
+    crossbeam_channel::{Receiver, bounded},
     rand::{Rng, rng},
     rayon::{ThreadPool, prelude::*},
     solana_client::connection_cache::ConnectionCache,
@@ -62,6 +62,7 @@ use {
         thread::{JoinHandle, sleep},
         time::{Duration, Instant},
     },
+    tokio::runtime::Runtime,
     wincode,
 };
 
@@ -591,11 +592,8 @@ pub fn check_for_new_processed(
 pub fn start_datagram_listener_for_alpenglow_votor(
     vote_listener_socket: UdpSocket,
     listener_keypair: Keypair,
-) -> (
-    QuicDatagramEndpoint,
-    crossbeam_channel::Receiver<Datagram>,
-    tokio::runtime::Runtime,
-) {
+    admitted_peers: &[Pubkey],
+) -> (QuicDatagramEndpoint, Receiver<Datagram>, Runtime) {
     let rt = tokio::runtime::Builder::new_multi_thread()
         .enable_all()
         .worker_threads(2)
@@ -603,10 +601,18 @@ pub fn start_datagram_listener_for_alpenglow_votor(
         .build()
         .expect("tokio runtime");
     let (sender, receiver) = bounded(1024);
-    // Listener admits all peers (no peer_list) and never bans; the ban sender
-    // is dropped so no commands ever arrive.
+    // Listener never bans, so ban sender unused.
     let (_ban_tx, ban_receiver) = tokio::sync::mpsc::channel(1);
-    // Listener never connects.
+    // Admit every peer from `admitted_peers`. the UNSPECIFIED address keeps the listener's
+    // outbound loop from connecting to them. Leak the sender so the channel stays open.
+    let unspecified = SocketAddr::from(([0, 0, 0, 0], 0));
+    let peer_list = admitted_peers
+        .iter()
+        .map(|pubkey| (*pubkey, unspecified))
+        .collect::<HashMap<_, _>>();
+    let (peer_list_sender, peer_list_receiver) = tokio::sync::watch::channel(Arc::new(peer_list));
+    // We want the sender to stay alive so the endpoint does not exit prematurely.
+    Box::leak(Box::new(peer_list_sender));
     let client_socket = bind_to_localhost_unique().expect("bind alpenglow client socket");
     let endpoint = QuicDatagramEndpoint::spawn(
         rt.handle(),
@@ -614,7 +620,7 @@ pub fn start_datagram_listener_for_alpenglow_votor(
         vec![vote_listener_socket],
         client_socket,
         sender,
-        None,
+        peer_list_receiver,
         ban_receiver,
         VOTOR_RATE_LIMIT_PPS,
     )
@@ -666,8 +672,12 @@ pub fn check_for_new_notarized_votes(
     let contact_infos_owned: Vec<ContactInfo> = contact_infos.to_vec();
     let test_name_owned = test_name.to_string();
 
-    let (_endpoint, receiver, _rt) =
-        start_datagram_listener_for_alpenglow_votor(vote_listener_socket, listener_keypair);
+    let admitted_peers: Vec<Pubkey> = contact_infos.iter().map(|node| *node.pubkey()).collect();
+    let (_endpoint, receiver, _rt) = start_datagram_listener_for_alpenglow_votor(
+        vote_listener_socket,
+        listener_keypair,
+        &admitted_peers,
+    );
 
     // Now start vote listener and wait for new notarized votes.
     let vote_listener = std::thread::spawn({

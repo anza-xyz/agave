@@ -13,7 +13,7 @@ use {
     arrayvec::ArrayVec,
     crossbeam_channel::{Sender, TrySendError},
     futures::{StreamExt as _, stream::FuturesUnordered},
-    log::{debug, info, warn},
+    log::{debug, info},
     quinn::{Connecting, Connection, Endpoint},
     solana_net_utils::{banlist::Banlist, token_bucket::TokenBucket},
     solana_pubkey::{Pubkey, PubkeyHasherBuilder},
@@ -309,11 +309,9 @@ pub(crate) struct InboundLoop {
     pub(crate) banlist: Banlist<Pubkey>,
     /// Inbound ban commands `(peer, duration)` from the BLS sigverifier.
     pub(crate) ban_receiver: mpsc::Receiver<BanCommand>,
-    /// Latest admitted-peer snapshot, or `None` to admit all peers (dev/test).
-    /// A change publishes a new snapshot and triggers an eviction sweep.
-    pub(crate) peer_list_receiver: Option<PeerListReceiver>,
-    /// Identity-rotation channel. On change the whole table is evicted so peers
-    /// re-handshake.
+    /// Latest version of the admitted peer list.
+    pub(crate) peer_list_receiver: PeerListReceiver,
+    /// Identity-rotation notification channel.
     pub(crate) identity_receiver: watch::Receiver<Option<Arc<IdentitySnapshot>>>,
     /// Per-peer receive-only connection state.
     pub(crate) peer_state: HashMap<Pubkey, PeerEntry, PubkeyHasherBuilder>,
@@ -336,7 +334,7 @@ impl InboundLoop {
     pub(crate) fn new(
         ingress: Sender<Datagram>,
         ban_receiver: mpsc::Receiver<BanCommand>,
-        peer_list_receiver: Option<PeerListReceiver>,
+        peer_list_receiver: PeerListReceiver,
         inbound_events_sender: mpsc::Sender<InboundEvent>,
         inbound_events_receiver: mpsc::Receiver<InboundEvent>,
         identity_receiver: watch::Receiver<Option<Arc<IdentitySnapshot>>>,
@@ -415,23 +413,12 @@ impl InboundLoop {
                     self.evict_all();
                 }
                 // The admitted-peer set changed.
-                changed = async {
-                    match peer_list_receiver.as_mut() {
-                        Some(receiver) => receiver.changed().await,
-                        None => std::future::pending().await,
+                changed = peer_list_receiver.changed() => {
+                    if changed.is_err() {
+                        info!("peer_list sender dropped; inbound loop exiting");
+                        break;
                     }
-                } => {
-                    match changed {
-                        Ok(()) => self.evict_not_allowed(),
-                        Err(_) => {
-                            warn!(
-                                "peer_list channel closed; inbound admission frozen at last \
-                                 snapshot"
-                            );
-                            // Disarm: parks the arm via the `None` branch above.
-                            peer_list_receiver = None;
-                        }
-                    }
+                    self.evict_not_allowed();
                 }
                 // Metrics are quite handy to have even if we are flooded with incoming.
                 _ = metrics.tick() => stats::report_server(&self.stats, self.count_connections()),
@@ -478,11 +465,7 @@ impl InboundLoop {
             stats,
             ..
         } = self;
-        // `None` means admit-all; nothing to evict.
-        let Some(peer_list_receiver) = peer_list_receiver.as_ref() else {
-            return;
-        };
-        // Take a snapshow of the peer list to avoid holding locks.
+        // Snapshot the peer list to avoid holding locks.
         let peer_list = peer_list_receiver.borrow().clone();
         let mut evicted_peer_list = 0u64;
         for (peer, entry) in peer_state.iter_mut() {
@@ -553,14 +536,7 @@ impl InboundLoop {
             return;
         }
 
-        if self
-            .peer_list_receiver
-            .as_ref()
-            // not in the peerlist
-            .map(|rx| !rx.borrow().contains_key(&peer))
-            // or no peerlist provided
-            .unwrap_or(false)
-        {
+        if !self.peer_list_receiver.borrow().contains_key(&peer) {
             close_codes::NOT_ADMITTED.close(&connection);
             record_server_error(&Error::NotAdmitted(peer), &self.stats);
             return;

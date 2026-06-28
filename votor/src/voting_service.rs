@@ -537,11 +537,10 @@ mod tests {
     }
 
     /// Spin up a quic-datagram "spy" endpoint with the given keypair.
-    /// With `peer_list_receiver: None` it admits all inbound peers; with `Some`,
-    /// inbound admission and outbound dialing follow that peer_list.
+    /// Inbound admission follows `peer_list_receiver`.
     fn spawn_endpoint(
         keypair: Keypair,
-        peer_list_receiver: Option<PeerListReceiver>,
+        peer_list_receiver: PeerListReceiver,
     ) -> (
         QuicDatagramEndpoint,
         Receiver<Datagram>,
@@ -643,13 +642,22 @@ mod tests {
 
         let listener_kp = Keypair::new();
         let listener_pubkey = listener_kp.pubkey();
-        let (endpoint, ingress_rx, listener_addr, _rt) = spawn_endpoint(listener_kp, None);
+        let client_kp = Keypair::new();
+        let client_pubkey = client_kp.pubkey();
+
+        // Listener must admit the client, the UNSPECIFIED address keeps the listener's
+        // outbound loop from connecting to it.
+        let unresolved = SocketAddr::from(([0, 0, 0, 0], 0));
+        let (_spy_peer_list_sender, spy_peer_list_receiver) =
+            watch::channel(Arc::new(HashMap::from([(client_pubkey, unresolved)])));
+        let (endpoint, ingress_rx, listener_addr, _rt) =
+            spawn_endpoint(listener_kp, spy_peer_list_receiver);
 
         // Seed the client's peer_list empty; create_voting_service installs a test
         // override that injects the listener.
-        let (peer_list_tx, peer_list_receiver) = watch::channel(Arc::new(HashMap::new()));
+        let (peer_list_sender, peer_list_receiver) = watch::channel(Arc::new(HashMap::new()));
         let (client_endpoint, _client_ingress_rx, _client_addr, _client_rt) =
-            spawn_endpoint(Keypair::new(), Some(peer_list_receiver));
+            spawn_endpoint(client_kp, peer_list_receiver);
         let egress = client_endpoint.egress.clone();
 
         let (bls_sender, bls_receiver) = unbounded();
@@ -657,7 +665,7 @@ mod tests {
             bls_receiver,
             (listener_pubkey, listener_addr),
             egress.clone(),
-            peer_list_tx,
+            peer_list_sender,
         );
 
         // Wait for the peer_list-driven connection to land, broadcast disposable

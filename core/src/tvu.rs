@@ -327,7 +327,7 @@ impl Tvu {
             alpenglow_sockets,
             alpenglow_client_socket,
             votor_ingress_sender,
-            Some(votor_peer_list_receiver),
+            votor_peer_list_receiver,
             votor_ban_receiver,
             VOTOR_RATE_LIMIT_PPS,
         )
