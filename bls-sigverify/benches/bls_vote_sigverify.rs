@@ -12,8 +12,10 @@ use {
         stats::SigVerifyVoteStats,
     },
     agave_votor_messages::{
-        consensus_message::Block, unverified_vote_message::UnverifiedVoteMessage, vote::Vote,
-        wire::get_vote_payload_to_sign,
+        consensus_message::Block,
+        unverified_vote_message::UnverifiedVoteMessage,
+        vote::Vote,
+        wire::{VotePayloadToSign, get_vote_payload_to_sign},
     },
     criterion::{BatchSize, Criterion, criterion_group, criterion_main},
     rayon::{ThreadPool, ThreadPoolBuilder},
@@ -21,10 +23,9 @@ use {
     solana_hash::Hash,
     solana_keypair::Keypair,
     solana_signer::Signer,
-    std::{hint::black_box, sync::Arc},
+    std::hint::black_box,
 };
 
-static MESSAGE_COUNTS: &[usize] = &[1, 2, 4, 8, 16];
 static BATCH_SIZES: &[usize] = &[8, 16, 32, 64, 128];
 
 fn get_thread_pool() -> ThreadPool {
@@ -35,67 +36,39 @@ fn get_thread_pool() -> ThreadPool {
         .unwrap()
 }
 
-fn get_matrix_params() -> impl Iterator<Item = (usize, usize)> {
-    BATCH_SIZES.iter().flat_map(|&batch_size| {
-        MESSAGE_COUNTS.iter().filter_map(move |&num_distinct| {
-            if num_distinct > batch_size {
-                None
-            } else {
-                Some((batch_size, num_distinct))
-            }
-        })
-    })
-}
-
 fn generate_test_data(
     shred_version: u16,
-    num_distinct_messages: usize,
     batch_size: usize,
-) -> Vec<UnverifiedVotePayload> {
-    assert!(
-        batch_size >= num_distinct_messages,
-        "Batch size must be >= distinct messages"
-    );
-
+) -> (VotePayloadToSign, Vec<UnverifiedVotePayload>) {
     // Pre-calculate the payloads to ensure exact distinctness
-    let base_payloads = (0..num_distinct_messages)
-        .map(|i| {
-            let slot = (i as u64).saturating_add(100);
-            let vote = Vote::new_notarization_vote(Block {
-                slot,
-                block_id: Hash::new_unique(),
-            });
-            let payload = get_vote_payload_to_sign(&vote, shred_version);
-            (vote, Arc::new(payload))
-        })
-        .collect::<Vec<_>>();
-
-    let mut votes_to_verify = Vec::with_capacity(batch_size);
-
-    for i in 0..batch_size {
-        let (vote, payload) = &base_payloads[i.rem_euclid(num_distinct_messages)];
-
-        let bls_keypair = BLSKeypair::new();
-
-        let signature = bls_keypair.sign(payload);
-
-        let vote_message = UnverifiedVoteMessage {
-            vote: *vote,
-            signature: signature.into(),
-            rank: 0,
-            shred_version,
-        };
-
-        votes_to_verify.push(UnverifiedVotePayload {
-            vote_message,
-            sender_bls_pubkey: bls_keypair.public,
-            sender_vote_account_pubkey: Keypair::new().pubkey(),
-            sender_identity_pubkey: Keypair::new().pubkey(),
-            prepared_payload: None,
-        });
-    }
-
-    votes_to_verify
+    let slot = 100;
+    let vote = Vote::new_notarization_vote(Block {
+        slot,
+        block_id: Hash::new_unique(),
+    });
+    let payload = get_vote_payload_to_sign(vote, shred_version);
+    (
+        VotePayloadToSign::new_from_vote(vote, shred_version),
+        (0..batch_size)
+            .map(|_| {
+                let bls_keypair = BLSKeypair::new();
+                let signature = bls_keypair.sign(&payload);
+                let vote_message = UnverifiedVoteMessage {
+                    vote,
+                    signature: signature.into(),
+                    rank: 0,
+                    shred_version,
+                };
+                UnverifiedVotePayload {
+                    vote_message,
+                    sender_bls_pubkey: bls_keypair.public,
+                    sender_vote_account_pubkey: Keypair::new().pubkey(),
+                    sender_identity_pubkey: Keypair::new().pubkey(),
+                    prepared_payload: None,
+                }
+            })
+            .collect(),
+    )
 }
 
 // Single Signature Verification
@@ -145,13 +118,18 @@ fn bench_verify_votes_optimistic(c: &mut Criterion) {
     let mut stats = SigVerifyVoteStats::default();
     let thread_pool = get_thread_pool();
 
-    for (batch_size, num_distinct) in get_matrix_params() {
-        let votes = generate_test_data(shred_version, num_distinct, batch_size);
-        let label = format!("msgs_{num_distinct}/batch_{batch_size}");
+    for &batch_size in BATCH_SIZES {
+        let (vote, mut unverified_votes) = generate_test_data(shred_version, batch_size);
+        let label = format!("batch_{batch_size}");
 
         group.bench_function(&label, |b| {
             b.iter(|| {
-                let res = verify_votes_optimistic(black_box(&votes), &mut stats, &thread_pool);
+                let res = verify_votes_optimistic(
+                    vote,
+                    black_box(&mut unverified_votes),
+                    &mut stats,
+                    &thread_pool,
+                );
                 black_box(res);
             })
         });
@@ -165,21 +143,19 @@ fn bench_verify_votes_optimistic(c: &mut Criterion) {
 fn bench_aggregate_pubkeys(c: &mut Criterion) {
     let shred_version = 1234;
     let mut group = c.benchmark_group("aggregate_pubkeys");
-    let mut stats = SigVerifyVoteStats::default();
 
-    for (batch_size, num_distinct) in get_matrix_params() {
-        let votes = generate_test_data(shred_version, num_distinct, batch_size);
-        let label = format!("msgs_{num_distinct}/batch_{batch_size}");
+    for &batch_size in BATCH_SIZES {
+        let (vote, unverified_votes) = generate_test_data(shred_version, batch_size);
+        let label = format!("batch_{batch_size}");
 
         group.bench_function(&label, |b| {
             b.iter(|| {
-                let res = aggregate_pubkeys_by_payload(black_box(&votes), &mut stats);
-                black_box(res).2.unwrap();
+                let res = aggregate_pubkeys_by_payload(vote, black_box(&unverified_votes));
+                black_box(res).1.unwrap();
             })
         });
     }
     group.finish();
-    black_box(stats);
 }
 
 // Signature Aggregation
@@ -191,12 +167,12 @@ fn bench_aggregate_signatures(c: &mut Criterion) {
     for &batch_size in BATCH_SIZES {
         // Use 1 distinct message just to generate valid data cheaply.
         // It doesn't affect signature aggregation performance.
-        let votes = generate_test_data(shred_version, 1, batch_size);
+        let (_, unverified_votes) = generate_test_data(shred_version, batch_size);
         let label = format!("batch_{batch_size}");
 
         group.bench_function(&label, |b| {
             b.iter(|| {
-                let res = aggregate_signatures(black_box(&votes));
+                let res = aggregate_signatures(black_box(&unverified_votes));
                 black_box(res).unwrap();
             })
         });
@@ -213,15 +189,14 @@ fn bench_verify_individual_votes(c: &mut Criterion) {
 
     for &batch_size in BATCH_SIZES {
         // Distinctness doesn't affect the cost of N individual verifications.
-        let votes = generate_test_data(shred_version, 1, batch_size);
+        let (_vote, unverified_votes) = generate_test_data(shred_version, batch_size);
         let label = format!("batch_{batch_size}");
 
         group.bench_function(&label, |b| {
             b.iter_batched(
-                || votes.clone(),
+                || unverified_votes.clone(),
                 |votes| {
-                    let res =
-                        verify_individual_votes(black_box(votes), vec![], vec![], &thread_pool);
+                    let res = verify_individual_votes(black_box(votes), &thread_pool);
                     black_box(res);
                 },
                 BatchSize::SmallInput,

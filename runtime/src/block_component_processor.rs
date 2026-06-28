@@ -49,6 +49,8 @@ pub enum BlockComponentProcessorError {
     GenesisCertificateOnNonChild,
     #[error("GenesisCertificate was invalid and failed to verify")]
     GenesisCertificateFailedVerification,
+    #[error("GenesisCertificate marker must immediately follow the block header")]
+    GenesisCertificateOutOfOrder,
     #[error("FinalizationCertificate was invalid or failed to verify {0}")]
     InvalidFinalizationCertificate(#[from] BlockFinalizationCertError),
     #[error("Missing block footer")]
@@ -95,6 +97,7 @@ impl BlockComponentProcessorError {
             | BlockComponentProcessorError::HeaderParentSlotMismatch { .. }
             | BlockComponentProcessorError::NanosecondClockOutOfBounds
             | BlockComponentProcessorError::UnexpectedInitialUpdateParent
+            | BlockComponentProcessorError::GenesisCertificateOutOfOrder
             | BlockComponentProcessorError::AbandonedBank(_)
             | BlockComponentProcessorError::InvalidRewardCerts(_)
             | BlockComponentProcessorError::UpdateBankFooter(_)
@@ -116,6 +119,7 @@ impl BlockComponentProcessorError {
 pub struct BlockComponentProcessor {
     has_header: bool,
     has_footer: bool,
+    has_entry_batch: bool,
     update_parent: Option<VersionedUpdateParent>,
 }
 
@@ -128,12 +132,6 @@ impl BlockComponentProcessor {
         // Only require block markers (header/footer) for slots where they should be present
         if !migration_status.should_allow_block_markers(slot) {
             return Ok(());
-        }
-
-        // If we encounter an UpdateParent when fast leader handover is disabled, error.
-        if !migration_status.should_allow_fast_leader_handover(slot) && self.update_parent.is_some()
-        {
-            return Err(BlockComponentProcessorError::SpuriousUpdateParent);
         }
 
         // Post-migration: both header and footer are required
@@ -158,6 +156,7 @@ impl BlockComponentProcessor {
         slot: Slot,
     ) -> Result<(), BlockComponentProcessorError> {
         if !migration_status.should_allow_block_markers(slot) {
+            self.has_entry_batch = true;
             return Ok(());
         }
 
@@ -166,6 +165,7 @@ impl BlockComponentProcessor {
             return Err(BlockComponentProcessorError::MissingParentMarker);
         }
 
+        self.has_entry_batch = true;
         Ok(())
     }
 
@@ -190,6 +190,8 @@ impl BlockComponentProcessor {
 
         let markers_fully_enabled = migration_status.should_allow_block_markers(slot);
         let in_migration = migration_status.is_in_migration();
+        let fast_leader_handover_active =
+            bank.feature_set.snapshot().alpenglow_fast_leader_handover;
 
         match marker {
             // Header and genesis cert can be processed either:
@@ -219,7 +221,11 @@ impl BlockComponentProcessor {
             ),
 
             BlockMarkerV1::UpdateParent(update_parent) if markers_fully_enabled => {
-                self.on_update_parent(slot, update_parent.inner(), allow_initial_update_parent)
+                if fast_leader_handover_active {
+                    self.on_update_parent(slot, update_parent.inner(), allow_initial_update_parent)
+                } else {
+                    Err(BlockComponentProcessorError::SpuriousUpdateParent)
+                }
             }
 
             // Any other combination means we saw a marker too early
@@ -235,6 +241,7 @@ impl BlockComponentProcessor {
         genesis_block_marker: GenesisCertBlockMarker,
         migration_status: &MigrationStatus,
     ) -> Result<(), BlockComponentProcessorError> {
+        self.validate_genesis_cert_block_marker_position()?;
         self.process_genesis_cert_block_marker(
             bank,
             genesis_block_marker,
@@ -252,6 +259,20 @@ impl BlockComponentProcessor {
         migration_status: &MigrationStatus,
     ) -> Result<(), BlockComponentProcessorError> {
         self.process_genesis_cert_block_marker(bank, genesis_block_marker, migration_status, None)
+    }
+
+    fn validate_genesis_cert_block_marker_position(
+        &self,
+    ) -> Result<(), BlockComponentProcessorError> {
+        if !self.has_header {
+            return Err(BlockComponentProcessorError::MissingParentMarker);
+        }
+
+        if self.has_entry_batch || self.has_footer || self.update_parent.is_some() {
+            return Err(BlockComponentProcessorError::GenesisCertificateOutOfOrder);
+        }
+
+        Ok(())
     }
 
     /// Performs verification if `shred_version` is specified
@@ -595,6 +616,7 @@ mod tests {
             genesis_utils::{activate_all_features_alpenglow, create_genesis_config},
         },
         rand::Rng,
+        solana_bls_signatures::BLS_SIGNATURE_AFFINE_SIZE,
         solana_clock::DEFAULT_MS_PER_SLOT,
         solana_entry::block_component::{
             BlockFooterV1, BlockHeaderV1, UpdateParentV1, VersionedUpdateParent,
@@ -629,6 +651,15 @@ mod tests {
         )
     }
 
+    fn test_genesis_cert_marker() -> GenesisCertBlockMarker {
+        GenesisCertBlockMarker {
+            slot: 0,
+            block_id: Hash::default(),
+            bls_signature: solana_bls_signatures::Signature([0; BLS_SIGNATURE_AFFINE_SIZE]),
+            bitmap: vec![],
+        }
+    }
+
     #[test]
     fn test_missing_header_error_on_entry_batch() {
         let migration_status = MigrationStatus::post_migration_status();
@@ -639,6 +670,117 @@ mod tests {
         assert!(matches!(
             result,
             Err(BlockComponentProcessorError::MissingParentMarker)
+        ));
+    }
+
+    #[test]
+    fn test_missing_header_error_on_genesis_certificate() {
+        let migration_status = MigrationStatus::post_migration_status();
+        let mut processor = BlockComponentProcessor::default();
+        let marker =
+            VersionedBlockMarker::from_genesis_cert_block_marker(test_genesis_cert_marker());
+
+        let (parent, bank_forks) = create_test_bank();
+        let bank = create_child_bank(&bank_forks, &parent, 1);
+        let shred_version = rand::rng().random();
+
+        let result = processor.on_marker(
+            bank,
+            parent,
+            shred_version,
+            marker,
+            false,
+            None,
+            &migration_status,
+        );
+        assert!(matches!(
+            result,
+            Err(BlockComponentProcessorError::MissingParentMarker)
+        ));
+    }
+
+    #[test]
+    fn test_genesis_certificate_after_entry_batch_errors() {
+        let migration_status = MigrationStatus::post_migration_status();
+        let mut processor = BlockComponentProcessor::default();
+        let (parent, bank_forks) = create_test_bank();
+        let bank = create_child_bank(&bank_forks, &parent, 1);
+        let shred_version = rand::rng().random();
+
+        let header = VersionedBlockMarker::from_block_header(BlockHeaderV1 {
+            parent_slot: 0,
+            parent_block_id: Hash::default(),
+        });
+        processor
+            .on_marker(
+                bank.clone(),
+                parent.clone(),
+                shred_version,
+                header,
+                false,
+                None,
+                &migration_status,
+            )
+            .unwrap();
+        processor
+            .on_entry_batch(&migration_status, bank.slot())
+            .unwrap();
+
+        let marker =
+            VersionedBlockMarker::from_genesis_cert_block_marker(test_genesis_cert_marker());
+        let result = processor.on_marker(
+            bank,
+            parent,
+            shred_version,
+            marker,
+            false,
+            None,
+            &migration_status,
+        );
+        assert!(matches!(
+            result,
+            Err(BlockComponentProcessorError::GenesisCertificateOutOfOrder)
+        ));
+    }
+
+    #[test]
+    fn test_genesis_certificate_immediately_after_header_passes_order_check() {
+        let migration_status = MigrationStatus::post_migration_status();
+        let mut processor = BlockComponentProcessor::default();
+        let (parent, bank_forks) = create_test_bank();
+        let bank = create_child_bank(&bank_forks, &parent, 1);
+        let shred_version = rand::rng().random();
+
+        let header = VersionedBlockMarker::from_block_header(BlockHeaderV1 {
+            parent_slot: 0,
+            parent_block_id: Hash::default(),
+        });
+        processor
+            .on_marker(
+                bank.clone(),
+                parent.clone(),
+                shred_version,
+                header,
+                false,
+                None,
+                &migration_status,
+            )
+            .unwrap();
+
+        let marker =
+            VersionedBlockMarker::from_genesis_cert_block_marker(test_genesis_cert_marker());
+        let result = processor.on_marker(
+            bank,
+            parent,
+            shred_version,
+            marker,
+            false,
+            None,
+            &migration_status,
+        );
+        assert!(matches!(
+            result,
+            Err(BlockComponentProcessorError::GenesisCertificateInAlpenglowCluster)
         ));
     }
 
@@ -1559,7 +1701,6 @@ mod tests {
     }
 
     #[test]
-    #[ignore] // TODO(ksn): Enable when fast leader handover is enabled in MigrationPhase::should_allow_fast_leader_handover
     fn test_workflow_with_update_parent() {
         let migration_status = MigrationStatus::post_migration_status();
         let mut processor = BlockComponentProcessor::default();

@@ -40,10 +40,12 @@ Release channels have their own copy of this changelog:
 * `--experimental-poh-pinned-cpu-core` is now deprecated. Use `--poh-pinned-cpu-core` instead.
 #### Changes
 * Turbine shred ingestion now rejects shreds more than half an epoch in the future (previously up to 2 full epochs ahead was accepted).
+* When XDP is enabled, gossip egress does not support private and loopback addresses. Operators running with `--allow-private-addr` must also pass `--no-xdp`.
 ### CLI
 #### Breaking
 #### Changes
 * `vote-account` supports Alpenglow and as such `vote-account --output json` breaks compatibility with older versions.
+* Support Keystone hardware wallets using `usb://keystone`
 
 ## 4.1.0
 ### RPC

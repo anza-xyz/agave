@@ -814,7 +814,7 @@ mod tests {
             let bls_keypair =
                 BLSKeypair::derive_from_signer(vote_keypair, BLS_KEYPAIR_DERIVE_SEED).unwrap();
             let vote_serialized =
-                get_vote_payload_to_sign(&notarize_vote, ctx.ctx.cluster_info.my_shred_version());
+                get_vote_payload_to_sign(notarize_vote, ctx.ctx.cluster_info.my_shred_version());
             let message = ConsensusMessage::Vote(VoteMessage {
                 vote: notarize_vote,
                 signature: bls_keypair.sign(&vote_serialized).into(),

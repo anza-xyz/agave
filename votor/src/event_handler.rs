@@ -450,15 +450,15 @@ impl EventHandler {
                     stats,
                 );
 
-                if let Some(slot) = *standstill_slot {
-                    if block.slot > slot {
-                        *standstill_slot = None;
-                        info!(
-                            "{my_pubkey}: Standstill initially detected at slot={slot} has ended \
-                             at slot={}. Ending timeout extension",
-                            block.slot
-                        );
-                    }
+                if let Some(slot) = *standstill_slot
+                    && block.slot > slot
+                {
+                    *standstill_slot = None;
+                    info!(
+                        "{my_pubkey}: Standstill initially detected at slot={slot} has ended at \
+                         slot={}. Ending timeout extension",
+                        block.slot
+                    );
                 }
 
                 if let Some(parent_block) =
@@ -876,8 +876,10 @@ impl EventHandler {
                     panic!(
                         "{my_pubkey}: Block {block:?} has been finalized, however we have a bank \
                          hash mismatch. The cluster bank hash is {expected_hash} however we \
-                         computed {}. At this point we will be unable to recover. Please save a \
-                         copy of your ledger to share on discord and restart from a snapshot > {}.",
+                         computed {}. At this point we will be unable to recover. Ensure that you \
+                         are running a supported Agave version for this cluster. If this is not \
+                         operator error,please save a copy of your ledger to share on discord and \
+                         restart from a snapshot > {}.",
                         bank.hash(),
                         block.slot
                     );
@@ -1398,7 +1400,7 @@ mod tests {
 
         fn expected_vote_message(&self, expected_vote: &Vote) -> VoteMessage {
             let payload =
-                get_vote_payload_to_sign(expected_vote, self.cluster_info.my_shred_version());
+                get_vote_payload_to_sign(*expected_vote, self.cluster_info.my_shred_version());
             let signature: BLSSignature = self.my_bls_keypair.sign(&payload).into();
             VoteMessage {
                 vote: *expected_vote,

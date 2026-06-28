@@ -74,13 +74,8 @@ fn get_key_and_stakes(
     };
     Ok((
         entry.vote_account_pubkey,
-        NonZero::new(entry.stake).unwrap_or_else(|| {
-            panic!(
-                "Validator stake is zero for pubkey: {}",
-                entry.vote_account_pubkey,
-            )
-        }),
-        NonZero::new(rank_map.total_stake()).expect("expect rank-map total stake to not be 0"),
+        entry.stake,
+        rank_map.total_stake(),
     ))
 }
 
@@ -782,7 +777,7 @@ mod tests {
         let bls_keypair =
             BLSKeypair::derive_from_signer(&keypairs[rank].vote_keypair, BLS_KEYPAIR_DERIVE_SEED)
                 .unwrap();
-        let payload = get_vote_payload_to_sign(vote, shred_version);
+        let payload = get_vote_payload_to_sign(*vote, shred_version);
         let signature: BLSSignature = bls_keypair.sign(&payload).into();
         ConsensusMessage::new_vote(*vote, signature, rank as u16)
     }
@@ -2236,7 +2231,7 @@ mod tests {
             BLSKeypair::derive_from_signer(validator_vote_keypair, BLS_KEYPAIR_DERIVE_SEED)
                 .unwrap();
 
-        let payload = get_vote_payload_to_sign(&vote, ctx.pool.cluster_info.my_shred_version());
+        let payload = get_vote_payload_to_sign(vote, ctx.pool.cluster_info.my_shred_version());
         vote_message
             .signature
             .verify(&bls_keypair.public, &payload)

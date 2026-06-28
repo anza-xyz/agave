@@ -7,7 +7,6 @@ use {
     },
     bytes::Bytes,
     crossbeam_channel::TrySendError,
-    nix::ifaddrs::getifaddrs,
     quinn::{
         AsyncUdpSocket, Runtime, TokioRuntime, UdpPoller,
         udp::{EcnCodepoint as QuinnEcnCodepoint, RecvMeta, Transmit},
@@ -273,7 +272,10 @@ impl QuicXdpSender {
 }
 
 /// Collects IPv4 addresses assigned to local network interfaces.
+#[cfg(target_os = "linux")]
 fn collect_local_ipv4_ips() -> io::Result<Vec<Ipv4Addr>> {
+    use nix::ifaddrs::getifaddrs;
+
     let mut ips = Vec::new();
     for ifa in getifaddrs().map_err(io::Error::other)? {
         let Some(addr) = ifa.address else { continue };
@@ -285,6 +287,11 @@ fn collect_local_ipv4_ips() -> io::Result<Vec<Ipv4Addr>> {
         }
     }
     Ok(ips)
+}
+
+#[cfg(not(target_os = "linux"))]
+fn collect_local_ipv4_ips() -> io::Result<Vec<Ipv4Addr>> {
+    Ok(Vec::new())
 }
 
 #[inline]

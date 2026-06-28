@@ -3254,7 +3254,7 @@ impl Blockstore {
         slot_meta: &SlotMeta,
         just_inserted_shreds: &HashMap<(BlockLocation, ShredId), Cow<'_, Shred>>,
         max_root: Slot,
-        leader_schedule: Option<&LeaderScheduleCache>,
+        _leader_schedule: Option<&LeaderScheduleCache>,
         shred_source: ShredSource,
         duplicate_shreds: &mut Vec<PossibleDuplicateShred>,
     ) -> bool {
@@ -3269,15 +3269,13 @@ impl Blockstore {
         debug_assert_matches!(shred.sanitize(), Ok(()));
         // Check that we do not receive shred_index >= than the last_index
         // for the slot
-        let last_index = slot_meta.last_index;
-        if last_index.map(|ix| shred_index >= ix).unwrap_or_default() {
-            let leader_pubkey = leader_schedule
-                .and_then(|leader_schedule| leader_schedule.slot_leader_at(slot, None));
-
+        if let Some(meta_last_index) = slot_meta.last_index
+            && shred_index >= meta_last_index
+        {
             if !self.has_duplicate_shreds_in_slot(slot) {
                 let shred_id = ShredId::new(
                     slot,
-                    u32::try_from(last_index.unwrap()).unwrap(),
+                    u32::try_from(meta_last_index).unwrap(),
                     ShredType::Data,
                 );
                 let Some(ending_shred) = self
@@ -3310,8 +3308,9 @@ impl Blockstore {
                 (
                     "error",
                     format!(
-                        "Leader {leader_pubkey:?}, slot {slot}: received index {shred_index} >= \
-                         slot.last_index {last_index:?}, shred_source: {shred_source:?}"
+                        "Received shred from {shred_source:?} with index={shred_index} >= \
+                         meta.last_index={meta_last_index}; shred: {:?}",
+                        shred.id()
                     ),
                     String
                 )
@@ -3321,9 +3320,6 @@ impl Blockstore {
         // Check that we do not receive a shred with "last_index" true, but shred_index
         // less than our current received
         if last_in_slot && shred_index < slot_meta.received {
-            let leader_pubkey = leader_schedule
-                .and_then(|leader_schedule| leader_schedule.slot_leader_at(slot, None));
-
             if !self.has_duplicate_shreds_in_slot(slot) {
                 let shred_id = ShredId::new(
                     slot,
@@ -3360,9 +3356,10 @@ impl Blockstore {
                 (
                     "error",
                     format!(
-                        "Leader {:?}, slot {}: received shred_index {} < slot.received {}, \
-                         shred_source: {:?}",
-                        leader_pubkey, slot, shred_index, slot_meta.received, shred_source
+                        "Received shred from {shred_source:?} with LAST_SHRED_IN_SLOT flag and \
+                         index={shred_index} < meta.received={}; shred: {:?}",
+                        slot_meta.received,
+                        shred.id()
                     ),
                     String
                 )
@@ -3394,25 +3391,19 @@ impl Blockstore {
         };
 
         if expected_shred_parent != shred_parent {
-            let leader_pubkey = leader_schedule
-                .and_then(|leader_schedule| leader_schedule.slot_leader_at(slot, None));
-
             datapoint_error!(
                 "blockstore_error",
                 (
                     "error",
                     format!(
-                        "Leader {:?}, shred_id {:?}: received shred with parent {} but expected \
-                         shred parent {}{}",
-                        leader_pubkey,
-                        shred.id(),
-                        shred_parent,
-                        expected_shred_parent,
+                        "Received shred from {shred_source:?} with parent={shred_parent} != \
+                         expected_shred_parent={expected_shred_parent}{}; shred: {:?}",
                         if slot_meta.has_update_parent() {
                             " after UpdateParent"
                         } else {
                             " before UpdateParent"
-                        }
+                        },
+                        shred.id(),
                     ),
                     String
                 )

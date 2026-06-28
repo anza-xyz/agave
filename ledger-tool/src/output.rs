@@ -3,7 +3,6 @@ use {
         error::{LedgerToolError, Result},
         ledger_utils::get_program_ids,
     },
-    chrono::{Local, TimeZone},
     itertools::Either,
     pretty_hex::PrettyHex,
     serde::{
@@ -13,8 +12,8 @@ use {
     solana_account::{AccountSharedData, ReadableAccount},
     solana_accounts_db::is_loadable::IsLoadable as _,
     solana_cli_output::{
-        CliAccount, CliAccountNewConfig, OutputFormat, QuietDisplay, VerboseDisplay,
-        display::{build_balance_message, writeln_transaction},
+        CliAccount, CliAccountNewConfig, CliBlock, OutputFormat, QuietDisplay, VerboseDisplay,
+        display::writeln_transaction,
     },
     solana_clock::{Slot, UnixTimestamp},
     solana_hash::Hash,
@@ -208,84 +207,17 @@ impl VerboseDisplay for CliBlockWithEntries {}
 
 impl fmt::Display for CliBlockWithEntries {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        writeln!(f, "Slot: {}", self.slot)?;
-        writeln!(
+        CliBlock::display_block_meta(
             f,
-            "Parent Slot: {}",
-            self.encoded_confirmed_block.parent_slot
+            self.slot,
+            self.encoded_confirmed_block.parent_slot,
+            &self.encoded_confirmed_block.blockhash,
+            &self.encoded_confirmed_block.previous_blockhash,
+            self.encoded_confirmed_block.block_time,
+            self.encoded_confirmed_block.block_height,
+            &self.encoded_confirmed_block.rewards,
         )?;
-        writeln!(f, "Blockhash: {}", self.encoded_confirmed_block.blockhash)?;
-        writeln!(
-            f,
-            "Previous Blockhash: {}",
-            self.encoded_confirmed_block.previous_blockhash
-        )?;
-        if let Some(block_time) = self.encoded_confirmed_block.block_time {
-            writeln!(
-                f,
-                "Block Time: {:?}",
-                Local.timestamp_opt(block_time, 0).unwrap()
-            )?;
-        }
-        if let Some(block_height) = self.encoded_confirmed_block.block_height {
-            writeln!(f, "Block Height: {block_height:?}")?;
-        }
-        if !self.encoded_confirmed_block.rewards.is_empty() {
-            let mut rewards = self.encoded_confirmed_block.rewards.clone();
-            rewards.sort_by(|a, b| a.pubkey.cmp(&b.pubkey));
-            let mut total_rewards = 0;
-            writeln!(f, "Rewards:")?;
-            writeln!(
-                f,
-                "  {:<44}  {:^15}  {:<15}  {:<20}  {:>14}  {:>10}",
-                "Address", "Type", "Amount", "New Balance", "Percent Change", "Commission"
-            )?;
-            for reward in rewards {
-                let sign = if reward.lamports < 0 { "-" } else { "" };
 
-                total_rewards += reward.lamports;
-                #[allow(clippy::format_in_format_args)]
-                writeln!(
-                    f,
-                    "  {:<44}  {:^15}  {:>15}  {}  {}",
-                    reward.pubkey,
-                    if let Some(reward_type) = reward.reward_type {
-                        format!("{reward_type}")
-                    } else {
-                        "-".to_string()
-                    },
-                    format!(
-                        "{}◎{:<14.9}",
-                        sign,
-                        build_balance_message(reward.lamports.unsigned_abs(), false, false)
-                    ),
-                    if reward.post_balance == 0 {
-                        "          -                 -".to_string()
-                    } else {
-                        format!(
-                            "◎{:<19.9}  {:>13.9}%",
-                            build_balance_message(reward.post_balance, false, false),
-                            (reward.lamports.abs() as f64
-                                / (reward.post_balance as f64 - reward.lamports as f64))
-                                * 100.0
-                        )
-                    },
-                    reward
-                        .commission_bps
-                        .map(|bps| format!("{:>8}.{:02}%", bps / 100, bps % 100))
-                        .or_else(|| reward.commission.map(|c| format!("{c:>9}%")))
-                        .unwrap_or_else(|| "    -".to_string())
-                )?;
-            }
-
-            let sign = if total_rewards < 0 { "-" } else { "" };
-            writeln!(
-                f,
-                "Total Rewards: {}◎{:<12.9}",
-                sign,
-                build_balance_message(total_rewards.unsigned_abs(), false, false)
-            )?;
-        }
         for (index, entry) in self.encoded_confirmed_block.entries.iter().enumerate() {
             writeln_entry(f, index, &entry.into(), "")?;
             for (index, transaction_with_meta) in entry.transactions.iter().enumerate() {

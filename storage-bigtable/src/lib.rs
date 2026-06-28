@@ -40,6 +40,10 @@ use {
 #[macro_use]
 extern crate solana_metrics;
 
+#[cfg_attr(feature = "frozen-abi", macro_use)]
+#[cfg(feature = "frozen-abi")]
+extern crate solana_frozen_abi_macro;
+
 mod access_token;
 mod bigtable;
 mod compression;
@@ -118,6 +122,14 @@ fn key_to_slot(key: &str) -> Option<Slot> {
 // Note: in order to continue to support old bincode-serialized bigtable entries, if new fields are
 // added to ConfirmedBlock, they must either be excluded or set to `default_on_eof` here
 //
+#[cfg_attr(
+    feature = "frozen-abi",
+    derive(StableAbi, StableAbiSample, PartialEq),
+    frozen_abi(
+        abi_digest = "GcFQWu3jGSH6BXJhGdJXaBDPamhszdXFXfdfPqTmTkFe",
+        test_roundtrip = "eq_and_wire"
+    )
+)]
 #[derive(Serialize, Deserialize)]
 struct StoredConfirmedBlock {
     previous_blockhash: String,
@@ -181,10 +193,32 @@ impl From<StoredConfirmedBlock> for ConfirmedBlock {
     }
 }
 
+#[cfg_attr(feature = "frozen-abi", derive(StableAbi, StableAbiSample, PartialEq))]
 #[derive(Serialize, Deserialize)]
 struct StoredConfirmedBlockTransaction {
+    #[cfg_attr(
+        feature = "frozen-abi",
+        stable_abi_sample(with = "sample_bincode_compatible_transaction(rng)")
+    )]
     transaction: VersionedTransaction,
     meta: Option<StoredConfirmedBlockTransactionStatusMeta>,
+}
+
+// `VersionedTransaction`'s V1 layout is wincode-only and has no bincode equivalent, so sampling it
+// would make the ABI digest unstable against the future wincode migration. Restrict the sample to
+// the legacy/v0 versions — the only formats present in historical bincode-serialized bigtable
+// blocks — which encode identically under bincode and wincode.
+#[cfg(feature = "frozen-abi")]
+fn sample_bincode_compatible_transaction(
+    rng: &mut (impl solana_frozen_abi::rand::RngCore + ?Sized),
+) -> VersionedTransaction {
+    use solana_frozen_abi::stable_abi::StableAbi;
+    loop {
+        let transaction = VersionedTransaction::random(rng);
+        if !matches!(transaction.message, solana_message::VersionedMessage::V1(_)) {
+            return transaction;
+        }
+    }
 }
 
 #[cfg(test)]
@@ -223,6 +257,7 @@ impl From<StoredConfirmedBlockTransaction> for TransactionWithStatusMeta {
     }
 }
 
+#[cfg_attr(feature = "frozen-abi", derive(StableAbi, StableAbiSample, PartialEq))]
 #[derive(Serialize, Deserialize)]
 struct StoredConfirmedBlockTransactionStatusMeta {
     err: Option<TransactionError>,
@@ -281,6 +316,7 @@ impl From<TransactionStatusMeta> for StoredConfirmedBlockTransactionStatusMeta {
 
 type StoredConfirmedBlockRewards = Vec<StoredConfirmedBlockReward>;
 
+#[cfg_attr(feature = "frozen-abi", derive(StableAbi, StableAbiSample, PartialEq))]
 #[derive(Serialize, Deserialize)]
 struct StoredConfirmedBlockReward {
     pubkey: String,
@@ -311,6 +347,14 @@ impl From<Reward> for StoredConfirmedBlockReward {
 }
 
 // A serialized `TransactionInfo` is stored in the `tx` table
+#[cfg_attr(
+    feature = "frozen-abi",
+    derive(StableAbi, StableAbiSample),
+    frozen_abi(
+        abi_digest = "6WZ7LHbaEy2SSt8PvySFEnRNjFek3aMy18eM5p7Qj5Au",
+        test_roundtrip = "eq_and_wire"
+    )
+)]
 #[derive(Serialize, Deserialize, PartialEq, Eq, Debug)]
 struct TransactionInfo {
     slot: Slot, // The slot that contains the block with this transaction in it
@@ -354,6 +398,14 @@ impl From<TransactionInfo> for TransactionStatus {
     }
 }
 
+#[cfg_attr(
+    feature = "frozen-abi",
+    derive(StableAbi, StableAbiSample),
+    frozen_abi(
+        abi_digest = "86r1cp4pK2UX84rrPyYXL4NYZW1h7Hf7CAdeJq295AXp",
+        test_roundtrip = "eq_and_wire"
+    )
+)]
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 struct LegacyTransactionByAddrInfo {
     pub signature: Signature,          // The transaction signature

@@ -25,6 +25,7 @@ check-cfg = [
 arithmetic_side_effects = "deny"
 default_trait_access = "deny"
 manual_let_else = "deny"
+uninlined_format_args = "deny"
 used_underscore_binding = "deny"
 
 # Allowed lints
@@ -77,7 +78,7 @@ solana-clap-utils = { path = "../clap-utils", version = "=4.2.0-alpha.0", featur
 solana-cli-config = { path = "../cli-config", version = "=4.2.0-alpha.0" }
 solana-cli-output = { path = "../cli-output", version = "=4.2.0-alpha.0", features = ["agave-unstable-api"] }
 solana-client = { path = "../client", version = "=4.2.0-alpha.0" }
-solana-clock = "3.0.1"
+solana-clock = "3.1.1"
 solana-cluster-type = "3.1.0"
 solana-commitment-config = "3.0.0"
 solana-compute-budget = { path = "../compute-budget", version = "=4.2.0-alpha.0", features = ["agave-unstable-api"] }
@@ -97,7 +98,7 @@ solana-geyser-plugin-manager = { path = "../geyser-plugin-manager", version = "=
 solana-hash = "4.4.0"
 solana-inflation = "3.1.1"
 solana-instruction = "3.4.0"
-solana-instruction-error = "2.3.0"
+solana-instruction-error = "2.4.0"
 solana-keypair = "3.1.2"
 solana-ledger = { path = "../ledger", version = "=4.2.0-alpha.0", features = ["agave-unstable-api"] }
 solana-loader-v3-interface = "7.0.0"
@@ -119,12 +120,12 @@ solana-rpc-client = { path = "../rpc-client", version = "=4.2.0-alpha.0", defaul
 solana-rpc-client-api = { path = "../rpc-client-api", version = "=4.2.0-alpha.0" }
 solana-runtime = { path = "../runtime", version = "=4.2.0-alpha.0", features = ["agave-unstable-api"] }
 solana-runtime-transaction = { path = "../runtime-transaction", version = "=4.2.0-alpha.0", features = ["agave-unstable-api"] }
-solana-sbpf = { version = "=0.21.0", default-features = false }
+solana-sbpf = { version = "=0.21.1", default-features = false }
 solana-sdk-ids = "3.1.0"
 solana-shred-version = "3.0.1"
 solana-signature = { version = "3.4.1", default-features = false }
 solana-signer = "3.0.1"
-solana-stake-interface = "4.2.0"
+solana-stake-interface = "4.3.0"
 solana-storage-bigtable = { path = "../storage-bigtable", version = "=4.2.0-alpha.0", features = ["agave-unstable-api"] }
 solana-streamer = { path = "../streamer", version = "=4.2.0-alpha.0", features = ["agave-unstable-api"] }
 solana-svm = { path = "../svm", version = "=4.2.0-alpha.0", features = ["agave-unstable-api"] }

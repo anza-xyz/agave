@@ -93,7 +93,6 @@ use {
         vote_sender_types::{ReplayVoteMessage, ReplayVoteSender},
     },
     solana_signer::Signer,
-    solana_svm_timings::ExecuteTimings,
     solana_time_utils::timestamp,
     solana_transaction::Transaction,
     solana_vote::vote_transaction::VoteTransaction,
@@ -1605,8 +1604,11 @@ impl ReplayStage {
             let bank_forks_r = bank_forks.read().unwrap();
             new_frozen_slots
                 .iter()
-                .filter(|slot| migration_status.should_allow_fast_leader_handover(**slot))
                 .filter_map(|slot| bank_forks_r.get(*slot))
+                .filter(|bank| {
+                    bank.feature_set.snapshot().alpenglow_fast_leader_handover
+                        && migration_status.should_allow_block_markers(bank.slot())
+                })
                 .collect_vec()
         };
         for bank in flh_candidate_banks {
@@ -2656,6 +2658,8 @@ impl ReplayStage {
                 } else if let Some(prev_hash) =
                     duplicate_confirmed_slots.insert(confirmed_slot, duplicate_confirmed_hash)
                 {
+                    // This assertion is intentional - it is not possible to split the cluster to get 52% on two versions
+                    // without a massive turbine failure
                     assert_eq!(
                         prev_hash, duplicate_confirmed_hash,
                         "Additional duplicate confirmed notification for slot {confirmed_slot} \
@@ -3817,8 +3821,6 @@ impl ReplayStage {
         let bank_forks = &process_active_banks_context.bank_forks;
 
         // TODO: See if processing of blockstore replay results and bank completion can be made thread safe.
-        let mut tx_count = 0;
-        let mut execute_timings = ExecuteTimings::default();
         let mut new_frozen_slots = vec![];
         for replay_result in replay_result_vec {
             if replay_result.is_slot_dead {
@@ -3832,7 +3834,7 @@ impl ReplayStage {
             };
             if let Some(replay_result) = &replay_result.replay_result {
                 match replay_result {
-                    Ok(replay_tx_count) => tx_count += replay_tx_count,
+                    Ok(_) => {}
                     Err(BlockstoreProcessorError::BlockComponentProcessor(
                         BlockComponentProcessorError::AbandonedBank(update_parent),
                     )) => {
@@ -4202,7 +4204,6 @@ impl ReplayStage {
                     bank_complete_time.as_us(),
                     is_unified_scheduler_enabled,
                 );
-                execute_timings.accumulate(&r_replay_stats.batch_execute.totals);
             } else {
                 trace!(
                     "bank {} not completed tick_height: {}, max_tick_height: {}",

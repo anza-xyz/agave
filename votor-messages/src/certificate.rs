@@ -82,33 +82,30 @@ impl CertificateType {
         match self {
             Self::Notarize(block) | Self::FinalizeFast(block) => {
                 let vote = Vote::new_notarization_vote(*block);
-                (get_vote_payload_to_sign(&vote, shred_version), None)
+                (get_vote_payload_to_sign(vote, shred_version), None)
             }
             Self::Genesis(block) => {
                 let vote = Vote::new_genesis_vote(*block);
-                (get_vote_payload_to_sign(&vote, shred_version), None)
+                (get_vote_payload_to_sign(vote, shred_version), None)
             }
             Self::Finalize(slot) => {
                 let vote = Vote::new_finalization_vote(*slot);
-                (get_vote_payload_to_sign(&vote, shred_version), None)
+                (get_vote_payload_to_sign(vote, shred_version), None)
             }
             Self::Skip(slot) => {
                 let skip_vote = Vote::new_skip_vote(*slot);
                 let skip_fallback_vote = Vote::new_skip_fallback_vote(*slot);
                 (
-                    get_vote_payload_to_sign(&skip_vote, shred_version),
-                    Some(get_vote_payload_to_sign(&skip_fallback_vote, shred_version)),
+                    get_vote_payload_to_sign(skip_vote, shred_version),
+                    Some(get_vote_payload_to_sign(skip_fallback_vote, shred_version)),
                 )
             }
             Self::NotarizeFallback(block) => {
                 let notar_vote = Vote::new_notarization_vote(*block);
                 let notar_fallback_vote = Vote::new_notarization_fallback_vote(*block);
                 (
-                    get_vote_payload_to_sign(&notar_vote, shred_version),
-                    Some(get_vote_payload_to_sign(
-                        &notar_fallback_vote,
-                        shred_version,
-                    )),
+                    get_vote_payload_to_sign(notar_vote, shred_version),
+                    Some(get_vote_payload_to_sign(notar_fallback_vote, shred_version)),
                 )
             }
         }

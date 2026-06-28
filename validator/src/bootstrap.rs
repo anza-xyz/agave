@@ -166,6 +166,7 @@ fn start_gossip_node(
         &cluster_info,
         None,
         gossip_sockets,
+        None,
         gossip_validators,
         should_check_duplicate_instance,
         None,

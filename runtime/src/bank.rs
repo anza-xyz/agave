@@ -82,8 +82,10 @@ use {
     agave_reserved_account_keys::ReservedAccountKeys,
     agave_snapshots::snapshot_hash::SnapshotHash,
     agave_votor_messages::{
-        certificate::Certificate, migration::GENESIS_CERTIFICATE_ACCOUNT,
+        certificate::{Certificate, CertificateType},
+        migration::GENESIS_CERTIFICATE_ACCOUNT,
         unverified_vote_message::UnverifiedCertificate,
+        wire::{WireBlockCertMessage, WireCertSignature},
     },
     ahash::AHashSet,
     log::*,
@@ -199,7 +201,6 @@ use {
     std::{
         collections::{HashMap, HashSet},
         fmt,
-        num::NonZero,
         ops::AddAssign,
         path::PathBuf,
         slice,
@@ -228,11 +229,6 @@ use {
     solana_program_runtime::sysvar_cache::SysvarCache,
     solana_svm::program_loader::load_program_with_pubkey,
 };
-
-/// params to `verify_accounts_hash`
-struct VerifyAccountsHashConfig {
-    require_rooted_bank: bool,
-}
 
 mod accounts_lt_hash;
 mod address_lookup_table;
@@ -274,7 +270,7 @@ static NANOSECOND_CLOCK_ACCOUNT: LazyLock<Pubkey> = LazyLock::new(|| {
 pub type BankStatusCache = StatusCache<Result<()>>;
 #[cfg_attr(
     feature = "frozen-abi",
-    frozen_abi(digest = "23uAyYmzMrmPvPDKf6SvF1YoojYstmEPmdkfAQDnpwsq")
+    frozen_abi(digest = "HvpA8mUc4TZAcDF3BpcynmYWYBK3scJRTem2qadCiF5Z")
 )]
 pub type BankSlotDelta = SlotDelta<Result<()>>;
 
@@ -642,6 +638,7 @@ impl PartialEq for Bank {
             #[cfg(feature = "dev-context-only-utils")]
             hash_overrides,
             accounts_lt_hash,
+            is_alpenglow,
             // TODO: Confirm if all these fields are intentionally ignored!
             rewards: _,
             cluster_type: _,
@@ -709,6 +706,7 @@ impl PartialEq for Bank {
                 *hash_overrides.lock().unwrap() == *other.hash_overrides.lock().unwrap())
             && *accounts_lt_hash.lock().unwrap() == *other.accounts_lt_hash.lock().unwrap()
             && *block_id.read().unwrap() == *other.block_id.read().unwrap()
+            && is_alpenglow.load(Relaxed) == other.is_alpenglow()
     }
 }
 
@@ -1023,6 +1021,9 @@ pub struct Bank {
     /// currently write to this during replay, as we process block components one at a time, and
     /// read from this once replay is complete.
     pub block_component_processor: RwLock<BlockComponentProcessor>,
+
+    /// Cached Alpenglow migration state, derived from the genesis certificate account.
+    is_alpenglow: AtomicBool,
 }
 
 #[derive(Debug, Default)]
@@ -1238,6 +1239,7 @@ impl Bank {
             bank_hash_stats: AtomicBankHashStats::default(),
             epoch_rewards_calculation_cache: Arc::new(Mutex::new(HashMap::default())),
             block_component_processor: RwLock::new(BlockComponentProcessor::default()),
+            is_alpenglow: AtomicBool::new(false),
         };
 
         bank.transaction_processor =
@@ -1313,6 +1315,9 @@ impl Bank {
         bank.update_last_restart_slot();
         bank.transaction_processor
             .fill_missing_sysvar_cache_entries(&bank);
+        if bank.get_alpenglow_genesis_certificate().is_some() {
+            bank.set_is_alpenglow();
+        }
         bank
     }
 
@@ -1497,6 +1502,7 @@ impl Bank {
             bank_hash_stats: AtomicBankHashStats::default(),
             epoch_rewards_calculation_cache: parent.epoch_rewards_calculation_cache.clone(),
             block_component_processor: RwLock::new(BlockComponentProcessor::default()),
+            is_alpenglow: AtomicBool::new(parent.is_alpenglow()),
         };
 
         let (_, ancestors_time_us) = measure_us!({
@@ -1970,7 +1976,7 @@ impl Bank {
             self.update_slot_hashes();
             self.update_stake_history(Some(parent_epoch));
 
-            if self.get_alpenglow_genesis_certificate().is_some() {
+            if self.is_alpenglow() {
                 // Alpenglow banks have the timestamp populated via the footer
                 // We only populate the slot here
                 self.update_clock_slot_for_alpenglow();
@@ -2158,7 +2164,12 @@ impl Bank {
             epoch_rewards_calculation_cache: Arc::new(Mutex::new(HashMap::default())),
             expected_bank_hash: RwLock::new(None),
             block_component_processor: RwLock::new(BlockComponentProcessor::default()),
+            is_alpenglow: AtomicBool::new(false),
         };
+
+        if bank.get_alpenglow_genesis_certificate().is_some() {
+            bank.set_is_alpenglow();
+        }
 
         // Sanity assertions between bank snapshot and genesis config
         // Consider removing from serializable bank state
@@ -3345,19 +3356,42 @@ impl Bank {
             // The address is known in advance, so the account could already exist if it was prefunded.
             // However this account cannot be written to except by us in `set_alpenglow_genesis_certificate`,
             // so this deserialize is safe if the account is non-empty
-            wincode::deserialize(acct.data())
-                .expect("Programmer error deserializing genesis certificate")
+            let cert: WireBlockCertMessage = wincode::deserialize(acct.data())
+                .expect("Programmer error deserializing genesis certificate");
+            Certificate {
+                cert_type: CertificateType::Genesis(cert.block),
+                signature: cert.signature.signature,
+                bitmap: cert.signature.bitmap,
+            }
         })
+    }
+
+    pub fn is_alpenglow(&self) -> bool {
+        self.is_alpenglow.load(Relaxed)
+    }
+
+    fn set_is_alpenglow(&self) {
+        self.is_alpenglow.store(true, Relaxed);
     }
 
     /// For use in the first Alpenglow block, set the genesis certificate.
     pub fn set_alpenglow_genesis_certificate(&self, cert: &Certificate) {
-        let data = wincode::serialize(cert).unwrap();
+        debug_assert!(cert.cert_type.is_genesis());
+        let block = cert.cert_type.to_block().unwrap();
+        let cert = WireBlockCertMessage {
+            block,
+            signature: WireCertSignature {
+                signature: cert.signature,
+                bitmap: cert.bitmap.clone(),
+            },
+        };
+        let data = wincode::serialize(&cert).unwrap();
         let lamports = Rent::default().minimum_balance(data.len());
         let mut cert_acct = AccountSharedData::new(lamports, data.len(), &system_program::ID);
         cert_acct.set_data_from_slice(&data);
 
         self.store_account_and_update_capitalization(&GENESIS_CERTIFICATE_ACCOUNT, &cert_acct);
+        self.set_is_alpenglow();
     }
 
     /// Update the clock sysvar from a block footer's nanosecond timestamp.
@@ -3974,7 +4008,7 @@ impl Bank {
         let processing_environment = TransactionProcessingEnvironment {
             blockhash,
             blockhash_lamports_per_signature,
-            alpenglow_migration_succeeded: self.get_alpenglow_genesis_certificate().is_some(),
+            alpenglow_migration_succeeded: self.is_alpenglow(),
             epoch_total_stake: self.get_current_epoch_total_stake(),
             feature_set: self.feature_set.runtime_features(),
             program_runtime_environments: ProgramRuntimeEnvironments::new(
@@ -5321,12 +5355,7 @@ impl Bank {
     pub fn run_final_hash_calc(&self) {
         self.force_flush_accounts_cache();
         // note that this slot may not be a root
-        _ = self.verify_accounts(
-            VerifyAccountsHashConfig {
-                require_rooted_bank: false,
-            },
-            None,
-        );
+        _ = self.verify_accounts(None);
     }
 
     /// Verify the account state as part of startup, typically from a snapshot.
@@ -5342,30 +5371,8 @@ impl Bank {
     ///
     /// Only intended to be called at startup, or from tests/ledger-tool.
     #[must_use]
-    fn verify_accounts(
-        &self,
-        config: VerifyAccountsHashConfig,
-        calculated_accounts_lt_hash: Option<&AccountsLtHash>,
-    ) -> bool {
+    fn verify_accounts(&self, calculated_accounts_lt_hash: Option<&AccountsLtHash>) -> bool {
         let accounts_db = &self.rc.accounts.accounts_db;
-
-        let slot = self.slot();
-
-        if config.require_rooted_bank && !accounts_db.accounts_index.is_alive_root(slot) {
-            if let Some(parent) = self.parent() {
-                info!(
-                    "slot {slot} is not a root, so verify accounts hash on parent bank at slot {}",
-                    parent.slot(),
-                );
-                // The calculated_accounts_lt_hash parameter is only valid for the current slot, so
-                // we must fall back to calculating the accounts lt hash with the index.
-                return parent.verify_accounts(config, None);
-            } else {
-                // this will result in mismatch errors
-                // accounts hash calc doesn't include unrooted slots
-                panic!("cannot verify accounts hash because slot {slot} is not a root");
-            }
-        }
 
         fn check_lt_hash(
             expected_accounts_lt_hash: &AccountsLtHash,
@@ -5567,12 +5574,7 @@ impl Bank {
         let (verified_accounts, verify_accounts_time_us) = measure_us!({
             let should_verify_accounts = !self.rc.accounts.accounts_db.skip_initial_hash_calc;
             if should_verify_accounts {
-                self.verify_accounts(
-                    VerifyAccountsHashConfig {
-                        require_rooted_bank: false,
-                    },
-                    calculated_accounts_lt_hash,
-                )
+                self.verify_accounts(calculated_accounts_lt_hash)
             } else {
                 info!("Verifying accounts... Skipped.");
                 true
@@ -5768,8 +5770,7 @@ impl Bank {
             .epoch_stakes_from_slot(slot)
             .ok_or(CertVerifyError::MissingRankMap)?;
         let key_to_rank_map = epoch_stakes.bls_pubkey_to_rank_map();
-        let total_stake =
-            NonZero::new(key_to_rank_map.total_stake()).expect("total stake cannot be 0");
+        let total_stake = key_to_rank_map.total_stake();
 
         let cert =
             cert_verify::verify_certificate(cert, key_to_rank_map.len(), total_stake, |rank| {

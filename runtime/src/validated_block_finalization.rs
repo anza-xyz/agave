@@ -406,7 +406,7 @@ mod tests {
         signing_ranks: &[usize],
         validator_keypairs: &[ValidatorVoteKeypairs],
     ) -> Certificate {
-        let serialized_vote = get_vote_payload_to_sign(&vote, shred_version);
+        let serialized_vote = get_vote_payload_to_sign(vote, shred_version);
 
         // Aggregate signatures
         let mut signature = SignatureProjective::identity();

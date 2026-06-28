@@ -9,9 +9,9 @@ use {
     agave_feature_set::{FEATURE_NAMES, FeatureSet},
     agave_votor_messages::{
         self,
-        certificate::{Certificate, CertificateType},
         consensus_message::{BLS_KEYPAIR_DERIVE_SEED, Block},
         migration::GENESIS_CERTIFICATE_ACCOUNT,
+        wire::{WireBlockCertMessage, WireCertSignature},
     },
     bincode::serialize,
     bitvec::vec::BitVec,
@@ -336,13 +336,15 @@ fn configure_alpenglow_at_genesis(genesis_config: &mut GenesisConfig) {
 
     // This is a dev cluster with alpenglow enabled at genesis. We don't want to test the migration pathway
     // so we add a fake genesis certificate.
-    let cert = Certificate {
-        cert_type: CertificateType::Genesis(Block {
+    let cert = WireBlockCertMessage {
+        block: Block {
             slot: 0,
             block_id: Hash::default(),
-        }),
-        signature: BLSSignature([0; BLS_SIGNATURE_AFFINE_SIZE]),
-        bitmap: encode_base2(&BitVec::new()).unwrap(),
+        },
+        signature: WireCertSignature {
+            signature: BLSSignature([0; BLS_SIGNATURE_AFFINE_SIZE]),
+            bitmap: encode_base2(&BitVec::new()).unwrap(),
+        },
     };
     let cert_size = bincode::serialized_size(&cert).unwrap();
     let lamports = Rent::default().minimum_balance(cert_size as usize);

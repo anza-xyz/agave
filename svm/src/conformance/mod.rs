@@ -6,6 +6,8 @@ pub mod callback;
 #[cfg(feature = "conformance")]
 pub mod elf_loader;
 #[cfg(feature = "conformance")]
+mod err;
+#[cfg(feature = "conformance")]
 pub mod fd_hash;
 #[cfg(feature = "conformance")]
 pub mod feature_set;
@@ -14,3 +16,5 @@ pub mod programs;
 #[cfg(feature = "conformance")]
 pub mod serialization;
 mod setup;
+#[cfg(feature = "conformance")]
+pub mod syscall;

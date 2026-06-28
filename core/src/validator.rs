@@ -51,7 +51,6 @@ use {
     },
     solana_client::connection_cache::{ConnectionCache, Protocol},
     solana_clock::Slot,
-    solana_cluster_type::ClusterType,
     solana_entry::poh::compute_hash_time,
     solana_epoch_schedule::MAX_LEADER_SCHEDULE_EPOCH_OFFSET,
     solana_genesis_config::GenesisConfig,
@@ -145,7 +144,7 @@ use {
     },
     solana_time_utils::timestamp,
     solana_tpu_client::tpu_client::{DEFAULT_TPU_CONNECTION_POOL_SIZE, DEFAULT_VOTE_USE_QUIC},
-    solana_turbine::{self, XdpSender as TurbineXdpSender, broadcast_stage::BroadcastStageType},
+    solana_turbine::{self, broadcast_stage::BroadcastStageType},
     solana_unified_scheduler_pool::DefaultSchedulerPool,
     solana_validator_exit::Exit,
     solana_vote_program::vote_state::{VoteStateV4, handler::VoteStateHandler},
@@ -1427,10 +1426,60 @@ impl Validator {
         let epoch_specs: Box<dyn solana_gossip::epoch_specs::EpochSpecs> =
             Box::new(crate::epoch_specs::EpochSpecs::from(bank_forks.clone()));
 
+        let (
+            xdp_transmitter,
+            turbine_xdp_sender,
+            quic_xdp_sender,
+            repair_xdp_sender,
+            gossip_xdp_sender,
+        ) = if let Some(XdpTransmitSetup {
+            transmitter_builder,
+            src_ip,
+        }) = xdp_transmit_setup
+        {
+            let turbine_src_port = node.sockets.retransmit_sockets[0]
+                .local_addr()
+                .expect("retransmit socket should have local address")
+                .port();
+
+            let repair_src_port = node
+                .sockets
+                .repair
+                .local_addr()
+                .expect("repair socket should have local address")
+                .port();
+
+            let gossip_src_port = node.sockets.gossip[0]
+                .local_addr()
+                .expect("gossip socket should have local address")
+                .port();
+
+            let (transmitter, sender) = transmitter_builder.build();
+            (
+                Some(transmitter),
+                Some(PinnedXdpSender::new(
+                    sender.clone(),
+                    SocketAddrV4::new(src_ip, turbine_src_port),
+                )),
+                Some((sender.clone(), src_ip)),
+                Some(PinnedXdpSender::new(
+                    sender.clone(),
+                    SocketAddrV4::new(src_ip, repair_src_port),
+                )),
+                Some(PinnedXdpSender::new(
+                    sender,
+                    SocketAddrV4::new(src_ip, gossip_src_port),
+                )),
+            )
+        } else {
+            (None, None, None, None, None)
+        };
+
         let gossip_service = GossipService::new(
             &cluster_info,
             Some(epoch_specs),
             node.sockets.gossip.clone(),
+            gossip_xdp_sender,
             config.gossip_validators.clone(),
             config.should_check_duplicate_instance,
             Some(stats_reporter_sender.clone()),
@@ -1567,49 +1616,6 @@ impl Validator {
         // This channel backing up indicates a serious problem in votor
         let (votor_event_sender, votor_event_receiver) = bounded(1000);
 
-        let (xdp_transmitter, turbine_xdp_sender, quic_xdp_sender, repair_xdp_sender) =
-            if let Some(XdpTransmitSetup {
-                transmitter_builder,
-                src_ip,
-            }) = xdp_transmit_setup
-            {
-                let turbine_src_port = node.sockets.retransmit_sockets[0]
-                    .local_addr()
-                    .expect("retransmit socket should have local address")
-                    .port();
-                let repair_src_port = node
-                    .sockets
-                    .repair
-                    .local_addr()
-                    .expect("repair socket should have local address")
-                    .port();
-
-                let (transmitter, sender) = transmitter_builder.build();
-                (
-                    Some(transmitter),
-                    Some(TurbineXdpSender::new(
-                        sender.clone(),
-                        SocketAddrV4::new(src_ip, turbine_src_port),
-                    )),
-                    Some((sender.clone(), src_ip)),
-                    Some(PinnedXdpSender::new(
-                        sender,
-                        SocketAddrV4::new(src_ip, repair_src_port),
-                    )),
-                )
-            } else {
-                (None, None, None, None)
-            };
-
-        // disable Alpenglow votor networking if not allowed for cluster type
-        let alpenglow_socket = if genesis_config.cluster_type == ClusterType::Testnet
-            || genesis_config.cluster_type == ClusterType::Development
-        {
-            Some(node.sockets.alpenglow)
-        } else {
-            None
-        };
-
         let tvu = Tvu::new(
             vote_account,
             authorized_voter_keypairs,
@@ -1620,7 +1626,7 @@ impl Validator {
                 retransmit: node.sockets.retransmit_sockets,
                 fetch: node.sockets.tvu,
                 ancestor_hashes_requests: node.sockets.ancestor_hashes_requests,
-                alpenglow: alpenglow_socket,
+                alpenglow: node.sockets.alpenglow,
                 block_id_repair: node.sockets.block_id_repair,
             },
             blockstore.clone(),
@@ -1918,6 +1924,10 @@ impl Validator {
         info!(
             "local retransmit address: {}",
             node.sockets.retransmit_sockets[0].local_addr().unwrap()
+        );
+        info!(
+            "local alpenglow address: {}",
+            node.sockets.alpenglow.local_addr().unwrap()
         );
     }
 
