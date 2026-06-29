@@ -101,7 +101,7 @@ struct SigVerifier {
     thread_pool: ThreadPool,
     generated_cert_types: Arc<GeneratedCertTypes>,
     /// dedup received votes so that we only ever verify a single `Vote` from a given sender.
-    received_votes: HashSet<(Vote, u16)>,
+    received_votes: HashSet<(Vote, Pubkey)>,
 }
 
 impl SigVerifier {
@@ -257,7 +257,7 @@ impl SigVerifier {
                         self.keep_vote(&vote, &unverified_vote, root_bank)
                         && self
                             .received_votes
-                            .insert((unverified_vote.vote, unverified_vote.rank))
+                            .insert((unverified_vote.vote, sender_identity_pubkey))
                     {
                         let vote_payload_to_sign = VotePayloadToSign::new_from_vote(
                             unverified_vote.vote,
