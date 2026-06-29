@@ -259,10 +259,10 @@ impl TransactionStatusService {
                     blockstore.write_batch(batch)?;
                 }
 
-                if let Some(dependency_tracker) = dependency_tracker.as_ref() {
-                    if let Some(work_id) = work_id {
-                        dependency_tracker.mark_this_and_all_previous_work_processed(work_id);
-                    }
+                if let Some(dependency_tracker) = dependency_tracker.as_ref()
+                    && let Some(work_id) = work_id
+                {
+                    dependency_tracker.mark_this_and_all_previous_work_processed(work_id);
                 }
             }
             TransactionStatusMessage::Freeze(bank) => {

@@ -165,8 +165,6 @@ used_underscore_binding = "deny"
 
 # Allowed lints
 new_without_default = "allow"
-## Due to recent switch to Rust 2024, should be removed after repo auto-fix before release cut
-collapsible_if = "allow"
 
 [workspace.dependencies]
 Inflector = "0.11.4"
@@ -213,7 +211,7 @@ bitvec = { version = "1.0.1", features = ["serde"] }
 blake3 = "1.8.5"
 blst = "0.3.16"
 blstrs = "0.7.1"
-borsh = { version = "1.6.1", features = ["derive", "unstable__schema"] }
+borsh = { version = "1.7.0", features = ["derive", "unstable__schema"] }
 bs58 = { version = "0.5.1", default-features = false }
 bv = "0.11.1"
 bytemuck = "1.25.0"
@@ -417,7 +415,7 @@ solana-hash-512 = "1.1.0"
 solana-inflation = "3.1.1"
 solana-instruction = "3.4.0"
 solana-instruction-error = "2.4.0"
-solana-instructions-sysvar = "3.0.0"
+solana-instructions-sysvar = "4.0.0"
 solana-keccak-hasher = "3.1.0"
 solana-keypair = "3.1.2"
 solana-last-restart-slot = "3.0.1"

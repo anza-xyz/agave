@@ -1267,14 +1267,14 @@ fn validators_set(
         let validators_set: Option<HashSet<Pubkey>> = values_t!(matches, matches_name, Pubkey)
             .ok()
             .map(|validators| validators.into_iter().collect());
-        if let Some(validators_set) = &validators_set {
-            if validators_set.contains(identity_pubkey) {
-                return Err(crate::commands::Error::Dynamic(
-                    Box::<dyn std::error::Error>::from(format!(
-                        "the validator's identity pubkey cannot be a {arg_name}: {identity_pubkey}"
-                    )),
-                ));
-            }
+        if let Some(validators_set) = &validators_set
+            && validators_set.contains(identity_pubkey)
+        {
+            return Err(crate::commands::Error::Dynamic(
+                Box::<dyn std::error::Error>::from(format!(
+                    "the validator's identity pubkey cannot be a {arg_name}: {identity_pubkey}"
+                )),
+            ));
         }
         Ok(validators_set)
     } else {

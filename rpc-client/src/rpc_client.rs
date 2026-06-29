@@ -17,7 +17,7 @@ use {
         nonblocking::{self, rpc_client::get_rpc_request_str},
         rpc_sender::*,
     },
-    agave_votor_messages::certificate::Certificate,
+    agave_votor_messages::wire::WireBlockCertMessage,
     serde_json::Value,
     solana_account::{Account, ReadableAccount},
     solana_account_decoder::UiAccount,
@@ -1846,7 +1846,7 @@ impl RpcClient {
     /// let cert = rpc_client.get_ag_genesis_cert()?;
     /// # Ok::<(), Error>(())
     /// ```
-    pub fn get_ag_genesis_cert(&self) -> ClientResult<Option<Certificate>> {
+    pub fn get_ag_genesis_cert(&self) -> ClientResult<Option<WireBlockCertMessage>> {
         self.invoke((self.rpc_client.as_ref()).get_ag_genesis_cert())
     }
 

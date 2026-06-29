@@ -472,13 +472,13 @@ impl<T: IndexValue, U: DiskIndexValue + From<T> + Into<T>> AccountsIndex<T, U> {
     ) -> Option<usize> {
         let mut current_max = 0;
         let mut rv = None;
-        if let Some(ancestors) = ancestors {
-            if !ancestors.is_empty() {
-                for (i, (slot, _t)) in slot_list.iter().rev().enumerate() {
-                    if (rv.is_none() || *slot > current_max) && ancestors.contains_key(slot) {
-                        rv = Some(i);
-                        current_max = *slot;
-                    }
+        if let Some(ancestors) = ancestors
+            && !ancestors.is_empty()
+        {
+            for (i, (slot, _t)) in slot_list.iter().rev().enumerate() {
+                if (rv.is_none() || *slot > current_max) && ancestors.contains_key(slot) {
+                    rv = Some(i);
+                    current_max = *slot;
                 }
             }
         }
@@ -683,20 +683,18 @@ impl<T: IndexValue, U: DiskIndexValue + From<T> + Into<T>> AccountsIndex<T, U> {
         account_indexes: &AccountSecondaryIndexes,
     ) {
         if *account_owner == *token_id {
-            if account_indexes.contains(&AccountIndex::SplTokenOwner) {
-                if let Some(owner_key) = G::unpack_account_owner(account_data) {
-                    if account_indexes.include_key(owner_key) {
-                        self.spl_token_owner_index.insert(owner_key, pubkey);
-                    }
-                }
+            if account_indexes.contains(&AccountIndex::SplTokenOwner)
+                && let Some(owner_key) = G::unpack_account_owner(account_data)
+                && account_indexes.include_key(owner_key)
+            {
+                self.spl_token_owner_index.insert(owner_key, pubkey);
             }
 
-            if account_indexes.contains(&AccountIndex::SplTokenMint) {
-                if let Some(mint_key) = G::unpack_account_mint(account_data) {
-                    if account_indexes.include_key(mint_key) {
-                        self.spl_token_mint_index.insert(mint_key, pubkey);
-                    }
-                }
+            if account_indexes.contains(&AccountIndex::SplTokenMint)
+                && let Some(mint_key) = G::unpack_account_mint(account_data)
+                && account_indexes.include_key(mint_key)
+            {
+                self.spl_token_mint_index.insert(mint_key, pubkey);
             }
         }
     }

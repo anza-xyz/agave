@@ -186,21 +186,21 @@ pub fn invoke_builtin_function(
     // Commit AccountInfo changes back into KeyedAccounts
     for i in deduplicated_indices.into_iter() {
         let mut borrowed_account = instruction_context.try_borrow_instruction_account(i)?;
-        if borrowed_account.is_writable() {
-            if let Some(account_info) = account_info_map.get(borrowed_account.get_key()) {
-                if borrowed_account.get_lamports() != account_info.lamports() {
-                    borrowed_account.set_lamports(account_info.lamports())?;
-                }
+        if borrowed_account.is_writable()
+            && let Some(account_info) = account_info_map.get(borrowed_account.get_key())
+        {
+            if borrowed_account.get_lamports() != account_info.lamports() {
+                borrowed_account.set_lamports(account_info.lamports())?;
+            }
 
-                if borrowed_account
-                    .can_data_be_resized(account_info.data_len())
-                    .is_ok()
-                {
-                    borrowed_account.set_data_from_slice(&account_info.data.borrow())?;
-                }
-                if borrowed_account.get_owner() != account_info.owner {
-                    borrowed_account.set_owner(account_info.owner.as_ref())?;
-                }
+            if borrowed_account
+                .can_data_be_resized(account_info.data_len())
+                .is_ok()
+            {
+                borrowed_account.set_data_from_slice(&account_info.data.borrow())?;
+            }
+            if borrowed_account.get_owner() != account_info.owner {
+                borrowed_account.set_owner(account_info.owner.as_ref())?;
             }
         }
     }

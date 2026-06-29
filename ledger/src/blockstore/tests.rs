@@ -3029,6 +3029,102 @@ fn test_get_rooted_block() {
 }
 
 #[test]
+fn test_get_complete_block_with_block_markers() {
+    let ledger_path = get_tmp_ledger_path_auto_delete!();
+    let blockstore = Blockstore::open(ledger_path.path()).unwrap();
+
+    let parent_slot = 20;
+    let slot = parent_slot + 1;
+
+    let parent_entries = create_ticks(4, 0, Hash::new_unique());
+    let parent_blockhash = parent_entries.last().unwrap().hash;
+    blockstore
+        .insert_shreds(
+            entries_to_test_shreds(&parent_entries, parent_slot, parent_slot - 1, true, 0),
+            None,
+            false,
+        )
+        .unwrap();
+
+    let block_header_shreds = data_shreds(create_block_header_shreds(
+        slot,
+        parent_slot,
+        parent_blockhash,
+    ));
+    let entry_start_index = block_header_shreds.last().unwrap().index() + 1;
+
+    let entries = create_ticks(4, 0, parent_blockhash);
+    let entry_shreds = Shredder::new(slot, parent_slot, 0, 0)
+        .unwrap()
+        .make_merkle_shreds_from_entries(
+            &Keypair::new(),
+            &entries,
+            false,
+            Hash::new_unique(),
+            entry_start_index,
+            entry_start_index,
+            &ReedSolomonCache::default(),
+            &mut ProcessShredsStats::default(),
+        )
+        .filter(Shred::is_data)
+        .collect_vec();
+    let entry_end_index = entry_shreds.last().unwrap().index() + 1;
+
+    let block_footer_shreds = data_shreds(create_block_footer_shreds(
+        slot,
+        parent_slot,
+        entry_end_index,
+    ));
+    let slot_end_index = block_footer_shreds.last().unwrap().index() + 1;
+
+    let shreds: Vec<_> = block_header_shreds
+        .iter()
+        .chain(entry_shreds.iter())
+        .chain(block_footer_shreds.iter())
+        .cloned()
+        .collect();
+    blockstore.insert_shreds(shreds, None, true).unwrap();
+
+    let (slot_entries, num_shreds, is_full) = blockstore
+        .get_slot_entries_with_shred_info(slot, 0, false)
+        .unwrap();
+    assert_eq!(slot_entries, entries);
+    assert_eq!(num_shreds, u64::from(slot_end_index));
+    assert!(is_full);
+
+    assert!(
+        blockstore
+            .get_entries_in_data_block(slot, 0..entry_start_index, None)
+            .unwrap()
+            .is_empty()
+    );
+    assert_eq!(
+        blockstore
+            .get_entries_in_data_block(slot, entry_start_index..entry_end_index, None)
+            .unwrap(),
+        entries
+    );
+    assert!(
+        blockstore
+            .get_entries_in_data_block(slot, entry_end_index..slot_end_index, None)
+            .unwrap()
+            .is_empty()
+    );
+
+    let complete_block = blockstore.get_complete_block(slot, true).unwrap();
+    assert_eq!(complete_block.parent_slot, parent_slot);
+    assert_eq!(
+        complete_block.previous_blockhash,
+        parent_blockhash.to_string()
+    );
+    assert_eq!(
+        complete_block.blockhash,
+        entries.last().unwrap().hash.to_string()
+    );
+    assert!(complete_block.transactions.is_empty());
+}
+
+#[test]
 fn test_persist_transaction_status() {
     let ledger_path = get_tmp_ledger_path_auto_delete!();
     let blockstore = Blockstore::open(ledger_path.path()).unwrap();

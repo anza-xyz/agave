@@ -8,7 +8,7 @@ use {
         parsed_token_accounts::*, rpc_cache::LargestAccountsCache, rpc_health::*,
     },
     agave_snapshots::{paths as snapshot_paths, snapshot_config::SnapshotConfig},
-    agave_votor_messages::certificate::Certificate,
+    agave_votor_messages::wire::{WireBlockCertMessage, WireCertSignature},
     base64::{Engine, prelude::BASE64_STANDARD},
     crossbeam_channel::{Receiver, Sender, unbounded},
     jsonrpc_core::{
@@ -274,13 +274,13 @@ impl JsonRpcRequestProcessor {
             min_context_slot,
         } = config;
         let bank = self.bank(commitment);
-        if let Some(min_context_slot) = min_context_slot {
-            if bank.slot() < min_context_slot {
-                return Err(RpcCustomError::MinContextSlotNotReached {
-                    context_slot: bank.slot(),
-                }
-                .into());
+        if let Some(min_context_slot) = min_context_slot
+            && bank.slot() < min_context_slot
+        {
+            return Err(RpcCustomError::MinContextSlotNotReached {
+                context_slot: bank.slot(),
             }
+            .into());
         }
         Ok(bank)
     }
@@ -921,9 +921,16 @@ impl JsonRpcRequestProcessor {
         bank.epoch_schedule().clone()
     }
 
-    pub fn get_ag_genesis_cert(&self) -> Option<Certificate> {
+    pub fn get_ag_genesis_cert(&self) -> Option<WireBlockCertMessage> {
         let bank = self.bank(Some(CommitmentConfig::finalized()));
         bank.get_alpenglow_genesis_certificate()
+            .map(|c| WireBlockCertMessage {
+                block: c.cert_type.to_block().unwrap(),
+                signature: WireCertSignature {
+                    signature: c.signature,
+                    bitmap: c.bitmap,
+                },
+            })
     }
 
     pub fn get_balance(
@@ -1170,10 +1177,10 @@ impl JsonRpcRequestProcessor {
         ) = vote_accounts
             .iter()
             .filter_map(|(vote_pubkey, (activated_stake, account))| {
-                if let Some(filter_by_vote_pubkey) = filter_by_vote_pubkey {
-                    if *vote_pubkey != filter_by_vote_pubkey {
-                        return None;
-                    }
+                if let Some(filter_by_vote_pubkey) = filter_by_vote_pubkey
+                    && *vote_pubkey != filter_by_vote_pubkey
+                {
+                    return None;
                 }
 
                 let vote_state_view = account.vote_state_view();
@@ -1355,14 +1362,14 @@ impl JsonRpcRequestProcessor {
                 }
                 Ok::<UiConfirmedBlock, Error>(encoded_block)
             };
-            if result.is_err() {
-                if let Some(bigtable_ledger_storage) = &self.bigtable_ledger_storage {
-                    let bigtable_result = bigtable_ledger_storage.get_confirmed_block(slot).await;
-                    self.check_bigtable_result(&bigtable_result)?;
-                    let encoded_block_future: OptionFuture<_> =
-                        bigtable_result.ok().map(encode_block).into();
-                    return encoded_block_future.await.transpose();
-                }
+            if result.is_err()
+                && let Some(bigtable_ledger_storage) = &self.bigtable_ledger_storage
+            {
+                let bigtable_result = bigtable_ledger_storage.get_confirmed_block(slot).await;
+                self.check_bigtable_result(&bigtable_result)?;
+                let encoded_block_future: OptionFuture<_> =
+                    bigtable_result.ok().map(encode_block).into();
+                return encoded_block_future.await.transpose();
             }
             self.check_slot_cleaned_up(&result, slot)?;
             let encoded_block_future: OptionFuture<_> = result
@@ -1607,14 +1614,14 @@ impl JsonRpcRequestProcessor {
         {
             let result = self.blockstore.get_rooted_block_time(slot);
             self.check_blockstore_root(&result, slot)?;
-            if result.is_err() {
-                if let Some(bigtable_ledger_storage) = &self.bigtable_ledger_storage {
-                    let bigtable_result = bigtable_ledger_storage.get_confirmed_block(slot).await;
-                    self.check_bigtable_result(&bigtable_result)?;
-                    return Ok(bigtable_result
-                        .ok()
-                        .and_then(|confirmed_block| confirmed_block.block_time));
-                }
+            if result.is_err()
+                && let Some(bigtable_ledger_storage) = &self.bigtable_ledger_storage
+            {
+                let bigtable_result = bigtable_ledger_storage.get_confirmed_block(slot).await;
+                self.check_bigtable_result(&bigtable_result)?;
+                return Ok(bigtable_result
+                    .ok()
+                    .and_then(|confirmed_block| confirmed_block.block_time));
             }
             self.check_slot_cleaned_up(&result, slot)?;
             Ok(result.ok())
@@ -1961,21 +1968,17 @@ impl JsonRpcRequestProcessor {
             } else {
                 // Long-term storage is not enabled.
                 // Return an error to the user if either before/until were provided but not found.
-                if !found_before {
-                    if let Some(signature) = before {
-                        return Err(RpcCustomError::FilterTransactionNotFound {
-                            signature: signature.to_string(),
-                        }
-                        .into());
+                if !found_before && let Some(signature) = before {
+                    return Err(RpcCustomError::FilterTransactionNotFound {
+                        signature: signature.to_string(),
                     }
+                    .into());
                 }
-                if !found_until {
-                    if let Some(signature) = until {
-                        return Err(RpcCustomError::FilterTransactionNotFound {
-                            signature: signature.to_string(),
-                        }
-                        .into());
+                if !found_until && let Some(signature) = until {
+                    return Err(RpcCustomError::FilterTransactionNotFound {
+                        signature: signature.to_string(),
                     }
+                    .into());
                 }
             }
         }
@@ -2452,11 +2455,11 @@ impl JsonRpcRequestProcessor {
 
 pub(crate) fn optimize_filters(filters: &mut [RpcFilterType]) {
     filters.iter_mut().for_each(|filter_type| {
-        if let RpcFilterType::Memcmp(compare) = filter_type {
-            if let Err(err) = compare.convert_to_raw_bytes() {
-                // All filters should have been previously verified
-                warn!("Invalid filter: bytes could not be decoded, {err}");
-            }
+        if let RpcFilterType::Memcmp(compare) = filter_type
+            && let Err(err) = compare.convert_to_raw_bytes()
+        {
+            // All filters should have been previously verified
+            warn!("Invalid filter: bytes could not be decoded, {err}");
         }
     })
 }
@@ -2994,7 +2997,7 @@ pub mod rpc_minimal {
 // RPC interface that only depends on immediate Bank data
 // Expected to be provided by API nodes
 pub mod rpc_bank {
-    use super::*;
+    use {super::*, agave_votor_messages::wire::WireBlockCertMessage};
     #[rpc]
     pub trait BankData {
         type Metadata;
@@ -3036,7 +3039,8 @@ pub mod rpc_bank {
         ) -> Result<Vec<String>>;
 
         #[rpc(meta, name = "getAgGenesisCert")]
-        fn get_ag_genesis_cert(&self, meta: Self::Metadata) -> Result<Option<Certificate>>;
+        fn get_ag_genesis_cert(&self, meta: Self::Metadata)
+        -> Result<Option<WireBlockCertMessage>>;
 
         #[rpc(meta, name = "getBlockProduction")]
         fn get_block_production(
@@ -3113,7 +3117,10 @@ pub mod rpc_bank {
                 .collect())
         }
 
-        fn get_ag_genesis_cert(&self, meta: Self::Metadata) -> Result<Option<Certificate>> {
+        fn get_ag_genesis_cert(
+            &self,
+            meta: Self::Metadata,
+        ) -> Result<Option<WireBlockCertMessage>> {
             debug!("get_ag_genesis_cert rpc request received");
             Ok(meta.get_ag_genesis_cert())
         }
@@ -3178,11 +3185,11 @@ pub mod rpc_bank {
 
             let mut slot = first_slot;
             for identity in slot_leaders {
-                if let Some(ref filter_by_identity) = filter_by_identity {
-                    if identity != *filter_by_identity {
-                        slot += 1;
-                        continue;
-                    }
+                if let Some(ref filter_by_identity) = filter_by_identity
+                    && identity != *filter_by_identity
+                {
+                    slot += 1;
+                    continue;
                 }
 
                 let entry = block_production.entry(identity).or_default();

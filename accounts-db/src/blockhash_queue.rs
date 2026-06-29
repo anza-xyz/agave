@@ -30,6 +30,7 @@ impl HashInfo {
     frozen_abi(
         api_digest = "DZVVXt4saSgH1CWGrzBcX2sq5yswCuRqGx1Y1ZehtWT6",
         abi_digest = "5ojmBDhhu9AjKUc1LSHhZfXF6KeicvZpKP6XdLNaFAdy",
+        test_roundtrip = "eq_and_wire"
     )
 )]
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]

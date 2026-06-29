@@ -40,6 +40,7 @@ solana-signature = { workspace = true, optional = true }
 [dev-dependencies]
 solana-account-info = { workspace = true }
 solana-program-entrypoint = { workspace = true }
+solana-pubkey = { workspace = true, features = ["rand"] }
 solana-system-interface = { workspace = true }
 solana-transaction-context = { path = ".", features = [
     "agave-unstable-api",

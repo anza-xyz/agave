@@ -233,15 +233,14 @@ impl SendTransactionService {
                             stats.received_transactions.fetch_add(1, Ordering::Relaxed);
                             let entry = transactions.entry(transaction_info.signature);
                             let mut new_transaction = false;
-                            if let Entry::Vacant(_) = entry {
-                                if !retry_transactions
+                            if let Entry::Vacant(_) = entry
+                                && !retry_transactions
                                     .lock()
                                     .unwrap()
                                     .contains_key(&transaction_info.signature)
-                                {
-                                    entry.or_insert(transaction_info);
-                                    new_transaction = true;
-                                }
+                            {
+                                entry.or_insert(transaction_info);
+                                new_transaction = true;
                             }
                             if !new_transaction {
                                 stats
@@ -435,15 +434,15 @@ impl SendTransactionService {
             let max_retries =
                 transaction_info.get_max_retries(default_max_retries, service_max_retries);
 
-            if let Some(max_retries) = max_retries {
-                if transaction_info.retries >= max_retries {
-                    info!("Dropping transaction due to max retries: {signature}");
-                    result.max_retries_elapsed += 1;
-                    stats
-                        .transactions_exceeding_max_retries
-                        .fetch_add(1, Ordering::Relaxed);
-                    return false;
-                }
+            if let Some(max_retries) = max_retries
+                && transaction_info.retries >= max_retries
+            {
+                info!("Dropping transaction due to max retries: {signature}");
+                result.max_retries_elapsed += 1;
+                stats
+                    .transactions_exceeding_max_retries
+                    .fetch_add(1, Ordering::Relaxed);
+                return false;
             }
 
             match signature_status {
@@ -469,10 +468,10 @@ impl SendTransactionService {
 
                         let max_retries = transaction_info
                             .get_max_retries(default_max_retries, service_max_retries);
-                        if let Some(max_retries) = max_retries {
-                            if transaction_info.retries >= max_retries {
-                                exceeded_retries_transactions.push(*signature);
-                            }
+                        if let Some(max_retries) = max_retries
+                            && transaction_info.retries >= max_retries
+                        {
+                            exceeded_retries_transactions.push(*signature);
                         }
                     } else if let Some(last) = transaction_info.last_sent_time {
                         result.last_sent_time = Some(

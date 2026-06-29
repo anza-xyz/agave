@@ -1018,6 +1018,13 @@ fn main() {
                 .help(BlockVerificationMethod::cli_message()),
         )
         .arg(
+            Arg::with_name("skip_inter_slot_verification")
+                .long("skip-inter-slot-verification")
+                .takes_value(false)
+                .global(true)
+                .help("Skip inter-slot parent block ID verification while processing the ledger"),
+        )
+        .arg(
             Arg::with_name("unified_scheduler_handler_threads")
                 .long("unified-scheduler-handler-threads")
                 .value_name("COUNT")
@@ -2275,18 +2282,17 @@ fn main() {
                             .unwrap()
                             .into_iter()
                         {
-                            if let Ok(StakeStateV2::Stake(meta, stake, _)) = account.state() {
-                                if vote_accounts_to_destake.contains(&stake.delegation.voter_pubkey)
-                                {
-                                    if verbose_level > 0 {
-                                        warn!(
-                                            "Undelegating stake account {} from {}",
-                                            address, stake.delegation.voter_pubkey,
-                                        );
-                                    }
-                                    account.set_state(&StakeStateV2::Initialized(meta)).unwrap();
-                                    bank.store_account(&address, &account);
+                            if let Ok(StakeStateV2::Stake(meta, stake, _)) = account.state()
+                                && vote_accounts_to_destake.contains(&stake.delegation.voter_pubkey)
+                            {
+                                if verbose_level > 0 {
+                                    warn!(
+                                        "Undelegating stake account {} from {}",
+                                        address, stake.delegation.voter_pubkey,
+                                    );
                                 }
+                                account.set_state(&StakeStateV2::Initialized(meta)).unwrap();
+                                bank.store_account(&address, &account);
                             }
                         }
                     }

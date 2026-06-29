@@ -1114,27 +1114,22 @@ fn test_incremental_snapshot_download_with_crossing_full_snapshot_interval_at_st
             validator_snapshot_test_config
                 .full_snapshot_archives_dir
                 .path(),
-        ) {
-            if full_snapshot_slot >= validator_next_full_snapshot_slot {
-                if let Some(incremental_snapshot_slot) =
-                    snapshot_paths::get_highest_incremental_snapshot_archive_slot(
-                        validator_snapshot_test_config
-                            .incremental_snapshot_archives_dir
-                            .path(),
-                        full_snapshot_slot,
-                    )
-                {
-                    if incremental_snapshot_slot >= validator_next_incremental_snapshot_slot {
-                        // specific incremental snapshot is not important, just that one was created
-                        info!(
-                            "Validator made new snapshots, full snapshot slot: \
-                             {full_snapshot_slot}, incremental snapshot slot: \
-                             {incremental_snapshot_slot}",
-                        );
-                        break;
-                    }
-                }
-            }
+        ) && full_snapshot_slot >= validator_next_full_snapshot_slot
+            && let Some(incremental_snapshot_slot) =
+                snapshot_paths::get_highest_incremental_snapshot_archive_slot(
+                    validator_snapshot_test_config
+                        .incremental_snapshot_archives_dir
+                        .path(),
+                    full_snapshot_slot,
+                )
+            && incremental_snapshot_slot >= validator_next_incremental_snapshot_slot
+        {
+            // specific incremental snapshot is not important, just that one was created
+            info!(
+                "Validator made new snapshots, full snapshot slot: {full_snapshot_slot}, \
+                 incremental snapshot slot: {incremental_snapshot_slot}",
+            );
+            break;
         }
 
         assert!(
@@ -1967,11 +1962,11 @@ fn do_test_future_tower(cluster_mode: ClusterMode) {
     loop {
         sleep(Duration::from_millis(100));
 
-        if let Some(root) = root_in_tower(&val_a_ledger_path, &validator_a_pubkey) {
-            if root >= 15 {
-                root_before_restart = root;
-                break;
-            }
+        if let Some(root) = root_in_tower(&val_a_ledger_path, &validator_a_pubkey)
+            && root >= 15
+        {
+            root_before_restart = root;
+            break;
         }
     }
     let purged_slot_before_restart = 10;
@@ -1997,11 +1992,11 @@ fn do_test_future_tower(cluster_mode: ClusterMode) {
     for _ in 0..600 {
         sleep(Duration::from_millis(100));
 
-        if let Some(root) = root_in_tower(&val_a_ledger_path, &validator_a_pubkey) {
-            if root >= some_root_after_restart {
-                newly_rooted = true;
-                break;
-            }
+        if let Some(root) = root_in_tower(&val_a_ledger_path, &validator_a_pubkey)
+            && root >= some_root_after_restart
+        {
+            newly_rooted = true;
+            break;
         }
     }
     let _validator_a_info = cluster.exit_node(&validator_a_pubkey);
@@ -2139,10 +2134,10 @@ fn test_hard_fork_invalidates_tower() {
     loop {
         sleep(Duration::from_millis(100));
 
-        if let Some(root) = root_in_tower(&val_a_ledger_path, &validator_a_pubkey) {
-            if root >= min_root {
-                break;
-            }
+        if let Some(root) = root_in_tower(&val_a_ledger_path, &validator_a_pubkey)
+            && root >= min_root
+        {
+            break;
         }
     }
 
@@ -2328,12 +2323,11 @@ fn test_hard_fork_with_gap_in_roots() {
     loop {
         sleep(Duration::from_millis(100));
 
-        if let Some((last_vote, _)) = last_vote_in_tower(&val_a_ledger_path, &validator_a_pubkey) {
-            if last_vote >= min_last_vote
-                && root_in_tower(&val_a_ledger_path, &validator_a_pubkey) > Some(min_root)
-            {
-                break;
-            }
+        if let Some((last_vote, _)) = last_vote_in_tower(&val_a_ledger_path, &validator_a_pubkey)
+            && last_vote >= min_last_vote
+            && root_in_tower(&val_a_ledger_path, &validator_a_pubkey) > Some(min_root)
+        {
+            break;
         }
     }
 
@@ -3181,10 +3175,10 @@ fn do_test_lockout_violation_with_or_without_tower(with_tower: bool) {
     // Step 1: Wait for validator A to vote so the tower file exists, and so we can determine the
     // `base_slot` and `next_slot_on_a`
     loop {
-        if let Some((last_vote, _)) = last_vote_in_tower(&val_a_ledger_path, &validator_a_pubkey) {
-            if last_vote >= 1 {
-                break;
-            }
+        if let Some((last_vote, _)) = last_vote_in_tower(&val_a_ledger_path, &validator_a_pubkey)
+            && last_vote >= 1
+        {
+            break;
         }
 
         sleep(Duration::from_millis(100));
@@ -4414,10 +4408,10 @@ fn test_slot_hash_expiry() {
     // Let A run for a while until we get to the common ancestor
     info!("Letting A run until common_ancestor_slot");
     loop {
-        if let Some((last_vote, _)) = last_vote_in_tower(&a_ledger_path, &a_pubkey) {
-            if last_vote >= common_ancestor_slot {
-                break;
-            }
+        if let Some((last_vote, _)) = last_vote_in_tower(&a_ledger_path, &a_pubkey)
+            && last_vote >= common_ancestor_slot
+        {
+            break;
         }
         sleep(Duration::from_millis(100));
     }
@@ -4495,14 +4489,14 @@ fn test_slot_hash_expiry() {
         let last_vote =
             wait_for_last_vote_in_tower_to_land_in_ledger(&b_ledger_path, &b_pubkey).unwrap();
         let mut ancestors = AncestorIterator::new(last_vote, &blockstore);
-        if let Some(index) = ancestors.position(|x| x == common_ancestor_slot) {
-            if index > 7 {
-                info!(
-                    "B has forked for enough lockout: {:?}",
-                    AncestorIterator::new(last_vote, &blockstore).collect::<Vec<Slot>>()
-                );
-                break;
-            }
+        if let Some(index) = ancestors.position(|x| x == common_ancestor_slot)
+            && index > 7
+        {
+            info!(
+                "B has forked for enough lockout: {:?}",
+                AncestorIterator::new(last_vote, &blockstore).collect::<Vec<Slot>>()
+            );
+            break;
         }
         sleep(Duration::from_millis(1000));
     }
@@ -4886,10 +4880,9 @@ fn test_boot_from_local_state() {
     let bank_snapshot = loop {
         if let Some(bank_snapshot) =
             snapshot_utils::get_highest_bank_snapshot(&validator2_config.bank_snapshots_dir)
+            && bank_snapshot.slot > incremental_snapshot_archive.slot()
         {
-            if bank_snapshot.slot > incremental_snapshot_archive.slot() {
-                break bank_snapshot;
-            }
+            break bank_snapshot;
         }
         assert!(
             timer.elapsed() < Duration::from_secs(30),
@@ -5569,16 +5562,16 @@ fn test_duplicate_shreds_switch_failure() {
             &target_switch_fork_validator_ledger_path,
             &target_switch_fork_validator_pubkey,
         );
-        if let Some(latest_vote_slot) = last_vote {
-            if latest_vote_slot > dup_slot {
-                let blockstore = open_blockstore(&target_switch_fork_validator_ledger_path);
-                let ancestor_slots: HashSet<Slot> =
-                    AncestorIterator::new_inclusive(latest_vote_slot, &blockstore).collect();
-                assert!(ancestor_slots.contains(&latest_vote_slot));
-                assert!(ancestor_slots.contains(&0));
-                assert!(!ancestor_slots.contains(&dup_slot));
-                break;
-            }
+        if let Some(latest_vote_slot) = last_vote
+            && latest_vote_slot > dup_slot
+        {
+            let blockstore = open_blockstore(&target_switch_fork_validator_ledger_path);
+            let ancestor_slots: HashSet<Slot> =
+                AncestorIterator::new_inclusive(latest_vote_slot, &blockstore).collect();
+            assert!(ancestor_slots.contains(&latest_vote_slot));
+            assert!(ancestor_slots.contains(&0));
+            assert!(!ancestor_slots.contains(&dup_slot));
+            break;
         }
         sleep(Duration::from_millis(1000));
     }
@@ -5760,10 +5753,9 @@ fn test_invalid_forks_persisted_on_restart() {
     loop {
         if let Some(slot) =
             wait_for_last_vote_in_tower_to_land_in_ledger(&target_ledger_path, &target_pubkey)
+            && slot > dup_slot
         {
-            if slot > dup_slot {
-                break;
-            }
+            break;
         }
 
         assert!(
@@ -6262,14 +6254,13 @@ fn test_alpenglow_migration(
     // Monitor for feature activation
     let activation_slot;
     loop {
-        if let Ok(account) = client.get_account(&agave_feature_set::alpenglow::id()) {
-            if let Some(feature) = solana_feature_gate_interface::from_account(&account) {
-                if let Some(slot) = feature.activated_at {
-                    activation_slot = slot;
-                    info!("Feature activated at slot {slot}");
-                    break;
-                }
-            }
+        if let Ok(account) = client.get_account(&agave_feature_set::alpenglow::id())
+            && let Some(feature) = solana_feature_gate_interface::from_account(&account)
+            && let Some(slot) = feature.activated_at
+        {
+            activation_slot = slot;
+            info!("Feature activated at slot {slot}");
+            break;
         }
         std::thread::sleep(std::time::Duration::from_millis(100));
     }
