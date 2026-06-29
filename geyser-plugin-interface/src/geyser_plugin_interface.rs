@@ -213,8 +213,11 @@ pub struct ReplicaTransactionInfoV4<'a> {
 /// plugin implementations to handle the change.
 #[repr(u32)]
 pub enum ReplicaTransactionInfoVersions<'a> {
+    #[deprecated]
     V0_0_1(&'a ReplicaTransactionInfo<'a>),
+    #[deprecated]
     V0_0_2(&'a ReplicaTransactionInfoV2<'a>),
+    #[deprecated]
     V0_0_3(&'a ReplicaTransactionInfoV3<'a>),
     V0_0_4(&'a ReplicaTransactionInfoV4<'a>),
 }
