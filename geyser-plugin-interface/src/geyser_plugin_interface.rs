@@ -680,6 +680,7 @@ pub trait GeyserPlugin: Any + Send + Sync + std::fmt::Debug {
         slot: Slot,
         parent: Option<u64>,
         status: &SlotStatus,
+        bank_id: Option<BankId>,
     ) -> Result<()> {
         Ok(())
     }
