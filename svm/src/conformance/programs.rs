@@ -81,6 +81,13 @@ fn create_keyed_account_for_builtin_program(program_id: &Pubkey, name: &str) -> 
     (*program_id, account)
 }
 
+pub fn keyed_account_for_builtin_pubkey(program_id: &Pubkey) -> Option<(Pubkey, Account)> {
+    SVM_BUILTINS
+        .iter()
+        .find(|builtin| builtin.program_id == *program_id)
+        .map(|builtin| create_keyed_account_for_builtin_program(&builtin.program_id, builtin.name))
+}
+
 pub fn keyed_account_for_system_program() -> (Pubkey, Account) {
     create_keyed_account_for_builtin_program(&SVM_BUILTINS[0].program_id, SVM_BUILTINS[0].name)
 }

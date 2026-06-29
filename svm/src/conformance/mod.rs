@@ -20,3 +20,8 @@ pub mod serialization;
 pub mod setup;
 #[cfg(feature = "conformance")]
 pub mod syscall;
+pub mod transaction_address_loader;
+pub mod transaction_meta;
+pub mod txn;
+#[cfg(feature = "conformance")]
+pub mod versioned_message;
