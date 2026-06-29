@@ -44,7 +44,8 @@ impl PoolVoteAggregate {
         &self.vote
     }
 
-    pub(super) fn ranks(&self) -> &BitVec<u8> {
+    /// Returns the ranks of all the validators included in the aggregate.
+    pub(super) fn signed_ranks(&self) -> &BitVec<u8> {
         &self.original_ranks
     }
 

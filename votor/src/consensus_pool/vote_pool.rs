@@ -16,10 +16,9 @@
 //!   actor will be deemed incompatible and not included in the pool.
 //!
 //! To address these issues, the vote pool first relies on the bls-sigverifier
-//! to dedup votes before sending them.  And then the vote pool stores
-//! aggregates that were not compatible with the existing aggregates separately
-//! in `ConflictedAggregates`.  When it builds a certificate, it includes as
-//! many aggregates from the conflicted set as possible.
+//! to dedup votes before sending them.  Then the vote pool uses
+//! `PoolVoteAggregate` to only count the stake of the validators not already
+//! present in the pool.
 
 use {
     crate::consensus_pool::vote_pool::pool_vote_aggregate::PoolVoteAggregate,
@@ -177,7 +176,7 @@ impl NotarFallbackVoteEntry {
         let block_id = *aggregate.vote().block_id().unwrap();
         let mut validators = vec![];
         // TODO: can we remove the collect below?
-        for rank in aggregate.ranks().iter_ones().collect::<Vec<_>>() {
+        for rank in aggregate.signed_ranks().iter_ones().collect::<Vec<_>>() {
             // TODO: handle unwrap
             let stake_entry = rank_map.get_pubkey_stake_entry(rank).unwrap();
             let validator = stake_entry.vote_account_pubkey;
@@ -231,7 +230,7 @@ impl VoteEntry {
 
     fn new_with_aggregate(max_validators: usize, aggregate: PoolVoteAggregate) -> Self {
         let mut ranks = default_bitvec(max_validators);
-        ranks |= aggregate.ranks();
+        ranks |= aggregate.signed_ranks();
         Self {
             ranks,
             signature: aggregate.signature().try_as_projective().unwrap(),
@@ -248,7 +247,7 @@ impl VoteEntry {
         self.signature
             .aggregate_with(std::iter::once(aggregate.signature()))
             .map_err(VotePoolAddVoteError::SignatureAggregationFailed)?;
-        self.ranks |= aggregate.ranks();
+        self.ranks |= aggregate.signed_ranks();
         self.stake = self.stake.saturating_add(aggregate.stake());
         Ok(self.stake)
     }
