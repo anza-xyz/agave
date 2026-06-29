@@ -3,7 +3,7 @@
 //! In addition, the dynamic library must export a "C" function _create_plugin which
 //! creates the implementation of the plugin.
 use {
-    solana_clock::{Slot, UnixTimestamp},
+    solana_clock::{BankId, Slot, UnixTimestamp},
     solana_hash::Hash,
     solana_message::v0::LoadedAddresses,
     solana_signature::Signature,
@@ -181,6 +181,32 @@ pub struct ReplicaTransactionInfoV3<'a> {
     pub index: usize,
 }
 
+/// Information about a transaction, including index in block and bank id
+#[derive(Clone, Debug)]
+#[repr(C)]
+pub struct ReplicaTransactionInfoV4<'a> {
+    /// The transaction signature, used for identifying the transaction.
+    pub signature: &'a Signature,
+
+    /// The transaction message hash, used for identifying the transaction.
+    pub message_hash: &'a Hash,
+
+    /// Indicates if the transaction is a simple vote transaction.
+    pub is_vote: bool,
+
+    /// The versioned transaction.
+    pub transaction: &'a VersionedTransaction,
+
+    /// Metadata of the transaction status.
+    pub transaction_status_meta: &'a TransactionStatusMeta,
+
+    /// The transaction's index in the block
+    pub index: usize,
+
+    /// The id of the bank that processed the transaction.
+    pub bank_id: BankId,
+}
+
 /// A wrapper to future-proof ReplicaTransactionInfo handling.
 /// If there were a change to the structure of ReplicaTransactionInfo,
 /// there would be new enum entry for the newer version, forcing
@@ -190,6 +216,7 @@ pub enum ReplicaTransactionInfoVersions<'a> {
     V0_0_1(&'a ReplicaTransactionInfo<'a>),
     V0_0_2(&'a ReplicaTransactionInfoV2<'a>),
     V0_0_3(&'a ReplicaTransactionInfoV3<'a>),
+    V0_0_4(&'a ReplicaTransactionInfoV4<'a>),
 }
 
 /// Information about a transaction after deshredding (when entries are formed from shreds).

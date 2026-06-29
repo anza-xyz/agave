@@ -328,6 +328,7 @@ pub fn execute_batch<'a>(
 
         transaction_status_sender.send_transaction_status_batch(
             bank.slot(),
+            bank.bank_id(),
             transactions,
             commit_results,
             balances,
@@ -2804,6 +2805,7 @@ pub enum TransactionStatusMessage {
 #[derive(Debug)]
 pub struct TransactionStatusBatch {
     pub slot: Slot,
+    pub bank_id: BankId,
     pub transactions: Vec<SanitizedTransaction>,
     pub commit_results: Vec<TransactionCommitResult>,
     pub balances: TransactionBalancesSet,
@@ -2822,6 +2824,7 @@ impl TransactionStatusSender {
     pub fn send_transaction_status_batch(
         &self,
         slot: Slot,
+        bank_id: BankId,
         transactions: Vec<SanitizedTransaction>,
         commit_results: Vec<TransactionCommitResult>,
         balances: TransactionBalancesSet,
@@ -2837,6 +2840,7 @@ impl TransactionStatusSender {
         if let Err(e) = self.sender.send(TransactionStatusMessage::Batch((
             TransactionStatusBatch {
                 slot,
+                bank_id,
                 transactions,
                 commit_results,
                 balances,
