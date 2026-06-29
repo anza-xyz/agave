@@ -3000,7 +3000,7 @@ fn test_delete_dependencies() {
     for key in [&key0, &key1, &key2] {
         let (rooted_entries, ref_count) = accounts_index.get_and_then(key, |entry| {
             let slot_list_lock = entry.unwrap().slot_list_read_lock();
-            let rooted = accounts_index.get_rooted_entries(slot_list_lock.as_ref(), None);
+            let rooted = accounts_index.get_entries_up_to_inclusive(slot_list_lock.as_ref(), None);
             (false, (rooted, entry.unwrap().ref_count()))
         });
         let index = accounts_index.bin_calculator.bin_from_pubkey(key);

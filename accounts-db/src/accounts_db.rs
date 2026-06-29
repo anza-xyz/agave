@@ -1868,7 +1868,7 @@ impl AccountsDb {
                                             // Add all the rooted entries that contain this pubkey.
                                             // We know the highest rooted entry is zero lamports.
                                             candidate_info.slot_list =
-                                                self.accounts_index.get_rooted_entries(
+                                                self.accounts_index.get_entries_up_to_inclusive(
                                                     slot_list,
                                                     max_clean_root_inclusive,
                                                 );
