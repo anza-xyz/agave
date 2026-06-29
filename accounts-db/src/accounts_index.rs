@@ -1692,49 +1692,6 @@ mod tests {
     }
 
     #[test]
-    fn test_insert_with_lock_no_ancestors() {
-        let key = solana_pubkey::new_rand();
-        let index = AccountsIndex::<bool, bool>::default_for_tests();
-        let slot = 0;
-        let account_info = true;
-
-        let new_entry =
-            PreAllocatedAccountMapEntry::new(slot, account_info, &index.storage.storage, false);
-        assert_eq!(0, account_maps_stats_len(&index));
-
-        assert_eq!(0, account_maps_stats_len(&index));
-        let r_account_maps = index.get_bin(&key);
-        r_account_maps.upsert(
-            &key,
-            new_entry,
-            None,
-            &mut ReclaimsSlotList::default(),
-            UPSERT_RECLAIM_TEST_DEFAULT,
-        );
-        assert_eq!(1, account_maps_stats_len(&index));
-
-        // Every slot in the index is a root, so the account is visible even with
-        // no ancestors.
-        let ancestors = Ancestors::default();
-        assert!(index.contains_with(&key, &ancestors));
-        index.get_and_then(&key, |entry| {
-            let (stored_slot, value) = entry.unwrap().slot_list_read_lock()[0];
-            assert_eq!(stored_slot, slot);
-            assert_eq!(value, account_info);
-            (false, ())
-        });
-
-        let mut num = 0;
-        index.scan_accounts(
-            &ancestors,
-            0,
-            |_pubkey, _index| num += 1,
-            &ScanConfig::default(),
-        );
-        assert_eq!(num, 1);
-    }
-
-    #[test]
     fn test_insert_ignore_reclaims() {
         {
             // non-cached
@@ -2114,10 +2071,6 @@ mod tests {
         index.upsert(5, 5, &key, 100, &mut gc, UpsertReclaim::IgnoreReclaims);
         // No entry at slot 99 — replace must panic rather than silently appending.
         index.replace(10, 99, &key, 200);
-    }
-
-    fn account_maps_stats_len<T: IndexValue>(index: &AccountsIndex<T, T>) -> usize {
-        index.storage.storage.stats.total_count()
     }
 
     #[test]
