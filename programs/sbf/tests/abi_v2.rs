@@ -640,3 +640,44 @@ fn test_sol_transfer_lamports() {
     assert_eq!(bank.get_account(&acc_1_key).unwrap().lamports(), 20);
     assert_eq!(bank.get_account(&acc_2_key).unwrap().lamports(), 30);
 }
+
+#[test]
+fn test_resize_cpi_scratchpad() {
+    let GenesisConfigInfo {
+        genesis_config,
+        mint_keypair,
+        ..
+    } = create_genesis_config(50);
+
+    let (bank, bank_forks) = Bank::new_with_bank_forks_for_tests(&genesis_config);
+    let mut bank_client = BankClient::new_shared(bank.clone());
+    let authority_keypair = Keypair::new();
+
+    let (bank, program_id) = load_upgradeable_program_and_advance_slot(
+        &mut bank_client,
+        &bank_forks,
+        &mint_keypair,
+        &authority_keypair,
+        "solana_sbf_rust_abi_v2_memory",
+    );
+
+    let acc_1_key = Pubkey::new_unique();
+    let acc_1 = AccountSharedData::create_from_existing_shared_data(
+        10,
+        vec![1, 2, 3].into(),
+        program_id,
+        false,
+        64,
+    );
+    bank.store_account(&acc_1_key, &acc_1);
+
+    let metas_for_ix_1 = vec![AccountMeta::new(acc_1_key, false)];
+
+    let data = [11u8];
+    let ix_1 = Instruction::new_with_bytes(program_id, &data, metas_for_ix_1);
+    let message = Message::new(&[ix_1], Some(&mint_keypair.pubkey()));
+    let tx = Transaction::new(&[&mint_keypair], message, bank.last_blockhash());
+    let (_, _, logs, _) = process_transaction_and_record_inner(&bank, tx);
+
+    assert!(logs.last().unwrap().contains("success"));
+}

@@ -2945,7 +2945,7 @@ mod tests {
         },
         solana_sbpf::{
             aligned_memory::AlignedMemory,
-            ebpf::{self, HOST_ALIGN},
+            ebpf::{self, HOST_ALIGN, MM_REGION_SIZE},
             error::EbpfError,
             memory_region::{MemoryMapping, MemoryRegion},
             program::SBPFVersion,
@@ -2966,11 +2966,13 @@ mod tests {
             instruction_accounts::InstructionAccount,
             vm_addresses::{
                 GUEST_ACCOUNT_PAYLOAD_BASE_ADDRESS, GUEST_ACCOUNT_PAYLOAD_END_ADDRESS,
-                GUEST_INSTRUCTION_ACCOUNT_END_ADDRESS, GUEST_REGION_SIZE, RETURN_DATA_SCRATCHPAD,
+                GUEST_INSTRUCTION_ACCOUNT_BASE_ADDRESS, GUEST_INSTRUCTION_ACCOUNT_END_ADDRESS,
+                GUEST_INSTRUCTION_DATA_BASE_ADDRESS, GUEST_REGION_SIZE, RETURN_DATA_SCRATCHPAD,
             },
         },
         std::{
             borrow::Cow,
+            collections::HashSet,
             hash::{DefaultHasher, Hash, Hasher},
             mem,
             str::FromStr,
@@ -8221,9 +8223,16 @@ mod tests {
         for region in &mut regions {
             region.writable = true;
         }
+
+        let allowed_addresses: HashSet<u64> = HashSet::from([
+            RETURN_DATA_SCRATCHPAD,
+            GUEST_INSTRUCTION_ACCOUNT_BASE_ADDRESS.saturating_add(MM_REGION_SIZE),
+            GUEST_INSTRUCTION_DATA_BASE_ADDRESS.saturating_add(MM_REGION_SIZE),
+        ]);
+
         for (idx, region) in regions.clone().into_iter().enumerate() {
-            if region.vm_addr == RETURN_DATA_SCRATCHPAD {
-                // The return data scratchpad can be resized even when it is not writable
+            if allowed_addresses.contains(&region.vm_addr) {
+                // These regions can be resized even when they are not writable
                 continue;
             }
             regions[idx].writable = false;
@@ -8391,5 +8400,186 @@ mod tests {
                 .lamports(),
             40
         );
+    }
+
+    #[test]
+    fn resize_cpi_scratchpads() {
+        let program_id = Pubkey::new_unique();
+        let transaction_accounts = vec![
+            (
+                program_id,
+                AccountSharedData::new(0, 2, &Pubkey::new_unique()),
+            ),
+            (
+                Pubkey::new_unique(),
+                AccountSharedData::new(20, 3, &program_id),
+            ),
+            (
+                Pubkey::new_unique(),
+                AccountSharedData::new(30, 3, &program_id),
+            ),
+        ];
+        with_mock_invoke_context!(invoke_context, transaction_context, 2, transaction_accounts);
+
+        invoke_context
+            .transaction_context
+            .configure_instruction_at_index(
+                0,
+                0,
+                vec![InstructionAccount::new(1, false, true)],
+                vec![u16::MAX; MAX_ACCOUNTS_PER_TRANSACTION],
+                Cow::Owned(Vec::new()),
+                None,
+            )
+            .unwrap();
+
+        invoke_context
+            .transaction_context
+            .configure_instruction_at_index(
+                1,
+                0,
+                vec![InstructionAccount::new(1, false, true)],
+                vec![u16::MAX; MAX_ACCOUNTS_PER_TRANSACTION],
+                Cow::Owned(Vec::new()),
+                None,
+            )
+            .unwrap();
+
+        let regions = create_abiv2_regions(invoke_context.transaction_context);
+        let mapping = unsafe {
+            MemoryMapping::new(regions.clone(), &Config::default(), SBPFVersion::V4).unwrap()
+        };
+
+        invoke_context.push().unwrap();
+        invoke_context
+            .memory_contexts
+            .mock_set_mapping_abi_v2(mapping);
+
+        // It is not possible to resize regions from top-level instructions
+        for addr in [
+            GUEST_INSTRUCTION_DATA_BASE_ADDRESS,
+            GUEST_INSTRUCTION_DATA_BASE_ADDRESS.saturating_add(MM_REGION_SIZE),
+            GUEST_INSTRUCTION_ACCOUNT_BASE_ADDRESS,
+            GUEST_INSTRUCTION_DATA_BASE_ADDRESS.saturating_add(MM_REGION_SIZE),
+        ] {
+            let result = SyscallSetBufferLength::rust(&mut invoke_context, addr, 20, 0, 0, 0);
+            let err = result.unwrap_err().downcast::<InstructionError>().unwrap();
+            assert_eq!(*err, InstructionError::InvalidArgument);
+        }
+
+        // Resizing the CPI region
+        let result = SyscallSetBufferLength::rust(
+            &mut invoke_context,
+            GUEST_INSTRUCTION_DATA_BASE_ADDRESS.saturating_add(MM_REGION_SIZE.saturating_mul(2)),
+            20,
+            0,
+            0,
+            0,
+        );
+        assert!(result.is_ok());
+        unsafe {
+            assert_eq!(
+                (*invoke_context
+                    .transaction_context
+                    .transaction_frame_address())
+                .cpi_data_scratchpad
+                .len(),
+                20
+            );
+        }
+
+        let next_ctx = invoke_context
+            .transaction_context
+            .get_next_instruction_context()
+            .unwrap();
+        assert_eq!(next_ctx.get_instruction_data().len(), 20);
+
+        // Invalid size should not work
+        let bytes_size = size_of::<InstructionAccount>().saturating_mul(20) as u64;
+        let result = SyscallSetBufferLength::rust(
+            &mut invoke_context,
+            GUEST_INSTRUCTION_ACCOUNT_BASE_ADDRESS.saturating_add(MM_REGION_SIZE.saturating_mul(2)),
+            bytes_size.saturating_add(1),
+            0,
+            0,
+            0,
+        );
+        let err = result.unwrap_err().downcast::<InstructionError>().unwrap();
+        assert_eq!(*err, InstructionError::InvalidArgument);
+
+        let result = SyscallSetBufferLength::rust(
+            &mut invoke_context,
+            GUEST_INSTRUCTION_ACCOUNT_BASE_ADDRESS.saturating_add(MM_REGION_SIZE.saturating_mul(2)),
+            bytes_size,
+            0,
+            0,
+            0,
+        );
+        assert!(result.is_ok());
+        unsafe {
+            assert_eq!(
+                (*invoke_context
+                    .transaction_context
+                    .transaction_frame_address())
+                .cpi_accounts_scratchpad
+                .len(),
+                20
+            );
+        }
+
+        let next_ctx = invoke_context
+            .transaction_context
+            .get_next_instruction_context()
+            .unwrap();
+        assert_eq!(next_ctx.get_number_of_instruction_accounts(), 20);
+
+        // Let's perform the CPI
+        invoke_context.push().unwrap();
+        invoke_context.memory_contexts.set_abi_v2().unwrap();
+
+        // Now we cannot resize the same areas anymore
+        let result = SyscallSetBufferLength::rust(
+            &mut invoke_context,
+            GUEST_INSTRUCTION_DATA_BASE_ADDRESS.saturating_add(MM_REGION_SIZE.saturating_mul(2)),
+            20,
+            0,
+            0,
+            0,
+        );
+        let err = result.unwrap_err().downcast::<InstructionError>().unwrap();
+        assert_eq!(*err, InstructionError::InvalidArgument);
+        let result = SyscallSetBufferLength::rust(
+            &mut invoke_context,
+            GUEST_INSTRUCTION_ACCOUNT_BASE_ADDRESS.saturating_add(MM_REGION_SIZE.saturating_mul(2)),
+            bytes_size,
+            0,
+            0,
+            0,
+        );
+        let err = result.unwrap_err().downcast::<InstructionError>().unwrap();
+        assert_eq!(*err, InstructionError::InvalidArgument);
+
+        // Not even after returning from CPI
+        invoke_context.pop().unwrap();
+        let result = SyscallSetBufferLength::rust(
+            &mut invoke_context,
+            GUEST_INSTRUCTION_DATA_BASE_ADDRESS.saturating_add(MM_REGION_SIZE.saturating_mul(2)),
+            20,
+            0,
+            0,
+            0,
+        );
+        let err = result.unwrap_err().downcast::<InstructionError>().unwrap();
+        assert_eq!(*err, InstructionError::InvalidArgument);
+        let result = SyscallSetBufferLength::rust(
+            &mut invoke_context,
+            GUEST_INSTRUCTION_ACCOUNT_BASE_ADDRESS.saturating_add(MM_REGION_SIZE.saturating_mul(2)),
+            bytes_size,
+            0,
+            0,
+            0,
+        );
+        let err = result.unwrap_err().downcast::<InstructionError>().unwrap();
+        assert_eq!(*err, InstructionError::InvalidArgument);
     }
 }

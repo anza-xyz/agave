@@ -210,6 +210,11 @@ impl<'ix_data> TransactionContext<'ix_data> {
         self.instruction_trace.len().saturating_sub(1)
     }
 
+    /// Check if the provided instruction index is that of an
+    pub fn is_upcoming_cpi_ix_index(&self, ix_idx: usize) -> bool {
+        self.get_instruction_trace_length() == ix_idx
+    }
+
     /// Gets a view on an instruction by its index in the trace
     pub fn get_instruction_context_at_index_in_trace(
         &self,
@@ -811,39 +816,99 @@ impl<'ix_data> TransactionContext<'ix_data> {
                 account.resize_payload_region(new_len as usize)?
             }
             GUEST_INSTRUCTION_DATA_BASE_ADDRESS..GUEST_INSTRUCTION_DATA_END_ADDRESS => {
-                if !old_region.writable {
-                    return Err(InstructionError::InvalidArgument);
-                }
                 let ix_address = vm_address
                     .checked_sub(GUEST_INSTRUCTION_DATA_BASE_ADDRESS)
                     .ok_or(InstructionError::InvalidArgument)?;
                 let ix_idx = abiv2_region_index_from_vm_address(ix_address);
-                let ix = self.instruction_data.get_mut(ix_idx);
-                let ix = ix.ok_or(InstructionError::InvalidArgument)?;
-                let data_vec = match ix {
-                    Cow::Owned(vec) => vec,
-                    Cow::Borrowed(_) => {
-                        debug_assert!(false, "writable region implies ownership of ix data");
-                        ix.to_mut()
-                    }
-                };
+                if !self.is_upcoming_cpi_ix_index(ix_idx) {
+                    // Only the last region is supposed to be resized, since it is going to be
+                    // used for CPI
+                    return Err(InstructionError::InvalidArgument);
+                }
+
+                let ix_data = self
+                    .instruction_data
+                    .get_mut(ix_idx)
+                    .ok_or(InstructionError::InvalidArgument)?;
+
+                debug_assert!(
+                    matches!(ix_data, Cow::Owned(_)),
+                    "writable regions implies ownership of ix data"
+                );
+                let data_vec = ix_data.to_mut();
+
                 data_vec.resize(new_len as usize, 0);
+
+                let ix_frame = self
+                    .instruction_trace
+                    .get_mut(ix_idx)
+                    .ok_or(InstructionError::InvalidArgument)?;
+
+                ix_frame.instruction_data = VmSlice::new(
+                    GUEST_INSTRUCTION_DATA_BASE_ADDRESS
+                        .saturating_add(GUEST_REGION_SIZE.saturating_mul(ix_idx as u64)),
+                    new_len,
+                );
+
+                // SAFETY: The vector backing this virtual memory has just been resized.
+                unsafe {
+                    self.transaction_frame.cpi_data_scratchpad.set_len(new_len);
+                }
+
                 MemoryRegion::new(&raw mut data_vec[..], vm_address)
             }
             GUEST_INSTRUCTION_ACCOUNT_BASE_ADDRESS..GUEST_INSTRUCTION_ACCOUNT_END_ADDRESS => {
-                if !old_region.writable {
-                    return Err(InstructionError::InvalidArgument);
-                }
                 let ix_address = vm_address
                     .checked_sub(GUEST_INSTRUCTION_ACCOUNT_BASE_ADDRESS)
                     .ok_or(InstructionError::InvalidArgument)?;
                 let ix_idx = abiv2_region_index_from_vm_address(ix_address);
-                let ix = self
+
+                if !self.is_upcoming_cpi_ix_index(ix_idx) {
+                    // Only the last region is supposed to be resized, since it is going to be
+                    // used for CPI
+                    return Err(InstructionError::InvalidArgument);
+                }
+
+                // This constant and the assertion serve to ensure we will never divide by zero
+                // and appease clippy.
+                // PS: The assertion is done during compile time.
+                const SZ: u64 = size_of::<InstructionAccount>() as u64;
+                const _: () = assert!(SZ > 0);
+                let number_of_accounts = new_len.saturating_div(SZ);
+
+                if !new_len.is_multiple_of(SZ) {
+                    return Err(InstructionError::InvalidArgument);
+                }
+
+                let ix_accs = self
                     .instruction_accounts
                     .get_mut(ix_idx)
                     .ok_or(InstructionError::InvalidArgument)?;
-                ix.resize(new_len as usize, InstructionAccount::new(0, false, false));
-                MemoryRegion::new(&raw mut ix[..], vm_address)
+
+                ix_accs.resize(
+                    number_of_accounts as usize,
+                    InstructionAccount::new(0, false, false),
+                );
+
+                let ix_frame = self
+                    .instruction_trace
+                    .get_mut(ix_idx)
+                    .ok_or(InstructionError::InvalidArgument)?;
+
+                ix_frame.instruction_accounts = VmSlice::new(
+                    GUEST_INSTRUCTION_ACCOUNT_BASE_ADDRESS
+                        .saturating_add(GUEST_REGION_SIZE.saturating_mul(ix_idx as u64)),
+                    number_of_accounts,
+                );
+
+                // SAFETY: The vector backing this virtual memory has just been resized.
+                unsafe {
+                    self.transaction_frame
+                        .cpi_accounts_scratchpad
+                        .set_len(number_of_accounts);
+                }
+
+                MemoryRegion::new(&raw mut ix_accs[..], vm_address)
             }
             _ => {
                 return Err(InstructionError::InvalidArgument);

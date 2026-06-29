@@ -7,6 +7,7 @@ use {
     solana_pubkey::Pubkey,
     solana_transaction_context::{
         instruction::InstructionFrame,
+        instruction_accounts::InstructionAccount,
         transaction::TransactionFrame,
         transaction_accounts::AccountSharedFields,
         vm_addresses::{
@@ -325,6 +326,29 @@ unsafe fn test_sol_transfer_lamports(
     );
 }
 
+unsafe fn test_resize_cpi_scratchpads(tx_frame: &mut TransactionFrame) {
+    // Resizing the cpi data scratchpad
+    assert_eq!(tx_frame.cpi_data_scratchpad.len(), 0);
+    set_buffer_length(tx_frame.cpi_data_scratchpad.ptr(), 8);
+    assert_eq!(tx_frame.cpi_data_scratchpad.len(), 8);
+    let ptr = tx_frame.cpi_data_scratchpad.ptr() as *mut u64;
+    unsafe { *ptr = 77 };
+
+    // Resizing the accounts scratchpad
+    assert_eq!(tx_frame.cpi_accounts_scratchpad.len(), 0);
+    set_buffer_length(
+        tx_frame.cpi_accounts_scratchpad.ptr(),
+        2 * size_of::<InstructionAccount>() as u64,
+    );
+    assert_eq!(
+        tx_frame.cpi_data_scratchpad.len(),
+        2 * size_of::<InstructionAccount>() as u64
+    );
+    let slice_mut = tx_frame.cpi_accounts_scratchpad.as_slice_mut();
+    *slice_mut.get_unchecked_mut(0) = InstructionAccount::new(2, false, true);
+    *slice_mut.get_unchecked_mut(1) = InstructionAccount::new(1, true, true);
+}
+
 #[unsafe(no_mangle)]
 #[allow(clippy::missing_safety_doc)]
 pub unsafe extern "C" fn entrypoint(
@@ -335,8 +359,8 @@ pub unsafe extern "C" fn entrypoint(
     ix_payload_len: u64,
 ) -> u64 {
     // Transaction frame
-    let tx_frame_ptr = TRANSACTION_FRAME_ADDRESS as *const TransactionFrame;
-    let tx_frame = &*tx_frame_ptr;
+    let tx_frame_ptr = TRANSACTION_FRAME_ADDRESS as *mut TransactionFrame;
+    let tx_frame = &mut *tx_frame_ptr;
 
     let instruction_trace = slice::from_raw_parts(
         INSTRUCTION_TRACE_AREA as *const InstructionFrame,
@@ -376,6 +400,7 @@ pub unsafe extern "C" fn entrypoint(
         [0x08, ..] => test_set_buffer_length_account(2, tx_accounts_metadata),
         [0x09, ..] => test_assign_owner(current_ix, tx_accounts_metadata),
         [0x0a, ..] => test_sol_transfer_lamports(tx_accounts_metadata, current_ix),
+        [0x0b, ..] => test_resize_cpi_scratchpads(tx_frame),
         _ => panic!("unknown command"),
     }
     0
