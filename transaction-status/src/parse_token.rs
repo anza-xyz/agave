@@ -6,8 +6,8 @@ use {
         confidential_mint_burn::*, confidential_transfer::*, confidential_transfer_fee::*,
         cpi_guard::*, default_account_state::*, group_member_pointer::*, group_pointer::*,
         interest_bearing_mint::*, memo_transfer::*, metadata_pointer::*, mint_close_authority::*,
-        pausable::*, permanent_delegate::*, reallocate::*, scaled_ui_amount::*, token_group::*,
-        token_metadata::*, transfer_fee::*, transfer_hook::*,
+        pausable::*, permanent_delegate::*, permissioned_burn::*, reallocate::*,
+        scaled_ui_amount::*, token_group::*, token_metadata::*, transfer_fee::*, transfer_hook::*,
     },
     serde::{Deserialize, Serialize},
     serde_json::{Map, Value, json},
@@ -237,7 +237,8 @@ pub fn parse_token(
                     | AuthorityType::GroupPointer
                     | AuthorityType::GroupMemberPointer
                     | AuthorityType::ScaledUiAmount
-                    | AuthorityType::Pause => "mint",
+                    | AuthorityType::Pause
+                    | AuthorityType::PermissionedBurn => "mint",
                     AuthorityType::AccountOwner | AuthorityType::CloseAccount => "account",
                 };
                 let mut value = json!({
@@ -705,6 +706,37 @@ pub fn parse_token(
                 &instruction.accounts,
                 account_keys,
             ),
+            TokenInstruction::UnwrapLamports { amount } => {
+                check_num_token_accounts(&instruction.accounts, 3)?;
+                let mut value = json!({
+                    "source": account_keys[instruction.accounts[0] as usize].to_string(),
+                    "destination": account_keys[instruction.accounts[1] as usize].to_string(),
+                });
+                let map = value.as_object_mut().unwrap();
+                if let COption::Some(amount) = amount {
+                    map.insert("amount".to_string(), json!(amount.to_string()));
+                }
+                parse_signers(
+                    map,
+                    2,
+                    account_keys,
+                    &instruction.accounts,
+                    "authority",
+                    "multisigAuthority",
+                );
+                Ok(ParsedInstructionEnum {
+                    instruction_type: "unwrapLamports".to_string(),
+                    info: value,
+                })
+            }
+            TokenInstruction::PermissionedBurnExtension => parse_permissioned_burn_instruction(
+                &instruction.data[1..],
+                &instruction.accounts,
+                account_keys,
+            ),
+            TokenInstruction::Batch { .. } => Err(ParseInstructionError::InstructionNotParsable(
+                ParsableProgram::SplToken,
+            )),
         }
     } else if let Ok(token_group_instruction) = TokenGroupInstruction::unpack(&instruction.data) {
         parse_token_group_instruction(
@@ -747,6 +779,7 @@ pub enum UiAuthorityType {
     GroupMemberPointer,
     ScaledUiAmount,
     Pause,
+    PermissionedBurn,
 }
 
 impl From<AuthorityType> for UiAuthorityType {
@@ -771,6 +804,7 @@ impl From<AuthorityType> for UiAuthorityType {
             AuthorityType::GroupMemberPointer => UiAuthorityType::GroupMemberPointer,
             AuthorityType::ScaledUiAmount => UiAuthorityType::ScaledUiAmount,
             AuthorityType::Pause => UiAuthorityType::Pause,
+            AuthorityType::PermissionedBurn => UiAuthorityType::PermissionedBurn,
         }
     }
 }
@@ -806,6 +840,7 @@ pub enum UiExtensionType {
     ScaledUiAmount,
     Pausable,
     PausableAccount,
+    PermissionedBurn,
 }
 
 impl From<ExtensionType> for UiExtensionType {
@@ -845,6 +880,7 @@ impl From<ExtensionType> for UiExtensionType {
             ExtensionType::ScaledUiAmount => UiExtensionType::ScaledUiAmount,
             ExtensionType::Pausable => UiExtensionType::Pausable,
             ExtensionType::PausableAccount => UiExtensionType::PausableAccount,
+            ExtensionType::PermissionedBurn => UiExtensionType::PermissionedBurn,
         }
     }
 }
