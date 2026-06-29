@@ -163,8 +163,9 @@ impl Bank {
     /// Begin the process of calculating and distributing rewards.
     /// This process can take multiple slots.
     ///
-    /// Returns the distributed epoch validator rewards, not including lamports
-    /// distributed to the incinerator.
+    /// Returns the total rewards that will be distributed in this epoch (to both validators and
+    /// stakers) minus rewards sent to the incinerator.  This is the total amount the capitalization
+    /// will increase by after all the rewards have been paid.
     pub(in crate::bank) fn begin_partitioned_rewards(
         &mut self,
         parent_epoch: Epoch,
@@ -217,6 +218,9 @@ impl Bank {
             ("parent_block_height", parent_block_height, i64),
         );
         distributed_lamports
+            + rewards_calculation
+                .stake_rewards
+                .total_stake_rewards_lamports
     }
 
     // Calculate rewards from previous epoch and distribute reward commissions
@@ -1366,6 +1370,74 @@ mod tests {
         );
 
         assert!(point_value.is_none());
+    }
+
+    #[test]
+    fn test_begin_partitioned_rewards_returns_total_capitalization_increase() {
+        let (genesis_config, _mint_keypair) = create_genesis_config(1_000 * LAMPORTS_PER_SOL);
+        let mut bank = Bank::new_for_tests(&genesis_config);
+        let thread_pool = ThreadPoolBuilder::new().num_threads(1).build().unwrap();
+
+        let commission_pubkey = Pubkey::new_unique();
+        {
+            let mut commission_account = AccountSharedData::default();
+            commission_account.set_lamports(1);
+            bank.store_account_and_update_capitalization(&commission_pubkey, &commission_account);
+        }
+
+        let commission_lamports = 123;
+        let stake_reward_lamports = 456;
+        let mut reward_commissions = RewardCommissions::default();
+        reward_commissions.insert(
+            commission_pubkey,
+            RewardCommission {
+                commission_bps: Some(0),
+                commission_lamports,
+                burned_lamports: 0,
+                is_vote_account: true,
+            },
+        );
+        let stake_rewards = [Some(PartitionedStakeReward {
+            stake_pubkey: Pubkey::new_unique(),
+            inflation: InflationReward {
+                stake: Stake {
+                    delegation: Delegation::default(),
+                    credits_observed: 0,
+                },
+                stake_reward: stake_reward_lamports,
+                commission_bps: Some(0),
+            },
+        })]
+        .into_iter()
+        .collect::<PartitionedStakeRewards>();
+        let rewards_calculation = PartitionedRewardsCalculation {
+            reward_commissions,
+            stake_rewards: StakeRewardCalculation {
+                stake_rewards: Arc::new(stake_rewards),
+                total_stake_rewards_lamports: stake_reward_lamports,
+            },
+            capitalization: bank.capitalization(),
+            point_value: PointValue {
+                rewards: commission_lamports + stake_reward_lamports,
+                points: 1,
+            },
+            num_filtered_vote_accounts: 1,
+        };
+        let mut rewards_metrics = RewardsMetrics::default();
+
+        let rewards = bank.begin_partitioned_rewards(
+            bank.epoch().saturating_sub(1),
+            bank.parent_slot(),
+            bank.block_height(),
+            &rewards_calculation,
+            &mut rewards_metrics,
+            &thread_pool,
+        );
+
+        assert_eq!(rewards, commission_lamports + stake_reward_lamports);
+        let epoch_rewards = bank.get_epoch_rewards_sysvar();
+        assert_eq!(epoch_rewards.distributed_rewards, commission_lamports);
+        assert_eq!(epoch_rewards.total_rewards, rewards);
     }
 
     struct EpochOperations {

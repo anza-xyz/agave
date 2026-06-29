@@ -1832,7 +1832,7 @@ impl Bank {
 
         // Distribute rewards commission to vote accounts and cache stake rewards
         // for partitioned distribution in the upcoming slots.
-        let (epoch_validator_rewards, begin_partitioned_rewards_time_us) =
+        let (epoch_rewards, begin_partitioned_rewards_time_us) =
             measure_us!(self.begin_partitioned_rewards(
                 parent_epoch,
                 parent_slot,
@@ -1849,7 +1849,7 @@ impl Bank {
             EpochInflationAccountState::new_epoch_update_account(
                 self,
                 epoch_start_capitalization,
-                epoch_validator_rewards,
+                epoch_rewards,
             );
         }
 
