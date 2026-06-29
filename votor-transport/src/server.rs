@@ -364,9 +364,6 @@ impl InboundLoop {
     }
 
     pub(crate) async fn run(mut self) {
-        let mut prune = interval(BANLIST_PRUNE_INTERVAL);
-        prune.set_missed_tick_behavior(MissedTickBehavior::Delay);
-
         let mut metrics = interval(METRICS_INTERVAL);
         metrics.set_missed_tick_behavior(MissedTickBehavior::Delay);
 
@@ -412,10 +409,10 @@ impl InboundLoop {
                     }
                     self.close_not_allowed();
                 }
-                // Metrics.
-                _ = metrics.tick() => stats::report_server(&self.stats, self.total_peers()),
-                // When idle we can take care of bookkeeping that does not affect liveness.
-                _ = prune.tick() => {
+                // When idle we can take care of metrics and bookkeeping that
+                // does not affect liveness.
+                _ = metrics.tick() => {
+                    stats::report_server(&self.stats, self.total_peers());
                     self.banlist.prune();
                     // Reclaim empty connection slots
                     let burst_dos = self.peer_rate_limit_burst_dos;

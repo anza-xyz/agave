@@ -81,12 +81,6 @@ pub const MAX_INFLIGHT_HANDSHAKES: usize = MAX_ALPENGLOW_VOTE_ACCOUNTS;
 /// loss -> 2s to have margin for retransmits.
 pub(crate) const HANDSHAKE_TIMEOUT: Duration = Duration::from_secs(2);
 
-/// How often expired banlist entries are pruned. Bans last for hours,
-/// and their duration is chosen by BLS sigverify, this prune only
-/// reclaims hashmap slots for pubkeys which are no longer banned, i.e.
-/// it never affects whether a ban is active or not.
-pub(crate) const BANLIST_PRUNE_INTERVAL: Duration = Duration::from_mins(1);
-
 /// How often endpoint metrics are reported.
 pub(crate) const METRICS_INTERVAL: Duration = Duration::from_secs(1);
 
