@@ -3,20 +3,22 @@
 
 use {
     super::{AddVoteError, BuildSigBitmapError, partial_cert::PartialCert},
+    crate::block_creation_loop::rewards::certs_builder::entry::has_common_bits,
+    agave_bls_sigverify::sig_verified_messages::VoteAggregate,
     agave_votor_messages::reward_certificate::{BuildRewardCertsRespError, NotarRewardCertificate},
-    solana_bls_signatures::Signature as BLSSignature,
+    bitvec::vec::BitVec,
     solana_clock::Slot,
     solana_hash::Hash,
     solana_pubkey::Pubkey,
     solana_runtime::epoch_stakes::BLSPubkeyToRankMap,
-    std::collections::{HashMap, HashSet},
+    std::collections::HashMap,
 };
 
 /// Struct to manage per slot state for notar votes used to build a [`NotarRewardCertificate`].
 #[derive(Clone)]
 pub(super) struct NotarEntry {
     /// Stores which validators have already voted.
-    voted: HashSet<u16>,
+    voted: BitVec<u8>,
     /// Different validators may vote for different block ids.
     /// This stores a [`PartialCert`] per block id observed.
     partials: HashMap<Hash, PartialCert>,
@@ -26,36 +28,32 @@ impl NotarEntry {
     /// Returns a new instance of [`NotarEntry`].
     pub(super) fn new(max_validators: usize) -> Self {
         Self {
-            voted: HashSet::with_capacity(max_validators),
+            voted: BitVec::repeat(false, max_validators),
             // under normal operations, all validators should vote for a single block id, still allocate space for a few more to hopefully avoid allocations.
             partials: HashMap::with_capacity(5),
         }
     }
 
     /// Returns true if the [`NotarEntry`] needs the vote else false.
-    pub(super) fn wants_vote(&self, rank: u16) -> bool {
-        !self.voted.contains(&rank)
+    pub(super) fn wants_vote(&self, ranks: &BitVec<u8>) -> bool {
+        !has_common_bits(&self.voted, ranks)
     }
 
     /// Adds a new observed vote to the aggregate.
     pub(super) fn add_vote(
         &mut self,
         rank_map: &BLSPubkeyToRankMap,
-        rank: u16,
-        signature: &BLSSignature,
-        block_id: Hash,
         max_validators: usize,
+        block_id: Hash,
+        vote: &VoteAggregate,
     ) -> Result<(), AddVoteError> {
-        if !self.voted.insert(rank) {
-            return Err(AddVoteError::Duplicate);
-        }
         let partial = self
             .partials
             .entry(block_id)
             .or_insert(PartialCert::new(max_validators));
-        let res = partial.add_vote(rank_map, rank, signature);
-        if res.is_err() {
-            self.voted.remove(&rank);
+        let res = partial.add_vote(rank_map, vote);
+        if res.is_ok() {
+            self.voted |= vote.ranks();
         }
         res
     }
@@ -95,12 +93,8 @@ mod tests {
         crate::block_creation_loop::rewards::certs_builder::entry::tests::{
             get_rank_map_keypairs, get_rank_map_keypairs_with_stakes, new_vote, validate_bitmap,
         },
-        agave_votor_messages::{
-            consensus_message::{Block, VoteMessage},
-            vote::Vote,
-        },
+        agave_votor_messages::{consensus_message::Block, vote::Vote},
         rand::Rng,
-        solana_bls_signatures::signature::BLS_SIGNATURE_AFFINE_SIZE,
         solana_hash::Hash,
     };
 
@@ -109,7 +103,7 @@ mod tests {
         let slot = 123;
         let max_validators = 5;
         let shred_version = rand::rng().random();
-        let (rank_map, keypairs) = get_rank_map_keypairs(max_validators, slot);
+        let (rank_map, keypairs, bank, _forks) = get_rank_map_keypairs(max_validators, slot);
         let rank = 0;
         let mut entry = NotarEntry::new(max_validators);
 
@@ -118,39 +112,13 @@ mod tests {
             slot,
             block_id: blockid0,
         });
-        let invalid_vote = VoteMessage {
-            vote: notar,
-            signature: BLSSignature([0; BLS_SIGNATURE_AFFINE_SIZE]),
-            rank,
-        };
-        entry
-            .add_vote(
-                &rank_map,
-                invalid_vote.rank,
-                &invalid_vote.signature,
-                blockid0,
-                max_validators,
-            )
-            .unwrap_err();
 
-        let vote = new_vote(notar, rank as usize, &keypairs, shred_version);
+        let vote = new_vote(&bank, notar, rank, &keypairs, shred_version);
         entry
-            .add_vote(
-                &rank_map,
-                vote.rank,
-                &vote.signature,
-                blockid0,
-                max_validators,
-            )
+            .add_vote(&rank_map, max_validators, blockid0, &vote)
             .unwrap();
         let err = entry
-            .add_vote(
-                &rank_map,
-                vote.rank,
-                &vote.signature,
-                blockid0,
-                max_validators,
-            )
+            .add_vote(&rank_map, max_validators, blockid0, &vote)
             .unwrap_err();
         assert!(matches!(err, AddVoteError::Duplicate));
     }
@@ -159,7 +127,7 @@ mod tests {
     fn validate_build_cert() {
         let slot = 123;
         let max_validators = 5;
-        let (rank_map, keypairs) =
+        let (rank_map, keypairs, bank, _bank_forks) =
             get_rank_map_keypairs_with_stakes(vec![1_000, 900, 10, 10, 10], slot);
         let shred_version = rand::rng().random();
 
@@ -174,15 +142,9 @@ mod tests {
                 slot,
                 block_id: blockid0,
             });
-            let vote = new_vote(notar, rank, &keypairs, shred_version);
+            let vote = new_vote(&bank, notar, rank, &keypairs, shred_version);
             entry
-                .add_vote(
-                    &rank_map,
-                    vote.rank,
-                    &vote.signature,
-                    blockid0,
-                    max_validators,
-                )
+                .add_vote(&rank_map, max_validators, blockid0, &vote)
                 .unwrap();
         }
         for rank in 2..5 {
@@ -190,15 +152,9 @@ mod tests {
                 slot,
                 block_id: blockid1,
             });
-            let vote = new_vote(notar, rank, &keypairs, shred_version);
+            let vote = new_vote(&bank, notar, rank, &keypairs, shred_version);
             entry
-                .add_vote(
-                    &rank_map,
-                    vote.rank,
-                    &vote.signature,
-                    blockid1,
-                    max_validators,
-                )
+                .add_vote(&rank_map, max_validators, blockid1, &vote)
                 .unwrap();
         }
         let (notar_cert, _) = entry.build_cert(slot).unwrap().unwrap();

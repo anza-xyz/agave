@@ -14,7 +14,7 @@ use {
         signature::AsSignatureAffine,
     },
     solana_signer_store::{DecodeError, Decoded, decode},
-    std::num::NonZero,
+    std::{collections::HashSet, num::NonZero},
     thiserror::Error,
 };
 
@@ -73,12 +73,15 @@ pub fn verify_certificate(
     total_stake: NonZero<u64>,
     mut rank_map: impl FnMut(usize) -> Option<(NonZero<u64>, PopVerified<BlsPubkeyAffine>)>,
 ) -> Result<Certificate, Error> {
+    let mut accessed_ranks = HashSet::new();
     let mut aggregate_stake = 0u64;
 
     // Wrap the `rank_map` to accumulate stake as a side-effect
-    let accumulating_rank_map = |ind: usize| {
-        rank_map(ind).map(|(stake, pubkey)| {
-            aggregate_stake = aggregate_stake.saturating_add(stake.get());
+    let accumulating_rank_map = |rank: usize| {
+        rank_map(rank).map(|(stake, pubkey)| {
+            if accessed_ranks.insert(rank) {
+                aggregate_stake = aggregate_stake.saturating_add(stake.get());
+            }
             pubkey
         })
     };
@@ -178,8 +181,6 @@ fn verify_base3(
     match ranks {
         Decoded::Base2(ranks) => verify_single_vote_signature(payload, signature, &ranks, rank_map),
         Decoded::Base3(ranks, fallback_ranks) => {
-            check_disjoint(&ranks, &fallback_ranks)?;
-
             // Must run sequentially because `rank_map` captures `total_stake` (FnMut).
             // We pass a mutable reference for the first call so we can reuse the
             // closure for the second.
@@ -248,21 +249,6 @@ pub fn collect_pubkeys(
         pubkeys.push(pubkey);
     }
     Ok(pubkeys)
-}
-
-/// Ensures that no validator appears in both the primary and fallback bitmaps.
-fn check_disjoint(ranks: &BitVec<u8>, fallback_ranks: &BitVec<u8>) -> Result<(), Error> {
-    // Ensure both bitmaps are exactly the same length.
-    if ranks.len() != fallback_ranks.len() {
-        return Err(Error::WrongEncoding);
-    }
-
-    // Ensure no validator appears in both bitmaps.
-    // We use `iter_ones` for an allocation-free O(popcount) check.
-    if ranks.iter_ones().any(|i| fallback_ranks[i]) {
-        return Err(Error::BitmapOverlap);
-    }
-    Ok(())
 }
 
 #[cfg(test)]
@@ -525,34 +511,6 @@ mod test {
             },
         )
         .unwrap();
-    }
-
-    #[test]
-    fn test_check_disjoint() {
-        let mut ranks = BitVec::<u8>::new();
-        let mut fallback_ranks = BitVec::<u8>::new();
-        ranks.resize(10, false);
-        fallback_ranks.resize(10, false);
-
-        // Honest disjoint bitmaps
-        ranks.set(0, true);
-        fallback_ranks.set(1, true);
-        assert_eq!(check_disjoint(&ranks, &fallback_ranks), Ok(()));
-
-        // Malicious overlapping bitmaps
-        fallback_ranks.set(0, true);
-        assert_eq!(
-            check_disjoint(&ranks, &fallback_ranks),
-            Err(Error::BitmapOverlap)
-        );
-
-        // Mismatched lengths
-        let mut short_ranks = BitVec::<u8>::new();
-        short_ranks.resize(5, false);
-        assert_eq!(
-            check_disjoint(&short_ranks, &fallback_ranks),
-            Err(Error::WrongEncoding)
-        );
     }
 
     // ----------------------------------------------------------------------------

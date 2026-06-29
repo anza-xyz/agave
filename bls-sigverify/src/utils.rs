@@ -1,13 +1,13 @@
 use {
     crate::{
         errors::{SigVerifyCertError, SigVerifyVoteError},
+        rewards::AddVoteMessage,
         sig_verified_messages::SigVerifiedBatch,
         stats::{SigVerifyCertStats, SigVerifyVoteStats},
     },
     agave_votor_messages::{
         VerifiedVoterSlotsSender,
         metric_types::{ConsensusMetricsEvent, ConsensusMetricsEventSender},
-        reward_certificate::AddVoteMessage,
     },
     crossbeam_channel::{Sender, TrySendError},
     log::{error, info},
@@ -57,7 +57,7 @@ pub(super) fn send_votes_to_rewards(
 
 /// Sends the `batch` to the consensus pool.  If the channel is full, then does a
 /// blocking send.
-pub(super) fn send_votes_to_pool(
+pub(super) fn send_sig_verified_batch_to_pool(
     batch: SigVerifiedBatch,
     channel: &Sender<SigVerifiedBatch>,
     stats: &mut SigVerifyVoteStats,

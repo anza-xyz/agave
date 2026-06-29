@@ -29,6 +29,7 @@ use {
     agave_bls_sigverify::{
         bls_sigverifier::{self, SigVerifierChannels, SigVerifierContext},
         generated_cert_types::GeneratedCertTypes,
+        rewards::AddVoteMessage,
     },
     agave_votor::{
         event::{LatestSwitchRequest, LeaderWindowInfo, VotorEventReceiver, VotorEventSender},
@@ -41,7 +42,7 @@ use {
     },
     agave_votor_messages::{
         VerifiedVoterSlotsReceiver, VerifiedVoterSlotsSender, consensus_message::Block,
-        metric_types::MAX_IN_FLIGHT_CONSENSUS_EVENTS, reward_certificate::AddVoteMessage,
+        metric_types::MAX_IN_FLIGHT_CONSENSUS_EVENTS,
     },
     crossbeam_channel::{Receiver, Sender, bounded, unbounded},
     solana_client::connection_cache::ConnectionCache,

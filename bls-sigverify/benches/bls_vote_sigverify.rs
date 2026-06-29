@@ -20,8 +20,10 @@ use {
     criterion::{BatchSize, Criterion, criterion_group, criterion_main},
     rayon::{ThreadPool, ThreadPoolBuilder},
     solana_bls_signatures::{Keypair as BLSKeypair, PreparedHashedMessage, VerifySignature},
+    solana_genesis_config::GenesisConfig,
     solana_hash::Hash,
     solana_keypair::Keypair,
+    solana_runtime::bank::{Bank, SlotLeader},
     solana_signer::Signer,
     std::hint::black_box,
 };
@@ -187,6 +189,12 @@ fn bench_verify_individual_votes(c: &mut Criterion) {
     let mut group = c.benchmark_group("verify_votes_fallback");
     let thread_pool = get_thread_pool();
 
+    let leader = SlotLeader::new_unique();
+    let genesis_config = GenesisConfig::default();
+    let bank = Bank::new_with_paths_for_tests(&genesis_config, None, vec![], Some(leader));
+    assert_eq!(*bank.leader(), leader);
+    let (bank, _bank_forks) = bank.wrap_with_bank_forks_for_tests();
+
     for &batch_size in BATCH_SIZES {
         // Distinctness doesn't affect the cost of N individual verifications.
         let (_vote, unverified_votes) = generate_test_data(shred_version, batch_size);
@@ -196,7 +204,7 @@ fn bench_verify_individual_votes(c: &mut Criterion) {
             b.iter_batched(
                 || unverified_votes.clone(),
                 |votes| {
-                    let res = verify_individual_votes(black_box(votes), &thread_pool);
+                    let res = verify_individual_votes(&bank, black_box(votes), &thread_pool);
                     black_box(res);
                 },
                 BatchSize::SmallInput,

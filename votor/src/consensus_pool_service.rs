@@ -18,7 +18,8 @@ use {
         voting_service::BLSOp,
     },
     agave_bls_sigverify::{
-        generated_cert_types::GeneratedCertTypes, sig_verified_messages::SigVerifiedBatch,
+        generated_cert_types::GeneratedCertTypes,
+        sig_verified_messages::{SigVerifiedBatch, VoteAggregate},
     },
     agave_votor_messages::{
         certificate::Certificate,
@@ -181,47 +182,26 @@ impl ConsensusPoolService {
 
     fn process_batch(
         ctx: &mut ConsensusPoolContext,
-        msgs: impl Iterator<Item = ConsensusMessage>,
+        batch: SigVerifiedBatch,
         consensus_pool: &mut ConsensusPool,
         events: &mut Vec<VotorEvent>,
         standstill_timer: &mut Instant,
         stats: &mut ConsensusPoolServiceStats,
     ) -> Result<(), ()> {
-        for msg in msgs {
-            Self::process_consensus_message(
-                ctx,
-                msg,
-                consensus_pool,
-                events,
-                standstill_timer,
-                stats,
-            )?;
-        }
-        Ok(())
-    }
-
-    fn process_consensus_message(
-        ctx: &mut ConsensusPoolContext,
-        message: ConsensusMessage,
-        consensus_pool: &mut ConsensusPool,
-        events: &mut Vec<VotorEvent>,
-        standstill_timer: &mut Instant,
-        stats: &mut ConsensusPoolServiceStats,
-    ) -> Result<(), ()> {
-        match message {
-            ConsensusMessage::Certificate(_) => {
-                stats.received_certificates += 1;
+        match &batch {
+            SigVerifiedBatch::Certificates(certs) => {
+                stats.received_certificates += certs.len();
             }
-            ConsensusMessage::Vote(_) => {
-                stats.received_votes += 1;
+            SigVerifiedBatch::Votes(aggregates) => {
+                stats.received_vote_aggregates += aggregates.len();
             }
         }
         let root_bank = ctx.sharable_banks.root();
-        let (new_finalized_slot, new_certificates_to_send) = match Self::add_message(
+        let (new_finalized_slot, new_certificates_to_send) = match Self::add_batch(
             &root_bank,
             &ctx.cluster_info.id(),
-            &ctx.my_vote_pubkey,
-            message,
+            ctx.my_vote_pubkey,
+            batch,
             consensus_pool,
             events,
             stats,
@@ -324,12 +304,12 @@ impl ConsensusPoolService {
 
         // Ingest votes into consensus pool and notify voting loop of new events
         while !ctx.exit.load(Ordering::Relaxed) {
+            let root_bank = ctx.sharable_banks.root();
             // Kick off parent ready event, this either happens:
             // - When we first migrate to alpenglow from TowerBFT - kick off with genesis block
             // - If we startup post alpenglow migration - kick off with root block
             // - If restored vote history is farther ahead, resume from its highest parent-ready
             if !kick_off_parent_ready && ctx.migration_status.is_alpenglow_enabled() {
-                let root_bank = ctx.sharable_banks.root();
                 let (slot, parent_block) = Self::initial_parent_ready(
                     ctx.migration_status.genesis_block(),
                     Self::root_block(&root_bank),
@@ -409,7 +389,7 @@ impl ConsensusPoolService {
                     let Ok(first) = msg else {
                         return Self::handle_channel_disconnected(&mut ctx, "own_message_receiver channel");
                     };
-                    Self::handle_own_message(&mut ctx, &mut consensus_pool, &mut events, &mut standstill_timer, first, &mut stats)
+                    Self::handle_own_message(&root_bank, &mut ctx, &mut consensus_pool, &mut events, &mut standstill_timer, first, &mut stats)
                 }
                 recv(ctx.consensus_message_receiver) -> msg => {
                     let Ok(first) = msg else {
@@ -434,17 +414,17 @@ impl ConsensusPoolService {
     /// Adds a vote to the consensus pool.
     ///
     /// If a new finalization slot was recognized, returns the slot
-    fn add_message(
+    fn add_batch(
         root_bank: &Bank,
         my_pubkey: &Pubkey,
-        my_vote_pubkey: &Pubkey,
-        message: ConsensusMessage,
+        my_vote_pubkey: Pubkey,
+        batch: SigVerifiedBatch,
         consensus_pool: &mut ConsensusPool,
         votor_events: &mut Vec<VotorEvent>,
         stats: &mut ConsensusPoolServiceStats,
     ) -> Result<(Option<Slot>, Vec<Arc<Certificate>>), AddVoteError> {
         let (new_finalized_slot, new_certificates_to_send) =
-            consensus_pool.add_message(root_bank, my_vote_pubkey, message, votor_events)?;
+            consensus_pool.add_batch(root_bank, my_vote_pubkey, batch, votor_events);
         let Some(new_finalized_slot) = new_finalized_slot else {
             return Ok((None, new_certificates_to_send));
         };
@@ -633,29 +613,13 @@ impl ConsensusPoolService {
     ) -> Result<(), ()> {
         let receiver = ctx.consensus_message_receiver.clone();
         for batch in std::iter::once(first).chain(receiver.try_iter()) {
-            match batch {
-                SigVerifiedBatch::Votes(votes) => Self::process_batch(
-                    ctx,
-                    votes.into_iter().map(ConsensusMessage::Vote),
-                    consensus_pool,
-                    events,
-                    standstill_timer,
-                    stats,
-                ),
-                SigVerifiedBatch::Certificates(certs) => Self::process_batch(
-                    ctx,
-                    certs.into_iter().map(ConsensusMessage::Certificate),
-                    consensus_pool,
-                    events,
-                    standstill_timer,
-                    stats,
-                ),
-            }?
+            Self::process_batch(ctx, batch, consensus_pool, events, standstill_timer, stats)?
         }
         Ok(())
     }
 
     fn handle_own_message(
+        root_bank: &Bank,
         ctx: &mut ConsensusPoolContext,
         consensus_pool: &mut ConsensusPool,
         events: &mut Vec<VotorEvent>,
@@ -664,8 +628,19 @@ impl ConsensusPoolService {
         stats: &mut ConsensusPoolServiceStats,
     ) -> Result<(), ()> {
         let receiver = ctx.own_message_receiver.clone();
-        let msgs = std::iter::once(first).chain(receiver.try_iter());
-        Self::process_batch(ctx, msgs, consensus_pool, events, standstill_timer, stats)
+        for batch in std::iter::once(first)
+            .chain(receiver.try_iter())
+            .map(|m| match m {
+                ConsensusMessage::Certificate(c) => SigVerifiedBatch::Certificates(vec![c]),
+                ConsensusMessage::Vote(v) => {
+                    let aggregate = VoteAggregate::new_from_verified_vote(root_bank, v);
+                    SigVerifiedBatch::Votes(vec![aggregate])
+                }
+            })
+        {
+            Self::process_batch(ctx, batch, consensus_pool, events, standstill_timer, stats)?;
+        }
+        Ok(())
     }
 }
 
@@ -674,6 +649,7 @@ mod tests {
     use {
         super::*,
         crate::tests::get_cluster_info,
+        agave_bls_sigverify::sig_verified_messages::VoteAggregate,
         agave_votor_messages::{
             certificate::CertificateType,
             consensus_message::{BLS_KEYPAIR_DERIVE_SEED, VoteMessage},
@@ -694,6 +670,7 @@ mod tests {
                 ValidatorVoteKeypairs, create_genesis_config_with_alpenglow_vote_accounts,
             },
         },
+        solana_signer::Signer,
         std::sync::Arc,
     };
 
@@ -750,7 +727,7 @@ mod tests {
                 migration_status.clone(),
                 initial_parent_ready,
             );
-            let my_vote_pubkey = Pubkey::new_unique();
+            let my_vote_pubkey = validator_keypairs[0].vote_keypair.pubkey();
             let (consensus_message_sender, consensus_message_receiver) = unbounded();
             let (_own_message_sender, own_message_receiver) = unbounded();
             let (event_sender, event_receiver) = unbounded();
@@ -815,25 +792,27 @@ mod tests {
                 BLSKeypair::derive_from_signer(vote_keypair, BLS_KEYPAIR_DERIVE_SEED).unwrap();
             let vote_serialized =
                 get_vote_payload_to_sign(notarize_vote, ctx.ctx.cluster_info.my_shred_version());
-            let message = ConsensusMessage::Vote(VoteMessage {
-                vote: notarize_vote,
-                signature: bls_keypair.sign(&vote_serialized).into(),
-                rank: my_rank as u16,
-            });
+            let batch = SigVerifiedBatch::Votes(vec![VoteAggregate::new_from_verified_vote(
+                &root_bank,
+                VoteMessage {
+                    vote: notarize_vote,
+                    signature: bls_keypair.sign(&vote_serialized).into(),
+                    rank: my_rank as u16,
+                },
+            )]);
 
             let mut stats = ConsensusPoolServiceStats::new();
-            let result = ConsensusPoolService::add_message(
+            let (new_finalized_slot, new_certificates_to_send) = ConsensusPoolService::add_batch(
                 &root_bank,
                 &ctx.ctx.cluster_info.id(),
-                &ctx.ctx.my_vote_pubkey,
-                message,
+                ctx.ctx.my_vote_pubkey,
+                batch,
                 &mut ctx.consensus_pool,
                 &mut events,
                 &mut stats,
-            );
-            assert!(result.is_ok());
+            )
+            .unwrap();
 
-            let (new_finalized_slot, new_certificates_to_send) = result.unwrap();
             let mut standstill_timer = Instant::now();
 
             // Send certificates if any were produced
@@ -886,11 +865,11 @@ mod tests {
         events.clear();
 
         let mut stats = ConsensusPoolServiceStats::new();
-        let result = ConsensusPoolService::add_message(
+        let result = ConsensusPoolService::add_batch(
             &root_bank,
             &ctx.ctx.cluster_info.id(),
-            &ctx.ctx.my_vote_pubkey,
-            ConsensusMessage::Certificate(skip_certificate),
+            ctx.ctx.my_vote_pubkey,
+            SigVerifiedBatch::Certificates(vec![skip_certificate]),
             &mut ctx.consensus_pool,
             &mut events,
             &mut stats,
@@ -953,11 +932,11 @@ mod tests {
                 bitmap: vec![],
             };
 
-            let result = ConsensusPoolService::add_message(
+            let result = ConsensusPoolService::add_batch(
                 &root_bank,
                 &ctx.ctx.cluster_info.id(),
-                &ctx.ctx.my_vote_pubkey,
-                ConsensusMessage::Certificate(skip_certificate),
+                ctx.ctx.my_vote_pubkey,
+                SigVerifiedBatch::Certificates(vec![skip_certificate]),
                 &mut ctx.consensus_pool,
                 &mut events,
                 &mut stats,

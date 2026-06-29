@@ -6,7 +6,7 @@ use {
         bls_vote_sigverify::{UnverifiedVotePayload, verify_and_send_votes},
         errors::SigVerifyError,
         generated_cert_types::GeneratedCertTypes,
-        rewards::rewards_wants_vote,
+        rewards::{AddVoteMessage, rewards_wants_vote, should_prune_vote},
         sig_verified_messages::SigVerifiedBatch,
         stats::SigVerifierStats,
     },
@@ -15,7 +15,6 @@ use {
         certificate::CertificateType,
         metric_types::ConsensusMetricsEventSender,
         migration::MigrationStatus,
-        reward_certificate::AddVoteMessage,
         unverified_vote_message::{DecodedWireConsensusMessage, UnverifiedVoteMessage},
         vote::Vote,
         wire::{VersionedWireConsensusMessage, VotePayloadToSign},
@@ -101,6 +100,8 @@ struct SigVerifier {
     /// thread pool to use for all parallel tasks
     thread_pool: ThreadPool,
     generated_cert_types: Arc<GeneratedCertTypes>,
+    /// dedup received votes so that we only ever verify a single `Vote` from a given sender.
+    received_votes: HashSet<(Vote, Pubkey)>,
 }
 
 impl SigVerifier {
@@ -127,6 +128,7 @@ impl SigVerifier {
             sharable_banks,
             stats: SigVerifierStats::new(root_slot),
             verified_certs: HashSet::new(),
+            received_votes: HashSet::new(),
             last_checked_root_slot: 0,
             cluster_info,
             leader_schedule,
@@ -205,6 +207,8 @@ impl SigVerifier {
         if self.last_checked_root_slot < root_slot {
             self.last_checked_root_slot = root_slot;
             self.verified_certs.retain(|cert| cert.slot() >= root_slot);
+            self.received_votes
+                .retain(|(vote, _)| !should_prune_vote(vote, root_slot));
         }
     }
 
@@ -248,8 +252,12 @@ impl SigVerifier {
 
             match decoded_msg {
                 DecodedWireConsensusMessage::Vote(unverified_vote) => {
+                    let vote = unverified_vote.vote;
                     if let Some((sender_vote_account_pubkey, sender_bls_pubkey)) =
-                        self.keep_vote(&unverified_vote.vote, &unverified_vote, root_bank)
+                        self.keep_vote(&vote, &unverified_vote, root_bank)
+                        && self
+                            .received_votes
+                            .insert((unverified_vote.vote, sender_identity_pubkey))
                     {
                         let vote_payload_to_sign = VotePayloadToSign::new_from_vote(
                             unverified_vote.vote,
@@ -358,6 +366,7 @@ fn recv_batches(
 mod tests {
     use {
         super::*,
+        crate::sig_verified_messages::VoteAggregate,
         agave_votor::consensus_pool::certificate_builder::CertificateBuilder,
         agave_votor_messages::{
             VerifiedVoterSlotsReceiver,
@@ -765,8 +774,13 @@ mod tests {
 
         let (m1_recv, m2_recv) = drain.join().expect("drain joined");
         // Both messages were eventually delivered (no silent drop).
-        assert_eq!(m1_recv, SigVerifiedBatch::Votes(vec![msg1]));
-        assert_eq!(m2_recv, SigVerifiedBatch::Votes(vec![msg2]));
+        let bank = ctx.verifier.sharable_banks.root();
+        let batch1 =
+            SigVerifiedBatch::Votes(vec![VoteAggregate::new_from_verified_vote(&bank, msg1)]);
+        let batch2 =
+            SigVerifiedBatch::Votes(vec![VoteAggregate::new_from_verified_vote(&bank, msg2)]);
+        assert_eq!(m1_recv, batch1);
+        assert_eq!(m2_recv, batch2);
         // pool_sent counts every message that made it onto the channel,
         // whether via try_send or the blocking fallback.
         assert_eq!(ctx.verifier.stats.vote_stats.pool_sent.0, 2);
@@ -853,8 +867,9 @@ mod tests {
         let batches = ctx.pool_receiver.try_iter().collect::<Vec<_>>();
         assert_eq!(batches.len(), 1);
         match &batches[0] {
-            SigVerifiedBatch::Votes(votes) => {
-                assert_eq!(votes.len(), num_votes);
+            SigVerifiedBatch::Votes(aggregates) => {
+                assert_eq!(aggregates.len(), 1);
+                assert_eq!(aggregates[0].num_votes(), num_votes);
             }
             rest => panic!("unexpected type: {rest:?}"),
         }
@@ -925,7 +940,10 @@ mod tests {
         let total_votes_verified = batches
             .into_iter()
             .map(|batch| match batch {
-                SigVerifiedBatch::Votes(votes) => votes.len(),
+                SigVerifiedBatch::Votes(aggregates) => {
+                    assert_eq!(aggregates.len(), 1);
+                    aggregates[0].num_votes()
+                }
                 rest => panic!("unexpected type: {rest:?}"),
             })
             .sum::<usize>();
@@ -1002,13 +1020,15 @@ mod tests {
         let total_votes_verified = batches
             .into_iter()
             .map(|batch| match batch {
-                SigVerifiedBatch::Votes(votes) => {
-                    for vote in &votes {
-                        if vote.vote == vote2 && vote.rank == invalid_rank {
+                SigVerifiedBatch::Votes(aggregates) => {
+                    for aggregate in &aggregates {
+                        if aggregate.vote == vote2
+                            && *aggregate.ranks().get(invalid_rank as usize).unwrap()
+                        {
                             panic!("invalid vote verified");
                         }
                     }
-                    votes.len()
+                    aggregates.iter().map(|v| v.num_votes()).sum::<usize>()
                 }
                 rest => panic!("unexpected type: {rest:?}"),
             })
@@ -1065,8 +1085,8 @@ mod tests {
         let batches: Vec<_> = ctx.pool_receiver.try_iter().collect();
         assert_eq!(batches.len(), 1);
         match &batches[0] {
-            SigVerifiedBatch::Votes(votes) => {
-                assert_eq!(votes.len(), num_votes - 1);
+            SigVerifiedBatch::Votes(aggregates) => {
+                assert_eq!(aggregates.len(), num_votes - 1);
             }
             rest => panic!("unexpected type: {rest:?}"),
         }
@@ -1074,9 +1094,9 @@ mod tests {
         // Ensure the message with the invalid rank is not in the sent messages.
         let mut found_msg = false;
         match &batches[0] {
-            SigVerifiedBatch::Votes(votes) => {
-                for vote in votes {
-                    if vote.rank == invalid_rank {
+            SigVerifiedBatch::Votes(aggregates) => {
+                for aggregate in aggregates {
+                    if *aggregate.ranks().get(invalid_rank as usize).unwrap() {
                         found_msg = true;
                         break;
                     }
@@ -1365,8 +1385,9 @@ mod tests {
         assert_eq!(batches.len(), 2);
 
         let batch_0_was_votes = match &batches[0] {
-            SigVerifiedBatch::Votes(votes) => {
-                assert_eq!(votes.len(), num_votes);
+            SigVerifiedBatch::Votes(aggregates) => {
+                assert_eq!(aggregates.len(), 1);
+                assert_eq!(aggregates[0].num_votes(), num_votes);
                 true
             }
             SigVerifiedBatch::Certificates(certs) => {
@@ -1376,16 +1397,17 @@ mod tests {
         };
 
         match &batches[1] {
-            SigVerifiedBatch::Votes(votes) => {
+            SigVerifiedBatch::Votes(aggregates) => {
                 assert!(!batch_0_was_votes);
-                assert_eq!(votes.len(), num_votes);
+                assert_eq!(aggregates.len(), 1);
+                assert_eq!(aggregates[0].num_votes(), num_votes);
             }
             SigVerifiedBatch::Certificates(certs) => {
                 assert!(batch_0_was_votes);
                 assert_eq!(certs.len(), 1);
             }
         }
-        assert_eq!(ctx.verifier.stats.vote_stats.pool_sent.0, num_votes as u64);
+        assert_eq!(ctx.verifier.stats.vote_stats.pool_sent.0, 1);
         assert_eq!(ctx.verifier.stats.cert_stats.pool_sent.0, 1);
     }
 
@@ -1653,8 +1675,8 @@ mod tests {
         let batches = ctx.pool_receiver.try_iter().collect::<Vec<_>>();
         assert_eq!(batches.len(), 1);
         match &batches[0] {
-            SigVerifiedBatch::Votes(votes) => {
-                assert_eq!(votes.len(), 3);
+            SigVerifiedBatch::Votes(aggregates) => {
+                assert_eq!(aggregates.len(), 3);
             }
             rest => panic!("unexpected type: {rest:?}"),
         }

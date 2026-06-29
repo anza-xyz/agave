@@ -108,6 +108,7 @@ dependencies = [
  "solana-bls-signatures",
  "solana-clock",
  "solana-epoch-schedule",
+ "solana-genesis-config",
  "solana-gossip",
  "solana-hash 4.4.0",
  "solana-keypair",

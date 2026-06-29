@@ -1,4 +1,5 @@
 use {
+    crate::sig_verified_messages::VoteAggregate,
     agave_votor_messages::{reward_certificate::NUM_SLOTS_FOR_REWARD, vote::Vote},
     solana_clock::Slot,
     solana_gossip::cluster_info::ClusterInfo,
@@ -34,4 +35,22 @@ pub fn rewards_wants_vote(
         return false;
     }
     true
+}
+
+/// Returns true if `Vote` can be pruned from the received_votes cache.
+pub(crate) fn should_prune_vote(vote: &Vote, root_slot: Slot) -> bool {
+    let slot = vote.slot();
+    match vote {
+        Vote::Notarize(_) | Vote::Skip(_) => slot.saturating_add(NUM_SLOTS_FOR_REWARD) <= root_slot,
+        Vote::Finalize(_)
+        | Vote::NotarizeFallback(_)
+        | Vote::SkipFallback(_)
+        | Vote::Genesis(_) => slot < root_slot,
+    }
+}
+
+/// Message to add votes to the rewards container.
+#[derive(Debug)]
+pub struct AddVoteMessage {
+    pub votes: Vec<VoteAggregate>,
 }

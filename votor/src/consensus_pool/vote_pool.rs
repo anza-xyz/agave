@@ -1,285 +1,681 @@
+//! This module defines VotePool which tracks verified votes received from other
+//! validators and when enough stake has been received, produces appropriate
+//! certificates.
+//!
+//! Since we verify votes in batches, the pool does not receive individual votes
+//! but instead receives aggregates of votes called `VoteAggregate`s.  Normally,
+//! the vote pool should reject newer aggregates if there are duplicates or
+//! conflicts compared to already accepted aggregates.  This creates some attack
+//! vectors e.g.:
+//!
+//! - If an attacker gets their vote into an initial aggregate, they can keep
+//!   poisoning future aggregates by repeating their votes.
+//! - Another attack vector is if all honest validators want to send vote A
+//!   (e.g. Notar), the malicious actor first sends vote B (e.g. Skip) and then
+//!   keeps sending vote A.  All aggregates containing vote A from the malicious
+//!   actor will be deemed incompatible and not included in the pool.
+//!
+//! To address these issues, the vote pool first relies on the bls-sigverifier
+//! to dedup votes before sending them.  Then the vote pool uses
+//! `PoolVoteAggregate` to only count the stake of the validators not already
+//! present in the pool.
+
 use {
-    crate::common::Stake,
-    agave_votor_messages::consensus_message::VoteMessage,
+    crate::consensus_pool::vote_pool::pool_vote_aggregate::PoolVoteAggregate,
+    agave_bls_sigverify::sig_verified_messages::VoteAggregate,
+    agave_votor_messages::{
+        certificate::{Certificate, CertificateType},
+        consensus_message::Block,
+        fraction::Fraction,
+        vote::Vote,
+    },
+    bitvec::vec::BitVec,
+    solana_bls_signatures::{
+        AsSignatureProjective, BlsError, Signature as BLSSignature, SignatureProjective,
+    },
+    solana_clock::Slot,
     solana_hash::Hash,
     solana_pubkey::Pubkey,
+    solana_runtime::epoch_stakes::BLSPubkeyToRankMap,
+    solana_signer_store::{EncodeError, encode_base2, encode_base3},
     std::{
-        collections::{BTreeMap, BTreeSet},
+        collections::{BTreeMap, HashMap, HashSet, hash_map::Entry as HashMapEntry},
         num::NonZero,
+        sync::Arc,
     },
+    thiserror::Error,
 };
 
-/// There are two types of vote pools:
-/// - SimpleVotePool: Tracks all votes of a specfic vote type made by validators for some slot N, but only one vote per block.
-/// - DuplicateBlockVotePool: Tracks all votes of a specfic vote type made by validators for some slot N,
-///   but allows votes for different blocks by the same validator. Only relevant for VotePool's that are of type
-///   Notarization or NotarizationFallback
-pub(super) enum VotePool {
-    SimpleVotePool(SimpleVotePool),
-    DuplicateBlockVotePool(DuplicateBlockVotePool),
+mod pool_vote_aggregate;
+
+const MAX_NOTAR_FALLBACK_PER_VALIDATOR: usize = 3;
+
+fn default_bitvec(max_validators: usize) -> BitVec<u8> {
+    BitVec::repeat(false, max_validators)
 }
 
-#[derive(Default)]
-pub(super) struct SimpleVotePool {
-    votes: Vec<VoteMessage>,
-    total_stake: Stake,
-    prev_voted_validators: BTreeSet<Pubkey>,
+#[derive(Debug, PartialEq, Eq, Error)]
+pub(crate) enum VotePoolAddVoteError {
+    #[error("Signature aggregation failed with {0}")]
+    SignatureAggregationFailed(BlsError),
+    #[error("encoding failed with {0:?}")]
+    EncodingFailed(EncodeError),
 }
 
-impl SimpleVotePool {
-    pub(super) fn add_vote(
-        &mut self,
-        validator_vote_key: Pubkey,
-        validator_stake: NonZero<Stake>,
-        vote: VoteMessage,
-    ) -> Option<Stake> {
-        if !self.prev_voted_validators.insert(validator_vote_key) {
-            return None;
-        }
-        self.votes.push(vote);
-        self.total_stake = self.total_stake.saturating_add(validator_stake.get());
-        Some(self.total_stake)
-    }
-
-    pub(super) fn votes(&self) -> &[VoteMessage] {
-        &self.votes
-    }
-
-    pub(super) fn total_stake(&self) -> Stake {
-        self.total_stake
-    }
-
-    pub(super) fn has_prev_validator_vote(&self, validator_vote_key: &Pubkey) -> bool {
-        self.prev_voted_validators.contains(validator_vote_key)
-    }
+struct NotarVoteEntry {
+    slot: Slot,
+    max_validators: usize,
+    entries: HashMap<Hash, VoteEntry>,
+    ranks: BitVec<u8>,
 }
 
-#[derive(Default)]
-struct VoteEntry {
-    votes: Vec<VoteMessage>,
-    total_stake_by_key: Stake,
-}
-
-pub(super) struct DuplicateBlockVotePool {
-    max_entries_per_pubkey: usize,
-    vote_entries: BTreeMap<Hash, VoteEntry>,
-    prev_voted_block_ids: BTreeMap<Pubkey, BTreeSet<Hash>>,
-}
-
-impl DuplicateBlockVotePool {
-    pub(super) fn new(max_entries_per_pubkey: usize) -> Self {
+impl NotarVoteEntry {
+    fn new(slot: Slot, max_validators: usize) -> Self {
         Self {
-            max_entries_per_pubkey,
-            vote_entries: BTreeMap::new(),
-            prev_voted_block_ids: BTreeMap::new(),
+            slot,
+            max_validators,
+            entries: HashMap::with_capacity(MAX_NOTAR_FALLBACK_PER_VALIDATOR),
+            ranks: default_bitvec(max_validators),
         }
     }
 
-    pub(super) fn add_vote(
+    fn add_aggregate(
         &mut self,
-        validator_vote_key: Pubkey,
-        validator_stake: NonZero<Stake>,
-        vote: VoteMessage,
-    ) -> Option<Stake> {
-        let block_id = *vote.vote.block_id().unwrap();
-        // Check whether the validator_vote_key already used the same voted_block_id or exceeded max_entries_per_pubkey
-        // If so, return false, otherwise add the voted_block_id to the prev_votes
-        let prev_voted_block_ids = self
-            .prev_voted_block_ids
-            .entry(validator_vote_key)
-            .or_default();
-        if prev_voted_block_ids.contains(&block_id)
-            || prev_voted_block_ids.len() >= self.max_entries_per_pubkey
-        {
-            return None;
+        rank_map: &BLSPubkeyToRankMap,
+        mut aggregate: PoolVoteAggregate,
+    ) -> Result<u64, VotePoolAddVoteError> {
+        debug_assert_eq!(self.slot, aggregate.vote().slot());
+        let block_id = *aggregate.vote().block_id().unwrap();
+        aggregate.subtract_ranks(rank_map, &self.ranks);
+        match self.entries.entry(block_id) {
+            HashMapEntry::Occupied(mut e) => {
+                let entry = e.get_mut();
+                let stake = entry.add_aggregate(rank_map, aggregate)?;
+                self.ranks |= &entry.ranks;
+                Ok(stake)
+            }
+            HashMapEntry::Vacant(e) => {
+                let entry = VoteEntry::new_with_aggregate(self.max_validators, aggregate);
+                let stake = entry.stake;
+                self.ranks |= &entry.ranks;
+                e.insert(entry);
+                Ok(stake)
+            }
         }
-        prev_voted_block_ids.insert(block_id);
+    }
+}
 
-        let vote_entry = self.vote_entries.entry(block_id).or_default();
-        vote_entry.votes.push(vote);
-        vote_entry.total_stake_by_key = vote_entry
-            .total_stake_by_key
-            .saturating_add(validator_stake.get());
-        Some(vote_entry.total_stake_by_key)
+struct GenesisVoteEntry {
+    slot: Slot,
+    max_validators: usize,
+    entries: HashMap<Hash, VoteEntry>,
+    ranks: BitVec<u8>,
+}
+
+impl GenesisVoteEntry {
+    fn new(slot: Slot, max_validators: usize) -> Self {
+        Self {
+            slot,
+            max_validators,
+            entries: HashMap::with_capacity(MAX_NOTAR_FALLBACK_PER_VALIDATOR),
+            ranks: default_bitvec(max_validators),
+        }
     }
 
-    pub(super) fn total_stake_by_block_id(&self, block_id: &Hash) -> Stake {
-        self.vote_entries
-            .get(block_id)
-            .map_or(0, |vote_entries| vote_entries.total_stake_by_key)
+    fn add_aggregate(
+        &mut self,
+        rank_map: &BLSPubkeyToRankMap,
+        mut aggregate: PoolVoteAggregate,
+    ) -> Result<u64, VotePoolAddVoteError> {
+        debug_assert_eq!(self.slot, aggregate.vote().slot());
+        let block_id = *aggregate.vote().block_id().unwrap();
+        aggregate.subtract_ranks(rank_map, &self.ranks);
+        match self.entries.entry(block_id) {
+            HashMapEntry::Occupied(mut e) => {
+                let entry = e.get_mut();
+                let stake = entry.add_aggregate(rank_map, aggregate)?;
+                self.ranks |= &entry.ranks;
+                Ok(stake)
+            }
+            HashMapEntry::Vacant(e) => {
+                let entry = VoteEntry::new_with_aggregate(self.max_validators, aggregate);
+                let stake = entry.stake;
+                self.ranks |= &entry.ranks;
+                e.insert(entry);
+                Ok(stake)
+            }
+        }
+    }
+}
+
+struct NotarFallbackVoteEntry {
+    slot: Slot,
+    max_validators: usize,
+    entries: HashMap<Hash, VoteEntry>,
+    validators: HashMap<Pubkey, HashSet<Hash>>,
+    ranks: BitVec<u8>,
+}
+
+impl NotarFallbackVoteEntry {
+    fn new(slot: Slot, max_validators: usize) -> Self {
+        Self {
+            slot,
+            max_validators,
+            entries: HashMap::with_capacity(MAX_NOTAR_FALLBACK_PER_VALIDATOR),
+            validators: HashMap::with_capacity(max_validators),
+            ranks: default_bitvec(max_validators),
+        }
     }
 
-    pub(super) fn votes(&self, block_id: &Hash) -> Option<&[VoteMessage]> {
-        self.vote_entries
-            .get(block_id)
-            .map(|entry| entry.votes.as_slice())
+    fn add_aggregate(
+        &mut self,
+        rank_map: &BLSPubkeyToRankMap,
+        mut aggregate: PoolVoteAggregate,
+    ) -> Result<u64, VotePoolAddVoteError> {
+        debug_assert_eq!(self.slot, aggregate.vote().slot());
+        let block_id = *aggregate.vote().block_id().unwrap();
+        let mut validators = vec![];
+        // TODO: can we remove the collect below?
+        for rank in aggregate.signed_ranks().iter_ones().collect::<Vec<_>>() {
+            // TODO: handle unwrap
+            let stake_entry = rank_map.get_pubkey_stake_entry(rank).unwrap();
+            let validator = stake_entry.vote_account_pubkey;
+            if let Some(set) = self.validators.get(&validator)
+                && set.len() >= MAX_NOTAR_FALLBACK_PER_VALIDATOR
+            {
+                aggregate.subtract_rank(rank_map, rank);
+            }
+            validators.push(validator);
+        }
+        let stake = match self.entries.entry(block_id) {
+            HashMapEntry::Occupied(mut e) => {
+                let entry = e.get_mut();
+                let stake = entry.add_aggregate(rank_map, aggregate)?;
+                self.ranks |= &entry.ranks;
+                stake
+            }
+            HashMapEntry::Vacant(e) => {
+                let entry = VoteEntry::new_with_aggregate(self.max_validators, aggregate);
+                let stake = entry.stake;
+                self.ranks |= &entry.ranks;
+                e.insert(entry);
+                stake
+            }
+        };
+        for validator in validators {
+            self.validators
+                .entry(validator)
+                .or_default()
+                .insert(block_id);
+        }
+        Ok(stake)
+    }
+}
+
+#[derive(Debug)]
+struct VoteEntry {
+    ranks: BitVec<u8>,
+    signature: SignatureProjective,
+    stake: u64,
+}
+
+impl VoteEntry {
+    fn new(max_validators: usize) -> Self {
+        Self {
+            ranks: default_bitvec(max_validators),
+            signature: SignatureProjective::identity(),
+            stake: 0,
+        }
     }
 
-    pub(super) fn has_prev_validator_vote_for_block(
+    fn new_with_aggregate(max_validators: usize, aggregate: PoolVoteAggregate) -> Self {
+        let mut ranks = default_bitvec(max_validators);
+        ranks |= aggregate.signed_ranks();
+        Self {
+            ranks,
+            signature: aggregate.signature().try_as_projective().unwrap(),
+            stake: aggregate.stake(),
+        }
+    }
+
+    fn add_aggregate(
+        &mut self,
+        rank_map: &BLSPubkeyToRankMap,
+        mut aggregate: PoolVoteAggregate,
+    ) -> Result<u64, VotePoolAddVoteError> {
+        aggregate.subtract_ranks(rank_map, &self.ranks);
+        self.signature
+            .aggregate_with(std::iter::once(aggregate.signature()))
+            .map_err(VotePoolAddVoteError::SignatureAggregationFailed)?;
+        self.ranks |= aggregate.signed_ranks();
+        self.stake = self.stake.saturating_add(aggregate.stake());
+        Ok(self.stake)
+    }
+
+    fn try_build_cert(
         &self,
-        validator_vote_key: &Pubkey,
-        block_id: &Hash,
-    ) -> bool {
-        self.prev_voted_block_ids
-            .get(validator_vote_key)
-            .is_some_and(|vs| vs.contains(block_id))
+        cert_type: CertificateType,
+        total_stake: NonZero<u64>,
+        completed_certs: &BTreeMap<CertificateType, Arc<Certificate>>,
+    ) -> Result<Option<Certificate>, VotePoolAddVoteError> {
+        if completed_certs.contains_key(&cert_type) {
+            return Ok(None);
+        }
+        let observed_fraction = Fraction::new(self.stake, total_stake);
+        if observed_fraction < cert_type.threshold() {
+            return Ok(None);
+        }
+        let mut ranks = self.ranks.clone();
+        let new_len = ranks.last_one().map_or(0, |i| i.saturating_add(1));
+        ranks.resize(new_len, false);
+        let bitmap = encode_base2(&ranks).map_err(VotePoolAddVoteError::EncodingFailed)?;
+        let signature = BLSSignature::from(self.signature);
+        Ok(Some(Certificate {
+            cert_type,
+            signature,
+            bitmap,
+        }))
+    }
+}
+
+pub(super) struct VotePool {
+    slot: Slot,
+    skip: VoteEntry,
+    skip_fallback: VoteEntry,
+    finalize: VoteEntry,
+    notar: NotarVoteEntry,
+    notar_fallback: NotarFallbackVoteEntry,
+    genesis: GenesisVoteEntry,
+}
+
+impl VotePool {
+    pub(super) fn new(slot: Slot, max_validators: usize) -> Self {
+        Self {
+            slot,
+            skip: VoteEntry::new(max_validators),
+            skip_fallback: VoteEntry::new(max_validators),
+            finalize: VoteEntry::new(max_validators),
+            notar: NotarVoteEntry::new(slot, max_validators),
+            notar_fallback: NotarFallbackVoteEntry::new(slot, max_validators),
+            genesis: GenesisVoteEntry::new(slot, max_validators),
+        }
     }
 
-    pub(super) fn has_prev_validator_vote(&self, validator_vote_key: &Pubkey) -> bool {
-        self.prev_voted_block_ids.contains_key(validator_vote_key)
+    fn try_produce_notar_fallback_cert(
+        &mut self,
+        total_stake: NonZero<u64>,
+        block: Block,
+        completed_certs: &BTreeMap<CertificateType, Arc<Certificate>>,
+    ) -> Result<Option<Certificate>, VotePoolAddVoteError> {
+        let cert_type = CertificateType::NotarizeFallback(block);
+        match (
+            self.notar.entries.get(&block.block_id),
+            self.notar_fallback.entries.get(&block.block_id),
+        ) {
+            (None, None) => Ok(None),
+            (Some(entry), None) => entry.try_build_cert(cert_type, total_stake, completed_certs),
+            (None, Some(nf_entry)) => {
+                let empty = VoteEntry::new(0);
+                try_build_from_entries(cert_type, total_stake, &empty, nf_entry, completed_certs)
+            }
+            (Some(notar_entry), Some(nf_entry)) => try_build_from_entries(
+                cert_type,
+                total_stake,
+                notar_entry,
+                nf_entry,
+                completed_certs,
+            ),
+        }
     }
+
+    fn try_produce_finalize_cert(
+        &mut self,
+        total_stake: NonZero<u64>,
+        vote: &Vote,
+        completed_certs: &BTreeMap<CertificateType, Arc<Certificate>>,
+    ) -> Result<Option<Certificate>, VotePoolAddVoteError> {
+        let cert_type = CertificateType::Finalize(vote.slot());
+        self.finalize
+            .try_build_cert(cert_type, total_stake, completed_certs)
+    }
+
+    fn try_produce_finalize_fast_cert(
+        &mut self,
+        total_stake: NonZero<u64>,
+        block: Block,
+        completed_certs: &BTreeMap<CertificateType, Arc<Certificate>>,
+    ) -> Result<Option<Certificate>, VotePoolAddVoteError> {
+        let Some(entry) = self.notar.entries.get(&block.block_id) else {
+            return Ok(None);
+        };
+        let cert_type = CertificateType::FinalizeFast(block);
+        entry.try_build_cert(cert_type, total_stake, completed_certs)
+    }
+
+    fn try_produce_notar_cert(
+        &mut self,
+        total_stake: NonZero<u64>,
+        block: Block,
+        completed_certs: &BTreeMap<CertificateType, Arc<Certificate>>,
+    ) -> Result<Option<Certificate>, VotePoolAddVoteError> {
+        let cert_type = CertificateType::Notarize(block);
+        let Some(entry) = self.notar.entries.get(&block.block_id) else {
+            return Ok(None);
+        };
+        entry.try_build_cert(cert_type, total_stake, completed_certs)
+    }
+
+    fn try_produce_skip_cert(
+        &mut self,
+        total_stake: NonZero<u64>,
+        slot: Slot,
+        completed_certs: &BTreeMap<CertificateType, Arc<Certificate>>,
+    ) -> Result<Option<Certificate>, VotePoolAddVoteError> {
+        let cert_type = CertificateType::Skip(slot);
+        if self.skip_fallback.stake == 0 {
+            self.skip
+                .try_build_cert(cert_type, total_stake, completed_certs)
+        } else {
+            try_build_from_entries(
+                cert_type,
+                total_stake,
+                &self.skip,
+                &self.skip_fallback,
+                completed_certs,
+            )
+        }
+    }
+
+    fn try_produce_genesis_cert(
+        &mut self,
+        total_stake: NonZero<u64>,
+        block: Block,
+        completed_certs: &BTreeMap<CertificateType, Arc<Certificate>>,
+    ) -> Result<Option<Certificate>, VotePoolAddVoteError> {
+        let cert_type = CertificateType::Genesis(block);
+        let Some(entry) = self.genesis.entries.get(&block.block_id) else {
+            return Ok(None);
+        };
+        entry.try_build_cert(cert_type, total_stake, completed_certs)
+    }
+
+    fn try_produce_certs(
+        &mut self,
+        total_stake: NonZero<u64>,
+        vote: Vote,
+        completed_certs: &BTreeMap<CertificateType, Arc<Certificate>>,
+    ) -> Result<Vec<Certificate>, VotePoolAddVoteError> {
+        match vote {
+            Vote::Notarize(notar) => Ok([
+                self.try_produce_notar_fallback_cert(total_stake, notar.block, completed_certs)?,
+                self.try_produce_notar_cert(total_stake, notar.block, completed_certs)?,
+                self.try_produce_finalize_fast_cert(total_stake, notar.block, completed_certs)?,
+            ]
+            .into_iter()
+            .flatten()
+            .collect()),
+            Vote::NotarizeFallback(nf) => Ok(self
+                .try_produce_notar_fallback_cert(total_stake, nf.block, completed_certs)?
+                .into_iter()
+                .collect()),
+            Vote::Finalize(_) => Ok(self
+                .try_produce_finalize_cert(total_stake, &vote, completed_certs)?
+                .into_iter()
+                .collect()),
+            Vote::Skip(_) | Vote::SkipFallback(_) => Ok(self
+                .try_produce_skip_cert(total_stake, vote.slot(), completed_certs)?
+                .into_iter()
+                .collect()),
+            Vote::Genesis(genesis) => Ok(self
+                .try_produce_genesis_cert(total_stake, genesis.block, completed_certs)?
+                .into_iter()
+                .collect()),
+        }
+    }
+
+    /// Adds votes and if some certs can be produced and they are not already included in the completed certs, produces them.
+    pub(super) fn add_aggregate(
+        &mut self,
+        rank_map: &BLSPubkeyToRankMap,
+        aggregate: &VoteAggregate,
+        completed_certs: &BTreeMap<CertificateType, Arc<Certificate>>,
+    ) -> Result<(u64, Vec<Certificate>), VotePoolAddVoteError> {
+        debug_assert_eq!(self.slot, aggregate.vote().slot());
+        let mut aggregate = PoolVoteAggregate::new(aggregate);
+        let vote = *aggregate.vote();
+        let stake = match aggregate.vote() {
+            Vote::Notarize(_) => {
+                aggregate.subtract_ranks(rank_map, &self.skip.ranks);
+                aggregate.subtract_ranks(rank_map, &self.genesis.ranks);
+                if let Some(entry) = self
+                    .notar_fallback
+                    .entries
+                    .get(aggregate.vote().block_id().unwrap())
+                {
+                    aggregate.subtract_ranks(rank_map, &entry.ranks);
+                }
+                self.notar.add_aggregate(rank_map, aggregate)
+            }
+            Vote::NotarizeFallback(_) => {
+                aggregate.subtract_ranks(rank_map, &self.finalize.ranks);
+                aggregate.subtract_ranks(rank_map, &self.genesis.ranks);
+                if let Some(entry) = self.notar.entries.get(aggregate.vote().block_id().unwrap()) {
+                    aggregate.subtract_ranks(rank_map, &entry.ranks);
+                }
+                self.notar_fallback.add_aggregate(rank_map, aggregate)
+            }
+            Vote::Genesis(_) => {
+                aggregate.subtract_ranks(rank_map, &self.skip.ranks);
+                aggregate.subtract_ranks(rank_map, &self.skip_fallback.ranks);
+                aggregate.subtract_ranks(rank_map, &self.notar.ranks);
+                aggregate.subtract_ranks(rank_map, &self.notar_fallback.ranks);
+                aggregate.subtract_ranks(rank_map, &self.finalize.ranks);
+                self.genesis.add_aggregate(rank_map, aggregate)
+            }
+            Vote::Skip(_) => {
+                aggregate.subtract_ranks(rank_map, &self.notar.ranks);
+                aggregate.subtract_ranks(rank_map, &self.finalize.ranks);
+                aggregate.subtract_ranks(rank_map, &self.skip_fallback.ranks);
+                aggregate.subtract_ranks(rank_map, &self.genesis.ranks);
+                self.skip.add_aggregate(rank_map, aggregate)
+            }
+            Vote::SkipFallback(_) => {
+                aggregate.subtract_ranks(rank_map, &self.finalize.ranks);
+                aggregate.subtract_ranks(rank_map, &self.skip.ranks);
+                aggregate.subtract_ranks(rank_map, &self.genesis.ranks);
+                self.skip_fallback.add_aggregate(rank_map, aggregate)
+            }
+            Vote::Finalize(_) => {
+                aggregate.subtract_ranks(rank_map, &self.skip.ranks);
+                aggregate.subtract_ranks(rank_map, &self.skip_fallback.ranks);
+                aggregate.subtract_ranks(rank_map, &self.notar_fallback.ranks);
+                aggregate.subtract_ranks(rank_map, &self.genesis.ranks);
+                self.finalize.add_aggregate(rank_map, aggregate)
+            }
+        }?;
+        let certs = self.try_produce_certs(rank_map.total_stake(), vote, completed_certs)?;
+        Ok((stake, certs))
+    }
+}
+
+/// Build a [`Certificate`] from two bitmaps.
+fn try_build_from_entries(
+    cert_type: CertificateType,
+    total_stake: NonZero<u64>,
+    entry0: &VoteEntry,
+    entry1: &VoteEntry,
+    completed_certs: &BTreeMap<CertificateType, Arc<Certificate>>,
+) -> Result<Option<Certificate>, VotePoolAddVoteError> {
+    if completed_certs.contains_key(&cert_type) {
+        return Ok(None);
+    }
+    let observed_fraction = Fraction::new(entry0.stake.saturating_add(entry1.stake), total_stake);
+    if observed_fraction < cert_type.threshold() {
+        return Ok(None);
+    }
+    let mut signature0 = entry0.signature;
+    let mut ranks0 = entry0.ranks.clone();
+    let signature1 = entry1.signature;
+    let mut ranks1 = entry1.ranks.clone();
+    let last_one_0 = ranks0.last_one().map_or(0, |i| i.saturating_add(1));
+    let last_one_1 = ranks1.last_one().map_or(0, |i| i.saturating_add(1));
+    let new_length = last_one_0.max(last_one_1);
+    ranks0.resize(new_length, false);
+    ranks1.resize(new_length, false);
+    let bitmap = encode_base3(&ranks0, &ranks1).map_err(VotePoolAddVoteError::EncodingFailed)?;
+    signature0
+        .aggregate_with(std::iter::once(&signature1))
+        .map_err(VotePoolAddVoteError::SignatureAggregationFailed)?;
+    Ok(Some(Certificate {
+        cert_type,
+        signature: signature0.into(),
+        bitmap,
+    }))
 }
 
 #[cfg(test)]
-mod test {
+mod tests {
     use {
         super::*,
+        crate::consensus_pool::tests::{conflicting_types, create_bank_forks},
         agave_votor_messages::{
-            consensus_message::{Block, VoteMessage},
-            vote::Vote,
+            consensus_message::{BLS_KEYPAIR_DERIVE_SEED, VoteMessage},
+            vote::VoteType,
+            wire::get_vote_payload_to_sign,
         },
-        solana_bls_signatures::{BLS_SIGNATURE_AFFINE_SIZE, Signature as BLSSignature},
+        solana_bls_signatures::Keypair as BLSKeypair,
+        solana_runtime::{bank::Bank, bank_forks::BankForks, genesis_utils::ValidatorVoteKeypairs},
+        std::sync::RwLock,
     };
 
-    #[test]
-    fn test_skip_vote_pool() {
-        let mut vote_pool = SimpleVotePool::default();
-        let vote = Vote::new_skip_vote(5);
-        let vote_message = VoteMessage {
-            vote,
-            signature: BLSSignature([0; BLS_SIGNATURE_AFFINE_SIZE]),
-            rank: 1,
-        };
-        let my_pubkey = Pubkey::new_unique();
+    fn create_new_vote(vote_type: VoteType, slot: Slot, block_id: Hash) -> Vote {
+        match vote_type {
+            VoteType::Notarize => Vote::new_notarization_vote(Block { slot, block_id }),
+            VoteType::NotarizeFallback => {
+                Vote::new_notarization_fallback_vote(Block { slot, block_id })
+            }
+            VoteType::Skip => Vote::new_skip_vote(slot),
+            VoteType::SkipFallback => Vote::new_skip_fallback_vote(slot),
+            VoteType::Finalize => Vote::new_finalization_vote(slot),
+            VoteType::Genesis => Vote::new_genesis_vote(Block { slot, block_id }),
+        }
+    }
 
-        assert_eq!(
-            vote_pool.add_vote(my_pubkey, NonZero::new(10).unwrap(), vote_message.clone()),
-            Some(10)
-        );
-        assert_eq!(vote_pool.total_stake(), 10);
+    struct TestContext {
+        validators: Vec<ValidatorVoteKeypairs>,
+        _bank_forks: Arc<RwLock<BankForks>>,
+        bank: Arc<Bank>,
+        pool: VotePool,
+        slot: Slot,
+        block_id: Hash,
+        shred_version: u16,
+    }
 
-        // Adding the same key again should fail
-        assert_eq!(
-            vote_pool.add_vote(my_pubkey, NonZero::new(10).unwrap(), vote_message.clone()),
-            None
-        );
-        assert_eq!(vote_pool.total_stake(), 10);
+    impl TestContext {
+        fn new() -> Self {
+            let max_validators = 10;
+            let validators = (0..max_validators)
+                .map(|_| ValidatorVoteKeypairs::new_rand())
+                .collect::<Vec<_>>();
+            let bank_forks = create_bank_forks(&validators);
+            let bank = bank_forks.read().unwrap().root_bank();
+            let slot = 12;
+            let block_id = Hash::new_unique();
+            let pool = VotePool::new(slot, max_validators);
+            let shred_version = 1233;
+            Self {
+                validators,
+                _bank_forks: bank_forks,
+                bank,
+                pool,
+                slot,
+                block_id,
+                shred_version,
+            }
+        }
 
-        // Adding a different key should succeed
-        let new_pubkey = Pubkey::new_unique();
-        assert_eq!(
-            vote_pool.add_vote(new_pubkey, NonZero::new(60).unwrap(), vote_message),
-            Some(70)
-        );
-        assert_eq!(vote_pool.total_stake(), 70);
+        fn new_vote(&self, vote: Vote, rank: u16) -> VoteAggregate {
+            let bls_keypair = BLSKeypair::derive_from_signer(
+                &self.validators[rank as usize].vote_keypair,
+                BLS_KEYPAIR_DERIVE_SEED,
+            )
+            .unwrap();
+            let payload = get_vote_payload_to_sign(vote, self.shred_version);
+            let signature = bls_keypair.sign(&payload).into();
+            let msg = VoteMessage {
+                vote,
+                signature,
+                rank,
+            };
+            VoteAggregate::new_from_verified_vote(&self.bank, msg)
+        }
     }
 
     #[test]
-    fn test_notarization_pool() {
-        let mut vote_pool = DuplicateBlockVotePool::new(1);
-        let my_pubkey = Pubkey::new_unique();
-        let block_id = Hash::new_unique();
-        let vote = Vote::new_notarization_vote(Block { slot: 3, block_id });
-        let vote = VoteMessage {
-            vote,
-            signature: BLSSignature([0; BLS_SIGNATURE_AFFINE_SIZE]),
-            rank: 1,
-        };
-        assert_eq!(
-            vote_pool.add_vote(my_pubkey, NonZero::new(10).unwrap(), vote.clone()),
-            Some(10)
-        );
-        assert_eq!(vote_pool.total_stake_by_block_id(&block_id), 10);
+    fn validate_conflicting_votes() {
+        for src in [
+            VoteType::Finalize,
+            VoteType::Notarize,
+            VoteType::NotarizeFallback,
+            VoteType::Skip,
+            VoteType::SkipFallback,
+            VoteType::Genesis,
+        ] {
+            for conflicting in conflicting_types(src) {
+                let mut ctx = TestContext::new();
+                let rank_map = ctx
+                    .bank
+                    .epoch_stakes_from_slot(ctx.slot)
+                    .unwrap()
+                    .bls_pubkey_to_rank_map();
+                let conflicting = create_new_vote(*conflicting, ctx.slot, ctx.block_id);
+                let conflicting = ctx.new_vote(conflicting, 1);
+                let src = create_new_vote(src, ctx.slot, ctx.block_id);
+                let src = ctx.new_vote(src, 1);
+                ctx.pool
+                    .add_aggregate(rank_map, &conflicting, &BTreeMap::new())
+                    .unwrap();
+                ctx.pool
+                    .add_aggregate(rank_map, &src, &BTreeMap::new())
+                    .unwrap();
+            }
 
-        // Adding the same key again should fail
-        assert_eq!(
-            vote_pool.add_vote(my_pubkey, NonZero::new(10).unwrap(), vote.clone()),
-            None
-        );
-
-        // Adding a different bankhash should fail
-        assert_eq!(
-            vote_pool.add_vote(my_pubkey, NonZero::new(10).unwrap(), vote.clone()),
-            None
-        );
-
-        // Adding a different key should succeed
-        let new_pubkey = Pubkey::new_unique();
-        assert_eq!(
-            vote_pool.add_vote(new_pubkey, NonZero::new(60).unwrap(), vote),
-            Some(70)
-        );
-        assert_eq!(vote_pool.total_stake_by_block_id(&block_id), 70);
+            let mut ctx = TestContext::new();
+            let rank_map = ctx
+                .bank
+                .epoch_stakes_from_slot(ctx.slot)
+                .unwrap()
+                .bls_pubkey_to_rank_map();
+            let src = create_new_vote(src, ctx.slot, ctx.block_id);
+            let src = ctx.new_vote(src, 1);
+            ctx.pool
+                .add_aggregate(rank_map, &src, &BTreeMap::new())
+                .unwrap();
+            ctx.pool
+                .add_aggregate(rank_map, &src, &BTreeMap::new())
+                .unwrap();
+        }
     }
 
     #[test]
-    fn test_notarization_fallback_pool() {
-        agave_logger::setup();
-        let mut vote_pool = DuplicateBlockVotePool::new(3);
-        let my_pubkey = Pubkey::new_unique();
-
-        let votes = (0..4)
-            .map(|_| {
-                let vote = Vote::new_notarization_fallback_vote(Block {
-                    slot: 7,
-                    block_id: Hash::new_unique(),
-                });
-                VoteMessage {
-                    vote,
-                    signature: BLSSignature([0; BLS_SIGNATURE_AFFINE_SIZE]),
-                    rank: 1,
-                }
-            })
-            .collect::<Vec<_>>();
-
-        // Adding the first 3 votes should succeed, but total_stake should remain at 10
-        for vote in votes.iter().take(3).cloned() {
-            assert_eq!(
-                vote_pool.add_vote(my_pubkey, NonZero::new(10).unwrap(), vote.clone()),
-                Some(10)
-            );
-            assert_eq!(
-                vote_pool.total_stake_by_block_id(vote.vote.block_id().unwrap()),
-                10
-            );
+    fn validate_max_notar_votes_per_validator() {
+        let mut ctx = TestContext::new();
+        let rank_map = ctx
+            .bank
+            .epoch_stakes_from_slot(ctx.slot)
+            .unwrap()
+            .bls_pubkey_to_rank_map();
+        for _ in 0..MAX_NOTAR_FALLBACK_PER_VALIDATOR {
+            let notar = create_new_vote(VoteType::NotarizeFallback, ctx.slot, Hash::new_unique());
+            let notar = ctx.new_vote(notar, 1);
+            ctx.pool
+                .add_aggregate(rank_map, &notar, &BTreeMap::new())
+                .unwrap();
         }
-        // Adding the 4th vote should fail
-        assert_eq!(
-            vote_pool.add_vote(my_pubkey, NonZero::new(10).unwrap(), votes[3].clone()),
-            None
-        );
-        assert_eq!(
-            vote_pool.total_stake_by_block_id(votes[3].vote.block_id().unwrap()),
-            0
-        );
-
-        // Adding a different key should succeed
-        let new_pubkey = Pubkey::new_unique();
-        for vote in votes.iter().skip(1).take(2).cloned() {
-            assert_eq!(
-                vote_pool.add_vote(new_pubkey, NonZero::new(60).unwrap(), vote.clone()),
-                Some(70)
-            );
-            assert_eq!(
-                vote_pool.total_stake_by_block_id(vote.vote.block_id().unwrap()),
-                70
-            );
-        }
-
-        // The new key only added 2 votes, so adding block_ids[3] should succeed
-        assert_eq!(
-            vote_pool.add_vote(new_pubkey, NonZero::new(60).unwrap(), votes[3].clone()),
-            Some(60)
-        );
-        assert_eq!(
-            vote_pool.total_stake_by_block_id(votes[3].vote.block_id().unwrap()),
-            60
-        );
-
-        // Now if adding the same key again, it should fail
-        assert_eq!(
-            vote_pool.add_vote(new_pubkey, NonZero::new(60).unwrap(), votes[0].clone()),
-            None
-        );
+        let notar = create_new_vote(VoteType::NotarizeFallback, ctx.slot, Hash::new_unique());
+        let notar = ctx.new_vote(notar, 1);
+        ctx.pool
+            .add_aggregate(rank_map, &notar, &BTreeMap::new())
+            .unwrap();
     }
 }
