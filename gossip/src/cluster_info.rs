@@ -38,7 +38,7 @@ use {
             PULL_RESPONSE_MIN_SERIALIZED_SIZE, PUSH_MESSAGE_MAX_PAYLOAD_SIZE, Ping, PingCache,
             Protocol, PruneData, deserialize_protocol, split_gossip_messages,
         },
-        verifying_key_cache::VerifyingKeyCache,
+        sigverify_cache::SigVerifyCache,
         weighted_shuffle::WeightedShuffle,
     },
     arc_swap::ArcSwap,
@@ -194,8 +194,7 @@ pub struct ClusterInfo {
     contact_info_path: PathBuf,
     socket_addr_space: SocketAddrSpace,
     bind_ip_addrs: Arc<BindIpAddrs>,
-    /// Caches decompressed Ed25519 verifying keys for the gossip receive path.
-    verifying_key_cache: VerifyingKeyCache,
+    sigverify_cache: SigVerifyCache,
 }
 
 impl ClusterInfo {
@@ -233,7 +232,7 @@ impl ClusterInfo {
             contact_save_interval: 0, // disabled
             socket_addr_space,
             bind_ip_addrs: Arc::new(BindIpAddrs::default()),
-            verifying_key_cache: VerifyingKeyCache::new(),
+            sigverify_cache: SigVerifyCache::new(),
         };
         me.refresh_my_gossip_contact_info();
         me
@@ -2153,7 +2152,7 @@ impl ClusterInfo {
             packet: PacketRef,
             stakes: &HashMap<Pubkey, u64>,
             stats: &GossipStats,
-            vk_cache: &VerifyingKeyCache,
+            sigverify_cache: &SigVerifyCache,
         ) -> Option<(SocketAddr, Protocol)> {
             let result: wincode::ReadResult<Protocol> = packet
                 .data(..)
@@ -2171,7 +2170,7 @@ impl ClusterInfo {
                     return None;
                 }
             }
-            protocol.verify(vk_cache).then(|| {
+            protocol.verify(sigverify_cache).then(|| {
                 stats.packets_received_verified_count.add_relaxed(1);
                 (packet.meta().socket_addr(), protocol)
             })
@@ -2186,7 +2185,7 @@ impl ClusterInfo {
                     packet_buf[0]
                         .par_iter()
                         .filter_map(|packet| {
-                            verify_packet(packet, &stakes, &self.stats, &self.verifying_key_cache)
+                            verify_packet(packet, &stakes, &self.stats, &self.sigverify_cache)
                         })
                         .collect()
                 } else {
@@ -2194,7 +2193,7 @@ impl ClusterInfo {
                         .par_iter()
                         .flatten()
                         .filter_map(|packet| {
-                            verify_packet(packet, &stakes, &self.stats, &self.verifying_key_cache)
+                            verify_packet(packet, &stakes, &self.stats, &self.sigverify_cache)
                         })
                         .collect()
                 }
@@ -3057,10 +3056,10 @@ mod tests {
             .collect::<HashMap<_, Vec<_>>>();
         // there should be some pushes ready
         assert!(!push_messages.is_empty());
-        let vk_cache = VerifyingKeyCache::new();
+        let sigverify_cache = SigVerifyCache::new();
         push_messages.values().for_each(|v| {
             v.par_iter()
-                .for_each(|v| assert!(v.verify_with_cache(&vk_cache)))
+                .for_each(|v| assert!(v.verify_with_cache(&sigverify_cache)))
         });
 
         let mut pings = Vec::new();
@@ -3388,7 +3387,7 @@ mod tests {
             assert_eq!(addr, entrypoint.gossip().unwrap());
             match msg {
                 Protocol::PullRequest(_, value) => {
-                    assert!(value.verify_with_cache(&VerifyingKeyCache::new()));
+                    assert!(value.verify_with_cache(&SigVerifyCache::new()));
                     assert_eq!(value.pubkey(), cluster_info.id())
                 }
                 _ => panic!("wrong protocol"),

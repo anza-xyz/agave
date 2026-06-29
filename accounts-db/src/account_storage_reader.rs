@@ -130,13 +130,13 @@ impl<'a, R: FileBufRead<'a>> Read for AccountStorageReader<'_, R> {
         while total_read < buf_len {
             let next_obsolete_account = self.sorted_obsolete_accounts.last();
             let file_offset = self.reader.get_file_offset() as usize;
-            if let Some(&(obsolete_start, obsolete_size)) = next_obsolete_account {
-                if file_offset == obsolete_start {
-                    let skip_len = obsolete_size.min(self.num_total_bytes - obsolete_start);
-                    self.reader.consume_or_skip(skip_len);
-                    self.sorted_obsolete_accounts.pop();
-                    continue;
-                }
+            if let Some(&(obsolete_start, obsolete_size)) = next_obsolete_account
+                && file_offset == obsolete_start
+            {
+                let skip_len = obsolete_size.min(self.num_total_bytes - obsolete_start);
+                self.reader.consume_or_skip(skip_len);
+                self.sorted_obsolete_accounts.pop();
+                continue;
             }
 
             // Cannot read beyond the end of the buffer

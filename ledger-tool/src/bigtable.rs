@@ -568,32 +568,29 @@ pub async fn transaction_history(
                 // and keep it around.  This helps reduce BigTable query traffic and speeds up the
                 // results for high-volume addresses
                 loop {
-                    if let Some((slot, block)) = &loaded_block {
-                        if *slot == result.slot {
-                            match block.transactions.get(index as usize).map(|tx_with_meta| {
-                                (
-                                    tx_with_meta.get_transaction(),
-                                    tx_with_meta.get_status_meta(),
-                                )
-                            }) {
-                                None => {
-                                    println!(
-                                        "  Transaction info for {} is corrupt",
-                                        result.signature
-                                    );
-                                }
-                                Some((transaction, meta)) => {
-                                    println_transaction(
-                                        &transaction,
-                                        meta.map(|m| m.into()).as_ref(),
-                                        "  ",
-                                        None,
-                                        None,
-                                    );
-                                }
+                    if let Some((slot, block)) = &loaded_block
+                        && *slot == result.slot
+                    {
+                        match block.transactions.get(index as usize).map(|tx_with_meta| {
+                            (
+                                tx_with_meta.get_transaction(),
+                                tx_with_meta.get_status_meta(),
+                            )
+                        }) {
+                            None => {
+                                println!("  Transaction info for {} is corrupt", result.signature);
                             }
-                            break;
+                            Some((transaction, meta)) => {
+                                println_transaction(
+                                    &transaction,
+                                    meta.map(|m| m.into()).as_ref(),
+                                    "  ",
+                                    None,
+                                    None,
+                                );
+                            }
                         }
+                        break;
                     }
                     match bigtable.get_confirmed_block(result.slot).await {
                         Err(err) => {

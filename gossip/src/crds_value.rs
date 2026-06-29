@@ -4,7 +4,7 @@ use {
         crds_data::{CrdsData, EpochSlotsIndex, VoteIndex},
         duplicate_shred::DuplicateShredIndex,
         epoch_slots::EpochSlots,
-        verifying_key_cache::VerifyingKeyCache,
+        sigverify_cache::SigVerifyCache,
     },
     rand::Rng,
     serde::{Deserialize, Serialize, de::Deserializer},
@@ -66,7 +66,12 @@ impl Signable for CrdsValue {
     }
 
     fn set_signature(&mut self, signature: Signature) {
-        self.signature = signature
+        self.signature = signature;
+        // Keep self.hash consistent with the new signature: callers (CRDS
+        // shards, pull filters, the verified-CRDS cache) treat hash as the
+        // value's identity.
+        self.hash =
+            compute_crds_value_hash(&signature, &self.data).expect("failed to serialize CrdsData");
     }
 
     fn verify(&self) -> bool {
@@ -105,16 +110,20 @@ impl CrdsValueLabel {
 }
 
 impl CrdsValue {
-    /// Verify the signature, reusing a cached decompressed verifying key.
-    /// Inserts only after `verify_strict` succeeds, so the cache can't be
-    /// seeded with arbitrary pubkeys to evict useful entries.
-    pub(crate) fn verify_with_cache(&self, cache: &VerifyingKeyCache) -> bool {
+    /// Verify the signature, short-circuiting on a previously-verified value
+    /// hash and otherwise reusing a cached decompressed verifying key. Both
+    /// caches are populated only after `verify_strict` succeeds, so neither can
+    /// be seeded with arbitrary entries to evict useful ones.
+    pub(crate) fn verify_with_cache(&self, cache: &SigVerifyCache) -> bool {
+        if cache.verified_values.contains(&self.hash) {
+            return true;
+        }
         let pubkey = self.pubkey();
         let signable_data = self.signable_data();
         let message = signable_data.borrow();
         let sig_bytes: [u8; 64] = self.signature.into();
         let signature = ed25519_dalek::Signature::from_bytes(&sig_bytes);
-        match cache.get(&pubkey) {
+        let verified = match cache.verifying_keys.get(&pubkey) {
             Some(vk) => vk.verify_strict(message, &signature).is_ok(),
             None => {
                 let Ok(vk) = ed25519_dalek::VerifyingKey::try_from(pubkey.as_ref()) else {
@@ -123,16 +132,20 @@ impl CrdsValue {
                 if vk.verify_strict(message, &signature).is_err() {
                     return false;
                 }
-                cache.insert(pubkey, vk);
+                cache.verifying_keys.insert(pubkey, vk);
                 true
             }
+        };
+        if verified {
+            cache.verified_values.insert(self.hash);
         }
+        verified
     }
 
     pub fn new(data: CrdsData, keypair: &Keypair) -> Self {
         let serialized_data = wincode::serialize(&data).unwrap();
         let signature = keypair.sign_message(&serialized_data);
-        let hash = solana_sha256_hasher::hashv(&[signature.as_ref(), &serialized_data]);
+        let hash = hash_signed_data(&signature, &serialized_data);
         Self {
             signature,
             data,
@@ -142,9 +155,8 @@ impl CrdsValue {
 
     #[cfg(test)]
     pub(crate) fn new_unsigned(data: CrdsData) -> Self {
-        let serialized_data = wincode::serialize(&data).unwrap();
         let signature = Signature::default();
-        let hash = solana_sha256_hasher::hashv(&[signature.as_ref(), &serialized_data]);
+        let hash = compute_crds_value_hash(&signature, &data).unwrap();
         Self {
             signature,
             data,
@@ -239,6 +251,11 @@ impl CrdsValue {
     }
 }
 
+// sha256(signature || serialized_data), for callers that already serialized.
+fn hash_signed_data(signature: &Signature, serialized_data: &[u8]) -> Hash {
+    solana_sha256_hasher::hashv(&[signature.as_ref(), serialized_data])
+}
+
 // Computes sha256(signature || serialize(data)) using a stack buffer.
 // PACKET_DATA_SIZE is always enough since the value originated in a packet.
 fn compute_crds_value_hash(signature: &Signature, data: &CrdsData) -> wincode::WriteResult<Hash> {
@@ -249,7 +266,7 @@ fn compute_crds_value_hash(signature: &Signature, data: &CrdsData) -> wincode::W
     // SAFETY: wincode's "Writer for &mut [MaybeUninit<u8>]" initializes every
     // consumed slot before advancing the cursor, so the first "written" bytes are init.
     let bytes = unsafe { std::slice::from_raw_parts(buffer.as_ptr().cast::<u8>(), written) };
-    Ok(solana_sha256_hasher::hashv(&[signature.as_ref(), bytes]))
+    Ok(hash_signed_data(signature, bytes))
 }
 
 // Manual implementation of SchemaRead for CrdsValue in order to populate
@@ -321,14 +338,14 @@ mod test {
             &keypair.pubkey(),
             0,
         )));
-        let cache = VerifyingKeyCache::new();
+        let cache = SigVerifyCache::new();
 
         assert!(
             !value.verify_with_cache(&cache),
             "unsigned value must not verify"
         );
         assert!(
-            cache.get(&value.pubkey()).is_none(),
+            cache.verifying_keys.get(&value.pubkey()).is_none(),
             "failed verification must not populate the cache"
         );
 
@@ -340,22 +357,30 @@ mod test {
             "value signed by the wrong key must not verify"
         );
         assert!(
-            cache.get(&value.pubkey()).is_none(),
+            cache.verifying_keys.get(&value.pubkey()).is_none(),
             "failed verification must not populate the cache"
         );
+        assert!(
+            !cache.verified_values.contains(&value.hash),
+            "failed verification must not populate the verified-value cache"
+        );
 
-        // Cold miss: a valid signature verifies and populates the cache.
+        // Cold miss: a valid signature verifies and populates both caches.
         value.sign(&keypair);
         assert!(
             value.verify_with_cache(&cache),
             "validly signed value must verify"
         );
         assert!(
-            cache.get(&value.pubkey()).is_some(),
-            "successful verification must populate the cache"
+            cache.verifying_keys.get(&value.pubkey()).is_some(),
+            "successful verification must populate the verifying-key cache"
+        );
+        assert!(
+            cache.verified_values.contains(&value.hash),
+            "successful verification must populate the verified-value cache"
         );
 
-        // Warm hit: verifies again, now served from the cached key.
+        // Warm hit: verifies again, now short-circuited by the verified-value cache.
         assert!(
             value.verify_with_cache(&cache),
             "validly signed value must verify on a cache hit"
@@ -414,7 +439,7 @@ mod test {
     fn serialize_deserialize_value(
         value: &mut CrdsValue,
         keypair: &Keypair,
-        cache: &VerifyingKeyCache,
+        cache: &SigVerifyCache,
     ) {
         let num_tries = 10;
         value.sign(keypair);
@@ -442,7 +467,7 @@ mod test {
         correct_keypair: &Keypair,
         wrong_keypair: &Keypair,
     ) {
-        let cache = VerifyingKeyCache::new();
+        let cache = SigVerifyCache::new();
         assert!(!value.verify_with_cache(&cache));
         value.sign(correct_keypair);
         assert!(value.verify_with_cache(&cache));

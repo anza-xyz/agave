@@ -83,13 +83,13 @@ impl Bank {
             authority_address: buffer_authority,
         } = bincode::deserialize(&source.buffer_account.data()[..buffer_metadata_size])?
         {
-            if let Some(provided_authority) = upgrade_authority_address {
-                if upgrade_authority_address != buffer_authority {
-                    return Err(CoreBpfMigrationError::UpgradeAuthorityMismatch(
-                        provided_authority,
-                        buffer_authority,
-                    ));
-                }
+            if let Some(provided_authority) = upgrade_authority_address
+                && upgrade_authority_address != buffer_authority
+            {
+                return Err(CoreBpfMigrationError::UpgradeAuthorityMismatch(
+                    provided_authority,
+                    buffer_authority,
+                ));
             }
 
             let elf = &source.buffer_account.data()[buffer_metadata_size..];

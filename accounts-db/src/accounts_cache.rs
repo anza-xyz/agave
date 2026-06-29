@@ -344,10 +344,10 @@ impl AccountsCache {
         // range in descending order and return the first (highest) ancestor that has it.
         if let Some(ancestors_min_slot) = ancestors.min_slot() {
             for slot in (ancestors_min_slot..=index_max_slot).rev() {
-                if ancestors.contains_key(&slot) {
-                    if let Some(account) = self.load(slot, pubkey) {
-                        return Some((account, slot));
-                    }
+                if ancestors.contains_key(&slot)
+                    && let Some(account) = self.load(slot, pubkey)
+                {
+                    return Some((account, slot));
                 }
             }
         }

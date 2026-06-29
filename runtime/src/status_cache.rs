@@ -368,17 +368,17 @@ mod tests {
                     .all(|(hash, (slot, key_index, hash_map))| {
                         if let Some((other_slot, other_key_index, other_hash_map)) =
                             other.cache.get(hash)
+                            && slot == other_slot
+                            && key_index == other_key_index
                         {
-                            if slot == other_slot && key_index == other_key_index {
-                                return hash_map.iter().all(|(slice, fork_map)| {
-                                    if let Some(other_fork_map) = other_hash_map.get(slice) {
-                                        // all this work just to compare the highest forks in the fork map
-                                        // per entry
-                                        return fork_map.last() == other_fork_map.last();
-                                    }
-                                    false
-                                });
-                            }
+                            return hash_map.iter().all(|(slice, fork_map)| {
+                                if let Some(other_fork_map) = other_hash_map.get(slice) {
+                                    // all this work just to compare the highest forks in the fork map
+                                    // per entry
+                                    return fork_map.last() == other_fork_map.last();
+                                }
+                                false
+                            });
                         }
                         false
                     })

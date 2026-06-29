@@ -158,10 +158,10 @@ impl EpochInflationAccountState {
         if self.current.epoch == epoch {
             return Some(self.current);
         }
-        if let Some(prev) = self.prev {
-            if prev.epoch == epoch {
-                return Some(prev);
-            }
+        if let Some(prev) = self.prev
+            && prev.epoch == epoch
+        {
+            return Some(prev);
         }
         None
     }

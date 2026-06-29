@@ -874,6 +874,9 @@ pub type ProcessSlotCallback = Arc<dyn Fn(&Bank) + Sync + Send>;
 pub struct ProcessOptions {
     /// Run PoH, transaction signature and other transaction verification on the entries.
     pub run_verification: bool,
+    /// For startup replay / ledger-tool skip checks that verify a block chains to its parent correctly
+    /// For Tower blocks this is validating the chained merkle root, for Alpenglow it is the double merkle root
+    pub skip_inter_slot_verification: bool,
     pub halt_at_slot: Option<Slot>,
     pub slot_callback: Option<ProcessSlotCallback>,
     pub new_hard_forks: Option<Vec<Slot>>,
@@ -2136,15 +2139,14 @@ fn confirm_slot_entries(
             }
 
             // If bank is in vote-only mode, validate that entries contain only vote transactions
-            if let EntryType::Transactions(ref transactions) = entry {
-                if transactions
+            if let EntryType::Transactions(ref transactions) = entry
+                && transactions
                     .iter()
                     .any(|tx| !is_valid_vote_only_transaction(tx))
-                {
-                    return Err(BlockstoreProcessorError::UserTransactionsInVoteOnlyBank(
-                        bank.slot(),
-                    ));
-                }
+            {
+                return Err(BlockstoreProcessorError::UserTransactionsInVoteOnlyBank(
+                    bank.slot(),
+                ));
             }
             Ok(ReplayEntry {
                 entry,
@@ -2339,19 +2341,21 @@ fn process_next_slots(
         // Only process full slots in blockstore_processor, replay_stage
         // handles any partials
         if next_meta.is_full() {
-            let parent_block_id = bank.block_id();
-            if migration_status.should_allow_block_markers(*next_slot)
-                && bank.slot() != 0
-                && Some(next_meta.parent_block_id) != parent_block_id
-            {
-                warn!(
-                    "startup replay deferring slot {next_slot}: parent {} has block id {:?}, but \
-                     SlotMeta expects {:?}",
-                    bank.slot(),
-                    parent_block_id,
-                    next_meta.parent_block_id,
-                );
-                continue;
+            if !opts.skip_inter_slot_verification {
+                let parent_block_id = bank.block_id();
+                if migration_status.should_allow_block_markers(*next_slot)
+                    && bank.slot() != 0
+                    && Some(next_meta.parent_block_id) != parent_block_id
+                {
+                    warn!(
+                        "startup replay deferring slot {next_slot}: parent {} has block id {:?}, \
+                         but SlotMeta expects {:?}",
+                        bank.slot(),
+                        parent_block_id,
+                        next_meta.parent_block_id,
+                    );
+                    continue;
+                }
             }
 
             let next_bank = Bank::new_from_parent(
@@ -2632,16 +2636,15 @@ fn load_frozen_forks(
                 root_retain_us += m.as_us();
 
                 // If this root bank activated the feature flag, update migration status
-                if migration_status.is_pre_feature_activation() {
-                    if let Some(slot) = bank_forks
+                if migration_status.is_pre_feature_activation()
+                    && let Some(slot) = bank_forks
                         .read()
                         .unwrap()
                         .root_bank()
                         .feature_set
                         .activated_slot(&agave_feature_set::alpenglow::id())
-                    {
-                        migration_status.record_feature_activation(slot);
-                    }
+                {
+                    migration_status.record_feature_activation(slot);
                 }
             }
 
@@ -2820,19 +2823,21 @@ pub fn process_single_slot(
     migration_status: &MigrationStatus,
 ) -> result::Result<(), BlockstoreProcessorError> {
     let slot = bank.slot();
-    match check_chained_block_id(blockstore, bank, migration_status) {
-        ChainedBlockIdCheck::Inactive | ChainedBlockIdCheck::Pass => (),
-        ChainedBlockIdCheck::Unavailable => {
-            // no shreds to replay
-            return Ok(());
-        }
-        ChainedBlockIdCheck::Mismatch => {
-            // Mismatch, mark dead
-            mark_dead_if_primary_access(blockstore, slot);
-            return Err(BlockstoreProcessorError::ChainedBlockIdFailure(
-                slot,
-                bank.parent_slot(),
-            ));
+    if !opts.skip_inter_slot_verification {
+        match check_chained_block_id(blockstore, bank, migration_status) {
+            ChainedBlockIdCheck::Inactive | ChainedBlockIdCheck::Pass => (),
+            ChainedBlockIdCheck::Unavailable => {
+                // no shreds to replay
+                return Ok(());
+            }
+            ChainedBlockIdCheck::Mismatch => {
+                // Mismatch, mark dead
+                mark_dead_if_primary_access(blockstore, slot);
+                return Err(BlockstoreProcessorError::ChainedBlockIdFailure(
+                    slot,
+                    bank.parent_slot(),
+                ));
+            }
         }
     }
 
@@ -5190,11 +5195,7 @@ pub mod tests {
     fn test_replay_vote_sender() {
         let validator_keypairs: Vec<_> =
             (0..10).map(|_| ValidatorVoteKeypairs::new_rand()).collect();
-        let GenesisConfigInfo {
-            genesis_config,
-            voting_keypair: _,
-            ..
-        } = create_genesis_config_with_vote_accounts(
+        let GenesisConfigInfo { genesis_config, .. } = create_genesis_config_with_vote_accounts(
             1_000_000_000,
             &validator_keypairs,
             vec![100; validator_keypairs.len()],
@@ -6600,5 +6601,28 @@ pub mod tests {
 
         assert_eq!(pending_slots.len(), 1);
         assert_eq!(pending_slots[0].1.slot(), 3);
+
+        let mut pending_slots = Vec::new();
+        process_next_slots(
+            &parent_bank,
+            &parent_meta,
+            &blockstore,
+            &leader_schedule_cache,
+            &mut pending_slots,
+            &ProcessOptions {
+                skip_inter_slot_verification: true,
+                ..ProcessOptions::default()
+            },
+            &MigrationStatus::post_migration_status(),
+        )
+        .unwrap();
+
+        assert_eq!(
+            pending_slots
+                .iter()
+                .map(|(_, bank, _)| bank.slot())
+                .collect::<BTreeSet<_>>(),
+            BTreeSet::from([2, 3])
+        );
     }
 }

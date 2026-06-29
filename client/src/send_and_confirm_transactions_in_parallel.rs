@@ -209,8 +209,8 @@ async fn send_transaction_with_rpc_fallback(
     } else {
         true
     };
-    if send_over_rpc {
-        if let Err(e) = rpc_client
+    if send_over_rpc
+        && let Err(e) = rpc_client
             .send_transaction_with_config(
                 &transaction,
                 RpcSendTransactionConfig {
@@ -219,41 +219,40 @@ async fn send_transaction_with_rpc_fallback(
                 },
             )
             .await
-        {
-            match e.kind() {
-                ErrorKind::Io(_) | ErrorKind::Reqwest(_) => {
-                    // fall through on io error, we will retry the transaction
-                }
-                ErrorKind::TransactionError(TransactionError::BlockhashNotFound) => {
-                    // fall through so that we will resend with another blockhash
-                }
-                ErrorKind::TransactionError(transaction_error) => {
-                    // if we get other than blockhash not found error the transaction is invalid
-                    context.error_map.insert(index, transaction_error.clone());
-                }
-                ErrorKind::RpcError(RpcError::RpcResponseError {
-                    data:
-                        RpcResponseErrorData::SendTransactionPreflightFailure(
-                            RpcSimulateTransactionResult {
-                                err: Some(ui_transaction_error),
-                                ..
-                            },
-                        ),
-                    ..
-                }) => {
-                    match TransactionError::from(ui_transaction_error.clone()) {
-                        TransactionError::BlockhashNotFound => {
-                            // fall through so that we will resend with another blockhash
-                        }
-                        err => {
-                            // if we get other than blockhash not found error the transaction is invalid
-                            context.error_map.insert(index, err);
-                        }
+    {
+        match e.kind() {
+            ErrorKind::Io(_) | ErrorKind::Reqwest(_) => {
+                // fall through on io error, we will retry the transaction
+            }
+            ErrorKind::TransactionError(TransactionError::BlockhashNotFound) => {
+                // fall through so that we will resend with another blockhash
+            }
+            ErrorKind::TransactionError(transaction_error) => {
+                // if we get other than blockhash not found error the transaction is invalid
+                context.error_map.insert(index, transaction_error.clone());
+            }
+            ErrorKind::RpcError(RpcError::RpcResponseError {
+                data:
+                    RpcResponseErrorData::SendTransactionPreflightFailure(
+                        RpcSimulateTransactionResult {
+                            err: Some(ui_transaction_error),
+                            ..
+                        },
+                    ),
+                ..
+            }) => {
+                match TransactionError::from(ui_transaction_error.clone()) {
+                    TransactionError::BlockhashNotFound => {
+                        // fall through so that we will resend with another blockhash
+                    }
+                    err => {
+                        // if we get other than blockhash not found error the transaction is invalid
+                        context.error_map.insert(index, err);
                     }
                 }
-                _ => {
-                    return Err(TpuSenderError::from(e));
-                }
+            }
+            _ => {
+                return Err(TpuSenderError::from(e));
             }
         }
     }

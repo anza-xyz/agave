@@ -1,12 +1,13 @@
 use {
     super::{Bank, BankStatusCache},
     agave_feature_set::FeatureSet,
+    solana_account::ReadableAccount,
     solana_accounts_db::blockhash_queue::BlockhashQueue,
     solana_clock::{MAX_TRANSACTION_FORWARDING_DELAY, Slot},
     solana_compute_budget::compute_budget::SVMTransactionExecutionBudget,
     solana_fee::{FeeFeatures, calculate_fee_details},
-    solana_nonce::state::{Data as NonceData, DurableNonce},
-    solana_nonce_account::{self as nonce_account, SystemAccountKind, get_system_account_kind},
+    solana_nonce::state::{Data as NonceData, DurableNonce, State as NonceState},
+    solana_nonce_account as nonce_account,
     solana_program_runtime::execution_budget::SVMTransactionExecutionAndFeeBudgetLimits,
     solana_pubkey::Pubkey,
     solana_runtime_transaction::transaction_with_meta::TransactionWithMeta,
@@ -240,9 +241,7 @@ impl Bank {
     ) -> Option<(Pubkey, NonceData)> {
         let nonce_address = message.get_durable_nonce()?;
         let nonce_account = self.get_account_with_fixed_root(nonce_address)?;
-        if strict_nonce_size_check
-            && get_system_account_kind(&nonce_account) != Some(SystemAccountKind::Nonce)
-        {
+        if strict_nonce_size_check && nonce_account.data().len() != NonceState::size() {
             return None;
         }
         let nonce_data =
@@ -310,7 +309,9 @@ mod tests {
                 setup_nonce_with_bank,
             },
         },
-        solana_account::state_traits::StateMut,
+        solana_account::{
+            AccountSharedData, ReadableAccount, WritableAccount, state_traits::StateMut,
+        },
         solana_hash::Hash,
         solana_keypair::Keypair,
         solana_message::{
@@ -385,6 +386,39 @@ mod tests {
         ));
         assert!(
             bank.check_nonce_transaction_validity(&message, &bank.next_durable_nonce(), false)
+                .is_none()
+        );
+    }
+
+    #[test]
+    fn test_check_nonce_transaction_validity_strict_nonce_size_check_fail() {
+        let (bank, _mint_keypair, custodian_keypair, nonce_keypair, _) =
+            setup_nonce_with_bank(10_000_000, |_| {}, 5_000_000, 250_000, None).unwrap();
+        let custodian_pubkey = custodian_keypair.pubkey();
+        let nonce_pubkey = nonce_keypair.pubkey();
+
+        let nonce_hash = get_nonce_blockhash(&bank, &nonce_pubkey).unwrap();
+        let message = new_sanitized_message(Message::new_with_blockhash(
+            &[
+                system_instruction::advance_nonce_account(&nonce_pubkey, &nonce_pubkey),
+                system_instruction::transfer(&custodian_pubkey, &nonce_pubkey, 100_000),
+            ],
+            Some(&custodian_pubkey),
+            &nonce_hash,
+        ));
+
+        let nonce_account = bank.get_account(&nonce_pubkey).unwrap();
+        let mut resized_nonce_account = AccountSharedData::new(
+            nonce_account.lamports(),
+            NonceState::size() + 1,
+            nonce_account.owner(),
+        );
+        resized_nonce_account.data_as_mut_slice()[..nonce_account.data().len()]
+            .copy_from_slice(nonce_account.data());
+        bank.store_account(&nonce_pubkey, &resized_nonce_account);
+
+        assert!(
+            bank.check_nonce_transaction_validity(&message, &bank.next_durable_nonce(), true)
                 .is_none()
         );
     }
