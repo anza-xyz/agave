@@ -261,7 +261,6 @@ impl SigVerifier {
                                 sender_bls_pubkey,
                                 sender_vote_account_pubkey,
                                 sender_identity_pubkey,
-                                prepared_payload: None,
                             },
                         );
                     }
