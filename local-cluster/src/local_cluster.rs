@@ -66,7 +66,7 @@ use {
         collections::HashMap,
         io::{Error, Result},
         iter,
-        net::{IpAddr, Ipv4Addr, SocketAddr},
+        net::{IpAddr, Ipv4Addr, SocketAddr, UdpSocket},
         path::{Path, PathBuf},
         sync::{Arc, RwLock},
         time::Duration,
@@ -915,7 +915,7 @@ impl LocalCluster {
         num_new_notarized_votes: usize,
         test_name: &str,
         socket_addr_space: SocketAddrSpace,
-        vote_listener_socket: std::net::UdpSocket,
+        vote_listener_socket: UdpSocket,
         listener_keypair: Keypair,
     ) {
         let alive_node_contact_infos = self.discover_nodes(socket_addr_space, test_name);

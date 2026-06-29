@@ -43,16 +43,18 @@ pub const MAX_INBOUND_CONNECTIONS_PER_PEER: usize = 2;
 /// Picked to absorb several slots worth of work.
 pub(crate) const CONN_EVENT_CHANNEL_CAP: usize = MAX_ALPENGLOW_VOTE_ACCOUNTS;
 
-/// Votor should bace broadcasts to each peer. This window is the
+/// Votor should pace broadcasts to each peer. This window is the
 /// instantaneous burst headroom (`window × nominal rate`) we allow to
 /// absorb votor's transient bursts before we start dropping at ingress.
 /// 1 second is enough to absorb plausible network jitter and implementation
 /// differences.
 pub const PEER_RATE_LIMIT_BURST_WINDOW: Duration = Duration::from_secs(1);
 /// A peer that sustains above-nominal rate long enough to drain this much
-/// budget (`window × nominal rate`) is obviously not following votor's
-/// self-pacing; we close the connection rather than just shaping.
-pub const PEER_RATE_LIMIT_DOS_WINDOW: Duration = Duration::from_secs(20);
+/// budget is obviously not following votor's self-pacing, so we close the
+/// connection rather than just shaping. Chosen as 10x of base burst window
+/// as a balance between probability of dropping legit peer and allowing broken
+/// peers to keep sending.
+pub const PEER_RATE_LIMIT_DOS_WINDOW: Duration = Duration::from_secs(10);
 
 /// Sustained rate at which we start inbound TLS handshakes (handshakes/second),
 /// consulted before `Endpoint::accept()` so it bounds when we begin handshake
