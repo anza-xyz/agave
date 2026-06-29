@@ -580,6 +580,15 @@ const INTERESTING_LIMITS: &[(&str, InterestingLimit)] = &[
     ("net.core.netdev_max_backlog", InterestingLimit::QueryOnly),
 ];
 
+struct NetworkLimit {
+    /// The kernel parameter being read
+    key: &'static str,
+    /// The Agave suggested limit
+    limit: &'static InterestingLimit,
+    /// The value read back from the system
+    current_value: i64,
+}
+
 impl SystemMonitorService {
     pub fn new(exit: Arc<AtomicBool>, config: SystemMonitorStatsReportConfig) -> Self {
         info!("Starting SystemMonitorService");
@@ -594,7 +603,7 @@ impl SystemMonitorService {
     }
 
     #[cfg(target_os = "linux")]
-    fn linux_get_current_network_limits() -> Vec<(&'static str, &'static InterestingLimit, i64)> {
+    fn linux_get_current_network_limits() -> Vec<NetworkLimit> {
         use sysctl::Sysctl;
 
         fn sysctl_read(name: &str) -> Result<String, sysctl::SysctlError> {
@@ -608,7 +617,7 @@ impl SystemMonitorService {
         }
         INTERESTING_LIMITS
             .iter()
-            .map(|(key, interesting_limit)| {
+            .map(|(key, limit)| {
                 let current_value = sysctl_read(key)
                     .map_err(|e| normalize_err(key, e))
                     .and_then(|val| val.parse::<i64>().map_err(|e| normalize_err(key, e)))
@@ -616,27 +625,33 @@ impl SystemMonitorService {
                         error!("{e}");
                         -1
                     });
-                (*key, interesting_limit, current_value)
+                NetworkLimit {
+                    key,
+                    limit,
+                    current_value,
+                }
             })
             .collect::<Vec<_>>()
     }
 
     #[cfg_attr(not(target_os = "linux"), allow(dead_code))]
-    fn linux_report_network_limits(
-        current_limits: &[(&'static str, &'static InterestingLimit, i64)],
-    ) -> bool {
+    fn linux_report_network_limits(limits: &[NetworkLimit]) -> bool {
         datapoint_info!(
             "os-config",
             ("platform", platform_id(), String),
-            (current_limits[0].0, current_limits[0].2, i64),
-            (current_limits[1].0, current_limits[1].2, i64),
-            (current_limits[2].0, current_limits[2].2, i64),
-            (current_limits[3].0, current_limits[3].2, i64),
-            (current_limits[4].0, current_limits[4].2, i64)
+            (limits[0].key, limits[0].current_value, i64),
+            (limits[1].key, limits[1].current_value, i64),
+            (limits[2].key, limits[2].current_value, i64),
+            (limits[3].key, limits[3].current_value, i64),
+            (limits[4].key, limits[4].current_value, i64)
         );
 
-        current_limits.iter().all(
-            |(key, interesting_limit, current_value)| match interesting_limit {
+        limits.iter().all(
+            |NetworkLimit {
+                 key,
+                 limit,
+                 current_value,
+             }| match limit {
                 InterestingLimit::Recommend(recommended_value)
                     if current_value < recommended_value =>
                 {
