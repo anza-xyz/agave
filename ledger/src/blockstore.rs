@@ -4077,30 +4077,11 @@ impl Blockstore {
             return Err(BlockstoreError::SlotUnavailable);
         }
 
-        // For UpdateParent slots, replay starts at the marker FEC set. Read
-        // components first so the marker can be skipped before returning entries.
-        let slot_entries = if slot_meta.has_update_parent() {
-            let (slot_components, _, _) = self.get_slot_components_with_shred_info(
-                slot,
-                u64::from(slot_meta.replay_fec_set_index),
-                allow_dead_slots,
-            )?;
-            slot_components
-                .into_iter()
-                .filter_map(|component| match component {
-                    BlockComponent::EntryBatch(entries) => Some(entries),
-                    BlockComponent::BlockMarker(_) => None,
-                })
-                .flatten()
-                .collect()
-        } else {
-            self.get_slot_entries_with_shred_info(
-                slot,
-                u64::from(slot_meta.replay_fec_set_index),
-                allow_dead_slots,
-            )?
-            .0
-        };
+        let (slot_entries, _, _) = self.get_slot_entries_with_shred_info(
+            slot,
+            u64::from(slot_meta.replay_fec_set_index),
+            allow_dead_slots,
+        )?;
 
         if slot_entries.is_empty() {
             trace!("do_get_complete_block_with_entries() failed for {slot} (no entries found)");
