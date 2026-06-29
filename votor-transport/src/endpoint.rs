@@ -222,7 +222,7 @@ impl Drop for QuicDatagramEndpoint {
 mod tests {
     use {
         super::{BanCommand, Datagram, QuicDatagramEndpoint},
-        crate::{MAX_ALPENGLOW_VOTE_ACCOUNTS, PeerListSender},
+        crate::{ADDRESS_UNKNOWN, MAX_ALPENGLOW_VOTE_ACCOUNTS, PeerListSender},
         bytes::Bytes,
         crossbeam_channel::{Receiver, bounded},
         solana_keypair::{Keypair, Signer},
@@ -231,7 +231,7 @@ mod tests {
         solana_tls_utils::NotifyKeyUpdate,
         std::{
             collections::HashMap,
-            net::{IpAddr, Ipv4Addr, SocketAddr},
+            net::SocketAddr,
             sync::{
                 Arc,
                 atomic::{AtomicU64, Ordering},
@@ -243,11 +243,6 @@ mod tests {
             sync::{mpsc, watch},
         },
     };
-
-    /// Sentinel "no route" address: a peer_list entry with this address is
-    /// admitted on the inbound side (membership only) but is never connected to
-    /// Used for server nodes that should admit a peer without connecting back to it.
-    const NO_ROUTE: SocketAddr = SocketAddr::new(IpAddr::V4(Ipv4Addr::UNSPECIFIED), 0);
 
     const HIGH_PPS: usize = 1000;
 
@@ -442,7 +437,12 @@ mod tests {
         let rt = make_runtime();
         let a_kp = Keypair::new();
         let a_pk = a_kp.pubkey();
-        let server = spawn_node(&rt, Keypair::new(), peer_list_of(a_pk, NO_ROUTE), HIGH_PPS);
+        let server = spawn_node(
+            &rt,
+            Keypair::new(),
+            peer_list_of(a_pk, ADDRESS_UNKNOWN),
+            HIGH_PPS,
+        );
         let server_pk = server.pubkey();
         let client_a = spawn_node(&rt, a_kp, peer_list_of(server_pk, server.addr), HIGH_PPS);
         let client_b = spawn_node(
@@ -488,7 +488,7 @@ mod tests {
         let server = spawn_node(
             &rt,
             Keypair::new(),
-            peer_list_of(client_pubkey, NO_ROUTE),
+            peer_list_of(client_pubkey, ADDRESS_UNKNOWN),
             HIGH_PPS,
         );
         let client = spawn_node(
@@ -545,7 +545,7 @@ mod tests {
         let server = spawn_node(
             &rt,
             Keypair::new(),
-            peer_list_of(shared_pk, NO_ROUTE),
+            peer_list_of(shared_pk, ADDRESS_UNKNOWN),
             HIGH_PPS,
         );
         let server_pk = server.pubkey();
@@ -604,7 +604,7 @@ mod tests {
         let server = spawn_node(
             &rt,
             Keypair::new(),
-            peer_list_of(shared_pk, NO_ROUTE),
+            peer_list_of(shared_pk, ADDRESS_UNKNOWN),
             HIGH_PPS,
         );
         let peers = peer_list_of(server.pubkey(), server.addr);
@@ -672,7 +672,7 @@ mod tests {
         let server = spawn_node(
             &rt,
             Keypair::new(),
-            peer_list_of(client_pubkey, NO_ROUTE),
+            peer_list_of(client_pubkey, ADDRESS_UNKNOWN),
             PPS,
         );
         let client = spawn_node(
@@ -790,7 +790,7 @@ mod tests {
         let server = spawn_node(
             &rt,
             Keypair::new(),
-            HashMap::from([(k1_pk, NO_ROUTE), (k2_pk, NO_ROUTE)]),
+            HashMap::from([(k1_pk, ADDRESS_UNKNOWN), (k2_pk, ADDRESS_UNKNOWN)]),
             HIGH_PPS,
         );
         let client = spawn_node(
@@ -841,7 +841,7 @@ mod tests {
         let server = spawn_node(
             &rt,
             Keypair::new(),
-            peer_list_of(client_pubkey, NO_ROUTE),
+            peer_list_of(client_pubkey, ADDRESS_UNKNOWN),
             HIGH_PPS,
         );
         let server_pubkey1 = server.pubkey();
@@ -919,7 +919,7 @@ mod tests {
         let server1 = spawn_node(
             &rt,
             server_keypair.insecure_clone(),
-            peer_list_of(client_pubkey, NO_ROUTE),
+            peer_list_of(client_pubkey, ADDRESS_UNKNOWN),
             HIGH_PPS,
         );
         let client = spawn_node(
@@ -946,7 +946,7 @@ mod tests {
         let server2 = spawn_node(
             &rt,
             server_keypair.insecure_clone(),
-            peer_list_of(client_pubkey, NO_ROUTE),
+            peer_list_of(client_pubkey, ADDRESS_UNKNOWN),
             HIGH_PPS,
         );
         assert_ne!(

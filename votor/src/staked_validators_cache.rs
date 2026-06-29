@@ -1,16 +1,12 @@
 #[cfg(feature = "dev-context-only-utils")]
 use arc_swap::ArcSwap;
 use {
-    agave_votor_transport::PeerListSender,
+    agave_votor_transport::{ADDRESS_UNKNOWN, PeerListSender},
     solana_clock::Epoch,
     solana_gossip::cluster_info::ClusterInfo,
     solana_pubkey::Pubkey,
     solana_runtime::bank_forks::SharableBanks,
-    std::{
-        collections::HashMap,
-        net::{IpAddr, Ipv4Addr, SocketAddr},
-        sync::Arc,
-    },
+    std::{collections::HashMap, net::SocketAddr, sync::Arc},
 };
 
 /// Slots on either side of an epoch boundary during which the adjacent epoch's
@@ -94,8 +90,7 @@ impl StakedValidatorsCache {
     /// across the boundary are not transiently rejected.
     ///
     /// Each peer's votor socket is resolved from gossip (or a test override).
-    /// Peers that have no address yet are added with UNSPECIFIED address such
-    /// that connections from them are admitted.
+    /// Peers that have no address yet are added with the [`ADDRESS_UNKNOWN`].
     pub fn refresh_peer_list(&self, cluster_info: &ClusterInfo) {
         let Some(peer_list) = self.peer_list.as_ref() else {
             return;
@@ -131,7 +126,7 @@ impl StakedValidatorsCache {
         }
         self.inject_overrides(&mut staked_nodes);
 
-        // Participate in votor only if this node is itself in the
+        // Participate in votor only if this node is itself in the effective
         // staked set. An unstaked node publishes an empty peer_list, so the
         // transport neither connects to staked peers nor admits inbound connections.
         if !staked_nodes.contains_key(&cluster_info.id()) {
@@ -141,18 +136,17 @@ impl StakedValidatorsCache {
             return;
         }
 
-        let snapshot = staked_nodes
+        let new_peer_list = staked_nodes
             .into_keys()
             .map(|pubkey| {
                 let addr = self
                     .resolve_socket(&pubkey, cluster_info)
-                    // send an unspecified address as a sentinel
-                    .unwrap_or(SocketAddr::new(IpAddr::V4(Ipv4Addr::UNSPECIFIED), 0));
+                    .unwrap_or(ADDRESS_UNKNOWN);
                 (pubkey, addr)
             })
             .collect();
         // Publish the latest version via watch channel - this never blocks.
-        peer_list.send(Arc::new(snapshot)).expect(
+        peer_list.send(Arc::new(new_peer_list)).expect(
             "Transport endpoint receivers should not be dropped before StakedValidatorsCache \
              exits.",
         );

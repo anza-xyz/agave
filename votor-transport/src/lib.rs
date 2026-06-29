@@ -11,12 +11,20 @@ pub(crate) mod transport;
 
 use {
     solana_pubkey::Pubkey,
-    std::{collections::HashMap, net::SocketAddr, sync::Arc, time::Duration},
+    std::{
+        collections::HashMap,
+        net::{IpAddr, Ipv4Addr, SocketAddr},
+        sync::Arc,
+        time::Duration,
+    },
     tokio::sync::watch,
 };
 
+/// Sentinel address for a peer we want to admit but do not yet know the address of.
+pub const ADDRESS_UNKNOWN: SocketAddr = SocketAddr::new(IpAddr::V4(Ipv4Addr::UNSPECIFIED), 0);
+
 /// Snapshot of desired peers list. Peers we cannot yet resolve via gossip
-/// carry the sentinel IP set to `0.0.0.0:0`.
+/// carry the [`ADDRESS_UNKNOWN`] sentinel.
 ///
 /// Inbound admission uses membership only (the address is ignored).
 type PeerListSnapshot = Arc<HashMap<Pubkey, SocketAddr>>;
@@ -34,26 +42,31 @@ pub type PeerListReceiver = watch::Receiver<PeerListSnapshot>;
 /// copy to avoid a `solana-runtime` dependency from this transport crate.
 pub const MAX_ALPENGLOW_VOTE_ACCOUNTS: usize = 2000;
 
-/// Maximum simultaneous inbound connections we keep from a single peer pubkey.
-/// Two are needed to let a hot-spare of the same identity connect while the
-/// previous instance's connection is still alive.
+/// Allows one backup instance to connect while connection from the primary instance
+/// has not yet timed out (this is normal during validator updates).
+/// More than two is erroneous and implies multiple backup nodes assumed the same
+/// identity, we ignore extra connections until existing ones time out.
 pub const MAX_INBOUND_CONNECTIONS_PER_PEER: usize = 2;
 
-/// Capacity of each task -> control-loop connection-event channel.
-/// Picked to absorb several slots worth of work.
-pub(crate) const CONN_EVENT_CHANNEL_CAP: usize = MAX_ALPENGLOW_VOTE_ACCOUNTS;
+/// Capacity of the channel used by the accept and read tasks to report
+/// connection lifecycle events. Events are per-connection, so sized
+/// to absorb a whole cluster disconnecting at once.
+pub(crate) const CONN_EVENT_CHANNEL_CAP: usize =
+    MAX_ALPENGLOW_VOTE_ACCOUNTS * MAX_INBOUND_CONNECTIONS_PER_PEER;
 
-/// Votor should pace broadcasts to each peer. This window is the
-/// instantaneous burst headroom (`window × nominal rate`) we allow to
-/// absorb votor's transient bursts before we start dropping at ingress.
-/// 1 second is enough to absorb plausible network jitter and implementation
-/// differences.
+/// Votor should pace broadcasts to each peer. We must drop packets that
+/// break the limits set by BLS sigverifier. However, network jitter may
+/// add some bursts in the delivery, so this window is the maximum amount
+/// of time we allow the packets to be piling up at max rate before we start
+/// dropping at ingress. 1 second is enough to absorb likely network
+/// jitter and should be safe with current BLS sigverifier implementation.
 pub const PEER_RATE_LIMIT_BURST_WINDOW: Duration = Duration::from_secs(1);
 /// A peer that sustains above-nominal rate long enough to drain this much
 /// budget is obviously not following votor's self-pacing, so we close the
-/// connection rather than just shaping. Chosen as 10x of base burst window
-/// as a balance between probability of dropping legit peer and allowing broken
-/// peers to keep sending.
+/// connection, since datagrams have no flow control.
+/// Chosen as 10 * [`PEER_RATE_LIMIT_BURST_WINDOW`] as a balance between
+/// probability of dropping legit peer and allowing broken peers to keep
+/// sending unbounded amount of traffic.
 pub const PEER_RATE_LIMIT_DOS_WINDOW: Duration = Duration::from_secs(10);
 
 /// Sustained rate at which we start inbound TLS handshakes (handshakes/second),
@@ -62,9 +75,9 @@ pub const PEER_RATE_LIMIT_DOS_WINDOW: Duration = Duration::from_secs(10);
 /// once after a coordinated restart and should be admitted within ~1 second.
 pub const HANDSHAKE_GLOBAL_RATE: f64 = MAX_ALPENGLOW_VOTE_ACCOUNTS as f64;
 
-/// Burst of inbound handshakes tolerated above [`HANDSHAKE_GLOBAL_RATE`] before
-/// new attempts are shed: 200ms of the sustained rate. Kept small to cap the
-/// synchronous handshake-crypto spike on the accept loop.
+/// Burst of inbound handshakes tolerated above allowed rate before
+/// new attempts are shed. Chosen to align with 200ms at [`HANDSHAKE_GLOBAL_RATE`].
+/// Kept small to cap the handshake-crypto load spikes on the accept loop.
 pub(crate) const HANDSHAKE_BURST: u64 = 400;
 
 /// How many instances of AcceptLoop to spawn per server endpoint. This controls
@@ -76,9 +89,9 @@ pub(crate) const HANDSHAKE_WORKERS_PER_ENDPOINT: usize = 1;
 /// validator set, which may be handshaking all at once after a restart.
 pub const MAX_INFLIGHT_HANDSHAKES: usize = MAX_ALPENGLOW_VOTE_ACCOUNTS;
 
-/// Hard timeout for an inbound handshake, operates regardless of what
+/// Hard timeout for an inbound handshake, enforced regardless of what
 /// the peer sends. ~1s suffices for a 300ms-RTT handshake with no packet
-/// loss -> 2s to have margin for retransmits.
+/// loss, so we use 2s to have margin for losses & retransmits.
 pub(crate) const HANDSHAKE_TIMEOUT: Duration = Duration::from_secs(2);
 
 /// How often endpoint metrics are reported.
