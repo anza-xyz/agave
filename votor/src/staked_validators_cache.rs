@@ -15,7 +15,9 @@ use {
 
 /// Slots on either side of an epoch boundary during which the adjacent epoch's
 /// staked set is merged into the peer_list, so peers transitioning across the
-/// boundary are not transiently rejected.
+/// boundary are not transiently rejected. Chosen to give fresh members of the staked set
+/// enough time to connect (several seconds), while also making sure new epoch has
+/// started before booting the departing nodes.
 const EPOCH_BOUNDARY_SLOTS: u64 = 100;
 
 /// Builds and publishes the votor datagram endpoint's peer_list: the set of
@@ -114,11 +116,12 @@ impl StakedValidatorsCache {
             return;
         };
         let mut staked_nodes = (*base).clone();
-        if near_start && epoch > 0 {
-            if let Some(prev) = self.epoch_staked_nodes(epoch.saturating_sub(1)) {
-                for (pubkey, stake) in prev.iter() {
-                    staked_nodes.entry(*pubkey).or_insert(*stake);
-                }
+        if near_start
+            && epoch > 0
+            && let Some(prev) = self.epoch_staked_nodes(epoch.saturating_sub(1))
+        {
+            for (pubkey, stake) in prev.iter() {
+                staked_nodes.entry(*pubkey).or_insert(*stake);
             }
         }
         if near_end {

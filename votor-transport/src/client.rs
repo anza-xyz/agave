@@ -4,7 +4,7 @@ use {
         ALPENGLOW_ALPN, CONN_EVENT_CHANNEL_CAP, METRICS_INTERVAL, PeerListReceiver, close_codes,
         error::Error,
         stats::{self, ClientStats, add, record_client_error},
-        transport::{IdentitySnapshot, new_client_config},
+        transport::{Identity, new_client_config},
     },
     bytes::Bytes,
     log::{error, info},
@@ -105,7 +105,7 @@ pub(crate) struct OutboundLoop {
     pub(crate) generation: u64,
     /// Channel for outbound messages to be broadcast
     pub(crate) egress_receiver: mpsc::Receiver<Bytes>,
-    pub(crate) identity_receiver: watch::Receiver<Option<Arc<IdentitySnapshot>>>,
+    pub(crate) identity_receiver: watch::Receiver<Option<Arc<Identity>>>,
     pub(crate) peer_list_receiver: PeerListReceiver,
     /// Per-peer send-only connection state.
     /// Size is limited to the peer_list size by reconcile task.
@@ -123,7 +123,7 @@ impl OutboundLoop {
         endpoint: Endpoint,
         local_pubkey: Pubkey,
         egress_receiver: mpsc::Receiver<Bytes>,
-        identity_receiver: watch::Receiver<Option<Arc<IdentitySnapshot>>>,
+        identity_receiver: watch::Receiver<Option<Arc<Identity>>>,
         peer_list_receiver: PeerListReceiver,
         shutdown: CancellationToken,
     ) -> Self {
@@ -151,7 +151,7 @@ impl OutboundLoop {
         let mut reconcile_timer = interval(RECONCILE_INTERVAL);
         reconcile_timer.set_missed_tick_behavior(MissedTickBehavior::Delay);
 
-        // A separate receiver clone drives change notifications, the snapshot
+        // A separate receiver clone drives change notifications, the
         // reads in `reconcile` go through `self.peer_list_receiver`.
         let mut peer_list_receiver = self.peer_list_receiver.clone();
 
@@ -164,9 +164,9 @@ impl OutboundLoop {
                         info!("identity rotation channel closed; outbound loop exiting");
                         break;
                     }
-                    let snap = self.identity_receiver.borrow_and_update().clone();
-                    if let Some(snap) = snap {
-                        self.apply_identity_change(snap);
+                    let new_identity = self.identity_receiver.borrow_and_update().clone();
+                    if let Some(new_identity) = new_identity {
+                        self.apply_identity_change(new_identity);
                     }
                 }
                 // The peer set changed: reconcile the connection table right away.
@@ -200,10 +200,13 @@ impl OutboundLoop {
     /// Rebuild the client TLS config against the new identity, swap it into the
     /// quinn endpoint, evict every existing connection (since they use old ID),
     /// and adopt the new pubkey. The next reconcile will reconnect to everyone.
-    fn apply_identity_change(&mut self, snap: Arc<IdentitySnapshot>) {
-        let client_config =
-            new_client_config(snap.cert.clone(), snap.key.clone_key(), ALPENGLOW_ALPN);
-        self.local_pubkey = snap.pubkey;
+    fn apply_identity_change(&mut self, new_identity: Arc<Identity>) {
+        let client_config = new_client_config(
+            new_identity.cert.clone(),
+            new_identity.key.clone_key(),
+            ALPENGLOW_ALPN,
+        );
+        self.local_pubkey = new_identity.pubkey;
         self.endpoint.set_default_client_config(client_config);
         // Bump generation so any in-flight connect that completes after this point is
         // dropped (it carries the old ID).
@@ -213,7 +216,7 @@ impl OutboundLoop {
             .drain()
             .filter(|(_peer, entry)| {
                 if let PeerState::Established { connection, .. } = entry {
-                    close_codes::IDENTITY_ROTATED.close(connection);
+                    close_codes::IDENTITY_CHANGED.close(connection);
                     true
                 } else {
                     false
@@ -221,11 +224,11 @@ impl OutboundLoop {
             })
             .count() as u64;
         self.stats
-            .connection_evicted_identity_rotated
+            .connection_evicted_identity_changed
             .fetch_add(evicted, Ordering::Relaxed);
         info!(
-            "outbound identity rotated to {} ({} connection(s) evicted)",
-            snap.pubkey, evicted
+            "outbound identity changed to {} ({} connection(s) evicted)",
+            new_identity.pubkey, evicted
         );
     }
 
@@ -233,12 +236,12 @@ impl OutboundLoop {
     fn reconcile(&mut self) {
         // Clone the Arc so the operation is coherent (next call to reconcile will
         // pick up a new peer_list if it gets published before this operation finishes).
-        let snapshot = self.peer_list_receiver.borrow().clone();
+        let peer_list = self.peer_list_receiver.borrow().clone();
 
         // 1. Drop connections for peers that left the peer_list.
         let mut evicted = 0u64;
         self.peer_state.retain(|peer, state| {
-            if snapshot.contains_key(peer) {
+            if peer_list.contains_key(peer) {
                 return true;
             }
             if let PeerState::Established { connection, .. } = state {
@@ -252,7 +255,7 @@ impl OutboundLoop {
             .fetch_add(evicted, Ordering::Relaxed);
 
         // 2. Ensure a connection for every addressable peer.
-        for (peer, addr) in snapshot.iter() {
+        for (peer, addr) in peer_list.iter() {
             if *peer == self.local_pubkey {
                 continue;
             }
@@ -319,7 +322,6 @@ impl OutboundLoop {
         }
     }
 
-    /// React to a ConnectEvent.
     fn handle_connect_event(&mut self, event: ConnectEvent) {
         let ConnectEvent {
             peer,
@@ -328,9 +330,9 @@ impl OutboundLoop {
         } = event;
         if generation != self.generation {
             if let Ok(connection) = outcome {
-                close_codes::IDENTITY_ROTATED.close(&connection);
+                close_codes::IDENTITY_CHANGED.close(&connection);
                 self.stats
-                    .connection_evicted_identity_rotated
+                    .connection_evicted_identity_changed
                     .fetch_add(1, Ordering::Relaxed);
             }
             return;
@@ -350,16 +352,13 @@ impl OutboundLoop {
                 _ => {
                     // Connect succeeded but the slot is no longer waiting for it.
                     // The connection is redundant; close it.
-                    close_codes::IDENTITY_ROTATED.close(&connection);
+                    close_codes::IDENTITY_CHANGED.close(&connection);
                 }
             },
             // Connection failed: drop the placeholder.
             Err(()) => {
-                debug_assert!(matches!(
-                    self.peer_state.get(&peer),
-                    Some(PeerState::Connecting)
-                ));
-                self.peer_state.remove(&peer);
+                let removed = self.peer_state.remove(&peer);
+                debug_assert!(matches!(removed, Some(PeerState::Connecting)));
             }
         }
     }

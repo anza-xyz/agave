@@ -50,7 +50,7 @@ pub(crate) mod close_codes {
         reason: b"FLOODING",
     };
 
-    pub(crate) const IDENTITY_ROTATED: Spec = Spec {
+    pub(crate) const IDENTITY_CHANGED: Spec = Spec {
         code: VarInt::from_u32(11),
         reason: b"IDENTITY_ROTATED",
     };

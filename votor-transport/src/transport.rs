@@ -16,13 +16,13 @@ use {
 
 /// Identity material derived from a keypair: the ed25519 pubkey plus the
 /// self-signed TLS cert/key that the endpoint presents to peers.
-pub(crate) struct IdentitySnapshot {
+pub(crate) struct Identity {
     pub pubkey: Pubkey,
     pub cert: CertificateDer<'static>,
     pub key: PrivateKeyDer<'static>,
 }
 
-impl IdentitySnapshot {
+impl Identity {
     pub fn from_keypair(keypair: &Keypair) -> Self {
         let (cert, key) = new_dummy_x509_certificate(keypair);
         Self {

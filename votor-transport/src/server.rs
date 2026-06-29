@@ -8,7 +8,7 @@ use {
         endpoint::{BanCommand, Datagram},
         error::Error,
         stats::{self, ServerStats, record_server_error},
-        transport::{IdentitySnapshot, new_server_config},
+        transport::{Identity, new_server_config},
     },
     arrayvec::ArrayVec,
     crossbeam_channel::{Sender, TrySendError},
@@ -52,14 +52,13 @@ pub(crate) enum InboundEvent {
     FloodDetected { peer: Pubkey },
 }
 
-/// AcceptLoop pulls connection attempts off its endpoint,
-/// runs the server side of the TLS handshake, then
-/// spawns a task that awaits the client's reply.
+/// AcceptLoop pulls connection attempts off its endpoint, runs the server
+/// side of the TLS handshake, then spawns a task that awaits the client's reply.
 /// This coarsely bounds the number of cores that can be dedicated
 /// to handshake work to the number of accept loops (one per endpoint).
 pub(crate) struct AcceptLoop {
     endpoint: Endpoint,
-    identity_receiver: watch::Receiver<Option<Arc<IdentitySnapshot>>>,
+    identity_receiver: watch::Receiver<Option<Arc<Identity>>>,
     events_sender: mpsc::Sender<InboundEvent>,
     stats: Arc<ServerStats>,
     shutdown: CancellationToken,
@@ -72,7 +71,7 @@ pub(crate) struct AcceptLoop {
 impl AcceptLoop {
     pub(crate) fn new(
         endpoint: Endpoint,
-        identity_receiver: watch::Receiver<Option<Arc<IdentitySnapshot>>>,
+        identity_receiver: watch::Receiver<Option<Arc<Identity>>>,
         events_sender: mpsc::Sender<InboundEvent>,
         stats: Arc<ServerStats>,
         shutdown: CancellationToken,
@@ -113,8 +112,7 @@ impl AcceptLoop {
             tokio::select! {
                 biased;
                 // Identity rotation: swap this endpoint's server config so new
-                // handshakes observe the new cert. In-flight handshakes that
-                // complete under the old cert are harmless and ignored here.
+                // handshakes observe the new cert.
                 changed = identity_receiver.changed() => {
                     if changed.is_err() {
                         info!("identity rotation channel closed; accept loop exiting");
@@ -312,7 +310,7 @@ pub(crate) struct InboundLoop {
     /// Latest version of the admitted peer list.
     pub(crate) peer_list_receiver: PeerListReceiver,
     /// Identity-rotation notification channel.
-    pub(crate) identity_receiver: watch::Receiver<Option<Arc<IdentitySnapshot>>>,
+    pub(crate) identity_receiver: watch::Receiver<Option<Arc<Identity>>>,
     /// Per-peer receive-only connection state.
     pub(crate) peer_state: HashMap<Pubkey, PeerEntry, PubkeyHasherBuilder>,
     /// Cloned into spawned tasks.
@@ -337,7 +335,7 @@ impl InboundLoop {
         peer_list_receiver: PeerListReceiver,
         inbound_events_sender: mpsc::Sender<InboundEvent>,
         inbound_events_receiver: mpsc::Receiver<InboundEvent>,
-        identity_receiver: watch::Receiver<Option<Arc<IdentitySnapshot>>>,
+        identity_receiver: watch::Receiver<Option<Arc<Identity>>>,
         stats: Arc<ServerStats>,
         shutdown: CancellationToken,
         max_datagrams_per_second_per_peer: usize,
@@ -399,7 +397,7 @@ impl InboundLoop {
                 Some(event) = self.events_receiver.recv() => self.handle_event(event),
                 // A peer was banned by the sig-verifier.
                 Some(BanCommand { peer, duration }) = self.ban_receiver.recv() => self.apply_ban(peer, duration),
-                // The local identity rotated: evict the table so peers
+                // The local identity changed: evict the table so peers
                 // re-handshake under the new cert.
                 changed = identity_receiver.changed() => {
                     if changed.is_err() {
@@ -443,12 +441,12 @@ impl InboundLoop {
             .peer_state
             .drain()
             .flat_map(|(_, entry)| entry.connections)
-            .inspect(|connection| close_codes::IDENTITY_ROTATED.close(connection))
+            .inspect(|connection| close_codes::IDENTITY_CHANGED.close(connection))
             .count() as u64;
         self.stats
-            .connection_evicted_identity_rotated
+            .connection_evicted_identity_changed
             .fetch_add(evicted, Ordering::Relaxed);
-        info!("inbound identity rotated ({evicted} connection(s) evicted)");
+        info!("inbound identity changed ({evicted} connection(s) evicted)");
     }
 
     /// Table-wide admission sweep, driven by a peer_list change. Closes every
@@ -618,13 +616,12 @@ mod tests {
         // timeout lives). The control loop is not needed: the handshake never
         // completes, so no Accepted event is ever forwarded.
         let server_kp = Keypair::new();
-        let id = IdentitySnapshot::from_keypair(&server_kp);
+        let id = Identity::from_keypair(&server_kp);
         let server_cfg = new_server_config(id.cert, id.key, ALPENGLOW_ALPN);
         let endpoint = Endpoint::server(server_cfg, loopback).unwrap();
         let server_addr = endpoint.local_addr().unwrap();
 
-        // Keep the sender alive so the loop keeps rotation support enabled; we
-        // never rotate in this test.
+        // Keep the sender alive so the event loop keeps running.
         let (_identity_sender, identity_receiver) = watch::channel(None);
         // Sized so a never-completing handshake never needs to send.
         let (events_sender, _events_receiver) = mpsc::channel(1);
@@ -659,7 +656,7 @@ mod tests {
 
         // Client connects to the proxy, so it sends but never hears back.
         let client_kp = Keypair::new();
-        let cid = IdentitySnapshot::from_keypair(&client_kp);
+        let cid = Identity::from_keypair(&client_kp);
         let client_cfg = new_client_config(cid.cert, cid.key, ALPENGLOW_ALPN);
         let mut client = Endpoint::client(loopback).unwrap();
         client.set_default_client_config(client_cfg);

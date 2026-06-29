@@ -5,9 +5,9 @@ use {
         MAX_INFLIGHT_HANDSHAKES, PeerListReceiver,
         client::OutboundLoop,
         error::Error,
-        server::{AcceptLoop, InboundEvent, InboundLoop},
+        server::{AcceptLoop, InboundLoop},
         stats::ServerStats,
-        transport::{IdentitySnapshot, new_client_config, new_server_config},
+        transport::{Identity, new_client_config, new_server_config},
     },
     bytes::Bytes,
     crossbeam_channel::Sender,
@@ -36,14 +36,14 @@ pub struct BanCommand {
 
 /// Handle for caller-driven identity rotation.
 pub struct KeyUpdater {
-    sender: watch::Sender<Option<Arc<IdentitySnapshot>>>,
+    sender: watch::Sender<Option<Arc<Identity>>>,
 }
 
 impl NotifyKeyUpdate for KeyUpdater {
     fn update_key(&self, keypair: &Keypair) -> Result<(), Box<dyn std::error::Error>> {
-        let snap = Arc::new(IdentitySnapshot::from_keypair(keypair));
+        let new_identity = Arc::new(Identity::from_keypair(keypair));
         self.sender
-            .send(Some(snap))
+            .send(Some(new_identity))
             .map_err(|_| -> Box<dyn std::error::Error> {
                 "quic-datagram endpoint has shut down; identity update rejected".into()
             })?;
@@ -80,7 +80,7 @@ impl QuicDatagramEndpoint {
     /// cancels them.
     /// Received datagrams flow into `inbound_datagrams`, per-peer receive rate is
     /// capped by `max_datagrams_per_second_per_peer`.
-    /// `desired_peers` carries desired peer set updates: inbound evicts
+    /// `peer_list` carries desired peer set updates: inbound evicts
     /// peers no longer in the set, outbound connects to peers in it.
     /// `ban_commands` carries temporary per-peer ban commands (banning also closes
     /// the peer's connections).
@@ -152,7 +152,7 @@ impl QuicDatagramEndpoint {
         // Inbound event channel allows the accept loops to forward authenticated
         // connections, and per-connection tasks report lifecycle events.
         let (inbound_events_sender, inbound_events_receiver) =
-            mpsc::channel::<InboundEvent>(CONN_EVENT_CHANNEL_CAP);
+            mpsc::channel(CONN_EVENT_CHANNEL_CAP);
         // One accept loop per endpoint. Splits the global handshake budgets
         // evenly so the aggregate matches limits regardless of how many endpoints exist.
         let num_endpoints = inbound_endpoints.len();

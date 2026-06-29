@@ -19,9 +19,8 @@ pub struct ClientStats {
     pub(crate) connect_failed: AtomicU64,
     /// A peer in the peer_list had no resolvable address.
     pub(crate) connect_no_route: AtomicU64,
-    /// Connections closed because the local identity (TLS cert / pubkey) was
-    /// rotated.
-    pub(crate) connection_evicted_identity_rotated: AtomicU64,
+    /// Connections closed because the local identity changed.
+    pub(crate) connection_evicted_identity_changed: AtomicU64,
     /// Existing connection closed because the peer's gossip address changed.
     pub(crate) connection_evicted_peer_moved: AtomicU64,
     /// Connections closed because the peer is no longer in the peer_list.
@@ -59,9 +58,8 @@ pub struct ServerStats {
     pub(crate) connection_evicted_peer_list: AtomicU64,
     /// Connections closed because the peer was banned by the sig-verifier.
     pub(crate) connection_evicted_banned: AtomicU64,
-    /// Connections closed because the local identity (TLS cert / pubkey) was
-    /// rotated.
-    pub(crate) connection_evicted_identity_rotated: AtomicU64,
+    /// Connections closed because the local identity changed.
+    pub(crate) connection_evicted_identity_changed: AtomicU64,
     /// We have received a datagram but have nowhere to put it.
     pub(crate) datagram_ingress_dropped_channel_full: AtomicU64,
     /// Peer's incoming datagram exceeded the per-connection rate.
@@ -169,8 +167,8 @@ pub(crate) fn report_client(stats: &ClientStats, live_connections: u64) {
             i64
         ),
         (
-            "connection_evicted_identity_rotated",
-            swap!(stats.connection_evicted_identity_rotated),
+            "connection_evicted_identity_changed",
+            swap!(stats.connection_evicted_identity_changed),
             i64
         ),
     );
@@ -231,8 +229,8 @@ pub(crate) fn report_server(stats: &ServerStats, live_connections: u64) {
             i64
         ),
         (
-            "connection_evicted_identity_rotated",
-            swap!(stats.connection_evicted_identity_rotated),
+            "connection_evicted_identity_changed",
+            swap!(stats.connection_evicted_identity_changed),
             i64
         ),
     );
