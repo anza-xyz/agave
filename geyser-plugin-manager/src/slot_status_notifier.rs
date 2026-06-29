@@ -140,28 +140,19 @@ mod tests {
     }
 
     #[test]
-    fn test_notify_created_bank_includes_bank_id() {
+    fn test_notify_slot_status_bank_id() {
         let updates = Arc::new(Mutex::new(Vec::new()));
         let notifier = create_notifier(updates.clone());
 
         notifier.notify_created_bank(42, 41, 9);
-
-        assert_eq!(
-            *updates.lock().unwrap(),
-            vec![(42, Some(41), SlotStatus::CreatedBank, Some(9))]
-        );
-    }
-
-    #[test]
-    fn test_notify_slot_status_without_bank_has_no_bank_id() {
-        let updates = Arc::new(Mutex::new(Vec::new()));
-        let notifier = create_notifier(updates.clone());
-
         notifier.notify_slot_processed(42, Some(41));
 
         assert_eq!(
             *updates.lock().unwrap(),
-            vec![(42, Some(41), SlotStatus::Processed, None)]
+            vec![
+                (42, Some(41), SlotStatus::CreatedBank, Some(9)),
+                (42, Some(41), SlotStatus::Processed, None),
+            ]
         );
     }
 }
