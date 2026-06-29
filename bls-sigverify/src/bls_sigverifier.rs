@@ -100,7 +100,7 @@ struct SigVerifier {
     /// thread pool to use for all parallel tasks
     thread_pool: ThreadPool,
     generated_cert_types: Arc<GeneratedCertTypes>,
-    /// used to dedup received votes so that we only ever verify a single `Vote` from a given sender.
+    /// dedup received votes so that we only ever verify a single `Vote` from a given sender.
     received_votes: HashSet<(Vote, u16)>,
 }
 
