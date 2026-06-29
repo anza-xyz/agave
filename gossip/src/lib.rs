@@ -50,10 +50,9 @@ extern crate solana_frozen_abi_macro;
 #[macro_use]
 extern crate solana_metrics;
 
-#[cfg(feature = "conformance")]
-pub use protocol::gossip_decode_to_effects;
-
-#[cfg(feature = "conformance")]
-mod harness;
+// Internals exposed under `dev-context-only-utils` for out-of-crate conformance
+// harnesses (see the `agave-conformance` crate).
+#[cfg(feature = "dev-context-only-utils")]
+pub use protocol::{Ping, Protocol, PruneData, deserialize_protocol};
 
 mod wire_format_tests;

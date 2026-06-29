@@ -1,3 +1,5 @@
+#[cfg(feature = "dev-context-only-utils")]
+use qualifier_attr::qualifiers;
 use {
     crate::{
         contact_info::ContactInfo,
@@ -315,13 +317,16 @@ pub struct LowestSlot {
 }
 
 impl LowestSlot {
-    // Conformance-only accessors; unused under DCOU.
-    #[cfg(any(test, feature = "conformance"))]
+    // Accessors exposed under `dev-context-only-utils` for the out-of-crate
+    // conformance harness (see the `agave-conformance` crate).
+    #[cfg(any(test, feature = "dev-context-only-utils"))]
+    #[cfg_attr(feature = "dev-context-only-utils", qualifiers(pub))]
     pub(crate) fn wallclock(&self) -> u64 {
         self.wallclock
     }
 
-    #[cfg(any(test, feature = "conformance"))]
+    #[cfg(any(test, feature = "dev-context-only-utils"))]
+    #[cfg_attr(feature = "dev-context-only-utils", qualifiers(pub))]
     pub(crate) fn from(&self) -> &Pubkey {
         &self.from
     }
@@ -432,17 +437,21 @@ impl Vote {
         }
     }
 
+    #[cfg_attr(feature = "dev-context-only-utils", qualifiers(pub))]
     pub(crate) fn transaction(&self) -> &Transaction {
         &self.transaction
     }
 
-    // Conformance-only accessors; unused under DCOU.
-    #[cfg(any(test, feature = "conformance"))]
+    // Accessors exposed under `dev-context-only-utils` for the out-of-crate
+    // conformance harness (see the `agave-conformance` crate).
+    #[cfg(any(test, feature = "dev-context-only-utils"))]
+    #[cfg_attr(feature = "dev-context-only-utils", qualifiers(pub))]
     pub(crate) fn from(&self) -> &Pubkey {
         &self.from
     }
 
-    #[cfg(any(test, feature = "conformance"))]
+    #[cfg(any(test, feature = "dev-context-only-utils"))]
+    #[cfg_attr(feature = "dev-context-only-utils", qualifiers(pub))]
     pub(crate) fn wallclock(&self) -> u64 {
         self.wallclock
     }
