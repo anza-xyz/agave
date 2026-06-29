@@ -61,10 +61,9 @@ fn max_admitted_vote_slot(root_slot: Slot, highest_parent_ready_slot: Slot) -> S
         .saturating_add(MAX_VOTE_SLOT_DISTANCE_FROM_PARENT_READY)
 }
 
-/// If we receive an invalid certificate or vote, we ban its attributed sender. For certificates
-/// received from blockstore, that sender is the scheduled leader for the carrier slot. We ban the
-/// sender for 2 days, which roughly corresponds to an epoch.
-pub(super) const BAN_TIMEOUT: Duration = Duration::from_hours(48);
+/// If we receive an invalid certificate or vote from a QUIC connection, we ban the sender.
+/// We ban the sender for 10 seconds which prevents DoS but allows for recovery in case of instability.
+pub(super) const BAN_TIMEOUT: Duration = Duration::from_secs(10);
 
 pub struct SigVerifierContext {
     pub migration_status: Arc<MigrationStatus>,
