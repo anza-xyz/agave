@@ -255,25 +255,23 @@ impl SigVerifier {
                     let vote = unverified_vote.vote;
                     if let Some((sender_vote_account_pubkey, sender_bls_pubkey)) =
                         self.keep_vote(&vote, &unverified_vote, root_bank)
-                    {
-                        if self
+                        && self
                             .received_votes
                             .insert((unverified_vote.vote, unverified_vote.rank))
-                        {
-                            let vote_payload_to_sign = VotePayloadToSign::new_from_vote(
-                                unverified_vote.vote,
-                                unverified_vote.shred_version,
-                            );
-                            votes.entry(vote_payload_to_sign).or_default().push(
-                                UnverifiedVotePayload {
-                                    vote_message: unverified_vote,
-                                    sender_bls_pubkey,
-                                    sender_vote_account_pubkey,
-                                    sender_identity_pubkey,
-                                    prepared_payload: None,
-                                },
-                            );
-                        }
+                    {
+                        let vote_payload_to_sign = VotePayloadToSign::new_from_vote(
+                            unverified_vote.vote,
+                            unverified_vote.shred_version,
+                        );
+                        votes.entry(vote_payload_to_sign).or_default().push(
+                            UnverifiedVotePayload {
+                                vote_message: unverified_vote,
+                                sender_bls_pubkey,
+                                sender_vote_account_pubkey,
+                                sender_identity_pubkey,
+                                prepared_payload: None,
+                            },
+                        );
                     }
                 }
                 DecodedWireConsensusMessage::Certificate(cert) => {
