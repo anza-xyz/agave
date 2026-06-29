@@ -1,9 +1,9 @@
 use {
     super::*,
+    solana_zk_sdk_pod::encryption::elgamal::PodElGamalPubkey,
     spl_token_2022_interface::{
         extension::confidential_transfer_fee::instruction::*,
         instruction::{decode_instruction_data, decode_instruction_type},
-        solana_zk_sdk::encryption::pod::elgamal::PodElGamalPubkey,
     },
 };
 
@@ -212,15 +212,13 @@ mod test {
         solana_instruction::{AccountMeta, Instruction},
         solana_message::Message,
         solana_pubkey::Pubkey,
+        solana_zk_sdk_pod::encryption::auth_encryption::PodAeCiphertext,
         spl_token_2022_interface::{
             extension::confidential_transfer_fee::instruction::{
                 inner_withdraw_withheld_tokens_from_accounts,
                 inner_withdraw_withheld_tokens_from_mint,
             },
-            solana_zk_sdk::{
-                encryption::pod::auth_encryption::PodAeCiphertext,
-                zk_elgamal_proof_program::proof_data::CiphertextCiphertextEqualityProofData,
-            },
+            solana_zk_elgamal_proof_interface::proof_data::CiphertextCiphertextEqualityProofData,
         },
         spl_token_confidential_transfer_proof_extraction::instruction::ProofLocation,
         std::num::NonZero,

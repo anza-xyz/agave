@@ -3,17 +3,18 @@ pub use solana_account_decoder_client_types::token::{
     UiConfidentialTransferFeeConfig, UiConfidentialTransferMint, UiCpiGuard, UiDefaultAccountState,
     UiExtension, UiGroupMemberPointer, UiGroupPointer, UiInterestBearingConfig, UiMemoTransfer,
     UiMetadataPointer, UiMintCloseAuthority, UiPausableConfig, UiPermanentDelegate,
-    UiScaledUiAmountConfig, UiTokenGroup, UiTokenGroupMember, UiTokenMetadata, UiTransferFee,
-    UiTransferFeeAmount, UiTransferFeeConfig, UiTransferHook, UiTransferHookAccount,
+    UiPermissionedBurnConfig, UiScaledUiAmountConfig, UiTokenGroup, UiTokenGroupMember,
+    UiTokenMetadata, UiTransferFee, UiTransferFeeAmount, UiTransferFeeConfig, UiTransferHook,
+    UiTransferHookAccount,
 };
 use {
     crate::parse_token::convert_account_state,
     solana_clock::UnixTimestamp,
     solana_program_pack::Pack,
     solana_pubkey::Pubkey,
-    spl_token_2022_interface::{
-        extension::{self, BaseState, BaseStateWithExtensions, ExtensionType, StateWithExtensions},
-        solana_zk_sdk::encryption::pod::elgamal::PodElGamalPubkey,
+    solana_zk_sdk_pod::encryption::elgamal::PodElGamalPubkey,
+    spl_token_2022_interface::extension::{
+        self, BaseState, BaseStateWithExtensions, ExtensionType, StateWithExtensions,
     },
     spl_token_group_interface::state::{TokenGroup, TokenGroupMember},
     spl_token_metadata_interface::state::TokenMetadata,
@@ -153,6 +154,12 @@ pub fn parse_extension<S: BaseState + Pack>(
             .map(|&extension| UiExtension::PausableConfig(convert_pausable_config(extension)))
             .unwrap_or(UiExtension::UnparseableExtension),
         ExtensionType::PausableAccount => UiExtension::PausableAccount,
+        ExtensionType::PermissionedBurn => account
+            .get_extension::<extension::permissioned_burn::PermissionedBurnConfig>()
+            .map(|&extension| {
+                UiExtension::PermissionedBurnConfig(convert_permissioned_burn_config(extension))
+            })
+            .unwrap_or(UiExtension::UnparseableExtension),
     }
 }
 
@@ -434,5 +441,14 @@ fn convert_pausable_config(
     UiPausableConfig {
         authority: authority.map(|pubkey| pubkey.to_string()),
         paused: pausable_config.paused.into(),
+    }
+}
+
+fn convert_permissioned_burn_config(
+    permissioned_burn_config: extension::permissioned_burn::PermissionedBurnConfig,
+) -> UiPermissionedBurnConfig {
+    let authority: Option<Pubkey> = permissioned_burn_config.authority.into();
+    UiPermissionedBurnConfig {
+        authority: authority.map(|pubkey| pubkey.to_string()),
     }
 }
