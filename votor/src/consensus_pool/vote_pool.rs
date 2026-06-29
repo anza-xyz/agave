@@ -313,8 +313,10 @@ impl VotePool {
             self.notar_fallback.entries.get(&block.block_id),
         ) {
             (None, None) => Ok(None),
-            (Some(entry), None) | (None, Some(entry)) => {
-                entry.try_build_cert(cert_type, total_stake, completed_certs)
+            (Some(entry), None) => entry.try_build_cert(cert_type, total_stake, completed_certs),
+            (None, Some(nf_entry)) => {
+                let empty = VoteEntry::new(0);
+                try_build_from_entries(cert_type, total_stake, &empty, nf_entry, completed_certs)
             }
             (Some(notar_entry), Some(nf_entry)) => try_build_from_entries(
                 cert_type,
@@ -370,22 +372,17 @@ impl VotePool {
         completed_certs: &BTreeMap<CertificateType, Arc<Certificate>>,
     ) -> Result<Option<Certificate>, VotePoolAddVoteError> {
         let cert_type = CertificateType::Skip(slot);
-        match (self.skip.stake > 0, self.skip_fallback.stake > 0) {
-            (false, false) => Ok(None),
-            (true, false) => self
-                .skip
-                .try_build_cert(cert_type, total_stake, completed_certs),
-            (false, true) => {
-                self.skip_fallback
-                    .try_build_cert(cert_type, total_stake, completed_certs)
-            }
-            (true, true) => try_build_from_entries(
+        if self.skip_fallback.stake == 0 {
+            self.skip
+                .try_build_cert(cert_type, total_stake, completed_certs)
+        } else {
+            try_build_from_entries(
                 cert_type,
                 total_stake,
                 &self.skip,
                 &self.skip_fallback,
                 completed_certs,
-            ),
+            )
         }
     }
 
