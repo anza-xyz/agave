@@ -314,7 +314,7 @@ impl VersionedEpochStakes {
         }
     }
 
-    pub fn bls_pubkey_to_rank_map(&self) -> &Arc<BLSPubkeyToRankMap> {
+    pub fn bls_pubkey_to_rank_map(&self) -> &BLSPubkeyToRankMap {
         match self {
             Self::Current {
                 bls_pubkey_to_rank_map,
