@@ -262,7 +262,9 @@ impl SigVerifier {
                         {
                             continue;
                         }
-                        if deduped_votes.insert(unverified_vote.clone()) {
+                        // sender could send duplicate votes with different signatures so do not use
+                        // signature to detect duplicates.
+                        if deduped_votes.insert((unverified_vote.vote, unverified_vote.rank)) {
                             let vote_payload_to_sign = VotePayloadToSign::new_from_vote(
                                 unverified_vote.vote,
                                 unverified_vote.shred_version,
