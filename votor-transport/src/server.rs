@@ -397,15 +397,14 @@ impl InboundLoop {
                 Some(event) = self.events_receiver.recv() => self.handle_event(event),
                 // A peer was banned by the sig-verifier.
                 Some(BanCommand { peer, duration }) = self.ban_receiver.recv() => self.apply_ban(peer, duration),
-                // The local identity changed: evict the table so peers
-                // re-handshake under the new cert.
+                // The local identity changed.
                 changed = identity_receiver.changed() => {
                     if changed.is_err() {
                         info!("identity rotation channel closed; inbound loop exiting");
                         break;
                     }
                     let _ = identity_receiver.borrow_and_update();
-                    self.evict_all();
+                    self.close_all();
                 }
                 // The admitted-peer set changed.
                 changed = peer_list_receiver.changed() => {
@@ -413,11 +412,11 @@ impl InboundLoop {
                         info!("peer_list sender dropped; inbound loop exiting");
                         break;
                     }
-                    self.evict_not_allowed();
+                    self.close_not_allowed();
                 }
-                // Metrics are quite handy to have even if we are flooded with incoming.
+                // Metrics.
                 _ = metrics.tick() => stats::report_server(&self.stats, self.total_peers()),
-                // When idle we can take care of bookkeeping.
+                // When idle we can take care of bookkeeping that does not affect liveness.
                 _ = prune.tick() => {
                     self.banlist.prune();
                     // Reclaim empty connection slots
@@ -433,25 +432,22 @@ impl InboundLoop {
         }
     }
 
-    /// Evict the whole inbound table so peers re-handshake under the new
-    /// identity. Driven by a change on the identity channel; the accept loops
-    /// own the matching per-endpoint server-TLS-config swaps.
-    fn evict_all(&mut self) {
-        let evicted = self
+    /// Close all inbound connections so peers observe our new identity.
+    fn close_all(&mut self) {
+        let total_closed = self
             .peer_state
             .drain()
             .flat_map(|(_, entry)| entry.connections)
             .inspect(|connection| close_codes::IDENTITY_CHANGED.close(connection))
             .count() as u64;
         self.stats
-            .connection_evicted_identity_changed
-            .fetch_add(evicted, Ordering::Relaxed);
-        info!("inbound identity changed ({evicted} connection(s) evicted)");
+            .connection_closed_identity_changed
+            .fetch_add(total_closed, Ordering::Relaxed);
+        info!("inbound identity changed ({total_closed} connection(s) closed)");
     }
 
-    /// Table-wide admission sweep, driven by a peer_list change. Closes every
-    /// connection whose peer is no longer admitted.
-    fn evict_not_allowed(&mut self) {
+    /// Scans all open connections and closes those whose peer is no longer admitted.
+    fn close_not_allowed(&mut self) {
         // Disjoint field borrows so the membership check can read `peer_list_receiver`
         // while iterating `peer_state` mutably.
         let Self {
@@ -462,7 +458,7 @@ impl InboundLoop {
         } = self;
         // Snapshot the peer list to avoid holding locks.
         let peer_list = peer_list_receiver.borrow().clone();
-        let mut evicted_peer_list = 0u64;
+        let mut closed_not_in_peer_list = 0u64;
         for (peer, entry) in peer_state.iter_mut() {
             if entry.connections.is_empty() || peer_list.contains_key(peer) {
                 continue;
@@ -472,15 +468,14 @@ impl InboundLoop {
                 .drain(..)
                 .inspect(|connection| close_codes::NOT_ADMITTED.close(connection))
                 .count() as u64;
-            evicted_peer_list = evicted_peer_list.saturating_add(closed);
+            closed_not_in_peer_list = closed_not_in_peer_list.saturating_add(closed);
         }
         stats
-            .connection_evicted_peer_list
-            .fetch_add(evicted_peer_list, Ordering::Relaxed);
+            .connection_closed_not_in_peer_list
+            .fetch_add(closed_not_in_peer_list, Ordering::Relaxed);
     }
 
-    /// Apply the ban command and close any open connections
-    /// from that peer.
+    /// Apply the ban command and close any open connections from that peer.
     fn apply_ban(&mut self, peer: Pubkey, timeout: Duration) {
         self.banlist.ban(peer, timeout);
         // if peer has any open connections...
@@ -493,16 +488,13 @@ impl InboundLoop {
                 .count() as u64;
 
             self.stats
-                .connection_evicted_banned
+                .connection_closed_banned
                 .fetch_add(closed, Ordering::Relaxed);
         }
     }
 
-    /// Apply an admission or connection-lifecycle event.
     fn handle_event(&mut self, event: InboundEvent) {
         match event {
-            // The accept loop already filtered handshakes that completed across
-            // a rotation, so an Accepted that reaches here is current.
             InboundEvent::Accepted { peer, connection } => {
                 self.maybe_admit_connection(peer, connection)
             }

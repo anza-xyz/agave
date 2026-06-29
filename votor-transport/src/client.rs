@@ -198,7 +198,7 @@ impl OutboundLoop {
     }
 
     /// Rebuild the client TLS config against the new identity, swap it into the
-    /// quinn endpoint, evict every existing connection (since they use old ID),
+    /// quinn endpoint, close every existing connection (since they use old ID),
     /// and adopt the new pubkey. The next reconcile will reconnect to everyone.
     fn apply_identity_change(&mut self, new_identity: Arc<Identity>) {
         let client_config = new_client_config(
@@ -211,7 +211,7 @@ impl OutboundLoop {
         // Bump generation so any in-flight connect that completes after this point is
         // dropped (it carries the old ID).
         self.generation = self.generation.wrapping_add(1);
-        let evicted = self
+        let closed = self
             .peer_state
             .drain()
             .filter(|(_peer, entry)| {
@@ -224,11 +224,11 @@ impl OutboundLoop {
             })
             .count() as u64;
         self.stats
-            .connection_evicted_identity_changed
-            .fetch_add(evicted, Ordering::Relaxed);
+            .connection_closed_identity_changed
+            .fetch_add(closed, Ordering::Relaxed);
         info!(
-            "outbound identity changed to {} ({} connection(s) evicted)",
-            new_identity.pubkey, evicted
+            "outbound identity changed to {} ({} connection(s) closed)",
+            new_identity.pubkey, closed
         );
     }
 
@@ -239,20 +239,20 @@ impl OutboundLoop {
         let peer_list = self.peer_list_receiver.borrow().clone();
 
         // 1. Drop connections for peers that left the peer_list.
-        let mut evicted = 0u64;
+        let mut closed_not_in_peer_list = 0u64;
         self.peer_state.retain(|peer, state| {
             if peer_list.contains_key(peer) {
                 return true;
             }
             if let PeerState::Established { connection, .. } = state {
                 close_codes::NOT_ADMITTED.close(connection);
-                evicted = evicted.saturating_add(1);
+                closed_not_in_peer_list = closed_not_in_peer_list.saturating_add(1);
             }
             false
         });
         self.stats
-            .connection_evicted_peer_list
-            .fetch_add(evicted, Ordering::Relaxed);
+            .connection_closed_not_in_peer_list
+            .fetch_add(closed_not_in_peer_list, Ordering::Relaxed);
 
         // 2. Ensure a connection for every addressable peer.
         for (peer, addr) in peer_list.iter() {
@@ -261,7 +261,7 @@ impl OutboundLoop {
             }
             // No gossip address yet (or anymore)
             if addr.ip().is_unspecified() {
-                add(&self.stats.connect_no_route);
+                add(&self.stats.connect_failed_no_address);
                 continue;
             }
             let needs_connection = match self.peer_state.get(peer) {
@@ -274,7 +274,7 @@ impl OutboundLoop {
                     if cur != addr {
                         close_codes::PEER_MOVED.close(connection);
                         self.stats
-                            .connection_evicted_peer_moved
+                            .connection_closed_peer_moved
                             .fetch_add(1, Ordering::Relaxed);
                         true
                     } else {
@@ -332,7 +332,7 @@ impl OutboundLoop {
             if let Ok(connection) = outcome {
                 close_codes::IDENTITY_CHANGED.close(&connection);
                 self.stats
-                    .connection_evicted_identity_changed
+                    .connection_closed_identity_changed
                     .fetch_add(1, Ordering::Relaxed);
             }
             return;

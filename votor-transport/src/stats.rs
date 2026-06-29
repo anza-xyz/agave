@@ -18,13 +18,13 @@ pub struct ClientStats {
     /// connection fault, or a non-transient `send_datagram` failure.
     pub(crate) connect_failed: AtomicU64,
     /// A peer in the peer_list had no resolvable address.
-    pub(crate) connect_no_route: AtomicU64,
+    pub(crate) connect_failed_no_address: AtomicU64,
     /// Connections closed because the local identity changed.
-    pub(crate) connection_evicted_identity_changed: AtomicU64,
+    pub(crate) connection_closed_identity_changed: AtomicU64,
     /// Existing connection closed because the peer's gossip address changed.
-    pub(crate) connection_evicted_peer_moved: AtomicU64,
+    pub(crate) connection_closed_peer_moved: AtomicU64,
     /// Connections closed because the peer is no longer in the peer_list.
-    pub(crate) connection_evicted_peer_list: AtomicU64,
+    pub(crate) connection_closed_not_in_peer_list: AtomicU64,
 }
 
 /// Counters for the inbound (we-accept, receive-only) direction.
@@ -54,12 +54,12 @@ pub struct ServerStats {
     /// Handshakes that did not complete within `HANDSHAKE_TIMEOUT`.
     pub(crate) handshake_timed_out: AtomicU64,
     /// Connections closed because the peer is no longer
-    /// admitted (e.g. evicted at an epoch boundary).
-    pub(crate) connection_evicted_peer_list: AtomicU64,
+    /// admitted (e.g. lost stake at an epoch boundary).
+    pub(crate) connection_closed_not_in_peer_list: AtomicU64,
     /// Connections closed because the peer was banned by the sig-verifier.
-    pub(crate) connection_evicted_banned: AtomicU64,
+    pub(crate) connection_closed_banned: AtomicU64,
     /// Connections closed because the local identity changed.
-    pub(crate) connection_evicted_identity_changed: AtomicU64,
+    pub(crate) connection_closed_identity_changed: AtomicU64,
     /// We have received a datagram but have nowhere to put it.
     pub(crate) datagram_ingress_dropped_channel_full: AtomicU64,
     /// Peer's incoming datagram exceeded the per-connection rate.
@@ -154,21 +154,25 @@ pub(crate) fn report_client(stats: &ClientStats, live_connections: u64) {
         ),
         ("datagrams_sent", swap!(stats.datagrams_sent), i64),
         ("connect_failed", swap!(stats.connect_failed), i64),
-        ("connect_no_route", swap!(stats.connect_no_route), i64),
+        (
+            "connect_failed_no_address",
+            swap!(stats.connect_failed_no_address),
+            i64
+        ),
         ("connection_lost", swap!(stats.connection_lost), i64),
         (
-            "connection_evicted_peer_moved",
-            swap!(stats.connection_evicted_peer_moved),
+            "connection_closed_peer_moved",
+            swap!(stats.connection_closed_peer_moved),
             i64
         ),
         (
-            "connection_evicted_peer_list",
-            swap!(stats.connection_evicted_peer_list),
+            "connection_closed_not_in_peer_list",
+            swap!(stats.connection_closed_not_in_peer_list),
             i64
         ),
         (
-            "connection_evicted_identity_changed",
-            swap!(stats.connection_evicted_identity_changed),
+            "connection_closed_identity_changed",
+            swap!(stats.connection_closed_identity_changed),
             i64
         ),
     );
@@ -219,18 +223,18 @@ pub(crate) fn report_server(stats: &ServerStats, live_connections: u64) {
         ),
         ("handshake_timed_out", swap!(stats.handshake_timed_out), i64),
         (
-            "connection_evicted_peer_list",
-            swap!(stats.connection_evicted_peer_list),
+            "connection_closed_not_in_peer_list",
+            swap!(stats.connection_closed_not_in_peer_list),
             i64
         ),
         (
-            "connection_evicted_banned",
-            swap!(stats.connection_evicted_banned),
+            "connection_closed_banned",
+            swap!(stats.connection_closed_banned),
             i64
         ),
         (
-            "connection_evicted_identity_changed",
-            swap!(stats.connection_evicted_identity_changed),
+            "connection_closed_identity_changed",
+            swap!(stats.connection_closed_identity_changed),
             i64
         ),
     );

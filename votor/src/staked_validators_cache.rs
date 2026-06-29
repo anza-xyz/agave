@@ -124,11 +124,9 @@ impl StakedValidatorsCache {
                 staked_nodes.entry(*pubkey).or_insert(*stake);
             }
         }
-        if near_end {
-            if let Some(next) = self.epoch_staked_nodes(epoch.saturating_add(1)) {
-                for (pubkey, stake) in next.iter() {
-                    staked_nodes.entry(*pubkey).or_insert(*stake);
-                }
+        if near_end && let Some(next) = self.epoch_staked_nodes(epoch.saturating_add(1)) {
+            for (pubkey, stake) in next.iter() {
+                staked_nodes.entry(*pubkey).or_insert(*stake);
             }
         }
         self.inject_overrides(&mut staked_nodes);

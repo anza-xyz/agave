@@ -80,7 +80,7 @@ impl QuicDatagramEndpoint {
     /// cancels them.
     /// Received datagrams flow into `inbound_datagrams`, per-peer receive rate is
     /// capped by `max_datagrams_per_second_per_peer`.
-    /// `peer_list` carries desired peer set updates: inbound evicts
+    /// `peer_list` carries desired peer set updates: inbound closes connections to
     /// peers no longer in the set, outbound connects to peers in it.
     /// `ban_commands` carries temporary per-peer ban commands (banning also closes
     /// the peer's connections).
