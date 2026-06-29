@@ -49,7 +49,7 @@ dashmap = "5.5.3"
 env_logger = "0.11.10"
 futures = "0.3.32"
 histogram = "0.6.9"
-itertools = "0.14.0"
+itertools = "0.15.0"
 jemallocator = { package = "tikv-jemallocator", version = "0.6.0", features = [
     "unprefixed_malloc_on_supported_platforms",
 ] }
