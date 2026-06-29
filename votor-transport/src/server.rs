@@ -61,7 +61,7 @@ pub(crate) struct AcceptLoop {
     stats: Arc<ServerStats>,
     shutdown: CancellationToken,
     /// Paces how fast this endpoint *starts* handshakes.
-    limiter: TokenBucket,
+    handshake_rate_limiter: TokenBucket,
     /// Bounds the number of in-flight handshakes for this endpoint.
     max_inflight_handshakes: usize,
 }
@@ -80,7 +80,7 @@ impl AcceptLoop {
             events_sender,
             stats,
             shutdown,
-            limiter: handshake_rate_limiter,
+            handshake_rate_limiter,
             max_inflight_handshakes,
         }
     }
@@ -91,7 +91,7 @@ impl AcceptLoop {
             events_sender,
             stats,
             shutdown,
-            limiter,
+            handshake_rate_limiter,
             max_inflight_handshakes,
         } = self;
 
@@ -125,9 +125,9 @@ impl AcceptLoop {
                     };
                     // Handshake ratelimiter check - stop admitting tasks once limiter
                     // is exhausted.
-                    if limiter.consume_tokens(1).is_err() {
+                    if handshake_rate_limiter.consume_tokens(1).is_err() {
                         incoming.ignore();
-                        let wait_us = limiter.us_to_have_tokens(1).unwrap_or(1000);
+                        let wait_us = handshake_rate_limiter.us_to_have_tokens(1).unwrap_or(1000);
                         let deadline = Instant::now()
                             .checked_add(Duration::from_micros(wait_us))
                             .expect("accept-gate deadline should never overflow");

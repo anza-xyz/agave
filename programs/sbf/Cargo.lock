@@ -437,7 +437,7 @@ dependencies = [
 
 [[package]]
 name = "agave-votor-transport"
-version = "4.2.0-alpha.0"
+version = "4.3.0-alpha.0"
 dependencies = [
  "arrayvec",
  "bytes",

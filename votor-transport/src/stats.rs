@@ -45,7 +45,7 @@ pub struct ServerStats {
     pub(crate) handshakes_completed: AtomicU64,
     /// Handshake refused because the peer is not permitted: not in the
     /// peer_list, or currently banned.
-    pub(crate) handshake_rejected_unauthorized: AtomicU64,
+    pub handshake_rejected_unauthorized: AtomicU64,
     /// Handshake refused due to a resource limit: connection table full.
     pub(crate) handshake_rejected_overload: AtomicU64,
     /// Inbound attempts shed because the global handshake rate limit was
@@ -57,7 +57,7 @@ pub struct ServerStats {
     /// admitted (e.g. lost stake at an epoch boundary).
     pub(crate) connection_closed_not_in_peer_list: AtomicU64,
     /// Connections closed because the peer was banned by the sig-verifier.
-    pub(crate) connection_closed_banned: AtomicU64,
+    pub connection_closed_banned: AtomicU64,
     /// Connections closed because the local identity changed.
     pub(crate) connection_closed_identity_changed: AtomicU64,
     /// We have received a datagram but have nowhere to put it.

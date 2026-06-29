@@ -68,9 +68,11 @@ pub struct QuicDatagramEndpoint {
     pub key_updater: Arc<KeyUpdater>,
     shutdown: CancellationToken,
     /// Inbound counters, exposed so in-crate tests can assert on admission,
-    /// eviction, and rate-limit behavior.
-    #[cfg(test)]
-    pub(crate) server_stats: Arc<ServerStats>,
+    /// eviction, and rate-limit behavior. Also exposed under
+    /// `dev-context-only-utils` so cross-crate integration tests (e.g. the
+    /// `agave-bls-sigverify` full ban-path test) can observe ban-driven closures.
+    #[cfg(any(test, feature = "dev-context-only-utils"))]
+    pub server_stats: Arc<ServerStats>,
 }
 
 impl QuicDatagramEndpoint {
@@ -184,7 +186,7 @@ impl QuicDatagramEndpoint {
                 runtime.spawn(accept.run());
             }
         }
-        #[cfg(test)]
+        #[cfg(any(test, feature = "dev-context-only-utils"))]
         let endpoint_server_stats = server_stats.clone();
         let inbound = InboundLoop::new(
             inbound_datagrams,
@@ -204,7 +206,7 @@ impl QuicDatagramEndpoint {
             egress: egress_sender,
             key_updater,
             shutdown,
-            #[cfg(test)]
+            #[cfg(any(test, feature = "dev-context-only-utils"))]
             server_stats: endpoint_server_stats,
         })
     }
@@ -222,19 +224,24 @@ impl Drop for QuicDatagramEndpoint {
 mod tests {
     use {
         super::{BanCommand, Datagram, QuicDatagramEndpoint},
-        crate::{ADDRESS_UNKNOWN, MAX_ALPENGLOW_VOTE_ACCOUNTS, PeerListSender},
+        crate::{
+            ADDRESS_UNKNOWN, ALPENGLOW_ALPN, HANDSHAKE_BURST, HANDSHAKE_GLOBAL_RATE,
+            MAX_ALPENGLOW_VOTE_ACCOUNTS, MAX_INFLIGHT_HANDSHAKES, PeerListSender,
+            transport::{Identity, new_client_config},
+        },
         bytes::Bytes,
         crossbeam_channel::{Receiver, bounded},
+        quinn_proto::{Endpoint as ProtoEndpoint, EndpointConfig as ProtoEndpointConfig},
         solana_keypair::{Keypair, Signer},
         solana_net_utils::sockets::bind_to_localhost_unique,
         solana_pubkey::Pubkey,
-        solana_tls_utils::NotifyKeyUpdate,
+        solana_tls_utils::{NotifyKeyUpdate, socket_addr_to_quic_server_name},
         std::{
             collections::HashMap,
             net::SocketAddr,
             sync::{
                 Arc,
-                atomic::{AtomicU64, Ordering},
+                atomic::{AtomicBool, AtomicU64, Ordering},
             },
             time::{Duration, Instant},
         },
@@ -245,6 +252,14 @@ mod tests {
     };
 
     const HIGH_PPS: usize = 1000;
+
+    fn make_runtime_for_tests() -> Runtime {
+        Builder::new_multi_thread()
+            .worker_threads(4)
+            .enable_all()
+            .build()
+            .expect("tokio multi-thread runtime")
+    }
 
     /// Ingress channel capacity. Mirrors `solana_core`'s `MAX_ALPENGLOW_PACKET_NUM`.
     const INGRESS_CAP: usize = 10_000;
@@ -276,14 +291,6 @@ mod tests {
                 .send(Arc::new(map))
                 .expect("peer_list receiver alive");
         }
-    }
-
-    fn make_runtime() -> Runtime {
-        Builder::new_multi_thread()
-            .worker_threads(4)
-            .enable_all()
-            .build()
-            .expect("tokio multi-thread runtime")
     }
 
     fn spawn_node(
@@ -396,11 +403,42 @@ mod tests {
         }
     }
 
+    /// Drive a quinn-proto endpoint to emit fresh Initials at `server_addr` as fast
+    /// as the thread can, never advancing any handshake, until `stop` is set. Each
+    /// connection is forgotten after its Initial, so the server never receives a
+    /// reply and keeps every accepted handshake in-flight until it times out.
+    ///
+    /// This does actively leak quinn state, so running this for > 5 seconds is
+    /// not a good idea.
+    fn flood_initials(
+        stop: &AtomicBool,
+        client_config: &quinn_proto::ClientConfig,
+        server_addr: SocketAddr,
+        server_name: &str,
+    ) {
+        let udp = bind_to_localhost_unique().expect("bind flood socket");
+        let mut buf = Vec::with_capacity(1300);
+        let mut proto =
+            ProtoEndpoint::new(Arc::new(ProtoEndpointConfig::default()), None, false, None);
+        while !stop.load(Ordering::Relaxed) {
+            let now = Instant::now();
+            let Ok((_ch, mut conn)) =
+                proto.connect(now, client_config.clone(), server_addr, server_name)
+            else {
+                break;
+            };
+            buf.clear();
+            if let Some(transmit) = conn.poll_transmit(now, 1, &mut buf) {
+                let _ = udp.send_to(&buf[..transmit.size], transmit.destination);
+            }
+        }
+    }
+
     /// Basic exchange: each node lists the other in its peer_list, datagrams flow
     /// in both directions over two independent send-only connections.
     #[test]
-    fn delivery_flows_both_directions() {
-        let rt = make_runtime();
+    fn test_delivery_flows_both_directions() {
+        let rt = make_runtime_for_tests();
         let a_kp = Keypair::new();
         let b_kp = Keypair::new();
         let a_pk = a_kp.pubkey();
@@ -433,8 +471,8 @@ mod tests {
     /// A peer in the server's peer_list is admitted; one that is not is rejected
     /// at admission (NOT_ADMITTED) and never reaches ingress.
     #[test]
-    fn admitted_peer_delivers_unadmitted_is_rejected() {
-        let rt = make_runtime();
+    fn test_server_admitted_peer_delivers_unadmitted_is_rejected() {
+        let rt = make_runtime_for_tests();
         let a_kp = Keypair::new();
         let a_pk = a_kp.pubkey();
         let server = spawn_node(
@@ -481,8 +519,8 @@ mod tests {
     /// Banning a peer closes its live connection and
     /// blocks subsequent connections.
     #[test]
-    fn ban_evicts_existing_and_blocks_handshake() {
-        let rt = make_runtime();
+    fn test_server_ban_evicts_existing_and_blocks_handshake() {
+        let rt = make_runtime_for_tests();
         let client_keypair = Keypair::new();
         let client_pubkey = client_keypair.pubkey();
         let server = spawn_node(
@@ -538,8 +576,8 @@ mod tests {
     /// Two client instances sharing one identity each bring up a *separate*
     /// inbound connection, a third same-identity instance is refused.
     #[test]
-    fn two_inbound_same_identity_coexist_third_refused() {
-        let rt = make_runtime();
+    fn test_server_two_inbound_same_identity_coexist_third_refused() {
+        let rt = make_runtime_for_tests();
         let shared = Keypair::new();
         let shared_pk = shared.pubkey();
         let server = spawn_node(
@@ -596,8 +634,8 @@ mod tests {
     /// connections (one identity may hold up to `MAX_INBOUND_CONNECTIONS_PER_PEER`,
     /// i.e. 2), not just one. (e.g. at an epoch boundary.)
     #[test]
-    fn peer_list_eviction_closes_live_connections() {
-        let rt = make_runtime();
+    fn test_server_peer_list_eviction_closes_live_connections() {
+        let rt = make_runtime_for_tests();
         // Two instances of one identity give the server two inbound connections.
         let shared = Keypair::new();
         let shared_pk = shared.pubkey();
@@ -661,12 +699,12 @@ mod tests {
     /// dropped and the connection survives. a sustained flood that drains
     /// the bucket dry closes the connection.
     #[test]
-    fn rate_limit_drops_then_closes_on_sustained_flood() {
+    fn test_server_rate_limit_drops_then_closes_on_sustained_flood() {
         // pps=20 => burst bucket = ceil(20*BURST_WINDOW=1s)=20,
         // DoS bucket = ceil(20*DOS_WINDOW=10s)=200.
         const PPS: usize = 20;
         const BURST: usize = 20;
-        let rt = make_runtime();
+        let rt = make_runtime_for_tests();
         let client_keypair = Keypair::new();
         let client_pubkey = client_keypair.pubkey();
         let server = spawn_node(
@@ -778,8 +816,8 @@ mod tests {
     /// reconnects under the new key, the server observes the post-rotation
     /// messages attributed to the new pubkey.
     #[test]
-    fn client_identity_rotation_resends_under_new_identity() {
-        let rt = make_runtime();
+    fn test_client_identity_rotation_resends_under_new_identity() {
+        let rt = make_runtime_for_tests();
         let k1 = Keypair::new();
         let k1_pk = k1.pubkey();
         let k2 = Keypair::new();
@@ -834,8 +872,8 @@ mod tests {
     /// Rotating the SERVER's identity closes every inbound connection that was
     /// accepted under the old identity (close code IDENTITY_CHANGED).
     #[test]
-    fn server_identity_rotation_evicts_inbound() {
-        let rt = make_runtime();
+    fn test_server_identity_rotation_evicts_inbound() {
+        let rt = make_runtime_for_tests();
         let client_keypair = Keypair::new();
         let client_pubkey = client_keypair.pubkey();
         let server = spawn_node(
@@ -910,8 +948,8 @@ mod tests {
     /// When a peer's address changes in the peer_list, the outbound
     /// loop closes the stale connection and connects to the new address.
     #[test]
-    fn outbound_addr_change_reconnects_to_new_addr() {
-        let rt = make_runtime();
+    fn test_client_addr_change_reconnects_to_new_addr() {
+        let rt = make_runtime_for_tests();
         let server_keypair = Keypair::new();
         let server_pubkey = server_keypair.pubkey();
         let client_keypair = Keypair::new();
@@ -975,8 +1013,8 @@ mod tests {
 
     /// A node should never connect to itself.
     #[test]
-    fn outbound_excludes_self() {
-        let rt = make_runtime();
+    fn test_client_connections_excludes_self() {
+        let rt = make_runtime_for_tests();
         let keypair = Keypair::new();
         let self_pubkey = keypair.pubkey();
         let node = spawn_node(&rt, keypair, HashMap::new(), HIGH_PPS);
@@ -999,6 +1037,110 @@ mod tests {
             stats.datagrams_received.load(Ordering::Relaxed),
             0,
             "no datagram should loop back to self"
+        );
+    }
+
+    /// Inbound handshakes that never complete must not accumulate past
+    /// [`MAX_INFLIGHT_HANDSHAKES`]. We drive the QUIC state machine by hand:
+    /// send each connection's Initial but never reply to the server's handshake,
+    /// so every accepted handshake stays in-flight until it times out.
+    #[test]
+    fn test_server_inflight_handshakes_are_capped() {
+        let rt = make_runtime_for_tests();
+        let node = spawn_node(&rt, Keypair::new(), HashMap::new(), HIGH_PPS);
+        let server_addr = node.addr;
+        let server_name = socket_addr_to_quic_server_name(server_addr);
+
+        // Any identity works: the rate limit and in-flight cap are enforced
+        // before peer admission, so these connections never need to be admitted.
+        let Identity { cert, key, .. } = Identity::from_keypair(&Keypair::new());
+        let client_config = new_client_config(cert, key, ALPENGLOW_ALPN);
+
+        // A scoped flooder keeps emitting fresh Initials and never advances the
+        // handshake state machine. This makes ~20k Initials over the test's lifetime.
+        let stop = AtomicBool::new(false);
+        let stats = &node.endpoint.server_stats;
+        let mut peak_inflight = 0usize;
+        std::thread::scope(|s| {
+            s.spawn(|| flood_initials(&stop, &client_config, server_addr, &server_name));
+
+            let start = Instant::now();
+            while start.elapsed() < Duration::from_millis(2000) {
+                // The flood never answers, so a started handshake can only leave the in-flight
+                // set by timing out.
+                let started = stats.handshakes_started.load(Ordering::Relaxed);
+                let done = stats.handshake_timed_out.load(Ordering::Relaxed);
+                let inflight = started.saturating_sub(done) as usize;
+                peak_inflight = peak_inflight.max(inflight);
+                std::thread::sleep(Duration::from_millis(20));
+            }
+            stop.store(true, Ordering::Relaxed);
+        });
+
+        // The cap must never be exceeded, and should be approached (proving the flood
+        // stressed it). Checking the peak covers every sample at once.
+        assert!(
+            peak_inflight <= MAX_INFLIGHT_HANDSHAKES,
+            "in-flight handshakes {peak_inflight} exceeded the cap {MAX_INFLIGHT_HANDSHAKES}"
+        );
+        assert!(
+            peak_inflight >= MAX_INFLIGHT_HANDSHAKES * 5 / 6,
+            "in-flight handshakes should approach the cap; peak={peak_inflight}, \
+             cap={MAX_INFLIGHT_HANDSHAKES}"
+        );
+    }
+
+    /// The handshake rate limiter caps how fast inbound handshakes are *started*.
+    /// Its contract is a token bucket: the cumulative number started can never
+    /// exceed `HANDSHAKE_BURST + HANDSHAKE_GLOBAL_RATE * elapsed`. We saturate it
+    /// with Initials and assert that ceiling holds.
+    #[test]
+    fn test_server_handshake_rate_is_limited() {
+        let rt = make_runtime_for_tests();
+        let node = spawn_node(&rt, Keypair::new(), HashMap::new(), HIGH_PPS);
+        let server_addr = node.addr;
+        let server_name = socket_addr_to_quic_server_name(server_addr);
+
+        let Identity { cert, key, .. } = Identity::from_keypair(&Keypair::new());
+        let client_config = new_client_config(cert, key, ALPENGLOW_ALPN);
+
+        let stop = AtomicBool::new(false);
+        let stats = &node.endpoint.server_stats;
+        let (started, elapsed) = std::thread::scope(|s| {
+            // Time from just before the flood starts: any delay before the first
+            // Initial only makes the ceiling more generous, never tighter.
+            let t0 = Instant::now();
+            s.spawn(|| flood_initials(&stop, &client_config, server_addr, &server_name));
+
+            // The in-flight cap would become the binding constraint once `started`
+            // reaches MAX_INFLIGHT_HANDSHAKES, which (nothing times out before
+            // HANDSHAKE_TIMEOUT) happens after this many seconds:
+            //   (MAX_INFLIGHT_HANDSHAKES - HANDSHAKE_BURST) / HANDSHAKE_GLOBAL_RATE.
+            // Measure over half of that headroom so the count stays well clear of it.
+            let secs_until_cap_binds =
+                (MAX_INFLIGHT_HANDSHAKES as f64 - HANDSHAKE_BURST as f64) / HANDSHAKE_GLOBAL_RATE;
+            std::thread::sleep(Duration::from_secs_f64(secs_until_cap_binds / 2.0));
+            let started = stats.handshakes_started.load(Ordering::Relaxed);
+            // Read elapsed *after* the count, so it spans at least as long as the count
+            // accrued over, keeping the ceiling on the safe side.
+            let elapsed = t0.elapsed().as_secs_f64();
+            stop.store(true, Ordering::Relaxed);
+            (started, elapsed)
+        });
+
+        assert!(
+            started < MAX_INFLIGHT_HANDSHAKES as u64,
+            "in-flight cap bound during the measurement, invalidating the rate check: \
+             started={started}"
+        );
+        // We assert only the upper bound, not a target rate: the achieved rate depends
+        // on the optimized build and platform hardware. The bound must hold always.
+        // 1.1 absorbs measurement jitter and token-bucket granularity.
+        let ceiling = (HANDSHAKE_BURST as f64 + HANDSHAKE_GLOBAL_RATE * elapsed) * 1.1;
+        assert!(
+            (started as f64) <= ceiling,
+            "started {started} handshakes in {elapsed:.3}s, exceeding the token-bucket ceiling \
+             {ceiling:.0} (burst {HANDSHAKE_BURST} + {HANDSHAKE_GLOBAL_RATE}/s)"
         );
     }
 }
