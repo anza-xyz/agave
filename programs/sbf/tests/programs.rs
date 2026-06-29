@@ -77,7 +77,7 @@ use {
     solana_account::Account,
     solana_program_runtime::sysvar_cache::SysvarCache,
     solana_sdk_ids::sysvar::rent,
-    solana_svm::conformance::{
+    solana_svm_conformance::{
         instr::{context::InstrContext, harness::execute_instr},
         programs::{
             add_program_to_program_cache, keyed_account_for_system_program,
