@@ -168,7 +168,6 @@ impl ConsensusPool {
     fn update_vote_pool(
         &mut self,
         root_bank: &Bank,
-        total_stake: NonZero<u64>,
         aggregate: &VoteAggregate,
     ) -> Result<(u64, Vec<Certificate>), AddVoteError> {
         let rank_map = get_rank_map(root_bank, aggregate.vote().slot())?;
@@ -177,13 +176,8 @@ impl ConsensusPool {
             .vote_pools
             .entry(slot)
             .or_insert_with(|| VotePool::new(slot, rank_map.len()));
-        pool.add_aggregate(
-            rank_map,
-            total_stake,
-            aggregate,
-            &self.completed_certificates,
-        )
-        .map_err(AddVoteError::VotePoolAddVote)
+        pool.add_aggregate(rank_map, aggregate, &self.completed_certificates)
+            .map_err(AddVoteError::VotePoolAddVote)
     }
 
     fn insert_certificate(
@@ -355,7 +349,7 @@ impl ConsensusPool {
             });
         }
         let vote_type = vote.get_type();
-        let (entry_stake, new_certs) = self.update_vote_pool(root_bank, total_stake, &aggregate)?;
+        let (entry_stake, new_certs) = self.update_vote_pool(root_bank, &aggregate)?;
         let fallback_vote_counters = self
             .slot_stake_counters_map
             .entry(vote_slot)

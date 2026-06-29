@@ -437,7 +437,6 @@ impl VotePool {
     pub(super) fn add_aggregate(
         &mut self,
         rank_map: &BLSPubkeyToRankMap,
-        total_stake: NonZero<u64>,
         aggregate: &VoteAggregate,
         completed_certs: &BTreeMap<CertificateType, Arc<Certificate>>,
     ) -> Result<(u64, Vec<Certificate>), VotePoolAddVoteError> {
@@ -494,7 +493,7 @@ impl VotePool {
                 self.finalize.add_aggregate(rank_map, aggregate)
             }
         }?;
-        let certs = self.try_produce_certs(total_stake, vote, completed_certs)?;
+        let certs = self.try_produce_certs(rank_map.total_stake(), vote, completed_certs)?;
         Ok((stake, certs))
     }
 }
