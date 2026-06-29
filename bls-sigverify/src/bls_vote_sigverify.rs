@@ -96,7 +96,6 @@ pub(super) fn verify_and_send_votes(
     banlist: &SimpleQosBanlist,
     thread_pool: &ThreadPool,
     channels: &SigVerifierChannels,
-    received_vote: &mut HashMap<Vote, HashSet<Pubkey>>,
 ) -> Result<SigVerifyVoteStats, SigVerifyVoteError> {
     let mut measure = Measure::start("verify_and_send_votes");
     let mut stats = SigVerifyVoteStats::default();
@@ -118,13 +117,6 @@ pub(super) fn verify_and_send_votes(
             thread_pool,
         );
         stats.sig_verified_votes += verified_votes.len() as u64;
-
-        for verified_vote in &verified_votes {
-            received_vote
-                .entry(*verified_vote.vote_aggregate.vote())
-                .or_default()
-                .extend(verified_vote.sender_vote_account_pubkeys.iter().cloned());
-        }
 
         let (sig_verified_batch, msgs_for_repair, msg_for_reward, msg_for_metrics) =
             process_verified_votes(verified_votes, root_bank, cluster_info, leader_schedule);

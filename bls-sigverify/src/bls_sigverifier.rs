@@ -100,7 +100,8 @@ struct SigVerifier {
     /// thread pool to use for all parallel tasks
     thread_pool: ThreadPool,
     generated_cert_types: Arc<GeneratedCertTypes>,
-    received_votes: HashMap<Vote, HashSet<Pubkey>>,
+    /// used to dedup received votes so that we only ever verify a single `Vote` from a given sender.
+    received_votes: HashSet<(Vote, u16)>,
 }
 
 impl SigVerifier {
@@ -127,7 +128,7 @@ impl SigVerifier {
             sharable_banks,
             stats: SigVerifierStats::new(root_slot),
             verified_certs: HashSet::new(),
-            received_votes: HashMap::new(),
+            received_votes: HashSet::new(),
             last_checked_root_slot: 0,
             cluster_info,
             leader_schedule,
@@ -180,7 +181,6 @@ impl SigVerifier {
                     &self.banlist,
                     &self.thread_pool,
                     &self.channels,
-                    &mut self.received_votes,
                 )
             },
             || {
@@ -208,7 +208,7 @@ impl SigVerifier {
             self.last_checked_root_slot = root_slot;
             self.verified_certs.retain(|cert| cert.slot() >= root_slot);
             self.received_votes
-                .retain(|vote, _| !should_prune_vote(vote, root_slot));
+                .retain(|(vote, _)| !should_prune_vote(vote, root_slot));
         }
     }
 
@@ -223,7 +223,6 @@ impl SigVerifier {
         let root_slot = root_bank.slot();
         let mut certs = Vec::new();
         let mut votes: HashMap<VotePayloadToSign, Vec<UnverifiedVotePayload>> = HashMap::new();
-        let mut deduped_votes = HashSet::new();
         let mut num_pkts = 0u64;
         let my_shred_version = self.cluster_info.my_shred_version();
         for packet in batches.iter().flatten() {
@@ -257,14 +256,10 @@ impl SigVerifier {
                     if let Some((sender_vote_account_pubkey, sender_bls_pubkey)) =
                         self.keep_vote(&vote, &unverified_vote, root_bank)
                     {
-                        if let Some(validators) = self.received_votes.get(&vote)
-                            && validators.contains(&sender_vote_account_pubkey)
+                        if self
+                            .received_votes
+                            .insert((unverified_vote.vote, unverified_vote.rank))
                         {
-                            continue;
-                        }
-                        // sender could send duplicate votes with different signatures so do not use
-                        // signature to detect duplicates.
-                        if deduped_votes.insert((unverified_vote.vote, unverified_vote.rank)) {
                             let vote_payload_to_sign = VotePayloadToSign::new_from_vote(
                                 unverified_vote.vote,
                                 unverified_vote.shred_version,
