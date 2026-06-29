@@ -8640,7 +8640,7 @@ version = "4.2.0-alpha.0"
 dependencies = [
  "solana-account-info",
  "solana-instruction",
- "solana-instructions-sysvar 3.0.0",
+ "solana-instructions-sysvar 4.0.0",
  "solana-msg",
  "solana-program",
  "solana-program-entrypoint",
@@ -9041,7 +9041,7 @@ dependencies = [
  "solana-account-info",
  "solana-define-syscall 3.0.0",
  "solana-instruction",
- "solana-instructions-sysvar 3.0.0",
+ "solana-instructions-sysvar 4.0.0",
  "solana-msg",
  "solana-program-entrypoint",
  "solana-program-error",
