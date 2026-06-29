@@ -1855,6 +1855,7 @@ fn confirm_slot_entries(
     };
 
     let slot = bank.slot();
+    let bank_id = bank.bank_id();
     let (entries, num_shreds, slot_full) = slot_entries_load_result;
     let num_entries = entries.len();
     let mut entry_tx_starting_indexes = Vec::with_capacity(num_entries);
@@ -1867,6 +1868,7 @@ fn confirm_slot_entries(
                 let entry_index = progress.num_entries.saturating_add(i);
                 if let Err(err) = entry_notification_sender.send(EntryNotification {
                     slot,
+                    bank_id,
                     index: entry_index,
                     entry: entry.into(),
                     starting_transaction_index: entry_tx_starting_index,

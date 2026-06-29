@@ -64,6 +64,7 @@ impl TpuEntryNotifier {
         let (bank, (entry_or_marker, tick_height)) =
             entry_receiver.recv_timeout(Duration::from_secs(1))?;
         let slot = bank.slot();
+        let bank_id = bank.bank_id();
         if slot != *current_slot {
             *current_index = 0;
             *current_transaction_index = 0;
@@ -79,6 +80,7 @@ impl TpuEntryNotifier {
             };
             if let Err(err) = entry_notification_sender.send(EntryNotification {
                 slot,
+                bank_id,
                 index,
                 entry: entry_summary,
                 starting_transaction_index: *current_transaction_index,
