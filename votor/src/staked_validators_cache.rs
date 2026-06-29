@@ -152,10 +152,10 @@ impl StakedValidatorsCache {
             })
             .collect();
         // Publish the latest version via watch channel - this never blocks.
-        if peer_list.send(Arc::new(snapshot)).is_err() {
-            // This can only happen if the receivers are all dropped.
-            error!("Could not send updated peer list to the transport endpoint!");
-        }
+        peer_list.send(Arc::new(snapshot)).expect(
+            "Transport endpoint receivers should not be dropped before StakedValidatorsCache \
+             exits.",
+        );
     }
 }
 
