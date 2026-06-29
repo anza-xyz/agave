@@ -4072,7 +4072,7 @@ impl Blockstore {
 
         let (slot_components, _, _) = self.get_slot_components_with_shred_info(
             slot,
-            /*start_index:*/ 0,
+            u64::from(slot_meta.replay_fec_set_index),
             allow_dead_slots,
         )?;
 
