@@ -4307,6 +4307,11 @@ impl AccountsDb {
         // `add_root()` should be called first
         let mut safety_checks_elapsed = Measure::start("safety_checks_elapsed");
         let non_roots = slots
+            // Only purge slots that are still in the write cache and are not
+            // unflushed roots. Flushed roots have already been removed from the
+            // cache, so the `contains` check excludes them; the
+            // `contains_unflushed_root` check excludes roots still pending flush.
+            //
             // Only safe to check when there are duplicate versions of a slot
             // because ReplayStage will not make new roots before dumping the
             // duplicate slots first. Thus we will not be in a case where we
@@ -4317,7 +4322,10 @@ impl AccountsDb {
             // it's safe to filter them out here as they won't need deletion from
             // self.scan_tracker.removed_bank_ids in
             // `purge_slots_from_cache()`.
-            .filter(|slot| !self.accounts_index.is_alive_root(**slot));
+            .filter(|slot| {
+                self.accounts_cache.contains(**slot)
+                    && !self.accounts_cache.contains_unflushed_root(**slot)
+            });
         safety_checks_elapsed.stop();
         self.external_purge_slots_stats
             .safety_checks_elapsed
@@ -4328,12 +4336,15 @@ impl AccountsDb {
     }
 
     pub fn remove_unrooted_slots(&self, remove_slots: &[(Slot, BankId)]) {
-        let rooted_slots = self
-            .accounts_index
-            .get_rooted_from_list(remove_slots.iter().map(|(slot, _)| slot));
         assert!(
-            rooted_slots.is_empty(),
-            "Trying to remove accounts for rooted slots {rooted_slots:?}"
+            remove_slots.iter().all(|(slot, _)| {
+                debug_assert!(
+                    self.accounts_cache.contains(*slot),
+                    "Trying to remove slot not in cache {slot}"
+                );
+                !self.accounts_cache.contains_unflushed_root(*slot)
+            }),
+            "Trying to remove accounts for rooted slots {remove_slots:?}"
         );
 
         // Mark down these slots are about to be purged so that new attempts to scan these
@@ -4644,7 +4655,7 @@ impl AccountsDb {
         slot_cache: &SlotCache,
         pubkeys_to_flush: &PubkeysToFlush,
     ) -> FlushStats {
-        debug_assert!(self.accounts_index.is_alive_root(slot));
+        debug_assert!(self.accounts_cache.contains_unflushed_root(slot));
         let mut flush_stats = FlushStats::default();
         let iter_items: Vec<_> = slot_cache.iter().collect();
 
@@ -5671,7 +5682,7 @@ impl AccountsDb {
     ) -> StoreAccountsForFlushStats {
         let slot = accounts.target_slot();
 
-        debug_assert!(self.accounts_index.is_alive_root(slot));
+        debug_assert!(self.accounts_cache.contains_unflushed_root(slot));
 
         // Write the accounts to storage
         let write_accounts_time = Measure::start("write_accounts");
@@ -6878,15 +6889,7 @@ impl AccountsDb {
     }
 
     pub fn flush_accounts_cache_slot_for_tests(&self, slot: Slot) {
-        assert!(
-            self.accounts_index
-                .roots_tracker
-                .read()
-                .unwrap()
-                .alive_roots
-                .contains(&slot),
-            "slot: {slot}"
-        );
+        assert!(self.accounts_cache.contains_unflushed_root(slot));
         self.flush_slot_cache(slot, &PubkeysToFlush::All);
     }
 
@@ -7050,15 +7053,7 @@ impl AccountsDb {
     /// useful to adapt tests written prior to introduction of the write cache
     /// to use the write cache
     pub fn flush_root_write_cache(&self, root: Slot) {
-        assert!(
-            self.accounts_index
-                .roots_tracker
-                .read()
-                .unwrap()
-                .alive_roots
-                .contains(&root),
-            "slot: {root}"
-        );
+        assert!(self.accounts_cache.contains_unflushed_root(root));
         self.flush_accounts_cache(true, Some(root));
     }
 

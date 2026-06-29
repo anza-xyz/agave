@@ -1313,7 +1313,7 @@ pub mod formalize_loaded_transaction_data_size {
 }
 
 pub mod alpenglow {
-    solana_pubkey::declare_id!("mustRekeyVm2QHYB3JPefBiU4BY3Z6JkW2k3Scw5GWP");
+    solana_pubkey::declare_id!("a1penGLz8Vm2QHYB3JPefBiU4BY3Z6JkW2k3Scw5GWP");
 }
 
 pub mod disable_zk_elgamal_proof_program {
@@ -1550,7 +1550,7 @@ pub mod upgrade_bpf_stake_program_to_v5_1 {
 }
 
 pub mod alpenglow_fast_leader_handover {
-    solana_pubkey::declare_id!("FastLeaderHandover1111111111111111111111111");
+    solana_pubkey::declare_id!("FLHoAWBDjNh6zwmJ5i1NKK4KyD8otAiv7XxvmnFnVnKH");
 }
 
 pub static FEATURE_NAMES: LazyLock<AHashMap<Pubkey, &'static str>> = LazyLock::new(|| {

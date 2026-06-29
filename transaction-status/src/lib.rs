@@ -402,6 +402,7 @@ pub struct VersionedConfirmedBlockWithEntries {
 
 // Data needed to reconstruct an Entry, given an ordered list of transactions in
 // a block. Used for uploading to BigTable.
+#[derive(Clone, Copy)]
 pub struct EntrySummary {
     pub num_hashes: u64,
     pub hash: Hash,

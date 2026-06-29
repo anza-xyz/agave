@@ -5278,9 +5278,9 @@ fn test_bank_hash_consistency(deprecate_rent_exemption_threshold: bool) {
             assert_eq!(
                 bank.hash().to_string(),
                 if deprecate_rent_exemption_threshold {
-                    "9ycftRwjpQ17PrhnwhGPbVzDKd3Q9BybmLYU8UD1Pg1T"
+                    "4PhJip2GUR1cihJKUwGam9GeFChyU5S9KsxhB3kMSYgk"
                 } else {
-                    "4XzjZMjhP9s8iBeFQsnHFwaQ991dpiBGHEkzj1ifAcpS"
+                    "BvPkQKe71uT4XBsSoBtw5ynydnrgPjEccbge235sXQiL"
                 },
             );
         }
@@ -5289,9 +5289,9 @@ fn test_bank_hash_consistency(deprecate_rent_exemption_threshold: bool) {
             assert_eq!(
                 bank.hash().to_string(),
                 if deprecate_rent_exemption_threshold {
-                    "7sbqfkN4W3PkBREyduDc3R2eiKu68JKYRXZt6gCWNt4N"
+                    "AHdJaAqajYELEDxx6iE9F6yc2MobHLNrrVZr2egARz9m"
                 } else {
-                    "ArB3XNVLJsyV7AtrG3C3Bj4akb8s7AzpS5rHJnqGW5sw"
+                    "H6wrFKB918yKMNe32rGuEML5aQP59o6pcUVJnm3vKGLr"
                 },
             );
             break;
@@ -7704,14 +7704,15 @@ fn test_remove_unrooted_scan_interleaved_with_remove_unrooted_slots() {
          starting_lamports| {
             loop {
                 let step_size = 2;
-                let (bank_at_fork_tip, slots_on_fork, ancestors) = setup_banks_on_fork_to_remove(
-                    bank0.clone(),
-                    pubkeys_to_modify.clone(),
-                    &program_id,
-                    starting_lamports,
-                    10,
-                    step_size,
-                );
+                let (bank_at_fork_tip, mut slots_on_fork, ancestors) =
+                    setup_banks_on_fork_to_remove(
+                        bank0.clone(),
+                        pubkeys_to_modify.clone(),
+                        &program_id,
+                        starting_lamports,
+                        10,
+                        step_size,
+                    );
                 // Although we dumped the slots last iteration via `remove_unrooted_slots()`,
                 // we've recreated those slots this iteration, so they should be findable
                 // again
@@ -7729,7 +7730,7 @@ fn test_remove_unrooted_scan_interleaved_with_remove_unrooted_slots() {
                 // Remove 1 < `step_size` of the *latest* slots while the scan is happening.
                 // This should create inconsistency between the account balances of accounts
                 // stored in that slot, and the accounts stored in earlier slots
-                let slot_to_remove = *slots_on_fork.last().unwrap();
+                let slot_to_remove = slots_on_fork.pop().unwrap();
                 bank_at_fork_tip.remove_unrooted_slots(&[slot_to_remove]);
 
                 // Wait for scan to finish before starting next iteration
@@ -7739,7 +7740,8 @@ fn test_remove_unrooted_scan_interleaved_with_remove_unrooted_slots() {
                 }
                 assert_eq!(finished_scan_bank_id.unwrap(), bank_at_fork_tip.bank_id());
 
-                // Remove the rest of the slots before the next iteration
+                // Remove the rest of the slots before the next iteration. The last slot
+                // was already popped and removed above.
                 for (slot, bank_id) in slots_on_fork {
                     bank_at_fork_tip.remove_unrooted_slots(&[(slot, bank_id)]);
                 }

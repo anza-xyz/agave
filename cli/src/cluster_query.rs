@@ -3,7 +3,7 @@ use {
         cli::{CliCommand, CliCommandInfo, CliConfig, CliError, ProcessResult},
         feature::get_feature_activation_epoch,
     },
-    agave_votor_messages::certificate::Certificate,
+    agave_votor_messages::wire::WireBlockCertMessage,
     clap::{App, AppSettings, Arg, ArgMatches, SubCommand, value_t, value_t_or_exit},
     console::style,
     serde::{Deserialize, Serialize},
@@ -1092,26 +1092,21 @@ pub async fn process_get_ag_genesis_info(
     let cert = rpc_client.get_ag_genesis_cert().await?;
     let ag_genesis_info = match cert {
         None => CliAgGenesisInfo::Tower,
-        Some(Certificate {
-            cert_type,
-            signature,
-            bitmap,
-        }) => {
-            debug_assert!(cert_type.is_genesis());
+        Some(WireBlockCertMessage { block, signature }) => {
             let epoch_schedule = rpc_client.get_epoch_schedule().await?;
-            let epoch = epoch_schedule.get_epoch(cert_type.slot());
+            let epoch = epoch_schedule.get_epoch(block.slot);
             const MAX_VALIDATORS: usize = 4096;
-            let Decoded::Base2(bitvec) = decode(&bitmap, MAX_VALIDATORS)
+            let Decoded::Base2(bitvec) = decode(&signature.bitmap, MAX_VALIDATORS)
                 .map_err(|_| Box::new(CliError::InvalidAgGenesisCert))?
             else {
                 return Err(Box::new(CliError::InvalidAgGenesisCert));
             };
             CliAgGenesisInfo::Ag(CliAgGenesisInfoPayload {
                 epoch,
-                slot: cert_type.slot(),
-                block_id: cert_type.to_block().unwrap().block_id,
+                slot: block.slot,
+                block_id: block.block_id,
                 bitvec,
-                signature,
+                signature: signature.signature,
             })
         }
     };

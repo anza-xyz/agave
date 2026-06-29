@@ -19,7 +19,7 @@ use {
         },
         rpc_sender::*,
     },
-    agave_votor_messages::certificate::Certificate,
+    agave_votor_messages::wire::WireBlockCertMessage,
     base64::{Engine, prelude::BASE64_STANDARD},
     futures::join,
     log::*,
@@ -2117,7 +2117,7 @@ impl RpcClient {
     /// # })?;
     /// # Ok::<(), Error>(())
     /// ```
-    pub async fn get_ag_genesis_cert(&self) -> ClientResult<Option<Certificate>> {
+    pub async fn get_ag_genesis_cert(&self) -> ClientResult<Option<WireBlockCertMessage>> {
         self.send(RpcRequest::GetAgGenesisCert, Value::Null).await
     }
 

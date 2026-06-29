@@ -46,7 +46,7 @@ use {
         consensus_message::{Block, ConsensusMessage, VoteMessage},
         vote::Vote,
     },
-    serde::Serialize,
+    serde::{Deserialize, Serialize},
     solana_bls_signatures::Signature as BLSSignature,
     solana_clock::Slot,
     wincode::{SchemaRead, SchemaWrite, pod_wrapper},
@@ -102,7 +102,7 @@ pub(crate) struct WireSlotVoteMessage {
 }
 
 #[cfg_attr(feature = "frozen-abi", derive(AbiExample, StableAbi, StableAbiSample))]
-#[derive(Clone, Debug, Hash, PartialEq, Eq, SchemaRead, SchemaWrite, Serialize)]
+#[derive(Clone, Debug, Hash, PartialEq, Eq, SchemaRead, SchemaWrite, Serialize, Deserialize)]
 /// Signature on a wire cert message
 pub struct WireCertSignature {
     #[cfg_attr(
@@ -133,7 +133,7 @@ pub(crate) struct WireSlotCertMessage {
 }
 
 #[cfg_attr(feature = "frozen-abi", derive(AbiExample, StableAbi, StableAbiSample))]
-#[derive(Debug, Clone, Hash, PartialEq, Eq, SchemaRead, SchemaWrite, Serialize)]
+#[derive(Debug, Clone, Hash, PartialEq, Eq, SchemaRead, SchemaWrite, Serialize, Deserialize)]
 /// A wire cert message that holds a block.
 pub struct WireBlockCertMessage {
     /// the block the cert is certifying.

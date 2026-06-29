@@ -8,7 +8,7 @@ use {
         parsed_token_accounts::*, rpc_cache::LargestAccountsCache, rpc_health::*,
     },
     agave_snapshots::{paths as snapshot_paths, snapshot_config::SnapshotConfig},
-    agave_votor_messages::certificate::Certificate,
+    agave_votor_messages::wire::{WireBlockCertMessage, WireCertSignature},
     base64::{Engine, prelude::BASE64_STANDARD},
     crossbeam_channel::{Receiver, Sender, unbounded},
     jsonrpc_core::{
@@ -921,9 +921,16 @@ impl JsonRpcRequestProcessor {
         bank.epoch_schedule().clone()
     }
 
-    pub fn get_ag_genesis_cert(&self) -> Option<Certificate> {
+    pub fn get_ag_genesis_cert(&self) -> Option<WireBlockCertMessage> {
         let bank = self.bank(Some(CommitmentConfig::finalized()));
         bank.get_alpenglow_genesis_certificate()
+            .map(|c| WireBlockCertMessage {
+                block: c.cert_type.to_block().unwrap(),
+                signature: WireCertSignature {
+                    signature: c.signature,
+                    bitmap: c.bitmap,
+                },
+            })
     }
 
     pub fn get_balance(
@@ -2990,7 +2997,7 @@ pub mod rpc_minimal {
 // RPC interface that only depends on immediate Bank data
 // Expected to be provided by API nodes
 pub mod rpc_bank {
-    use super::*;
+    use {super::*, agave_votor_messages::wire::WireBlockCertMessage};
     #[rpc]
     pub trait BankData {
         type Metadata;
@@ -3032,7 +3039,8 @@ pub mod rpc_bank {
         ) -> Result<Vec<String>>;
 
         #[rpc(meta, name = "getAgGenesisCert")]
-        fn get_ag_genesis_cert(&self, meta: Self::Metadata) -> Result<Option<Certificate>>;
+        fn get_ag_genesis_cert(&self, meta: Self::Metadata)
+        -> Result<Option<WireBlockCertMessage>>;
 
         #[rpc(meta, name = "getBlockProduction")]
         fn get_block_production(
@@ -3109,7 +3117,10 @@ pub mod rpc_bank {
                 .collect())
         }
 
-        fn get_ag_genesis_cert(&self, meta: Self::Metadata) -> Result<Option<Certificate>> {
+        fn get_ag_genesis_cert(
+            &self,
+            meta: Self::Metadata,
+        ) -> Result<Option<WireBlockCertMessage>> {
             debug!("get_ag_genesis_cert rpc request received");
             Ok(meta.get_ag_genesis_cert())
         }

@@ -603,7 +603,7 @@ fn test_flush_slots_with_reclaim_old_slots() {
 
     let storage = accounts.create_and_insert_store(new_slot, 4096, "test_flush_slots");
 
-    accounts.accounts_index.add_root(new_slot);
+    accounts.accounts_cache.add_root(new_slot);
 
     // Flushing this storage directly using store_accounts_for_flush. This is done to pass in
     // UpsertReclaim::ReclaimOldSlots
@@ -797,7 +797,7 @@ define_accounts_db_test!(test_remove_unrooted_slot_cached, |db| {
     assert!(!db.contains(&key));
     db.store_for_tests((unrooted_slot, &[(&key, &account0)][..]));
     assert!(db.accounts_cache.contains(unrooted_slot));
-    assert!(!db.accounts_index.is_alive_root(unrooted_slot));
+    assert!(!db.accounts_cache.contains_unflushed_root(unrooted_slot));
     assert!(db.contains(&key));
     db.assert_load_account(unrooted_slot, key, 1);
 
