@@ -3,10 +3,10 @@
 use {
     crate::{
         device::{NetworkDevice, QueueId, RingSizes, RxFillRing, XdpDesc},
-        set_cpu_affinity,
         socket::{Rx, Socket},
         umem::{FrameOffset, PageAlignedMemory, SliceUmem, SliceUmemFrame, Umem},
     },
+    agave_cpu_utils::{CpuId, set_cpu_affinity},
     aya::{Ebpf, maps::XskMap},
     bytes::Bytes,
     crossbeam_channel::Sender,
@@ -29,7 +29,7 @@ pub fn rx_loop(
         dev.name()
     );
 
-    set_cpu_affinity([cpu_id]).unwrap();
+    set_cpu_affinity(None, [CpuId::new(cpu_id).unwrap()]).unwrap();
 
     let frame_size = unsafe { sysconf(_SC_PAGESIZE) } as usize;
 
@@ -65,12 +65,11 @@ pub fn rx_loop(
     if let Some(bpf) = bpf_opt {
         let queue_id = socket.queue().id().0 as u32;
         let fd = socket.as_fd();
-        if let Some(map) = bpf.map_mut("xsks_map") {
-            if let Ok(mut xsk_map) = XskMap::try_from(map) {
-                if let Err(e) = xsk_map.set(queue_id, fd, 0) {
-                    log::error!("Failed to set xsks_map[{queue_id}]: {e:?}");
-                }
-            }
+        if let Some(map) = bpf.map_mut("xsks_map")
+            && let Ok(mut xsk_map) = XskMap::try_from(map)
+            && let Err(e) = xsk_map.set(queue_id, fd, 0)
+        {
+            log::error!("Failed to set xsks_map[{queue_id}]: {e:?}");
         }
     }
 
