@@ -3,8 +3,8 @@
 use {
     crate::rpc_sender::*,
     agave_votor_messages::{
-        certificate::{Certificate, CertificateType},
         consensus_message::Block,
+        wire::{WireBlockCertMessage, WireCertSignature},
     },
     async_trait::async_trait,
     base64::{Engine, prelude::BASE64_STANDARD},
@@ -178,10 +178,12 @@ impl RpcSender for MockSender {
                 transaction_count: Some(123),
             })?,
             "getAgGenesisCert" => {
-                let cert = Certificate {
-                    cert_type: CertificateType::Genesis(Block { slot: 0, block_id: Hash::default() }),
-                    signature: BLSSignature([0; BLS_SIGNATURE_AFFINE_SIZE]),
-                    bitmap: Vec::default(),
+                let cert = WireBlockCertMessage {
+                    block: Block { slot: 0, block_id: Hash::default() },
+                    signature: WireCertSignature {
+                        signature:  BLSSignature([0; BLS_SIGNATURE_AFFINE_SIZE]),
+                        bitmap: vec![],
+                     }
                 };
                 serde_json::to_value(Some(cert))?
             }
