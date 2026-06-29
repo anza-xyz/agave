@@ -43,6 +43,7 @@ fn sample_hash(rng: &mut (impl solana_frozen_abi::rand::RngCore + ?Sized)) -> Ha
     SchemaWrite,
     SchemaRead,
 )]
+#[serde(rename_all = "camelCase")]
 pub struct Block {
     /// The slot in the block.
     pub slot: Slot,
