@@ -120,7 +120,8 @@ impl AcceptLoop {
                     if !rate_limited && handshakes.len() < max_inflight_handshakes =>
                 {
                     let Some(incoming) = incoming else {
-                        break; // Endpoint closed
+                        info!("Accept loop exiting: endpoint closed.");
+                        break;
                     };
                     // Handshake ratelimiter check - stop admitting tasks once limiter
                     // is exhausted.

@@ -320,10 +320,13 @@ impl OutboundLoop {
                     close_codes::NOT_ADMITTED.close(&connection);
                 }
             },
-            // Connection failed: drop the placeholder.
+            // Connection failed: drop the placeholder so the next reconcile can
+            // retry. The placeholder may already be gone (the peer left the peer_list
+            // while the handshake was in flight, so reconcile removed it).
             Err(peer) => {
-                let removed = self.peer_state.remove(&peer);
-                debug_assert!(matches!(removed, Some(PeerState::Connecting)));
+                if matches!(self.peer_state.get(&peer), Some(PeerState::Connecting)) {
+                    self.peer_state.remove(&peer);
+                }
             }
         }
     }
