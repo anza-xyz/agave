@@ -5,11 +5,9 @@ use {
     crate::{
         admin_rpc_post_init::{KeyUpdaterType, KeyUpdaters},
         banking_trace::BankingTracer,
-        block_creation_loop::{ReplayHighestFrozen, rewards::msg_types::AddVoteMessage},
-        bls_sigverify::bls_sigverifier::{self, SigVerifierChannels, SigVerifierContext},
+        block_creation_loop::ReplayHighestFrozen,
         cluster_info_vote_listener::{
-            DuplicateConfirmedSlotsReceiver, GossipVerifiedVoteHashReceiver,
-            VerifiedVoterSlotsReceiver, VerifiedVoterSlotsSender, VoteTracker,
+            DuplicateConfirmedSlotsReceiver, GossipVerifiedVoteHashReceiver, VoteTracker,
         },
         cluster_slots_service::{ClusterSlotsService, cluster_slots::ClusterSlots},
         commitment_service::AggregateCommitmentService,
@@ -28,16 +26,23 @@ use {
         warm_quic_cache_service::WarmQuicCacheService,
         window_service::{WindowService, WindowServiceChannels},
     },
-    agave_votor::{
-        consensus_metrics::MAX_IN_FLIGHT_CONSENSUS_EVENTS,
-        event::{LatestSwitchRequest, LeaderWindowInfo, VotorEventReceiver, VotorEventSender},
+    agave_bls_sigverify::{
+        bls_sigverifier::{self, SigVerifierChannels, SigVerifierContext},
         generated_cert_types::GeneratedCertTypes,
+    },
+    agave_votor::{
+        event::{LatestSwitchRequest, LeaderWindowInfo, VotorEventReceiver, VotorEventSender},
         vote_history::VoteHistory,
         vote_history_storage::VoteHistoryStorage,
-        voting_service::{VotingService as BLSVotingService, VotingServiceOverride},
+        voting_service::{
+            VOTOR_RATE_LIMIT_PPS, VotingService as BLSVotingService, VotingServiceOverride,
+        },
         votor::{Votor, VotorConfig},
     },
-    agave_votor_messages::consensus_message::Block,
+    agave_votor_messages::{
+        VerifiedVoterSlotsReceiver, VerifiedVoterSlotsSender, consensus_message::Block,
+        metric_types::MAX_IN_FLIGHT_CONSENSUS_EVENTS, reward_certificate::AddVoteMessage,
+    },
     crossbeam_channel::{Receiver, Sender, bounded, unbounded},
     solana_client::connection_cache::ConnectionCache,
     solana_clock::Slot,
@@ -55,6 +60,7 @@ use {
         leader_schedule_cache::LeaderScheduleCache,
         shred::filter::TurbineMode,
     },
+    solana_net_utils::PinnedXdpSender,
     solana_poh::{poh_controller::PohController, poh_recorder::PohRecorder},
     solana_pubkey::Pubkey,
     solana_rpc::{
@@ -117,7 +123,7 @@ pub struct Tvu {
     warm_quic_cache_service: Option<WarmQuicCacheService>,
     drop_bank_service: DropBankService,
     duplicate_shred_listener: DuplicateShredListener,
-    bls_sigverify_threads: Option<(JoinHandle<()>, JoinHandle<()>)>,
+    bls_sigverify_threads: (JoinHandle<()>, JoinHandle<()>),
     votor: Votor,
     commitment_service: AggregateCommitmentService,
 }
@@ -127,7 +133,7 @@ pub struct TvuSockets {
     pub repair: UdpSocket,
     pub retransmit: Vec<UdpSocket>,
     pub ancestor_hashes_requests: UdpSocket,
-    pub alpenglow: Option<UdpSocket>,
+    pub alpenglow: UdpSocket,
     pub block_id_repair: UdpSocket,
 }
 
@@ -144,6 +150,7 @@ pub struct TvuConfig {
     pub shred_sigverify_threads: NonZeroUsize,
     pub bls_sigverify_threads: NonZeroUsize,
     pub turbine_xdp_sender: Option<TurbineXdpSender>,
+    pub repair_xdp_sender: Option<PinnedXdpSender>,
 }
 
 impl Default for TvuConfig {
@@ -159,6 +166,7 @@ impl Default for TvuConfig {
             shred_sigverify_threads: NonZeroUsize::new(1).expect("1 is non-zero"),
             bls_sigverify_threads: NonZeroUsize::new(1).expect("1 is non-zero"),
             turbine_xdp_sender: None,
+            repair_xdp_sender: None,
         }
     }
 }
@@ -279,9 +287,7 @@ impl Tvu {
             bounded(MAX_IN_FLIGHT_CONSENSUS_EVENTS);
         let generated_cert_types = Arc::new(GeneratedCertTypes::default());
 
-        // The BLS socket is currently only available on Testnet and Development clusters.
-        // Closer to release we will enable this for all clusters.
-        let bls_sigverify_threads = if let Some(bls_socket) = bls_socket {
+        let bls_sigverify_threads = {
             let (bls_packet_sender, bls_packet_receiver) = bounded(MAX_ALPENGLOW_PACKET_NUM);
 
             let (
@@ -297,7 +303,7 @@ impl Tvu {
                     ..Default::default()
                 };
                 let qos_config = SimpleQosConfig {
-                    max_streams_per_second: 30,
+                    max_streams_per_second: VOTOR_RATE_LIMIT_PPS,
                     // Cap by # of active validators (some overhead for epoch boundaries)
                     max_staked_connections: MAX_ALPENGLOW_VOTE_ACCOUNTS * 2,
                     // Two staked connection per validator to account for hotspares
@@ -334,17 +340,14 @@ impl Tvu {
                     packet_receiver: bls_packet_receiver,
                     channel_to_repair: verified_voter_slots_sender,
                     channel_to_reward: reward_votes_sender,
-                    channel_to_pool: consensus_message_sender.clone(),
+                    channel_to_pool: consensus_message_sender,
                     channel_to_metrics: consensus_metrics_sender.clone(),
                 },
             );
 
             let mut key_notifiers = key_notifiers.write().unwrap();
             key_notifiers.add(KeyUpdaterType::Bls, bls_key_updater);
-
-            Some((bls_streamer_t, bls_sigverifier_t))
-        } else {
-            None
+            (bls_streamer_t, bls_sigverifier_t)
         };
 
         let (fetch_sender, fetch_receiver) = EvictingSender::new_bounded(SHRED_FETCH_CHANNEL_SIZE);
@@ -467,6 +470,7 @@ impl Tvu {
                 leader_schedule_cache.clone(),
                 tvu_config.shred_version,
                 outstanding_repair_requests,
+                tvu_config.repair_xdp_sender,
             )
         };
 
@@ -491,6 +495,7 @@ impl Tvu {
                 block_commitment_cache.clone(),
                 rpc_subscriptions.clone(),
             );
+        let (own_message_sender, own_message_receiver) = bounded(MAX_ALPENGLOW_PACKET_NUM);
 
         let votor_config = VotorConfig {
             exit: exit.clone(),
@@ -505,7 +510,7 @@ impl Tvu {
             cluster_info: cluster_info.clone(),
             leader_schedule_cache: leader_schedule_cache.clone(),
             consensus_metrics_sender,
-            highest_finalized,
+            highest_finalized: highest_finalized.clone(),
             bank_forks_controller,
             bls_sender: bls_sender.clone(),
             commitment_sender: votor_commitment_sender,
@@ -514,10 +519,11 @@ impl Tvu {
             highest_parent_ready,
             event_sender: votor_event_sender.clone(),
             latest_switch_request: latest_switch_request.clone(),
-            own_vote_sender: consensus_message_sender.clone(),
+            own_vote_sender: own_message_sender.clone(),
             repair_event_sender,
             event_receiver: votor_event_receiver,
             consensus_message_receiver,
+            own_message_receiver,
             consensus_metrics_receiver,
         };
         let votor = Votor::new(votor_config);
@@ -539,7 +545,7 @@ impl Tvu {
             block_metadata_notifier,
             dumped_slots_sender,
             votor_event_sender,
-            own_vote_sender: consensus_message_sender,
+            own_message_sender,
             optimistic_parent_sender,
             lockouts_sender,
         };
@@ -597,6 +603,7 @@ impl Tvu {
             vote_history_storage,
             bls_connection_cache,
             bank_forks.clone(),
+            highest_finalized,
             voting_service_test_override,
         );
 
@@ -671,10 +678,9 @@ impl Tvu {
         }
         self.drop_bank_service.join()?;
         self.duplicate_shred_listener.join()?;
-        if let Some((streamer, sigverifier)) = self.bls_sigverify_threads {
-            streamer.join()?;
-            sigverifier.join()?;
-        }
+        let (streamer, sigverifier) = self.bls_sigverify_threads;
+        streamer.join()?;
+        sigverifier.join()?;
         self.votor.join()?;
         self.commitment_service.join()?;
         Ok(())

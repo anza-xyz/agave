@@ -296,9 +296,8 @@ impl<T: IndexValue> PreAllocatedAccountMapEntry<T> {
         account_info: T,
         storage: &BucketMapHolder<T, U>,
     ) -> Box<AccountMapEntry<T>> {
-        let is_cached = account_info.is_cached();
-        let ref_count = RefCount::from(!is_cached);
-        let meta = AccountMapEntryMeta::new_dirty(storage, is_cached);
+        let ref_count = 1;
+        let meta = AccountMapEntryMeta::new_dirty(storage, false);
         Box::new(AccountMapEntry::new(
             SlotList::from([(slot, account_info)]),
             ref_count,

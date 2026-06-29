@@ -63,7 +63,9 @@ use {
         genesis_utils::{GenesisConfigInfo, ValidatorVoteKeypairs},
     },
     solana_sha256_hasher::hash,
+    solana_shred_version::compute_shred_version,
     solana_signature::Signature,
+    solana_svm_timings::ExecuteTimings,
     solana_system_transaction as system_transaction,
     solana_tpu_client::tpu_client::{DEFAULT_TPU_CONNECTION_POOL_SIZE, DEFAULT_VOTE_USE_QUIC},
     solana_transaction_error::TransactionError,
@@ -142,6 +144,16 @@ fn post_migration_status_for_tests() -> MigrationStatus {
     migration_status.set_genesis_certificate(genesis_certificate);
     migration_status.enable_alpenglow_during_startup();
     migration_status
+}
+
+fn cluster_info_for_tests() -> ClusterInfo {
+    let keypair = Arc::new(Keypair::new());
+    let my_pubkey = keypair.pubkey();
+    ClusterInfo::new(
+        Node::new_localhost_with_pubkey(&my_pubkey).info,
+        keypair,
+        SocketAddrSpace::Unspecified,
+    )
 }
 
 fn block_marker_shreds(
@@ -1008,11 +1020,13 @@ fn do_test_dead_slot_on_complete_bank(failure: CompleteBankFailure) {
         let entries = make_complete_slot_entries(&bank, vec![tx]);
         let shreds = entries_to_test_shreds(&entries, slot, bank.parent_slot(), true, 0);
         blockstore.insert_shreds(shreds, None, false).unwrap();
+        let cluster_info = cluster_info_for_tests();
 
         ReplaySlotFromBlockstore {
             is_slot_dead: false,
             bank_slot: slot,
             replay_result: Some(ReplayStage::replay_blockstore_into_bank(
+                cluster_info.my_shred_version(),
                 &process_active_banks_context,
                 &bank,
                 &bank_progress.replay_stats,
@@ -1230,7 +1244,9 @@ where
             blockstore.clone(),
             replay_vote_sender,
         );
+        let cluster_info = cluster_info_for_tests();
         let res = ReplayStage::replay_blockstore_into_bank(
+            cluster_info.my_shred_version(),
             &process_active_banks_context,
             &bank1,
             &bank1_progress.replay_stats,
@@ -6147,6 +6163,7 @@ fn test_initialize_progress_and_fork_choice_with_duplicates() {
     // Set up bank0
     let bank_forks = BankForks::new_rw_arc(Bank::new_for_tests(&genesis_config));
     let bank0 = bank_forks.read().unwrap().get_with_scheduler(0).unwrap();
+    let shred_version = compute_shred_version(&genesis_config.hash(), None);
     let replay_tx_thread_pool = rayon::ThreadPoolBuilder::new()
         .num_threads(1)
         .thread_name(|i| format!("solReplayTx{i:02}"))
@@ -6155,6 +6172,7 @@ fn test_initialize_progress_and_fork_choice_with_duplicates() {
 
     process_bank_0(
         &bank0,
+        shred_version,
         &blockstore,
         &replay_tx_thread_pool,
         &ProcessOptions::default(),
@@ -6176,6 +6194,7 @@ fn test_initialize_progress_and_fork_choice_with_duplicates() {
     confirm_full_slot(
         &blockstore,
         &bank1,
+        shred_version,
         &replay_tx_thread_pool,
         &ProcessOptions::default(),
         &mut ConfirmationProgress::new(bank0.last_blockhash()),
@@ -6195,6 +6214,7 @@ fn test_initialize_progress_and_fork_choice_with_duplicates() {
     blockstore_processor::process_blockstore_from_root(
         &blockstore,
         &bank_forks,
+        shred_version,
         &leader_schedule_cache,
         &ProcessOptions::default(),
         None,

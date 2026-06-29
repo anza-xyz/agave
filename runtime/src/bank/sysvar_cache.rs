@@ -125,6 +125,7 @@ mod tests {
         // inject a reward sysvar for test
         let num_partitions = 2; // num_partitions is arbitrary and unimportant for this test
         let total_points = 42_000; // total_points is arbitrary for the purposes of this test
+        let block_rewards = 42_000_000; // block_rewards are arbitrary for this test
         let expected_epoch_rewards = EpochRewards {
             distribution_starting_block_height: 42,
             num_partitions,
@@ -142,6 +143,7 @@ mod tests {
                 rewards: 100,
                 points: total_points,
             },
+            block_rewards,
         );
 
         bank1
@@ -173,6 +175,7 @@ mod tests {
         let (bank0, bank_forks) =
             Bank::new_for_tests(&genesis_config).wrap_with_bank_forks_for_tests();
         assert!(bank0.get_alpenglow_genesis_certificate().is_some());
+        assert!(bank0.is_alpenglow());
 
         let parent_clock = bank0.clock();
         let bank1_slot = bank0.slot() + 1;
@@ -182,6 +185,7 @@ mod tests {
             SlotLeader::default(),
             bank1_slot,
         );
+        assert!(bank1.is_alpenglow());
 
         let pre_footer_clock = bank1.clock();
         assert_eq!(pre_footer_clock.slot, bank1_slot);

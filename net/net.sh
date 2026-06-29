@@ -20,11 +20,9 @@ usage() {
                                      Valid client types are:
                                          idle
                                          transaction-bench
-                                         bench-tps (deprecated)
                                      User can optionally provide extraArgs that are transparently
                                      supplied to the client program as command line parameters.
-                                     extraArgs use the argument names of the selected client program
-                                     (solana-transaction-bench or, for bench-tps, solana-bench-tps).
+                                     extraArgs use solana-transaction-bench argument names.
                                      For example,
                                          -c transaction-bench=2="--target-tps 5000 ws-leader-tracker"
                                      This will start 2 solana-transaction-bench clients, and supply
@@ -115,10 +113,6 @@ Operate a configured testnet
 
    --tpu-enable-udp
                                       - Enable UDP for tpu transactions
-
-   --client-type
-                                      - Specify backend client type for the deprecated bench-tps. Valid options are (rpc-client|tpu-client), tpu-client is default.
-                                        Ignored by solana-transaction-bench, which always sends over QUIC to the TPU.
 
  sanity/start-specific options:
    -F                   - Discard validator nodes that didn't bootup successfully
@@ -327,7 +321,6 @@ startBootstrapLeader() {
          \"$internalNodesStakeLamports\" \
          \"$internalNodesLamports\" \
          $nodeIndex \
-         $numBenchTpsClients \"$benchTpsExtraArgs\" \
          \"$genesisOptions\" \
          \"$maybeNoSnapshot $maybeSkipLedgerVerify $maybeLimitLedgerSize $maybeWaitForSupermajority $maybeAccountsDbSkipShrink $maybeSkipRequireTower\" \
          \"$maybeWarpSlot\" \
@@ -402,7 +395,6 @@ startNode() {
          \"$internalNodesStakeLamports\" \
          \"$internalNodesLamports\" \
          $nodeIndex \
-         $numBenchTpsClients \"$benchTpsExtraArgs\" \
          \"$genesisOptions\" \
          \"$maybeNoSnapshot $maybeSkipLedgerVerify $maybeLimitLedgerSize $maybeWaitForSupermajority $maybeAccountsDbSkipShrink $maybeSkipRequireTower\" \
          \"$maybeWarpSlot\" \
@@ -423,13 +415,9 @@ startNode() {
 startClient() {
   declare ipAddress=$1
   declare clientToRun="$2"
-  declare clientIndex="$3"
 
   # Forward the extra args that belong to the selected client program.
-  declare clientExtraArgs=$benchTpsExtraArgs
-  if [[ $clientToRun = solana-transaction-bench ]]; then
-    clientExtraArgs=$transactionBenchExtraArgs
-  fi
+  declare clientExtraArgs=$transactionBenchExtraArgs
 
   initLogDir
   declare logFile="$netLogDir/client-$clientToRun-$ipAddress.log"
@@ -441,7 +429,7 @@ startClient() {
     startCommon "$ipAddress"
     ssh "${sshOptions[@]}" -f "$ipAddress" \
       "./solana/net/remote/remote-client.sh $deployMethod $entrypointIp \
-      $clientToRun \"$RUST_LOG\" \"$clientExtraArgs\" $clientIndex $clientType \
+      $clientToRun \"$RUST_LOG\" \"$clientExtraArgs\" \
       $maybeUseUnstakedConnection"
   ) >> "$logFile" 2>&1 || {
     cat "$logFile"
@@ -451,15 +439,11 @@ startClient() {
 }
 
 startClients() {
-  benchTpsIndex=0
   for ((i=0; i < numClients && i < numClientsRequested; i++)) do
     if [[ $i -lt $numTransactionBenchClients ]]; then
-      startClient "${clientIpList[$i]}" "solana-transaction-bench" "$i"
-    elif [[ $i -lt $((numTransactionBenchClients + numBenchTpsClients)) ]]; then
-      startClient "${clientIpList[$i]}" "solana-bench-tps" "$benchTpsIndex"
-      ((benchTpsIndex++))
+      startClient "${clientIpList[$i]}" "solana-transaction-bench"
     else
-      startClient "${clientIpList[$i]}" "idle" "$i"
+      startClient "${clientIpList[$i]}" "idle"
     fi
   done
 }
@@ -824,8 +808,6 @@ sanityExtraArgs=
 skipSetup=false
 nodeAddress=
 numIdleClients=0
-numBenchTpsClients=0
-benchTpsExtraArgs=
 numTransactionBenchClients=0
 transactionBenchExtraArgs=
 failOnValidatorBootupFailure=true
@@ -855,7 +837,6 @@ waitForNodeInit=true
 extraPrimordialStakes=0
 disableQuic=false
 enableUdp=false
-clientType=tpu-client
 maybeUseUnstakedConnection=""
 alpenglow=false
 
@@ -972,17 +953,6 @@ while [[ -n $1 ]]; do
     elif [[ $1 = --skip-require-tower ]]; then
       maybeSkipRequireTower="$1"
       shift 1
-    elif [[ $1 = --client-type ]]; then
-      clientType=$2
-      case "$clientType" in
-        tpu-client|rpc-client)
-          ;;
-        *)
-          echo "Unexpected client type: \"$clientType\""
-          exit 1
-          ;;
-      esac
-      shift 2
     elif [[ $1 = --use-unstaked-connection ]]; then
       maybeUseUnstakedConnection="$1"
       shift 1
@@ -1060,10 +1030,6 @@ while getopts "h?T:t:o:f:rc:Fn:i:d" opt "${shortArgs[@]}"; do
           numTransactionBenchClients=$numClients
           transactionBenchExtraArgs=$extraArgs
         ;;
-        bench-tps)
-          numBenchTpsClients=$numClients
-          benchTpsExtraArgs=$extraArgs
-        ;;
         *)
           echo "Unknown client type: $clientType"
           exit 1
@@ -1096,7 +1062,7 @@ if [[ -n $numValidatorsRequested ]]; then
 fi
 
 numClients=${#clientIpList[@]}
-numClientsRequested=$((numTransactionBenchClients + numBenchTpsClients + numIdleClients))
+numClientsRequested=$((numTransactionBenchClients + numIdleClients))
 if [[ "$numClientsRequested" -eq 0 ]]; then
   # Default to solana-transaction-bench on every available client node.
   numTransactionBenchClients=$numClients

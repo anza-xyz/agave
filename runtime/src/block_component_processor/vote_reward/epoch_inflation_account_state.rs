@@ -21,6 +21,16 @@ static VOTE_REWARD_ACCOUNT_ADDR: LazyLock<Pubkey> = LazyLock::new(|| {
     pubkey
 });
 
+#[cfg_attr(
+    feature = "frozen-abi",
+    derive(AbiExample, StableAbi, StableAbiSample),
+    frozen_abi(
+        digest = "DwwQZJF7Epufk6MN9W6bfJ1z1DkjGfMZUsXDMWNv86jb",
+        abi_digest = "CrSvqX8ZAYxjZ6XoTp9Z1ED6McdnqhXq8zYFWBDkCwJs",
+        abi_serializer = "wincode",
+        test_roundtrip = "eq_and_wire",
+    )
+)]
 /// The per epoch info stored in the off curve account.
 #[derive(Debug, Clone, PartialEq, Eq, SchemaRead, SchemaWrite, Deserialize, Serialize)]
 pub(super) struct EpochInflationState {
@@ -52,6 +62,16 @@ impl EpochInflationState {
     }
 }
 
+#[cfg_attr(
+    feature = "frozen-abi",
+    derive(AbiExample, StableAbi, StableAbiSample),
+    frozen_abi(
+        digest = "HR1JbQp4gVU7fcsG4ji1fe28j8uNJRmuptdQz4PDkKoC",
+        abi_digest = "FeEFnXTk7DxHkCamcHDpRRjRDfSyMh3DGnefbwSvA8Kc",
+        abi_serializer = "wincode",
+        test_roundtrip = "eq_and_wire",
+    )
+)]
 /// The state stored in the off curve account used to store metadata for calculating and paying
 /// voting rewards.
 ///
@@ -138,10 +158,10 @@ impl EpochInflationAccountState {
         if self.current.epoch == epoch {
             return Some(self.current);
         }
-        if let Some(prev) = self.prev {
-            if prev.epoch == epoch {
-                return Some(prev);
-            }
+        if let Some(prev) = self.prev
+            && prev.epoch == epoch
+        {
+            return Some(prev);
         }
         None
     }

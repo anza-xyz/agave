@@ -16,6 +16,7 @@ use {
     rayon::{ThreadPool, ThreadPoolBuilder, prelude::*},
     solana_clock::Slot,
     solana_gossip::cluster_info::ClusterInfo,
+    solana_leader_schedule::NUM_CONSECUTIVE_LEADER_SLOTS,
     solana_ledger::{
         leader_schedule_cache::LeaderScheduleCache,
         shred::{self, ShredFlags, ShredId, ShredType},
@@ -123,6 +124,7 @@ struct RetransmitState {
     stats: RetransmitStats,
     addr_cache: AddrCache,
     shred_buf: Vec<Vec<shred::Payload>>,
+    pending_first_shred_event: Option<VotorEvent>,
 }
 
 struct RetransmitNotifiers {
@@ -152,6 +154,7 @@ impl RetransmitState {
             stats: RetransmitStats::new(now),
             addr_cache: AddrCache::with_capacity(/*capacity:*/ 4),
             shred_buf: Vec::with_capacity(RETRANSMIT_BATCH_SIZE),
+            pending_first_shred_event: None,
         }
     }
 }
@@ -331,7 +334,16 @@ fn retransmit(context: &RetransmitContext, state: &mut RetransmitState) -> Resul
         stats,
         addr_cache,
         shred_buf,
+        pending_first_shred_event,
     } = state;
+
+    // Attempt to resend a pending first shred event to votor
+    if let Some(event) = pending_first_shred_event.take()
+        && let Err(TrySendError::Full(event)) = context.notifiers.votor_event_sender.try_send(event)
+    {
+        // Failed again, requeue
+        *pending_first_shred_event = Some(event);
+    }
 
     // Try to receive shreds from the channel without blocking. If the channel
     // is empty precompute turbine trees speculatively. If no cache updates are
@@ -459,7 +471,13 @@ fn retransmit(context: &RetransmitContext, state: &mut RetransmitState) -> Resul
         })
     };
 
-    stats.upsert_slot_stats(slot_stats, root_bank.slot(), addr_cache, &context.notifiers)?;
+    stats.upsert_slot_stats(
+        slot_stats,
+        root_bank.slot(),
+        addr_cache,
+        &context.notifiers,
+        pending_first_shred_event,
+    );
     timer_start.stop();
     stats.total_time += timer_start.as_us();
     stats.maybe_submit(
@@ -786,13 +804,19 @@ impl RetransmitStats {
         root: Slot,
         addr_cache: &mut AddrCache,
         notifiers: &RetransmitNotifiers,
-    ) -> Result<(), ()> {
+        pending_first_shred_event: &mut Option<VotorEvent>,
+    ) {
         for (slot, mut slot_stats) in feed {
             addr_cache.record(slot, &mut slot_stats);
             match self.slot_stats.get_mut(&slot) {
                 None => {
                     if slot > root {
-                        notify_subscribers(slot, slot_stats.outset, notifiers)?;
+                        notify_subscribers(
+                            slot,
+                            slot_stats.outset,
+                            notifiers,
+                            pending_first_shred_event,
+                        );
                     }
                     self.slot_stats.put(slot, slot_stats);
                 }
@@ -810,7 +834,6 @@ impl RetransmitStats {
                 None => break,
             }
         }
-        Ok(())
     }
 }
 
@@ -885,7 +908,8 @@ fn notify_subscribers(
     slot: Slot,
     timestamp: u64, // When the first shred in the slot was received.
     notifiers: &RetransmitNotifiers,
-) -> Result<(), ()> {
+    pending_first_shred_event: &mut Option<VotorEvent>,
+) {
     if let Some(rpc_subscriptions) = notifiers.rpc_subscriptions.as_ref() {
         let slot_update = SlotUpdate::FirstShredReceived { slot, timestamp };
         rpc_subscriptions.notify_slot_update(slot_update);
@@ -898,7 +922,9 @@ fn notify_subscribers(
             .notify_first_shred_received(slot);
     }
 
-    if notifiers.migration_status.should_send_votor_event(slot) {
+    if notifiers.migration_status.should_send_votor_event(slot)
+        && slot.is_multiple_of(NUM_CONSECUTIVE_LEADER_SLOTS.get() as u64)
+    {
         match notifiers
             .votor_event_sender
             .try_send(VotorEvent::FirstShred(slot))
@@ -906,18 +932,17 @@ fn notify_subscribers(
             Ok(()) => (),
             Err(TrySendError::Full(event)) => {
                 error!(
-                    "Votor event channel is backed up len {}, something is wrong, blocking",
+                    "Votor event channel is backed up len {}, something is wrong",
                     notifiers.votor_event_sender.len(),
                 );
-                let _ = notifiers.votor_event_sender.send(event);
+                // Only the latest first shred notification matters, requeue
+                pending_first_shred_event.replace(event);
             }
             Err(TrySendError::Disconnected(_)) => {
-                info!("Votor event channel disconnectioned, we are shutting down")
+                info!("Votor event channel disconnected, we are shutting down")
             }
         }
     }
-
-    Ok(())
 }
 
 #[cfg(test)]

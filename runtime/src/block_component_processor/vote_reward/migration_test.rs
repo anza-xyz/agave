@@ -12,7 +12,7 @@ mod tests {
                 ValidatorVoteKeypairs, activate_all_features, create_genesis_config_with_leader_ex,
                 create_validator,
             },
-            inflation_rewards::commission_split,
+            inflation_rewards::commission_split_preserve_lamports,
             stake_utils,
         },
         agave_feature_set::FeatureSet,
@@ -20,7 +20,7 @@ mod tests {
             certificate::{Certificate, CertificateType},
             consensus_message::Block,
         },
-        solana_account::{Account, ReadableAccount},
+        solana_account::{Account, ReadableAccount, from_account},
         solana_bls_signatures::{BLS_SIGNATURE_AFFINE_SIZE, Signature as BLSSignature},
         solana_cluster_type::ClusterType,
         solana_epoch_schedule::EpochSchedule,
@@ -34,6 +34,7 @@ mod tests {
         solana_rent::Rent,
         solana_signer::Signer,
         solana_stake_interface::state::StakeStateV2,
+        solana_sysvar::{self as sysvar, epoch_rewards::EpochRewards},
         std::{collections::HashMap, num::NonZero, sync::Arc},
         test_case::test_matrix,
     };
@@ -271,21 +272,12 @@ mod tests {
                 return ret;
             }
 
-            let total_points = self
-                .validators
-                .iter()
-                .map(|validator| {
-                    let vote_pubkey = validator.vote_keypair.pubkey();
-                    let validator_stake = self.get_validator_stake(reward_bank, &vote_pubkey);
-                    let points = validator_stake * self.pay_type.tower();
-                    points as u128
-                })
-                .sum::<u128>();
-
-            let epoch_inflation = payout_bank.calculate_epoch_inflation_rewards(
-                reward_bank.capitalization(),
-                reward_bank.epoch(),
-            );
+            let epoch_rewards: EpochRewards = payout_bank
+                .get_account(&sysvar::epoch_rewards::id())
+                .and_then(|account| from_account(&account))
+                .unwrap();
+            let epoch_inflation = epoch_rewards.total_rewards;
+            let total_points = epoch_rewards.total_points;
             let genesis_cert = payout_bank.get_alpenglow_genesis_certificate().unwrap();
             let first_slot_in_reward_epoch = payout_bank
                 .epoch_schedule
@@ -364,7 +356,7 @@ mod tests {
                     self.pay_type.ag().map(NonZero::get).unwrap_or(0) * stake / validator_stake;
                 let stake_weighted_reward = stake_weighted_tower + stake_weighted_ag;
                 let (voter_reward, staker_reward, is_split) =
-                    commission_split(self.commission_bps, stake_weighted_reward);
+                    commission_split_preserve_lamports(self.commission_bps, stake_weighted_reward);
                 assert!(is_split);
                 assert_eq!(
                     staker_reward,

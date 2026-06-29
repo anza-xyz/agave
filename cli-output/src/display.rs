@@ -468,11 +468,11 @@ fn write_instruction<'a, W: io::Write>(
                 writeln!(w, "{prefix}  {system_instruction:?}")?;
                 raw = false;
             }
-        } else if is_memo_program(program_pubkey) {
-            if let Ok(s) = std::str::from_utf8(&instruction.data) {
-                writeln!(w, "{prefix}  Data: \"{s}\"")?;
-                raw = false;
-            }
+        } else if is_memo_program(program_pubkey)
+            && let Ok(s) = std::str::from_utf8(&instruction.data)
+        {
+            writeln!(w, "{prefix}  Data: \"{s}\"")?;
+            raw = false;
         }
     }
 
@@ -512,31 +512,31 @@ fn write_rewards<W: io::Write>(
     rewards: Option<&Rewards>,
     prefix: &str,
 ) -> io::Result<()> {
-    if let Some(rewards) = rewards {
-        if !rewards.is_empty() {
-            writeln!(w, "{prefix}Rewards:",)?;
+    if let Some(rewards) = rewards
+        && !rewards.is_empty()
+    {
+        writeln!(w, "{prefix}Rewards:",)?;
+        writeln!(
+            w,
+            "{}  {:<44}  {:^15}  {:<16}  {:<20}",
+            prefix, "Address", "Type", "Amount", "New Balance"
+        )?;
+        for reward in rewards {
+            let sign = if reward.lamports < 0 { "-" } else { "" };
             writeln!(
                 w,
-                "{}  {:<44}  {:^15}  {:<16}  {:<20}",
-                prefix, "Address", "Type", "Amount", "New Balance"
+                "{}  {:<44}  {:^15}  {}◎{:<14.9}  ◎{:<18.9}",
+                prefix,
+                reward.pubkey,
+                if let Some(reward_type) = reward.reward_type {
+                    format!("{reward_type}")
+                } else {
+                    "-".to_string()
+                },
+                sign,
+                build_balance_message(reward.lamports.unsigned_abs(), false, false),
+                build_balance_message(reward.post_balance, false, false)
             )?;
-            for reward in rewards {
-                let sign = if reward.lamports < 0 { "-" } else { "" };
-                writeln!(
-                    w,
-                    "{}  {:<44}  {:^15}  {}◎{:<14.9}  ◎{:<18.9}",
-                    prefix,
-                    reward.pubkey,
-                    if let Some(reward_type) = reward.reward_type {
-                        format!("{reward_type}")
-                    } else {
-                        "-".to_string()
-                    },
-                    sign,
-                    build_balance_message(reward.lamports.unsigned_abs(), false, false),
-                    build_balance_message(reward.post_balance, false, false)
-                )?;
-            }
         }
     }
     Ok(())
@@ -645,12 +645,12 @@ fn write_log_messages<W: io::Write>(
     log_messages: Option<&Vec<String>>,
     prefix: &str,
 ) -> io::Result<()> {
-    if let Some(log_messages) = log_messages {
-        if !log_messages.is_empty() {
-            writeln!(w, "{prefix}Log Messages:",)?;
-            for log_message in log_messages {
-                writeln!(w, "{prefix}  {log_message}")?;
-            }
+    if let Some(log_messages) = log_messages
+        && !log_messages.is_empty()
+    {
+        writeln!(w, "{prefix}Log Messages:",)?;
+        for log_message in log_messages {
+            writeln!(w, "{prefix}  {log_message}")?;
         }
     }
     Ok(())
@@ -674,10 +674,9 @@ pub fn println_transaction(
         CliTimezone::Local,
     )
     .is_ok()
+        && let Ok(s) = String::from_utf8(w)
     {
-        if let Ok(s) = String::from_utf8(w) {
-            print!("{s}");
-        }
+        print!("{s}");
     }
 }
 
@@ -700,10 +699,10 @@ pub fn writeln_transaction(
         CliTimezone::Local,
     );
 
-    if write_result.is_ok() {
-        if let Ok(s) = String::from_utf8(w) {
-            write!(f, "{s}")?;
-        }
+    if write_result.is_ok()
+        && let Ok(s) = String::from_utf8(w)
+    {
+        write!(f, "{s}")?;
     }
     Ok(())
 }

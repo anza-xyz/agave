@@ -82,6 +82,22 @@ EOF
   fi
 )
 
+# Disallow adding new files under docs/ — docs now live in a separate repo
+(
+  added_docs=$(git diff --diff-filter=AR --name-only "$target" -- 'docs/*')
+  if [ -n "$added_docs" ]; then
+    cat <<EOF 1>&2
+
+Error: new files added under docs/:
+$added_docs
+
+Documentation has moved to https://github.com/anza-xyz/docs.anza.xyz
+Please add your changes there instead.
+EOF
+    exit 1
+  fi
+)
+
 ./scripts/cargo-install-all.sh --dcou-check-only
 
 echo --- ok

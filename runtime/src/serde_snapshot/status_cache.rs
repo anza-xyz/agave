@@ -18,7 +18,7 @@ use {
 
 #[cfg_attr(
     feature = "frozen-abi",
-    frozen_abi(digest = "AardUUq1At4qq6oNNp9V2JZFsMR5k54RZmBmZkxUfk7m")
+    frozen_abi(digest = "DM9FgEZxfdt43ZgxNAtU2YoGV2P1NgiABgJJunURuV2p")
 )]
 type SerdeBankSlotDelta = SerdeSlotDelta<Result<(), SerdeTransactionError>>;
 type SerdeSlotDelta<T> = (Slot, bool, SerdeStatus<T>);
@@ -112,7 +112,7 @@ pub fn deserialize_status_cache(
 /// contain a string in the BorshIoError variant.
 #[cfg_attr(
     feature = "frozen-abi",
-    frozen_abi(digest = "5pMgydVNgsYbg64Trhjxbftsug5La7fRDmooyrsHd4wy"),
+    frozen_abi(digest = "H4jrGnmko28mgcxgsVyC49ihwiZmBJbSFAnYGHYtNpS"),
     derive(AbiExample, AbiEnumVisitor)
 )]
 #[derive(Debug, PartialEq, Eq, Clone, Serialize, SchemaRead, SchemaWrite)]
@@ -156,6 +156,7 @@ enum SerdeTransactionError {
     UnbalancedTransaction,
     ProgramCacheHitMaxLimit,
     CommitCancelled,
+    InstructionsSysvarOverflow,
 }
 
 impl From<&TransactionError> for SerdeTransactionError {
@@ -224,6 +225,7 @@ impl From<&TransactionError> for SerdeTransactionError {
             TransactionError::UnbalancedTransaction => Self::UnbalancedTransaction,
             TransactionError::ProgramCacheHitMaxLimit => Self::ProgramCacheHitMaxLimit,
             TransactionError::CommitCancelled => Self::CommitCancelled,
+            TransactionError::InstructionsSysvarOverflow => Self::InstructionsSysvarOverflow,
         }
     }
 }
@@ -294,6 +296,7 @@ impl From<SerdeTransactionError> for TransactionError {
             SerdeTransactionError::UnbalancedTransaction => Self::UnbalancedTransaction,
             SerdeTransactionError::ProgramCacheHitMaxLimit => Self::ProgramCacheHitMaxLimit,
             SerdeTransactionError::CommitCancelled => Self::CommitCancelled,
+            SerdeTransactionError::InstructionsSysvarOverflow => Self::InstructionsSysvarOverflow,
         }
     }
 }

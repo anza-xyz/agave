@@ -288,10 +288,10 @@ impl OptimisticallyConfirmedBankTracker {
     ) {
         debug!("received bank notification: {notification:?} event: {dependency_work:?}");
 
-        if let Some(tracker) = dependency_tracker.as_ref() {
-            if let Some(dependency_work) = dependency_work {
-                tracker.wait_for_dependency(dependency_work);
-            }
+        if let Some(tracker) = dependency_tracker.as_ref()
+            && let Some(dependency_work) = dependency_work
+        {
+            tracker.wait_for_dependency(dependency_work);
         }
         match notification {
             BankNotification::OptimisticallyConfirmed(slot) => {
@@ -450,7 +450,7 @@ impl OptimisticallyConfirmedBankTracker {
 mod tests {
     use {
         super::*,
-        crossbeam_channel::unbounded,
+        crossbeam_channel::bounded,
         solana_ledger::genesis_utils::{GenesisConfigInfo, create_genesis_config},
         solana_runtime::{bank::SlotLeader, commitment::BlockCommitmentCache, dependency_tracker},
         std::sync::atomic::AtomicU64,
@@ -618,7 +618,7 @@ mod tests {
         let bank5 = bank_forks.read().unwrap().get(5).unwrap();
 
         let mut bank_notification_senders = Vec::new();
-        let (sender, receiver) = unbounded();
+        let (sender, receiver) = bounded(1024);
         bank_notification_senders.push(sender);
 
         let subscribers = Some(Arc::new(RwLock::new(bank_notification_senders)));

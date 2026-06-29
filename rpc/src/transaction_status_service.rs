@@ -259,10 +259,10 @@ impl TransactionStatusService {
                     blockstore.write_batch(batch)?;
                 }
 
-                if let Some(dependency_tracker) = dependency_tracker.as_ref() {
-                    if let Some(work_id) = work_id {
-                        dependency_tracker.mark_this_and_all_previous_work_processed(work_id);
-                    }
+                if let Some(dependency_tracker) = dependency_tracker.as_ref()
+                    && let Some(work_id) = work_id
+                {
+                    dependency_tracker.mark_this_and_all_previous_work_processed(work_id);
                 }
             }
             TransactionStatusMessage::Freeze(bank) => {
@@ -349,7 +349,7 @@ pub(crate) mod tests {
         super::*,
         crate::transaction_notifier_interface::TransactionNotifier,
         agave_reserved_account_keys::ReservedAccountKeys,
-        crossbeam_channel::unbounded,
+        crossbeam_channel::bounded,
         dashmap::DashMap,
         solana_account::state_traits::StateMut,
         solana_account_decoder::{
@@ -442,7 +442,7 @@ pub(crate) mod tests {
         let genesis_config = create_genesis_config(2).genesis_config;
         let (bank, _bank_forks) = Bank::new_with_bank_forks_for_tests(&genesis_config);
 
-        let (transaction_status_sender, transaction_status_receiver) = unbounded();
+        let (transaction_status_sender, transaction_status_receiver) = bounded(1024);
         let ledger_path = get_tmp_ledger_path_auto_delete!();
         let blockstore = Blockstore::open(ledger_path.path())
             .expect("Expected to be able to open database ledger");
@@ -570,7 +570,7 @@ pub(crate) mod tests {
         let genesis_config = create_genesis_config(2).genesis_config;
         let (bank, _bank_forks) = Bank::new_with_bank_forks_for_tests(&genesis_config);
 
-        let (transaction_status_sender, transaction_status_receiver) = unbounded();
+        let (transaction_status_sender, transaction_status_receiver) = bounded(1024);
         let ledger_path = get_tmp_ledger_path_auto_delete!();
         let blockstore = Blockstore::open(ledger_path.path())
             .expect("Expected to be able to open database ledger");

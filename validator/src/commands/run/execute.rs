@@ -12,6 +12,7 @@ use {
         snapshot_config::{SnapshotConfig, SnapshotUsage},
     },
     agave_votor::vote_history_storage,
+    bytesize::ByteSize,
     clap::{ArgMatches, crate_name, value_t, value_t_or_exit, values_t, values_t_or_exit},
     crossbeam_channel::unbounded,
     log::*,
@@ -82,7 +83,11 @@ use {
     },
 };
 #[cfg(target_os = "linux")]
-use {agave_xdp::transmitter::XdpConfig, solana_clap_utils::input_parsers::parse_cpu_ranges};
+use {
+    agave_cpu_utils::cpu_affinity,
+    agave_xdp::transmitter::{QueueCpuBinding, XdpConfig},
+    solana_clap_utils::input_parsers::parse_cpu_ranges,
+};
 
 #[derive(Debug, PartialEq, Eq)]
 pub enum Operation {
@@ -163,30 +168,11 @@ pub fn execute(
             Err(format!("invalid entrypoint address: {addr}"))?;
         }
     }
+    // XDP is not needed for init — it only initializes the ledger and exits.
+    // Also, init drops all Linux capabilities in main() so XDP setup would fail.
     #[cfg(target_os = "linux")]
-    let xdp_transmit_config = if let Some(xdp_cpu_cores) = matches
-        .value_of("xdp_cpu_cores")
-        .or_else(|| matches.value_of("experimental_retransmit_xdp_cpu_cores"))
-    {
-        let xdp_interface = matches
-            .value_of("xdp_interface")
-            .or_else(|| matches.value_of("experimental_retransmit_xdp_interface"));
-        let xdp_zero_copy = matches.is_present("xdp_zero_copy")
-            || matches.is_present("experimental_retransmit_xdp_zero_copy");
-        let config = XdpConfig::new(
-            xdp_interface,
-            parse_cpu_ranges(xdp_cpu_cores).unwrap(),
-            xdp_zero_copy,
-        );
-        if bind_addresses.len() > 1 {
-            Err(String::from(
-                "--xdp-cpu-cores cannot be used in a multihoming context",
-            ))?;
-        }
-        Some(config)
-    } else {
-        None
-    };
+    let xdp_transmit_config: Option<XdpConfig> =
+        build_xdp_config(matches, &operation, &bind_addresses)?;
 
     let dynamic_port_range =
         solana_net_utils::parse_port_range(matches.value_of("dynamic_port_range").unwrap())
@@ -289,13 +275,14 @@ pub fn execute(
     let _ = config;
 
     #[cfg(target_os = "linux")]
-    let xdp_transmit_setup = {
+    let (xdp_transmit_setup, xdp_network_config_report) = {
         use {
             agave_xdp::transmitter::TransmitterBuilder,
             caps::{
                 CapSet,
                 Capability::{CAP_BPF, CAP_NET_ADMIN, CAP_NET_RAW, CAP_PERFMON, CAP_SYS_NICE},
             },
+            solana_core::system_monitor_service::XdpNetworkConfigReport,
         };
 
         let super::Config { primordial_caps } = config;
@@ -371,33 +358,46 @@ pub fn execute(
         // XDP _MUST_ be setup _BEFORE_ the app spawns any threads to ensure linux
         // capabilities do not leak, leaving the process in a state where it could
         // potentially be used as a privilege escalation gadget
-        let xdp_transmit_setup = xdp_transmit_config.clone().map(|xdp_config| {
-            use {
-                agave_xdp::{default_device_ipv4, interface_ipv4},
-                solana_core::validator::XdpTransmitSetup,
-            };
+        let (xdp_transmit_setup, report) = xdp_transmit_config
+            .clone()
+            .map(|mut xdp_config| {
+                use {
+                    agave_xdp::{device::NetworkDevice, interface_ipv4},
+                    solana_core::validator::XdpTransmitSetup,
+                };
 
-            let src_ip = match node.bind_ip_addrs.active() {
-                IpAddr::V4(ip) if !ip.is_unspecified() => ip,
-                IpAddr::V4(_unspecified) => {
-                    if let Some(interface) = xdp_config.interface.as_ref() {
-                        interface_ipv4(interface).expect(
-                            "configured interface should exist and have an IPv4 address assigned",
-                        )
-                    } else {
-                        default_device_ipv4().expect(
-                            "default route device should exist and have an IPv4 address assigned",
-                        )
-                    }
-                }
-                _ => panic!("IPv6 not supported"),
-            };
-            XdpTransmitSetup {
-                transmitter_builder: TransmitterBuilder::new(xdp_config, exit.clone())
-                    .expect("failed to create xdp transmitter"),
-                src_ip,
-            }
-        });
+                let device = if let Some(interface) = xdp_config.interface.as_ref() {
+                    NetworkDevice::new(interface).expect("configured interface should exist")
+                } else {
+                    NetworkDevice::new_from_default_route()
+                        .expect("default route device should exist")
+                };
+
+                let xdp_interface = device.name().to_string();
+                // Keep the transmitter and metrics on the selected XDP device. Source IP lookup
+                // uses the same interface name, with bond-master fallback.
+                xdp_config.interface = Some(xdp_interface.clone());
+                let zero_copy = xdp_config.zero_copy;
+                let src_ip = match node.bind_ip_addrs.active() {
+                    IpAddr::V4(ip) if !ip.is_unspecified() => ip,
+                    IpAddr::V4(_unspecified) => interface_ipv4(&xdp_interface).expect(
+                        "selected interface should exist and have an IPv4 address assigned",
+                    ),
+                    _ => panic!("IPv6 not supported"),
+                };
+                (
+                    XdpTransmitSetup {
+                        transmitter_builder: TransmitterBuilder::new(xdp_config, exit.clone())
+                            .expect("failed to create xdp transmitter"),
+                        src_ip,
+                    },
+                    XdpNetworkConfigReport {
+                        zero_copy,
+                        interface: xdp_interface,
+                    },
+                )
+            })
+            .map_or((None, None), |(setup, report)| (Some(setup), Some(report)));
 
         // we're done with caps needed to init xdp now. remove them from our process
         caps::set(None, CapSet::Effective, &retained_caps)
@@ -405,15 +405,16 @@ pub fn execute(
         caps::set(None, CapSet::Permitted, &retained_caps)
             .expect("linux allows permitted capset to be set");
 
-        xdp_transmit_setup
+        (xdp_transmit_setup, report)
     };
 
     #[cfg(not(target_os = "linux"))]
-    let xdp_transmit_setup = None;
+    let (xdp_transmit_setup, xdp_network_config_report) = (None, None);
 
     #[cfg(target_os = "linux")]
-    let poh_pinned_cpu_core =
-        value_of(matches, "poh_pinned_cpu_core").or(poh_service::DEFAULT_PINNED_CPU_CORE);
+    let poh_pinned_cpu_core = value_of(matches, "poh_pinned_cpu_core")
+        .or_else(|| value_of(matches, "experimental_poh_pinned_cpu_core"))
+        .or(poh_service::DEFAULT_PINNED_CPU_CORE);
 
     #[cfg(not(target_os = "linux"))]
     let poh_pinned_cpu_core = None;
@@ -644,16 +645,37 @@ pub fn execute(
 
     const MB: usize = 1_024 * 1_024;
 
-    let read_cache_limit_bytes =
-        values_of::<usize>(matches, "accounts_db_read_cache_limit").map(|limits| {
-            match limits.len() {
-                2 => (limits[0], limits[1]),
-                _ => {
-                    // clap will enforce two values are given
-                    unreachable!("invalid number of values given to accounts-db-read-cache-limit")
+    let read_cache_limit_bytes = if let Some(limits) =
+        values_of::<ByteSize>(matches, "accounts_db_read_cache_limit")
+    {
+        match limits.as_slice() {
+            [lo, hi] => {
+                let lo = usize::try_from(lo.0)?;
+                let hi = usize::try_from(hi.0)?;
+                if lo > hi {
+                    Err(format!(
+                        "invalid --accounts-db-read-cache-limit: LOW ({lo}) must be <= HIGH ({hi})",
+                    ))?;
                 }
+                Some((lo, hi))
             }
-        });
+            _ => {
+                // clap will enforce two values are given
+                unreachable!("invalid number of values given to accounts-db-read-cache-limit")
+            }
+        }
+    } else {
+        None
+    };
+
+    let write_cache_limit_bytes =
+        value_of::<ByteSize>(matches, "accounts_db_write_cache_limit").map(|limit| limit.0);
+    // accounts-db-write-cache-limit-mb was deprecated in v4.2.0
+    let write_cache_limit_mb = value_t!(matches, "accounts_db_cache_limit_mb", u64)
+        .ok()
+        .map(|mb| mb * MB as u64);
+    // clap will enforce only one cli arg is provided, so pick whichever is Some
+    let write_cache_limit_bytes = write_cache_limit_bytes.or(write_cache_limit_mb);
 
     let scan_filter_for_shrinking = matches
         .value_of("accounts_db_scan_filter_for_shrinking")
@@ -676,9 +698,7 @@ pub fn execute(
         read_cache_limit_bytes,
         read_cache_evict_sample_size: None,
         read_cache_num_shards: None,
-        write_cache_limit_bytes: value_t!(matches, "accounts_db_cache_limit_mb", u64)
-            .ok()
-            .map(|mb| mb * MB as u64),
+        write_cache_limit_bytes,
         ancient_append_vec_offset: value_t!(matches, "accounts_db_ancient_append_vecs", i64).ok(),
         ancient_storage_ideal_size: value_t!(
             matches,
@@ -789,6 +809,7 @@ pub fn execute(
         no_poh_speed_test: matches.is_present("no_poh_speed_test"),
         no_os_memory_stats_reporting: matches.is_present("no_os_memory_stats_reporting"),
         no_os_network_stats_reporting: matches.is_present("no_os_network_stats_reporting"),
+        xdp_network_config_report,
         no_os_cpu_stats_reporting: matches.is_present("no_os_cpu_stats_reporting"),
         no_os_disk_stats_reporting: matches.is_present("no_os_disk_stats_reporting"),
         // The validator needs to open many files, check that the process has
@@ -818,8 +839,8 @@ pub fn execute(
         replay_transactions_threads,
         tvu_shred_sigverify_threads: tvu_sigverify_threads,
         tvu_bls_sigverify_threads,
-        delay_leader_block_for_pending_fork: matches
-            .is_present("delay_leader_block_for_pending_fork"),
+        delay_leader_block_for_pending_fork: !matches
+            .is_present("no_delay_leader_block_for_pending_fork"),
         turbine_mode: TurbineMode::default(),
         broadcast_stage_type: BroadcastStageType::Standard,
         block_verification_method: value_t_or_exit!(
@@ -1362,4 +1383,151 @@ fn new_snapshot_config(
     }
 
     Ok(snapshot_config)
+}
+
+#[cfg(target_os = "linux")]
+fn build_xdp_config(
+    matches: &ArgMatches,
+    operation: &Operation,
+    bind_addresses: &BindIpAddrs,
+) -> Result<Option<XdpConfig>, String> {
+    if matches.is_present("no_xdp") || *operation == Operation::Initialize {
+        return Ok(None);
+    }
+    if bind_addresses.len() > 1 {
+        return Err(
+            "XDP cannot be used in a multihoming context; pass --no-xdp to disable XDP".to_string(),
+        );
+    }
+    let xdp_interface = matches
+        .value_of("xdp_interface")
+        .or_else(|| matches.value_of("experimental_retransmit_xdp_interface"));
+    let xdp_zero_copy = matches.is_present("xdp_zero_copy")
+        || matches.is_present("experimental_retransmit_xdp_zero_copy");
+    let poh_pinned_cpu_core = value_of(matches, "poh_pinned_cpu_core")
+        .or_else(|| value_of(matches, "experimental_poh_pinned_cpu_core"))
+        .or(poh_service::DEFAULT_PINNED_CPU_CORE);
+    let xdp_cpu_cores = matches
+        .value_of("xdp_cpu_cores")
+        .or_else(|| matches.value_of("experimental_retransmit_xdp_cpu_cores"));
+    let cpus = if let Some(cpu_str) = xdp_cpu_cores {
+        let parsed =
+            parse_cpu_ranges(cpu_str).expect("clap validator already accepted this CPU list");
+        if let Some(poh_core) = poh_pinned_cpu_core
+            && parsed.contains(&poh_core)
+        {
+            return Err(format!(
+                "--xdp-cpu-cores includes PoH core {poh_core}; XDP and PoH must not share a CPU \
+                 core"
+            ));
+        }
+        Some(parsed)
+    } else {
+        // Auto-select a single core, avoiding the PoH core.
+        match cpu_affinity(None) {
+            Ok(allowed) => {
+                match allowed
+                    .iter()
+                    .rev()
+                    .map(|cpu| **cpu)
+                    .find(|cpu| Some(*cpu) != poh_pinned_cpu_core)
+                {
+                    Some(cpu) => Some(vec![cpu]),
+                    None => {
+                        return Err(format!(
+                            "XDP requires a dedicated CPU core separate from PoH (core \
+                             {poh_pinned_cpu_core:?}), but none is available. Pass --no-xdp to \
+                             disable XDP."
+                        ));
+                    }
+                }
+            }
+            Err(e) => {
+                return Err(format!(
+                    "failed to query CPU affinity: {e}. Pass --no-xdp to disable XDP, or provide \
+                     --xdp-cpu-cores explicitly."
+                ));
+            }
+        }
+    };
+    Ok(cpus.map(|cpus| {
+        info!("XDP enabled on CPU cores: {cpus:?}");
+        // Map the CPU list onto hardware queues sequentially (queue i -> cpus[i]).
+        let queues = cpus
+            .into_iter()
+            .enumerate()
+            .map(|(queue, cpu)| QueueCpuBinding {
+                queue: queue as u32,
+                cpu,
+            })
+            .collect();
+        XdpConfig::new(xdp_interface, queues, xdp_zero_copy)
+    }))
+}
+
+#[cfg(all(target_os = "linux", test))]
+mod xdp_tests {
+    use {
+        super::*,
+        crate::{cli::DefaultArgs, commands::run::args::add_args},
+        solana_net_utils::multihomed_sockets::BindIpAddrs,
+        std::net::{IpAddr, Ipv4Addr},
+    };
+
+    fn single_ip_bind() -> BindIpAddrs {
+        BindIpAddrs::new(vec![Ipv4Addr::UNSPECIFIED.into()]).unwrap()
+    }
+
+    fn multihoming_bind() -> BindIpAddrs {
+        BindIpAddrs::new(vec![
+            IpAddr::V4(Ipv4Addr::new(1, 1, 1, 1)),
+            IpAddr::V4(Ipv4Addr::new(2, 2, 2, 2)),
+        ])
+        .unwrap()
+    }
+
+    #[test]
+    fn test_no_xdp_flag_disables_xdp() {
+        let default_args = DefaultArgs::default();
+        let app = add_args(clap::App::new("agave-validator"), &default_args);
+        let matches = app.get_matches_from(vec!["agave-validator", "--no-xdp"]);
+        let result = build_xdp_config(&matches, &Operation::Run, &single_ip_bind());
+        assert!(result.unwrap().is_none(), "--no-xdp must disable XDP");
+    }
+
+    #[test]
+    fn test_init_disables_xdp() {
+        let default_args = DefaultArgs::default();
+        let app = add_args(clap::App::new("agave-validator"), &default_args);
+        let matches = app.get_matches_from(vec!["agave-validator"]);
+        let result = build_xdp_config(&matches, &Operation::Initialize, &single_ip_bind());
+        assert!(result.unwrap().is_none(), "init operation must disable XDP");
+    }
+
+    #[test]
+    fn test_multihoming_is_error() {
+        let default_args = DefaultArgs::default();
+        let app = add_args(clap::App::new("agave-validator"), &default_args);
+        let matches = app.get_matches_from(vec!["agave-validator"]);
+        let result = build_xdp_config(&matches, &Operation::Run, &multihoming_bind());
+        assert!(
+            result.unwrap_err().contains("multihoming"),
+            "multihoming context must produce an error"
+        );
+    }
+
+    #[test]
+    fn test_explicit_xdp_core_conflicts_with_poh_core_is_error() {
+        let default_args = DefaultArgs::default();
+        let app = add_args(clap::App::new("agave-validator"), &default_args);
+        let poh_core = solana_poh::poh_service::DEFAULT_PINNED_CPU_CORE
+            .unwrap_or(0)
+            .to_string();
+        let matches = app.get_matches_from(vec!["agave-validator", "--xdp-cpu-cores", &poh_core]);
+        let result = build_xdp_config(&matches, &Operation::Run, &single_ip_bind());
+        assert!(
+            result.unwrap_err().contains("PoH core"),
+            "XDP core overlapping PoH core must produce an error"
+        );
+    }
 }

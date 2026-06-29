@@ -11,6 +11,8 @@ edition = { workspace = true }
 
 [package.metadata.docs.rs]
 targets = ["x86_64-unknown-linux-gnu"]
+all-features = true
+rustdoc-args = ["--cfg=docsrs"]
 
 [lib]
 crate-type = ["lib"]
@@ -68,7 +70,6 @@ bincode = { workspace = true }
 bitvec = { workspace = true }
 bytemuck = { workspace = true }
 crossbeam-channel = { workspace = true }
-crossbeam-queue = { workspace = true }
 crossbeam-utils = { workspace = true }
 dashmap = { workspace = true, features = ["rayon", "raw-api", "serde"] }
 imbl = { workspace = true, features = ["rayon", "serde"] }
@@ -141,7 +142,7 @@ solana-poh-config = { workspace = true }
 solana-precompile-error = { workspace = true }
 solana-program-binaries = { workspace = true, optional = true }
 solana-program-runtime = { workspace = true, features = ["metrics"] }
-solana-pubkey = { workspace = true, features = ["rand"] }
+solana-pubkey = { workspace = true, features = ["rand", "wincode"] }
 solana-rayon-threadlimit = { workspace = true }
 solana-rent = { workspace = true }
 solana-reward-info = { workspace = true }

@@ -724,7 +724,7 @@ mod test {
                 check_multiple_streams, make_client_endpoint, make_client_endpoint_with_bind_ip,
             },
         },
-        crossbeam_channel::{Receiver, unbounded},
+        crossbeam_channel::{Receiver, bounded},
         solana_net_utils::sockets::bind_to_localhost_unique,
         solana_pubkey::Pubkey,
         solana_signer::Signer,
@@ -755,7 +755,7 @@ mod test {
         Arc<SimpleQosBanlist>,
     ) {
         let s = bind_to_localhost_unique().expect("should bind");
-        let (sender, receiver) = unbounded();
+        let (sender, receiver) = bounded(1024);
         let keypair = Keypair::new();
         let server_address = s.local_addr().unwrap();
         let cancel = CancellationToken::new();
@@ -791,7 +791,7 @@ mod test {
 
         let server_params = QuicStreamerConfig::default_for_tests();
         let s = bind_to_localhost_unique().expect("should bind");
-        let (sender, receiver) = unbounded();
+        let (sender, receiver) = bounded(1024);
         let keypair = Keypair::new();
         let server_address = s.local_addr().unwrap();
         let cancel = CancellationToken::new();
@@ -846,7 +846,7 @@ mod test {
     fn test_quic_server_multiple_streams() {
         agave_logger::setup();
         let s = bind_to_localhost_unique().expect("should bind");
-        let (sender, receiver) = unbounded();
+        let (sender, receiver) = bounded(1024);
         let keypair = Keypair::new();
         let server_address = s.local_addr().unwrap();
         let staked_nodes = Arc::new(RwLock::new(StakedNodes::default()));
@@ -1016,11 +1016,11 @@ mod test {
             .await;
 
             // Rejection can happen at handshake or when opening streams.
-            if let Ok(connection) = post_ban {
-                if let Ok(mut stream) = connection.open_uni().await {
-                    let _ = stream.write_all(&[7u8]).await;
-                    let _ = stream.finish();
-                }
+            if let Ok(connection) = post_ban
+                && let Ok(mut stream) = connection.open_uni().await
+            {
+                let _ = stream.write_all(&[7u8]).await;
+                let _ = stream.finish();
             }
 
             // Ensure nothing from the post-ban attempt made it through.
@@ -1038,7 +1038,7 @@ mod test {
     fn test_quic_server_unstaked_node_connect_failure() {
         agave_logger::setup();
         let s = bind_to_localhost_unique().expect("should bind");
-        let (sender, _) = unbounded();
+        let (sender, _) = bounded(1024);
         let keypair = Keypair::new();
         let server_address = s.local_addr().unwrap();
         let staked_nodes = Arc::new(RwLock::new(StakedNodes::default()));

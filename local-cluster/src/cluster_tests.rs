@@ -5,7 +5,10 @@
 use log::*;
 use {
     crate::{cluster::QuicTpuClient, local_cluster::LocalCluster},
-    agave_votor_messages::consensus_message::ConsensusMessage,
+    agave_votor_messages::{
+        consensus_message::VoteMessage, unverified_vote_message::DecodedWireConsensusMessage,
+        wire::VersionedWireConsensusMessage,
+    },
     crossbeam_channel::bounded,
     rand::{Rng, rng},
     rayon::{ThreadPool, prelude::*},
@@ -30,6 +33,7 @@ use {
     solana_keypair::Keypair,
     solana_ledger::blockstore::Blockstore,
     solana_net_utils::{SocketAddrSpace, sockets::bind_to_localhost_unique},
+    solana_perf::packet::{PacketRef, packet_config},
     solana_poh_config::PohConfig,
     solana_pubkey::Pubkey,
     solana_rpc_client::rpc_client::RpcClient,
@@ -621,8 +625,28 @@ pub fn start_quic_streamer_to_listen_for_votes_and_certs(
     (cancel, result.thread, receiver)
 }
 
+fn convert_packet_to_vote_message(packet: PacketRef, my_shred_version: u16) -> Option<VoteMessage> {
+    let Ok(msg) = wincode::config::deserialize_exact::<VersionedWireConsensusMessage, _>(
+        packet.data(..).unwrap_or_default(),
+        packet_config(),
+    ) else {
+        return None;
+    };
+    let DecodedWireConsensusMessage::Vote(vote_msg) =
+        DecodedWireConsensusMessage::try_new(msg, my_shred_version).unwrap()
+    else {
+        return None;
+    };
+    Some(VoteMessage {
+        vote: vote_msg.vote,
+        signature: vote_msg.signature,
+        rank: vote_msg.rank,
+    })
+}
+
 /// Check that all nodes in the cluster are producing notarized votes.
 pub fn check_for_new_notarized_votes(
+    my_shred_version: u16,
     num_new_votes: usize,
     contact_infos: &[ContactInfo],
     test_name: &str,
@@ -672,7 +696,8 @@ pub fn check_for_new_notarized_votes(
                     continue;
                 };
                 for packet in packet_batch.iter() {
-                    let Ok(ConsensusMessage::Vote(vote_message)) = packet.deserialize_slice(..)
+                    let Some(vote_message) =
+                        convert_packet_to_vote_message(packet, my_shred_version)
                     else {
                         continue;
                     };

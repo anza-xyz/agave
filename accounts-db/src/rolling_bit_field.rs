@@ -295,26 +295,6 @@ impl RollingBitField {
         self.max_exclusive.saturating_sub(1)
     }
 
-    /// return all items < 'max_slot_exclusive'
-    pub fn get_all_less_than(&self, max_slot_exclusive: Slot) -> Vec<u64> {
-        let mut all = Vec::with_capacity(self.count);
-        self.excess.iter().for_each(|slot| {
-            if slot < &max_slot_exclusive {
-                all.push(*slot)
-            }
-        });
-        for key in self.min..self.max_exclusive {
-            if key >= max_slot_exclusive {
-                break;
-            }
-
-            if self.contains_assume_in_range(&key) {
-                all.push(key);
-            }
-        }
-        all
-    }
-
     /// return highest item < 'max_slot_exclusive'
     pub fn get_prior(&self, max_slot_exclusive: Slot) -> Option<Slot> {
         let mut slot = max_slot_exclusive.saturating_sub(1);
@@ -360,59 +340,6 @@ mod tests {
         pub fn clear(&mut self) {
             *self = Self::new(self.max_width);
         }
-    }
-
-    #[test]
-    fn test_get_all_less_than() {
-        agave_logger::setup();
-        let len = 16;
-        let mut bitfield = RollingBitField::new(len);
-        assert!(bitfield.get_all_less_than(0).is_empty());
-        bitfield.insert(0);
-        assert!(bitfield.get_all_less_than(0).is_empty());
-        assert_eq!(bitfield.get_all_less_than(1), vec![0]);
-        bitfield.insert(1);
-        assert_eq!(bitfield.get_all_less_than(1), vec![0]);
-        let last_item_not_in_excess = len - 1;
-        bitfield.insert(last_item_not_in_excess);
-        assert!(bitfield.excess.is_empty());
-        assert_eq!(
-            bitfield.get_all_less_than(last_item_not_in_excess),
-            vec![0, 1]
-        );
-        assert_eq!(
-            bitfield.get_all_less_than(last_item_not_in_excess + 1),
-            vec![0, 1, last_item_not_in_excess]
-        );
-        let first_item_in_excess = last_item_not_in_excess + 1;
-        bitfield.insert(first_item_in_excess);
-        assert!(bitfield.excess.contains(&0));
-        assert_eq!(
-            bitfield.get_all_less_than(last_item_not_in_excess),
-            vec![0, 1]
-        );
-        assert_eq!(
-            bitfield.get_all_less_than(last_item_not_in_excess + 1),
-            vec![0, 1, last_item_not_in_excess]
-        );
-        assert_eq!(
-            bitfield.get_all_less_than(first_item_in_excess + 1),
-            vec![0, 1, last_item_not_in_excess, first_item_in_excess]
-        );
-
-        bitfield.insert(len * 2);
-        let mut less = bitfield.get_all_less_than(len * 2);
-        less.sort_unstable();
-        assert_eq!(
-            vec![0, 1, last_item_not_in_excess, first_item_in_excess],
-            less
-        );
-        let mut less = bitfield.get_all_less_than(len * 2 + 1);
-        less.sort_unstable();
-        assert_eq!(
-            vec![0, 1, last_item_not_in_excess, first_item_in_excess, len * 2],
-            less
-        );
     }
 
     #[test]

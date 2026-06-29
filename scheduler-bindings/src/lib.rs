@@ -439,11 +439,13 @@ pub mod worker_message_types {
         pub const UNBALANCED_TRANSACTION: u8 = 100;
         /// Program cache hit max limit.
         pub const PROGRAM_CACHE_HIT_MAX_LIMIT: u8 = 101;
+        /// Instructions sysvar overflowed format.
+        pub const INSTRUCTIONS_SYSVAR_OVERFLOW: u8 = 102;
 
         // This error in agave is only internal, and to avoid updating the sdk
         // it is reused for mapping into `ALL_OR_NOTHING_BATCH_FAILURE`.
         // /// Commit cancelled internally.
-        // pub const COMMIT_CANCELLED: u8 = 102;
+        // pub const COMMIT_CANCELLED: u8 = 103;
     }
 
     /// Tag indicating [`CheckResponse`] inner message.

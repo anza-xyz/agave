@@ -88,6 +88,18 @@ check-cfg = [
     'cfg(target_feature, values("dynamic-frames"))',
 ]
 
+# Keep in sync with the root [workspace.lints.clippy].
+[workspace.lints.clippy]
+# Denied lints
+arithmetic_side_effects = "deny"
+default_trait_access = "deny"
+manual_let_else = "deny"
+uninlined_format_args = "deny"
+used_underscore_binding = "deny"
+
+# Allowed lints
+new_without_default = "allow"
+
 [workspace.dependencies]
 agave-feature-set = { path = "../../feature-set", version = "=4.2.0-alpha.0" }
 agave-logger = { path = "../../logger", version = "=4.2.0-alpha.0" }
@@ -108,7 +120,7 @@ solana-account-view = "=2.0.0"
 solana-address = "=2.6.1"
 solana-blake3-hasher = { version = "=3.1.0", features = ["blake3"] }
 solana-bn254 = "=3.2.1"
-solana-clock = { version = "=3.1.0", features = ["serde", "sysvar"] }
+solana-clock = { version = "=3.1.1", features = ["serde", "sysvar"] }
 solana-compute-budget = { path = "../../compute-budget", version = "=4.2.0-alpha.0" }
 solana-compute-budget-instruction = { path = "../../compute-budget-instruction", version = "=4.2.0-alpha.0" }
 solana-cpi = "=3.1.0"
@@ -140,7 +152,7 @@ solana-sbf-rust-realloc-invoke-dep = { path = "rust/realloc_invoke_dep", version
 solana-sdk-ids = "=3.1.0"
 solana-secp256k1-recover = "=3.1.1"
 solana-sha256-hasher = { version = "=3.1.0", features = ["sha2"] }
-solana-stake-interface = { version = "=4.2.0", features = ["bincode"] }
+solana-stake-interface = { version = "=4.3.0", features = ["bincode"] }
 solana-svm = { path = "../../svm", version = "=4.2.0-alpha.0" }
 solana-svm-feature-set = { path = "../../svm-feature-set", version = "=4.2.0-alpha.0" }
 solana-svm-timings = { path = "../../svm-timings", version = "=4.2.0-alpha.0" }
@@ -150,7 +162,7 @@ solana-system-interface = { version = "=3.2", features = ["bincode"] }
 solana-sysvar = "=4.0.0"
 solana-test-validator = { path = "../../test-validator", version = "=4.2.0-alpha.0" }
 solana-vote = { path = "../../vote", version = "=4.2.0-alpha.0" }
-solana-vote-interface = "6.0.0"
+solana-vote-interface = "6.0.2"
 solana-vote-program = { path = "../../programs/vote", version = "=4.2.0-alpha.0" }
 test-case = "3.3.1"
 thiserror = "2.0"
@@ -201,7 +213,7 @@ solana-sbf-rust-realloc-dep = { workspace = true }
 solana-sbf-rust-realloc-invoke-dep = { workspace = true }
 solana-sdk-ids = "3.1.0"
 solana-signer = "3.0.0"
-solana-stake-interface = "4.2.0"
+solana-stake-interface = "4.3.0"
 solana-svm = { workspace = true, features = ["dev-context-only-utils"] }
 solana-svm-feature-set = { workspace = true }
 solana-svm-timings = { workspace = true }
@@ -211,7 +223,7 @@ solana-system-interface = { workspace = true }
 solana-sysvar = "4.0.0"
 solana-test-validator = { workspace = true, features = ["agave-unstable-api", "dev-context-only-utils"] }
 solana-transaction = "4.1.0"
-solana-transaction-error = "3.2.0"
+solana-transaction-error = "3.3.0"
 solana-vote = { workspace = true }
 solana-vote-interface = { workspace = true }
 solana-vote-program = { workspace = true }
@@ -233,3 +245,6 @@ opt-level = 1
 # The test programs are build in release mode
 # Minimize their file size so that they fit into the account size limit
 strip = true
+
+[lints]
+workspace = true

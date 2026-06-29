@@ -288,11 +288,6 @@ impl MigrationPhase {
     fn should_use_double_merkle_block_id(&self, slot: Slot) -> bool {
         self.is_alpenglow_block(slot)
     }
-
-    /// Should this block allow the UpdateParent marker, i.e., support fast leader handover?
-    fn should_allow_fast_leader_handover(&self, slot: Slot) -> bool {
-        self.is_alpenglow_block(slot)
-    }
 }
 
 /// Keeps track of the current migration status
@@ -418,7 +413,7 @@ impl MigrationStatus {
             }
         };
 
-        warn!("Pre startup initializing alpenglow migration from root bank: {phase:?}");
+        info!("Pre startup initializing alpenglow migration from root bank: {phase:?}");
         Self::new(phase)
     }
 
@@ -436,7 +431,7 @@ impl MigrationStatus {
     pub fn log_phase(&self) {
         let my_pubkey = self.my_pubkey();
         let phase = self.phase.read().unwrap();
-        warn!("{my_pubkey}: Alpenglow migration phase {phase:?}");
+        info!("{my_pubkey}: Alpenglow migration phase {phase:?}");
     }
 
     /// Record that PohService has started and must be coordinated with when enabling Alpenglow.
@@ -459,7 +454,6 @@ impl MigrationStatus {
     dispatch!(pub fn should_respond_to_ancestor_hashes_requests(&self, slot: Slot) -> bool);
     dispatch!(pub fn should_have_alpenglow_ticks(&self, slot: Slot) -> bool);
     dispatch!(pub fn should_allow_block_markers(&self, slot: Slot) -> bool);
-    dispatch!(pub fn should_allow_fast_leader_handover(&self, slot: Slot) -> bool);
     dispatch!(pub fn should_use_double_merkle_block_id(&self, slot: Slot) -> bool);
 
     /// The alpenglow feature flag has been activated in slot `slot`.
@@ -480,7 +474,7 @@ impl MigrationStatus {
             genesis_cert: None,
         };
 
-        warn!(
+        info!(
             "{}: Alpenglow feature flag was activated in {slot}, migration will start at \
              {migration_slot}",
             self.my_pubkey()
@@ -545,7 +539,7 @@ impl MigrationStatus {
             discovered_genesis_block.slot < *migration_slot,
             "Attempting to set a genesis block that is past the migration start"
         );
-        warn!(
+        info!(
             "{} Setting genesis block {discovered_genesis_block:?}",
             self.my_pubkey()
         );
@@ -604,7 +598,7 @@ impl MigrationStatus {
             block.slot < *migration_slot,
             "Attempting to set a genesis certificate past the migration start"
         );
-        warn!("{} Setting genesis cert for ({block:?})", self.my_pubkey());
+        info!("{} Setting genesis cert for ({block:?})", self.my_pubkey());
         *genesis_cert = Some(cert.clone());
 
         let Some(genesis_block) = genesis_block else {
@@ -639,14 +633,14 @@ impl MigrationStatus {
         self.wait_for_migration_or_exit(exit);
 
         if exit.load(Ordering::Relaxed) {
-            warn!(
+            info!(
                 "{}: Validator shutdown before Alpenglow could be enabled",
                 self.my_pubkey()
             );
             return;
         }
 
-        warn!("{}: Alpenglow enabled!", self.my_pubkey());
+        info!("{}: Alpenglow enabled!", self.my_pubkey());
     }
 
     /// PohService is shutting down after being asked to by replay_stage via `enable_alpenglow`.
@@ -672,7 +666,7 @@ impl MigrationStatus {
     ///
     /// Transition the phase from `ReadyToEnable` to `AlpenglowEnabled`
     pub fn enable_alpenglow_during_startup(&self) -> Slot {
-        warn!("{}: Enabling alpenglow during startup", self.my_pubkey());
+        info!("{}: Enabling alpenglow during startup", self.my_pubkey());
         let MigrationPhase::ReadyToEnable { genesis_cert } = self.phase.read().unwrap().clone()
         else {
             unreachable!(
@@ -697,7 +691,7 @@ impl MigrationStatus {
         let (is_alpenglow_enabled, _condvar) = &self.migration_wait;
         *is_alpenglow_enabled.lock().unwrap() = true;
         // No need to condvar as we're in startup and no one is waiting for us.
-        warn!(
+        info!(
             "{}: Alpenglow enabled during startup! Genesis slot {genesis_slot}",
             self.my_pubkey()
         );
@@ -721,7 +715,7 @@ impl MigrationStatus {
             full_alpenglow_epoch,
         };
 
-        warn!(
+        info!(
             "{}: Migration epoch has concluded, entering full alpenglow epoch {}!",
             self.my_pubkey(),
             full_alpenglow_epoch

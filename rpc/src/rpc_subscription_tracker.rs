@@ -500,7 +500,6 @@ impl SubscriptionsTracker {
         }
     }
 
-    #[allow(clippy::collapsible_if)]
     pub fn unsubscribe(&mut self, params: SubscriptionParams, id: SubscriptionId) {
         match &params {
             SubscriptionParams::Logs(params) => {
@@ -520,20 +519,16 @@ impl SubscriptionsTracker {
             }
             _ => {}
         }
-        if params.is_commitment_watcher() {
-            if self.commitment_watchers.remove(&id).is_none() {
-                warn!("Subscriptions inconsistency (missing entry in commitment_watchers)");
-            }
+        if params.is_commitment_watcher() && self.commitment_watchers.remove(&id).is_none() {
+            warn!("Subscriptions inconsistency (missing entry in commitment_watchers)");
         }
-        if params.is_gossip_watcher() {
-            if self.gossip_watchers.remove(&id).is_none() {
-                warn!("Subscriptions inconsistency (missing entry in gossip_watchers)");
-            }
+        if params.is_gossip_watcher() && self.gossip_watchers.remove(&id).is_none() {
+            warn!("Subscriptions inconsistency (missing entry in gossip_watchers)");
         }
-        if params.is_node_progress_watcher() {
-            if self.node_progress_watchers.remove(&params).is_none() {
-                warn!("Subscriptions inconsistency (missing entry in node_progress_watchers)");
-            }
+        if params.is_node_progress_watcher()
+            && self.node_progress_watchers.remove(&params).is_none()
+        {
+            warn!("Subscriptions inconsistency (missing entry in node_progress_watchers)");
         }
     }
 
@@ -571,7 +566,6 @@ impl fmt::Debug for SubscriptionTokenInner {
 }
 
 impl Drop for SubscriptionTokenInner {
-    #[allow(clippy::collapsible_if)]
     fn drop(&mut self) {
         match self.control.subscriptions.entry(self.params.clone()) {
             DashEntry::Vacant(_) => {
@@ -643,6 +637,7 @@ mod tests {
     use {
         super::*,
         crate::rpc_pubsub_service::PubSubConfig,
+        crossbeam_channel::bounded,
         solana_ledger::genesis_utils::{GenesisConfigInfo, create_genesis_config},
         solana_runtime::bank::Bank,
     };
@@ -654,7 +649,7 @@ mod tests {
 
     impl ControlWrapper {
         fn new() -> Self {
-            let (sender, receiver) = crossbeam_channel::unbounded();
+            let (sender, receiver) = bounded(1024);
             let (broadcast_sender, _broadcast_receiver) = broadcast::channel(42);
 
             let control = SubscriptionControl::new(
@@ -707,7 +702,7 @@ mod tests {
         // previous holder's `SubscriptionTokenInner::drop` is blocked on the
         // entry lock. A fresh subscribe must recreate the inner and reuse the
         // stored SubscriptionId rather than allocating a new one.
-        let (sender, receiver) = crossbeam_channel::unbounded();
+        let (sender, receiver) = bounded(1024);
         let (broadcast_sender, _broadcast_receiver) = broadcast::channel(42);
         let control = SubscriptionControl::new(2, sender, broadcast_sender);
 
@@ -741,7 +736,7 @@ mod tests {
     fn duplicate_params_consume_separate_subscriber_slots() {
         // Cap of 1 must reject a second subscriber even when params match an
         // existing subscription (GHSA: duplicate-params cap bypass).
-        let (sender, _receiver) = crossbeam_channel::unbounded();
+        let (sender, _receiver) = bounded(1024);
         let (broadcast_sender, _broadcast_receiver) = broadcast::channel(42);
         let control = SubscriptionControl::new(1, sender, broadcast_sender);
 

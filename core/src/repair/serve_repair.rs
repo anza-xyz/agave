@@ -71,6 +71,7 @@ use {
         thread::{Builder, JoinHandle},
         time::{Duration, Instant},
     },
+    wincode::{SchemaRead, SchemaWrite},
 };
 
 /// the number of slots to respond with when responding to `Orphan` requests
@@ -189,7 +190,7 @@ impl AncestorHashesRepairType {
     }
 }
 
-#[derive(Debug, Deserialize, Serialize)]
+#[derive(Debug, Deserialize, Serialize, SchemaRead, SchemaWrite)]
 pub enum AncestorHashesResponse {
     Hashes(Vec<(Slot, Hash)>),
     Ping(Ping),
@@ -235,7 +236,7 @@ impl BlockIdRepairType {
     }
 }
 
-#[derive(Debug, Deserialize, Serialize)]
+#[derive(Debug, Deserialize, Serialize, SchemaRead, SchemaWrite)]
 pub enum BlockIdRepairResponse {
     ParentFecSetCount {
         fec_set_count: u32,
@@ -371,7 +372,7 @@ struct ServeRepairStats {
 }
 
 #[cfg_attr(feature = "frozen-abi", derive(AbiExample, StableAbi))]
-#[derive(Debug, Deserialize, Serialize)]
+#[derive(Debug, Deserialize, Serialize, SchemaRead, SchemaWrite)]
 pub struct RepairRequestHeader {
     signature: Signature,
     sender: Pubkey,
@@ -428,7 +429,7 @@ type PingCache = ping_pong::PingCache<REPAIR_PING_TOKEN_SIZE>;
         abi_digest = "D5RRQygn3D6ux1TYxeyXdksWD2KGA8PYi315hXP3JJ7c"
     )
 )]
-#[derive(Debug, Deserialize, Serialize)]
+#[derive(Debug, Deserialize, Serialize, SchemaRead, SchemaWrite)]
 pub enum RepairProtocol {
     LegacyWindowIndex,
     LegacyHighestWindowIndex,
@@ -545,7 +546,7 @@ fn is_well_formed_repair_request(packet: &PacketRef, stats: &mut ServeRepairStat
     well_formed
 }
 
-#[derive(Debug, Deserialize, Serialize)]
+#[derive(Debug, Deserialize, Serialize, SchemaRead, SchemaWrite)]
 pub(crate) enum RepairResponse {
     Ping(Ping),
 }
@@ -1854,7 +1855,9 @@ impl ServeRepair {
             if packet.meta().size != REPAIR_RESPONSE_SERIALIZED_PING_BYTES {
                 continue;
             }
-            if let Ok(RepairResponse::Ping(ping)) = packet.deserialize_slice(..) {
+            if let Some(data) = packet.data(..)
+                && let Ok(RepairResponse::Ping(ping)) = wincode::deserialize(data)
+            {
                 if !ping.verify() {
                     // Do _not_ set `discard` to allow shred processing to attempt to
                     // handle the packet.
@@ -1954,7 +1957,7 @@ mod tests {
             },
         },
         solana_net_utils::SocketAddrSpace,
-        solana_perf::packet::{Packet, PacketFlags, PacketRef, deserialize_from_with_limit},
+        solana_perf::packet::{Packet, PacketFlags, PacketRef},
         solana_pubkey::Pubkey,
         solana_runtime::bank::Bank,
         solana_time_utils::timestamp,
@@ -2153,8 +2156,7 @@ mod tests {
             .unwrap();
 
         let mut cursor = Cursor::new(&rsp[..]);
-        let deserialized_request: RepairProtocol =
-            deserialize_from_with_limit(&mut cursor).unwrap();
+        let deserialized_request: RepairProtocol = wincode::deserialize_from(&mut cursor).unwrap();
         assert_eq!(cursor.position(), rsp.len() as u64);
         if let RepairProtocol::Orphan { header, slot } = deserialized_request {
             assert_eq!(slot, 123);
@@ -2168,7 +2170,7 @@ mod tests {
                     .verify(keypair.pubkey().as_ref(), &signed_data)
             );
         } else {
-            panic!("unexpected request type {:?}", &deserialized_request);
+            panic!("unexpected request type {deserialized_request:?}");
         }
     }
 
@@ -2194,8 +2196,7 @@ mod tests {
             .ancestor_repair_request_bytes(&keypair, &repair_peer_id, slot, nonce)
             .unwrap();
         let mut cursor = Cursor::new(&request_bytes[..]);
-        let deserialized_request: RepairProtocol =
-            deserialize_from_with_limit(&mut cursor).unwrap();
+        let deserialized_request: RepairProtocol = wincode::deserialize_from(&mut cursor).unwrap();
         assert_eq!(cursor.position(), request_bytes.len() as u64);
         if let RepairProtocol::AncestorHashes {
             header,
@@ -2213,7 +2214,7 @@ mod tests {
                     .verify(keypair.pubkey().as_ref(), &signed_data)
             );
         } else {
-            panic!("unexpected request type {:?}", &deserialized_request);
+            panic!("unexpected request type {deserialized_request:?}");
         }
     }
 
@@ -2247,8 +2248,7 @@ mod tests {
             .unwrap();
 
         let mut cursor = Cursor::new(&request_bytes[..]);
-        let deserialized_request: RepairProtocol =
-            deserialize_from_with_limit(&mut cursor).unwrap();
+        let deserialized_request: RepairProtocol = wincode::deserialize_from(&mut cursor).unwrap();
         assert_eq!(cursor.position(), request_bytes.len() as u64);
         if let RepairProtocol::WindowIndex {
             header,
@@ -2268,7 +2268,7 @@ mod tests {
                     .verify(keypair.pubkey().as_ref(), &signed_data)
             );
         } else {
-            panic!("unexpected request type {:?}", &deserialized_request);
+            panic!("unexpected request type {deserialized_request:?}");
         }
 
         let request = ShredRepairType::HighestShred(slot, shred_index);
@@ -2283,8 +2283,7 @@ mod tests {
             .unwrap();
 
         let mut cursor = Cursor::new(&request_bytes[..]);
-        let deserialized_request: RepairProtocol =
-            deserialize_from_with_limit(&mut cursor).unwrap();
+        let deserialized_request: RepairProtocol = wincode::deserialize_from(&mut cursor).unwrap();
         assert_eq!(cursor.position(), request_bytes.len() as u64);
         if let RepairProtocol::HighestWindowIndex {
             header,
@@ -2304,7 +2303,7 @@ mod tests {
                     .verify(keypair.pubkey().as_ref(), &signed_data)
             );
         } else {
-            panic!("unexpected request type {:?}", &deserialized_request);
+            panic!("unexpected request type {deserialized_request:?}");
         }
     }
 
@@ -2760,9 +2759,12 @@ mod tests {
     #[test]
     fn test_run_ancestor_hashes() {
         fn deserialize_ancestor_hashes_response(packet: PacketRef) -> AncestorHashesResponse {
-            packet
-                .deserialize_slice(..packet.meta().size - SIZE_OF_NONCE)
-                .unwrap()
+            wincode::deserialize(
+                packet
+                    .data(..(packet.meta().size - SIZE_OF_NONCE))
+                    .unwrap_or_default(),
+            )
+            .unwrap()
         }
 
         agave_logger::setup();
@@ -2795,7 +2797,7 @@ mod tests {
                 assert!(hashes.is_empty());
             }
             _ => {
-                panic!("unexpected response: {:?}", &ancestor_hashes_response);
+                panic!("unexpected response: {ancestor_hashes_response:?}");
             }
         }
 
@@ -2812,7 +2814,7 @@ mod tests {
                 assert!(hashes.is_empty());
             }
             _ => {
-                panic!("unexpected response: {:?}", &ancestor_hashes_response);
+                panic!("unexpected response: {ancestor_hashes_response:?}");
             }
         }
 
@@ -2836,7 +2838,7 @@ mod tests {
                 assert_eq!(hashes, expected_ancestors);
             }
             _ => {
-                panic!("unexpected response: {:?}", &ancestor_hashes_response);
+                panic!("unexpected response: {ancestor_hashes_response:?}");
             }
         }
     }

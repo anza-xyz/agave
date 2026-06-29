@@ -33,7 +33,7 @@ use {
     wincode::{SchemaRead, SchemaWrite, deserialize, serialize, serialized_size},
 };
 #[cfg(feature = "dev-context-only-utils")]
-use {crossbeam_channel::unbounded, std::net::Ipv4Addr, std::thread};
+use {crossbeam_channel::bounded, std::net::Ipv4Addr, std::thread};
 
 #[macro_export]
 macro_rules! socketaddr {
@@ -123,15 +123,14 @@ impl Faucet {
         allowed_ips: HashSet<IpAddr>,
     ) -> Self {
         let time_slice = Duration::new(time_input.unwrap_or(TIME_SLICE), 0);
-        if let Some((per_request_cap, per_time_cap)) = per_request_cap.zip(per_time_cap) {
-            if per_time_cap < per_request_cap {
-                warn!(
-                    "per_time_cap {} SOL < per_request_cap {} SOL; maximum single requests will \
-                     fail",
-                    build_balance_message(per_time_cap, false, false),
-                    build_balance_message(per_request_cap, false, false),
-                );
-            }
+        if let Some((per_request_cap, per_time_cap)) = per_request_cap.zip(per_time_cap)
+            && per_time_cap < per_request_cap
+        {
+            warn!(
+                "per_time_cap {} SOL < per_request_cap {} SOL; maximum single requests will fail",
+                build_balance_message(per_time_cap, false, false),
+                build_balance_message(per_request_cap, false, false),
+            );
         }
         Self {
             faucet_keypair,
@@ -151,15 +150,15 @@ impl Faucet {
     ) -> Result<(), FaucetError> {
         let new_total = to.check_cache(self, request_amount);
         to.datapoint_info(request_amount, new_total);
-        if let Some(cap) = self.per_time_cap {
-            if new_total > cap {
-                return Err(FaucetError::PerTimeCapExceeded(
-                    build_balance_message(request_amount, false, false),
-                    to.to_string(),
-                    build_balance_message(new_total, false, false),
-                    build_balance_message(cap, false, false),
-                ));
-            }
+        if let Some(cap) = self.per_time_cap
+            && new_total > cap
+        {
+            return Err(FaucetError::PerTimeCapExceeded(
+                build_balance_message(request_amount, false, false),
+                to.to_string(),
+                build_balance_message(new_total, false, false),
+                build_balance_message(cap, false, false),
+            ));
         }
         Ok(())
     }
@@ -192,26 +191,26 @@ impl Faucet {
                     to
                 );
 
-                if let Some(cap) = self.per_request_cap {
-                    if lamports > cap {
-                        let memo = format!(
-                            "{}",
-                            FaucetError::PerRequestCapExceeded(
-                                build_balance_message(lamports, false, false),
-                                build_balance_message(cap, false, false),
-                            )
-                        );
-                        let memo_instruction = Instruction {
-                            program_id: spl_memo_interface::v4::id(),
-                            accounts: vec![],
-                            data: memo.as_bytes().to_vec(),
-                        };
-                        let message = Message::new(&[memo_instruction], Some(&mint_pubkey));
-                        return Ok(FaucetTransaction::Memo((
-                            Transaction::new(&[&self.faucet_keypair], message, blockhash),
-                            memo,
-                        )));
-                    }
+                if let Some(cap) = self.per_request_cap
+                    && lamports > cap
+                {
+                    let memo = format!(
+                        "{}",
+                        FaucetError::PerRequestCapExceeded(
+                            build_balance_message(lamports, false, false),
+                            build_balance_message(cap, false, false),
+                        )
+                    );
+                    let memo_instruction = Instruction {
+                        program_id: spl_memo_interface::v4::id(),
+                        accounts: vec![],
+                        data: memo.as_bytes().to_vec(),
+                    };
+                    let message = Message::new(&[memo_instruction], Some(&mint_pubkey));
+                    return Ok(FaucetTransaction::Memo((
+                        Transaction::new(&[&self.faucet_keypair], message, blockhash),
+                        memo,
+                    )));
                 }
                 if !ip.is_loopback() && !self.allowed_ips.contains(&ip) {
                     self.check_time_request_limit(lamports, ip)?;
@@ -364,7 +363,7 @@ pub fn run_local_faucet_for_tests(
     per_time_cap: Option<u64>,
     port: u16,
 ) -> SocketAddr {
-    let (sender, receiver) = unbounded();
+    let (sender, receiver) = bounded(1024);
     run_local_faucet_with_config(
         sender,
         LocalFaucetConfig {

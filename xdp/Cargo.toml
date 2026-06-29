@@ -8,6 +8,11 @@ license = { workspace = true }
 edition = { workspace = true }
 publish = true
 
+[package.metadata.docs.rs]
+targets = ["x86_64-unknown-linux-gnu"]
+all-features = true
+rustdoc-args = ["--cfg=docsrs"]
+
 [features]
 agave-unstable-api = []
 
@@ -25,6 +30,30 @@ agave-xdp-ebpf = { workspace = true }
 arrayvec = { workspace = true }
 aya = { workspace = true }
 caps = { workspace = true }
+
+[target.'cfg(target_os = "linux")'.dev-dependencies]
+aya = { workspace = true, features = ["test-helpers"] }
+nix = { workspace = true, features = ["net", "poll", "socket"] }
+
+[[test]]
+name = "netlink_snapshot"
+path = "tests/netlink_snapshot.rs"
+required-features = ["agave-unstable-api"]
+
+[[test]]
+name = "route_monitor"
+path = "tests/route_monitor.rs"
+required-features = ["agave-unstable-api"]
+
+[[test]]
+name = "router_snapshot"
+path = "tests/router_snapshot.rs"
+required-features = ["agave-unstable-api"]
+
+[[test]]
+name = "transmitter_smoke"
+path = "tests/transmitter_smoke.rs"
+required-features = ["agave-unstable-api"]
 
 [lints]
 workspace = true

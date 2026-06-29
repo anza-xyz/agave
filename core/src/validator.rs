@@ -24,7 +24,8 @@ use {
         snapshot_packager_service::SnapshotPackagerService,
         stats_reporter_service::StatsReporterService,
         system_monitor_service::{
-            SystemMonitorService, SystemMonitorStatsReportConfig, verify_net_stats_access,
+            SystemMonitorService, SystemMonitorStatsReportConfig, XdpNetworkConfigReport,
+            verify_net_stats_access,
         },
         tpu::{Tpu, TpuSockets},
         tvu::{AlpenglowInitializationState, Tvu, TvuConfig, TvuSockets},
@@ -50,7 +51,6 @@ use {
     },
     solana_client::connection_cache::{ConnectionCache, Protocol},
     solana_clock::Slot,
-    solana_cluster_type::ClusterType,
     solana_entry::poh::compute_hash_time,
     solana_epoch_schedule::MAX_LEADER_SCHEDULE_EPOCH_OFFSET,
     solana_genesis_config::GenesisConfig,
@@ -95,7 +95,7 @@ use {
     },
     solana_measure::measure::Measure,
     solana_metrics::{datapoint_info, metrics::metrics_config_sanity_check},
-    solana_net_utils::SocketAddrSpace,
+    solana_net_utils::{PinnedXdpSender, SocketAddrSpace},
     solana_poh::{
         poh_controller::PohController,
         poh_recorder::PohRecorder,
@@ -144,7 +144,7 @@ use {
     },
     solana_time_utils::timestamp,
     solana_tpu_client::tpu_client::{DEFAULT_TPU_CONNECTION_POOL_SIZE, DEFAULT_VOTE_USE_QUIC},
-    solana_turbine::{self, XdpSender as TurbineXdpSender, broadcast_stage::BroadcastStageType},
+    solana_turbine::{self, broadcast_stage::BroadcastStageType},
     solana_unified_scheduler_pool::DefaultSchedulerPool,
     solana_validator_exit::Exit,
     solana_vote_program::vote_state::{VoteStateV4, handler::VoteStateHandler},
@@ -360,6 +360,7 @@ pub struct ValidatorConfig {
     pub no_poh_speed_test: bool,
     pub no_os_memory_stats_reporting: bool,
     pub no_os_network_stats_reporting: bool,
+    pub xdp_network_config_report: Option<XdpNetworkConfigReport>,
     pub no_os_cpu_stats_reporting: bool,
     pub no_os_disk_stats_reporting: bool,
     pub enforce_ulimit_nofile: bool,
@@ -441,6 +442,7 @@ impl ValidatorConfig {
             no_poh_speed_test: true,
             no_os_memory_stats_reporting: true,
             no_os_network_stats_reporting: true,
+            xdp_network_config_report: None,
             no_os_cpu_stats_reporting: true,
             no_os_disk_stats_reporting: true,
             // No need to enforce nofile limit in tests
@@ -477,7 +479,7 @@ impl ValidatorConfig {
             replay_transactions_threads: NonZeroUsize::new(2).expect("2 is non-zero"),
             tvu_shred_sigverify_threads: NonZeroUsize::new(2).expect("2 is non-zero"),
             tvu_bls_sigverify_threads: NonZeroUsize::new(2).expect("2 is non-zero"),
-            delay_leader_block_for_pending_fork: false,
+            delay_leader_block_for_pending_fork: true,
             voting_service_test_override: None,
             repair_handler_type: RepairHandlerType::default(),
             snapshot_packager_niceness_adj: 0,
@@ -560,10 +562,10 @@ impl BlockstoreRootScan {
     }
 
     fn join(self) {
-        if let Some(blockstore_root_scan) = self.thread {
-            if let Err(err) = blockstore_root_scan.join() {
-                warn!("blockstore_root_scan failed to join {err:?}");
-            }
+        if let Some(blockstore_root_scan) = self.thread
+            && let Err(err) = blockstore_root_scan.join()
+        {
+            warn!("blockstore_root_scan failed to join {err:?}");
         }
     }
 }
@@ -893,6 +895,7 @@ impl Validator {
             SystemMonitorStatsReportConfig {
                 report_os_memory_stats: !config.no_os_memory_stats_reporting,
                 report_os_network_stats: !config.no_os_network_stats_reporting,
+                xdp_network_config_report: config.xdp_network_config_report.clone(),
                 report_os_cpu_stats: !config.no_os_cpu_stats_reporting,
                 report_os_disk_stats: !config.no_os_disk_stats_reporting,
             },
@@ -946,14 +949,14 @@ impl Validator {
         let shred_version = compute_shred_version(&genesis_config.hash(), Some(&hard_forks));
         info!("shred version: {shred_version}, hard forks: {hard_forks:?}");
 
-        if let Some(expected_shred_version) = config.expected_shred_version {
-            if expected_shred_version != shred_version {
-                return Err(ValidatorError::ShredVersionMismatch {
-                    actual: shred_version,
-                    expected: expected_shred_version,
-                }
-                .into());
+        if let Some(expected_shred_version) = config.expected_shred_version
+            && expected_shred_version != shred_version
+        {
+            return Err(ValidatorError::ShredVersionMismatch {
+                actual: shred_version,
+                expected: expected_shred_version,
             }
+            .into());
         }
 
         if let Some(start_slot) = should_cleanup_blockstore_incorrect_shred_versions(
@@ -1130,6 +1133,7 @@ impl Validator {
             blockstore_root_scan,
             &snapshot_controller,
             config,
+            cluster_info.my_shred_version(),
         );
 
         maybe_warp_slot(
@@ -1422,10 +1426,60 @@ impl Validator {
         let epoch_specs: Box<dyn solana_gossip::epoch_specs::EpochSpecs> =
             Box::new(crate::epoch_specs::EpochSpecs::from(bank_forks.clone()));
 
+        let (
+            xdp_transmitter,
+            turbine_xdp_sender,
+            quic_xdp_sender,
+            repair_xdp_sender,
+            gossip_xdp_sender,
+        ) = if let Some(XdpTransmitSetup {
+            transmitter_builder,
+            src_ip,
+        }) = xdp_transmit_setup
+        {
+            let turbine_src_port = node.sockets.retransmit_sockets[0]
+                .local_addr()
+                .expect("retransmit socket should have local address")
+                .port();
+
+            let repair_src_port = node
+                .sockets
+                .repair
+                .local_addr()
+                .expect("repair socket should have local address")
+                .port();
+
+            let gossip_src_port = node.sockets.gossip[0]
+                .local_addr()
+                .expect("gossip socket should have local address")
+                .port();
+
+            let (transmitter, sender) = transmitter_builder.build();
+            (
+                Some(transmitter),
+                Some(PinnedXdpSender::new(
+                    sender.clone(),
+                    SocketAddrV4::new(src_ip, turbine_src_port),
+                )),
+                Some((sender.clone(), src_ip)),
+                Some(PinnedXdpSender::new(
+                    sender.clone(),
+                    SocketAddrV4::new(src_ip, repair_src_port),
+                )),
+                Some(PinnedXdpSender::new(
+                    sender,
+                    SocketAddrV4::new(src_ip, gossip_src_port),
+                )),
+            )
+        } else {
+            (None, None, None, None, None)
+        };
+
         let gossip_service = GossipService::new(
             &cluster_info,
             Some(epoch_specs),
             node.sockets.gossip.clone(),
+            gossip_xdp_sender,
             config.gossip_validators.clone(),
             config.should_check_duplicate_instance,
             Some(stats_reporter_sender.clone()),
@@ -1562,39 +1616,6 @@ impl Validator {
         // This channel backing up indicates a serious problem in votor
         let (votor_event_sender, votor_event_receiver) = bounded(1000);
 
-        let (xdp_transmitter, turbine_xdp_sender, quic_xdp_sender) =
-            if let Some(XdpTransmitSetup {
-                transmitter_builder,
-                src_ip,
-            }) = xdp_transmit_setup
-            {
-                let turbine_src_port = node.sockets.retransmit_sockets[0]
-                    .local_addr()
-                    .expect("retransmit socket should have local address")
-                    .port();
-
-                let (transmitter, sender) = transmitter_builder.build();
-                (
-                    Some(transmitter),
-                    Some(TurbineXdpSender::new(
-                        sender.clone(),
-                        SocketAddrV4::new(src_ip, turbine_src_port),
-                    )),
-                    Some((sender, src_ip)),
-                )
-            } else {
-                (None, None, None)
-            };
-
-        // disable all2all tests if not allowed for a given cluster type
-        let alpenglow_socket = if genesis_config.cluster_type == ClusterType::Testnet
-            || genesis_config.cluster_type == ClusterType::Development
-        {
-            node.sockets.alpenglow
-        } else {
-            None
-        };
-
         let tvu = Tvu::new(
             vote_account,
             authorized_voter_keypairs,
@@ -1605,7 +1626,7 @@ impl Validator {
                 retransmit: node.sockets.retransmit_sockets,
                 fetch: node.sockets.tvu,
                 ancestor_hashes_requests: node.sockets.ancestor_hashes_requests,
-                alpenglow: alpenglow_socket,
+                alpenglow: node.sockets.alpenglow,
                 block_id_repair: node.sockets.block_id_repair,
             },
             blockstore.clone(),
@@ -1644,6 +1665,7 @@ impl Validator {
                 shred_sigverify_threads: config.tvu_shred_sigverify_threads,
                 bls_sigverify_threads: config.tvu_bls_sigverify_threads,
                 turbine_xdp_sender: turbine_xdp_sender.clone(),
+                repair_xdp_sender,
             },
             &max_slots,
             block_metadata_notifier,
@@ -1847,15 +1869,14 @@ impl Validator {
                 logfile,
                 logrotate_flag,
             }) = self.log_config.as_ref()
+                && logrotate_flag.load(Ordering::Relaxed)
             {
-                if logrotate_flag.load(Ordering::Relaxed) {
-                    info!("Received SIGUSR1, reopening {}", logfile.display());
-                    agave_logger::redirect_stderr(logfile);
-                    // Reset the flag to `false` to allow detection of the
-                    // signal again and to avoid hitting this case every
-                    // iteration
-                    logrotate_flag.store(false, Ordering::Relaxed);
-                }
+                info!("Received SIGUSR1, reopening {}", logfile.display());
+                agave_logger::redirect_stderr(logfile);
+                // Reset the flag to `false` to allow detection of the
+                // signal again and to avoid hitting this case every
+                // iteration
+                logrotate_flag.store(false, Ordering::Relaxed);
             }
 
             // One second is a reasonable response time for these signals to
@@ -1902,6 +1923,10 @@ impl Validator {
         info!(
             "local retransmit address: {}",
             node.sockets.retransmit_sockets[0].local_addr().unwrap()
+        );
+        info!(
+            "local alpenglow address: {}",
+            node.sockets.alpenglow.local_addr().unwrap()
         );
     }
 
@@ -1999,10 +2024,10 @@ impl Validator {
 }
 
 fn active_vote_account_exists_in_bank(bank: &Bank, vote_account: &Pubkey) -> bool {
-    if let Some(account) = &bank.get_account(vote_account) {
-        if let Ok(vote_state) = VoteStateV4::deserialize(account.data(), vote_account) {
-            return !vote_state.votes.is_empty();
-        }
+    if let Some(account) = &bank.get_account(vote_account)
+        && let Ok(vote_state) = VoteStateV4::deserialize(account.data(), vote_account)
+    {
+        return !vote_state.votes.is_empty();
     }
     false
 }
@@ -2114,10 +2139,10 @@ fn check_poh_speed(bank: &Bank, maybe_hash_samples: Option<u64>) -> Result<(), V
 
 fn maybe_cluster_restart_with_hard_fork(config: &ValidatorConfig, root_slot: Slot) -> Option<Slot> {
     // detect cluster restart (hard fork) indirectly via wait_for_supermajority...
-    if let Some(wait_slot_for_supermajority) = config.wait_for_supermajority {
-        if wait_slot_for_supermajority == root_slot {
-            return Some(wait_slot_for_supermajority);
-        }
+    if let Some(wait_slot_for_supermajority) = config.wait_for_supermajority
+        && wait_slot_for_supermajority == root_slot
+    {
+        return Some(wait_slot_for_supermajority);
     }
 
     None
@@ -2293,13 +2318,13 @@ fn load_genesis(
     let genesis_hash = genesis_config.hash();
     info!("genesis hash: {genesis_hash}");
 
-    if let Some(expected_genesis_hash) = config.expected_genesis_hash {
-        if genesis_hash != expected_genesis_hash {
-            return Err(ValidatorError::GenesisHashMismatch(
-                genesis_hash,
-                expected_genesis_hash,
-            ));
-        }
+    if let Some(expected_genesis_hash) = config.expected_genesis_hash
+        && genesis_hash != expected_genesis_hash
+    {
+        return Err(ValidatorError::GenesisHashMismatch(
+            genesis_hash,
+            expected_genesis_hash,
+        ));
     }
 
     Ok(genesis_config)
@@ -2470,6 +2495,7 @@ pub struct ProcessBlockStore<'a> {
     config: &'a ValidatorConfig,
     tower: Option<Tower>,
     vote_history: Option<VoteHistory>,
+    my_shred_version: u16,
 }
 
 impl<'a> ProcessBlockStore<'a> {
@@ -2488,6 +2514,7 @@ impl<'a> ProcessBlockStore<'a> {
         blockstore_root_scan: BlockstoreRootScan,
         snapshot_controller: &'a SnapshotController,
         config: &'a ValidatorConfig,
+        my_shred_version: u16,
     ) -> Self {
         Self {
             id,
@@ -2505,6 +2532,7 @@ impl<'a> ProcessBlockStore<'a> {
             config,
             tower: None,
             vote_history: None,
+            my_shred_version,
         }
     }
 
@@ -2540,6 +2568,7 @@ impl<'a> ProcessBlockStore<'a> {
         blockstore_processor::process_blockstore_from_root(
             self.blockstore,
             self.bank_forks,
+            self.my_shred_version,
             self.leader_schedule_cache,
             self.process_options,
             self.transaction_status_sender,
@@ -2764,16 +2793,23 @@ fn scan_blockstore_for_incorrect_shred_version(
     // Search for shreds with incompatible version in blockstore
     let slot_meta_iterator = blockstore.slot_meta_iterator(start_slot)?;
 
-    info!("Searching blockstore for shred with incorrect version from slot {start_slot}");
+    info!(
+        "Blockstore search for shreds with incorrect version starting from slot {start_slot}; \
+         searching for 60s"
+    );
     for (slot, _meta) in slot_meta_iterator {
         let shreds = blockstore.get_data_shreds_for_slot(slot, 0)?;
         for shred in &shreds {
             if shred.version() != expected_shred_version {
+                info!(
+                    "Blockstore search found shred with incorrect version {} in slot {slot}",
+                    shred.version()
+                );
                 return Ok(Some(shred.version()));
             }
         }
         if timer.elapsed() > TIMEOUT {
-            info!("Didn't find incorrect shreds after 60 seconds, aborting");
+            info!("Blockstore search did not find any shreds with incorrect version");
             break;
         }
     }
@@ -2953,13 +2989,13 @@ fn wait_for_supermajority(
                 _ => {}
             }
 
-            if let Some(expected_bank_hash) = config.expected_bank_hash {
-                if bank.hash() != expected_bank_hash {
-                    return Err(ValidatorError::BankHashMismatch(
-                        bank.hash(),
-                        expected_bank_hash,
-                    ));
-                }
+            if let Some(expected_bank_hash) = config.expected_bank_hash
+                && bank.hash() != expected_bank_hash
+            {
+                return Err(ValidatorError::BankHashMismatch(
+                    bank.hash(),
+                    expected_bank_hash,
+                ));
             }
 
             for i in 1.. {

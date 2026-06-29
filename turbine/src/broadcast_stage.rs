@@ -632,7 +632,7 @@ pub mod test {
     use {
         super::*,
         agave_votor_messages::migration::MigrationStatus,
-        crossbeam_channel::{bounded, unbounded},
+        crossbeam_channel::bounded,
         rand::Rng,
         solana_entry::{entry::create_ticks, entry_or_marker::EntryOrMarker},
         solana_gossip::{cluster_info::ClusterInfo, node::Node},
@@ -789,8 +789,8 @@ pub mod test {
         // Setup
         let ledger_path = get_tmp_ledger_path_auto_delete!();
         let blockstore = Arc::new(Blockstore::open(ledger_path.path()).unwrap());
-        let (transmit_sender, transmit_receiver) = unbounded();
-        let (retransmit_slots_sender, retransmit_slots_receiver) = unbounded();
+        let (transmit_sender, transmit_receiver) = bounded(1024);
+        let (retransmit_slots_sender, retransmit_slots_receiver) = bounded(1024);
 
         // Make some shreds
         let updated_slot = 0;
@@ -914,8 +914,8 @@ pub mod test {
         // Create the leader scheduler
         let leader_keypair = Arc::new(Keypair::new());
 
-        let (entry_sender, entry_receiver) = unbounded();
-        let (retransmit_slots_sender, retransmit_slots_receiver) = unbounded();
+        let (entry_sender, entry_receiver) = bounded(1024);
+        let (retransmit_slots_sender, retransmit_slots_receiver) = bounded(1024);
         let broadcast_service = setup_dummy_broadcast_service(
             leader_keypair,
             ledger_path.path(),

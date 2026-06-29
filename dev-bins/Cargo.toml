@@ -1,5 +1,5 @@
 [workspace]
-members = ["../accounts-db/store-tool", "../bench-tps", "../ledger-tool"]
+members = ["../accounts-db/store-tool", "../ledger-tool"]
 
 resolver = "2"
 
@@ -25,12 +25,11 @@ check-cfg = [
 arithmetic_side_effects = "deny"
 default_trait_access = "deny"
 manual_let_else = "deny"
+uninlined_format_args = "deny"
 used_underscore_binding = "deny"
 
 # Allowed lints
 new_without_default = "allow"
-## Due to recent switch to Rust 2024, should be removed after repo auto-fix before release cut
-collapsible_if = "allow"
 
 [workspace.dependencies]
 agave-feature-set = { path = "../feature-set", version = "=4.2.0-alpha.0", features = ["agave-unstable-api"] }
@@ -56,19 +55,19 @@ jemallocator = { package = "tikv-jemallocator", version = "0.6.0", features = [
 log = "0.4.28"
 num_cpus = "1.17.0"
 pretty-hex = "0.4.2"
-prost = "0.14.3"
-prost-build = "0.14.3"
+prost = "0.14.4"
+prost-build = "0.14.4"
 protosol = "2.0.0"
 rand = "0.9.4"
 rayon = "1.12.0"
-regex = "1.12.3"
+regex = "1.12.4"
 serde = { version = "1.0.228", features = ["derive"] }
 serde_bytes = "0.11.19"
 serde_json = "1.0.150"
 serde_yaml = "0.9.34"
 serial_test = "3.2.0"
 signal-hook = "0.4.4"
-solana-account = "4.3.0"
+solana-account = "4.3.1"
 solana-account-decoder = { path = "../account-decoder", version = "=4.2.0-alpha.0", features = ["agave-unstable-api"] }
 solana-accounts-db = { path = "../accounts-db", version = "=4.2.0-alpha.0", features = ["agave-unstable-api"] }
 solana-bpf-loader-program = { path = "../programs/bpf_loader", version = "=4.2.0-alpha.0", features = ["agave-unstable-api"] }
@@ -77,7 +76,7 @@ solana-clap-utils = { path = "../clap-utils", version = "=4.2.0-alpha.0", featur
 solana-cli-config = { path = "../cli-config", version = "=4.2.0-alpha.0" }
 solana-cli-output = { path = "../cli-output", version = "=4.2.0-alpha.0", features = ["agave-unstable-api"] }
 solana-client = { path = "../client", version = "=4.2.0-alpha.0" }
-solana-clock = "3.0.1"
+solana-clock = "3.1.1"
 solana-cluster-type = "3.1.0"
 solana-commitment-config = "3.0.0"
 solana-compute-budget = { path = "../compute-budget", version = "=4.2.0-alpha.0", features = ["agave-unstable-api"] }
@@ -89,15 +88,15 @@ solana-cost-model = { path = "../cost-model", version = "=4.2.0-alpha.0", featur
 solana-entry = { path = "../entry", version = "=4.2.0-alpha.0", features = ["agave-unstable-api"] }
 solana-faucet = { path = "../faucet", version = "=4.2.0-alpha.0", features = ["agave-unstable-api"] }
 solana-feature-gate-interface = "4.0.0"
-solana-fee-calculator = "3.2.1"
+solana-fee-calculator = "3.2.2"
 solana-genesis = { path = "../genesis", version = "=4.2.0-alpha.0", features = ["agave-unstable-api"] }
 solana-genesis-config = "4.0.0"
 solana-genesis-utils = { path = "../genesis-utils", version = "=4.2.0-alpha.0", features = ["agave-unstable-api"] }
 solana-geyser-plugin-manager = { path = "../geyser-plugin-manager", version = "=4.2.0-alpha.0", features = ["agave-unstable-api"] }
 solana-hash = "4.4.0"
-solana-inflation = "3.1.0"
+solana-inflation = "3.1.1"
 solana-instruction = "3.4.0"
-solana-instruction-error = "2.3.0"
+solana-instruction-error = "2.4.0"
 solana-keypair = "3.1.2"
 solana-ledger = { path = "../ledger", version = "=4.2.0-alpha.0", features = ["agave-unstable-api"] }
 solana-loader-v3-interface = "7.0.0"
@@ -113,18 +112,18 @@ solana-precompile-error = "3.0.0"
 solana-program-runtime = { path = "../program-runtime", version = "=4.2.0-alpha.0", features = ["agave-unstable-api"] }
 solana-pubkey = { version = "4.2.0", default-features = false }
 solana-quic-client = { path = "../quic-client", version = "=4.2.0-alpha.0", features = ["agave-unstable-api"] }
-solana-rent = "4.2.0"
+solana-rent = "4.2.1"
 solana-rpc = { path = "../rpc", version = "=4.2.0-alpha.0", features = ["agave-unstable-api"] }
 solana-rpc-client = { path = "../rpc-client", version = "=4.2.0-alpha.0", default-features = false }
 solana-rpc-client-api = { path = "../rpc-client-api", version = "=4.2.0-alpha.0" }
 solana-runtime = { path = "../runtime", version = "=4.2.0-alpha.0", features = ["agave-unstable-api"] }
 solana-runtime-transaction = { path = "../runtime-transaction", version = "=4.2.0-alpha.0", features = ["agave-unstable-api"] }
-solana-sbpf = { version = "=0.21.0", default-features = false }
+solana-sbpf = { version = "=0.21.1", default-features = false }
 solana-sdk-ids = "3.1.0"
 solana-shred-version = "3.0.1"
 solana-signature = { version = "3.4.1", default-features = false }
 solana-signer = "3.0.1"
-solana-stake-interface = "4.2.0"
+solana-stake-interface = "4.3.0"
 solana-storage-bigtable = { path = "../storage-bigtable", version = "=4.2.0-alpha.0", features = ["agave-unstable-api"] }
 solana-streamer = { path = "../streamer", version = "=4.2.0-alpha.0", features = ["agave-unstable-api"] }
 solana-svm = { path = "../svm", version = "=4.2.0-alpha.0", features = ["agave-unstable-api"] }
@@ -139,7 +138,6 @@ solana-system-program = { path = "../programs/system", version = "=4.2.0-alpha.0
 solana-sysvar-id = "3.1.0"
 solana-test-validator = { path = "../test-validator", version = "=4.2.0-alpha.0" }
 solana-time-utils = "3.0.0"
-solana-tps-client = { path = "../tps-client", version = "=4.2.0-alpha.0", features = ["agave-unstable-api"] }
 solana-tpu-client = { path = "../tpu-client", version = "=4.2.0-alpha.0", default-features = false, features = ["agave-unstable-api"] }
 solana-transaction = "4.1.0"
 solana-transaction-context = { path = "../transaction-context", version = "=4.2.0-alpha.0", features = ["agave-unstable-api", "bincode"] }
