@@ -21,7 +21,7 @@ use {
     solana_ledger::{
         ancestor_iterator::AncestorIterator,
         blockstore::{
-            Blockstore, PurgeType,
+            Blockstore, BlockstoreError, PurgeType,
             column::{Column, ColumnName},
         },
         blockstore_options::AccessType,
@@ -164,8 +164,12 @@ fn raw_key_to_slot(key: &[u8], column_name: &str) -> Option<Slot> {
 
 /// Returns true if the supplied slot contains any nonvote transactions
 fn slot_contains_nonvote_tx(blockstore: &Blockstore, slot: Slot) -> bool {
+    let Some(slot_meta) = blockstore.meta(slot).expect("Failed to get slot meta") else {
+        return false;
+    };
+
     let (entries, _, _) = blockstore
-        .get_slot_entries_with_shred_info(slot, 0, false)
+        .get_slot_entries_with_shred_info(slot, u64::from(slot_meta.replay_fec_set_index), false)
         .expect("Failed to get slot entries");
 
     entries
@@ -713,7 +717,14 @@ fn do_blockstore_process_command(ledger_path: &Path, matches: &ArgMatches<'_>) -
                 .into_iter()
                 .rev()
             {
-                let blockhash = blockstore.get_slot_entries(slot, 0)?.last().unwrap().hash;
+                let slot_meta = blockstore
+                    .meta(slot)?
+                    .ok_or(BlockstoreError::SlotUnavailable)?;
+                let blockhash = blockstore
+                    .get_slot_entries(slot, u64::from(slot_meta.replay_fec_set_index))?
+                    .last()
+                    .unwrap()
+                    .hash;
                 println!("{slot}: {blockhash:?}");
             }
         }

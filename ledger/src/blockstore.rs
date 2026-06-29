@@ -4192,7 +4192,7 @@ impl Blockstore {
 
         let (slot_components, _, _) = self.get_slot_components_with_shred_info(
             slot,
-            /*start_index:*/ 0,
+            u64::from(slot_meta.replay_fec_set_index),
             allow_dead_slots,
         )?;
 
@@ -4283,9 +4283,10 @@ impl Blockstore {
         slot_transaction_iterator: impl Iterator<Item = VersionedTransaction>,
     ) -> Result<VersionedConfirmedBlock> {
         let previous_blockhash = slot_meta.parent_slot.and_then(|parent_slot| {
+            let parent_slot_meta = self.meta(parent_slot).ok().flatten()?;
             self.get_slot_components_with_shred_info(
                 parent_slot,
-                /*shred_start_index:*/ 0,
+                u64::from(parent_slot_meta.replay_fec_set_index),
                 allow_dead_slots,
             )
             .ok()
@@ -4613,15 +4614,17 @@ impl Blockstore {
     /// Finds a transaction by signature in the given slot and returns it along with its index.
     ///
     /// The index represents the transaction's 0-based position in the flattened list of all
-    /// transactions across all entries in this slot. This matches the `transaction_index`
-    /// stored in `AddressSignatures` when `write_transaction_status` is called during block
-    /// processing.
+    /// transactions across the entries in this slot, starting at `replay_fec_set_index` when the
+    /// slot has an UpdateParent marker. This matches the `transaction_index` stored in
+    /// `AddressSignatures` when `write_transaction_status` is called during block processing.
     fn find_transaction_in_slot(
         &self,
         slot: Slot,
         signature: Signature,
     ) -> Result<Option<(VersionedTransaction, u32)>> {
-        let slot_entries = self.get_slot_entries(slot, 0)?;
+        let slot_meta = self.meta(slot)?.ok_or(BlockstoreError::SlotUnavailable)?;
+        let slot_entries =
+            self.get_slot_entries(slot, u64::from(slot_meta.replay_fec_set_index))?;
         Ok(slot_entries
             .into_iter()
             .flat_map(|entry| entry.transactions)
