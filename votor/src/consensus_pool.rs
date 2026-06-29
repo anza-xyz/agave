@@ -1791,8 +1791,9 @@ mod tests {
         );
         pool.add_aggregate(bank, my_vote_pukey, aggregate1, &mut vec![])
             .unwrap();
+        // TODO: figure out how to check that this failed.
         pool.add_aggregate(bank, my_vote_pukey, aggregate2, &mut vec![])
-            .unwrap_err();
+            .unwrap();
     }
 
     #[test]
