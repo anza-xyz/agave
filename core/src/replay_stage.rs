@@ -4182,6 +4182,7 @@ impl ReplayStage {
                         bank.parent_slot(),
                         &parent_blockhash.to_string(),
                         bank.slot(),
+                        bank.bank_id(),
                         &bank.last_blockhash().to_string(),
                         &bank.get_rewards_and_num_partitions(),
                         Some(bank.clock().unix_timestamp),
