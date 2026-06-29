@@ -15,11 +15,11 @@ use {
     tokio::sync::watch,
 };
 
-/// Snapshot of desired peers. Peers we cannot yet resolve via gossip
+/// Snapshot of desired peers list. Peers we cannot yet resolve via gossip
 /// carry the sentinel IP set to `0.0.0.0:0`.
 ///
 /// Inbound admission uses membership only (the address is ignored).
-pub type PeerListSnapshot = Arc<HashMap<Pubkey, SocketAddr>>;
+type PeerListSnapshot = Arc<HashMap<Pubkey, SocketAddr>>;
 
 pub type PeerListSender = watch::Sender<PeerListSnapshot>;
 

@@ -2,9 +2,8 @@
 
 use {
     crate::{
-        ALPENGLOW_ALPN, BANLIST_PRUNE_INTERVAL, HANDSHAKE_TIMEOUT,
-        MAX_INBOUND_CONNECTIONS_PER_PEER, METRICS_INTERVAL, PEER_RATE_LIMIT_BURST_WINDOW,
-        PEER_RATE_LIMIT_DOS_WINDOW, PeerListReceiver, close_codes,
+        ALPENGLOW_ALPN, HANDSHAKE_TIMEOUT, MAX_INBOUND_CONNECTIONS_PER_PEER, METRICS_INTERVAL,
+        PEER_RATE_LIMIT_BURST_WINDOW, PEER_RATE_LIMIT_DOS_WINDOW, PeerListReceiver, close_codes,
         endpoint::{BanCommand, Datagram},
         error::Error,
         stats::{self, ServerStats, record_server_error},
@@ -545,7 +544,7 @@ impl InboundLoop {
                     Ok(()) => Arc::clone(&entry.rate_limiter),
                     Err(_) => {
                         close_codes::TOO_MANY_CONNECTIONS.close(&connection);
-                        record_server_error(&Error::TableFull, &self.stats);
+                        record_server_error(&Error::TooManyConnections, &self.stats);
                         return;
                     }
                 }

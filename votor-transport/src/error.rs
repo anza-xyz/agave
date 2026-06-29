@@ -86,8 +86,8 @@ pub enum Error {
 
     /// Inbound refused at a capacity limit: this peer already holds
     /// [`crate::MAX_INBOUND_CONNECTIONS_PER_PEER`] connections.
-    #[error("connection table full")]
-    TableFull,
+    #[error("too many connections for peer")]
+    TooManyConnections,
 
     #[error(transparent)]
     SendDatagram(#[from] SendDatagramError),

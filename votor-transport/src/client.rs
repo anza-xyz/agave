@@ -1,7 +1,7 @@
 //! Outbound (client) direction: we initiate, send-only.
 use {
     crate::{
-        ALPENGLOW_ALPN, CONN_EVENT_CHANNEL_CAP, METRICS_INTERVAL, PeerListReceiver, close_codes,
+        ALPENGLOW_ALPN, METRICS_INTERVAL, PeerListReceiver, close_codes,
         error::Error,
         stats::{self, ClientStats, add, record_client_error},
         transport::{Identity, new_client_config},
@@ -18,8 +18,8 @@ use {
         time::Duration,
     },
     tokio::{
-        spawn,
         sync::{mpsc, watch},
+        task::JoinSet,
         time::{MissedTickBehavior, interval},
     },
     tokio_util::sync::CancellationToken,
@@ -42,25 +42,20 @@ pub(crate) enum PeerState {
     },
 }
 
-/// Connect result reported by a ClientConnection task to the OubtoundLoop.
-pub(crate) struct ConnectEvent {
-    pub(crate) peer: Pubkey,
-    pub(crate) generation: u64,
-    pub(crate) outcome: Result<Connection, ()>,
-}
+/// `Ok` carries the peer and the newly established
+/// `Err` carries the peer we tried to connect to (but failed)
+type HandshakeOutcome = Result<(Pubkey, Connection), Pubkey>;
 
 /// Task for the outbound connection.
 pub(crate) struct ClientConnection {
     pub(crate) endpoint: Endpoint,
     pub(crate) peer: Pubkey,
     pub(crate) addr: SocketAddr,
-    pub(crate) generation: u64,
-    pub(crate) events_sender: mpsc::Sender<ConnectEvent>,
     pub(crate) stats: Arc<ClientStats>,
 }
 
 impl ClientConnection {
-    async fn run(self) {
+    async fn run(self) -> HandshakeOutcome {
         let connect = async {
             let server_name = socket_addr_to_quic_server_name(self.addr);
             let connection = self.endpoint.connect(self.addr, &server_name)?.await?;
@@ -72,27 +67,17 @@ impl ClientConnection {
             }
             Ok(connection)
         };
-        let outcome = match connect.await {
-            Ok(connection) => Ok(connection),
+        match connect.await {
+            Ok(connection) => Ok((self.peer, connection)),
             Err(e) => {
                 error!(
                     "Connection attempt to ({}, {}) failed: {e:?}",
                     self.peer, self.addr
                 );
                 record_client_error(&e, &self.stats);
-                Err(())
+                Err(self.peer)
             }
-        };
-        // Report back to the OutboundLoop. If send fails
-        // the OutboundLoop must have exited.
-        let _ = self
-            .events_sender
-            .send(ConnectEvent {
-                peer: self.peer,
-                generation: self.generation,
-                outcome,
-            })
-            .await;
+        }
     }
 }
 
@@ -101,8 +86,6 @@ impl ClientConnection {
 pub(crate) struct OutboundLoop {
     pub(crate) endpoint: Endpoint,
     pub(crate) local_pubkey: Pubkey,
-    /// Identity-rotation counter.
-    pub(crate) generation: u64,
     /// Channel for outbound messages to be broadcast
     pub(crate) egress_receiver: mpsc::Receiver<Bytes>,
     pub(crate) identity_receiver: watch::Receiver<Option<Arc<Identity>>>,
@@ -110,10 +93,7 @@ pub(crate) struct OutboundLoop {
     /// Per-peer send-only connection state.
     /// Size is limited to the peer_list size by reconcile task.
     pub(crate) peer_state: HashMap<Pubkey, PeerState, PubkeyHasherBuilder>,
-    /// Sender to clone into freshly spawned per-connection tasks
-    pub(crate) events_sender: mpsc::Sender<ConnectEvent>,
-    /// Per-connection tasks report their outcome here
-    pub(crate) events_receiver: mpsc::Receiver<ConnectEvent>,
+    pub(crate) in_flight_handshakes: JoinSet<HandshakeOutcome>,
     pub(crate) shutdown: CancellationToken,
     pub(crate) stats: Arc<ClientStats>,
 }
@@ -127,18 +107,14 @@ impl OutboundLoop {
         peer_list_receiver: PeerListReceiver,
         shutdown: CancellationToken,
     ) -> Self {
-        let (events_sender, events_receiver) =
-            mpsc::channel::<ConnectEvent>(CONN_EVENT_CHANNEL_CAP);
         Self {
             endpoint,
             local_pubkey,
-            generation: 0,
             egress_receiver,
             identity_receiver,
             peer_list_receiver,
             peer_state: HashMap::with_hasher(PubkeyHasherBuilder::default()),
-            events_sender,
-            events_receiver,
+            in_flight_handshakes: JoinSet::new(),
             shutdown,
             stats: Arc::default(),
         }
@@ -179,7 +155,12 @@ impl OutboundLoop {
                 }
                 // Connect outcomes must come ahead of egress to ensure new
                 // connections are registered even when egress is busy.
-                Some(event) = self.events_receiver.recv() => self.handle_connect_event(event),
+                Some(joined) = self.in_flight_handshakes.join_next(), if !self.in_flight_handshakes.is_empty() => {
+                    match joined {
+                        Ok(outcome) => self.handle_handshake_outcome(outcome),
+                        Err(err) => error!("Outbound connection task failed: {err}"),
+                    }
+                }
                 // Egress: broadcast one message to every live connection.
                 maybe_message = self.egress_receiver.recv() => {
                     let Some(message) = maybe_message else { break };
@@ -208,9 +189,9 @@ impl OutboundLoop {
         );
         self.local_pubkey = new_identity.pubkey;
         self.endpoint.set_default_client_config(client_config);
-        // Bump generation so any in-flight connect that completes after this point is
-        // dropped (it carries the old ID).
-        self.generation = self.generation.wrapping_add(1);
+        // Dropping the JoinSet aborts every in-flight handshake. We do not
+        // want them as they begun under the old identity.
+        self.in_flight_handshakes = JoinSet::new();
         let closed = self
             .peer_state
             .drain()
@@ -286,13 +267,11 @@ impl OutboundLoop {
             };
             if needs_connection {
                 self.peer_state.insert(*peer, PeerState::Connecting);
-                spawn(
+                self.in_flight_handshakes.spawn(
                     ClientConnection {
                         endpoint: self.endpoint.clone(),
                         peer: *peer,
                         addr: *addr,
-                        generation: self.generation,
-                        events_sender: self.events_sender.clone(),
                         stats: self.stats.clone(),
                     }
                     .run(),
@@ -322,23 +301,9 @@ impl OutboundLoop {
         }
     }
 
-    fn handle_connect_event(&mut self, event: ConnectEvent) {
-        let ConnectEvent {
-            peer,
-            generation,
-            outcome,
-        } = event;
-        if generation != self.generation {
-            if let Ok(connection) = outcome {
-                close_codes::IDENTITY_CHANGED.close(&connection);
-                self.stats
-                    .connection_closed_identity_changed
-                    .fetch_add(1, Ordering::Relaxed);
-            }
-            return;
-        }
+    fn handle_handshake_outcome(&mut self, outcome: HandshakeOutcome) {
         match outcome {
-            Ok(connection) => match self.peer_state.get_mut(&peer) {
+            Ok((peer, connection)) => match self.peer_state.get_mut(&peer) {
                 Some(slot @ PeerState::Connecting) => {
                     *slot = PeerState::Established {
                         target_address: connection.remote_address(),
@@ -352,11 +317,11 @@ impl OutboundLoop {
                 _ => {
                     // Connect succeeded but the slot is no longer waiting for it.
                     // The connection is redundant; close it.
-                    close_codes::IDENTITY_CHANGED.close(&connection);
+                    close_codes::NOT_ADMITTED.close(&connection);
                 }
             },
             // Connection failed: drop the placeholder.
-            Err(()) => {
+            Err(peer) => {
                 let removed = self.peer_state.remove(&peer);
                 debug_assert!(matches!(removed, Some(PeerState::Connecting)));
             }
