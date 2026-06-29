@@ -40,7 +40,7 @@ use {
         accounts_db::stats::{
             AccountsStats, CleanAccountsStats, FlushStats, LoadAccountsStats,
             ObsoleteAccountsStats, PurgeStats, ShrinkAncientStats, ShrinkStats, ShrinkStatsSub,
-            StoreAccountsForFlushStats, StoreAccountsForShrinkStats, StoreAccountsTiming,
+            StoreAccountsForFlushStats, StoreAccountsForShrinkStats, StoreAccountsForSquashStats,
             StoreAccountsUnfrozenStats, WriteAccountsToCacheStats,
         },
         accounts_file::{AccountsFile, AccountsFileProvider},
@@ -909,9 +909,6 @@ pub struct AccountsDb {
     /// Stats from storing accounts unfrozen
     store_accounts_unfrozen_stats: StoreAccountsUnfrozenStats,
 
-    /// Stats from storing accounts for shrink
-    store_accounts_for_shrink_stats: StoreAccountsForShrinkStats,
-
     clean_accounts_stats: CleanAccountsStats,
 
     // Stats for purges called outside of clean_accounts()
@@ -1136,7 +1133,6 @@ impl AccountsDb {
             stats: AccountsStats::default(),
             load_account_stats: LoadAccountsStats::default(),
             store_accounts_unfrozen_stats: StoreAccountsUnfrozenStats::default(),
-            store_accounts_for_shrink_stats: StoreAccountsForShrinkStats::default(),
             #[cfg(test)]
             load_delay: u64::default(),
             #[cfg(test)]
@@ -2936,7 +2932,7 @@ impl AccountsDb {
         // mutating rooted slots; There should be no writers to them.
         let accounts = [(slot, &shrink_collect.alive_accounts.alive_accounts()[..])];
         let storable_accounts = StorableAccountsBySlot::new(slot, &accounts, self);
-        stats_sub.store_accounts_timing = self.store_accounts_for_shrink(
+        stats_sub.store_accounts_stats = self.store_accounts_for_shrink(
             storable_accounts,
             shrink_in_progress.new_storage(),
             UpdateIndexThreadSelection::PoolWithThreshold,
@@ -2961,46 +2957,8 @@ impl AccountsDb {
 
         self.reopen_storage_as_readonly_shrinking_in_progress_ok(slot);
 
-        Self::update_shrink_stats(&self.shrink_stats, stats_sub, true);
+        self.shrink_stats.accumulate_sub_stats(stats_sub, true);
         self.shrink_stats.report();
-    }
-
-    pub(crate) fn update_shrink_stats(
-        shrink_stats: &ShrinkStats,
-        stats_sub: ShrinkStatsSub,
-        increment_count: bool,
-    ) {
-        if increment_count {
-            shrink_stats
-                .num_slots_shrunk
-                .fetch_add(1, Ordering::Relaxed);
-        }
-        shrink_stats.create_and_insert_store_elapsed.fetch_add(
-            stats_sub.create_and_insert_store_elapsed_us.0,
-            Ordering::Relaxed,
-        );
-        shrink_stats.store_accounts_elapsed.fetch_add(
-            stats_sub.store_accounts_timing.store_accounts_elapsed,
-            Ordering::Relaxed,
-        );
-        shrink_stats.update_index_elapsed.fetch_add(
-            stats_sub.store_accounts_timing.update_index_elapsed,
-            Ordering::Relaxed,
-        );
-        shrink_stats.handle_reclaims_elapsed.fetch_add(
-            stats_sub.store_accounts_timing.handle_reclaims_elapsed,
-            Ordering::Relaxed,
-        );
-        shrink_stats
-            .rewrite_elapsed
-            .fetch_add(stats_sub.rewrite_elapsed_us.0, Ordering::Relaxed);
-        shrink_stats
-            .unpackable_slots_count
-            .fetch_add(stats_sub.unpackable_slots_count.0 as u64, Ordering::Relaxed);
-        shrink_stats.newest_alive_packed_count.fetch_add(
-            stats_sub.newest_alive_packed_count.0 as u64,
-            Ordering::Relaxed,
-        );
     }
 
     /// get stores for 'slot'
@@ -5583,10 +5541,11 @@ impl AccountsDb {
         &self,
         accounts: impl StorableAccounts<'a>,
         storage: &AccountStorageEntry,
-    ) -> StoreAccountsTiming {
+    ) -> StoreAccountsForSquashStats {
         let slot = accounts.target_slot();
+
         // Flush the read cache if necessary
-        if self.read_only_accounts_cache.can_slot_be_in_cache(slot) {
+        let flush_read_cache_us = if self.read_only_accounts_cache.can_slot_be_in_cache(slot) {
             let flush_read_cache_time = Measure::start("flush_read_cache");
             (0..accounts.len()).for_each(|index| {
                 // Based on the patterns of how a validator writes accounts, it is almost always
@@ -5595,16 +5554,20 @@ impl AccountsDb {
                 self.read_only_accounts_cache
                     .remove_assume_not_present(accounts.pubkey(index));
             });
-            self.store_accounts_for_shrink_stats
-                .flush_read_cache_us
-                .fetch_add(flush_read_cache_time.end_as_us(), Ordering::Relaxed);
-        }
+            flush_read_cache_time.end_as_us()
+        } else {
+            0
+        };
 
-        self.store_accounts_for_shrink(
+        let store_accounts_for_shrink_stats = self.store_accounts_for_shrink(
             accounts,
             storage,
             UpdateIndexThreadSelection::PoolWithThreshold,
-        )
+        );
+        StoreAccountsForSquashStats {
+            store_accounts_for_shrink_stats,
+            flush_read_cache_us,
+        }
     }
 
     /// Stores accounts in the storage and updates the index.
@@ -5617,10 +5580,9 @@ impl AccountsDb {
         accounts: impl StorableAccounts<'a>,
         storage: &AccountStorageEntry,
         update_index_thread_selection: UpdateIndexThreadSelection,
-    ) -> StoreAccountsTiming {
+    ) -> StoreAccountsForShrinkStats {
         let slot = accounts.target_slot();
         let num_accounts_stored = accounts.len();
-        let stats = &self.store_accounts_for_shrink_stats;
 
         debug_assert!(self.accounts_index.is_alive_root(slot));
 
@@ -5643,28 +5605,12 @@ impl AccountsDb {
         );
         let update_index_us = update_index_time.end_as_us();
 
-        stats
-            .write_to_storage_us
-            .fetch_add(write_accounts_us, Ordering::Relaxed);
-        stats
-            .mark_zero_lamport_single_ref_accounts_us
-            .fetch_add(mark_zero_lamport_single_ref_us, Ordering::Relaxed);
-        stats
-            .update_index_us
-            .fetch_add(update_index_us, Ordering::Relaxed);
-        stats
-            .num_accounts_stored
-            .fetch_add(num_accounts_stored as u64, Ordering::Relaxed);
-        stats.num_zero_lamport_single_ref_accounts_marked.fetch_add(
+        StoreAccountsForShrinkStats {
+            write_accounts_us,
+            mark_zero_lamport_single_ref_accounts_us: mark_zero_lamport_single_ref_us,
+            update_index_us,
+            num_accounts_stored: num_accounts_stored as u64,
             num_zero_lamport_single_ref_accounts_marked,
-            Ordering::Relaxed,
-        );
-        stats.report();
-
-        StoreAccountsTiming {
-            store_accounts_elapsed: write_accounts_us,
-            update_index_elapsed: update_index_us,
-            handle_reclaims_elapsed: 0,
         }
     }
 

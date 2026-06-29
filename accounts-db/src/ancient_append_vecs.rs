@@ -11,7 +11,7 @@ use {
         accounts_db::{
             AccountFromStorage, AccountsDb, AliveAccounts, GetUniqueAccountsResult, ShrinkCollect,
             ShrinkCollectAliveSeparatedByRefs,
-            stats::{ShrinkAncientStats, ShrinkStatsSub},
+            stats::{ShrinkAncientStats, SquashStatsSub},
         },
         active_stats::ActiveStatItem,
         storable_accounts::{StorableAccounts, StorableAccountsBySlot},
@@ -331,7 +331,7 @@ struct WriteAncientAccounts<'a> {
     /// 'ShrinkInProgress' instances created by starting a shrink operation
     shrinks_in_progress: HashMap<Slot, ShrinkInProgress<'a>>,
 
-    metrics: ShrinkStatsSub,
+    metrics: SquashStatsSub,
 }
 
 #[derive(Debug, PartialEq, Clone, Copy)]
@@ -367,7 +367,7 @@ impl AccountsDb {
 
         let _guard = self.active_stats.activate(ActiveStatItem::SquashAncient);
 
-        let mut stats_sub = ShrinkStatsSub::default();
+        let mut stats_sub = SquashStatsSub::default();
 
         let (_, total_us) = measure_us!(self.combine_ancient_slots_packed_internal(
             sorted_slots,
@@ -375,7 +375,7 @@ impl AccountsDb {
             &mut stats_sub
         ));
 
-        Self::update_shrink_stats(&self.shrink_ancient_stats.shrink_stats, stats_sub, false);
+        self.shrink_ancient_stats.accumulate_sub_stats(stats_sub);
         self.shrink_ancient_stats
             .total_us
             .fetch_add(total_us, Ordering::Relaxed);
@@ -418,7 +418,7 @@ impl AccountsDb {
         &self,
         sorted_slots: Vec<Slot>,
         mut tuning: PackedAncientStorageTuning,
-        metrics: &mut ShrinkStatsSub,
+        metrics: &mut SquashStatsSub,
     ) {
         self.shrink_ancient_stats
             .slot
@@ -563,15 +563,15 @@ impl AccountsDb {
             .expect("ancient shrink target slot must already have a storage");
         let (shrink_in_progress, create_and_insert_store_elapsed_us) =
             measure_us!(self.get_store_for_shrink(target_slot, old_store, bytes));
-        let (store_accounts_timing, rewrite_elapsed_us) = measure_us!(
+        let (store_accounts_stats, rewrite_elapsed_us) = measure_us!(
             self.store_accounts_for_squash(accounts_to_write, shrink_in_progress.new_storage())
         );
 
-        write_ancient_accounts.metrics.accumulate(&ShrinkStatsSub {
-            store_accounts_timing,
+        write_ancient_accounts.metrics.accumulate(&SquashStatsSub {
+            store_accounts_stats,
             rewrite_elapsed_us: Saturating(rewrite_elapsed_us),
             create_and_insert_store_elapsed_us: Saturating(create_and_insert_store_elapsed_us),
-            ..ShrinkStatsSub::default()
+            ..SquashStatsSub::default()
         });
 
         write_ancient_accounts
@@ -726,7 +726,7 @@ impl AccountsDb {
         &self,
         accounts_to_combine: AccountsToCombine<'_>,
         mut write_ancient_accounts: WriteAncientAccounts,
-        metrics: &mut ShrinkStatsSub,
+        metrics: &mut SquashStatsSub,
     ) {
         let mut dropped_roots = Vec::with_capacity(accounts_to_combine.accounts_to_combine.len());
         for shrink_collect in accounts_to_combine.accounts_to_combine {
@@ -1557,7 +1557,7 @@ mod tests {
                         &default_tuning(),
                         IncludeManyRefSlots::Include,
                     );
-                    let mut stats = ShrinkStatsSub::default();
+                    let mut stats = SquashStatsSub::default();
                     let mut write_ancient_accounts = WriteAncientAccounts::default();
 
                     slots.clone().for_each(|slot| {
@@ -3422,7 +3422,7 @@ mod tests {
                 db.combine_ancient_slots_packed_internal(
                     (0..num_slots).map(|slot| (slot as Slot) + slot1).collect(),
                     tuning,
-                    &mut ShrinkStatsSub::default(),
+                    &mut SquashStatsSub::default(),
                 );
                 let storage = db.storage.get_slot_storage_entry(slot1);
                 if num_slots == 0 {
@@ -3500,7 +3500,7 @@ mod tests {
             ..default_tuning()
         };
 
-        let mut stats_sub = ShrinkStatsSub::default();
+        let mut stats_sub = SquashStatsSub::default();
         db.combine_ancient_slots_packed_internal(sorted_slots, tuning, &mut stats_sub);
     }
 
