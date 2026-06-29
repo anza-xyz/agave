@@ -699,11 +699,10 @@ mod tests {
                 panic!("listener never received the message");
             }
             let recv_result = ingress_rx.recv_timeout(remaining);
-            if let Ok(dg) = recv_result {
-                if let Ok(msg) = wincode::deserialize::<VersionedWireConsensusMessage>(&dg.message)
-                {
-                    break msg;
-                }
+            if let Ok(dg) = recv_result
+                && let Ok(msg) = wincode::deserialize::<VersionedWireConsensusMessage>(&dg.message)
+            {
+                break msg;
             }
         };
         assert_eq!(

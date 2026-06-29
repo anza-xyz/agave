@@ -58,7 +58,6 @@ pub(crate) enum InboundEvent {
 /// to handshake work to the number of accept loops (one per endpoint).
 pub(crate) struct AcceptLoop {
     endpoint: Endpoint,
-    identity_receiver: watch::Receiver<Option<Arc<Identity>>>,
     events_sender: mpsc::Sender<InboundEvent>,
     stats: Arc<ServerStats>,
     shutdown: CancellationToken,
@@ -71,7 +70,6 @@ pub(crate) struct AcceptLoop {
 impl AcceptLoop {
     pub(crate) fn new(
         endpoint: Endpoint,
-        identity_receiver: watch::Receiver<Option<Arc<Identity>>>,
         events_sender: mpsc::Sender<InboundEvent>,
         stats: Arc<ServerStats>,
         shutdown: CancellationToken,
@@ -80,7 +78,6 @@ impl AcceptLoop {
     ) -> Self {
         Self {
             endpoint,
-            identity_receiver,
             events_sender,
             stats,
             shutdown,
@@ -92,7 +89,6 @@ impl AcceptLoop {
     pub(crate) async fn run(self) {
         let Self {
             endpoint,
-            mut identity_receiver,
             events_sender,
             stats,
             shutdown,
@@ -111,23 +107,6 @@ impl AcceptLoop {
         loop {
             tokio::select! {
                 biased;
-                // Identity rotation: swap this endpoint's server config so new
-                // handshakes observe the new cert.
-                changed = identity_receiver.changed() => {
-                    if changed.is_err() {
-                        info!("identity rotation channel closed; accept loop exiting");
-                        break;
-                    }
-                    if let Some(new_identity) = identity_receiver.borrow_and_update().clone() {
-                        let server_config = new_server_config(
-                            new_identity.cert.clone(),
-                            new_identity.key.clone_key(),
-                            ALPENGLOW_ALPN,
-                        );
-                        endpoint.set_server_config(Some(server_config));
-                        info!("AcceptLoop applied new identity {}", new_identity.pubkey);
-                    }
-                }
                 // Handshake task finished: this potentially reopens the accept arm below.
                 Some(_joined) = handshakes.next(), if !handshakes.is_empty() => {}
                 // Rate gate refilled: allow pulling connection attempts.
@@ -311,6 +290,9 @@ pub(crate) struct InboundLoop {
     pub(crate) peer_list_receiver: PeerListReceiver,
     /// Identity-rotation notification channel.
     pub(crate) identity_receiver: watch::Receiver<Option<Arc<Identity>>>,
+    /// Endpoints that handle connections. On identity rotation we need to
+    /// configure them with the updated TLS config.
+    pub(crate) endpoints: Vec<Endpoint>,
     /// Per-peer receive-only connection state.
     pub(crate) peer_state: HashMap<Pubkey, PeerEntry, PubkeyHasherBuilder>,
     /// Cloned into spawned tasks.
@@ -333,6 +315,7 @@ impl InboundLoop {
         ingress: Sender<Datagram>,
         ban_receiver: mpsc::Receiver<BanCommand>,
         peer_list_receiver: PeerListReceiver,
+        endpoints: Vec<Endpoint>,
         inbound_events_sender: mpsc::Sender<InboundEvent>,
         inbound_events_receiver: mpsc::Receiver<InboundEvent>,
         identity_receiver: watch::Receiver<Option<Arc<Identity>>>,
@@ -352,6 +335,7 @@ impl InboundLoop {
             ban_receiver,
             peer_list_receiver,
             identity_receiver,
+            endpoints,
             peer_state: HashMap::with_hasher(PubkeyHasherBuilder::default()),
             events_sender: inbound_events_sender,
             events_receiver: inbound_events_receiver,
@@ -403,7 +387,21 @@ impl InboundLoop {
                         info!("identity rotation channel closed; inbound loop exiting");
                         break;
                     }
-                    let _ = identity_receiver.borrow_and_update();
+                    let new_identity = identity_receiver.borrow_and_update().clone();
+                    // form the new TLS config
+                    if let Some(identity) = new_identity {
+                        let server_config = new_server_config(
+                            identity.cert.clone(),
+                            identity.key.clone_key(),
+                            ALPENGLOW_ALPN,
+                        );
+                        // set new config on all server endpoints
+                        for endpoint in &self.endpoints {
+                            endpoint.set_server_config(Some(server_config.clone()));
+                        }
+                        info!("inbound applied new identity {}", identity.pubkey);
+                    }
+                    // Avoid keeping connections from old identity alive
                     self.close_all();
                 }
                 // The admitted-peer set changed.
@@ -613,15 +611,12 @@ mod tests {
         let endpoint = Endpoint::server(server_cfg, loopback).unwrap();
         let server_addr = endpoint.local_addr().unwrap();
 
-        // Keep the sender alive so the event loop keeps running.
-        let (_identity_sender, identity_receiver) = watch::channel(None);
         // Sized so a never-completing handshake never needs to send.
         let (events_sender, _events_receiver) = mpsc::channel(1);
         let stats = Arc::new(ServerStats::default());
         let shutdown = CancellationToken::new();
         let accept = AcceptLoop::new(
             endpoint,
-            identity_receiver,
             events_sender,
             stats.clone(),
             shutdown.clone(),

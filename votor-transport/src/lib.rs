@@ -67,6 +67,10 @@ pub const HANDSHAKE_GLOBAL_RATE: f64 = MAX_ALPENGLOW_VOTE_ACCOUNTS as f64;
 /// synchronous handshake-crypto spike on the accept loop.
 pub(crate) const HANDSHAKE_BURST: u64 = 400;
 
+/// How many instances of AcceptLoop to spawn per server endpoint. This controls
+/// the max number of cores we dedicate to processing of the TLS handshakes, per endpoint.
+pub(crate) const HANDSHAKE_WORKERS_PER_ENDPOINT: usize = 1;
+
 /// Maximum inbound handshakes allowed in flight; once reached we stop pulling
 /// new ones off the endpoint. Bounds handshake memory use. Sized to the
 /// validator set, which may be handshaking all at once after a restart.

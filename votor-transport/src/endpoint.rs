@@ -2,7 +2,7 @@
 use {
     crate::{
         ALPENGLOW_ALPN, CONN_EVENT_CHANNEL_CAP, HANDSHAKE_BURST, HANDSHAKE_GLOBAL_RATE,
-        MAX_INFLIGHT_HANDSHAKES, PeerListReceiver,
+        HANDSHAKE_WORKERS_PER_ENDPOINT, MAX_INFLIGHT_HANDSHAKES, PeerListReceiver,
         client::OutboundLoop,
         error::Error,
         server::{AcceptLoop, InboundLoop},
@@ -167,22 +167,24 @@ impl QuicDatagramEndpoint {
             handshake_burst,
             HANDSHAKE_GLOBAL_RATE / num_endpoints as f64,
         );
-        for endpoint in inbound_endpoints {
-            let accept = AcceptLoop::new(
-                endpoint,
-                identity_receiver.clone(),
-                inbound_events_sender.clone(),
-                server_stats.clone(),
-                shutdown.clone(),
-                rate_limiter.clone(),
-                max_inflight_handshakes,
-            );
-            runtime.spawn(accept.run());
+        for endpoint in &inbound_endpoints {
+            for _ in 0..HANDSHAKE_WORKERS_PER_ENDPOINT {
+                let accept = AcceptLoop::new(
+                    endpoint.clone(),
+                    inbound_events_sender.clone(),
+                    server_stats.clone(),
+                    shutdown.clone(),
+                    rate_limiter.clone(),
+                    max_inflight_handshakes,
+                );
+                runtime.spawn(accept.run());
+            }
         }
         let inbound = InboundLoop::new(
             inbound_datagrams,
             ban_commands,
             peer_list,
+            inbound_endpoints,
             inbound_events_sender,
             inbound_events_receiver,
             identity_receiver,
