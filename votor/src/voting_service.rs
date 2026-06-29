@@ -586,7 +586,9 @@ mod tests {
         );
         let bank0 = Bank::new_for_tests(&genesis.genesis_config);
         let bank_forks = BankForks::new_rw_arc(bank0);
-        let keypair = Keypair::new();
+        // The sending node must itself be staked, otherwise the peer_list
+        // refresh publishes an empty set and never connects to the listener.
+        let keypair = validator_keypairs[0].node_keypair.insecure_clone();
         let contact_info = ContactInfo::new_localhost(&keypair.pubkey(), 0);
         let cluster_info = Arc::new(ClusterInfo::new(
             contact_info,

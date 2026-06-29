@@ -130,6 +130,16 @@ impl StakedValidatorsCache {
         }
         self.inject_overrides(&mut staked_nodes);
 
+        // Participate in votor only if this node is itself in the
+        // staked set. An unstaked node publishes an empty peer_list, so the
+        // transport neither connects to staked peers nor admits inbound connections.
+        if !staked_nodes.contains_key(&cluster_info.id()) {
+            if peer_list.send(Arc::new(HashMap::new())).is_err() {
+                error!("Could not send empty peer list to the transport endpoint!");
+            }
+            return;
+        }
+
         let snapshot = staked_nodes
             .into_keys()
             .map(|pubkey| {
@@ -142,7 +152,7 @@ impl StakedValidatorsCache {
             .collect();
         // Publish the latest version via watch channel - this never blocks.
         if peer_list.send(Arc::new(snapshot)).is_err() {
-            // This can only happen if the receievers are all dropped.
+            // This can only happen if the receivers are all dropped.
             error!("Could not send updated peer list to the transport endpoint!");
         }
     }
@@ -172,7 +182,7 @@ mod tests {
         solana_time_utils::timestamp,
         std::{
             collections::HashMap,
-            net::Ipv4Addr,
+            net::{IpAddr, Ipv4Addr, SocketAddr},
             sync::{Arc, RwLock},
         },
         tokio::sync::watch,
@@ -303,6 +313,39 @@ mod tests {
         assert_eq!(snapshot.len(), num_nodes - num_zero_stake_nodes);
         // Every staked node resolved to a real gossip socket (no sentinel).
         assert!(snapshot.values().all(|addr| !addr.ip().is_unspecified()));
+    }
+
+    /// An unstaked node publishes an
+    /// empty peer_list, so the transport is idle.
+    #[test]
+    fn test_unstaked_peer_list_remaims_empty() {
+        let slot_num = 12345000u64;
+        // A fully-staked set, none of whose identities is the local node below.
+        let (bank_forks, _, _) = create_bank_forks_and_cluster_info(10, 0, slot_num);
+
+        // Identity that is not staked.
+        let unstaked_kp = Keypair::new();
+        let cluster_info = ClusterInfo::new(
+            Node::new_localhost_with_pubkey(&unstaked_kp.pubkey()).info,
+            Arc::new(unstaked_kp),
+            SocketAddrSpace::Unspecified,
+        );
+
+        let (tx, rx) = watch::channel(Arc::new(HashMap::from([(Pubkey::new_unique(), {
+            SocketAddr::new(IpAddr::V4(Ipv4Addr::LOCALHOST), 8000)
+        })])));
+        let svc = StakedValidatorsCache::new(
+            bank_forks.read().unwrap().sharable_banks(),
+            Some(tx),
+            Arc::new(ArcSwap::default()),
+        );
+
+        svc.refresh_peer_list(&cluster_info);
+
+        assert!(
+            rx.borrow().is_empty(),
+            "unstaked node must publish an empty peer_list"
+        );
     }
 
     /// With no peer_list sender, a refresh is a no-op and must not panic.

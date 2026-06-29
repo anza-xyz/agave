@@ -312,8 +312,11 @@ impl Tvu {
         let peer_list_seed = {
             let root_bank = bank_forks.read().unwrap().root_bank();
             let unresolved = SocketAddr::new(IpAddr::V4(Ipv4Addr::UNSPECIFIED), 0);
+            let my_id = cluster_info.id();
+            // Initializa the votor peer list if this node is itself staked.
             let map: HashMap<Pubkey, SocketAddr> = root_bank
                 .epoch_staked_nodes(root_bank.epoch())
+                .filter(|nodes| nodes.contains_key(&my_id))
                 .map(|nodes| nodes.keys().map(|pubkey| (*pubkey, unresolved)).collect())
                 .unwrap_or_default();
             Arc::new(map)
