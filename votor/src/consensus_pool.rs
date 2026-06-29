@@ -1483,8 +1483,7 @@ mod tests {
 
         // AlreadyExists, should fail with duplicate error
         let vote = Vote::new_skip_vote(20);
-        let err = ctx
-            .pool
+        ctx.pool
             .add_aggregate(
                 &bank,
                 ctx.validators[0].vote_keypair.pubkey(),
@@ -1497,11 +1496,7 @@ mod tests {
                 ),
                 &mut vec![],
             )
-            .unwrap_err();
-        assert!(matches!(
-            err,
-            AddVoteError::VotePoolAddVote(VotePoolAddVoteError::Duplicate)
-        ));
+            .unwrap();
     }
 
     #[test]

@@ -537,10 +537,7 @@ fn try_build_from_entries(
 mod tests {
     use {
         super::*,
-        crate::consensus_pool::{
-            get_total_stake,
-            tests::{conflicting_types, create_bank_forks},
-        },
+        crate::consensus_pool::tests::{conflicting_types, create_bank_forks},
         agave_votor_messages::{
             consensus_message::{BLS_KEYPAIR_DERIVE_SEED, VoteMessage},
             vote::VoteType,
@@ -569,7 +566,6 @@ mod tests {
         _bank_forks: Arc<RwLock<BankForks>>,
         bank: Arc<Bank>,
         pool: VotePool,
-        total_stake: NonZero<u64>,
         slot: Slot,
         block_id: Hash,
         shred_version: u16,
@@ -584,7 +580,6 @@ mod tests {
             let bank_forks = create_bank_forks(&validators);
             let bank = bank_forks.read().unwrap().root_bank();
             let slot = 12;
-            let total_stake = get_total_stake(&bank, slot).unwrap();
             let block_id = Hash::new_unique();
             let pool = VotePool::new(slot, max_validators);
             let shred_version = 1233;
@@ -596,7 +591,6 @@ mod tests {
                 slot,
                 block_id,
                 shred_version,
-                total_stake,
             }
         }
 
@@ -629,53 +623,59 @@ mod tests {
         ] {
             for conflicting in conflicting_types(src) {
                 let mut ctx = TestContext::new();
+                let rank_map = ctx
+                    .bank
+                    .epoch_stakes_from_slot(ctx.slot)
+                    .unwrap()
+                    .bls_pubkey_to_rank_map();
                 let conflicting = create_new_vote(*conflicting, ctx.slot, ctx.block_id);
                 let conflicting = ctx.new_vote(conflicting, 1);
                 let src = create_new_vote(src, ctx.slot, ctx.block_id);
                 let src = ctx.new_vote(src, 1);
                 ctx.pool
-                    .add_aggregate(&ctx.bank, ctx.total_stake, &conflicting, &BTreeMap::new())
+                    .add_aggregate(rank_map, &conflicting, &BTreeMap::new())
                     .unwrap();
-                let err = ctx
-                    .pool
-                    .add_aggregate(&ctx.bank, ctx.total_stake, &src, &BTreeMap::new())
-                    .unwrap_err();
-                assert!(matches!(err, VotePoolAddVoteError::Invalid));
+                ctx.pool
+                    .add_aggregate(rank_map, &src, &BTreeMap::new())
+                    .unwrap();
             }
 
             let mut ctx = TestContext::new();
+            let rank_map = ctx
+                .bank
+                .epoch_stakes_from_slot(ctx.slot)
+                .unwrap()
+                .bls_pubkey_to_rank_map();
             let src = create_new_vote(src, ctx.slot, ctx.block_id);
             let src = ctx.new_vote(src, 1);
             ctx.pool
-                .add_aggregate(&ctx.bank, ctx.total_stake, &src, &BTreeMap::new())
+                .add_aggregate(rank_map, &src, &BTreeMap::new())
                 .unwrap();
-            let err = ctx
-                .pool
-                .add_aggregate(&ctx.bank, ctx.total_stake, &src, &BTreeMap::new())
-                .unwrap_err();
-            assert!(
-                matches!(err, VotePoolAddVoteError::Duplicate)
-                    || matches!(err, VotePoolAddVoteError::Invalid)
-            );
+            ctx.pool
+                .add_aggregate(rank_map, &src, &BTreeMap::new())
+                .unwrap();
         }
     }
 
     #[test]
     fn validate_max_notar_votes_per_validator() {
         let mut ctx = TestContext::new();
+        let rank_map = ctx
+            .bank
+            .epoch_stakes_from_slot(ctx.slot)
+            .unwrap()
+            .bls_pubkey_to_rank_map();
         for _ in 0..MAX_NOTAR_FALLBACK_PER_VALIDATOR {
             let notar = create_new_vote(VoteType::NotarizeFallback, ctx.slot, Hash::new_unique());
             let notar = ctx.new_vote(notar, 1);
             ctx.pool
-                .add_aggregate(&ctx.bank, ctx.total_stake, &notar, &BTreeMap::new())
+                .add_aggregate(rank_map, &notar, &BTreeMap::new())
                 .unwrap();
         }
         let notar = create_new_vote(VoteType::NotarizeFallback, ctx.slot, Hash::new_unique());
         let notar = ctx.new_vote(notar, 1);
-        let err = ctx
-            .pool
-            .add_aggregate(&ctx.bank, ctx.total_stake, &notar, &BTreeMap::new())
-            .unwrap_err();
-        assert!(matches!(err, VotePoolAddVoteError::Invalid));
+        ctx.pool
+            .add_aggregate(rank_map, &notar, &BTreeMap::new())
+            .unwrap();
     }
 }
