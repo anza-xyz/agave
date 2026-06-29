@@ -974,26 +974,16 @@ impl<T: IndexValue, U: DiskIndexValue + From<T> + Into<T>> AccountsIndex<T, U> {
             self.purge_older_root_entries_one_slot_list
                 .fetch_add(1, Ordering::Relaxed);
         }
-        let newest_root_in_slot_list;
-        let max_clean_root_inclusive = {
-            newest_root_in_slot_list = slot_list
-                .iter()
-                .map(|(slot, _)| *slot)
-                .filter(|slot| slot <= &max_clean_root_inclusive.unwrap_or(Slot::MAX))
-                .max()
-                .unwrap_or_default();
-            max_clean_root_inclusive.unwrap_or(newest_root_in_slot_list)
-        };
+        // Find the newest slot at or below the clean root, then reclaim every slot older than it.
+        let newest_slot = slot_list
+            .iter()
+            .map(|(slot, _)| *slot)
+            .filter(|slot| slot <= &max_clean_root_inclusive.unwrap_or(Slot::MAX))
+            .max()
+            .unwrap_or_default();
 
         slot_list.retain_and_count(|(slot, value)| {
-            let should_purge = Self::can_purge_older_entries(
-                // Note that we have a root that is inclusive here.
-                // Calling a function that expects 'exclusive'
-                // This is expected behavior for this call.
-                max_clean_root_inclusive,
-                newest_root_in_slot_list,
-                *slot,
-            );
+            let should_purge = *slot < newest_slot;
             if should_purge {
                 reclaims.push((*slot, *value));
             }
@@ -1033,26 +1023,6 @@ impl<T: IndexValue, U: DiskIndexValue + From<T> + Into<T>> AccountsIndex<T, U> {
             map.clean_and_unref_slot_list_on_startup(pubkey, &mut reclaims);
         }
         reclaims
-    }
-
-    /// When can an entry be purged?
-    ///
-    /// If we get a slot update where slot != newest_root_in_slot_list for an account where slot <
-    /// max_clean_root_exclusive, then we know it's safe to delete because:
-    ///
-    /// a) If slot < newest_root_in_slot_list, then we know the update is outdated by a later rooted
-    /// update, namely the one in newest_root_in_slot_list
-    ///
-    /// b) If slot > newest_root_in_slot_list, then because slot < max_clean_root_exclusive and we know there are
-    /// no roots in the slot list between newest_root_in_slot_list and max_clean_root_exclusive, (otherwise there
-    /// would be a bigger newest_root_in_slot_list, which is a contradiction), then we know slot must be
-    /// an unrooted slot less than max_clean_root_exclusive and thus safe to clean as well.
-    fn can_purge_older_entries(
-        max_clean_root_exclusive: Slot,
-        newest_root_in_slot_list: Slot,
-        slot: Slot,
-    ) -> bool {
-        slot < max_clean_root_exclusive && slot != newest_root_in_slot_list
     }
 
     /// Given a list of slots, return a new list of only the slots that are rooted
