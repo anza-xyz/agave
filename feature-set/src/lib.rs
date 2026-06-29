@@ -1512,7 +1512,7 @@ pub mod relax_post_exec_min_balance_check {
 }
 
 pub mod enable_tx_v1 {
-    solana_pubkey::declare_id!("txv1hPU76QFBVeq3942jJ65e9Em2xbdbCJrzX8sM4U4");
+    solana_pubkey::declare_id!("txv1aq4pp281K9um3tnPgkfX8UqtFT6wcVW3hNezGLL");
 }
 
 pub mod define_ltds_fee_only_semantics {
