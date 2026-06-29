@@ -407,7 +407,7 @@ impl<T: IndexValue, U: DiskIndexValue + From<T> + Into<T>> InMemAccountsIndex<T,
         pubkey: &Pubkey,
         user_fn: impl FnOnce(SlotListWriteGuard<T>, &AccountMapEntry<T>) -> RT,
     ) -> Option<RT> {
-        let mut write_through_args: Option<(Slot, T)> = None;
+        let mut should_write_through = false;
         let result = self.get_internal_inner(pubkey, |entry| {
             (
                 true,
@@ -416,17 +416,14 @@ impl<T: IndexValue, U: DiskIndexValue + From<T> + Into<T>> InMemAccountsIndex<T,
                     // always mark dirty unconditionally, even if user_fn made no changes
                     entry.mark_dirty();
                     if self.should_write_through && entry.ref_count() == 1 {
-                        let slot_list = entry.slot_list_read_lock();
-                        if slot_list.len() == 1 {
-                            write_through_args = Some(slot_list[0]);
-                        }
+                        should_write_through = entry.slot_list_read_lock().len() == 1;
                     }
                     result
                 }),
             )
         });
-        if let Some((slot, account_info)) = write_through_args {
-            self.write_through(pubkey, slot, account_info);
+        if should_write_through {
+            self.write_through(pubkey);
         }
         result
     }
@@ -452,54 +449,33 @@ impl<T: IndexValue, U: DiskIndexValue + From<T> + Into<T>> InMemAccountsIndex<T,
         grow_us
     }
 
-    /// Write `(slot, account_info)` to the disk index, then under the slot list read lock
-    /// verify the in-mem entry still matches; if so, clear the dirty flag so the entry
-    /// is eligible for eviction without waiting for the background flush.
+    /// Under the slot list read lock, check the entry is dirty, single-slot, and single-ref;
+    /// if so write it to the disk index and clear the dirty flag so the entry is eligible for
+    /// eviction without waiting for the background flush.
     ///
-    /// We hold the slot list read lock during the equality check to prevent concurrent
-    /// modifications from invalidating our check between the disk write and the dirty-clear.
+    /// We hold the slot list read lock across the check and disk write so a concurrent
+    /// modification cannot invalidate the check between the disk write and the dirty-clear.
     /// Any concurrent upsert that modifies the slot list must hold the write lock, so it
     /// cannot proceed until we release. If it ran before us the check will fail and we leave
     /// the entry dirty for the next write to clean up; if it runs after, it will re-dirty
     /// the now-clean entry and call write_through itself.
-    fn write_through(&self, pubkey: &Pubkey, slot: Slot, account_info: T) {
+    pub(crate) fn write_through(&self, pubkey: &Pubkey) {
         let disk = self.bucket.as_ref().unwrap();
-        let disk_entry = [(slot, account_info.into())];
-        let grow_us = Self::write_to_disk(disk, pubkey, &disk_entry);
-        Self::update_stat(&self.stats().flush_entries_updated_on_disk_immediate, 1);
-        Self::update_stat(&self.stats().flush_grow_us, grow_us);
         self.get_only_in_mem(pubkey, false, |entry| {
-            if let Some(entry) = entry {
-                let slot_list = entry.slot_list_read_lock();
-                if slot_list.len() == 1
-                    && slot_list[0] == (slot, account_info)
-                    && entry.ref_count() == 1
-                {
-                    entry.clear_dirty();
-                }
+            let Some(entry) = entry else {
+                return;
+            };
+            let slot_list = entry.slot_list_read_lock();
+            if !entry.dirty() || slot_list.len() != 1 || entry.ref_count() != 1 {
+                return;
             }
+            let (slot, account_info) = slot_list[0];
+            let disk_entry = [(slot, account_info.into())];
+            let grow_us = Self::write_to_disk(disk, pubkey, &disk_entry);
+            Self::update_stat(&self.stats().flush_entries_updated_on_disk_immediate, 1);
+            Self::update_stat(&self.stats().flush_grow_us, grow_us);
+            entry.clear_dirty();
         });
-    }
-
-    /// If the in-mem entry for pubkey is `slot_list.len() == 1` with `ref_count == 1` and
-    /// currently dirty, write it through to disk
-    pub fn try_write_through(&self, pubkey: &Pubkey) {
-        let to_write = self.get_only_in_mem(pubkey, false, |entry| {
-            entry.and_then(|entry| {
-                if !entry.dirty() {
-                    return None;
-                }
-
-                let slot_list = entry.slot_list_read_lock();
-                match (entry.ref_count(), &slot_list[..]) {
-                    (1, [info]) => Some(*info),
-                    _ => None,
-                }
-            })
-        });
-        if let Some((slot, info)) = to_write {
-            self.write_through(pubkey, slot, info);
-        }
     }
 
     /// Clean the slot list by removing all slot_list items older than the max_slot.
@@ -597,8 +573,7 @@ impl<T: IndexValue, U: DiskIndexValue + From<T> + Into<T>> InMemAccountsIndex<T,
                 self.should_write_through && slot_list_length == 1 && entry.ref_count() == 1;
         });
         if should_write_through {
-            let (slot, account_info) = new_item;
-            self.write_through(pubkey, slot, account_info);
+            self.write_through(pubkey);
         }
     }
 
@@ -2993,9 +2968,9 @@ mod tests {
         );
     }
 
-    /// `upsert` then `try_write_through` clears the dirty flag.
+    /// `upsert` then `write_through` clears the dirty flag.
     #[test]
-    fn test_try_write_through_clears_dirty() {
+    fn test_write_through_clears_dirty() {
         let index = new_should_write_through_for_test(None);
         let pubkey = solana_pubkey::new_rand();
         let slot = 1;
@@ -3011,7 +2986,7 @@ mod tests {
             &mut ReclaimsSlotList::new(),
             UpsertReclaim::IgnoreReclaims,
         );
-        index.try_write_through(&pubkey);
+        index.write_through(&pubkey);
 
         index.get_only_in_mem(&pubkey, false, |entry| {
             let entry = entry.expect("entry should be in memory");
@@ -3025,12 +3000,12 @@ mod tests {
         assert_eq!(ref_count, 1);
     }
 
-    /// `try_write_through` must leave a multi-ref entry alone: if the pubkey still has more
+    /// `write_through` must leave a multi-ref entry alone: if the pubkey still has more
     /// than one slot-list entry (ref_count > 1), persisting just one of them to disk would let a
     /// later eviction drop the fresher in-mem entry in favor of an incomplete disk entry. The
     /// entry must stay dirty and nothing must be written to disk.
     #[test]
-    fn test_try_write_through_skips_multi_ref_entry() {
+    fn test_write_through_skips_multi_ref_entry() {
         let index = new_should_write_through_for_test(None);
         let pubkey = solana_pubkey::new_rand();
         let info = 10;
@@ -3065,7 +3040,7 @@ mod tests {
             .flush_entries_updated_on_disk_immediate
             .load(Ordering::Relaxed);
 
-        index.try_write_through(&pubkey);
+        index.write_through(&pubkey);
 
         index.get_only_in_mem(&pubkey, false, |entry| {
             let entry = entry.expect("entry should still be in memory");
@@ -3105,7 +3080,7 @@ mod tests {
                 &mut ReclaimsSlotList::new(),
                 UpsertReclaim::IgnoreReclaims,
             );
-            index.try_write_through(pubkey);
+            index.write_through(pubkey);
         }
         assert_eq!(index.map_internal.read().unwrap().len(), 3);
 

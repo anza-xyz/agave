@@ -667,7 +667,7 @@ fn test_flush_defers_write_through_until_all_cached_slots_drop() {
     let baseline_writes = immediate_disk_writes();
 
     // Flush slot 0. Pubkey is still cached at slots 1 and 2, so remove_slot does
-    // not return it and try_write_through is never called, so no immediate disk
+    // not return it and write_through is never called, so no immediate disk
     // write must fire.
     db.add_root_and_flush_write_cache(0);
     assert_eq!(immediate_disk_writes(), baseline_writes);
@@ -677,7 +677,7 @@ fn test_flush_defers_write_through_until_all_cached_slots_drop() {
     assert_eq!(immediate_disk_writes(), baseline_writes);
 
     // Flush slot 2. The pubkey is no longer in any cached slot, so the cache-drop
-    // loop in flush_slot_cache calls try_write_through. ReclaimOldSlots has
+    // loop in flush_slot_cache calls write_through. ReclaimOldSlots has
     // collapsed the slot list to a single storage entry with ref_count == 1, so
     // write-through fires and bumps the counter by exactly one.
     db.add_root_and_flush_write_cache(2);

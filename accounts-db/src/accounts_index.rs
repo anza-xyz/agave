@@ -745,7 +745,7 @@ impl<T: IndexValue, U: DiskIndexValue + From<T> + Into<T>> AccountsIndex<T, U> {
             return;
         }
         for pubkey in pubkeys {
-            self.get_bin(&pubkey).try_write_through(&pubkey);
+            self.get_bin(&pubkey).write_through(&pubkey);
         }
     }
 
