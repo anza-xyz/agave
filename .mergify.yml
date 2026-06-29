@@ -109,23 +109,6 @@ pull_request_rules:
         ignore_conflicts: true
         branches:
           - v4.1
-  - name: backport warning comment
-    conditions:
-      - or:
-        - label=v4.0
-        - label=v4.1
-    actions:
-      comment:
-        message: >
-          Backports to release branches are to be avoided unless absolutely
-          necessary for fixing bugs, security issues, and perf regressions.
-          Changes intended for backport should be structured such that a
-          minimum effective diff can be committed separately from any
-          refactoring, plumbing, cleanup, etc that are not strictly
-          necessary to achieve the goal. Any of the latter should go only
-          into master and ride the normal stabilization schedule. Exceptions
-          include CI/metrics changes, CLI improvements and documentation
-          updates on a case by case basis.
   - name: v4.2 feature-gate backport
     conditions:
       - label=v4.2
@@ -150,13 +133,16 @@ pull_request_rules:
         ignore_conflicts: true
         branches:
           - v4.2
-  - name: v4.2 backport warning comment
+  - name: backport warning comment
     conditions:
-      - label=v4.2
+      - or:
+        - label=v4.0
+        - label=v4.1
+        - label=v4.2
     actions:
       comment:
         message: >
-          Backports to the alpha branch are to be avoided unless absolutely
+          Backports to release branches are to be avoided unless absolutely
           necessary for fixing bugs, security issues, and perf regressions.
           Changes intended for backport should be structured such that a
           minimum effective diff can be committed separately from any
