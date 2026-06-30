@@ -73,11 +73,6 @@ pub struct ServerStats {
     pub(crate) report_frozen: AtomicBool,
 }
 
-#[inline]
-pub(crate) fn add(metric: &AtomicU64) {
-    metric.fetch_add(1, Ordering::Relaxed);
-}
-
 /// Raise a peak-occupancy high-water mark to `count` if it is higher.
 pub(crate) fn record_connection_count(peak: &AtomicU64, count: u64) {
     peak.fetch_max(count, Ordering::Relaxed);
@@ -93,7 +88,9 @@ pub(crate) fn record_client_error(err: &Error, stats: &ClientStats) {
             | ConnectionError::Reset
             | ConnectionError::TimedOut,
         )
-        | Error::SendDatagram(SendDatagramError::ConnectionLost(_)) => add(&stats.connection_lost),
+        | Error::SendDatagram(SendDatagramError::ConnectionLost(_)) => {
+            stats.connection_lost.fetch_add(1, Ordering::Relaxed);
+        }
         Error::Connect(_)
         | Error::Connection(
             ConnectionError::TransportError(_)
@@ -105,7 +102,9 @@ pub(crate) fn record_client_error(err: &Error, stats: &ClientStats) {
             SendDatagramError::TooLarge
             | SendDatagramError::UnsupportedByPeer
             | SendDatagramError::Disabled,
-        ) => add(&stats.connect_failed),
+        ) => {
+            stats.connect_failed.fetch_add(1, Ordering::Relaxed);
+        }
         Error::NotAdmitted(_)
         | Error::Banned(_)
         | Error::TooManyConnections
@@ -124,30 +123,40 @@ pub(crate) fn record_server_error(err: &Error, stats: &ServerStats) {
             | ConnectionError::LocallyClosed
             | ConnectionError::Reset
             | ConnectionError::TimedOut,
-        ) => add(&stats.connection_lost),
+        ) => {
+            stats.connection_lost.fetch_add(1, Ordering::Relaxed);
+        }
         Error::Connection(
             ConnectionError::TransportError(_)
             | ConnectionError::VersionMismatch
             | ConnectionError::CidsExhausted,
         )
-        | Error::InvalidIdentity(_) => add(&stats.connection_failed),
-        Error::NotAdmitted(_) | Error::Banned(_) => add(&stats.handshake_rejected_unauthorized),
-        Error::TooManyConnections => add(&stats.handshake_rejected_overload),
+        | Error::InvalidIdentity(_) => {
+            stats.connection_failed.fetch_add(1, Ordering::Relaxed);
+        }
+        Error::NotAdmitted(_) | Error::Banned(_) => {
+            stats
+                .handshake_rejected_unauthorized
+                .fetch_add(1, Ordering::Relaxed);
+        }
+        Error::TooManyConnections => {
+            stats
+                .handshake_rejected_overload
+                .fetch_add(1, Ordering::Relaxed);
+        }
         Error::Connect(_) | Error::SendDatagram(_) | Error::Endpoint(_) => {
             debug_assert!(false, "inbound direction does not produce {err:?}");
         }
     }
 }
 
-macro_rules! swap {
-    ($m:expr) => {
-        $m.swap(0, Ordering::Relaxed) as i64
-    };
+/// Read and reset a counter, returns the old value.
+fn swap(metric: &AtomicU64) -> i64 {
+    metric.swap(0, Ordering::Relaxed) as i64
 }
 
-/// Re-baseline the peak to the current value and return the
-/// peak observed over the period just ending.
-#[inline]
+/// Re-baseline the peak to the current value, returns the peak over
+/// period just observed.
 fn take_peak(peak: &AtomicU64, live: u64) -> i64 {
     peak.swap(live, Ordering::Relaxed).max(live) as i64
 }
@@ -157,13 +166,13 @@ pub(crate) fn report_client(stats: &ClientStats, live_connections: u64) {
     // Snapshot and reset every counter unconditionally, *before* `datapoint_info!`
     // so we do not end up with huge values here when operator changes log level.
     let connections_peak = take_peak(&stats.peak_connections, live_connections);
-    let datagrams_sent = swap!(stats.datagrams_sent);
-    let connect_failed = swap!(stats.connect_failed);
-    let connect_failed_no_address = swap!(stats.connect_failed_no_address);
-    let connection_lost = swap!(stats.connection_lost);
-    let connection_closed_peer_moved = swap!(stats.connection_closed_peer_moved);
-    let connection_closed_not_in_peer_list = swap!(stats.connection_closed_not_in_peer_list);
-    let connection_closed_identity_changed = swap!(stats.connection_closed_identity_changed);
+    let datagrams_sent = swap(&stats.datagrams_sent);
+    let connect_failed = swap(&stats.connect_failed);
+    let connect_failed_no_address = swap(&stats.connect_failed_no_address);
+    let connection_lost = swap(&stats.connection_lost);
+    let connection_closed_peer_moved = swap(&stats.connection_closed_peer_moved);
+    let connection_closed_not_in_peer_list = swap(&stats.connection_closed_not_in_peer_list);
+    let connection_closed_identity_changed = swap(&stats.connection_closed_identity_changed);
     datapoint_info!(
         "votor_datagram_client",
         ("connections_peak", connections_peak, i64),
@@ -199,20 +208,20 @@ pub(crate) fn report_server(stats: &ServerStats, live_connections: u64) {
     }
     // Snapshot-and-reset every counter unconditionally, *before* `datapoint_info!`.
     let unique_peers_peak = take_peak(&stats.peak_unique_peers, live_connections);
-    let datagrams_received = swap!(stats.datagrams_received);
-    let handshakes_started = swap!(stats.handshakes_started);
-    let handshakes_completed = swap!(stats.handshakes_completed);
-    let connection_failed = swap!(stats.connection_failed);
-    let connection_lost = swap!(stats.connection_lost);
-    let datagram_rate_limited = swap!(stats.datagram_rate_limited);
-    let datagram_ingress_dropped_channel_full = swap!(stats.datagram_ingress_dropped_channel_full);
-    let handshake_rejected_unauthorized = swap!(stats.handshake_rejected_unauthorized);
-    let handshake_rejected_overload = swap!(stats.handshake_rejected_overload);
-    let handshake_rate_limited = swap!(stats.handshake_rate_limited);
-    let handshake_timed_out = swap!(stats.handshake_timed_out);
-    let connection_closed_not_in_peer_list = swap!(stats.connection_closed_not_in_peer_list);
-    let connection_closed_banned = swap!(stats.connection_closed_banned);
-    let connection_closed_identity_changed = swap!(stats.connection_closed_identity_changed);
+    let datagrams_received = swap(&stats.datagrams_received);
+    let handshakes_started = swap(&stats.handshakes_started);
+    let handshakes_completed = swap(&stats.handshakes_completed);
+    let connection_failed = swap(&stats.connection_failed);
+    let connection_lost = swap(&stats.connection_lost);
+    let datagram_rate_limited = swap(&stats.datagram_rate_limited);
+    let datagram_ingress_dropped_channel_full = swap(&stats.datagram_ingress_dropped_channel_full);
+    let handshake_rejected_unauthorized = swap(&stats.handshake_rejected_unauthorized);
+    let handshake_rejected_overload = swap(&stats.handshake_rejected_overload);
+    let handshake_rate_limited = swap(&stats.handshake_rate_limited);
+    let handshake_timed_out = swap(&stats.handshake_timed_out);
+    let connection_closed_not_in_peer_list = swap(&stats.connection_closed_not_in_peer_list);
+    let connection_closed_banned = swap(&stats.connection_closed_banned);
+    let connection_closed_identity_changed = swap(&stats.connection_closed_identity_changed);
     datapoint_info!(
         "votor_datagram_server",
         ("unique_peers_peak", unique_peers_peak, i64),

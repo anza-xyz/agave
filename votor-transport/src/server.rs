@@ -348,7 +348,8 @@ impl InboundLoop {
         }
     }
 
-    /// Number of peers with live inbound connections.
+    /// Number of entries in the peer table. Includes peers whose
+    /// connections have all closed but whose rate limiter has not yet refilled.
     fn total_peers(&self) -> u64 {
         self.peer_state.len() as u64
     }
@@ -403,7 +404,7 @@ impl InboundLoop {
                 // When idle we can take care of metrics and bookkeeping that
                 // does not affect liveness.
                 _ = metrics.tick() => {
-                    debug!("InboundLoop: runnig bookkeeping tasks");
+                    debug!("InboundLoop: running bookkeeping tasks");
                     stats::report_server(&self.stats, self.total_peers());
                     self.banlist.prune();
                     // Reclaim empty connection slots
@@ -465,9 +466,7 @@ impl InboundLoop {
     /// Apply the ban command and close any open connections from that peer.
     fn apply_ban(&mut self, peer: Pubkey, timeout: Duration) {
         self.banlist.ban(peer, timeout);
-        // if peer has any open connections...
         if let Some(entry) = self.peer_state.get(&peer) {
-            // ... we go over them and close each.
             let closed = entry
                 .connections
                 .iter()
@@ -610,8 +609,8 @@ mod tests {
         let server_kp = Keypair::new();
         let id = Identity::from_keypair(&server_kp);
         let server_cfg = new_server_config(id.cert, id.key, ALPENGLOW_ALPN);
-        let endpoint = Endpoint::server(server_cfg, loopback).unwrap();
-        let server_addr = endpoint.local_addr().unwrap();
+        let endpoint = Endpoint::server(server_cfg, loopback).expect("bind server endpoint");
+        let server_addr = endpoint.local_addr().expect("server local addr");
 
         // Sized so a never-completing handshake never needs to send.
         let (events_sender, _events_receiver) = mpsc::channel(1);
@@ -630,8 +629,8 @@ mod tests {
         // One-way proxy: forward client->server, drop server->client.
         let proxy = solana_net_utils::sockets::bind_to_async(IpAddr::V4(Ipv4Addr::LOCALHOST), 0)
             .await
-            .unwrap();
-        let proxy_addr = proxy.local_addr().unwrap();
+            .expect("bind proxy socket");
+        let proxy_addr = proxy.local_addr().expect("proxy local addr");
         let proxy_task = spawn(async move {
             let mut buf = [0u8; 2048];
             while let Ok((n, from)) = proxy.recv_from(&mut buf).await {
@@ -647,9 +646,11 @@ mod tests {
         let client_kp = Keypair::new();
         let cid = Identity::from_keypair(&client_kp);
         let client_cfg = new_client_config(cid.cert, cid.key, ALPENGLOW_ALPN);
-        let mut client = Endpoint::client(loopback).unwrap();
+        let mut client = Endpoint::client(loopback).expect("bind client endpoint");
         client.set_default_client_config(client_cfg);
-        let connecting = client.connect(proxy_addr, "votor").unwrap();
+        let connecting = client
+            .connect(proxy_addr, "votor")
+            .expect("client connect to proxy");
         let client_task = spawn(async move {
             let _ = connecting.await;
         });

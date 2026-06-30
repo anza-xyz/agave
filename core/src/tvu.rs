@@ -41,7 +41,7 @@ use {
         VerifiedVoterSlotsReceiver, VerifiedVoterSlotsSender, consensus_message::Block,
         metric_types::MAX_IN_FLIGHT_CONSENSUS_EVENTS, reward_certificate::AddVoteMessage,
     },
-    agave_votor_transport::endpoint::QuicDatagramEndpoint,
+    agave_votor_transport::{ADDRESS_UNKNOWN, endpoint::QuicDatagramEndpoint},
     crossbeam_channel::{Receiver, Sender, bounded, unbounded},
     solana_client::connection_cache::ConnectionCache,
     solana_clock::Slot,
@@ -80,7 +80,7 @@ use {
     solana_turbine::{XdpSender as TurbineXdpSender, retransmit_stage::RetransmitStage},
     std::{
         collections::{HashMap, HashSet},
-        net::{IpAddr, Ipv4Addr, SocketAddr, UdpSocket},
+        net::{SocketAddr, UdpSocket},
         num::NonZeroUsize,
         sync::{Arc, RwLock, atomic::AtomicBool},
         thread::{self, JoinHandle},
@@ -123,6 +123,7 @@ pub struct Tvu {
     bls_sigverifier: JoinHandle<()>,
     votor: Votor,
     commitment_service: AggregateCommitmentService,
+    // Held so votor Endpoint terminates during Drop of TVU.
     _votor_endpoint: QuicDatagramEndpoint,
     // `None` when running on an ambient runtime (test-validator).
     _votor_runtime: Option<TokioRuntime>,
@@ -311,13 +312,17 @@ impl Tvu {
         // wait_for_supermajority.
         let peer_list_seed = {
             let root_bank = bank_forks.read().unwrap().root_bank();
-            let unresolved = SocketAddr::new(IpAddr::V4(Ipv4Addr::UNSPECIFIED), 0);
             let my_id = cluster_info.id();
-            // Initializa the votor peer list if this node is itself staked.
+            // Initialize the votor peer list if this node is itself staked.
             let map: HashMap<Pubkey, SocketAddr> = root_bank
                 .epoch_staked_nodes(root_bank.epoch())
                 .filter(|nodes| nodes.contains_key(&my_id))
-                .map(|nodes| nodes.keys().map(|pubkey| (*pubkey, unresolved)).collect())
+                .map(|nodes| {
+                    nodes
+                        .keys()
+                        .map(|pubkey| (*pubkey, ADDRESS_UNKNOWN))
+                        .collect()
+                })
                 .unwrap_or_default();
             Arc::new(map)
         };

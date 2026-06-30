@@ -57,8 +57,8 @@ const MAX_INCOMING: usize = MAX_ALPENGLOW_VOTE_ACCOUNTS;
 pub(crate) fn new_transport_config() -> TransportConfig {
     let max_idle =
         IdleTimeout::try_from(MAX_IDLE_TIMEOUT).expect("MAX_IDLE_TIMEOUT fits IdleTimeout");
-    let mut c = TransportConfig::default();
-    c.datagram_receive_buffer_size(Some(DATAGRAM_RECEIVE_BUFFER_BYTES))
+    let mut cfg = TransportConfig::default();
+    cfg.datagram_receive_buffer_size(Some(DATAGRAM_RECEIVE_BUFFER_BYTES))
         .datagram_send_buffer_size(DATAGRAM_SEND_BUFFER_BYTES)
         .initial_mtu(DATAGRAM_MTU)
         .min_mtu(DATAGRAM_MTU)
@@ -68,7 +68,7 @@ pub(crate) fn new_transport_config() -> TransportConfig {
         // Datagrams only - disable streams entirely.
         .max_concurrent_bidi_streams(VarInt::from(0u8))
         .max_concurrent_uni_streams(VarInt::from(0u8));
-    c
+    cfg
 }
 
 /// Build the rustls + quinn server config.

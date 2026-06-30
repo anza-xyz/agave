@@ -3,11 +3,11 @@ use {
     crate::{
         ALPENGLOW_ALPN, METRICS_INTERVAL, PeerListReceiver, close_codes,
         error::Error,
-        stats::{self, ClientStats, add, record_client_error},
+        stats::{self, ClientStats, record_client_error},
         transport::{Identity, new_client_config},
     },
     bytes::Bytes,
-    log::{debug, error, info},
+    log::{debug, error, info, warn},
     quinn::{Connection, Endpoint, SendDatagramError},
     solana_pubkey::{Pubkey, PubkeyHasherBuilder},
     solana_tls_utils::{get_remote_pubkey, socket_addr_to_quic_server_name},
@@ -43,46 +43,38 @@ pub(crate) enum PeerState {
     },
 }
 
-/// `Ok` carries the peer and the newly established
-/// `Err` carries the peer we tried to connect to (but failed)
+/// `Ok` carries the peer and its newly established connection; `Err` carries
+/// the peer we tried (and failed) to connect to.
 type HandshakeOutcome = Result<(Pubkey, Connection), Pubkey>;
 
-/// Task for the outbound connection.
-pub(crate) struct ClientConnection {
-    pub(crate) endpoint: Endpoint,
-    pub(crate) peer: Pubkey,
-    pub(crate) addr: SocketAddr,
-    pub(crate) stats: Arc<ClientStats>,
-}
-
-impl ClientConnection {
-    async fn run(self) -> HandshakeOutcome {
-        let connect = async {
-            let server_name = socket_addr_to_quic_server_name(self.addr);
-            let connection = self.endpoint.connect(self.addr, &server_name)?.await?;
-            let attested =
-                get_remote_pubkey(&connection).ok_or(Error::InvalidIdentity(self.addr))?;
-            if attested != self.peer {
-                close_codes::INVALID_IDENTITY.close(&connection);
-                return Err(Error::InvalidIdentity(self.addr));
-            }
-            Ok(connection)
-        };
-        match connect.await {
-            Ok(connection) => Ok((self.peer, connection)),
-            Err(e) => {
-                error!(
-                    "Connection attempt to ({}, {}) failed: {e:?}",
-                    self.peer, self.addr
-                );
-                record_client_error(&e, &self.stats);
-                Err(self.peer)
-            }
+/// Open and authenticate a new connection to `peer` at `addr`.
+async fn connect(
+    endpoint: Endpoint,
+    peer: Pubkey,
+    addr: SocketAddr,
+    stats: Arc<ClientStats>,
+) -> HandshakeOutcome {
+    let attempt = async {
+        let server_name = socket_addr_to_quic_server_name(addr);
+        let connection = endpoint.connect(addr, &server_name)?.await?;
+        let attested = get_remote_pubkey(&connection).ok_or(Error::InvalidIdentity(addr))?;
+        if attested != peer {
+            close_codes::INVALID_IDENTITY.close(&connection);
+            return Err(Error::InvalidIdentity(addr));
+        }
+        Ok(connection)
+    };
+    match attempt.await {
+        Ok(connection) => Ok((peer, connection)),
+        Err(e) => {
+            warn!("Connection attempt to ({peer}, {addr}) failed: {e:?}");
+            record_client_error(&e, &stats);
+            Err(peer)
         }
     }
 }
 
-/// Outbound control loop for the egress direction(we-connect, send-only).
+/// Outbound control loop for the egress direction (we-connect, send-only).
 /// Strives to ensure open connections to everyone in the peer_list.
 pub(crate) struct OutboundLoop {
     pub(crate) endpoint: Endpoint,
@@ -172,7 +164,7 @@ impl OutboundLoop {
                 _ = reconcile_timer.tick() => self.reconcile(),
                 // Metrics are best effort
                 _ = metrics.tick() => {
-                    debug!("OutboundLoop: runnig bookkeeping tasks");
+                    debug!("OutboundLoop: running bookkeeping tasks");
                     stats::report_client(&self.stats, self.peer_state.len() as u64);
                 }
                 // Shutdown is never something we do in a hurry
@@ -193,7 +185,7 @@ impl OutboundLoop {
         self.local_pubkey = new_identity.pubkey;
         self.endpoint.set_default_client_config(client_config);
         // Dropping the JoinSet aborts every in-flight handshake. We do not
-        // want them as they begun under the old identity.
+        // want them as they began under the old identity.
         self.in_flight_handshakes = JoinSet::new();
         let closed = self
             .peer_state
@@ -218,7 +210,7 @@ impl OutboundLoop {
 
     /// Reconcile the connection table against the current peer_list.
     fn reconcile(&mut self) {
-        debug!("OutboundLoop: runnig reconcile");
+        debug!("OutboundLoop: running reconcile");
         // Clone the Arc so the operation is coherent (next call to reconcile will
         // pick up a new peer_list if it gets published before this operation finishes).
         let peer_list = self.peer_list_receiver.borrow().clone();
@@ -251,7 +243,9 @@ impl OutboundLoop {
             }
             // No gossip address yet (or anymore)
             if addr.ip().is_unspecified() {
-                add(&self.stats.connect_failed_no_address);
+                self.stats
+                    .connect_failed_no_address
+                    .fetch_add(1, Ordering::Relaxed);
                 continue;
             }
             let needs_connection = match self.peer_state.get(peer) {
@@ -286,16 +280,12 @@ impl OutboundLoop {
             };
             if needs_connection {
                 info!("OutboundLoop: initiating connection to {peer} ({addr})");
-
-                let abort_handle = self.in_flight_handshakes.spawn(
-                    ClientConnection {
-                        endpoint: self.endpoint.clone(),
-                        peer: *peer,
-                        addr: *addr,
-                        stats: self.stats.clone(),
-                    }
-                    .run(),
-                );
+                let abort_handle = self.in_flight_handshakes.spawn(connect(
+                    self.endpoint.clone(),
+                    *peer,
+                    *addr,
+                    self.stats.clone(),
+                ));
                 self.peer_state
                     .insert(*peer, PeerState::Connecting(abort_handle));
             }
