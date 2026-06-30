@@ -93,7 +93,6 @@ use {
         vote_sender_types::{ReplayVoteMessage, ReplayVoteSender},
     },
     solana_signer::Signer,
-    solana_svm_timings::ExecuteTimings,
     solana_time_utils::timestamp,
     solana_transaction::Transaction,
     solana_vote::vote_transaction::VoteTransaction,
@@ -1493,8 +1492,9 @@ impl ReplayStage {
                     // may add a bank that will not included in either of these maps.
                     drop(ancestors);
                     drop(descendants);
-                    if !tpu_has_bank && !poh_controller.has_pending_message() {
-                        if let Some(poh_slot) = Self::maybe_start_leader(
+                    if !tpu_has_bank
+                        && !poh_controller.has_pending_message()
+                        && let Some(poh_slot) = Self::maybe_start_leader(
                             &my_pubkey,
                             &bank_forks,
                             &poh_recorder,
@@ -1508,14 +1508,14 @@ impl ReplayStage {
                             &banking_tracer,
                             has_new_vote_been_rooted,
                             migration_status.as_ref(),
-                        ) {
-                            Self::log_leader_change(
-                                &my_pubkey,
-                                poh_slot,
-                                &mut current_leader,
-                                &my_pubkey,
-                            );
-                        }
+                        )
+                    {
+                        Self::log_leader_change(
+                            &my_pubkey,
+                            poh_slot,
+                            &mut current_leader,
+                            &my_pubkey,
+                        );
                     }
                     start_leader_time.stop();
 
@@ -1605,8 +1605,11 @@ impl ReplayStage {
             let bank_forks_r = bank_forks.read().unwrap();
             new_frozen_slots
                 .iter()
-                .filter(|slot| migration_status.should_allow_fast_leader_handover(**slot))
                 .filter_map(|slot| bank_forks_r.get(*slot))
+                .filter(|bank| {
+                    bank.feature_set.snapshot().alpenglow_fast_leader_handover
+                        && migration_status.should_allow_block_markers(bank.slot())
+                })
                 .collect_vec()
         };
         for bank in flh_candidate_banks {
@@ -1619,15 +1622,14 @@ impl ReplayStage {
             );
         }
 
-        if let Some(highest) = new_frozen_slots.iter().max() {
-            if *highest > *highest_frozen_slot {
-                *highest_frozen_slot = *highest;
-                let mut l_highest_frozen =
-                    replay_highest_frozen.highest_frozen_slot.lock().unwrap();
-                // Let the block creation loop know about this new frozen slot
-                *l_highest_frozen = *highest;
-                replay_highest_frozen.freeze_notification.notify_one();
-            }
+        if let Some(highest) = new_frozen_slots.iter().max()
+            && *highest > *highest_frozen_slot
+        {
+            *highest_frozen_slot = *highest;
+            let mut l_highest_frozen = replay_highest_frozen.highest_frozen_slot.lock().unwrap();
+            // Let the block creation loop know about this new frozen slot
+            *l_highest_frozen = *highest;
+            replay_highest_frozen.freeze_notification.notify_one();
         }
     }
 
@@ -1843,28 +1845,26 @@ impl ReplayStage {
 
         for slot in first_leader_group_slot..=latest_leader_slot {
             let is_propagated = progress.is_propagated(slot);
-            if let Some(retransmit_info) = progress.get_retransmit_info_mut(slot) {
-                if !is_propagated.expect(
+            if let Some(retransmit_info) = progress.get_retransmit_info_mut(slot)
+                && !is_propagated.expect(
                     "presence of retransmit_info ensures that propagation status is present",
-                ) {
-                    if retransmit_info.reached_retransmit_threshold() {
-                        info!(
-                            "Retrying retransmit: latest_leader_slot={latest_leader_slot} \
-                             slot={slot} retransmit_info={retransmit_info:?}",
-                        );
-                        datapoint_info!(
-                            metric_name,
-                            ("latest_leader_slot", latest_leader_slot, i64),
-                            ("slot", slot, i64),
-                            ("retry_iteration", retransmit_info.retry_iteration, i64),
-                        );
-                        let _ = retransmit_slots_sender.send(slot);
-                        retransmit_info.increment_retry_iteration();
-                    } else {
-                        debug!(
-                            "Bypass retransmit of slot={slot} retransmit_info={retransmit_info:?}"
-                        );
-                    }
+                )
+            {
+                if retransmit_info.reached_retransmit_threshold() {
+                    info!(
+                        "Retrying retransmit: latest_leader_slot={latest_leader_slot} slot={slot} \
+                         retransmit_info={retransmit_info:?}",
+                    );
+                    datapoint_info!(
+                        metric_name,
+                        ("latest_leader_slot", latest_leader_slot, i64),
+                        ("slot", slot, i64),
+                        ("retry_iteration", retransmit_info.retry_iteration, i64),
+                    );
+                    let _ = retransmit_slots_sender.send(slot);
+                    retransmit_info.increment_retry_iteration();
+                } else {
+                    debug!("Bypass retransmit of slot={slot} retransmit_info={retransmit_info:?}");
                 }
             }
         }
@@ -2589,10 +2589,10 @@ impl ReplayStage {
         async_verification_freelist: &mut Vec<AsyncVerificationProgress>,
         async_verification: Option<AsyncVerificationProgress>,
     ) {
-        if let Some(async_verification) = async_verification {
-            if async_verification_freelist.len() < ASYNC_VERIFICATION_FREELIST_CAPACITY {
-                async_verification_freelist.push(async_verification);
-            }
+        if let Some(async_verification) = async_verification
+            && async_verification_freelist.len() < ASYNC_VERIFICATION_FREELIST_CAPACITY
+        {
+            async_verification_freelist.push(async_verification);
         }
     }
 
@@ -2762,17 +2762,17 @@ impl ReplayStage {
         current_leader: &mut Option<Pubkey>,
         new_leader: &Pubkey,
     ) {
-        if let Some(current_leader) = current_leader.as_ref() {
-            if current_leader != new_leader {
-                let msg = if Self::leader_is_me(current_leader, my_pubkey) {
-                    ". I am no longer the leader"
-                } else if Self::leader_is_me(new_leader, my_pubkey) {
-                    ". I am now the leader"
-                } else {
-                    ""
-                };
-                info!("LEADER CHANGE at slot: {bank_slot} leader: {new_leader}{msg}");
-            }
+        if let Some(current_leader) = current_leader.as_ref()
+            && current_leader != new_leader
+        {
+            let msg = if Self::leader_is_me(current_leader, my_pubkey) {
+                ". I am no longer the leader"
+            } else if Self::leader_is_me(new_leader, my_pubkey) {
+                ". I am now the leader"
+            } else {
+                ""
+            };
+            info!("LEADER CHANGE at slot: {bank_slot} leader: {new_leader}{msg}");
         }
         current_leader.replace(new_leader.to_owned());
     }
@@ -3083,20 +3083,19 @@ impl ReplayStage {
             );
 
             // Check if we've rooted a bank that will tell us the migration slot
-            if migration_status.is_pre_feature_activation() {
-                if let Some(slot) = bank_forks
+            if migration_status.is_pre_feature_activation()
+                && let Some(slot) = bank_forks
                     .read()
                     .unwrap()
                     .root_bank()
                     .feature_set
                     .activated_slot(&agave_feature_set::alpenglow::id())
-                {
-                    let migration_slot = migration_status.record_feature_activation(slot);
-                    datapoint_info!(
-                        "migration-started",
-                        ("migration_slot", migration_slot as i64, i64),
-                    );
-                }
+            {
+                let migration_slot = migration_status.record_feature_activation(slot);
+                datapoint_info!(
+                    "migration-started",
+                    ("migration_slot", migration_slot as i64, i64),
+                );
             }
         }
 
@@ -3197,10 +3196,10 @@ impl ReplayStage {
         if authorized_voter_keypairs.is_empty() {
             return GenerateVoteTxResult::NonVoting;
         }
-        if let Some(slot) = wait_to_vote_slot {
-            if bank.slot() < slot {
-                return GenerateVoteTxResult::WaitToVoteSlot(slot);
-            }
+        if let Some(slot) = wait_to_vote_slot
+            && bank.slot() < slot
+        {
+            return GenerateVoteTxResult::WaitToVoteSlot(slot);
         }
         let Some(vote_account) = bank.get_vote_account(vote_account_pubkey) else {
             warn!("Vote account {vote_account_pubkey} does not exist.  Unable to vote",);
@@ -3819,8 +3818,6 @@ impl ReplayStage {
         let bank_forks = &process_active_banks_context.bank_forks;
 
         // TODO: See if processing of blockstore replay results and bank completion can be made thread safe.
-        let mut tx_count = 0;
-        let mut execute_timings = ExecuteTimings::default();
         let mut new_frozen_slots = vec![];
         for replay_result in replay_result_vec {
             if replay_result.is_slot_dead {
@@ -3834,7 +3831,7 @@ impl ReplayStage {
             };
             if let Some(replay_result) = &replay_result.replay_result {
                 match replay_result {
-                    Ok(replay_tx_count) => tx_count += replay_tx_count,
+                    Ok(_) => {}
                     Err(BlockstoreProcessorError::BlockComponentProcessor(
                         BlockComponentProcessorError::AbandonedBank(update_parent),
                     )) => {
@@ -4204,7 +4201,6 @@ impl ReplayStage {
                     bank_complete_time.as_us(),
                     is_unified_scheduler_enabled,
                 );
-                execute_timings.accumulate(&r_replay_stats.batch_execute.totals);
             } else {
                 trace!(
                     "bank {} not completed tick_height: {}, max_tick_height: {}",
@@ -4568,36 +4564,35 @@ impl ReplayStage {
             tower.vote_state.root_slot
         );
 
-        if let Some(local_root) = tower.vote_state.root_slot {
-            if bank_vote_state
+        if let Some(local_root) = tower.vote_state.root_slot
+            && bank_vote_state
                 .root_slot
                 .map(|bank_root| local_root > bank_root)
                 .unwrap_or(true)
-            {
-                // If the local root is larger than this on chain vote state
-                // root (possible due to supermajority roots being set on
-                // startup), then we need to adjust the tower
-                bank_vote_state.root_slot = Some(local_root);
-                bank_vote_state
-                    .votes
-                    .retain(|lockout| lockout.slot() > local_root);
-                info!(
-                    "Local root is larger than on chain root, overwrote bank root {:?} and \
-                     updated votes {:?}",
-                    bank_vote_state.root_slot, bank_vote_state.votes
-                );
+        {
+            // If the local root is larger than this on chain vote state
+            // root (possible due to supermajority roots being set on
+            // startup), then we need to adjust the tower
+            bank_vote_state.root_slot = Some(local_root);
+            bank_vote_state
+                .votes
+                .retain(|lockout| lockout.slot() > local_root);
+            info!(
+                "Local root is larger than on chain root, overwrote bank root {:?} and updated \
+                 votes {:?}",
+                bank_vote_state.root_slot, bank_vote_state.votes
+            );
 
-                if let Some(first_vote) = bank_vote_state.votes.front() {
-                    assert!(
-                        ancestors
-                            .get(&first_vote.slot())
-                            .expect(
-                                "Ancestors map must contain an entry for all slots on this fork \
-                                 greater than `local_root` and less than `bank_slot`"
-                            )
-                            .contains(&local_root)
-                    );
-                }
+            if let Some(first_vote) = bank_vote_state.votes.front() {
+                assert!(
+                    ancestors
+                        .get(&first_vote.slot())
+                        .expect(
+                            "Ancestors map must contain an entry for all slots on this fork \
+                             greater than `local_root` and less than `bank_slot`"
+                        )
+                        .contains(&local_root)
+                );
             }
         }
 

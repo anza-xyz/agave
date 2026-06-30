@@ -9,6 +9,11 @@ license = { workspace = true }
 edition = { workspace = true }
 include = ["Cargo.toml", "src/**", "README", "agave-xdp-prog"]
 
+[package.metadata.docs.rs]
+targets = ["x86_64-unknown-linux-gnu"]
+all-features = true
+rustdoc-args = ["--cfg=docsrs"]
+
 [[bin]]
 name = "agave-xdp-prog"
 path = "src/bin/agave-xdp-prog.rs"

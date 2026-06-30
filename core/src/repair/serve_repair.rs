@@ -2505,7 +2505,7 @@ mod tests {
         shreds.truncate(1);
 
         blockstore
-            .insert_shreds(shreds, None, false)
+            .insert_shreds(shreds, false)
             .expect("Expect successful ledger write");
 
         let mut rv = handler
@@ -2668,7 +2668,7 @@ mod tests {
         let (shreds, _) = make_many_slot_entries(slot, num_slots, 5);
 
         blockstore
-            .insert_shreds(shreds, None, false)
+            .insert_shreds(shreds, false)
             .expect("Expect successful ledger write");
 
         // We don't have slot `slot + num_slots`, so we don't know how to service this request
@@ -2724,7 +2724,7 @@ mod tests {
         // covers packet size check in repair_response_packet_from_bytes.
         shreds.retain(|shred| shred.slot() != 1);
         blockstore
-            .insert_shreds(shreds, None, false)
+            .insert_shreds(shreds, false)
             .expect("Expect successful ledger write");
         let nonce = 42;
         // Make sure repair response is corrupted
@@ -2781,7 +2781,7 @@ mod tests {
         let (shreds, _) = make_many_slot_entries(slot, num_slots, 5);
 
         blockstore
-            .insert_shreds(shreds, None, false)
+            .insert_shreds(shreds, false)
             .expect("Expect successful ledger write");
 
         // We don't have slot `slot + num_slots`, so we return empty

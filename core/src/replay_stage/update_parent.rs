@@ -113,7 +113,7 @@ fn try_restart_slot_from_update_parent(
     migration_status: &MigrationStatus,
     source: &str,
 ) -> bool {
-    if !migration_status.should_allow_fast_leader_handover(slot) {
+    if !migration_status.should_allow_block_markers(slot) {
         return false;
     }
     if blockstore.is_dead(slot) {
@@ -135,10 +135,10 @@ fn try_restart_slot_from_update_parent(
     if bank.is_none() && !progress.contains_key(&slot) {
         return false;
     }
-    if bank
-        .as_ref()
-        .is_some_and(|bank| ReplayStage::leader_is_me(bank.leader_id(), my_pubkey))
-    {
+    if bank.as_ref().is_some_and(|bank| {
+        ReplayStage::leader_is_me(bank.leader_id(), my_pubkey)
+            || !bank.feature_set.snapshot().alpenglow_fast_leader_handover
+    }) {
         return false;
     }
     if progress.get(&slot).is_some_and(|progress| {

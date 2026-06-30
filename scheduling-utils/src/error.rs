@@ -87,6 +87,9 @@ pub fn transaction_error_to_not_included_reason(error: &TransactionError) -> u8 
         TransactionError::ProgramCacheHitMaxLimit => {
             not_included_reasons::PROGRAM_CACHE_HIT_MAX_LIMIT
         }
+        TransactionError::InstructionsSysvarOverflow => {
+            not_included_reasons::INSTRUCTIONS_SYSVAR_OVERFLOW
+        }
 
         // SPECIAL CASE - CommitCancelled is an internal error reused to avoid breaking sdk
         TransactionError::CommitCancelled => not_included_reasons::ALL_OR_NOTHING_BATCH_FAILURE,

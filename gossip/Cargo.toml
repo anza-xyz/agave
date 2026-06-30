@@ -11,6 +11,8 @@ edition = { workspace = true }
 
 [package.metadata.docs.rs]
 targets = ["x86_64-unknown-linux-gnu"]
+all-features = true
+rustdoc-args = ["--cfg=docsrs"]
 
 [lib]
 bench = false
@@ -42,6 +44,7 @@ agave-random = { workspace = true }
 arc-swap = { workspace = true }
 assert_matches = { workspace = true }
 bv = { workspace = true, features = ["serde"] }
+bytes = { workspace = true }
 crossbeam-channel = { workspace = true }
 ed25519-dalek = { workspace = true }
 flate2 = { workspace = true }

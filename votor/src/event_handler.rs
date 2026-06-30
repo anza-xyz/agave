@@ -231,11 +231,11 @@ impl EventHandler {
         Self::check_pending_blocks(my_pubkey, &mut local_context.pending_blocks, vctx, votes)?;
         let root_bank = vctx.sharable_banks.root();
         let delta_block = Duration::from_nanos_u128(root_bank.ns_per_slot_at_slot(slot));
-        let delta_first_slice = delta_block;
+        let delta_first_fec_set = delta_block;
         let timeout_inserted = timer_manager.write().set_timeouts(
             slot,
             local_context.standstill_slot,
-            delta_first_slice,
+            delta_first_fec_set,
             delta_block,
         );
         if timeout_inserted {
@@ -450,15 +450,15 @@ impl EventHandler {
                     stats,
                 );
 
-                if let Some(slot) = *standstill_slot {
-                    if block.slot > slot {
-                        *standstill_slot = None;
-                        info!(
-                            "{my_pubkey}: Standstill initially detected at slot={slot} has ended \
-                             at slot={}. Ending timeout extension",
-                            block.slot
-                        );
-                    }
+                if let Some(slot) = *standstill_slot
+                    && block.slot > slot
+                {
+                    *standstill_slot = None;
+                    info!(
+                        "{my_pubkey}: Standstill initially detected at slot={slot} has ended at \
+                         slot={}. Ending timeout extension",
+                        block.slot
+                    );
                 }
 
                 if let Some(parent_block) =

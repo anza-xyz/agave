@@ -6,7 +6,7 @@ here="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 source "$here"/common.sh
 
 program="${solana_transaction_bench}"
-default_staked_identity_file_count=4
+default_staked_identity_file_count=1
 
 usage() {
   if [[ -n $1 ]]; then
@@ -24,13 +24,18 @@ usage: $0 [extra args]
    --url http://127.0.0.1:8899
    --authority ${SOLANA_CONFIG_DIR}/faucet.json
    run
-   --num-payers 256
+   --num-payers 1024
    --payer-account-balance 10SOL
    --duration 90
    --bind 127.0.0.1:0
+   --num-max-open-connections 8
+   --workers-pull-size 8
+   --lamports-to-transfer 65536
+   --num-send-instructions-per-tx 1
+   --send-fanout 1
    --staked-identity-file ${SOLANA_CONFIG_DIR}/bootstrap-validator/identity.json
      (repeated ${default_staked_identity_file_count} times)
-   --transfer-tx-cu-budget 600
+   --transfer-tx-cu-budget 400
    pinned-leader-tracker <TPU from getClusterNodes tpuQuic>
 
  Examples:
@@ -194,16 +199,21 @@ if ! contains_url_arg "${global_args[@]}"; then
 fi
 add_default_arg global_args --authority "${SOLANA_CONFIG_DIR}/faucet.json"
 
-add_default_arg run_args --num-payers 256
+add_default_arg run_args --num-payers 1024
 add_default_arg run_args --payer-account-balance 10SOL
 add_default_arg run_args --duration 90
 add_default_arg run_args --bind "127.0.0.1:0"
+add_default_arg run_args --num-max-open-connections 8
+add_default_arg run_args --workers-pull-size 8
+add_default_arg run_args --lamports-to-transfer 65536
+add_default_arg run_args --num-send-instructions-per-tx 1
+add_default_arg run_args --send-fanout 1
 
 for ((i = 0; i < default_staked_identity_file_count; i++)); do
   run_args+=(--staked-identity-file "${SOLANA_CONFIG_DIR}/bootstrap-validator/identity.json")
 done
 
-add_default_arg run_args --transfer-tx-cu-budget 600
+add_default_arg run_args --transfer-tx-cu-budget 400
 
 if [[ ${#leader_tracker_args[@]} -eq 0 ]]; then
   rpc_url=$(get_rpc_url)

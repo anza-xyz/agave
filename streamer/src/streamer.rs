@@ -11,6 +11,7 @@ use {
     },
     crossbeam_channel::{Receiver, RecvTimeoutError, SendError, Sender, TrySendError},
     histogram::Histogram,
+    solana_measure::measure::Measure,
     solana_net_utils::{
         SocketAddrSpace,
         multihomed_sockets::{
@@ -19,11 +20,10 @@ use {
         },
     },
     solana_pubkey::Pubkey,
-    solana_time_utils::timestamp,
     std::{
         cmp::Reverse,
         collections::HashMap,
-        net::{IpAddr, UdpSocket},
+        net::{IpAddr, SocketAddr, UdpSocket},
         sync::{
             Arc,
             atomic::{AtomicBool, AtomicUsize, Ordering},
@@ -452,26 +452,6 @@ impl StakedNodes {
     }
 }
 
-fn recv_send(
-    sock: &UdpSocket,
-    r: &PacketBatchReceiver,
-    socket_addr_space: &SocketAddrSpace,
-    stats: &mut Option<StreamerSendStats>,
-) -> Result<()> {
-    let timer = Duration::new(1, 0);
-    let packet_batch = r.recv_timeout(timer)?;
-    if let Some(stats) = stats {
-        packet_batch.iter().for_each(|p| stats.record(p));
-    }
-    let packets = packet_batch.iter().filter_map(|pkt| {
-        let addr = pkt.meta().socket_addr();
-        let data = pkt.data(..)?;
-        socket_addr_space.check(&addr).then_some((data, addr))
-    });
-    batch_send(sock, packets.collect::<Vec<_>>())?;
-    Ok(())
-}
-
 pub fn recv_packet_batches(
     recvr: &PacketBatchReceiver,
     soft_receive_limit: usize,
@@ -500,26 +480,27 @@ pub fn recv_packet_batches(
     Ok((packet_batches, num_packets, recv_duration))
 }
 
-pub fn responder_atomic(
-    name: &'static str,
-    sockets: Arc<[UdpSocket]>,
-    bind_ip_addrs: Arc<BindIpAddrs>,
-    r: PacketBatchReceiver,
+struct ServeRepairSocketProvider {
+    socket: Arc<UdpSocket>,
     socket_addr_space: SocketAddrSpace,
-    stats_reporter_sender: Option<Sender<Box<dyn FnOnce() + Send>>>,
-) -> JoinHandle<()> {
-    Builder::new()
-        .name(format!("solRspndr{name}"))
-        .spawn(move || {
-            responder_loop(
-                MultihomedSocketProvider::new(sockets, bind_ip_addrs),
-                name,
-                r,
-                socket_addr_space,
-                stats_reporter_sender,
-            );
-        })
-        .unwrap()
+}
+
+impl ResponseSender for ServeRepairSocketProvider {
+    fn send_batch(&self, batch: PacketBatch) -> std::result::Result<(), SendPktsError> {
+        let packets = filter_packets_by_socket_addr_space(batch.iter(), &self.socket_addr_space);
+        batch_send(self.socket.as_ref(), packets.collect::<Vec<_>>())
+    }
+}
+
+pub fn filter_packets_by_socket_addr_space<'a>(
+    packets: impl Iterator<Item = PacketRef<'a>> + 'a,
+    socket_addr_space: &'a SocketAddrSpace,
+) -> impl Iterator<Item = (&'a [u8], SocketAddr)> + 'a {
+    packets.filter_map(move |pkt| {
+        let addr = pkt.meta().socket_addr();
+        let data = pkt.data(..)?;
+        socket_addr_space.check(&addr).then_some((data, addr))
+    })
 }
 
 pub fn responder(
@@ -533,26 +514,40 @@ pub fn responder(
         .name(format!("solRspndr{name}"))
         .spawn(move || {
             responder_loop(
-                FixedSocketProvider::new(sock),
                 name,
                 r,
-                socket_addr_space,
+                ServeRepairSocketProvider {
+                    socket: sock,
+                    socket_addr_space,
+                },
                 stats_reporter_sender,
             );
         })
         .unwrap()
 }
 
-fn responder_loop<P: SocketProvider>(
-    provider: P,
+pub trait ResponseSender {
+    /// Send a batch of packets.
+    ///
+    /// Returns Ok if all the packets with valid destination within batch were sent successfully,
+    /// and returns an error if any packet within the batch failed to send with number of failed
+    /// packets.
+    fn send_batch(&self, batch: PacketBatch) -> std::result::Result<(), SendPktsError>;
+}
+
+pub fn responder_loop<G: ResponseSender>(
     name: &'static str,
     r: PacketBatchReceiver,
-    socket_addr_space: SocketAddrSpace,
+    sender: G,
     stats_reporter_sender: Option<Sender<Box<dyn FnOnce() + Send>>>,
 ) {
+    const SEND_REPORTING_INTERVAL: Duration = Duration::from_secs(1);
     let mut errors = 0;
     let mut last_error = None;
-    let mut last_print = 0;
+    let mut send_elapsed_us: u64 = 0;
+    let mut send_batch_count: u64 = 0;
+
+    let mut now = Instant::now();
     let mut stats = None;
 
     if stats_reporter_sender.is_some() {
@@ -560,28 +555,58 @@ fn responder_loop<P: SocketProvider>(
     }
 
     loop {
-        let sock = provider.current_socket_ref();
-        if let Err(e) = recv_send(sock, &r, &socket_addr_space, &mut stats) {
-            match e {
-                StreamerError::RecvTimeout(RecvTimeoutError::Disconnected) => break,
-                StreamerError::RecvTimeout(RecvTimeoutError::Timeout) => (),
-                _ => {
-                    errors += 1;
-                    last_error = Some(e);
-                }
+        let timer = Duration::new(1, 0);
+        let packet_batch = match r.recv_timeout(timer) {
+            Ok(batch) => Some(batch),
+            Err(RecvTimeoutError::Disconnected) => break,
+            Err(RecvTimeoutError::Timeout) => None,
+        };
+        if let Some(packet_batch) = packet_batch {
+            if let Some(stats) = stats.as_mut() {
+                packet_batch.iter().for_each(|p| stats.record(p));
             }
-        }
-        let now = timestamp();
-        if now - last_print > 1000 && errors != 0 {
-            datapoint_info!(name, ("errors", errors, i64),);
-            info!("{name} last-error: {last_error:?} count: {errors}");
-            last_print = now;
-            errors = 0;
-        }
-        if let Some(ref stats_reporter_sender) = stats_reporter_sender {
-            if let Some(ref mut stats) = stats {
-                stats.maybe_submit(name, stats_reporter_sender);
+            let mut measure_send = Measure::start("send batch");
+            if let Err(e) = sender.send_batch(packet_batch) {
+                errors += 1;
+                last_error = Some(StreamerError::SendPktsError(e));
             }
+            measure_send.stop();
+            send_elapsed_us = send_elapsed_us.saturating_add(measure_send.as_us());
+            send_batch_count = send_batch_count.saturating_add(1);
+        }
+
+        // Metrics reporting
+        let sample_duration = now.elapsed();
+        if sample_duration > SEND_REPORTING_INTERVAL {
+            datapoint_info!(
+                name,
+                // how long it took to send batches of packets during this interval
+                ("streamer-send-egress_time_us", send_elapsed_us as i64, i64),
+                (
+                    "streamer-send-egress_batch_count",
+                    send_batch_count as i64,
+                    i64
+                ),
+                (
+                    "streamer-send-egress_sample_duration_ms",
+                    sample_duration.as_millis() as i64,
+                    i64
+                ),
+            );
+            send_elapsed_us = 0;
+            send_batch_count = 0;
+            if errors != 0 {
+                datapoint_info!(name, ("errors", errors, i64),);
+                info!("{name} last-error: {last_error:?} count: {errors}");
+                errors = 0;
+                last_error = None;
+            }
+            now = Instant::now();
+        }
+        if let Some(ref stats_reporter_sender) = stats_reporter_sender
+            && let Some(ref mut stats) = stats
+        {
+            stats.maybe_submit(name, stats_reporter_sender);
         }
     }
 }

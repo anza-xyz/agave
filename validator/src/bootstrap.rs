@@ -166,6 +166,7 @@ fn start_gossip_node(
         &cluster_info,
         None,
         gossip_sockets,
+        None,
         gossip_validators,
         should_check_duplicate_instance,
         None,
@@ -339,10 +340,10 @@ pub fn fail_rpc_node(
     blacklisted_rpc_nodes: &mut HashSet<Pubkey, RandomState>,
 ) {
     warn!("{err}");
-    if let Some(known_validators) = known_validators {
-        if known_validators.contains(rpc_id) {
-            return;
-        }
+    if let Some(known_validators) = known_validators
+        && known_validators.contains(rpc_id)
+    {
+        return;
     }
 
     info!("Excluding {rpc_id} as a future RPC candidate");
@@ -1243,23 +1244,22 @@ fn download_snapshot(
                 && download_progress.estimated_remaining_time > 60_f32
                 && *download_abort_count < maximum_snapshot_download_abort
             {
-                if let Some(ref known_validators) = validator_config.known_validators {
-                    if known_validators.contains(rpc_contact_info.pubkey())
-                        && known_validators.len() == 1
-                        && bootstrap_config.only_known_rpc
-                    {
-                        warn!(
-                            "The snapshot download is too slow, throughput: {} < min speed {} \
-                             bytes/sec, but will NOT abort and try a different node as it is the \
-                             only known validator and the --only-known-rpc flag is set. Abort \
-                             count: {}, Progress detail: {:?}",
-                            download_progress.last_throughput,
-                            minimal_snapshot_download_speed,
-                            download_abort_count,
-                            download_progress,
-                        );
-                        return true; // Do not abort download from the one-and-only known validator
-                    }
+                if let Some(ref known_validators) = validator_config.known_validators
+                    && known_validators.contains(rpc_contact_info.pubkey())
+                    && known_validators.len() == 1
+                    && bootstrap_config.only_known_rpc
+                {
+                    warn!(
+                        "The snapshot download is too slow, throughput: {} < min speed {} \
+                         bytes/sec, but will NOT abort and try a different node as it is the only \
+                         known validator and the --only-known-rpc flag is set. Abort count: {}, \
+                         Progress detail: {:?}",
+                        download_progress.last_throughput,
+                        minimal_snapshot_download_speed,
+                        download_abort_count,
+                        download_progress,
+                    );
+                    return true; // Do not abort download from the one-and-only known validator
                 }
                 warn!(
                     "The snapshot download is too slow, throughput: {} < min speed {} bytes/sec, \

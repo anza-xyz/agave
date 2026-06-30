@@ -52,6 +52,7 @@ pub struct FeatureSnapshot {
     pub fix_alt_bn128_multiplication_input_length: bool,
     pub formalize_loaded_transaction_data_size: bool,
     pub alpenglow: bool,
+    pub alpenglow_fast_leader_handover: bool,
     pub disable_zk_elgamal_proof_program: bool,
     pub reenable_zk_elgamal_proof_program: bool,
     pub raise_block_limits_to_100m: bool,
@@ -156,6 +157,7 @@ impl From<&AHashMap<Pubkey, u64>> for FeatureSnapshot {
                 &formalize_loaded_transaction_data_size::ID,
             ),
             alpenglow: is_active(&alpenglow::ID),
+            alpenglow_fast_leader_handover: is_active(&alpenglow_fast_leader_handover::ID),
             disable_zk_elgamal_proof_program: is_active(&disable_zk_elgamal_proof_program::ID),
             reenable_zk_elgamal_proof_program: is_active(&reenable_zk_elgamal_proof_program::ID),
             raise_block_limits_to_100m: is_active(&raise_block_limits_to_100m::ID),
@@ -1311,7 +1313,7 @@ pub mod formalize_loaded_transaction_data_size {
 }
 
 pub mod alpenglow {
-    solana_pubkey::declare_id!("mustRekeyVm2QHYB3JPefBiU4BY3Z6JkW2k3Scw5GWP");
+    solana_pubkey::declare_id!("a2penGLz8Vm2QHYB3JPefBiU4BY3Z6JkW2k3Scw5GWP");
 }
 
 pub mod disable_zk_elgamal_proof_program {
@@ -1510,7 +1512,7 @@ pub mod relax_post_exec_min_balance_check {
 }
 
 pub mod enable_tx_v1 {
-    solana_pubkey::declare_id!("txv1hPU76QFBVeq3942jJ65e9Em2xbdbCJrzX8sM4U4");
+    solana_pubkey::declare_id!("txv1aq4pp281K9um3tnPgkfX8UqtFT6wcVW3hNezGLL");
 }
 
 pub mod define_ltds_fee_only_semantics {
@@ -1545,6 +1547,10 @@ pub mod upgrade_bpf_stake_program_to_v5_1 {
     pub mod buffer {
         solana_pubkey::declare_id!("p51x11QCYMHwuVS1MBcLHKb3MezWyqGS5BEB41CA1dk");
     }
+}
+
+pub mod alpenglow_fast_leader_handover {
+    solana_pubkey::declare_id!("FLHoAWBDjNh6zwmJ5i1NKK4KyD8otAiv7XxvmnFnVnKH");
 }
 
 pub static FEATURE_NAMES: LazyLock<AHashMap<Pubkey, &'static str>> = LazyLock::new(|| {
@@ -2620,6 +2626,10 @@ pub static FEATURE_NAMES: LazyLock<AHashMap<Pubkey, &'static str>> = LazyLock::n
         (
             upgrade_bpf_stake_program_to_v5_1::id(),
             "SIMD-0391: Upgrade BPF Stake Program to v5.1.0 (fixed-point warmup/cooldown)",
+        ),
+        (
+            alpenglow_fast_leader_handover::id(),
+            "SIMD-0326: Alpenglow fast leader handover",
         ),
         /*************** ADD NEW FEATURES HERE ***************/
         /***** ADD NEW FEATURE BOOL TO `FeatureSnapshot` *****/

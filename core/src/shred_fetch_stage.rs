@@ -108,10 +108,10 @@ impl ShredFetchStage {
                     packet.meta_mut().flags.insert(flags);
                 }
             }
-            if shred_filter_ctx.maybe_submit_stats(name, STATS_SUBMIT_CADENCE) {
-                if let Some(stats) = recvr_stats.as_ref() {
-                    stats.report();
-                }
+            if shred_filter_ctx.maybe_submit_stats(name, STATS_SUBMIT_CADENCE)
+                && let Some(stats) = recvr_stats.as_ref()
+            {
+                stats.report();
             }
             if let Err(send_err) = sendr.try_send(packet_batch) {
                 match send_err {

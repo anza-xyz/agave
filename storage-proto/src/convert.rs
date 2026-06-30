@@ -800,78 +800,78 @@ impl TryFrom<tx_by_addr::TransactionError> for TransactionError {
     type Error = &'static str;
 
     fn try_from(transaction_error: tx_by_addr::TransactionError) -> Result<Self, Self::Error> {
-        if transaction_error.transaction_error == 8 {
-            if let Some(instruction_error) = transaction_error.instruction_error {
-                if let Some(custom) = instruction_error.custom {
-                    return Ok(TransactionError::InstructionError(
-                        instruction_error.index as u8,
-                        InstructionError::Custom(custom.custom),
-                    ));
-                }
-
-                let ie = match instruction_error.error {
-                    0 => InstructionError::GenericError,
-                    1 => InstructionError::InvalidArgument,
-                    2 => InstructionError::InvalidInstructionData,
-                    3 => InstructionError::InvalidAccountData,
-                    4 => InstructionError::AccountDataTooSmall,
-                    5 => InstructionError::InsufficientFunds,
-                    6 => InstructionError::IncorrectProgramId,
-                    7 => InstructionError::MissingRequiredSignature,
-                    8 => InstructionError::AccountAlreadyInitialized,
-                    9 => InstructionError::UninitializedAccount,
-                    10 => InstructionError::UnbalancedInstruction,
-                    11 => InstructionError::ModifiedProgramId,
-                    12 => InstructionError::ExternalAccountLamportSpend,
-                    13 => InstructionError::ExternalAccountDataModified,
-                    14 => InstructionError::ReadonlyLamportChange,
-                    15 => InstructionError::ReadonlyDataModified,
-                    16 => InstructionError::DuplicateAccountIndex,
-                    17 => InstructionError::ExecutableModified,
-                    18 => InstructionError::RentEpochModified,
-                    #[allow(deprecated)]
-                    19 => InstructionError::NotEnoughAccountKeys,
-                    20 => InstructionError::AccountDataSizeChanged,
-                    21 => InstructionError::AccountNotExecutable,
-                    22 => InstructionError::AccountBorrowFailed,
-                    23 => InstructionError::AccountBorrowOutstanding,
-                    24 => InstructionError::DuplicateAccountOutOfSync,
-                    26 => InstructionError::InvalidError,
-                    27 => InstructionError::ExecutableDataModified,
-                    28 => InstructionError::ExecutableLamportChange,
-                    29 => InstructionError::ExecutableAccountNotRentExempt,
-                    30 => InstructionError::UnsupportedProgramId,
-                    31 => InstructionError::CallDepth,
-                    32 => InstructionError::MissingAccount,
-                    33 => InstructionError::ReentrancyNotAllowed,
-                    34 => InstructionError::MaxSeedLengthExceeded,
-                    35 => InstructionError::InvalidSeeds,
-                    36 => InstructionError::InvalidRealloc,
-                    37 => InstructionError::ComputationalBudgetExceeded,
-                    38 => InstructionError::PrivilegeEscalation,
-                    39 => InstructionError::ProgramEnvironmentSetupFailure,
-                    40 => InstructionError::ProgramFailedToComplete,
-                    41 => InstructionError::ProgramFailedToCompile,
-                    42 => InstructionError::Immutable,
-                    43 => InstructionError::IncorrectAuthority,
-                    44 => InstructionError::BorshIoError,
-                    45 => InstructionError::AccountNotRentExempt,
-                    46 => InstructionError::InvalidAccountOwner,
-                    47 => InstructionError::ArithmeticOverflow,
-                    48 => InstructionError::UnsupportedSysvar,
-                    49 => InstructionError::IllegalOwner,
-                    50 => InstructionError::MaxAccountsDataAllocationsExceeded,
-                    51 => InstructionError::MaxAccountsExceeded,
-                    52 => InstructionError::MaxInstructionTraceLengthExceeded,
-                    53 => InstructionError::BuiltinProgramsMustConsumeComputeUnits,
-                    _ => return Err("Invalid InstructionError"),
-                };
-
+        if transaction_error.transaction_error == 8
+            && let Some(instruction_error) = transaction_error.instruction_error
+        {
+            if let Some(custom) = instruction_error.custom {
                 return Ok(TransactionError::InstructionError(
                     instruction_error.index as u8,
-                    ie,
+                    InstructionError::Custom(custom.custom),
                 ));
             }
+
+            let ie = match instruction_error.error {
+                0 => InstructionError::GenericError,
+                1 => InstructionError::InvalidArgument,
+                2 => InstructionError::InvalidInstructionData,
+                3 => InstructionError::InvalidAccountData,
+                4 => InstructionError::AccountDataTooSmall,
+                5 => InstructionError::InsufficientFunds,
+                6 => InstructionError::IncorrectProgramId,
+                7 => InstructionError::MissingRequiredSignature,
+                8 => InstructionError::AccountAlreadyInitialized,
+                9 => InstructionError::UninitializedAccount,
+                10 => InstructionError::UnbalancedInstruction,
+                11 => InstructionError::ModifiedProgramId,
+                12 => InstructionError::ExternalAccountLamportSpend,
+                13 => InstructionError::ExternalAccountDataModified,
+                14 => InstructionError::ReadonlyLamportChange,
+                15 => InstructionError::ReadonlyDataModified,
+                16 => InstructionError::DuplicateAccountIndex,
+                17 => InstructionError::ExecutableModified,
+                18 => InstructionError::RentEpochModified,
+                #[allow(deprecated)]
+                19 => InstructionError::NotEnoughAccountKeys,
+                20 => InstructionError::AccountDataSizeChanged,
+                21 => InstructionError::AccountNotExecutable,
+                22 => InstructionError::AccountBorrowFailed,
+                23 => InstructionError::AccountBorrowOutstanding,
+                24 => InstructionError::DuplicateAccountOutOfSync,
+                26 => InstructionError::InvalidError,
+                27 => InstructionError::ExecutableDataModified,
+                28 => InstructionError::ExecutableLamportChange,
+                29 => InstructionError::ExecutableAccountNotRentExempt,
+                30 => InstructionError::UnsupportedProgramId,
+                31 => InstructionError::CallDepth,
+                32 => InstructionError::MissingAccount,
+                33 => InstructionError::ReentrancyNotAllowed,
+                34 => InstructionError::MaxSeedLengthExceeded,
+                35 => InstructionError::InvalidSeeds,
+                36 => InstructionError::InvalidRealloc,
+                37 => InstructionError::ComputationalBudgetExceeded,
+                38 => InstructionError::PrivilegeEscalation,
+                39 => InstructionError::ProgramEnvironmentSetupFailure,
+                40 => InstructionError::ProgramFailedToComplete,
+                41 => InstructionError::ProgramFailedToCompile,
+                42 => InstructionError::Immutable,
+                43 => InstructionError::IncorrectAuthority,
+                44 => InstructionError::BorshIoError,
+                45 => InstructionError::AccountNotRentExempt,
+                46 => InstructionError::InvalidAccountOwner,
+                47 => InstructionError::ArithmeticOverflow,
+                48 => InstructionError::UnsupportedSysvar,
+                49 => InstructionError::IllegalOwner,
+                50 => InstructionError::MaxAccountsDataAllocationsExceeded,
+                51 => InstructionError::MaxAccountsExceeded,
+                52 => InstructionError::MaxInstructionTraceLengthExceeded,
+                53 => InstructionError::BuiltinProgramsMustConsumeComputeUnits,
+                _ => return Err("Invalid InstructionError"),
+            };
+
+            return Ok(TransactionError::InstructionError(
+                instruction_error.index as u8,
+                ie,
+            ));
         }
 
         if let Some(transaction_details) = transaction_error.transaction_details {
@@ -932,6 +932,7 @@ impl TryFrom<tx_by_addr::TransactionError> for TransactionError {
             36 => TransactionError::UnbalancedTransaction,
             37 => TransactionError::ProgramCacheHitMaxLimit,
             38 => TransactionError::CommitCancelled,
+            39 => TransactionError::InstructionsSysvarOverflow,
             _ => return Err("Invalid TransactionError"),
         })
     }
@@ -1055,6 +1056,9 @@ impl From<TransactionError> for tx_by_addr::TransactionError {
                 }
                 TransactionError::CommitCancelled => {
                     tx_by_addr::TransactionErrorType::CommitCancelled
+                }
+                TransactionError::InstructionsSysvarOverflow => {
+                    tx_by_addr::TransactionErrorType::InstructionsSysvarOverflow
                 }
             } as i32,
             instruction_error: match transaction_error {

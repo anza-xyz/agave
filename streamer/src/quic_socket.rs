@@ -7,7 +7,6 @@ use {
     },
     bytes::Bytes,
     crossbeam_channel::TrySendError,
-    nix::ifaddrs::getifaddrs,
     quinn::{
         AsyncUdpSocket, Runtime, TokioRuntime, UdpPoller,
         udp::{EcnCodepoint as QuinnEcnCodepoint, RecvMeta, Transmit},
@@ -17,10 +16,7 @@ use {
         io::{self, IoSliceMut},
         net::{IpAddr, Ipv4Addr, SocketAddr, SocketAddrV4},
         pin::Pin,
-        sync::{
-            Arc,
-            atomic::{AtomicUsize, Ordering},
-        },
+        sync::Arc,
         task::{Context, Poll},
     },
 };
@@ -151,8 +147,7 @@ impl AsyncUdpSocket for QuicXdpTxSocket {
         // `QuicXdpSender` could enqueue, throughput may be temporarily suboptimal until the UDP
         // socket becomes writable. The reverse mismatch is also possible: the UDP poller is ready
         // but the selected `QuicXdpSender` channel is full. In this case `try_send` fails with
-        // `WouldBlock`, and the caller invokes `poll_writable` again, which can select another
-        // channel in the next round.
+        // `WouldBlock`, and the caller invokes `poll_writable` again before retrying.
         self.udp_socket.clone().create_io_poller()
     }
 
@@ -230,24 +225,20 @@ impl AsyncUdpSocket for QuicXdpTxSocket {
     }
 }
 
-/// [`QuicXdpSender`] wraps [`XdpSender`] and provides round-robin sender selection.
+/// [`QuicXdpSender`] wraps [`XdpSender`] and provides destination-based sender selection.
 ///
-/// This wrapper provides a simple round-robin sender index for each packet sent. It is required
-/// because `AsyncUdpSocket::try_send` does not provide a way to specify the sender index. If the
-/// `XdpSender` has only one sender, the index is always 0.
+/// This wrapper maps each remote IP to a stable XDP sender index. Keeping packets for the same
+/// remote host on one TX queue avoids queue-induced reordering within packet bursts.
 struct QuicXdpSender {
     xdp_sender: XdpSender,
     src_addr: SocketAddrV4,
-    next_sender_index: AtomicUsize,
 }
 
 impl QuicXdpSender {
     fn new(xdp_sender: XdpSender, src_addr: SocketAddrV4) -> Self {
-        let next_sender_index = AtomicUsize::new(0);
         Self {
             xdp_sender,
             src_addr,
-            next_sender_index,
         }
     }
 
@@ -258,22 +249,31 @@ impl QuicXdpSender {
         ecn: Option<QuinnEcnCodepoint>,
         payload: Bytes,
     ) -> Result<(), TrySendError<BytesTxPacket>> {
-        let sender_idx = self.next_sender_index.fetch_add(1, Ordering::Relaxed);
+        // Keep packets for the same remote IP on the same XDP TX queue when there is more than
+        // one queue. Avoid hashing entirely for the common single-sender case.
+        let sender_key = if self.xdp_sender.len() == 1 {
+            0
+        } else {
+            fold_xor(destination_ip_key(&destination)) as usize
+        };
 
         let src_ip = src_ip.unwrap_or(*self.src_addr.ip());
-        // Respect Quinn's per-packet source IP, used for wildcard-bound sockets, while
-        // keeping the port from `self.src_addr`.
+        // Respect Quinn's per-packet source IP, used for wildcard-bound sockets, while keeping the
+        // port from `self.src_addr`.
         let src_addr = SocketAddrV4::new(src_ip, self.src_addr.port());
         let ecn = ecn.map(quinn_ecn_to_xdp);
 
         let mut packet = BytesTxPacket::new(src_addr, destination, ecn, payload);
         packet.set_allow_mtu_overflow(true);
-        self.xdp_sender.try_send(sender_idx, packet)
+        self.xdp_sender.try_send(sender_key, packet)
     }
 }
 
 /// Collects IPv4 addresses assigned to local network interfaces.
+#[cfg(target_os = "linux")]
 fn collect_local_ipv4_ips() -> io::Result<Vec<Ipv4Addr>> {
+    use nix::ifaddrs::getifaddrs;
+
     let mut ips = Vec::new();
     for ifa in getifaddrs().map_err(io::Error::other)? {
         let Some(addr) = ifa.address else { continue };
@@ -287,11 +287,31 @@ fn collect_local_ipv4_ips() -> io::Result<Vec<Ipv4Addr>> {
     Ok(ips)
 }
 
+#[cfg(not(target_os = "linux"))]
+fn collect_local_ipv4_ips() -> io::Result<Vec<Ipv4Addr>> {
+    Ok(Vec::new())
+}
+
 #[inline]
 const fn quinn_ecn_to_xdp(ecn: QuinnEcnCodepoint) -> XdpEcnCodepoint {
     match ecn {
         QuinnEcnCodepoint::Ect0 => XdpEcnCodepoint::Ect0,
         QuinnEcnCodepoint::Ect1 => XdpEcnCodepoint::Ect1,
         QuinnEcnCodepoint::Ce => XdpEcnCodepoint::Ce,
+    }
+}
+
+#[inline]
+fn fold_xor(mut x: u32) -> u32 {
+    x ^= x >> 16;
+    x ^= x >> 8;
+    x
+}
+
+#[inline]
+fn destination_ip_key(destination: &SocketAddr) -> u32 {
+    match destination {
+        SocketAddr::V4(destination) => u32::from(*destination.ip()),
+        SocketAddr::V6(_) => unreachable!("IPv6 destinations are rejected before AF_XDP send"),
     }
 }

@@ -61,7 +61,7 @@ impl ThresholdDecision {
     }
 }
 
-#[cfg_attr(feature = "frozen-abi", derive(AbiExample))]
+#[cfg_attr(feature = "frozen-abi", derive(AbiExample, StableAbi, StableAbiSample))]
 #[derive(PartialEq, Eq, Clone, Debug)]
 pub enum SwitchForkDecision {
     SwitchProof(Hash),
@@ -200,7 +200,7 @@ impl TowerVersions {
     }
 }
 
-#[cfg_attr(feature = "frozen-abi", derive(AbiExample))]
+#[cfg_attr(feature = "frozen-abi", derive(AbiExample, StableAbi, StableAbiSample))]
 #[derive(PartialEq, Eq, Debug, Default, Clone, Copy)]
 pub(crate) enum BlockhashStatus {
     /// No vote since restart
@@ -498,14 +498,14 @@ impl Tower {
                 vote_slots.insert(slot);
             }
 
-            if start_root != vote_state.root_slot {
-                if let Some(root) = start_root {
-                    // The account's prior root can be older than this fork's root; clamp to
-                    // the same range for the same reason as above.
-                    if root > root_slot {
-                        trace!("ROOT: {root}");
-                        vote_slots.insert(root);
-                    }
+            if start_root != vote_state.root_slot
+                && let Some(root) = start_root
+            {
+                // The account's prior root can be older than this fork's root; clamp to
+                // the same range for the same reason as above.
+                if root > root_slot {
+                    trace!("ROOT: {root}");
+                    vote_slots.insert(root);
                 }
             }
             if let Some(root) = vote_state.root_slot {
@@ -703,15 +703,15 @@ impl Tower {
         vote_hash: Hash,
         block_id: Hash,
     ) -> Option<Slot> {
-        if let Some(last_voted_slot) = self.vote_state.last_voted_slot() {
-            if vote_slot <= last_voted_slot {
-                panic!(
-                    "Error while recording vote {} {} in local tower {:?}",
-                    vote_slot,
-                    vote_hash,
-                    VoteError::VoteTooOld
-                );
-            }
+        if let Some(last_voted_slot) = self.vote_state.last_voted_slot()
+            && vote_slot <= last_voted_slot
+        {
+            panic!(
+                "Error while recording vote {} {} in local tower {:?}",
+                vote_slot,
+                vote_hash,
+                VoteError::VoteTooOld
+            );
         }
 
         trace!("{} record_vote for {}", self.node_pubkey, vote_slot);
@@ -807,10 +807,10 @@ impl Tower {
             if slot <= last_voted_slot {
                 return false;
             }
-        } else if let Some(root) = self.vote_state.root_slot {
-            if slot <= root {
-                return false;
-            }
+        } else if let Some(root) = self.vote_state.root_slot
+            && slot <= root
+        {
+            return false;
         }
         true
     }
@@ -841,15 +841,15 @@ impl Tower {
             }
         }
 
-        if let Some(root_slot) = vote_state.root_slot {
-            if slot != root_slot {
-                // This case should never happen because bank forks purges all
-                // non-descendants of the root every time root is set
-                assert!(
-                    ancestors.contains(&root_slot),
-                    "ancestors: {ancestors:?}, slot: {slot} root: {root_slot}"
-                );
-            }
+        if let Some(root_slot) = vote_state.root_slot
+            && slot != root_slot
+        {
+            // This case should never happen because bank forks purges all
+            // non-descendants of the root every time root is set
+            assert!(
+                ancestors.contains(&root_slot),
+                "ancestors: {ancestors:?}, slot: {slot} root: {root_slot}"
+            );
         }
 
         false
@@ -3333,11 +3333,11 @@ pub mod test {
         let blockstore = Blockstore::open(ledger_path.path()).unwrap();
 
         let (shreds, _) = make_slot_entries(1, 0, 42);
-        blockstore.insert_shreds(shreds, None, false).unwrap();
+        blockstore.insert_shreds(shreds, false).unwrap();
         let (shreds, _) = make_slot_entries(3, 1, 42);
-        blockstore.insert_shreds(shreds, None, false).unwrap();
+        blockstore.insert_shreds(shreds, false).unwrap();
         let (shreds, _) = make_slot_entries(4, 1, 42);
-        blockstore.insert_shreds(shreds, None, false).unwrap();
+        blockstore.insert_shreds(shreds, false).unwrap();
         assert!(!blockstore.is_root(0));
         assert!(!blockstore.is_root(1));
         assert!(!blockstore.is_root(3));
@@ -3369,11 +3369,11 @@ pub mod test {
         let blockstore = Blockstore::open(ledger_path.path()).unwrap();
 
         let (shreds, _) = make_slot_entries(1, 0, 42);
-        blockstore.insert_shreds(shreds, None, false).unwrap();
+        blockstore.insert_shreds(shreds, false).unwrap();
         let (shreds, _) = make_slot_entries(3, 1, 42);
-        blockstore.insert_shreds(shreds, None, false).unwrap();
+        blockstore.insert_shreds(shreds, false).unwrap();
         let (shreds, _) = make_slot_entries(4, 1, 42);
-        blockstore.insert_shreds(shreds, None, false).unwrap();
+        blockstore.insert_shreds(shreds, false).unwrap();
         blockstore.set_roots(std::iter::once(&3)).unwrap();
         assert!(!blockstore.is_root(0));
         assert!(!blockstore.is_root(1));
@@ -3397,9 +3397,9 @@ pub mod test {
         let blockstore = Blockstore::open(ledger_path.path()).unwrap();
 
         let (shreds, _) = make_slot_entries(1, 0, 42);
-        blockstore.insert_shreds(shreds, None, false).unwrap();
+        blockstore.insert_shreds(shreds, false).unwrap();
         let (shreds, _) = make_slot_entries(3, 1, 42);
-        blockstore.insert_shreds(shreds, None, false).unwrap();
+        blockstore.insert_shreds(shreds, false).unwrap();
         assert!(!blockstore.is_root(0));
         assert!(!blockstore.is_root(1));
         assert!(!blockstore.is_root(3));

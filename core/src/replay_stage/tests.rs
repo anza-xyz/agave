@@ -65,6 +65,7 @@ use {
     solana_sha256_hasher::hash,
     solana_shred_version::compute_shred_version,
     solana_signature::Signature,
+    solana_svm_timings::ExecuteTimings,
     solana_system_transaction as system_transaction,
     solana_tpu_client::tpu_client::{DEFAULT_TPU_CONNECTION_POOL_SIZE, DEFAULT_VOTE_USE_QUIC},
     solana_transaction_error::TransactionError,
@@ -216,7 +217,7 @@ fn insert_update_parent_slot(
         update_parent,
         replay_fec_set_index,
     ));
-    blockstore.insert_shreds(shreds, None, true).unwrap();
+    blockstore.insert_shreds(shreds, true).unwrap();
 }
 
 /// Build the minimal dead-slot context needed by focused replay tests.
@@ -412,7 +413,7 @@ fn test_child_slots_of_same_parent() {
         1,                            // parent_slot
         8,                            // num_entries
     );
-    blockstore.insert_shreds(shreds, None, false).unwrap();
+    blockstore.insert_shreds(shreds, false).unwrap();
     assert!(
         bank_forks
             .read()
@@ -445,7 +446,7 @@ fn test_child_slots_of_same_parent() {
     // Insert shreds for slot 2 * NUM_CONSECUTIVE_LEADER_SLOTS,
     // chaining to slot 1
     let (shreds, _) = make_slot_entries(2 * NUM_CONSECUTIVE_LEADER_SLOTS, 1, 8);
-    blockstore.insert_shreds(shreds, None, false).unwrap();
+    blockstore.insert_shreds(shreds, false).unwrap();
     assert!(
         bank_forks
             .read()
@@ -1018,7 +1019,7 @@ fn do_test_dead_slot_on_complete_bank(failure: CompleteBankFailure) {
         };
         let entries = make_complete_slot_entries(&bank, vec![tx]);
         let shreds = entries_to_test_shreds(&entries, slot, bank.parent_slot(), true, 0);
-        blockstore.insert_shreds(shreds, None, false).unwrap();
+        blockstore.insert_shreds(shreds, false).unwrap();
         let cluster_info = cluster_info_for_tests();
 
         ReplaySlotFromBlockstore {
@@ -1233,7 +1234,7 @@ where
             &validator_keypairs.values().next().unwrap().node_keypair,
             bank1.clone(),
         );
-        blockstore.insert_shreds(shreds, None, false).unwrap();
+        blockstore.insert_shreds(shreds, false).unwrap();
         let block_commitment_cache = Arc::new(RwLock::new(BlockCommitmentCache::default()));
         let exit = Arc::new(AtomicBool::new(false));
         let (replay_vote_sender, _replay_vote_receiver) = bounded(1024);
@@ -2701,13 +2702,13 @@ fn test_purge_unconfirmed_duplicate_slots_and_reattach() {
         1, // parent_slot
         8, // num_entries
     );
-    blockstore.insert_shreds(shreds, None, false).unwrap();
+    blockstore.insert_shreds(shreds, false).unwrap();
     let (shreds, _) = make_slot_entries(
         5, // slot
         3, // parent_slot
         8, // num_entries
     );
-    blockstore.insert_shreds(shreds, None, false).unwrap();
+    blockstore.insert_shreds(shreds, false).unwrap();
 
     let rpc_subscriptions = Some(rpc_subscriptions);
 
@@ -2938,7 +2939,7 @@ fn test_headerless_update_parent() {
         64,
         true,
     ));
-    blockstore.insert_shreds(shreds, None, true).unwrap();
+    blockstore.insert_shreds(shreds, true).unwrap();
     let slot_meta = blockstore.meta(slot).unwrap().unwrap();
     assert!(blockstore.is_full(slot), "{slot_meta:?}");
     assert!(slot_meta.has_update_parent());
@@ -3251,7 +3252,7 @@ fn test_before_update_soft_dead() {
     let mut shreds = block_marker_shreds(slot, 0, header, 0);
     shreds.retain(|shred| !shred.is_data() || shred.index() != 0);
     shreds.extend(block_marker_shreds(slot, 0, update_parent, 32));
-    blockstore.insert_shreds(shreds, None, true).unwrap();
+    blockstore.insert_shreds(shreds, true).unwrap();
     assert!(blockstore.meta(slot).unwrap().unwrap().has_update_parent());
 
     let p = ForkProgress::new(bank.last_blockhash(), Some(0), None, 0, 0, None);
@@ -6284,7 +6285,7 @@ fn test_skip_leader_slot_for_existing_slot() {
     let initial_slot = working_bank.slot();
     let num_entries = 10;
     let (shreds, _) = make_slot_entries(dummy_slot, initial_slot, num_entries);
-    blockstore.insert_shreds(shreds, None, false).unwrap();
+    blockstore.insert_shreds(shreds, false).unwrap();
 
     // Reset PoH recorder to the completed bank to ensure consistent state
     ReplayStage::reset_poh_recorder(

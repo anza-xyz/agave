@@ -12,7 +12,7 @@ use {
 };
 
 /// The SDK's stake history with clone-on-write semantics
-#[cfg_attr(feature = "frozen-abi", derive(AbiExample))]
+#[cfg_attr(feature = "frozen-abi", derive(AbiExample, StableAbi, StableAbiSample))]
 #[derive(Default, Clone, PartialEq, Eq, Debug, Deserialize, Serialize)]
 pub struct StakeHistory(Arc<StakeHistoryInner>);
 

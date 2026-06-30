@@ -35,7 +35,7 @@ fn calculate_timeout_multiplier(slot: Slot, standstill_slot: Option<Slot>) -> f6
 #[derive(Clone)]
 struct TimeoutConfig {
     delta_timeout: Duration,
-    delta_first_slice: Duration,
+    delta_first_fec_set: Duration,
     delta_block: Duration,
 }
 
@@ -48,7 +48,7 @@ impl TimeoutConfig {
         .unwrap_or(MAX_TIMEOUT);
         TimeoutConfig {
             delta_timeout,
-            delta_first_slice: self.delta_first_slice,
+            delta_first_fec_set: self.delta_first_fec_set,
             delta_block: self.delta_block,
         }
     }
@@ -57,8 +57,8 @@ impl TimeoutConfig {
 /// Encodes a basic state machine of the different stages involved in handling
 /// timeouts for a window of slots.
 enum TimerState {
-    /// Waiting for initial DELTA_TIMEOUT + delta_first_slice stage.
-    WaitForFirstSlice {
+    /// Waiting for initial DELTA_TIMEOUT + delta_first_fec_set stage.
+    WaitForFirstFecSet {
         /// The slots in the window.  Must not be empty.
         window: VecDeque<Slot>,
         /// Time when this stage will end.
@@ -83,23 +83,23 @@ impl TimerState {
     /// Creates a new instance of the state machine.
     ///
     /// The `timeout_multiplier` extends only the network-DELTA-derived timeout
-    /// (`delta_timeout`). `delta_first_slice` and `delta_block` are protocol
+    /// (`delta_timeout`). `delta_first_fec_set` and `delta_block` are protocol
     /// pacing, not a function of network delays, so they are not scaled. Also
     /// returns the next time the timer should fire.
     fn new(slot: Slot, timeout_config: TimeoutConfig, now: Instant) -> (Self, Instant) {
         let window = (slot..=last_of_consecutive_leader_slots(slot)).collect::<VecDeque<_>>();
         assert!(!window.is_empty());
 
-        // A correct leader may take up to `delta_first_slice` to send their first slice,
+        // A correct leader may take up to `delta_first_fec_set` to send their first FEC set,
         // so the earliest sound point to declare them crashed is
-        // `delta_first_slice + delta_timeout` after their window starts.
+        // `delta_first_fec_set + delta_timeout` after their window starts.
         let timeout = now
             .checked_add(timeout_config.delta_timeout)
             .unwrap()
-            .checked_add(timeout_config.delta_first_slice)
+            .checked_add(timeout_config.delta_first_fec_set)
             .unwrap();
         (
-            Self::WaitForFirstSlice {
+            Self::WaitForFirstFecSet {
                 window,
                 timeout,
                 timeout_config: timeout_config.clone(),
@@ -113,7 +113,7 @@ impl TimerState {
     /// Returns a potentially empty list of events that should be sent.
     fn progress(&mut self, now: Instant) -> Option<VotorEvent> {
         match self {
-            Self::WaitForFirstSlice {
+            Self::WaitForFirstFecSet {
                 window,
                 timeout,
                 timeout_config,
@@ -124,11 +124,11 @@ impl TimerState {
                 }
                 let slot = *window.front().unwrap();
                 // Slot 0's block deadline is `T + delta_block + scaled_delta_timeout`;
-                // subtract the `delta_first_slice` paid up-front to `WaitForFirstSlice`.
+                // subtract the `delta_first_fec_set` paid up-front to `WaitForFirstFecSet`.
                 let new_timeout = timeout
                     .checked_add(timeout_config.delta_block)
                     .unwrap()
-                    .checked_sub(timeout_config.delta_first_slice)
+                    .checked_sub(timeout_config.delta_first_fec_set)
                     .unwrap();
                 *self = Self::WaitForBlock {
                     window: window.to_owned(),
@@ -163,7 +163,7 @@ impl TimerState {
     /// When would this state machine next be able to make progress.
     fn next_fire(&self) -> Option<Instant> {
         match self {
-            Self::WaitForFirstSlice { timeout, .. } | Self::WaitForBlock { timeout, .. } => {
+            Self::WaitForFirstFecSet { timeout, .. } | Self::WaitForBlock { timeout, .. } => {
                 Some(*timeout)
             }
             Self::Done => None,
@@ -203,14 +203,14 @@ impl Timers {
         slot: Slot,
         now: Instant,
         standstill_slot: Option<Slot>,
-        delta_first_slice: Duration,
+        delta_first_fec_set: Duration,
         delta_block: Duration,
     ) -> bool {
-        assert!(delta_first_slice <= delta_block);
+        assert!(delta_first_fec_set <= delta_block);
         assert_eq!(self.heap.len(), self.timers.len());
         let timeout_config = TimeoutConfig {
             delta_timeout: self.delta_timeout,
-            delta_first_slice,
+            delta_first_fec_set,
             delta_block,
         }
         .scaled(slot, standstill_slot);
@@ -286,7 +286,7 @@ mod tests {
         let slot = 0;
         let timeout_config = TimeoutConfig {
             delta_timeout: one_micro,
-            delta_first_slice: one_micro,
+            delta_first_fec_set: one_micro,
             delta_block: one_micro,
         }
         .scaled(slot, None);
@@ -359,26 +359,66 @@ mod tests {
     }
 
     #[test]
+    fn default_timeout_schedule_matches_slot_pacing() {
+        let now = Instant::now();
+        let delta_block = Duration::from_millis(DEFAULT_MS_PER_SLOT);
+        assert_eq!(delta_block, Duration::from_millis(400));
+
+        let timeout_config = TimeoutConfig {
+            delta_timeout: DELTA_TIMEOUT,
+            delta_first_fec_set: delta_block,
+            delta_block,
+        }
+        .scaled(0, None);
+        let (mut timer_state, next_fire) = TimerState::new(0, timeout_config, now);
+
+        let first_deadline = now + Duration::from_millis(800);
+        assert_eq!(next_fire, first_deadline);
+        assert!(matches!(
+            timer_state.progress(first_deadline).unwrap(),
+            VotorEvent::TimeoutCrashedLeader(0)
+        ));
+
+        assert_eq!(timer_state.next_fire().unwrap(), first_deadline);
+        assert!(matches!(
+            timer_state.progress(first_deadline).unwrap(),
+            VotorEvent::Timeout(0)
+        ));
+
+        let second_deadline = now + Duration::from_millis(1200);
+        assert_eq!(timer_state.next_fire().unwrap(), second_deadline);
+        assert!(matches!(
+            timer_state.progress(second_deadline).unwrap(),
+            VotorEvent::Timeout(1)
+        ));
+
+        assert_eq!(
+            timer_state.next_fire().unwrap(),
+            now + Duration::from_millis(1600)
+        );
+    }
+
+    #[test]
     fn timer_state_with_multiplier() {
         // Test that timeout multiplier correctly extends the timeout duration
         let delta_timeout = Duration::from_millis(100);
-        let delta_first_slice = Duration::from_millis(10);
+        let delta_first_fec_set = Duration::from_millis(10);
         let delta_block = Duration::from_millis(50);
         let now = Instant::now();
         let slot = 0;
 
         let timeout_config = TimeoutConfig {
             delta_timeout,
-            delta_first_slice,
+            delta_first_fec_set,
             delta_block,
         }
         // 1 leader window standstill -> 1.05x multiplier
         .scaled(NUM_CONSECUTIVE_LEADER_SLOTS.get() as Slot, Some(0));
         let (mut timer_state, next_fire) = TimerState::new(slot, timeout_config, now);
 
-        // The first timeout should fire at now + (delta_timeout * 1.05) + delta_first_slice
-        // = now + 105ms + delta_first_slice
-        let expected_first_fire = now + Duration::from_millis(105) + delta_first_slice;
+        // The first timeout should fire at now + (delta_timeout * 1.05) + delta_first_fec_set
+        // = now + 105ms + delta_first_fec_set
+        let expected_first_fire = now + Duration::from_millis(105) + delta_first_fec_set;
         assert!(
             next_fire >= expected_first_fire - Duration::from_micros(100)
                 && next_fire <= expected_first_fire + Duration::from_micros(100),
@@ -392,7 +432,7 @@ mod tests {
         ));
 
         // Slot 0's block deadline is `now + delta_block + scaled_delta_timeout`
-        // = now + 50ms + 105ms = now + 155ms (unaffected by delta_first_slice).
+        // = now + 50ms + 105ms = now + 155ms (unaffected by delta_first_fec_set).
         let next = timer_state.next_fire().unwrap();
         let expected_next = now + Duration::from_millis(155);
         let skew = if next >= expected_next {
@@ -437,19 +477,19 @@ mod tests {
     fn timer_state_caps_at_max_timeout() {
         let now = Instant::now();
         let delta_block = Duration::from_millis(DEFAULT_MS_PER_SLOT);
-        let delta_first_slice = delta_block;
+        let delta_first_fec_set = delta_block;
 
         let timeout_config = TimeoutConfig {
             delta_timeout: DELTA_TIMEOUT,
-            delta_first_slice,
+            delta_first_fec_set,
             delta_block,
         }
         // ensure a large multiplier that would exceed MAX_TIMEOUT
         .scaled(1000, Some(0));
         let (mut timer_state, next_fire) = TimerState::new(1000, timeout_config, now);
 
-        // The first timeout should be capped at MAX_TIMEOUT (+ unscaled delta_first_slice).
-        let expected_first_fire = now + MAX_TIMEOUT + delta_first_slice;
+        // The first timeout should be capped at MAX_TIMEOUT (+ unscaled delta_first_fec_set).
+        let expected_first_fire = now + MAX_TIMEOUT + delta_first_fec_set;
         assert_eq!(next_fire, expected_first_fire);
 
         // Progress the timer to get TimeoutCrashedLeader
@@ -459,9 +499,9 @@ mod tests {
         ));
 
         // Slot 0's block deadline is `T + delta_block + scaled_delta_timeout`, so
-        // the gap from the (delta_first_slice-shifted) first fire is `delta_block - delta_first_slice`.
+        // the gap from the (delta_first_fec_set-shifted) first fire is `delta_block - delta_first_fec_set`.
         let next = timer_state.next_fire().unwrap();
         let actual_delta = next - next_fire;
-        assert_eq!(actual_delta, delta_block - delta_first_slice);
+        assert_eq!(actual_delta, delta_block - delta_first_fec_set);
     }
 }

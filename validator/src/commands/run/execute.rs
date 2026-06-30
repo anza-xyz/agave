@@ -1413,13 +1413,13 @@ fn build_xdp_config(
     let cpus = if let Some(cpu_str) = xdp_cpu_cores {
         let parsed =
             parse_cpu_ranges(cpu_str).expect("clap validator already accepted this CPU list");
-        if let Some(poh_core) = poh_pinned_cpu_core {
-            if parsed.contains(&poh_core) {
-                return Err(format!(
-                    "--xdp-cpu-cores includes PoH core {poh_core}; XDP and PoH must not share a \
-                     CPU core"
-                ));
-            }
+        if let Some(poh_core) = poh_pinned_cpu_core
+            && parsed.contains(&poh_core)
+        {
+            return Err(format!(
+                "--xdp-cpu-cores includes PoH core {poh_core}; XDP and PoH must not share a CPU \
+                 core"
+            ));
         }
         Some(parsed)
     } else {

@@ -617,14 +617,14 @@ impl PohService {
                 }
             }
 
-            if let Some(service_message) = service_message {
-                if !should_exit {
-                    Self::handle_service_message(&poh_recorder, service_message, record_receiver);
-                    target_ns_per_tick = Self::target_tick_ns_adjusted(
-                        ticks_per_slot,
-                        Self::target_tick_ns_reconciled(&poh_recorder, poh_config),
-                    );
-                }
+            if let Some(service_message) = service_message
+                && !should_exit
+            {
+                Self::handle_service_message(&poh_recorder, service_message, record_receiver);
+                target_ns_per_tick = Self::target_tick_ns_adjusted(
+                    ticks_per_slot,
+                    Self::target_tick_ns_reconciled(&poh_recorder, poh_config),
+                );
             }
 
             // If exit signal is set and there are no more records to process, exit.

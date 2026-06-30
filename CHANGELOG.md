@@ -8,13 +8,21 @@ This project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
 and follows a [Backwards Compatibility Policy](https://docs.anza.xyz/backwards-compatibility)
 
 Release channels have their own copy of this changelog:
-* [edge - v4.2](#edge-channel)
-* [alpha - v4.1](https://github.com/anza-xyz/agave/blob/v4.1/CHANGELOG.md)
-* [beta - v4.0](https://github.com/anza-xyz/agave/blob/v4.0/CHANGELOG.md)
-* [stable - v3.1](https://github.com/anza-xyz/agave/blob/v3.1/CHANGELOG.md)
+* [edge - v4.3](#edge-channel)
+* [alpha - v4.2](https://github.com/anza-xyz/agave/blob/v4.2/CHANGELOG.md)
+* [beta - v4.1](https://github.com/anza-xyz/agave/blob/v4.1/CHANGELOG.md)
+* [stable - v4.0](https://github.com/anza-xyz/agave/blob/v4.0/CHANGELOG.md)
 
 <a name="edge-channel"></a>
-## 4.2.0-Unreleased
+## 4.3.0-Unreleased
+### RPC
+#### Breaking
+#### Changes
+### Validator
+#### Breaking
+#### Changes
+
+## 4.2.0
 ### RPC
 #### Breaking
 * The `jsonParsed` output for confidential transfer `Deposit` (`depositConfidentialTransfer`) and `Withdraw` (`withdrawConfidentialTransfer`) instructions has been corrected. These instructions operate on a single token account, so the mislabeled `source` and `destination` fields have been replaced by a single `account` field (the `mint` field is unchanged).
@@ -40,10 +48,12 @@ Release channels have their own copy of this changelog:
 * `--experimental-poh-pinned-cpu-core` is now deprecated. Use `--poh-pinned-cpu-core` instead.
 #### Changes
 * Turbine shred ingestion now rejects shreds more than half an epoch in the future (previously up to 2 full epochs ahead was accepted).
+* When XDP is enabled, gossip egress does not support private and loopback addresses. Operators running with `--allow-private-addr` must also pass `--no-xdp`.
 ### CLI
 #### Breaking
 #### Changes
 * `vote-account` supports Alpenglow and as such `vote-account --output json` breaks compatibility with older versions.
+* Support Keystone hardware wallets using `usb://keystone`
 
 ## 4.1.0
 ### RPC

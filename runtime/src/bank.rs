@@ -230,11 +230,6 @@ use {
     solana_svm::program_loader::load_program_with_pubkey,
 };
 
-/// params to `verify_accounts_hash`
-struct VerifyAccountsHashConfig {
-    require_rooted_bank: bool,
-}
-
 mod accounts_lt_hash;
 mod address_lookup_table;
 pub mod bank_hash_details;
@@ -275,7 +270,7 @@ static NANOSECOND_CLOCK_ACCOUNT: LazyLock<Pubkey> = LazyLock::new(|| {
 pub type BankStatusCache = StatusCache<Result<()>>;
 #[cfg_attr(
     feature = "frozen-abi",
-    frozen_abi(digest = "23uAyYmzMrmPvPDKf6SvF1YoojYstmEPmdkfAQDnpwsq")
+    frozen_abi(digest = "HvpA8mUc4TZAcDF3BpcynmYWYBK3scJRTem2qadCiF5Z")
 )]
 pub type BankSlotDelta = SlotDelta<Result<()>>;
 
@@ -643,6 +638,7 @@ impl PartialEq for Bank {
             #[cfg(feature = "dev-context-only-utils")]
             hash_overrides,
             accounts_lt_hash,
+            is_alpenglow,
             // TODO: Confirm if all these fields are intentionally ignored!
             rewards: _,
             cluster_type: _,
@@ -710,6 +706,7 @@ impl PartialEq for Bank {
                 *hash_overrides.lock().unwrap() == *other.hash_overrides.lock().unwrap())
             && *accounts_lt_hash.lock().unwrap() == *other.accounts_lt_hash.lock().unwrap()
             && *block_id.read().unwrap() == *other.block_id.read().unwrap()
+            && is_alpenglow.load(Relaxed) == other.is_alpenglow()
     }
 }
 
@@ -1024,6 +1021,9 @@ pub struct Bank {
     /// currently write to this during replay, as we process block components one at a time, and
     /// read from this once replay is complete.
     pub block_component_processor: RwLock<BlockComponentProcessor>,
+
+    /// Cached Alpenglow migration state, derived from the genesis certificate account.
+    is_alpenglow: AtomicBool,
 }
 
 #[derive(Debug, Default)]
@@ -1056,7 +1056,7 @@ pub struct ProcessedTransactionCounts {
 
 /// Account stats for computing the bank hash
 /// This struct is serialized and stored in the snapshot.
-#[cfg_attr(feature = "frozen-abi", derive(AbiExample))]
+#[cfg_attr(feature = "frozen-abi", derive(AbiExample, StableAbi, StableAbiSample))]
 #[derive(Clone, Default, Debug, Serialize, Deserialize, PartialEq, Eq)]
 pub struct BankHashStats {
     pub num_updated_accounts: u64,
@@ -1239,6 +1239,7 @@ impl Bank {
             bank_hash_stats: AtomicBankHashStats::default(),
             epoch_rewards_calculation_cache: Arc::new(Mutex::new(HashMap::default())),
             block_component_processor: RwLock::new(BlockComponentProcessor::default()),
+            is_alpenglow: AtomicBool::new(false),
         };
 
         bank.transaction_processor =
@@ -1314,6 +1315,9 @@ impl Bank {
         bank.update_last_restart_slot();
         bank.transaction_processor
             .fill_missing_sysvar_cache_entries(&bank);
+        if bank.get_alpenglow_genesis_certificate().is_some() {
+            bank.set_is_alpenglow();
+        }
         bank
     }
 
@@ -1498,6 +1502,7 @@ impl Bank {
             bank_hash_stats: AtomicBankHashStats::default(),
             epoch_rewards_calculation_cache: parent.epoch_rewards_calculation_cache.clone(),
             block_component_processor: RwLock::new(BlockComponentProcessor::default()),
+            is_alpenglow: AtomicBool::new(parent.is_alpenglow()),
         };
 
         let (_, ancestors_time_us) = measure_us!({
@@ -1827,7 +1832,7 @@ impl Bank {
 
         // Distribute rewards commission to vote accounts and cache stake rewards
         // for partitioned distribution in the upcoming slots.
-        let (epoch_validator_rewards, begin_partitioned_rewards_time_us) =
+        let (epoch_rewards, begin_partitioned_rewards_time_us) =
             measure_us!(self.begin_partitioned_rewards(
                 parent_epoch,
                 parent_slot,
@@ -1844,7 +1849,7 @@ impl Bank {
             EpochInflationAccountState::new_epoch_update_account(
                 self,
                 epoch_start_capitalization,
-                epoch_validator_rewards,
+                epoch_rewards,
             );
         }
 
@@ -1971,7 +1976,7 @@ impl Bank {
             self.update_slot_hashes();
             self.update_stake_history(Some(parent_epoch));
 
-            if self.get_alpenglow_genesis_certificate().is_some() {
+            if self.is_alpenglow() {
                 // Alpenglow banks have the timestamp populated via the footer
                 // We only populate the slot here
                 self.update_clock_slot_for_alpenglow();
@@ -2159,7 +2164,12 @@ impl Bank {
             epoch_rewards_calculation_cache: Arc::new(Mutex::new(HashMap::default())),
             expected_bank_hash: RwLock::new(None),
             block_component_processor: RwLock::new(BlockComponentProcessor::default()),
+            is_alpenglow: AtomicBool::new(false),
         };
+
+        if bank.get_alpenglow_genesis_certificate().is_some() {
+            bank.set_is_alpenglow();
+        }
 
         // Sanity assertions between bank snapshot and genesis config
         // Consider removing from serializable bank state
@@ -3050,10 +3060,10 @@ impl Bank {
         self.freeze();
         let computed_hash = self.hash();
 
-        if let Some(expected_hash) = self.expected_bank_hash() {
-            if expected_hash != computed_hash {
-                return Err((expected_hash, computed_hash));
-            }
+        if let Some(expected_hash) = self.expected_bank_hash()
+            && expected_hash != computed_hash
+        {
+            return Err((expected_hash, computed_hash));
         }
         Ok(())
     }
@@ -3356,6 +3366,14 @@ impl Bank {
         })
     }
 
+    pub fn is_alpenglow(&self) -> bool {
+        self.is_alpenglow.load(Relaxed)
+    }
+
+    fn set_is_alpenglow(&self) {
+        self.is_alpenglow.store(true, Relaxed);
+    }
+
     /// For use in the first Alpenglow block, set the genesis certificate.
     pub fn set_alpenglow_genesis_certificate(&self, cert: &Certificate) {
         debug_assert!(cert.cert_type.is_genesis());
@@ -3373,6 +3391,7 @@ impl Bank {
         cert_acct.set_data_from_slice(&data);
 
         self.store_account_and_update_capitalization(&GENESIS_CERTIFICATE_ACCOUNT, &cert_acct);
+        self.set_is_alpenglow();
     }
 
     /// Update the clock sysvar from a block footer's nanosecond timestamp.
@@ -3989,7 +4008,7 @@ impl Bank {
         let processing_environment = TransactionProcessingEnvironment {
             blockhash,
             blockhash_lamports_per_signature,
-            alpenglow_migration_succeeded: self.get_alpenglow_genesis_certificate().is_some(),
+            alpenglow_migration_succeeded: self.is_alpenglow(),
             epoch_total_stake: self.get_current_epoch_total_stake(),
             feature_set: self.feature_set.runtime_features(),
             program_runtime_environments: ProgramRuntimeEnvironments::new(
@@ -5108,10 +5127,10 @@ impl Bank {
         pubkey: &Pubkey,
     ) -> Option<(AccountSharedData, Slot)> {
         let just_self: Ancestors = Ancestors::from(vec![self.slot()]);
-        if let Some((account, slot)) = self.load_slow_with_fixed_root(&just_self, pubkey) {
-            if slot == self.slot() {
-                return Some((account, slot));
-            }
+        if let Some((account, slot)) = self.load_slow_with_fixed_root(&just_self, pubkey)
+            && slot == self.slot()
+        {
+            return Some((account, slot));
         }
         None
     }
@@ -5215,10 +5234,10 @@ impl Bank {
         &self,
         signature: &Signature,
     ) -> Option<Result<()>> {
-        if let Some((slot, status)) = self.get_signature_status_slot(signature) {
-            if slot <= self.slot() {
-                return Some(status);
-            }
+        if let Some((slot, status)) = self.get_signature_status_slot(signature)
+            && slot <= self.slot()
+        {
+            return Some(status);
         }
         None
     }
@@ -5336,12 +5355,7 @@ impl Bank {
     pub fn run_final_hash_calc(&self) {
         self.force_flush_accounts_cache();
         // note that this slot may not be a root
-        _ = self.verify_accounts(
-            VerifyAccountsHashConfig {
-                require_rooted_bank: false,
-            },
-            None,
-        );
+        _ = self.verify_accounts(None);
     }
 
     /// Verify the account state as part of startup, typically from a snapshot.
@@ -5357,30 +5371,8 @@ impl Bank {
     ///
     /// Only intended to be called at startup, or from tests/ledger-tool.
     #[must_use]
-    fn verify_accounts(
-        &self,
-        config: VerifyAccountsHashConfig,
-        calculated_accounts_lt_hash: Option<&AccountsLtHash>,
-    ) -> bool {
+    fn verify_accounts(&self, calculated_accounts_lt_hash: Option<&AccountsLtHash>) -> bool {
         let accounts_db = &self.rc.accounts.accounts_db;
-
-        let slot = self.slot();
-
-        if config.require_rooted_bank && !accounts_db.accounts_index.is_alive_root(slot) {
-            if let Some(parent) = self.parent() {
-                info!(
-                    "slot {slot} is not a root, so verify accounts hash on parent bank at slot {}",
-                    parent.slot(),
-                );
-                // The calculated_accounts_lt_hash parameter is only valid for the current slot, so
-                // we must fall back to calculating the accounts lt hash with the index.
-                return parent.verify_accounts(config, None);
-            } else {
-                // this will result in mismatch errors
-                // accounts hash calc doesn't include unrooted slots
-                panic!("cannot verify accounts hash because slot {slot} is not a root");
-            }
-        }
 
         fn check_lt_hash(
             expected_accounts_lt_hash: &AccountsLtHash,
@@ -5582,12 +5574,7 @@ impl Bank {
         let (verified_accounts, verify_accounts_time_us) = measure_us!({
             let should_verify_accounts = !self.rc.accounts.accounts_db.skip_initial_hash_calc;
             if should_verify_accounts {
-                self.verify_accounts(
-                    VerifyAccountsHashConfig {
-                        require_rooted_bank: false,
-                    },
-                    calculated_accounts_lt_hash,
-                )
+                self.verify_accounts(calculated_accounts_lt_hash)
             } else {
                 info!("Verifying accounts... Skipped.");
                 true
@@ -6081,14 +6068,14 @@ impl Bank {
 
         // Update activation slot of features in `new_feature_activations`
         for feature_id in new_feature_activations.iter() {
-            if let Some(mut account) = self.get_account_with_fixed_root(feature_id) {
-                if let Some(mut feature) = feature::state::from_account(&account) {
-                    feature.activated_at = Some(self.slot());
-                    if feature::state::to_account(&feature, &mut account).is_some() {
-                        self.store_account(feature_id, &account);
-                    }
-                    info!("Feature {} activated at slot {}", feature_id, self.slot());
+            if let Some(mut account) = self.get_account_with_fixed_root(feature_id)
+                && let Some(mut feature) = feature::state::from_account(&account)
+            {
+                feature.activated_at = Some(self.slot());
+                if feature::state::to_account(&feature, &mut account).is_some() {
+                    self.store_account(feature_id, &account);
                 }
+                info!("Feature {} activated at slot {}", feature_id, self.slot());
             }
         }
 
@@ -6166,40 +6153,40 @@ impl Bank {
 
         self.apply_new_builtin_program_feature_transitions(&new_feature_activations);
 
-        if new_feature_activations.contains(&feature_set::replace_spl_token_with_p_token::id()) {
-            if let Err(e) = self.upgrade_loader_v2_program_with_loader_v3_program(
+        if new_feature_activations.contains(&feature_set::replace_spl_token_with_p_token::id())
+            && let Err(e) = self.upgrade_loader_v2_program_with_loader_v3_program(
                 &feature_set::replace_spl_token_with_p_token::SPL_TOKEN_PROGRAM_ID,
                 &feature_set::replace_spl_token_with_p_token::PTOKEN_PROGRAM_BUFFER,
                 self.feature_set
                     .snapshot()
                     .relax_programdata_account_check_migration,
                 "replace_spl_token_with_p_token",
-            ) {
-                warn!(
-                    "Failed to replace SPL Token with p-token buffer '{}': {e}",
-                    feature_set::replace_spl_token_with_p_token::PTOKEN_PROGRAM_BUFFER,
-                );
-            }
+            )
+        {
+            warn!(
+                "Failed to replace SPL Token with p-token buffer '{}': {e}",
+                feature_set::replace_spl_token_with_p_token::PTOKEN_PROGRAM_BUFFER,
+            );
         }
 
-        if new_feature_activations.contains(&feature_set::upgrade_bpf_stake_program_to_v5::id()) {
-            if let Err(e) = self.upgrade_core_bpf_program(
+        if new_feature_activations.contains(&feature_set::upgrade_bpf_stake_program_to_v5::id())
+            && let Err(e) = self.upgrade_core_bpf_program(
                 &solana_sdk_ids::stake::id(),
                 &feature_set::upgrade_bpf_stake_program_to_v5::buffer::id(),
                 "upgrade_stake_program_to_v5",
-            ) {
-                error!("Failed to upgrade Core BPF Stake program: {e}");
-            }
+            )
+        {
+            error!("Failed to upgrade Core BPF Stake program: {e}");
         }
 
-        if new_feature_activations.contains(&feature_set::upgrade_bpf_stake_program_to_v5_1::id()) {
-            if let Err(e) = self.upgrade_core_bpf_program(
+        if new_feature_activations.contains(&feature_set::upgrade_bpf_stake_program_to_v5_1::id())
+            && let Err(e) = self.upgrade_core_bpf_program(
                 &solana_sdk_ids::stake::id(),
                 &feature_set::upgrade_bpf_stake_program_to_v5_1::buffer::id(),
                 "upgrade_stake_program_to_v5_1",
-            ) {
-                error!("Failed to upgrade Core BPF Stake program: {e}");
-            }
+            )
+        {
+            error!("Failed to upgrade Core BPF Stake program: {e}");
         }
     }
 
@@ -6208,37 +6195,37 @@ impl Bank {
         new_feature_activations: &AHashSet<Pubkey>,
     ) {
         for builtin in BUILTINS.iter() {
-            if let Some(feature_id) = builtin.enable_feature_id {
-                if new_feature_activations.contains(&feature_id) {
-                    self.add_builtin(
-                        builtin.program_id,
-                        builtin.name,
-                        ProgramCacheEntry::new_builtin(
-                            self.feature_set.activated_slot(&feature_id).unwrap_or(0),
-                            builtin.name.len(),
-                            builtin.register_fn,
-                        ),
-                    );
-                }
+            if let Some(feature_id) = builtin.enable_feature_id
+                && new_feature_activations.contains(&feature_id)
+            {
+                self.add_builtin(
+                    builtin.program_id,
+                    builtin.name,
+                    ProgramCacheEntry::new_builtin(
+                        self.feature_set.activated_slot(&feature_id).unwrap_or(0),
+                        builtin.name.len(),
+                        builtin.register_fn,
+                    ),
+                );
             }
 
             if let Some(core_bpf_migration_config) = &builtin.core_bpf_migration_config {
                 // If the builtin is set to be migrated to Core BPF on feature
                 // activation, perform the migration which will remove it from
                 // the builtins list and the cache.
-                if new_feature_activations.contains(&core_bpf_migration_config.feature_id) {
-                    if let Err(e) = self.migrate_builtin_to_core_bpf(
+                if new_feature_activations.contains(&core_bpf_migration_config.feature_id)
+                    && let Err(e) = self.migrate_builtin_to_core_bpf(
                         &builtin.program_id,
                         core_bpf_migration_config,
                         self.feature_set
                             .snapshot()
                             .relax_programdata_account_check_migration,
-                    ) {
-                        warn!(
-                            "Failed to migrate builtin {} to Core BPF: {}",
-                            builtin.name, e
-                        );
-                    }
+                    )
+                {
+                    warn!(
+                        "Failed to migrate builtin {} to Core BPF: {}",
+                        builtin.name, e
+                    );
                 }
             };
         }
@@ -6247,29 +6234,28 @@ impl Bank {
         // Stateless builtins do not have an `enable_feature_id` since they
         // do not exist on-chain.
         for stateless_builtin in STATELESS_BUILTINS.iter() {
-            if let Some(core_bpf_migration_config) = &stateless_builtin.core_bpf_migration_config {
-                if new_feature_activations.contains(&core_bpf_migration_config.feature_id) {
-                    if let Err(e) = self.migrate_builtin_to_core_bpf(
-                        &stateless_builtin.program_id,
-                        core_bpf_migration_config,
-                        self.feature_set
-                            .snapshot()
-                            .relax_programdata_account_check_migration,
-                    ) {
-                        warn!(
-                            "Failed to migrate stateless builtin {} to Core BPF: {}",
-                            stateless_builtin.name, e
-                        );
-                    }
-                }
+            if let Some(core_bpf_migration_config) = &stateless_builtin.core_bpf_migration_config
+                && new_feature_activations.contains(&core_bpf_migration_config.feature_id)
+                && let Err(e) = self.migrate_builtin_to_core_bpf(
+                    &stateless_builtin.program_id,
+                    core_bpf_migration_config,
+                    self.feature_set
+                        .snapshot()
+                        .relax_programdata_account_check_migration,
+                )
+            {
+                warn!(
+                    "Failed to migrate stateless builtin {} to Core BPF: {}",
+                    stateless_builtin.name, e
+                );
             }
         }
 
         for precompile in get_precompiles() {
-            if let Some(feature_id) = &precompile.feature {
-                if new_feature_activations.contains(feature_id) {
-                    self.add_precompile(&precompile.program_id);
-                }
+            if let Some(feature_id) = &precompile.feature
+                && new_feature_activations.contains(feature_id)
+            {
+                self.add_precompile(&precompile.program_id);
             }
         }
     }
@@ -6291,20 +6277,20 @@ impl Bank {
 
         for feature_id in self.feature_set.inactive() {
             let mut activated = None;
-            if let Some(account) = self.get_account_with_fixed_root(feature_id) {
-                if let Some(feature) = feature::state::from_account(&account) {
-                    match feature.activated_at {
-                        None if include_pending => {
-                            // Feature activation is pending
-                            pending.insert(*feature_id);
-                            activated = Some(slot);
-                        }
-                        Some(activation_slot) if slot >= activation_slot => {
-                            // Feature has been activated already
-                            activated = Some(activation_slot);
-                        }
-                        _ => {}
+            if let Some(account) = self.get_account_with_fixed_root(feature_id)
+                && let Some(feature) = feature::state::from_account(&account)
+            {
+                match feature.activated_at {
+                    None if include_pending => {
+                        // Feature activation is pending
+                        pending.insert(*feature_id);
+                        activated = Some(slot);
                     }
+                    Some(activation_slot) if slot >= activation_slot => {
+                        // Feature has been activated already
+                        activated = Some(activation_slot);
+                    }
+                    _ => {}
                 }
             }
             if let Some(slot) = activated {
@@ -6457,10 +6443,10 @@ impl Bank {
     }
 
     pub fn is_in_slot_hashes_history(&self, slot: &Slot) -> bool {
-        if slot < &self.slot {
-            if let Ok(slot_hashes) = self.transaction_processor.sysvar_cache().get_slot_hashes() {
-                return slot_hashes.get(slot).is_some();
-            }
+        if slot < &self.slot
+            && let Ok(slot_hashes) = self.transaction_processor.sysvar_cache().get_slot_hashes()
+        {
+            return slot_hashes.get(slot).is_some();
         }
         false
     }

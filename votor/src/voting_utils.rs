@@ -162,10 +162,10 @@ pub fn generate_vote_tx(
     if bank.get_vote_account(&vote_account_pubkey).is_none() {
         return GenerateVoteTxResult::VoteAccountNotFound(vote_account_pubkey);
     }
-    if let Some(slot) = wait_to_vote_slot {
-        if vote.slot() < slot {
-            return GenerateVoteTxResult::WaitToVoteSlot(slot);
-        }
+    if let Some(slot) = wait_to_vote_slot
+        && vote.slot() < slot
+    {
+        return GenerateVoteTxResult::WaitToVoteSlot(slot);
     }
 
     let rank_map = bank
