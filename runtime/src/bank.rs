@@ -154,11 +154,10 @@ use {
     solana_signature::Signature,
     solana_slot_hashes::SlotHashes,
     solana_slot_history::{Check, SlotHistory},
-    solana_stake_interface::{
-        stake_history::{SIZE as STAKE_HISTORY_ACCOUNT_SIZE, StakeHistory},
-        state::Delegation,
-        sysvar::stake_history,
+    solana_stake_history::{
+        SIZE as STAKE_HISTORY_ACCOUNT_SIZE, StakeHistory, sysvar as stake_history,
     },
+    solana_stake_interface::state::Delegation,
     solana_svm::{
         account_loader::LoadedTransaction,
         account_overrides::AccountOverrides,

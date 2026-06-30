@@ -4,16 +4,14 @@ use {
     crate::{
         alpenglow_epoch_type::{AlpenglowEpochType, RewardEpochDelegatedStakes},
         stake_delegation::delegation_effective_stake,
+        stake_history::StakeHistory,
     },
     agave_votor_messages::migration::AG_MIGRATION_EPOCH_CREDIT,
     log::error,
     solana_clock::Epoch,
     solana_instruction::error::InstructionError,
     solana_pubkey::Pubkey,
-    solana_stake_interface::{
-        stake_history::StakeHistory,
-        state::{Delegation, Stake, StakeStateV2},
-    },
+    solana_stake_interface::state::{Delegation, Stake, StakeStateV2},
     solana_vote::vote_state_view::VoteStateView,
     std::cmp::Ordering,
 };

@@ -82,7 +82,7 @@ solana-rent = { workspace = true, optional = true }
 solana-reward-info = { workspace = true, features = ["serde"] }
 solana-signer = { workspace = true, optional = true }
 solana-slot-hashes = { workspace = true }
-solana-stake-interface = { workspace = true, optional = true }
+solana-stake-interface = { workspace = true, optional = true, features = ["serde"] }
 solana-svm-transaction = { workspace = true }
 solana-system-interface = { workspace = true }
 solana-sysvar = { workspace = true }
