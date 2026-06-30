@@ -21,7 +21,9 @@ use {
     solana_svm::{
         account_loader::validate_fee_payer,
         transaction_error_metrics::TransactionErrorMetrics,
-        transaction_processing_result::TransactionProcessingResultExtensions,
+        transaction_processing_result::{
+            /* HANA ProcessedTransaction, */ TransactionProcessingResultExtensions,
+        },
         transaction_processor::{ExecutionRecordingConfig, TransactionProcessingConfig},
     },
     solana_transaction_error::TransactionError,
@@ -345,6 +347,16 @@ impl Consumer {
         // HANA TODO i think we can safely transform ProcessedTransaction::NoOp into Err here
         // this *should* let us avoid committing them when building blocks, but handle them gracefully in replay
         // until we actually *do* async execution there is no reason to write garbage to chain
+        // update: i dont think this is sufficient i have to mess with processed counts etc...
+        /*
+        let processing_results: Vec<_> = processing_results
+            .into_iter()
+            .map(|res| match res {
+                Ok(ProcessedTransaction::NoOp(tx_details)) => Err(tx_details.validation_error),
+                res => res,
+            })
+            .collect();
+        */
 
         let transaction_counts = LeaderProcessedTransactionCounts {
             processed_count: processed_counts.processed_transactions_count,

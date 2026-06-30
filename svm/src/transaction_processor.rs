@@ -737,10 +737,10 @@ impl<FG: ForkGraph> TransactionBatchProcessor<FG> {
             error_counters,
         );
 
-        // With SIMD-0290 enabled, an invalid fee-payer can be processed as a no-op.
-        // However, this can ONLY be done for blockhash transactions; nonce transactions
-        // must always be discarded, regardless of whether they use a standard or nonce-based
-        // fee-payer. Fee-payer failure for nonces will be handled the same as nonce failures
+        // With SIMD-0290 enabled, a blockhash transaction with an invalid fee-payer can
+        // be processed as a no-op. However, nonce transactions must ALWAYS be discarded,
+        // regardless of whether they use a standard or nonce-based fee-payer.
+        // Fee-payer failure for nonces will be handled the same as nonce failures
         // themselves when we implement SIMD-0297.
         let allow_noop =
             account_loader.feature_set.relax_fee_payer_constraint && is_blockhash_transaction;

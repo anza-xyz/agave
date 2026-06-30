@@ -55,7 +55,6 @@ const ADDRESS_LOOKUP_TABLE_BASE_SIZE: usize = 8248;
 pub type TransactionCheckResult = Result<CheckedTransactionDetails>;
 
 // Combined result of runtime, fee-payer, and nonce checks.
-// HANA idk if i want to box or not. probably not
 #[allow(clippy::large_enum_variant)]
 #[derive(PartialEq, Eq, Debug, Clone)]
 pub(crate) enum TransactionValidationResult {
@@ -73,8 +72,8 @@ pub(crate) enum TransactionLoadResult {
     /// loaded successfully.
     FeesOnly(FeesOnlyTransaction),
     /// This transaction will be processed but entail no account state changes.
-    /// If SIMD-0290 is enabled, invalid fee-payers are processable.
-    /// If SIMD-0297 is enabled, invalid nonce accounts are processable.
+    /// With SIMD-0290 enabled, invalid fee-payers for blockhash transactions are processable.
+    /// With SIMD-0297 enabled, invalid nonce accounts are processable.
     NoOp(NoOpTransaction),
     /// Mandatory checks failed; this transaction will be discarded as unprocessable.
     Unprocessable(TransactionError),
