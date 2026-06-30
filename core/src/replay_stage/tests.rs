@@ -1001,12 +1001,12 @@ fn do_test_dead_slot_on_complete_bank(failure: CompleteBankFailure) {
             .or_insert_with(|| ForkProgress::new(bank.last_blockhash(), None, None, 0, 0, None));
         let tx = match failure {
             CompleteBankFailure::ReplayError => {
-                // trigger a replay error since from_keypair is not funded
+                // trigger a replay error since blockhash is invalid
                 system_transaction::transfer(
-                    &Keypair::new(),
+                    &funded_keypair,
                     &Keypair::new().pubkey(),
                     1,
-                    bank.last_blockhash(),
+                    Hash::new_unique(),
                 )
             }
             CompleteBankFailure::VerifyError => {
