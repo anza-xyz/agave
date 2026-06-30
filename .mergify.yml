@@ -151,6 +151,15 @@ pull_request_rules:
           into master and ride the normal stabilization schedule. Exceptions
           include CI/metrics changes, CLI improvements and documentation
           updates on a case by case basis.
+  - name: close PRs against EoL version branches
+    conditions:
+      - base ~= ^v[0-9]+\.[0-9]+$
+      - base != v4.0
+      - base != v4.1
+      - base != v4.2
+    actions:
+      close:
+        message: "`{{base}}` is end-of-life and no longer accepts changes."
   - name: Reminder to update RPC clients for changes in `rpc/`
     conditions:
       - or:
