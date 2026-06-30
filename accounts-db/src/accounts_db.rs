@@ -2189,20 +2189,6 @@ impl AccountsDb {
                 i64
             ),
             (
-                "append_vecs_open",
-                append_vec::APPEND_VEC_STATS
-                    .files_open
-                    .load(Ordering::Relaxed),
-                i64
-            ),
-            (
-                "append_vecs_dirty",
-                append_vec::APPEND_VEC_STATS
-                    .files_dirty
-                    .load(Ordering::Relaxed),
-                i64
-            ),
-            (
                 "purge_older_root_entries_one_slot_list",
                 self.accounts_index
                     .purge_older_root_entries_one_slot_list
@@ -4722,6 +4708,20 @@ impl AccountsDb {
             ("total_bytes", total_bytes, i64),
             ("total_alive_bytes", total_alive_bytes, i64),
             ("total_alive_ratio", total_alive_ratio, f64),
+            (
+                "append_vecs_open",
+                append_vec::APPEND_VEC_STATS
+                    .files_open
+                    .load(Ordering::Relaxed),
+                i64
+            ),
+            (
+                "append_vecs_dirty",
+                append_vec::APPEND_VEC_STATS
+                    .files_dirty
+                    .load(Ordering::Relaxed),
+                i64
+            ),
         );
     }
 
