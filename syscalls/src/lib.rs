@@ -577,7 +577,6 @@ fn translate_type<T>(
     check_aligned: bool,
 ) -> Result<&T, Error> {
     translate_type_inner!(memory_mapping, AccessType::Load, vm_addr, T, check_aligned)
-        .map(|value| &*value)
 }
 fn translate_slice<T>(
     memory_mapping: &MemoryMapping,
@@ -2804,7 +2803,7 @@ mod tests {
         const LENGTH: u64 = 1000;
 
         let data = vec![0u8; LENGTH as usize];
-        let addr = data.as_ptr() as u64;
+        let addr = data.as_ptr().addr();
         let config = Config::default();
         let memory_mapping = unsafe {
             MemoryMapping::new(
@@ -2821,21 +2820,28 @@ mod tests {
             (true, START, LENGTH, addr),
             (true, START + 1, LENGTH - 1, addr + 1),
             (false, START + 1, LENGTH, 0),
-            (true, START + LENGTH - 1, 1, addr + LENGTH - 1),
-            (true, START + LENGTH, 0, addr + LENGTH),
+            (true, START + LENGTH - 1, 1, addr + LENGTH as usize - 1),
+            (true, START + LENGTH, 0, addr + LENGTH as usize),
             (false, START + LENGTH, 1, 0),
             (false, START, LENGTH + 1, 0),
             (false, 0, 0, 0),
             (false, 0, 1, 0),
             (false, START - 1, 0, 0),
             (false, START - 1, 1, 0),
-            (true, START + LENGTH / 2, LENGTH / 2, addr + LENGTH / 2),
+            (
+                true,
+                START + LENGTH / 2,
+                LENGTH / 2,
+                addr + LENGTH as usize / 2,
+            ),
         ];
         for (ok, start, length, value) in cases {
             if ok {
                 assert_eq!(
                     translate_inner!(&memory_mapping, map, AccessType::Load, start, length)
-                        .unwrap(),
+                        .unwrap()
+                        .ptr()
+                        .addr(),
                     value
                 )
             } else {
@@ -3310,7 +3316,7 @@ mod tests {
                 SyscallAllocFree::rust(&mut invoke_context, size_of::<T>() as u64, 0, 0, 0, 0);
             let address = result.unwrap();
             assert_ne!(address, 0);
-            assert!(address_is_aligned::<T>(address));
+            assert!(address_is_aligned::<T>(address as usize));
         }
         aligned::<u8>();
         aligned::<u16>();
@@ -6192,7 +6198,7 @@ mod tests {
     #[test]
     fn test_address_is_aligned() {
         for address in 0..std::mem::size_of::<u64>() {
-            assert_eq!(address_is_aligned::<u64>(address as u64), address == 0);
+            assert_eq!(address_is_aligned::<u64>(address), address == 0);
         }
     }
 

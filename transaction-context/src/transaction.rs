@@ -14,7 +14,7 @@ use {
     solana_instruction::error::InstructionError,
     solana_instructions_sysvar as instructions,
     solana_rent::Rent,
-    solana_sbpf::memory_region::{AccessType, AccessViolationHandler, HostBuffer, MemoryRegion},
+    solana_sbpf::memory_region::{AccessType, AccessViolationHandler, MemoryRegion},
     std::{borrow::Cow, cell::Cell, rc::Rc},
 };
 use {
@@ -573,11 +573,6 @@ impl<'ix_data> TransactionContext<'ix_data> {
                     }
                     unsafe {
                         account.resize(new_len, 0);
-                        let data_ptr = match region.host_buffer() {
-                            HostBuffer::Immutable(p) => p.cast::<u8>().cast_mut(),
-                            HostBuffer::Mutable(p) => p.cast::<u8>(),
-                        };
-                        let data_slice = std::ptr::slice_from_raw_parts_mut(data_ptr, new_len);
                         // SAFETY:
                         //
                         // Contract from `MemoryRegion::redirect`: MemoryRegion must point to a
@@ -601,7 +596,12 @@ impl<'ix_data> TransactionContext<'ix_data> {
                         // writable (even though the HostBuffer might have been initially created as
                         // immutable.) In the direct mapping case we redirect the region to the
                         // buffer stored in the account later on.
-                        region.redirect(data_slice);
+                        //
+                        // Contract from `HostBuffer::mutable`: This host buffer must have been
+                        // initially constructed with a mutable pointer.
+                        // Evidence: See `create_memory_region_of_account`. Direct mapping case
+                        // later reconstructs this buffer from scratch. See below.
+                        region.redirect(region.host_buffer().mutable());
                     }
                 }
 

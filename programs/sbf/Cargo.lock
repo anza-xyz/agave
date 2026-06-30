@@ -1159,8 +1159,8 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "90dbd31c98227229239363921e60fcf5e558e43ec69094d46fc4996f08d1d5bc"
 dependencies = [
  "bitcoin_hashes",
- "rand 0.8.6",
- "rand_core 0.6.4",
+ "rand 0.7.3",
+ "rand_core 0.5.1",
  "serde",
  "unicode-normalization",
 ]
@@ -9071,7 +9071,7 @@ dependencies = [
 [[package]]
 name = "solana-sbpf"
 version = "0.22.0"
-source = "git+https://github.com/anza-xyz/sbpf?rev=refs%2Fpull%2F191%2Fhead#2482f5abbfadd4b63428f852468982705ce97716"
+source = "git+https://github.com/anza-xyz/sbpf?rev=refs%2Fpull%2F191%2Fhead#aa3c51173bed9c4332da053b5323f4d53f912b23"
 dependencies = [
  "byteorder",
  "combine 3.8.1",
