@@ -24,19 +24,19 @@ pub fn modify_memory_region_of_account(
     account: &mut BorrowedInstructionAccount<'_, '_>,
     region: &mut MemoryRegion,
 ) {
-    let host_ptr = match region.host_buffer() {
-        solana_sbpf::memory_region::HostBuffer::Mutable(p) => p.cast::<u8>(),
-        solana_sbpf::memory_region::HostBuffer::Immutable(p) => p.cast::<u8>(),
-    };
-    let host_len = account.get_data().len();
-    let vm_addr = region.vm_addr_range().start;
     if account.can_data_be_changed().is_ok() {
-        let host_slice = std::ptr::slice_from_raw_parts_mut(host_ptr.cast_mut(), host_len);
-        *region = MemoryRegion::new_gapped(host_slice, vm_addr, region.gap_size());
+        unsafe {
+            // SAFETY:
+            // Contract from `HostBuffer::mutable`: This host buffer must have been initially
+            // constructed with a mutable pointer.
+            // Evidence: this region must be pointing to a serialized data buffer which is known to
+            // be mutable.
+            region.redirect(region.host_buffer().mutable());
+        }
         region.access_violation_handler_payload = Some(account.get_index_in_transaction());
     } else {
-        let host_slice = std::ptr::slice_from_raw_parts(host_ptr, host_len);
-        *region = MemoryRegion::new_gapped(host_slice, vm_addr, region.gap_size());
+        region.make_immutable();
+        region.access_violation_handler_payload = None;
     }
 }
 
@@ -854,7 +854,10 @@ mod tests {
 
                 let (mut serialized, regions, _account_lengths, _instruction_data_offset) =
                     serialization_result.unwrap();
-                let mut serialized_regions = concat_regions(&regions);
+                let mut serialized_regions = unsafe {
+                    // SAFETY: test code, serialize_parameters should be constructing valid regions.
+                    concat_regions(&regions)
+                };
                 let (de_program_id, de_accounts, de_instruction_data) = unsafe {
                     deserialize(
                         if !virtual_address_space_adjustments {
@@ -1008,7 +1011,10 @@ mod tests {
                 )
                 .unwrap();
 
-            let mut serialized_regions = concat_regions(&regions);
+            let mut serialized_regions = unsafe {
+                // SAFETY: test code, serialize_parameters should be constructing valid regions.
+                concat_regions(&regions)
+            };
             if !virtual_address_space_adjustments {
                 assert_eq!(serialized.as_slice(), serialized_regions.as_slice());
             }
@@ -1107,7 +1113,10 @@ mod tests {
                     direct_account_pointers_in_program_input,
                 )
                 .unwrap();
-            let mut serialized_regions = concat_regions(&regions);
+            let mut serialized_regions = unsafe {
+                // SAFETY: test code, serialize_parameters should be constructing valid regions.
+                concat_regions(&regions)
+            };
 
             let (de_program_id, de_accounts, de_instruction_data) = unsafe {
                 deserialize_for_abiv0(
@@ -1273,7 +1282,10 @@ mod tests {
             )
             .unwrap();
 
-        let mut serialized_regions = concat_regions(&regions);
+        let mut serialized_regions = unsafe {
+            // SAFETY: test code, serialize_parameters should be constructing valid regions.
+            concat_regions(&regions)
+        };
         let (_de_program_id, de_accounts, _de_instruction_data) = unsafe {
             deserialize(serialized_regions.as_slice_mut().first_mut().unwrap() as *mut u8)
         };
@@ -1305,7 +1317,10 @@ mod tests {
                 direct_account_pointers_in_program_input,
             )
             .unwrap();
-        let mut serialized_regions = concat_regions(&regions);
+        let mut serialized_regions = unsafe {
+            // SAFETY: test code, serialize_parameters should be constructing valid regions.
+            concat_regions(&regions)
+        };
 
         let (_de_program_id, de_accounts, _de_instruction_data) = unsafe {
             deserialize_for_abiv0(serialized_regions.as_slice_mut().first_mut().unwrap() as *mut u8)
@@ -1441,7 +1456,10 @@ mod tests {
         (program_id, accounts, instruction_data)
     }
 
-    fn concat_regions(regions: &[MemoryRegion]) -> AlignedMemory<HOST_ALIGN> {
+    /// # Safety
+    ///
+    /// All memory regions must be pointing to valid to dereference host buffers.
+    unsafe fn concat_regions(regions: &[MemoryRegion]) -> AlignedMemory<HOST_ALIGN> {
         let last_region = regions.last().unwrap();
         let last_region_vm_addr = last_region.vm_addr_range().start;
         let mut mem = AlignedMemory::zero_filled(
@@ -1449,12 +1467,15 @@ mod tests {
         );
         for region in regions {
             let vm_start = region.vm_addr_range().start;
-            let buffer = match region.host_buffer() {
-                solana_sbpf::memory_region::HostBuffer::Immutable(buf) => buf,
-                solana_sbpf::memory_region::HostBuffer::Mutable(buf) => buf.cast_const(),
-            };
+            let buffer = region.host_buffer().ptr();
             mem.as_slice_mut()[(vm_start - MM_INPUT_START) as usize..][..buffer.len()]
-                .copy_from_slice(unsafe { &*buffer })
+                .copy_from_slice(unsafe {
+                    // SAFETY:
+                    // Contract from `<*const [u8]>::as_ref_unchecked`: ensure that the pointer is
+                    // convertible to reference.
+                    // Evidence: The contract delegated to the callers.
+                    buffer.as_ref_unchecked()
+                })
         }
         mem
     }
