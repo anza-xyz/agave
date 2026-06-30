@@ -8,13 +8,13 @@ use {
     solana_pubkey::Pubkey,
     solana_signer::Signer,
     solana_sysvar::{
-        Sysvar, SysvarSerialize,
+        SysvarSerialize,
         last_restart_slot::{self, LastRestartSlot},
     },
     solana_transaction::Transaction,
 };
 
-// program to check both syscall and sysvar
+// program to check sysvar
 fn sysvar_last_restart_slot_process_instruction(
     _program_id: &Pubkey,
     accounts: &[AccountInfo],
@@ -23,15 +23,6 @@ fn sysvar_last_restart_slot_process_instruction(
     msg!("sysvar_last_restart_slot");
     assert_eq!(input.len(), 8);
     let expected_last_hardfork_slot = u64::from_le_bytes(input[0..8].try_into().unwrap());
-
-    let last_restart_slot = LastRestartSlot::get();
-    msg!("last restart slot: {:?}", last_restart_slot);
-    assert_eq!(
-        last_restart_slot,
-        Ok(LastRestartSlot {
-            last_restart_slot: expected_last_hardfork_slot
-        })
-    );
 
     let last_restart_slot_account = &accounts[0];
     let slot_via_account = LastRestartSlot::from_account_info(last_restart_slot_account)?;

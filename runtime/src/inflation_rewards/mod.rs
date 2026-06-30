@@ -418,17 +418,14 @@ mod tests {
     use {
         self::points::{PointValue, null_tracer},
         super::*,
-        crate::alpenglow_epoch_type::RewardEpochDelegatedStakes,
+        crate::{alpenglow_epoch_type::RewardEpochDelegatedStakes, stake_history::StakeHistory},
         agave_votor_messages::migration::AG_MIGRATION_EPOCH_CREDIT,
         proptest::prelude::*,
         solana_clock::Epoch,
         solana_native_token::LAMPORTS_PER_SOL,
         solana_pubkey::Pubkey,
         solana_rent::Rent,
-        solana_stake_interface::{
-            stake_history::StakeHistory,
-            state::{Delegation, StakeStateV2},
-        },
+        solana_stake_interface::state::{Delegation, StakeStateV2},
         solana_vote_program::vote_state::{VoteStateV4, handler::VoteStateHandler},
         test_case::{test_case, test_matrix},
     };

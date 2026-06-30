@@ -50,11 +50,11 @@ use {
         system_program,
         sysvar::{clock, stake_history},
     },
+    solana_stake_history::StakeHistory,
     solana_stake_interface::{
         self as stake,
         error::StakeError,
         instruction::{self as stake_instruction, LockupArgs},
-        stake_history::StakeHistory,
         state::{
             Authorized, Delegation, Lockup, Meta, StakeActivationStatus, StakeAuthorize,
             StakeStateV2,
