@@ -680,13 +680,17 @@ fn test_dead_fork_transaction_error() {
             &blockhash,
             hashes_per_tick.saturating_sub(1),
             vec![
-                system_transaction::transfer(&keypair1, &keypair2.pubkey(), 2, blockhash), // should be fine,
+                // valid transfer
+                system_transaction::transfer(&keypair1, &keypair2.pubkey(), 2, blockhash),
+                // unfunded fee-payer, successful no-op
                 system_transaction::transfer(
                     &missing_keypair,
                     &missing_keypair2.pubkey(),
                     2,
                     blockhash,
-                ), // should cause AccountNotFound error
+                ),
+                // invalid blockhash
+                system_transaction::transfer(&keypair1, &keypair2.pubkey(), 2, Hash::new_unique()),
             ],
         );
         entries_to_test_shreds(
@@ -701,7 +705,7 @@ fn test_dead_fork_transaction_error() {
     assert_matches!(
         res,
         Err(BlockstoreProcessorError::InvalidTransaction(
-            TransactionError::AccountNotFound
+            TransactionError::BlockhashNotFound
         ))
     );
 }
