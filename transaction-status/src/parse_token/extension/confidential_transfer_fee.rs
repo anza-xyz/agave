@@ -48,29 +48,22 @@ pub(in crate::parse_token) fn parse_confidential_transfer_fee_instruction(
                 "newDecryptableAvailableBalance": format!("{}", withdraw_withheld_data.new_decryptable_available_balance),
             });
             let map = value.as_object_mut().unwrap();
-            let offset = if proof_instruction_offset == 0 {
-                map.insert(
-                    "proofContextStateAccount".to_string(),
-                    json!(account_keys[account_indexes[2] as usize].to_string()),
-                );
-                3
-            } else {
-                map.insert(
-                    "instructionsSysvar".to_string(),
-                    json!(account_keys[account_indexes[2] as usize].to_string()),
-                );
-                // Assume that the extra account is a proof account and not a multisig
-                // signer. This might be wrong, but it's the best possible option.
-                if account_indexes.len() > 4 {
+            let mut offset = 2;
+            if offset < account_indexes.len().saturating_sub(1) {
+                if proof_instruction_offset == 0 {
                     map.insert(
-                        "recordAccount".to_string(),
-                        json!(account_keys[account_indexes[3] as usize].to_string()),
+                        "proofContextStateAccount".to_string(),
+                        json!(account_keys[account_indexes[offset] as usize].to_string()),
                     );
-                    4
                 } else {
-                    3
+                    map.insert(
+                        "instructionsSysvar".to_string(),
+                        json!(account_keys[account_indexes[offset] as usize].to_string()),
+                    );
                 }
-            };
+                offset += 1;
+            }
+
             parse_signers(
                 map,
                 offset,
@@ -102,29 +95,17 @@ pub(in crate::parse_token) fn parse_confidential_transfer_fee_instruction(
             let first_source_account_index = account_indexes
                 .len()
                 .saturating_sub(num_token_accounts as usize);
-            let offset = if proof_instruction_offset == 0 {
+            if proof_instruction_offset == 0 {
                 map.insert(
                     "proofContextStateAccount".to_string(),
                     json!(account_keys[account_indexes[2] as usize].to_string()),
                 );
-                3
             } else {
                 map.insert(
                     "instructionsSysvar".to_string(),
                     json!(account_keys[account_indexes[2] as usize].to_string()),
                 );
-                if first_source_account_index > 4 {
-                    // Assume that the extra account is a proof account and not a multisig
-                    // signer. This might be wrong, but it's the best possible option.
-                    map.insert(
-                        "proofAccount".to_string(),
-                        json!(account_keys[account_indexes[3] as usize].to_string()),
-                    );
-                    4
-                } else {
-                    3
-                }
-            };
+            }
             let mut source_accounts: Vec<String> = vec![];
             for i in account_indexes[first_source_account_index..].iter() {
                 source_accounts.push(account_keys[*i as usize].to_string());
@@ -132,7 +113,7 @@ pub(in crate::parse_token) fn parse_confidential_transfer_fee_instruction(
             map.insert("sourceAccounts".to_string(), json!(source_accounts));
             parse_signers(
                 map,
-                offset,
+                3,
                 account_keys,
                 &account_indexes[..first_source_account_index],
                 "withdrawWithheldAuthority",
@@ -212,6 +193,7 @@ mod test {
         solana_instruction::{AccountMeta, Instruction},
         solana_message::Message,
         solana_pubkey::Pubkey,
+        solana_sdk_ids::sysvar,
         solana_zk_sdk_pod::encryption::auth_encryption::PodAeCiphertext,
         spl_token_2022_interface::{
             extension::confidential_transfer_fee::instruction::{
@@ -238,49 +220,229 @@ mod test {
     }
 
     #[test]
-    fn test_withdraw_from_accounts() {
-        for location in [
-            ProofLocation::InstructionOffset(
-                NonZero::new(1).unwrap(),
-                &CiphertextCiphertextEqualityProofData::zeroed(),
-            ),
-            ProofLocation::ContextStateAccount(&Pubkey::new_unique()),
-        ] {
-            let instruction = inner_withdraw_withheld_tokens_from_accounts(
+    fn test_withdraw_from_mint() {
+        let mint = Pubkey::new_unique();
+        let destination = Pubkey::new_unique();
+        let authority = Pubkey::new_unique();
+        let proof_ctx = Pubkey::new_unique();
+
+        let new_decryptable_balance = PodAeCiphertext::default();
+
+        let offset_proof = ProofLocation::InstructionOffset(
+            NonZero::new(1).unwrap(),
+            &CiphertextCiphertextEqualityProofData::zeroed(),
+        );
+
+        let context_proof = ProofLocation::ContextStateAccount(&proof_ctx);
+
+        // Array of cases: (Test Name, Proof Location, Expected Offset)
+        let cases = vec![
+            ("Context State Account", context_proof, 0),
+            ("Instruction Offset", offset_proof, 1),
+        ];
+
+        for (name, proof_location, expected_offset) in cases {
+            let instruction = inner_withdraw_withheld_tokens_from_mint(
                 &spl_token_2022_interface::id(),
-                &Pubkey::new_unique(),
-                &Pubkey::new_unique(),
-                &PodAeCiphertext::default(),
-                &Pubkey::new_unique(),
+                &mint,
+                &destination,
+                &new_decryptable_balance,
+                &authority,
                 &[],
-                &[&Pubkey::new_unique(), &Pubkey::new_unique()],
-                location,
+                proof_location,
             )
             .unwrap();
-            check_no_panic(instruction);
+
+            check_no_panic(instruction.clone());
+
+            let message = Message::new(&[instruction], None);
+            let parsed = parse_token(
+                &message.instructions[0],
+                &AccountKeys::new(&message.account_keys, None),
+            )
+            .unwrap();
+
+            // Core Property Assertions
+            assert_eq!(
+                parsed.instruction_type, "withdrawWithheldConfidentialTransferTokensFromMint",
+                "Failed on: {}",
+                name
+            );
+            assert_eq!(
+                parsed.info["mint"],
+                json!(mint.to_string()),
+                "Failed on: {}",
+                name
+            );
+            assert_eq!(
+                parsed.info["feeRecipient"],
+                json!(destination.to_string()),
+                "Failed on: {}",
+                name
+            );
+            assert_eq!(
+                parsed.info["withdrawWithheldAuthority"],
+                json!(authority.to_string()),
+                "Failed on: {}",
+                name
+            );
+            assert_eq!(
+                parsed.info["newDecryptableAvailableBalance"],
+                json!(format!("{}", new_decryptable_balance)),
+                "Failed on: {}",
+                name
+            );
+
+            assert_eq!(
+                parsed.info["proofInstructionOffset"],
+                json!(expected_offset),
+                "Failed on: {}",
+                name
+            );
+
+            if expected_offset == 0 {
+                assert_eq!(
+                    parsed.info["proofContextStateAccount"],
+                    json!(proof_ctx.to_string()),
+                    "Proof Context mismatch on: {}",
+                    name
+                );
+                assert!(
+                    parsed.info.get("instructionsSysvar").is_none(),
+                    "Sysvar should not be present on: {}",
+                    name
+                );
+            } else {
+                assert_eq!(
+                    parsed.info["instructionsSysvar"],
+                    json!(sysvar::instructions::id().to_string()),
+                    "Sysvar mismatch on: {}",
+                    name
+                );
+                assert!(
+                    parsed.info.get("proofContextStateAccount").is_none(),
+                    "Proof Context should not be present on: {}",
+                    name
+                );
+            }
         }
     }
 
     #[test]
-    fn test_withdraw_from_mint() {
-        for location in [
-            ProofLocation::InstructionOffset(
-                NonZero::new(1).unwrap(),
-                &CiphertextCiphertextEqualityProofData::zeroed(),
-            ),
-            ProofLocation::ContextStateAccount(&Pubkey::new_unique()),
-        ] {
-            let instruction = inner_withdraw_withheld_tokens_from_mint(
+    fn test_withdraw_from_accounts() {
+        let mint = Pubkey::new_unique();
+        let destination = Pubkey::new_unique();
+        let authority = Pubkey::new_unique();
+        let source_1 = Pubkey::new_unique();
+        let source_2 = Pubkey::new_unique();
+        let proof_ctx = Pubkey::new_unique();
+
+        let new_decryptable_balance = PodAeCiphertext::default();
+
+        let offset_proof = ProofLocation::InstructionOffset(
+            NonZero::new(1).unwrap(),
+            &CiphertextCiphertextEqualityProofData::zeroed(),
+        );
+
+        let context_proof = ProofLocation::ContextStateAccount(&proof_ctx);
+
+        // Array of cases: (Test Name, Proof Location, Expected Offset)
+        let cases = vec![
+            ("Context State Account", context_proof, 0),
+            ("Instruction Offset", offset_proof, 1),
+        ];
+
+        for (name, proof_location, expected_offset) in cases {
+            let instruction = inner_withdraw_withheld_tokens_from_accounts(
                 &spl_token_2022_interface::id(),
-                &Pubkey::new_unique(),
-                &Pubkey::new_unique(),
-                &PodAeCiphertext::default(),
-                &Pubkey::new_unique(),
+                &mint,
+                &destination,
+                &new_decryptable_balance,
+                &authority,
                 &[],
-                location,
+                &[&source_1, &source_2],
+                proof_location,
             )
             .unwrap();
-            check_no_panic(instruction);
+
+            check_no_panic(instruction.clone());
+
+            let message = Message::new(&[instruction], None);
+            let parsed = parse_token(
+                &message.instructions[0],
+                &AccountKeys::new(&message.account_keys, None),
+            )
+            .unwrap();
+
+            // Core Property Assertions
+            assert_eq!(
+                parsed.instruction_type, "withdrawWithheldConfidentialTransferTokensFromAccounts",
+                "Failed on: {}",
+                name
+            );
+            assert_eq!(
+                parsed.info["mint"],
+                json!(mint.to_string()),
+                "Failed on: {}",
+                name
+            );
+            assert_eq!(
+                parsed.info["feeRecipient"],
+                json!(destination.to_string()),
+                "Failed on: {}",
+                name
+            );
+            assert_eq!(
+                parsed.info["withdrawWithheldAuthority"],
+                json!(authority.to_string()),
+                "Failed on: {}",
+                name
+            );
+            assert_eq!(
+                parsed.info["sourceAccounts"],
+                json!(vec![source_1.to_string(), source_2.to_string()]),
+                "Failed on: {}",
+                name
+            );
+            assert_eq!(
+                parsed.info["newDecryptableAvailableBalance"],
+                json!(format!("{}", new_decryptable_balance)),
+                "Failed on: {}",
+                name
+            );
+
+            assert_eq!(
+                parsed.info["proofInstructionOffset"],
+                json!(expected_offset),
+                "Failed on: {}",
+                name
+            );
+
+            if expected_offset == 0 {
+                assert_eq!(
+                    parsed.info["proofContextStateAccount"],
+                    json!(proof_ctx.to_string()),
+                    "Proof Context mismatch on: {}",
+                    name
+                );
+                assert!(
+                    parsed.info.get("instructionsSysvar").is_none(),
+                    "Sysvar should not be present on: {}",
+                    name
+                );
+            } else {
+                assert_eq!(
+                    parsed.info["instructionsSysvar"],
+                    json!(sysvar::instructions::id().to_string()),
+                    "Sysvar mismatch on: {}",
+                    name
+                );
+                assert!(
+                    parsed.info.get("proofContextStateAccount").is_none(),
+                    "Proof Context should not be present on: {}",
+                    name
+                );
+            }
         }
     }
 }
