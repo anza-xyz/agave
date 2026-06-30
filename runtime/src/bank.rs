@@ -4069,6 +4069,8 @@ impl Bank {
                 }
             }
 
+            // XXX HANA if leader drops noop txns then this is very serious
+            // i would need to drop them before here, or skip them here, or something
             if processing_result.was_processed() {
                 // Signature count must be accumulated only if the transaction
                 // is processed, otherwise a mismatched count between banking
@@ -4484,7 +4486,7 @@ impl Bank {
                         inner_instructions: None,
                         return_data: None,
                         executed_units,
-                        fee_details: no_op_tx.fee_details,
+                        fee_details: FeeDetails::default(),
                         loaded_account_stats: TransactionLoadedAccountsStats {
                             loaded_accounts_count: 0,
                             loaded_accounts_data_size,

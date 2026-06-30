@@ -748,6 +748,7 @@ impl<FG: ForkGraph> TransactionBatchProcessor<FG> {
         match fee_payer_result {
             Ok(details) => TransactionValidationResult::Loadable(details),
             Err(e) if allow_noop => {
+                // we correctly report the fee-payer balance if the account exists but is invalid
                 let fee_payer_balance = account_loader
                     .load_account(message.fee_payer())
                     .map(|account| account.lamports());
@@ -755,7 +756,6 @@ impl<FG: ForkGraph> TransactionBatchProcessor<FG> {
                 TransactionValidationResult::NoOp(NoOpTransaction {
                     validation_error: e,
                     fee_payer_balance,
-                    fee_details: compute_budget_and_limits.fee_details,
                 })
             }
             Err(e) => TransactionValidationResult::Unprocessable(e),
@@ -2260,7 +2260,6 @@ mod tests {
             TransactionValidationResult::NoOp(NoOpTransaction {
                 validation_error: expected_error,
                 fee_payer_balance: None,
-                fee_details: FeeDetails::default(),
             })
         } else {
             TransactionValidationResult::Unprocessable(expected_error)
@@ -2313,7 +2312,6 @@ mod tests {
             TransactionValidationResult::NoOp(NoOpTransaction {
                 validation_error: expected_error,
                 fee_payer_balance: Some(fee_payer_balance),
-                fee_details,
             })
         } else {
             TransactionValidationResult::Unprocessable(expected_error)
@@ -2369,7 +2367,6 @@ mod tests {
             TransactionValidationResult::NoOp(NoOpTransaction {
                 validation_error: expected_error,
                 fee_payer_balance: Some(starting_balance),
-                fee_details,
             })
         } else {
             TransactionValidationResult::Unprocessable(expected_error)
@@ -2421,7 +2418,6 @@ mod tests {
             TransactionValidationResult::NoOp(NoOpTransaction {
                 validation_error: expected_error,
                 fee_payer_balance: Some(fee_payer_balance),
-                fee_details,
             })
         } else {
             TransactionValidationResult::Unprocessable(expected_error)
