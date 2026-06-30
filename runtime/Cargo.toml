@@ -157,6 +157,7 @@ solana-signer = { workspace = true }
 solana-signer-store = { workspace = true }
 solana-slot-hashes = { workspace = true, features = ["wincode"] }
 solana-slot-history = { workspace = true, features = ["wincode"] }
+solana-stake-history = { workspace = true }
 solana-stake-interface = { workspace = true }
 solana-svm = { workspace = true, features = ["metrics"] }
 solana-svm-callback = { workspace = true }
@@ -203,7 +204,7 @@ solana-sdk-ids = { workspace = true }
 solana-secp256k1-program = { workspace = true, features = ["bincode"] }
 solana-signature = { workspace = true, features = ["std"] }
 solana-signer-store = { workspace = true }
-solana-stake-interface = { workspace = true, features = ["sysvar"] }
+solana-stake-interface = { workspace = true, features = ["bincode"] }
 solana-svm = { path = "../svm", features = ["agave-unstable-api", "dev-context-only-utils"] }
 solana-transaction-context = { path = "../transaction-context", features = ["agave-unstable-api", "bincode", "dev-context-only-utils"] }
 solana-vote-program = { path = "../programs/vote", default-features = false, features = ["agave-unstable-api", "dev-context-only-utils"] }

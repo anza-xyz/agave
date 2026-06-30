@@ -489,7 +489,8 @@ solana-signer-store = "0.1.0"
 solana-slot-hashes = "3.1.0"
 solana-slot-history = "3.0.1"
 solana-stable-layout = "3.0.1"
-solana-stake-interface = "4.3.0"
+solana-stake-history = "1.0.0"
+solana-stake-interface = "4.3.1"
 solana-storage-bigtable = { path = "storage-bigtable", version = "=4.3.0-alpha.0", features = ["agave-unstable-api"] }
 solana-storage-proto = { path = "storage-proto", version = "=4.3.0-alpha.0", features = ["agave-unstable-api"] }
 solana-streamer = { path = "streamer", version = "=4.3.0-alpha.0", features = ["agave-unstable-api"] }
@@ -505,7 +506,7 @@ solana-syscalls = { path = "syscalls", version = "=4.3.0-alpha.0", default-featu
 solana-system-interface = { version = "3.2", features = ["alloc", "bincode", "serde", "wincode"] }
 solana-system-program = { path = "programs/system", version = "=4.3.0-alpha.0", features = ["agave-unstable-api"] }
 solana-system-transaction = "4.0.0"
-solana-sysvar = "4.0.0"
+solana-sysvar = "4.1.0"
 solana-sysvar-id = "3.1.0"
 solana-test-validator = { path = "test-validator", version = "=4.3.0-alpha.0", features = ["agave-unstable-api"] }
 solana-time-utils = "3.0.0"

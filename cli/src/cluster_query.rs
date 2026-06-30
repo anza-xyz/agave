@@ -43,7 +43,8 @@ use {
     solana_signature::Signature,
     solana_signer_store::{Decoded, decode},
     solana_slot_history::{self as slot_history, SlotHistory},
-    solana_stake_interface::{self as stake, stake_history::StakeHistory, state::StakeStateV2},
+    solana_stake_history::StakeHistory,
+    solana_stake_interface::{self as stake, state::StakeStateV2},
     solana_system_interface::MAX_PERMITTED_DATA_LENGTH,
     solana_transaction_status::{
         EncodableWithMeta, EncodedConfirmedTransactionWithStatusMeta, UiTransactionEncoding,

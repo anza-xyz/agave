@@ -2,10 +2,8 @@
 
 use {
     solana_clock::Epoch,
-    solana_stake_interface::{
-        stake_history::StakeHistoryGetEntry,
-        state::{Delegation, Stake, StakeActivationStatus},
-    },
+    solana_stake_history::StakeHistoryGetEntry,
+    solana_stake_interface::state::{Delegation, Stake, StakeActivationStatus},
 };
 
 #[inline]
