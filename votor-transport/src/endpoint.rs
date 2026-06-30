@@ -226,19 +226,21 @@ mod tests {
         super::{BanCommand, Datagram, QuicDatagramEndpoint},
         crate::{
             ADDRESS_UNKNOWN, ALPENGLOW_ALPN, HANDSHAKE_BURST, HANDSHAKE_GLOBAL_RATE,
-            MAX_ALPENGLOW_VOTE_ACCOUNTS, MAX_INFLIGHT_HANDSHAKES, PeerListSender,
-            transport::{Identity, new_client_config},
+            MAX_ALPENGLOW_VOTE_ACCOUNTS, MAX_INFLIGHT_HANDSHAKES, METRICS_INTERVAL, PeerListSender,
+            transport::{Identity, MAX_IDLE_TIMEOUT, new_client_config},
         },
         bytes::Bytes,
         crossbeam_channel::{Receiver, bounded},
         quinn_proto::{Endpoint as ProtoEndpoint, EndpointConfig as ProtoEndpointConfig},
         solana_keypair::{Keypair, Signer},
-        solana_net_utils::sockets::bind_to_localhost_unique,
+        solana_net_utils::sockets::{
+            SocketConfiguration, bind_more_with_config, bind_to_localhost_unique,
+        },
         solana_pubkey::Pubkey,
         solana_tls_utils::{NotifyKeyUpdate, socket_addr_to_quic_server_name},
         std::{
             collections::HashMap,
-            net::SocketAddr,
+            net::{SocketAddr, UdpSocket},
             sync::{
                 Arc,
                 atomic::{AtomicBool, AtomicU64, Ordering},
@@ -300,7 +302,21 @@ mod tests {
         max_pps: usize,
     ) -> Node {
         let server_socket = bind_to_localhost_unique().expect("bind server UDP");
-        let addr = server_socket.local_addr().expect("server local addr");
+        spawn_node_with_sockets(rt, keypair, peer_list, max_pps, vec![server_socket])
+    }
+
+    /// As [`spawn_node`], but the caller supplies the inbound socket(s). Used to
+    /// drive the multi-endpoint (SO_REUSEPORT) path where `inbound_sockets.len() > 1`.
+    fn spawn_node_with_sockets(
+        rt: &Runtime,
+        keypair: Keypair,
+        peer_list: HashMap<Pubkey, SocketAddr>,
+        max_pps: usize,
+        inbound_sockets: Vec<UdpSocket>,
+    ) -> Node {
+        let addr = inbound_sockets[0]
+            .local_addr()
+            .expect("server local addr from first inbound socket");
         let client_socket = bind_to_localhost_unique().expect("bind client UDP");
         // Channel sizes mirror prod (`solana_core::tvu`): ingress like
         // `MAX_ALPENGLOW_PACKET_NUM`, ban like `MAX_ALPENGLOW_VOTE_ACCOUNTS * 2`.
@@ -310,7 +326,7 @@ mod tests {
         let endpoint = QuicDatagramEndpoint::spawn(
             rt.handle(),
             &keypair,
-            vec![server_socket],
+            inbound_sockets,
             client_socket,
             ingress_sender,
             peer_list_receiver,
@@ -587,6 +603,12 @@ mod tests {
             HIGH_PPS,
         );
         let server_pk = server.pubkey();
+        // Keep `handshake_rejected_overload` cumulative across report ticks.
+        server
+            .endpoint
+            .server_stats
+            .report_frozen
+            .store(true, Ordering::Relaxed);
         let peers = peer_list_of(server_pk, server.addr);
         let c1 = spawn_node(&rt, shared.insecure_clone(), peers.clone(), HIGH_PPS);
         let c2 = spawn_node(&rt, shared.insecure_clone(), peers.clone(), HIGH_PPS);
@@ -713,6 +735,12 @@ mod tests {
             peer_list_of(client_pubkey, ADDRESS_UNKNOWN),
             PPS,
         );
+        // Keep `datagram_rate_limited` / `connection_lost` cumulative across report ticks.
+        server
+            .endpoint
+            .server_stats
+            .report_frozen
+            .store(true, Ordering::Relaxed);
         let client = spawn_node(
             &rt,
             client_keypair,
@@ -1040,6 +1068,122 @@ mod tests {
         );
     }
 
+    /// Background GC: after an inbound connection closes, the peer entry lingers as
+    /// (the per-peer rate limiter is retained in case the peer reconnects quickly).
+    /// Once that limiter refills, the inbound loop must reclaim the entry.
+    #[test]
+    fn test_server_reclaims_departed_peer_entries() {
+        let rt = make_runtime_for_tests();
+        let client_keypair = Keypair::new();
+        let client_pubkey = client_keypair.pubkey();
+        let server = spawn_node(
+            &rt,
+            Keypair::new(),
+            peer_list_of(client_pubkey, ADDRESS_UNKNOWN),
+            HIGH_PPS,
+        );
+        let client = spawn_node(
+            &rt,
+            client_keypair,
+            peer_list_of(server.pubkey(), server.addr),
+            HIGH_PPS,
+        );
+        let stats = &server.endpoint.server_stats;
+
+        // Establish the connection: the server now holds one inbound peer entry.
+        let probe = Bytes::from_static(b"probe");
+        send_until_received(
+            &client,
+            &probe,
+            &server.ingress_receiver,
+            Duration::from_secs(10),
+            |d| (d.peer_pubkey == client_pubkey && d.message == probe).then_some(()),
+            "server never received the probe",
+        );
+        assert!(
+            stats.peak_unique_peers.load(Ordering::Relaxed) >= 1,
+            "the admitted connection must register a unique peer"
+        );
+
+        // Close from the client side by dropping the server from its peer_list. The
+        // server observes the close (connection_lost) and should close the connection,
+        // leaving an empty tombstone entry behind.
+        client.set_peer_list(HashMap::new());
+        let lost = wait_for_stat(&stats.connection_lost, 1, MAX_IDLE_TIMEOUT * 2);
+        assert_eq!(lost, 1, "server must observe the client-initiated close");
+
+        // The background maintenance tick must reclaim the entry once
+        // its rate limiter has refilled. peak_unique_peers returns to zero after
+        // that reclaim runs.
+        let start = Instant::now();
+
+        while stats.peak_unique_peers.load(Ordering::Relaxed) != 0
+            && start.elapsed() < METRICS_INTERVAL * 2
+        {
+            std::thread::sleep(Duration::from_millis(100));
+        }
+        assert_eq!(
+            stats.peak_unique_peers.load(Ordering::Relaxed),
+            0,
+            "background maintenance must reclaim the closed peer's entry"
+        );
+    }
+
+    /// A server bound with several inbound sockets on one port (SO_REUSEPORT) must
+    /// accept packets from all of them. The kernel hashes each connection's 4-tuple to
+    /// a socket, but we do not know which one. S we spawn many connections to make sure
+    /// we cover multiple Endpoints with high probability.
+    ///
+    /// On platforms without SO_REUSEPORT, `bind_more_with_config` yields one socket
+    /// and this degrades to a delivery check, but should still pass.
+    #[test]
+    fn test_server_socket_reuseport_delivers() {
+        const NUM_SIBLINGS: usize = 3;
+        const NUM_CLIENTS: usize = 6;
+        let rt = make_runtime_for_tests();
+
+        let first = bind_to_localhost_unique().expect("bind first inbound socket");
+        let inbound_sockets =
+            bind_more_with_config(first, NUM_SIBLINGS, SocketConfiguration::default())
+                .expect("bind additional reuseport inbound sockets");
+
+        let client_keypairs: Vec<Keypair> = (0..NUM_CLIENTS).map(|_| Keypair::new()).collect();
+        let server_peer_list: HashMap<Pubkey, SocketAddr> = client_keypairs
+            .iter()
+            .map(|kp| (kp.pubkey(), ADDRESS_UNKNOWN))
+            .collect();
+        let server = spawn_node_with_sockets(
+            &rt,
+            Keypair::new(),
+            server_peer_list,
+            HIGH_PPS,
+            inbound_sockets,
+        );
+        let server_pubkey = server.pubkey();
+        let clients: Vec<Node> = client_keypairs
+            .into_iter()
+            .map(|kp| spawn_node(&rt, kp, peer_list_of(server_pubkey, server.addr), HIGH_PPS))
+            .collect();
+
+        // Every client must get a datagram through.
+        for (i, client) in clients.iter().enumerate() {
+            let client_pubkey = client.pubkey();
+            let probe = Bytes::from(format!("reuseport-probe-{i}").into_bytes());
+            send_until_received(
+                client,
+                &probe,
+                &server.ingress_receiver,
+                Duration::from_secs(2),
+                |d| (d.peer_pubkey == client_pubkey && d.message == probe).then_some(()),
+                "server never received a datagram from one of the clients",
+            );
+            // Clear this client's retransmits before checking the next one.
+            drain_matching(&server.ingress_receiver, Duration::from_millis(200), |d| {
+                d.message == probe
+            });
+        }
+    }
+
     /// Inbound handshakes that never complete must not accumulate past
     /// [`MAX_INFLIGHT_HANDSHAKES`]. We drive the QUIC state machine by hand:
     /// send each connection's Initial but never reply to the server's handshake,
@@ -1056,10 +1200,11 @@ mod tests {
         let Identity { cert, key, .. } = Identity::from_keypair(&Keypair::new());
         let client_config = new_client_config(cert, key, ALPENGLOW_ALPN);
 
-        // A scoped flooder keeps emitting fresh Initials and never advances the
-        // handshake state machine. This makes ~20k Initials over the test's lifetime.
         let stop = AtomicBool::new(false);
         let stats = &node.endpoint.server_stats;
+        // Keep counters cumulative across report ticks so started−timed_out reflects
+        // true in-flight; otherwise report_server resets them every METRICS_INTERVAL.
+        stats.report_frozen.store(true, Ordering::Relaxed);
         let mut peak_inflight = 0usize;
         std::thread::scope(|s| {
             s.spawn(|| flood_initials(&stop, &client_config, server_addr, &server_name));

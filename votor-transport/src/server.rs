@@ -137,6 +137,7 @@ impl AcceptLoop {
                         continue;
                     }
                     let remote_addr = incoming.remote_address();
+                    debug!("Incoming connection from {remote_addr}.");
                     if remote_addr.is_ipv6() || remote_addr.ip().is_multicast() {
                         incoming.ignore();
                         continue;
@@ -370,6 +371,7 @@ impl InboundLoop {
         let mut peer_list_receiver = self.peer_list_receiver.clone();
         let mut identity_receiver = self.identity_receiver.clone();
 
+        info!("Votor QUIC transport server ready.");
         loop {
             tokio::select! {
                 biased;
@@ -412,6 +414,7 @@ impl InboundLoop {
                 // When idle we can take care of metrics and bookkeeping that
                 // does not affect liveness.
                 _ = metrics.tick() => {
+                    debug!("InboundLoop: runnig bookkeeping tasks");
                     stats::report_server(&self.stats, self.total_peers());
                     self.banlist.prune();
                     // Reclaim empty connection slots
@@ -513,12 +516,14 @@ impl InboundLoop {
     /// Admission checks for a freshly handshaked inbound connection.
     fn maybe_admit_connection(&mut self, peer: Pubkey, connection: Connection) {
         if self.banlist.is_banned(&peer) {
+            debug!("Banned peer {peer} attempted a connection, rejected");
             close_codes::BANNED.close(&connection);
             record_server_error(&Error::Banned(peer), &self.stats);
             return;
         }
 
         if !self.peer_list_receiver.borrow().contains_key(&peer) {
+            debug!("Not admitted peer {peer} attempted a connection, rejected");
             close_codes::NOT_ADMITTED.close(&connection);
             record_server_error(&Error::NotAdmitted(peer), &self.stats);
             return;
@@ -544,6 +549,7 @@ impl InboundLoop {
                 match entry.connections.try_push(connection.clone()) {
                     Ok(()) => Arc::clone(&entry.rate_limiter),
                     Err(_) => {
+                        debug!("Could not admit a connection from {peer} - all slots occupied");
                         close_codes::TOO_MANY_CONNECTIONS.close(&connection);
                         record_server_error(&Error::TooManyConnections, &self.stats);
                         return;
@@ -552,6 +558,7 @@ impl InboundLoop {
             }
         };
         stats::record_connection_count(&self.stats.peak_unique_peers, self.total_peers());
+        info!("Admitted connection from {peer}, remote address {remote_addr}");
         // The ConnectionReader reports [`InboundEvent::Closed`] when it exits so
         // we can get notified when that happens and need not retain a handle here.
         spawn(

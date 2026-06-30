@@ -23,6 +23,10 @@ pub(crate) mod close_codes {
             conn.close(self.code, self.reason);
         }
     }
+    pub(crate) const PEER_MOVED: Spec = Spec {
+        code: VarInt::from_u32(1),
+        reason: b"PEER_MOVED",
+    };
 
     pub(crate) const INVALID_IDENTITY: Spec = Spec {
         code: VarInt::from_u32(2),
@@ -54,11 +58,8 @@ pub(crate) mod close_codes {
         code: VarInt::from_u32(11),
         reason: b"IDENTITY_ROTATED",
     };
-
-    pub(crate) const PEER_MOVED: Spec = Spec {
-        code: VarInt::from_u32(12),
-        reason: b"PEER_MOVED",
-    };
+    // When adding new close code, make sure to also capture it
+    // in test_close_codes_are_frozen.
 }
 
 /// All errors observed by the endpoint.
@@ -95,4 +96,40 @@ pub enum Error {
     /// `quinn::Endpoint::new` failed. Construction-time only.
     #[error(transparent)]
     Endpoint(#[from] io::Error),
+}
+
+#[cfg(test)]
+mod tests {
+    use {super::close_codes, quinn::VarInt};
+
+    /// Close codes are wire format: changing an existing value is a breaking
+    /// change. Pin every code/reason pair so an accidental edit fails here
+    /// instead of silently breaking interop.
+    #[test]
+    fn test_close_codes_are_frozen() {
+        let pinned: [(&close_codes::Spec, u32, &[u8]); 7] = [
+            (&close_codes::PEER_MOVED, 1, b"PEER_MOVED"),
+            (&close_codes::INVALID_IDENTITY, 2, b"INVALID_IDENTITY"),
+            (&close_codes::NOT_ADMITTED, 3, b"NOT_ADMITTED"),
+            (&close_codes::BANNED, 4, b"BANNED"),
+            (
+                &close_codes::TOO_MANY_CONNECTIONS,
+                5,
+                b"TOO_MANY_CONNECTIONS",
+            ),
+            (&close_codes::FLOODING, 6, b"FLOODING"),
+            (&close_codes::IDENTITY_CHANGED, 11, b"IDENTITY_ROTATED"),
+        ];
+        for (spec, code, reason) in pinned {
+            assert_eq!(
+                spec.code,
+                VarInt::from_u32(code),
+                "close code value changed: this is a breaking protocol change"
+            );
+            assert_eq!(
+                spec.reason, reason,
+                "close reason changed: this is a breaking protocol change"
+            );
+        }
+    }
 }

@@ -7,7 +7,7 @@ use {
         transport::{Identity, new_client_config},
     },
     bytes::Bytes,
-    log::{error, info},
+    log::{debug, error, info},
     quinn::{Connection, Endpoint, SendDatagramError},
     solana_pubkey::{Pubkey, PubkeyHasherBuilder},
     solana_tls_utils::{get_remote_pubkey, socket_addr_to_quic_server_name},
@@ -131,6 +131,7 @@ impl OutboundLoop {
         // reads in `reconcile` go through `self.peer_list_receiver`.
         let mut peer_list_receiver = self.peer_list_receiver.clone();
 
+        info!("Votor QUIC transport client ready.");
         loop {
             tokio::select! {
                 biased;
@@ -170,6 +171,7 @@ impl OutboundLoop {
                 _ = reconcile_timer.tick() => self.reconcile(),
                 // Metrics are best effort
                 _ = metrics.tick() => {
+                    debug!("OutboundLoop: runnig bookkeeping tasks");
                     stats::report_client(&self.stats, self.peer_state.len() as u64);
                 }
                 // Shutdown is never something we do in a hurry
@@ -215,6 +217,7 @@ impl OutboundLoop {
 
     /// Reconcile the connection table against the current peer_list.
     fn reconcile(&mut self) {
+        debug!("OutboundLoop: runnig reconcile");
         // Clone the Arc so the operation is coherent (next call to reconcile will
         // pick up a new peer_list if it gets published before this operation finishes).
         let peer_list = self.peer_list_receiver.borrow().clone();
@@ -226,6 +229,7 @@ impl OutboundLoop {
                 return true;
             }
             if let PeerState::Established { connection, .. } = state {
+                info!("OutboundLoop: closing connection to {peer}: no longer desired.");
                 close_codes::NOT_ADMITTED.close(connection);
                 closed_not_in_peer_list = closed_not_in_peer_list.saturating_add(1);
             }
@@ -253,6 +257,10 @@ impl OutboundLoop {
                 }) => {
                     // desired peer address has changed
                     if cur != addr {
+                        info!(
+                            "OutboundLoop: closing connection to {peer}: desired address changed \
+                             from {cur} to {addr}."
+                        );
                         close_codes::PEER_MOVED.close(connection);
                         self.stats
                             .connection_closed_peer_moved
@@ -266,6 +274,7 @@ impl OutboundLoop {
                 None => true,
             };
             if needs_connection {
+                info!("OutboundLoop: initiating connection to {peer} ({addr})");
                 self.peer_state.insert(*peer, PeerState::Connecting);
                 self.in_flight_handshakes.spawn(
                     ClientConnection {
