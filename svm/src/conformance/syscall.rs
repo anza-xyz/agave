@@ -26,7 +26,7 @@ use {
             aligned_memory::AlignedMemory,
             ebpf::{HOST_ALIGN, MM_BYTECODE_START, MM_HEAP_START, MM_INPUT_START, MM_STACK_START},
             error::{ProgramResult, StableResult},
-            memory_region::{AccessViolationHandler, HostBuffer, MemoryMapping, MemoryRegion},
+            memory_region::{AccessViolationHandler, MemoryMapping, MemoryRegion},
             program::{BuiltinProgram, SBPFVersion},
             vm::{Config, ContextObject, EbpfVm},
         },
@@ -320,13 +320,7 @@ fn extract_input_data_regions(
 fn mem_region_to_input_data_region(region: &MemoryRegion) -> ProtoInputDataRegion {
     let host_buffer = region.host_buffer();
     ProtoInputDataRegion {
-        content: unsafe {
-            match host_buffer {
-                HostBuffer::Immutable(p) => &*p,
-                HostBuffer::Mutable(p) => &*p,
-            }
-            .to_vec()
-        },
+        content: unsafe { host_buffer.ptr().as_ref_unchecked().to_vec() },
         offset: region.vm_addr_range().start.saturating_sub(MM_INPUT_START),
         is_writable: host_buffer.is_mutable(),
     }
