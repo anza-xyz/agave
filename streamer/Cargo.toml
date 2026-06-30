@@ -24,6 +24,7 @@ dev-context-only-utils = []
 
 [dependencies]
 agave-xdp = { workspace = true }
+ahash = { workspace = true }
 bytes = { workspace = true }
 crossbeam-channel = { workspace = true }
 futures = { workspace = true }
