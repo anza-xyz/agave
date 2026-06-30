@@ -663,70 +663,59 @@ mod test {
 
             assert_eq!(
                 parsed.instruction_type, "configureConfidentialTransferAccount",
-                "Failed on: {}",
-                name
+                "Failed on: {name}",
             );
             assert_eq!(
                 parsed.info["account"],
                 json!(token_account.to_string()),
-                "Failed on: {}",
-                name
+                "Failed on: {name}",
             );
             assert_eq!(
                 parsed.info["mint"],
                 json!(mint.to_string()),
-                "Failed on: {}",
-                name
+                "Failed on: {name}",
             );
             assert_eq!(
                 parsed.info["owner"],
                 json!(authority.to_string()),
-                "Failed on: {}",
-                name
+                "Failed on: {name}",
             );
             assert_eq!(
                 parsed.info["decryptableZeroBalance"],
-                json!(format!("{}", decryptable_zero_balance)),
-                "Failed on: {}",
-                name
+                json!(format!("{decryptable_zero_balance}")),
+                "Failed on: {name}",
             );
             assert_eq!(
                 parsed.info["maximumPendingBalanceCreditCounter"],
                 json!(maximum_pending_balance_credit_counter),
-                "Failed on: {}",
-                name
+                "Failed on: {name}",
             );
 
             assert_eq!(
                 parsed.info["proofInstructionOffset"],
                 json!(expected_offset),
-                "Failed on: {}",
-                name
+                "Failed on: {name}",
             );
 
             if expected_offset == 0 {
                 assert_eq!(
                     parsed.info["proofContextStateAccount"],
                     json!(proof_ctx.to_string()),
-                    "Proof Context mismatch on: {}",
-                    name
+                    "Proof Context mismatch on: {name}",
                 );
                 assert!(
                     parsed.info.get("instructionsSysvar").is_none(),
-                    "Sysvar should not be present on: {}",
-                    name
+                    "Sysvar should not be present on: {name}",
                 );
             } else {
                 assert_eq!(
                     parsed.info["instructionsSysvar"],
                     json!(sysvar::instructions::id().to_string()),
-                    "Sysvar mismatch on: {}",
-                    name
+                    "Sysvar mismatch on: {name}",
                 );
                 assert!(
                     parsed.info.get("proofContextStateAccount").is_none(),
-                    "Proof Context should not be present on: {}",
-                    name
+                    "Proof Context should not be present on: {name}",
                 );
             }
         }
@@ -774,53 +763,45 @@ mod test {
             // Core Property Assertions
             assert_eq!(
                 parsed.instruction_type, "emptyConfidentialTransferAccount",
-                "Failed on: {}",
-                name
+                "Failed on: {name}",
             );
             assert_eq!(
                 parsed.info["account"],
                 json!(token_account.to_string()),
-                "Failed on: {}",
-                name
+                "Failed on: {name}",
             );
             assert_eq!(
                 parsed.info["owner"],
                 json!(authority.to_string()),
-                "Failed on: {}",
-                name
+                "Failed on: {name}",
             );
 
             // Expected Offset
             assert_eq!(
                 parsed.info["proofInstructionOffset"],
                 json!(expected_offset),
-                "Failed on: {}",
-                name
+                "Failed on: {name}",
             );
 
             if expected_offset == 0 {
                 assert_eq!(
                     parsed.info["proofContextStateAccount"],
                     json!(proof_ctx.to_string()),
-                    "Proof Context mismatch on: {}",
-                    name
+                    "Proof Context mismatch on: {name}",
                 );
                 assert!(
                     parsed.info.get("instructionsSysvar").is_none(),
-                    "Sysvar should not be present on: {}",
-                    name
+                    "Sysvar should not be present on: {name}",
                 );
             } else {
                 assert_eq!(
                     parsed.info["instructionsSysvar"],
                     json!(sysvar::instructions::id().to_string()),
-                    "Sysvar mismatch on: {}",
-                    name
+                    "Sysvar mismatch on: {name}",
                 );
                 assert!(
                     parsed.info.get("proofContextStateAccount").is_none(),
-                    "Proof Context should not be present on: {}",
-                    name
+                    "Proof Context should not be present on: {name}",
                 );
             }
         }
@@ -925,47 +906,40 @@ mod test {
 
             assert_eq!(
                 parsed.instruction_type, "withdrawConfidentialTransfer",
-                "Failed on: {}",
-                name
+                "Failed on: {name}",
             );
             assert_eq!(
                 parsed.info["account"],
                 json!(token_account.to_string()),
-                "Failed on: {}",
-                name
+                "Failed on: {name}",
             );
             assert_eq!(
                 parsed.info["mint"],
                 json!(mint.to_string()),
-                "Failed on: {}",
-                name
+                "Failed on: {name}",
             );
             assert_eq!(
                 parsed.info["owner"],
                 json!(authority.to_string()),
-                "Failed on: {}",
-                name
+                "Failed on: {name}",
             );
-            assert_eq!(parsed.info["amount"], json!(42), "Failed on: {}", name);
-            assert_eq!(parsed.info["decimals"], json!(9), "Failed on: {}", name);
+            assert_eq!(parsed.info["amount"], json!(42), "Failed on: {name}");
+            assert_eq!(parsed.info["decimals"], json!(9), "Failed on: {name}");
             assert_eq!(
                 parsed.info["newDecryptableAvailableBalance"],
                 json!(format!("{}", PodAeCiphertext::default())),
-                "Failed on: {}",
-                name
+                "Failed on: {name}",
             );
 
             assert_eq!(
                 parsed.info["equalityProofInstructionOffset"],
                 json!(eq_offset),
-                "Failed on: {}",
-                name
+                "Failed on: {name}",
             );
             assert_eq!(
                 parsed.info["rangeProofInstructionOffset"],
                 json!(rng_offset),
-                "Failed on: {}",
-                name
+                "Failed on: {name}",
             );
 
             // Sysvar Assertion: Only present if at least one proof relies on
@@ -974,14 +948,12 @@ mod test {
                 assert_eq!(
                     parsed.info["instructionsSysvar"],
                     json!(sysvar::instructions::id().to_string()),
-                    "Sysvar mismatch on: {}",
-                    name
+                    "Sysvar mismatch on: {name}",
                 );
             } else {
                 assert!(
                     parsed.info.get("instructionsSysvar").is_none(),
-                    "Sysvar mismatch on: {}",
-                    name
+                    "Sysvar mismatch on: {name}",
                 );
             }
 
@@ -989,8 +961,7 @@ mod test {
                 assert_eq!(
                     parsed.info["equalityProofContextStateAccount"],
                     json!(equality_ctx.to_string()),
-                    "Eq Context mismatch on: {}",
-                    name
+                    "Eq Context mismatch on: {name}",
                 );
             } else {
                 assert!(
@@ -998,8 +969,7 @@ mod test {
                         .info
                         .get("equalityProofContextStateAccount")
                         .is_none(),
-                    "Eq Context mismatch on: {}",
-                    name
+                    "Eq Context mismatch on: {name}",
                 );
             }
 
@@ -1007,14 +977,12 @@ mod test {
                 assert_eq!(
                     parsed.info["rangeProofContextStateAccount"],
                     json!(range_ctx.to_string()),
-                    "Rng Context mismatch on: {}",
-                    name
+                    "Rng Context mismatch on: {name}",
                 );
             } else {
                 assert!(
                     parsed.info.get("rangeProofContextStateAccount").is_none(),
-                    "Rng Context mismatch on: {}",
-                    name
+                    "Rng Context mismatch on: {name}",
                 );
             }
         }
@@ -1098,51 +1066,43 @@ mod test {
 
             assert_eq!(
                 parsed.instruction_type, "confidentialTransfer",
-                "Failed on: {}",
-                name
+                "Failed on: {name}",
             );
             assert_eq!(
                 parsed.info["source"],
                 json!(source.to_string()),
-                "Failed on: {}",
-                name
+                "Failed on: {name}",
             );
             assert_eq!(
                 parsed.info["mint"],
                 json!(mint.to_string()),
-                "Failed on: {}",
-                name
+                "Failed on: {name}",
             );
             assert_eq!(
                 parsed.info["destination"],
                 json!(destination.to_string()),
-                "Failed on: {}",
-                name
+                "Failed on: {name}",
             );
             assert_eq!(
                 parsed.info["owner"],
                 json!(authority.to_string()),
-                "Failed on: {}",
-                name
+                "Failed on: {name}",
             );
 
             assert_eq!(
                 parsed.info["equalityProofInstructionOffset"],
                 json!(eq_offset),
-                "Failed on: {}",
-                name
+                "Failed on: {name}",
             );
             assert_eq!(
                 parsed.info["ciphertextValidityProofInstructionOffset"],
                 json!(val_offset),
-                "Failed on: {}",
-                name
+                "Failed on: {name}",
             );
             assert_eq!(
                 parsed.info["rangeProofInstructionOffset"],
                 json!(rng_offset),
-                "Failed on: {}",
-                name
+                "Failed on: {name}",
             );
 
             // The Instructions Sysvar is only pushed into the account list if
@@ -1152,14 +1112,12 @@ mod test {
                 assert_eq!(
                     parsed.info["instructionsSysvar"],
                     json!(sysvar::instructions::id().to_string()),
-                    "Sysvar mismatch on: {}",
-                    name
+                    "Sysvar mismatch on: {name}",
                 );
             } else {
                 assert!(
                     parsed.info.get("instructionsSysvar").is_none(),
-                    "Sysvar mismatch on: {}",
-                    name
+                    "Sysvar mismatch on: {name}",
                 );
             }
 
@@ -1167,8 +1125,7 @@ mod test {
                 assert_eq!(
                     parsed.info["equalityProofContextStateAccount"],
                     json!(equality_ctx.to_string()),
-                    "Eq Context mismatch on: {}",
-                    name
+                    "Eq Context mismatch on: {name}",
                 );
             } else {
                 assert!(
@@ -1176,8 +1133,7 @@ mod test {
                         .info
                         .get("equalityProofContextStateAccount")
                         .is_none(),
-                    "Eq Context mismatch on: {}",
-                    name
+                    "Eq Context mismatch on: {name}",
                 );
             }
 
@@ -1185,8 +1141,7 @@ mod test {
                 assert_eq!(
                     parsed.info["ciphertextValidityProofContextStateAccount"],
                     json!(validity_ctx.to_string()),
-                    "Val Context mismatch on: {}",
-                    name
+                    "Val Context mismatch on: {name}",
                 );
             } else {
                 assert!(
@@ -1194,8 +1149,7 @@ mod test {
                         .info
                         .get("ciphertextValidityProofContextStateAccount")
                         .is_none(),
-                    "Val Context mismatch on: {}",
-                    name
+                    "Val Context mismatch on: {name}",
                 );
             }
 
@@ -1203,14 +1157,12 @@ mod test {
                 assert_eq!(
                     parsed.info["rangeProofContextStateAccount"],
                     json!(range_ctx.to_string()),
-                    "Rng Context mismatch on: {}",
-                    name
+                    "Rng Context mismatch on: {name}",
                 );
             } else {
                 assert!(
                     parsed.info.get("rangeProofContextStateAccount").is_none(),
-                    "Rng Context mismatch on: {}",
-                    name
+                    "Rng Context mismatch on: {name}",
                 );
             }
         }
@@ -1360,63 +1312,53 @@ mod test {
 
             assert_eq!(
                 parsed.instruction_type, "confidentialTransferWithFee",
-                "Failed on: {}",
-                name
+                "Failed on: {name}",
             );
             assert_eq!(
                 parsed.info["source"],
                 json!(source.to_string()),
-                "Failed on: {}",
-                name
+                "Failed on: {name}",
             );
             assert_eq!(
                 parsed.info["mint"],
                 json!(mint.to_string()),
-                "Failed on: {}",
-                name
+                "Failed on: {name}",
             );
             assert_eq!(
                 parsed.info["destination"],
                 json!(destination.to_string()),
-                "Failed on: {}",
-                name
+                "Failed on: {name}",
             );
             assert_eq!(
                 parsed.info["owner"],
                 json!(authority.to_string()),
-                "Failed on: {}",
-                name
+                "Failed on: {name}",
             );
 
             assert_eq!(
                 parsed.info["equalityProofInstructionOffset"],
                 json!(eq_offset),
-                "Failed on: {}",
-                name
+                "Failed on: {name}",
             );
             assert_eq!(
                 parsed.info["transferAmountCiphertextValidityProofInstructionOffset"],
                 json!(transfer_val_offset),
-                "Failed on: {}",
-                name
+                "Failed on: {name}",
             );
             assert_eq!(
                 parsed.info["feeSigmaProofInstructionOffset"],
                 json!(fee_sigma_offset),
-                "Failed on: {}",
-                name
+                "Failed on: {name}",
             );
             assert_eq!(
                 parsed.info["feeCiphertextValidityProofInstructionOffset"],
                 json!(fee_val_offset),
-                "Failed on: {}",
-                name
+                "Failed on: {name}",
             );
             assert_eq!(
                 parsed.info["rangeProofInstructionOffset"],
                 json!(rng_offset),
-                "Failed on: {}",
-                name
+                "Failed on: {name}",
             );
 
             // Sysvar Assertion: Only present if at least one proof relies on an
@@ -1430,14 +1372,12 @@ mod test {
                 assert_eq!(
                     parsed.info["instructionsSysvar"],
                     json!(sysvar::instructions::id().to_string()),
-                    "Sysvar mismatch on: {}",
-                    name
+                    "Sysvar mismatch on: {name}",
                 );
             } else {
                 assert!(
                     parsed.info.get("instructionsSysvar").is_none(),
-                    "Sysvar mismatch on: {}",
-                    name
+                    "Sysvar mismatch on: {name}",
                 );
             }
 
@@ -1445,8 +1385,7 @@ mod test {
                 assert_eq!(
                     parsed.info["equalityProofContextStateAccount"],
                     json!(equality_ctx.to_string()),
-                    "Eq Context mismatch on: {}",
-                    name
+                    "Eq Context mismatch on: {name}",
                 );
             } else {
                 assert!(
@@ -1454,8 +1393,7 @@ mod test {
                         .info
                         .get("equalityProofContextStateAccount")
                         .is_none(),
-                    "Eq Context mismatch on: {}",
-                    name
+                    "Eq Context mismatch on: {name}",
                 );
             }
 
@@ -1463,8 +1401,7 @@ mod test {
                 assert_eq!(
                     parsed.info["transferAmountCiphertextValidityProofContextStateAccount"],
                     json!(transfer_val_ctx.to_string()),
-                    "Transfer Val Context mismatch on: {}",
-                    name
+                    "Transfer Val Context mismatch on: {name}",
                 );
             } else {
                 assert!(
@@ -1472,8 +1409,7 @@ mod test {
                         .info
                         .get("transferAmountCiphertextValidityProofContextStateAccount")
                         .is_none(),
-                    "Transfer Val Context mismatch on: {}",
-                    name
+                    "Transfer Val Context mismatch on: {name}",
                 );
             }
 
@@ -1481,8 +1417,7 @@ mod test {
                 assert_eq!(
                     parsed.info["feeSigmaProofContextStateAccount"],
                     json!(fee_sigma_ctx.to_string()),
-                    "Fee Sigma Context mismatch on: {}",
-                    name
+                    "Fee Sigma Context mismatch on: {name}",
                 );
             } else {
                 assert!(
@@ -1490,8 +1425,7 @@ mod test {
                         .info
                         .get("feeSigmaProofContextStateAccount")
                         .is_none(),
-                    "Fee Sigma Context mismatch on: {}",
-                    name
+                    "Fee Sigma Context mismatch on: {name}",
                 );
             }
 
@@ -1499,8 +1433,7 @@ mod test {
                 assert_eq!(
                     parsed.info["feeCiphertextValidityProofContextStateAccount"],
                     json!(fee_val_ctx.to_string()),
-                    "Fee Val Context mismatch on: {}",
-                    name
+                    "Fee Val Context mismatch on: {name}",
                 );
             } else {
                 assert!(
@@ -1508,8 +1441,7 @@ mod test {
                         .info
                         .get("feeCiphertextValidityProofContextStateAccount")
                         .is_none(),
-                    "Fee Val Context mismatch on: {}",
-                    name
+                    "Fee Val Context mismatch on: {name}",
                 );
             }
 
@@ -1517,14 +1449,12 @@ mod test {
                 assert_eq!(
                     parsed.info["rangeProofContextStateAccount"],
                     json!(range_ctx.to_string()),
-                    "Rng Context mismatch on: {}",
-                    name
+                    "Rng Context mismatch on: {name}",
                 );
             } else {
                 assert!(
                     parsed.info.get("rangeProofContextStateAccount").is_none(),
-                    "Rng Context mismatch on: {}",
-                    name
+                    "Rng Context mismatch on: {name}",
                 );
             }
         }

@@ -265,64 +265,54 @@ mod test {
             // Core Property Assertions
             assert_eq!(
                 parsed.instruction_type, "withdrawWithheldConfidentialTransferTokensFromMint",
-                "Failed on: {}",
-                name
+                "Failed on: {name}",
             );
             assert_eq!(
                 parsed.info["mint"],
                 json!(mint.to_string()),
-                "Failed on: {}",
-                name
+                "Failed on: {name}",
             );
             assert_eq!(
                 parsed.info["feeRecipient"],
                 json!(destination.to_string()),
-                "Failed on: {}",
-                name
+                "Failed on: {name}",
             );
             assert_eq!(
                 parsed.info["withdrawWithheldAuthority"],
                 json!(authority.to_string()),
-                "Failed on: {}",
-                name
+                "Failed on: {name}",
             );
             assert_eq!(
                 parsed.info["newDecryptableAvailableBalance"],
-                json!(format!("{}", new_decryptable_balance)),
-                "Failed on: {}",
-                name
+                json!(format!("{new_decryptable_balance}")),
+                "Failed on: {name}",
             );
 
             assert_eq!(
                 parsed.info["proofInstructionOffset"],
                 json!(expected_offset),
-                "Failed on: {}",
-                name
+                "Failed on: {name}",
             );
 
             if expected_offset == 0 {
                 assert_eq!(
                     parsed.info["proofContextStateAccount"],
                     json!(proof_ctx.to_string()),
-                    "Proof Context mismatch on: {}",
-                    name
+                    "Proof Context mismatch on: {name}",
                 );
                 assert!(
                     parsed.info.get("instructionsSysvar").is_none(),
-                    "Sysvar should not be present on: {}",
-                    name
+                    "Sysvar should not be present on: {name}",
                 );
             } else {
                 assert_eq!(
                     parsed.info["instructionsSysvar"],
                     json!(sysvar::instructions::id().to_string()),
-                    "Sysvar mismatch on: {}",
-                    name
+                    "Sysvar mismatch on: {name}",
                 );
                 assert!(
                     parsed.info.get("proofContextStateAccount").is_none(),
-                    "Proof Context should not be present on: {}",
-                    name
+                    "Proof Context should not be present on: {name}",
                 );
             }
         }
@@ -377,70 +367,59 @@ mod test {
             // Core Property Assertions
             assert_eq!(
                 parsed.instruction_type, "withdrawWithheldConfidentialTransferTokensFromAccounts",
-                "Failed on: {}",
-                name
+                "Failed on: {name}",
             );
             assert_eq!(
                 parsed.info["mint"],
                 json!(mint.to_string()),
-                "Failed on: {}",
-                name
+                "Failed on: {name}",
             );
             assert_eq!(
                 parsed.info["feeRecipient"],
                 json!(destination.to_string()),
-                "Failed on: {}",
-                name
+                "Failed on: {name}",
             );
             assert_eq!(
                 parsed.info["withdrawWithheldAuthority"],
                 json!(authority.to_string()),
-                "Failed on: {}",
-                name
+                "Failed on: {name}",
             );
             assert_eq!(
                 parsed.info["sourceAccounts"],
                 json!(vec![source_1.to_string(), source_2.to_string()]),
-                "Failed on: {}",
-                name
+                "Failed on: {name}",
             );
             assert_eq!(
                 parsed.info["newDecryptableAvailableBalance"],
-                json!(format!("{}", new_decryptable_balance)),
-                "Failed on: {}",
-                name
+                json!(format!("{new_decryptable_balance}")),
+                "Failed on: {name}",
             );
 
             assert_eq!(
                 parsed.info["proofInstructionOffset"],
                 json!(expected_offset),
-                "Failed on: {}",
-                name
+                "Failed on: {name}",
             );
 
             if expected_offset == 0 {
                 assert_eq!(
                     parsed.info["proofContextStateAccount"],
                     json!(proof_ctx.to_string()),
-                    "Proof Context mismatch on: {}",
-                    name
+                    "Proof Context mismatch on: {name}",
                 );
                 assert!(
                     parsed.info.get("instructionsSysvar").is_none(),
-                    "Sysvar should not be present on: {}",
-                    name
+                    "Sysvar should not be present on: {name}",
                 );
             } else {
                 assert_eq!(
                     parsed.info["instructionsSysvar"],
                     json!(sysvar::instructions::id().to_string()),
-                    "Sysvar mismatch on: {}",
-                    name
+                    "Sysvar mismatch on: {name}",
                 );
                 assert!(
                     parsed.info.get("proofContextStateAccount").is_none(),
-                    "Proof Context should not be present on: {}",
-                    name
+                    "Proof Context should not be present on: {name}",
                 );
             }
         }

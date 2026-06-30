@@ -342,32 +342,27 @@ mod test {
             // Core Property Assertions
             assert_eq!(
                 parsed.instruction_type, "permissionedConfidentialBurn",
-                "Failed on: {}",
-                name
+                "Failed on: {name}",
             );
             assert_eq!(
                 parsed.info["account"],
                 json!(account.to_string()),
-                "Failed on: {}",
-                name
+                "Failed on: {name}",
             );
             assert_eq!(
                 parsed.info["mint"],
                 json!(mint.to_string()),
-                "Failed on: {}",
-                name
+                "Failed on: {name}",
             );
             assert_eq!(
                 parsed.info["permissionedBurnAuthority"],
                 json!(permissioned_burn_authority.to_string()),
-                "Failed on: {}",
-                name
+                "Failed on: {name}",
             );
             assert_eq!(
                 parsed.info["authority"],
                 json!(authority.to_string()),
-                "Failed on: {}",
-                name
+                "Failed on: {name}",
             );
 
             // Conditional Proof Context / Sysvar Assertions
@@ -375,14 +370,12 @@ mod test {
                 assert_eq!(
                     parsed.info["instructionsSysvar"],
                     json!(sysvar::instructions::id().to_string()),
-                    "Failed on: {}",
-                    name
+                    "Failed on: {name}",
                 );
             } else {
                 assert!(
                     parsed.info.get("instructionsSysvar").is_none(),
-                    "Failed on: {}",
-                    name
+                    "Failed on: {name}",
                 );
             }
 
@@ -390,8 +383,7 @@ mod test {
                 assert_eq!(
                     parsed.info["equalityProofContextStateAccount"],
                     json!(equality_ctx.to_string()),
-                    "Failed on: {}",
-                    name
+                    "Failed on: {name}",
                 );
             } else {
                 assert!(
@@ -399,8 +391,7 @@ mod test {
                         .info
                         .get("equalityProofContextStateAccount")
                         .is_none(),
-                    "Failed on: {}",
-                    name
+                    "Failed on: {name}",
                 );
             }
 
@@ -408,8 +399,7 @@ mod test {
                 assert_eq!(
                     parsed.info["ciphertextValidityProofContextStateAccount"],
                     json!(validity_ctx.to_string()),
-                    "Failed on: {}",
-                    name
+                    "Failed on: {name}",
                 );
             } else {
                 assert!(
@@ -417,8 +407,7 @@ mod test {
                         .info
                         .get("ciphertextValidityProofContextStateAccount")
                         .is_none(),
-                    "Failed on: {}",
-                    name
+                    "Failed on: {name}",
                 );
             }
 
@@ -426,14 +415,12 @@ mod test {
                 assert_eq!(
                     parsed.info["rangeProofContextStateAccount"],
                     json!(range_ctx.to_string()),
-                    "Failed on: {}",
-                    name
+                    "Failed on: {name}",
                 );
             } else {
                 assert!(
                     parsed.info.get("rangeProofContextStateAccount").is_none(),
-                    "Failed on: {}",
-                    name
+                    "Failed on: {name}",
                 );
             }
         }
