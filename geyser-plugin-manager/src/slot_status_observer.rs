@@ -55,23 +55,25 @@ impl SlotStatusObserver {
                 while !exit.load(Ordering::Relaxed) {
                     if let Ok(slot) = bank_notification_receiver.recv() {
                         match slot {
-                            SlotNotification::OptimisticallyConfirmed(slot) => {
+                            SlotNotification::OptimisticallyConfirmed(slot, bank_id) => {
                                 slot_status_notifier
                                     .read()
                                     .unwrap()
-                                    .notify_slot_confirmed(slot, None);
+                                    .notify_slot_confirmed(slot, None, bank_id);
                             }
-                            SlotNotification::Frozen((slot, parent)) => {
-                                slot_status_notifier
-                                    .read()
-                                    .unwrap()
-                                    .notify_slot_processed(slot, Some(parent));
+                            SlotNotification::Frozen((slot, parent, bank_id)) => {
+                                slot_status_notifier.read().unwrap().notify_slot_processed(
+                                    slot,
+                                    Some(parent),
+                                    bank_id,
+                                );
                             }
-                            SlotNotification::Root((slot, parent)) => {
-                                slot_status_notifier
-                                    .read()
-                                    .unwrap()
-                                    .notify_slot_rooted(slot, Some(parent));
+                            SlotNotification::Root((slot, parent, bank_id)) => {
+                                slot_status_notifier.read().unwrap().notify_slot_rooted(
+                                    slot,
+                                    Some(parent),
+                                    bank_id,
+                                );
                             }
                         }
                     }

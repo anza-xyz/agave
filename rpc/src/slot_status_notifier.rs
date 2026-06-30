@@ -5,13 +5,13 @@ use {
 
 pub trait SlotStatusNotifierInterface {
     /// Notified when a slot is optimistically confirmed
-    fn notify_slot_confirmed(&self, slot: Slot, parent: Option<Slot>);
+    fn notify_slot_confirmed(&self, slot: Slot, parent: Option<Slot>, bank_id: BankId);
 
     /// Notified when a slot is marked frozen.
-    fn notify_slot_processed(&self, slot: Slot, parent: Option<Slot>);
+    fn notify_slot_processed(&self, slot: Slot, parent: Option<Slot>, bank_id: BankId);
 
     /// Notified when a slot is rooted.
-    fn notify_slot_rooted(&self, slot: Slot, parent: Option<Slot>);
+    fn notify_slot_rooted(&self, slot: Slot, parent: Option<Slot>, bank_id: BankId);
 
     /// Notified when the first shred is received for a slot.
     fn notify_first_shred_received(&self, slot: Slot);

@@ -904,11 +904,11 @@ impl SlotStatusNotifierForTest {
 }
 
 impl SlotStatusNotifierInterface for SlotStatusNotifierForTest {
-    fn notify_slot_confirmed(&self, _slot: Slot, _parent: Option<Slot>) {}
+    fn notify_slot_confirmed(&self, _slot: Slot, _parent: Option<Slot>, _bank_id: BankId) {}
 
-    fn notify_slot_processed(&self, _slot: Slot, _parent: Option<Slot>) {}
+    fn notify_slot_processed(&self, _slot: Slot, _parent: Option<Slot>, _bank_id: BankId) {}
 
-    fn notify_slot_rooted(&self, _slot: Slot, _parent: Option<Slot>) {}
+    fn notify_slot_rooted(&self, _slot: Slot, _parent: Option<Slot>, _bank_id: BankId) {}
 
     fn notify_first_shred_received(&self, _slot: Slot) {}
 

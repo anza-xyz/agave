@@ -13,16 +13,16 @@ pub struct SlotStatusNotifierImpl {
 }
 
 impl SlotStatusNotifierInterface for SlotStatusNotifierImpl {
-    fn notify_slot_confirmed(&self, slot: Slot, parent: Option<Slot>) {
-        self.notify_slot_status(slot, parent, SlotStatus::Confirmed, None);
+    fn notify_slot_confirmed(&self, slot: Slot, parent: Option<Slot>, bank_id: BankId) {
+        self.notify_slot_status(slot, parent, SlotStatus::Confirmed, Some(bank_id));
     }
 
-    fn notify_slot_processed(&self, slot: Slot, parent: Option<Slot>) {
-        self.notify_slot_status(slot, parent, SlotStatus::Processed, None);
+    fn notify_slot_processed(&self, slot: Slot, parent: Option<Slot>, bank_id: BankId) {
+        self.notify_slot_status(slot, parent, SlotStatus::Processed, Some(bank_id));
     }
 
-    fn notify_slot_rooted(&self, slot: Slot, parent: Option<Slot>) {
-        self.notify_slot_status(slot, parent, SlotStatus::Rooted, None);
+    fn notify_slot_rooted(&self, slot: Slot, parent: Option<Slot>, bank_id: BankId) {
+        self.notify_slot_status(slot, parent, SlotStatus::Rooted, Some(bank_id));
     }
 
     fn notify_first_shred_received(&self, slot: Slot) {
@@ -145,13 +145,13 @@ mod tests {
         let notifier = create_notifier(updates.clone());
 
         notifier.notify_created_bank(42, 41, 9);
-        notifier.notify_slot_processed(42, Some(41));
+        notifier.notify_slot_processed(42, Some(41), 9);
 
         assert_eq!(
             *updates.lock().unwrap(),
             vec![
                 (42, Some(41), SlotStatus::CreatedBank, Some(9)),
-                (42, Some(41), SlotStatus::Processed, None),
+                (42, Some(41), SlotStatus::Processed, Some(9)),
             ]
         );
     }
