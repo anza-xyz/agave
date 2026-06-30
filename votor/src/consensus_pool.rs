@@ -147,6 +147,9 @@ impl ConsensusPool {
             VoteType::Notarize => VotePool::DuplicateBlockVotePool(DuplicateBlockVotePool::new(
                 MAX_ENTRIES_PER_PUBKEY_FOR_OTHER_TYPES,
             )),
+            VoteType::Genesis => VotePool::DuplicateBlockVotePool(DuplicateBlockVotePool::new(
+                MAX_ENTRIES_PER_PUBKEY_FOR_OTHER_TYPES,
+            )),
             _ => VotePool::SimpleVotePool(SimpleVotePool::default()),
         }
     }
