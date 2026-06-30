@@ -40,6 +40,3 @@ impl SerializableAccountStorageEntry {
         }
     }
 }
-
-#[cfg(feature = "frozen-abi")]
-impl solana_frozen_abi::abi_example::TransparentAsHelper for SerializableAccountStorageEntry {}

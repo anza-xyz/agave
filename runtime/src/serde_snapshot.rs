@@ -293,9 +293,6 @@ impl From<BankFieldsToSerialize> for SerializableVersionedBank {
     }
 }
 
-#[cfg(feature = "frozen-abi")]
-impl solana_frozen_abi::abi_example::TransparentAsHelper for SerializableVersionedBank {}
-
 /// Helper type to wrap BufReader streams when deserializing and reconstructing from either just a
 /// full snapshot, or both a full and incremental snapshot
 pub struct SnapshotStreams<'a, R> {
