@@ -106,11 +106,7 @@ mod serde_snapshot_tests {
         let bank_hash_stats = BankHashStats::default();
         serialize_into(
             stream,
-            &SerializableAccountsDb {
-                slot,
-                account_storage_entries,
-                bank_hash_stats,
-            },
+            &SerializableAccountsDb::new(slot, account_storage_entries, bank_hash_stats),
         )
     }
 

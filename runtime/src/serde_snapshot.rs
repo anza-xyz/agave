@@ -39,7 +39,6 @@ use {
     solana_inflation::Inflation,
     solana_lattice_hash::lt_hash::LtHash,
     solana_leader_schedule::SlotLeader,
-    solana_measure::measure::Measure,
     solana_pubkey::Pubkey,
     solana_serde::default_on_eof,
     solana_stake_interface::state::Delegation,
@@ -627,6 +626,29 @@ pub fn serialize_bank_snapshot_into(
     )
 }
 
+// The full serialized form of a bank snapshot: the bank fields, the accounts db fields, and the
+// extra fields, in wire order. Generic over the account-storage-entries serializer `E` so the
+// runtime can stream the storage entries lazily (see `SerializableAccountsDb`).
+#[cfg_attr(feature = "frozen-abi", derive(StableAbi, StableAbiSample))]
+#[derive(Serialize)]
+struct SerializableBankSnapshot<E> {
+    bank: SerializableVersionedBank,
+    accounts_db: SerializableAccountsDb<E>,
+    extra_fields: ExtraFieldsToSerialize,
+}
+
+// Concrete instantiation of `SerializableBankSnapshot` used only to pin the wire ABI; see
+// `SerializableAccountsDbForAbi`. Write-only type (its deserialize counterparts are
+// `DeserializableVersionedBank`, `AccountsDbFields` and `ExtraFieldsToDeserialize`), so there is no
+// roundtrip.
+#[cfg(all(test, feature = "frozen-abi"))]
+#[frozen_abi(
+    abi_digest = "E4waD1iVxUYi3x9xA5xQHhCEbhhGtV9bqmo2TJ9ZsqTw",
+    test_roundtrip = "no"
+)]
+type SerializableBankSnapshotForAbi =
+    SerializableBankSnapshot<Vec<(Slot, Vec<SerializableAccountStorageEntry>)>>;
+
 /// Serializes bank snapshot with `serializer`
 pub fn serialize_bank_snapshot_with<S>(
     serializer: S,
@@ -639,13 +661,14 @@ where
     S: serde::Serializer,
 {
     let slot = bank_fields.slot;
-    let serializable_bank = SerializableVersionedBank::from(bank_fields);
-    let serializable_accounts_db = SerializableAccountsDb::<'_> {
-        slot,
-        account_storage_entries,
-        bank_hash_stats,
+    let snapshot = SerializableBankSnapshot {
+        bank: SerializableVersionedBank::from(bank_fields),
+        accounts_db: SerializableAccountsDb::new(slot, account_storage_entries, bank_hash_stats),
+        extra_fields,
     };
-    (serializable_bank, serializable_accounts_db, extra_fields).serialize(serializer)
+    // Note: the time spent here is reported by the caller (e.g. as `bank_serialize_us` in the
+    // `snapshot_bank` datapoint).
+    snapshot.serialize(serializer)
 }
 
 #[cfg(test)]
@@ -667,14 +690,10 @@ impl Serialize for SerializableBankAndStorage<'_> {
         let versioned_epoch_stakes = std::mem::take(&mut bank_fields.versioned_epoch_stakes);
         let accounts_lt_hash = Some(bank_fields.accounts_lt_hash.clone().into());
         let block_id = Some(bank_fields.block_id);
-        let bank_fields_to_serialize = (
-            SerializableVersionedBank::from(bank_fields),
-            SerializableAccountsDb::<'_> {
-                slot,
-                account_storage_entries: self.snapshot_storages,
-                bank_hash_stats,
-            },
-            ExtraFieldsToSerialize {
+        let bank_fields_to_serialize = SerializableBankSnapshot {
+            bank: SerializableVersionedBank::from(bank_fields),
+            accounts_db: SerializableAccountsDb::new(slot, self.snapshot_storages, bank_hash_stats),
+            extra_fields: ExtraFieldsToSerialize {
                 lamports_per_signature,
                 unused_incremental_snapshot_persistence: None,
                 unused_epoch_accounts_hash: None,
@@ -682,7 +701,7 @@ impl Serialize for SerializableBankAndStorage<'_> {
                 accounts_lt_hash,
                 block_id,
             },
-        );
+        };
         bank_fields_to_serialize.serialize(serializer)
     }
 }
@@ -704,11 +723,7 @@ impl Serialize for SerializableBankAndStorageNoExtra<'_> {
         let bank_hash_stats = self.bank.get_bank_hash_stats();
         (
             SerializableVersionedBank::from(bank_fields),
-            SerializableAccountsDb::<'_> {
-                slot,
-                account_storage_entries: self.snapshot_storages,
-                bank_hash_stats,
-            },
+            SerializableAccountsDb::new(slot, self.snapshot_storages, bank_hash_stats),
         )
             .serialize(serializer)
     }
@@ -728,58 +743,69 @@ impl<'a> From<SerializableBankAndStorageNoExtra<'a>> for SerializableBankAndStor
     }
 }
 
-struct SerializableAccountsDb<'a> {
+// Serializable counterpart of `AccountsDbFields`, generic over the type used to serialize the
+// account storage entries so that the runtime can stream them via a lazy map-serializing iterator
+// (see `SerializableAccountsDb::new`) without materializing a collection. Sync fields with
+// `AccountsDbFields`!
+#[cfg_attr(feature = "frozen-abi", derive(StableAbi, StableAbiSample))]
+#[derive(Serialize)]
+struct SerializableAccountsDb<E> {
+    /// account storage entries, serialized as a map of slot to its storage entries
+    accounts_storage_entries: E,
+    unused_write_version: u64, // unused, formerly write_version
     slot: Slot,
-    account_storage_entries: &'a [Arc<AccountStorageEntry>],
-    bank_hash_stats: BankHashStats,
+    bank_hash_info: BankHashInfo,
+    /// all slots that were roots within the last epoch
+    historical_roots: Vec<Slot>,
+    /// slots that were roots within the last epoch for which we care about the hash value
+    historical_roots_with_hash: Vec<(Slot, Hash)>,
 }
 
-impl Serialize for SerializableAccountsDb<'_> {
-    fn serialize<S>(&self, serializer: S) -> std::result::Result<S::Ok, S::Error>
-    where
-        S: serde::ser::Serializer,
-    {
-        // (1st of 3 elements) write the list of account storage entry lists out as a map
-        let entries = utils::serialize_iter_as_map(self.account_storage_entries.iter().map(|x| {
-            (
-                x.slot(),
-                utils::serialize_iter_as_seq(
-                    [x].into_iter()
-                        .map(|x| SerializableAccountStorageEntry::new(x, self.slot)),
-                ),
-            )
-        }));
+impl SerializableAccountsDb<()> {
+    fn new(
+        slot: Slot,
+        account_storage_entries: &[Arc<AccountStorageEntry>],
+        bank_hash_stats: BankHashStats,
+    ) -> SerializableAccountsDb<impl Serialize + '_> {
+        // Serialize the list of account storage entry lists out as a map keyed by slot. This is a
+        // lazy iterator, so the entries are only walked when the struct is serialized.
+        let accounts_storage_entries =
+            utils::serialize_iter_as_map(account_storage_entries.iter().map(move |x| {
+                (
+                    x.slot(),
+                    utils::serialize_iter_as_seq(
+                        [x].into_iter()
+                            .map(move |x| SerializableAccountStorageEntry::new(x, slot)),
+                    ),
+                )
+            }));
         let bank_hash_info = BankHashInfo {
             unused_accounts_delta_hash: [0; 32],
             unused_accounts_hash: [0; 32],
-            stats: self.bank_hash_stats.clone(),
+            stats: bank_hash_stats,
         };
-
-        let historical_roots = Vec::<Slot>::default();
-        let historical_roots_with_hash = Vec::<(Slot, Hash)>::default();
-
-        let mut serialize_account_storage_timer = Measure::start("serialize_account_storage_ms");
-        let result = (
-            entries,
-            0u64, // unused, formerly write_version
-            self.slot,
+        SerializableAccountsDb {
+            accounts_storage_entries,
+            unused_write_version: 0,
+            slot,
             bank_hash_info,
-            historical_roots,
-            historical_roots_with_hash,
-        )
-            .serialize(serializer);
-        serialize_account_storage_timer.stop();
-        datapoint_info!(
-            "serialize_account_storage_ms",
-            ("duration", serialize_account_storage_timer.as_ms(), i64),
-            ("num_entries", self.account_storage_entries.len(), i64),
-        );
-        result
+            historical_roots: Vec::default(),
+            historical_roots_with_hash: Vec::default(),
+        }
     }
 }
 
-#[cfg(feature = "frozen-abi")]
-impl solana_frozen_abi::abi_example::TransparentAsHelper for SerializableAccountsDb<'_> {}
+// Concrete instantiation of `SerializableAccountsDb` used only to pin the wire ABI. The runtime
+// serializes the storage entries with a lazy map-serializing iterator; this alias uses a `Vec` of
+// the same `(slot, entries)` shape, which serializes to identical bytes. Write-only type (its
+// deserialize counterpart is `AccountsDbFields`), so there is no roundtrip.
+#[cfg(all(test, feature = "frozen-abi"))]
+#[frozen_abi(
+    abi_digest = "2TpwtsyrverM4ius4ykX3RRCGqeLfXJQbAvYHkxdUVrs",
+    test_roundtrip = "no"
+)]
+type SerializableAccountsDbForAbi =
+    SerializableAccountsDb<Vec<(Slot, Vec<SerializableAccountStorageEntry>)>>;
 
 /// This struct contains side-info while reconstructing the bank from fields
 #[derive(Debug)]
