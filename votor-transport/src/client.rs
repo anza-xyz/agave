@@ -19,7 +19,7 @@ use {
     },
     tokio::{
         sync::{mpsc, watch},
-        task::JoinSet,
+        task::{AbortHandle, JoinSet},
         time::{MissedTickBehavior, interval},
     },
     tokio_util::sync::CancellationToken,
@@ -30,9 +30,10 @@ use {
 const RECONCILE_INTERVAL: Duration = Duration::from_secs(1);
 
 /// State of a peer's entry in the outbound table.
+#[derive(Debug)]
 pub(crate) enum PeerState {
-    /// Connection initiated but is not ready yet.
-    Connecting,
+    /// Connection initiated but is not ready yet. Holds AbortHandle to the handshake task.
+    Connecting(AbortHandle),
     /// Live send-only connection.
     Established {
         connection: Connection,
@@ -222,16 +223,20 @@ impl OutboundLoop {
         // pick up a new peer_list if it gets published before this operation finishes).
         let peer_list = self.peer_list_receiver.borrow().clone();
 
-        // 1. Drop connections for peers that left the peer_list.
+        // 1. Close connections for peers that have left the peer_list.
+        // Abort active handshakes to undesired peers too.
         let mut closed_not_in_peer_list = 0u64;
         self.peer_state.retain(|peer, state| {
             if peer_list.contains_key(peer) {
                 return true;
             }
-            if let PeerState::Established { connection, .. } = state {
-                info!("OutboundLoop: closing connection to {peer}: no longer desired.");
-                close_codes::NOT_ADMITTED.close(connection);
-                closed_not_in_peer_list = closed_not_in_peer_list.saturating_add(1);
+            match state {
+                PeerState::Established { connection, .. } => {
+                    info!("OutboundLoop: closing connection to {peer}: no longer desired.");
+                    close_codes::NOT_ADMITTED.close(connection);
+                    closed_not_in_peer_list = closed_not_in_peer_list.saturating_add(1);
+                }
+                PeerState::Connecting(abort_handle) => abort_handle.abort(),
             }
             false
         });
@@ -250,7 +255,7 @@ impl OutboundLoop {
                 continue;
             }
             let needs_connection = match self.peer_state.get(peer) {
-                Some(PeerState::Connecting) => false,
+                Some(PeerState::Connecting(_)) => false,
                 Some(PeerState::Established {
                     connection,
                     target_address: cur,
@@ -268,15 +273,21 @@ impl OutboundLoop {
                         true
                     } else {
                         // Reconnect if the connection has died.
-                        connection.close_reason().is_some()
+                        connection
+                            .close_reason()
+                            .inspect(|reason| {
+                                self.stats.connection_lost.fetch_add(1, Ordering::Relaxed);
+                                info!("OutboundLoop: connection to {peer} was closed: {reason}");
+                            })
+                            .is_some()
                     }
                 }
                 None => true,
             };
             if needs_connection {
                 info!("OutboundLoop: initiating connection to {peer} ({addr})");
-                self.peer_state.insert(*peer, PeerState::Connecting);
-                self.in_flight_handshakes.spawn(
+
+                let abort_handle = self.in_flight_handshakes.spawn(
                     ClientConnection {
                         endpoint: self.endpoint.clone(),
                         peer: *peer,
@@ -285,6 +296,8 @@ impl OutboundLoop {
                     }
                     .run(),
                 );
+                self.peer_state
+                    .insert(*peer, PeerState::Connecting(abort_handle));
             }
         }
     }
@@ -300,7 +313,10 @@ impl OutboundLoop {
             };
             match connection.send_datagram(message.clone()) {
                 Ok(()) => sent = sent.saturating_add(1),
-                Err(SendDatagramError::ConnectionLost(_)) => dead_peers.push(*peer),
+                Err(SendDatagramError::ConnectionLost(_)) => {
+                    self.stats.connection_lost.fetch_add(1, Ordering::Relaxed);
+                    dead_peers.push(*peer);
+                }
                 Err(e) => record_client_error(&Error::from(e), &self.stats),
             }
         }
@@ -313,27 +329,29 @@ impl OutboundLoop {
     fn handle_handshake_outcome(&mut self, outcome: HandshakeOutcome) {
         match outcome {
             Ok((peer, connection)) => match self.peer_state.get_mut(&peer) {
-                Some(slot @ PeerState::Connecting) => {
+                Some(slot @ PeerState::Connecting(_)) => {
                     *slot = PeerState::Established {
                         target_address: connection.remote_address(),
                         connection,
                     };
+                    info!("OutboundLoop: established connection to {peer}.");
                     stats::record_connection_count(
                         &self.stats.peak_connections,
                         self.peer_state.len() as u64,
                     );
                 }
-                _ => {
-                    // Connect succeeded but the slot is no longer waiting for it.
-                    // The connection is redundant; close it.
-                    close_codes::NOT_ADMITTED.close(&connection);
-                }
+                // The handshake completed before handshake was aborted by
+                // reconcile (the peer left the peer_list), so this connection
+                // is redundant, close it.
+                _ => close_codes::NOT_ADMITTED.close(&connection),
             },
-            // Connection failed: drop the placeholder so the next reconcile can
-            // retry. The placeholder may already be gone (the peer left the peer_list
-            // while the handshake was in flight, so reconcile removed it).
+            // Failure: drop the placeholder so the next reconcile can retry. Only
+            // a still-`Connecting` slot is removed: the entry may already be gone
+            // or replaced by a newer successful handshake (the peer left and
+            // rejoined while this one was in flight), and we must not tear down
+            // that live connection.
             Err(peer) => {
-                if matches!(self.peer_state.get(&peer), Some(PeerState::Connecting)) {
+                if matches!(self.peer_state.get(&peer), Some(PeerState::Connecting(_))) {
                     self.peer_state.remove(&peer);
                 }
             }

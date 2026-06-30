@@ -73,6 +73,13 @@ pub struct QuicDatagramEndpoint {
     /// `agave-bls-sigverify` full ban-path test) can observe ban-driven closures.
     #[cfg(any(test, feature = "dev-context-only-utils"))]
     pub server_stats: Arc<ServerStats>,
+    /// Handles to the spawned inbound/outbound/accept loop tasks. Present only
+    /// under `test`/`dev-context-only-utils`: the test `Node` awaits them on
+    /// teardown to surface a panic a loop would otherwise swallow. Absent (and
+    /// the loops are spawn-and-forget) in prod builds.
+    #[cfg(any(test, feature = "dev-context-only-utils"))]
+    #[cfg_attr(not(test), allow(dead_code))]
+    pub(crate) task_handles: Vec<tokio::task::JoinHandle<()>>,
 }
 
 impl QuicDatagramEndpoint {
@@ -145,6 +152,8 @@ impl QuicDatagramEndpoint {
         };
         outbound_endpoint.set_default_client_config(client_config);
 
+        #[cfg(any(test, feature = "dev-context-only-utils"))]
+        let mut task_handles = Vec::new();
         let outbound = OutboundLoop::new(
             outbound_endpoint,
             local_pubkey,
@@ -153,7 +162,11 @@ impl QuicDatagramEndpoint {
             peer_list.clone(),
             shutdown.clone(),
         );
-        runtime.spawn(outbound.run());
+        let outbound_handle = runtime.spawn(outbound.run());
+        #[cfg(any(test, feature = "dev-context-only-utils"))]
+        task_handles.push(outbound_handle);
+        #[cfg(not(any(test, feature = "dev-context-only-utils")))]
+        drop(outbound_handle);
 
         // Inbound event channel allows the accept loops to forward authenticated
         // connections, and per-connection tasks report lifecycle events.
@@ -183,7 +196,11 @@ impl QuicDatagramEndpoint {
                     rate_limiter.clone(),
                     max_inflight_handshakes,
                 );
-                runtime.spawn(accept.run());
+                let accept_handle = runtime.spawn(accept.run());
+                #[cfg(any(test, feature = "dev-context-only-utils"))]
+                task_handles.push(accept_handle);
+                #[cfg(not(any(test, feature = "dev-context-only-utils")))]
+                drop(accept_handle);
             }
         }
         #[cfg(any(test, feature = "dev-context-only-utils"))]
@@ -200,7 +217,11 @@ impl QuicDatagramEndpoint {
             shutdown.clone(),
             max_datagrams_per_second_per_peer,
         );
-        runtime.spawn(inbound.run());
+        let inbound_handle = runtime.spawn(inbound.run());
+        #[cfg(any(test, feature = "dev-context-only-utils"))]
+        task_handles.push(inbound_handle);
+        #[cfg(not(any(test, feature = "dev-context-only-utils")))]
+        drop(inbound_handle);
 
         Ok(Self {
             egress: egress_sender,
@@ -208,6 +229,8 @@ impl QuicDatagramEndpoint {
             shutdown,
             #[cfg(any(test, feature = "dev-context-only-utils"))]
             server_stats: endpoint_server_stats,
+            #[cfg(any(test, feature = "dev-context-only-utils"))]
+            task_handles,
         })
     }
 }
@@ -226,7 +249,8 @@ mod tests {
         super::{BanCommand, Datagram, QuicDatagramEndpoint},
         crate::{
             ADDRESS_UNKNOWN, ALPENGLOW_ALPN, HANDSHAKE_BURST, HANDSHAKE_GLOBAL_RATE,
-            MAX_ALPENGLOW_VOTE_ACCOUNTS, MAX_INFLIGHT_HANDSHAKES, METRICS_INTERVAL, PeerListSender,
+            HANDSHAKE_TIMEOUT, MAX_ALPENGLOW_VOTE_ACCOUNTS, MAX_INFLIGHT_HANDSHAKES,
+            METRICS_INTERVAL, PeerListSender,
             transport::{Identity, MAX_IDLE_TIMEOUT, new_client_config},
         },
         bytes::Bytes,
@@ -248,7 +272,7 @@ mod tests {
             time::{Duration, Instant},
         },
         tokio::{
-            runtime::{Builder, Runtime},
+            runtime::{Builder, Handle, Runtime},
             sync::{mpsc, watch},
         },
     };
@@ -273,6 +297,42 @@ mod tests {
         keypair: Keypair,
         peer_list_sender: PeerListSender,
         ban_sender: mpsc::Sender<BanCommand>,
+        /// Runtime handle used by `Drop` to await the spawned loop tasks.
+        rt_handle: Handle,
+    }
+
+    impl Drop for Node {
+        /// Cancel the loops and await their `JoinHandle`s so a panic that a loop
+        /// task would otherwise swallow (the handle is normally dropped) turns
+        /// into a real test failure instead of a green run with a stray
+        /// "task panicked" line on stderr.
+        fn drop(&mut self) {
+            self.endpoint.shutdown.cancel();
+            let handles = std::mem::take(&mut self.endpoint.task_handles);
+            let panics = self.rt_handle.block_on(async {
+                let mut panics = 0usize;
+                for handle in handles {
+                    match tokio::time::timeout(Duration::from_secs(5), handle).await {
+                        Ok(Ok(())) => {}
+                        Ok(Err(join_err)) if join_err.is_panic() => panics += 1,
+                        // We never abort these tasks, so a cancel should not occur.
+                        Ok(Err(_)) => {}
+                        // Failure to exit on shutdown is a separate concern, not a
+                        // swallowed panic: surface it but do not fail teardown.
+                        Err(_elapsed) => {
+                            eprintln!("Node teardown: a loop task did not exit within 5s")
+                        }
+                    }
+                }
+                panics
+            });
+            // Guard against a double panic (which aborts the process) when the
+            // test body is already unwinding from its own failed assertion.
+            assert!(
+                panics == 0 || std::thread::panicking(),
+                "{panics} spawned loop task(s) panicked during the test"
+            );
+        }
     }
 
     impl Node {
@@ -341,6 +401,7 @@ mod tests {
             keypair,
             peer_list_sender,
             ban_sender,
+            rt_handle: rt.handle().clone(),
         }
     }
 
@@ -350,25 +411,23 @@ mod tests {
     }
 
     /// Re-send `payload` until `cond` matches a received datagram or `timeout` elapses.
-    /// Retrying covers the connect/handshake settling time.
     fn send_until_received<T>(
         sender: &Node,
         payload: &Bytes,
         receiver: &Receiver<Datagram>,
         timeout: Duration,
         mut cond: impl FnMut(&Datagram) -> Option<T>,
-        msg: &str,
-    ) -> T {
+    ) -> Result<T, ()> {
         let start = Instant::now();
         while start.elapsed() < timeout {
             sender.send(payload);
             if let Ok(item) = receiver.recv_timeout(Duration::from_millis(100))
                 && let Some(t) = cond(&item)
             {
-                return t;
+                return Ok(t);
             }
         }
-        panic!("{msg}");
+        Err(())
     }
 
     /// Drain datagrams matching `pred` (e.g. retry duplicates), stopping at the
@@ -450,6 +509,38 @@ mod tests {
         }
     }
 
+    /// Make sure client keeps trying to connect.
+    #[test]
+    fn test_client_keeps_trying() {
+        let rt = make_runtime_for_tests();
+        let a_kp = Keypair::new();
+        let b_kp = Keypair::new();
+        let a_pk = a_kp.pubkey();
+        let b_pk = b_kp.pubkey();
+        let a = spawn_node(&rt, a_kp, HashMap::new(), HIGH_PPS);
+        let b = spawn_node(&rt, b_kp, HashMap::new(), HIGH_PPS);
+        a.set_peer_list(peer_list_of(b_pk, b.addr));
+
+        let from_a = Bytes::from_static(b"from-A");
+        send_until_received(
+            &a,
+            &from_a,
+            &b.ingress_receiver,
+            HANDSHAKE_TIMEOUT * 2,
+            |d| (d.peer_pubkey == a_pk && d.message == from_a).then_some(()),
+        )
+        .expect_err("B should not have received anything");
+        // now allow A to connect
+        b.set_peer_list(peer_list_of(a_pk, a.addr));
+        send_until_received(
+            &a,
+            &from_a,
+            &b.ingress_receiver,
+            HANDSHAKE_TIMEOUT * 2,
+            |d| (d.peer_pubkey == a_pk && d.message == from_a).then_some(()),
+        )
+        .expect("B never received A's datagram");
+    }
     /// Basic exchange: each node lists the other in its peer_list, datagrams flow
     /// in both directions over two independent send-only connections.
     #[test]
@@ -471,8 +562,8 @@ mod tests {
             &b.ingress_receiver,
             Duration::from_secs(10),
             |d| (d.peer_pubkey == a_pk && d.message == from_a).then_some(()),
-            "B never received A's datagram",
-        );
+        )
+        .expect("B never received A's datagram");
         let from_b = Bytes::from_static(b"from-B");
         send_until_received(
             &b,
@@ -480,8 +571,8 @@ mod tests {
             &a.ingress_receiver,
             Duration::from_secs(10),
             |d| (d.peer_pubkey == b_pk && d.message == from_b).then_some(()),
-            "A never received B's datagram",
-        );
+        )
+        .expect("A never received B's datagram");
     }
 
     /// A peer in the server's peer_list is admitted; one that is not is rejected
@@ -513,8 +604,8 @@ mod tests {
             &server.ingress_receiver,
             Duration::from_secs(10),
             |d| (d.peer_pubkey == a_pk && d.message == payload_a).then_some(()),
-            "server never received payload from admitted peer A",
-        );
+        )
+        .expect("server never received payload from admitted peer A");
         drain_matching(&server.ingress_receiver, Duration::from_millis(300), |d| {
             d.message == payload_a
         });
@@ -559,8 +650,8 @@ mod tests {
             &server.ingress_receiver,
             Duration::from_secs(10),
             |d| (d.message == probe).then_some(()),
-            "first datagram never arrived",
-        );
+        )
+        .expect("first datagram never arrived");
         // drain all packets from ingress
         drain_matching(&server.ingress_receiver, Duration::from_millis(300), |d| {
             d.message == probe
@@ -620,8 +711,8 @@ mod tests {
             &server.ingress_receiver,
             Duration::from_secs(10),
             |d| (d.message == p1).then_some(()),
-            "server did not receive c1's probe",
-        );
+        )
+        .expect("server did not receive c1's probe");
         drain_matching(&server.ingress_receiver, Duration::from_millis(300), |d| {
             d.message == p1
         });
@@ -632,8 +723,8 @@ mod tests {
             &server.ingress_receiver,
             Duration::from_secs(10),
             |d| (d.message == p2).then_some(()),
-            "server did not receive c2's probe (second same-identity inbound)",
-        );
+        )
+        .expect("server did not receive c2's probe (second same-identity inbound)");
         drain_matching(&server.ingress_receiver, Duration::from_millis(300), |d| {
             d.message == p2
         });
@@ -678,8 +769,8 @@ mod tests {
             &server.ingress_receiver,
             Duration::from_secs(10),
             |d| (d.message == p1).then_some(()),
-            "server never received c1's probe",
-        );
+        )
+        .expect("server never received c1's probe");
         drain_matching(&server.ingress_receiver, Duration::from_millis(300), |d| {
             d.message == p1
         });
@@ -690,8 +781,8 @@ mod tests {
             &server.ingress_receiver,
             Duration::from_secs(10),
             |d| (d.message == p2).then_some(()),
-            "server never received c2's probe (second same-identity inbound)",
-        );
+        )
+        .expect("server never received c2's probe (second same-identity inbound)");
         drain_matching(&server.ingress_receiver, Duration::from_millis(300), |d| {
             d.message == p2
         });
@@ -755,8 +846,8 @@ mod tests {
             &server.ingress_receiver,
             Duration::from_secs(10),
             |d| (d.message == probe).then_some(()),
-            "first datagram never arrived",
-        );
+        )
+        .expect("first datagram never arrived");
         drain_matching(&server.ingress_receiver, Duration::from_millis(300), |d| {
             d.message == probe
         });
@@ -805,8 +896,8 @@ mod tests {
             &server.ingress_receiver,
             Duration::from_secs(5),
             |d| (d.message == resume).then_some(()),
-            "post-refill datagram never arrived",
-        );
+        )
+        .expect("post-refill datagram never arrived");
 
         // A sustained flood that drains the bucket dry closes the connection
         // (connection_lost grows).
@@ -873,8 +964,8 @@ mod tests {
             &server.ingress_receiver,
             Duration::from_secs(10),
             |d| (d.peer_pubkey == k1_pk && d.message == p1).then_some(()),
-            "server never received message attributed to K1",
-        );
+        )
+        .expect("server never received message attributed to K1");
         drain_matching(&server.ingress_receiver, Duration::from_millis(300), |d| {
             d.message == p1
         });
@@ -893,8 +984,8 @@ mod tests {
             &server.ingress_receiver,
             Duration::from_secs(10),
             |d| (d.peer_pubkey == k2_pk && d.message == p2).then_some(()),
-            "server never received message attributed to K2 after rotation",
-        );
+        )
+        .expect("server never received message attributed to K2 after rotation");
     }
 
     /// Rotating the SERVER's identity closes every inbound connection that was
@@ -925,8 +1016,8 @@ mod tests {
             &server.ingress_receiver,
             Duration::from_secs(10),
             |d| (d.message == p1).then_some(()),
-            "server never received datagram under original identity",
-        );
+        )
+        .expect("server never received datagram under original identity");
         drain_matching(&server.ingress_receiver, Duration::from_millis(300), |d| {
             d.message == p1
         });
@@ -969,8 +1060,8 @@ mod tests {
             &server.ingress_receiver,
             Duration::from_secs(10),
             |d| (d.message == p2).then_some(()),
-            "server never received datagram under new identity",
-        );
+        )
+        .expect("server never received datagram under new identity");
     }
 
     /// When a peer's address changes in the peer_list, the outbound
@@ -1002,8 +1093,8 @@ mod tests {
             &server1.ingress_receiver,
             Duration::from_secs(10),
             |d| (d.message == probe).then_some(()),
-            "server1 did not receive probe",
-        );
+        )
+        .expect("server1 did not receive probe");
         drain_matching(&server1.ingress_receiver, Duration::from_millis(300), |d| {
             d.message == probe
         });
@@ -1028,8 +1119,8 @@ mod tests {
             &server2.ingress_receiver,
             Duration::from_secs(10),
             |d| (d.message == probe2).then_some(()),
-            "server2 did not receive probe2",
-        );
+        )
+        .expect("server2 did not receive probe2");
 
         // The stale connection to server1 must be closed,
         // server1 must not see post-move data.
@@ -1098,8 +1189,8 @@ mod tests {
             &server.ingress_receiver,
             Duration::from_secs(10),
             |d| (d.peer_pubkey == client_pubkey && d.message == probe).then_some(()),
-            "server never received the probe",
-        );
+        )
+        .expect("server never received the probe");
         assert!(
             stats.peak_unique_peers.load(Ordering::Relaxed) >= 1,
             "the admitted connection must register a unique peer"
@@ -1175,8 +1266,8 @@ mod tests {
                 &server.ingress_receiver,
                 Duration::from_secs(2),
                 |d| (d.peer_pubkey == client_pubkey && d.message == probe).then_some(()),
-                "server never received a datagram from one of the clients",
-            );
+            )
+            .expect("server never received a datagram from one of the clients");
             // Clear this client's retransmits before checking the next one.
             drain_matching(&server.ingress_receiver, Duration::from_millis(200), |d| {
                 d.message == probe

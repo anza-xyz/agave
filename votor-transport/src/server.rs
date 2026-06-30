@@ -12,7 +12,7 @@ use {
     arrayvec::ArrayVec,
     crossbeam_channel::{Sender, TrySendError},
     futures::{StreamExt as _, stream::FuturesUnordered},
-    log::{debug, info},
+    log::{debug, info, warn},
     quinn::{Connecting, Connection, Endpoint},
     solana_net_utils::{banlist::Banlist, token_bucket::TokenBucket},
     solana_pubkey::{Pubkey, PubkeyHasherBuilder},
@@ -353,17 +353,6 @@ impl InboundLoop {
         self.peer_state.len() as u64
     }
 
-    /// Remove the connection with the given `stable_id` from `peer`'s inbound
-    /// set. Keeps the `PeerEntry` so the rate limiter state survives a reconnect.
-    /// Entries are reclaimed by the prune task once the rate limiter has refilled.
-    fn reap_connection(&mut self, peer: &Pubkey, stable_id: usize) {
-        if let Entry::Occupied(mut slot) = self.peer_state.entry(*peer) {
-            slot.get_mut()
-                .connections
-                .retain(|c| c.stable_id() != stable_id);
-        }
-    }
-
     pub(crate) async fn run(mut self) {
         let mut metrics = interval(METRICS_INTERVAL);
         metrics.set_missed_tick_behavior(MissedTickBehavior::Delay);
@@ -434,8 +423,8 @@ impl InboundLoop {
     fn close_all(&mut self) {
         let total_closed = self
             .peer_state
-            .drain()
-            .flat_map(|(_, entry)| entry.connections)
+            .values()
+            .flat_map(|entry| entry.connections.as_slice())
             .inspect(|connection| close_codes::IDENTITY_CHANGED.close(connection))
             .count() as u64;
         self.stats
@@ -463,7 +452,7 @@ impl InboundLoop {
             }
             let closed = entry
                 .connections
-                .drain(..)
+                .iter()
                 .inspect(|connection| close_codes::NOT_ADMITTED.close(connection))
                 .count() as u64;
             closed_not_in_peer_list = closed_not_in_peer_list.saturating_add(closed);
@@ -477,17 +466,17 @@ impl InboundLoop {
     fn apply_ban(&mut self, peer: Pubkey, timeout: Duration) {
         self.banlist.ban(peer, timeout);
         // if peer has any open connections...
-        if let Some(mut entry) = self.peer_state.remove(&peer) {
+        if let Some(entry) = self.peer_state.get(&peer) {
             // ... we go over them and close each.
             let closed = entry
                 .connections
-                .drain(..)
+                .iter()
                 .inspect(|connection| close_codes::BANNED.close(connection))
                 .count() as u64;
-
             self.stats
                 .connection_closed_banned
                 .fetch_add(closed, Ordering::Relaxed);
+            // the peer_state entries will get cleaned up after their receive tasks join.
         }
     }
 
@@ -496,20 +485,29 @@ impl InboundLoop {
             InboundEvent::Accepted { peer, connection } => {
                 self.maybe_admit_connection(peer, connection)
             }
-            InboundEvent::Closed { peer, stable_id } => self.reap_connection(&peer, stable_id),
+            InboundEvent::Closed { peer, stable_id } => match self.peer_state.entry(peer) {
+                Entry::Occupied(mut slot) => {
+                    slot.get_mut()
+                        .connections
+                        .retain(|c| c.stable_id() != stable_id);
+                }
+                _ => unreachable!("Entry must be in Occupied state"),
+            },
             // Flood detected: close all connections but keep the entry as a
             // tombstone so the depleted rate limiter persists on reconnect.
-            InboundEvent::FloodDetected { peer } => {
-                if let Some(entry) = self.peer_state.get_mut(&peer) {
+            InboundEvent::FloodDetected { peer } => match self.peer_state.get_mut(&peer) {
+                Some(entry) => {
+                    warn!("Peer {peer} is flooding packets, closing their connections.");
                     let closed = entry.connections.len() as u64;
-                    for connection in entry.connections.drain(..) {
-                        close_codes::FLOODING.close(&connection);
+                    for connection in entry.connections.iter() {
+                        close_codes::FLOODING.close(connection);
                     }
                     self.stats
                         .connection_lost
                         .fetch_add(closed, Ordering::Relaxed);
                 }
-            }
+                None => unreachable!("Can not detect flooding on non-existing peer"),
+            },
         }
     }
 
