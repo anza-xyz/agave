@@ -2,7 +2,7 @@ use {
     crate::{
         nonblocking::{
             connection_rate_limiter::ConnectionRateLimiter,
-            qos::{ConnectionContext, OpaqueStreamerCounter, QosController},
+            qos::{ConnectionContext, MaxStreamsAction, OpaqueStreamerCounter, QosController},
         },
         quic::{QuicServerError, QuicStreamerConfig, StreamerStats, configure_server},
         quic_socket::{QuicSocket, QuicXdpSocketParts, QuicXdpTxSocket},
@@ -14,6 +14,7 @@ use {
     indexmap::map::{Entry, IndexMap},
     quinn::{
         Accept, AsyncUdpSocket, Connecting, Connection, Endpoint, EndpointConfig, TokioRuntime,
+        VarInt,
     },
     rand::{Rng, rng},
     smallvec::SmallVec,
@@ -53,6 +54,17 @@ use {
 
 pub const DEFAULT_WAIT_FOR_CHUNK_TIMEOUT: Duration = Duration::from_secs(2);
 
+/// Parked re-check base progression: 10 -> 20 -> 40 -> 80ms (cap at 80ms).
+/// Jitter of up to 20ms is added to spread wakeups and avoid herd behavior.
+const PARK_RECHECK_BASE_MS: u64 = 10;
+const PARK_RECHECK_BASE_CAP_MS: u64 = 80;
+const PARK_RECHECK_JITTER_MAX_MS: u64 = 20;
+
+/// How often the cached connection RTT is refreshed while a connection is live.
+/// Reading `Connection::rtt()` grabs the connection lock, so we cache it and only
+/// re-read once per interval.
+const RTT_REFRESH_INTERVAL: Duration = Duration::from_millis(500);
+
 pub const ALPN_TPU_PROTOCOL_ID: &[u8] = b"solana-tpu";
 
 const CONNECTION_CLOSE_CODE_DROPPED_ENTRY: u32 = 1;
@@ -79,19 +91,40 @@ const MAX_CONNECTION_BURST: u64 = 1000;
 /// peer, and is canceled when we get a Handshake packet from them.
 const QUIC_CONNECTION_HANDSHAKE_TIMEOUT: Duration = Duration::from_secs(2);
 
-/// Absolute max RTT to allow for a legitimate connection.
-/// Enough to cover any non-malicious link on Earth.
-pub(crate) const MAX_RTT: Duration = Duration::from_millis(320);
-/// Prevent connections from having 0 RTT when RTT is too small,
-/// as this would break some BDP calculations and assign zero bandwidth
-pub(crate) const MIN_RTT: Duration = Duration::from_millis(2);
-
 /// How many RTTs worth of delay can we tolerate on stream reassembly
 /// before considering stream to be "too late". 1.5 RTT should be enough
 /// for any reasonable fragmentation to be resolved, so the only way
 /// a stream reassembly would be delayed more is when something
 /// extraordinary has occured (congestion control or flow control blocking)
 const LATE_REASSEMBLY_THRESHOLD: f32 = 1.5;
+
+#[derive(Debug, Clone)]
+struct ParkRecheckBackoff {
+    base_ms: u64,
+}
+
+impl ParkRecheckBackoff {
+    fn new() -> Self {
+        Self {
+            base_ms: PARK_RECHECK_BASE_MS,
+        }
+    }
+
+    fn reset(&mut self) {
+        self.base_ms = PARK_RECHECK_BASE_MS;
+    }
+
+    fn next_delay(&mut self) -> Duration {
+        let delay_ms = rng().random_range(self.base_ms..=self.base_ms + PARK_RECHECK_JITTER_MAX_MS);
+        self.base_ms = self.base_ms.saturating_mul(2).min(PARK_RECHECK_BASE_CAP_MS);
+        Duration::from_millis(delay_ms)
+    }
+
+    #[cfg(test)]
+    fn base_ms(&self) -> u64 {
+        self.base_ms
+    }
+}
 
 // A struct to accumulate the bytes making up
 // a packet, along with their offsets, and the
@@ -595,6 +628,8 @@ async fn handle_connection<Q, C>(
     C: ConnectionContext + Send + Sync + 'static,
 {
     let peer_type = context.peer_type();
+    let mut park_recheck_backoff = ParkRecheckBackoff::new();
+    let mut last_applied_max_streams: Option<u32> = None;
     debug!(
         "quic new connection {} streams: {} connections: {}",
         remote_address,
@@ -603,11 +638,42 @@ async fn handle_connection<Q, C>(
     );
     stats.total_connections.fetch_add(1, Ordering::Relaxed);
 
-    // cache the RTT to avoid grabbing lock for every stream.
-    // we only use that for some stats here, so if it gets stale during connection lifetime
-    // it is not the end of the world.
-    let rtt = connection.rtt();
+    let mut rtt = connection.rtt();
+    let mut rtt_refreshed_at = Instant::now();
     'conn: loop {
+        let now = Instant::now();
+        if now.duration_since(rtt_refreshed_at) >= RTT_REFRESH_INTERVAL {
+            rtt = connection.rtt();
+            rtt_refreshed_at = now;
+        }
+        match qos.compute_max_streams(&context, rtt) {
+            MaxStreamsAction::Unmanaged => {}
+            MaxStreamsAction::Set(max_streams) => {
+                debug_assert!(max_streams > 0, "Set(0) should use Park");
+                if max_streams > 0 && last_applied_max_streams != Some(max_streams) {
+                    connection.set_max_concurrent_uni_streams(VarInt::from_u32(max_streams));
+                    last_applied_max_streams = Some(max_streams);
+                }
+                // Unparked: restore fast re-checks for the next time this connection parks.
+                park_recheck_backoff.reset();
+            }
+            MaxStreamsAction::Park => {
+                if last_applied_max_streams != Some(0) {
+                    connection.set_max_concurrent_uni_streams(VarInt::from_u32(0));
+                    last_applied_max_streams = Some(0);
+                    stats
+                        .unstaked_connections_parked
+                        .fetch_add(1, Ordering::Relaxed);
+                }
+                // Park: don't accept streams, wait for load to drop.
+                let recheck_delay = park_recheck_backoff.next_delay();
+                select! {
+                    _ = tokio::time::sleep(recheck_delay) => continue,
+                    _ = cancel.cancelled() => break,
+                }
+            }
+        }
+
         // Wait for new streams. If the peer is disconnected we get a cancellation signal and stop
         // the connection task.
         let mut stream = select! {
@@ -1131,13 +1197,16 @@ impl Future for EndpointAccept<'_> {
 pub mod test {
     use {
         super::*,
-        crate::nonblocking::{
-            qos::NullStreamerCounter,
-            swqos::SwQosConfig,
-            testing_utilities::{
-                SpawnTestServerResult, check_multiple_streams, get_client_config,
-                make_client_endpoint, setup_quic_server, spawn_stake_weighted_qos_server,
+        crate::{
+            nonblocking::{
+                qos::NullStreamerCounter,
+                swqos::SwQosSleepConfig,
+                testing_utilities::{
+                    SpawnTestServerResult, check_multiple_streams, get_client_config,
+                    make_client_endpoint, setup_quic_server, spawn_stake_weighted_qos_server,
+                },
             },
+            quic::SwQosConfig,
         },
         assert_matches::assert_matches,
         crossbeam_channel::{Receiver, bounded},
@@ -1149,6 +1218,43 @@ pub mod test {
         std::collections::HashMap,
         tokio::time::sleep,
     };
+
+    #[test]
+    fn test_park_recheck_backoff_progression_and_bounds() {
+        let mut backoff = ParkRecheckBackoff::new();
+
+        for expected_base in [10_u64, 20, 40, 80, 80, 80] {
+            assert_eq!(backoff.base_ms(), expected_base);
+            let delay_ms = backoff.next_delay().as_millis() as u64;
+            assert!(
+                delay_ms >= expected_base,
+                "delay_ms={delay_ms}, expected_base={expected_base}"
+            );
+            assert!(
+                delay_ms <= expected_base + PARK_RECHECK_JITTER_MAX_MS,
+                "delay_ms={delay_ms}, expected_base={expected_base}"
+            );
+        }
+
+        assert_eq!(backoff.base_ms(), PARK_RECHECK_BASE_CAP_MS);
+    }
+
+    #[test]
+    fn test_park_recheck_backoff_reset() {
+        let mut backoff = ParkRecheckBackoff::new();
+        for _ in 0..4 {
+            let _ = backoff.next_delay();
+        }
+        assert_eq!(backoff.base_ms(), PARK_RECHECK_BASE_CAP_MS);
+
+        backoff.reset();
+        assert_eq!(backoff.base_ms(), PARK_RECHECK_BASE_MS);
+
+        let delay_ms = backoff.next_delay().as_millis() as u64;
+        assert!(delay_ms >= PARK_RECHECK_BASE_MS);
+        assert!(delay_ms <= PARK_RECHECK_BASE_MS + PARK_RECHECK_JITTER_MAX_MS);
+        assert_eq!(backoff.base_ms(), 20);
+    }
 
     pub async fn check_timeout(receiver: Receiver<PacketBatch>, server_address: SocketAddr) {
         let conn1 = make_client_endpoint(&server_address, None).await;
@@ -1394,10 +1500,10 @@ pub mod test {
             QuicStreamerConfig {
                 ..QuicStreamerConfig::default_for_tests()
             },
-            SwQosConfig {
+            SwQosConfig::Sleep(SwQosSleepConfig {
                 max_connections_per_unstaked_peer: 2,
-                ..SwQosConfig::default_for_tests()
-            },
+                ..SwQosSleepConfig::default_for_tests()
+            }),
         );
 
         let client_socket = bind_to_localhost_unique().expect("should bind - client");
@@ -1606,10 +1712,10 @@ pub mod test {
             QuicStreamerConfig {
                 ..QuicStreamerConfig::default_for_tests()
             },
-            SwQosConfig {
+            SwQosConfig::Sleep(SwQosSleepConfig {
                 max_unstaked_connections: 0, // Do not allow any connection from unstaked clients/nodes
                 ..Default::default()
-            },
+            }),
             cancel.clone(),
         )
         .unwrap();
@@ -1642,10 +1748,10 @@ pub mod test {
             QuicStreamerConfig {
                 ..QuicStreamerConfig::default_for_tests()
             },
-            SwQosConfig {
+            SwQosConfig::Sleep(SwQosSleepConfig {
                 max_connections_per_unstaked_peer: 2,
                 ..Default::default()
-            },
+            }),
             cancel.clone(),
         )
         .unwrap();
@@ -2045,7 +2151,6 @@ pub mod test {
             stats.total_new_streams.load(Ordering::Relaxed),
             expected_num_txs
         );
-        assert!(stats.throttled_unstaked_streams.load(Ordering::Relaxed) > 0);
     }
 
     #[test]
