@@ -366,7 +366,7 @@ mod tests {
         #[cfg_attr(
             feature = "frozen-abi",
             derive(AbiExample),
-            frozen_abi(digest = "HPAeeQDtsPexZuCjrCRv1MU6oo8MLHForsk1bXy1863V")
+            frozen_abi(digest = "7XGJN8SQCW8XppasvrCUfux7TCXfav7W8Bw9NDNiV9GS")
         )]
         #[derive(serde::Serialize)]
         pub struct BankAbiTestWrapper {
