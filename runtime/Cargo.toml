@@ -22,15 +22,15 @@ name = "solana_runtime"
 agave-unstable-api = []
 conformance = [
     "agave-unstable-api",
-    "dep:prost",
-    "dep:protosol",
     "dev-context-only-utils",
-    "solana-svm/conformance",
 ]
 dev-context-only-utils = [
+    "dep:prost",
+    "dep:protosol",
     "agave-votor-messages/dev-context-only-utils",
     "solana-accounts-db/dev-context-only-utils",
     "solana-program-binaries",
+    "solana-svm/conformance",
     "solana-svm/dev-context-only-utils",
     "solana-runtime-transaction/dev-context-only-utils",
     "solana-vote/dev-context-only-utils",

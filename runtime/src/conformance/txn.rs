@@ -51,8 +51,7 @@ use {
     solana_vote::vote_account::VoteAccounts,
     std::{collections::HashMap, sync::Arc},
 };
-// Protobuf glue: only needed when the `conformance` feature is enabled.
-#[cfg(feature = "conformance")]
+#[cfg(feature = "dev-context-only-utils")]
 use {
     agave_feature_set::virtual_address_space_adjustments,
     agave_precompiles::is_precompile,
@@ -100,17 +99,18 @@ pub enum NativeTxnExecution {
 fn load_sysvar<T: serde::de::DeserializeOwned>(
     accounts: &[(Pubkey, AccountSharedData)],
     id: &Pubkey,
-) -> Option<T> {
+) -> T {
     accounts
         .iter()
         .find(|(address, account)| address == id && account.lamports() > 0)
-        .and_then(|(_, account)| bincode::deserialize(account.data()).ok())
+        .map(|(_, account)| bincode::deserialize(account.data()).unwrap())
+        .unwrap()
 }
 
 /// Build a [`Bank`] from the supplied native inputs and execute `transaction`.
 ///
 /// The clock and epoch-schedule sysvars are read out of `accounts` to derive the
-/// bank's slot/epoch; returns `None` if either is missing or undecodable.
+/// bank's slot/epoch.
 pub fn execute_txn(
     accounts: &[(Pubkey, AccountSharedData)],
     feature_set: FeatureSet,
@@ -118,15 +118,15 @@ pub fn execute_txn(
     fee_rate_governor: FeeRateGovernor,
     total_epoch_stake: u64,
     transaction: VersionedTransaction,
-) -> Option<NativeTxnExecution> {
+) -> NativeTxnExecution {
     const TICKS_PER_SLOT: u64 = 64;
 
     // Slot and parent slot come from the clock sysvar.
-    let clock: Clock = load_sysvar(accounts, &sysvar::clock::id())?;
+    let clock: Clock = load_sysvar(accounts, &sysvar::clock::id());
     let slot = clock.slot;
     let parent_slot = slot.saturating_sub(1);
 
-    let epoch_schedule: EpochSchedule = load_sysvar(accounts, &sysvar::epoch_schedule::id())?;
+    let epoch_schedule: EpochSchedule = load_sysvar(accounts, &sysvar::epoch_schedule::id());
     let epoch = epoch_schedule.get_epoch(slot);
 
     // Populate the accounts DB with the input accounts at the parent slot.
@@ -198,7 +198,7 @@ pub fn execute_txn(
         TransactionVerificationMode::HashAndVerifyPrecompiles,
     ) {
         Ok(tx) => tx,
-        Err(err) => return Some(NativeTxnExecution::NotSanitized(err)),
+        Err(err) => return NativeTxnExecution::NotSanitized(err),
     };
     let sanitized_message = runtime_transaction.message().clone();
 
@@ -230,17 +230,18 @@ pub fn execute_txn(
         )
         .processing_results
         .into_iter()
-        .next()?;
+        .next()
+        .unwrap();
 
-    Some(NativeTxnExecution::Processed {
+    NativeTxnExecution::Processed {
         result,
         sanitized_message,
-    })
+    }
 }
 
 /// Parse the input accounts into keyed `AccountSharedData`, dropping zero-lamport
 /// accounts (treated as nonexistent).
-#[cfg(feature = "conformance")]
+#[cfg(feature = "dev-context-only-utils")]
 fn deserialize_accounts(accounts: &[AcctState]) -> Vec<(Pubkey, AccountSharedData)> {
     accounts
         .iter()
@@ -252,19 +253,17 @@ fn deserialize_accounts(accounts: &[AcctState]) -> Vec<(Pubkey, AccountSharedDat
         .collect()
 }
 
-#[cfg(feature = "conformance")]
+#[cfg(feature = "dev-context-only-utils")]
 fn restore_blockhash_queue(entries: &[protos::BlockhashQueueEntry]) -> BlockhashQueue {
     let mut blockhash_queue = BlockhashQueue::default();
     for entry in entries {
-        if let Ok(bytes) = <[u8; 32]>::try_from(entry.blockhash.as_slice()) {
-            blockhash_queue
-                .register_hash(&Hash::new_from_array(bytes), entry.lamports_per_signature);
-        }
+        let bytes = <[u8; 32]>::try_from(entry.blockhash.as_slice()).unwrap();
+        blockhash_queue.register_hash(&Hash::new_from_array(bytes), entry.lamports_per_signature);
     }
     blockhash_queue
 }
 
-#[cfg(feature = "conformance")]
+#[cfg(feature = "dev-context-only-utils")]
 fn build_versioned_message(value: &ProtoTransactionMessage) -> VersionedMessage {
     let header = value
         .header
@@ -285,11 +284,13 @@ fn build_versioned_message(value: &ProtoTransactionMessage) -> VersionedMessage 
     let account_keys = value
         .account_keys
         .iter()
-        .filter_map(|key| Pubkey::try_from(key.as_slice()).ok())
+        .map(|key| Pubkey::try_from(key.as_slice()).unwrap())
         .collect::<Vec<_>>();
-    let recent_blockhash = <[u8; 32]>::try_from(value.recent_blockhash.as_slice())
-        .map(Hash::new_from_array)
-        .unwrap_or_default();
+    let recent_blockhash = if value.recent_blockhash.is_empty() {
+        Hash::default()
+    } else {
+        Hash::new_from_array(<[u8; 32]>::try_from(value.recent_blockhash.as_slice()).unwrap())
+    };
     let instructions = value
         .instructions
         .iter()
@@ -315,22 +316,21 @@ fn build_versioned_message(value: &ProtoTransactionMessage) -> VersionedMessage 
         let address_table_lookups = value
             .address_table_lookups
             .iter()
-            .filter_map(|lookup| {
-                Pubkey::try_from(lookup.account_key.as_slice())
-                    .ok()
-                    .map(|account_key| MessageAddressTableLookup {
-                        account_key,
-                        writable_indexes: lookup
-                            .writable_indexes
-                            .iter()
-                            .map(|index| *index as u8)
-                            .collect(),
-                        readonly_indexes: lookup
-                            .readonly_indexes
-                            .iter()
-                            .map(|index| *index as u8)
-                            .collect(),
-                    })
+            .map(|lookup| {
+                let account_key = Pubkey::try_from(lookup.account_key.as_slice()).unwrap();
+                MessageAddressTableLookup {
+                    account_key,
+                    writable_indexes: lookup
+                        .writable_indexes
+                        .iter()
+                        .map(|index| *index as u8)
+                        .collect(),
+                    readonly_indexes: lookup
+                        .readonly_indexes
+                        .iter()
+                        .map(|index| *index as u8)
+                        .collect(),
+                }
             })
             .collect::<Vec<_>>();
         VersionedMessage::V0(v0::Message {
@@ -344,7 +344,7 @@ fn build_versioned_message(value: &ProtoTransactionMessage) -> VersionedMessage 
 }
 
 /// Firedancer error numbers: the bincode-serialized enum discriminant `+ 1`.
-#[cfg(feature = "conformance")]
+#[cfg(feature = "dev-context-only-utils")]
 #[derive(Default)]
 struct ProtoTxnErrorFields {
     txn_error: u32,
@@ -353,7 +353,7 @@ struct ProtoTxnErrorFields {
     instruction_error_index: u32,
 }
 
-#[cfg(feature = "conformance")]
+#[cfg(feature = "dev-context-only-utils")]
 impl ProtoTxnErrorFields {
     fn from_processed_transaction(
         txn: &ProcessedTransaction,
@@ -368,7 +368,7 @@ impl ProtoTxnErrorFields {
 
     fn from_transaction_error(transaction_error: &TransactionError) -> Self {
         fn err_num<T: serde::Serialize>(value: &T) -> u32 {
-            let serialized = bincode::serialize(value).unwrap_or_else(|_| vec![0; 4]);
+            let serialized = bincode::serialize(value).unwrap();
             u32::from_le_bytes(serialized[0..4].try_into().unwrap()).saturating_add(1)
         }
 
@@ -408,7 +408,7 @@ impl ProtoTxnErrorFields {
     }
 }
 
-#[cfg(feature = "conformance")]
+#[cfg(feature = "dev-context-only-utils")]
 fn instruction_is_precompile(
     instruction_error_index: u32,
     sanitized_message: &SanitizedMessage,
@@ -423,14 +423,14 @@ fn instruction_is_precompile(
         .is_some_and(|(program_id, _)| is_precompile(program_id, |_| true))
 }
 
-#[cfg(feature = "conformance")]
+#[cfg(feature = "dev-context-only-utils")]
 struct ProtoTxnEffects {
     modified_accounts: Vec<AcctState>,
     rollback_accounts: Vec<AcctState>,
     return_data: Vec<u8>,
 }
 
-#[cfg(feature = "conformance")]
+#[cfg(feature = "dev-context-only-utils")]
 impl ProtoTxnEffects {
     fn from_processed_transaction(
         txn: &ProcessedTransaction,
@@ -445,12 +445,7 @@ impl ProtoTxnEffects {
     }
 }
 
-#[cfg(feature = "conformance")]
-fn account_shared_data_to_proto((pubkey, account): &(Pubkey, AccountSharedData)) -> AcctState {
-    account_to_proto((*pubkey, account.clone().into()))
-}
-
-#[cfg(feature = "conformance")]
+#[cfg(feature = "dev-context-only-utils")]
 fn executed_transaction_effects(
     executed_tx: &solana_svm::transaction_execution_result::ExecutedTransaction,
     sanitized_message: &SanitizedMessage,
@@ -461,13 +456,13 @@ fn executed_transaction_effects(
         .iter()
         .enumerate()
         .filter(|(index, _)| sanitized_message.is_writable(*index))
-        .map(|(_, account)| account_shared_data_to_proto(account))
+        .map(|(_, (pubkey, account))| account_to_proto((*pubkey, account.clone().into())))
         .collect();
     let rollback_accounts = if executed_tx.execution_details.status.is_err() {
         loaded
             .rollback_accounts
             .iter()
-            .map(account_shared_data_to_proto)
+            .map(|(pubkey, account)| account_to_proto((*pubkey, account.clone().into())))
             .collect()
     } else {
         vec![]
@@ -486,7 +481,7 @@ fn executed_transaction_effects(
     }
 }
 
-#[cfg(feature = "conformance")]
+#[cfg(feature = "dev-context-only-utils")]
 fn fees_only_transaction_effects(
     tx: &solana_svm::account_loader::FeesOnlyTransaction,
 ) -> ProtoTxnEffects {
@@ -495,7 +490,7 @@ fn fees_only_transaction_effects(
         rollback_accounts: tx
             .rollback_accounts
             .iter()
-            .map(account_shared_data_to_proto)
+            .map(|(pubkey, account)| account_to_proto((*pubkey, account.clone().into())))
             .collect(),
         return_data: vec![],
     }
@@ -503,7 +498,7 @@ fn fees_only_transaction_effects(
 
 /// Map the processor's result for the single executed transaction into a
 /// `TxnResult`.
-#[cfg(feature = "conformance")]
+#[cfg(feature = "dev-context-only-utils")]
 fn output_txn_result(
     execution_result: &TransactionProcessingResult,
     sanitized_message: &SanitizedMessage,
@@ -548,16 +543,16 @@ fn output_txn_result(
 
 /// Decode a `TxnContext` proto, run it through [`execute_txn`], and encode the
 /// effects as a `TxnResult` proto.
-#[cfg(feature = "conformance")]
-pub fn execute_txn_proto(context: &ProtoTxnContext) -> Option<ProtoTxnResult> {
-    let txn_bank = context.bank.as_ref()?;
+#[cfg(feature = "dev-context-only-utils")]
+pub fn execute_txn_proto(context: &ProtoTxnContext) -> ProtoTxnResult {
+    let txn_bank = context.bank.as_ref().unwrap();
 
     let accounts = deserialize_accounts(&context.account_shared_data);
     let blockhash_queue = restore_blockhash_queue(&txn_bank.blockhash_queue);
 
     // On snapshot boot the fee rate governor's lamports_per_signature comes from
     // the manifest, so use the provided value directly.
-    let input_fee_rate_governor = txn_bank.fee_rate_governor.as_ref()?;
+    let input_fee_rate_governor = txn_bank.fee_rate_governor.as_ref().unwrap();
     let fee_rate_governor = FeeRateGovernor {
         lamports_per_signature: u64::from(txn_bank.rbh_lamports_per_signature),
         target_lamports_per_signature: input_fee_rate_governor.target_lamports_per_signature,
@@ -571,17 +566,17 @@ pub fn execute_txn_proto(context: &ProtoTxnContext) -> Option<ProtoTxnResult> {
         .features
         .as_ref()
         .map(feature_set_from_proto)
-        .unwrap_or_default();
+        .unwrap();
     let virtual_address_space_adjustments_active =
         feature_set.is_active(&virtual_address_space_adjustments::id());
 
-    let tx = context.tx.as_ref()?;
-    let proto_message = tx.message.as_ref()?;
+    let tx = context.tx.as_ref().unwrap();
+    let proto_message = tx.message.as_ref().unwrap();
     let message = build_versioned_message(proto_message);
     let mut signatures = tx
         .signatures
         .iter()
-        .filter_map(|item| <[u8; 64]>::try_from(item.as_slice()).ok())
+        .map(|item| <[u8; 64]>::try_from(item.as_slice()).unwrap())
         .map(Signature::from)
         .collect::<Vec<Signature>>();
     if signatures.is_empty() {
@@ -600,10 +595,10 @@ pub fn execute_txn_proto(context: &ProtoTxnContext) -> Option<ProtoTxnResult> {
         fee_rate_governor,
         txn_bank.total_epoch_stake,
         transaction,
-    )? {
+    ) {
         NativeTxnExecution::NotSanitized(err) => {
             let error = ProtoTxnErrorFields::from_transaction_error(&err);
-            return Some(ProtoTxnResult {
+            return ProtoTxnResult {
                 executed: false,
                 txn_error: error.txn_error,
                 instruction_error: error.instruction_error,
@@ -611,7 +606,7 @@ pub fn execute_txn_proto(context: &ProtoTxnContext) -> Option<ProtoTxnResult> {
                 // Precompile error codes are not conformant, so they are ignored here.
                 custom_error: 0,
                 ..Default::default()
-            });
+            };
         }
         NativeTxnExecution::Processed {
             result,
@@ -646,7 +641,7 @@ pub fn execute_txn_proto(context: &ProtoTxnContext) -> Option<ProtoTxnResult> {
     loaded_account_keys.extend(
         account_keys
             .iter()
-            .filter_map(|key| Pubkey::try_from(key.as_slice()).ok()),
+            .map(|key| Pubkey::try_from(key.as_slice()).unwrap()),
     );
     if let SanitizedMessage::V0(message) = &sanitized_message {
         loaded_account_keys.extend(message.loaded_addresses.writable.iter().copied());
@@ -655,10 +650,10 @@ pub fn execute_txn_proto(context: &ProtoTxnContext) -> Option<ProtoTxnResult> {
     txn_result.modified_accounts.retain(|account| {
         Pubkey::try_from(account.address.as_slice())
             .map(|pubkey| loaded_account_keys.contains(&pubkey))
-            .unwrap_or(false)
+            .unwrap()
     });
 
-    Some(txn_result)
+    txn_result
 }
 
 /// # Safety
@@ -689,9 +684,7 @@ pub unsafe extern "C" fn sol_compat_txn_execute_v1(
         return 0;
     };
 
-    let Some(txn_result) = execute_txn_proto(&context) else {
-        return 0;
-    };
+    let txn_result = execute_txn_proto(&context);
 
     let out_slice = unsafe { std::slice::from_raw_parts_mut(out_ptr, (*out_psz) as usize) };
     let out_vec = txn_result.encode_to_vec();
@@ -930,7 +923,7 @@ mod tests {
         }
     }
 
-    #[cfg(feature = "conformance")]
+    #[cfg(feature = "dev-context-only-utils")]
     fn sanitized_message_with_program(program_id: Pubkey) -> solana_message::SanitizedMessage {
         solana_message::SanitizedMessage::try_from_legacy_message(
             legacy::Message {
@@ -952,7 +945,7 @@ mod tests {
         .unwrap()
     }
 
-    #[cfg(feature = "conformance")]
+    #[cfg(feature = "dev-context-only-utils")]
     #[test]
     fn proto_txn_error_fields_zeroes_precompile_custom_error() {
         let error = solana_transaction_error::TransactionError::InstructionError(
@@ -969,7 +962,7 @@ mod tests {
         assert_eq!(fields.instruction_error_index, 0);
     }
 
-    #[cfg(feature = "conformance")]
+    #[cfg(feature = "dev-context-only-utils")]
     #[test]
     fn proto_txn_error_fields_keeps_non_precompile_custom_error() {
         let error = solana_transaction_error::TransactionError::InstructionError(
@@ -1026,8 +1019,7 @@ mod tests {
             fee_rate_governor(),
             0,
             transaction,
-        )
-        .unwrap();
+        );
 
         assert_executed_ok(&execution);
         assert_eq!(return_data(&execution).len(), 8);
@@ -1082,8 +1074,7 @@ mod tests {
             fee_rate_governor(),
             0,
             transaction,
-        )
-        .unwrap();
+        );
 
         assert_executed_ok(&execution);
         assert_eq!(writable_account_lamports(&execution, &sender), Some(899990));
@@ -1166,8 +1157,7 @@ mod tests {
             fee_rate_governor(),
             0,
             transaction,
-        )
-        .unwrap();
+        );
 
         assert_executed_ok(&execution);
         assert_eq!(writable_account_lamports(&execution, &sender), Some(899985));
