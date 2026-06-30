@@ -71,7 +71,7 @@ pub(crate) fn bls_pubkey_compressed_bytes_to_bls_pubkey(
     bls_pubkey_compressed_bytes: [u8; BLS_PUBLIC_KEY_COMPRESSED_SIZE],
 ) -> Option<(BLSPubkeyCompressed, PopVerified<BLSPubkeyAffine>)> {
     let bls_pubkey_compressed: BLSPubkeyCompressed =
-        bincode::deserialize(&bls_pubkey_compressed_bytes).ok()?;
+        wincode::deserialize(&bls_pubkey_compressed_bytes).ok()?;
     let bls_pubkey_affine = BLSPubkeyAffine::try_from(bls_pubkey_compressed).ok()?;
     // It is safe to use `new_unchecked` here because data coming from the vote
     // state has already had its PoP verified.
@@ -529,7 +529,7 @@ pub(crate) mod tests {
                         let bls_pubkey_compressed: BLSPubkeyCompressed =
                             (*BLSKeypair::new().public).into();
                         let bls_pubkey_compressed_serialized =
-                            bincode::serialize(&bls_pubkey_compressed)
+                            wincode::serialize(&bls_pubkey_compressed)
                                 .unwrap()
                                 .try_into()
                                 .unwrap();
@@ -747,7 +747,7 @@ pub(crate) mod tests {
     fn test_bls_pubkey_rank_map_excludes_duplicate_bls_and_identity() {
         let new_bls_pubkey = || {
             let bls_pubkey_compressed: BLSPubkeyCompressed = (*BLSKeypair::new().public).into();
-            let bls_pubkey_compressed_serialized = bincode::serialize(&bls_pubkey_compressed)
+            let bls_pubkey_compressed_serialized = wincode::serialize(&bls_pubkey_compressed)
                 .unwrap()
                 .try_into()
                 .unwrap();
