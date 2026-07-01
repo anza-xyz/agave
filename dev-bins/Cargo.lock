@@ -6624,6 +6624,7 @@ version = "4.3.0-alpha.0"
 dependencies = [
  "agave-snapshots",
  "log",
+ "reqwest 0.12.28",
  "solana-clock",
  "solana-file-download",
  "solana-genesis-config",
