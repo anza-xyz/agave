@@ -50,8 +50,8 @@ use {
 pub(super) const NUM_SLOTS_FOR_VERIFY: Slot = 90_000;
 
 /// If we receive an invalid certificate or vote from a QUIC connection, we ban the sender.
-/// We ban the sender for 2 days which roughly corresponds to an epoch
-pub(super) const BAN_TIMEOUT: Duration = Duration::from_hours(48);
+/// We ban the sender for 1 minute which prevents DoS but allows for recovery in case of instability.
+pub(super) const BAN_TIMEOUT: Duration = Duration::from_mins(1);
 
 pub struct SigVerifierContext {
     pub migration_status: Arc<MigrationStatus>,
