@@ -1,6 +1,6 @@
-#![feature(test)]
 
-extern crate test;
+
+
 
 use {
     agave_feature_set::{FeatureSet, deprecate_legacy_vote_ixs},
@@ -23,7 +23,7 @@ use {
             VoteStateVersions, handler::VoteStateHandler,
         },
     },
-    test::Bencher,
+    Bencher,
 };
 
 fn create_accounts() -> (
@@ -148,7 +148,7 @@ fn bench_process_vote_instruction(
     });
 }
 
-#[bench]
+
 fn bench_process_vote(bencher: &mut Bencher) {
     let (num_initial_votes, slot_hashes, transaction_accounts, instruction_account_metas) =
         create_accounts();
@@ -176,7 +176,7 @@ fn bench_process_vote(bencher: &mut Bencher) {
     );
 }
 
-#[bench]
+
 fn bench_process_vote_state_update(bencher: &mut Bencher) {
     let (num_initial_votes, slot_hashes, transaction_accounts, instruction_account_metas) =
         create_accounts();
@@ -206,7 +206,7 @@ fn bench_process_vote_state_update(bencher: &mut Bencher) {
     );
 }
 
-#[bench]
+
 fn bench_process_tower_sync(bencher: &mut Bencher) {
     let (num_initial_votes, slot_hashes, transaction_accounts, instruction_account_metas) =
         create_accounts();
@@ -235,3 +235,6 @@ fn bench_process_tower_sync(bencher: &mut Bencher) {
         instruction_data,
     );
 }
+
+benchmark_group!(benches, bench_process_deprecated_vote_instruction, bench_process_vote_instruction, bench_process_vote, bench_process_vote_state_update, bench_process_tower_sync);
+benchmark_main!(benches);
