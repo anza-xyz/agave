@@ -38,7 +38,7 @@ use {
     solana_svm::transaction_error_metrics::TransactionErrorMetrics,
     solana_svm_transaction::svm_message::SVMMessage,
     solana_transaction::sanitized::MessageHash,
-    solana_transaction_error::TransactionError,
+    solana_transaction_error::{TransactionError, TransactionResult},
     std::{collections::HashSet, sync::Arc, time::Instant},
 };
 
@@ -46,6 +46,7 @@ use {
 pub(crate) struct DisconnectedError;
 
 /// Stats/metrics returned by `receive_and_buffer_packets`.
+#[derive(Debug, Default)]
 pub(crate) struct ReceivingStats {
     pub num_received: usize,
     /// Count of packets that passed sigverify but were dropped
@@ -68,7 +69,48 @@ pub(crate) struct ReceivingStats {
     pub buffer_time_us: u64,
 }
 
+trait RecordReceiveError {
+    fn record(&self, receiving_stats: &mut ReceivingStats);
+}
+
+impl RecordReceiveError for PacketHandlingError {
+    fn record(&self, receiving_stats: &mut ReceivingStats) {
+        match self {
+            PacketHandlingError::Sanitization | PacketHandlingError::ALTResolution => {
+                receiving_stats.num_dropped_on_parsing_and_sanitization += 1;
+            }
+            PacketHandlingError::LockValidation => {
+                receiving_stats.num_dropped_on_lock_validation += 1;
+            }
+            PacketHandlingError::ComputeBudget => {
+                receiving_stats.num_dropped_on_compute_budget += 1;
+            }
+            PacketHandlingError::FilterKey => {
+                receiving_stats.num_dropped_on_filter_key += 1;
+            }
+        }
+    }
+}
+
+impl RecordReceiveError for TransactionError {
+    fn record(&self, receiving_stats: &mut ReceivingStats) {
+        match self {
+            TransactionError::BlockhashNotFound => {
+                receiving_stats.num_dropped_on_age += 1;
+            }
+            TransactionError::AlreadyProcessed => {
+                receiving_stats.num_dropped_on_already_processed += 1;
+            }
+            _ => {}
+        }
+    }
+}
+
 impl ReceivingStats {
+    fn record<E: RecordReceiveError>(&mut self, err: &E) {
+        err.record(self);
+    }
+
     fn accumulate(&mut self, other: ReceivingStats) {
         self.num_received += other.num_received;
         self.num_dropped_without_parsing += other.num_dropped_without_parsing;
@@ -128,21 +170,7 @@ impl ReceiveAndBuffer for TransactionViewReceiveAndBuffer {
         let start = Instant::now();
 
         let mut received_message = false;
-        let mut stats = ReceivingStats {
-            num_received: 0,
-            num_dropped_without_parsing: 0,
-            num_dropped_on_parsing_and_sanitization: 0,
-            num_dropped_on_lock_validation: 0,
-            num_dropped_on_compute_budget: 0,
-            num_dropped_on_age: 0,
-            num_dropped_on_already_processed: 0,
-            num_dropped_on_fee_payer: 0,
-            num_dropped_on_filter_key: 0,
-            num_dropped_on_capacity: 0,
-            num_buffered: 0,
-            receive_time_us: 0,
-            buffer_time_us: 0,
-        };
+        let mut stats = ReceivingStats::default();
 
         // If not leader/unknown, do a blocking-receive initially. This lets
         // the thread sleep until a message is received, or until the timeout.
@@ -207,21 +235,7 @@ impl ReceiveAndBuffer for TransactionViewReceiveAndBuffer {
             }
         }
 
-        Ok(ReceivingStats {
-            num_received: stats.num_received,
-            num_dropped_without_parsing: stats.num_dropped_without_parsing,
-            num_dropped_on_parsing_and_sanitization: stats.num_dropped_on_parsing_and_sanitization,
-            num_dropped_on_lock_validation: stats.num_dropped_on_lock_validation,
-            num_dropped_on_compute_budget: stats.num_dropped_on_compute_budget,
-            num_dropped_on_age: stats.num_dropped_on_age,
-            num_dropped_on_already_processed: stats.num_dropped_on_already_processed,
-            num_dropped_on_fee_payer: stats.num_dropped_on_fee_payer,
-            num_dropped_on_filter_key: stats.num_dropped_on_filter_key,
-            num_dropped_on_capacity: stats.num_dropped_on_capacity,
-            num_buffered: stats.num_buffered,
-            receive_time_us: stats.receive_time_us,
-            buffer_time_us: stats.buffer_time_us,
-        })
+        Ok(stats)
     }
 }
 
@@ -255,83 +269,7 @@ impl TransactionViewReceiveAndBuffer {
         let mut transaction_priority_ids = ArrayVec::<_, EXTRA_CAPACITY>::new();
         let lock_results: [_; EXTRA_CAPACITY] = core::array::from_fn(|_| Ok(()));
         let mut error_counters = TransactionErrorMetrics::default();
-        let mut num_dropped_on_age = 0;
-        let mut num_dropped_on_already_processed = 0;
-        let mut num_dropped_on_fee_payer = 0;
-        let mut num_dropped_on_filter_key = 0;
-        let mut num_dropped_on_capacity = 0;
-        let mut num_buffered = 0;
-
-        let mut check_and_push_to_queue =
-            |container: &mut TransactionViewStateContainer,
-             transaction_priority_ids: &mut ArrayVec<TransactionPriorityId, 64>| {
-                // Temporary scope so that transaction references are immediately
-                // dropped and transactions not passing
-                let mut check_results = {
-                    let mut transactions = ArrayVec::<_, EXTRA_CAPACITY>::new();
-                    transactions.extend(transaction_priority_ids.iter().map(|priority_id| {
-                        container
-                            .get_transaction(priority_id.id)
-                            .expect("transaction must exist")
-                    }));
-                    working_bank.check_transactions::<RuntimeTransaction<_>>(
-                        &transactions,
-                        &lock_results[..transactions.len()],
-                        working_bank.max_processing_age(),
-                        true,
-                        &mut error_counters,
-                    )
-                };
-
-                // Remove errored transactions
-                for (result, priority_id) in check_results
-                    .iter_mut()
-                    .zip(transaction_priority_ids.iter())
-                {
-                    if let Err(err) = result {
-                        match err {
-                            TransactionError::BlockhashNotFound => {
-                                num_dropped_on_age += 1;
-                            }
-                            TransactionError::AlreadyProcessed => {
-                                num_dropped_on_already_processed += 1;
-                            }
-                            _ => {}
-                        }
-                        container.remove_by_id(priority_id.id);
-                        continue;
-                    }
-                    let transaction = container
-                        .get_transaction(priority_id.id)
-                        .expect("transaction must exist");
-                    if let Err(err) = Consumer::check_fee_payer_unlocked(
-                        working_bank,
-                        transaction,
-                        &mut error_counters,
-                    ) {
-                        *result = Err(err);
-                        num_dropped_on_fee_payer += 1;
-                        container.remove_by_id(priority_id.id);
-                        continue;
-                    }
-
-                    num_buffered += 1;
-                }
-                // Push non-errored transaction into queue.
-                num_dropped_on_capacity += container.push_ids_into_queue(
-                    check_results
-                        .into_iter()
-                        .zip(transaction_priority_ids.drain(..))
-                        .filter(|(r, _)| r.is_ok())
-                        .map(|(_, id)| id),
-                );
-            };
-
-        let mut num_received = 0;
-        let mut num_dropped_without_parsing = 0;
-        let mut num_dropped_on_parsing_and_sanitization = 0;
-        let mut num_dropped_on_lock_validation = 0;
-        let mut num_dropped_on_compute_budget = 0;
+        let mut receiving_stats = ReceivingStats::default();
 
         for packet_batch in packet_batch_message.iter() {
             for packet in packet_batch.iter() {
@@ -339,9 +277,9 @@ impl TransactionViewReceiveAndBuffer {
                     continue;
                 };
 
-                num_received += 1;
+                receiving_stats.num_received += 1;
                 if !should_parse {
-                    num_dropped_without_parsing += 1;
+                    receiving_stats.num_dropped_without_parsing += 1;
                     continue;
                 }
 
@@ -357,23 +295,8 @@ impl TransactionViewReceiveAndBuffer {
                             &self.filter_keys,
                         ) {
                             Ok(state) => Ok(state),
-                            Err(
-                                PacketHandlingError::Sanitization
-                                | PacketHandlingError::ALTResolution,
-                            ) => {
-                                num_dropped_on_parsing_and_sanitization += 1;
-                                Err(())
-                            }
-                            Err(PacketHandlingError::LockValidation) => {
-                                num_dropped_on_lock_validation += 1;
-                                Err(())
-                            }
-                            Err(PacketHandlingError::ComputeBudget) => {
-                                num_dropped_on_compute_budget += 1;
-                                Err(())
-                            }
-                            Err(PacketHandlingError::FilterKey) => {
-                                num_dropped_on_filter_key += 1;
+                            Err(ref err) => {
+                                receiving_stats.record(err);
                                 Err(())
                             }
                         }
@@ -383,35 +306,87 @@ impl TransactionViewReceiveAndBuffer {
                         .get_mut_transaction_state(transaction_id)
                         .expect("transaction must exist")
                         .priority();
-                    transaction_priority_ids
-                        .push(TransactionPriorityId::new(priority, transaction_id));
 
-                    // If at capacity, run checks and remove invalid transactions.
-                    if transaction_priority_ids.len() == EXTRA_CAPACITY {
-                        check_and_push_to_queue(container, &mut transaction_priority_ids);
+                    let transaction = container
+                        .get_transaction(transaction_id)
+                        .expect("transaction must exist");
+
+                    // Pre-check this is a potentially valid transaction
+                    match working_bank
+                        .precheck_transaction_age(
+                            transaction,
+                            working_bank.max_processing_age(),
+                            &mut error_counters,
+                        )
+                        .map(|details| details.nonce_address())
+                    {
+                        // Valid nonce transaction. Add to priority queue immediately.
+                        // It is fine to skip StatusCache because "invalid nonce transactions"
+                        // is a superset of "recently executed transactions".
+                        Ok(Some(_nonce_address)) => {
+                            match Consumer::check_fee_payer_unlocked(
+                                working_bank,
+                                transaction,
+                                &mut error_counters,
+                            ) {
+                                Ok(_) => {
+                                    receiving_stats.num_buffered += 1;
+                                    receiving_stats.num_dropped_on_capacity += container
+                                        .push_ids_into_queue(std::iter::once(
+                                            TransactionPriorityId::new(priority, transaction_id),
+                                        ));
+                                }
+                                Err(_) => {
+                                    receiving_stats.num_dropped_on_fee_payer += 1;
+                                    container.remove_by_id(transaction_id);
+                                }
+                            }
+                        }
+
+                        // Potentially valid blockhash transaction. Put in our local batch.
+                        // We batch them to minimize the times we have to lock StatusCache.
+                        Ok(None) => {
+                            transaction_priority_ids
+                                .push(TransactionPriorityId::new(priority, transaction_id));
+
+                            // If at capacity, run checks and remove invalid transactions.
+                            if transaction_priority_ids.len() == EXTRA_CAPACITY {
+                                check_and_push_blockhash_batch_to_queue(
+                                    working_bank,
+                                    container,
+                                    &mut transaction_priority_ids,
+                                    &lock_results,
+                                    &mut error_counters,
+                                    &mut receiving_stats,
+                                );
+                            }
+                        }
+
+                        // Invalid transaction, blockhash or nonce.
+                        // In this case we can drop it and never go to StatusCache.
+                        Err(err) => {
+                            receiving_stats.record(&err);
+                            container.remove_by_id(transaction_id);
+                        }
                     }
                 }
             }
         }
 
         // Any remaining packets undergo status/age checks
-        check_and_push_to_queue(container, &mut transaction_priority_ids);
+        check_and_push_blockhash_batch_to_queue(
+            working_bank,
+            container,
+            &mut transaction_priority_ids,
+            &lock_results,
+            &mut error_counters,
+            &mut receiving_stats,
+        );
 
-        ReceivingStats {
-            num_received,
-            num_dropped_without_parsing,
-            num_dropped_on_parsing_and_sanitization,
-            num_dropped_on_lock_validation,
-            num_dropped_on_compute_budget,
-            num_dropped_on_age,
-            num_dropped_on_already_processed,
-            num_dropped_on_fee_payer,
-            num_dropped_on_filter_key,
-            num_dropped_on_capacity,
-            num_buffered,
-            receive_time_us: 0, // receive is outside this function
-            buffer_time_us: start.elapsed().as_micros() as u64,
-        }
+        // `receive_time_us` is set outside this function
+        receiving_stats.buffer_time_us = start.elapsed().as_micros() as u64;
+
+        receiving_stats
     }
 
     fn try_handle_packet(
@@ -450,6 +425,71 @@ impl TransactionViewReceiveAndBuffer {
 
         Ok(TransactionState::new(view, max_age, priority, cost))
     }
+}
+
+// Given a batch of plausibly valid blockhash transactions, fully validate and add to priority queue
+fn check_and_push_blockhash_batch_to_queue(
+    working_bank: &Bank,
+    container: &mut TransactionViewStateContainer,
+    transaction_priority_ids: &mut ArrayVec<TransactionPriorityId, 64>,
+    lock_results: &[TransactionResult<()>],
+    error_counters: &mut TransactionErrorMetrics,
+    receiving_stats: &mut ReceivingStats,
+) {
+    // Temporary scope so that transaction references are immediately
+    // dropped and transactions not passing
+    let mut check_results = {
+        let mut transactions = ArrayVec::<_, EXTRA_CAPACITY>::new();
+        transactions.extend(transaction_priority_ids.iter().map(|priority_id| {
+            container
+                .get_transaction(priority_id.id)
+                .expect("transaction must exist")
+        }));
+
+        working_bank.check_transactions::<RuntimeTransaction<_>>(
+            &transactions,
+            &lock_results[..transactions.len()],
+            working_bank.max_processing_age(),
+            true,
+            error_counters,
+        )
+    };
+
+    // Remove errored transactions
+    for (result, priority_id) in check_results
+        .iter_mut()
+        .zip(transaction_priority_ids.iter())
+    {
+        if let Err(err) = result {
+            receiving_stats.record(err);
+            container.remove_by_id(priority_id.id);
+            continue;
+        }
+
+        let transaction = container
+            .get_transaction(priority_id.id)
+            .expect("transaction must exist");
+
+        if let Err(err) =
+            Consumer::check_fee_payer_unlocked(working_bank, transaction, error_counters)
+        {
+            *result = Err(err);
+            receiving_stats.num_dropped_on_fee_payer += 1;
+            container.remove_by_id(priority_id.id);
+            continue;
+        }
+
+        receiving_stats.num_buffered += 1;
+    }
+
+    // Push non-errored transaction into queue.
+    receiving_stats.num_dropped_on_capacity += container.push_ids_into_queue(
+        check_results
+            .into_iter()
+            .zip(transaction_priority_ids.drain(..))
+            .filter(|(r, _)| r.is_ok())
+            .map(|(_, id)| id),
+    );
 }
 
 /// Perform sanitization checks and transition from data to an executable
