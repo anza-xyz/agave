@@ -50,6 +50,7 @@ use {
         program_metrics::ProgramStatistics,
         solana_sbpf::{program::BuiltinProgram, vm::Config as VmConfig},
         sysvar_cache::SysvarCache,
+        threaded_compilation::{CompilationMode, CompilationWorker},
     },
     solana_pubkey::Pubkey,
     solana_rent::Rent,
@@ -218,6 +219,10 @@ pub struct TransactionBatchProcessor<FG: ForkGraph> {
     builtin_program_cache: RwLock<ProgramCacheForTxBatch>,
 
     execution_cost: SVMTransactionExecutionCost,
+
+    /// As programs are collected, we'll check if they are a candidate for compilation and send the
+    /// request to compile to a dedicated compilation thread.
+    pub compilation_worker: CompilationWorker,
 }
 
 impl<FG: ForkGraph> Debug for TransactionBatchProcessor<FG> {
@@ -245,6 +250,7 @@ impl<FG: ForkGraph> Default for TransactionBatchProcessor<FG> {
             builtin_program_ids: RwLock::new(HashSet::new()),
             builtin_program_cache: RwLock::new(ProgramCacheForTxBatch::new(Slot::default())),
             execution_cost: SVMTransactionExecutionCost::default(),
+            compilation_worker: CompilationWorker::default(),
         }
     }
 }
@@ -337,6 +343,7 @@ impl<FG: ForkGraph> TransactionBatchProcessor<FG> {
             &environments,
             false,
             false,
+            |_, _| {},
         );
 
         Self {
@@ -349,6 +356,7 @@ impl<FG: ForkGraph> TransactionBatchProcessor<FG> {
             builtin_program_ids: RwLock::new(builtin_program_ids),
             builtin_program_cache: RwLock::new(builtin_program_cache),
             execution_cost: self.execution_cost,
+            compilation_worker: self.compilation_worker.clone(),
         }
     }
 
@@ -849,6 +857,20 @@ impl<FG: ForkGraph> TransactionBatchProcessor<FG> {
         increment_usage_counter: bool,
     ) {
         let mut count_hits_and_misses = true;
+
+        let compilation_mode = CompilationMode::get();
+        let extracted_callback: &dyn Fn(&_, &_) = if let CompilationMode::ThreadedJit =
+            compilation_mode
+        {
+            let compilation_worker = self.compilation_worker.clone();
+            let jit_timer = Arc::clone(&execute_timings.details.create_executor_jit_compile_us);
+            &move |_, program| {
+                compilation_worker.request_compilation(Arc::clone(program), Arc::clone(&jit_timer));
+            }
+        } else {
+            &|_, _| {}
+        };
+
         loop {
             // Lock the global cache.
             let global_program_cache = self.global_program_cache.read().unwrap();
@@ -859,7 +881,9 @@ impl<FG: ForkGraph> TransactionBatchProcessor<FG> {
                 program_runtime_environment_for_execution,
                 increment_usage_counter,
                 count_hits_and_misses,
+                extracted_callback,
             );
+
             count_hits_and_misses = false;
             let task_waiter = Arc::clone(&global_program_cache.loading_task_waiter);
             let task_cookie = task_waiter.cookie();
@@ -867,7 +891,7 @@ impl<FG: ForkGraph> TransactionBatchProcessor<FG> {
             drop(global_program_cache);
 
             let program_to_store = program_to_load.map(|key| {
-                // Load, verify and compile one program.
+                // Load and verify one program.
                 let (program, last_modification_slot) = load_program_with_pubkey(
                     account_loader,
                     program_runtime_environment_for_execution,
@@ -876,6 +900,17 @@ impl<FG: ForkGraph> TransactionBatchProcessor<FG> {
                     execute_timings,
                 )
                 .expect("called load_program_with_pubkey() with nonexistent account");
+                match compilation_mode {
+                    CompilationMode::Never => {}
+                    CompilationMode::ThreadedJit => extracted_callback(&key, &program),
+                    CompilationMode::AlwaysJit => {
+                        let compile_duration = program.try_compile_loaded();
+                        execute_timings
+                            .details
+                            .create_executor_jit_compile_us
+                            .fetch_add(compile_duration, Ordering::Relaxed);
+                    }
+                }
                 (key, program, last_modification_slot)
             });
 
@@ -2103,6 +2138,7 @@ mod tests {
                 &program_runtime_environment,
                 true,
                 true,
+                |_, _| {},
             );
         let entry = loaded_programs_for_tx_batch.find(&key).unwrap();
 

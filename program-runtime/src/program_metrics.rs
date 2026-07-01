@@ -253,8 +253,6 @@ pub struct LoadProgramMetrics {
     pub load_elf_us: u64,
     /// Microseconds it took to `executable.verify::<RequisiteVerifier>`
     pub verify_code_us: u64,
-    /// Microseconds it took to `executable.jit_compile`
-    pub jit_compile_us: u64,
 }
 
 #[cfg(feature = "metrics")]
@@ -263,7 +261,6 @@ impl LoadProgramMetrics {
         timings.create_executor_register_syscalls_us += self.register_syscalls_us;
         timings.create_executor_load_elf_us += self.load_elf_us;
         timings.create_executor_verify_code_us += self.verify_code_us;
-        timings.create_executor_jit_compile_us += self.jit_compile_us;
     }
 }
 
