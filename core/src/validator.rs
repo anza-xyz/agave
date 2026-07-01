@@ -1662,6 +1662,7 @@ impl Validator {
                 bank_forks_controller_receiver,
                 votor_event_sender: votor_event_sender.clone(),
                 votor_event_receiver,
+                cancel: cancel.child_token(),
                 key_notifiers: key_notifiers.clone(),
                 alpenglow_sockets: node.sockets.alpenglow,
                 alpenglow_client_socket: node.sockets.quic_alpenglow_client,

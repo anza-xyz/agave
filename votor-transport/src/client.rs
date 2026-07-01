@@ -2,6 +2,7 @@
 use {
     crate::{
         ALPENGLOW_ALPN, METRICS_INTERVAL, PeerListReceiver, close_codes,
+        endpoint::ExitSignals,
         error::Error,
         stats::{self, ClientStats, record_client_error},
         transport::{Identity, new_client_config},
@@ -22,7 +23,6 @@ use {
         task::JoinSet,
         time::{MissedTickBehavior, interval},
     },
-    tokio_util::sync::CancellationToken,
 };
 
 /// How often the outbound loop reconciles its connection table against the
@@ -87,7 +87,7 @@ pub(crate) struct OutboundLoop {
     /// Size is limited to the peer_list size by reconcile task.
     pub(crate) peer_state: HashMap<Pubkey, PeerState, PubkeyHasherBuilder>,
     pub(crate) in_flight_handshakes: JoinSet<HandshakeOutcome>,
-    pub(crate) shutdown: CancellationToken,
+    pub(crate) exit_signals: ExitSignals,
     pub(crate) stats: Arc<ClientStats>,
 }
 
@@ -98,7 +98,7 @@ impl OutboundLoop {
         egress_receiver: mpsc::Receiver<Bytes>,
         identity_receiver: watch::Receiver<Option<Arc<Identity>>>,
         peer_list_receiver: PeerListReceiver,
-        shutdown: CancellationToken,
+        exit_signals: ExitSignals,
     ) -> Self {
         Self {
             endpoint,
@@ -108,7 +108,7 @@ impl OutboundLoop {
             peer_list_receiver,
             peer_state: HashMap::with_hasher(PubkeyHasherBuilder::default()),
             in_flight_handshakes: JoinSet::new(),
-            shutdown,
+            exit_signals,
             stats: Arc::default(),
         }
     }
@@ -127,11 +127,12 @@ impl OutboundLoop {
         info!("Votor QUIC transport client ready.");
         loop {
             tokio::select! {
-                biased;
-                // ID changes are rare but very important and must be acted on immediately
                 changed = self.identity_receiver.changed() => {
                     if changed.is_err(){
-                        info!("identity rotation channel closed; outbound loop exiting");
+                        debug_assert!(
+                            self.exit_signals.is_exiting(),
+                            "OutboundLoop: identity channel closed while running."
+                        );
                         break;
                     }
                     let new_identity = self.identity_receiver.borrow_and_update().clone();
@@ -142,33 +143,34 @@ impl OutboundLoop {
                 // The peer set changed: reconcile the connection table right away.
                 changed = peer_list_receiver.changed() => {
                     if changed.is_err() {
-                        info!("peer_list channel closed; outbound loop exiting");
+                        debug_assert!(
+                            self.exit_signals.is_exiting(),
+                            "OutboundLoop: peer_list closed while running."
+                        );
                         break;
                     }
                     self.reconcile();
                 }
-                // Connect outcomes must come ahead of egress to ensure new
-                // connections are registered even when egress is busy.
                 Some(joined) = self.in_flight_handshakes.join_next(), if !self.in_flight_handshakes.is_empty() => {
                     match joined {
                         Ok(outcome) => self.handle_handshake_outcome(outcome),
                         Err(err) => error!("Outbound connection task failed: {err}"),
                     }
                 }
-                // Egress: broadcast one message to every live connection.
                 maybe_message = self.egress_receiver.recv() => {
-                    let Some(message) = maybe_message else { break };
-                    self.handle_broadcast(message);
+                    let Some(message) = maybe_message else {
+                        // ok here since the only way this happens is if Endpoint is already dropped.
+                        break;
+                    };
+                    self.perform_broadcast(message);
                 }
                 // Periodic reconcile: connect to missing peers, drop departed peers.
                 _ = reconcile_timer.tick() => self.reconcile(),
-                // Metrics are best effort
                 _ = metrics.tick() => {
                     debug!("OutboundLoop: running bookkeeping tasks");
                     stats::report_client(&self.stats, self.peer_state.len() as u64);
                 }
-                // Shutdown is never something we do in a hurry
-                _ = self.shutdown.cancelled() => break,
+                _ = self.exit_signals.cancelled() => break,
             }
         }
     }
@@ -294,7 +296,7 @@ impl OutboundLoop {
 
     /// Broadcast one message to every live connection. Broken connections are
     /// dropped from the table so the next reconcile remakes them.
-    fn handle_broadcast(&mut self, message: Bytes) {
+    fn perform_broadcast(&mut self, message: Bytes) {
         let mut sent = 0u64;
         let mut dead_peers = Vec::new();
         for (peer, state) in self.peer_state.iter() {

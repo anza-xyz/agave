@@ -60,7 +60,7 @@ pub(crate) mod close_codes {
     };
 
     pub(crate) const IDENTITY_CHANGED: Spec = Spec {
-        code: VarInt::from_u32(11),
+        code: VarInt::from_u32(7),
         reason: b"IDENTITY_CHANGED",
     };
     // When adding new close code, make sure to also capture it
@@ -124,7 +124,7 @@ mod tests {
                 b"TOO_MANY_CONNECTIONS",
             ),
             (&close_codes::FLOODING, 6, b"FLOODING"),
-            (&close_codes::IDENTITY_CHANGED, 11, b"IDENTITY_ROTATED"),
+            (&close_codes::IDENTITY_CHANGED, 7, b"IDENTITY_CHANGED"),
         ];
         for (spec, code, reason) in pinned {
             assert_eq!(

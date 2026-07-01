@@ -41,7 +41,10 @@ use {
         VerifiedVoterSlotsReceiver, VerifiedVoterSlotsSender, consensus_message::Block,
         metric_types::MAX_IN_FLIGHT_CONSENSUS_EVENTS, reward_certificate::AddVoteMessage,
     },
-    agave_votor_transport::{ADDRESS_UNKNOWN, endpoint::QuicDatagramEndpoint},
+    agave_votor_transport::{
+        ADDRESS_UNKNOWN,
+        endpoint::{ExitSignals, QuicDatagramEndpoint},
+    },
     crossbeam_channel::{Receiver, Sender, bounded, unbounded},
     solana_client::connection_cache::ConnectionCache,
     solana_clock::Slot,
@@ -89,6 +92,7 @@ use {
         runtime::{Handle, Runtime as TokioRuntime},
         sync::{mpsc, watch},
     },
+    tokio_util::sync::CancellationToken,
 };
 
 /// Sets the upper bound on the number of batches stored in the retransmit
@@ -187,6 +191,7 @@ pub struct AlpenglowInitializationState {
     pub votor_event_sender: VotorEventSender,
     pub votor_event_receiver: VotorEventReceiver,
 
+    pub cancel: CancellationToken,
     pub key_notifiers: Arc<RwLock<KeyUpdaters>>,
 
     // server sockets for votor
@@ -271,6 +276,7 @@ impl Tvu {
             bank_forks_controller_receiver,
             votor_event_sender,
             votor_event_receiver,
+            cancel,
             key_notifiers,
             alpenglow_sockets,
             alpenglow_client_socket,
@@ -336,6 +342,7 @@ impl Tvu {
             votor_peer_list_receiver,
             votor_ban_receiver,
             VOTOR_RATE_LIMIT_PPS,
+            ExitSignals::new(exit.clone(), cancel),
         )
         .map_err(|e| format!("alpenglow endpoint: {e:?}"))?;
         key_notifiers
@@ -898,6 +905,7 @@ pub mod tests {
                 highest_parent_ready,
                 votor_event_sender,
                 votor_event_receiver,
+                cancel: CancellationToken::new(),
                 key_notifiers,
                 alpenglow_sockets: vec![bind_to_localhost_unique().expect("bind alpenglow socket")],
                 alpenglow_client_socket: bind_to_localhost_unique()

@@ -414,7 +414,7 @@ mod tests {
         },
         agave_votor_transport::{
             PeerListReceiver, PeerListSender,
-            endpoint::{Datagram, QuicDatagramEndpoint},
+            endpoint::{BanCommand, Datagram, ExitSignals, QuicDatagramEndpoint},
         },
         bytes::Bytes,
         crossbeam_channel::{Receiver, bounded, unbounded},
@@ -431,11 +431,13 @@ mod tests {
             },
         },
         solana_signer::Signer,
+        std::sync::atomic::AtomicBool,
         test_case::test_case,
         tokio::{
             runtime::{Builder, Runtime},
             sync::watch,
         },
+        tokio_util::sync::CancellationToken,
     };
 
     fn test_vote_message(
@@ -546,6 +548,9 @@ mod tests {
         Receiver<Datagram>,
         SocketAddr,
         Runtime,
+        // Returned so the ban channel stays open for the endpoint's lifetime;
+        // dropping it would trip the InboundLoop's out-of-order-feeder assert.
+        mpsc::Sender<BanCommand>,
     ) {
         let rt = Builder::new_multi_thread()
             .enable_all()
@@ -555,7 +560,7 @@ mod tests {
         let addr = socket.local_addr().expect("local addr");
         let client_socket = bind_to_localhost_unique().expect("bind client UDP");
         let (ingress_tx, ingress_rx) = bounded(4096);
-        let (_ban_tx, ban_receiver) = mpsc::channel(1);
+        let (ban_tx, ban_receiver) = mpsc::channel(1);
         let endpoint = QuicDatagramEndpoint::spawn(
             rt.handle(),
             &keypair,
@@ -565,9 +570,10 @@ mod tests {
             peer_list_receiver,
             ban_receiver,
             VOTOR_RATE_LIMIT_PPS,
+            ExitSignals::new(Arc::new(AtomicBool::new(false)), CancellationToken::new()),
         )
         .expect("QuicDatagramEndpoint::spawn");
-        (endpoint, ingress_rx, addr, rt)
+        (endpoint, ingress_rx, addr, rt, ban_tx)
     }
 
     fn create_voting_service(
@@ -652,13 +658,13 @@ mod tests {
         let unresolved = SocketAddr::from(([0, 0, 0, 0], 0));
         let (_spy_peer_list_sender, spy_peer_list_receiver) =
             watch::channel(Arc::new(HashMap::from([(client_pubkey, unresolved)])));
-        let (endpoint, ingress_rx, listener_addr, _rt) =
+        let (endpoint, ingress_rx, listener_addr, _rt, _ban_tx) =
             spawn_endpoint(listener_kp, spy_peer_list_receiver);
 
         // Seed the client's peer_list empty; create_voting_service installs a test
         // override that injects the listener.
         let (peer_list_sender, peer_list_receiver) = watch::channel(Arc::new(HashMap::new()));
-        let (client_endpoint, _client_ingress_rx, _client_addr, _client_rt) =
+        let (client_endpoint, _client_ingress_rx, _client_addr, _client_rt, _client_ban_tx) =
             spawn_endpoint(client_kp, peer_list_receiver);
         let egress = client_endpoint.egress.clone();
 
@@ -709,6 +715,10 @@ mod tests {
             received,
             VersionedWireConsensusMessage::new(expected_message, cluster_info.my_shred_version())
         );
+        // Tear both endpoints down before their feeder channels (`_ban_tx`,
+        // `_client_ban_tx`) drop at scope end; otherwise the InboundLoop would
+        // observe the ban channel close before shutdown and trip its assert.
         drop(endpoint);
+        drop(client_endpoint);
     }
 }

@@ -18,7 +18,10 @@ use {
     solana_tls_utils::{NotifyKeyUpdate, new_dummy_x509_certificate},
     std::{
         net::{SocketAddr, UdpSocket},
-        sync::Arc,
+        sync::{
+            Arc,
+            atomic::{AtomicBool, Ordering},
+        },
         time::Duration,
     },
     tokio::{
@@ -35,24 +38,7 @@ pub struct BanCommand {
     pub duration: Duration,
 }
 
-/// Handle for caller-driven identity rotation.
-pub struct KeyUpdater {
-    sender: watch::Sender<Option<Arc<Identity>>>,
-}
-
-impl NotifyKeyUpdate for KeyUpdater {
-    fn update_key(&self, keypair: &Keypair) -> Result<(), Box<dyn std::error::Error>> {
-        let new_identity = Arc::new(Identity::from_keypair(keypair));
-        self.sender
-            .send(Some(new_identity))
-            .map_err(|_| -> Box<dyn std::error::Error> {
-                "quic-datagram endpoint has shut down; identity update rejected".into()
-            })?;
-        Ok(())
-    }
-}
-
-/// Datagram envelope used on both directions of the endpoint.
+/// Envelope used to report incoming packets.
 #[derive(Debug)]
 pub struct Datagram {
     pub peer_pubkey: Pubkey,
@@ -67,11 +53,11 @@ pub struct QuicDatagramEndpoint {
     pub egress: mpsc::Sender<Bytes>,
     /// Handle for rotating the local identity (TLS cert / pubkey).
     pub key_updater: Arc<KeyUpdater>,
-    shutdown: CancellationToken,
-    /// Inbound counters, exposed so in-crate tests can assert on admission,
-    /// eviction, and rate-limit behavior. Also exposed under
-    /// `dev-context-only-utils` so cross-crate integration tests (e.g. the
-    /// `agave-bls-sigverify` full ban-path test) can observe ban-driven closures.
+    /// A retained `peer_list` receiver clone. Exists so a peer_list update
+    /// never panics just because the loop tasks have exited during teardown.
+    _peer_list: PeerListReceiver,
+    exit_signals: ExitSignals,
+    /// Inbound stats, exposed so integration tests can assert on them.
     #[cfg(any(test, feature = "dev-context-only-utils"))]
     pub server_stats: Arc<ServerStats>,
     /// Spawned event-loop tasks. In test / DCOU builds `Drop` joins these so a panic
@@ -82,20 +68,19 @@ pub struct QuicDatagramEndpoint {
 }
 
 impl QuicDatagramEndpoint {
-    /// Construct a datagram-only QUIC endpoint. `inbound_sockets` back the
-    /// inbound (we-accept) direction and are expected to be SO_REUSEPORT
-    /// bound to the same port to load-balance inbound datagrams. The outbound
-    /// (send-only) direction runs on a dedicated `outbound_socket` bound to its
-    /// own port.
+    /// Spawns the inbound and outbound loops on `runtime`.
     ///
-    /// Spawns the inbound and outbound loops on `runtime`; dropping the handle
-    /// cancels them.
+    /// `inbound_sockets` back the inbound (we-accept) direction and are
+    /// expected to be SO_REUSEPORT bound to the same port to load-balance.
+    /// `outbound_socket` backs the outbound (send-only) direction bound to its
+    /// own port.
     /// Received datagrams flow into `inbound_datagrams`, per-peer receive rate is
     /// capped by `max_datagrams_per_second_per_peer`.
-    /// `peer_list` carries desired peer set updates: inbound closes connections to
+    /// `peer_list` carries desired peer set: inbound closes connections to
     /// peers no longer in the set, outbound connects to peers in it.
-    /// `ban_commands` carries temporary per-peer ban commands (banning also closes
+    /// `ban_commands` carries temporary ban commands (banning also closes
     /// the peer's connections).
+    /// `exit_signals` controls when the endpoint should terminate.
     pub fn spawn(
         runtime: &Handle,
         keypair: &Keypair,
@@ -105,6 +90,7 @@ impl QuicDatagramEndpoint {
         peer_list: PeerListReceiver,
         ban_commands: mpsc::Receiver<BanCommand>,
         max_datagrams_per_second_per_peer: usize,
+        exit_signals: ExitSignals,
     ) -> Result<Self, Error> {
         assert!(!inbound_sockets.is_empty(), "Must have sockets provided");
 
@@ -113,7 +99,6 @@ impl QuicDatagramEndpoint {
         // Size it to 5 seconds of the votor max send rate (these rates are quite low).
         let egress_channel_capacity = max_datagrams_per_second_per_peer.saturating_mul(5);
         let (egress_sender, egress_receiver) = mpsc::channel(egress_channel_capacity);
-        let shutdown = CancellationToken::new();
         let (identity_sender, identity_receiver) = watch::channel(None);
         let key_updater = Arc::new(KeyUpdater {
             sender: identity_sender,
@@ -158,7 +143,7 @@ impl QuicDatagramEndpoint {
             egress_receiver,
             identity_receiver.clone(),
             peer_list.clone(),
-            shutdown.clone(),
+            exit_signals.clone(),
         );
         task_handles.spawn_on(outbound.run(), runtime);
 
@@ -186,7 +171,7 @@ impl QuicDatagramEndpoint {
                     endpoint.clone(),
                     inbound_events_sender.clone(),
                     server_stats.clone(),
-                    shutdown.clone(),
+                    exit_signals.clone(),
                     rate_limiter.clone(),
                     max_inflight_handshakes,
                 );
@@ -198,13 +183,13 @@ impl QuicDatagramEndpoint {
         let inbound = InboundLoop::new(
             inbound_datagrams,
             ban_commands,
-            peer_list,
+            peer_list.clone(),
             inbound_endpoints,
             inbound_events_sender,
             inbound_events_receiver,
             identity_receiver,
             server_stats,
-            shutdown.clone(),
+            exit_signals.clone(),
             max_datagrams_per_second_per_peer,
         );
         task_handles.spawn_on(inbound.run(), runtime);
@@ -212,7 +197,8 @@ impl QuicDatagramEndpoint {
         Ok(Self {
             egress: egress_sender,
             key_updater,
-            shutdown,
+            _peer_list: peer_list,
+            exit_signals,
             task_handles,
             #[cfg(any(test, feature = "dev-context-only-utils"))]
             runtime_handle: runtime.clone(),
@@ -225,7 +211,7 @@ impl QuicDatagramEndpoint {
 impl Drop for QuicDatagramEndpoint {
     /// Cancel the spawned loops so a dropped handle can't leak them.
     fn drop(&mut self) {
-        self.shutdown.cancel();
+        self.exit_signals.cancel();
         #[cfg(any(test, feature = "dev-context-only-utils"))]
         {
             // Join all the internal tasks so a panic that a loop task
@@ -242,7 +228,11 @@ impl Drop for QuicDatagramEndpoint {
                     {
                         Ok(Some(Ok(()))) => {}
                         Ok(Some(Err(join_err))) => {
-                            errors.push(format!("QuicDatagramEndpoint teardown error {join_err}"));
+                            if join_err.is_panic() {
+                                errors.push(format!(
+                                    "QuicDatagramEndpoint teardown error {join_err}"
+                                ));
+                            }
                         }
                         // All loop tasks have exited.
                         Ok(None) => break,
@@ -272,11 +262,59 @@ impl Drop for QuicDatagramEndpoint {
     }
 }
 
+/// Handle for caller-driven identity rotation.
+pub struct KeyUpdater {
+    sender: watch::Sender<Option<Arc<Identity>>>,
+}
+
+impl NotifyKeyUpdate for KeyUpdater {
+    fn update_key(&self, keypair: &Keypair) -> Result<(), Box<dyn std::error::Error>> {
+        let new_identity = Arc::new(Identity::from_keypair(keypair));
+        self.sender
+            .send(Some(new_identity))
+            .map_err(|_| -> Box<dyn std::error::Error> {
+                "quic-datagram endpoint has shut down; identity update rejected".into()
+            })?;
+        Ok(())
+    }
+}
+
+/// Aggregates both the validator-global exit atomic bool and the
+/// validator-global cancellation token.
+///
+/// Some channels are held by sync services, we consult these to
+/// tell a shutdown-time channel close from a bug.
+#[derive(Clone)]
+pub struct ExitSignals {
+    exit: Arc<AtomicBool>,
+    cancel: CancellationToken,
+}
+
+impl ExitSignals {
+    /// `exit` is the validator-global exit flag; `cancel` should be a child of
+    /// the validator-global cancellation token.
+    pub fn new(exit: Arc<AtomicBool>, cancel: CancellationToken) -> Self {
+        Self { exit, cancel }
+    }
+
+    pub(crate) fn is_exiting(&self) -> bool {
+        self.exit.load(Ordering::Relaxed)
+    }
+
+    pub(crate) async fn cancelled(&self) {
+        self.cancel.cancelled().await
+    }
+
+    pub(crate) fn cancel(&self) {
+        self.cancel.cancel();
+    }
+}
+
 #[cfg(test)]
 #[allow(clippy::arithmetic_side_effects)]
 mod tests {
     use {
-        super::{BanCommand, Datagram, QuicDatagramEndpoint},
+        super::{BanCommand, Datagram, ExitSignals, QuicDatagramEndpoint},
         crate::{
             ADDRESS_UNKNOWN, ALPENGLOW_ALPN, HANDSHAKE_BURST, HANDSHAKE_GLOBAL_RATE,
             MAX_ALPENGLOW_VOTE_ACCOUNTS, MAX_INFLIGHT_HANDSHAKES, METRICS_INTERVAL, PeerListSender,
@@ -305,6 +343,7 @@ mod tests {
             runtime::{Builder, Runtime},
             sync::{mpsc, watch},
         },
+        tokio_util::sync::CancellationToken,
     };
 
     const HIGH_PPS: usize = 1000;
@@ -386,6 +425,7 @@ mod tests {
             peer_list_receiver,
             ban_receiver,
             max_pps,
+            ExitSignals::new(Arc::new(AtomicBool::new(false)), CancellationToken::new()),
         )
         .expect("QuicDatagramEndpoint::spawn");
         Node {

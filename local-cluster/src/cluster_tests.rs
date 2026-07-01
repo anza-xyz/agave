@@ -10,7 +10,7 @@ use {
         consensus_message::VoteMessage, unverified_vote_message::DecodedWireConsensusMessage,
         wire::VersionedWireConsensusMessage,
     },
-    agave_votor_transport::endpoint::{Datagram, QuicDatagramEndpoint},
+    agave_votor_transport::endpoint::{Datagram, ExitSignals, QuicDatagramEndpoint},
     crossbeam_channel::{Receiver, bounded},
     rand::{Rng, rng},
     rayon::{ThreadPool, prelude::*},
@@ -62,7 +62,8 @@ use {
         thread::{JoinHandle, sleep},
         time::{Duration, Instant},
     },
-    tokio::runtime::Runtime,
+    tokio::runtime::{Builder as TokioBuilder, Runtime},
+    tokio_util::sync::CancellationToken,
     wincode,
 };
 
@@ -77,7 +78,7 @@ impl TpuSender {
     pub fn new() -> Self {
         Self {
             runtime: Arc::new(
-                tokio::runtime::Builder::new_multi_thread()
+                TokioBuilder::new_multi_thread()
                     .worker_threads(4)
                     .enable_all()
                     .build()
@@ -594,15 +595,17 @@ pub fn start_datagram_listener_for_alpenglow_votor(
     listener_keypair: Keypair,
     admitted_peers: &[Pubkey],
 ) -> (QuicDatagramEndpoint, Receiver<Datagram>, Runtime) {
-    let rt = tokio::runtime::Builder::new_multi_thread()
+    let rt = TokioBuilder::new_multi_thread()
         .enable_all()
         .worker_threads(2)
         .thread_name("solAlpenglowListen")
         .build()
         .expect("tokio runtime");
     let (sender, receiver) = bounded(1024);
-    // Listener never bans, so ban sender unused.
-    let (_ban_tx, ban_receiver) = tokio::sync::mpsc::channel(1);
+    // Listener never bans, so ban sender unused. Leak it so the channel stays
+    // open: dropping it would trip the InboundLoop's out-of-order-teardown assert.
+    let (ban_tx, ban_receiver) = tokio::sync::mpsc::channel(1);
+    Box::leak(Box::new(ban_tx));
     // Admit every peer from `admitted_peers`. the UNSPECIFIED address keeps the listener's
     // outbound loop from connecting to them. Leak the sender so the channel stays open.
     let unspecified = SocketAddr::from(([0, 0, 0, 0], 0));
@@ -623,6 +626,7 @@ pub fn start_datagram_listener_for_alpenglow_votor(
         peer_list_receiver,
         ban_receiver,
         VOTOR_RATE_LIMIT_PPS,
+        ExitSignals::new(Arc::new(AtomicBool::new(false)), CancellationToken::new()),
     )
     .expect("alpenglow datagram listener");
     (endpoint, receiver, rt)

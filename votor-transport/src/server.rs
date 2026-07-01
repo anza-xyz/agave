@@ -3,7 +3,7 @@ use {
     crate::{
         ALPENGLOW_ALPN, HANDSHAKE_TIMEOUT, MAX_INBOUND_CONNECTIONS_PER_PEER, METRICS_INTERVAL,
         PEER_RATE_LIMIT_BURST_WINDOW, PEER_RATE_LIMIT_DOS_WINDOW, PeerListReceiver, close_codes,
-        endpoint::{BanCommand, Datagram},
+        endpoint::{BanCommand, Datagram, ExitSignals},
         error::Error,
         stats::{self, ServerStats, record_server_error},
         transport::{Identity, new_server_config},
@@ -27,7 +27,6 @@ use {
         task::JoinSet,
         time::{Instant, MissedTickBehavior, interval, sleep, timeout},
     },
-    tokio_util::sync::CancellationToken,
 };
 
 /// Tracks resource use by one peer
@@ -58,7 +57,7 @@ pub(crate) struct AcceptLoop {
     endpoint: Endpoint,
     events_sender: mpsc::Sender<InboundEvent>,
     stats: Arc<ServerStats>,
-    shutdown: CancellationToken,
+    exit_signals: ExitSignals,
     /// Paces how fast this endpoint *starts* handshakes.
     handshake_rate_limiter: TokenBucket,
     /// Bounds the number of in-flight handshakes for this endpoint.
@@ -70,7 +69,7 @@ impl AcceptLoop {
         endpoint: Endpoint,
         events_sender: mpsc::Sender<InboundEvent>,
         stats: Arc<ServerStats>,
-        shutdown: CancellationToken,
+        exit_signals: ExitSignals,
         handshake_rate_limiter: TokenBucket,
         max_inflight_handshakes: usize,
     ) -> Self {
@@ -78,7 +77,7 @@ impl AcceptLoop {
             endpoint,
             events_sender,
             stats,
-            shutdown,
+            exit_signals,
             handshake_rate_limiter,
             max_inflight_handshakes,
         }
@@ -89,7 +88,7 @@ impl AcceptLoop {
             endpoint,
             events_sender,
             stats,
-            shutdown,
+            exit_signals,
             handshake_rate_limiter,
             max_inflight_handshakes,
         } = self;
@@ -157,7 +156,7 @@ impl AcceptLoop {
                         stats.clone(),
                     ));
                 }
-                _ = shutdown.cancelled() => break,
+                _ = exit_signals.cancelled() => break,
             }
         }
     }
@@ -297,7 +296,7 @@ pub(crate) struct InboundLoop {
     /// Channel for read tasks to report their lifetime events.
     pub(crate) events_receiver: mpsc::Receiver<InboundEvent>,
     pub(crate) stats: Arc<ServerStats>,
-    pub(crate) shutdown: CancellationToken,
+    pub(crate) exit_signals: ExitSignals,
     /// Sustained datagrams-per-second each peer is allowed to send.
     pub(crate) max_datagrams_per_second_per_peer: usize,
     /// Burst headroom above the sustained rate, in tokens.
@@ -317,7 +316,7 @@ impl InboundLoop {
         inbound_events_receiver: mpsc::Receiver<InboundEvent>,
         identity_receiver: watch::Receiver<Option<Arc<Identity>>>,
         stats: Arc<ServerStats>,
-        shutdown: CancellationToken,
+        exit_signals: ExitSignals,
         max_datagrams_per_second_per_peer: usize,
     ) -> Self {
         let tokens_over = |window: Duration| {
@@ -337,7 +336,7 @@ impl InboundLoop {
             events_sender: inbound_events_sender,
             events_receiver: inbound_events_receiver,
             stats,
-            shutdown,
+            exit_signals,
             max_datagrams_per_second_per_peer,
             peer_rate_limit_burst,
             peer_rate_limit_burst_dos,
@@ -364,11 +363,23 @@ impl InboundLoop {
                 // per-connection read tasks.
                 Some(event) = self.events_receiver.recv() => self.handle_event(event),
                 // A peer was banned by the sig-verifier.
-                Some(BanCommand { peer, duration }) = self.ban_receiver.recv() => self.apply_ban(peer, duration),
+                maybe_ban = self.ban_receiver.recv() => {
+                    let Some(BanCommand { peer, duration }) = maybe_ban else {
+                        debug_assert!(
+                            self.exit_signals.is_exiting(),
+                            "InboundLoop: ban_receiver closed while running"
+                        );
+                        break;
+                    };
+                    self.apply_ban(peer, duration);
+                }
                 // The local identity changed.
                 changed = identity_receiver.changed() => {
                     if changed.is_err() {
-                        info!("identity rotation channel closed; inbound loop exiting");
+                        debug_assert!(
+                            self.exit_signals.is_exiting(),
+                            "InboundLoop: identity channel closed while running."
+                        );
                         break;
                     }
                     let new_identity = identity_receiver.borrow_and_update().clone();
@@ -392,7 +403,10 @@ impl InboundLoop {
                 // The admitted-peer set changed.
                 changed = peer_list_receiver.changed() => {
                     if changed.is_err() {
-                        info!("InboundLoop: peer_list sender dropped, exiting");
+                        debug_assert!(
+                            self.exit_signals.is_exiting(),
+                            "InboundLoop: peer_list closed while running."
+                        );
                         break;
                     }
                     self.close_not_allowed();
@@ -409,7 +423,7 @@ impl InboundLoop {
                             || e.rate_limiter.current_tokens() < burst_dos
                     });
                 }
-                _ = self.shutdown.cancelled() => {
+                _ = self.exit_signals.cancelled() => {
                     break
                 },
             }
@@ -582,9 +596,11 @@ mod tests {
         solana_keypair::Keypair,
         std::{
             net::{IpAddr, Ipv4Addr},
+            sync::atomic::AtomicBool,
             time::Duration,
         },
         tokio::time::sleep,
+        tokio_util::sync::CancellationToken,
     };
 
     /// A peer that completes the QUIC Initial but never finishes the handshake
@@ -610,12 +626,13 @@ mod tests {
         // Sized so a never-completing handshake never needs to send.
         let (events_sender, _events_receiver) = mpsc::channel(1);
         let stats = Arc::new(ServerStats::default());
-        let shutdown = CancellationToken::new();
+        let cancel = CancellationToken::new();
+        let exit_signals = ExitSignals::new(Arc::new(AtomicBool::new(false)), cancel.clone());
         let accept = AcceptLoop::new(
             endpoint,
             events_sender,
             stats.clone(),
-            shutdown.clone(),
+            exit_signals,
             TokenBucket::new(HANDSHAKE_BURST, HANDSHAKE_BURST, HANDSHAKE_GLOBAL_RATE),
             MAX_INFLIGHT_HANDSHAKES,
         );
@@ -665,7 +682,7 @@ mod tests {
             "stalled handshake was not reclaimed within {deadline:?}",
         );
 
-        shutdown.cancel();
+        cancel.cancel();
         client_task.abort();
         proxy_task.abort();
         let _ = loop_handle.await;
