@@ -106,6 +106,69 @@ impl WindowServiceMetrics {
     }
 }
 
+/// Per-shred duplicate handling, extracted from `run_check_duplicate` so callers
+/// can run the same duplicate-detection path without gossip/channel side effects.
+///
+/// Returns the duplicate proof (`shred` and the conflicting payload) when one is
+/// detected, leaving propagation to the caller.
+pub fn check_duplicate_shred(
+    blockstore: &Blockstore,
+    shred: PossibleDuplicateShred,
+    validate_chained_block_id: bool,
+    validate_chained_block_id_2: bool,
+    no_verify_chained_merkle_root: bool,
+) -> Result<Option<(Shred, shred::Payload)>> {
+    let shred_slot = shred.slot();
+    let (shred1, shred2) = match shred {
+        PossibleDuplicateShred::LastIndexConflict(shred, conflict)
+        | PossibleDuplicateShred::ErasureConflict(shred, conflict)
+        | PossibleDuplicateShred::MerkleRootConflict(shred, conflict) => (shred, conflict),
+        PossibleDuplicateShred::ChainedMerkleRootConflict(_slot) => {
+            if no_verify_chained_merkle_root {
+                // If we're in the full alpenglow epoch, we stop validating the chained merkle root.
+                // In Alpenglow we only use the double merkle root
+                return Ok(None);
+            }
+            if validate_chained_block_id || validate_chained_block_id_2 {
+                // Although chained merkle roots are not necessary for agave duplicate resolution protocols,
+                // We still need to mark the block as dead for other client teams.
+                blockstore.set_dead_slot(shred_slot)?;
+            }
+            return Ok(None);
+        }
+        PossibleDuplicateShred::FixedFECChainedMerkleRootConflict(_slot) => {
+            if no_verify_chained_merkle_root {
+                // If we're in the full alpenglow epoch, we stop validating the chained merkle root.
+                // In Alpenglow we only use the double merkle root
+                return Ok(None);
+            }
+            if validate_chained_block_id_2 {
+                blockstore.set_dead_slot(shred_slot)?;
+            }
+            return Ok(None);
+        }
+        PossibleDuplicateShred::Exists(shred) => {
+            // Unlike the other cases we have to wait until here to decide to handle the duplicate and store
+            // in blockstore. This is because the duplicate could have been part of the same insert batch,
+            // so we wait until the batch has been written.
+            if blockstore.has_duplicate_shreds_in_slot(shred_slot) {
+                return Ok(None); // A duplicate is already recorded
+            }
+            let Some(existing_shred_payload) = blockstore.is_shred_duplicate(&shred) else {
+                return Ok(None); // Not a duplicate
+            };
+            blockstore.store_duplicate_slot(
+                shred_slot,
+                existing_shred_payload.clone(),
+                shred.clone().into_payload(),
+            )?;
+            (shred, shred::Payload::from(existing_shred_payload))
+        }
+    };
+
+    Ok(Some((shred1, shred2)))
+}
+
 fn run_check_duplicate(
     cluster_info: &ClusterInfo,
     blockstore: &Blockstore,
@@ -141,65 +204,26 @@ fn run_check_duplicate(
             &root_bank,
         );
 
-        let (shred1, shred2) = match shred {
-            PossibleDuplicateShred::LastIndexConflict(shred, conflict)
-            | PossibleDuplicateShred::ErasureConflict(shred, conflict)
-            | PossibleDuplicateShred::MerkleRootConflict(shred, conflict) => (shred, conflict),
-            PossibleDuplicateShred::ChainedMerkleRootConflict(_slot) => {
-                if no_verify_chained_merkle_root {
-                    // If we're in the full alpenglow epoch, we stop validating the chained merkle root.
-                    // In Alpenglow we only use the double merkle root
-                    return Ok(());
-                }
-                if validate_chained_block_id || validate_chained_block_id_2 {
-                    // Although chained merkle roots are not necessary for agave duplicate resolution protocols,
-                    // We still need to mark the block as dead for other client teams.
-                    blockstore.set_dead_slot(shred_slot)?;
-                }
-                return Ok(());
+        if let Some((shred1, shred2)) = check_duplicate_shred(
+            blockstore,
+            shred,
+            validate_chained_block_id,
+            validate_chained_block_id_2,
+            no_verify_chained_merkle_root,
+        )? {
+            if migration_status.should_respond_to_ancestor_hashes_requests(shred_slot) {
+                // In alpenglow we store the duplicate block proofs in blockstore for the purposes of slashing,
+                // however we do not need to propagate the duplicate proof through gossip.
+                // We still propagate during the mixed migration epoch, to account for other nodes that are stuck
+                // and require a duplicate proof to proceed
+                cluster_info.push_duplicate_shred(&shred1, &shred2)?;
             }
-            PossibleDuplicateShred::FixedFECChainedMerkleRootConflict(_slot) => {
-                if no_verify_chained_merkle_root {
-                    // If we're in the full alpenglow epoch, we stop validating the chained merkle root.
-                    // In Alpenglow we only use the double merkle root
-                    return Ok(());
-                }
-                if validate_chained_block_id_2 {
-                    blockstore.set_dead_slot(shred_slot)?;
-                }
-                return Ok(());
-            }
-            PossibleDuplicateShred::Exists(shred) => {
-                // Unlike the other cases we have to wait until here to decide to handle the duplicate and store
-                // in blockstore. This is because the duplicate could have been part of the same insert batch,
-                // so we wait until the batch has been written.
-                if blockstore.has_duplicate_shreds_in_slot(shred_slot) {
-                    return Ok(()); // A duplicate is already recorded
-                }
-                let Some(existing_shred_payload) = blockstore.is_shred_duplicate(&shred) else {
-                    return Ok(()); // Not a duplicate
-                };
-                blockstore.store_duplicate_slot(
-                    shred_slot,
-                    existing_shred_payload.clone(),
-                    shred.clone().into_payload(),
-                )?;
-                (shred, shred::Payload::from(existing_shred_payload))
-            }
-        };
 
-        if migration_status.should_respond_to_ancestor_hashes_requests(shred_slot) {
-            // In alpenglow we store the duplicate block proofs in blockstore for the purposes of slashing,
-            // however we do not need to propagate the duplicate proof through gossip.
-            // We still propagate during the mixed migration epoch, to account for other nodes that are stuck
-            // and require a duplicate proof to proceed
-            cluster_info.push_duplicate_shred(&shred1, &shred2)?;
-        }
-
-        if !migration_status.is_alpenglow_enabled() {
-            // The state machine can be exited as soon as alpenglow is enabled.
-            // Notify duplicate consensus state machine. If channel is full we wait.
-            duplicate_slots_sender.send(shred_slot)?;
+            if !migration_status.is_alpenglow_enabled() {
+                // The state machine can be exited as soon as alpenglow is enabled.
+                // Notify duplicate consensus state machine. If channel is full we wait.
+                duplicate_slots_sender.send(shred_slot)?;
+            }
         }
 
         Ok(())
@@ -607,6 +631,38 @@ mod test {
             duplicate_slot_receiver.try_recv().unwrap(),
             duplicate_shred_slot
         );
+    }
+
+    #[test]
+    fn test_check_duplicate_shred_returns_duplicate_proof() {
+        let ledger_path = get_tmp_ledger_path_auto_delete!();
+        let blockstore = Blockstore::open(ledger_path.path()).unwrap();
+        let (shreds, _) = make_many_slot_entries(5, 5, 10);
+        blockstore.insert_shreds(shreds.clone(), false).unwrap();
+        let duplicate_index = 0;
+        let original_shred = shreds[duplicate_index].clone();
+        let duplicate_shred = {
+            let (mut shreds, _) = make_many_slot_entries(5, 1, 10);
+            shreds.swap_remove(duplicate_index)
+        };
+        let duplicate_shred_slot = duplicate_shred.slot();
+        assert!(!blockstore.has_duplicate_shreds_in_slot(duplicate_shred_slot));
+
+        let (returned_shred, conflicting_payload) = check_duplicate_shred(
+            &blockstore,
+            PossibleDuplicateShred::Exists(duplicate_shred.clone()),
+            true,
+            true,
+            false,
+        )
+        .unwrap()
+        .unwrap();
+
+        assert_eq!(returned_shred.payload(), duplicate_shred.payload());
+        assert_eq!(conflicting_payload, *original_shred.payload());
+        let duplicate_proof = blockstore.get_duplicate_slot(duplicate_shred_slot).unwrap();
+        assert_eq!(duplicate_proof.shred1, *original_shred.payload());
+        assert_eq!(duplicate_proof.shred2, *duplicate_shred.payload());
     }
 
     #[test]
