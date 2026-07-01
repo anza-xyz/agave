@@ -214,39 +214,49 @@ impl Drop for QuicDatagramEndpoint {
         self.exit_signals.cancel();
         #[cfg(any(test, feature = "dev-context-only-utils"))]
         {
-            // Join all the internal tasks so a panic that a loop task
-            // would otherwise swallow turns into a real test failure instead of a
-            // green run with a stray "task panicked" line on stderr.
-            let errors = self.runtime_handle.block_on(async {
-                let mut errors = vec![];
-                loop {
-                    match tokio::time::timeout(
-                        Duration::from_secs(1),
-                        self.task_handles.join_next(),
-                    )
-                    .await
-                    {
-                        Ok(Some(Ok(()))) => {}
-                        Ok(Some(Err(join_err))) => {
-                            if join_err.is_panic() {
-                                errors.push(format!(
-                                    "QuicDatagramEndpoint teardown error {join_err}"
-                                ));
+            // Join all the internal tasks so a panic that a loop task would
+            // otherwise swallow turns into a real test failure instead of a green
+            // run with a stray "task panicked" line on stderr.
+            let mut join = || {
+                self.runtime_handle.block_on(async {
+                    let mut errors = vec![];
+                    loop {
+                        match tokio::time::timeout(
+                            Duration::from_secs(1),
+                            self.task_handles.join_next(),
+                        )
+                        .await
+                        {
+                            Ok(Some(Ok(()))) => {}
+                            Ok(Some(Err(join_err))) => {
+                                if join_err.is_panic() {
+                                    errors.push(format!(
+                                        "QuicDatagramEndpoint teardown error {join_err}"
+                                    ));
+                                }
+                            }
+                            // All loop tasks have exited.
+                            Ok(None) => break,
+                            // Stuck tasks on shutdown are also a concern.
+                            Err(_elapsed) => {
+                                errors.push(
+                                    "QuicDatagramEndpoint teardown: a loop task did not exit \
+                                     within 1s"
+                                        .to_string(),
+                                );
                             }
                         }
-                        // All loop tasks have exited.
-                        Ok(None) => break,
-                        // Stuck tasks on shutdown are also a concern.
-                        Err(_elapsed) => {
-                            errors.push(
-                                "QuicDatagramEndpoint teardown: a loop task did not exit within 1s"
-                                    .to_string(),
-                            );
-                        }
                     }
-                }
-                errors
-            });
+                    errors
+                })
+            };
+            // one day we will stop running validator inside ambient tokio runtime
+            let errors = match Handle::try_current().map(|handle| handle.runtime_flavor()) {
+                Err(_) => join(),
+                Ok(tokio::runtime::RuntimeFlavor::MultiThread) => tokio::task::block_in_place(join),
+                // current thread runtime can not be used here
+                Ok(_) => vec![],
+            };
             if !errors.is_empty() {
                 // Guard against a double panic (which aborts the process).
                 if !std::thread::panicking() {
