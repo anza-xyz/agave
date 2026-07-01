@@ -651,7 +651,7 @@ impl SystemMonitorService {
                     }
                 }
             });
-        solana_metrics::submit(datapoint, log::Level::Warn);
+        solana_metrics::submit(datapoint, log::Level::Info);
         ret
     }
 
