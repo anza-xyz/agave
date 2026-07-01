@@ -11,9 +11,10 @@ use {
             QuicClientCertificate, QuicError, create_client_config, create_client_endpoint,
         },
         transaction_batch::TransactionBatch,
-        workers_cache::{WorkersCache, WorkersCacheError, shutdown_worker},
+        workers_cache::{WorkersCache, WorkersCacheError, WorkersCacheInterface, shutdown_worker},
     },
     async_trait::async_trait,
+    lru::LruCache,
     quinn::{ClientConfig, Endpoint},
     solana_keypair::Keypair,
     std::{
@@ -98,6 +99,11 @@ pub struct ConnectionWorkersSchedulerConfig {
     /// The maximum number of reconnection attempts allowed in case of
     /// connection failure.
     pub max_reconnect_attempts: usize,
+
+    /// Optional cache implementation used to store connection workers.
+    ///
+    /// If not provided, the scheduler uses an LRU cache with [`Self::num_connections`] capacity.
+    pub workers_cache: Option<Box<dyn WorkersCacheInterface>>,
 
     /// Configures the number of leaders to connect to and send transactions to.
     pub leaders_fanout: Fanout,
@@ -218,6 +224,7 @@ impl ConnectionWorkersScheduler {
             skip_check_transaction_age,
             worker_channel_size,
             max_reconnect_attempts,
+            workers_cache,
             leaders_fanout,
             override_initial_congestion_window: initial_congestion_window,
         }: ConnectionWorkersSchedulerConfig,
@@ -233,7 +240,9 @@ impl ConnectionWorkersScheduler {
         let mut endpoint = setup_endpoint(bind, stake_identity, initial_congestion_window)?;
 
         debug!("Client endpoint bind address: {:?}", endpoint.local_addr());
-        let mut workers = WorkersCache::new(num_connections, cancel.clone());
+        let workers_cache =
+            workers_cache.unwrap_or_else(|| Box::new(LruCache::new(num_connections)));
+        let mut workers = WorkersCache::new(workers_cache, cancel.clone());
 
         let mut last_error = None;
         // flag to ensure that the section handling

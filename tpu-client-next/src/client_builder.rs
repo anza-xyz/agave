@@ -48,6 +48,7 @@ use {
         },
         leader_updater::LeaderUpdater,
         transaction_batch::TransactionBatch,
+        workers_cache::WorkersCacheInterface,
     },
     solana_keypair::Keypair,
     std::{future::Future, net::UdpSocket, num::NonZeroUsize, pin::Pin, sync::Arc},
@@ -85,6 +86,7 @@ pub struct ClientBuilder {
     sender_channel_size: usize,
     worker_channel_size: usize,
     max_reconnect_attempts: usize,
+    workers_cache: Option<Box<dyn WorkersCacheInterface>>,
     broadcaster: Box<dyn WorkersBroadcaster>,
     report_fn: Option<ReportFn>,
     cancel_scheduler: CancellationToken,
@@ -105,6 +107,7 @@ impl ClientBuilder {
             worker_channel_size: 2,
             sender_channel_size: 64,
             max_reconnect_attempts: 2,
+            workers_cache: None,
             broadcaster: Box::new(NonblockingBroadcaster),
             report_fn: None,
             cancel_scheduler: CancellationToken::new(),
@@ -140,7 +143,7 @@ impl ClientBuilder {
         self
     }
 
-    /// Set the maximum number of cached connections.
+    /// Set the maximum number of cached connections used by the default LRU cache.
     pub fn max_cache_size(mut self, num_connections: NonZeroUsize) -> Self {
         self.num_connections = num_connections;
         self
@@ -188,6 +191,14 @@ impl ClientBuilder {
         self
     }
 
+    /// Set the cache implementation used to store connection workers.
+    ///
+    /// When this is set, [`Self::max_cache_size`] does not affect the provided cache.
+    pub fn workers_cache(mut self, workers_cache: impl WorkersCacheInterface + 'static) -> Self {
+        self.workers_cache = Some(Box::new(workers_cache));
+        self
+    }
+
     /// Set the broadcaster used by the scheduler.
     pub fn broadcaster(mut self, broadcaster: impl WorkersBroadcaster + 'static) -> Self {
         self.broadcaster = Box::new(broadcaster);
@@ -218,6 +229,7 @@ impl ClientBuilder {
             skip_check_transaction_age: self.skip_check_transaction_age,
             worker_channel_size: self.worker_channel_size,
             max_reconnect_attempts: self.max_reconnect_attempts,
+            workers_cache: self.workers_cache,
             // We open connection to one more leader in advance, which time-wise means ~1.6s
             leaders_fanout: Fanout {
                 connect: self.leader_send_fanout.saturating_add(1),
