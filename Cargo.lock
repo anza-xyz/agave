@@ -9805,7 +9805,6 @@ dependencies = [
  "solana-signer",
  "solana-stake-interface",
  "solana-svm-log-collector",
- "solana-svm-timings",
  "solana-system-interface 3.2.0",
  "solana-sysvar",
  "solana-sysvar-id",
