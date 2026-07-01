@@ -112,7 +112,7 @@ impl ConsensusMetrics {
         exit: Arc<AtomicBool>,
     ) -> JoinHandle<()> {
         Builder::new()
-            .name("solConsMetrics".into())
+            .name("solVotorConsMetrics".into())
             .spawn(move || {
                 let mut metrics = Self::new(epoch_schedule, receiver);
                 metrics.run(exit);
