@@ -657,8 +657,16 @@ impl RepairService {
         popular_pruned_forks_requests: &mut HashSet<Slot>,
         dumped_slots_receiver: &DumpedSlotsReceiver,
         verified_voter_slots_receiver: &VerifiedVoterSlotsReceiver,
+        migration_status: &MigrationStatus,
         repair_metrics: &mut RepairMetrics,
     ) {
+        if repair_weight.is_pruned_tree_tracking_enabled()
+            && migration_status.is_alpenglow_enabled()
+        {
+            repair_weight.disable_pruned_tree_tracking();
+            popular_pruned_forks_requests.clear();
+        }
+
         // Purge outdated slots from the weighting heuristic
         let mut set_root_us = Measure::start("set_root_us");
         repair_weight.set_root(root_bank.slot());
@@ -883,6 +891,7 @@ impl RepairService {
             popular_pruned_forks_requests,
             dumped_slots_receiver,
             verified_voter_slots_receiver,
+            migration_status,
             repair_metrics,
         );
 
