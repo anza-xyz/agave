@@ -309,7 +309,7 @@ fn extract_input_data_regions(
             let mut regions: Vec<ProtoInputDataRegion> = mapping
                 .get_regions()
                 .iter()
-                .filter(|region| region.vm_addr >= MM_INPUT_START)
+                .filter(|region| region.vm_addr_range().start >= MM_INPUT_START)
                 .map(mem_region_to_input_data_region)
                 .collect();
             regions.sort_by_key(|region| region.offset);
@@ -319,12 +319,11 @@ fn extract_input_data_regions(
 }
 
 fn mem_region_to_input_data_region(region: &MemoryRegion) -> ProtoInputDataRegion {
+    let host_buffer = region.host_buffer();
     ProtoInputDataRegion {
-        content: unsafe {
-            std::slice::from_raw_parts(region.host_addr as *const u8, region.len as usize).to_vec()
-        },
-        offset: region.vm_addr.saturating_sub(MM_INPUT_START),
-        is_writable: region.writable,
+        content: unsafe { host_buffer.ptr().as_ref_unchecked().to_vec() },
+        offset: region.vm_addr_range().start.saturating_sub(MM_INPUT_START),
+        is_writable: host_buffer.is_mutable(),
     }
 }
 
