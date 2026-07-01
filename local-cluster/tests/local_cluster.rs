@@ -6373,3 +6373,79 @@ fn test_alpenglow_missed_migration_entirely() {
     cluster.restart_node(&node_pubkey, exit_info, SocketAddrSpace::Unspecified);
     cluster.check_for_new_roots(8, test_name, SocketAddrSpace::Unspecified);
 }
+
+/// Smoke test for the mesh layer: starts a 3-node cluster with
+/// `enable_mesh_layer = true` on all validators and verifies that the cluster
+/// still produces blocks, confirms transactions, and roots slots — proving
+/// the mesh layer doesn't interfere with normal Turbine operation.
+#[test]
+#[serial]
+fn test_mesh_layer_cluster_smoke() {
+    agave_logger::setup_with_default(RUST_LOG_FILTER);
+    let num_nodes = 3;
+    info!("test_mesh_layer_cluster_smoke with {num_nodes} nodes");
+
+    let validator_config = ValidatorConfig {
+        enable_mesh_layer: true,
+        ..ValidatorConfig::default_for_test()
+    };
+
+    let mut config = ClusterConfig {
+        node_stakes: vec![DEFAULT_NODE_STAKE; num_nodes],
+        validator_configs: make_identical_validator_configs(&validator_config, num_nodes),
+        ..ClusterConfig::default()
+    };
+
+    let local = LocalCluster::new(&mut config, SocketAddrSpace::Unspecified);
+    assert_eq!(local.validators.len(), num_nodes);
+
+    // Verify the cluster can produce roots — blocks are propagating.
+    local.check_for_new_roots(
+        8,
+        "test_mesh_layer_cluster_smoke",
+        SocketAddrSpace::Unspecified,
+    );
+
+    // Verify transactions confirm across all nodes.
+    cluster_tests::spend_and_verify_all_nodes(
+        &local.entry_point_info,
+        &local.funding_keypair,
+        num_nodes,
+        HashSet::new(),
+        SocketAddrSpace::Unspecified,
+        &cluster_tests::TpuSender::new(),
+    );
+}
+
+/// Test the mesh layer with `verify_mesh_shreds = true`: verifies that
+/// routing mesh-reconstructed shreds back through the sigverify pipeline
+/// doesn't break cluster operation.
+#[test]
+#[serial]
+fn test_mesh_layer_verify_shreds() {
+    agave_logger::setup_with_default(RUST_LOG_FILTER);
+    let num_nodes = 3;
+    info!("test_mesh_layer_verify_shreds with {num_nodes} nodes");
+
+    let validator_config = ValidatorConfig {
+        enable_mesh_layer: true,
+        verify_mesh_shreds: true,
+        ..ValidatorConfig::default_for_test()
+    };
+
+    let mut config = ClusterConfig {
+        node_stakes: vec![DEFAULT_NODE_STAKE; num_nodes],
+        validator_configs: make_identical_validator_configs(&validator_config, num_nodes),
+        ..ClusterConfig::default()
+    };
+
+    let local = LocalCluster::new(&mut config, SocketAddrSpace::Unspecified);
+    assert_eq!(local.validators.len(), num_nodes);
+
+    // Verify the cluster can produce roots with re-verification enabled.
+    local.check_for_new_roots(
+        8,
+        "test_mesh_layer_verify_shreds",
+        SocketAddrSpace::Unspecified,
+    );
+}

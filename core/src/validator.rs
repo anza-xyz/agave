@@ -398,6 +398,23 @@ pub struct ValidatorConfig {
     pub repair_handler_type: RepairHandlerType,
     // Thread niceness adjustment for snapshot packager service
     pub snapshot_packager_niceness_adj: i8,
+    /// Enable the optional second network layer (raptorq mesh).
+    ///
+    /// When enabled, the validator starts a [`agave_mesh_layer::MeshLayerService`]
+    /// that uses RaptorQ fountain-code erasure coding to flood shred batches
+    /// directly to all known TVU peers, bypassing the Turbine tree.  This
+    /// trades higher bandwidth for lower propagation latency.
+    ///
+    /// Mesh-reconstructed shreds bypass signature verification by default
+    /// (they were already verified before entering the retransmit path).
+    /// Set `verify_mesh_shreds = true` to re-verify.
+    pub enable_mesh_layer: bool,
+    /// When `enable_mesh_layer` is true, controls whether mesh-reconstructed
+    /// shreds are re-verified through the sigverify pipeline before entering
+    /// the window service.  Default `false` (bypass — shreds were already
+    /// verified by the original sender).  Set to `true` for defense-in-depth
+    /// at the cost of extra sigverify CPU.
+    pub verify_mesh_shreds: bool,
 }
 
 impl ValidatorConfig {
@@ -483,6 +500,8 @@ impl ValidatorConfig {
             voting_service_test_override: None,
             repair_handler_type: RepairHandlerType::default(),
             snapshot_packager_niceness_adj: 0,
+            enable_mesh_layer: false,
+            verify_mesh_shreds: false,
         }
     }
 
@@ -1628,6 +1647,14 @@ impl Validator {
                 ancestor_hashes_requests: node.sockets.ancestor_hashes_requests,
                 alpenglow: node.sockets.alpenglow,
                 block_id_repair: node.sockets.block_id_repair,
+                mesh: if config.enable_mesh_layer {
+                    Some(
+                        solana_net_utils::bind_to_unspecified()
+                            .expect("bind mesh socket"),
+                    )
+                } else {
+                    None
+                },
             },
             blockstore.clone(),
             ledger_signal_receiver,
@@ -1666,6 +1693,14 @@ impl Validator {
                 bls_sigverify_threads: config.tvu_bls_sigverify_threads,
                 turbine_xdp_sender: turbine_xdp_sender.clone(),
                 repair_xdp_sender,
+                mesh_layer_config: if config.enable_mesh_layer {
+                    Some(agave_mesh_layer::MeshLayerConfig {
+                        verify_mesh_shreds: config.verify_mesh_shreds,
+                        ..Default::default()
+                    })
+                } else {
+                    None
+                },
             },
             &max_slots,
             block_metadata_notifier,
