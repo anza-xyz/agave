@@ -120,18 +120,20 @@ impl AcceptLoop {
                         info!("Accept loop exiting: endpoint closed.");
                         break;
                     };
-                    // Handshake ratelimiter check - stop admitting tasks once limiter
-                    // is exhausted.
-                    if handshake_rate_limiter.consume_tokens(1).is_err() {
-                        incoming.ignore();
+                    // We always serve the attempt we already pulled, but we close
+                    // the accept gate if we do not have tokens to serve the next one.
+                    rate_limited = match handshake_rate_limiter.consume_tokens(1) {
+                        Ok(0) => true,
+                        Ok(_) => false,
+                        Err(_) => true, // must be early wakeup?
+                    };
+                    if rate_limited {
                         let wait_us = handshake_rate_limiter.us_to_have_tokens(1).unwrap_or(1000);
                         let deadline = Instant::now()
                             .checked_add(Duration::from_micros(wait_us))
                             .expect("accept-gate deadline should never overflow");
                         accept_gate.as_mut().reset(deadline);
-                        rate_limited = true;
                         stats.handshake_rate_limited.fetch_add(1, Ordering::Relaxed);
-                        continue;
                     }
                     let remote_addr = incoming.remote_address();
                     debug!("Incoming connection from {remote_addr}.");
