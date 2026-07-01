@@ -4,7 +4,7 @@ use {
     crate::{
         bank::DEFAULT_VAT_TO_BURN_PER_EPOCH,
         block_component_processor::vote_reward::epoch_inflation_account_state::EpochInflationAccountState,
-        stake_utils,
+        inflation_schedule, stake_utils,
     },
     agave_feature_set::{FEATURE_NAMES, FeatureSet},
     agave_votor_messages::{
@@ -511,6 +511,7 @@ pub fn create_genesis_config_with_leader_ex_no_features(
             .map(|(key, account)| (key, Account::from(account)))
             .collect(),
         fee_rate_governor,
+        inflation: inflation_schedule::default_inflation(),
         rent,
         cluster_type,
         ..GenesisConfig::default()

@@ -66,6 +66,7 @@ use {
         },
         bank_forks::BankForks,
         inflation_rewards::points::{InflationPointCalculationEvent, PointValue},
+        inflation_schedule,
         installed_scheduler_pool::BankWithScheduler,
         snapshot_bank_utils,
         snapshot_minimizer::SnapshotMinimizer,
@@ -2729,7 +2730,7 @@ fn main() {
                         if let Ok(raw_inflation) = value_t!(arg_matches, "inflation", String) {
                             let inflation = match raw_inflation.as_str() {
                                 "pico" => Inflation::pico(),
-                                "full" => Inflation::full(),
+                                "full" => inflation_schedule::full_inflation(),
                                 "none" => Inflation::new_disabled(),
                                 _ => unreachable!(),
                             };
