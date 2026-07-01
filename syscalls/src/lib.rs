@@ -2694,7 +2694,6 @@ mod tests {
         solana_program_runtime::{
             execution_budget::MAX_HEAP_FRAME_BYTES,
             invoke_context::{BpfAllocator, InvokeContext},
-            memory::address_is_aligned,
             memory_context::MemoryContext,
             with_mock_invoke_context, with_mock_invoke_context_with_feature_set,
         },
@@ -3315,8 +3314,9 @@ mod tests {
             let result =
                 SyscallAllocFree::rust(&mut invoke_context, size_of::<T>() as u64, 0, 0, 0, 0);
             let address = result.unwrap();
+            let align = align_of::<T>() as u64;
             assert_ne!(address, 0);
-            assert!(address_is_aligned::<T>(address as usize));
+            assert!((address % align) == 0);
         }
         aligned::<u8>();
         aligned::<u16>();
@@ -6193,13 +6193,6 @@ mod tests {
     fn bytes_of_slice_mut<T>(val: &mut [T]) -> *mut [u8] {
         let size = val.len().wrapping_mul(mem::size_of::<T>());
         core::ptr::slice_from_raw_parts_mut(val.as_mut_ptr().cast(), size)
-    }
-
-    #[test]
-    fn test_address_is_aligned() {
-        for address in 0..std::mem::size_of::<u64>() {
-            assert_eq!(address_is_aligned::<u64>(address), address == 0);
-        }
     }
 
     #[test_case(0x100000004, 0x100000004, &[0x00, 0x00, 0x00, 0x00])] // Intra region match
