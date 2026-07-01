@@ -373,8 +373,7 @@ pub fn gossip_decode_to_effects(input: &[u8]) -> protosol::protos::GossipEffects
                     version_patch: v.patch() as u32,
                     version_commit: v.commit(),
                     version_feature_set: v.feature_set(),
-                    version_client: u16::try_from(v.client().clone()).expect("valid client id")
-                        as u32,
+                    version_client: u16::from(v.client().clone()) as u32,
                     addrs: ci
                         .addrs()
                         .iter()
