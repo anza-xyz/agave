@@ -6117,6 +6117,9 @@ impl Blockstore {
 fn update_completed_data_indexes<'a>(
     is_last_in_data: bool,
     new_shred_index: u32,
+    // The index *plus one* of the highest data shred received for this slot,
+    // i.e. `SlotMeta::received` after accounting for `new_shred_index`.
+    received: u64,
     received_data_shreds: &'a ShredIndex,
     // Shreds indices which are marked data complete.
     completed_data_indexes: &mut CompletedDataIndexes,
@@ -6126,6 +6129,15 @@ fn update_completed_data_indexes<'a>(
     if is_last_in_data {
         completed_data_indexes.insert(new_shred_index);
     }
+    // Every index in `completed_data_indexes` is strictly less than
+    // `received`: indexes are only inserted above, and the caller max-bumps
+    // `SlotMeta::received` past `new_shred_index` first. This makes
+    // `received` a tight exclusive bound for the forward scan below, which
+    // would otherwise walk the bit vector's empty tail on every in-order
+    // shred insertion. `BitVec::range` clamps to capacity, so saturating
+    // the conversion is safe.
+    let received = u32::try_from(received).unwrap_or(u32::MAX);
+    debug_assert!(completed_data_indexes.range(received..).next().is_none());
     // Consecutive entries i, j, k in this array represent potential ranges
     // [i, j), [j, k) that could be completed data ranges
     [
@@ -6136,7 +6148,7 @@ fn update_completed_data_indexes<'a>(
             .or(Some(0u32)),
         is_last_in_data.then_some(new_shred_index + 1),
         completed_data_indexes
-            .range(new_shred_index + 1..)
+            .range(new_shred_index + 1..received)
             .next()
             .map(|index| index + 1),
     ]
@@ -6174,6 +6186,7 @@ fn update_slot_meta<'a>(
     update_completed_data_indexes(
         is_last_in_slot || is_last_in_data,
         index,
+        slot_meta.received,
         received_data_shreds,
         &mut slot_meta.completed_data_indexes,
     )
