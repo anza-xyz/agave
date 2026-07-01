@@ -422,7 +422,8 @@ impl VoteAccounts {
 unsafe impl<C: wincode::config::Config> SchemaWrite<C> for VoteAccount {
     type Src = Self;
 
-    const TYPE_META: TypeMeta = <AccountSharedData as SchemaWrite<C>>::TYPE_META;
+    const TYPE_META: TypeMeta =
+        <AccountSharedData as SchemaWrite<C>>::TYPE_META.keep_zero_copy(false);
 
     fn size_of(src: &Self::Src) -> WriteResult<usize> {
         <AccountSharedData as SchemaWrite<C>>::size_of(&src.0.account)

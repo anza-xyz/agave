@@ -43,7 +43,8 @@ pub struct StakeAccount<T> {
 unsafe impl<C: wincode::config::Config> SchemaWrite<C> for StakeAccount<Delegation> {
     type Src = Self;
 
-    const TYPE_META: wincode::TypeMeta = <Delegation as SchemaWrite<C>>::TYPE_META;
+    const TYPE_META: wincode::TypeMeta =
+        <Delegation as SchemaWrite<C>>::TYPE_META.keep_zero_copy(false);
 
     fn size_of(src: &Self::Src) -> wincode::WriteResult<usize> {
         <Delegation as SchemaWrite<C>>::size_of(src.delegation())
