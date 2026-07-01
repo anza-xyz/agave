@@ -724,7 +724,8 @@ impl Bank {
                 .par_iter()
                 .zip_eq(stake_rewards.spare_capacity_mut())
                 .with_min_len(500)
-                .filter_map(|((stake_pubkey, stake_account), stake_reward_ref)| {
+                .filter_map(|((stake_pubkey, stake_account), reward_ref)| {
+                    let block_reward = 0;
                     let maybe_reward_record = self.redeem_delegation_rewards(
                         rewarded_epoch,
                         stake_pubkey,
@@ -742,8 +743,9 @@ impl Bank {
                         use_fixed_point_stake_math,
                     );
 
-                    let (stake_reward, maybe_reward_record) = match maybe_reward_record {
-                        Some(res) => {
+                    let (reward, maybe_reward_record) = match (block_reward, maybe_reward_record) {
+                        (0, None) => (None, None),
+                        (_, Some(res)) => {
                             let InflationRewardWithCommission {
                                 inflation,
                                 commission_pubkey,
@@ -754,11 +756,37 @@ impl Bank {
                                 Some(PartitionedStakeReward {
                                     stake_pubkey: **stake_pubkey,
                                     inflation,
+                                    block_reward,
                                 }),
                                 Some((stakers_reward, commission_pubkey, reward_commission)),
                             )
                         }
-                        None => (None, None),
+                        (_, None) => {
+                            // Create a zero entry for distribution
+                            let stake = *stake_account.stake();
+                            let stake_reward = 0;
+                            let commission_pubkey = stake.delegation.voter_pubkey;
+                            let commission_bps = None;
+                            let reward_commission = RewardCommission {
+                                commission_bps,
+                                commission_lamports: 0,
+                                burned_lamports: 0,
+                                is_vote_account: true,
+                            };
+                            (
+                                Some(PartitionedStakeReward {
+                                    stake_pubkey: **stake_pubkey,
+                                    inflation: InflationReward {
+                                        stake,
+                                        stake_reward,
+                                        commission_bps,
+                                    },
+                                    block_reward,
+                                }),
+                                // Need a reward record for accumulator
+                                Some((stake_reward, commission_pubkey, reward_commission)),
+                            )
+                        }
                     };
                     // It's important that for every stake delegation, we write
                     // a value to the cell of the stake rewards vector,
@@ -766,7 +794,7 @@ impl Bank {
                     // This allows us to pre-allocate the vector with the known
                     // size and avoid re-allocations, which were the bottleneck
                     // in this path.
-                    stake_reward_ref.write(stake_reward);
+                    reward_ref.write(reward);
                     maybe_reward_record
                 })
                 .fold(
@@ -1407,6 +1435,7 @@ mod tests {
                 stake_reward: stake_reward_lamports,
                 commission_bps: Some(0),
             },
+            block_reward: 0,
         })]
         .into_iter()
         .collect::<PartitionedStakeRewards>();
@@ -2154,6 +2183,7 @@ mod tests {
                     stake_reward,
                     commission_bps: None,
                 },
+                block_reward: 0,
             }
         };
         assert_eq!(
