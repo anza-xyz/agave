@@ -454,7 +454,6 @@ dependencies = [
  "arrayvec",
  "bytes",
  "crossbeam-channel",
- "futures 0.3.32",
  "log",
  "quinn",
  "rustls",

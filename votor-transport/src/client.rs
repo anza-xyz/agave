@@ -19,7 +19,7 @@ use {
     },
     tokio::{
         sync::{mpsc, watch},
-        task::{AbortHandle, JoinSet},
+        task::JoinSet,
         time::{MissedTickBehavior, interval},
     },
     tokio_util::sync::CancellationToken,
@@ -32,8 +32,8 @@ const RECONCILE_INTERVAL: Duration = Duration::from_secs(1);
 /// State of a peer's entry in the outbound table.
 #[derive(Debug)]
 pub(crate) enum PeerState {
-    /// Connection initiated but is not ready yet. Holds AbortHandle to the handshake task.
-    Connecting(AbortHandle),
+    /// Connection initiated but is not ready yet.
+    Connecting,
     /// Live send-only connection.
     Established {
         connection: Connection,
@@ -216,21 +216,22 @@ impl OutboundLoop {
         let peer_list = self.peer_list_receiver.borrow().clone();
 
         // 1. Close connections for peers that have left the peer_list.
-        // Abort active handshakes to undesired peers too.
         let mut closed_not_in_peer_list = 0u64;
         self.peer_state.retain(|peer, state| {
             if peer_list.contains_key(peer) {
                 return true;
             }
+            // Only kill established connections, let handshakes resolve, they will
+            // get reclaimed on the next iterations.
             match state {
                 PeerState::Established { connection, .. } => {
                     info!("OutboundLoop: closing connection to {peer}: no longer desired.");
                     close_codes::NOT_ADMITTED.close(connection);
                     closed_not_in_peer_list = closed_not_in_peer_list.saturating_add(1);
+                    false
                 }
-                PeerState::Connecting(abort_handle) => abort_handle.abort(),
+                _ => true,
             }
-            false
         });
         self.stats
             .connection_closed_not_in_peer_list
@@ -249,7 +250,7 @@ impl OutboundLoop {
                 continue;
             }
             let needs_connection = match self.peer_state.get(peer) {
-                Some(PeerState::Connecting(_)) => false,
+                Some(PeerState::Connecting) => false,
                 Some(PeerState::Established {
                     connection,
                     target_address: cur,
@@ -280,14 +281,13 @@ impl OutboundLoop {
             };
             if needs_connection {
                 info!("OutboundLoop: initiating connection to {peer} ({addr})");
-                let abort_handle = self.in_flight_handshakes.spawn(connect(
+                self.in_flight_handshakes.spawn(connect(
                     self.endpoint.clone(),
                     *peer,
                     *addr,
                     self.stats.clone(),
                 ));
-                self.peer_state
-                    .insert(*peer, PeerState::Connecting(abort_handle));
+                self.peer_state.insert(*peer, PeerState::Connecting);
             }
         }
     }
@@ -319,7 +319,7 @@ impl OutboundLoop {
     fn handle_handshake_outcome(&mut self, outcome: HandshakeOutcome) {
         match outcome {
             Ok((peer, connection)) => match self.peer_state.get_mut(&peer) {
-                Some(slot @ PeerState::Connecting(_)) => {
+                Some(slot @ PeerState::Connecting) => {
                     *slot = PeerState::Established {
                         target_address: connection.remote_address(),
                         connection,
@@ -330,20 +330,21 @@ impl OutboundLoop {
                         self.peer_state.len() as u64,
                     );
                 }
-                // The handshake completed before handshake was aborted by
-                // reconcile (the peer left the peer_list), so this connection
-                // is redundant, close it.
-                _ => close_codes::NOT_ADMITTED.close(&connection),
+                _ => debug_assert!(
+                    false,
+                    "Handshake completed for peer {peer} whose state was not Connecting."
+                ),
             },
-            // Failure: drop the placeholder so the next reconcile can retry. Only
-            // a still-`Connecting` slot is removed: the entry may already be gone
-            // or replaced by a newer successful handshake (the peer left and
-            // rejoined while this one was in flight), and we must not tear down
-            // that live connection.
+            // The slot is always `Connecting` here (same invariant as the Ok arm):
+            // one handshake per peer, reconcile keeps `Connecting`, and identity
+            // rotation resets the JoinSet, so no stale or duplicate outcome can
+            // reach us. Drop the placeholder so the next reconcile retries.
             Err(peer) => {
-                if matches!(self.peer_state.get(&peer), Some(PeerState::Connecting(_))) {
-                    self.peer_state.remove(&peer);
-                }
+                let removed = self.peer_state.remove(&peer);
+                debug_assert!(
+                    matches!(removed, Some(PeerState::Connecting)),
+                    "Handshake failed for {peer} whose state was not Connecting."
+                );
             }
         }
     }

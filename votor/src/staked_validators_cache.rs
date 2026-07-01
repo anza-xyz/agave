@@ -310,10 +310,9 @@ mod tests {
         assert!(snapshot.values().all(|addr| !addr.ip().is_unspecified()));
     }
 
-    /// An unstaked node publishes an
-    /// empty peer_list, so the transport is idle.
+    /// An unstaked node publishes an empty peer_list, so the transport is idle.
     #[test]
-    fn test_unstaked_peer_list_remaims_empty() {
+    fn test_unstaked_peer_list_remains_empty() {
         let slot_num = 12345000u64;
         // A fully-staked set, none of whose identities is the local node below.
         let (bank_forks, _, _) = create_bank_forks_and_cluster_info(10, 0, slot_num);

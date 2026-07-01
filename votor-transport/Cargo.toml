@@ -19,7 +19,6 @@ agave-unstable-api = []
 arrayvec = { workspace = true }
 bytes = { workspace = true }
 crossbeam-channel = { workspace = true }
-futures = { workspace = true }
 log = { workspace = true }
 quinn = { workspace = true }
 rustls = { workspace = true }

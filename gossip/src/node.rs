@@ -353,7 +353,7 @@ impl Node {
             port_range,
             socket_configs.primarily_write_quic,
         )
-        .unwrap();
+        .expect("Alpenglow votor client socket bind should succeed");
 
         let (_, rpc_sts_client) = bind_in_range_with_config(
             bind_ip_addr,

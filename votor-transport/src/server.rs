@@ -1,5 +1,4 @@
 //! Inbound (server) direction: we-accept, receive-only.
-
 use {
     crate::{
         ALPENGLOW_ALPN, HANDSHAKE_TIMEOUT, MAX_INBOUND_CONNECTIONS_PER_PEER, METRICS_INTERVAL,
@@ -11,7 +10,6 @@ use {
     },
     arrayvec::ArrayVec,
     crossbeam_channel::{Sender, TrySendError},
-    futures::{StreamExt as _, stream::FuturesUnordered},
     log::{debug, info, warn},
     quinn::{Connecting, Connection, Endpoint},
     solana_net_utils::{banlist::Banlist, token_bucket::TokenBucket},
@@ -26,6 +24,7 @@ use {
     tokio::{
         spawn,
         sync::{mpsc, watch},
+        task::JoinSet,
         time::{Instant, MissedTickBehavior, interval, sleep, timeout},
     },
     tokio_util::sync::CancellationToken,
@@ -101,13 +100,12 @@ impl AcceptLoop {
 
         // In-flight handshake tasks. We use this to be notified whenever any of the
         // per-peer admission tasks complete and to track total count.
-        let mut handshakes = FuturesUnordered::new();
-
+        let mut handshakes = JoinSet::new();
         loop {
             tokio::select! {
                 biased;
                 // Handshake task finished: this potentially reopens the accept arm below.
-                Some(_joined) = handshakes.next(), if !handshakes.is_empty() => {}
+                Some(_joined) = handshakes.join_next(), if !handshakes.is_empty() => {}
                 // Rate gate refilled: allow pulling connection attempts.
                 _ = &mut accept_gate, if rate_limited => {
                     rate_limited = false;
@@ -153,11 +151,11 @@ impl AcceptLoop {
                     stats.handshakes_started.fetch_add(1, Ordering::Relaxed);
                     // Track the spawned task so the accept guard's `handshakes.len()`
                     // check bounds the in-flight handshakes.
-                    handshakes.push(spawn(Self::wait_for_complete_handshake(
+                    handshakes.spawn(Self::wait_for_complete_handshake(
                         connecting,
                         events_sender.clone(),
                         stats.clone(),
-                    )));
+                    ));
                 }
                 _ = shutdown.cancelled() => break,
             }
@@ -265,8 +263,6 @@ impl ConnectionReader {
                 }
                 Err(e) => {
                     // The peer (or we) closed this inbound, or it timed out.
-                    // Record and exit; the control loop reaps the table slot
-                    // from the `Closed` event below.
                     record_server_error(&Error::from(e), &stats);
                     break;
                 }
@@ -364,7 +360,6 @@ impl InboundLoop {
         info!("Votor QUIC transport server ready.");
         loop {
             tokio::select! {
-                biased;
                 // Admission and lifecycle events from the accept loops and the
                 // per-connection read tasks.
                 Some(event) = self.events_receiver.recv() => self.handle_event(event),
@@ -384,25 +379,25 @@ impl InboundLoop {
                             identity.key.clone_key(),
                             ALPENGLOW_ALPN,
                         );
-                        // set new config on all server endpoints
                         for endpoint in &self.endpoints {
                             endpoint.set_server_config(Some(server_config.clone()));
                         }
                         info!("inbound applied new identity {}", identity.pubkey);
                     }
-                    // Avoid keeping connections from old identity alive
-                    self.close_all();
+
+                    let total_closed = self.close_all(close_codes::IDENTITY_CHANGED);
+                    self.stats.connection_closed_identity_changed.fetch_add(total_closed, Ordering::Relaxed);
+                            info!("InboundLoop: identity changed ({total_closed} connection(s) closed)");
                 }
                 // The admitted-peer set changed.
                 changed = peer_list_receiver.changed() => {
                     if changed.is_err() {
-                        info!("peer_list sender dropped; inbound loop exiting");
+                        info!("InboundLoop: peer_list sender dropped, exiting");
                         break;
                     }
                     self.close_not_allowed();
                 }
-                // When idle we can take care of metrics and bookkeeping that
-                // does not affect liveness.
+                // Take care of metrics and bookkeeping that does not affect liveness.
                 _ = metrics.tick() => {
                     debug!("InboundLoop: running bookkeeping tasks");
                     stats::report_server(&self.stats, self.total_peers());
@@ -414,24 +409,24 @@ impl InboundLoop {
                             || e.rate_limiter.current_tokens() < burst_dos
                     });
                 }
-                // Shutdown is never done in a hurry
-                _ = self.shutdown.cancelled() => break,
+                _ = self.shutdown.cancelled() => {
+                    break
+                },
             }
         }
+        // Close every connection so the detached per-connection reader tasks see
+        // `LocallyClosed`, exit, and drop their `Connection` handles. Otherwise
+        // they keep the quinn endpoint (and its UDP socket) alive after teardown.
+        self.close_all(close_codes::NORMAL_CLOSE);
     }
 
-    /// Close all inbound connections so peers observe our new identity.
-    fn close_all(&mut self) {
-        let total_closed = self
-            .peer_state
+    /// Close every inbound connection and return how many were closed.
+    fn close_all(&mut self, close_code: close_codes::Spec) -> u64 {
+        self.peer_state
             .values()
             .flat_map(|entry| entry.connections.as_slice())
-            .inspect(|connection| close_codes::IDENTITY_CHANGED.close(connection))
-            .count() as u64;
-        self.stats
-            .connection_closed_identity_changed
-            .fetch_add(total_closed, Ordering::Relaxed);
-        info!("inbound identity changed ({total_closed} connection(s) closed)");
+            .inspect(|connection| close_code.close(connection))
+            .count() as u64
     }
 
     /// Scans all open connections and closes those whose peer is no longer admitted.

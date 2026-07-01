@@ -24,6 +24,7 @@ use {
     tokio::{
         runtime::Handle,
         sync::{mpsc, watch},
+        task::JoinSet,
     },
     tokio_util::sync::CancellationToken,
 };
@@ -73,13 +74,11 @@ pub struct QuicDatagramEndpoint {
     /// `agave-bls-sigverify` full ban-path test) can observe ban-driven closures.
     #[cfg(any(test, feature = "dev-context-only-utils"))]
     pub server_stats: Arc<ServerStats>,
-    /// Handles to the spawned inbound/outbound/accept loop tasks. Present only
-    /// under `test`/`dev-context-only-utils`: the test `Node` awaits them on
-    /// teardown to surface a panic a loop would otherwise swallow. Absent (and
-    /// the loops are spawn-and-forget) in prod builds.
+    /// Spawned event-loop tasks. In test / DCOU builds `Drop` joins these so a panic
+    /// that tokio would otherwise swallow becomes a real failure.
+    task_handles: JoinSet<()>,
     #[cfg(any(test, feature = "dev-context-only-utils"))]
-    #[cfg_attr(not(test), allow(dead_code))]
-    pub(crate) task_handles: Vec<tokio::task::JoinHandle<()>>,
+    runtime_handle: Handle,
 }
 
 impl QuicDatagramEndpoint {
@@ -143,7 +142,7 @@ impl QuicDatagramEndpoint {
                 .collect::<Result<Vec<_>, _>>()?;
             let outbound_endpoint = Endpoint::new(
                 EndpointConfig::default(),
-                None, // No server_config on this endpoint
+                None,
                 outbound_socket,
                 Arc::new(TokioRuntime),
             )
@@ -152,8 +151,7 @@ impl QuicDatagramEndpoint {
         };
         outbound_endpoint.set_default_client_config(client_config);
 
-        #[cfg(any(test, feature = "dev-context-only-utils"))]
-        let mut task_handles = Vec::new();
+        let mut task_handles = JoinSet::new();
         let outbound = OutboundLoop::new(
             outbound_endpoint,
             local_pubkey,
@@ -162,11 +160,7 @@ impl QuicDatagramEndpoint {
             peer_list.clone(),
             shutdown.clone(),
         );
-        let outbound_handle = runtime.spawn(outbound.run());
-        #[cfg(any(test, feature = "dev-context-only-utils"))]
-        task_handles.push(outbound_handle);
-        #[cfg(not(any(test, feature = "dev-context-only-utils")))]
-        drop(outbound_handle);
+        task_handles.spawn_on(outbound.run(), runtime);
 
         // Inbound event channel allows the accept loops to forward authenticated
         // connections, and per-connection tasks report lifecycle events.
@@ -196,11 +190,7 @@ impl QuicDatagramEndpoint {
                     rate_limiter.clone(),
                     max_inflight_handshakes,
                 );
-                let accept_handle = runtime.spawn(accept.run());
-                #[cfg(any(test, feature = "dev-context-only-utils"))]
-                task_handles.push(accept_handle);
-                #[cfg(not(any(test, feature = "dev-context-only-utils")))]
-                drop(accept_handle);
+                task_handles.spawn_on(accept.run(), runtime);
             }
         }
         #[cfg(any(test, feature = "dev-context-only-utils"))]
@@ -217,20 +207,17 @@ impl QuicDatagramEndpoint {
             shutdown.clone(),
             max_datagrams_per_second_per_peer,
         );
-        let inbound_handle = runtime.spawn(inbound.run());
-        #[cfg(any(test, feature = "dev-context-only-utils"))]
-        task_handles.push(inbound_handle);
-        #[cfg(not(any(test, feature = "dev-context-only-utils")))]
-        drop(inbound_handle);
+        task_handles.spawn_on(inbound.run(), runtime);
 
         Ok(Self {
             egress: egress_sender,
             key_updater,
             shutdown,
+            task_handles,
+            #[cfg(any(test, feature = "dev-context-only-utils"))]
+            runtime_handle: runtime.clone(),
             #[cfg(any(test, feature = "dev-context-only-utils"))]
             server_stats: endpoint_server_stats,
-            #[cfg(any(test, feature = "dev-context-only-utils"))]
-            task_handles,
         })
     }
 }
@@ -239,6 +226,49 @@ impl Drop for QuicDatagramEndpoint {
     /// Cancel the spawned loops so a dropped handle can't leak them.
     fn drop(&mut self) {
         self.shutdown.cancel();
+        #[cfg(any(test, feature = "dev-context-only-utils"))]
+        {
+            // Join all the internal tasks so a panic that a loop task
+            // would otherwise swallow turns into a real test failure instead of a
+            // green run with a stray "task panicked" line on stderr.
+            let errors = self.runtime_handle.block_on(async {
+                let mut errors = vec![];
+                loop {
+                    match tokio::time::timeout(
+                        Duration::from_secs(1),
+                        self.task_handles.join_next(),
+                    )
+                    .await
+                    {
+                        Ok(Some(Ok(()))) => {}
+                        Ok(Some(Err(join_err))) => {
+                            errors.push(format!("QuicDatagramEndpoint teardown error {join_err}"));
+                        }
+                        // All loop tasks have exited.
+                        Ok(None) => break,
+                        // Stuck tasks on shutdown are also a concern.
+                        Err(_elapsed) => {
+                            errors.push(
+                                "QuicDatagramEndpoint teardown: a loop task did not exit within 1s"
+                                    .to_string(),
+                            );
+                        }
+                    }
+                }
+                errors
+            });
+            if !errors.is_empty() {
+                // Guard against a double panic (which aborts the process).
+                if !std::thread::panicking() {
+                    panic!("QuicDatagramEndpoint encountered errors: {errors:?}");
+                } else {
+                    eprintln!("QuicDatagramEndpoint encountered errors: {errors:?}");
+                }
+            }
+        }
+        // Detach rather than abort: in prod the loops wind down on their own once
+        // `shutdown` fires; in test/dev the set was already drained above.
+        self.task_handles.detach_all();
     }
 }
 
@@ -257,13 +287,14 @@ mod tests {
         quinn_proto::{Endpoint as ProtoEndpoint, EndpointConfig as ProtoEndpointConfig},
         solana_keypair::{Keypair, Signer},
         solana_net_utils::sockets::{
-            SocketConfiguration, bind_more_with_config, bind_to_localhost_unique,
+            SocketConfiguration, bind_more_with_config, bind_to, bind_to_localhost_unique,
+            unique_port_range_for_tests,
         },
         solana_pubkey::Pubkey,
         solana_tls_utils::{NotifyKeyUpdate, socket_addr_to_quic_server_name},
         std::{
             collections::HashMap,
-            net::{SocketAddr, UdpSocket},
+            net::{IpAddr, Ipv4Addr, SocketAddr, UdpSocket},
             sync::{
                 Arc,
                 atomic::{AtomicBool, AtomicU64, Ordering},
@@ -271,7 +302,7 @@ mod tests {
             time::{Duration, Instant},
         },
         tokio::{
-            runtime::{Builder, Handle, Runtime},
+            runtime::{Builder, Runtime},
             sync::{mpsc, watch},
         },
     };
@@ -296,42 +327,6 @@ mod tests {
         keypair: Keypair,
         peer_list_sender: PeerListSender,
         ban_sender: mpsc::Sender<BanCommand>,
-        /// Runtime handle used by `Drop` to await the spawned loop tasks.
-        rt_handle: Handle,
-    }
-
-    impl Drop for Node {
-        /// Cancel the loops and await their `JoinHandle`s so a panic that a loop
-        /// task would otherwise swallow (the handle is normally dropped) turns
-        /// into a real test failure instead of a green run with a stray
-        /// "task panicked" line on stderr.
-        fn drop(&mut self) {
-            self.endpoint.shutdown.cancel();
-            let handles = std::mem::take(&mut self.endpoint.task_handles);
-            let panics = self.rt_handle.block_on(async {
-                let mut panics = 0usize;
-                for handle in handles {
-                    match tokio::time::timeout(Duration::from_secs(5), handle).await {
-                        Ok(Ok(())) => {}
-                        Ok(Err(join_err)) if join_err.is_panic() => panics += 1,
-                        // We never abort these tasks, so a cancel should not occur.
-                        Ok(Err(_)) => {}
-                        // Failure to exit on shutdown is a separate concern, not a
-                        // swallowed panic: surface it but do not fail teardown.
-                        Err(_elapsed) => {
-                            eprintln!("Node teardown: a loop task did not exit within 5s")
-                        }
-                    }
-                }
-                panics
-            });
-            // Guard against a double panic (which aborts the process) when the
-            // test body is already unwinding from its own failed assertion.
-            assert!(
-                panics == 0 || std::thread::panicking(),
-                "{panics} spawned loop task(s) panicked during the test"
-            );
-        }
     }
 
     impl Node {
@@ -400,7 +395,6 @@ mod tests {
             keypair,
             peer_list_sender,
             ban_sender,
-            rt_handle: rt.handle().clone(),
         }
     }
 
@@ -1257,5 +1251,105 @@ mod tests {
             "started {started} handshakes in {elapsed:.3}s, exceeding the token-bucket ceiling \
              {ceiling:.0} (burst {HANDSHAKE_BURST} + {HANDSHAKE_GLOBAL_RATE}/s)"
         );
+    }
+
+    /// A live outbound connection whose server disappears must be detected as dead
+    /// and reconnected once the server is back. Exercises the reconcile reconnect
+    /// path: with no sends in flight, the death is noticed by the idle timeout
+    /// rather than by a failed `send_datagram`.
+    #[test]
+    fn test_client_reconnects_after_server_restart() {
+        let rt = make_runtime_for_tests();
+        let server_keypair = Keypair::new();
+        let server_pubkey = server_keypair.pubkey();
+        let client_keypair = Keypair::new();
+        let client_pubkey = client_keypair.pubkey();
+
+        let localhost = IpAddr::V4(Ipv4Addr::LOCALHOST);
+        let server_port = unique_port_range_for_tests(1).start;
+        let server_addr = SocketAddr::new(localhost, server_port);
+        let server_socket = bind_to(localhost, server_port).expect("bind server to reserved port");
+
+        let server = spawn_node_with_sockets(
+            &rt,
+            server_keypair.insecure_clone(),
+            peer_list_of(client_pubkey, ADDRESS_UNKNOWN),
+            HIGH_PPS,
+            vec![server_socket],
+        );
+        let client = spawn_node(
+            &rt,
+            client_keypair,
+            peer_list_of(server_pubkey, server_addr),
+            HIGH_PPS,
+        );
+
+        let probe = Bytes::from_static(b"before-restart");
+        send_until_received(&client, &probe, &server.ingress_receiver, |d| {
+            (d.peer_pubkey == client_pubkey && d.message == probe).then_some(())
+        })
+        .expect("server never received the pre-restart probe");
+
+        // Kill the server and stay silent: with nothing being sent, the client
+        // cannot notice the death via a failed `send_datagram`, so the dead
+        // connection is reclaimed by reconcile once the idle timeout fires.
+        drop(server);
+        std::thread::sleep(MAX_IDLE_TIMEOUT + Duration::from_secs(2));
+
+        // Restart on the same port under the same identity.
+        let server_socket = bind_to(localhost, server_port).expect("bind server to reserved port");
+        let server = spawn_node_with_sockets(
+            &rt,
+            server_keypair,
+            peer_list_of(client_pubkey, ADDRESS_UNKNOWN),
+            HIGH_PPS,
+            vec![server_socket],
+        );
+
+        let after = Bytes::from_static(b"after-restart");
+        send_until_received(&client, &after, &server.ingress_receiver, |d| {
+            (d.peer_pubkey == client_pubkey && d.message == after).then_some(())
+        })
+        .expect("client did not reconnect and resume delivery after server restart");
+    }
+
+    /// The client verifies the server's attested identity against the pubkey it
+    /// intended to reach. Pointed at a real server under the wrong pubkey, it
+    /// completes the TLS handshake, but rejects the connection so it delivers nothing.
+    #[test]
+    fn test_client_rejects_identity_mismatch() {
+        let rt = make_runtime_for_tests();
+        let client_keypair = Keypair::new();
+        let client_pubkey = client_keypair.pubkey();
+        let server = spawn_node(
+            &rt,
+            Keypair::new(),
+            peer_list_of(client_pubkey, ADDRESS_UNKNOWN),
+            HIGH_PPS,
+        );
+        let server_pubkey = server.pubkey();
+
+        // The client's peer_list points at the server's address but expects a
+        // different identity there.
+        let wrong_pubkey = Keypair::new().pubkey();
+        let client = spawn_node(
+            &rt,
+            client_keypair,
+            peer_list_of(wrong_pubkey, server.addr),
+            HIGH_PPS,
+        );
+
+        let to_impostor = Bytes::from_static(b"to-impostor");
+        assert_not_delivered(&client, &to_impostor, &server.ingress_receiver, 20);
+
+        // Retarget the client at the server's true identity: delivery resumes,
+        // proving the server was reachable and willing all along, so the identity
+        // mismatch was the sole blocker.
+        client.set_peer_list(peer_list_of(server_pubkey, server.addr));
+        let to_true_identity = Bytes::from_static(b"to-true-identity");
+        send_until_received(&client, &to_true_identity, &server.ingress_receiver, |d| {
+            (d.peer_pubkey == client_pubkey && d.message == to_true_identity).then_some(())
+        })
+        .expect("delivery must resume once the client targets the server's true identity");
     }
 }

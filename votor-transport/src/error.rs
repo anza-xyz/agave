@@ -23,6 +23,11 @@ pub(crate) mod close_codes {
             conn.close(self.code, self.reason);
         }
     }
+    pub(crate) const NORMAL_CLOSE: Spec = Spec {
+        code: VarInt::from_u32(0),
+        reason: b"NORMAL_CLOSE",
+    };
+
     pub(crate) const PEER_MOVED: Spec = Spec {
         code: VarInt::from_u32(1),
         reason: b"PEER_MOVED",
@@ -56,7 +61,7 @@ pub(crate) mod close_codes {
 
     pub(crate) const IDENTITY_CHANGED: Spec = Spec {
         code: VarInt::from_u32(11),
-        reason: b"IDENTITY_ROTATED",
+        reason: b"IDENTITY_CHANGED",
     };
     // When adding new close code, make sure to also capture it
     // in test_close_codes_are_frozen.
@@ -107,7 +112,8 @@ mod tests {
     /// instead of silently breaking interop.
     #[test]
     fn test_close_codes_are_frozen() {
-        let pinned: [(&close_codes::Spec, u32, &[u8]); 7] = [
+        let pinned: [(&close_codes::Spec, u32, &[u8]); 8] = [
+            (&close_codes::NORMAL_CLOSE, 0, b"NORMAL_CLOSE"),
             (&close_codes::PEER_MOVED, 1, b"PEER_MOVED"),
             (&close_codes::INVALID_IDENTITY, 2, b"INVALID_IDENTITY"),
             (&close_codes::NOT_ADMITTED, 3, b"NOT_ADMITTED"),

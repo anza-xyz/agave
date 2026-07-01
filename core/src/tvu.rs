@@ -305,7 +305,7 @@ impl Tvu {
         };
         let (votor_ingress_sender, votor_ingress_receiver) = bounded(MAX_ALPENGLOW_PACKET_NUM);
         // Inbound bans flow from the sig-verifier to the endpoint over this
-        // channel: sized very generously to avoid any drops while keeping unbounded semantics.
+        // channel: sized very generously to avoid any drops.
         let (votor_ban_sender, votor_ban_receiver) = mpsc::channel(MAX_ALPENGLOW_VOTE_ACCOUNTS * 2);
         // Seed the peer_list from the last rooted bank so inbound votor
         // connections from staked peers are admitted during ledger replay and

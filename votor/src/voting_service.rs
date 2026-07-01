@@ -326,8 +326,8 @@ impl VotingService {
             }
         };
 
-        // Drop on full / closed — votor consensus tolerates loss, we
-        // never want to backpressure into vote production.
+        // Drop on full / closed channel: votor consensus tolerates loss, we
+        // never want to backpressure into consensus, but will shout loudly.
         match egress.try_send(buf) {
             Ok(()) => {}
             Err(TrySendError::Full(_)) => {
