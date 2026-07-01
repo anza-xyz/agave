@@ -4639,12 +4639,22 @@ dependencies = [
 
 [[package]]
 name = "prost"
+version = "0.11.9"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "0b82eaa1d779e9a4bc1c3217db8ffbeabaae1dca241bf70183242128d48681cd"
+dependencies = [
+ "bytes",
+ "prost-derive 0.11.9",
+]
+
+[[package]]
+name = "prost"
 version = "0.14.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "528ac67416ff8646872a3c02cad9cc4ee5dc9f9540c9b10771855c95cb2e5ae1"
 dependencies = [
  "bytes",
- "prost-derive",
+ "prost-derive 0.14.4",
 ]
 
 [[package]]
@@ -4659,13 +4669,26 @@ dependencies = [
  "multimap",
  "petgraph",
  "prettyplease",
- "prost",
+ "prost 0.14.4",
  "prost-types",
  "pulldown-cmark",
  "pulldown-cmark-to-cmark",
  "regex",
  "syn 2.0.117",
  "tempfile",
+]
+
+[[package]]
+name = "prost-derive"
+version = "0.11.9"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "e5d2d8d10f3c6ded6da8b05b5fb3b8a5082514344d56c9f871412d29b4e075b4"
+dependencies = [
+ "anyhow",
+ "itertools 0.10.5",
+ "proc-macro2",
+ "quote",
+ "syn 1.0.109",
 ]
 
 [[package]]
@@ -4687,7 +4710,7 @@ version = "0.14.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "f94967dc7688f3054c7fac87473ffae4cc4c3904800e2d9f5b857246d8963b0a"
 dependencies = [
- "prost",
+ "prost 0.14.4",
 ]
 
 [[package]]
@@ -4717,6 +4740,15 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "3e36c2f31e0a47f9280fb347ef5e461ffcd2c52dd520d8e216b52f93b0b0d7d6"
 dependencies = [
  "thiserror 1.0.69",
+]
+
+[[package]]
+name = "protosol"
+version = "9.1.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "61dfab20271ca73268fec941784821bb2ed864d07dba4f1624cb23dbb442092d"
+dependencies = [
+ "prost 0.11.9",
 ]
 
 [[package]]
@@ -7303,7 +7335,7 @@ dependencies = [
  "mockall",
  "num_cpus",
  "num_enum",
- "prost",
+ "prost 0.14.4",
  "qualifier_attr",
  "rand 0.9.4",
  "rand_chacha 0.9.0",
@@ -8226,6 +8258,8 @@ dependencies = [
  "num-derive",
  "num-traits",
  "percentage",
+ "prost 0.11.9",
+ "protosol",
  "qualifier_attr",
  "rand 0.9.4",
  "rayon",
@@ -9368,7 +9402,7 @@ dependencies = [
  "http 1.4.2",
  "hyper-util",
  "log",
- "prost",
+ "prost 0.14.4",
  "prost-types",
  "serde",
  "smpl_jwt",
@@ -9395,7 +9429,7 @@ name = "solana-storage-proto"
 version = "4.2.0-alpha.0"
 dependencies = [
  "bs58",
- "prost",
+ "prost 0.14.4",
  "protobuf-src",
  "serde",
  "solana-account-decoder",
@@ -9453,9 +9487,14 @@ dependencies = [
 name = "solana-svm"
 version = "4.2.0-alpha.0"
 dependencies = [
+ "agave-feature-set",
+ "agave-precompiles",
  "ahash 0.8.12",
+ "bincode",
  "log",
  "percentage",
+ "prost 0.11.9",
+ "protosol",
  "qualifier_attr",
  "serde",
  "solana-account 4.3.1",
@@ -9473,6 +9512,7 @@ dependencies = [
  "solana-message",
  "solana-nonce",
  "solana-nonce-account",
+ "solana-poseidon",
  "solana-precompile-error",
  "solana-program-entrypoint",
  "solana-program-pack",
@@ -9493,8 +9533,11 @@ dependencies = [
  "solana-sysvar-id",
  "solana-transaction-context",
  "solana-transaction-error",
+ "solana-vote-program",
+ "solana-zk-elgamal-proof-program",
  "spl-generic-token",
  "thiserror 2.0.18",
+ "xxhash-rust",
 ]
 
 [[package]]
@@ -11087,7 +11130,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "50849f68853be452acf590cde0b146665b8d507b3b8af17261df47e02c209ea0"
 dependencies = [
  "bytes",
- "prost",
+ "prost 0.14.4",
  "tonic",
 ]
 
@@ -12041,6 +12084,12 @@ dependencies = [
  "linux-raw-sys 0.4.14",
  "rustix 0.38.39",
 ]
+
+[[package]]
+name = "xxhash-rust"
+version = "0.8.16"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "4d93c89cdc2d3a63c3ec48ffe926931bdc069eafa8e4402fe6d8f790c9d1e576"
 
 [[package]]
 name = "yoke"

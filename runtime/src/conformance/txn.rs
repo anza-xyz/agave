@@ -18,7 +18,7 @@
 
 use {
     crate::{
-        bank::{Bank, BankFieldsToDeserialize, BankHashStats, BankRc},
+        bank::{Bank, BankFieldsToDeserialize, BankRc},
         epoch_stakes::VersionedEpochStakes,
         stake_history::StakeHistory,
         stakes::{DeserializableStakes, SerdeStakesToStakeFormat, Stakes},
@@ -26,16 +26,13 @@ use {
     agave_feature_set::FeatureSet,
     solana_account::AccountSharedData,
     solana_accounts_db::{
-        accounts::Accounts, accounts_db::AccountsDb, accounts_hash::AccountsLtHash,
-        ancestors::Ancestors, blockhash_queue::BlockhashQueue,
+        accounts::Accounts, accounts_db::AccountsDb, ancestors::Ancestors,
+        blockhash_queue::BlockhashQueue,
     },
     solana_clock::{Clock, Epoch, MAX_PROCESSING_AGE},
     solana_epoch_schedule::EpochSchedule,
     solana_fee_calculator::FeeRateGovernor,
-    solana_hard_forks::HardForks,
     solana_hash::Hash,
-    solana_inflation::Inflation,
-    solana_lattice_hash::lt_hash::LtHash,
     solana_message::SanitizedMessage,
     solana_pubkey::Pubkey,
     solana_runtime_transaction::runtime_transaction::RuntimeTransaction,
@@ -92,8 +89,8 @@ use {prost::Message, std::ffi::c_int};
 
 /// Result of executing a single transaction through the [`Bank`].
 pub enum BankTxnProcessingResult {
-    /// The transaction failed sanitization/verification before execution.
-    NotSanitized(TransactionError),
+    /// The transaction failed verification before processing.
+    FailedVerification(TransactionError),
     /// The transaction was processed (executed or fees-only). Carries the
     /// processing result and transaction for effect extraction.
     Processed {
@@ -155,33 +152,16 @@ pub fn execute_txn(
 
     let bank_fields = BankFieldsToDeserialize {
         blockhash_queue,
-        hash: Hash::default(),
-        parent_hash: Hash::default(),
         parent_slot,
-        hard_forks: HardForks::default(),
-        transaction_count: 0,
         tick_height: TICKS_PER_SLOT.saturating_mul(slot),
-        signature_count: 0,
-        capitalization: 0,
         max_tick_height: TICKS_PER_SLOT.saturating_mul(slot.saturating_add(1)),
-        hashes_per_tick: None,
         ticks_per_slot: TICKS_PER_SLOT,
-        ns_per_slot: 0,
-        genesis_creation_time: 0,
-        slots_per_year: 0f64,
         slot,
         block_height: slot,
-        leader_id: Pubkey::default(),
         fee_rate_governor,
         epoch_schedule,
-        inflation: Inflation::default(),
         stakes,
-        versioned_epoch_stakes: vec![],
-        is_delta: false,
-        accounts_data_len: 0,
-        accounts_lt_hash: AccountsLtHash(LtHash::identity()),
-        bank_hash_stats: BankHashStats::default(),
-        block_id: None,
+        ..BankFieldsToDeserialize::default()
     };
 
     // The bank must be wrapped in `BankForks` so the program cache has a fork graph;
@@ -194,7 +174,7 @@ pub fn execute_txn(
         TransactionVerificationMode::HashAndVerifyPrecompiles,
     ) {
         Ok(tx) => tx,
-        Err(err) => return BankTxnProcessingResult::NotSanitized(err),
+        Err(err) => return BankTxnProcessingResult::FailedVerification(err),
     };
 
     let recording_config = ExecutionRecordingConfig {
@@ -581,7 +561,7 @@ pub fn execute_txn_proto(context: &ProtoTxnContext) -> ProtoTxnResult {
         txn_bank.total_epoch_stake,
         transaction,
     ) {
-        BankTxnProcessingResult::NotSanitized(err) => {
+        BankTxnProcessingResult::FailedVerification(err) => {
             let error = ProtoTxnErrorFields::from_transaction_error(&err);
             return ProtoTxnResult {
                 executed: false,
@@ -907,8 +887,8 @@ mod tests {
             BankTxnProcessingResult::Processed { result, .. } => {
                 assert!(result.was_processed_with_successful_result())
             }
-            BankTxnProcessingResult::NotSanitized(err) => {
-                panic!("transaction was not sanitized: {err:?}")
+            BankTxnProcessingResult::FailedVerification(err) => {
+                panic!("transaction failed verification: {err:?}")
             }
         }
     }
