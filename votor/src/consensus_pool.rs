@@ -231,7 +231,7 @@ impl ConsensusPool {
                 }
             });
             let new_cert = Arc::new(cert_builder.build()?);
-            self.insert_certificate(root_bank, cert_type, new_cert.clone(), events);
+            self.insert_certificate(root_bank, new_cert.clone(), events);
             self.generated_cert_types.insert_cert(cert_type);
             self.stats.incr_generated_cert(&new_cert.cert_type);
             new_certificates_to_send.push(new_cert);
@@ -276,17 +276,17 @@ impl ConsensusPool {
     fn insert_certificate(
         &mut self,
         root_bank: &Bank,
-        cert_type: CertificateType,
         cert: Arc<Certificate>,
         events: &mut Vec<VotorEvent>,
     ) {
         trace!(
             "{}: Inserting certificate {:?}",
             self.cluster_info.id(),
-            cert_type
+            cert.cert_type
         );
-        self.completed_certificates.insert(cert_type, cert.clone());
-        match cert_type {
+        self.completed_certificates
+            .insert(cert.cert_type, cert.clone());
+        match cert.cert_type {
             CertificateType::NotarizeFallback(block) => {
                 events.push(VotorEvent::BlockNotarFallback(block));
                 self.parent_ready_tracker
@@ -479,7 +479,7 @@ impl ConsensusPool {
             return Ok(vec![]);
         }
         let cert = Arc::new(cert);
-        self.insert_certificate(root_bank, cert_type, cert.clone(), events);
+        self.insert_certificate(root_bank, cert.clone(), events);
         self.stats.incr_ingested_cert(&cert_type);
 
         Ok(vec![cert])
