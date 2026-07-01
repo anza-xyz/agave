@@ -66,3 +66,62 @@ jobs:
             git commit -am "Update all workspaces"
             git push
           fi
+
+  audit:
+    needs: dependabot
+    timeout-minutes: 25
+    runs-on: ubuntu-24.04
+    environment: dep-audit
+    permissions:
+      contents: read
+      pull-requests: write
+
+    steps:
+      - name: Checkout base branch
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd  # v6.0.2
+        with:
+          persist-credentials: false
+
+      - name: Install dep-audit skill
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd  # v6.0.2
+        with:
+          repository: anza-xyz/claude-skills
+          ref: 0ec828e9f44bb9d49b0814b6f4a40a48e4aedca6  # v1.1.0
+          path: .dep-audit-skill
+          persist-credentials: false
+
+      - name: Copy skill into place
+        run: |
+          mkdir -p .claude/commands
+          cp .dep-audit-skill/commands/audit-dep-update.md .claude/commands/
+          cp -r .dep-audit-skill/commands/audit-dep-update-refs .claude/commands/
+
+      - name: Mint security-repo app token
+        id: security-app-token
+        uses: actions/create-github-app-token@bcd2ba49218906704ab6c1aa796996da409d3eb1  # v3.2.0
+        with:
+          client-id: ${{ vars.SECURITY_APP_CLIENT_ID }}
+          private-key: ${{ secrets.SECURITY_APP_PRIVATE_KEY }}
+          owner: ${{ vars.SECURITY_REPO_OWNER }}
+
+      - name: Audit dependency update
+        uses: anthropics/claude-code-action@6e2bd52842c65e914eba5c8badd17560bd26b5de  # v1
+        env:
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+          SECURITY_REPO: ${{ vars.SECURITY_REPO }}
+          SECURITY_TOKEN: ${{ steps.security-app-token.outputs.token }}
+        with:
+          anthropic_api_key: ${{ secrets.ANTHROPIC_API_KEY }}
+          github_token: ${{ github.token }}
+          prompt: |
+            Run /audit-dep-update with the PR number from the PR_NUMBER
+            environment variable. The repo is anza-xyz/agave.
+
+            Post the full verdict as your response. This becomes the PR
+            comment. If the verdict is CONCERN, post only the redacted
+            version — full findings go to the private issue.
+
+            For private issue creation, use the SECURITY_TOKEN env var
+            for authentication:
+              GH_TOKEN="$SECURITY_TOKEN" gh issue create --repo "$SECURITY_REPO" ...
+          claude_args: "--max-turns 30"
