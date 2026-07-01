@@ -8,7 +8,7 @@ pub mod direct_mapping;
 #[cfg(feature = "conformance")]
 pub mod elf_loader;
 #[cfg(feature = "conformance")]
-mod err;
+pub mod err;
 #[cfg(feature = "conformance")]
 pub mod fd_hash;
 #[cfg(feature = "conformance")]

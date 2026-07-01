@@ -78,6 +78,7 @@ use {
     solana_svm::conformance::{
         account_state::{account_from_proto, account_to_proto},
         direct_mapping::direct_mapping_handle_cu_exhaustion,
+        err::{instruction_error_code, transaction_error_code},
         feature_set::feature_set_from_proto,
         setup::sysvar_from_accounts,
     },
@@ -359,11 +360,6 @@ impl ProtoTxnErrorFields {
     }
 
     fn from_transaction_error(transaction_error: &TransactionError) -> Self {
-        fn err_num<T: serde::Serialize>(value: &T) -> u32 {
-            let serialized = bincode::serialize(value).unwrap();
-            u32::from_le_bytes(serialized[0..4].try_into().unwrap()).saturating_add(1)
-        }
-
         let (instruction_error, custom_error, instruction_error_index) = match transaction_error {
             TransactionError::InstructionError(instruction_error_index, instruction_error) => {
                 let custom_error = match instruction_error {
@@ -371,7 +367,7 @@ impl ProtoTxnErrorFields {
                     _ => 0,
                 };
                 (
-                    err_num(instruction_error),
+                    instruction_error_code(instruction_error) as u32,
                     custom_error,
                     (*instruction_error_index).into(),
                 )
@@ -380,7 +376,7 @@ impl ProtoTxnErrorFields {
         };
 
         Self {
-            txn_error: err_num(transaction_error),
+            txn_error: transaction_error_code(transaction_error),
             instruction_error,
             custom_error,
             instruction_error_index,

@@ -12,6 +12,7 @@ use {
         },
     },
     solana_syscalls::SyscallError,
+    solana_transaction_error::TransactionError,
 };
 
 pub(crate) fn elf_error_code(error: &ElfError) -> u32 {
@@ -26,9 +27,17 @@ fn syscall_error_code(error: &SyscallError) -> i64 {
     (error.discriminant() as i64).saturating_add(1)
 }
 
-pub(crate) fn instruction_error_code(error: &InstructionError) -> i32 {
+fn serialized_error_code<T: serde::Serialize>(error: &T) -> u32 {
     let serialized = bincode::serialize(error).unwrap();
-    i32::from_le_bytes(serialized[0..4].try_into().unwrap()).saturating_add(1)
+    u32::from_le_bytes(serialized[0..4].try_into().unwrap()).saturating_add(1)
+}
+
+pub fn instruction_error_code(error: &InstructionError) -> i32 {
+    serialized_error_code(error) as i32
+}
+
+pub fn transaction_error_code(error: &TransactionError) -> u32 {
+    serialized_error_code(error)
 }
 
 /// A VM `program_result` mapped into the fields a conformance fixture compares.
