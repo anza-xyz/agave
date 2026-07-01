@@ -126,7 +126,7 @@ fn key_to_slot(key: &str) -> Option<Slot> {
     feature = "frozen-abi",
     derive(StableAbi, StableAbiSample, PartialEq),
     frozen_abi(
-        abi_digest = "GcFQWu3jGSH6BXJhGdJXaBDPamhszdXFXfdfPqTmTkFe",
+        abi_digest = "AqgEWHGTni7ZV6JGTPkvewggW5YQutUEWv3bMUbN7o3f",
         test_roundtrip = "eq_and_wire"
     )
 )]
@@ -351,7 +351,7 @@ impl From<Reward> for StoredConfirmedBlockReward {
     feature = "frozen-abi",
     derive(StableAbi, StableAbiSample),
     frozen_abi(
-        abi_digest = "6WZ7LHbaEy2SSt8PvySFEnRNjFek3aMy18eM5p7Qj5Au",
+        abi_digest = "3RJqJCwpbxdqKp5PLDeoE3xkawxtJYBuZmVPEHYFB8bc",
         test_roundtrip = "eq_and_wire"
     )
 )]
@@ -402,7 +402,7 @@ impl From<TransactionInfo> for TransactionStatus {
     feature = "frozen-abi",
     derive(StableAbi, StableAbiSample),
     frozen_abi(
-        abi_digest = "86r1cp4pK2UX84rrPyYXL4NYZW1h7Hf7CAdeJq295AXp",
+        abi_digest = "3j7JBoVWnTHm2vMpZtJUCV2vjbaNdbAHtCrb42UUV3VX",
         test_roundtrip = "eq_and_wire"
     )
 )]
