@@ -118,20 +118,27 @@ impl Bank {
         epoch_rewards.active = false;
 
         self.update_sysvar_account(&sysvar::epoch_rewards::id(), |account| {
-            // Don't use `inherit_specially_retained_account_fields()` to
-            // ensure that any remaining lamports get burned, lamports are
-            // set to the rent-exempt minimum during `update_sysvar_account`,
-            // and capitalization is updated
-            create_account(
-                &epoch_rewards,
-                (
-                    RENT_UNADJUSTED_INITIAL_BALANCE,
-                    account
-                        .as_ref()
-                        .map(|a| a.rent_epoch())
-                        .unwrap_or(INITIAL_RENT_EPOCH),
-                ),
-            )
+            if self.feature_set.snapshot().block_revenue_sharing {
+                // Don't use `inherit_specially_retained_account_fields()` to
+                // ensure that any remaining lamports get burned, lamports are
+                // set to the rent-exempt minimum during `update_sysvar_account`,
+                // and capitalization is updated
+                create_account(
+                    &epoch_rewards,
+                    (
+                        RENT_UNADJUSTED_INITIAL_BALANCE,
+                        account
+                            .as_ref()
+                            .map(|a| a.rent_epoch())
+                            .unwrap_or(INITIAL_RENT_EPOCH),
+                    ),
+                )
+            } else {
+                create_account(
+                    &epoch_rewards,
+                    self.inherit_specially_retained_account_fields(account),
+                )
+            }
         });
 
         self.log_epoch_rewards_sysvar("set_inactive");
@@ -155,9 +162,13 @@ impl Bank {
 mod tests {
     use {
         super::*,
-        crate::bank::{SlotLeader, tests::create_genesis_config},
+        crate::{
+            bank::SlotLeader,
+            genesis_utils::{GenesisConfigInfo, create_genesis_config},
+        },
         solana_epoch_schedule::EpochSchedule,
         solana_native_token::LAMPORTS_PER_SOL,
+        solana_rent::Rent,
     };
 
     /// Test `EpochRewards` sysvar creation, distribution, and burning.
@@ -165,9 +176,11 @@ mod tests {
     /// `create_epoch_rewards_sysvar`, `update_epoch_rewards_sysvar`, `test_epoch_rewards_sysvar`.
     #[test]
     fn test_epoch_rewards_sysvar() {
-        let (mut genesis_config, _mint_keypair) =
-            create_genesis_config(1_000_000 * LAMPORTS_PER_SOL);
+        let GenesisConfigInfo {
+            mut genesis_config, ..
+        } = create_genesis_config(1_000_000 * LAMPORTS_PER_SOL);
         genesis_config.epoch_schedule = EpochSchedule::custom(432000, 432000, false);
+        genesis_config.rent = Rent::default();
         let (bank, bank_forks) =
             Bank::new_for_tests(&genesis_config).wrap_with_bank_forks_for_tests();
 
@@ -192,6 +205,11 @@ mod tests {
             active: true,
         };
 
+        // Genesis adds the sysvar with one lamport, so don't factor that in
+        let account = bank.get_account(&sysvar::epoch_rewards::id()).unwrap();
+        let pre_sysvar_lamports = account.lamports();
+        assert_eq!(pre_sysvar_lamports, 1);
+
         let epoch_rewards = bank.get_epoch_rewards_sysvar();
         assert_eq!(epoch_rewards, EpochRewards::default());
 
@@ -208,7 +226,7 @@ mod tests {
         // Expect capitalization to only change by rent exempt minimum
         assert_eq!(
             post_capitalization,
-            pre_capitalization + rent_exempt_reserve
+            pre_capitalization + rent_exempt_reserve - pre_sysvar_lamports,
         );
 
         let epoch_rewards: EpochRewards = from_account(&account).unwrap();
