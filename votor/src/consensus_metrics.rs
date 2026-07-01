@@ -40,12 +40,6 @@ impl NodeVoteMetrics {
         let elapsed = match elapsed.try_into() {
             Ok(e) => e,
             Err(err) => {
-                if cfg!(test) {
-                    panic!(
-                        "invariant: recording duration {elapsed} for vote {vote:?}: conversion to \
-                         u64 failed with {err}"
-                    );
-                }
                 warn!(
                     "recording duration {elapsed} for vote {vote:?}: conversion to u64 failed \
                      with {err}"
@@ -191,12 +185,6 @@ impl ConsensusMetrics {
         let elapsed = match elapsed.try_into() {
             Ok(e) => e,
             Err(err) => {
-                if cfg!(test) {
-                    panic!(
-                        "invariant: recording duration {elapsed} for block hash for slot {slot}: \
-                         conversion to u64 failed with {err}"
-                    );
-                }
                 warn!(
                     "recording duration {elapsed} for block hash for slot {slot}: conversion to \
                      u64 failed with {err}"

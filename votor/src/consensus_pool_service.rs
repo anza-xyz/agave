@@ -483,13 +483,12 @@ impl ConsensusPoolService {
             .leader_schedule_cache
             .slot_leader_at(*highest_parent_ready, Some(&root_bank))
         else {
-            if cfg!(test) {
-                panic!(
-                    "invariant: unable to compute leader for parent-ready slot \
-                     {highest_parent_ready} (root_bank_slot={})",
-                    root_bank.slot()
-                );
-            }
+            #[cfg(debug_assertions)]
+            panic!(
+                "invariant: unable to compute leader for parent-ready slot {highest_parent_ready} \
+                 (root_bank_slot={})",
+                root_bank.slot()
+            );
             error!(
                 "my_pubkey={}: unable to compute leader: \
                  highest_parent_ready={highest_parent_ready} root_bank_slot={}.  Exiting",

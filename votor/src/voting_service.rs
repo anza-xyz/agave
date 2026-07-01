@@ -401,12 +401,10 @@ impl VotingService {
         let buf = match wincode::serialize(message) {
             Ok(buf) => buf,
             Err(err) => {
-                if cfg!(test) {
-                    panic!(
-                        "invariant: serializing an outgoing alpenglow message must not fail: \
-                         {err:?}"
-                    );
-                }
+                #[cfg(debug_assertions)]
+                panic!(
+                    "invariant: serializing an outgoing alpenglow message must not fail: {err:?}"
+                );
                 error!("Failed to serialize alpenglow message: {err:?}");
                 return;
             }

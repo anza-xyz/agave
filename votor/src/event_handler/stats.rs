@@ -200,10 +200,8 @@ impl EventHandlerStats {
             }
             BLSOp::RefreshVotes { .. } => (),
             _ => {
-                warn!("Unexpected BLS operation: {bls_op:?}");
-                if cfg!(test) {
-                    panic!("invariant: unexpected BLS operation: {bls_op:?}");
-                }
+                #[cfg(debug_assertions)]
+                panic!("invariant: unexpected BLS operation: {bls_op:?}");
             }
         }
     }
