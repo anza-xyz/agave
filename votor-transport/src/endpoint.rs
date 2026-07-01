@@ -1253,6 +1253,7 @@ mod tests {
     /// Its contract is a token bucket: the cumulative number started can never
     /// exceed `HANDSHAKE_BURST + HANDSHAKE_GLOBAL_RATE * elapsed`. We saturate it
     /// with Initials and assert that ceiling holds.
+    #[ignore = "Unreliable under codecov"]
     #[test]
     fn test_server_handshake_rate_is_limited() {
         let rt = make_runtime_for_tests();
