@@ -20,10 +20,14 @@ name = "solana_runtime"
 
 [features]
 agave-unstable-api = []
+conformance = ["agave-unstable-api", "dev-context-only-utils"]
 dev-context-only-utils = [
+    "dep:prost",
+    "dep:protosol",
     "agave-votor-messages/dev-context-only-utils",
     "solana-accounts-db/dev-context-only-utils",
     "solana-program-binaries",
+    "solana-svm/conformance",
     "solana-svm/dev-context-only-utils",
     "solana-runtime-transaction/dev-context-only-utils",
     "solana-vote/dev-context-only-utils",
@@ -80,6 +84,8 @@ mockall = { workspace = true }
 num-derive = { workspace = true }
 num-traits = { workspace = true }
 percentage = { workspace = true }
+prost = { version = "0.11", optional = true }
+protosol = { workspace = true, optional = true }
 qualifier_attr = { workspace = true }
 rand = { workspace = true }
 rayon = { workspace = true }
