@@ -77,8 +77,7 @@ pub fn execute_vm_syscall(input: ProtoSyscallContext) -> ProtoSyscallEffects {
             deployment_environment,
             &instr_context.accounts,
             slot,
-        )
-        .expect("failed to fill program cache from accounts");
+        );
         cache
     } else {
         ProgramCacheForTxBatch::default()
