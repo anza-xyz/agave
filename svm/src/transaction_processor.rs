@@ -6,7 +6,6 @@ use {
             update_rent_exempt_status_for_account, validate_fee_payer,
         },
         account_overrides::AccountOverrides,
-        message_processor::process_message,
         nonce_info::NonceInfo,
         program_loader::{filter_executable_program_accounts, load_program_with_pubkey},
         rollback_accounts::RollbackAccounts,
@@ -1050,13 +1049,9 @@ impl<FG: ForkGraph> TransactionBatchProcessor<FG> {
         );
 
         let mut process_message_time = Measure::start("process_message_time");
-        let process_result = process_message(
-            tx,
-            &mut invoke_context,
-            execute_timings,
-            &mut executed_units,
-        )
-        .map_err(|(index, err)| TransactionError::InstructionError(index, err));
+        let process_result = invoke_context
+            .process_message(tx, execute_timings, &mut executed_units)
+            .map_err(|(index, err)| TransactionError::InstructionError(index, err));
         process_message_time.stop();
 
         drop(invoke_context);
