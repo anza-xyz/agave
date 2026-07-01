@@ -128,12 +128,7 @@ members = [
     "xdp-ebpf",
 ]
 
-exclude = [
-    "ci/xtask",
-    "dev-bins",
-    "programs/sbf",
-    "svm/tests/example-programs",
-]
+exclude = ["ci/xtask", "dev-bins", "programs/sbf", "svm/tests/example-programs"]
 
 resolver = "2"
 
