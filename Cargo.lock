@@ -1374,8 +1374,8 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "90dbd31c98227229239363921e60fcf5e558e43ec69094d46fc4996f08d1d5bc"
 dependencies = [
  "bitcoin_hashes 0.14.100",
- "rand 0.8.6",
- "rand_core 0.6.4",
+ "rand 0.7.3",
+ "rand_core 0.5.1",
  "serde",
  "unicode-normalization",
 ]
@@ -12411,6 +12411,26 @@ dependencies = [
 ]
 
 [[package]]
+name = "thiserror-core"
+version = "1.0.50"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "c001ee18b7e5e3f62cbf58c7fe220119e68d902bb7443179c0c8aef30090e999"
+dependencies = [
+ "thiserror-core-impl",
+]
+
+[[package]]
+name = "thiserror-core-impl"
+version = "1.0.50"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "e4c60d69f36615a077cc7663b9cb8e42275722d23e58a7fa3d2c7f2915d09d04"
+dependencies = [
+ "proc-macro2",
+ "quote",
+ "syn 2.0.117",
+]
+
+[[package]]
 name = "thiserror-impl"
 version = "1.0.69"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -13036,9 +13056,9 @@ checksum = "461d0c5956fcc728ecc03a3a961e4adc9a7975d86f6f8371389a289517c02ca9"
 
 [[package]]
 name = "ur-parse-lib"
-version = "1.0.3"
+version = "1.0.6"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "f88434c87d748dfb765bc5debbbab61d020392d23b568fe73eb44eaca46daa04"
+checksum = "c7208ca6353acee95f8ff76d0fabd3a8b8e6f7bc460d71d7e0b3b52c470f8ef5"
 dependencies = [
  "hex",
  "keystone-ur",
@@ -13047,9 +13067,9 @@ dependencies = [
 
 [[package]]
 name = "ur-registry"
-version = "1.0.3"
+version = "1.0.6"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "cf91aff789fea1c05116a47b11fbe0bea32ef66e0c1f77b46550e1407efc4c6e"
+checksum = "46020e79f25a631d560b081c6d690a84665b94e71b77ab3d03c0134b456f5eba"
 dependencies = [
  "bs58",
  "hex",
@@ -13063,6 +13083,7 @@ dependencies = [
  "prost-types 0.11.9",
  "serde",
  "thiserror 1.0.69",
+ "thiserror-core",
 ]
 
 [[package]]
