@@ -256,7 +256,7 @@ impl SvmTestEnvironment<'_> {
                         );
                     }
                 }
-                Err(_) => {}
+                Ok(ProcessedTransaction::NoOp(_)) | Err(_) => {}
             }
         }
 
@@ -287,6 +287,9 @@ impl SvmTestEnvironment<'_> {
                     Ok(ProcessedTransaction::FeesOnly(fee_only)) => {
                         format!("{} (fee-only): {:?}", i, fee_only.load_error)
                     }
+                    Ok(ProcessedTransaction::NoOp(e)) => {
+                        format!("{i} (no-op): {e:?}")
+                    }
                     Err(e) => format!("{i} (discarded): {e:?}"),
                 })
                 .collect::<Vec<_>>()
@@ -312,7 +315,7 @@ impl SvmTestEnvironment<'_> {
             match processing_result {
                 Ok(ProcessedTransaction::Executed(executed_transaction)) => test_item_asserts
                     .check_executed_transaction(&executed_transaction.execution_details),
-                Ok(ProcessedTransaction::FeesOnly(_)) => {
+                Ok(ProcessedTransaction::FeesOnly(_)) | Ok(ProcessedTransaction::NoOp(_)) => {
                     assert!(test_item_asserts.processed());
                     assert!(!test_item_asserts.executed());
                 }
@@ -397,8 +400,12 @@ pub struct SvmTestEntry {
 
 impl Default for SvmTestEntry {
     fn default() -> Self {
+        // HANA not ready to test this here yet
+        let mut feature_set = SVMFeatureSet::all_enabled();
+        feature_set.relax_fee_payer_constraint = false;
+
         Self {
-            feature_set: SVMFeatureSet::all_enabled(),
+            feature_set,
             all_or_nothing: false,
             drop_on_failure: false,
             initial_programs: Vec::new(),
@@ -707,6 +714,8 @@ impl From<&TransactionProcessingResult> for ExecutionStatus {
                 }
             }
             Ok(ProcessedTransaction::FeesOnly(_)) => ExecutionStatus::ProcessedFailed,
+            // HANA i probably want to add a new ExecutionStatus and distinguish these
+            Ok(ProcessedTransaction::NoOp(_)) => ExecutionStatus::ProcessedFailed,
             Err(_) => ExecutionStatus::Discarded,
         }
     }

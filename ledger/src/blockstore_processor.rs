@@ -4646,6 +4646,7 @@ pub mod tests {
         assert_eq!(bank.get_balance(&keypair3.pubkey()), 1);
         assert_eq!(bank.get_balance(&keypair4.pubkey()), 1);
 
+        // HANA have to fix this one
         // ensure that an error is returned for an empty account (keypair2)
         let tx =
             system_transaction::transfer(&keypair2, &keypair3.pubkey(), 1, bank.last_blockhash());
