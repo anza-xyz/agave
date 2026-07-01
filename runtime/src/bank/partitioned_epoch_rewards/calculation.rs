@@ -762,18 +762,29 @@ impl Bank {
                             )
                         }
                         (_, None) => {
+                            // Create a zero entry for distribution
                             let stake = *stake_account.stake();
+                            let stake_reward = 0;
+                            let commission_pubkey = stake.delegation.voter_pubkey;
+                            let commission_bps = None;
+                            let reward_commission = RewardCommission {
+                                commission_bps,
+                                commission_lamports: 0,
+                                burned_lamports: 0,
+                                is_vote_account: true,
+                            };
                             (
                                 Some(PartitionedStakeReward {
                                     stake_pubkey: **stake_pubkey,
                                     inflation: InflationReward {
                                         stake,
-                                        stake_reward: 0,
-                                        commission_bps: None,
+                                        stake_reward,
+                                        commission_bps,
                                     },
                                     block_reward,
                                 }),
-                                None, // No commission to consider
+                                // Need a reward record for accumulator
+                                Some((stake_reward, commission_pubkey, reward_commission)),
                             )
                         }
                     };

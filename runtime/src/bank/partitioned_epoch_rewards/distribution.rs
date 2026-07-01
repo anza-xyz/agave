@@ -195,6 +195,10 @@ impl Bank {
         self.capitalization
             .fetch_add(stake_reward_lamports_minted, Relaxed);
 
+        // decrease total capitalization by burned block rewards
+        self.capitalization
+            .fetch_sub(block_reward_lamports_burned, Relaxed);
+
         // decrease distributed capital from epoch rewards sysvar
         self.update_epoch_rewards_sysvar(
             stake_reward_lamports_minted + stake_reward_lamports_burned,
