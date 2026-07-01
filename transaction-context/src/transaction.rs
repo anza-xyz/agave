@@ -60,6 +60,24 @@ pub struct TransactionFrame {
 #[cfg(not(any(target_arch = "sbf", target_arch = "bpf")))]
 impl VmExposable for TransactionFrame {}
 
+#[cfg(not(any(target_arch = "sbf", target_arch = "bpf")))]
+impl TransactionFrame {
+    fn configure_cpi(&mut self) {
+        self.total_number_of_instructions_in_trace =
+            self.total_number_of_instructions_in_trace.saturating_add(1);
+        let next_data_ptr = self
+            .cpi_data_scratchpad
+            .ptr()
+            .saturating_add(GUEST_REGION_SIZE);
+        self.cpi_data_scratchpad = VmSlice::new(next_data_ptr, 0);
+        let next_accounts_ptr = self
+            .cpi_accounts_scratchpad
+            .ptr()
+            .saturating_add(GUEST_REGION_SIZE);
+        self.cpi_accounts_scratchpad = VmSlice::new(next_accounts_ptr, 0);
+    }
+}
+
 /// Loaded transaction shared between runtime and programs.
 ///
 /// This context is valid for the entire duration of a transaction being processed.
@@ -331,23 +349,8 @@ impl<'ix_data> TransactionContext<'ix_data> {
 
         // If we have a parent index, then we are dealing with a CPI.
         if let Some(caller_index) = caller_index {
-            self.transaction_frame.total_number_of_instructions_in_trace = self
-                .transaction_frame
-                .total_number_of_instructions_in_trace
-                .saturating_add(1);
             instruction.index_of_caller_instruction = caller_index;
-            let next_data_ptr = self
-                .transaction_frame
-                .cpi_data_scratchpad
-                .ptr()
-                .saturating_add(GUEST_REGION_SIZE);
-            self.transaction_frame.cpi_data_scratchpad = VmSlice::new(next_data_ptr, 0);
-            let next_accounts_ptr = self
-                .transaction_frame
-                .cpi_accounts_scratchpad
-                .ptr()
-                .saturating_add(GUEST_REGION_SIZE);
-            self.transaction_frame.cpi_accounts_scratchpad = VmSlice::new(next_accounts_ptr, 0);
+            self.transaction_frame.configure_cpi();
         }
 
         instruction.program_account_index_in_tx = program_index;
@@ -375,29 +378,71 @@ impl<'ix_data> TransactionContext<'ix_data> {
         Ok(())
     }
 
-    /// For tests only
-    fn deduplicate_accounts_for_tests(instruction_accounts: &[InstructionAccount]) -> Vec<u16> {
+    fn deduplicate_accounts(instruction_accounts: &mut [InstructionAccount]) -> Vec<u16> {
         let mut dedup_map = vec![u16::MAX; MAX_ACCOUNTS_PER_TRANSACTION];
-        for (idx, account) in instruction_accounts.iter().enumerate() {
-            let index_in_instruction = dedup_map
-                .get_mut(account.index_in_transaction as usize)
+        for idx_in_ix in 0..instruction_accounts.len() {
+            let first_occurrence_in_ix = dedup_map
+                .get_mut(
+                    instruction_accounts
+                        .get(idx_in_ix)
+                        .unwrap()
+                        .index_in_transaction as usize,
+                )
                 .unwrap();
-            if *index_in_instruction == u16::MAX {
-                *index_in_instruction = idx as u16;
+            if *first_occurrence_in_ix == u16::MAX {
+                *first_occurrence_in_ix = idx_in_ix as u16;
+            } else {
+                // Let's update the signer and writable flags for the first appearance of this
+                // account.
+                let [this_account, other_account] = instruction_accounts
+                    .get_disjoint_mut([idx_in_ix, *first_occurrence_in_ix as usize])
+                    .expect("Accounts indices must exist in array");
+
+                other_account.set_is_signer(other_account.is_signer() || this_account.is_signer());
+                other_account
+                    .set_is_writable(other_account.is_writable() || this_account.is_writable());
             }
         }
+
+        Self::replicate_account_flags(instruction_accounts, &dedup_map);
         dedup_map
+    }
+
+    /// Replicate account flags to duplicated accounts
+    pub fn replicate_account_flags(
+        instruction_accounts: &mut [InstructionAccount],
+        dedup_map: &[u16],
+    ) {
+        for current_index in 0..instruction_accounts.len() {
+            let instruction_account = instruction_accounts.get(current_index).unwrap();
+            let other_account_index = *dedup_map
+                .get(instruction_account.index_in_transaction as usize)
+                .expect("Deduplication map must contain this account")
+                as usize;
+
+            if current_index != other_account_index {
+                let [current_account, reference_account] = instruction_accounts
+                    .get_disjoint_mut([current_index, other_account_index])
+                    .expect("Indices must be present in instruction account");
+
+                current_account
+                    .set_is_signer(current_account.is_signer() || reference_account.is_signer());
+                current_account.set_is_writable(
+                    current_account.is_writable() || reference_account.is_writable(),
+                );
+            }
+        }
     }
 
     /// A version of `configure_top_level_instruction` to help creating the deduplication map in tests
     pub fn configure_top_level_instruction_for_tests(
         &mut self,
         program_index: IndexOfAccount,
-        instruction_accounts: Vec<InstructionAccount>,
+        mut instruction_accounts: Vec<InstructionAccount>,
         instruction_data: Vec<u8>,
     ) -> Result<(), InstructionError> {
         debug_assert!(instruction_accounts.len() <= u16::MAX as usize);
-        let dedup_map = Self::deduplicate_accounts_for_tests(&instruction_accounts);
+        let dedup_map = Self::deduplicate_accounts(&mut instruction_accounts);
 
         self.configure_instruction_at_index(
             self.next_top_level_instruction_index,
@@ -414,11 +459,11 @@ impl<'ix_data> TransactionContext<'ix_data> {
     pub fn configure_next_cpi_for_tests(
         &mut self,
         program_index: IndexOfAccount,
-        instruction_accounts: Vec<InstructionAccount>,
+        mut instruction_accounts: Vec<InstructionAccount>,
         instruction_data: Vec<u8>,
     ) -> Result<(), InstructionError> {
         debug_assert!(instruction_accounts.len() <= u16::MAX as usize);
-        let dedup_map = Self::deduplicate_accounts_for_tests(&instruction_accounts);
+        let dedup_map = Self::deduplicate_accounts(&mut instruction_accounts);
         let caller_index = self.get_current_instruction_index()?;
         let cpi_index = self.get_instruction_trace_length();
         self.configure_instruction_at_index(
@@ -1164,9 +1209,17 @@ mod tests {
             .get_instruction_context_at_index_in_trace(2)
             .unwrap();
         assert_eq!(
-            instruction_accounts_3.as_slice(),
+            vec![
+                InstructionAccount::new(0, false, true),
+                InstructionAccount::new(3, true, false),
+                InstructionAccount::new(5, false, false),
+                InstructionAccount::new(3, true, false),
+                InstructionAccount::new(10, false, false),
+            ]
+            .as_slice(),
             third_ix_context.instruction_accounts
         );
+
         assert_eq!(
             *third_ix_context.instruction_data,
             **transaction_context.instruction_data.get(2).unwrap()
@@ -1905,6 +1958,185 @@ mod tests {
                 .saturating_add(GUEST_REGION_SIZE.saturating_mul(3u64))
         );
         assert_eq!(r4.len, 0);
+    }
+
+    #[test]
+    fn test_deduplicate_accounts() {
+        let mut instruction_accounts = vec![
+            InstructionAccount::new(0, false, true), // Account 0, writable
+            InstructionAccount::new(1, true, false), // Account 1, signer
+            InstructionAccount::new(0, false, false), // Account 0 again, not writable
+            InstructionAccount::new(2, false, true), // Account 2, writable
+            InstructionAccount::new(1, true, false), // Account 1 again, signer
+        ];
+
+        let dedup_map = TransactionContext::deduplicate_accounts(&mut instruction_accounts);
+
+        // Check that the dedup_map correctly maps duplicate accounts
+        assert_eq!(
+            *dedup_map.first().unwrap(),
+            0,
+            "account must be a duplicate of itself"
+        );
+        assert_eq!(
+            *dedup_map.get(1).unwrap(),
+            1,
+            "account must be a duplicate of itself"
+        );
+        assert_eq!(
+            *dedup_map.get(2).unwrap(),
+            3,
+            "account must be a duplicate of itself"
+        );
+
+        // Check that duplicate accounts are properly merged
+        let acc = instruction_accounts.first().unwrap();
+        assert_eq!(acc.index_in_transaction, 0);
+        assert!(
+            !acc.is_signer(),
+            "Must not be a signer because account 1 is not signer"
+        );
+        assert!(
+            acc.is_writable(),
+            "Must be writable because account 0 is writable"
+        );
+
+        let acc = instruction_accounts.get(1).unwrap();
+        assert_eq!(acc.index_in_transaction, 1);
+        assert!(
+            acc.is_signer(),
+            "Must be signer because account 1 is signer"
+        );
+        assert!(
+            !acc.is_writable(),
+            "Must not be writable because account 1 is not writable"
+        );
+
+        let acc = instruction_accounts.get(2).unwrap();
+        assert_eq!(acc.index_in_transaction, 0);
+        assert!(!acc.is_signer(), "Should be merged from account 1");
+        assert!(acc.is_writable(), "Should be merged from account 0");
+
+        let acc = instruction_accounts.get(3).unwrap();
+        assert_eq!(acc.index_in_transaction, 2);
+        assert!(!acc.is_signer());
+        assert!(acc.is_writable());
+
+        let acc = instruction_accounts.get(4).unwrap();
+        assert_eq!(acc.index_in_transaction, 1);
+        assert!(
+            acc.is_signer(),
+            "Must be signer because account 1 is signer"
+        );
+        assert!(
+            !acc.is_writable(),
+            "Must not be writable because account 1 is not writable"
+        );
+
+        // Verify that the deduplication map correctly identifies duplicates
+        assert_eq!(
+            *dedup_map.first().unwrap(),
+            0,
+            "account must be a duplicate of itself"
+        );
+        assert_eq!(
+            *dedup_map.get(1).unwrap(),
+            1,
+            "account must be a duplicate of itself"
+        );
+        assert_eq!(
+            *dedup_map.get(2).unwrap(),
+            3,
+            "account must be a duplicate of itself"
+        );
+    }
+
+    #[test]
+    fn test_deduplicate_accounts_no_duplicates() {
+        let mut instruction_accounts = vec![
+            InstructionAccount::new(0, false, true),
+            InstructionAccount::new(1, true, false),
+            InstructionAccount::new(2, false, false),
+        ];
+
+        let dedup_map = TransactionContext::deduplicate_accounts(&mut instruction_accounts);
+
+        // Check that the dedup_map correctly maps each account to itself
+        assert_eq!(
+            *dedup_map.first().unwrap(),
+            0,
+            "account must be a duplicate of itself"
+        );
+        assert_eq!(
+            *dedup_map.get(1).unwrap(),
+            1,
+            "account must be a duplicate of itself"
+        );
+        assert_eq!(
+            *dedup_map.get(2).unwrap(),
+            2,
+            "account must be a duplicate of itself"
+        );
+
+        // Check that accounts are not modified
+        let acc = instruction_accounts.first().unwrap();
+        assert_eq!(acc.index_in_transaction, 0);
+        assert!(!acc.is_signer());
+        assert!(acc.is_writable());
+
+        let acc = instruction_accounts.get(1).unwrap();
+        assert_eq!(acc.index_in_transaction, 1);
+        assert!(acc.is_signer());
+        assert!(!acc.is_writable());
+
+        let acc = instruction_accounts.get(2).unwrap();
+        assert_eq!(acc.index_in_transaction, 2);
+        assert!(!acc.is_signer());
+        assert!(!acc.is_writable());
+    }
+
+    #[test]
+    fn test_deduplicate_accounts_all_duplicates() {
+        let mut instruction_accounts = vec![
+            InstructionAccount::new(0, false, true),
+            InstructionAccount::new(0, true, false),
+            InstructionAccount::new(0, false, false),
+        ];
+
+        let dedup_map = TransactionContext::deduplicate_accounts(&mut instruction_accounts);
+
+        // Check that all accounts map to the first occurrence (index 0)
+        assert_eq!(
+            *dedup_map.first().unwrap(),
+            0,
+            "account must be a duplicate of itself"
+        );
+        for idx in dedup_map.iter().skip(1) {
+            assert_eq!(*idx, u16::MAX);
+        }
+
+        // Check that the first account has combined flags
+        let acc = instruction_accounts.first().unwrap();
+        assert_eq!(acc.index_in_transaction, 0);
+        assert!(
+            acc.is_signer(),
+            "Should be signer because of second account"
+        );
+        assert!(
+            acc.is_writable(),
+            "Should be writable because of first account"
+        );
+
+        // Check that the other accounts have the same flags as the first
+        let acc = instruction_accounts.get(1).unwrap();
+        assert_eq!(acc.index_in_transaction, 0);
+        assert!(acc.is_signer());
+        assert!(acc.is_writable());
+
+        let acc = instruction_accounts.get(2).unwrap();
+        assert_eq!(acc.index_in_transaction, 0);
+        assert!(acc.is_signer());
+        assert!(acc.is_writable());
     }
 
     #[test]
