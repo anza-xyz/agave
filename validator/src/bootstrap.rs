@@ -625,7 +625,7 @@ pub fn rpc_bootstrap(
         );
         // `vetted_rpc_nodes` is sorted by ping ascending, so take the first
         // entry. `pop()` would take the highest-ping peer.
-        let (rpc_contact_info, snapshot_hash, rpc_client) = vetted_rpc_nodes.swap_remove(0);
+        let (rpc_contact_info, snapshot_hash, rpc_client) = vetted_rpc_nodes.remove(0);
         get_rpc_nodes_time += get_rpc_nodes_start.elapsed();
 
         let snapshot_download_start = Instant::now();
