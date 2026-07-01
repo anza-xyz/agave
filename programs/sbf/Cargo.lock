@@ -7422,9 +7422,9 @@ dependencies = [
 
 [[package]]
 name = "solana-message"
-version = "4.2.3"
+version = "4.2.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "b94164f9740d40f41568f6f48140a0866251a79a7bce013eb4ffefe12d0e38cc"
+checksum = "d2666e0ff38557ad1239d0fc42f4688fb9df0817fb12c041dbae90c2b2e3fa55"
 dependencies = [
  "blake3",
  "serde",
