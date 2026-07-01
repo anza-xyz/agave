@@ -2066,7 +2066,7 @@ pub fn should_require_vote_history_file(
         // New vote account
         return false;
     };
-    let genesis_slot = genesis_certificate.cert_type.slot();
+    let genesis_slot = genesis_certificate.block.slot;
 
     // We've voted past the alpenglow genesis
     last_voted_slot > genesis_slot
@@ -3150,6 +3150,7 @@ pub fn is_snapshot_config_valid(snapshot_config: &SnapshotConfig) -> bool {
 mod tests {
     use {
         super::*,
+        agave_votor_messages::certificate::{CertSignature, GenesisCert},
         crossbeam_channel::{RecvTimeoutError, bounded},
         solana_entry::entry,
         solana_genesis_config::create_genesis_config,
@@ -3168,10 +3169,7 @@ mod tests {
     #[test]
     fn test_should_require_vote_history_file() {
         use {
-            agave_votor_messages::{
-                certificate::{Certificate, CertificateType},
-                consensus_message::Block,
-            },
+            agave_votor_messages::consensus_message::Block,
             solana_account::{AccountSharedData, state_traits::StateMut},
             solana_bls_signatures::{BLS_SIGNATURE_AFFINE_SIZE, Signature as BLSSignature},
         };
@@ -3229,14 +3227,17 @@ mod tests {
             &identity,
         ));
 
-        bank.set_alpenglow_genesis_certificate(&Certificate {
-            cert_type: CertificateType::Genesis(Block {
+        let cert = GenesisCert {
+            block: Block {
                 slot: 40,
                 block_id: Hash::new_unique(),
-            }),
-            signature: BLSSignature([0; BLS_SIGNATURE_AFFINE_SIZE]),
-            bitmap: vec![],
-        });
+            },
+            signature: CertSignature {
+                signature: BLSSignature([0; BLS_SIGNATURE_AFFINE_SIZE]),
+                bitmap: vec![],
+            },
+        };
+        bank.set_alpenglow_genesis_certificate(&cert);
         assert!(!should_require_vote_history_file(
             &bank,
             &vote_account_pubkey,

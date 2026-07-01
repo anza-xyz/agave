@@ -15,7 +15,7 @@ use {
     },
     agave_bls_sigverify::generated_cert_types::GeneratedCertTypes,
     agave_votor_messages::{
-        certificate::{Certificate, CertificateType},
+        certificate::{CertSignature, Certificate, CertificateType, GenesisCert},
         consensus_message::{Block, ConsensusMessage, VoteMessage},
         finalized_slot::FinalizedSlot,
         fraction::Fraction,
@@ -348,7 +348,14 @@ impl ConsensusPool {
                 }
             }
             CertificateType::Genesis(block) => {
-                self.migration_status.set_genesis_certificate(cert);
+                let genesis_cert = Arc::new(GenesisCert {
+                    block,
+                    signature: CertSignature {
+                        signature: cert.signature,
+                        bitmap: cert.bitmap.clone(),
+                    },
+                });
+                self.migration_status.set_genesis_certificate(genesis_cert);
                 // The genesis block is automatically certified
                 self.parent_ready_tracker
                     .add_new_notar_fallback_or_stronger(block, events);

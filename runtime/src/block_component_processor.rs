@@ -11,7 +11,7 @@ use {
         validated_reward_certificate::{Error as ValidatedRewardCertError, ValidatedRewardCert},
     },
     agave_votor_messages::{
-        certificate::{Certificate, CertificateType},
+        certificate::{CertSignature, CertificateType, GenesisCert},
         consensus_message::{Block, ConsensusMessage},
         migration::MigrationStatus,
         unverified_vote_message::UnverifiedCertificate,
@@ -328,26 +328,20 @@ impl BlockComponentProcessor {
             return Err(BlockComponentProcessorError::GenesisCertificateAlreadyPopulated);
         }
 
-        let genesis_cert_type = CertificateType::Genesis(Block {
-            slot: genesis_block_marker.slot,
-            block_id: genesis_block_marker.block_id,
-        });
-        let genesis_cert = match shred_version {
-            Some(shred_version) => {
-                let unverified_genesis_cert = UnverifiedCertificate {
-                    cert_type: genesis_cert_type,
-                    signature: genesis_block_marker.bls_signature,
-                    bitmap: genesis_block_marker.bitmap,
-                    shred_version,
-                };
-                Self::verify_genesis_certificate(&bank, unverified_genesis_cert)?
-            }
-            None => Certificate {
-                cert_type: genesis_cert_type,
+        let genesis_cert = GenesisCert {
+            block: Block {
+                slot: genesis_block_marker.slot,
+                block_id: genesis_block_marker.block_id,
+            },
+            signature: CertSignature {
                 signature: genesis_block_marker.bls_signature,
                 bitmap: genesis_block_marker.bitmap,
             },
         };
+        if let Some(shred_version) = shred_version {
+            Self::verify_genesis_certificate(&bank, &genesis_cert, shred_version)?;
+        }
+
         bank.set_alpenglow_genesis_certificate(&genesis_cert);
         bank.set_hashes_per_tick(None);
         self.has_genesis_certificate_marker = true;
@@ -368,12 +362,7 @@ impl BlockComponentProcessor {
             migration_status.my_pubkey(),
             bank.slot()
         );
-        migration_status.set_genesis_block(
-            genesis_cert
-                .cert_type
-                .to_block()
-                .expect("Genesis cert must correspond to a block"),
-        );
+        migration_status.set_genesis_block(genesis_cert.block);
         migration_status.set_genesis_certificate(Arc::new(genesis_cert));
         assert!(migration_status.is_ready_to_enable());
 
@@ -382,12 +371,17 @@ impl BlockComponentProcessor {
 
     fn verify_genesis_certificate(
         bank: &Bank,
-        cert: UnverifiedCertificate,
-    ) -> Result<Certificate, BlockComponentProcessorError> {
-        debug_assert!(cert.cert_type.is_genesis());
-
-        let cert_slot = cert.cert_type.slot();
-        let cert = bank.verify_certificate(cert).map_err(|_| {
+        cert: &GenesisCert,
+        shred_version: u16,
+    ) -> Result<(), BlockComponentProcessorError> {
+        let cert_slot = cert.block.slot;
+        let unverified_cert = UnverifiedCertificate {
+            cert_type: CertificateType::Genesis(cert.block),
+            signature: cert.signature.signature,
+            bitmap: cert.signature.bitmap.clone(),
+            shred_version,
+        };
+        bank.verify_certificate(unverified_cert).map_err(|_| {
             warn!(
                 "Failed to verify genesis certificate for slot {cert_slot} in bank slot {}",
                 bank.slot()
@@ -395,7 +389,7 @@ impl BlockComponentProcessor {
             BlockComponentProcessorError::GenesisCertificateFailedVerification
         })?;
 
-        Ok(cert)
+        Ok(())
     }
 
     fn on_footer(
@@ -698,11 +692,14 @@ mod tests {
             block_id: Hash::default(),
         };
         migration_status.set_genesis_block(genesis_block);
-        migration_status.set_genesis_certificate(Arc::new(Certificate {
-            cert_type: CertificateType::Genesis(genesis_block),
-            signature: BLSSignature([0; BLS_SIGNATURE_AFFINE_SIZE]),
-            bitmap: vec![],
-        }));
+        let cert = Arc::new(GenesisCert {
+            block: genesis_block,
+            signature: CertSignature {
+                signature: BLSSignature([0; BLS_SIGNATURE_AFFINE_SIZE]),
+                bitmap: vec![],
+            },
+        });
+        migration_status.set_genesis_certificate(cert);
         migration_status.enable_alpenglow_during_startup();
 
         migration_status

@@ -2904,7 +2904,7 @@ pub mod tests {
             shred::{ProcessShredsStats, ReedSolomonCache, Shred, Shredder},
         },
         agave_votor_messages::{
-            certificate::{Certificate, CertificateType},
+            certificate::{CertSignature, GenesisCert},
             consensus_message::Block,
         },
         assert_matches::assert_matches,
@@ -2960,11 +2960,13 @@ pub mod tests {
     };
 
     /// Generate a dummy alpenglow genesis certificate
-    fn genesis_certificate(genesis_block: Block) -> Arc<Certificate> {
-        Arc::new(Certificate {
-            cert_type: CertificateType::Genesis(genesis_block),
-            signature: BLSSignature([0; BLS_SIGNATURE_AFFINE_SIZE]),
-            bitmap: vec![],
+    fn genesis_certificate(block: Block) -> Arc<GenesisCert> {
+        Arc::new(GenesisCert {
+            block,
+            signature: CertSignature {
+                signature: BLSSignature([0; BLS_SIGNATURE_AFFINE_SIZE]),
+                bitmap: vec![],
+            },
         })
     }
 
