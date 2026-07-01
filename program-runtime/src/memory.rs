@@ -1,9 +1,6 @@
 //! Memory translation utilities.
 
-use {
-    solana_sbpf::memory_region::MemoryMapping, solana_transaction_context::vm_slice::VmSlice,
-    std::mem::align_of,
-};
+use {solana_sbpf::memory_region::MemoryMapping, solana_transaction_context::vm_slice::VmSlice};
 
 /// Error types for memory translation operations.
 #[derive(Debug, thiserror::Error, PartialEq, Eq, Clone)]
@@ -12,13 +9,6 @@ pub enum MemoryTranslationError {
     UnalignedPointer,
     #[error("InvalidLength")]
     InvalidLength,
-}
-
-pub fn address_is_aligned<T>(address: usize) -> bool {
-    address
-        .checked_rem(align_of::<T>())
-        .map(|rem| rem == 0)
-        .expect("T to be non-zero aligned")
 }
 
 // Do not use this directly
@@ -47,7 +37,7 @@ macro_rules! translate_type_inner {
         let ptr = host_addr.ptr_mut().cast::<$T>();
         if !$check_aligned {
             Ok(unsafe { ptr.as_mut_unchecked() })
-        } else if !$crate::memory::address_is_aligned::<$T>(ptr.addr()) {
+        } else if !ptr.is_aligned() {
             Err($crate::memory::MemoryTranslationError::UnalignedPointer.into())
         } else {
             Ok(unsafe { ptr.as_mut_unchecked() })
@@ -64,7 +54,7 @@ macro_rules! translate_type_inner {
         let ptr = host_addr.ptr().cast::<$T>();
         if !$check_aligned {
             Ok(unsafe { ptr.as_ref_unchecked() })
-        } else if !$crate::memory::address_is_aligned::<$T>(ptr.addr()) {
+        } else if !ptr.is_aligned() {
             Err($crate::memory::MemoryTranslationError::UnalignedPointer.into())
         } else {
             Ok(unsafe { ptr.as_ref_unchecked() })
@@ -94,10 +84,7 @@ macro_rules! translate_slice_inner {
                     total_size
                 ) {
                     Err(e) => Err(e),
-                    Ok(host_buf)
-                        if $check_aligned
-                            && !$crate::memory::address_is_aligned::<$T>(host_buf.ptr().addr()) =>
-                    {
+                    Ok(host_buf) if $check_aligned && !host_buf.ptr().cast::<$T>().is_aligned() => {
                         Err($crate::memory::MemoryTranslationError::UnalignedPointer.into())
                     }
                     Ok(host_buf) => Ok(std::ptr::slice_from_raw_parts_mut(
@@ -127,10 +114,7 @@ macro_rules! translate_slice_inner {
                     total_size
                 ) {
                     Err(e) => Err(e),
-                    Ok(host_buf)
-                        if $check_aligned
-                            && !$crate::memory::address_is_aligned::<$T>(host_buf.ptr().addr()) =>
-                    {
+                    Ok(host_buf) if $check_aligned && !host_buf.ptr().cast::<$T>().is_aligned() => {
                         Err($crate::memory::MemoryTranslationError::UnalignedPointer.into())
                     }
                     Ok(host_buf) => Ok(std::ptr::slice_from_raw_parts(
