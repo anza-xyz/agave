@@ -95,7 +95,7 @@ pub enum BankTxnProcessingResult {
     /// processing result and transaction for effect extraction.
     Processed {
         result: TransactionProcessingResult,
-        runtime_transaction: RuntimeTransaction<SanitizedTransaction>,
+        runtime_transaction: Box<RuntimeTransaction<SanitizedTransaction>>,
     },
 }
 
@@ -208,7 +208,7 @@ pub fn execute_txn(
 
     BankTxnProcessingResult::Processed {
         result,
-        runtime_transaction,
+        runtime_transaction: Box::new(runtime_transaction),
     }
 }
 
@@ -691,7 +691,7 @@ mod tests {
             ProcessedTransaction, TransactionProcessingResultExtensions,
         },
         solana_transaction::versioned::VersionedTransaction,
-        std::{borrow::Cow, env, fs, sync::Arc},
+        std::{borrow::Cow, collections::HashSet, env, fs, sync::Arc},
     };
 
     /// All features enabled except `disable_sbpf_v0_execution`, so the v0
@@ -910,7 +910,7 @@ mod tests {
                     data: vec![],
                 }],
             },
-            &Default::default(),
+            &HashSet::default(),
         )
         .unwrap()
     }
