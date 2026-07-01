@@ -2829,6 +2829,15 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "12cb882ccb290b8646e554b157ab0b71e64e8d5bef775cd66b6531e52d302669"
 
 [[package]]
+name = "hkdf"
+version = "0.12.4"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "7b5f8eb2ad728638ea2c7d47a21db23b7b58a72ed6a38256b8a1849f15fbbdf7"
+dependencies = [
+ "hmac 0.12.1",
+]
+
+[[package]]
 name = "hmac"
 version = "0.8.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -10200,33 +10209,32 @@ dependencies = [
 
 [[package]]
 name = "solana-zk-sdk"
-version = "5.0.1"
+version = "7.0.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "09670ff59f60e6ddc2209c2e4353992a9b9f01d4e244f3e9d67bd5146e33d388"
+checksum = "96cd8535d2f40d43a1d47af2849e1c86706a597a2ad84207441f51a50f09d8fd"
 dependencies = [
  "aes-gcm-siv",
  "base64 0.22.1",
  "bincode",
  "bytemuck",
- "bytemuck_derive",
  "curve25519-dalek 4.1.3",
+ "hkdf",
  "itertools 0.14.0",
  "merlin",
- "num-derive",
- "num-traits",
  "rand 0.8.6",
  "serde",
  "serde_derive",
  "serde_json",
+ "sha2 0.10.9",
  "sha3",
  "solana-address 2.6.1",
  "solana-derivation-path",
- "solana-instruction",
- "solana-sdk-ids",
  "solana-seed-derivable",
  "solana-seed-phrase",
  "solana-signature",
  "solana-signer",
+ "solana-zk-elgamal-proof-interface",
+ "solana-zk-sdk-pod",
  "subtle",
  "thiserror 2.0.18",
  "zeroize",
