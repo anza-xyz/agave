@@ -20,18 +20,18 @@ use {
         vote::Vote,
         wire::{VersionedWireConsensusMessage, VotePayloadToSign},
     },
-    crossbeam_channel::{Receiver, RecvTimeoutError, Sender, TryRecvError},
-    log::error,
+    agave_votor_transport::endpoint::{BanCommand, Datagram},
+    crossbeam_channel::{Receiver, Sender, TryRecvError},
+    log::{error, info, warn},
     rayon::{ThreadPool, ThreadPoolBuilder},
     solana_bls_signatures::pubkey::{PopVerified, PubkeyAffine as BlsPubkeyAffine},
     solana_clock::Slot,
     solana_gossip::cluster_info::ClusterInfo,
     solana_ledger::leader_schedule_cache::LeaderScheduleCache,
     solana_measure::measure_us,
-    solana_perf::packet::packet_config,
+    solana_perf::packet::{BytesPacket, Meta, PacketBatch, packet_config},
     solana_pubkey::Pubkey,
     solana_runtime::{bank::Bank, bank_forks::SharableBanks},
-    solana_streamer::{nonblocking::simple_qos::SimpleQosBanlist, packet::PacketBatch},
     std::{
         collections::{HashMap, HashSet},
         sync::{
@@ -41,7 +41,22 @@ use {
         thread::{self, Builder},
         time::Duration,
     },
+    tokio::sync::mpsc,
 };
+
+/// Ask the endpoint to ban `peer` for [`BAN_TIMEOUT`].
+pub(super) fn send_ban_request(ban_sender: &mpsc::Sender<BanCommand>, peer: Pubkey) {
+    match ban_sender.try_send(BanCommand {
+        peer,
+        duration: BAN_TIMEOUT,
+    }) {
+        Ok(()) => info!("requested ban for sender={peer}"),
+        Err(mpsc::error::TrySendError::Full(_)) => {
+            warn!("ban channel full; dropping ban request for sender={peer}")
+        }
+        Err(mpsc::error::TrySendError::Closed(_)) => {}
+    }
+}
 
 /// If a cert or vote is so many slots in the future relative to the root slot, it is considered
 /// invalid and discarded.
@@ -55,7 +70,8 @@ pub(super) const BAN_TIMEOUT: Duration = Duration::from_hours(48);
 
 pub struct SigVerifierContext {
     pub migration_status: Arc<MigrationStatus>,
-    pub banlist: Arc<SimpleQosBanlist>,
+    /// Channel to send peer ban commands to the datagram endpoint.
+    pub ban_sender: mpsc::Sender<BanCommand>,
     pub sharable_banks: SharableBanks,
     pub cluster_info: Arc<ClusterInfo>,
     pub leader_schedule: Arc<LeaderScheduleCache>,
@@ -64,7 +80,7 @@ pub struct SigVerifierContext {
 }
 
 pub struct SigVerifierChannels {
-    pub packet_receiver: Receiver<PacketBatch>,
+    pub packet_receiver: Receiver<Datagram>,
     pub channel_to_repair: VerifiedVoterSlotsSender,
     pub channel_to_reward: Sender<AddVoteMessage>,
     pub channel_to_pool: Sender<SigVerifiedBatch>,
@@ -87,7 +103,7 @@ pub fn spawn_service(
 
 struct SigVerifier {
     migration_status: Arc<MigrationStatus>,
-    banlist: Arc<SimpleQosBanlist>,
+    ban_sender: mpsc::Sender<BanCommand>,
     channels: SigVerifierChannels,
     /// Container to look up root banks from.
     sharable_banks: SharableBanks,
@@ -107,7 +123,7 @@ impl SigVerifier {
     fn new(context: SigVerifierContext, channels: SigVerifierChannels) -> Self {
         let SigVerifierContext {
             migration_status,
-            banlist,
+            ban_sender,
             sharable_banks,
             cluster_info,
             leader_schedule,
@@ -122,7 +138,7 @@ impl SigVerifier {
         let root_slot = sharable_banks.root().slot();
         Self {
             migration_status,
-            banlist,
+            ban_sender,
             channels,
             sharable_banks,
             stats: SigVerifierStats::new(root_slot),
@@ -176,7 +192,7 @@ impl SigVerifier {
                     &root_bank,
                     &self.cluster_info,
                     &self.leader_schedule,
-                    &self.banlist,
+                    &self.ban_sender,
                     &self.thread_pool,
                     &self.channels,
                 )
@@ -187,7 +203,7 @@ impl SigVerifier {
                     certs_to_verify,
                     &root_bank,
                     &self.channels.channel_to_pool,
-                    &self.banlist,
+                    &self.ban_sender,
                     &self.thread_pool,
                 )
             },
@@ -322,30 +338,51 @@ impl SigVerifier {
     }
 }
 
-/// Receives a `Vec<PacketBatch>` from the `receiver` while adhering to the `soft_receive_cap` limit.
+/// Wraps  [`Datagram`] as a one-packet [`PacketBatch`] so the
+/// rest of the sigverifier can keep operating on the `PacketBatch` abstraction.
+fn datagram_to_batch(datagram: Datagram) -> PacketBatch {
+    let Datagram {
+        peer_pubkey,
+        peer_address,
+        message,
+    } = datagram;
+    let mut meta = Meta::default();
+    meta.size = message.len();
+    meta.set_socket_addr(&peer_address);
+    meta.set_remote_pubkey(peer_pubkey);
+    PacketBatch::Single(BytesPacket::new(message, meta))
+}
+
+/// Receives a batch of [`Datagram`]s from the `receiver`, each wrapped as a
+/// single-packet [`PacketBatch`], up to the `soft_receive_cap` limit.
 ///
 /// Returns `Err(())` if the channel disconnected.
 fn recv_batches(
-    receiver: &Receiver<PacketBatch>,
+    receiver: &Receiver<Datagram>,
     soft_receive_cap: usize,
 ) -> Result<Vec<PacketBatch>, ()> {
-    let batch = match receiver.recv_timeout(Duration::from_secs(1)) {
-        Ok(b) => b,
-        Err(e) => match e {
-            RecvTimeoutError::Timeout => {
-                return Ok(vec![]);
+    let mut sleeps: u32 = 0;
+    let batch = loop {
+        if sleeps >= 1000 {
+            return Ok(vec![]);
+        }
+        match receiver.try_recv() {
+            Ok(datagram) => break datagram_to_batch(datagram),
+            Err(TryRecvError::Empty) => {
+                sleeps = sleeps.saturating_add(1);
+                thread::sleep(Duration::from_millis(1))
             }
-            RecvTimeoutError::Disconnected => {
-                return Err(());
-            }
-        },
+            Err(TryRecvError::Disconnected) => return Err(()),
+        }
     };
-    let mut batches = Vec::with_capacity(soft_receive_cap);
+    // Size to what is actually queued (plus the batch we just took).
+    let capacity = receiver.len().saturating_add(1).min(soft_receive_cap);
+    let mut batches = Vec::with_capacity(capacity);
     batches.push(batch);
     while batches.len() < soft_receive_cap {
         match receiver.try_recv() {
             Ok(b) => {
-                batches.push(b);
+                batches.push(datagram_to_batch(b));
             }
             Err(e) => match e {
                 TryRecvError::Empty => return Ok(batches),
@@ -390,17 +427,12 @@ mod tests {
         solana_signer_store::encode_base2,
     };
 
-    fn new_test_banlist() -> Arc<SimpleQosBanlist> {
-        let (banlist, _banlist_eviction_receiver) = SimpleQosBanlist::new();
-        Arc::new(banlist)
-    }
-
     struct TestContext {
         verifier: SigVerifier,
         validator_keypairs: Vec<ValidatorVoteKeypairs>,
-        banlist: Arc<SimpleQosBanlist>,
+        ban_receiver: mpsc::Receiver<BanCommand>,
 
-        _packet_sender: Sender<PacketBatch>,
+        _packet_sender: Sender<Datagram>,
         repair_receiver: VerifiedVoterSlotsReceiver,
         _reward_receiver: Receiver<AddVoteMessage>,
         pool_receiver: Receiver<SigVerifiedBatch>,
@@ -412,6 +444,15 @@ mod tests {
         fn new() -> Self {
             let (channel_to_pool, pool_receiver) = bounded(1024);
             Self::new_with_pool_channel(channel_to_pool, pool_receiver)
+        }
+
+        /// Drain pending ban requests and collect the banned pubkeys.
+        fn banned_pubkeys(&mut self) -> HashSet<Pubkey> {
+            let mut banned = HashSet::new();
+            while let Ok(BanCommand { peer, .. }) = self.ban_receiver.try_recv() {
+                banned.insert(peer);
+            }
+            banned
         }
 
         fn new_with_pool_channel(
@@ -450,11 +491,11 @@ mod tests {
             let (channel_to_metrics, metrics_receiver) = bounded(1024);
 
             let generated_cert_types = Arc::new(GeneratedCertTypes::default());
-            let banlist = new_test_banlist();
+            let (ban_sender, ban_receiver) = mpsc::channel(1024);
             let verifier = SigVerifier::new(
                 SigVerifierContext {
                     migration_status: Arc::new(MigrationStatus::default()),
-                    banlist: banlist.clone(),
+                    ban_sender,
                     sharable_banks,
                     cluster_info,
                     leader_schedule,
@@ -472,7 +513,7 @@ mod tests {
             Self {
                 validator_keypairs,
                 verifier,
-                banlist,
+                ban_receiver,
                 _packet_sender: packet_sender,
                 repair_receiver,
                 _reward_receiver: reward_receiver,
@@ -1453,10 +1494,11 @@ mod tests {
         ));
         let leader_schedule = Arc::new(LeaderScheduleCache::new_from_bank(&sharable_banks.root()));
         let (_packet_sender, packet_receiver) = bounded(1024);
+        let (ban_sender, _ban_receiver) = mpsc::channel(1024);
         let mut sig_verifier = SigVerifier::new(
             SigVerifierContext {
                 migration_status: Arc::new(MigrationStatus::default()),
-                banlist: new_test_banlist(),
+                ban_sender,
                 sharable_banks,
                 cluster_info,
                 leader_schedule,
@@ -1610,8 +1652,9 @@ mod tests {
             .verify_and_send_batches(packet_batches)
             .unwrap();
         assert_eq!(ctx.pool_receiver.try_iter().count(), 2);
-        assert!(!ctx.banlist.is_banned(&vote_sender));
-        assert!(!ctx.banlist.is_banned(&cert_sender));
+        let banned = ctx.banned_pubkeys();
+        assert!(!banned.contains(&vote_sender));
+        assert!(!banned.contains(&cert_sender));
     }
 
     #[test]
@@ -1661,15 +1704,16 @@ mod tests {
             rest => panic!("unexpected type: {rest:?}"),
         }
 
+        let banned = ctx.banned_pubkeys();
         for (i, (_, sender)) in messages.iter().enumerate() {
             if invalid_indexes.contains(&i) {
                 assert!(
-                    ctx.banlist.is_banned(sender),
+                    banned.contains(sender),
                     "invalid sender {i} should be banned"
                 );
             } else {
                 assert!(
-                    !ctx.banlist.is_banned(sender),
+                    !banned.contains(sender),
                     "valid sender {i} should not be banned"
                 );
             }
@@ -1716,15 +1760,16 @@ mod tests {
             rest => panic!("unexpected type: {rest:?}"),
         }
 
+        let banned = ctx.banned_pubkeys();
         for (i, (_, sender)) in messages.iter().enumerate() {
             if invalid_indexes.contains(&i) {
                 assert!(
-                    ctx.banlist.is_banned(sender),
+                    banned.contains(sender),
                     "invalid sender {i} should be banned"
                 );
             } else {
                 assert!(
-                    !ctx.banlist.is_banned(sender),
+                    !banned.contains(sender),
                     "valid sender {i} should not be banned"
                 );
             }

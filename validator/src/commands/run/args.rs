@@ -788,6 +788,15 @@ pub fn add_args<'a>(app: App<'a, 'a>, default_args: &'a DefaultArgs) -> App<'a, 
             ),
     )
     .arg(
+        Arg::with_name("num_votor_endpoints")
+            .long("num-votor-endpoints")
+            .takes_value(true)
+            .default_value(&default_args.num_votor_endpoints)
+            .validator(is_parsable::<usize>)
+            .hidden(hidden_unless_forced())
+            .help("The number of QUIC endpoints used for the votor transport."),
+    )
+    .arg(
         Arg::with_name("staked_nodes_overrides")
             .long("staked-nodes-overrides")
             .value_name("PATH")
