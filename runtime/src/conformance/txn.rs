@@ -2,7 +2,7 @@
 //!
 //! Split into two layers, mirroring the SVM harness convention:
 //!
-//! * The **native** core ([`execute_txn`] + [`NativeTxnExecution`]) builds a
+//! * The **native** core ([`execute_txn`] + [`BankTxnProcessingResult`]) builds a
 //!   [`Bank`] via [`Bank::new_for_txn_tests`], runs
 //!   `bank.load_and_execute_transactions`, and returns the native execution
 //!   result. It depends only on `solana-runtime`/SVM types, so it is available
@@ -90,8 +90,8 @@ use {
 #[cfg(all(feature = "conformance", not(test)))]
 use {prost::Message, std::ffi::c_int};
 
-/// Native result of executing a single transaction through the [`Bank`].
-pub enum NativeTxnExecution {
+/// Result of executing a single transaction through the [`Bank`].
+pub enum BankTxnProcessingResult {
     /// The transaction failed sanitization/verification before execution.
     NotSanitized(TransactionError),
     /// The transaction was processed (executed or fees-only). Carries the
@@ -113,7 +113,7 @@ pub fn execute_txn(
     fee_rate_governor: FeeRateGovernor,
     total_epoch_stake: u64,
     transaction: VersionedTransaction,
-) -> NativeTxnExecution {
+) -> BankTxnProcessingResult {
     const TICKS_PER_SLOT: u64 = 64;
 
     // Slot and parent slot come from the clock sysvar.
@@ -194,7 +194,7 @@ pub fn execute_txn(
         TransactionVerificationMode::HashAndVerifyPrecompiles,
     ) {
         Ok(tx) => tx,
-        Err(err) => return NativeTxnExecution::NotSanitized(err),
+        Err(err) => return BankTxnProcessingResult::NotSanitized(err),
     };
 
     let recording_config = ExecutionRecordingConfig {
@@ -226,7 +226,7 @@ pub fn execute_txn(
         .expect("single transaction execution must return one result")
     };
 
-    NativeTxnExecution::Processed {
+    BankTxnProcessingResult::Processed {
         result,
         runtime_transaction,
     }
@@ -581,7 +581,7 @@ pub fn execute_txn_proto(context: &ProtoTxnContext) -> ProtoTxnResult {
         txn_bank.total_epoch_stake,
         transaction,
     ) {
-        NativeTxnExecution::NotSanitized(err) => {
+        BankTxnProcessingResult::NotSanitized(err) => {
             let error = ProtoTxnErrorFields::from_transaction_error(&err);
             return ProtoTxnResult {
                 executed: false,
@@ -593,7 +593,7 @@ pub fn execute_txn_proto(context: &ProtoTxnContext) -> ProtoTxnResult {
                 ..Default::default()
             };
         }
-        NativeTxnExecution::Processed {
+        BankTxnProcessingResult::Processed {
             result,
             runtime_transaction,
         } => (result, runtime_transaction),
@@ -686,7 +686,7 @@ pub unsafe extern "C" fn sol_compat_txn_execute_v1(
 #[cfg(test)]
 mod tests {
     use {
-        super::{NativeTxnExecution, execute_txn},
+        super::{BankTxnProcessingResult, execute_txn},
         agave_feature_set::{FeatureSet, disable_sbpf_v0_execution, set_exempt_rent_epoch_max},
         solana_account::{AccountSharedData, ReadableAccount},
         solana_accounts_db::blockhash_queue::BlockhashQueue,
@@ -867,9 +867,12 @@ mod tests {
 
     /// Lamports of the writable account `pubkey` after execution, if the
     /// transaction executed successfully.
-    fn writable_account_lamports(execution: &NativeTxnExecution, pubkey: &Pubkey) -> Option<u64> {
+    fn writable_account_lamports(
+        execution: &BankTxnProcessingResult,
+        pubkey: &Pubkey,
+    ) -> Option<u64> {
         match execution {
-            NativeTxnExecution::Processed {
+            BankTxnProcessingResult::Processed {
                 result: Ok(ProcessedTransaction::Executed(executed_tx)),
                 runtime_transaction,
             } => executed_tx
@@ -884,9 +887,9 @@ mod tests {
         }
     }
 
-    fn return_data(execution: &NativeTxnExecution) -> Vec<u8> {
+    fn return_data(execution: &BankTxnProcessingResult) -> Vec<u8> {
         match execution {
-            NativeTxnExecution::Processed {
+            BankTxnProcessingResult::Processed {
                 result: Ok(ProcessedTransaction::Executed(executed_tx)),
                 ..
             } => executed_tx
@@ -899,12 +902,12 @@ mod tests {
         }
     }
 
-    fn assert_executed_ok(execution: &NativeTxnExecution) {
+    fn assert_executed_ok(execution: &BankTxnProcessingResult) {
         match execution {
-            NativeTxnExecution::Processed { result, .. } => {
+            BankTxnProcessingResult::Processed { result, .. } => {
                 assert!(result.was_processed_with_successful_result())
             }
-            NativeTxnExecution::NotSanitized(err) => {
+            BankTxnProcessingResult::NotSanitized(err) => {
                 panic!("transaction was not sanitized: {err:?}")
             }
         }
