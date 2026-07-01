@@ -110,10 +110,10 @@ solana-ed25519-program = { workspace = true }
 solana-entry = { workspace = true }
 solana-epoch-info = { workspace = true }
 solana-epoch-rewards-hasher = { workspace = true }
-solana-epoch-schedule = { workspace = true }
+solana-epoch-schedule = { workspace = true, features = ["wincode"] }
 solana-feature-gate-interface = { workspace = true, features = ["bincode"] }
 solana-fee = { workspace = true }
-solana-fee-calculator = { workspace = true }
+solana-fee-calculator = { workspace = true, features = ["wincode"] }
 solana-fee-structure = { workspace = true, features = ["serde"] }
 solana-frozen-abi = { workspace = true, optional = true, features = [
     "frozen-abi",
@@ -122,9 +122,9 @@ solana-frozen-abi-macro = { workspace = true, optional = true, features = [
     "frozen-abi",
 ] }
 solana-genesis-config = { workspace = true, features = ["serde"] }
-solana-hard-forks = { workspace = true, features = ["serde"] }
-solana-hash = { workspace = true, features = ["atomic"] }
-solana-inflation = { workspace = true, features = ["serde"] }
+solana-hard-forks = { workspace = true, features = ["serde", "wincode"] }
+solana-hash = { workspace = true, features = ["atomic", "wincode"] }
+solana-inflation = { workspace = true, features = ["serde", "wincode"] }
 solana-instruction = { workspace = true }
 solana-keypair = { workspace = true, features = ["seed-derivable"] }
 solana-lattice-hash = { workspace = true }
@@ -144,7 +144,7 @@ solana-program-binaries = { workspace = true, optional = true }
 solana-program-runtime = { workspace = true, features = ["metrics"] }
 solana-pubkey = { workspace = true, features = ["rand", "wincode"] }
 solana-rayon-threadlimit = { workspace = true }
-solana-rent = { workspace = true }
+solana-rent = { workspace = true, features = ["wincode"] }
 solana-reward-info = { workspace = true }
 solana-runtime-transaction = { workspace = true }
 solana-sdk-ids = { workspace = true }
@@ -157,7 +157,7 @@ solana-signer = { workspace = true }
 solana-signer-store = { workspace = true }
 solana-slot-hashes = { workspace = true, features = ["wincode"] }
 solana-slot-history = { workspace = true, features = ["wincode"] }
-solana-stake-interface = { workspace = true }
+solana-stake-interface = { workspace = true, features = ["wincode"] }
 solana-svm = { workspace = true, features = ["metrics"] }
 solana-svm-callback = { workspace = true }
 solana-svm-timings = { workspace = true }
@@ -183,7 +183,7 @@ strum = { workspace = true, features = ["derive"] }
 strum_macros = { workspace = true }
 tempfile = { workspace = true }
 thiserror = { workspace = true }
-wincode = { workspace = true }
+wincode = { workspace = true, features = ["smallvec"] }
 
 [dev-dependencies]
 agave-logger = { path = "../logger", features = ["agave-unstable-api"] }

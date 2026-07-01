@@ -7,10 +7,12 @@ use {
     solana_hash::Hash,
     solana_time_utils::timestamp,
     std::collections::HashMap,
+    wincode::{SchemaRead, SchemaWrite},
 };
 
+#[repr(C)]
 #[cfg_attr(feature = "frozen-abi", derive(AbiExample, StableAbi, StableAbiSample))]
-#[derive(Debug, PartialEq, Eq, Clone, Serialize, Deserialize)]
+#[derive(Debug, PartialEq, Eq, Clone, Serialize, Deserialize, SchemaRead, SchemaWrite)]
 pub struct HashInfo {
     fee_calculator: FeeCalculator,
     hash_index: u64,
@@ -30,10 +32,11 @@ impl HashInfo {
     frozen_abi(
         api_digest = "DZVVXt4saSgH1CWGrzBcX2sq5yswCuRqGx1Y1ZehtWT6",
         abi_digest = "5ojmBDhhu9AjKUc1LSHhZfXF6KeicvZpKP6XdLNaFAdy",
+        abi_serializer = ["bincode", "wincode"],
         test_roundtrip = "eq_and_wire"
     )
 )]
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, SchemaRead, SchemaWrite)]
 pub struct BlockhashQueue {
     /// index of last hash to be registered
     last_hash_index: u64,

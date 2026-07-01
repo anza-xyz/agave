@@ -5782,6 +5782,7 @@ dependencies = [
  "solana-pubkey 4.2.0",
  "solana-sdk-ids",
  "solana-sysvar",
+ "wincode",
 ]
 
 [[package]]
@@ -5900,6 +5901,7 @@ dependencies = [
  "spl-generic-token",
  "tempfile",
  "thiserror 2.0.18",
+ "wincode",
 ]
 
 [[package]]
@@ -6701,6 +6703,7 @@ dependencies = [
  "solana-sdk-ids",
  "solana-sdk-macro",
  "solana-sysvar-id",
+ "wincode",
 ]
 
 [[package]]
@@ -6942,6 +6945,7 @@ checksum = "45406eccad36220e52988b024d8daa93e691e38d5d71ad5fec55410cc9cf427d"
 dependencies = [
  "serde",
  "serde_derive",
+ "wincode",
 ]
 
 [[package]]
@@ -6983,6 +6987,7 @@ checksum = "ccf104167e42e747602b88e02b25cacfc5de699c3b7cbba60d3250437e6a22ed"
 dependencies = [
  "serde",
  "serde_derive",
+ "wincode",
 ]
 
 [[package]]
@@ -7731,6 +7736,7 @@ dependencies = [
  "solana-sdk-ids",
  "solana-sdk-macro",
  "solana-sysvar-id",
+ "wincode",
 ]
 
 [[package]]
@@ -9054,6 +9060,7 @@ dependencies = [
  "solana-transaction",
  "solana-vote-interface",
  "thiserror 2.0.18",
+ "wincode",
 ]
 
 [[package]]
@@ -10458,6 +10465,7 @@ dependencies = [
  "pastey",
  "proc-macro2",
  "quote",
+ "smallvec",
  "thiserror 2.0.18",
  "wincode-derive",
 ]

@@ -43,6 +43,7 @@ use {
     solana_serde::default_on_eof,
     solana_stake_interface::state::Delegation,
     std::{
+        borrow::Borrow,
         collections::{HashMap, HashSet},
         io::{self, BufReader, Read, Write},
         path::PathBuf,
@@ -56,8 +57,10 @@ use {
     },
     types::{SerdeAccountsLtHash, UnusedRentCollector},
     wincode::{
-        SchemaReadOwned, SchemaWrite,
+        ReadResult, SchemaRead, SchemaReadOwned, SchemaWrite, WriteResult,
+        containers::FromIntoIterator,
         io::{Reader, std_write::WriteAdapter},
+        len::BincodeLen,
     },
 };
 
@@ -93,9 +96,10 @@ pub(crate) struct AccountsDbFields<T>(
     Vec<(Slot, Hash)>,
 );
 
+#[repr(C)]
 #[cfg_attr(feature = "frozen-abi", derive(AbiExample, StableAbi, StableAbiSample))]
 #[cfg_attr(feature = "dev-context-only-utils", derive(Default, PartialEq))]
-#[derive(Serialize, Deserialize, Clone, Debug)]
+#[derive(Serialize, Deserialize, Clone, Debug, SchemaRead, SchemaWrite)]
 pub struct UnusedIncrementalSnapshotPersistence {
     pub full_slot: u64,
     pub full_hash: [u8; 32],
@@ -104,15 +108,17 @@ pub struct UnusedIncrementalSnapshotPersistence {
     pub incremental_capitalization: u64,
 }
 
+#[repr(C)]
 #[cfg_attr(
     feature = "frozen-abi",
     derive(AbiExample, StableAbi, StableAbiSample),
     frozen_abi(
         abi_digest = "EcPdH21GSyYYTiSZbAN157YfrT3G8rKvDiNh7q1fw8Bc",
+        abi_serializer = ["bincode", "wincode"],
         test_roundtrip = "eq_and_wire"
     )
 )]
-#[derive(Clone, Default, Debug, Serialize, Deserialize, PartialEq, Eq)]
+#[derive(Clone, Default, Debug, Serialize, Deserialize, PartialEq, Eq, SchemaRead, SchemaWrite)]
 struct BankHashInfo {
     unused_accounts_delta_hash: [u8; 32],
     unused_accounts_hash: [u8; 32],
@@ -120,7 +126,7 @@ struct BankHashInfo {
 }
 
 #[cfg_attr(feature = "frozen-abi", derive(AbiExample, StableAbi, StableAbiSample))]
-#[derive(Default, Clone, PartialEq, Eq, Debug, Deserialize, Serialize)]
+#[derive(Default, Clone, PartialEq, Eq, Debug, Deserialize, Serialize, SchemaRead, SchemaWrite)]
 struct UnusedAccounts {
     unused1: HashSet<Pubkey>,
     unused2: HashSet<Pubkey>,
@@ -213,10 +219,11 @@ impl From<DeserializableVersionedBank> for BankFieldsToDeserialize {
     // digest only verifies the serialized wire format; there is no roundtrip.
     frozen_abi(
         abi_digest = "6sm6hSNiTsNBAbSAiNe2BSQgnum3UdeNBpZnZiX7aM9r",
+        abi_serializer = ["bincode", "wincode"],
         test_roundtrip = "no"
     )
 )]
-#[derive(Serialize)]
+#[derive(Serialize, SchemaWrite)]
 struct SerializableVersionedBank {
     blockhash_queue: BlockhashQueue,
     unused_ancestors: HashMap<Slot, usize>,
@@ -359,7 +366,7 @@ impl<T> SnapshotAccountsDbFields<T> {
     }
 }
 
-pub(crate) fn serialize_into<W, T>(writer: W, value: &T) -> wincode::WriteResult<()>
+pub(crate) fn serialize_into<W, T>(writer: W, value: &T) -> WriteResult<()>
 where
     W: Write,
     T: SchemaWrite<MaxStreamSizeConfig, Src = T>,
@@ -367,7 +374,7 @@ where
     wincode::config::serialize_into(WriteAdapter::new(writer), value, MaxStreamSizeConfig::new())
 }
 
-pub(crate) fn deserialize_wincode_from<'a, R, T>(reader: R) -> wincode::ReadResult<T>
+pub(crate) fn deserialize_wincode_from<'a, R, T>(reader: R) -> ReadResult<T>
 where
     R: Reader<'a>,
     T: SchemaReadOwned<MaxStreamSizeConfig, Dst = T>,
@@ -432,11 +439,12 @@ struct ExtraFieldsToDeserialize {
     // only verifies the serialized wire format; there is no roundtrip.
     frozen_abi(
         abi_digest = "726M1TRfibJsSAGcFqan4TSC8qKkJhDZfiK2P3h71eoo",
+        abi_serializer = ["bincode", "wincode"],
         test_roundtrip = "no"
     )
 )]
 #[cfg_attr(feature = "dev-context-only-utils", derive(Default, PartialEq))]
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, SchemaWrite)]
 pub struct ExtraFieldsToSerialize {
     pub lamports_per_signature: u64,
     pub unused_incremental_snapshot_persistence: Option<UnusedIncrementalSnapshotPersistence>,
@@ -626,7 +634,7 @@ pub fn serialize_bank_snapshot_into(
 // extra fields, in wire order. Generic over the account-storage-entries serializer `E` so the
 // runtime can stream the storage entries lazily (see `SerializableAccountsDb`).
 #[cfg_attr(feature = "frozen-abi", derive(StableAbi, StableAbiSample))]
-#[derive(Serialize)]
+#[derive(Serialize, SchemaWrite)]
 struct SerializableBankSnapshot<E> {
     bank: SerializableVersionedBank,
     accounts_db: SerializableAccountsDb<E>,
@@ -640,6 +648,7 @@ struct SerializableBankSnapshot<E> {
 #[cfg(all(test, feature = "frozen-abi"))]
 #[frozen_abi(
     abi_digest = "E4waD1iVxUYi3x9xA5xQHhCEbhhGtV9bqmo2TJ9ZsqTw",
+    abi_serializer = ["bincode", "wincode"],
     test_roundtrip = "no"
 )]
 type SerializableBankSnapshotForAbi =
@@ -744,7 +753,7 @@ impl<'a> From<SerializableBankAndStorageNoExtra<'a>> for SerializableBankAndStor
 // (see `SerializableAccountsDb::new`) without materializing a collection. Sync fields with
 // `AccountsDbFields`!
 #[cfg_attr(feature = "frozen-abi", derive(StableAbi, StableAbiSample))]
-#[derive(Serialize)]
+#[derive(Serialize, SchemaWrite)]
 struct SerializableAccountsDb<E> {
     /// account storage entries, serialized as a map of slot to its storage entries
     accounts_storage_entries: E,
@@ -758,9 +767,29 @@ struct SerializableAccountsDb<E> {
 }
 
 /// Adapts a cloneable, exact-size iterator into a value that serializes as a length-prefixed
-/// sequence, re-creating the iterator via `Clone` on each serialization so a locally built iterator
-/// can be written without first materializing it into a collection.
+/// sequence under *both* serde (bincode) and wincode, re-creating the iterator via `Clone` on each
+/// serialization so a locally built iterator can be written without first materializing it into a
+/// collection. serde maps/sequences and bincode/wincode sequences share the same wire encoding, so
+/// this matches the `slot -> [entry]` map shape read back by `AccountsDbFields`.
 struct SerializableExactIteratorView<I>(I);
+
+impl<I: Iterator> IntoIterator for SerializableExactIteratorView<I> {
+    type Item = I::Item;
+    type IntoIter = I;
+
+    fn into_iter(self) -> Self::IntoIter {
+        self.0
+    }
+}
+
+impl<I: Iterator + Clone> IntoIterator for &SerializableExactIteratorView<I> {
+    type Item = I::Item;
+    type IntoIter = I;
+
+    fn into_iter(self) -> Self::IntoIter {
+        self.0.clone()
+    }
+}
 
 impl<I> Serialize for SerializableExactIteratorView<I>
 where
@@ -772,6 +801,28 @@ where
         S: serde::Serializer,
     {
         serializer.collect_seq(self.0.clone())
+    }
+}
+
+// Serialize the wrapped iterator as a length-prefixed sequence via `FromIntoIterator`, byte-for-byte
+// identical to the serde encoding above.
+unsafe impl<I, C: wincode::config::Config> SchemaWrite<C> for SerializableExactIteratorView<I>
+where
+    I: ExactSizeIterator + Clone,
+    I::Item: SchemaWrite<C> + Borrow<<I::Item as SchemaWrite<C>>::Src>,
+{
+    type Src = Self;
+
+    fn size_of(src: &Self::Src) -> WriteResult<usize> {
+        <FromIntoIterator<SerializableExactIteratorView<I>, BincodeLen> as SchemaWrite<C>>::size_of(
+            src,
+        )
+    }
+
+    fn write(writer: impl wincode::io::Writer, src: &Self::Src) -> WriteResult<()> {
+        <FromIntoIterator<SerializableExactIteratorView<I>, BincodeLen> as SchemaWrite<C>>::write(
+            writer, src,
+        )
     }
 }
 
@@ -822,6 +873,7 @@ impl SerializableAccountsDb<()> {
 #[cfg(all(test, feature = "frozen-abi"))]
 #[frozen_abi(
     abi_digest = "2TpwtsyrverM4ius4ykX3RRCGqeLfXJQbAvYHkxdUVrs",
+    abi_serializer = ["bincode", "wincode"],
     test_roundtrip = "no"
 )]
 type SerializableAccountsDbForAbi =
