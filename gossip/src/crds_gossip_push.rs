@@ -288,15 +288,19 @@ impl CrdsGossipPush {
 mod tests {
     use {
         super::*,
-        crate::{contact_info::ContactInfo, crds_data::CrdsData},
-        std::time::{Duration, Instant},
+        crate::{
+            cluster_info::{GOSSIP_PING_CACHE_OUTSTANDING_PING_TIMEOUT_MS, GOSSIP_PING_CACHE_TTL},
+            contact_info::ContactInfo,
+            crds_data::CrdsData,
+        },
+        std::time::Instant,
     };
 
     fn new_ping_cache() -> PingCache {
         PingCache::new(
-            Duration::from_secs(20 * 60),      // ttl
-            Duration::from_secs(20 * 60) / 64, // rate_limit_delay
-            128,                               // capacity
+            GOSSIP_PING_CACHE_TTL,
+            GOSSIP_PING_CACHE_OUTSTANDING_PING_TIMEOUT_MS,
+            128, // capacity (small for tests)
         )
     }
 
