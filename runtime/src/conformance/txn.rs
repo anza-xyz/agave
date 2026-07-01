@@ -38,6 +38,7 @@ use {
     solana_lattice_hash::lt_hash::LtHash,
     solana_message::SanitizedMessage,
     solana_pubkey::Pubkey,
+    solana_runtime_transaction::runtime_transaction::RuntimeTransaction,
     solana_sdk_ids::sysvar,
     solana_stake_interface::state::Stake,
     solana_svm::{
@@ -46,7 +47,10 @@ use {
         transaction_processor::{ExecutionRecordingConfig, TransactionProcessingConfig},
     },
     solana_svm_timings::ExecuteTimings,
-    solana_transaction::{TransactionVerificationMode, versioned::VersionedTransaction},
+    solana_transaction::{
+        TransactionVerificationMode, sanitized::SanitizedTransaction,
+        versioned::VersionedTransaction,
+    },
     solana_transaction_error::TransactionError,
     solana_vote::vote_account::VoteAccounts,
     std::{collections::HashMap, sync::Arc},
@@ -86,11 +90,10 @@ pub enum NativeTxnExecution {
     /// The transaction failed sanitization/verification before execution.
     NotSanitized(TransactionError),
     /// The transaction was processed (executed or fees-only). Carries the
-    /// processing result and a copy of the sanitized message for effect
-    /// extraction.
+    /// processing result and transaction for effect extraction.
     Processed {
         result: TransactionProcessingResult,
-        sanitized_message: SanitizedMessage,
+        runtime_transaction: RuntimeTransaction<SanitizedTransaction>,
     },
 }
 
@@ -200,11 +203,6 @@ pub fn execute_txn(
         Ok(tx) => tx,
         Err(err) => return NativeTxnExecution::NotSanitized(err),
     };
-    let sanitized_message = runtime_transaction.message().clone();
-
-    // `RuntimeTransaction` is not `Clone`, so wrap it in a Vec for the batch.
-    let transactions = vec![runtime_transaction];
-    let batch = bank.prepare_sanitized_batch(&transactions);
 
     let recording_config = ExecutionRecordingConfig {
         enable_cpi_recording: false,
@@ -220,8 +218,9 @@ pub fn execute_txn(
 
     let mut timings = ExecuteTimings::default();
     let mut metrics = TransactionErrorMetrics::default();
-    let result = bank
-        .load_and_execute_transactions(
+    let result = {
+        let batch = bank.prepare_locked_batch_from_single_tx(&runtime_transaction);
+        bank.load_and_execute_transactions(
             &batch,
             MAX_PROCESSING_AGE,
             &mut timings,
@@ -231,11 +230,12 @@ pub fn execute_txn(
         .processing_results
         .into_iter()
         .next()
-        .unwrap();
+        .expect("single transaction execution must return one result")
+    };
 
     NativeTxnExecution::Processed {
         result,
-        sanitized_message,
+        runtime_transaction,
     }
 }
 
@@ -576,8 +576,7 @@ pub fn execute_txn_proto(context: &ProtoTxnContext) -> ProtoTxnResult {
     let mut signatures = tx
         .signatures
         .iter()
-        .map(|item| <[u8; 64]>::try_from(item.as_slice()).unwrap())
-        .map(Signature::from)
+        .map(|item| Signature::try_from(item.as_slice()).unwrap())
         .collect::<Vec<Signature>>();
     if signatures.is_empty() {
         // Default: a single empty signature (keeps simple cases valid).
@@ -588,7 +587,7 @@ pub fn execute_txn_proto(context: &ProtoTxnContext) -> ProtoTxnResult {
         message,
     };
 
-    let (result, sanitized_message) = match execute_txn(
+    let (result, runtime_transaction) = match execute_txn(
         &accounts,
         feature_set,
         blockhash_queue,
@@ -610,11 +609,12 @@ pub fn execute_txn_proto(context: &ProtoTxnContext) -> ProtoTxnResult {
         }
         NativeTxnExecution::Processed {
             result,
-            sanitized_message,
-        } => (result, sanitized_message),
+            runtime_transaction,
+        } => (result, runtime_transaction),
     };
+    let sanitized_message = runtime_transaction.message();
 
-    let mut txn_result = output_txn_result(&result, &sanitized_message);
+    let mut txn_result = output_txn_result(&result, sanitized_message);
 
     let cu_avail = match &result {
         Ok(ProcessedTransaction::Executed(executed_tx)) => executed_tx
@@ -643,7 +643,7 @@ pub fn execute_txn_proto(context: &ProtoTxnContext) -> ProtoTxnResult {
             .iter()
             .map(|key| Pubkey::try_from(key.as_slice()).unwrap()),
     );
-    if let SanitizedMessage::V0(message) = &sanitized_message {
+    if let SanitizedMessage::V0(message) = sanitized_message {
         loaded_account_keys.extend(message.loaded_addresses.writable.iter().copied());
         loaded_account_keys.extend(message.loaded_addresses.readonly.iter().copied());
     }
@@ -884,13 +884,13 @@ mod tests {
         match execution {
             NativeTxnExecution::Processed {
                 result: Ok(ProcessedTransaction::Executed(executed_tx)),
-                sanitized_message,
+                runtime_transaction,
             } => executed_tx
                 .loaded_transaction
                 .accounts
                 .iter()
                 .enumerate()
-                .filter(|(index, _)| sanitized_message.is_writable(*index))
+                .filter(|(index, _)| runtime_transaction.message().is_writable(*index))
                 .find(|(_, (key, _))| key == pubkey)
                 .map(|(_, (_, account))| account.lamports()),
             _ => None,
