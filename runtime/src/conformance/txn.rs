@@ -42,7 +42,9 @@ use {
     solana_sdk_ids::sysvar,
     solana_stake_interface::state::Stake,
     solana_svm::{
+        account_loader::FeesOnlyTransaction,
         transaction_error_metrics::TransactionErrorMetrics,
+        transaction_execution_result::ExecutedTransaction,
         transaction_processing_result::TransactionProcessingResult,
         transaction_processor::{ExecutionRecordingConfig, TransactionProcessingConfig},
     },
@@ -65,6 +67,7 @@ use {
         TransactionMessage as ProtoTransactionMessage, TxnContext as ProtoTxnContext,
         TxnResult as ProtoTxnResult,
     },
+    solana_instruction::error::InstructionError,
     solana_message::{
         MessageHeader, VersionedMessage,
         compiled_instruction::CompiledInstruction,
@@ -364,9 +367,7 @@ impl ProtoTxnErrorFields {
         let (instruction_error, custom_error, instruction_error_index) = match transaction_error {
             TransactionError::InstructionError(instruction_error_index, instruction_error) => {
                 let custom_error = match instruction_error {
-                    solana_instruction::error::InstructionError::Custom(custom_error) => {
-                        *custom_error
-                    }
+                    InstructionError::Custom(custom_error) => *custom_error,
                     _ => 0,
                 };
                 (
@@ -438,7 +439,7 @@ impl ProtoTxnEffects {
 
 #[cfg(feature = "dev-context-only-utils")]
 fn executed_transaction_effects(
-    executed_tx: &solana_svm::transaction_execution_result::ExecutedTransaction,
+    executed_tx: &ExecutedTransaction,
     sanitized_message: &SanitizedMessage,
 ) -> ProtoTxnEffects {
     let loaded = &executed_tx.loaded_transaction;
@@ -473,9 +474,7 @@ fn executed_transaction_effects(
 }
 
 #[cfg(feature = "dev-context-only-utils")]
-fn fees_only_transaction_effects(
-    tx: &solana_svm::account_loader::FeesOnlyTransaction,
-) -> ProtoTxnEffects {
+fn fees_only_transaction_effects(tx: &FeesOnlyTransaction) -> ProtoTxnEffects {
     ProtoTxnEffects {
         modified_accounts: vec![],
         rollback_accounts: tx
@@ -700,6 +699,7 @@ mod tests {
         solana_epoch_schedule::EpochSchedule,
         solana_fee_calculator::FeeRateGovernor,
         solana_hash::Hash,
+        solana_instruction::error::InstructionError,
         solana_loader_v3_interface::state::UpgradeableLoaderState,
         solana_message::{
             MessageHeader, VersionedMessage,
@@ -941,7 +941,7 @@ mod tests {
     fn proto_txn_error_fields_zeroes_precompile_custom_error() {
         let error = solana_transaction_error::TransactionError::InstructionError(
             0,
-            solana_instruction::error::InstructionError::Custom(7),
+            InstructionError::Custom(7),
         );
         let fields = super::ProtoTxnErrorFields::from_transaction_error(&error)
             .zero_precompile_custom_error(&sanitized_message_with_program(
@@ -958,7 +958,7 @@ mod tests {
     fn proto_txn_error_fields_keeps_non_precompile_custom_error() {
         let error = solana_transaction_error::TransactionError::InstructionError(
             0,
-            solana_instruction::error::InstructionError::Custom(7),
+            InstructionError::Custom(7),
         );
         let fields = super::ProtoTxnErrorFields::from_transaction_error(&error)
             .zero_precompile_custom_error(&sanitized_message_with_program(Pubkey::new_unique()));
