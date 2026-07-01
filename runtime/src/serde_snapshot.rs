@@ -17,7 +17,7 @@ use {
     bincode::{self, Error, config::Options},
     log::*,
     serde::{Deserialize, Serialize, de::DeserializeOwned},
-    smallvec::SmallVec,
+    smallvec::{SmallVec, smallvec},
     solana_accounts_db::{
         ObsoleteAccounts,
         account_storage_entry::AccountStorageEntry,
@@ -67,7 +67,6 @@ mod storage;
 mod storages_list;
 mod tests;
 mod types;
-mod utils;
 
 pub(crate) use {
     obsolete_accounts::{SerdeObsoleteAccounts, SerdeObsoleteAccountsMap},
@@ -758,24 +757,48 @@ struct SerializableAccountsDb<E> {
     historical_roots_with_hash: Vec<(Slot, Hash)>,
 }
 
+/// Adapts a cloneable, exact-size iterator into a value that serializes as a length-prefixed
+/// sequence, re-creating the iterator via `Clone` on each serialization so a locally built iterator
+/// can be written without first materializing it into a collection.
+struct SerializableExactIteratorView<I>(I);
+
+impl<I> Serialize for SerializableExactIteratorView<I>
+where
+    I: ExactSizeIterator + Clone,
+    I::Item: Serialize,
+{
+    fn serialize<S>(&self, serializer: S) -> std::result::Result<S::Ok, S::Error>
+    where
+        S: serde::Serializer,
+    {
+        serializer.collect_seq(self.0.clone())
+    }
+}
+
 impl SerializableAccountsDb<()> {
     fn new(
         slot: Slot,
         account_storage_entries: &[Arc<AccountStorageEntry>],
         bank_hash_stats: BankHashStats,
-    ) -> SerializableAccountsDb<impl Serialize + '_> {
-        // Serialize the list of account storage entry lists out as a map keyed by slot. This is a
-        // lazy iterator, so the entries are only walked when the struct is serialized.
+    ) -> SerializableAccountsDb<
+        SerializableExactIteratorView<
+            impl ExactSizeIterator<Item = (Slot, SmallVec<[SerializableAccountStorageEntry; 1]>)>
+            + Clone
+            + '_,
+        >,
+    > {
+        // Stream the storage entries as a `slot -> [entry]` map, each slot's single entry kept
+        // inline in a `SmallVec`. `SerializableExactIteratorView` re-creates the iterator on each
+        // serialization, so nothing is materialized.
         let accounts_storage_entries =
-            utils::serialize_iter_as_map(account_storage_entries.iter().map(move |x| {
-                (
-                    x.slot(),
-                    utils::serialize_iter_as_seq(
-                        [x].into_iter()
-                            .map(move |x| SerializableAccountStorageEntry::new(x, slot)),
-                    ),
-                )
-            }));
+            SerializableExactIteratorView(account_storage_entries.iter().map(
+                move |entry| -> (Slot, SmallVec<[SerializableAccountStorageEntry; 1]>) {
+                    (
+                        entry.slot(),
+                        smallvec![SerializableAccountStorageEntry::new(entry, slot)],
+                    )
+                },
+            ));
         let bank_hash_info = BankHashInfo {
             unused_accounts_delta_hash: [0; 32],
             unused_accounts_hash: [0; 32],
