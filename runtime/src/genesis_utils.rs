@@ -322,7 +322,15 @@ pub fn create_genesis_config_with_leader_with_mint_keypair(
 
 pub fn activate_all_features_alpenglow(genesis_config: &mut GenesisConfig) {
     do_activate_all_features::<true>(genesis_config);
+    configure_alpenglow_at_genesis(genesis_config);
+}
 
+pub fn activate_alpenglow_at_genesis(genesis_config: &mut GenesisConfig) {
+    activate_feature(genesis_config, agave_feature_set::alpenglow::id());
+    configure_alpenglow_at_genesis(genesis_config);
+}
+
+fn configure_alpenglow_at_genesis(genesis_config: &mut GenesisConfig) {
     // PoH is in low power mode
     genesis_config.poh_config.hashes_per_tick = None;
 

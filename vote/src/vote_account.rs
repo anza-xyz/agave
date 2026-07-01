@@ -312,7 +312,8 @@ impl VoteAccounts {
                 Some(mem::replace(old_vote_account, new_vote_account))
             }
             Entry::Vacant(entry) => {
-                // This is a new vote account. We don't know the stake yet, so we need to compute it.
+                // This is a new vote account. Use the caller-provided stake for the initial
+                // cache entry.
                 let (stake, vote_account) = entry.insert((calculate_stake(), new_vote_account));
                 if let Some(staked_nodes) = self.staked_nodes.get_mut() {
                     Self::do_add_node_stake(staked_nodes, *stake, *vote_account.node_pubkey());

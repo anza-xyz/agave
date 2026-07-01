@@ -144,13 +144,13 @@ solana-stake-interface = { version = "=4.2.0", features = ["bincode"] }
 solana-svm = { path = "../../svm", version = "=4.2.0-alpha.0" }
 solana-svm-feature-set = { path = "../../svm-feature-set", version = "=4.2.0-alpha.0" }
 solana-svm-timings = { path = "../../svm-timings", version = "=4.2.0-alpha.0" }
-solana-svm-transaction = { path = "../../svm-transaction", version = "=4.2.0-alpha.0" }
+solana-svm-transaction = "=4.2.0"
 solana-svm-type-overrides = { path = "../../svm-type-overrides", version = "=4.2.0-alpha.0" }
 solana-system-interface = { version = "=3.2", features = ["bincode"] }
 solana-sysvar = "=4.0.0"
 solana-test-validator = { path = "../../test-validator", version = "=4.2.0-alpha.0" }
 solana-vote = { path = "../../vote", version = "=4.2.0-alpha.0" }
-solana-vote-interface = "6.0.0"
+solana-vote-interface = "6.0.1"
 solana-vote-program = { path = "../../programs/vote", version = "=4.2.0-alpha.0" }
 test-case = "3.3.1"
 thiserror = "2.0"

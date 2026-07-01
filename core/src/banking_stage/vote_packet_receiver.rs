@@ -11,6 +11,7 @@ use {
     crossbeam_channel::RecvTimeoutError,
     solana_measure::{measure::Measure, measure_us},
     solana_pubkey::Pubkey,
+    solana_runtime_transaction::sanitize_config::sanitize_config,
     std::{
         collections::HashSet,
         num::Saturating,
@@ -115,8 +116,9 @@ impl VotePacketReceiver {
                 match SanitizedTransactionView::try_new_sanitized(
                     Arc::new(pkt.data(..)?.to_vec()),
                     // Vote instructions are created in the validator code, and they are not
-                    // referencing more than 255 accounts, so it is safe to set this to true.
-                    true,
+                    // referencing more than 255 accounts, so it is safe to enforce the
+                    // instruction accounts limit unconditionally.
+                    &sanitize_config(true),
                 ) {
                     Ok(pkt) => {
                         if self.should_filter_packet(&pkt) {
@@ -280,7 +282,7 @@ mod tests {
             leader_slot_metrics::LeaderSlotMetricsTracker,
             vote_storage::{VoteStorage, tests::packet_from_slots},
         },
-        crossbeam_channel::unbounded,
+        crossbeam_channel::bounded,
         solana_perf::packet::PacketBatch,
         solana_runtime::{
             bank::Bank,
@@ -294,7 +296,7 @@ mod tests {
         filter_keys: Arc<HashSet<Pubkey>>,
     ) -> VoteStorage {
         let vote_packet = packet_from_slots(vec![(1, 1)], keypairs, None);
-        let (sender, receiver) = unbounded();
+        let (sender, receiver) = bounded(1024);
         sender
             .send(Arc::new(vec![PacketBatch::from(vec![vote_packet])]))
             .unwrap();

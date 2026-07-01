@@ -35,6 +35,7 @@ pub(crate) type EpochSlotsIndex = u8;
 pub(crate) const MAX_EPOCH_SLOTS: EpochSlotsIndex = 255;
 
 // Helper for deprecated types
+#[cfg_attr(feature = "frozen-abi", derive(AbiExample, StableAbi, StableAbiSample))]
 #[derive(Serialize, Clone, Debug, PartialEq, Eq, SchemaWrite)]
 pub(crate) struct Deprecated {}
 reject_deserialize!(Deprecated, "Trying to deserialize deprecated type");
@@ -71,7 +72,15 @@ unsafe impl<'de, C: Config> SchemaRead<'de, C> for RejectNonzeroU8 {
 /// * Merge Strategy - Latest wallclock is picked
 /// * LowestSlot index is deprecated
 #[allow(clippy::large_enum_variant)]
-#[cfg_attr(feature = "frozen-abi", derive(AbiExample, AbiEnumVisitor))]
+#[cfg_attr(
+    feature = "frozen-abi",
+    derive(AbiExample, AbiEnumVisitor, StableAbi),
+    frozen_abi(
+        abi_digest = "Dqsrw64E4ALKusk5cjbckL6vNHw1ESwTzKUqKrMSQCic",
+        abi_serializer = ["bincode", "wincode"],
+        test_roundtrip = "eq_and_wire",
+    )
+)]
 #[cfg_attr(test, derive(strum_macros::EnumCount))]
 #[derive(Serialize, Deserialize, Clone, Debug, PartialEq, Eq, SchemaWrite, SchemaRead)]
 pub enum CrdsData {
@@ -251,7 +260,15 @@ impl From<&ContactInfo> for CrdsData {
     }
 }
 
-#[cfg_attr(feature = "frozen-abi", derive(AbiExample))]
+#[cfg_attr(
+    feature = "frozen-abi",
+    derive(AbiExample, StableAbi, StableAbiSample),
+    frozen_abi(
+        abi_digest = "EMCUxeoxyA9ATkmZpACEx6a6mPd5nV16g9vpeuFzpyG5",
+        abi_serializer = ["bincode", "wincode"],
+        test_roundtrip = "eq_and_wire",
+    )
+)]
 #[derive(Serialize, Deserialize, Clone, Debug, PartialEq, Eq, SchemaRead, SchemaWrite)]
 pub struct SnapshotHashes {
     pub from: Pubkey,
@@ -278,7 +295,15 @@ impl Sanitize for SnapshotHashes {
     }
 }
 
-#[cfg_attr(feature = "frozen-abi", derive(AbiExample))]
+#[cfg_attr(
+    feature = "frozen-abi",
+    derive(AbiExample, StableAbi, StableAbiSample),
+    frozen_abi(
+        abi_digest = "BjFXktfmwd6TT8kdWVEeMJquARTUe8cUvo2oDwzMfhPi",
+        abi_serializer = ["bincode", "wincode"],
+        test_roundtrip = "eq_and_wire",
+    )
+)]
 #[derive(Serialize, Deserialize, Clone, Debug, PartialEq, Eq, SchemaRead, SchemaWrite)]
 pub struct LowestSlot {
     pub(crate) from: Pubkey,
@@ -359,7 +384,15 @@ where
     }
 }
 
-#[cfg_attr(feature = "frozen-abi", derive(AbiExample))]
+#[cfg_attr(
+    feature = "frozen-abi",
+    derive(AbiExample, StableAbi),
+    frozen_abi(
+        abi_digest = "BuDZ4shsJhBqELG47eMS3cDM8EcqHBGMSVu99JeW6VdM",
+        abi_serializer = ["bincode", "wincode"],
+        test_roundtrip = "eq_and_wire",
+    )
+)]
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, SchemaWrite)]
 pub struct Vote {
     pub(crate) from: Pubkey,
@@ -494,6 +527,64 @@ macro_rules! reject_deserialize {
     };
 }
 pub(crate) use reject_deserialize;
+
+// `Vote` derives only `StableAbi` (not `StableAbiSample`): its `slot` field is
+// recomputed from the transaction on deserialize, and the transaction must parse
+// as a vote, so independent per-field sampling can't produce round-trippable
+// values. Building via `Vote::new` with a valid vote transaction does, which lets
+// the digest test use `test_roundtrip = "eq_and_wire"`.
+#[cfg(feature = "frozen-abi")]
+impl solana_frozen_abi::rand::distr::Distribution<Vote>
+    for solana_frozen_abi::rand::distr::StandardUniform
+{
+    fn sample<R: solana_frozen_abi::rand::Rng + ?Sized>(&self, rng: &mut R) -> Vote {
+        use {solana_frozen_abi::stable_abi::StableAbi, solana_keypair::Keypair};
+        let node = Keypair::new_from_array(rng.random());
+        let vote = Keypair::new_from_array(rng.random());
+        let authorized_voter = Keypair::new_from_array(rng.random());
+        let transaction = solana_vote::vote_transaction::new_vote_transaction(
+            /*slots:*/ vec![rng.random()],
+            /*bank_hash:*/ <Hash as StableAbi>::random(rng),
+            /*blockhash:*/ <Hash as StableAbi>::random(rng),
+            &node,
+            &vote,
+            &authorized_voter,
+            /*switch_proof_hash:*/ None,
+        );
+        Vote::new(
+            <Pubkey as StableAbi>::random(rng),
+            transaction,
+            rng.random(),
+        )
+        .expect("vote transaction must parse as a vote")
+    }
+}
+
+// `CrdsData` derives only `StableAbi` (not `StableAbiSample`): the auto-derived
+// enum sampler picks a uniform variant including the deprecated ones, which wrap
+// `Deprecated` and reject deserialization. This sampler emits only the
+// non-deprecated, round-trippable variants (with `LowestSlot`'s index pinned to
+// 0), so the digest test can use `test_roundtrip = "eq_and_wire"`.
+#[cfg(feature = "frozen-abi")]
+impl solana_frozen_abi::rand::distr::Distribution<CrdsData>
+    for solana_frozen_abi::rand::distr::StandardUniform
+{
+    fn sample<R: solana_frozen_abi::rand::Rng + ?Sized>(&self, rng: &mut R) -> CrdsData {
+        use solana_frozen_abi::stable_abi::StableAbi;
+        match rng.random_range(0..8u8) {
+            0 => CrdsData::Vote(rng.random(), <Vote as StableAbi>::random(rng)),
+            1 => CrdsData::LowestSlot(0, <LowestSlot as StableAbi>::random(rng)),
+            2 => CrdsData::EpochSlots(rng.random(), <EpochSlots as StableAbi>::random(rng)),
+            3 => CrdsData::DuplicateShred(rng.random(), <DuplicateShred as StableAbi>::random(rng)),
+            4 => CrdsData::SnapshotHashes(<SnapshotHashes as StableAbi>::random(rng)),
+            5 => CrdsData::ContactInfo(<ContactInfo as StableAbi>::random(rng)),
+            6 => CrdsData::RestartLastVotedForkSlots(
+                <RestartLastVotedForkSlots as StableAbi>::random(rng),
+            ),
+            _ => CrdsData::RestartHeaviestFork(<RestartHeaviestFork as StableAbi>::random(rng)),
+        }
+    }
+}
 
 #[cfg(test)]
 mod test {

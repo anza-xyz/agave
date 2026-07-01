@@ -20,7 +20,6 @@ use {
     solana_sdk_ids::{bpf_loader, bpf_loader_deprecated, bpf_loader_upgradeable, loader_v4},
     solana_svm_callback::TransactionProcessingCallback,
     solana_svm_timings::ExecuteTimings,
-    solana_svm_transaction::svm_message::SVMMessage,
     solana_svm_type_overrides::sync::Arc,
     solana_transaction_error::{TransactionError, TransactionResult},
     std::sync::atomic::Ordering,
@@ -250,11 +249,11 @@ pub(crate) fn get_program_deployment_slot<CB: TransactionProcessingCallback>(
 pub fn filter_executable_program_accounts<'a, CB: TransactionProcessingCallback>(
     callbacks: &CB,
     program_cache_for_tx_batch: &ProgramCacheForTxBatch,
-    tx: &'a impl SVMMessage,
+    keys: impl Iterator<Item = &'a Pubkey>,
     check_program_deployment_slot: bool,
 ) -> Vec<ProgramToLoad<'a>> {
     let mut result = Vec::new();
-    for account_key in tx.account_keys().iter() {
+    for account_key in keys {
         if let Some(cache_entry) = program_cache_for_tx_batch.find(account_key) {
             cache_entry.stats.uses.fetch_add(1, Ordering::Relaxed);
         } else if let Some((account, last_modification_slot)) =
@@ -322,6 +321,7 @@ mod tests {
             solana_sbpf::program::BuiltinProgram,
         },
         solana_sdk_ids::{bpf_loader, bpf_loader_upgradeable, native_loader},
+        solana_svm_transaction::svm_message::SVMMessage,
         solana_svm_type_overrides::sync::atomic::AtomicU64,
         solana_transaction::{Transaction, sanitized::SanitizedTransaction},
         std::{
@@ -885,7 +885,7 @@ mod tests {
         let missing_programs = filter_executable_program_accounts(
             &mock_bank,
             &loaded_programs_for_tx_batch,
-            &sanitized_tx,
+            sanitized_tx.account_keys().iter(),
             false,
         );
         assert_eq!(
@@ -909,7 +909,7 @@ mod tests {
         let missing_programs = filter_executable_program_accounts(
             &mock_bank,
             &loaded_programs_for_tx_batch,
-            &sanitized_tx,
+            sanitized_tx.account_keys().iter(),
             true,
         );
         assert_eq!(

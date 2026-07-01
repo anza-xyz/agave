@@ -3636,7 +3636,7 @@ mod tests {
                             // non-empty slot list (but ignored) because slot_list = 1
                             let slot_list = vec![(
                                 slot,
-                                AccountInfo::new(StorageLocation::Cached, lamports == 0),
+                                AccountInfo::new(StorageLocation::AppendVec(0, 0), lamports == 0),
                             )];
                             alive_accounts.add(2, &account, &slot_list);
                             assert!(alive_accounts.one_ref.accounts.is_empty());
@@ -3653,11 +3653,17 @@ mod tests {
                             let slot_list = vec![
                                 (
                                     slot,
-                                    AccountInfo::new(StorageLocation::Cached, lamports == 0),
+                                    AccountInfo::new(
+                                        StorageLocation::AppendVec(0, 0),
+                                        lamports == 0,
+                                    ),
                                 ),
                                 (
                                     slot + 1,
-                                    AccountInfo::new(StorageLocation::Cached, lamports == 0),
+                                    AccountInfo::new(
+                                        StorageLocation::AppendVec(0, 0),
+                                        lamports == 0,
+                                    ),
                                 ),
                             ];
                             alive_accounts.add(2, &account, &slot_list);
@@ -3675,11 +3681,17 @@ mod tests {
                             let slot_list = vec![
                                 (
                                     slot,
-                                    AccountInfo::new(StorageLocation::Cached, lamports == 0),
+                                    AccountInfo::new(
+                                        StorageLocation::AppendVec(0, 0),
+                                        lamports == 0,
+                                    ),
                                 ),
                                 (
                                     slot - 1,
-                                    AccountInfo::new(StorageLocation::Cached, lamports == 0),
+                                    AccountInfo::new(
+                                        StorageLocation::AppendVec(0, 0),
+                                        lamports == 0,
+                                    ),
                                 ),
                             ];
                             alive_accounts.add(2, &account, &slot_list);

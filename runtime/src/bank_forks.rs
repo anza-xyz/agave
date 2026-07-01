@@ -105,8 +105,7 @@ impl BankForks {
             BankWithScheduler::new_without_scheduler(root_bank.clone()),
         );
 
-        let parents = root_bank.parents();
-        for parent in parents {
+        for parent in root_bank.parents_iter() {
             if banks
                 .insert(
                     parent.slot(),
@@ -488,7 +487,7 @@ impl BankForks {
             }
         }
         let root_tx_count = root_bank
-            .parents()
+            .parents_iter()
             .last()
             .map(|bank| bank.transaction_count())
             .unwrap_or(0);

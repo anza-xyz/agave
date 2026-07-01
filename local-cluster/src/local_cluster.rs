@@ -42,6 +42,7 @@ use {
         GenesisConfigInfo, ValidatorVoteKeypairs,
         create_genesis_config_with_vote_accounts_and_cluster_type,
     },
+    solana_shred_version::compute_shred_version,
     solana_signer::{Signer, signers::Signers},
     solana_stake_interface::{
         instruction as stake_instruction,
@@ -559,7 +560,7 @@ impl LocalCluster {
 
     pub fn close_preserve_ledgers(&mut self) {
         self.exit();
-        for (_, node) in self.validators.iter_mut() {
+        for node in self.validators.values_mut() {
             if let Some(v) = node.validator.take() {
                 v.join();
             }
@@ -921,6 +922,7 @@ impl LocalCluster {
         let alive_node_contact_infos = self.discover_nodes(socket_addr_space, test_name);
         info!("{test_name} looking for new notarized votes on all nodes");
         cluster_tests::check_for_new_notarized_votes(
+            compute_shred_version(&self.genesis_config.hash(), None),
             num_new_notarized_votes,
             &alive_node_contact_infos,
             test_name,
@@ -963,14 +965,14 @@ impl LocalCluster {
     /// Ok(Some(())) if the transaction was processed successfully. Return
     /// Ok(None) if the transaction was not processed.
     pub fn poll_for_successfully_processed_transaction(
-        client: &QuicTpuClient,
+        rpc_client: &RpcClient,
         transaction: &Transaction,
     ) -> std::result::Result<Option<()>, TransportError> {
         loop {
             // Some local cluster tests create conditions where confirmation
             // is unable to be reached. So rather than checking for confirmation,
             // check for the transaction being processed.
-            let status = client.rpc_client().get_signature_status_with_commitment(
+            let status = rpc_client.get_signature_status_with_commitment(
                 &transaction.signatures[0],
                 CommitmentConfig::processed(),
             )?;
@@ -984,7 +986,7 @@ impl LocalCluster {
                 }
             }
 
-            if !client.rpc_client().is_blockhash_valid(
+            if !rpc_client.is_blockhash_valid(
                 &transaction.message.recent_blockhash,
                 CommitmentConfig::processed(),
             )? {
@@ -1012,7 +1014,9 @@ impl LocalCluster {
         // in LocalCluster integration tests
         for attempt in 1..=attempts {
             client.send_transaction_to_upcoming_leaders(transaction)?;
-            if Self::poll_for_successfully_processed_transaction(client, transaction)?.is_some() {
+            if Self::poll_for_successfully_processed_transaction(client.rpc_client(), transaction)?
+                .is_some()
+            {
                 return Ok(());
             }
 

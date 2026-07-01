@@ -19,7 +19,6 @@ usage: $0 [extra args]
  Run solana-transaction-bench against the local multinode demo.
 
    extra args: additional arguments are passed along to solana-transaction-bench.
-               Use solana-transaction-bench argument names, not bench-tps names.
 
  Defaults:
    --url http://127.0.0.1:8899

@@ -1011,7 +1011,6 @@ pub fn verify_and_unarchive_snapshots(
         account_paths,
         full_snapshot_archive_info.archive_format(),
         next_append_vec_id.clone(),
-        None,
         io_setup,
     )?;
 
@@ -1038,7 +1037,6 @@ pub fn verify_and_unarchive_snapshots(
             account_paths,
             incremental_snapshot_archive_info.archive_format(),
             next_append_vec_id.clone(),
-            Some(incremental_snapshot_archive_info.base_slot()),
             io_setup,
         )?;
         (
@@ -1230,7 +1228,6 @@ fn unarchive_snapshot(
     account_paths: &[PathBuf],
     archive_format: ArchiveFormat,
     next_append_vec_id: Arc<AtomicAccountsFileId>,
-    base_slot: Option<Slot>,
     io_setup: &IoSetupState,
 ) -> Result<UnarchivedSnapshot> {
     let unpack_dir = tempfile::Builder::new()
@@ -1258,11 +1255,8 @@ fn unarchive_snapshot(
                  append_vec_files,
                  ..
              }| {
-                let snapshot_storage_lengths =
-                    accounts_db_fields.get_storage_lengths_for_snapshot_slots(base_slot)?;
                 let (storage, measure_untar) = measure_time!(
                     SnapshotStorageRebuilder::rebuild_storages(
-                        snapshot_storage_lengths,
                         append_vec_files.into_iter().chain(file_receiver),
                         next_append_vec_id,
                         SnapshotFrom::Archive,
@@ -1536,10 +1530,7 @@ pub(crate) fn rebuild_storages_from_snapshot_dir(
              append_vec_files,
              ..
          }| {
-            let snapshot_storage_lengths =
-                accounts_db_fields.get_storage_lengths_for_snapshot_slots(None)?;
             let storage = SnapshotStorageRebuilder::rebuild_storages(
-                snapshot_storage_lengths,
                 append_vec_files.into_iter().chain(file_receiver),
                 next_append_vec_id,
                 SnapshotFrom::Dir,
@@ -1713,7 +1704,7 @@ pub fn verify_unpacked_snapshots_dir_and_version(
 ) -> Result<(SnapshotVersion, BankSnapshotInfo)> {
     info!(
         "snapshot version: {}",
-        &unpacked_snapshots_dir_and_version.snapshot_version
+        unpacked_snapshots_dir_and_version.snapshot_version
     );
 
     let snapshot_version = unpacked_snapshots_dir_and_version.snapshot_version;

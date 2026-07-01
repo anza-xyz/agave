@@ -4,7 +4,6 @@ FROM ${BASE_IMAGE}
 ARG \
   RUST_VERSION= \
   RUST_NIGHTLY_VERSION= \
-  NODE_MAJOR= \
   SCCACHE_VERSION= \
   NEXTEST_VERSION= \
   GRCOV_VERSION= \
@@ -25,7 +24,6 @@ ENV \
 RUN \
   if [ -z "$RUST_VERSION" ]; then echo "ERROR: The RUST_VERSION argument is required!" && exit 1; fi && \
   if [ -z "$RUST_NIGHTLY_VERSION" ]; then echo "ERROR: The RUST_NIGHTLY_VERSION argument is required!" && exit 1; fi && \
-  if [ -z "$NODE_MAJOR" ]; then echo "ERROR: The NODE_MAJOR argument is required!" && exit 1; fi && \
   if [ -z "$SCCACHE_VERSION" ]; then echo "ERROR: The SCCACHE_VERSION argument is required!" && exit 1; fi && \
   if [ -z "$NEXTEST_VERSION" ]; then echo "ERROR: The NEXTEST_VERSION argument is required!" && exit 1; fi && \
   if [ -z "$GRCOV_VERSION" ]; then echo "ERROR: The GRCOV_VERSION argument is required!" && exit 1; fi && \
@@ -46,8 +44,7 @@ RUN \
   lld \
   cmake \
   openssh-client \
-  # docs
-  mscgen \
+  python3 \
   # solana compiling
   libssl-dev \
   libudev-dev \
@@ -111,12 +108,6 @@ RUN \
   tar -xzf "cargo-nextest-$NEXTEST_VERSION-x86_64-unknown-linux-musl.tar.gz" && \
   mv ./cargo-nextest "$CARGO_HOME/bin/" && \
   rm "cargo-nextest-$NEXTEST_VERSION-x86_64-unknown-linux-musl.tar.gz" && \
-  # nodejs
-  sudo mkdir -p /etc/apt/keyrings && \
-  curl -fsSL https://deb.nodesource.com/gpgkey/nodesource-repo.gpg.key | sudo gpg --dearmor -o /etc/apt/keyrings/nodesource.gpg && \
-  echo "deb [signed-by=/etc/apt/keyrings/nodesource.gpg] https://deb.nodesource.com/node_$NODE_MAJOR.x nodistro main" | sudo tee /etc/apt/sources.list.d/nodesource.list && \
-  sudo apt-get update && \
-  sudo apt-get install -y nodejs && \
   # setup path
   mkdir /.cache && \
   chmod -R a+w /.cache && \

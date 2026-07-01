@@ -61,7 +61,6 @@ update_solana_dependencies() {
     solana-storage-bigtable
     solana-storage-proto
     solana-streamer
-    solana-svm-transaction
     solana-test-validator
     solana-tpu-client
     solana-transaction-status
@@ -146,7 +145,6 @@ patch_crates_io_solana_no_header() {
   crates_map+=("solana-storage-bigtable storage-bigtable")
   crates_map+=("solana-storage-proto storage-proto")
   crates_map+=("solana-streamer streamer")
-  crates_map+=("solana-svm-transaction svm-transaction")
   crates_map+=("solana-test-validator test-validator")
   crates_map+=("solana-tpu-client tpu-client")
   crates_map+=("solana-transaction-status transaction-status")

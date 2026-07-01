@@ -34,7 +34,7 @@ use {
         },
     },
     solana_signature::Signature,
-    solana_transaction::{Transaction, versioned::TransactionVersion},
+    solana_transaction::versioned::{TransactionVersion, VersionedTransaction},
     solana_transaction_error::{TransactionError, TransactionResult},
     solana_transaction_status_client_types::{
         EncodedConfirmedBlock, EncodedConfirmedTransactionWithStatusMeta, EncodedTransaction,
@@ -364,7 +364,7 @@ impl RpcSender for MockSender {
                 } else {
                     let tx_str = params.as_array().unwrap()[0].as_str().unwrap().to_string();
                     let data = BASE64_STANDARD.decode(tx_str).unwrap();
-                    let tx: Transaction = bincode::deserialize(&data).unwrap();
+                    let tx: VersionedTransaction = wincode::deserialize(&data).unwrap();
                     tx.signatures[0].to_string()
                 };
                 Value::String(signature)

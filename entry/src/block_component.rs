@@ -133,7 +133,6 @@ use {
     crate::entry::{Entry, MaxDataShredsLen},
     agave_votor_messages::{
         certificate::{Certificate, CertificateType},
-        consensus_message::Block,
         reward_certificate::{NotarRewardCertificate, SkipRewardCertificate},
     },
     solana_bls_signatures::{
@@ -264,19 +263,6 @@ impl TryFrom<Certificate> for GenesisCertBlockMarker {
             bls_signature: cert.signature,
             bitmap: cert.bitmap,
         })
-    }
-}
-
-impl From<GenesisCertBlockMarker> for Certificate {
-    fn from(cert: GenesisCertBlockMarker) -> Self {
-        Self {
-            cert_type: CertificateType::Genesis(Block {
-                slot: cert.slot,
-                block_id: cert.block_id,
-            }),
-            signature: cert.bls_signature,
-            bitmap: cert.bitmap,
-        }
     }
 }
 

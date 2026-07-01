@@ -643,6 +643,7 @@ mod tests {
     use {
         super::*,
         crate::rpc_pubsub_service::PubSubConfig,
+        crossbeam_channel::bounded,
         solana_ledger::genesis_utils::{GenesisConfigInfo, create_genesis_config},
         solana_runtime::bank::Bank,
     };
@@ -654,7 +655,7 @@ mod tests {
 
     impl ControlWrapper {
         fn new() -> Self {
-            let (sender, receiver) = crossbeam_channel::unbounded();
+            let (sender, receiver) = bounded(1024);
             let (broadcast_sender, _broadcast_receiver) = broadcast::channel(42);
 
             let control = SubscriptionControl::new(
@@ -707,7 +708,7 @@ mod tests {
         // previous holder's `SubscriptionTokenInner::drop` is blocked on the
         // entry lock. A fresh subscribe must recreate the inner and reuse the
         // stored SubscriptionId rather than allocating a new one.
-        let (sender, receiver) = crossbeam_channel::unbounded();
+        let (sender, receiver) = bounded(1024);
         let (broadcast_sender, _broadcast_receiver) = broadcast::channel(42);
         let control = SubscriptionControl::new(2, sender, broadcast_sender);
 
@@ -741,7 +742,7 @@ mod tests {
     fn duplicate_params_consume_separate_subscriber_slots() {
         // Cap of 1 must reject a second subscriber even when params match an
         // existing subscription (GHSA: duplicate-params cap bypass).
-        let (sender, _receiver) = crossbeam_channel::unbounded();
+        let (sender, _receiver) = bounded(1024);
         let (broadcast_sender, _broadcast_receiver) = broadcast::channel(42);
         let control = SubscriptionControl::new(1, sender, broadcast_sender);
 

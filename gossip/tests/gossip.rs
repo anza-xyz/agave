@@ -198,7 +198,7 @@ fn gossip_star() {
             yd.set_wallclock(timestamp());
             let xv = &listen[x].0;
             xv.insert_info(yd);
-            trace!("star leader {}", &xv.id());
+            trace!("star leader {}", xv.id());
         }
     });
 }

@@ -1,5 +1,5 @@
 use {
-    crossbeam_channel::unbounded,
+    crossbeam_channel::bounded,
     itertools::Itertools,
     log::*,
     solana_core::{
@@ -109,8 +109,8 @@ fn test_scheduler_waited_by_drop_bank_service() {
     drop(lock_to_stall);
 
     // Create 2 channels to check actual pruned banks
-    let (drop_bank_sender1, drop_bank_receiver1) = unbounded();
-    let (drop_bank_sender2, drop_bank_receiver2) = unbounded();
+    let (drop_bank_sender1, drop_bank_receiver1) = bounded(1024);
+    let (drop_bank_sender2, drop_bank_receiver2) = bounded(1024);
     let drop_bank_service = DropBankService::new(drop_bank_receiver2);
 
     info!("calling handle_new_root()...");
