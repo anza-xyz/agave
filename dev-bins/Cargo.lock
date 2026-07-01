@@ -194,6 +194,7 @@ dependencies = [
  "solana-account 4.3.1",
  "solana-account-decoder",
  "solana-accounts-db",
+ "solana-bls-signatures",
  "solana-clap-utils",
  "solana-cli-output",
  "solana-clock",
@@ -243,6 +244,7 @@ dependencies = [
  "thiserror 2.0.18",
  "tikv-jemallocator",
  "tokio",
+ "wincode",
 ]
 
 [[package]]

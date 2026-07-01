@@ -924,6 +924,8 @@ impl<F: FnMut(Request<()>) -> InterceptedRequestResult> BigTable<F> {
             "bigtable_tx-by-addr"
         } else if table_name == "entries" {
             "bigtable_entries"
+        } else if table_name == "block-markers" {
+            "bigtable_block-markers"
         } else {
             "bigtable_unknown"
         };
