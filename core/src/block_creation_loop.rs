@@ -990,7 +990,7 @@ fn handle_parent_ready(
             packets.len(),
         );
         let batch: PacketBatch = packets.into();
-        let banking_packet_batch = Arc::new(vec![batch]);
+        let banking_packet_batch = Arc::new(batch);
         ctx.banking_stage_sender
             // technically this send can evict to make room (which may drop a few packets)
             // but this should (hopefully) not be significant amounts since we are evicting
@@ -1505,10 +1505,9 @@ mod tests {
     fn recv_rescheduled_transactions(
         receiver: &BankingPacketReceiver,
     ) -> Vec<VersionedTransaction> {
-        let packet_batches = receiver.recv_timeout(Duration::from_secs(1)).unwrap();
-        packet_batches
+        let packet_batch = receiver.recv_timeout(Duration::from_secs(1)).unwrap();
+        packet_batch
             .iter()
-            .flat_map(|batch| batch.iter())
             .map(|packet| {
                 wincode::deserialize::<VersionedTransaction>(
                     packet.data(..packet.meta().size).unwrap(),

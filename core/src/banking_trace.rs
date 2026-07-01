@@ -72,7 +72,7 @@ pub struct BankingTracer {
 #[cfg_attr(
     feature = "frozen-abi",
     derive(AbiExample),
-    frozen_abi(digest = "DY2zjwewCSNansb5xwtoxkCcNuXbVmWZe3U9nNH2kzNz")
+    frozen_abi(digest = "5jvhDLvSuAMKMHg8nSkmP57J5QitUcSRK2Ykg4FGCLzk")
 )]
 #[derive(Serialize, Deserialize, Debug)]
 pub struct TimedTracedEvent(pub std::time::SystemTime, pub TracedEvent);
@@ -411,7 +411,7 @@ impl TracedSender {
         }
         match self.sender.try_send(batch) {
             Ok(()) => Ok(0),
-            Err(TrySendError::Full(b)) => Ok(b.iter().map(|pb| pb.len()).sum()),
+            Err(TrySendError::Full(b)) => Ok(b.len()),
             Err(TrySendError::Disconnected(b)) => Err(SendError(b)),
         }
     }
@@ -428,13 +428,12 @@ impl TracedSender {
 #[cfg(any(test, feature = "dev-context-only-utils"))]
 pub mod for_test {
     use {
-        super::*,
-        solana_perf::{packet::to_packet_batches, test_tx::test_tx},
-        tempfile::TempDir,
+        super::*, agave_banking_stage_ingress_types::to_banking_packet_batch,
+        solana_perf::test_tx::test_tx, tempfile::TempDir,
     };
 
     pub fn sample_packet_batch() -> BankingPacketBatch {
-        BankingPacketBatch::new(to_packet_batches(&vec![test_tx(); 4], 10))
+        to_banking_packet_batch(&vec![test_tx(); 4])
     }
 
     pub fn drop_and_clean_temp_dir_unless_suppressed(temp_dir: TempDir) {
@@ -467,6 +466,7 @@ mod tests {
     use {
         super::*,
         bincode::ErrorKind::Io as BincodeIoError,
+        solana_perf::packet::BytesPacketBatch,
         std::{
             fs::File,
             io::{BufReader, ErrorKind::UnexpectedEof},
@@ -491,7 +491,9 @@ mod tests {
         });
 
         non_vote_sender
-            .send(BankingPacketBatch::new(vec![]))
+            .send(BankingPacketBatch::new(
+                solana_perf::packet::PacketBatch::Bytes(BytesPacketBatch::new()),
+            ))
             .unwrap();
         for_test::terminate_tracer(tracer, None, dummy_main_thread, non_vote_sender, None);
     }
