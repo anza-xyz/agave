@@ -24,7 +24,7 @@ use {
         stakes::{DeserializableStakes, SerdeStakesToStakeFormat, Stakes},
     },
     agave_feature_set::FeatureSet,
-    solana_account::{AccountSharedData, ReadableAccount},
+    solana_account::AccountSharedData,
     solana_accounts_db::{
         accounts::Accounts, accounts_db::AccountsDb, accounts_hash::AccountsLtHash,
         ancestors::Ancestors, blockhash_queue::BlockhashQueue,
@@ -76,6 +76,7 @@ use {
         account_state::{account_from_proto, account_to_proto},
         direct_mapping::direct_mapping_handle_cu_exhaustion,
         feature_set::feature_set_from_proto,
+        setup::sysvar_from_accounts,
     },
     solana_svm::transaction_processing_result::{
         ProcessedTransaction, TransactionProcessingResultExtensions,
@@ -97,19 +98,6 @@ pub enum NativeTxnExecution {
     },
 }
 
-/// Read and bincode-decode a sysvar account from the input set, ignoring
-/// zero-lamport (nonexistent) entries.
-fn load_sysvar<T: serde::de::DeserializeOwned>(
-    accounts: &[(Pubkey, AccountSharedData)],
-    id: &Pubkey,
-) -> T {
-    accounts
-        .iter()
-        .find(|(address, account)| address == id && account.lamports() > 0)
-        .map(|(_, account)| bincode::deserialize(account.data()).unwrap())
-        .unwrap()
-}
-
 /// Build a [`Bank`] from the supplied native inputs and execute `transaction`.
 ///
 /// The clock and epoch-schedule sysvars are read out of `accounts` to derive the
@@ -125,11 +113,12 @@ pub fn execute_txn(
     const TICKS_PER_SLOT: u64 = 64;
 
     // Slot and parent slot come from the clock sysvar.
-    let clock: Clock = load_sysvar(accounts, &sysvar::clock::id());
+    let clock: Clock = sysvar_from_accounts(accounts, &sysvar::clock::id());
     let slot = clock.slot;
     let parent_slot = slot.saturating_sub(1);
 
-    let epoch_schedule: EpochSchedule = load_sysvar(accounts, &sysvar::epoch_schedule::id());
+    let epoch_schedule: EpochSchedule =
+        sysvar_from_accounts(accounts, &sysvar::epoch_schedule::id());
     let epoch = epoch_schedule.get_epoch(slot);
 
     // Populate the accounts DB with the input accounts at the parent slot.
@@ -397,6 +386,8 @@ impl ProtoTxnErrorFields {
         }
     }
 
+    /// Firedancer does not compare precompile custom error codes because minor
+    /// implementation differences can surface different custom values.
     fn zero_precompile_custom_error(mut self, sanitized_message: &SanitizedMessage) -> Self {
         // Custom error is zeroed when the failing instruction is a precompile.
         if self.custom_error != 0
