@@ -408,7 +408,7 @@ fn commission_split_preserve_lamports(commission_bps: u16, on: u64) -> (u64, u64
                 .checked_sub(staker_rewards)
                 .expect("staker rewards cannot exceed total rewards");
 
-            (voter_rewards, staker_rewards, true)
+            (voter_rewards, staker_rewards, voter_rewards != 0 && staker_rewards != 0)
         }
     }
 }
@@ -1418,8 +1418,8 @@ mod tests {
         );
 
         // Remainder lamports go to the voter.
-        assert_eq!(commission_split_preserve_lamports(9_900, 1), (1, 0, true));
-        assert_eq!(commission_split_preserve_lamports(9_900, 10), (10, 0, true));
+        assert_eq!(commission_split_preserve_lamports(9_900, 1), (1, 0, false));
+        assert_eq!(commission_split_preserve_lamports(9_900, 10), (10, 0, false));
         assert_eq!(
             commission_split_preserve_lamports(9_900, 100),
             (99, 1, true)
@@ -1429,7 +1429,7 @@ mod tests {
             (990, 10, true)
         );
 
-        assert_eq!(commission_split_preserve_lamports(100, 1), (1, 0, true));
+        assert_eq!(commission_split_preserve_lamports(100, 1), (1, 0, false));
         assert_eq!(commission_split_preserve_lamports(100, 10), (1, 9, true));
         assert_eq!(commission_split_preserve_lamports(100, 100), (1, 99, true));
         assert_eq!(
@@ -1437,14 +1437,14 @@ mod tests {
             (10, 990, true)
         );
 
-        assert_eq!(commission_split_preserve_lamports(5_000, 1), (1, 0, true));
+        assert_eq!(commission_split_preserve_lamports(5_000, 1), (1, 0, false));
         assert_eq!(commission_split_preserve_lamports(5_000, 10), (5, 5, true));
         assert_eq!(
             commission_split_preserve_lamports(5_000, 100),
             (50, 50, true)
         );
 
-        assert_eq!(commission_split_preserve_lamports(1_234, 1), (1, 0, true));
+        assert_eq!(commission_split_preserve_lamports(1_234, 1), (1, 0, false));
         assert_eq!(commission_split_preserve_lamports(1_234, 10), (2, 8, true));
         assert_eq!(
             commission_split_preserve_lamports(1_234, 1_000),
@@ -1455,7 +1455,7 @@ mod tests {
             (1_234, 8_766, true)
         );
 
-        assert_eq!(commission_split_preserve_lamports(3_333, 1), (1, 0, true));
+        assert_eq!(commission_split_preserve_lamports(3_333, 1), (1, 0, false));
         assert_eq!(commission_split_preserve_lamports(3_333, 10), (4, 6, true));
         assert_eq!(
             commission_split_preserve_lamports(3_333, 1_000),
@@ -1465,6 +1465,10 @@ mod tests {
             commission_split_preserve_lamports(3_333, 10_000),
             (3_333, 6_667, true)
         );
+
+        // Rounding toward zero can floor one side to 0 lamports; was_split must be false.
+        assert_eq!(commission_split_preserve_lamports(1, 1), (1, 0, false));
+        assert_eq!(commission_split_preserve_lamports(9_999, 9_999), (9_999, 0, false));
     }
 
     proptest! {
@@ -1539,13 +1543,10 @@ mod tests {
             // Invariant 1: The full reward amount is assigned.
             prop_assert_eq!(voter + staker, rewards);
 
-            // Invariant 2: was_split is false only at the 0% and 100% boundaries.
+            // Invariant 2: was_split is true iff both parties receive non-zero lamports.
+            // Due to integer rounding, a mid-range commission can still floor one side to 0.
             let effective_bps = commission_bps.min(10_000);
-            if effective_bps == 0 || effective_bps == 10_000 {
-                prop_assert!(!was_split);
-            } else {
-                prop_assert!(was_split);
-            }
+            prop_assert_eq!(was_split, voter != 0 && staker != 0);
 
             // Invariant 3: Boundary - 0% commission gives everything to staker.
             if effective_bps == 0 {
