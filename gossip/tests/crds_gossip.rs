@@ -591,7 +591,6 @@ fn network_run_pull(
                     .map(|node| {
                         node.gossip
                             .generate_pull_responses(
-                                thread_pool,
                                 &requests,
                                 usize::MAX, // output_size_limit
                                 now,

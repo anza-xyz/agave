@@ -231,16 +231,14 @@ impl CrdsGossip {
 
     pub fn generate_pull_responses(
         &self,
-        thread_pool: &ThreadPool,
         requests: &[PullRequest],
         output_size_limit: usize, // Limit number of crds values returned.
         now: u64,
-        should_retain_crds_value: impl Fn(&CrdsValue) -> bool + Sync,
-        try_consume_scan_budget: impl Fn(&PullRequest, usize) -> bool + Sync,
+        should_retain_crds_value: impl Fn(&CrdsValue) -> bool,
+        try_consume_scan_budget: impl Fn(&PullRequest, usize) -> bool,
         stats: &GossipStats,
     ) -> Vec<Vec<CrdsValue>> {
         CrdsGossipPull::generate_pull_responses(
-            thread_pool,
             &self.crds,
             requests,
             output_size_limit,
