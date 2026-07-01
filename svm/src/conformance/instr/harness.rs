@@ -20,7 +20,6 @@ use {
     solana_pubkey::Pubkey,
     solana_svm_callback::InvokeContextCallback,
     solana_svm_timings::ExecuteTimings,
-    solana_transaction_error::TransactionError,
     std::rc::Rc,
 };
 #[cfg(feature = "conformance")]
@@ -100,10 +99,7 @@ pub fn execute_instr_with_callback<C: InvokeContextCallback>(
             &mut compute_units_consumed,
         ) {
             Ok(()) => Ok(()),
-            Err(TransactionError::InstructionError(_, err)) => Err(err),
-            // `process_message` only ever returns `InstructionError`-shaped
-            // failures.
-            Err(_) => unreachable!(),
+            Err((_, err)) => Err(err),
         }
     };
 

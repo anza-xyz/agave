@@ -1055,7 +1055,8 @@ impl<FG: ForkGraph> TransactionBatchProcessor<FG> {
             &mut invoke_context,
             execute_timings,
             &mut executed_units,
-        );
+        )
+        .map_err(|(index, err)| TransactionError::InstructionError(index, err));
         process_message_time.stop();
 
         drop(invoke_context);

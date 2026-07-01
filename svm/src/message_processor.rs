@@ -1,9 +1,9 @@
 use {
+    solana_instruction::error::InstructionError,
     solana_program_runtime::invoke_context::InvokeContext,
     solana_svm_measure::measure_us,
     solana_svm_timings::{ExecuteDetailsTimings, ExecuteTimings},
     solana_svm_transaction::svm_message::SVMMessage,
-    solana_transaction_error::TransactionError,
 };
 
 /// Process a message.
@@ -16,10 +16,8 @@ pub(crate) fn process_message<'ix_data>(
     invoke_context: &mut InvokeContext<'_, 'ix_data>,
     execute_timings: &mut ExecuteTimings,
     accumulated_consumed_units: &mut u64,
-) -> Result<(), TransactionError> {
-    invoke_context
-        .prepare_top_level_instructions(message)
-        .map_err(|(ix_idx, err)| TransactionError::InstructionError(ix_idx, err))?;
+) -> Result<(), (u8, InstructionError)> {
+    invoke_context.prepare_top_level_instructions(message)?;
 
     for (top_level_instruction_index, (program_id, instruction)) in
         message.program_instructions_iter().enumerate()
@@ -58,9 +56,7 @@ pub(crate) fn process_message<'ix_data>(
             .process_instructions
             .total_us += process_instruction_us;
 
-        result.map_err(|err| {
-            TransactionError::InstructionError(top_level_instruction_index as u8, err)
-        })?;
+        result.map_err(|err| (top_level_instruction_index as u8, err))?;
     }
     Ok(())
 }
@@ -299,13 +295,7 @@ mod tests {
             &mut ExecuteTimings::default(),
             &mut 0,
         );
-        assert_eq!(
-            result,
-            Err(TransactionError::InstructionError(
-                0,
-                InstructionError::ReadonlyLamportChange
-            ))
-        );
+        assert_eq!(result, Err((0, InstructionError::ReadonlyLamportChange)));
 
         let message = new_sanitized_message(Message::new_with_compiled_instructions(
             1,
@@ -346,13 +336,7 @@ mod tests {
             &mut ExecuteTimings::default(),
             &mut 0,
         );
-        assert_eq!(
-            result,
-            Err(TransactionError::InstructionError(
-                0,
-                InstructionError::ReadonlyDataModified
-            ))
-        );
+        assert_eq!(result, Err((0, InstructionError::ReadonlyDataModified)));
     }
 
     #[test]
@@ -481,13 +465,7 @@ mod tests {
             &mut ExecuteTimings::default(),
             &mut 0,
         );
-        assert_eq!(
-            result,
-            Err(TransactionError::InstructionError(
-                0,
-                InstructionError::AccountBorrowFailed
-            ))
-        );
+        assert_eq!(result, Err((0, InstructionError::AccountBorrowFailed)));
 
         // Try to borrow mut the same account in a safe way
         let message = new_sanitized_message(Message::new(
@@ -724,13 +702,7 @@ mod tests {
             &mut 0,
         );
 
-        assert_eq!(
-            result,
-            Err(TransactionError::InstructionError(
-                3,
-                InstructionError::Custom(0xbabb1e)
-            ))
-        );
+        assert_eq!(result, Err((3, InstructionError::Custom(0xbabb1e))));
         assert_eq!(
             transaction_context.number_of_called_instructions_in_trace(),
             4
