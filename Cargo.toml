@@ -513,25 +513,14 @@ solana-tls-utils = { path = "tls-utils", version = "=4.2.0-alpha.0", features = 
 solana-tpu-client = { path = "tpu-client", version = "=4.2.0-alpha.0", default-features = false, features = ["agave-unstable-api"] }
 solana-tpu-client-next = { path = "tpu-client-next", version = "=4.2.0-alpha.0", features = ["agave-unstable-api"] }
 solana-transaction = "4.1.4"
-<<<<<<< HEAD
 solana-transaction-context = { path = "transaction-context", version = "=4.2.0-alpha.0", features = ["agave-unstable-api", "bincode"] }
-solana-transaction-error = "3.3.0"
+solana-transaction-error = "3.3.1"
 solana-transaction-status = { path = "transaction-status", version = "=4.2.0-alpha.0", features = ["agave-unstable-api"] }
 solana-transaction-status-client-types = { path = "transaction-status-client-types", version = "=4.2.0-alpha.0", features = ["agave-unstable-api"] }
 solana-turbine = { path = "turbine", version = "=4.2.0-alpha.0", features = ["agave-unstable-api"] }
 solana-udp-client = { path = "udp-client", version = "=4.2.0-alpha.0", features = ["agave-unstable-api"] }
 solana-unified-scheduler-logic = { path = "unified-scheduler-logic", version = "=4.2.0-alpha.0", features = ["agave-unstable-api"] }
 solana-unified-scheduler-pool = { path = "unified-scheduler-pool", version = "=4.2.0-alpha.0", features = ["agave-unstable-api"] }
-=======
-solana-transaction-context = { path = "transaction-context", version = "=4.3.0-alpha.0", features = ["agave-unstable-api", "bincode"] }
-solana-transaction-error = "3.3.1"
-solana-transaction-status = { path = "transaction-status", version = "=4.3.0-alpha.0", features = ["agave-unstable-api"] }
-solana-transaction-status-client-types = { path = "transaction-status-client-types", version = "=4.3.0-alpha.0", features = ["agave-unstable-api"] }
-solana-turbine = { path = "turbine", version = "=4.3.0-alpha.0", features = ["agave-unstable-api"] }
-solana-udp-client = { path = "udp-client", version = "=4.3.0-alpha.0", features = ["agave-unstable-api"] }
-solana-unified-scheduler-logic = { path = "unified-scheduler-logic", version = "=4.3.0-alpha.0", features = ["agave-unstable-api"] }
-solana-unified-scheduler-pool = { path = "unified-scheduler-pool", version = "=4.3.0-alpha.0", features = ["agave-unstable-api"] }
->>>>>>> 751e58b33 (chore(deps): bump solana-transaction-error from 3.3.0 to 3.3.1 (#13578))
 solana-validator-exit = "3.0.0"
 solana-version = { path = "version", version = "=4.2.0-alpha.0", features = ["agave-unstable-api"] }
 solana-vote = { path = "vote", version = "=4.2.0-alpha.0", features = ["agave-unstable-api"] }
