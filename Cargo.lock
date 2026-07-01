@@ -10257,6 +10257,8 @@ dependencies = [
  "num-traits",
  "percentage",
  "proptest",
+ "prost 0.11.9",
+ "protosol",
  "qualifier_attr",
  "rand 0.9.4",
  "rayon",
