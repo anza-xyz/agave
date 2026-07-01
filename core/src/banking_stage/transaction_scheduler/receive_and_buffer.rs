@@ -262,70 +262,72 @@ impl TransactionViewReceiveAndBuffer {
         let mut num_dropped_on_capacity = 0;
         let mut num_buffered = 0;
 
-        let mut check_and_push_to_queue =
-            |container: &mut TransactionViewStateContainer,
-             transaction_priority_ids: &mut ArrayVec<TransactionPriorityId, 64>| {
-                // Temporary scope so that transaction references are immediately
-                // dropped and transactions not passing
-                let mut check_results = {
-                    let mut transactions = ArrayVec::<_, EXTRA_CAPACITY>::new();
-                    transactions.extend(transaction_priority_ids.iter().map(|priority_id| {
-                        container
-                            .get_transaction(priority_id.id)
-                            .expect("transaction must exist")
-                    }));
-                    working_bank.check_transactions::<RuntimeTransaction<_>>(
-                        &transactions,
-                        &lock_results[..transactions.len()],
-                        working_bank.max_processing_age(),
-                        true,
-                        &mut error_counters,
-                    )
-                };
-
-                // Remove errored transactions
-                for (result, priority_id) in check_results
-                    .iter_mut()
-                    .zip(transaction_priority_ids.iter())
-                {
-                    if let Err(err) = result {
-                        match err {
-                            TransactionError::BlockhashNotFound => {
-                                num_dropped_on_age += 1;
-                            }
-                            TransactionError::AlreadyProcessed => {
-                                num_dropped_on_already_processed += 1;
-                            }
-                            _ => {}
-                        }
-                        container.remove_by_id(priority_id.id);
-                        continue;
-                    }
-                    let transaction = container
+        let mut check_and_push_to_queue = |container: &mut TransactionViewStateContainer,
+                                           transaction_priority_ids: &mut ArrayVec<
+            TransactionPriorityId,
+            EXTRA_CAPACITY,
+        >| {
+            // Temporary scope so that transaction references are immediately
+            // dropped and transactions not passing
+            let mut check_results = {
+                let mut transactions = ArrayVec::<_, EXTRA_CAPACITY>::new();
+                transactions.extend(transaction_priority_ids.iter().map(|priority_id| {
+                    container
                         .get_transaction(priority_id.id)
-                        .expect("transaction must exist");
-                    if let Err(err) = Consumer::check_fee_payer_unlocked(
-                        working_bank,
-                        transaction,
-                        &mut error_counters,
-                    ) {
-                        *result = Err(err);
-                        num_dropped_on_fee_payer += 1;
-                        container.remove_by_id(priority_id.id);
-                        continue;
-                    }
-
-                    num_buffered += 1;
-                }
-                // Push non-errored transaction into queue.
-                num_dropped_on_capacity += container.push_ids_into_queue(
-                    check_results
-                        .into_iter()
-                        .zip(transaction_priority_ids.drain(..))
-                        .filter(|(r, _)| r.is_ok())
-                        .map(|(_, id)| id),
-                );
+                        .expect("transaction must exist")
+                }));
+                working_bank.check_transactions::<RuntimeTransaction<_>>(
+                    &transactions,
+                    &lock_results[..transactions.len()],
+                    working_bank.max_processing_age(),
+                    true,
+                    &mut error_counters,
+                )
             };
+
+            // Remove errored transactions
+            for (result, priority_id) in check_results
+                .iter_mut()
+                .zip(transaction_priority_ids.iter())
+            {
+                if let Err(err) = result {
+                    match err {
+                        TransactionError::BlockhashNotFound => {
+                            num_dropped_on_age += 1;
+                        }
+                        TransactionError::AlreadyProcessed => {
+                            num_dropped_on_already_processed += 1;
+                        }
+                        _ => {}
+                    }
+                    container.remove_by_id(priority_id.id);
+                    continue;
+                }
+                let transaction = container
+                    .get_transaction(priority_id.id)
+                    .expect("transaction must exist");
+                if let Err(err) = Consumer::check_fee_payer_unlocked(
+                    working_bank,
+                    transaction,
+                    &mut error_counters,
+                ) {
+                    *result = Err(err);
+                    num_dropped_on_fee_payer += 1;
+                    container.remove_by_id(priority_id.id);
+                    continue;
+                }
+
+                num_buffered += 1;
+            }
+            // Push non-errored transaction into queue.
+            num_dropped_on_capacity += container.push_ids_into_queue(
+                check_results
+                    .into_iter()
+                    .zip(transaction_priority_ids.drain(..))
+                    .filter(|(r, _)| r.is_ok())
+                    .map(|(_, id)| id),
+            );
+        };
 
         let mut num_received = 0;
         let mut num_dropped_without_parsing = 0;

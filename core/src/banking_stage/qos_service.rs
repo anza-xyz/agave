@@ -6,6 +6,7 @@
 use {
     super::committer::CommitTransactionDetails,
     agave_feature_set::FeatureSet,
+    smallvec::SmallVec,
     solana_cost_model::{
         cost_model::CostModel, cost_tracker::UpdatedCosts, transaction_cost::TransactionCost,
     },
@@ -17,6 +18,11 @@ use {
 mod transaction {
     pub use solana_transaction_error::TransactionResult as Result;
 }
+
+type TransactionCostResults<'a, Tx> = SmallVec<
+    [transaction::Result<TransactionCost<'a, Tx>>;
+        super::consumer::TARGET_NUM_TRANSACTIONS_PER_BATCH],
+>;
 
 // QosService is local to each banking thread, each instance of QosService provides services to
 // one banking thread.
@@ -34,14 +40,11 @@ impl QosService {
         bank: &Bank,
         transactions: &'a [Tx],
         pre_results: impl Iterator<Item = transaction::Result<()>>,
-    ) -> (Vec<transaction::Result<TransactionCost<'a, Tx>>>, u64) {
+    ) -> (TransactionCostResults<'a, Tx>, u64) {
         let transaction_costs =
             Self::compute_transaction_costs(&bank.feature_set, transactions.iter(), pre_results);
-        let (transactions_qos_cost_results, num_included) = Self::select_transactions_per_cost(
-            transactions.iter(),
-            transaction_costs.into_iter(),
-            bank,
-        );
+        let (transactions_qos_cost_results, num_included) =
+            Self::select_transactions_per_cost(transactions.iter(), transaction_costs, bank);
         let cost_model_throttled_transactions_count =
             transactions.len().saturating_sub(num_included) as u64;
 
@@ -57,7 +60,7 @@ impl QosService {
         feature_set: &FeatureSet,
         transactions: impl Iterator<Item = &'a Tx>,
         pre_results: impl Iterator<Item = transaction::Result<()>>,
-    ) -> Vec<transaction::Result<TransactionCost<'a, Tx>>> {
+    ) -> TransactionCostResults<'a, Tx> {
         transactions
             .zip(pre_results)
             .map(|(tx, pre_result)| {
@@ -82,15 +85,19 @@ impl QosService {
     /// and a count of the number of transactions that would fit in the block
     fn select_transactions_per_cost<'a, Tx: TransactionWithMeta>(
         transactions: impl Iterator<Item = &'a Tx>,
-        transactions_costs: impl Iterator<Item = transaction::Result<TransactionCost<'a, Tx>>>,
+        mut transactions_costs: TransactionCostResults<'a, Tx>,
         bank: &Bank,
-    ) -> (Vec<transaction::Result<TransactionCost<'a, Tx>>>, usize) {
+    ) -> (TransactionCostResults<'a, Tx>, usize) {
         let mut cost_tracker = bank.write_cost_tracker().unwrap();
         let mut num_included = 0;
-        let select_results = transactions
-            .zip(transactions_costs)
-            .map(|(tx, cost)| match cost {
-                Ok(cost) => match cost_tracker.try_add(&cost) {
+        transactions
+            .zip(transactions_costs.iter_mut())
+            .for_each(|(tx, cost_result)| {
+                let Ok(cost) = cost_result else {
+                    return;
+                };
+
+                match cost_tracker.try_add(cost) {
                     Ok(UpdatedCosts {
                         updated_block_cost,
                         updated_costliest_account_cost,
@@ -105,7 +112,6 @@ impl QosService {
                             updated_costliest_account_cost
                         );
                         num_included += 1;
-                        Ok(cost)
                     }
                     Err(e) => {
                         debug!(
@@ -116,15 +122,13 @@ impl QosService {
                             cost,
                             e
                         );
-                        Err(TransactionError::from(e))
+                        *cost_result = Err(TransactionError::from(e));
                     }
-                },
-                Err(e) => Err(e),
-            })
-            .collect();
+                }
+            });
         cost_tracker.add_transactions_in_flight(num_included);
 
-        (select_results, num_included)
+        (transactions_costs, num_included)
     }
 
     /// Removes transaction costs from the cost tracker if not committed or recorded, or
@@ -303,7 +307,7 @@ mod tests {
             .unwrap()
             .set_limits(CostTrackerLimits::new(cost_limit, cost_limit, 0));
         let (results, num_selected) =
-            QosService::select_transactions_per_cost(txs.iter(), txs_costs.into_iter(), &bank);
+            QosService::select_transactions_per_cost(txs.iter(), txs_costs, &bank);
         assert_eq!(num_selected, 2);
 
         // verify that first transfer tx and first vote are allowed
@@ -356,7 +360,7 @@ mod tests {
                 .map(|cost| cost.as_ref().unwrap().sum())
                 .sum();
             let (qos_cost_results, _num_included) =
-                QosService::select_transactions_per_cost(txs.iter(), txs_costs.into_iter(), &bank);
+                QosService::select_transactions_per_cost(txs.iter(), txs_costs, &bank);
             assert_eq!(
                 total_txs_cost,
                 bank.read_cost_tracker().unwrap().block_cost()
@@ -426,7 +430,7 @@ mod tests {
                 .map(|cost| cost.as_ref().unwrap().sum())
                 .sum();
             let (qos_cost_results, _num_included) =
-                QosService::select_transactions_per_cost(txs.iter(), txs_costs.into_iter(), &bank);
+                QosService::select_transactions_per_cost(txs.iter(), txs_costs, &bank);
             assert_eq!(
                 total_txs_cost,
                 bank.read_cost_tracker().unwrap().block_cost()
@@ -479,7 +483,7 @@ mod tests {
                 .map(|cost| cost.as_ref().unwrap().sum())
                 .sum();
             let (qos_cost_results, _num_included) =
-                QosService::select_transactions_per_cost(txs.iter(), txs_costs.into_iter(), &bank);
+                QosService::select_transactions_per_cost(txs.iter(), txs_costs, &bank);
             assert_eq!(
                 total_txs_cost,
                 bank.read_cost_tracker().unwrap().block_cost()
@@ -595,7 +599,7 @@ mod tests {
                 .map(|cost| cost.as_ref().unwrap().sum())
                 .sum();
             let (qos_cost_results, _num_included) =
-                QosService::select_transactions_per_cost(txs.iter(), txs_costs.into_iter(), &bank);
+                QosService::select_transactions_per_cost(txs.iter(), txs_costs, &bank);
             // transaction is committed with actual loaded account size == 0.
             let committed_status: Vec<CommitTransactionDetails> = qos_cost_results
                 .iter()
@@ -647,7 +651,7 @@ mod tests {
                 .map(|cost| cost.as_ref().unwrap().sum())
                 .sum();
             let (qos_cost_results, _num_included) =
-                QosService::select_transactions_per_cost(txs.iter(), txs_costs.into_iter(), &bank);
+                QosService::select_transactions_per_cost(txs.iter(), txs_costs, &bank);
             // transaction is committed with actual loaded account size == 1.
             let committed_status: Vec<CommitTransactionDetails> = qos_cost_results
                 .iter()

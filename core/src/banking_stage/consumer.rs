@@ -5,6 +5,7 @@ use {
         qos_service::QosService,
         scheduler_messages::MaxAge,
     },
+    smallvec::SmallVec,
     solana_fee::FeeFeatures,
     solana_measure::measure_us,
     solana_poh::{
@@ -127,7 +128,8 @@ impl Consumer {
         txs: &[impl TransactionWithMeta],
     ) -> ProcessTransactionBatchOutput {
         let mut error_counters = TransactionErrorMetrics::default();
-        let pre_results = vec![Ok(()); txs.len()];
+        let pre_results =
+            SmallVec::<[_; TARGET_NUM_TRANSACTIONS_PER_BATCH]>::from_elem(Ok(()), txs.len());
         let check_results = bank.check_transactions(
             txs,
             &pre_results,
