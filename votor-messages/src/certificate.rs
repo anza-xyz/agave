@@ -8,26 +8,36 @@ use {
         vote::{Vote, VoteType},
         wire::get_vote_payload_to_sign,
     },
-    serde::{Deserialize, Serialize},
     solana_bls_signatures::Signature as BLSSignature,
     solana_clock::Slot,
-    wincode::{SchemaRead, SchemaWrite, pod_wrapper},
 };
 
-// Use `BLSSignature` directly once `BLSSignature` wincode support
-// is released in solana-sdk.
-pod_wrapper! {
-    unsafe struct PodBLSSignature(BLSSignature);
+#[derive(Debug, Clone, PartialEq, Eq)]
+/// A cert signature
+pub struct CertSignature {
+    /// The aggregate signature.
+    pub signature: BLSSignature,
+    /// A rank bitmap for validators' signatures included in the aggregate.
+    /// See solana-signer-store for encoding format.
+    pub bitmap: Vec<u8>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+/// Genesis cert
+pub struct GenesisCert {
+    /// Block the cert is for.
+    pub block: Block,
+    /// the signature on the cert
+    pub signature: CertSignature,
 }
 
 /// The actual certificate with the aggregate signature and bitmap for which validators are included in the aggregate.
 /// BLS vote message, we need rank to look up pubkey
-#[derive(Clone, Debug, PartialEq, Eq, Hash, Serialize, Deserialize, SchemaWrite, SchemaRead)]
+#[derive(Clone, Debug, PartialEq, Eq, Hash)]
 pub struct Certificate {
     /// The certificate type.
     pub cert_type: CertificateType,
     /// The aggregate signature.
-    #[wincode(with = "PodBLSSignature")]
     pub signature: BLSSignature,
     /// A rank bitmap for validators' signatures included in the aggregate.
     /// See solana-signer-store for encoding format.
@@ -35,20 +45,7 @@ pub struct Certificate {
 }
 
 /// The different types of certificates and their relevant state.
-#[derive(
-    Debug,
-    Copy,
-    Clone,
-    PartialEq,
-    Eq,
-    PartialOrd,
-    Ord,
-    Hash,
-    Deserialize,
-    Serialize,
-    SchemaWrite,
-    SchemaRead,
-)]
+#[derive(Debug, Copy, Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub enum CertificateType {
     /// Finalize certificate
     Finalize(Slot),
@@ -82,33 +79,30 @@ impl CertificateType {
         match self {
             Self::Notarize(block) | Self::FinalizeFast(block) => {
                 let vote = Vote::new_notarization_vote(*block);
-                (get_vote_payload_to_sign(&vote, shred_version), None)
+                (get_vote_payload_to_sign(vote, shred_version), None)
             }
             Self::Genesis(block) => {
                 let vote = Vote::new_genesis_vote(*block);
-                (get_vote_payload_to_sign(&vote, shred_version), None)
+                (get_vote_payload_to_sign(vote, shred_version), None)
             }
             Self::Finalize(slot) => {
                 let vote = Vote::new_finalization_vote(*slot);
-                (get_vote_payload_to_sign(&vote, shred_version), None)
+                (get_vote_payload_to_sign(vote, shred_version), None)
             }
             Self::Skip(slot) => {
                 let skip_vote = Vote::new_skip_vote(*slot);
                 let skip_fallback_vote = Vote::new_skip_fallback_vote(*slot);
                 (
-                    get_vote_payload_to_sign(&skip_vote, shred_version),
-                    Some(get_vote_payload_to_sign(&skip_fallback_vote, shred_version)),
+                    get_vote_payload_to_sign(skip_vote, shred_version),
+                    Some(get_vote_payload_to_sign(skip_fallback_vote, shred_version)),
                 )
             }
             Self::NotarizeFallback(block) => {
                 let notar_vote = Vote::new_notarization_vote(*block);
                 let notar_fallback_vote = Vote::new_notarization_fallback_vote(*block);
                 (
-                    get_vote_payload_to_sign(&notar_vote, shred_version),
-                    Some(get_vote_payload_to_sign(
-                        &notar_fallback_vote,
-                        shred_version,
-                    )),
+                    get_vote_payload_to_sign(notar_vote, shred_version),
+                    Some(get_vote_payload_to_sign(notar_fallback_vote, shred_version)),
                 )
             }
         }

@@ -18,6 +18,7 @@ use {
             ProgramToLoad,
         },
         program_cache_entry::{ProgramCacheEntryOwner, ProgramCacheEntryType},
+        program_metrics::ProgramStatistics,
     },
     solana_pubkey::Pubkey,
     solana_svm::{
@@ -96,6 +97,33 @@ fn program_cache_execution(threads: usize) {
                 }
             })
         })
+        .chain(programs.iter().map(|program| {
+            let program = *program;
+            let local_bank = mock_bank.clone();
+            let processor = TransactionBatchProcessor::new_from(
+                &batch_processor,
+                batch_processor.slot,
+                batch_processor.epoch,
+            );
+            thread::spawn(move || {
+                let feature_set = SVMFeatureSet::all_enabled();
+                let account_loader = AccountLoader::new_with_loaded_accounts_capacity(
+                    None,
+                    &local_bank,
+                    &feature_set,
+                    0,
+                );
+                let upcoming_environment =
+                    processor.program_runtime_environment_for_epoch(processor.epoch + 1);
+                processor.prepare_one_program_for_upcoming_feature_set(
+                    &account_loader,
+                    false,
+                    &upcoming_environment,
+                    &program,
+                    &ProgramStatistics::default(),
+                );
+            })
+        }))
         .collect();
 
     for th in ths {

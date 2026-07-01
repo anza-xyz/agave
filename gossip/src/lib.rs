@@ -31,8 +31,10 @@ mod protocol;
 mod push_active_set;
 mod received_cache;
 pub mod restart_crds_values;
-mod verifying_key_cache;
+mod sigverify_cache;
 pub mod weighted_shuffle;
+
+pub use solana_net_utils::PinnedXdpSender as XdpSender;
 
 #[macro_use]
 extern crate log;

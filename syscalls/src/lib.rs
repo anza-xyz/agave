@@ -59,7 +59,10 @@ mod mem_ops;
 mod sysvar;
 
 /// Error definitions
+// Note: `#[repr(u64)]` is used for `Self::discriminant`, but the actual
+// memory layout of this enum's variants is not depended on by the VM.
 #[derive(Debug, ThisError, PartialEq, Eq)]
+#[repr(u64)]
 pub enum SyscallError {
     #[error("{0}: {1:?}")]
     InvalidString(Utf8Error, Vec<u8>),
@@ -112,6 +115,15 @@ pub enum SyscallError {
     InvalidPointer,
     #[error("Arithmetic overflow")]
     ArithmeticOverflow,
+}
+
+impl SyscallError {
+    /// Returns the enum discriminant as a `u64`.
+    ///
+    /// This is sound only because of the `#[repr(u64)]` attribute on the enum.
+    pub fn discriminant(&self) -> u64 {
+        unsafe { *std::ptr::addr_of!(*self).cast::<u64>() }
+    }
 }
 
 impl From<MemoryTranslationError> for SyscallError {

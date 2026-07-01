@@ -321,9 +321,7 @@ pub mod test {
                 shreds
             })
             .collect();
-        blockstore
-            .insert_shreds(completed_shreds, None, false)
-            .unwrap();
+        blockstore.insert_shreds(completed_shreds, false).unwrap();
         let mut repair_eligibility =
             RepairEligibility::elapsed_for_slots_for_tests(&blockstore, 0..=7);
         get_best_repair_shreds(

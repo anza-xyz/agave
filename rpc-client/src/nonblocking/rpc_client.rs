@@ -19,7 +19,7 @@ use {
         },
         rpc_sender::*,
     },
-    agave_votor_messages::certificate::Certificate,
+    agave_votor_messages::wire::WireBlockCertMessage,
     base64::{Engine, prelude::BASE64_STANDARD},
     futures::join,
     log::*,
@@ -2117,7 +2117,7 @@ impl RpcClient {
     /// # })?;
     /// # Ok::<(), Error>(())
     /// ```
-    pub async fn get_ag_genesis_cert(&self) -> ClientResult<Option<Certificate>> {
+    pub async fn get_ag_genesis_cert(&self) -> ClientResult<Option<WireBlockCertMessage>> {
         self.send(RpcRequest::GetAgGenesisCert, Value::Null).await
     }
 
@@ -4408,16 +4408,16 @@ impl RpcClient {
                 } = serde_json::from_value::<Response<Option<UiAccount>>>(result_json)?;
                 trace!("Response account {pubkey:?} {rpc_account:?}");
                 let response = {
-                    if let Some(rpc_account) = rpc_account {
-                        if let UiAccountData::Json(account_data) = rpc_account.data {
-                            let token_account_type: TokenAccountType =
-                                serde_json::from_value(account_data.parsed)?;
-                            if let TokenAccountType::Account(token_account) = token_account_type {
-                                return Ok(Response {
-                                    context,
-                                    value: Some(token_account),
-                                });
-                            }
+                    if let Some(rpc_account) = rpc_account
+                        && let UiAccountData::Json(account_data) = rpc_account.data
+                    {
+                        let token_account_type: TokenAccountType =
+                            serde_json::from_value(account_data.parsed)?;
+                        if let TokenAccountType::Account(token_account) = token_account_type {
+                            return Ok(Response {
+                                context,
+                                value: Some(token_account),
+                            });
                         }
                     }
                     Err(Into::<ClientError>::into(RpcError::ForUser(format!(
@@ -4811,10 +4811,9 @@ impl RpcClient {
                 "wait_for_balance_with_commitment [{run}] {balance_result:?} {expected_balance:?}"
             );
             if let (Some(expected_balance), Ok(balance_result)) = (expected_balance, balance_result)
+                && expected_balance == balance_result
             {
-                if expected_balance == balance_result {
-                    return Ok(balance_result);
-                }
+                return Ok(balance_result);
             }
             run += 1;
         }
@@ -5065,10 +5064,10 @@ impl RpcClient {
         let mut num_retries = 0;
         let start = Instant::now();
         while start.elapsed().as_secs() < 5 {
-            if let Ok(new_blockhash) = self.get_latest_blockhash().await {
-                if new_blockhash != *blockhash {
-                    return Ok(new_blockhash);
-                }
+            if let Ok(new_blockhash) = self.get_latest_blockhash().await
+                && new_blockhash != *blockhash
+            {
+                return Ok(new_blockhash);
             }
             debug!("Got same blockhash ({blockhash:?}), will retry...");
 

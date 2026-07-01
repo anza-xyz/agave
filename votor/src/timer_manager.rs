@@ -61,14 +61,14 @@ impl TimerManager {
         &self,
         slot: Slot,
         standstill_slot: Option<Slot>,
-        delta_first_slice: Duration,
+        delta_first_fec_set: Duration,
         delta_block: Duration,
     ) -> bool {
         self.timers.write().set_timeouts(
             slot,
             Instant::now(),
             standstill_slot,
-            delta_first_slice,
+            delta_first_fec_set,
             delta_block,
         )
     }
@@ -100,12 +100,12 @@ mod tests {
             Arc::new(MigrationStatus::post_migration_status()),
         );
         let delta_block = Duration::from_millis(DEFAULT_MS_PER_SLOT);
-        let delta_first_slice = delta_block;
+        let delta_first_fec_set = delta_block;
         let slot = 52;
         let start = Instant::now();
-        assert!(timer_manager.set_timeouts(slot, None, delta_first_slice, delta_block));
-        assert!(!timer_manager.set_timeouts(slot, None, delta_first_slice, delta_block));
-        // Should see two timeouts at delta_block and DELTA_TIMEOUT
+        assert!(timer_manager.set_timeouts(slot, None, delta_first_fec_set, delta_block));
+        assert!(!timer_manager.set_timeouts(slot, None, delta_first_fec_set, delta_block));
+        // Should see the first two timeout events at DELTA_TIMEOUT + delta_block.
         let mut timeouts_received = 0;
         while timeouts_received < 2 && Instant::now().duration_since(start) < Duration::from_secs(2)
         {
@@ -123,7 +123,7 @@ mod tests {
                         assert_eq!(s, slot);
                         assert!(
                             Instant::now().duration_since(start)
-                                >= DELTA_TIMEOUT + delta_first_slice
+                                >= DELTA_TIMEOUT + delta_first_fec_set
                         );
                         timeouts_received += 1;
                     }

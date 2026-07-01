@@ -563,17 +563,16 @@ impl RepairWeight {
                     epoch_stakes,
                     epoch_schedule,
                 );
-                if let Some(new_orphan_root) = new_orphan_root {
-                    if new_orphan_root != self.root {
-                        if let Some(repair_request) = RepairService::request_repair_if_needed(
-                            outstanding_repairs,
-                            ShredRepairType::Orphan(new_orphan_root),
-                        ) {
-                            repairs.push(repair_request);
-                            processed_slots.insert(new_orphan_root);
-                            new_best_orphan_requests += 1;
-                        }
-                    }
+                if let Some(new_orphan_root) = new_orphan_root
+                    && new_orphan_root != self.root
+                    && let Some(repair_request) = RepairService::request_repair_if_needed(
+                        outstanding_repairs,
+                        ShredRepairType::Orphan(new_orphan_root),
+                    )
+                {
+                    repairs.push(repair_request);
+                    processed_slots.insert(new_orphan_root);
+                    new_best_orphan_requests += 1;
                 }
             }
         }
@@ -606,7 +605,7 @@ impl RepairWeight {
         outstanding_repairs: &mut HashMap<ShredRepairType, u64>,
     ) -> Vec<ShredRepairType> {
         let mut repairs = Vec::default();
-        for (_slot, tree) in self.trees.iter() {
+        for tree in self.trees.values() {
             if repairs.len() >= max_new_repairs {
                 break;
             }
@@ -638,7 +637,7 @@ impl RepairWeight {
     ) -> (Vec<ShredRepairType>, /* processed slots */ usize) {
         let mut repairs = Vec::default();
         let mut total_processed_slots = 0;
-        for (_slot, tree) in self.trees.iter() {
+        for tree in self.trees.values() {
             if repairs.len() >= max_new_repairs {
                 break;
             }
@@ -2446,7 +2445,7 @@ mod test {
 
         // Simulate repair on 6 and 5
         for (shreds, _) in make_chaining_slot_entries(&[5, 6], 100, 0) {
-            blockstore.insert_shreds(shreds, None, true).unwrap();
+            blockstore.insert_shreds(shreds, true).unwrap();
         }
 
         // Verify orphans properly updated and chained

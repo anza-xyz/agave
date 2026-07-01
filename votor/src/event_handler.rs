@@ -231,11 +231,11 @@ impl EventHandler {
         Self::check_pending_blocks(my_pubkey, &mut local_context.pending_blocks, vctx, votes)?;
         let root_bank = vctx.sharable_banks.root();
         let delta_block = Duration::from_nanos_u128(root_bank.ns_per_slot_at_slot(slot));
-        let delta_first_slice = delta_block;
+        let delta_first_fec_set = delta_block;
         let timeout_inserted = timer_manager.write().set_timeouts(
             slot,
             local_context.standstill_slot,
-            delta_first_slice,
+            delta_first_fec_set,
             delta_block,
         );
         if timeout_inserted {
@@ -450,15 +450,15 @@ impl EventHandler {
                     stats,
                 );
 
-                if let Some(slot) = *standstill_slot {
-                    if block.slot > slot {
-                        *standstill_slot = None;
-                        info!(
-                            "{my_pubkey}: Standstill initially detected at slot={slot} has ended \
-                             at slot={}. Ending timeout extension",
-                            block.slot
-                        );
-                    }
+                if let Some(slot) = *standstill_slot
+                    && block.slot > slot
+                {
+                    *standstill_slot = None;
+                    info!(
+                        "{my_pubkey}: Standstill initially detected at slot={slot} has ended at \
+                         slot={}. Ending timeout extension",
+                        block.slot
+                    );
                 }
 
                 if let Some(parent_block) =
@@ -876,8 +876,10 @@ impl EventHandler {
                     panic!(
                         "{my_pubkey}: Block {block:?} has been finalized, however we have a bank \
                          hash mismatch. The cluster bank hash is {expected_hash} however we \
-                         computed {}. At this point we will be unable to recover. Please save a \
-                         copy of your ledger to share on discord and restart from a snapshot > {}.",
+                         computed {}. At this point we will be unable to recover. Ensure that you \
+                         are running a supported Agave version for this cluster. If this is not \
+                         operator error,please save a copy of your ledger to share on discord and \
+                         restart from a snapshot > {}.",
                         bank.hash(),
                         block.slot
                     );
@@ -1398,7 +1400,7 @@ mod tests {
 
         fn expected_vote_message(&self, expected_vote: &Vote) -> VoteMessage {
             let payload =
-                get_vote_payload_to_sign(expected_vote, self.cluster_info.my_shred_version());
+                get_vote_payload_to_sign(*expected_vote, self.cluster_info.my_shred_version());
             let signature: BLSSignature = self.my_bls_keypair.sign(&payload).into();
             VoteMessage {
                 vote: *expected_vote,

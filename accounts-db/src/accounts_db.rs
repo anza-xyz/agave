@@ -40,15 +40,15 @@ use {
         accounts_db::stats::{
             AccountsStats, CleanAccountsStats, FlushStats, LoadAccountsStats,
             ObsoleteAccountsStats, PurgeStats, ShrinkAncientStats, ShrinkStats, ShrinkStatsSub,
-            StoreAccountsForFlushStats, StoreAccountsForShrinkStats, StoreAccountsTiming,
+            StoreAccountsForFlushStats, StoreAccountsForShrinkStats, StoreAccountsForSquashStats,
             StoreAccountsUnfrozenStats, WriteAccountsToCacheStats,
         },
         accounts_file::{AccountsFile, AccountsFileProvider},
         accounts_hash::{AccountLtHash, AccountsLtHash, ZERO_LAMPORT_ACCOUNT_LT_HASH},
         accounts_index::{
-            AccountSecondaryIndexes, AccountsIndex, AccountsIndexRootsStats,
-            AccountsIndexScanResult, IndexKey, ReclaimsSlotList, RefCount, ScanFilter, SlotList,
-            Startup, UpsertReclaim, in_mem_accounts_index::StartupStats,
+            AccountSecondaryIndexes, AccountsIndex, AccountsIndexScanResult, IndexKey,
+            ReclaimsSlotList, RefCount, ScanFilter, SlotList, Startup, UpsertReclaim,
+            in_mem_accounts_index::StartupStats,
         },
         accounts_scan::{ScanConfig, ScanError, ScanGuard, ScanResult, ScanTracker},
         accounts_update_notifier_interface::{AccountForGeyser, AccountsUpdateNotifier},
@@ -108,7 +108,7 @@ const UNREF_ACCOUNTS_BATCH_SIZE: usize = 10_000;
 const DEFAULT_NUM_DIRS: u32 = 4;
 
 // This value reflects recommended memory lock limit documented in the validator's
-// setup instructions at docs/src/operations/guides/validator-start.md allowing use of
+// setup instructions at https://docs.anza.xyz/operations/guides/validator-start allowing use of
 // several io_uring instances with fixed buffers for large disk IO operations.
 pub const TOTAL_IO_URING_BUFFERS_SIZE_LIMIT: usize = 2_000_000_000;
 
@@ -325,7 +325,6 @@ pub struct GetUniqueAccountsResult {
 }
 
 pub struct AccountsAddRootTiming {
-    pub index_us: u64,
     pub cache_us: u64,
 }
 
@@ -909,12 +908,6 @@ pub struct AccountsDb {
     /// Stats from storing accounts unfrozen
     store_accounts_unfrozen_stats: StoreAccountsUnfrozenStats,
 
-    /// Stats from storing accounts for shrink
-    store_accounts_for_shrink_stats: StoreAccountsForShrinkStats,
-
-    /// Stats from storing accounts for flush
-    store_accounts_for_flush_stats: StoreAccountsForFlushStats,
-
     clean_accounts_stats: CleanAccountsStats,
 
     // Stats for purges called outside of clean_accounts()
@@ -989,6 +982,9 @@ pub struct AccountsDb {
     /// Members are Slot and capacity. If capacity is smaller, then
     /// that means the storage was already shrunk.
     pub(crate) best_ancient_slots_to_shrink: RwLock<VecDeque<(Slot, u64)>>,
+
+    /// The largest slot that has been added as a root via `add_root`.
+    max_root: AtomicU64,
 }
 
 pub fn quarter_thread_count() -> usize {
@@ -1136,8 +1132,6 @@ impl AccountsDb {
             stats: AccountsStats::default(),
             load_account_stats: LoadAccountsStats::default(),
             store_accounts_unfrozen_stats: StoreAccountsUnfrozenStats::default(),
-            store_accounts_for_shrink_stats: StoreAccountsForShrinkStats::default(),
-            store_accounts_for_flush_stats: StoreAccountsForFlushStats::default(),
             #[cfg(test)]
             load_delay: u64::default(),
             #[cfg(test)]
@@ -1150,6 +1144,7 @@ impl AccountsDb {
             latest_full_snapshot_slot: SeqLock::new(None),
             last_swept_full_snapshot_slot: AtomicU64::new(0),
             best_ancient_slots_to_shrink: RwLock::default(),
+            max_root: AtomicU64::new(0),
         };
 
         {
@@ -1405,20 +1400,17 @@ impl AccountsDb {
     /// get the oldest slot that is within one epoch of the highest known root.
     /// The slot will have been offset by `self.ancient_append_vec_offset`
     fn get_oldest_non_ancient_slot(&self, epoch_schedule: &EpochSchedule) -> Slot {
-        self.get_oldest_non_ancient_slot_from_slot(
-            epoch_schedule,
-            self.accounts_index.max_root_inclusive(),
-        )
+        self.get_oldest_non_ancient_slot_from_slot(epoch_schedule, self.max_root())
     }
 
-    /// get the oldest slot that is within one epoch of `max_root_inclusive`.
+    /// get the oldest slot that is within one epoch of `max_root`.
     /// The slot will have been offset by `self.ancient_append_vec_offset`
     fn get_oldest_non_ancient_slot_from_slot(
         &self,
         epoch_schedule: &EpochSchedule,
-        max_root_inclusive: Slot,
+        max_root: Slot,
     ) -> Slot {
-        let mut result = max_root_inclusive;
+        let mut result = max_root;
         if let Some(offset) = self.ancient_append_vec_offset {
             result = Self::apply_offset_to_slot(result, offset);
         }
@@ -1426,18 +1418,20 @@ impl AccountsDb {
             result,
             -((epoch_schedule.slots_per_epoch as i64).saturating_sub(1)),
         );
-        result.min(max_root_inclusive)
+        result.min(max_root)
     }
 
     /// Collect all the uncleaned slots, up to a max slot
     ///
     /// Search through the uncleaned Pubkeys and return all the slots, up to a maximum slot.
-    fn collect_uncleaned_slots_up_to_slot(&self, max_slot_inclusive: Slot) -> Vec<Slot> {
+    fn collect_uncleaned_slots_up_to_slot(&self, max_slot_inclusive: Option<Slot>) -> Vec<Slot> {
         self.uncleaned_pubkeys
             .iter()
             .filter_map(|entry| {
                 let slot = *entry.key();
-                (slot <= max_slot_inclusive).then_some(slot)
+                max_slot_inclusive
+                    .is_none_or(|max_slot_inclusive| slot <= max_slot_inclusive)
+                    .then_some(slot)
             })
             .collect()
     }
@@ -1447,7 +1441,7 @@ impl AccountsDb {
     /// pubkeys to `candidates` for cleaning.
     fn remove_uncleaned_slots_up_to_slot_and_move_pubkeys(
         &self,
-        max_slot_inclusive: Slot,
+        max_slot_inclusive: Option<Slot>,
         candidates: &[RwLock<HashMap<Pubkey, CleaningInfo>>],
     ) {
         let uncleaned_slots = self.collect_uncleaned_slots_up_to_slot(max_slot_inclusive);
@@ -1512,14 +1506,14 @@ impl AccountsDb {
         timings: &mut CleanKeyTimings,
     ) -> CleaningCandidates {
         let mut dirty_store_processing_time = Measure::start("dirty_store_processing");
-        let max_root_inclusive = self.accounts_index.max_root_inclusive();
-        let max_slot_inclusive = max_clean_root_inclusive.unwrap_or(max_root_inclusive);
         let mut dirty_stores = Vec::with_capacity(self.dirty_stores.len());
         // find the oldest dirty slot
         // we'll add logging if that append vec cannot be marked dead
         let mut min_dirty_slot = None::<u64>;
         self.dirty_stores.retain(|slot, store| {
-            if *slot > max_slot_inclusive {
+            if max_clean_root_inclusive
+                .is_some_and(|max_clean_root_inclusive| *slot > max_clean_root_inclusive)
+            {
                 true
             } else {
                 min_dirty_slot = min_dirty_slot.map(|min| min.min(*slot)).or(Some(*slot));
@@ -1543,15 +1537,14 @@ impl AccountsDb {
                 .might_contain_zero_lamport_entry |= is_zero_lamport;
         };
 
-        let mut dirty_store_routine = || {
+        // `min_dirty_slot` (computed above) already holds the oldest dirty slot over this same set.
+        timings.oldest_dirty_slot = min_dirty_slot.unwrap_or_default();
+        let dirty_store_routine = || {
             let chunk_size = 1.max(dirty_stores_len.saturating_div(rayon::current_num_threads()));
-            let oldest_dirty_slots: Vec<u64> = dirty_stores
+            dirty_stores
                 .par_chunks(chunk_size)
-                .map(|dirty_store_chunk| {
-                    let mut oldest_dirty_slot = max_slot_inclusive.saturating_add(1);
-                    dirty_store_chunk.iter().for_each(|(slot, store)| {
-                        oldest_dirty_slot = oldest_dirty_slot.min(*slot);
-
+                .for_each(|dirty_store_chunk| {
+                    dirty_store_chunk.iter().for_each(|(_slot, store)| {
                         store
                             .accounts
                             .scan_accounts_without_data(|_offset, account| {
@@ -1561,13 +1554,7 @@ impl AccountsDb {
                             })
                             .expect("must scan accounts storage");
                     });
-                    oldest_dirty_slot
-                })
-                .collect();
-            timings.oldest_dirty_slot = *oldest_dirty_slots
-                .iter()
-                .min()
-                .unwrap_or(&max_slot_inclusive.saturating_add(1));
+                });
         };
 
         if is_startup {
@@ -1587,7 +1574,10 @@ impl AccountsDb {
         timings.dirty_store_processing_us += dirty_store_processing_time.as_us();
 
         let mut collect_delta_keys = Measure::start("key_create");
-        self.remove_uncleaned_slots_up_to_slot_and_move_pubkeys(max_slot_inclusive, &candidates);
+        self.remove_uncleaned_slots_up_to_slot_and_move_pubkeys(
+            max_clean_root_inclusive,
+            &candidates,
+        );
         collect_delta_keys.stop();
         timings.collect_delta_keys_us += collect_delta_keys.as_us();
 
@@ -1608,29 +1598,28 @@ impl AccountsDb {
         if self
             .latest_full_snapshot_slot_advanced_since_clean
             .swap(false, Ordering::Acquire)
+            && let Some(latest_full_snapshot_slot) = self.latest_full_snapshot_slot()
         {
-            if let Some(latest_full_snapshot_slot) = self.latest_full_snapshot_slot() {
-                self.zero_lamport_accounts_to_purge_after_full_snapshot
-                    .retain(|(slot, pubkey)| {
-                        let is_candidate_for_clean =
-                            max_slot_inclusive >= *slot && latest_full_snapshot_slot >= *slot;
-                        if is_candidate_for_clean {
-                            insert_candidate(*pubkey, true);
-                        }
-                        !is_candidate_for_clean
-                    });
+            self.zero_lamport_accounts_to_purge_after_full_snapshot
+                .retain(|(slot, pubkey)| {
+                    let is_candidate_for_clean = max_clean_root_inclusive
+                        .is_none_or(|max_clean_root_inclusive| max_clean_root_inclusive >= *slot)
+                        && latest_full_snapshot_slot >= *slot;
+                    if is_candidate_for_clean {
+                        insert_candidate(*pubkey, true);
+                    }
+                    !is_candidate_for_clean
+                });
 
-                let last_swept_full_snapshot_slot =
-                    self.last_swept_full_snapshot_slot.load(Ordering::Relaxed);
-                let (added_to_shrink_count, sweep_us) =
-                    measure_us!(self.check_shrink_eligibility_after_snapshot(
-                        last_swept_full_snapshot_slot,
-                        latest_full_snapshot_slot
-                    ));
-                timings.zero_lamport_single_ref_slots_added_to_shrink_count +=
-                    added_to_shrink_count;
-                timings.zero_lamport_sweep_us += sweep_us;
-            }
+            let last_swept_full_snapshot_slot =
+                self.last_swept_full_snapshot_slot.load(Ordering::Relaxed);
+            let (added_to_shrink_count, sweep_us) =
+                measure_us!(self.check_shrink_eligibility_after_snapshot(
+                    last_swept_full_snapshot_slot,
+                    latest_full_snapshot_slot
+                ));
+            timings.zero_lamport_single_ref_slots_added_to_shrink_count += added_to_shrink_count;
+            timings.zero_lamport_sweep_us += sweep_us;
         }
 
         (candidates, min_dirty_slot)
@@ -1658,10 +1647,9 @@ impl AccountsDb {
             if let Some(store) = self.storage.get_slot_storage_entry(slot)
                 && self.is_shrinking_productive(&store)
                 && self.is_candidate_for_shrink(&store)
+                && shrink_candidates.insert(slot)
             {
-                if shrink_candidates.insert(slot) {
-                    added_to_shrink_count += 1;
-                }
+                added_to_shrink_count += 1;
             }
         }
         drop(shrink_candidates);
@@ -1676,20 +1664,33 @@ impl AccountsDb {
     /// this function will call Rayon par_iter, so you will want to have thread pool installed if
     /// you want to call this without consuming all the cores on the CPU.
     fn exhaustively_verify_refcounts(&self, max_slot_inclusive: Option<Slot>) {
-        let max_slot_inclusive =
-            max_slot_inclusive.unwrap_or_else(|| self.accounts_index.max_root_inclusive());
-        info!("exhaustively verifying refcounts as of slot: {max_slot_inclusive}");
+        info!("exhaustively verifying refcounts as of slot: {max_slot_inclusive:?}");
         let pubkey_refcount = DashMap::<Pubkey, Vec<Slot>>::default();
         let mut storages = self.storage.all_storages();
-        storages.retain(|s| s.slot() <= max_slot_inclusive);
+        // Flush is not running while we verify, so storages are stable. With no slot bound we
+        // verify every storage; otherwise we drop storages newer than the bound.
+        if let Some(max_slot_inclusive) = max_slot_inclusive {
+            storages.retain(|s| s.slot() <= max_slot_inclusive);
+        }
         // populate
         storages.par_iter().for_each_init(
             || Box::new(append_vec::new_scan_accounts_reader()),
             |reader, storage| {
                 let slot = storage.slot();
+                // Obsolete accounts are skipped during index generation, so they do not
+                // contribute to the index refcount. Skip them here too, otherwise we would count
+                // a physical copy the index never tracked and report a spurious mismatch.
+                let obsolete_accounts: IntSet<_> = storage
+                    .obsolete_accounts_read_lock()
+                    .filter_obsolete_accounts(None)
+                    .map(|(offset, _)| offset)
+                    .collect();
                 storage
                     .accounts
-                    .scan_accounts(reader.as_mut(), |_offset, account| {
+                    .scan_accounts(reader.as_mut(), |offset, account| {
+                        if obsolete_accounts.contains(&offset) {
+                            return;
+                        }
                         let pk = account.pubkey();
                         match pubkey_refcount.entry(*pk) {
                             dashmap::mapref::entry::Entry::Occupied(mut occupied_entry) => {
@@ -1733,7 +1734,11 @@ impl AccountsDb {
                                         let slot_list = index_entry.slot_list_read_lock();
                                         let num_too_new = slot_list
                                             .iter()
-                                            .filter(|(slot, _)| slot > &max_slot_inclusive)
+                                            .filter(|(slot, _)| {
+                                                max_slot_inclusive.is_some_and(
+                                                    |max_slot_inclusive| *slot > max_slot_inclusive,
+                                                )
+                                            })
                                             .count();
 
                                         if ((index_entry.ref_count() as usize) - num_too_new)
@@ -1858,7 +1863,7 @@ impl AccountsDb {
                                             // Add all the rooted entries that contain this pubkey.
                                             // We know the highest rooted entry is zero lamports.
                                             candidate_info.slot_list =
-                                                self.accounts_index.get_rooted_entries(
+                                                self.accounts_index.get_entries_up_to_inclusive(
                                                     slot_list,
                                                     max_clean_root_inclusive,
                                                 );
@@ -2177,8 +2182,10 @@ impl AccountsDb {
                 i64
             ),
             (
-                "roots_added",
-                self.accounts_index.roots_added.swap(0, Ordering::Relaxed),
+                "clean_unref_from_storage_us",
+                self.clean_accounts_stats
+                    .clean_unref_from_storage_us
+                    .swap(0, Ordering::Relaxed),
                 i64
             ),
             (
@@ -2186,11 +2193,6 @@ impl AccountsDb {
                 self.accounts_index
                     .purge_older_root_entries_one_slot_list
                     .swap(0, Ordering::Relaxed),
-                i64
-            ),
-            (
-                "roots_removed",
-                self.accounts_index.roots_removed.swap(0, Ordering::Relaxed),
                 i64
             ),
             (
@@ -2389,9 +2391,6 @@ impl AccountsDb {
                 pubkeys_removed_from_accounts_index,
             );
         }
-
-        // Remove dead slots from the accounts index root tracker
-        self.remove_dead_slots_metadata(dead_slots.iter());
 
         clean_dead_slots.stop();
 
@@ -2771,15 +2770,12 @@ impl AccountsDb {
                 match slot_refs {
                     Some((slot_list, ref_count)) => {
                         // Let's handle the special case - after unref, the result is a single ref zero lamport account.
-                        if slot_list.len() == 1 && ref_count == 2 {
-                            if let Some((slot_alive, acct_info)) = slot_list.first() {
-                                if acct_info.is_zero_lamport() {
-                                    self.zero_lamport_single_ref_found(
-                                        *slot_alive,
-                                        acct_info.offset(),
-                                    );
-                                }
-                            }
+                        if slot_list.len() == 1
+                            && ref_count == 2
+                            && let Some((slot_alive, acct_info)) = slot_list.first()
+                            && acct_info.is_zero_lamport()
+                        {
+                            self.zero_lamport_single_ref_found(*slot_alive, acct_info.offset());
                         }
                     }
                     None => {
@@ -2821,34 +2817,31 @@ impl AccountsDb {
         if let Some(store) = self
             .storage
             .get_slot_storage_entry_shrinking_in_progress_ok(slot)
+            && store.insert_zero_lamport_single_ref_account_offset(offset)
         {
-            if store.insert_zero_lamport_single_ref_account_offset(offset) {
-                // this wasn't previously marked as zero lamport single ref
-                self.shrink_stats
-                    .num_zero_lamport_single_ref_accounts_found
-                    .fetch_add(1, Ordering::Relaxed);
+            // this wasn't previously marked as zero lamport single ref
+            self.shrink_stats
+                .num_zero_lamport_single_ref_accounts_found
+                .fetch_add(1, Ordering::Relaxed);
 
-                if store.num_zero_lamport_single_ref_accounts() == store.count() {
-                    // all accounts in this storage can be dead
-                    self.dirty_stores.entry(slot).or_insert(store);
+            if store.num_zero_lamport_single_ref_accounts() == store.count() {
+                // all accounts in this storage can be dead
+                self.dirty_stores.entry(slot).or_insert(store);
+                self.shrink_stats
+                    .num_dead_slots_added_to_clean
+                    .fetch_add(1, Ordering::Relaxed);
+            } else if self.is_shrinking_productive(&store) && self.is_candidate_for_shrink(&store) {
+                // this store might be eligible for shrinking now
+                let is_new = self.shrink_candidate_slots.lock().unwrap().insert(slot);
+                if is_new {
                     self.shrink_stats
-                        .num_dead_slots_added_to_clean
-                        .fetch_add(1, Ordering::Relaxed);
-                } else if self.is_shrinking_productive(&store)
-                    && self.is_candidate_for_shrink(&store)
-                {
-                    // this store might be eligible for shrinking now
-                    let is_new = self.shrink_candidate_slots.lock().unwrap().insert(slot);
-                    if is_new {
-                        self.shrink_stats
-                            .num_slots_with_zero_lamport_accounts_added_to_shrink
-                            .fetch_add(1, Ordering::Relaxed);
-                    }
-                } else {
-                    self.shrink_stats
-                        .marking_zero_dead_accounts_in_non_shrinkable_store
+                        .num_slots_with_zero_lamport_accounts_added_to_shrink
                         .fetch_add(1, Ordering::Relaxed);
                 }
+            } else {
+                self.shrink_stats
+                    .marking_zero_dead_accounts_in_non_shrinkable_store
+                    .fetch_add(1, Ordering::Relaxed);
             }
         }
     }
@@ -2932,7 +2925,7 @@ impl AccountsDb {
         // mutating rooted slots; There should be no writers to them.
         let accounts = [(slot, &shrink_collect.alive_accounts.alive_accounts()[..])];
         let storable_accounts = StorableAccountsBySlot::new(slot, &accounts, self);
-        stats_sub.store_accounts_timing = self.store_accounts_for_shrink(
+        stats_sub.store_accounts_stats = self.store_accounts_for_shrink(
             storable_accounts,
             shrink_in_progress.new_storage(),
             UpdateIndexThreadSelection::PoolWithThreshold,
@@ -2957,46 +2950,8 @@ impl AccountsDb {
 
         self.reopen_storage_as_readonly_shrinking_in_progress_ok(slot);
 
-        Self::update_shrink_stats(&self.shrink_stats, stats_sub, true);
+        self.shrink_stats.accumulate_sub_stats(stats_sub, true);
         self.shrink_stats.report();
-    }
-
-    pub(crate) fn update_shrink_stats(
-        shrink_stats: &ShrinkStats,
-        stats_sub: ShrinkStatsSub,
-        increment_count: bool,
-    ) {
-        if increment_count {
-            shrink_stats
-                .num_slots_shrunk
-                .fetch_add(1, Ordering::Relaxed);
-        }
-        shrink_stats.create_and_insert_store_elapsed.fetch_add(
-            stats_sub.create_and_insert_store_elapsed_us.0,
-            Ordering::Relaxed,
-        );
-        shrink_stats.store_accounts_elapsed.fetch_add(
-            stats_sub.store_accounts_timing.store_accounts_elapsed,
-            Ordering::Relaxed,
-        );
-        shrink_stats.update_index_elapsed.fetch_add(
-            stats_sub.store_accounts_timing.update_index_elapsed,
-            Ordering::Relaxed,
-        );
-        shrink_stats.handle_reclaims_elapsed.fetch_add(
-            stats_sub.store_accounts_timing.handle_reclaims_elapsed,
-            Ordering::Relaxed,
-        );
-        shrink_stats
-            .rewrite_elapsed
-            .fetch_add(stats_sub.rewrite_elapsed_us.0, Ordering::Relaxed);
-        shrink_stats
-            .unpackable_slots_count
-            .fetch_add(stats_sub.unpackable_slots_count.0 as u64, Ordering::Relaxed);
-        shrink_stats.newest_alive_packed_count.fetch_add(
-            stats_sub.newest_alive_packed_count.0 as u64,
-            Ordering::Relaxed,
-        );
     }
 
     /// get stores for 'slot'
@@ -3037,17 +2992,16 @@ impl AccountsDb {
         if let Some(storage) = self
             .storage
             .get_slot_storage_entry_shrinking_in_progress_ok(slot)
+            && let Some(new_storage) = storage.reopen_as_readonly()
         {
-            if let Some(new_storage) = storage.reopen_as_readonly() {
-                // consider here the race condition of tx processing having looked up something in the index,
-                // which could return (slot, append vec id). We want the lookup for the storage to get a storage
-                // that works whether the lookup occurs before or after the replace call here.
-                // So, the two storages have to be exactly equivalent wrt offsets, counts, len, id, etc.
-                assert_eq!(storage.id(), new_storage.id());
-                assert_eq!(storage.accounts.len(), new_storage.accounts.len());
-                self.storage
-                    .replace_storage_with_equivalent(slot, Arc::new(new_storage));
-            }
+            // consider here the race condition of tx processing having looked up something in the index,
+            // which could return (slot, append vec id). We want the lookup for the storage to get a storage
+            // that works whether the lookup occurs before or after the replace call here.
+            // So, the two storages have to be exactly equivalent wrt offsets, counts, len, id, etc.
+            assert_eq!(storage.id(), new_storage.id());
+            assert_eq!(storage.accounts.len(), new_storage.accounts.len());
+            self.storage
+                .replace_storage_with_equivalent(slot, Arc::new(new_storage));
         }
     }
 
@@ -3071,10 +3025,9 @@ impl AccountsDb {
         if let Some(store) = self
             .storage
             .get_slot_storage_entry_shrinking_in_progress_ok(slot)
+            && self.is_shrinking_productive(&store)
         {
-            if self.is_shrinking_productive(&store) {
-                self.shrink_storage(store)
-            }
+            self.shrink_storage(store)
         }
     }
 
@@ -3164,20 +3117,13 @@ impl AccountsDb {
         (shrink_slots, shrink_slots_next_batch)
     }
 
-    fn get_roots_less_than(&self, slot: Slot) -> Vec<Slot> {
-        self.accounts_index
-            .roots_tracker
-            .read()
-            .unwrap()
-            .alive_roots
-            .get_all_less_than(slot)
-    }
-
     /// return all slots that are more than one epoch old and thus could already be an ancient append vec
     /// or which could need to be combined into a new or existing ancient append vec
     /// offset is used to combine newer slots than we normally would. This is designed to be used for testing.
     fn get_sorted_potential_ancient_slots(&self, oldest_non_ancient_slot: Slot) -> Vec<Slot> {
-        let mut ancient_slots = self.get_roots_less_than(oldest_non_ancient_slot);
+        // Only storages can be combined into ancient append vecs, so the storage map is the
+        // source of truth here.
+        let mut ancient_slots = self.storage.slots_less_than(oldest_non_ancient_slot);
         ancient_slots.sort_unstable();
         ancient_slots
     }
@@ -3191,31 +3137,12 @@ impl AccountsDb {
 
         let oldest_non_ancient_slot = self.get_oldest_non_ancient_slot(epoch_schedule);
         let can_randomly_shrink = true;
-        let sorted_slots = self.get_sorted_potential_ancient_slots(oldest_non_ancient_slot);
+        let (sorted_slots, select_slots_us) =
+            measure_us!(self.get_sorted_potential_ancient_slots(oldest_non_ancient_slot));
+        self.shrink_ancient_stats
+            .select_slots_us
+            .fetch_add(select_slots_us, Ordering::Relaxed);
         self.combine_ancient_slots_packed(sorted_slots, can_randomly_shrink);
-    }
-
-    /// each slot in 'dropped_roots' has been combined into an ancient append vec.
-    /// We are done with the slot now forever.
-    pub(crate) fn handle_dropped_roots_for_ancient(
-        &self,
-        dropped_roots: impl Iterator<Item = Slot>,
-    ) {
-        dropped_roots.for_each(|slot| {
-            self.accounts_index.clean_dead_slot(slot);
-            // the storage has been removed from this slot and recycled or dropped
-            assert!(self.storage.remove(&slot, false).is_none());
-            debug_assert!(
-                !self
-                    .accounts_index
-                    .roots_tracker
-                    .read()
-                    .unwrap()
-                    .alive_roots
-                    .contains(&slot),
-                "slot: {slot}"
-            );
-        });
     }
 
     /// add all 'pubkeys' into the set of pubkeys that are 'uncleaned', associated with 'slot'
@@ -3284,22 +3211,21 @@ impl AccountsDb {
         if shrink_slots.len() < SHRINK_INSERT_ANCIENT_THRESHOLD {
             let mut ancients = self.best_ancient_slots_to_shrink.write().unwrap();
             while let Some((slot, capacity)) = ancients.pop_front() {
-                if let Some(store) = self.storage.get_slot_storage_entry(slot) {
-                    if !shrink_slots.contains(&slot)
-                        && capacity == store.capacity()
-                        && self.is_candidate_for_shrink(&store)
-                    {
-                        let ancient_bytes_added_to_shrink =
-                            self.alive_bytes_after_shrink(&store) as u64;
-                        shrink_slots.insert(slot, store);
-                        self.shrink_stats
-                            .ancient_bytes_added_to_shrink
-                            .fetch_add(ancient_bytes_added_to_shrink, Ordering::Relaxed);
-                        self.shrink_stats
-                            .ancient_slots_added_to_shrink
-                            .fetch_add(1, Ordering::Relaxed);
-                        break;
-                    }
+                if let Some(store) = self.storage.get_slot_storage_entry(slot)
+                    && !shrink_slots.contains(&slot)
+                    && capacity == store.capacity()
+                    && self.is_candidate_for_shrink(&store)
+                {
+                    let ancient_bytes_added_to_shrink =
+                        self.alive_bytes_after_shrink(&store) as u64;
+                    shrink_slots.insert(slot, store);
+                    self.shrink_stats
+                        .ancient_bytes_added_to_shrink
+                        .fetch_add(ancient_bytes_added_to_shrink, Ordering::Relaxed);
+                    self.shrink_stats
+                        .ancient_slots_added_to_shrink
+                        .fetch_add(1, Ordering::Relaxed);
+                    break;
                 }
             }
         }
@@ -3422,13 +3348,11 @@ impl AccountsDb {
         F: FnMut(Option<(&Pubkey, AccountSharedData, Slot)>),
     {
         // Register this scan so that slots needed by the scan are not cleaned out from under us.
-        let scan_guard = ScanGuard::try_new(&self.scan_tracker, bank_id, || {
-            self.accounts_index.max_root_inclusive()
-        })
-        .ok_or(ScanError::SlotRemoved {
-            slot: ancestors.max_slot(),
-            bank_id,
-        })?;
+        let scan_guard = ScanGuard::try_new(&self.scan_tracker, bank_id, || self.max_root())
+            .ok_or(ScanError::SlotRemoved {
+                slot: ancestors.max_slot(),
+                bank_id,
+            })?;
 
         // If the scan's ancestors are all rooted, drop them and scan roots only
         // Scan Guard max root must be used as the scan guard guarantees that
@@ -3471,11 +3395,11 @@ impl AccountsDb {
             ancestors,
             max_root,
             |pubkey, (account_info, slot)| {
-                if let Some((cached_account, cache_slot)) = cached_versions.remove(pubkey) {
-                    if cache_slot >= slot {
-                        scan_func(Some((pubkey, cached_account.account.clone(), cache_slot)));
-                        return;
-                    }
+                if let Some((cached_account, cache_slot)) = cached_versions.remove(pubkey)
+                    && cache_slot >= slot
+                {
+                    scan_func(Some((pubkey, cached_account.account.clone(), cache_slot)));
+                    return;
                 }
 
                 let mut account_accessor =
@@ -3532,13 +3456,11 @@ impl AccountsDb {
         }
 
         // Register this scan so that slots needed by the scan are not cleaned out from under us.
-        let scan_guard = ScanGuard::try_new(&self.scan_tracker, bank_id, || {
-            self.accounts_index.max_root_inclusive()
-        })
-        .ok_or(ScanError::SlotRemoved {
-            slot: ancestors.max_slot(),
-            bank_id,
-        })?;
+        let scan_guard = ScanGuard::try_new(&self.scan_tracker, bank_id, || self.max_root())
+            .ok_or(ScanError::SlotRemoved {
+                slot: ancestors.max_slot(),
+                bank_id,
+            })?;
 
         // If the scan's ancestors are all rooted, drop them and scan roots only
         // Scan Guard max root must be used as the scan guard guarantees that
@@ -3792,10 +3714,10 @@ impl AccountsDb {
         // P1 purge_slot()                        | N/A
         //          |                             |
         //          V                             |
-        // P2 purge_slots_from_cache_and_store()  | map of caches/stores (removes old entry)
+        // P2 purge_slots_from_cache()            | map of caches/stores (removes old entry)
         //          |                             |
         //          V                             |
-        // P3 purge_slots_from_cache_and_store()/ | index
+        // P3 purge_slots_from_cache()/           | index
         //       remove_dead_slots_metadata()     | (removes index roots metadata for cached slot)
         //       purge_slot_storage()/            |
         //          purge_keys_exact()            | (removes accounts index entries)
@@ -3948,7 +3870,7 @@ impl AccountsDb {
         load_hint: LoadHint,
         populate_read_cache: PopulateReadCache,
     ) -> Option<(AccountSharedData, Slot)> {
-        let starting_max_root = self.accounts_index.max_root_inclusive();
+        let starting_max_root = self.max_root();
 
         // Check the write cache first; a hit is the freshest version visible on this fork,
         // so return it
@@ -4004,7 +3926,7 @@ impl AccountsDb {
         }
         if load_hint == LoadHint::FixedMaxRoot {
             // If the load hint is that the max root is fixed, the max root should be fixed.
-            let ending_max_root = self.accounts_index.max_root_inclusive();
+            let ending_max_root = self.max_root();
             if starting_max_root != ending_max_root {
                 warn!(
                     "do_load_with_populate_read_cache() scanning pubkey {pubkey} called with \
@@ -4102,13 +4024,16 @@ impl AccountsDb {
         self.purge_slots(std::iter::once(&slot));
     }
 
-    /// Purges every slot in `removed_slots` from both the cache and storage. This includes
-    /// entries in the accounts index, cache entries, and any backing storage entries.
-    fn purge_slots_from_cache_and_store<'a>(
+    /// Purges each slot in `removed_slots` from the write cache (and the accounts index). Slots
+    /// no longer present in the cache are skipped. This never touches backing storage, so it
+    /// cannot delete a flushed (rooted) slot's data. Returns whether any slot was actually
+    /// removed from the cache. This allows the snapshot minimizer to determine whether
+    /// it should purge the storage as well
+    fn purge_slots_from_cache<'a>(
         &self,
-        removed_slots: impl Iterator<Item = &'a Slot> + Clone,
+        removed_slots: impl Iterator<Item = &'a Slot>,
         purge_stats: &PurgeStats,
-    ) {
+    ) -> bool {
         let mut remove_cache_elapsed_across_slots = 0;
         let mut num_cached_slots_removed = 0;
         let mut total_removed_cached_bytes = 0;
@@ -4121,11 +4046,8 @@ impl AccountsDb {
             // holding the index lock, finding the index entry, and then looking up the entry
             // in the cache. If it fails to find that entry, it will panic in `get_loaded_account()`
             if let Some(slot_cache) = self.accounts_cache.slot_cache(*remove_slot) {
-                // If the slot is still in the cache, remove the backing storages for
-                // the slot and from the Accounts Index
                 num_cached_slots_removed += 1;
                 total_removed_cached_bytes += slot_cache.total_bytes();
-                self.remove_dead_slots_metadata(iter::once(remove_slot));
                 remove_cache_elapsed.stop();
                 remove_cache_elapsed_across_slots += remove_cache_elapsed.as_us();
                 // Nobody else should have removed the slot cache entry yet
@@ -4150,12 +4072,7 @@ impl AccountsDb {
                         .handle_dead_keys(&pubkeys_removed, &self.account_indexes);
                 }
                 self.accounts_index.write_through_pubkeys(pubkeys_removed);
-            } else {
-                self.purge_slot_storage(*remove_slot, purge_stats);
             }
-            // It should not be possible that a slot is neither in the cache or storage. Even in
-            // a slot with all ticks, `Bank::new_from_parent()` immediately stores some sysvars
-            // on bank creation.
         }
 
         purge_stats
@@ -4167,6 +4084,8 @@ impl AccountsDb {
         purge_stats
             .total_removed_cached_bytes
             .fetch_add(total_removed_cached_bytes, Ordering::Relaxed);
+
+        num_cached_slots_removed > 0
     }
 
     /// Purges every slot in `removed_slots` from both the cache and storage. This includes
@@ -4176,10 +4095,17 @@ impl AccountsDb {
     #[cfg(feature = "dev-context-only-utils")]
     pub fn purge_slots_for_snapshot_minimizer<'a>(
         &self,
-        removed_slots: impl Iterator<Item = &'a Slot> + Clone,
+        removed_slots: impl Iterator<Item = &'a Slot>,
     ) {
-        let stats = PurgeStats::default();
-        self.purge_slots_from_cache_and_store(removed_slots, &stats);
+        let purge_stats = PurgeStats::default();
+        for remove_slot in removed_slots {
+            // Unlike the consensus purge paths, minimization may purge slots that have already
+            // been flushed to storage, so fall back to purging storage for any slot that is no
+            // longer in the cache.
+            if !self.purge_slots_from_cache(iter::once(remove_slot), &purge_stats) {
+                self.purge_slot_storage(*remove_slot, &purge_stats);
+            }
+        }
     }
 
     /// Purge the backing storage entries for the given slot, does not purge from
@@ -4189,23 +4115,6 @@ impl AccountsDb {
         removed_slots: impl Iterator<Item = &'a Slot> + Clone,
         purge_stats: &PurgeStats,
     ) {
-        // Check all slots `removed_slots` are no longer "relevant" roots.
-        // Note that the slots here could have been rooted slots, but if they're passed here
-        // for removal it means:
-        // 1) All updates in that old root have been outdated by updates in newer roots
-        // 2) Those slots/roots should have already been purged from the accounts index root
-        // tracking metadata via `accounts_index.clean_dead_slot()`.
-        let mut safety_checks_elapsed = Measure::start("safety_checks_elapsed");
-        assert!(
-            self.accounts_index
-                .get_rooted_from_list(removed_slots.clone())
-                .is_empty()
-        );
-        safety_checks_elapsed.stop();
-        purge_stats
-            .safety_checks_elapsed
-            .fetch_add(safety_checks_elapsed.as_us(), Ordering::Relaxed);
-
         let mut total_removed_stored_bytes = 0;
         let mut all_removed_slot_storages = vec![];
 
@@ -4236,9 +4145,6 @@ impl AccountsDb {
             .num_stored_slots_removed
             .fetch_add(num_stored_slots_removed, Ordering::Relaxed);
         purge_stats
-            .total_removed_storage_entries
-            .fetch_add(num_stored_slots_removed, Ordering::Relaxed);
-        purge_stats
             .total_removed_stored_bytes
             .fetch_add(total_removed_stored_bytes, Ordering::Relaxed);
         self.stats
@@ -4246,6 +4152,7 @@ impl AccountsDb {
             .fetch_add(num_stored_slots_removed as u64, Ordering::Relaxed);
     }
 
+    #[cfg(feature = "dev-context-only-utils")]
     fn purge_slot_storage(&self, remove_slot: Slot, purge_stats: &PurgeStats) {
         // Because AccountsBackgroundService synchronously flushes from the accounts cache
         // and handles all Bank::drop() (the cleanup function that leads to this
@@ -4310,6 +4217,11 @@ impl AccountsDb {
         // `add_root()` should be called first
         let mut safety_checks_elapsed = Measure::start("safety_checks_elapsed");
         let non_roots = slots
+            // Only purge slots that are still in the write cache and are not
+            // unflushed roots. Flushed roots have already been removed from the
+            // cache, so the `contains` check excludes them; the
+            // `contains_unflushed_root` check excludes roots still pending flush.
+            //
             // Only safe to check when there are duplicate versions of a slot
             // because ReplayStage will not make new roots before dumping the
             // duplicate slots first. Thus we will not be in a case where we
@@ -4319,24 +4231,30 @@ impl AccountsDb {
             // Also note roots are never removed via `remove_unrooted_slot()`, so
             // it's safe to filter them out here as they won't need deletion from
             // self.scan_tracker.removed_bank_ids in
-            // `purge_slots_from_cache_and_store()`.
-            .filter(|slot| !self.accounts_index.is_alive_root(**slot));
+            // `purge_slots_from_cache()`.
+            .filter(|slot| {
+                self.accounts_cache.contains(**slot)
+                    && !self.accounts_cache.contains_unflushed_root(**slot)
+            });
         safety_checks_elapsed.stop();
         self.external_purge_slots_stats
             .safety_checks_elapsed
             .fetch_add(safety_checks_elapsed.as_us(), Ordering::Relaxed);
-        self.purge_slots_from_cache_and_store(non_roots, &self.external_purge_slots_stats);
+        self.purge_slots_from_cache(non_roots, &self.external_purge_slots_stats);
         self.external_purge_slots_stats
             .report("external_purge_slots_stats", Some(1000));
     }
 
     pub fn remove_unrooted_slots(&self, remove_slots: &[(Slot, BankId)]) {
-        let rooted_slots = self
-            .accounts_index
-            .get_rooted_from_list(remove_slots.iter().map(|(slot, _)| slot));
         assert!(
-            rooted_slots.is_empty(),
-            "Trying to remove accounts for rooted slots {rooted_slots:?}"
+            remove_slots.iter().all(|(slot, _)| {
+                debug_assert!(
+                    self.accounts_cache.contains(*slot),
+                    "Trying to remove slot not in cache {slot}"
+                );
+                !self.accounts_cache.contains_unflushed_root(*slot)
+            }),
+            "Trying to remove accounts for rooted slots {remove_slots:?}"
         );
 
         // Mark down these slots are about to be purged so that new attempts to scan these
@@ -4350,7 +4268,7 @@ impl AccountsDb {
         }
 
         let remove_unrooted_purge_stats = PurgeStats::default();
-        self.purge_slots_from_cache_and_store(
+        self.purge_slots_from_cache(
             remove_slots.iter().map(|(slot, _)| slot),
             &remove_unrooted_purge_stats,
         );
@@ -4485,19 +4403,28 @@ impl AccountsDb {
                 flush_stats.store_accounts_total_us.0,
                 i64
             ),
+            ("write_accounts_us", flush_stats.write_accounts_us.0, i64),
+            ("update_index_us", flush_stats.update_index_us.0, i64),
+            ("handle_reclaims_us", flush_stats.handle_reclaims_us.0, i64),
             (
-                "update_index_us",
-                flush_stats.store_accounts_timing.update_index_elapsed,
+                "mark_zero_lamport_single_ref_accounts_us",
+                flush_stats.mark_zero_lamport_single_ref_accounts_us.0,
                 i64
             ),
             (
-                "store_accounts_elapsed_us",
-                flush_stats.store_accounts_timing.store_accounts_elapsed,
+                "num_zero_lamport_single_ref_accounts_marked",
+                flush_stats.num_zero_lamport_single_ref_accounts_marked.0,
+                i64
+            ),
+            ("num_reclaims", flush_stats.num_reclaims.0, i64),
+            (
+                "num_obsolete_slots_removed",
+                flush_stats.num_obsolete_slots_removed.0,
                 i64
             ),
             (
-                "handle_reclaims_elapsed_us",
-                flush_stats.store_accounts_timing.handle_reclaims_elapsed,
+                "num_obsolete_bytes_removed",
+                flush_stats.num_obsolete_bytes_removed.0,
                 i64
             ),
             ("select_pubkeys_us", flush_stats.select_pubkeys_us.0, i64),
@@ -4638,7 +4565,7 @@ impl AccountsDb {
         slot_cache: &SlotCache,
         pubkeys_to_flush: &PubkeysToFlush,
     ) -> FlushStats {
-        debug_assert!(self.accounts_index.is_alive_root(slot));
+        debug_assert!(self.accounts_cache.contains_unflushed_root(slot));
         let mut flush_stats = FlushStats::default();
         let iter_items: Vec<_> = slot_cache.iter().collect();
 
@@ -4684,24 +4611,20 @@ impl AccountsDb {
                 self.create_store(slot, flush_stats.num_bytes_flushed.0, "flush_slot_cache");
             self.storage.insert(Arc::clone(&flushed_store));
 
-            let (store_accounts_timing_inner, store_accounts_total_inner_us) =
+            let (store_accounts_for_flush_stats, store_accounts_for_flush_us) =
                 measure_us!(self.store_accounts_for_flush(
                     (slot, &accounts[..]),
                     &flushed_store,
                     reclaim_method,
                     UpdateIndexThreadSelection::PoolWithThreshold,
                 ));
-            flush_stats.store_accounts_timing = store_accounts_timing_inner;
-            flush_stats.store_accounts_total_us = Saturating(store_accounts_total_inner_us);
+            flush_stats.accumulate_store_accounts_for_flush(store_accounts_for_flush_stats);
+            flush_stats.store_accounts_total_us += Saturating(store_accounts_for_flush_us);
 
             // If the above sizing function is correct, just one AppendVec is enough to hold
             // all the data for the slot
             assert!(self.storage.get_slot_storage_entry(slot).is_some());
             self.reopen_storage_as_readonly_shrinking_in_progress_ok(slot);
-        } else {
-            // Every account in this slot was superseded by a newer root, so it flushes to no
-            // storage. Drop the now-dead slot from the index roots metadata
-            self.remove_dead_slots_metadata(iter::once(&slot));
         }
 
         // Remove this slot from the cache, which will to AccountsDb's new readers should look like an
@@ -4785,6 +4708,20 @@ impl AccountsDb {
             ("total_bytes", total_bytes, i64),
             ("total_alive_bytes", total_alive_bytes, i64),
             ("total_alive_ratio", total_alive_ratio, f64),
+            (
+                "append_vecs_open",
+                append_vec::APPEND_VEC_STATS
+                    .files_open
+                    .load(Ordering::Relaxed),
+                i64
+            ),
+            (
+                "append_vecs_dirty",
+                append_vec::APPEND_VEC_STATS
+                    .files_dirty
+                    .load(Ordering::Relaxed),
+                i64
+            ),
         );
     }
 
@@ -5066,14 +5003,6 @@ impl AccountsDb {
         let target_slot = accounts.target_slot();
         let len = std::cmp::min(accounts.len(), infos.len());
 
-        // If reclaiming old slots, ensure the target slot is a root
-        // Having an unrooted slot reclaim a rooted version of a slot
-        // could lead to index corruption if the unrooted version is
-        // discarded
-        if reclaim == UpsertReclaim::ReclaimOldSlots {
-            assert!(target_slot <= self.accounts_index.max_root_inclusive());
-        }
-
         let update = |start, end| {
             let mut reclaims = ReclaimsSlotList::with_capacity((end - start) / 2);
 
@@ -5352,23 +5281,15 @@ impl AccountsDb {
             .fetch_add(measure.as_us(), Ordering::Relaxed);
 
         dead_slots.retain(|slot| {
-            if let Some(slot_store) = self.storage.get_slot_storage_entry(*slot) {
-                if slot_store.count() != 0 {
-                    return false;
-                }
+            if let Some(slot_store) = self.storage.get_slot_storage_entry(*slot)
+                && slot_store.count() != 0
+            {
+                return false;
             }
             true
         });
 
         (dead_slots, reclaimed_offsets)
-    }
-
-    fn remove_dead_slots_metadata<'a>(&'a self, dead_slots_iter: impl Iterator<Item = &'a Slot>) {
-        let accounts_index_root_stats = self.accounts_index.clean_dead_slots(dead_slots_iter);
-
-        self.clean_accounts_stats
-            .latest_accounts_index_roots_stats
-            .update(&accounts_index_root_stats);
     }
 
     /// lookup each pubkey in 'pubkeys' and unref it in the accounts index
@@ -5397,15 +5318,12 @@ impl AccountsDb {
                     |_pubkey, slots_refs| {
                         if let Some((slot_list, ref_count)) = slots_refs {
                             // Let's handle the special case - after unref, the result is a single ref zero lamport account.
-                            if slot_list.len() == 1 && ref_count == 2 {
-                                if let Some((slot_alive, acct_info)) = slot_list.first() {
-                                    if acct_info.is_zero_lamport() {
-                                        self.zero_lamport_single_ref_found(
-                                            *slot_alive,
-                                            acct_info.offset(),
-                                        );
-                                    }
-                                }
+                            if slot_list.len() == 1
+                                && ref_count == 2
+                                && let Some((slot_alive, acct_info)) = slot_list.first()
+                                && acct_info.is_zero_lamport()
+                            {
+                                self.zero_lamport_single_ref_found(*slot_alive, acct_info.offset());
                             }
                         }
                         AccountsIndexScanResult::Unref
@@ -5486,7 +5404,6 @@ impl AccountsDb {
         };
 
         //Unref the accounts from storage
-        let mut accounts_index_root_stats = AccountsIndexRootsStats::default();
         let mut measure_unref = Measure::start("unref_from_storage");
 
         if let Some(purged_account_slots) = purged_account_slots {
@@ -5497,11 +5414,9 @@ impl AccountsDb {
             );
         }
         measure_unref.stop();
-        accounts_index_root_stats.clean_unref_from_storage_us += measure_unref.as_us();
-
         self.clean_accounts_stats
-            .latest_accounts_index_roots_stats
-            .update(&accounts_index_root_stats);
+            .clean_unref_from_storage_us
+            .fetch_add(measure_unref.as_us(), Ordering::Relaxed);
 
         measure.stop();
         self.clean_accounts_stats
@@ -5570,6 +5485,42 @@ impl AccountsDb {
         self.report_store_timings();
     }
 
+    /// Store `accounts` into `storage`.
+    ///
+    /// This fn is to only be called by ancient squash.
+    pub(crate) fn store_accounts_for_squash<'a>(
+        &self,
+        accounts: impl StorableAccounts<'a>,
+        storage: &AccountStorageEntry,
+    ) -> StoreAccountsForSquashStats {
+        let slot = accounts.target_slot();
+
+        // Flush the read cache if necessary
+        let flush_read_cache_us = if self.read_only_accounts_cache.can_slot_be_in_cache(slot) {
+            let flush_read_cache_time = Measure::start("flush_read_cache");
+            (0..accounts.len()).for_each(|index| {
+                // Based on the patterns of how a validator writes accounts, it is almost always
+                // the case that there is no read only cache entry for this pubkey and slot.
+                // So, we can give that hint to the `remove` for performance.
+                self.read_only_accounts_cache
+                    .remove_assume_not_present(accounts.pubkey(index));
+            });
+            flush_read_cache_time.end_as_us()
+        } else {
+            0
+        };
+
+        let store_accounts_for_shrink_stats = self.store_accounts_for_shrink(
+            accounts,
+            storage,
+            UpdateIndexThreadSelection::PoolWithThreshold,
+        );
+        StoreAccountsForSquashStats {
+            store_accounts_for_shrink_stats,
+            flush_read_cache_us,
+        }
+    }
+
     /// Stores accounts in the storage and updates the index.
     /// This function is intended for accounts that are being shrunk (moving from one store to another)
     /// - `UpsertReclaims` is set to `IgnoreReclaims`. If the slot in `accounts` differs from the new slot,
@@ -5580,24 +5531,9 @@ impl AccountsDb {
         accounts: impl StorableAccounts<'a>,
         storage: &AccountStorageEntry,
         update_index_thread_selection: UpdateIndexThreadSelection,
-    ) -> StoreAccountsTiming {
+    ) -> StoreAccountsForShrinkStats {
         let slot = accounts.target_slot();
         let num_accounts_stored = accounts.len();
-        let stats = &self.store_accounts_for_shrink_stats;
-
-        debug_assert!(self.accounts_index.is_alive_root(slot));
-
-        // Flush the read cache if necessary
-        let flush_read_cache_time = Measure::start("flush_read_cache");
-        if self.read_only_accounts_cache.can_slot_be_in_cache(slot) {
-            (0..accounts.len()).for_each(|index| {
-                // based on the patterns of how a validator writes accounts, it is almost always the case that there is no read only cache entry
-                // for this pubkey and slot. So, we can give that hint to the `remove` for performance.
-                self.read_only_accounts_cache
-                    .remove_assume_not_present(accounts.pubkey(index));
-            });
-        }
-        let flush_read_cache_us = flush_read_cache_time.end_as_us();
 
         // Write the accounts to storage
         let write_accounts_time = Measure::start("write_accounts");
@@ -5618,31 +5554,12 @@ impl AccountsDb {
         );
         let update_index_us = update_index_time.end_as_us();
 
-        stats
-            .flush_read_cache_us
-            .fetch_add(flush_read_cache_us, Ordering::Relaxed);
-        stats
-            .write_to_storage_us
-            .fetch_add(write_accounts_us, Ordering::Relaxed);
-        stats
-            .mark_zero_lamport_single_ref_accounts_us
-            .fetch_add(mark_zero_lamport_single_ref_us, Ordering::Relaxed);
-        stats
-            .update_index_us
-            .fetch_add(update_index_us, Ordering::Relaxed);
-        stats
-            .num_accounts_stored
-            .fetch_add(num_accounts_stored as u64, Ordering::Relaxed);
-        stats.num_zero_lamport_single_ref_accounts_marked.fetch_add(
+        StoreAccountsForShrinkStats {
+            write_accounts_us,
+            mark_zero_lamport_single_ref_accounts_us: mark_zero_lamport_single_ref_us,
+            update_index_us,
+            num_accounts_stored: num_accounts_stored as u64,
             num_zero_lamport_single_ref_accounts_marked,
-            Ordering::Relaxed,
-        );
-        stats.report();
-
-        StoreAccountsTiming {
-            store_accounts_elapsed: write_accounts_us,
-            update_index_elapsed: update_index_us,
-            handle_reclaims_elapsed: 0,
         }
     }
 
@@ -5657,12 +5574,10 @@ impl AccountsDb {
         storage: &AccountStorageEntry,
         reclaim_handling: UpsertReclaim,
         update_index_thread_selection: UpdateIndexThreadSelection,
-    ) -> StoreAccountsTiming {
+    ) -> StoreAccountsForFlushStats {
         let slot = accounts.target_slot();
-        let num_accounts_stored = accounts.len();
-        let stats = &self.store_accounts_for_flush_stats;
 
-        debug_assert!(self.accounts_index.is_alive_root(slot));
+        debug_assert!(self.accounts_cache.contains_unflushed_root(slot));
 
         // Write the accounts to storage
         let write_accounts_time = Measure::start("write_accounts");
@@ -5690,8 +5605,11 @@ impl AccountsDb {
         // should skip handle_reclaims only when reclaims is empty. No need to
         // check the elements of reclaims are empty.
         let handle_reclaims_time = Measure::start("handle_reclaims");
+        let mut num_reclaims = 0;
+        let mut num_obsolete_slots_removed = 0;
+        let mut num_obsolete_bytes_removed = 0;
         if !reclaims.is_empty() {
-            let reclaims_len = reclaims.iter().map(|r| r.len()).sum::<usize>();
+            num_reclaims = reclaims.iter().map(|r| r.len() as u64).sum();
             let purge_stats = PurgeStats::default();
             self.handle_reclaims(
                 reclaims.iter().flatten(),
@@ -5700,47 +5618,23 @@ impl AccountsDb {
                 &purge_stats,
                 MarkAccountsObsolete::Yes(slot),
             );
-            stats.num_obsolete_slots_removed.fetch_add(
-                purge_stats.num_stored_slots_removed.load(Ordering::Relaxed),
-                Ordering::Relaxed,
-            );
-            stats.num_obsolete_bytes_removed.fetch_add(
-                purge_stats
-                    .total_removed_stored_bytes
-                    .load(Ordering::Relaxed),
-                Ordering::Relaxed,
-            );
-            stats
-                .num_reclaims
-                .fetch_add(reclaims_len as u64, Ordering::Relaxed);
+            num_obsolete_slots_removed =
+                purge_stats.num_stored_slots_removed.load(Ordering::Relaxed) as u64;
+            num_obsolete_bytes_removed = purge_stats
+                .total_removed_stored_bytes
+                .load(Ordering::Relaxed);
         }
         let handle_reclaims_us = handle_reclaims_time.end_as_us();
 
-        stats
-            .write_to_storage_us
-            .fetch_add(write_accounts_us, Ordering::Relaxed);
-        stats
-            .update_index_us
-            .fetch_add(update_index_us, Ordering::Relaxed);
-        stats
-            .mark_zero_lamport_single_ref_accounts_us
-            .fetch_add(mark_zero_lamport_us, Ordering::Relaxed);
-        stats
-            .handle_reclaims_us
-            .fetch_add(handle_reclaims_us, Ordering::Relaxed);
-        stats
-            .num_accounts_stored
-            .fetch_add(num_accounts_stored as u64, Ordering::Relaxed);
-        stats.num_zero_lamport_single_ref_accounts_marked.fetch_add(
+        StoreAccountsForFlushStats {
+            write_accounts_us,
+            update_index_us,
+            handle_reclaims_us,
+            mark_zero_lamport_single_ref_accounts_us: mark_zero_lamport_us,
             num_zero_lamport_single_ref_accounts_marked,
-            Ordering::Relaxed,
-        );
-        stats.report();
-
-        StoreAccountsTiming {
-            store_accounts_elapsed: write_accounts_us,
-            update_index_elapsed: update_index_us,
-            handle_reclaims_elapsed: handle_reclaims_us,
+            num_reclaims,
+            num_obsolete_slots_removed,
+            num_obsolete_bytes_removed,
         }
     }
 
@@ -6021,17 +5915,20 @@ impl AccountsDb {
     }
 
     pub fn add_root(&self, slot: Slot) -> AccountsAddRootTiming {
-        let mut index_time = Measure::start("index_add_root");
-        self.accounts_index.add_root(slot);
-        index_time.stop();
         let mut cache_time = Measure::start("cache_add_root");
         self.accounts_cache.add_root(slot);
         cache_time.stop();
 
+        self.max_root.fetch_max(slot, Ordering::Relaxed);
+
         AccountsAddRootTiming {
-            index_us: index_time.as_us(),
             cache_us: cache_time.as_us(),
         }
+    }
+
+    /// Returns the largest slot that has been added as a root via `add_root`.
+    pub fn max_root(&self) -> Slot {
+        self.max_root.load(Ordering::Relaxed)
     }
 
     /// Returns storages for `requested_slots`
@@ -6250,6 +6147,11 @@ impl AccountsDb {
             storages.truncate(limit); // get rid of the newer slots and keep just the older
         }
         let num_storages = storages.len();
+
+        // `storages` is sorted by slot, so the last one is the highest root.
+        if let Some(storage) = storages.last() {
+            self.max_root.fetch_max(storage.slot(), Ordering::Relaxed);
+        }
 
         self.accounts_index.set_startup(Startup::Startup);
 
@@ -6520,11 +6422,6 @@ impl AccountsDb {
                 .insert(slot, storages[storage_index].clone());
         }
 
-        // Need to add these last, otherwise older updates will be cleaned
-        for storage in &storages {
-            self.accounts_index.add_root(storage.slot());
-        }
-
         self.set_storage_count_and_alive_bytes(total_accum.storage_info, &mut timings);
 
         let mut mark_obsolete_accounts_time = Measure::start("mark_obsolete_accounts_time");
@@ -6613,8 +6510,7 @@ impl AccountsDb {
                 }
                 ObsoleteAccountsStats {
                     accounts_marked_obsolete: reclaims.len() as u64,
-                    slots_removed: stats.total_removed_storage_entries.load(Ordering::Relaxed)
-                        as u64,
+                    slots_removed: stats.num_stored_slots_removed.load(Ordering::Relaxed) as u64,
                 }
             })
             .sum();
@@ -6644,41 +6540,40 @@ impl AccountsDb {
         self.accounts_index.scan(
             pubkeys.iter(),
             |pubkey, slots_refs| {
-                if let Some((slot_list, _ref_count)) = slots_refs {
-                    if slot_list.len() > 1 {
-                        // Only the account data len in the highest slot should be used, and the rest are
-                        // duplicates.  So find the max slot to keep.
-                        // Then sum up the remaining data len, which are the duplicates.
-                        // All of the slots need to go in the 'uncleaned_slots' list. For clean to work properly,
-                        // the slot where duplicate accounts are found in the index need to be in 'uncleaned_slots' list, too.
-                        let max = slot_list.iter().map(|(slot, _)| slot).max().unwrap();
-                        slot_list.iter().for_each(|(slot, account_info)| {
-                            if slot == max {
-                                // the info in 'max' is the most recent, current info for this pubkey
-                                return;
+                if let Some((slot_list, _ref_count)) = slots_refs
+                    && slot_list.len() > 1
+                {
+                    // Only the account data len in the highest slot should be used, and the rest are
+                    // duplicates.  So find the max slot to keep.
+                    // Then sum up the remaining data len, which are the duplicates.
+                    // All of the slots need to go in the 'uncleaned_slots' list. For clean to work properly,
+                    // the slot where duplicate accounts are found in the index need to be in 'uncleaned_slots' list, too.
+                    let max = slot_list.iter().map(|(slot, _)| slot).max().unwrap();
+                    slot_list.iter().for_each(|(slot, account_info)| {
+                        if slot == max {
+                            // the info in 'max' is the most recent, current info for this pubkey
+                            return;
+                        }
+                        let maybe_storage_entry = self
+                            .storage
+                            .get_account_storage_entry(*slot, account_info.store_id());
+                        let mut accessor = LoadedAccountAccessor::Stored(
+                            maybe_storage_entry.map(|entry| (entry, account_info.offset())),
+                        );
+                        accessor.check_and_get_loaded_account(|loaded_account| {
+                            let data_len = loaded_account.data_len();
+                            let lamports = loaded_account.lamports();
+                            if lamports > 0 {
+                                accounts_data_len_from_duplicates += data_len;
                             }
-                            let maybe_storage_entry = self
-                                .storage
-                                .get_account_storage_entry(*slot, account_info.store_id());
-                            let mut accessor = LoadedAccountAccessor::Stored(
-                                maybe_storage_entry.map(|entry| (entry, account_info.offset())),
-                            );
-                            accessor.check_and_get_loaded_account(|loaded_account| {
-                                let data_len = loaded_account.data_len();
-                                let lamports = loaded_account.lamports();
-                                if lamports > 0 {
-                                    accounts_data_len_from_duplicates += data_len;
-                                }
-                                num_duplicate_accounts += 1;
-                                let account_lt_hash =
-                                    Self::lt_hash_account(&loaded_account, pubkey);
-                                duplicates_lt_hash.0.mix_in(&account_lt_hash.0);
-                                capitalization_from_duplicates = capitalization_from_duplicates
-                                    .checked_add(u128::from(lamports))
-                                    .expect("capitalization cannot overflow");
-                            });
+                            num_duplicate_accounts += 1;
+                            let account_lt_hash = Self::lt_hash_account(&loaded_account, pubkey);
+                            duplicates_lt_hash.0.mix_in(&account_lt_hash.0);
+                            capitalization_from_duplicates = capitalization_from_duplicates
+                                .checked_add(u128::from(lamports))
+                                .expect("capitalization cannot overflow");
                         });
-                    }
+                    });
                 }
                 AccountsIndexScanResult::OnlyKeepInMemoryIfDirty
             },
@@ -6731,15 +6626,11 @@ impl AccountsDb {
     }
 
     pub fn print_accounts_stats(&self, label: &str) {
-        self.print_index(label);
+        self.print_index();
         self.print_count_and_status(label);
     }
 
-    fn print_index(&self, label: &str) {
-        let mut alive_roots: Vec<_> = self.accounts_index.all_alive_roots();
-        #[allow(clippy::stable_sort_primitive)]
-        alive_roots.sort();
-        info!("{label}: accounts_index alive_roots: {alive_roots:?}");
+    fn print_index(&self) {
         self.accounts_index.account_maps.iter().for_each(|map| {
             for pubkey in map.keys() {
                 self.accounts_index.get_and_then(&pubkey, |account_entry| {
@@ -6880,15 +6771,7 @@ impl AccountsDb {
     }
 
     pub fn flush_accounts_cache_slot_for_tests(&self, slot: Slot) {
-        assert!(
-            self.accounts_index
-                .roots_tracker
-                .read()
-                .unwrap()
-                .alive_roots
-                .contains(&slot),
-            "slot: {slot}"
-        );
+        assert!(self.accounts_cache.contains_unflushed_root(slot));
         self.flush_slot_cache(slot, &PubkeysToFlush::All);
     }
 
@@ -7052,15 +6935,7 @@ impl AccountsDb {
     /// useful to adapt tests written prior to introduction of the write cache
     /// to use the write cache
     pub fn flush_root_write_cache(&self, root: Slot) {
-        assert!(
-            self.accounts_index
-                .roots_tracker
-                .read()
-                .unwrap()
-                .alive_roots
-                .contains(&root),
-            "slot: {root}"
-        );
+        assert!(self.accounts_cache.contains_unflushed_root(root));
         self.flush_accounts_cache(true, Some(root));
     }
 

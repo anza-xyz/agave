@@ -5,20 +5,20 @@ use {
     crate::{
         conformance::{
             callback::DefaultCallback,
-            setup::{compile_transaction_context, program_runtime_environments, recent_blockhash},
+            setup::{
+                InvokeContextFields, compute_budget, prepare_invoke_context_fields,
+                program_runtime_environments,
+            },
         },
         message_processor::process_message,
     },
-    solana_compute_budget::compute_budget::ComputeBudget,
     solana_instruction::error::InstructionError,
     solana_program_runtime::{
-        invoke_context::{EnvironmentConfig, InvokeContext},
-        loaded_programs::ProgramCacheForTxBatch,
+        invoke_context::InvokeContext, loaded_programs::ProgramCacheForTxBatch,
         sysvar_cache::SysvarCache,
     },
     solana_pubkey::Pubkey,
     solana_svm_callback::InvokeContextCallback,
-    solana_svm_log_collector::LogCollector,
     solana_svm_timings::ExecuteTimings,
     solana_transaction_error::TransactionError,
     std::rc::Rc,
@@ -30,6 +30,7 @@ use {
         programs::{fill_program_cache_from_accounts, new_program_cache_with_builtins},
         setup::sysvar_cache_from_accounts,
     },
+    agave_precompiles::is_precompile,
     prost::Message,
     protosol::protos::{InstrContext as ProtoInstrContext, InstrEffects as ProtoInstrEffects},
     std::ffi::c_int,
@@ -55,52 +56,43 @@ pub fn execute_instr_with_callback<C: InvokeContextCallback>(
     let mut compute_units_consumed = 0;
     let mut timings = ExecuteTimings::default();
 
-    let log_collector = LogCollector::new_ref();
-    let feature_set = input.feature_set;
-    let simd_0268_active = feature_set.raise_cpi_nesting_limit_to_8;
-
-    let mut compute_budget = ComputeBudget::new_with_defaults(simd_0268_active);
+    let mut compute_budget = compute_budget(&input.feature_set);
     compute_budget.compute_unit_limit = input.cu_avail; // Clamp budget for execution by cu_avail
 
-    let rent = sysvar_cache.get_rent().unwrap();
-    let program_id = &input.instruction.program_id;
     let loader_key = program_cache
-        .find(program_id)
+        .find(&input.instruction.program_id)
         .expect("program not loaded in cache")
         .account_owner();
 
-    let (sanitized_message, mut transaction_context) = compile_transaction_context(
-        &input.instruction,
-        &input.accounts,
-        program_id,
+    let program_runtime_environments =
+        program_runtime_environments(&input.feature_set, &compute_budget);
+
+    let InvokeContextFields {
+        sanitized_message,
+        mut transaction_context,
+        environment_config,
+        log_collector,
+        execution_budget,
+        execution_cost,
+    } = prepare_invoke_context_fields(
+        input,
+        callback,
         &loader_key,
+        sysvar_cache,
         &compute_budget,
-        (*rent).clone(),
+        &program_runtime_environments,
     );
 
-    let runtime_environments = program_runtime_environments(&input.feature_set, &compute_budget);
-
     let result = {
-        let (blockhash, blockhash_lamports_per_signature) = recent_blockhash(sysvar_cache);
-
-        let environment_config = EnvironmentConfig::new(
-            blockhash,
-            blockhash_lamports_per_signature,
-            false,
-            callback,
-            &feature_set,
-            &runtime_environments,
-            sysvar_cache,
-        );
-
         let mut invoke_context = InvokeContext::new(
             &mut transaction_context,
             program_cache,
             environment_config,
             Some(log_collector.clone()),
-            compute_budget.to_budget(),
-            compute_budget.to_cost(),
+            execution_budget,
+            execution_cost,
         );
+
         match process_message(
             &sanitized_message,
             &mut invoke_context,
@@ -165,8 +157,7 @@ pub fn execute_instr_proto(input: ProtoInstrContext) -> ProtoInstrEffects {
     let mut program_cache = {
         let slot = sysvar_cache.get_clock().unwrap().slot;
         let feature_set = &instr_context.feature_set;
-        let simd_0268_active = feature_set.raise_cpi_nesting_limit_to_8;
-        let compute_budget = ComputeBudget::new_with_defaults(simd_0268_active);
+        let compute_budget = compute_budget(feature_set);
         let environments = program_runtime_environments(feature_set, &compute_budget);
 
         let mut cache = new_program_cache_with_builtins(slot);
@@ -181,13 +172,57 @@ pub fn execute_instr_proto(input: ProtoInstrContext) -> ProtoInstrEffects {
         cache
     };
 
-    execute_instr_with_callback(
+    let mut effects = execute_instr_with_callback(
         &instr_context,
         &ConformanceCallback,
         &mut program_cache,
         &sysvar_cache,
-    )
-    .into()
+    );
+
+    // Precompile verification failures surface as `Custom`, but Firedancer
+    // reports a custom error code of 0 for precompiles.
+    if effects.custom_err.is_some()
+        && is_precompile(&instr_context.instruction.program_id, |_| true)
+    {
+        effects.custom_err = Some(0);
+    }
+
+    // TODO: Firedancer's tooling compares resulting account contents even
+    // when execution fails, so the harness must report them. Account
+    // contents are not meaningful on error (partial writes can diverge based
+    // on timing, e.g. with direct mapping or builtins), so once the tooling
+    // supports it, the harness should skip the account comparison on error
+    // entirely, which would also make the CU-exhaustion workaround below
+    // unnecessary.
+    direct_mapping_handle_cu_exhaustion(
+        instr_context.feature_set.virtual_address_space_adjustments,
+        effects.cu_avail,
+        effects.result.is_some(),
+        effects
+            .resulting_accounts
+            .iter_mut()
+            .map(|(_, account)| &mut account.data),
+    );
+
+    effects.into()
+}
+
+/// Due to how Firedancer's VM CU accounting works, when
+/// virtual_address_space_adjustments is enabled and execution fails with the
+/// CU meter exhausted, we cannot compare the data region of the accounts with
+/// Agave.  Clears each supplied data buffer in that case.
+#[cfg(feature = "conformance")]
+fn direct_mapping_handle_cu_exhaustion<'a>(
+    virtual_address_space_adjustments_active: bool,
+    cu_avail: u64,
+    has_err: bool,
+    account_data: impl IntoIterator<Item = &'a mut Vec<u8>>,
+) {
+    if virtual_address_space_adjustments_active && cu_avail == 0 && has_err {
+        for data in account_data {
+            data.clear();
+        }
+    }
 }
 
 /// # Safety

@@ -204,10 +204,10 @@ fn check_env_path_for_bin_dir(config: &Config) {
         .unwrap_or_default();
     let found = match env::var_os("PATH") {
         Some(paths) => env::split_paths(&paths).any(|path| {
-            if let Ok(path) = path.canonicalize() {
-                if path == bin_dir {
-                    return true;
-                }
+            if let Ok(path) = path.canonicalize()
+                && path == bin_dir
+            {
+                return true;
             }
             false
         }),
@@ -367,15 +367,15 @@ fn add_to_path(new_path: &str) -> bool {
 
     // Look for sh, bash, and zsh rc files
     let mut rcfiles = vec![dirs_next::home_dir().map(|p| p.join(".profile"))];
-    if let Ok(shell) = std::env::var("SHELL") {
-        if shell.contains("zsh") {
-            let zdotdir = std::env::var("ZDOTDIR")
-                .ok()
-                .map(PathBuf::from)
-                .or_else(dirs_next::home_dir);
-            let zprofile = zdotdir.map(|p| p.join(".zprofile"));
-            rcfiles.push(zprofile);
-        }
+    if let Ok(shell) = std::env::var("SHELL")
+        && shell.contains("zsh")
+    {
+        let zdotdir = std::env::var("ZDOTDIR")
+            .ok()
+            .map(PathBuf::from)
+            .or_else(dirs_next::home_dir);
+        let zprofile = zdotdir.map(|p| p.join(".zprofile"));
+        rcfiles.push(zprofile);
     }
 
     if let Some(bash_profile) = dirs_next::home_dir().map(|p| p.join(".bash_profile")) {
@@ -712,14 +712,13 @@ fn check_for_newer_github_release(
                          tag_name,
                          prerelease,
                      }| {
-                        if let Ok(version) = semver_of(&tag_name) {
-                            if (prerelease_allowed || !prerelease)
-                                && version_filter
-                                    .as_ref()
-                                    .is_none_or(|version_filter| version_filter.matches(&version))
-                            {
-                                return Some(version);
-                            }
+                        if let Ok(version) = semver_of(&tag_name)
+                            && (prerelease_allowed || !prerelease)
+                            && version_filter
+                                .as_ref()
+                                .is_none_or(|version_filter| version_filter.matches(&version))
+                        {
+                            return Some(version);
                         }
                         None
                     },
@@ -780,20 +779,18 @@ pub fn init_or_update(config_file: &str, is_init: bool, check_only: bool) -> Res
                         return Err(format!("Unknown release: {current_release_semver}"));
                     }
                     Some(release_semver) => {
-                        if release_semver == *current_release_semver {
-                            if let Ok(active_release_version) = load_release_version(
+                        if release_semver == *current_release_semver
+                            && let Ok(active_release_version) = load_release_version(
                                 &config.active_release_dir().join("version.yml"),
-                            ) {
-                                if format!("v{current_release_semver}")
-                                    == active_release_version.channel
-                                {
-                                    println!(
-                                        "Install is up to date. {release_semver} is the latest \
-                                         compatible release"
-                                    );
-                                    return Ok(false);
-                                }
-                            }
+                            )
+                            && format!("v{current_release_semver}")
+                                == active_release_version.channel
+                        {
+                            println!(
+                                "Install is up to date. {release_semver} is the latest compatible \
+                                 release"
+                            );
+                            return Ok(false);
                         }
                         config.explicit_release = ExplicitRelease::Semver(release_semver.clone());
 
@@ -839,16 +836,15 @@ pub fn init_or_update(config_file: &str, is_init: bool, check_only: bool) -> Res
                 if update_release_version.commit == current_release_version.commit {
                     if let Ok(active_release_version) =
                         load_release_version(&config.active_release_dir().join("version.yml"))
+                        && current_release_version.commit == active_release_version.commit
                     {
-                        if current_release_version.commit == active_release_version.commit {
-                            // Same version, no update required
-                            println!(
-                                "Install is up to date. {} is the latest commit for {}",
-                                &active_release_version.commit[0..7],
-                                release_channel
-                            );
-                            return Ok(false);
-                        }
+                        // Same version, no update required
+                        println!(
+                            "Install is up to date. {} is the latest commit for {}",
+                            &active_release_version.commit[0..7],
+                            release_channel
+                        );
+                        return Ok(false);
                     }
 
                     // Release already present in the cache

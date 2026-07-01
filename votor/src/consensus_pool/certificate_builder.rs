@@ -16,7 +16,7 @@ use {
 /// conservative number 4096 for now. During build() we will cut off end
 /// of the bitmaps if the tail contains only zeroes, so actual bitmap
 /// length will be less than or equal to this number.
-const MAXIMUM_VALIDATORS: usize = 4096;
+pub const MAXIMUM_VALIDATORS: usize = 4096;
 
 /// Different types of errors that can be returned from the [`CertificateBuilder::aggregate()`] function.
 #[derive(Debug, Error, PartialEq, Eq)]
@@ -414,7 +414,7 @@ mod tests {
         let mut keypairs = Vec::new();
         let mut vote_messages = Vec::new();
         let vote = Vote::new_notarization_vote(block);
-        let serialized_vote = get_vote_payload_to_sign(&vote, shred_version);
+        let serialized_vote = get_vote_payload_to_sign(vote, shred_version);
 
         for i in 0..num_validators {
             let keypair = BLSKeypair::new();
@@ -459,7 +459,7 @@ mod tests {
         let mut all_pubkeys = Vec::new();
         // Group 1: Signs a Notarize vote.
         let notarize_vote = Vote::new_notarization_vote(block);
-        let serialized_notarize_vote = get_vote_payload_to_sign(&notarize_vote, shred_version);
+        let serialized_notarize_vote = get_vote_payload_to_sign(notarize_vote, shred_version);
         for i in 0..3 {
             let keypair = BLSKeypair::new();
             let signature = keypair.sign(&serialized_notarize_vote);
@@ -474,7 +474,7 @@ mod tests {
         // Group 2: Signs a NotarizeFallback vote.
         let notarize_fallback_vote = Vote::new_notarization_fallback_vote(block);
         let serialized_fallback_vote =
-            get_vote_payload_to_sign(&notarize_fallback_vote, shred_version);
+            get_vote_payload_to_sign(notarize_fallback_vote, shred_version);
         for i in 3..6 {
             let keypair = BLSKeypair::new();
             let signature = keypair.sign(&serialized_fallback_vote);

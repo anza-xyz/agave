@@ -14,7 +14,7 @@ use {
             fee_distribution::ExternalCollectorType, null_tracer,
         },
         inflation_rewards::{
-            adjust_delegation_for_rent,
+            delegation_may_need_adjustment,
             points::{
                 CalculationEnvironment, DelegatedVoteState, PointValue, calculate_points_for_tower,
             },
@@ -163,8 +163,9 @@ impl Bank {
     /// Begin the process of calculating and distributing rewards.
     /// This process can take multiple slots.
     ///
-    /// Returns the distributed epoch validator rewards, not including lamports
-    /// distributed to the incinerator.
+    /// Returns the total rewards that will be distributed in this epoch (to both validators and
+    /// stakers) minus rewards sent to the incinerator.  This is the total amount the capitalization
+    /// will increase by after all the rewards have been paid.
     pub(in crate::bank) fn begin_partitioned_rewards(
         &mut self,
         parent_epoch: Epoch,
@@ -205,6 +206,7 @@ impl Bank {
             distribution_starting_block_height,
             num_partitions,
             point_value,
+            0, // block_rewards
         );
 
         datapoint_info!(
@@ -216,6 +218,9 @@ impl Bank {
             ("parent_block_height", parent_block_height, i64),
         );
         distributed_lamports
+            + rewards_calculation
+                .stake_rewards
+                .total_stake_rewards_lamports
     }
 
     // Calculate rewards from previous epoch and distribute reward commissions
@@ -558,23 +563,23 @@ impl Bank {
             .rent_collector
             .rent
             .minimum_balance(stake_account.data_len());
-        let mut stake = *stake_account.stake();
+        let stake = *stake_account.stake();
 
         let Some(vote_account) = distribution_epoch_vote_accounts.get(&vote_pubkey) else {
             debug!("could not find vote account {vote_pubkey} in cache");
             // Even if the vote account doesn't exist, there might still be a
             // need to adjust the stake delegation
             if adjust_delegations_for_rent {
-                let delegation = stake.delegation.stake;
-                let stake_was_adjusted = adjust_delegation_for_rent(
-                    &mut stake.delegation,
-                    rewarded_epoch,
-                    delegation,
+                if delegation_may_need_adjustment(
+                    stake.delegation.stake,
+                    stake.delegation.stake,
                     current_lamports,
                     minimum_lamports,
-                );
-                if stake_was_adjusted {
-                    debug!("delegation for stake {stake_pubkey} was adjusted");
+                ) {
+                    debug!(
+                        "delegation for stake {stake_pubkey} may be adjusted at distribution, \
+                         unless lamports are transferred before distribution block"
+                    );
                     let inflation = InflationReward {
                         stake,
                         stake_reward: 0,
@@ -595,7 +600,7 @@ impl Bank {
                         reward_commission,
                     });
                 } else {
-                    debug!("delegation for stake {stake_pubkey} was not adjusted");
+                    debug!("delegation for stake {stake_pubkey} will not be adjusted");
                     return None;
                 }
             } else {
@@ -1365,6 +1370,74 @@ mod tests {
         );
 
         assert!(point_value.is_none());
+    }
+
+    #[test]
+    fn test_begin_partitioned_rewards_returns_total_capitalization_increase() {
+        let (genesis_config, _mint_keypair) = create_genesis_config(1_000 * LAMPORTS_PER_SOL);
+        let mut bank = Bank::new_for_tests(&genesis_config);
+        let thread_pool = ThreadPoolBuilder::new().num_threads(1).build().unwrap();
+
+        let commission_pubkey = Pubkey::new_unique();
+        {
+            let mut commission_account = AccountSharedData::default();
+            commission_account.set_lamports(1);
+            bank.store_account_and_update_capitalization(&commission_pubkey, &commission_account);
+        }
+
+        let commission_lamports = 123;
+        let stake_reward_lamports = 456;
+        let mut reward_commissions = RewardCommissions::default();
+        reward_commissions.insert(
+            commission_pubkey,
+            RewardCommission {
+                commission_bps: Some(0),
+                commission_lamports,
+                burned_lamports: 0,
+                is_vote_account: true,
+            },
+        );
+        let stake_rewards = [Some(PartitionedStakeReward {
+            stake_pubkey: Pubkey::new_unique(),
+            inflation: InflationReward {
+                stake: Stake {
+                    delegation: Delegation::default(),
+                    credits_observed: 0,
+                },
+                stake_reward: stake_reward_lamports,
+                commission_bps: Some(0),
+            },
+        })]
+        .into_iter()
+        .collect::<PartitionedStakeRewards>();
+        let rewards_calculation = PartitionedRewardsCalculation {
+            reward_commissions,
+            stake_rewards: StakeRewardCalculation {
+                stake_rewards: Arc::new(stake_rewards),
+                total_stake_rewards_lamports: stake_reward_lamports,
+            },
+            capitalization: bank.capitalization(),
+            point_value: PointValue {
+                rewards: commission_lamports + stake_reward_lamports,
+                points: 1,
+            },
+            num_filtered_vote_accounts: 1,
+        };
+        let mut rewards_metrics = RewardsMetrics::default();
+
+        let rewards = bank.begin_partitioned_rewards(
+            bank.epoch().saturating_sub(1),
+            bank.parent_slot(),
+            bank.block_height(),
+            &rewards_calculation,
+            &mut rewards_metrics,
+            &thread_pool,
+        );
+
+        assert_eq!(rewards, commission_lamports + stake_reward_lamports);
+        let epoch_rewards = bank.get_epoch_rewards_sysvar();
+        assert_eq!(epoch_rewards.distributed_rewards, commission_lamports);
+        assert_eq!(epoch_rewards.total_rewards, rewards);
     }
 
     struct EpochOperations {

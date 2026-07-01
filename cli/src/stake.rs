@@ -2238,13 +2238,13 @@ pub async fn process_merge_stake(
 
     if !sign_only {
         for stake_account_address in &[stake_account_pubkey, source_stake_account_pubkey] {
-            if let Ok(stake_account) = rpc_client.get_account(stake_account_address).await {
-                if stake_account.owner != stake::program::id() {
-                    return Err(CliError::BadParameter(format!(
-                        "Account {stake_account_address} is not a stake account"
-                    ))
-                    .into());
-                }
+            if let Ok(stake_account) = rpc_client.get_account(stake_account_address).await
+                && stake_account.owner != stake::program::id()
+            {
+                return Err(CliError::BadParameter(format!(
+                    "Account {stake_account_address} is not a stake account"
+                ))
+                .into());
             }
         }
     }
@@ -2783,23 +2783,24 @@ pub async fn get_account_stake_state(
                 use_fixed_point_stake_math,
             );
 
-            if state.stake_type == CliStakeType::Stake && state.activation_epoch.is_some() {
-                if let Some(num_epochs) = with_rewards {
-                    state.epoch_rewards = match fetch_epoch_rewards(
-                        rpc_client,
-                        stake_account_address,
-                        num_epochs,
-                        starting_epoch,
-                    )
-                    .await
-                    {
-                        Ok(rewards) => Some(rewards),
-                        Err(error) => {
-                            eprintln!("Failed to fetch epoch rewards: {error:?}");
-                            None
-                        }
-                    };
-                }
+            if state.stake_type == CliStakeType::Stake
+                && state.activation_epoch.is_some()
+                && let Some(num_epochs) = with_rewards
+            {
+                state.epoch_rewards = match fetch_epoch_rewards(
+                    rpc_client,
+                    stake_account_address,
+                    num_epochs,
+                    starting_epoch,
+                )
+                .await
+                {
+                    Ok(rewards) => Some(rewards),
+                    Err(error) => {
+                        eprintln!("Failed to fetch epoch rewards: {error:?}");
+                        None
+                    }
+                };
             }
             Ok(state)
         }

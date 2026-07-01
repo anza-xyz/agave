@@ -3,7 +3,7 @@
 //! New reserved account keys may be added as long as they specify a feature
 //! gate that transitions the key into read-only at an epoch boundary.
 #![cfg_attr(feature = "frozen-abi", feature(min_specialization))]
-#![cfg_attr(docsrs, feature(doc_auto_cfg))]
+#![cfg_attr(docsrs, feature(doc_cfg))]
 use {
     agave_feature_set::FeatureSet,
     solana_pubkey::Pubkey,

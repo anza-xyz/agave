@@ -104,7 +104,7 @@ impl ValidatedRewardCert {
 
         if let Some(skip) = skip {
             let vote = Vote::new_skip_vote(skip.slot);
-            let payload = get_vote_payload_to_sign(&vote, shred_version);
+            let payload = get_vote_payload_to_sign(vote, shred_version);
             verify_base2(
                 &payload,
                 &skip.signature,
@@ -118,7 +118,7 @@ impl ValidatedRewardCert {
                 slot: notar.slot,
                 block_id: notar.block_id,
             });
-            let payload = get_vote_payload_to_sign(&vote, shred_version);
+            let payload = get_vote_payload_to_sign(vote, shred_version);
             verify_base2(
                 &payload,
                 &notar.signature,
@@ -127,6 +127,31 @@ impl ValidatedRewardCert {
                 rank_map,
             )?
         }
+        if validators.is_empty() {
+            return Ok(None);
+        }
+        Ok(Some(Self {
+            validators,
+            reward_slot,
+        }))
+    }
+
+    /// Constructs a [`ValidatedRewardCert`] for a block produced locally.
+    ///
+    /// The leader-side reward certificate builder receives verified votes and
+    /// tracks the validator set while aggregating them, so block production
+    /// only needs the reward slot and validator set for bank reward
+    /// calculation.
+    pub fn try_new_for_leader(
+        current_slot: Slot,
+        skip: &Option<SkipRewardCertificate>,
+        notar: &Option<NotarRewardCertificate>,
+        validators: impl IntoIterator<Item = Pubkey>,
+    ) -> Result<Option<Self>, Error> {
+        let Some(reward_slot) = extract_slot(current_slot, skip, notar)? else {
+            return Ok(None);
+        };
+        let validators: HashSet<_> = validators.into_iter().collect();
         if validators.is_empty() {
             return Ok(None);
         }
@@ -176,7 +201,7 @@ mod tests {
     };
 
     fn new_vote(vote: Vote, rank: usize, keypair: &BlsKeypair, shred_version: u16) -> VoteMessage {
-        let payload = get_vote_payload_to_sign(&vote, shred_version);
+        let payload = get_vote_payload_to_sign(vote, shred_version);
         let signature = keypair.sign(&payload).into();
         VoteMessage {
             vote,

@@ -18,7 +18,12 @@ use {
 
 #[cfg_attr(
     feature = "frozen-abi",
-    frozen_abi(digest = "AardUUq1At4qq6oNNp9V2JZFsMR5k54RZmBmZkxUfk7m")
+    frozen_abi(
+        api_digest = "AardUUq1At4qq6oNNp9V2JZFsMR5k54RZmBmZkxUfk7m",
+        abi_digest = "AGXdE33medQcQ5Bzq7Mppz3cQ9TNPxBaaX2iUM68pnmC",
+        abi_serializer = "wincode",
+        test_roundtrip = "eq_and_wire"
+    )
 )]
 type SerdeBankSlotDelta = SerdeSlotDelta<Result<(), SerdeTransactionError>>;
 type SerdeSlotDelta<T> = (Slot, bool, SerdeStatus<T>);
@@ -112,8 +117,8 @@ pub fn deserialize_status_cache(
 /// contain a string in the BorshIoError variant.
 #[cfg_attr(
     feature = "frozen-abi",
-    frozen_abi(digest = "5pMgydVNgsYbg64Trhjxbftsug5La7fRDmooyrsHd4wy"),
-    derive(AbiExample, AbiEnumVisitor)
+    frozen_abi(api_digest = "5pMgydVNgsYbg64Trhjxbftsug5La7fRDmooyrsHd4wy"),
+    derive(AbiExample, AbiEnumVisitor, StableAbi, StableAbiSample)
 )]
 #[derive(Debug, PartialEq, Eq, Clone, Serialize, SchemaRead, SchemaWrite)]
 enum SerdeTransactionError {
@@ -301,7 +306,10 @@ impl From<SerdeTransactionError> for TransactionError {
 /// Copy of `InstructionError` type in which the `BorshIoError` variant
 /// contains a string.
 #[cfg_attr(test, derive(strum_macros::FromRepr, strum_macros::EnumIter))]
-#[cfg_attr(feature = "frozen-abi", derive(AbiExample, AbiEnumVisitor))]
+#[cfg_attr(
+    feature = "frozen-abi",
+    derive(AbiExample, AbiEnumVisitor, StableAbi, StableAbiSample)
+)]
 #[derive(Debug, PartialEq, Eq, Clone, Serialize, SchemaRead, SchemaWrite)]
 enum SerdeInstructionError {
     GenericError,

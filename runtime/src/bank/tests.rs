@@ -1006,14 +1006,6 @@ fn test_bank_update_rewards_determinism() {
     }
 }
 
-impl VerifyAccountsHashConfig {
-    fn default_for_test() -> Self {
-        Self {
-            require_rooted_bank: false,
-        }
-    }
-}
-
 // Test that purging 0 lamports accounts works.
 #[test]
 fn test_purge_empty_accounts() {
@@ -1083,7 +1075,7 @@ fn test_purge_empty_accounts() {
 
         if pass == 0 {
             add_root_and_flush_write_cache(&bank0);
-            assert!(bank0.verify_accounts(VerifyAccountsHashConfig::default_for_test(), None));
+            assert!(bank0.verify_accounts(None));
             continue;
         }
 
@@ -1092,14 +1084,14 @@ fn test_purge_empty_accounts() {
         bank0.squash();
         add_root_and_flush_write_cache(&bank0);
         if pass == 1 {
-            assert!(bank0.verify_accounts(VerifyAccountsHashConfig::default_for_test(), None));
+            assert!(bank0.verify_accounts(None));
             continue;
         }
 
         bank1.freeze();
         bank1.squash();
         add_root_and_flush_write_cache(&bank1);
-        assert!(bank1.verify_accounts(VerifyAccountsHashConfig::default_for_test(), None));
+        assert!(bank1.verify_accounts(None));
 
         // keypair should have 0 tokens on both forks
         assert_eq!(bank0.get_account(&keypair.pubkey()), None);
@@ -1107,7 +1099,7 @@ fn test_purge_empty_accounts() {
 
         bank1.clean_accounts_for_tests();
 
-        assert!(bank1.verify_accounts(VerifyAccountsHashConfig::default_for_test(), None));
+        assert!(bank1.verify_accounts(None));
     }
 }
 
@@ -2286,7 +2278,7 @@ fn test_bank_hash_internal_state() {
     bank2.transfer(amount, &mint_keypair, &pubkey2).unwrap();
     bank2.squash();
     bank2.force_flush_accounts_cache();
-    assert!(bank2.verify_accounts(VerifyAccountsHashConfig::default_for_test(), None));
+    assert!(bank2.verify_accounts(None));
 }
 
 #[test]
@@ -2320,7 +2312,7 @@ fn test_bank_hash_internal_state_verify() {
             // we later modify bank 2, so this flush is destructive to the test
             bank2.freeze();
             add_root_and_flush_write_cache(&bank2);
-            assert!(bank2.verify_accounts(VerifyAccountsHashConfig::default_for_test(), None));
+            assert!(bank2.verify_accounts(None));
         }
         let bank3 = Bank::new_from_parent_with_bank_forks(
             &bank_forks,
@@ -2331,7 +2323,7 @@ fn test_bank_hash_internal_state_verify() {
         assert_eq!(bank0_state, bank0.hash_internal_state());
         if pass == 0 {
             // this relies on us having set bank2's accounts hash in the pass==0 if above
-            assert!(bank2.verify_accounts(VerifyAccountsHashConfig::default_for_test(), None));
+            assert!(bank2.verify_accounts(None));
             continue;
         }
         if pass == 1 {
@@ -2340,7 +2332,7 @@ fn test_bank_hash_internal_state_verify() {
             // Doing so throws an assert. So, we can't flush 3 until 2 is flushed.
             bank3.freeze();
             add_root_and_flush_write_cache(&bank3);
-            assert!(bank3.verify_accounts(VerifyAccountsHashConfig::default_for_test(), None));
+            assert!(bank3.verify_accounts(None));
             continue;
         }
 
@@ -2349,7 +2341,7 @@ fn test_bank_hash_internal_state_verify() {
         bank2.freeze(); // <-- keep freeze() *outside* `if pass == 2 {}`
         if pass == 2 {
             add_root_and_flush_write_cache(&bank2);
-            assert!(bank2.verify_accounts(VerifyAccountsHashConfig::default_for_test(), None));
+            assert!(bank2.verify_accounts(None));
 
             // Verifying the accounts lt hash is only intended to be called at startup, and
             // normally in the background.  Since here we're *not* at startup, and doing it
@@ -2364,7 +2356,7 @@ fn test_bank_hash_internal_state_verify() {
 
         bank3.freeze();
         add_root_and_flush_write_cache(&bank3);
-        assert!(bank3.verify_accounts(VerifyAccountsHashConfig::default_for_test(), None));
+        assert!(bank3.verify_accounts(None));
     }
 }
 
@@ -5286,9 +5278,9 @@ fn test_bank_hash_consistency(deprecate_rent_exemption_threshold: bool) {
             assert_eq!(
                 bank.hash().to_string(),
                 if deprecate_rent_exemption_threshold {
-                    "9ycftRwjpQ17PrhnwhGPbVzDKd3Q9BybmLYU8UD1Pg1T"
+                    "5PG7F5xaWbdVbGqMK4swGStgw6Dc3CRBwg3aYcDmY9q"
                 } else {
-                    "4XzjZMjhP9s8iBeFQsnHFwaQ991dpiBGHEkzj1ifAcpS"
+                    "BKPZ9wePLfR5995UW3zc487emH7KXh7fAMTG1unYBYbC"
                 },
             );
         }
@@ -5297,9 +5289,9 @@ fn test_bank_hash_consistency(deprecate_rent_exemption_threshold: bool) {
             assert_eq!(
                 bank.hash().to_string(),
                 if deprecate_rent_exemption_threshold {
-                    "7sbqfkN4W3PkBREyduDc3R2eiKu68JKYRXZt6gCWNt4N"
+                    "6P7mQgYgfCKXJT4giFVG9AUTG1k2oqbEz9oaJkQFzaFZ"
                 } else {
-                    "ArB3XNVLJsyV7AtrG3C3Bj4akb8s7AzpS5rHJnqGW5sw"
+                    "9X9n98FSzPHCrEns4We6giA6QnsQEeYXqbxxULT5tHL1"
                 },
             );
             break;
@@ -7712,14 +7704,15 @@ fn test_remove_unrooted_scan_interleaved_with_remove_unrooted_slots() {
          starting_lamports| {
             loop {
                 let step_size = 2;
-                let (bank_at_fork_tip, slots_on_fork, ancestors) = setup_banks_on_fork_to_remove(
-                    bank0.clone(),
-                    pubkeys_to_modify.clone(),
-                    &program_id,
-                    starting_lamports,
-                    10,
-                    step_size,
-                );
+                let (bank_at_fork_tip, mut slots_on_fork, ancestors) =
+                    setup_banks_on_fork_to_remove(
+                        bank0.clone(),
+                        pubkeys_to_modify.clone(),
+                        &program_id,
+                        starting_lamports,
+                        10,
+                        step_size,
+                    );
                 // Although we dumped the slots last iteration via `remove_unrooted_slots()`,
                 // we've recreated those slots this iteration, so they should be findable
                 // again
@@ -7737,7 +7730,7 @@ fn test_remove_unrooted_scan_interleaved_with_remove_unrooted_slots() {
                 // Remove 1 < `step_size` of the *latest* slots while the scan is happening.
                 // This should create inconsistency between the account balances of accounts
                 // stored in that slot, and the accounts stored in earlier slots
-                let slot_to_remove = *slots_on_fork.last().unwrap();
+                let slot_to_remove = slots_on_fork.pop().unwrap();
                 bank_at_fork_tip.remove_unrooted_slots(&[slot_to_remove]);
 
                 // Wait for scan to finish before starting next iteration
@@ -7747,7 +7740,8 @@ fn test_remove_unrooted_scan_interleaved_with_remove_unrooted_slots() {
                 }
                 assert_eq!(finished_scan_bank_id.unwrap(), bank_at_fork_tip.bank_id());
 
-                // Remove the rest of the slots before the next iteration
+                // Remove the rest of the slots before the next iteration. The last slot
+                // was already popped and removed above.
                 for (slot, bank_id) in slots_on_fork {
                     bank_at_fork_tip.remove_unrooted_slots(&[(slot, bank_id)]);
                 }
@@ -10997,7 +10991,7 @@ fn test_verify_accounts() {
     bank.force_flush_accounts_cache();
 
     // ensure the accounts verify successfully
-    assert!(bank.verify_accounts(VerifyAccountsHashConfig::default_for_test(), None));
+    assert!(bank.verify_accounts(None));
 }
 
 #[test]
@@ -11007,14 +11001,12 @@ fn test_squash_timing_add_assign() {
     let t1 = SquashTiming {
         squash_accounts_ms: 1,
         squash_accounts_cache_ms: 2,
-        squash_accounts_index_ms: 3,
         squash_cache_ms: 5,
     };
 
     let expected = SquashTiming {
         squash_accounts_ms: 2,
         squash_accounts_cache_ms: 2 * 2,
-        squash_accounts_index_ms: 3 * 2,
         squash_cache_ms: 5 * 2,
     };
 

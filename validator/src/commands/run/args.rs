@@ -1104,6 +1104,7 @@ pub fn add_args<'a>(app: App<'a, 'a>, default_args: &'a DefaultArgs) -> App<'a, 
         Arg::with_name("allow_private_addr")
             .long("allow-private-addr")
             .takes_value(false)
+            .requires("no_xdp")
             .help("Allow contacting private ip addresses")
             .hidden(hidden_unless_forced()),
     )
@@ -1266,14 +1267,14 @@ fn validators_set(
         let validators_set: Option<HashSet<Pubkey>> = values_t!(matches, matches_name, Pubkey)
             .ok()
             .map(|validators| validators.into_iter().collect());
-        if let Some(validators_set) = &validators_set {
-            if validators_set.contains(identity_pubkey) {
-                return Err(crate::commands::Error::Dynamic(
-                    Box::<dyn std::error::Error>::from(format!(
-                        "the validator's identity pubkey cannot be a {arg_name}: {identity_pubkey}"
-                    )),
-                ));
-            }
+        if let Some(validators_set) = &validators_set
+            && validators_set.contains(identity_pubkey)
+        {
+            return Err(crate::commands::Error::Dynamic(
+                Box::<dyn std::error::Error>::from(format!(
+                    "the validator's identity pubkey cannot be a {arg_name}: {identity_pubkey}"
+                )),
+            ));
         }
         Ok(validators_set)
     } else {
@@ -1849,7 +1850,7 @@ mod tests {
         };
         verify_args_struct_by_command_run_with_identity_setup(
             default_run_args,
-            vec!["--allow-private-addr"],
+            vec!["--allow-private-addr", "--no-xdp"],
             expected_args,
         );
     }

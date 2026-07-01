@@ -5,7 +5,7 @@ use {
         crds_gossip_pull::CrdsFilter,
         crds_value::CrdsValue,
         ping_pong::{self, Pong},
-        verifying_key_cache::VerifyingKeyCache,
+        sigverify_cache::SigVerifyCache,
     },
     serde::{Deserialize, Serialize},
     solana_keypair::signable::Signable,
@@ -134,15 +134,11 @@ impl Protocol {
 
     // Returns true if all signatures verify.
     #[must_use]
-    pub(crate) fn verify(&self, vk_cache: &VerifyingKeyCache) -> bool {
+    pub(crate) fn verify(&self, cache: &SigVerifyCache) -> bool {
         match self {
-            Self::PullRequest(_, caller) => caller.verify_with_cache(vk_cache),
-            Self::PullResponse(_, data) => {
-                data.iter().all(|value| value.verify_with_cache(vk_cache))
-            }
-            Self::PushMessage(_, data) => {
-                data.iter().all(|value| value.verify_with_cache(vk_cache))
-            }
+            Self::PullRequest(_, caller) => caller.verify_with_cache(cache),
+            Self::PullResponse(_, data) => data.iter().all(|value| value.verify_with_cache(cache)),
+            Self::PushMessage(_, data) => data.iter().all(|value| value.verify_with_cache(cache)),
             Self::PruneMessage(_, data) => data.verify(),
             Self::PingMessage(ping) => ping.verify(),
             Self::PongMessage(pong) => pong.verify(),

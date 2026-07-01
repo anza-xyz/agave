@@ -10,7 +10,7 @@ use {
             writeln_transaction,
         },
     },
-    agave_votor_messages::{certificate::Certificate, migration::AG_MIGRATION_EPOCH_CREDIT},
+    agave_votor_messages::{migration::AG_MIGRATION_EPOCH_CREDIT, wire::WireBlockCertMessage},
     base64::{Engine, prelude::BASE64_STANDARD},
     bitvec::vec::BitVec,
     chrono::{Local, TimeZone, Utc},
@@ -46,7 +46,7 @@ use {
         EncodedConfirmedBlock, EncodedTransaction, TransactionConfirmationStatus,
         UiTransactionStatusMeta,
     },
-    solana_transaction_status_client_types::UiTransactionError,
+    solana_transaction_status_client_types::{Rewards, UiTransactionError},
     solana_vote_program::{
         authorized_voters::AuthorizedVoters,
         vote_state::{
@@ -1808,13 +1808,13 @@ pub enum VotesObserved {
 }
 
 impl VotesObserved {
-    pub fn new(vote_state: &VoteStateV4, ag_genesis_cert: &Option<Certificate>) -> Self {
+    pub fn new(vote_state: &VoteStateV4, ag_genesis_cert: &Option<WireBlockCertMessage>) -> Self {
         match ag_genesis_cert {
             None => Self::Tower(vote_state.votes.iter().map(CliLandedVote::from).collect()),
             Some(cert) => match vote_state.votes.iter().last() {
                 None => Self::Alpenglow(None),
                 Some(vote) => {
-                    if vote.lockout.slot() <= cert.cert_type.slot() {
+                    if vote.lockout.slot() <= cert.block.slot {
                         Self::Tower(vote_state.votes.iter().map(CliLandedVote::from).collect())
                     } else {
                         Self::Alpenglow(Some(CliLandedVote::from(vote)))
@@ -2006,7 +2006,7 @@ pub struct AgEpochHistory {
 pub fn get_epoch_history(
     epoch_schedule: &EpochSchedule,
     vote_state: &VoteStateV4,
-    ag_genesis_cert: &Option<Certificate>,
+    ag_genesis_cert: &Option<WireBlockCertMessage>,
     tvc_activation_epoch: Option<Epoch>,
 ) -> Vec<CliEpochVotingHistory> {
     let mut ret = vec![];
@@ -2027,7 +2027,7 @@ pub fn get_epoch_history(
         let tower_or_ag = match ag_genesis_cert {
             None => TowerOrAg::Tower(slots_in_epoch),
             Some(cert) => {
-                let migration_slot = cert.cert_type.slot();
+                let migration_slot = cert.block.slot;
                 let migration_epoch = epoch_schedule.get_epoch(migration_slot);
                 match epoch.cmp(&migration_epoch) {
                     Ordering::Less => TowerOrAg::Tower(slots_in_epoch),
@@ -3106,35 +3106,33 @@ pub struct CliBlock {
     pub slot: Slot,
 }
 
-impl QuietDisplay for CliBlock {}
-impl VerboseDisplay for CliBlock {}
-
-impl fmt::Display for CliBlock {
-    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        writeln!(f, "Slot: {}", self.slot)?;
-        writeln!(
-            f,
-            "Parent Slot: {}",
-            self.encoded_confirmed_block.parent_slot
-        )?;
-        writeln!(f, "Blockhash: {}", self.encoded_confirmed_block.blockhash)?;
-        writeln!(
-            f,
-            "Previous Blockhash: {}",
-            self.encoded_confirmed_block.previous_blockhash
-        )?;
-        if let Some(block_time) = self.encoded_confirmed_block.block_time {
+impl CliBlock {
+    pub fn display_block_meta(
+        f: &mut fmt::Formatter,
+        slot: Slot,
+        parent_slot: Slot,
+        blockhash: &str,
+        previous_blockhash: &str,
+        block_time: Option<i64>,
+        block_height: Option<u64>,
+        rewards: &Rewards,
+    ) -> fmt::Result {
+        writeln!(f, "Slot: {slot}")?;
+        writeln!(f, "Parent Slot: {parent_slot}")?;
+        writeln!(f, "Blockhash: {blockhash}")?;
+        writeln!(f, "Previous Blockhash: {previous_blockhash}")?;
+        if let Some(block_time) = block_time {
             writeln!(
                 f,
                 "Block Time: {:?}",
                 Local.timestamp_opt(block_time, 0).unwrap()
             )?;
         }
-        if let Some(block_height) = self.encoded_confirmed_block.block_height {
+        if let Some(block_height) = block_height {
             writeln!(f, "Block Height: {block_height:?}")?;
         }
-        if !self.encoded_confirmed_block.rewards.is_empty() {
-            let mut rewards = self.encoded_confirmed_block.rewards.clone();
+        if !rewards.is_empty() {
+            let mut rewards = rewards.clone();
             rewards.sort_by(|a, b| a.pubkey.cmp(&b.pubkey));
             let mut total_rewards = 0;
             writeln!(f, "Rewards:")?;
@@ -3189,6 +3187,26 @@ impl fmt::Display for CliBlock {
                 build_balance_message(total_rewards.unsigned_abs(), false, false)
             )?;
         }
+        Ok(())
+    }
+}
+
+impl QuietDisplay for CliBlock {}
+impl VerboseDisplay for CliBlock {}
+
+impl fmt::Display for CliBlock {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        Self::display_block_meta(
+            f,
+            self.slot,
+            self.encoded_confirmed_block.parent_slot,
+            &self.encoded_confirmed_block.blockhash,
+            &self.encoded_confirmed_block.previous_blockhash,
+            self.encoded_confirmed_block.block_time,
+            self.encoded_confirmed_block.block_height,
+            &self.encoded_confirmed_block.rewards,
+        )?;
+
         for (index, transaction_with_meta) in
             self.encoded_confirmed_block.transactions.iter().enumerate()
         {

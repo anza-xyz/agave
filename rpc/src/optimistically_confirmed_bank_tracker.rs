@@ -288,10 +288,10 @@ impl OptimisticallyConfirmedBankTracker {
     ) {
         debug!("received bank notification: {notification:?} event: {dependency_work:?}");
 
-        if let Some(tracker) = dependency_tracker.as_ref() {
-            if let Some(dependency_work) = dependency_work {
-                tracker.wait_for_dependency(dependency_work);
-            }
+        if let Some(tracker) = dependency_tracker.as_ref()
+            && let Some(dependency_work) = dependency_work
+        {
+            tracker.wait_for_dependency(dependency_work);
         }
         match notification {
             BankNotification::OptimisticallyConfirmed(slot) => {

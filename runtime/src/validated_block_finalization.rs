@@ -120,7 +120,10 @@ impl ValidatedBlockFinalizationCert {
             let notarize_cert = Self::verify_certificate(bank, notarize_cert)?;
             let finalize_cert = Self::verify_certificate(bank, finalize_cert)?;
 
-            let signers = Self::extract_signers(bank, &finalize_cert)?;
+            let finalize_signers = Self::extract_signers(bank, &finalize_cert)?;
+            let mut signers = Self::extract_signers(bank, &notarize_cert)?;
+            signers.extend(finalize_signers);
+
             Ok(Self {
                 kind: ValidatedBlockFinalizationCertKind::Finalize {
                     finalize_cert,
@@ -174,8 +177,11 @@ impl ValidatedBlockFinalizationCert {
             finalize_cert.cert_type.slot()
         );
 
-        let signers = Self::extract_signers(bank, &finalize_cert)
+        let finalize_signers = Self::extract_signers(bank, &finalize_cert)
             .expect("Certificate should have been validated");
+        let mut signers = Self::extract_signers(bank, &notarize_cert)
+            .expect("Certificate should have been validated");
+        signers.extend(finalize_signers);
         Self {
             kind: ValidatedBlockFinalizationCertKind::Finalize {
                 finalize_cert,
@@ -406,7 +412,7 @@ mod tests {
         signing_ranks: &[usize],
         validator_keypairs: &[ValidatorVoteKeypairs],
     ) -> Certificate {
-        let serialized_vote = get_vote_payload_to_sign(&vote, shred_version);
+        let serialized_vote = get_vote_payload_to_sign(vote, shred_version);
 
         // Aggregate signatures
         let mut signature = SignatureProjective::identity();
@@ -428,6 +434,22 @@ mod tests {
             signature: signature.into(),
             bitmap,
         }
+    }
+
+    fn vote_pubkeys_for_ranks(bank: &Bank, ranks: &[usize]) -> HashSet<Pubkey> {
+        let rank_map = bank
+            .epoch_stakes_from_slot(bank.slot())
+            .unwrap()
+            .bls_pubkey_to_rank_map();
+        ranks
+            .iter()
+            .map(|rank| {
+                rank_map
+                    .get_pubkey_stake_entry(*rank)
+                    .unwrap()
+                    .vote_account_pubkey
+            })
+            .collect()
     }
 
     #[test]
@@ -519,6 +541,63 @@ mod tests {
                 vec![finalize_cert, notarize_cert]
             );
         }
+    }
+
+    #[test]
+    fn test_slow_finalization_signers_include_notarize_and_finalize_signers() {
+        let stakes = vec![1000, 900, 800, 700, 100];
+        let (bank, validator_keypairs) = create_bank_with_bls_validators(stakes.len(), stakes);
+        let shred_version = rand::rng().random();
+
+        let block = Block {
+            slot: bank.slot(),
+            block_id: Hash::new_unique(),
+        };
+
+        let notarize_cert_type = CertificateType::Notarize(block);
+        let notarize_vote = Vote::new_notarization_vote(block);
+        let notarize_signing_ranks = vec![0, 1, 3];
+        let notarize_cert = build_certificate_manual(
+            notarize_cert_type,
+            notarize_vote,
+            shred_version,
+            &notarize_signing_ranks,
+            &validator_keypairs,
+        );
+
+        let finalize_cert_type = CertificateType::Finalize(block.slot);
+        let finalize_vote = Vote::new_finalization_vote(block.slot);
+        let finalize_signing_ranks = vec![0, 1, 2];
+        let finalize_cert = build_certificate_manual(
+            finalize_cert_type,
+            finalize_vote,
+            shred_version,
+            &finalize_signing_ranks,
+            &validator_keypairs,
+        );
+
+        let mut expected_signers = vote_pubkeys_for_ranks(&bank, &notarize_signing_ranks);
+        expected_signers.extend(vote_pubkeys_for_ranks(&bank, &finalize_signing_ranks));
+
+        let block_final_cert = BlockFinalizationCert {
+            slot: block.slot,
+            block_id: block.block_id,
+            final_aggregate: VotesAggregate::from_certificate(&finalize_cert),
+            notar_aggregate: Some(VotesAggregate::from_certificate(&notarize_cert)),
+        };
+        let validated =
+            ValidatedBlockFinalizationCert::try_from_footer(block_final_cert, &bank, shred_version)
+                .expect("Valid slow finalize certificate should pass verification");
+        let (signers, _, _) = validated.into_parts();
+        assert_eq!(signers, expected_signers);
+
+        let validated = ValidatedBlockFinalizationCert::from_validated_slow(
+            finalize_cert,
+            notarize_cert,
+            &bank,
+        );
+        let (signers, _, _) = validated.into_parts();
+        assert_eq!(signers, expected_signers);
     }
 
     #[test]

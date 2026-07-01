@@ -162,10 +162,10 @@ pub fn generate_vote_tx(
     if bank.get_vote_account(&vote_account_pubkey).is_none() {
         return GenerateVoteTxResult::VoteAccountNotFound(vote_account_pubkey);
     }
-    if let Some(slot) = wait_to_vote_slot {
-        if vote.slot() < slot {
-            return GenerateVoteTxResult::WaitToVoteSlot(slot);
-        }
+    if let Some(slot) = wait_to_vote_slot
+        && vote.slot() < slot
+    {
+        return GenerateVoteTxResult::WaitToVoteSlot(slot);
     }
 
     let rank_map = bank
@@ -219,7 +219,7 @@ pub fn generate_vote_tx(
         return GenerateVoteTxResult::NonVoting;
     };
 
-    let vote_payload_to_sign = get_vote_payload_to_sign(&vote, shred_version);
+    let vote_payload_to_sign = get_vote_payload_to_sign(vote, shred_version);
     GenerateVoteTxResult::Vote(VoteMessage {
         vote,
         signature: bls_keypair.sign(&vote_payload_to_sign).into(),
@@ -363,7 +363,7 @@ mod tests {
         vote: Vote,
         my_bls_keypair: &BLSKeypair,
     ) -> VoteMessage {
-        let payload = get_vote_payload_to_sign(&vote, ctx.cluster_info.my_shred_version());
+        let payload = get_vote_payload_to_sign(vote, ctx.cluster_info.my_shred_version());
         let signature = my_bls_keypair.sign(&payload);
         VoteMessage {
             vote,

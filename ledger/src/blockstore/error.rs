@@ -67,8 +67,6 @@ pub enum BlockstoreError {
     LegacyShred(Slot, u64),
     #[error("unable to read merkle root slot {0}, index {1}")]
     MissingMerkleRoot(Slot, u64),
-    #[error("block contains an empty entry batch for slot {0}")]
-    EmptyEntryBatch(Slot),
     #[error("unable to purge slots in range [{from_slot}, {to_slot}] {purge_type:?}: {inner:?}")]
     PurgeFailed {
         from_slot: Slot,
