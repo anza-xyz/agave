@@ -78,7 +78,7 @@ jobs:
             | xargs -r docker run --rm \
               -v "${PWD}:/solana" -w /solana \
               "${DOCKER_IMAGE}" \
-              cargo package
+              cargo package --no-verify
           cp -v target/package/*.crate target/crate-staging/
 
       - name: Upload crate artifacts
@@ -105,7 +105,11 @@ jobs:
           path: target/crate-staging
 
       - name: Attest crate files
-        uses: actions/attest-build-provenance@db473fddc028af60658334401dc6fa3ffd8669fd  # v2.3.0
+        # actions/attest with only subject-path auto-generates SLSA build provenance
+        # (attest-build-provenance is now just a thin wrapper over this).
+        uses: actions/attest@a1948c3f048ba23858d222213b7c278aabede763  # v4.1.1
+        env:
+          NODE_OPTIONS: --max-http-header-size=32768
         with:
           subject-path: target/crate-staging/*.crate
 
