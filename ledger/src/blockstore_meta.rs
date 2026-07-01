@@ -95,6 +95,18 @@ impl CompletedDataIndexes {
         let end = bounds.end_bound().map(|&b| b as usize);
         self.index.range((start, end)).iter_ones().map(|i| i as u32)
     }
+
+    /// Equivalent to `range(..bound).next_back()`.
+    #[inline]
+    pub(crate) fn previous_completed_index(&self, bound: u32) -> Option<u32> {
+        self.index.prev_set_bit(bound as usize).map(|i| i as u32)
+    }
+
+    /// Equivalent to `range(from..).next()`.
+    #[inline]
+    pub(crate) fn next_completed_index(&self, from: u32) -> Option<u32> {
+        self.index.next_set_bit(from as usize).map(|i| i as u32)
+    }
 }
 
 impl FromIterator<u32> for CompletedDataIndexes {
@@ -523,6 +535,13 @@ impl ShredIndex {
         let start = bounds.start_bound().map(|&b| b as usize);
         let end = bounds.end_bound().map(|&b| b as usize);
         self.index.range((start, end)).count_ones()
+    }
+
+    /// Returns true when every index in `bounds` is present.
+    /// Empty and reversed ranges are vacuously true.
+    pub(crate) fn contains_range(&self, bounds: Range<u64>) -> bool {
+        let width = bounds.end.saturating_sub(bounds.start);
+        width <= self.num_shreds as u64 && self.count_range(bounds) as u64 == width
     }
 
     pub(crate) fn range<R>(&self, bounds: R) -> impl Iterator<Item = u64> + '_
@@ -955,6 +974,29 @@ mod test {
         proptest::prelude::*,
         rand::{prelude::IndexedRandom as _, rng},
     };
+
+    #[test]
+    #[allow(clippy::reversed_empty_ranges)]
+    fn test_shred_index_contains_range() {
+        let index: ShredIndex = [2u64, 3, 4, 7].into_iter().collect();
+        // Exhaustively cross-check against the iterator definition over every
+        // window, including empty (start == end) and reversed (end < start).
+        for start in 0..10u64 {
+            for end in 0..10u64 {
+                assert_eq!(
+                    index.contains_range(start..end),
+                    index.range(start..end).eq(start..end),
+                    "window {start}..{end}"
+                );
+            }
+        }
+        assert!(index.contains_range(2..5));
+        assert!(!index.contains_range(2..6));
+        assert!(!index.contains_range(1..3));
+        assert!(index.contains_range(7..8));
+        assert!(index.contains_range(5..5));
+        assert!(index.contains_range(5..2));
+    }
 
     #[test]
     fn test_slot_meta_slot_zero_connected() {
