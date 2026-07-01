@@ -21,10 +21,10 @@ use {
     solana_ledger::{
         blockstore::{Blockstore, BlockstoreInsertionMetrics, PossibleDuplicateShred},
         blockstore_meta::BlockLocation,
-        leader_schedule_cache::LeaderScheduleCache,
         shred::{self, ReedSolomonCache, Shred, filter::ShredRecoveryContext},
     },
     solana_measure::measure::Measure,
+    solana_net_utils::PinnedXdpSender,
     solana_rayon_threadlimit::get_thread_count,
     solana_runtime::bank_forks::{BankForks, SharableBanks},
     solana_streamer::evicting_sender::EvictingSender,
@@ -135,12 +135,22 @@ fn run_check_duplicate(
             shred_slot,
             &root_bank,
         );
+        let no_verify_chained_merkle_root = shred::filter::check_feature_activation_from_bank(
+            &feature_set::alpenglow::id(),
+            shred_slot,
+            &root_bank,
+        );
 
         let (shred1, shred2) = match shred {
             PossibleDuplicateShred::LastIndexConflict(shred, conflict)
             | PossibleDuplicateShred::ErasureConflict(shred, conflict)
             | PossibleDuplicateShred::MerkleRootConflict(shred, conflict) => (shred, conflict),
             PossibleDuplicateShred::ChainedMerkleRootConflict(_slot) => {
+                if no_verify_chained_merkle_root {
+                    // If we're in the full alpenglow epoch, we stop validating the chained merkle root.
+                    // In Alpenglow we only use the double merkle root
+                    return Ok(());
+                }
                 if validate_chained_block_id || validate_chained_block_id_2 {
                     // Although chained merkle roots are not necessary for agave duplicate resolution protocols,
                     // We still need to mark the block as dead for other client teams.
@@ -149,6 +159,11 @@ fn run_check_duplicate(
                 return Ok(());
             }
             PossibleDuplicateShred::FixedFECChainedMerkleRootConflict(_slot) => {
+                if no_verify_chained_merkle_root {
+                    // If we're in the full alpenglow epoch, we stop validating the chained merkle root.
+                    // In Alpenglow we only use the double merkle root
+                    return Ok(());
+                }
                 if validate_chained_block_id_2 {
                     blockstore.set_dead_slot(shred_slot)?;
                 }
@@ -201,7 +216,6 @@ fn run_insert<F>(
     verified_receiver: &Receiver<Vec<(shred::Payload, /*is_repaired:*/ bool, BlockLocation)>>,
     blockstore: &Blockstore,
     shred_recovery_context: &mut ShredRecoveryContext,
-    leader_schedule_cache: &LeaderScheduleCache,
     handle_duplicate: F,
     metrics: &mut BlockstoreInsertionMetrics,
     ws_metrics: &mut WindowServiceMetrics,
@@ -236,7 +250,6 @@ where
     ws_metrics.num_shreds_received += shreds.len();
     let completed_data_sets = blockstore.insert_shreds_at_location_handle_duplicate(
         shreds,
-        Some(leader_schedule_cache),
         false, // is_trusted
         shred_recovery_context,
         &handle_duplicate,
@@ -296,9 +309,9 @@ impl WindowService {
         exit: Arc<AtomicBool>,
         repair_info: RepairInfo,
         window_service_channels: WindowServiceChannels,
-        leader_schedule_cache: Arc<LeaderScheduleCache>,
         shred_version: u16,
         outstanding_repair_requests: Arc<RwLock<OutstandingShredRepairs>>,
+        repair_xdp_sender: Option<PinnedXdpSender>,
     ) -> WindowService {
         let cluster_info = repair_info.cluster_info.clone();
         let bank_forks = repair_info.bank_forks.clone();
@@ -320,6 +333,7 @@ impl WindowService {
             repair_info.clone(),
             outstanding_repair_requests.clone(),
             repair_service_channels,
+            repair_xdp_sender,
         );
 
         let block_id_repair_service = BlockIdRepairService::new(
@@ -348,7 +362,6 @@ impl WindowService {
             exit,
             blockstore,
             sharable_banks,
-            leader_schedule_cache,
             shred_version,
             verified_receiver,
             duplicate_sender,
@@ -382,10 +395,9 @@ impl WindowService {
                         &duplicate_receiver,
                         &duplicate_slots_sender,
                         &bank_forks,
-                    ) {
-                        if Self::should_exit_on_error(e) {
-                            break;
-                        }
+                    ) && Self::should_exit_on_error(e)
+                    {
+                        break;
                     }
                 }
             })
@@ -396,7 +408,6 @@ impl WindowService {
         exit: Arc<AtomicBool>,
         blockstore: Arc<Blockstore>,
         sharable_banks: SharableBanks,
-        leader_schedule_cache: Arc<LeaderScheduleCache>,
         shred_version: u16,
         verified_receiver: Receiver<Vec<(shred::Payload, /*is_repaired:*/ bool, BlockLocation)>>,
         check_duplicate_sender: Sender<PossibleDuplicateShred>,
@@ -439,7 +450,6 @@ impl WindowService {
                         &verified_receiver,
                         &blockstore,
                         &mut shred_recovery_context,
-                        &leader_schedule_cache,
                         handle_duplicate,
                         &mut metrics,
                         &mut ws_metrics,
@@ -543,7 +553,7 @@ mod test {
         let mut shreds = local_entries_to_shred(&original_entries, 0, 0, &Keypair::new());
         shreds.reverse();
         blockstore
-            .insert_shreds(shreds, None, false)
+            .insert_shreds(shreds, false)
             .expect("Expect successful processing of shred");
 
         assert_eq!(blockstore.get_slot_entries(0, 0).unwrap(), original_entries);
@@ -558,9 +568,7 @@ mod test {
         let (sender, receiver) = bounded(1024);
         let (duplicate_slot_sender, duplicate_slot_receiver) = bounded(1024);
         let (shreds, _) = make_many_slot_entries(5, 5, 10);
-        blockstore
-            .insert_shreds(shreds.clone(), None, false)
-            .unwrap();
+        blockstore.insert_shreds(shreds.clone(), false).unwrap();
         let duplicate_index = 0;
         let original_shred = shreds[duplicate_index].clone();
         let duplicate_shred = {
@@ -649,7 +657,6 @@ mod test {
             blockstore
                 .insert_shreds_handle_duplicate(
                     shreds,
-                    None,
                     false, // is_trusted
                     &mut ShredRecoveryContext::new(
                         ReedSolomonCache::default(),

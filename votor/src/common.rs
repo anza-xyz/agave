@@ -10,21 +10,27 @@ use {
 // Core consensus types and constants
 pub type Stake = u64;
 
-pub const fn conflicting_types(vote_type: VoteType) -> &'static [VoteType] {
+pub(crate) const fn conflicting_types(vote_type: VoteType) -> &'static [VoteType] {
     match vote_type {
         VoteType::Finalize => &[
             VoteType::NotarizeFallback,
             VoteType::Skip,
             VoteType::SkipFallback,
+            VoteType::Genesis,
         ],
-        VoteType::Notarize => &[VoteType::Skip, VoteType::NotarizeFallback],
-        VoteType::NotarizeFallback => &[VoteType::Finalize, VoteType::Notarize],
+        VoteType::Notarize => &[
+            VoteType::Skip,
+            VoteType::NotarizeFallback,
+            VoteType::Genesis,
+        ],
+        VoteType::NotarizeFallback => &[VoteType::Finalize, VoteType::Notarize, VoteType::Genesis],
         VoteType::Skip => &[
             VoteType::Finalize,
             VoteType::Notarize,
             VoteType::SkipFallback,
+            VoteType::Genesis,
         ],
-        VoteType::SkipFallback => &[VoteType::Skip, VoteType::Finalize],
+        VoteType::SkipFallback => &[VoteType::Skip, VoteType::Finalize, VoteType::Genesis],
         VoteType::Genesis => &[
             VoteType::Finalize,
             VoteType::Notarize,
@@ -68,18 +74,13 @@ pub const SAFE_TO_SKIP_THRESHOLD: Fraction = Fraction::from_percentage(40);
 /// Time bound assumed on network transmission delays during periods of synchrony.
 pub const DELTA: Duration = Duration::from_millis(250);
 
-/// Time bound for propagation delay in the block propagation sub-protocol. For
-/// Turbine this is a maximum of `3 * DELTA` for the current maximum number of
-/// validators.
-const DELTA_BLOCK_PROPAGATION: Duration = DELTA.checked_mul(3).unwrap();
-
 /// Base leader handover timeout: Time after parent-ready that a validator would
-/// see a leaders first slice if that leader sent it at the very start of their
+/// see a leaders first fec set if that leader sent it at the very start of their
 /// window.
 ///
-/// This accounts for up to `DELTA` difference between the leader and the other
-/// validator triggering the parent ready event and for block propagation delay.
-pub(crate) const DELTA_TIMEOUT: Duration = DELTA.checked_add(DELTA_BLOCK_PROPAGATION).unwrap();
+/// With the current 400ms slot duration, this schedules both
+/// `TimeoutCrashedLeader(s)` and `Timeout(s)` at 800ms after `ParentReady`.
+pub(crate) const DELTA_TIMEOUT: Duration = Duration::from_millis(400);
 
 /// Timeout for standstill detection mechanism.
 pub(crate) const DELTA_STANDSTILL: Duration = Duration::from_millis(10_000);

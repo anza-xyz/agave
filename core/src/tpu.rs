@@ -11,7 +11,7 @@ use {
         banking_trace::{Channels, TracerThread},
         cluster_info_vote_listener::{
             ClusterInfoVoteListener, DuplicateConfirmedSlotsSender, GossipVerifiedVoteHashSender,
-            VerifiedVoterSlotsSender, VoteTracker,
+            VoteTracker,
         },
         fetch_stage::FetchStage,
         forwarding_stage::{
@@ -25,6 +25,7 @@ use {
     },
     agave_banking_stage_ingress_types::SchedulerPriorityFloor,
     agave_votor::event::VotorEventSender,
+    agave_votor_messages::VerifiedVoterSlotsSender,
     agave_xdp::transmitter::XdpSender,
     crossbeam_channel::{Receiver, bounded, unbounded},
     solana_clock::Slot,
@@ -415,13 +416,13 @@ impl Tpu {
             tpu_entry_notifier.join()?;
         }
         let _ = broadcast_result?;
-        if let Some(tracer_thread_hdl) = self.tracer_thread_hdl {
-            if let Err(tracer_result) = tracer_thread_hdl.join()? {
-                error!(
-                    "banking tracer thread returned error after successful thread join: \
-                     {tracer_result:?}"
-                );
-            }
+        if let Some(tracer_thread_hdl) = self.tracer_thread_hdl
+            && let Err(tracer_result) = tracer_thread_hdl.join()?
+        {
+            error!(
+                "banking tracer thread returned error after successful thread join: \
+                 {tracer_result:?}"
+            );
         }
         Ok(())
     }

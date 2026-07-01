@@ -46,6 +46,7 @@ fn test_node(exit: Arc<AtomicBool>) -> (Arc<ClusterInfo>, GossipService, UdpSock
         None,
         test_node.sockets.gossip,
         None,
+        None,
         true, // should_check_duplicate_instance
         None,
         exit,
@@ -73,6 +74,7 @@ fn test_node_with_bank(
         &cluster_info,
         Some(epoch_specs),
         test_node.sockets.gossip,
+        None,
         None,
         true, // should_check_duplicate_instance
         None,
@@ -198,7 +200,7 @@ fn gossip_star() {
             yd.set_wallclock(timestamp());
             let xv = &listen[x].0;
             xv.insert_info(yd);
-            trace!("star leader {}", &xv.id());
+            trace!("star leader {}", xv.id());
         }
     });
 }

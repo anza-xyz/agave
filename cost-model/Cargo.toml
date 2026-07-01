@@ -11,6 +11,8 @@ edition = { workspace = true }
 
 [package.metadata.docs.rs]
 targets = ["x86_64-unknown-linux-gnu"]
+all-features = true
+rustdoc-args = ["--cfg=docsrs"]
 
 [lib]
 crate-type = ["lib"]
@@ -82,9 +84,6 @@ solana-system-transaction = { workspace = true }
 solana-vote = { path = "../vote", features = ["agave-unstable-api"] }
 static_assertions = { workspace = true }
 test-case = { workspace = true }
-
-[[bench]]
-name = "cost_tracker"
 
 [lints]
 workspace = true

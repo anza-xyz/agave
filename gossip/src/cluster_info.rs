@@ -38,6 +38,7 @@ use {
             PULL_RESPONSE_MIN_SERIALIZED_SIZE, PUSH_MESSAGE_MAX_PAYLOAD_SIZE, Ping, PingCache,
             Protocol, PruneData, deserialize_protocol, split_gossip_messages,
         },
+        sigverify_cache::SigVerifyCache,
         weighted_shuffle::WeightedShuffle,
     },
     arc_swap::ArcSwap,
@@ -193,6 +194,7 @@ pub struct ClusterInfo {
     contact_info_path: PathBuf,
     socket_addr_space: SocketAddrSpace,
     bind_ip_addrs: Arc<BindIpAddrs>,
+    sigverify_cache: SigVerifyCache,
 }
 
 impl ClusterInfo {
@@ -230,6 +232,7 @@ impl ClusterInfo {
             contact_save_interval: 0, // disabled
             socket_addr_space,
             bind_ip_addrs: Arc::new(BindIpAddrs::default()),
+            sigverify_cache: SigVerifyCache::new(),
         };
         me.refresh_my_gossip_contact_info();
         me
@@ -2149,6 +2152,7 @@ impl ClusterInfo {
             packet: PacketRef,
             stakes: &HashMap<Pubkey, u64>,
             stats: &GossipStats,
+            sigverify_cache: &SigVerifyCache,
         ) -> Option<(SocketAddr, Protocol)> {
             let result: wincode::ReadResult<Protocol> = packet
                 .data(..)
@@ -2166,7 +2170,7 @@ impl ClusterInfo {
                     return None;
                 }
             }
-            protocol.verify().then(|| {
+            protocol.verify(sigverify_cache).then(|| {
                 stats.packets_received_verified_count.add_relaxed(1);
                 (packet.meta().socket_addr(), protocol)
             })
@@ -2180,13 +2184,17 @@ impl ClusterInfo {
                 if packet_buf.len() == 1 {
                     packet_buf[0]
                         .par_iter()
-                        .filter_map(|packet| verify_packet(packet, &stakes, &self.stats))
+                        .filter_map(|packet| {
+                            verify_packet(packet, &stakes, &self.stats, &self.sigverify_cache)
+                        })
                         .collect()
                 } else {
                     packet_buf
                         .par_iter()
                         .flatten()
-                        .filter_map(|packet| verify_packet(packet, &stakes, &self.stats))
+                        .filter_map(|packet| {
+                            verify_packet(packet, &stakes, &self.stats, &self.sigverify_cache)
+                        })
                         .collect()
                 }
             })
@@ -2401,7 +2409,7 @@ pub struct Sockets {
     /// Client-side socket for ForwardingStage non-vote transactions
     pub tpu_transaction_forwarding_clients: Box<[UdpSocket]>, // quic write only
     /// Socket for alpenglow consensus logic
-    pub alpenglow: Option<UdpSocket>, // udp read/write
+    pub alpenglow: UdpSocket, // quic read/write
     /// Connection cache endpoint for QUIC-based Vote
     pub quic_vote_client: UdpSocket, // quic write only
     /// Connection cache endpoint for QUIC-based Alpenglow messages
@@ -2808,7 +2816,7 @@ mod tests {
             assert_eq!(packet.meta().socket_addr(), socket);
             let bytes = wincode::serialize(&pong).unwrap();
             assert_eq!(bytes, bincode::serialize(&pong).unwrap());
-            match packet.deserialize_slice(..).unwrap() {
+            match deserialize_protocol(packet.data(..).unwrap_or_default()).unwrap() {
                 Protocol::PongMessage(pong) => {
                     let pong_bytes = wincode::serialize(&pong).unwrap();
                     assert_eq!(pong_bytes, bincode::serialize(&pong).unwrap());
@@ -2946,9 +2954,7 @@ mod tests {
 
     fn check_node_sockets(node: &Node, ip: IpAddr, range: (u16, u16)) {
         check_socket(&node.sockets.repair, ip, range);
-        if let Some(alpenglow_port) = &node.sockets.alpenglow {
-            check_socket(alpenglow_port, ip, range);
-        }
+        check_socket(&node.sockets.alpenglow, ip, range);
         check_sockets(&node.sockets.gossip, ip, range);
         check_sockets(&node.sockets.tvu, ip, range);
         check_sockets(&node.sockets.tpu_quic, ip, range);
@@ -3050,9 +3056,11 @@ mod tests {
             .collect::<HashMap<_, Vec<_>>>();
         // there should be some pushes ready
         assert!(!push_messages.is_empty());
-        push_messages
-            .values()
-            .for_each(|v| v.par_iter().for_each(|v| assert!(v.verify())));
+        let sigverify_cache = SigVerifyCache::new();
+        push_messages.values().for_each(|v| {
+            v.par_iter()
+                .for_each(|v| assert!(v.verify_with_cache(&sigverify_cache)))
+        });
 
         let mut pings = Vec::new();
         let _ = cluster_info
@@ -3379,7 +3387,7 @@ mod tests {
             assert_eq!(addr, entrypoint.gossip().unwrap());
             match msg {
                 Protocol::PullRequest(_, value) => {
-                    assert!(value.verify());
+                    assert!(value.verify_with_cache(&SigVerifyCache::new()));
                     assert_eq!(value.pubkey(), cluster_info.id())
                 }
                 _ => panic!("wrong protocol"),

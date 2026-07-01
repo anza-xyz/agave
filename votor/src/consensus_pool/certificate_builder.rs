@@ -16,7 +16,7 @@ use {
 /// conservative number 4096 for now. During build() we will cut off end
 /// of the bitmaps if the tail contains only zeroes, so actual bitmap
 /// length will be less than or equal to this number.
-const MAXIMUM_VALIDATORS: usize = 4096;
+pub const MAXIMUM_VALIDATORS: usize = 4096;
 
 /// Different types of errors that can be returned from the [`CertificateBuilder::aggregate()`] function.
 #[derive(Debug, Error, PartialEq, Eq)]
@@ -216,7 +216,9 @@ mod tests {
             certificate::CertificateType,
             consensus_message::{Block, VoteMessage},
             vote::Vote,
+            wire::get_vote_payload_to_sign,
         },
+        rand::Rng,
         solana_bls_signatures::{
             BLS_SIGNATURE_AFFINE_SIZE, Keypair as BLSKeypair, PreparedHashedMessage,
             PubkeyProjective as BLSPubkeyProjective, Signature as BLSSignature,
@@ -403,6 +405,7 @@ mod tests {
             slot: 10,
             block_id: Hash::new_unique(),
         };
+        let shred_version = rand::rng().random();
         let cert_type = CertificateType::Notarize(block);
 
         // 1. Setup: Create keypairs and a single vote object.
@@ -411,7 +414,7 @@ mod tests {
         let mut keypairs = Vec::new();
         let mut vote_messages = Vec::new();
         let vote = Vote::new_notarization_vote(block);
-        let serialized_vote = wincode::serialize(&vote).unwrap();
+        let serialized_vote = get_vote_payload_to_sign(vote, shred_version);
 
         for i in 0..num_validators {
             let keypair = BLSKeypair::new();
@@ -449,13 +452,14 @@ mod tests {
         // A NotarizeFallback certificate can be composed of both Notarize and NotarizeFallback
         // votes.
         let cert_type = CertificateType::NotarizeFallback(block);
+        let shred_version = rand::rng().random();
 
         // 1. Setup: Create two groups of validators signing two different vote types.
         let mut all_vote_messages = Vec::new();
         let mut all_pubkeys = Vec::new();
         // Group 1: Signs a Notarize vote.
         let notarize_vote = Vote::new_notarization_vote(block);
-        let serialized_notarize_vote = wincode::serialize(&notarize_vote).unwrap();
+        let serialized_notarize_vote = get_vote_payload_to_sign(notarize_vote, shred_version);
         for i in 0..3 {
             let keypair = BLSKeypair::new();
             let signature = keypair.sign(&serialized_notarize_vote);
@@ -469,7 +473,8 @@ mod tests {
 
         // Group 2: Signs a NotarizeFallback vote.
         let notarize_fallback_vote = Vote::new_notarization_fallback_vote(block);
-        let serialized_fallback_vote = wincode::serialize(&notarize_fallback_vote).unwrap();
+        let serialized_fallback_vote =
+            get_vote_payload_to_sign(notarize_fallback_vote, shred_version);
         for i in 3..6 {
             let keypair = BLSKeypair::new();
             let signature = keypair.sign(&serialized_fallback_vote);

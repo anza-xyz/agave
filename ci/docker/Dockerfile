@@ -4,7 +4,6 @@ FROM ${BASE_IMAGE}
 ARG \
   RUST_VERSION= \
   RUST_NIGHTLY_VERSION= \
-  NODE_MAJOR= \
   SCCACHE_VERSION= \
   NEXTEST_VERSION= \
   GRCOV_VERSION= \
@@ -25,7 +24,6 @@ ENV \
 RUN \
   if [ -z "$RUST_VERSION" ]; then echo "ERROR: The RUST_VERSION argument is required!" && exit 1; fi && \
   if [ -z "$RUST_NIGHTLY_VERSION" ]; then echo "ERROR: The RUST_NIGHTLY_VERSION argument is required!" && exit 1; fi && \
-  if [ -z "$NODE_MAJOR" ]; then echo "ERROR: The NODE_MAJOR argument is required!" && exit 1; fi && \
   if [ -z "$SCCACHE_VERSION" ]; then echo "ERROR: The SCCACHE_VERSION argument is required!" && exit 1; fi && \
   if [ -z "$NEXTEST_VERSION" ]; then echo "ERROR: The NEXTEST_VERSION argument is required!" && exit 1; fi && \
   if [ -z "$GRCOV_VERSION" ]; then echo "ERROR: The GRCOV_VERSION argument is required!" && exit 1; fi && \
@@ -40,14 +38,14 @@ RUN \
   git \
   vim \
   jq \
+  iproute2 \
   ca-certificates \
   curl \
   gnupg \
   lld \
   cmake \
   openssh-client \
-  # docs
-  mscgen \
+  python3 \
   # solana compiling
   libssl-dev \
   libudev-dev \
@@ -84,15 +82,11 @@ RUN \
   rustup component add rustfmt --toolchain=$RUST_NIGHTLY_VERSION && \
   rustup component add miri --toolchain=$RUST_NIGHTLY_VERSION && \
   rustup component add llvm-tools-preview --toolchain=$RUST_NIGHTLY_VERSION && \
-  rustup target add wasm32-unknown-unknown && \
   cargo install cargo-audit && \
   cargo install cargo-hack && \
   cargo install cargo-sort@2.0.2 && \
-  cargo install mdbook && \
-  cargo install mdbook-linkcheck && \
-  cargo install svgbob_cli && \
-  cargo install wasm-pack && \
   cargo install rustfilt && \
+  cargo install cargo-build-sbf@4.1.0 --locked && \
   rustup show && \
   rustc --version && \
   cargo --version && \
@@ -111,19 +105,11 @@ RUN \
   tar -xzf "cargo-nextest-$NEXTEST_VERSION-x86_64-unknown-linux-musl.tar.gz" && \
   mv ./cargo-nextest "$CARGO_HOME/bin/" && \
   rm "cargo-nextest-$NEXTEST_VERSION-x86_64-unknown-linux-musl.tar.gz" && \
-  # nodejs
-  sudo mkdir -p /etc/apt/keyrings && \
-  curl -fsSL https://deb.nodesource.com/gpgkey/nodesource-repo.gpg.key | sudo gpg --dearmor -o /etc/apt/keyrings/nodesource.gpg && \
-  echo "deb [signed-by=/etc/apt/keyrings/nodesource.gpg] https://deb.nodesource.com/node_$NODE_MAJOR.x nodistro main" | sudo tee /etc/apt/sources.list.d/nodesource.list && \
-  sudo apt-get update && \
-  sudo apt-get install -y nodejs && \
   # setup path
   mkdir /.cache && \
   chmod -R a+w /.cache && \
   mkdir /.config && \
   chmod -R a+w /.config && \
-  mkdir /.npm && \
-  chmod -R a+w /.npm && \
   # grcov
   curl -LOsS "https://github.com/mozilla/grcov/releases/download/$GRCOV_VERSION/grcov-x86_64-unknown-linux-musl.tar.bz2" && \
   curl -LsS "https://github.com/mozilla/grcov/releases/download/$GRCOV_VERSION/checksums.sha256" | sha256sum -c --ignore-missing - && \

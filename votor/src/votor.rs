@@ -46,16 +46,13 @@
 use {
     crate::{
         commitment::CommitmentAggregationData,
-        consensus_metrics::{
-            ConsensusMetrics, ConsensusMetricsEventReceiver, ConsensusMetricsEventSender,
-        },
+        consensus_metrics::ConsensusMetrics,
         consensus_pool_service::{ConsensusPoolContext, ConsensusPoolService},
         event::{
             LatestSwitchRequest, LeaderWindowInfo, RepairEventSender, VotorEventReceiver,
             VotorEventSender,
         },
         event_handler::{EventHandler, EventHandlerContext},
-        generated_cert_types::GeneratedCertTypes,
         root_utils::RootContext,
         timer_manager::TimerManager,
         vote_history::VoteHistory,
@@ -63,7 +60,13 @@ use {
         voting_service::BLSOp,
         voting_utils::VotingContext,
     },
-    agave_votor_messages::consensus_message::{Block, SigVerifiedBatch},
+    agave_bls_sigverify::{
+        generated_cert_types::GeneratedCertTypes, sig_verified_messages::SigVerifiedBatch,
+    },
+    agave_votor_messages::{
+        consensus_message::{Block, ConsensusMessage},
+        metric_types::{ConsensusMetricsEventReceiver, ConsensusMetricsEventSender},
+    },
     crossbeam_channel::{Receiver, Sender},
     parking_lot::RwLock as PlRwLock,
     solana_clock::Slot,
@@ -111,13 +114,14 @@ pub struct VotorConfig {
     pub leader_window_info_sender: Sender<LeaderWindowInfo>,
     pub highest_parent_ready: Arc<RwLock<(Slot, Block)>>,
     pub event_sender: VotorEventSender,
-    pub own_vote_sender: Sender<SigVerifiedBatch>,
+    pub own_vote_sender: Sender<ConsensusMessage>,
     pub repair_event_sender: RepairEventSender,
     pub latest_switch_request: LatestSwitchRequest,
 
     // Receivers
     pub event_receiver: VotorEventReceiver,
     pub consensus_message_receiver: Receiver<SigVerifiedBatch>,
+    pub own_message_receiver: Receiver<ConsensusMessage>,
     pub consensus_metrics_receiver: ConsensusMetricsEventReceiver,
 }
 
@@ -164,6 +168,7 @@ impl Votor {
             latest_switch_request,
             event_receiver,
             consensus_message_receiver,
+            own_message_receiver,
             consensus_metrics_sender,
             consensus_metrics_receiver,
             generated_cert_types,
@@ -190,6 +195,7 @@ impl Votor {
         };
 
         let voting_context = VotingContext {
+            cluster_info: cluster_info.clone(),
             vote_history,
             vote_account_pubkey: vote_account,
             identity_keypair,
@@ -237,6 +243,7 @@ impl Votor {
             leader_schedule_cache: leader_schedule_cache.clone(),
             vote_history_highest_parent_ready,
             consensus_message_receiver,
+            own_message_receiver,
             bls_sender,
             event_sender,
             repair_event_sender,

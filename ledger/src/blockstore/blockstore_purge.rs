@@ -394,8 +394,11 @@ impl Blockstore {
         }
 
         for slot in from_slot..=to_slot {
-            let (slot_entries, _, _) =
-                self.get_slot_entries_with_shred_info(slot, 0, true /* allow_dead_slots */)?;
+            let Ok((slot_entries, _, _)) =
+                self.get_slot_entries_with_shred_info(slot, 0, /*allow_dead_slots:*/ true)
+            else {
+                continue;
+            };
             let transactions = slot_entries
                 .into_iter()
                 .flat_map(|entry| entry.transactions);
@@ -466,13 +469,13 @@ pub mod tests {
         crate::{
             blockstore::tests::make_slot_entries_with_transactions, get_tmp_ledger_path_auto_delete,
         },
-        bincode::serialize,
         solana_entry::entry::next_entry_mut,
         solana_hash::Hash,
         solana_message::Message,
         solana_sha256_hasher::hash,
         solana_transaction::Transaction,
         test_case::test_case,
+        wincode::serialize,
     };
 
     fn all_columns_empty_or_greater_than_slot(blockstore: &Blockstore, min_slot: Slot) {
@@ -700,7 +703,7 @@ pub mod tests {
         let blockstore = Blockstore::open(ledger_path.path()).unwrap();
 
         let (shreds, _) = make_many_slot_entries(0, 50, 5);
-        blockstore.insert_shreds(shreds, None, false).unwrap();
+        blockstore.insert_shreds(shreds, false).unwrap();
 
         blockstore.purge_slots(0, 5, PurgeType::Exact).unwrap();
         all_columns_empty_or_greater_than_slot(&blockstore, 6);
@@ -774,7 +777,7 @@ pub mod tests {
                 true,                // is_full_slot
                 0,                   // version
             );
-            blockstore.insert_shreds(shreds, None, false).unwrap();
+            blockstore.insert_shreds(shreds, false).unwrap();
             let signature = entries
                 .iter()
                 .filter(|entry| !entry.is_tick())
@@ -818,7 +821,7 @@ pub mod tests {
                 true, // is_full_slot
                 0,    // version
             );
-            blockstore.insert_shreds(shreds, None, false).unwrap();
+            blockstore.insert_shreds(shreds, false).unwrap();
 
             for transaction in entries.into_iter().flat_map(|entry| entry.transactions) {
                 assert_eq!(transaction.signatures.len(), 1);
@@ -989,7 +992,7 @@ pub mod tests {
             true,     // is_full_slot
             0,        // version
         );
-        blockstore.insert_shreds(shreds, None, false).unwrap();
+        blockstore.insert_shreds(shreds, false).unwrap();
 
         let mut write_batch = blockstore.get_write_batch().unwrap();
         blockstore
@@ -1057,7 +1060,7 @@ pub mod tests {
         let blockstore = Blockstore::open(ledger_path.path()).unwrap();
 
         let (shreds, _) = make_many_slot_entries(0, 10, 5);
-        blockstore.insert_shreds(shreds, None, false).unwrap();
+        blockstore.insert_shreds(shreds, false).unwrap();
 
         assert!(matches!(
             blockstore.purge_slot_cleanup_chaining(11).unwrap_err(),
@@ -1071,11 +1074,11 @@ pub mod tests {
         let blockstore = Blockstore::open(ledger_path.path()).unwrap();
 
         let (shreds, _) = make_many_slot_entries(0, 10, 5);
-        blockstore.insert_shreds(shreds, None, false).unwrap();
+        blockstore.insert_shreds(shreds, false).unwrap();
         let (slot_11, _) = make_slot_entries(11, 4, 5);
-        blockstore.insert_shreds(slot_11, None, false).unwrap();
+        blockstore.insert_shreds(slot_11, false).unwrap();
         let (slot_12, _) = make_slot_entries(12, 5, 5);
-        blockstore.insert_shreds(slot_12, None, false).unwrap();
+        blockstore.insert_shreds(slot_12, false).unwrap();
 
         blockstore.purge_slot_cleanup_chaining(5).unwrap();
 

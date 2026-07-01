@@ -198,7 +198,7 @@ impl Drop for AppendVec {
                 // promote this to panic soon.
                 // disabled due to many false positive warnings while running tests.
                 // blocked by rpc's upgrade to jsonrpc v17
-                warn!("AppendVec failed to remove {}: {err}", &self.path.display());
+                warn!("AppendVec failed to remove {}: {err}", self.path.display());
             }
         }
     }

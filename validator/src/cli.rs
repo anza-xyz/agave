@@ -151,6 +151,20 @@ fn deprecated_arguments() -> Vec<DeprecatedArg> {
             .help("No-op; account storages are always accessed via file I/O"),
     );
     add_arg!(
+        // deprecated in v4.2.0
+        Arg::with_name("accounts_db_cache_limit_mb")
+            .long("accounts-db-cache-limit-mb")
+            .value_name("MEGABYTES")
+            .validator(is_parsable::<u64>)
+            .takes_value(true)
+            .help(
+                "How large the write cache for account data can become. If this is exceeded, the \
+                 cache is flushed more aggressively.",
+            )
+            .conflicts_with("accounts_db_write_cache_limit"),
+        replaced_by: "accounts-db-write-cache-limit",
+    );
+    add_arg!(
         // deprecated in v4.0.0
         Arg::with_name("enable_accounts_disk_index")
             .long("enable-accounts-disk-index")
@@ -159,18 +173,28 @@ fn deprecated_arguments() -> Vec<DeprecatedArg> {
         replaced_by: "accounts-index-limit",
     );
     add_arg!(
+        // deprecated in v4.2.0
+        Arg::with_name("experimental_poh_pinned_cpu_core")
+            .long("experimental-poh-pinned-cpu-core")
+            .takes_value(true)
+            .value_name("CPU_ID")
+            .conflicts_with("poh_pinned_cpu_core")
+            .validator(is_parsable::<usize>)
+            .help("Specify which CPU core PoH is pinned to. Use --poh-pinned-cpu-core instead"),
+        replaced_by: "poh-pinned-cpu-core",
+    );
+    add_arg!(
         // deprecated in v4.1.0
         Arg::with_name("experimental_retransmit_xdp_cpu_cores")
             .long("experimental-retransmit-xdp-cpu-cores")
             .takes_value(true)
             .value_name("CPU_LIST")
             .conflicts_with("xdp_cpu_cores")
+            .conflicts_with("no_xdp")
             .validator(|value| {
                 validate_cpu_ranges(value, "--experimental-retransmit-xdp-cpu-cores")
             })
-            .help(
-                "Enable XDP retransmit on the specified CPU cores. Use --xdp-cpu-cores instead",
-            ),
+            .help("CPU cores to reserve for XDP. Use --xdp-cpu-cores instead"),
         replaced_by: "xdp-cpu-cores",
     );
     add_arg!(
@@ -180,8 +204,8 @@ fn deprecated_arguments() -> Vec<DeprecatedArg> {
             .takes_value(true)
             .value_name("INTERFACE")
             .conflicts_with("xdp_interface")
-            .requires("experimental_retransmit_xdp_cpu_cores")
-            .help("Network interface to use for XDP retransmit. Use --xdp-interface instead"),
+            .conflicts_with("no_xdp")
+            .help("Network interface to use for XDP. Use --xdp-interface instead"),
         replaced_by: "xdp-interface",
     );
     add_arg!(
@@ -190,7 +214,7 @@ fn deprecated_arguments() -> Vec<DeprecatedArg> {
             .long("experimental-retransmit-xdp-zero-copy")
             .takes_value(false)
             .conflicts_with("xdp_zero_copy")
-            .requires("experimental_retransmit_xdp_cpu_cores")
+            .conflicts_with("no_xdp")
             .help("Enable XDP zero copy. Use --xdp-zero-copy instead"),
         replaced_by: "xdp-zero-copy",
     );
@@ -831,6 +855,15 @@ pub fn test_app<'a>(version: &'a str, default_args: &'a DefaultTestArgs) -> App<
                 .long("enable-scheduler-bindings")
                 .takes_value(false)
                 .help("Enables external processes to connect and manage block production"),
+        )
+        .arg(
+            Arg::with_name("alpenglow")
+                .long("alpenglow")
+                .takes_value(false)
+                .help(
+                    "Activate Alpenglow at genesis. The validator_admission_ticket feature must \
+                     remain active",
+                ),
         )
         .arg(
             Arg::with_name("deactivate_feature")

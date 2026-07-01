@@ -4,7 +4,7 @@ use {
 };
 
 /// Snapshot serde-safe AccountsLtHash
-#[cfg_attr(feature = "frozen-abi", derive(AbiExample))]
+#[cfg_attr(feature = "frozen-abi", derive(AbiExample, StableAbi, StableAbiSample))]
 #[serde_with::serde_as]
 #[derive(Debug, serde::Serialize, serde::Deserialize, Clone, PartialEq, Eq)]
 pub struct SerdeAccountsLtHash(
@@ -26,7 +26,7 @@ impl From<AccountsLtHash> for SerdeAccountsLtHash {
 
 /// Snapshot serde-safe RentCollector, which is now unused
 #[repr(C)]
-#[cfg_attr(feature = "frozen-abi", derive(solana_frozen_abi_macro::AbiExample))]
+#[cfg_attr(feature = "frozen-abi", derive(AbiExample, StableAbi, StableAbiSample))]
 #[derive(Debug, serde::Deserialize, serde::Serialize, Clone)]
 pub struct UnusedRentCollector {
     epoch: Epoch,

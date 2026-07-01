@@ -8,8 +8,7 @@ use {
     crate::{
         banking_trace::{BankingPacketSender, BankingTracer},
         block_creation_loop::rewards::{
-            certs_requestor::CertsRequestor,
-            msg_types::{AddVoteMessage, RewardRespSucc},
+            certs_requestor::CertsRequestor, msg_types::RewardRespSucc,
             reward_certs_service::RewardCertsService,
         },
         replay_stage::{Finalizer, ReplayStage},
@@ -17,7 +16,7 @@ use {
     agave_votor::event::LeaderWindowInfo,
     agave_votor_messages::{
         consensus_message::Block,
-        reward_certificate::{NotarRewardCertificate, SkipRewardCertificate},
+        reward_certificate::{AddVoteMessage, NotarRewardCertificate, SkipRewardCertificate},
     },
     crossbeam_channel::{Receiver, Sender, select_biased},
     solana_clock::Slot,
@@ -60,6 +59,17 @@ use {
 
 pub(crate) mod rewards;
 mod stats;
+
+// Empirically derived value estimating the time to
+// - drain and record the final batch of transactions,
+// - produce the block footer,
+// - produce the 'alpentick',
+// - freeze the bank,
+// - shred the final batches of the block,
+// - broadcast.
+// Recording stops this much before the slot timeout so block completion has time to finish before
+// the leader window deadline.
+const TIME_TO_COMPLETE_BLOCK_BROADCAST: Duration = Duration::from_millis(6);
 
 /// Source of a leader-window notification consumed by BCL.
 enum ParentSource {
@@ -423,6 +433,7 @@ fn reset_poh_recorder(bank: &Arc<Bank>, ctx: &LeaderContext) {
 fn block_timeout(bank: &Bank, slot: Slot) -> Duration {
     Duration::from_nanos_u128(bank.ns_per_slot_at_slot(slot))
         .saturating_mul((leader_slot_index(slot) as u32).saturating_add(1))
+        .saturating_sub(TIME_TO_COMPLETE_BLOCK_BROADCAST)
 }
 
 /// Select the freshest leader-window notification within one source.
@@ -762,9 +773,10 @@ fn record_and_complete_block(
         let RewardRespSucc {
             skip,
             notar,
-            validators: _,
+            validators,
         } = reward_certs;
-        let reward_cert = ValidatedRewardCert::try_new(&bank, &skip, &notar)?;
+        let reward_cert =
+            ValidatedRewardCert::try_new_for_leader(bank.slot(), &skip, &notar, validators)?;
         let guard = ctx.highest_finalized.read().unwrap();
         let footer = produce_block_footer(&bank, skip, notar, guard.as_ref());
         let final_cert_input = guard.as_ref().map(|c| c.vote_rewards_input());
@@ -811,8 +823,8 @@ fn process_parent_ready(
     }
 
     if info.start_slot == bank_slot {
-        if let Some(optimistic_parent_block) = optimistic_parent.take() {
-            if handle_parent_ready(
+        if let Some(optimistic_parent_block) = optimistic_parent.take()
+            && handle_parent_ready(
                 ctx,
                 info,
                 optimistic_parent_block,
@@ -820,9 +832,8 @@ fn process_parent_ready(
                 block_timer,
             )?
             .is_some()
-            {
-                *records_shutdown = false;
-            }
+        {
+            *records_shutdown = false;
         }
         return Ok(false);
     }
@@ -1318,9 +1329,9 @@ fn maybe_include_genesis_certificate(
 
     // Process the genesis certificate
     let bank = poh_recorder.bank().expect("Bank cannot have been cleared");
-    let processor = bank.block_component_processor.read().unwrap();
+    let mut processor = bank.block_component_processor.write().unwrap();
     processor
-        .on_genesis_cert_block_marker(
+        .on_genesis_cert_block_marker_leader(
             bank.clone(),
             ctx.genesis_cert_block_marker.clone(),
             &ctx.bank_forks.read().unwrap().migration_status(),

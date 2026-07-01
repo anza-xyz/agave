@@ -1,21 +1,24 @@
 //! The `packet` module defines data structures and methods to pull data from the network.
 #[cfg(feature = "dev-context-only-utils")]
-use bytes::{BufMut, BytesMut};
+use wincode::{ReadError, ReadResult, SchemaRead, config::DefaultConfig};
 use {
     crate::{recycled_vec::RecycledVec, recycler::Recycler},
-    bincode::config::Options,
     bytes::Bytes,
     rayon::{
         iter::{IndexedParallelIterator, ParallelIterator},
         prelude::{IntoParallelIterator, IntoParallelRefIterator, IntoParallelRefMutIterator},
     },
-    serde::{Deserialize, Serialize, de::DeserializeOwned},
+    serde::{Deserialize, Serialize},
     std::{
         borrow::Borrow,
-        io::Read,
+        io::Cursor,
         net::SocketAddr,
         ops::{Deref, DerefMut, Index, IndexMut},
         slice::{Iter, SliceIndex},
+    },
+    wincode::{
+        SchemaWrite, WriteResult,
+        config::{Config, Configuration},
     },
 };
 pub use {
@@ -27,6 +30,47 @@ pub const NUM_PACKETS: usize = 1024 * 8;
 
 pub const PACKETS_PER_BATCH: usize = 64;
 pub const NUM_RCVMMSGS: usize = 64;
+
+pub type PacketConfig = Configuration<true, PACKET_DATA_SIZE>;
+
+/// wincode configuration setup to use for deserializing a Packet.
+/// - Zero-copy alignment check is enabled.
+/// - Preallocation size limit is PACKET_DATA_SIZE.
+#[inline]
+const fn packet_config_inner() -> PacketConfig {
+    Configuration::default().with_preallocation_size_limit::<{ solana_packet::PACKET_DATA_SIZE }>()
+}
+
+#[inline]
+pub const fn packet_config() -> impl Config {
+    packet_config_inner()
+}
+
+#[cfg(feature = "dev-context-only-utils")]
+pub fn deserialize_slice_from_packet<'de, T, I>(packet: &'de Packet, index: I) -> ReadResult<T>
+where
+    T: SchemaRead<'de, PacketConfig, Dst = T>,
+    I: SliceIndex<[u8], Output = [u8]>,
+{
+    let data = packet
+        .data(index)
+        .ok_or(ReadError::Custom("packet discarded"))?;
+    wincode::config::deserialize(data, packet_config_inner())
+}
+
+pub fn packet_from_data<T>(dest: Option<&SocketAddr>, data: T) -> WriteResult<Packet>
+where
+    T: SchemaWrite<PacketConfig, Src = T>,
+{
+    let mut packet = Packet::default();
+    let mut wr = Cursor::new(packet.buffer_mut());
+    wincode::config::serialize_into(&mut wr, &data, packet_config_inner())?;
+    packet.meta_mut().size = wr.position() as usize;
+    if let Some(dest) = dest {
+        packet.meta_mut().set_socket_addr(dest);
+    }
+    Ok(packet)
+}
 
 /// Representation of a packet used in TPU.
 #[cfg_attr(feature = "frozen-abi", derive(AbiExample))]
@@ -62,22 +106,13 @@ impl BytesPacket {
     }
 
     #[cfg(feature = "dev-context-only-utils")]
-    pub fn from_data<T>(dest: Option<&SocketAddr>, data: T) -> bincode::Result<Self>
+    pub fn from_data<T>(data: T) -> WriteResult<Self>
     where
-        T: solana_packet::Encode,
+        T: SchemaWrite<DefaultConfig, Src = T>,
     {
-        let buffer = BytesMut::with_capacity(PACKET_DATA_SIZE);
-        let mut writer = buffer.writer();
-        data.encode(&mut writer)?;
-        let buffer = writer.into_inner();
-        let buffer = buffer.freeze();
-
+        let buffer = Bytes::from(wincode::serialize(&data)?);
         let mut meta = Meta::default();
         meta.size = buffer.len();
-        if let Some(dest) = dest {
-            meta.set_socket_addr(dest);
-        }
-
         Ok(Self { buffer, meta })
     }
 
@@ -101,19 +136,6 @@ impl BytesPacket {
     #[inline]
     pub fn meta_mut(&mut self) -> &mut Meta {
         &mut self.meta
-    }
-
-    pub fn deserialize_slice<T, I>(&self, index: I) -> bincode::Result<T>
-    where
-        T: serde::de::DeserializeOwned,
-        I: SliceIndex<[u8], Output = [u8]>,
-    {
-        let bytes = self.data(index).ok_or(bincode::ErrorKind::SizeLimit)?;
-        bincode::options()
-            .with_limit(self.meta().size as u64)
-            .with_fixint_encoding()
-            .reject_trailing_bytes()
-            .deserialize(bytes)
     }
 
     #[cfg(feature = "dev-context-only-utils")]
@@ -359,17 +381,6 @@ impl<'a> PacketRef<'a> {
         }
     }
 
-    pub fn deserialize_slice<T, I>(&self, index: I) -> bincode::Result<T>
-    where
-        T: serde::de::DeserializeOwned,
-        I: SliceIndex<[u8], Output = [u8]>,
-    {
-        match self {
-            Self::Packet(packet) => packet.deserialize_slice(index),
-            Self::Bytes(packet) => packet.deserialize_slice(index),
-        }
-    }
-
     pub fn to_bytes_packet(&self) -> BytesPacket {
         match self {
             // In case of the legacy `Packet` variant, we unfortunately need to
@@ -439,17 +450,6 @@ impl PacketRefMut<'_> {
         match self {
             Self::Packet(packet) => packet.meta_mut(),
             Self::Bytes(packet) => packet.meta_mut(),
-        }
-    }
-
-    pub fn deserialize_slice<T, I>(&self, index: I) -> bincode::Result<T>
-    where
-        T: serde::de::DeserializeOwned,
-        I: SliceIndex<[u8], Output = [u8]>,
-    {
-        match self {
-            Self::Packet(packet) => packet.deserialize_slice(index),
-            Self::Bytes(packet) => packet.deserialize_slice(index),
         }
     }
 
@@ -881,20 +881,6 @@ impl<'a> IntoParallelIterator for &'a mut BytesPacketBatch {
     fn into_par_iter(self) -> Self::Iter {
         self.packets.par_iter_mut()
     }
-}
-
-pub fn deserialize_from_with_limit<R, T>(reader: R) -> bincode::Result<T>
-where
-    R: Read,
-    T: DeserializeOwned,
-{
-    // with_limit causes pre-allocation size to be limited
-    // to prevent against memory exhaustion attacks.
-    bincode::options()
-        .with_limit(PACKET_DATA_SIZE as u64)
-        .with_fixint_encoding()
-        .allow_trailing_bytes()
-        .deserialize_from(reader)
 }
 
 #[cfg(test)]

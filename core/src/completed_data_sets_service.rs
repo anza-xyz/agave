@@ -551,7 +551,7 @@ pub mod test {
             ))],
         )];
         let shreds = blockstore::entries_to_test_shreds(&entries, 11, 10, true, 0);
-        let completed_data_sets = blockstore.insert_shreds(shreds, None, true).unwrap();
+        let completed_data_sets = blockstore.insert_shreds(shreds, true).unwrap();
         assert_eq!(completed_data_sets.len(), 1);
         let completed_data_set = completed_data_sets[0].clone();
         sender.send(completed_data_sets).unwrap();
@@ -617,7 +617,7 @@ pub mod test {
             .collect();
         let shreds = blockstore::entries_to_test_shreds(&entries, 12, 11, true, 0);
         assert!(shreds.len() > 1);
-        let completed_data_sets = blockstore.insert_shreds(shreds, None, true).unwrap();
+        let completed_data_sets = blockstore.insert_shreds(shreds, true).unwrap();
         assert_eq!(completed_data_sets.len(), 1);
         let completed_data_set = completed_data_sets[0].clone();
         sender.send(completed_data_sets).unwrap();

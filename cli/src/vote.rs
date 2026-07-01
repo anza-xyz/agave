@@ -1114,17 +1114,14 @@ pub async fn process_create_vote_account(
         if let Ok(response) = rpc_client
             .get_account_with_commitment(&vote_account_address, config.commitment)
             .await
+            && let Some(vote_account) = response.value
         {
-            if let Some(vote_account) = response.value {
-                let err_msg = if vote_account.owner == solana_vote_program::id() {
-                    format!("Vote account {vote_account_address} already exists")
-                } else {
-                    format!(
-                        "Account {vote_account_address} already exists and is not a vote account"
-                    )
-                };
-                return Err(CliError::BadParameter(err_msg).into());
-            }
+            let err_msg = if vote_account.owner == solana_vote_program::id() {
+                format!("Vote account {vote_account_address} already exists")
+            } else {
+                format!("Account {vote_account_address} already exists and is not a vote account")
+            };
+            return Err(CliError::BadParameter(err_msg).into());
         }
 
         if let Some(nonce_account) = &nonce_account {
@@ -1241,14 +1238,14 @@ pub async fn process_vote_authorize(
                     &[current_authorized_voter, vote_state.authorized_withdrawer],
                     &authorized.pubkey(),
                 )?;
-                if let Some(signer) = new_authorized_signer {
-                    if signer.is_interactive() {
-                        return Err(CliError::BadParameter(format!(
-                            "invalid new authorized vote signer {new_authorized_pubkey:?}. \
-                             Interactive vote signers not supported"
-                        ))
-                        .into());
-                    }
+                if let Some(signer) = new_authorized_signer
+                    && signer.is_interactive()
+                {
+                    return Err(CliError::BadParameter(format!(
+                        "invalid new authorized vote signer {new_authorized_pubkey:?}. \
+                         Interactive vote signers not supported"
+                    ))
+                    .into());
                 }
             }
         }
@@ -1831,13 +1828,12 @@ pub async fn process_close_vote_account(
         .into_iter()
         .chain(vote_account_status.delinquent)
         .next()
+        && vote_account.activated_stake != 0
     {
-        if vote_account.activated_stake != 0 {
-            return Err(format!(
-                "Cannot close a vote account with active stake: {vote_account_pubkey}"
-            )
-            .into());
-        }
+        return Err(format!(
+            "Cannot close a vote account with active stake: {vote_account_pubkey}"
+        )
+        .into());
     }
 
     let latest_blockhash = rpc_client.get_latest_blockhash().await?;

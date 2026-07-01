@@ -34,6 +34,10 @@ const IFLA_GRE_TTL: u16 = 8;
 const IFLA_GRE_TOS: u16 = 9;
 const IFLA_GRE_PMTUDISC: u16 = 10;
 
+// VLAN nested attributes (from include/uapi/linux/if_link.h)
+const IFLA_VLAN_ID: u16 = 1;
+const IFLA_VLAN_PROTOCOL: u16 = 5;
+
 #[repr(C)]
 #[allow(non_camel_case_types)]
 struct ifinfomsg {
@@ -386,11 +390,19 @@ pub struct GreTunnelInfo {
     pub pmtudisc: u8,
 }
 
+/// 802.1Q VLAN sub-interface information from netlink (IFLA_LINKINFO kind "vlan").
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct VlanLinkInfo {
+    /// VLAN ID (IFLA_VLAN_ID), 1-4094 in practice.
+    pub vid: u16,
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct InterfaceInfo {
     pub if_index: u32,
     pub mtu: u32,
     pub gre_tunnel: Option<GreTunnelInfo>,
+    pub vlan_link: Option<VlanLinkInfo>,
 }
 
 impl InterfaceInfo {
@@ -453,11 +465,33 @@ pub(crate) fn parse_rtm_ifinfomsg(msg: &NetlinkMessage) -> Option<InterfaceInfo>
 
     // Parse GRE tunnel information if this is a GRE interface
     let gre_tunnel = parse_gre_tunnel_info_from_linkinfo(&attrs);
+    // Parse VLAN information if this is an 802.1Q VLAN sub-interface
+    let vlan_link = parse_vlan_link_info_from_linkinfo(&attrs);
     Some(InterfaceInfo {
         if_index: ifi.ifi_index,
         mtu,
         gre_tunnel,
+        vlan_link,
     })
+}
+
+// Parse 802.1Q VLAN information from netlink
+fn parse_vlan_link_info_from_linkinfo(attrs: &HashMap<u16, NlAttr>) -> Option<VlanLinkInfo> {
+    let vlan = parse_linkinfo_data_for_kind(attrs, b"vlan")?;
+
+    // Only 802.1Q is supported; skip 802.1ad (QinQ) sub-interfaces. The protocol attribute is a
+    // big-endian u16; kernels predating 802.1ad support omit it, which implies 802.1Q.
+    if let Some(proto) = vlan.get(&IFLA_VLAN_PROTOCOL) {
+        let proto = u16::from_be_bytes(proto.data.get(..2)?.try_into().ok()?);
+        if proto != libc::ETH_P_8021Q as u16 {
+            return None;
+        }
+    }
+
+    let vid = vlan
+        .get(&IFLA_VLAN_ID)
+        .and_then(|a| u16_from_ne_bytes(a.data))?;
+    Some(VlanLinkInfo { vid })
 }
 
 // Parse GRE tunnel information from netlink
@@ -598,10 +632,10 @@ pub fn parse_rtm_newneigh(msg: &NetlinkMessage, if_index: Option<u32>) -> Option
         return None;
     }
     let nd_msg = unsafe { ptr::read_unaligned(msg.data.as_ptr() as *const ndmsg) };
-    if let Some(idx) = if_index {
-        if nd_msg.ndm_ifindex != idx as i32 {
-            return None;
-        }
+    if let Some(idx) = if_index
+        && nd_msg.ndm_ifindex != idx as i32
+    {
+        return None;
     }
     let Ok(attrs) = parse_attrs(&msg.data[mem::size_of::<ndmsg>()..]) else {
         return None;
@@ -615,12 +649,12 @@ pub fn parse_rtm_newneigh(msg: &NetlinkMessage, if_index: Option<u32>) -> Option
     if let Some(dst_attr) = attrs.get(&NDA_DST) {
         neighbor.destination = parse_ip_address(dst_attr.data, nd_msg.ndm_family);
     }
-    if let Some(lladdr_attr) = attrs.get(&NDA_LLADDR) {
-        if lladdr_attr.data.len() >= 6 {
-            let mut mac = [0u8; 6];
-            mac.copy_from_slice(&lladdr_attr.data[0..6]);
-            neighbor.lladdr = Some(MacAddress(mac));
-        }
+    if let Some(lladdr_attr) = attrs.get(&NDA_LLADDR)
+        && lladdr_attr.data.len() >= 6
+    {
+        let mut mac = [0u8; 6];
+        mac.copy_from_slice(&lladdr_attr.data[0..6]);
+        neighbor.lladdr = Some(MacAddress(mac));
     }
     Some(neighbor)
 }
@@ -782,4 +816,9 @@ fn push_nlattr<T>(buf: &mut Vec<u8>, attr_type: u16, value: &T) {
 fn u32_from_ne_bytes(data: &[u8]) -> Option<u32> {
     let bytes: [u8; 4] = data.get(..4)?.try_into().ok()?;
     Some(u32::from_ne_bytes(bytes))
+}
+
+fn u16_from_ne_bytes(data: &[u8]) -> Option<u16> {
+    let bytes: [u8; 2] = data.get(..2)?.try_into().ok()?;
+    Some(u16::from_ne_bytes(bytes))
 }

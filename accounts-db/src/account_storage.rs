@@ -128,6 +128,20 @@ impl AccountStorage {
         self.map.iter().map(|iter_item| *iter_item.key()).collect()
     }
 
+    /// All slots with a storage entry below `max_slot_exclusive`.
+    pub(crate) fn slots_less_than(&self, max_slot_exclusive: Slot) -> Vec<Slot> {
+        assert!(
+            self.no_shrink_in_progress(),
+            "shrink is in progress! slots: {:?}",
+            self.shrink_in_progress_map.read().unwrap().keys(),
+        );
+        self.map
+            .iter()
+            .map(|iter_item| *iter_item.key())
+            .filter(|slot| *slot < max_slot_exclusive)
+            .collect()
+    }
+
     /// returns true if there is no entry for 'slot'
     #[cfg(test)]
     pub(crate) fn is_empty_entry(&self, slot: Slot) -> bool {

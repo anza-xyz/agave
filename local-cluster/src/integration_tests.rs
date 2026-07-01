@@ -186,11 +186,10 @@ pub fn wait_for_duplicate_proof(ledger_path: &Path, dup_slot: Slot) -> Option<Du
         let duplicate_fork_validator_blockstore = open_blockstore(ledger_path);
         if let Some((found_dup_slot, found_duplicate_proof)) =
             duplicate_fork_validator_blockstore.get_first_duplicate_proof()
+            && found_dup_slot == dup_slot
         {
-            if found_dup_slot == dup_slot {
-                return Some(found_duplicate_proof);
-            };
-        }
+            return Some(found_duplicate_proof);
+        };
 
         sleep(Duration::from_millis(1000));
     }
@@ -205,7 +204,7 @@ pub fn copy_blocks(end_slot: Slot, source: &Blockstore, dest: &Blockstore, is_tr
         assert!(source_meta.is_full());
 
         let shreds = source.get_data_shreds_for_slot(slot, 0).unwrap();
-        dest.insert_shreds(shreds, None, is_trusted).unwrap();
+        dest.insert_shreds(shreds, is_trusted).unwrap();
 
         let dest_meta = dest.meta(slot).unwrap().unwrap();
         assert!(dest_meta.is_full());

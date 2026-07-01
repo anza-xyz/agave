@@ -32,7 +32,7 @@ use {
     },
 };
 
-#[cfg_attr(feature = "frozen-abi", derive(AbiExample))]
+#[cfg_attr(feature = "frozen-abi", derive(AbiExample, StableAbi, StableAbiSample))]
 #[derive(Clone, Debug, PartialEq)]
 pub struct VoteAccount(Arc<VoteAccountInner>);
 
@@ -44,15 +44,20 @@ pub enum Error {
     InvalidOwner(/*owner:*/ Pubkey),
 }
 
-#[cfg_attr(feature = "frozen-abi", derive(AbiExample))]
+#[cfg_attr(feature = "frozen-abi", derive(AbiExample, StableAbi, StableAbiSample))]
 #[derive(Debug)]
 struct VoteAccountInner {
     account: AccountSharedData,
+    // Skipped by the custom serializer, and hard to instantiate other than via `AbiExample`.
+    #[cfg_attr(
+        feature = "frozen-abi",
+        stable_abi_sample(with = "solana_frozen_abi::abi_example::AbiExample::example()")
+    )]
     vote_state_view: VoteStateView,
 }
 
 pub type VoteAccountsHashMap = HashMap<Pubkey, (/*stake:*/ u64, VoteAccount)>;
-#[cfg_attr(feature = "frozen-abi", derive(AbiExample))]
+#[cfg_attr(feature = "frozen-abi", derive(AbiExample, StableAbi, StableAbiSample))]
 #[derive(Debug, Serialize, Deserialize)]
 #[cfg_attr(
     feature = "dev-context-only-utils",
@@ -62,6 +67,7 @@ pub struct VoteAccounts {
     #[serde(deserialize_with = "deserialize_accounts_hash_map")]
     vote_accounts: Arc<VoteAccountsHashMap>,
     // Inner Arc is meant to implement copy-on-write semantics.
+    #[cfg_attr(feature = "frozen-abi", stable_abi_sample(with = "Default::default()"))]
     #[serde(skip)]
     staked_nodes: OnceLock<
         Arc<
@@ -312,7 +318,8 @@ impl VoteAccounts {
                 Some(mem::replace(old_vote_account, new_vote_account))
             }
             Entry::Vacant(entry) => {
-                // This is a new vote account. We don't know the stake yet, so we need to compute it.
+                // This is a new vote account. Use the caller-provided stake for the initial
+                // cache entry.
                 let (stake, vote_account) = entry.insert((calculate_stake(), new_vote_account));
                 if let Some(staked_nodes) = self.staked_nodes.get_mut() {
                     Self::do_add_node_stake(staked_nodes, *stake, *vote_account.node_pubkey());

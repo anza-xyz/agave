@@ -1,18 +1,20 @@
 use {
     crate::{
         commitment::{CommitmentAggregationData, CommitmentError},
-        consensus_metrics::ConsensusMetricsEventSender,
         vote_history::{VoteHistory, VoteHistoryError},
         vote_history_storage::{SavedVoteHistory, SavedVoteHistoryVersions},
         voting_service::BLSOp,
     },
     agave_votor_messages::{
-        consensus_message::{BLS_KEYPAIR_DERIVE_SEED, SigVerifiedBatch, VoteMessage},
+        consensus_message::{BLS_KEYPAIR_DERIVE_SEED, ConsensusMessage, VoteMessage},
+        metric_types::ConsensusMetricsEventSender,
         vote::Vote,
+        wire::get_vote_payload_to_sign,
     },
     crossbeam_channel::{SendError, Sender},
     solana_bls_signatures::{BlsError, keypair::Keypair as BLSKeypair},
     solana_clock::{Epoch, Slot},
+    solana_gossip::cluster_info::ClusterInfo,
     solana_keypair::Keypair,
     solana_pubkey::Pubkey,
     solana_runtime::{bank::Bank, bank_forks::SharableBanks, epoch_stakes::BLSPubkeyStakeEntry},
@@ -111,13 +113,14 @@ pub enum VoteError {
 
 /// Context required to construct vote transactions
 pub struct VotingContext {
+    pub cluster_info: Arc<ClusterInfo>,
     pub vote_history: VoteHistory,
     pub vote_account_pubkey: Pubkey,
     pub identity_keypair: Arc<Keypair>,
     pub authorized_voter_keypairs: Arc<RwLock<Vec<Arc<Keypair>>>>,
     // The BLS keypair should always change with authorized_voter_keypairs.
     pub derived_bls_keypairs: HashMap<Pubkey, Arc<BLSKeypair>>,
-    pub own_vote_sender: Sender<SigVerifiedBatch>,
+    pub own_vote_sender: Sender<ConsensusMessage>,
     pub bls_sender: Sender<BLSOp>,
     pub commitment_sender: Sender<CommitmentAggregationData>,
     pub wait_to_vote_slot: Option<u64>,
@@ -147,6 +150,7 @@ pub fn generate_vote_tx(
     vote: Vote,
     bank: &Bank,
     vote_account_pubkey: Pubkey,
+    shred_version: u16,
     identity_keypair: &Keypair,
     authorized_voter_keypairs: &RwLock<Vec<Arc<Keypair>>>,
     wait_to_vote_slot: Option<u64>,
@@ -158,10 +162,10 @@ pub fn generate_vote_tx(
     if bank.get_vote_account(&vote_account_pubkey).is_none() {
         return GenerateVoteTxResult::VoteAccountNotFound(vote_account_pubkey);
     }
-    if let Some(slot) = wait_to_vote_slot {
-        if vote.slot() < slot {
-            return GenerateVoteTxResult::WaitToVoteSlot(slot);
-        }
+    if let Some(slot) = wait_to_vote_slot
+        && vote.slot() < slot
+    {
+        return GenerateVoteTxResult::WaitToVoteSlot(slot);
     }
 
     let rank_map = bank
@@ -215,10 +219,10 @@ pub fn generate_vote_tx(
         return GenerateVoteTxResult::NonVoting;
     };
 
-    let vote_serialized = wincode::serialize(&vote).unwrap();
+    let vote_payload_to_sign = get_vote_payload_to_sign(vote, shred_version);
     GenerateVoteTxResult::Vote(VoteMessage {
         vote,
-        signature: bls_keypair.sign(&vote_serialized).into(),
+        signature: bls_keypair.sign(&vote_payload_to_sign).into(),
         rank: my_rank,
     })
 }
@@ -239,6 +243,7 @@ fn create_vote_message(
         vote,
         &bank,
         context.vote_account_pubkey,
+        context.cluster_info.my_shred_version(),
         &context.identity_keypair,
         &context.authorized_voter_keypairs,
         wait_to_vote_slot,
@@ -314,7 +319,7 @@ pub(crate) fn create_and_send_own_vote_message(
 
     context
         .own_vote_sender
-        .send(SigVerifiedBatch::Votes(vec![vote_msg.clone()]))
+        .send(ConsensusMessage::Vote(vote_msg.clone()))
         .map_err(|_| SendError(()))?;
 
     Ok(Some(vote_msg))
@@ -339,7 +344,9 @@ mod tests {
         super::*,
         agave_votor_messages::consensus_message::Block,
         crossbeam_channel::bounded,
+        solana_gossip::contact_info::ContactInfo,
         solana_hash::Hash,
+        solana_net_utils::SocketAddrSpace,
         solana_runtime::{
             bank::{Bank, SlotLeader},
             bank_forks::BankForks,
@@ -351,9 +358,13 @@ mod tests {
         std::sync::{Arc, RwLock},
     };
 
-    fn generate_expected_consensus_message(vote: Vote, my_bls_keypair: &BLSKeypair) -> VoteMessage {
-        let vote_serialized = wincode::serialize(&vote).unwrap();
-        let signature = my_bls_keypair.sign(&vote_serialized);
+    fn generate_expected_consensus_message(
+        ctx: &VotingContext,
+        vote: Vote,
+        my_bls_keypair: &BLSKeypair,
+    ) -> VoteMessage {
+        let payload = get_vote_payload_to_sign(vote, ctx.cluster_info.my_shred_version());
+        let signature = my_bls_keypair.sign(&payload);
         VoteMessage {
             vote,
             signature: signature.into(),
@@ -362,7 +373,7 @@ mod tests {
     }
 
     fn setup_voting_context_and_bank_forks(
-        own_vote_sender: Sender<SigVerifiedBatch>,
+        own_vote_sender: Sender<ConsensusMessage>,
         validator_keypairs: &[ValidatorVoteKeypairs],
         my_index: usize,
     ) -> VotingContext {
@@ -375,7 +386,7 @@ mod tests {
     }
 
     fn setup_voting_context_and_bank_forks_with_forks(
-        own_vote_sender: Sender<SigVerifiedBatch>,
+        own_vote_sender: Sender<ConsensusMessage>,
         validator_keypairs: &[ValidatorVoteKeypairs],
         my_index: usize,
     ) -> (VotingContext, Arc<RwLock<BankForks>>) {
@@ -390,11 +401,18 @@ mod tests {
         let bank_forks = BankForks::new_rw_arc(bank0);
 
         let my_keys = &validator_keypairs[my_index];
+        let contact_info = ContactInfo::new_localhost(&my_keys.node_keypair.pubkey(), 0);
+        let cluster_info = Arc::new(ClusterInfo::new(
+            contact_info,
+            Arc::new(my_keys.node_keypair.insecure_clone()),
+            SocketAddrSpace::Unspecified,
+        ));
         let sharable_banks = bank_forks.read().unwrap().sharable_banks();
         let bls_sender = bounded(1024).0;
         let commitment_sender = bounded(1024).0;
         let consensus_metrics_sender = bounded(1024).0;
         let voting_context = VotingContext {
+            cluster_info,
             vote_history: VoteHistory::new(my_keys.node_keypair.pubkey(), 0),
             vote_account_pubkey: my_keys.vote_keypair.pubkey(),
             identity_keypair: Arc::new(my_keys.node_keypair.insecure_clone()),
@@ -439,7 +457,8 @@ mod tests {
             .ok()
             .unwrap()
             .unwrap();
-        let expected_message = generate_expected_consensus_message(vote, &my_bls_keypair);
+        let expected_message =
+            generate_expected_consensus_message(&voting_context, vote, &my_bls_keypair);
         if let BLSOp::PushVote {
             vote,
             saved_vote_history,
@@ -465,7 +484,7 @@ mod tests {
         let received_message = own_vote_receiver.recv().unwrap();
         assert_eq!(
             received_message,
-            SigVerifiedBatch::Votes(vec![expected_message.clone()])
+            ConsensusMessage::Vote(expected_message.clone())
         );
 
         let refresh_vote = Vote::new_notarization_vote(Block {
@@ -529,6 +548,7 @@ mod tests {
                 vote,
                 &voting_context.sharable_banks.root(),
                 voting_context.vote_account_pubkey,
+                voting_context.cluster_info.my_shred_version(),
                 &voting_context.identity_keypair,
                 &voting_context.authorized_voter_keypairs,
                 voting_context.wait_to_vote_slot,
@@ -570,6 +590,7 @@ mod tests {
                 vote,
                 &voting_context.sharable_banks.root(),
                 voting_context.vote_account_pubkey,
+                voting_context.cluster_info.my_shred_version(),
                 &wrong_identity_keypair,
                 &voting_context.authorized_voter_keypairs,
                 voting_context.wait_to_vote_slot,

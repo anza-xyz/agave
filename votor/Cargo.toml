@@ -9,6 +9,11 @@ homepage = { workspace = true }
 license = { workspace = true }
 edition = { workspace = true }
 
+[package.metadata.docs.rs]
+targets = ["x86_64-unknown-linux-gnu"]
+all-features = true
+rustdoc-args = ["--cfg=docsrs"]
+
 [features]
 agave-unstable-api = []
 dev-context-only-utils = [
@@ -18,17 +23,14 @@ dev-context-only-utils = [
 frozen-abi = [
     "dep:solana-frozen-abi",
     "dep:solana-frozen-abi-macro",
-    "solana-accounts-db/frozen-abi",
-    "solana-bloom/frozen-abi",
     "solana-ledger/frozen-abi",
     "solana-runtime/frozen-abi",
     "solana-signature/frozen-abi",
-    "solana-vote/frozen-abi",
-    "solana-vote-program/frozen-abi",
     "agave-votor-messages/frozen-abi",
 ]
 
 [dependencies]
+agave-bls-sigverify = { workspace = true }
 agave-logger = { workspace = true }
 agave-math-utils = { workspace = true }
 agave-votor-messages = { workspace = true }
@@ -38,11 +40,8 @@ itertools = { workspace = true }
 lazy-lru = { workspace = true }
 log = { workspace = true }
 parking_lot = { workspace = true }
-qualifier_attr = { workspace = true }
 serde = { workspace = true }
 serde_bytes = { workspace = true }
-solana-accounts-db = { workspace = true }
-solana-bloom = { workspace = true }
 solana-bls-signatures = { workspace = true, features = ["solana-signer-derive"] }
 solana-client = { workspace = true }
 solana-clock = { workspace = true }
@@ -71,18 +70,14 @@ solana-streamer = { workspace = true }
 solana-time-utils = { workspace = true }
 solana-transaction = { workspace = true }
 solana-transaction-error = { workspace = true }
-solana-vote = { workspace = true }
-solana-vote-program = { workspace = true }
 thiserror = { workspace = true }
 wincode = { workspace = true, features = ["alloc"] }
 
 [dev-dependencies]
-agave-votor = { path = ".", features = ["agave-unstable-api", "dev-context-only-utils"] }
 rand = { workspace = true }
 solana-net-utils = { path = "../net-utils", features = ["agave-unstable-api"] }
 solana-perf = { path = "../perf", features = ["agave-unstable-api", "dev-context-only-utils"] }
 solana-runtime = { path = "../runtime", features = ["agave-unstable-api", "dev-context-only-utils"] }
-solana-sdk-ids = { workspace = true }
 solana-streamer = { path = "../streamer", features = ["agave-unstable-api", "dev-context-only-utils"] }
 tempfile = { workspace = true }
 test-case = { workspace = true }

@@ -34,7 +34,12 @@ use {
     },
 };
 
-const INTERVAL_MS: u64 = 100;
+/// Limit the maximum frequency that the ABS main loop can run.
+/// If the loop ran for less than this duration, sleep the remainder.
+/// E.g. with a min interval of 100 millis, the loop will run a maximum
+/// of 10 times per second.  Lower frequency is allowed, and occurs
+/// when longer-running tasks are triggered.
+const MIN_LOOP_INTERVAL: Duration = Duration::from_millis(100);
 // Set the clean interval duration to be approximately how long before the next incremental
 // snapshot request is received, plus some buffer.  The default incremental snapshot interval is
 // 100 slots, which ends up being 40 seconds plus buffer.
@@ -565,8 +570,12 @@ impl AccountsBackgroundService {
                                 previous_shrink_time = Instant::now();
                             }
                         }
-                        stats.record_and_maybe_submit(start_time.elapsed());
-                        sleep(Duration::from_millis(INTERVAL_MS));
+
+                        let loop_dur = start_time.elapsed();
+                        stats.record_and_maybe_submit(loop_dur);
+                        if let Some(sleep_dur) = MIN_LOOP_INTERVAL.checked_sub(loop_dur) {
+                            sleep(sleep_dur);
+                        }
                     }
                     info!("AccountsBackgroundService has stopped");
                     is_running.store(false, Ordering::Relaxed);

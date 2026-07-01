@@ -24,7 +24,7 @@ const PONG_SIGNATURE_SAMPLE_LEADING_ZEROS: u32 = 5;
 // For backward compatibility we are using a const generic parameter here.
 // N should always be >= 8 and only the first 8 bytes are used. So the new code
 // should only use N == 8.
-#[cfg_attr(feature = "frozen-abi", derive(AbiExample))]
+#[cfg_attr(feature = "frozen-abi", derive(AbiExample, StableAbi, StableAbiSample))]
 #[derive(Debug, Deserialize, PartialEq, Serialize, SchemaRead, SchemaWrite)]
 pub struct Ping<const N: usize> {
     from: Pubkey,
@@ -33,7 +33,15 @@ pub struct Ping<const N: usize> {
     signature: Signature,
 }
 
-#[cfg_attr(feature = "frozen-abi", derive(AbiExample))]
+#[cfg_attr(
+    feature = "frozen-abi",
+    derive(AbiExample, StableAbi, StableAbiSample),
+    frozen_abi(
+        abi_digest = "Gab1D5ug6ZAB5sRNmBpoM8JyxsixccLLaWxYZwmueVYA",
+        abi_serializer = ["bincode", "wincode"],
+        test_roundtrip = "eq_and_wire",
+    )
+)]
 #[derive(Debug, Deserialize, PartialEq, Serialize, SchemaRead, SchemaWrite)]
 // repr(C) makes this struct zero-copy eligible in wincode.
 #[repr(C)]

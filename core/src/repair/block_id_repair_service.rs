@@ -40,7 +40,7 @@ use {
         shred::DATA_SHREDS_PER_FEC_BLOCK,
     },
     solana_perf::{
-        packet::{PacketBatch, PacketRef, deserialize_from_with_limit},
+        packet::{PacketBatch, PacketRef, packet_config},
         recycler::Recycler,
     },
     solana_pubkey::Pubkey,
@@ -543,7 +543,7 @@ impl BlockIdRepairService {
             return;
         };
         let mut cursor = Cursor::new(packet_data);
-        let Ok(response) = deserialize_from_with_limit::<_, BlockIdRepairResponse>(&mut cursor)
+        let Ok(response) = wincode::config::deserialize_from(&mut cursor, packet_config())
             .inspect_err(|e| {
                 debug!("Failed to deserialize response: {e:?}");
             })
@@ -565,7 +565,7 @@ impl BlockIdRepairService {
             return;
         }
 
-        let nonce: u32 = match deserialize_from_with_limit(&mut cursor) {
+        let nonce: u32 = match wincode::config::deserialize_from(&mut cursor, packet_config()) {
             Ok(n) => n,
             Err(e) => {
                 debug!("{my_pubkey}: Failed to deserialize nonce: {e:?}");
@@ -689,7 +689,7 @@ impl BlockIdRepairService {
             return;
         }
         let pong = RepairProtocol::Pong(Pong::new(ping, keypair));
-        let pong_bytes = bincode::serialize(&pong).expect("Pong serialization should not fail");
+        let pong_bytes = wincode::serialize(&pong).expect("Pong serialization should not fail");
 
         match block_id_repair_socket.send_to(&pong_bytes, addr) {
             Ok(bytes_sent) if bytes_sent == pong_bytes.len() => {
@@ -1066,7 +1066,6 @@ impl BlockIdRepairService {
 mod tests {
     use {
         super::*,
-        bincode::Options,
         solana_gossip::{cluster_info::ClusterInfo, contact_info::ContactInfo, ping_pong::Ping},
         solana_hash::Hash,
         solana_keypair::{Keypair, Signer},
@@ -1079,7 +1078,7 @@ mod tests {
         solana_perf::packet::Packet,
         solana_runtime::{bank::Bank, bank_forks::BankForks, genesis_utils::create_genesis_config},
         solana_sha256_hasher::hashv,
-        std::{io::Cursor, sync::RwLock},
+        std::sync::RwLock,
     };
 
     /// Helper to build a merkle tree from leaf hashes and return the root and proofs
@@ -1103,11 +1102,7 @@ mod tests {
 
     /// Serialize a response and nonce into packet format
     fn serialize_response(response: &BlockIdRepairResponse, nonce: u32) -> Vec<u8> {
-        bincode::options()
-            .with_fixint_encoding()
-            .allow_trailing_bytes()
-            .serialize(&(response, nonce))
-            .unwrap()
+        wincode::serialize(&(response, nonce)).unwrap()
     }
 
     /// Create a packet from serialized data
@@ -1238,12 +1233,12 @@ mod tests {
             parent_proof: parent_proof.clone(),
         };
 
-        let data = bincode::serialize(&response).unwrap();
+        let data = wincode::serialize(&response).unwrap();
         let packet = make_packet(&data);
         let packet_data = packet.data(..).unwrap();
 
         let deser_response: BlockIdRepairResponse =
-            deserialize_from_with_limit(&mut Cursor::new(packet_data)).unwrap();
+            wincode::config::deserialize(packet_data, packet_config()).unwrap();
 
         match deser_response {
             BlockIdRepairResponse::ParentFecSetCount {
@@ -1270,12 +1265,11 @@ mod tests {
             fec_set_proof: fec_set_proof.clone(),
         };
 
-        let data = bincode::serialize(&response).unwrap();
+        let data = wincode::serialize(&response).unwrap();
         let packet = make_packet(&data);
         let packet_data = packet.data(..).unwrap();
 
-        let deser_response: BlockIdRepairResponse =
-            deserialize_from_with_limit(&mut Cursor::new(packet_data)).unwrap();
+        let deser_response: BlockIdRepairResponse = wincode::deserialize(packet_data).unwrap();
 
         match deser_response {
             BlockIdRepairResponse::FecSetRoot {
@@ -1294,18 +1288,14 @@ mod tests {
         // Empty packet
         let packet = make_packet(&[]);
         let packet_data = packet.data(..).unwrap();
-        assert!(
-            deserialize_from_with_limit::<_, BlockIdRepairResponse>(&mut Cursor::new(packet_data))
-                .is_err()
-        );
+        wincode::config::deserialize::<BlockIdRepairResponse, _>(packet_data, packet_config())
+            .unwrap_err();
 
         // Garbage data
         let packet = make_packet(&[0xff, 0xff, 0xff, 0xff]);
         let packet_data = packet.data(..).unwrap();
-        assert!(
-            deserialize_from_with_limit::<_, BlockIdRepairResponse>(&mut Cursor::new(packet_data))
-                .is_err()
-        );
+        wincode::config::deserialize::<BlockIdRepairResponse, _>(packet_data, packet_config())
+            .unwrap_err();
     }
 
     #[test]
@@ -1617,7 +1607,7 @@ mod tests {
         let ping = Ping::new([7u8; 32], &ping_keypair);
         state.expect_ping_response(ping_keypair.pubkey(), from_addr, timestamp());
         let response = BlockIdRepairResponse::Ping { ping };
-        let data = bincode::serialize(&response).unwrap();
+        let data = wincode::serialize(&response).unwrap();
         let mut packet = make_packet(&data);
         packet.meta_mut().set_socket_addr(&from_addr);
 
@@ -1639,7 +1629,7 @@ mod tests {
             .unwrap();
         let mut buffer = vec![0; 2048];
         let (size, _) = pong_receiver.recv_from(&mut buffer).unwrap();
-        match bincode::deserialize(&buffer[..size]).unwrap() {
+        match wincode::deserialize(&buffer[..size]).unwrap() {
             RepairProtocol::Pong(pong) => assert!(pong.verify()),
             request => panic!("Expected Pong response, got {request:?}"),
         }
@@ -1657,7 +1647,7 @@ mod tests {
 
         let first_ping = Ping::new([1u8; 32], &ping_keypair);
         let response = BlockIdRepairResponse::Ping { ping: first_ping };
-        let data = bincode::serialize(&response).unwrap();
+        let data = wincode::serialize(&response).unwrap();
         let mut packet = make_packet(&data);
         packet.meta_mut().set_socket_addr(&from_addr);
         BlockIdRepairService::process_block_id_repair_response(
@@ -1670,7 +1660,7 @@ mod tests {
 
         let second_ping = Ping::new([2u8; 32], &ping_keypair);
         let response = BlockIdRepairResponse::Ping { ping: second_ping };
-        let data = bincode::serialize(&response).unwrap();
+        let data = wincode::serialize(&response).unwrap();
         let mut packet = make_packet(&data);
         packet.meta_mut().set_socket_addr(&from_addr);
         BlockIdRepairService::process_block_id_repair_response(
@@ -1695,7 +1685,7 @@ mod tests {
         let from_addr = SocketAddr::from(([127, 0, 0, 1], 1234));
         let ping = Ping::new([7u8; 32], &ping_keypair);
         let response = BlockIdRepairResponse::Ping { ping };
-        let data = bincode::serialize(&response).unwrap();
+        let data = wincode::serialize(&response).unwrap();
         let mut packet = make_packet(&data);
         packet.meta_mut().set_socket_addr(&from_addr);
 

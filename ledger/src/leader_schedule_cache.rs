@@ -243,7 +243,7 @@ mod tests {
             },
             staking_utils::tests::setup_vote_and_stake_accounts,
         },
-        crossbeam_channel::unbounded,
+        crossbeam_channel::bounded,
         solana_clock::DEFAULT_SLOTS_PER_EPOCH,
         solana_epoch_schedule::{
             DEFAULT_LEADER_SCHEDULE_SLOT_OFFSET, EpochSchedule, MINIMUM_SLOTS_PER_EPOCH,
@@ -337,7 +337,7 @@ mod tests {
             .map(|_| {
                 let cache = cache.clone();
                 let bank = bank.clone();
-                let (sender, receiver) = unbounded();
+                let (sender, receiver) = bounded(1024);
                 (
                     Builder::new()
                         .name("test_thread_race_leader_schedule_cache".to_string())
@@ -457,7 +457,7 @@ mod tests {
         // Write a shred into slot 2 that chains to slot 1,
         // but slot 1 is empty so should not be skipped
         let (shreds, _) = make_slot_entries(2, 1, 1);
-        blockstore.insert_shreds(shreds, None, false).unwrap();
+        blockstore.insert_shreds(shreds, false).unwrap();
         assert_eq!(
             cache
                 .next_leader_slot(&pubkey, 0, &bank, Some(&blockstore), u64::MAX)
@@ -470,7 +470,7 @@ mod tests {
         let (shreds, _) = make_slot_entries(1, 0, 1);
 
         // Check that slot 1 and 2 are skipped
-        blockstore.insert_shreds(shreds, None, false).unwrap();
+        blockstore.insert_shreds(shreds, false).unwrap();
         assert_eq!(
             cache
                 .next_leader_slot(&pubkey, 0, &bank, Some(&blockstore), u64::MAX)

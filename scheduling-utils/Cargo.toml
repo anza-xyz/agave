@@ -9,6 +9,11 @@ homepage = { workspace = true }
 license = { workspace = true }
 edition = { workspace = true }
 
+[package.metadata.docs.rs]
+targets = ["x86_64-unknown-linux-gnu"]
+all-features = true
+rustdoc-args = ["--cfg=docsrs"]
+
 [features]
 agave-unstable-api = []
 dev-context-only-utils = ["dep:wincode", "dep:solana-transaction"]
@@ -23,6 +28,7 @@ shaq = { workspace = true }
 slotmap = { workspace = true }
 solana-fee = { workspace = true, features = ["agave-unstable-api"] }
 solana-pubkey = { workspace = true }
+solana-runtime-transaction = { workspace = true }
 solana-transaction = { workspace = true, optional = true, features = ["serde"] }
 solana-transaction-error = { workspace = true }
 thiserror = { workspace = true }
@@ -33,6 +39,7 @@ libc = { workspace = true }
 nix = { workspace = true, features = ["socket", "uio"] }
 
 [dev-dependencies]
+solana-pubkey = { workspace = true, features = ["rand"] }
 tempfile = { workspace = true }
 
 [target."cfg(unix)".dev-dependencies]

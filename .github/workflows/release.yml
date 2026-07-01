@@ -11,7 +11,7 @@ jobs:
     runs-on: ubuntu-24.04
     steps:
       - name: Trigger a Buildkite Build
-        uses: "buildkite/trigger-pipeline-action@909fed762c73d5ae2b5d555ab910d66b3fae2670"  # v2.4.1
+        uses: "buildkite/trigger-pipeline-action@41fd38b69189bf186cf69cf10ec807a850cae593"  # v2.5.0
         with:
           buildkite_api_access_token: ${{ secrets.TRIGGER_BK_BUILD_TOKEN }}
           pipeline: "anza/agave-secondary"
@@ -23,6 +23,8 @@ jobs:
   draft-release:
     if: github.repository_owner == 'anza-xyz'
     runs-on: ubuntu-24.04
+    permissions:
+      contents: write
     steps:
       - name: Create Release
         uses: actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3  # v9.0.0

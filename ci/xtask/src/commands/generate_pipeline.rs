@@ -130,6 +130,7 @@ fn generate_private_pipeline() -> Result<buildkite::Pipeline> {
         ..Default::default()
     }));
 
+    pipeline.add_step(default_channel_info_divergence_step());
     pipeline.add_step(default_shellcheck_step());
 
     pipeline.add_step(buildkite::Step::Wait(buildkite::WaitStep {}));
@@ -142,6 +143,7 @@ fn generate_private_pipeline() -> Result<buildkite::Pipeline> {
     pipeline.add_step(default_local_cluster_step(10));
     pipeline.add_step(default_docs_check_step());
     pipeline.add_step(default_localnet_step());
+    pipeline.add_step(default_xdp_test_step());
 
     pipeline.add_step(buildkite::Step::Wait(buildkite::WaitStep {}));
 
@@ -187,6 +189,7 @@ fn generate_merge_queue_pipeline() -> Result<buildkite::Pipeline> {
     let mut pipeline = buildkite::Pipeline::new();
     pipeline.set_priority(10);
     pipeline.add_step(default_sanity_step());
+    pipeline.add_step(default_channel_info_divergence_step());
     pipeline.add_step(default_checks_step());
     Ok(pipeline)
 }
@@ -232,6 +235,7 @@ struct PullRequestPipelineFlags {
     stable_sbf: bool,
     shuttle: bool,
     coverage: bool,
+    xdp_tests: bool,
 }
 
 impl PullRequestPipelineFlags {
@@ -338,6 +342,11 @@ impl PullRequestPipelineFlags {
                         || file.ends_with("ci/test-coverage.sh")
                         || file.starts_with("ci/coverage/")
                 }),
+            xdp_tests: trigger_all
+                || rust_changed
+                || changed_files
+                    .iter()
+                    .any(|file| file.starts_with("xdp/") || file.ends_with("ci/test-xdp.sh")),
         }
     }
 }
@@ -352,6 +361,7 @@ async fn generate_pull_request_pipeline(
     let mut pipeline = buildkite::Pipeline::new();
 
     pipeline.add_step(default_sanity_step());
+    pipeline.add_step(default_channel_info_divergence_step());
     if flags.shellcheck {
         pipeline.add_step(default_shellcheck_step());
     }
@@ -385,6 +395,9 @@ async fn generate_pull_request_pipeline(
     if flags.localnet {
         pipeline.add_step(default_localnet_step());
     }
+    if flags.xdp_tests {
+        pipeline.add_step(default_xdp_test_step());
+    }
 
     pipeline.add_step(buildkite::Step::Wait(buildkite::WaitStep {}));
 
@@ -405,6 +418,7 @@ fn generate_full_pipeline() -> Result<buildkite::Pipeline> {
     let mut pipeline = buildkite::Pipeline::new();
 
     pipeline.add_step(default_sanity_step());
+    pipeline.add_step(default_channel_info_divergence_step());
     pipeline.add_step(default_shellcheck_step());
 
     pipeline.add_step(buildkite::Step::Wait(buildkite::WaitStep {}));
@@ -420,6 +434,7 @@ fn generate_full_pipeline() -> Result<buildkite::Pipeline> {
     pipeline.add_step(default_local_cluster_step(10));
     pipeline.add_step(default_docs_check_step());
     pipeline.add_step(default_localnet_step());
+    pipeline.add_step(default_xdp_test_step());
 
     pipeline.add_step(buildkite::Step::Wait(buildkite::WaitStep {}));
 
@@ -444,6 +459,20 @@ fn default_sanity_step() -> buildkite::Step {
             String::from("default"),
         )])),
         timeout_in_minutes: Some(5),
+        ..Default::default()
+    })
+}
+
+fn default_channel_info_divergence_step() -> buildkite::Step {
+    buildkite::Step::Command(buildkite::CommandStep {
+        name: String::from("channel-info-divergence"),
+        command: String::from("ci/docker-run-default-image.sh ci/test-channel-info-divergence.sh"),
+        agents: Some(HashMap::from([(
+            String::from("queue"),
+            String::from("default"),
+        )])),
+        timeout_in_minutes: Some(10),
+        soft_fail: Some(true),
         ..Default::default()
     })
 }
@@ -639,6 +668,32 @@ fn default_localnet_step() -> buildkite::Step {
             String::from("default"),
         )])),
         timeout_in_minutes: Some(30),
+        ..Default::default()
+    })
+}
+
+fn default_xdp_test_step() -> buildkite::Step {
+    buildkite::Step::Command(buildkite::CommandStep {
+        name: String::from("xdp-test"),
+        command: String::from("ci/docker-run-default-image.sh ci/test-xdp.sh"),
+        agents: Some(HashMap::from([(
+            String::from("queue"),
+            String::from("default"),
+        )])),
+        timeout_in_minutes: Some(25),
+        env: Some(HashMap::from([
+            (
+                String::from("EXTRA_DOCKER_RUN_ARGS"),
+                String::from(
+                    "--cap-add NET_ADMIN --cap-add NET_RAW --cap-add SYS_ADMIN --security-opt \
+                     apparmor=unconfined",
+                ),
+            ),
+            (
+                String::from("SOLANA_DOCKER_RUN_NOSETUID"),
+                String::from("1"),
+            ),
+        ])),
         ..Default::default()
     })
 }
@@ -858,6 +913,7 @@ mod tests {
         assert!(!f.stable_sbf);
         assert!(!f.shuttle);
         assert!(!f.coverage);
+        assert!(!f.xdp_tests);
     }
 
     #[test]
@@ -874,6 +930,7 @@ mod tests {
         assert!(f.stable_sbf);
         assert!(f.shuttle);
         assert!(f.coverage);
+        assert!(f.xdp_tests);
     }
 
     #[test]
@@ -890,6 +947,20 @@ mod tests {
         assert!(f.stable_sbf);
         assert!(f.shuttle);
         assert!(f.coverage);
+        assert!(f.xdp_tests);
+    }
+
+    #[test]
+    fn test_xdp_change_triggers_xdp_tests() {
+        let f = flags(&["xdp/tests/README.md"]);
+        assert!(f.xdp_tests);
+    }
+
+    #[test]
+    fn test_test_xdp_sh_triggers_xdp_tests_and_shellcheck() {
+        let f = flags(&["ci/test-xdp.sh"]);
+        assert!(f.shellcheck);
+        assert!(f.xdp_tests);
     }
 
     #[test]
@@ -907,6 +978,7 @@ mod tests {
         assert!(!f.stable_sbf);
         assert!(!f.shuttle);
         assert!(!f.coverage);
+        assert!(!f.xdp_tests);
     }
 
     #[test]
@@ -924,5 +996,6 @@ mod tests {
         assert!(!f.stable_sbf);
         assert!(!f.shuttle);
         assert!(!f.coverage);
+        assert!(!f.xdp_tests);
     }
 }

@@ -8,7 +8,7 @@ use {
         sigverify_stage::GossipSigVerifyHandle,
     },
     agave_banking_stage_ingress_types::BankingPacketBatch,
-    agave_votor_messages::migration::MigrationStatus,
+    agave_votor_messages::{VerifiedVoterSlotsSender, migration::MigrationStatus},
     crossbeam_channel::{Receiver, RecvTimeoutError, Select, Sender, unbounded},
     log::*,
     solana_clock::{BankId, Slot},
@@ -56,11 +56,6 @@ use {
 pub type ThresholdConfirmedSlots = Vec<(Slot, Hash)>;
 pub type VerifiedVoteTransactionsSender = Sender<Vec<Transaction>>;
 pub type VerifiedVoteTransactionsReceiver = Receiver<Vec<Transaction>>;
-// Send side of verified voter channel.
-// Each message contains the Pubkey of the voter and the slots in last verified vote.
-pub type VerifiedVoterSlotsSender = Sender<(Pubkey, Vec<Slot>)>;
-// Receive side of verified voter channel.
-pub type VerifiedVoterSlotsReceiver = Receiver<(Pubkey, Vec<Slot>)>;
 pub type GossipVerifiedVoteHashSender = Sender<(Pubkey, Slot, Hash)>;
 pub type GossipVerifiedVoteHashReceiver = Receiver<(Pubkey, Slot, Hash)>;
 pub type DuplicateConfirmedSlotsSender = Sender<ThresholdConfirmedSlots>;
@@ -753,31 +748,30 @@ impl ClusterInfoVoteListener {
         let reached_duplicate_confirmed = reached_threshold_results[0];
         let reached_optimistic_confirmed = reached_threshold_results[1];
 
-        if reached_duplicate_confirmed {
-            if let Some(ref sender) = notifiers.duplicate_confirmed_slot_sender {
-                let _ = sender.send(vec![(last_vote_slot, last_vote_hash)]);
-            }
+        if reached_duplicate_confirmed
+            && let Some(ref sender) = notifiers.duplicate_confirmed_slot_sender
+        {
+            let _ = sender.send(vec![(last_vote_slot, last_vote_hash)]);
         }
 
         if reached_optimistic_confirmed {
             new_optimistic_confirmed_slots.push((last_vote_slot, last_vote_hash));
-            if let Some(ref sender) = notifiers.bank_notification_sender {
-                if notifiers
+            if let Some(ref sender) = notifiers.bank_notification_sender
+                && notifiers
                     .migration_status
                     .should_report_commitment_or_root(last_vote_slot)
-                {
-                    let dependency_work = sender
-                        .dependency_tracker
-                        .as_ref()
-                        .map(|s| s.get_current_declared_work());
-                    sender
-                        .sender
-                        .send((
-                            BankNotification::OptimisticallyConfirmed(last_vote_slot),
-                            dependency_work,
-                        ))
-                        .unwrap_or_else(|err| warn!("bank_notification_sender failed: {err:?}"));
-                }
+            {
+                let dependency_work = sender
+                    .dependency_tracker
+                    .as_ref()
+                    .map(|s| s.get_current_declared_work());
+                sender
+                    .sender
+                    .send((
+                        BankNotification::OptimisticallyConfirmed(last_vote_slot),
+                        dependency_work,
+                    ))
+                    .unwrap_or_else(|err| warn!("bank_notification_sender failed: {err:?}"));
             }
         }
 

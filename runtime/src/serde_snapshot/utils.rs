@@ -2,8 +2,6 @@ use serde::{
     Serialize, Serializer,
     ser::{SerializeSeq, SerializeTuple},
 };
-#[cfg(all(test, feature = "frozen-abi"))]
-use solana_frozen_abi::abi_example::TransparentAsHelper;
 
 // consumes an iterator and returns an object that will serialize as a serde seq
 pub fn serialize_iter_as_seq<I>(iter: I) -> impl Serialize
@@ -15,9 +13,6 @@ where
     struct SerializableSequencedIterator<I> {
         iter: std::cell::RefCell<Option<I>>,
     }
-
-    #[cfg(all(test, feature = "frozen-abi"))]
-    impl<I> TransparentAsHelper for SerializableSequencedIterator<I> {}
 
     impl<I> Serialize for SerializableSequencedIterator<I>
     where
@@ -55,9 +50,6 @@ where
         iter: std::cell::RefCell<Option<I>>,
     }
 
-    #[cfg(all(test, feature = "frozen-abi"))]
-    impl<I> TransparentAsHelper for SerializableSequencedIterator<I> {}
-
     impl<I> Serialize for SerializableSequencedIterator<I>
     where
         I: IntoIterator,
@@ -92,9 +84,6 @@ where
     struct SerializableMappedIterator<I> {
         iter: std::cell::RefCell<Option<I>>,
     }
-
-    #[cfg(all(test, feature = "frozen-abi"))]
-    impl<I> TransparentAsHelper for SerializableMappedIterator<I> {}
 
     impl<K, V, I> Serialize for SerializableMappedIterator<I>
     where

@@ -17,6 +17,7 @@ use {
     std::{
         collections::HashMap,
         fmt,
+        num::NonZero,
         sync::{Arc, OnceLock},
     },
 };
@@ -36,7 +37,7 @@ pub struct BLSPubkeyStakeEntry {
     /// The bls pubkey of the validator specified in the vote account
     pub bls_pubkey: PopVerified<BLSPubkeyAffine>,
     /// The stake of the validator
-    pub stake: u64,
+    pub stake: NonZero<u64>,
 }
 
 /// Container to store a mapping from validator [`BLSPubkeyAffine`] to rank.
@@ -49,7 +50,7 @@ pub struct BLSPubkeyToRankMap {
     rank_map: HashMap<BLSPubkeyCompressed, u16>,
     vote_pubkey_to_rank: HashMap<Pubkey, u16>,
     sorted_pubkeys: Vec<BLSPubkeyStakeEntry>,
-    total_stake: u64,
+    total_stake: NonZero<u64>,
 }
 
 // We cannot auto derive `AbiExample` for `BLSPubkeyToRankMap` because
@@ -61,7 +62,7 @@ impl solana_frozen_abi::abi_example::AbiExample for BLSPubkeyToRankMap {
             rank_map: HashMap::new(),
             vote_pubkey_to_rank: HashMap::new(),
             sorted_pubkeys: Vec::new(),
-            total_stake: 0,
+            total_stake: NonZero::new(1).unwrap(),
         }
     }
 }
@@ -70,7 +71,7 @@ pub(crate) fn bls_pubkey_compressed_bytes_to_bls_pubkey(
     bls_pubkey_compressed_bytes: [u8; BLS_PUBLIC_KEY_COMPRESSED_SIZE],
 ) -> Option<(BLSPubkeyCompressed, PopVerified<BLSPubkeyAffine>)> {
     let bls_pubkey_compressed: BLSPubkeyCompressed =
-        bincode::deserialize(&bls_pubkey_compressed_bytes).ok()?;
+        wincode::deserialize(&bls_pubkey_compressed_bytes).ok()?;
     let bls_pubkey_affine = BLSPubkeyAffine::try_from(bls_pubkey_compressed).ok()?;
     // It is safe to use `new_unchecked` here because data coming from the vote
     // state has already had its PoP verified.
@@ -84,9 +85,9 @@ impl BLSPubkeyToRankMap {
         let mut bls_pubkey_counts = HashMap::new();
         let mut node_pubkey_counts = HashMap::new();
         for (&vote_account_pubkey, (stake, account)) in epoch_vote_accounts_hash_map {
-            if *stake == 0 {
+            let Some(stake) = NonZero::new(*stake) else {
                 continue;
-            }
+            };
             let node_pubkey = *account.vote_state_view().node_pubkey();
             let Some((bls_pubkey_compressed, bls_pubkey)) = account
                 .vote_state_view()
@@ -99,7 +100,7 @@ impl BLSPubkeyToRankMap {
                 vote_account_pubkey,
                 node_pubkey,
                 bls_pubkey,
-                stake: *stake,
+                stake,
             };
             *bls_pubkey_counts.entry(bls_pubkey_compressed).or_insert(0) += 1;
             *node_pubkey_counts.entry(node_pubkey).or_insert(0) += 1;
@@ -116,7 +117,10 @@ impl BLSPubkeyToRankMap {
                 .collect();
         let total_stake = keys_stake_entry_with_compressed
             .iter()
-            .fold(0u64, |stake, (entry, _)| stake.saturating_add(entry.stake));
+            .fold(0u64, |stake, (entry, _)| {
+                stake.saturating_add(entry.stake.get())
+            });
+        let total_stake = NonZero::new(total_stake).expect("total stakes should not be 0");
         keys_stake_entry_with_compressed.sort_by(
             |(a_entry, a_pubkey_compressed), (b_entry, b_pubkey_compressed)| {
                 b_entry
@@ -153,7 +157,7 @@ impl BLSPubkeyToRankMap {
         self.sorted_pubkeys.len()
     }
 
-    pub fn total_stake(&self) -> u64 {
+    pub fn total_stake(&self) -> NonZero<u64> {
         self.total_stake
     }
 
@@ -171,7 +175,7 @@ impl BLSPubkeyToRankMap {
     }
 }
 
-#[cfg_attr(feature = "frozen-abi", derive(AbiExample))]
+#[cfg_attr(feature = "frozen-abi", derive(AbiExample, StableAbi, StableAbiSample))]
 #[derive(Clone, Serialize, Debug, Deserialize, Default, PartialEq, Eq)]
 pub struct NodeVoteAccounts {
     pub vote_accounts: Vec<Pubkey>,
@@ -194,7 +198,10 @@ pub(crate) enum DeserializableVersionedEpochStakes {
 }
 
 #[derive(Clone, Debug, Serialize)]
-#[cfg_attr(feature = "frozen-abi", derive(AbiExample, AbiEnumVisitor))]
+#[cfg_attr(
+    feature = "frozen-abi",
+    derive(AbiExample, AbiEnumVisitor, StableAbi, StableAbiSample)
+)]
 #[cfg_attr(feature = "dev-context-only-utils", derive(PartialEq))]
 pub enum VersionedEpochStakes {
     Current {
@@ -203,6 +210,7 @@ pub enum VersionedEpochStakes {
         total_stake: u64,
         node_id_to_vote_accounts: Arc<NodeIdToVoteAccounts>,
         epoch_authorized_voters: Arc<EpochAuthorizedVoters>,
+        #[cfg_attr(feature = "frozen-abi", stable_abi_sample(with = "Default::default()"))]
         #[serde(skip)]
         bls_pubkey_to_rank_map: OnceLock<Arc<BLSPubkeyToRankMap>>,
     },
@@ -365,7 +373,7 @@ impl VersionedEpochStakes {
 
 /// The current version of epoch stakes
 #[derive(Clone, Debug, Default)]
-#[cfg_attr(feature = "frozen-abi", derive(AbiExample))]
+#[cfg_attr(feature = "frozen-abi", derive(AbiExample, StableAbi, StableAbiSample))]
 #[cfg_attr(feature = "dev-context-only-utils", derive(PartialEq))]
 pub struct EpochStakes {
     epoch: Epoch,
@@ -521,7 +529,7 @@ pub(crate) mod tests {
                         let bls_pubkey_compressed: BLSPubkeyCompressed =
                             (*BLSKeypair::new().public).into();
                         let bls_pubkey_compressed_serialized =
-                            bincode::serialize(&bls_pubkey_compressed)
+                            wincode::serialize(&bls_pubkey_compressed)
                                 .unwrap()
                                 .try_into()
                                 .unwrap();
@@ -662,14 +670,13 @@ pub(crate) mod tests {
         }
     }
 
-    #[test_case(1; "single_vote_account")]
-    #[test_case(2; "multiple_vote_accounts")]
-    fn test_bls_pubkey_rank_map(num_vote_accounts_per_node: usize) {
+    #[test]
+    fn test_bls_pubkey_rank_map() {
         agave_logger::setup();
         let num_nodes = 10;
-        let num_vote_accounts = num_nodes * num_vote_accounts_per_node;
+        let num_vote_accounts = num_nodes;
 
-        let vote_accounts_map = new_vote_accounts(num_nodes, num_vote_accounts_per_node, true);
+        let vote_accounts_map = new_vote_accounts(num_nodes, 1, true);
         let node_id_to_stake_map = vote_accounts_map
             .keys()
             .enumerate()
@@ -680,18 +687,13 @@ pub(crate) mod tests {
         });
         let epoch_stakes = VersionedEpochStakes::new_for_tests(epoch_vote_accounts.clone(), 0);
         let bls_pubkey_to_rank_map = epoch_stakes.bls_pubkey_to_rank_map();
-        let expected_num_vote_accounts = if num_vote_accounts_per_node == 1 {
-            num_vote_accounts
-        } else {
-            0
-        };
+        let expected_num_vote_accounts = num_vote_accounts;
         assert_eq!(bls_pubkey_to_rank_map.len(), expected_num_vote_accounts);
-        let expected_total_stake = if num_vote_accounts_per_node == 1 {
-            epoch_stakes.total_stake()
-        } else {
-            0
-        };
-        assert_eq!(bls_pubkey_to_rank_map.total_stake(), expected_total_stake);
+        let expected_total_stake = epoch_stakes.total_stake();
+        assert_eq!(
+            bls_pubkey_to_rank_map.total_stake().get(),
+            expected_total_stake
+        );
         for (vote_account_pubkey, (stake, vote_account)) in epoch_vote_accounts {
             let vote_state_view = vote_account.vote_state_view();
             let (_comp, bls_pubkey) = bls_pubkey_compressed_bytes_to_bls_pubkey(
@@ -699,15 +701,6 @@ pub(crate) mod tests {
             )
             .unwrap();
             let node_pubkey = *vote_state_view.node_pubkey();
-            if num_vote_accounts_per_node > 1 {
-                assert!(bls_pubkey_to_rank_map.get_rank(&bls_pubkey).is_none());
-                assert!(
-                    bls_pubkey_to_rank_map
-                        .get_rank_for_vote_pubkey(&vote_account_pubkey)
-                        .is_none()
-                );
-                continue;
-            }
             let index = bls_pubkey_to_rank_map.get_rank(&bls_pubkey).unwrap();
             assert!(index >= &0 && index < &(expected_num_vote_accounts as u16));
             assert_eq!(
@@ -716,7 +709,7 @@ pub(crate) mod tests {
                     vote_account_pubkey,
                     node_pubkey,
                     bls_pubkey,
-                    stake,
+                    stake: NonZero::new(stake).unwrap(),
                 })
             );
         }
@@ -732,10 +725,29 @@ pub(crate) mod tests {
     }
 
     #[test]
+    #[should_panic(expected = "total stakes should not be 0")]
+    fn test_multiple_vote_accounts_panics() {
+        agave_logger::setup();
+        let num_nodes = 10;
+
+        let vote_accounts_map = new_vote_accounts(num_nodes, 2, true);
+        let node_id_to_stake_map = vote_accounts_map
+            .keys()
+            .enumerate()
+            .map(|(index, node_id)| (*node_id, ((index + 1) * 100) as u64))
+            .collect::<HashMap<_, _>>();
+        let epoch_vote_accounts = new_epoch_vote_accounts(&vote_accounts_map, |node_id| {
+            *node_id_to_stake_map.get(node_id).unwrap()
+        });
+        let epoch_stakes = VersionedEpochStakes::new_for_tests(epoch_vote_accounts.clone(), 0);
+        epoch_stakes.bls_pubkey_to_rank_map();
+    }
+
+    #[test]
     fn test_bls_pubkey_rank_map_excludes_duplicate_bls_and_identity() {
         let new_bls_pubkey = || {
             let bls_pubkey_compressed: BLSPubkeyCompressed = (*BLSKeypair::new().public).into();
-            let bls_pubkey_compressed_serialized = bincode::serialize(&bls_pubkey_compressed)
+            let bls_pubkey_compressed_serialized = wincode::serialize(&bls_pubkey_compressed)
                 .unwrap()
                 .try_into()
                 .unwrap();
@@ -865,7 +877,7 @@ pub(crate) mod tests {
         let rank_map = BLSPubkeyToRankMap::new(&epoch_vote_accounts);
 
         assert_eq!(rank_map.len(), 3);
-        assert_eq!(rank_map.total_stake(), 250);
+        assert_eq!(rank_map.total_stake().get(), 250);
         for bls_pubkey in [
             duplicate_bls_pubkey,
             duplicate_node_bls_pubkey,
@@ -905,7 +917,7 @@ pub(crate) mod tests {
                     vote_account_pubkey,
                     node_pubkey,
                     bls_pubkey,
-                    stake: 100,
+                    stake: NonZero::new(100).unwrap(),
                 })
             );
         }
@@ -921,7 +933,7 @@ pub(crate) mod tests {
                 vote_account_pubkey: unique_vote_pubkey,
                 node_pubkey: unique_node_pubkey,
                 bls_pubkey: unique_bls_pubkey,
-                stake: 50,
+                stake: NonZero::new(50).unwrap(),
             })
         );
         assert!(rank_map.get_pubkey_stake_entry(rank_map.len()).is_none());
