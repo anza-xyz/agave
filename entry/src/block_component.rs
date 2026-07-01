@@ -132,7 +132,7 @@
 use {
     crate::entry::{Entry, MaxDataShredsLen},
     agave_votor_messages::{
-        certificate::{Certificate, GenesisCert},
+        certificate::{CertSignature, GenesisCert},
         reward_certificate::{NotarRewardCertificate, SkipRewardCertificate},
     },
     solana_bls_signatures::{
@@ -302,11 +302,11 @@ impl VotesAggregate {
     /// # Panics
     /// Panics if the signature cannot be converted to compressed format.
     /// This should never happen for valid certificates from the consensus pool.
-    pub fn from_certificate(cert: &Certificate) -> Self {
+    pub fn from_cert_signature(signature: CertSignature) -> Self {
         Self {
-            signature: BLSSignatureCompressed::try_from(&cert.signature)
+            signature: BLSSignatureCompressed::try_from(&signature.signature)
                 .expect("valid certificate signature should convert to compressed format"),
-            bitmap: cert.bitmap.clone(),
+            bitmap: signature.bitmap,
         }
     }
 

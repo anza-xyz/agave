@@ -15,7 +15,10 @@ use {
     },
     agave_bls_sigverify::generated_cert_types::GeneratedCertTypes,
     agave_votor_messages::{
-        certificate::{CertSignature, Certificate, CertificateType, GenesisCert},
+        certificate::{
+            CertSignature, Certificate, CertificateType, FastFinalizeCert, FinalizeCert,
+            GenesisCert, NotarCert,
+        },
         consensus_message::{Block, ConsensusMessage, VoteMessage},
         finalized_slot::FinalizedSlot,
         fraction::Fraction,
@@ -306,10 +309,17 @@ impl ConsensusPool {
                         .highest_finalized_slot()
                         .is_none_or(|s| s < FinalizedSlot::Slow(block.slot))
                     {
+                        let notarize_cert = NotarCert {
+                            block,
+                            signature: CertSignature {
+                                signature: cert.signature,
+                                bitmap: cert.bitmap.clone(),
+                            },
+                        };
                         self.highest_finalized_slot_cert =
                             Some(ValidatedBlockFinalizationCert::from_validated_slow(
-                                Arc::unwrap_or_clone(finalize_cert.clone()),
-                                Arc::unwrap_or_clone(cert),
+                                finalize_cert,
+                                notarize_cert,
                                 root_bank,
                             ));
                     }
@@ -317,16 +327,23 @@ impl ConsensusPool {
             }
             CertificateType::Finalize(slot) => {
                 if let Some(notarize_cert) = self.get_notarize_cert(slot) {
-                    let block = notarize_cert.cert_type.to_block().unwrap();
+                    let block = notarize_cert.block;
                     events.push(VotorEvent::Finalized(block, false));
                     if self
                         .highest_finalized_slot()
                         .is_none_or(|s| s < FinalizedSlot::Slow(slot))
                     {
+                        let finalize_cert = FinalizeCert {
+                            slot,
+                            signature: CertSignature {
+                                signature: cert.signature,
+                                bitmap: cert.bitmap.clone(),
+                            },
+                        };
                         self.highest_finalized_slot_cert =
                             Some(ValidatedBlockFinalizationCert::from_validated_slow(
-                                Arc::unwrap_or_clone(cert),
-                                Arc::unwrap_or_clone(notarize_cert),
+                                finalize_cert,
+                                notarize_cert,
                                 root_bank,
                             ));
                     }
@@ -340,9 +357,16 @@ impl ConsensusPool {
                     .highest_finalized_slot()
                     .is_none_or(|s| s < FinalizedSlot::Fast(block.slot))
                 {
+                    let fast_finalize_cert = FastFinalizeCert {
+                        block,
+                        signature: CertSignature {
+                            signature: cert.signature,
+                            bitmap: cert.bitmap.clone(),
+                        },
+                    };
                     self.highest_finalized_slot_cert =
                         Some(ValidatedBlockFinalizationCert::from_validated_fast(
-                            Arc::unwrap_or_clone(cert),
+                            fast_finalize_cert,
                             root_bank,
                         ));
                 }
@@ -486,19 +510,32 @@ impl ConsensusPool {
     }
 
     /// Get the Notarize certificate for a slot
-    fn get_notarize_cert(&self, slot: Slot) -> Option<Arc<Certificate>> {
+    fn get_notarize_cert(&self, slot: Slot) -> Option<NotarCert> {
         self.completed_certificates
             .iter()
             .find_map(|(cert_type, cert)| match cert_type {
-                CertificateType::Notarize(block) if slot == block.slot => Some(cert.clone()),
+                CertificateType::Notarize(block) if slot == block.slot => Some(NotarCert {
+                    block: *block,
+                    signature: CertSignature {
+                        signature: cert.signature,
+                        bitmap: cert.bitmap.clone(),
+                    },
+                }),
                 _ => None,
             })
     }
 
     /// Get the Finalize certificate for a slot
-    fn get_finalize_cert(&self, slot: Slot) -> Option<&Arc<Certificate>> {
+    fn get_finalize_cert(&self, slot: Slot) -> Option<FinalizeCert> {
         self.completed_certificates
             .get(&CertificateType::Finalize(slot))
+            .map(|c| FinalizeCert {
+                slot,
+                signature: CertSignature {
+                    signature: c.signature,
+                    bitmap: c.bitmap.clone(),
+                },
+            })
     }
 
     /// Get the highest finalized slot (slow or fast)
