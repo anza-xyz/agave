@@ -1,6 +1,7 @@
 #[cfg(feature = "dev-context-only-utils")]
 use {
     crate::program_cache_entry::ProgramCacheEntry,
+    qualifier_attr::qualifiers,
     solana_account::{AccountSharedData, WritableAccount, create_account_shared_data_for_test},
     solana_epoch_schedule::EpochSchedule,
     solana_instruction::AccountMeta,
@@ -270,7 +271,10 @@ impl<'a, 'ix_data> InvokeContext<'a, 'ix_data> {
     }
 
     /// Push a stack frame onto the invocation stack
-    pub fn push(&mut self) -> Result<(), InstructionError> {
+    // Used under dev-context-only-utils by the serialization & syscall
+    // conformance harnesses.
+    #[cfg_attr(feature = "dev-context-only-utils", qualifiers(pub))]
+    fn push(&mut self) -> Result<(), InstructionError> {
         let instruction_context = self.transaction_context.get_next_instruction_context()?;
         let program_id = instruction_context
             .get_program_key()
@@ -302,7 +306,10 @@ impl<'a, 'ix_data> InvokeContext<'a, 'ix_data> {
     }
 
     /// Pop a stack frame from the invocation stack
-    pub fn pop(&mut self) -> Result<(), InstructionError> {
+    // Used under dev-context-only-utils by the serialization & syscall
+    // conformance harnesses.
+    #[cfg_attr(feature = "dev-context-only-utils", qualifiers(pub))]
+    fn pop(&mut self) -> Result<(), InstructionError> {
         self.memory_contexts.pop();
         self.transaction_context.pop()
     }
@@ -343,7 +350,7 @@ impl<'a, 'ix_data> InvokeContext<'a, 'ix_data> {
 
     /// Helper to prepare for process_instruction() when the instruction is not a top level one,
     /// and depends on `AccountMeta`s
-    pub fn prepare_next_cpi_instruction(
+    pub(crate) fn prepare_next_cpi_instruction(
         &mut self,
         instruction: Instruction,
         signers: &[Pubkey],
@@ -545,7 +552,10 @@ impl<'a, 'ix_data> InvokeContext<'a, 'ix_data> {
     }
 
     /// Prepare the instruction trace with all the top level instructions
-    pub fn prepare_top_level_instructions(
+    // Used under dev-context-only-utils by the serialization & syscall
+    // conformance harnesses.
+    #[cfg_attr(feature = "dev-context-only-utils", qualifiers(pub))]
+    fn prepare_top_level_instructions(
         &mut self,
         message: &'ix_data impl SVMMessage,
     ) -> Result<(), (u8, InstructionError)> {
@@ -588,7 +598,7 @@ impl<'a, 'ix_data> InvokeContext<'a, 'ix_data> {
     }
 
     /// Processes an instruction and returns how many compute units were used
-    pub fn process_instruction(
+    pub(crate) fn process_instruction(
         &mut self,
         compute_units_consumed: &mut u64,
         timings: &mut ExecuteTimings,
@@ -602,7 +612,7 @@ impl<'a, 'ix_data> InvokeContext<'a, 'ix_data> {
     }
 
     /// Processes a precompile instruction
-    pub fn process_precompile(
+    fn process_precompile(
         &mut self,
         program_id: &Pubkey,
         instruction_data: &[u8],
@@ -797,7 +807,7 @@ impl<'a, 'ix_data> InvokeContext<'a, 'ix_data> {
     }
 
     /// Insert a VM register trace
-    pub fn insert_register_trace(&mut self, register_trace: Vec<[u64; 12]>) {
+    pub(crate) fn insert_register_trace(&mut self, register_trace: Vec<[u64; 12]>) {
         if register_trace.is_empty() {
             return;
         }
