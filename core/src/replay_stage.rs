@@ -2159,7 +2159,9 @@ impl ReplayStage {
 
         // Notify repair of the dumped slots along with the correct hash
         trace!("Dumped {} slots", dumped.len());
-        dumped_slots_sender.send(dumped).unwrap();
+        dumped_slots_sender
+            .send(dumped)
+            .unwrap_or_else(|err| warn!("dumped_slots_sender_failed: {err:?}"));
     }
 
     #[allow(clippy::too_many_arguments)]
