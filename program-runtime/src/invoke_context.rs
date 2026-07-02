@@ -271,8 +271,6 @@ impl<'a, 'ix_data> InvokeContext<'a, 'ix_data> {
     }
 
     /// Push a stack frame onto the invocation stack
-    // Used under dev-context-only-utils by the serialization & syscall
-    // conformance harnesses.
     #[cfg_attr(feature = "dev-context-only-utils", qualifiers(pub))]
     fn push(&mut self) -> Result<(), InstructionError> {
         let instruction_context = self.transaction_context.get_next_instruction_context()?;
@@ -306,8 +304,6 @@ impl<'a, 'ix_data> InvokeContext<'a, 'ix_data> {
     }
 
     /// Pop a stack frame from the invocation stack
-    // Used under dev-context-only-utils by the serialization & syscall
-    // conformance harnesses.
     #[cfg_attr(feature = "dev-context-only-utils", qualifiers(pub))]
     fn pop(&mut self) -> Result<(), InstructionError> {
         self.memory_contexts.pop();
@@ -552,8 +548,6 @@ impl<'a, 'ix_data> InvokeContext<'a, 'ix_data> {
     }
 
     /// Prepare the instruction trace with all the top level instructions
-    // Used under dev-context-only-utils by the serialization & syscall
-    // conformance harnesses.
     #[cfg_attr(feature = "dev-context-only-utils", qualifiers(pub))]
     fn prepare_top_level_instructions(
         &mut self,
