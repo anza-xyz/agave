@@ -2453,6 +2453,7 @@ impl ReplayStage {
         let mut ancestor_slot = block.slot;
         let mut ancestor_block_id = block.block_id;
         let mut blocks_to_switch = vec![];
+        let mut original_dead_slots_to_clear = BTreeSet::new();
         loop {
             if ancestor_slot <= root {
                 // This is either (1) an outdated attempt to switch out the
@@ -2473,8 +2474,11 @@ impl ReplayStage {
                 return Ok(());
             };
 
-            if location != BlockLocation::Original {
-                // Need to switch this block
+            if location == BlockLocation::Original {
+                if blockstore.is_dead(ancestor_slot) {
+                    original_dead_slots_to_clear.insert(ancestor_slot);
+                }
+            } else {
                 blocks_to_switch.push((ancestor_slot, location));
             }
 
@@ -2500,10 +2504,12 @@ impl ReplayStage {
             ancestor_slot = parent_slot;
         }
 
-        let slots_to_clear = bank_forks
-            .read()
-            .unwrap()
-            .slots_to_clear(blocks_to_switch.iter().map(|(slot, _)| *slot));
+        let slots_to_clear = bank_forks.read().unwrap().slots_to_clear(
+            blocks_to_switch
+                .iter()
+                .map(|(slot, _)| *slot)
+                .chain(original_dead_slots_to_clear.iter().copied()),
+        );
 
         info!("{my_pubkey}: Clearing banks for switching and descendants: {slots_to_clear:?}");
         Self::clear_banks(
@@ -2521,6 +2527,10 @@ impl ReplayStage {
             blockstore.switch_block_from_alternate(slot, location)?;
             progress.increment_num_bank_switches(slot);
             info!("{my_pubkey}: Switched {slot} from {location:?}");
+        }
+
+        for slot in original_dead_slots_to_clear {
+            blockstore.remove_dead_slot(slot)?;
         }
 
         *pending_switch = None;
