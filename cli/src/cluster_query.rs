@@ -16,6 +16,7 @@ use {
             build_balance_message, format_labeled_address, new_spinner_progress_bar,
             writeln_name_value,
         },
+        stdout::writeln_stdout,
         *,
     },
     solana_clock::{self as clock, Clock, Epoch, Slot},
@@ -664,10 +665,10 @@ pub async fn process_catchup(
         match node_json_rpc_url.as_ref() {
             Some(node_json_rpc_url) if node_json_rpc_url != &gussed_default => {
                 // go to new line to leave this message on console
-                println!(
+                writeln_stdout(format_args!(
                     "Preferring explicitly given rpc ({node_json_rpc_url}) as us, although \
                      --our-localhost is given\n"
-                )
+                ))?;
             }
             _ => {
                 node_json_rpc_url = Some(gussed_default);
@@ -683,10 +684,10 @@ pub async fn process_catchup(
             (match node_pubkey {
                 Some(node_pubkey) if node_pubkey != guessed_default => {
                     // go to new line to leave this message on console
-                    println!(
+                    writeln_stdout(format_args!(
                         "Preferring explicitly given node pubkey ({node_pubkey}) as us, although \
                          --our-localhost is given\n"
-                    );
+                    ))?;
                     node_pubkey
                 }
                 _ => guessed_default,
@@ -769,7 +770,10 @@ pub async fn process_catchup(
                     *retry_count = retry_count.saturating_add(1);
                     if log {
                         // go to new line to leave this message on console
-                        println!("Retrying({}/{max_retry_count}): {e}\n", *retry_count);
+                        writeln_stdout(format_args!(
+                            "Retrying({}/{max_retry_count}): {e}\n",
+                            *retry_count
+                        ))?;
                     }
                     sleep(Duration::from_secs(1));
                 }
@@ -890,7 +894,7 @@ pub async fn process_catchup(
             },
         ));
         if log {
-            println!();
+            writeln_stdout(format_args!(""))?;
         }
 
         sleep(sleep_interval);
@@ -1466,7 +1470,7 @@ pub fn parse_logs(
 }
 
 pub fn process_logs(config: &CliConfig, filter: &RpcTransactionLogsFilter) -> ProcessResult {
-    println!(
+    writeln_stdout(format_args!(
         "Streaming transaction logs{}. {:?} commitment",
         match filter {
             RpcTransactionLogsFilter::All => "".into(),
@@ -1475,7 +1479,7 @@ pub fn process_logs(config: &CliConfig, filter: &RpcTransactionLogsFilter) -> Pr
                 format!(" mentioning {}", addresses.join(",")),
         },
         config.commitment.commitment
-    );
+    ))?;
 
     let (_client, receiver) = PubsubClient::logs_subscribe(
         &config.websocket_url,
@@ -1488,18 +1492,21 @@ pub fn process_logs(config: &CliConfig, filter: &RpcTransactionLogsFilter) -> Pr
     loop {
         match receiver.recv() {
             Ok(logs) => {
-                println!("Transaction executed in slot {}:", logs.context.slot);
-                println!("  Signature: {}", logs.value.signature);
-                println!(
+                writeln_stdout(format_args!(
+                    "Transaction executed in slot {}:",
+                    logs.context.slot
+                ))?;
+                writeln_stdout(format_args!("  Signature: {}", logs.value.signature))?;
+                writeln_stdout(format_args!(
                     "  Status: {}",
                     logs.value
                         .err
                         .map(|err| err.to_string())
                         .unwrap_or_else(|| "Ok".to_string())
-                );
-                println!("  Log Messages:");
+                ))?;
+                writeln_stdout(format_args!("  Log Messages:"))?;
                 for log in logs.value.logs {
-                    println!("    {log}");
+                    writeln_stdout(format_args!("    {log}"))?;
                 }
             }
             Err(err) => {

@@ -587,7 +587,7 @@ pub async fn transaction_history(
                                     "  ",
                                     None,
                                     None,
-                                );
+                                )?;
                             }
                         }
                         break;

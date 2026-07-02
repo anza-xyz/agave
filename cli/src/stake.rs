@@ -30,7 +30,7 @@ use {
     solana_cli_output::{
         self, CliBalance, CliEpochReward, CliStakeHistory, CliStakeHistoryEntry, CliStakeState,
         CliStakeType, OutputFormat, ReturnSignersConfig, display::BuildBalanceMessageConfig,
-        return_signers_with_config,
+        return_signers_with_config, stdout::writeln_stdout,
     },
     solana_clock::{Clock, Epoch, SECONDS_PER_DAY, UnixTimestamp},
     solana_commitment_config::CommitmentConfig,
@@ -2913,7 +2913,7 @@ pub async fn process_delegate_stake(
             if !force {
                 sanity_check_result?;
             } else {
-                println!("--force supplied, ignoring: {err}");
+                writeln_stdout(format_args!("--force supplied, ignoring: {err}"))?;
             }
         }
 
