@@ -571,6 +571,14 @@ impl Tvu {
             wait_for_vote_to_start_leader: tvu_config.wait_for_vote_to_start_leader,
             tower_storage: tower_storage.clone(),
             wait_to_vote_slot,
+            // Vote batching: opt-in via SOLANA_VOTE_BATCH_N env var.
+            // 1 (default) = status quo. 2 = safe 50% fee reduction with 0% credit
+            // loss. See ReplayStage::VoteBatchState docs for the curve.
+            // Replace with proper CLI flag in production.
+            vote_batch_n: std::env::var("SOLANA_VOTE_BATCH_N")
+                .ok()
+                .and_then(|s| s.parse::<u8>().ok())
+                .unwrap_or(1),
             replay_forks_threads: tvu_config.replay_forks_threads,
             replay_transactions_threads: tvu_config.replay_transactions_threads,
             blockstore: blockstore.clone(),
