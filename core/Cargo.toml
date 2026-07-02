@@ -52,6 +52,7 @@ agave-feature-set = { workspace = true }
 agave-fs = { workspace = true }
 agave-logger = { workspace = true }
 agave-math-utils = { workspace = true }
+agave-mesh-layer = { workspace = true }
 agave-scheduler-bindings = { workspace = true }
 agave-scheduling-utils = { workspace = true }
 agave-snapshots = { workspace = true }

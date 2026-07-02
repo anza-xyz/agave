@@ -28,7 +28,7 @@ use {
     solana_pubkey::Pubkey,
     solana_runtime::{bank::Bank, bank_forks::BankForks},
     solana_signer::Signer,
-    solana_streamer::{evicting_sender::EvictingSender, streamer::ChannelSend},
+    solana_streamer::streamer::ChannelSend,
     std::{
         num::NonZeroUsize,
         sync::{
@@ -76,16 +76,19 @@ enum ResignError {
 
 pub type RepairNonceLocationLookup = dyn Fn(shred::Nonce) -> Option<BlockLocation> + Send + Sync;
 
-pub fn spawn_shred_sigverify(
+pub fn spawn_shred_sigverify<S>(
     cluster_info: Arc<ClusterInfo>,
     bank_forks: Arc<RwLock<BankForks>>,
     leader_schedule_cache: Arc<LeaderScheduleCache>,
     shred_fetch_receiver: Receiver<PacketBatch>,
-    retransmit_sender: EvictingSender<Vec<shred::Payload>>,
+    retransmit_sender: S,
     verified_sender: Sender<Vec<(shred::Payload, /*is_repaired:*/ bool, BlockLocation)>>,
     repair_nonce_location_lookup: Arc<RepairNonceLocationLookup>,
     num_sigverify_threads: NonZeroUsize,
-) -> JoinHandle<()> {
+) -> JoinHandle<()>
+where
+    S: ChannelSend<Vec<shred::Payload>> + 'static,
+{
     let mut stats = ShredSigVerifyStats::new(Instant::now());
     let cache = RwLock::new(LruCache::new(SIGVERIFY_LRU_CACHE_CAPACITY));
     let cluster_nodes_cache = ClusterNodesCache::<RetransmitStage>::new(
@@ -139,7 +142,7 @@ pub fn spawn_shred_sigverify(
 }
 
 #[allow(clippy::too_many_arguments)]
-fn run_shred_sigverify<const K: usize>(
+fn run_shred_sigverify<const K: usize, S>(
     thread_pool: &ThreadPool,
     keypair: &Keypair,
     cluster_info: &ClusterInfo,
@@ -147,14 +150,17 @@ fn run_shred_sigverify<const K: usize>(
     leader_schedule_cache: &LeaderScheduleCache,
     deduper: &Deduper<K, [u8]>,
     shred_fetch_receiver: &Receiver<PacketBatch>,
-    retransmit_sender: &EvictingSender<Vec<shred::Payload>>,
+    retransmit_sender: &S,
     verified_sender: &Sender<Vec<(shred::Payload, /*is_repaired:*/ bool, BlockLocation)>>,
     cluster_nodes_cache: &ClusterNodesCache<RetransmitStage>,
     repair_nonce_location_lookup: &RepairNonceLocationLookup,
     cache: &RwLock<LruCache>,
     stats: &mut ShredSigVerifyStats,
     shred_buffer: &mut Vec<PacketBatch>,
-) -> Result<(), ShredSigverifyError> {
+) -> Result<(), ShredSigverifyError>
+where
+    S: ChannelSend<Vec<shred::Payload>>,
+{
     const RECV_TIMEOUT: Duration = Duration::from_secs(1);
     let packets = shred_fetch_receiver.recv_timeout(RECV_TIMEOUT)?;
     stats.num_packets += packets.len();
@@ -268,7 +274,7 @@ fn run_shred_sigverify<const K: usize>(
             crossbeam_channel::TrySendError::Full(v) => {
                 stats.num_retransmit_stage_overflow_shreds += v.len();
             }
-            _ => unreachable!("EvictingSender holds on to both ends of the channel"),
+            _ => unreachable!("retransmit sender holds on to both ends of the channel"),
         }
     }
     // Send all shreds to window service to be inserted into blockstore.

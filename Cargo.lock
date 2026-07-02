@@ -238,6 +238,24 @@ dependencies = [
 ]
 
 [[package]]
+name = "agave-mesh-layer"
+version = "4.3.0-alpha.0"
+dependencies = [
+ "agave-logger",
+ "bytes",
+ "crossbeam-channel",
+ "log",
+ "raptorq",
+ "solana-gossip",
+ "solana-ledger",
+ "solana-metrics",
+ "solana-packet 4.1.0",
+ "solana-perf",
+ "solana-streamer",
+ "thiserror 2.0.18",
+]
+
+[[package]]
 name = "agave-precompiles"
 version = "4.3.0-alpha.0"
 dependencies = [
@@ -6020,6 +6038,12 @@ dependencies = [
 ]
 
 [[package]]
+name = "raptorq"
+version = "2.0.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "4d4215fb79ef19442a0c71616aabb0715a386e6a16ed9031775ee3e3f20e7502"
+
+[[package]]
 name = "rayon"
 version = "1.12.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -8024,6 +8048,7 @@ dependencies = [
  "agave-fs",
  "agave-logger",
  "agave-math-utils",
+ "agave-mesh-layer",
  "agave-reserved-account-keys",
  "agave-scheduler-bindings",
  "agave-scheduling-utils",
