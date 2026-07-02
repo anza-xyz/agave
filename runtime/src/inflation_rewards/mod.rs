@@ -1540,13 +1540,20 @@ mod tests {
             let (voter, staker, was_split) =
                 commission_split_preserve_lamports(commission_bps, rewards);
 
+            // Compute expected values independently from inputs, not from function outputs,
+            // so these invariants can catch regressions in the function itself.
+            let effective_bps = commission_bps.min(10_000);
+            let staker_bps = 10_000 - effective_bps;
+            let expected_staker =
+                (u128::from(rewards) * u128::from(staker_bps) / 10_000) as u64;
+            let expected_voter = rewards - expected_staker;
+
             // Invariant 1: The full reward amount is assigned.
             prop_assert_eq!(voter + staker, rewards);
 
             // Invariant 2: was_split is true iff both parties receive non-zero lamports.
-            // Due to integer rounding, a mid-range commission can still floor one side to 0.
-            let effective_bps = commission_bps.min(10_000);
-            prop_assert_eq!(was_split, voter != 0 && staker != 0);
+            // Use independently computed expected values so the check has real bite.
+            prop_assert_eq!(was_split, expected_voter != 0 && expected_staker != 0);
 
             // Invariant 3: Boundary - 0% commission gives everything to staker.
             if effective_bps == 0 {
@@ -1577,10 +1584,6 @@ mod tests {
             }
 
             // Invariant 7: The staker side is floored, and the voter gets the remainder.
-            let staker_bps = 10_000 - effective_bps;
-            let expected_staker =
-                (u128::from(rewards) * u128::from(staker_bps) / 10_000) as u64;
-            let expected_voter = rewards - expected_staker;
             prop_assert_eq!(voter, expected_voter);
             prop_assert_eq!(staker, expected_staker);
         }
