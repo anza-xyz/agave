@@ -184,6 +184,3 @@ lto = "thin"
 inherits = "release"
 lto = "fat"
 codegen-units = 1
-
-[patch.crates-io]
-solana-sbpf = { git = "https://github.com/anza-xyz/sbpf", rev = "refs/pull/191/head" }
