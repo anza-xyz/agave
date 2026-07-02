@@ -2712,7 +2712,7 @@ mod tests {
         solana_slot_hashes::{self as slot_hashes, SlotHashes},
         solana_stable_layout::stable_instruction::StableInstruction,
         solana_stake_history::{
-            self, SIZE as STAKE_HISTORY_ACCOUNT_SIZE, StakeHistory, StakeHistoryEntry,
+            SIZE as STAKE_HISTORY_ACCOUNT_SIZE, StakeHistory, StakeHistoryEntry,
         },
         solana_sysvar_id::SysvarId,
         solana_transaction_context::instruction_accounts::InstructionAccount,
