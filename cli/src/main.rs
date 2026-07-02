@@ -261,13 +261,7 @@ async fn do_main(matches: &ArgMatches<'_>) -> Result<(), Box<dyn error::Error>> 
 
 fn write_stdout(result: &str) -> Result<(), io::Error> {
     let mut stdout = io::stdout().lock();
-    if let Err(err) = stdout.write_all(result.as_bytes()) {
-        if err.kind() == io::ErrorKind::BrokenPipe {
-            return Ok(());
-        }
-        return Err(err);
-    }
-    if let Err(err) = stdout.write_all(b"\n") {
+    if let Err(err) = writeln!(&mut stdout, "{result}") {
         if err.kind() == io::ErrorKind::BrokenPipe {
             return Ok(());
         }
