@@ -1036,7 +1036,7 @@ pub fn execute(
             minimal_snapshot_download_speed,
             maximum_snapshot_download_abort,
             run_args.socket_addr_space,
-        );
+        )?;
         *start_progress.write().unwrap() = ValidatorStartProgress::Initializing;
     }
 
