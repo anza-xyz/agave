@@ -200,16 +200,26 @@ impl CertificateBuilder {
     /// Aggregates new [`VoteMessage`]s into the builder.
     pub fn aggregate(&mut self, msgs: &[VoteMessage]) -> Result<(), AggregateError> {
         let aggregated = self.builder_type.aggregate(&self.cert_type, msgs);
-        #[cfg(debug_assertions)]
-        debug_assert!(aggregated.is_ok());
+        #[cfg(feature = "fuzzing")]
+        {
+            if aggregated.is_err() {
+                error!("invariant: {}:{}", file!(), line!());
+            }
+            assert!(aggregated.is_ok());
+        }
         aggregated
     }
 
     /// Builds a [`Certificate`] from the builder.
     pub fn build(self) -> Result<Certificate, BuildError> {
         let cert = self.builder_type.build(self.cert_type);
-        #[cfg(debug_assertions)]
-        debug_assert!(cert.is_ok());
+        #[cfg(feature = "fuzzing")]
+        {
+            if cert.is_err() {
+                error!("invariant: {}:{}", file!(), line!());
+            }
+            assert!(cert.is_ok());
+        }
         cert
     }
 }

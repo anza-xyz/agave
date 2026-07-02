@@ -200,8 +200,11 @@ impl EventHandlerStats {
             }
             BLSOp::RefreshVotes { .. } => (),
             _ => {
-                #[cfg(debug_assertions)]
-                panic!("invariant: unexpected BLS operation: {bls_op:?}");
+                #[cfg(feature = "fuzzing")]
+                {
+                    error!("invariant: {}:{}", file!(), line!());
+                    panic!("invariant: unexpected BLS operation: {bls_op:?}");
+                }
             }
         }
     }

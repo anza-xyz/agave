@@ -401,11 +401,15 @@ impl VotingService {
         let buf = match wincode::serialize(message) {
             Ok(buf) => buf,
             Err(err) => {
-                #[cfg(debug_assertions)]
-                panic!(
-                    "invariant: serializing an outgoing alpenglow message must not fail: {err:?}"
-                );
                 error!("Failed to serialize alpenglow message: {err:?}");
+                #[cfg(feature = "fuzzing")]
+                {
+                    error!("invariant: {}:{}", file!(), line!());
+                    panic!(
+                        "invariant: serializing an outgoing alpenglow message must not fail: \
+                         {err:?}"
+                    );
+                }
                 return;
             }
         };
@@ -514,22 +518,22 @@ mod tests {
         },
         crossbeam_channel::bounded,
         rand::Rng,
-        solana_bls_signatures::{BLS_SIGNATURE_AFFINE_SIZE, Signature as BLSSignature},
+        solana_bls_signatures::{Signature as BLSSignature, BLS_SIGNATURE_AFFINE_SIZE},
         solana_gossip::{cluster_info::ClusterInfo, contact_info::ContactInfo},
         solana_keypair::Keypair,
-        solana_net_utils::{SocketAddrSpace, sockets::bind_to_localhost_unique},
+        solana_net_utils::{sockets::bind_to_localhost_unique, SocketAddrSpace},
         solana_perf::packet::packet_config,
         solana_runtime::{
             bank::Bank,
             bank_forks::BankForks,
             genesis_utils::{
-                ValidatorVoteKeypairs, create_genesis_config_with_alpenglow_vote_accounts,
+                create_genesis_config_with_alpenglow_vote_accounts, ValidatorVoteKeypairs,
             },
         },
         solana_signer::Signer,
         solana_streamer::{
             nonblocking::swqos::SwQosConfig,
-            quic::{QuicStreamerConfig, SpawnServerResult, spawn_stake_weighted_qos_server},
+            quic::{spawn_stake_weighted_qos_server, QuicStreamerConfig, SpawnServerResult},
             streamer::StakedNodes,
         },
         std::{

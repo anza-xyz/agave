@@ -228,6 +228,17 @@ impl EventHandler {
         }
 
         vctx.vote_history.add_parent_ready(slot, parent_block);
+        #[cfg(feature = "fuzzing")]
+        {
+            if !vctx.vote_history.is_parent_ready(slot, &parent_block) {
+                error!("invariant: {}:{}", file!(), line!());
+            }
+            assert!(
+                vctx.vote_history.is_parent_ready(slot, &parent_block),
+                "invariant: {my_pubkey}: parent {parent_block:?} must be ready for slot {slot} after \
+                 add",
+            );
+        }
         Self::check_pending_blocks(my_pubkey, &mut local_context.pending_blocks, vctx, votes)?;
         let root_bank = vctx.sharable_banks.root();
         let delta_block = Duration::from_nanos_u128(root_bank.ns_per_slot_at_slot(slot));
@@ -247,6 +258,17 @@ impl EventHandler {
 
         if slot > current_slot {
             *highest_parent_ready = (slot, parent_block);
+        }
+        #[cfg(feature = "fuzzing")]
+        {
+            if highest_parent_ready.0 < slot {
+                error!("invariant: {}:{}", file!(), line!());
+            }
+            assert!(
+                highest_parent_ready.0 >= slot,
+                "invariant: {my_pubkey}: highest_parent_ready {} must be >= processed slot {slot}",
+                highest_parent_ready.0,
+            );
         }
         Ok(())
     }
@@ -654,6 +676,18 @@ impl EventHandler {
             slot: parent_slot,
             block_id: parent_block_id,
         };
+        #[cfg(feature = "fuzzing")]
+        {
+            if parent_block.slot >= block.slot {
+                error!("invariant: {}:{}", file!(), line!());
+            }
+            assert!(
+                parent_block.slot < block.slot,
+                "invariant: parent slot {} must precede block slot {}",
+                parent_block.slot,
+                block.slot,
+            );
+        }
         (block, parent_block)
     }
 
@@ -710,6 +744,30 @@ impl EventHandler {
             &voting_context.commitment_sender,
         )?;
         pending_blocks.remove(&slot);
+
+        // Postconditions: the notarize vote is now recorded, and this slot is no
+        // longer pending. Catches vote_history/pending_blocks desync during fuzzing.
+        #[cfg(feature = "fuzzing")]
+        {
+            if voting_context.vote_history.voted_notar(slot) != Some(block_id) {
+                error!("invariant: {}:{}", file!(), line!());
+            }
+            assert_eq!(
+                voting_context.vote_history.voted_notar(slot),
+                Some(block_id),
+                "invariant: {my_pubkey}: notarize vote for slot {slot} must be recorded after voting",
+            );
+        }
+        #[cfg(feature = "fuzzing")]
+        {
+            if pending_blocks.contains_key(&slot) {
+                error!("invariant: {}:{}", file!(), line!());
+            }
+            assert!(
+                !pending_blocks.contains_key(&slot),
+                "invariant: {my_pubkey}: pending_blocks[{slot}] must be cleared after notarizing",
+            );
+        }
 
         Self::try_final(my_pubkey, Block { slot, block_id }, voting_context, votes)?;
 
@@ -800,6 +858,16 @@ impl EventHandler {
             .max(root_slot)
             .max(1);
         for s in start..=last_of_consecutive_leader_slots(slot) {
+            #[cfg(feature = "fuzzing")]
+            {
+                if s < 1 {
+                    error!("invariant: {}:{}", file!(), line!());
+                }
+                assert!(
+                    s >= 1,
+                    "invariant: {my_pubkey}: must never vote skip for slot 0"
+                );
+            }
             if voting_context.vote_history.voted(s) {
                 continue;
             }
@@ -897,6 +965,16 @@ impl EventHandler {
             // No rootable banks
             return;
         };
+        #[cfg(feature = "fuzzing")]
+        {
+            if new_root <= old_root {
+                error!("invariant: {}:{}", file!(), line!());
+            }
+            assert!(
+                new_root > old_root,
+                "invariant: {my_pubkey}: new root {new_root} must advance past old root {old_root}",
+            );
+        }
         drop(bank_forks_r);
         root_utils::set_root(
             my_pubkey,
@@ -926,16 +1004,19 @@ fn request_repair(
     match sender.try_send(event) {
         Ok(()) => Ok(()),
         Err(TrySendError::Full(event)) => {
-            #[cfg(debug_assertions)]
-            panic!(
-                "invariant: {my_pubkey}: Repair event channel is full for slot {}",
-                block.slot
-            );
             error!(
                 "{my_pubkey}: Repair event channel is full, this should not happen. Blocking to \
                  send event for slot {}",
                 block.slot
             );
+            #[cfg(feature = "fuzzing")]
+            {
+                error!("invariant: {}:{}", file!(), line!());
+                panic!(
+                    "invariant: {my_pubkey}: Repair event channel is full for slot {}",
+                    block.slot
+                );
+            }
             sender
                 .send(event)
                 .map_err(|_| EventLoopError::SenderDisconnected(SendError(())))
