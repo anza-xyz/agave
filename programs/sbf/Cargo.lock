@@ -381,8 +381,6 @@ dependencies = [
  "lazy-lru",
  "log",
  "parking_lot 0.12.2",
- "serde",
- "serde_bytes",
  "solana-bls-signatures",
  "solana-client",
  "solana-clock",
