@@ -17,7 +17,14 @@ use {
     },
     solana_remote_wallet::remote_wallet::RemoteWalletManager,
     solana_rpc_client_api::config::RpcSendTransactionConfig,
-    std::{collections::HashMap, error, path::PathBuf, rc::Rc, time::Duration},
+    std::{
+        collections::HashMap,
+        error,
+        io::{self, Write},
+        path::PathBuf,
+        rc::Rc,
+        time::Duration,
+    },
 };
 
 fn parse_settings(matches: &ArgMatches<'_>) -> Result<bool, Box<dyn error::Error>> {
@@ -247,7 +254,24 @@ async fn do_main(matches: &ArgMatches<'_>) -> Result<(), Box<dyn error::Error>> 
         let (mut config, signers) = parse_args(matches, &mut wallet_manager)?;
         config.signers = signers.iter().map(|s| s.as_ref()).collect();
         let result = process_command(&config).await?;
-        println!("{result}");
+        write_stdout(&result)?;
     };
+    Ok(())
+}
+
+fn write_stdout(result: &str) -> Result<(), io::Error> {
+    let mut stdout = io::stdout().lock();
+    if let Err(err) = stdout.write_all(result.as_bytes()) {
+        if err.kind() == io::ErrorKind::BrokenPipe {
+            return Ok(());
+        }
+        return Err(err);
+    }
+    if let Err(err) = stdout.write_all(b"\n") {
+        if err.kind() == io::ErrorKind::BrokenPipe {
+            return Ok(());
+        }
+        return Err(err);
+    }
     Ok(())
 }
