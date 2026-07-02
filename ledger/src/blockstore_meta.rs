@@ -236,11 +236,23 @@ mod wincode_compat {
             <Slot as SchemaWrite<C>>::TYPE_META.keep_zero_copy(false);
 
         fn size_of(src: &Self::Src) -> WriteResult<usize> {
-            <Slot as SchemaWrite<C>>::size_of(&src.unwrap_or(Slot::MAX))
+            match src {
+                Some(slot) if *slot == Slot::MAX => {
+                    Err(wincode::WriteError::Custom("Slot::MAX is reserved as the None sentinel"))
+                }
+                Some(slot) => <Slot as SchemaWrite<C>>::size_of(slot),
+                None => <Slot as SchemaWrite<C>>::size_of(&Slot::MAX),
+            }
         }
 
         fn write(writer: impl Writer, src: &Self::Src) -> WriteResult<()> {
-            <Slot as SchemaWrite<C>>::write(writer, &src.unwrap_or(Slot::MAX))
+            match src {
+                Some(slot) if *slot == Slot::MAX => {
+                    Err(wincode::WriteError::Custom("Slot::MAX is reserved as the None sentinel"))
+                }
+                Some(slot) => <Slot as SchemaWrite<C>>::write(writer, slot),
+                None => <Slot as SchemaWrite<C>>::write(writer, &Slot::MAX),
+            }
         }
     }
 
