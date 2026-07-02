@@ -132,6 +132,7 @@ impl TransactionStatusService {
             TransactionStatusMessage::Batch((
                 TransactionStatusBatch {
                     slot,
+                    bank_id,
                     transactions,
                     commit_results,
                     balances,
@@ -212,6 +213,7 @@ impl TransactionStatusService {
                         let transaction = transaction.to_versioned_transaction();
                         transaction_notifier.notify_transaction(
                             slot,
+                            bank_id,
                             transaction_index,
                             signature,
                             message_hash,
@@ -355,7 +357,7 @@ pub(crate) mod tests {
         solana_account_decoder::{
             parse_account_data::SplTokenAdditionalDataV2, parse_token::token_amount_to_ui_amount_v3,
         },
-        solana_clock::Slot,
+        solana_clock::{BankId, Slot},
         solana_fee_structure::FeeDetails,
         solana_hash::Hash,
         solana_keypair::Keypair,
@@ -384,6 +386,7 @@ pub(crate) mod tests {
     #[derive(Eq, Hash, PartialEq)]
     struct TestNotifierKey {
         slot: Slot,
+        bank_id: BankId,
         transaction_index: usize,
         message_hash: Hash,
     }
@@ -409,6 +412,7 @@ pub(crate) mod tests {
         fn notify_transaction(
             &self,
             slot: Slot,
+            bank_id: BankId,
             transaction_index: usize,
             _signature: &Signature,
             message_hash: &Hash,
@@ -419,6 +423,7 @@ pub(crate) mod tests {
             self.notifications.insert(
                 TestNotifierKey {
                     slot,
+                    bank_id,
                     transaction_index,
                     message_hash: *message_hash,
                 },
@@ -516,10 +521,12 @@ pub(crate) mod tests {
         };
 
         let slot = bank.slot();
+        let bank_id = bank.bank_id();
         let message_hash = *transaction.message_hash();
         let transaction_index: usize = bank.transaction_count().try_into().unwrap();
         let transaction_status_batch = TransactionStatusBatch {
             slot,
+            bank_id,
             transactions: vec![transaction],
             commit_results: vec![commit_result],
             balances,
@@ -553,6 +560,7 @@ pub(crate) mod tests {
         assert_eq!(test_notifier.notifications.len(), 1);
         let key = TestNotifierKey {
             slot,
+            bank_id,
             transaction_index,
             message_hash,
         };
@@ -623,11 +631,13 @@ pub(crate) mod tests {
         };
 
         let slot = bank.slot();
+        let bank_id = bank.bank_id();
         let transaction_index1: usize = bank.transaction_count().try_into().unwrap();
         let transaction_index2: usize = transaction_index1 + 1;
 
         let transaction_status_batch = TransactionStatusBatch {
             slot,
+            bank_id,
             transactions: vec![transaction1, transaction2],
             commit_results: vec![commit_result.clone(), commit_result],
             balances: balances.clone(),
@@ -662,11 +672,13 @@ pub(crate) mod tests {
 
         let key1 = TestNotifierKey {
             slot,
+            bank_id,
             transaction_index: transaction_index1,
             message_hash: *expected_transaction1.message_hash(),
         };
         let key2 = TestNotifierKey {
             slot,
+            bank_id,
             transaction_index: transaction_index2,
             message_hash: *expected_transaction2.message_hash(),
         };
