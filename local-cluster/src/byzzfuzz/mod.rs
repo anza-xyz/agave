@@ -105,7 +105,6 @@ fn test_alpenglow_byzfuzz() {
         random_seed,
         &node_pubkeys,
         &source_stakes,
-        &byzantine_sources,
         ROOT_SLOT_TO_WAIT_FOR,
     ));
     info!("byzfuzz fault schedule (seed {random_seed}): {schedule:?}");
