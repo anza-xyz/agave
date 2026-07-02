@@ -1450,19 +1450,48 @@ fn build_xdp_config(
             }
         }
     };
-    Ok(cpus.map(|cpus| {
-        info!("XDP enabled on CPU cores: {cpus:?}");
+    let xdp_queue_ids = matches
+        .value_of("xdp_queue_ids")
+        .or_else(|| matches.value_of("experimental_retransmit_xdp_queue_ids"))
+        .map(|queue_ids_str| {
+            parse_cpu_ranges(queue_ids_str)
+                .expect("clap validator already accepted this queue id list")
+        });
+
+    let Some(cpus) = cpus else {
+        return Ok(None);
+    };
+    info!("XDP enabled on CPU cores: {cpus:?}");
+    let queues = match xdp_queue_ids {
+        Some(queue_ids) => {
+            if queue_ids.len() != cpus.len() {
+                return Err(format!(
+                    "--xdp-queue-ids specifies {} queue id(s) but --xdp-cpu-cores specifies {} \
+                     core(s); as many queue ids as cpu cores shall be specified",
+                    queue_ids.len(),
+                    cpus.len()
+                ));
+            }
+            queue_ids
+                .into_iter()
+                .zip(cpus)
+                .map(|(queue, cpu)| QueueCpuBinding {
+                    queue: queue as u32,
+                    cpu,
+                })
+                .collect()
+        }
         // Map the CPU list onto hardware queues sequentially (queue i -> cpus[i]).
-        let queues = cpus
+        None => cpus
             .into_iter()
             .enumerate()
             .map(|(queue, cpu)| QueueCpuBinding {
                 queue: queue as u32,
                 cpu,
             })
-            .collect();
-        XdpConfig::new(xdp_interface, queues, xdp_zero_copy)
-    }))
+            .collect(),
+    };
+    Ok(Some(XdpConfig::new(xdp_interface, queues, xdp_zero_copy)))
 }
 
 #[cfg(all(target_os = "linux", test))]
@@ -1528,6 +1557,94 @@ mod xdp_tests {
         assert!(
             result.unwrap_err().contains("PoH core"),
             "XDP core overlapping PoH core must produce an error"
+        );
+    }
+
+    #[test]
+    fn test_default_queue_ids_are_sequential_by_cpu_position() {
+        let default_args = DefaultArgs::default();
+        let app = add_args(clap::App::new("agave-validator"), &default_args);
+        let matches = app.get_matches_from(vec!["agave-validator", "--xdp-cpu-cores", "3-5"]);
+        let config = build_xdp_config(&matches, &Operation::Run, &single_ip_bind())
+            .unwrap()
+            .expect("XDP must be enabled");
+        assert_eq!(
+            config.queues,
+            vec![
+                QueueCpuBinding { queue: 0, cpu: 3 },
+                QueueCpuBinding { queue: 1, cpu: 4 },
+                QueueCpuBinding { queue: 2, cpu: 5 },
+            ],
+            "without --xdp-queue-ids, queue ids must default to the CPU's position in the list"
+        );
+    }
+
+    #[test]
+    fn test_explicit_queue_ids_are_bound_to_matching_cpus() {
+        let default_args = DefaultArgs::default();
+        let app = add_args(clap::App::new("agave-validator"), &default_args);
+        let matches = app.get_matches_from(vec![
+            "agave-validator",
+            "--xdp-cpu-cores",
+            "3-5",
+            "--xdp-queue-ids",
+            "2,7,19",
+        ]);
+        let config = build_xdp_config(&matches, &Operation::Run, &single_ip_bind())
+            .unwrap()
+            .expect("XDP must be enabled");
+        assert_eq!(
+            config.queues,
+            vec![
+                QueueCpuBinding { queue: 2, cpu: 3 },
+                QueueCpuBinding { queue: 7, cpu: 4 },
+                QueueCpuBinding { queue: 19, cpu: 5 },
+            ],
+            "--xdp-queue-ids must bind queue ids to CPUs in the order both lists are given"
+        );
+    }
+
+    #[test]
+    fn test_explicit_queue_ids_support_range_syntax() {
+        let default_args = DefaultArgs::default();
+        let app = add_args(clap::App::new("agave-validator"), &default_args);
+        let matches = app.get_matches_from(vec![
+            "agave-validator",
+            "--xdp-cpu-cores",
+            "3-6",
+            "--xdp-queue-ids",
+            "2-4,17",
+        ]);
+        let config = build_xdp_config(&matches, &Operation::Run, &single_ip_bind())
+            .unwrap()
+            .expect("XDP must be enabled");
+        assert_eq!(
+            config.queues,
+            vec![
+                QueueCpuBinding { queue: 2, cpu: 3 },
+                QueueCpuBinding { queue: 3, cpu: 4 },
+                QueueCpuBinding { queue: 4, cpu: 5 },
+                QueueCpuBinding { queue: 17, cpu: 6 },
+            ],
+            "--xdp-queue-ids must accept the same range syntax as --xdp-cpu-cores"
+        );
+    }
+
+    #[test]
+    fn test_queue_ids_count_mismatch_is_error() {
+        let default_args = DefaultArgs::default();
+        let app = add_args(clap::App::new("agave-validator"), &default_args);
+        let matches = app.get_matches_from(vec![
+            "agave-validator",
+            "--xdp-cpu-cores",
+            "3-5",
+            "--xdp-queue-ids",
+            "2,7",
+        ]);
+        let result = build_xdp_config(&matches, &Operation::Run, &single_ip_bind());
+        assert!(
+            result.unwrap_err().contains("--xdp-queue-ids"),
+            "a queue id count that doesn't match the CPU core count must produce an error"
         );
     }
 }

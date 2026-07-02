@@ -198,6 +198,20 @@ fn deprecated_arguments() -> Vec<DeprecatedArg> {
         replaced_by: "xdp-cpu-cores",
     );
     add_arg!(
+        // deprecated in v4.3.0
+        Arg::with_name("experimental_retransmit_xdp_queue_ids")
+            .long("experimental-retransmit-xdp-queue-ids")
+            .takes_value(true)
+            .value_name("QUEUE_LIST")
+            .conflicts_with("xdp_queue_ids")
+            .conflicts_with("no_xdp")
+            .validator(|value| {
+                validate_cpu_ranges(value, "--experimental-retransmit-xdp-queue-ids")
+            })
+            .help("NIC hardware TX queue ids to bind for XDP. Use --xdp-queue-ids instead"),
+        replaced_by: "xdp-queue-ids",
+    );
+    add_arg!(
         // deprecated in v4.1.0
         Arg::with_name("experimental_retransmit_xdp_interface")
             .long("experimental-retransmit-xdp-interface")
