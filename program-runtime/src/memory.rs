@@ -35,9 +35,7 @@ macro_rules! translate_type_inner {
             size_of::<$T>() as u64
         )?;
         let ptr = host_addr.ptr_mut().cast::<$T>();
-        if !$check_aligned {
-            Ok(unsafe { ptr.as_mut_unchecked() })
-        } else if !ptr.is_aligned() {
+        if $check_aligned && !ptr.is_aligned() {
             Err($crate::memory::MemoryTranslationError::UnalignedPointer.into())
         } else {
             Ok(unsafe { ptr.as_mut_unchecked() })
@@ -52,9 +50,7 @@ macro_rules! translate_type_inner {
             size_of::<$T>() as u64
         )?;
         let ptr = host_addr.ptr().cast::<$T>();
-        if !$check_aligned {
-            Ok(unsafe { ptr.as_ref_unchecked() })
-        } else if !ptr.is_aligned() {
+        if $check_aligned && !ptr.is_aligned() {
             Err($crate::memory::MemoryTranslationError::UnalignedPointer.into())
         } else {
             Ok(unsafe { ptr.as_ref_unchecked() })
