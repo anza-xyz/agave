@@ -41,7 +41,7 @@ impl StakeHistoryGetEntry for StakeHistory {
 
 #[cfg(test)]
 mod tests {
-    use {super::*, solana_stake_history::StakeHistoryEntry};
+    use super::*;
 
     fn rand_stake_history_entry() -> StakeHistoryEntry {
         StakeHistoryEntry {
