@@ -163,6 +163,7 @@ pub trait FileCreator {
         mode: u32,
         parent_dir_handle: Arc<File>,
         contents: &mut dyn io::Read,
+        content_len: Option<FileSize>,
     ) -> io::Result<()>;
 
     /// Invoke implementation specific logic to handle file creation completion.
@@ -235,6 +236,7 @@ impl FileCreator for SyncIoFileCreator<'_> {
         mode: u32,
         _parent_dir_handle: Arc<File>,
         contents: &mut dyn io::Read,
+        _content_len: Option<FileSize>,
     ) -> io::Result<()> {
         // Open for writing (also allows overwrite) and apply `mode`
         let mut options = OpenOptions::new();
@@ -417,6 +419,7 @@ mod tests {
             0o644,
             dir,
             &mut Cursor::new(contents),
+            Some(contents.len() as FileSize),
         )?;
         creator.drain()?;
         drop(creator);
@@ -447,7 +450,8 @@ mod tests {
                 file_path,
                 0o600,
                 dir.clone(),
-                &mut Cursor::new(data),
+                &mut Cursor::new(&data),
+                Some(data.len() as FileSize),
             )?;
         }
         creator.drain()?;
@@ -479,6 +483,7 @@ mod tests {
             0o644,
             dir,
             &mut Cursor::new(contents),
+            Some(contents.len() as FileSize),
         )?;
         creator.drain()?;
         drop(creator);
