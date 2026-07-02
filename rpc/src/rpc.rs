@@ -1765,18 +1765,27 @@ impl JsonRpcRequestProcessor {
         &self,
         signature: Signature,
         config: Option<RpcEncodingConfigWrapper<RpcTransactionConfig>>,
-    ) -> Result<Option<EncodedConfirmedTransactionWithStatusMeta>> {
+    ) -> Result<OptionalContext<Option<EncodedConfirmedTransactionWithStatusMeta>>> {
         self.check_if_transaction_history_enabled()?;
 
         let config = config
             .map(|config| config.convert_to_current())
             .unwrap_or_default();
+        let with_context = config.with_context.unwrap_or_default();
         let encoding = config.encoding.unwrap_or(UiTransactionEncoding::Json);
         let max_supported_transaction_version = config.max_supported_transaction_version;
         let commitment = config.commitment.unwrap_or_default();
         check_is_at_least_confirmed(commitment)?;
 
         let confirmed_bank = self.bank(Some(CommitmentConfig::confirmed()));
+        let context_slot = if commitment.is_confirmed() {
+            confirmed_bank.slot()
+        } else {
+            self.block_commitment_cache
+                .read()
+                .unwrap()
+                .highest_super_majority_root()
+        };
         let confirmed_transaction = self
             .runtime
             .spawn_blocking({
@@ -1799,7 +1808,7 @@ impl JsonRpcRequestProcessor {
                     Ok(confirmed_tx_with_meta.encode(encoding, max_supported_transaction_version).map_err(RpcCustomError::from)?)
                 };
 
-        match confirmed_transaction.unwrap_or(None) {
+        let value = match confirmed_transaction.unwrap_or(None) {
             Some(mut confirmed_transaction) => {
                 if commitment.is_confirmed()
                     && confirmed_bank // should be redundant
@@ -1812,32 +1821,41 @@ impl JsonRpcRequestProcessor {
                             .get(confirmed_transaction.slot)
                             .map(|bank| bank.clock().unix_timestamp);
                     }
-                    return Ok(Some(encode_transaction(confirmed_transaction)?));
-                }
-
-                if confirmed_transaction.slot
+                    Some(encode_transaction(confirmed_transaction)?)
+                } else if confirmed_transaction.slot
                     <= self
                         .block_commitment_cache
                         .read()
                         .unwrap()
                         .highest_super_majority_root()
                 {
-                    return Ok(Some(encode_transaction(confirmed_transaction)?));
+                    Some(encode_transaction(confirmed_transaction)?)
+                } else {
+                    None
                 }
             }
             None => {
                 if let Some(bigtable_ledger_storage) = &self.bigtable_ledger_storage {
-                    return bigtable_ledger_storage
+                    bigtable_ledger_storage
                         .get_confirmed_transaction(&signature)
                         .await
                         .unwrap_or(None)
                         .map(encode_transaction)
-                        .transpose();
+                        .transpose()?
+                } else {
+                    None
                 }
             }
-        }
+        };
 
-        Ok(None)
+        Ok(if with_context {
+            OptionalContext::Context(RpcResponse {
+                context: RpcResponseContext::new(context_slot),
+                value,
+            })
+        } else {
+            OptionalContext::NoContext(value)
+        })
     }
 
     pub async fn get_signatures_for_address(
@@ -1846,11 +1864,12 @@ impl JsonRpcRequestProcessor {
         before: Option<Signature>,
         until: Option<Signature>,
         mut limit: usize,
-        config: RpcContextConfig,
-    ) -> Result<Vec<RpcConfirmedTransactionStatusWithSignature>> {
+        config: RpcSignaturesForAddressConfig,
+    ) -> Result<OptionalContext<Vec<RpcConfirmedTransactionStatusWithSignature>>> {
         self.check_if_transaction_history_enabled()?;
 
         let commitment = config.commitment.unwrap_or_default();
+        let with_context = config.with_context.unwrap_or_default();
         check_is_at_least_confirmed(commitment)?;
 
         let highest_super_majority_root = self
@@ -1858,8 +1877,11 @@ impl JsonRpcRequestProcessor {
             .read()
             .unwrap()
             .highest_super_majority_root();
-        let highest_slot = if commitment.is_confirmed() {
-            let confirmed_bank = self.get_bank_with_config(config)?;
+        let context_slot = if commitment.is_confirmed() {
+            let confirmed_bank = self.get_bank_with_config(RpcContextConfig {
+                commitment: Some(commitment),
+                min_context_slot: config.min_context_slot,
+            })?;
             confirmed_bank.slot()
         } else {
             let min_context_slot = config.min_context_slot.unwrap_or_default();
@@ -1878,7 +1900,7 @@ impl JsonRpcRequestProcessor {
             found_until,
         } = self
             .blockstore
-            .get_confirmed_signatures_for_address2(address, highest_slot, before, until, limit)
+            .get_confirmed_signatures_for_address2(address, context_slot, before, until, limit)
             .map_err(|err| Error::invalid_params(format!("{err}")))?;
 
         let map_results = |results: Vec<ConfirmedTransactionStatusWithSignature>| {
@@ -1983,7 +2005,16 @@ impl JsonRpcRequestProcessor {
             }
         }
 
-        Ok(map_results(results))
+        let value = map_results(results);
+
+        Ok(if with_context {
+            OptionalContext::Context(RpcResponse {
+                context: RpcResponseContext::new(context_slot),
+                value,
+            })
+        } else {
+            OptionalContext::NoContext(value)
+        })
     }
 
     pub async fn get_first_available_block(&self) -> Slot {
@@ -3620,7 +3651,7 @@ pub mod rpc_full {
             meta: Self::Metadata,
             signature_str: String,
             config: Option<RpcEncodingConfigWrapper<RpcTransactionConfig>>,
-        ) -> BoxFuture<Result<Option<EncodedConfirmedTransactionWithStatusMeta>>>;
+        ) -> BoxFuture<Result<OptionalContext<Option<EncodedConfirmedTransactionWithStatusMeta>>>>;
 
         #[rpc(meta, name = "getSignaturesForAddress")]
         fn get_signatures_for_address(
@@ -3628,7 +3659,7 @@ pub mod rpc_full {
             meta: Self::Metadata,
             address: String,
             config: Option<RpcSignaturesForAddressConfig>,
-        ) -> BoxFuture<Result<Vec<RpcConfirmedTransactionStatusWithSignature>>>;
+        ) -> BoxFuture<Result<OptionalContext<Vec<RpcConfirmedTransactionStatusWithSignature>>>>;
 
         #[rpc(meta, name = "getFirstAvailableBlock")]
         fn get_first_available_block(&self, meta: Self::Metadata) -> BoxFuture<Result<Slot>>;
@@ -4225,7 +4256,8 @@ pub mod rpc_full {
             meta: Self::Metadata,
             signature_str: String,
             config: Option<RpcEncodingConfigWrapper<RpcTransactionConfig>>,
-        ) -> BoxFuture<Result<Option<EncodedConfirmedTransactionWithStatusMeta>>> {
+        ) -> BoxFuture<Result<OptionalContext<Option<EncodedConfirmedTransactionWithStatusMeta>>>>
+        {
             debug!("get_transaction rpc request received: {signature_str:?}");
             let signature = verify_signature(&signature_str);
             if let Err(err) = signature {
@@ -4239,11 +4271,13 @@ pub mod rpc_full {
             meta: Self::Metadata,
             address: String,
             config: Option<RpcSignaturesForAddressConfig>,
-        ) -> BoxFuture<Result<Vec<RpcConfirmedTransactionStatusWithSignature>>> {
+        ) -> BoxFuture<Result<OptionalContext<Vec<RpcConfirmedTransactionStatusWithSignature>>>>
+        {
             let RpcSignaturesForAddressConfig {
                 before,
                 until,
                 limit,
+                with_context,
                 commitment,
                 min_context_slot,
             } = config.unwrap_or_default();
@@ -4258,7 +4292,11 @@ pub mod rpc_full {
                         before,
                         until,
                         limit,
-                        RpcContextConfig {
+                        RpcSignaturesForAddressConfig {
+                            before: None,
+                            until: None,
+                            limit: None,
+                            with_context,
                             commitment,
                             min_context_slot,
                         },
@@ -6059,6 +6097,58 @@ pub mod tests {
         );
         let result: Vec<RpcKeyedAccount> = parse_success_result(rpc.handle_request_sync(request));
         assert_eq!(result.len(), 0);
+    }
+
+    #[test]
+    fn test_rpc_get_transaction_with_context() {
+        let rpc = RpcHandler::start();
+        let confirmed_block_signatures = rpc.create_test_transactions_and_populate_blockstore();
+        let signature = confirmed_block_signatures
+            .first()
+            .expect("expected at least one confirmed signature")
+            .to_string();
+
+        let request = create_test_request(
+            "getTransaction",
+            Some(json!([
+                signature,
+                {
+                    "encoding": "json",
+                    "commitment": "confirmed",
+                    "withContext": true,
+                }
+            ])),
+        );
+
+        let result: RpcResponse<Option<EncodedConfirmedTransactionWithStatusMeta>> =
+            parse_success_result(rpc.handle_request_sync(request));
+
+        assert_eq!(result.context, RpcResponseContext::new(0));
+        assert!(result.value.is_some());
+    }
+
+    #[test]
+    fn test_rpc_get_signatures_for_address_with_context() {
+        let rpc = RpcHandler::start();
+        rpc.create_test_transactions_and_populate_blockstore();
+
+        let request = create_test_request(
+            "getSignaturesForAddress",
+            Some(json!([
+                rpc.mint_keypair.pubkey().to_string(),
+                {
+                    "limit": 10,
+                    "commitment": "confirmed",
+                    "withContext": true,
+                }
+            ])),
+        );
+
+        let result: RpcResponse<Vec<RpcConfirmedTransactionStatusWithSignature>> =
+            parse_success_result(rpc.handle_request_sync(request));
+
+        assert_eq!(result.context, RpcResponseContext::new(0));
+        // Response shape should include context when requested, even if no signatures are found.
     }
 
     #[test]
