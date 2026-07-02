@@ -926,6 +926,11 @@ fn request_repair(
     match sender.try_send(event) {
         Ok(()) => Ok(()),
         Err(TrySendError::Full(event)) => {
+            #[cfg(debug_assertions)]
+            panic!(
+                "invariant: {my_pubkey}: Repair event channel is full for slot {}",
+                block.slot
+            );
             error!(
                 "{my_pubkey}: Repair event channel is full, this should not happen. Blocking to \
                  send event for slot {}",
