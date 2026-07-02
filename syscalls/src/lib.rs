@@ -5016,7 +5016,7 @@ mod tests {
          */
 
         // Prepare four top level instructions: A, B, C and D
-        let ixs = [b'A', b'B', b'C', b'D'];
+        let ixs = *b"ABCD";
         for (idx, ix) in ixs.iter().enumerate() {
             invoke_context
                 .transaction_context
@@ -5280,7 +5280,7 @@ mod tests {
         We are invoking the syscall from B5, B6, B8, C, C1 and C2 for comprehensive testing.
         */
 
-        let top_level = [b'A', b'B', b'C'];
+        let top_level = *b"ABC";
         for (idx, ix) in top_level.iter().enumerate() {
             invoke_context
                 .transaction_context
