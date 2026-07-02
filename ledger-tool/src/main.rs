@@ -2441,7 +2441,7 @@ fn main() {
                                 AccessType::PrimaryForMaintenance,
                             ));
                             let _ = backup_blockstore
-                                .insert_cow_shreds(shreds.into_iter().map(Cow::Owned), true)
+                                .insert_cow_shreds(shreds.into_iter().map(Cow::Owned), None, true)
                                 .expect("Blockstore operation must succeed");
 
                             // Purge modifies state so use rw_blockstore
@@ -2483,7 +2483,7 @@ fn main() {
                             .map(Cow::Owned)
                             .collect();
                         rw_blockstore
-                            .insert_cow_shreds(shreds, true)
+                            .insert_cow_shreds(shreds, None, true)
                             .expect("Blockstore operation must succeed");
                     }
 
