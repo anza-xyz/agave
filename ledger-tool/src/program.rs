@@ -99,6 +99,59 @@ fn load_blockstore(ledger_path: &Path, arg_matches: &ArgMatches<'_>) -> Arc<Bank
     bank_forks.read().unwrap().working_bank()
 }
 
+fn append_program_run_accounts(
+    transaction_accounts: &mut Vec<(Pubkey, AccountSharedData)>,
+    loader_id: Pubkey,
+    program_id: Pubkey,
+    epoch_schedule_account: AccountSharedData,
+) -> IndexOfAccount {
+    transaction_accounts.push((
+        loader_id,
+        AccountSharedData::new(0, 0, &solana_sdk_ids::native_loader::id()),
+    ));
+
+    let program_index = transaction_accounts.len().try_into().unwrap();
+
+    transaction_accounts.push((program_id, AccountSharedData::new(0, 0, &loader_id)));
+
+    transaction_accounts.push((sysvar::epoch_schedule::id(), epoch_schedule_account));
+
+    program_index
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn append_program_run_accounts_returns_program_index_with_duplicate_accounts() {
+        let duplicate_account = Pubkey::new_unique();
+        let program_id = Pubkey::new_unique();
+        let loader_id = bpf_loader_upgradeable::id();
+        let mut transaction_accounts = vec![(
+            duplicate_account,
+            AccountSharedData::new(0, 0, &Pubkey::new_unique()),
+        )];
+        let instruction_accounts = [
+            InstructionAccount::new(0, false, true),
+            InstructionAccount::new(0, false, true),
+        ];
+
+        assert_ne!(transaction_accounts.len(), instruction_accounts.len());
+
+        let program_index = append_program_run_accounts(
+            &mut transaction_accounts,
+            loader_id,
+            program_id,
+            AccountSharedData::new(0, 0, &Pubkey::new_unique()),
+        );
+
+        assert_eq!(transaction_accounts[program_index as usize].0, program_id);
+        assert_eq!(transaction_accounts[1].0, loader_id);
+        assert_eq!(transaction_accounts[3].0, sysvar::epoch_schedule::id(),);
+    }
+}
+
 pub trait ProgramSubCommand {
     fn program_subcommand(self) -> Self;
 }
@@ -465,19 +518,14 @@ pub fn program(ledger_path: &Path, matches: &ArgMatches<'_>) {
             input.instruction_data
         }
     };
-    let program_index: u16 = instruction_accounts.len().try_into().unwrap();
-    transaction_accounts.push((
+
+    let program_index = append_program_run_accounts(
+        &mut transaction_accounts,
         loader_id,
-        AccountSharedData::new(0, 0, &solana_sdk_ids::native_loader::id()),
-    ));
-    transaction_accounts.push((
-        program_id, // ID of the loaded program. It can modify accounts with the same owner key
-        AccountSharedData::new(0, 0, &loader_id),
-    ));
-    transaction_accounts.push((
-        sysvar::epoch_schedule::id(),
+        program_id,
         create_account_shared_data_for_test(bank.epoch_schedule()),
-    ));
+    );
+
     with_mock_invoke_context!(invoke_context, transaction_context, transaction_accounts);
 
     // Adding `DELAY_VISIBILITY_SLOT_OFFSET` to slots to accommodate for delay visibility of the program
@@ -496,7 +544,7 @@ pub fn program(ledger_path: &Path, matches: &ArgMatches<'_>) {
     invoke_context
         .transaction_context
         .configure_top_level_instruction_for_tests(
-            program_index.saturating_add(1),
+            program_index,
             instruction_accounts,
             instruction_data,
         )
