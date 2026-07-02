@@ -11,6 +11,7 @@ use {
         replay_stage::ReplayStage,
         vote_simulator::{self, VoteSimulator},
     },
+    agave_votor::event::SwitchBankEvent,
     agave_votor_messages::{
         certificate::{CertSignature, GenesisCert},
         consensus_message::Block,
@@ -6122,6 +6123,50 @@ fn test_tower_load() {
         ReplayStage::load_tower(&tower_storage, &node_pubkey, &vote_account, &bank_forks).unwrap();
     assert_eq!(tower.vote_state, expected_tower.vote_state);
     assert_eq!(tower.node_pubkey, expected_tower.node_pubkey);
+}
+
+#[test]
+fn test_process_switch_bank_events_clears_dead_slot_when_bank_already_matches() {
+    let GenesisConfigInfo { genesis_config, .. } = create_genesis_config(123);
+    let bank_forks = BankForks::new_rw_arc(Bank::new_for_tests(&genesis_config));
+    let root_bank = bank_forks.read().unwrap().root_bank();
+    let bank = Bank::new_from_parent(root_bank, SlotLeader::default(), 1);
+    let slot = bank.slot();
+    let last_blockhash = bank.last_blockhash();
+    let block_id = Hash::new_unique();
+    bank.set_block_id(Some(block_id));
+    bank_forks.write().unwrap().insert(bank);
+
+    let ledger_path = get_tmp_ledger_path_auto_delete!();
+    let blockstore = Blockstore::open(ledger_path.path()).unwrap();
+    blockstore.set_dead_slot(slot).unwrap();
+
+    let mut fork_progress = ForkProgress::new(last_blockhash, None, None, 0, 0, None);
+    fork_progress.mark_dead(DeadSlotReason::Hard);
+    let mut progress = ProgressMap::default();
+    progress.insert(slot, fork_progress);
+
+    let latest_switch_request = LatestSwitchRequest::default();
+    latest_switch_request.try_advance(SwitchBankEvent::Switch {
+        block: Block { slot, block_id },
+    });
+    let mut pending_switch = None;
+    let mut async_verification_freelist = vec![];
+
+    ReplayStage::process_switch_bank_events(
+        &Pubkey::new_unique(),
+        &latest_switch_request,
+        &mut pending_switch,
+        &blockstore,
+        &bank_forks,
+        &mut progress,
+        &mut async_verification_freelist,
+    )
+    .unwrap();
+
+    assert!(pending_switch.is_none());
+    assert!(!blockstore.is_dead(slot));
+    assert_eq!(progress.is_dead(slot), Some(false));
 }
 
 #[test]
