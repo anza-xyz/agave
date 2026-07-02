@@ -74,7 +74,8 @@ fn validate_certified_slot_progress(
         .collect::<Vec<_>>();
     assert!(
         missing_slots.is_empty(),
-        "byzfuzz invariant failed: missing progress certificates up to {min_certified_slot}: {missing_slots:?}",
+        "byzfuzz invariant failed: missing progress certificates up to {min_certified_slot}: \
+         {missing_slots:?}",
     );
 }
 
@@ -124,7 +125,10 @@ fn slots_with_vote_quorum(
         }
     }
 
-    let total_stake = source_stakes.values().map(|stake| *stake as u128).sum::<u128>();
+    let total_stake = source_stakes
+        .values()
+        .map(|stake| *stake as u128)
+        .sum::<u128>();
     let stake_of = |sources: &HashSet<Pubkey>| -> u128 {
         sources
             .iter()
@@ -200,7 +204,8 @@ fn validate_no_conflicting_notarization_after_finalization(data: &AlpenglowInter
             for block in notarized_blocks {
                 assert_eq!(
                     *block, finalized_block,
-                    "byzfuzz invariant failed: slot {slot} finalized {finalized_block:?} but notarized {block:?}",
+                    "byzfuzz invariant failed: slot {slot} finalized {finalized_block:?} but \
+                     notarized {block:?}",
                 );
             }
         }
@@ -242,7 +247,8 @@ fn validate_correct_nodes_do_not_double_sign(
         if let Some(existing) = votes_by_source_kind_slot.get(&key) {
             assert_eq!(
                 *existing, payload,
-                "byzfuzz invariant failed: correct node {source} signed multiple {kind:?} payloads in slot {slot}: {existing:?} and {payload:?}",
+                "byzfuzz invariant failed: correct node {source} signed multiple {kind:?} \
+                 payloads in slot {slot}: {existing:?} and {payload:?}",
             );
         } else {
             votes_by_source_kind_slot.insert(key, payload);
@@ -321,7 +327,8 @@ fn record_finalized_block(finalized_by_slot: &mut HashMap<Slot, Block>, slot: Sl
     if let Some(existing) = finalized_by_slot.get(&slot) {
         assert_eq!(
             *existing, block,
-            "byzfuzz invariant failed: slot {slot} finalized multiple payloads: {existing:?} and {block:?}",
+            "byzfuzz invariant failed: slot {slot} finalized multiple payloads: {existing:?} and \
+             {block:?}",
         );
     } else {
         finalized_by_slot.insert(slot, block);
@@ -335,9 +342,7 @@ fn certificate_signing_stake(
 ) -> u64 {
     match decode(&certificate.bitmap, validator_count).unwrap_or_else(|err| {
         let cert_type = &certificate.cert_type;
-        panic!(
-            "byzfuzz invariant failed: failed to decode {cert_type:?}: {err:?}",
-        )
+        panic!("byzfuzz invariant failed: failed to decode {cert_type:?}: {err:?}",)
     }) {
         Decoded::Base2(signers) => signer_stake(signers.iter_ones(), rank_stakes),
         Decoded::Base3(primary, fallback) => {
@@ -368,7 +373,8 @@ fn rank_stakes(
         if let Some(existing) = rank_stakes.insert(vote_message.rank, stake) {
             assert_eq!(
                 existing, stake,
-                "byzfuzz invariant failed: rank {} mapped to multiple stakes: {existing} and {stake}",
+                "byzfuzz invariant failed: rank {} mapped to multiple stakes: {existing} and \
+                 {stake}",
                 vote_message.rank
             );
         }

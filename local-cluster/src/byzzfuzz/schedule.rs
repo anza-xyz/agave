@@ -34,9 +34,14 @@ const SLOTS_PER_LEADER_WINDOW: Slot = 4;
 const DEFAULT_NETWORK_FAULTS: usize = 8;
 /// Number of corruption windows per schedule.
 const DEFAULT_CORRUPTION_WINDOWS: usize = 8;
-/// A node may only be isolated if its stake is under this percent of total, so
-/// the online core stays above the 60% quorum and consensus can still progress.
-const MAX_ISOLATED_STAKE_PERCENT: u128 = 40;
+/// A node may be isolated only if doing so keeps the online *honest* core at or
+/// above the 60% quorum.  The online core loses both the isolated node's stake
+/// and the byzantine nodes' stake — byzantine nodes may equivocate, so their
+/// stake can't be counted toward a coherent quorum — hence we bound
+/// `isolated_stake + byzantine_stake` by this percent of total.  Bounding only
+/// the isolated node's own stake is unsound: e.g. with 19% byzantine, isolating
+/// a 30% node leaves just 51% coherent honest stake and the cluster deadlocks.
+const MAX_OFFLINE_STAKE_PERCENT: u128 = 40;
 
 /// Isolates a set of nodes for a window of slots.  Any message whose source or
 /// destination is isolated is dropped while the window is active.
@@ -60,23 +65,32 @@ impl FaultSchedule {
         seed: u64,
         nodes: &[Pubkey],
         stakes: &HashMap<Pubkey, u64>,
+        byzantine: &HashSet<Pubkey>,
         max_slot: Slot,
     ) -> Self {
         let mut rng = AlpenglowRng::seed_from_u64(seed);
-        // Only nodes under MAX_ISOLATED_STAKE_PERCENT may be isolated, so the
-        // online core always keeps above the 60% quorum.
         let total_stake = stakes.values().map(|stake| *stake as u128).sum::<u128>();
+        // Byzantine stake is effectively offline for quorum purposes: an
+        // equivocating node can't be counted toward a coherent certificate.
+        let byzantine_stake = byzantine
+            .iter()
+            .map(|node| stakes.get(node).copied().unwrap_or(0) as u128)
+            .sum::<u128>();
+        // A node is isolatable only if `isolated + byzantine` stake stays at or
+        // below MAX_OFFLINE_STAKE_PERCENT, so the coherent honest core always
+        // keeps at or above the 60% quorum.
         let isolatable = nodes
             .iter()
             .copied()
             .filter(|node| {
                 let stake = stakes.get(node).copied().unwrap_or(0) as u128;
-                stake * 100 < MAX_ISOLATED_STAKE_PERCENT * total_stake
+                (stake + byzantine_stake) * 100 <= MAX_OFFLINE_STAKE_PERCENT * total_stake
             })
             .collect::<Vec<_>>();
         assert!(
             !isolatable.is_empty(),
-            "byzfuzz: no node is under {MAX_ISOLATED_STAKE_PERCENT}% stake to isolate",
+            "byzfuzz: no node keeps coherent honest stake >= 60% when isolated (byzantine stake \
+             {byzantine_stake} of {total_stake} too high?)",
         );
         // Each network fault isolates one isolatable node, and the windows are
         // placed in disjoint time buckets so at most one node is ever isolated
@@ -129,9 +143,7 @@ impl FaultSchedule {
         let mut hasher = std::collections::hash_map::DefaultHasher::new();
         self.corruption_seed.hash(&mut hasher);
         destination.hash(&mut hasher);
-        if let Ok(bytes) = wincode::serialize(message) {
-            bytes.hash(&mut hasher);
-        }
+        message.hash(&mut hasher);
         AlpenglowRng::seed_from_u64(hasher.finish())
     }
 }

@@ -4,6 +4,7 @@ use {
         certificate::{Certificate, CertificateType},
         consensus_message::{Block, ConsensusMessage, VoteMessage},
         vote::Vote,
+        wire::get_vote_payload_to_sign,
     },
     rand::Rng,
     solana_bls_signatures::{Signature as BLSSignature, keypair::Keypair as BLSKeypair},
@@ -16,6 +17,7 @@ const MAX_DELAY_MESSAGES: usize = 16;
 
 pub(crate) fn maybe_mutate_alpenglow_message(
     message: &ConsensusMessage,
+    shred_version: u16,
     rng: &mut AlpenglowRng,
     source_bls_keypair: Option<&BLSKeypair>,
 ) -> Option<AlpenglowInterceptAction> {
@@ -23,7 +25,7 @@ pub(crate) fn maybe_mutate_alpenglow_message(
         return None;
     }
     let mutation = Mutations::ALL[rng.random_range(0..Mutations::ALL.len())];
-    mutation.apply(message, rng, source_bls_keypair)
+    mutation.apply(message, shred_version, rng, source_bls_keypair)
 }
 
 #[derive(Clone, Copy, Debug)]
@@ -77,6 +79,7 @@ impl Mutations {
     fn apply(
         self,
         message: &ConsensusMessage,
+        shred_version: u16,
         rng: &mut AlpenglowRng,
         source_bls_keypair: Option<&BLSKeypair>,
     ) -> Option<AlpenglowInterceptAction> {
@@ -88,7 +91,7 @@ impl Mutations {
                 rng.random_range(MIN_DELAY_MESSAGES..=MAX_DELAY_MESSAGES),
             )),
             _ => self
-                .mutate_message(message, rng, source_bls_keypair)
+                .mutate_message(message, shred_version, rng, source_bls_keypair)
                 .map(|message| AlpenglowInterceptAction::Replace(Box::new(message))),
         }
     }
@@ -96,6 +99,7 @@ impl Mutations {
     fn mutate_message(
         self,
         message: &ConsensusMessage,
+        shred_version: u16,
         rng: &mut AlpenglowRng,
         source_bls_keypair: Option<&BLSKeypair>,
     ) -> Option<ConsensusMessage> {
@@ -104,7 +108,7 @@ impl Mutations {
                 .mutate_certificate(cert, rng)
                 .map(ConsensusMessage::Certificate),
             ConsensusMessage::Vote(vote) => self
-                .mutate_vote_message(vote, rng, source_bls_keypair)
+                .mutate_vote_message(vote, shred_version, rng, source_bls_keypair)
                 .map(ConsensusMessage::Vote),
         }
     }
@@ -135,6 +139,7 @@ impl Mutations {
     fn mutate_vote_message(
         self,
         vote_message: &VoteMessage,
+        shred_version: u16,
         rng: &mut AlpenglowRng,
         source_bls_keypair: Option<&BLSKeypair>,
     ) -> Option<VoteMessage> {
@@ -157,9 +162,8 @@ impl Mutations {
             }
         }
         // Re-sign mutated votes as the sending validator.
-        mutated.signature = source_bls_keypair
-            .sign(wincode::serialize(&mutated.vote).ok()?.as_slice())
-            .into();
+        let vote_payload = get_vote_payload_to_sign(mutated.vote, shred_version);
+        mutated.signature = source_bls_keypair.sign(vote_payload.as_slice()).into();
         Some(mutated)
     }
 

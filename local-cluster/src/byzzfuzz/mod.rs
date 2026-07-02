@@ -2,34 +2,37 @@ mod interceptor;
 mod invariants;
 mod mutations;
 mod schedule;
-use agave_votor_messages::consensus_message::BLS_KEYPAIR_DERIVE_SEED;
-use log::*;
-use solana_bls_signatures::keypair::Keypair as BLSKeypair;
-use solana_clock::Slot;
-use solana_core::validator::ValidatorConfig;
-use solana_epoch_schedule::MINIMUM_SLOTS_PER_EPOCH;
-use solana_leader_schedule::FixedSchedule;
-use solana_net_utils::SocketAddrSpace;
-use solana_signer::Signer;
-use std::{
-    collections::{HashMap, HashSet},
-    sync::{
-        Arc,
-        atomic::{AtomicU64, Ordering},
+use {
+    crate::{
+        byzzfuzz::{
+            interceptor::{AlpenglowInterceptAction, AlpenglowInterceptor},
+            invariants::validate_invariants,
+            mutations::maybe_mutate_alpenglow_message,
+            schedule::{FaultSchedule, message_slot},
+        },
+        integration_tests::{
+            AG_DEBUG_LOG_FILTER, DEFAULT_NODE_STAKE, create_custom_leader_schedule_with_random_keys,
+        },
+        local_cluster::{ClusterConfig, LocalCluster},
+        validator_configs::safe_clone_config,
     },
-    time::{SystemTime, UNIX_EPOCH},
-};
-
-use crate::{
-    byzzfuzz::interceptor::{AlpenglowInterceptAction, AlpenglowInterceptor},
-    byzzfuzz::invariants::validate_invariants,
-    byzzfuzz::mutations::maybe_mutate_alpenglow_message,
-    byzzfuzz::schedule::{FaultSchedule, message_slot},
-    integration_tests::{
-        AG_DEBUG_LOG_FILTER, DEFAULT_NODE_STAKE, create_custom_leader_schedule_with_random_keys,
+    agave_votor_messages::consensus_message::BLS_KEYPAIR_DERIVE_SEED,
+    log::*,
+    solana_bls_signatures::keypair::Keypair as BLSKeypair,
+    solana_clock::Slot,
+    solana_core::validator::ValidatorConfig,
+    solana_epoch_schedule::MINIMUM_SLOTS_PER_EPOCH,
+    solana_leader_schedule::FixedSchedule,
+    solana_net_utils::SocketAddrSpace,
+    solana_signer::Signer,
+    std::{
+        collections::{HashMap, HashSet},
+        sync::{
+            Arc,
+            atomic::{AtomicU64, Ordering},
+        },
+        time::{SystemTime, UNIX_EPOCH},
     },
-    local_cluster::{ClusterConfig, LocalCluster},
-    validator_configs::safe_clone_config,
 };
 
 #[test]
@@ -102,6 +105,7 @@ fn test_alpenglow_byzfuzz() {
         random_seed,
         &node_pubkeys,
         &source_stakes,
+        &byzantine_sources,
         ROOT_SLOT_TO_WAIT_FOR,
     ));
     info!("byzfuzz fault schedule (seed {random_seed}): {schedule:?}");
@@ -136,9 +140,12 @@ fn test_alpenglow_byzfuzz() {
             // the same vote to different peers can be mutated differently.
             let mut rng =
                 schedule_for_policy.corruption_rng(&intercepted.message, &intercepted.destination);
-            if let Some(action) =
-                maybe_mutate_alpenglow_message(&intercepted.message, &mut rng, source_bls_keypair)
-            {
+            if let Some(action) = maybe_mutate_alpenglow_message(
+                &intercepted.message,
+                intercepted.shred_version,
+                &mut rng,
+                source_bls_keypair,
+            ) {
                 return action;
             }
         }
@@ -146,8 +153,7 @@ fn test_alpenglow_byzfuzz() {
     });
 
     info!(
-        "Alpenglow byzantine test stake distribution \
-         (byzantine indices = {BYZANTINE_INDICES:?} \
+        "Alpenglow byzantine test stake distribution (byzantine indices = {BYZANTINE_INDICES:?} \
          {node_stakes:?} (sum = {total_cluster_stake})",
     );
     // initialize validator config

@@ -26,7 +26,7 @@ dev-context-only-utils = [
 agave-feature-set = { workspace = true }
 agave-logger = { workspace = true }
 agave-snapshots = { workspace = true }
-agave-votor = { workspace = true }
+agave-votor = { workspace = true, features = ["fuzzing"] }
 agave-votor-messages = { workspace = true }
 crossbeam-channel = { workspace = true }
 itertools = { workspace = true }

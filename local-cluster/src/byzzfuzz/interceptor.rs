@@ -7,6 +7,8 @@ use {
     agave_votor_messages::{
         certificate::Certificate,
         consensus_message::{ConsensusMessage, VoteMessage},
+        unverified_vote_message::DecodedWireConsensusMessage,
+        wire::VersionedWireConsensusMessage,
     },
     crossbeam_channel::bounded,
     log::{debug, warn},
@@ -49,6 +51,7 @@ pub struct AlpenglowInterceptedMessage {
     pub source: Pubkey,
     pub destination: Pubkey,
     pub message: ConsensusMessage,
+    pub shred_version: u16,
     // Logical time: the highest slot the interceptor has observed so far.  Used
     // for temporal faults (partitions) that depend on how far consensus has
     // progressed, not on which slot a given message is about.
@@ -79,6 +82,7 @@ struct DelayedMessage {
     source: Pubkey,
     destination: Pubkey,
     message: ConsensusMessage,
+    shred_version: u16,
 }
 
 pub struct AlpenglowInterceptor {
@@ -92,10 +96,7 @@ pub struct AlpenglowInterceptor {
 impl AlpenglowInterceptor {
     pub fn new(
         validator_keys: &[ValidatorKeys],
-        policy: impl Fn(AlpenglowInterceptedMessage) -> AlpenglowInterceptAction
-        + Send
-        + Sync
-        + 'static,
+        policy: impl Fn(AlpenglowInterceptedMessage) -> AlpenglowInterceptAction + Send + Sync + 'static,
     ) -> Self {
         let source_clients = Arc::new(Self::source_clients(validator_keys));
         let staked_nodes = Self::staked_nodes(validator_keys);
@@ -263,10 +264,39 @@ impl AlpenglowInterceptor {
                             warn!("AlpenglowInterceptor: packet missing source identity");
                             continue;
                         };
-                        let Ok(message) = packet.deserialize_slice::<ConsensusMessage, _>(..)
+                        let Some(bytes) = packet.data(..) else {
+                            warn!("AlpenglowInterceptor: packet missing data");
+                            continue;
+                        };
+                        let Ok(wire_message) =
+                            wincode::deserialize::<VersionedWireConsensusMessage>(bytes)
                         else {
                             warn!("AlpenglowInterceptor: malformed consensus message");
                             continue;
+                        };
+                        // Preserve the wire shred version so forwarded messages are
+                        // accepted by the destination validator's sigverifier.
+                        let shred_version = wire_message.shred_version();
+                        // Passing the message's own shred version makes the decode's
+                        // shred-version filter a no-op; the interceptor relays rather
+                        // than validates.
+                        let Some(decoded) =
+                            DecodedWireConsensusMessage::try_new(wire_message, shred_version)
+                        else {
+                            warn!("AlpenglowInterceptor: malformed consensus message");
+                            continue;
+                        };
+                        let message = match decoded {
+                            DecodedWireConsensusMessage::Vote(vote) => {
+                                ConsensusMessage::new_vote(vote.vote, vote.signature, vote.rank)
+                            }
+                            DecodedWireConsensusMessage::Certificate(cert) => {
+                                ConsensusMessage::new_certificate(
+                                    cert.cert_type,
+                                    cert.bitmap,
+                                    cert.signature,
+                                )
+                            }
                         };
                         // Advance the shared logical clock; `now` is monotonic.
                         let now = current_slot
@@ -279,6 +309,7 @@ impl AlpenglowInterceptor {
                             source,
                             destination,
                             message: message.clone(),
+                            shred_version,
                             current_slot: now,
                         });
                         match action {
@@ -286,6 +317,7 @@ impl AlpenglowInterceptor {
                                 source,
                                 destination,
                                 message,
+                                shred_version,
                                 source_clients.clone(),
                                 destinations.clone(),
                                 exit.clone(),
@@ -298,6 +330,7 @@ impl AlpenglowInterceptor {
                                     source,
                                     destination,
                                     message.clone(),
+                                    shred_version,
                                     source_clients.clone(),
                                     destinations.clone(),
                                     exit.clone(),
@@ -306,6 +339,7 @@ impl AlpenglowInterceptor {
                                     source,
                                     destination,
                                     message,
+                                    shred_version,
                                     source_clients.clone(),
                                     destinations.clone(),
                                     exit.clone(),
@@ -315,6 +349,7 @@ impl AlpenglowInterceptor {
                                 Self::forward_to_all(
                                     source,
                                     message,
+                                    shred_version,
                                     all_destinations.clone(),
                                     source_clients.clone(),
                                     destinations.clone(),
@@ -329,12 +364,14 @@ impl AlpenglowInterceptor {
                                     source,
                                     destination,
                                     message,
+                                    shred_version,
                                 );
                             }
                             AlpenglowInterceptAction::Replace(message) => Self::forward(
                                 source,
                                 destination,
                                 *message,
+                                shred_version,
                                 source_clients.clone(),
                                 destinations.clone(),
                                 exit.clone(),
@@ -377,6 +414,7 @@ impl AlpenglowInterceptor {
         source: Pubkey,
         destination: Pubkey,
         message: ConsensusMessage,
+        shred_version: u16,
     ) {
         // Hold the message until the protocol advances `delay` slots past it.
         let release_at = slot.saturating_add(delay.clamp(1, 16) as u64);
@@ -385,6 +423,7 @@ impl AlpenglowInterceptor {
             source,
             destination,
             message,
+            shred_version,
         });
     }
 
@@ -413,6 +452,7 @@ impl AlpenglowInterceptor {
                 delayed.source,
                 delayed.destination,
                 delayed.message,
+                delayed.shred_version,
                 source_clients.clone(),
                 destinations.clone(),
                 exit.clone(),
@@ -423,6 +463,7 @@ impl AlpenglowInterceptor {
     fn forward_to_all(
         source: Pubkey,
         message: ConsensusMessage,
+        shred_version: u16,
         all_destinations: Arc<Vec<Pubkey>>,
         source_clients: Arc<HashMap<Pubkey, Arc<ConnectionCache>>>,
         destinations: Arc<RwLock<HashMap<Pubkey, SocketAddr>>>,
@@ -433,6 +474,7 @@ impl AlpenglowInterceptor {
                 source,
                 destination,
                 message.clone(),
+                shred_version,
                 source_clients.clone(),
                 destinations.clone(),
                 exit.clone(),
@@ -444,6 +486,7 @@ impl AlpenglowInterceptor {
         source: Pubkey,
         destination: Pubkey,
         message: ConsensusMessage,
+        shred_version: u16,
         source_clients: Arc<HashMap<Pubkey, Arc<ConnectionCache>>>,
         destinations: Arc<RwLock<HashMap<Pubkey, SocketAddr>>>,
         exit: Arc<AtomicBool>,
@@ -456,12 +499,17 @@ impl AlpenglowInterceptor {
             warn!("AlpenglowInterceptor: unknown source {source}");
             return;
         };
-        let Ok(buf) = wincode::serialize(&message) else {
+        // Re-wrap into the wire format so the destination validator's
+        // sigverifier can decode it; preserve the original shred version.
+        let wire_message = VersionedWireConsensusMessage::new(message, shred_version);
+        let Ok(buf) = wincode::serialize(&wire_message) else {
             unreachable!("AlpenglowInterceptor: failed to serialize message");
         };
         let client = source_client.get_connection(&destination_addr);
         if let Err(err) = client.send_data_async(Arc::new(buf)) {
-            unreachable!("AlpenglowInterceptor: failed to forward {source} -> {destination}: {err:?}");
+            unreachable!(
+                "AlpenglowInterceptor: failed to forward {source} -> {destination}: {err:?}"
+            );
         }
     }
 

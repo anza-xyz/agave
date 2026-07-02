@@ -331,6 +331,13 @@ impl VersionedWireConsensusMessage {
             Self::V1(v1) => v1.slot(),
         }
     }
+
+    /// Returns the shred version carried by the message.
+    pub fn shred_version(&self) -> u16 {
+        match self {
+            Self::V1(v1) => v1.shred_version,
+        }
+    }
 }
 
 #[cfg_attr(
