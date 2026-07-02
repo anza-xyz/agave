@@ -2974,7 +2974,7 @@ pub mod rpc_minimal {
 
             debug!("get_leader_schedule rpc request received: {slot:?}");
 
-            Ok(meta
+            let schedule_by_identity = meta
                 .leader_schedule_cache
                 .get_epoch_leader_schedule(epoch)
                 .map(|leader_schedule| {
@@ -2985,11 +2985,20 @@ pub mod rpc_minimal {
                                 .map(|slot_leader| &slot_leader.id)
                                 .enumerate(),
                         );
-                    if let Some(identity) = config.identity {
-                        schedule_by_identity.retain(|k, _| *k == identity);
+                    if let Some(ref identity) = config.identity {
+                        schedule_by_identity.retain(|k, _| k == identity);
                     }
                     schedule_by_identity
-                }))
+                });
+
+            if let Some(identity) = config.identity
+                && let Some(scheduled_by_identity) = &schedule_by_identity
+                && scheduled_by_identity.is_empty()
+            {
+                return Err(RpcCustomError::LeaderScheduleIdentityNotFound { identity }.into());
+            }
+
+            Ok(schedule_by_identity)
         }
     }
 }
@@ -4627,6 +4636,7 @@ pub mod tests {
         solana_rpc_client_api::{
             custom_error::{
                 JSON_RPC_SERVER_ERROR_BLOCK_NOT_AVAILABLE,
+                JSON_RPC_SERVER_ERROR_LEADER_SCHEDULE_IDENTITY_NOT_FOUND,
                 JSON_RPC_SERVER_ERROR_TRANSACTION_HISTORY_NOT_AVAILABLE,
                 JSON_RPC_SERVER_ERROR_UNSUPPORTED_TRANSACTION_VERSION,
             },
@@ -5551,14 +5561,15 @@ pub mod tests {
         let expected: Option<RpcLeaderSchedule> = None;
         assert_eq!(result, expected);
 
-        let request = create_test_request(
-            "getLeaderSchedule",
-            Some(json!([{"identity": Pubkey::new_unique().to_string() }])),
+        let identity = Pubkey::new_unique().to_string();
+        let request =
+            create_test_request("getLeaderSchedule", Some(json!([{"identity": identity }])));
+        let response = parse_failure_response(rpc.handle_request_sync(request));
+        let expected = (
+            JSON_RPC_SERVER_ERROR_LEADER_SCHEDULE_IDENTITY_NOT_FOUND,
+            format!("Node {identity} was not in the leader schedule for specified epoch"),
         );
-        let result: Option<RpcLeaderSchedule> =
-            parse_success_result(rpc.handle_request_sync(request));
-        let expected = Some(HashMap::default());
-        assert_eq!(result, expected);
+        assert_eq!(response, expected);
     }
 
     #[test]
