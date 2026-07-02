@@ -21,6 +21,12 @@ Release channels have their own copy of this changelog:
 ### Validator
 #### Breaking
 #### Changes
+### SDK
+#### Breaking
+* solana-program-test: syscall getters (e.g. `Rent::get()`, `Clock::get()`) and `solana_sysvar::get_sysvar()` now return
+  `ProgramError::UnsupportedSysvar` in native-mode processors (programs  registered with `processor!`). Programs 
+  executed as BPF (including the bundled SPL programs), are unaffected, even when invoked via CPI from a native
+  processor. See `program-test/tests/sysvar.rs` for examples of what is and is not supported.
 
 ## 4.2.0
 ### RPC
