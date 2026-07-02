@@ -52,7 +52,6 @@ use {
     },
     solana_signer::Signer,
     solana_svm_log_collector::ic_msg,
-    solana_svm_timings::ExecuteTimings,
     solana_sysvar::{SysvarSerialize, last_restart_slot::LastRestartSlot},
     solana_sysvar_id::SysvarId,
     solana_vote_program::vote_state::{VoteStateV4, VoteStateVersions},
@@ -348,11 +347,6 @@ impl solana_sysvar::program_stubs::SyscallStubs for SyscallStubs {
     ) -> ProgramResult {
         let invoke_context = get_invoke_context();
         let log_collector = invoke_context.get_log_collector();
-        let transaction_context = &invoke_context.transaction_context;
-        let instruction_context = transaction_context
-            .get_current_instruction_context()
-            .unwrap();
-        let caller = instruction_context.get_program_key().unwrap();
 
         stable_log::program_invoke(
             &log_collector,
@@ -360,35 +354,28 @@ impl solana_sysvar::program_stubs::SyscallStubs for SyscallStubs {
             invoke_context.get_stack_height(),
         );
 
-        let signers = signers_seeds
-            .iter()
-            .map(|seeds| Pubkey::create_program_address(seeds, caller).unwrap())
-            .collect::<Vec<_>>();
-
-        invoke_context
-            .prepare_next_cpi_instruction(instruction.clone(), &signers)
-            .unwrap();
-
-        // Copy caller's account_info modifications into invoke_context accounts
+        // Copy the caller's account_info modifications into the invoke context's
+        // accounts so the callee can see them. The set of accounts participating
+        // in the CPI is derived from the instruction's metas, mirroring what
+        // `native_invoke_signed` prepares internally.
         let transaction_context = &invoke_context.transaction_context;
         let instruction_context = transaction_context
             .get_current_instruction_context()
             .unwrap();
-        let next_instruction_context = transaction_context.get_next_instruction_context().unwrap();
-        let next_instruction_accounts = next_instruction_context.instruction_accounts();
-        let mut account_indices = Vec::with_capacity(next_instruction_accounts.len());
-        for instruction_account in next_instruction_accounts.iter() {
-            let account_key = transaction_context
-                .get_key_of_account_at_index(instruction_account.index_in_transaction)
+        let mut account_indices = Vec::with_capacity(instruction.accounts.len());
+        for account_meta in instruction.accounts.iter() {
+            let index_in_transaction = transaction_context
+                .find_index_of_account(&account_meta.pubkey)
+                .ok_or(InstructionError::MissingAccount)
                 .unwrap();
             let account_info_index = account_infos
                 .iter()
-                .position(|account_info| account_info.unsigned_key() == account_key)
+                .position(|account_info| account_info.unsigned_key() == &account_meta.pubkey)
                 .ok_or(InstructionError::MissingAccount)
                 .unwrap();
             let account_info = &account_infos[account_info_index];
             let index_in_caller = instruction_context
-                .get_index_of_account_in_instruction(instruction_account.index_in_transaction)
+                .get_index_of_account_in_instruction(index_in_transaction)
                 .unwrap();
             let mut borrowed_account = instruction_context
                 .try_borrow_instruction_account(index_in_caller)
@@ -415,15 +402,13 @@ impl solana_sysvar::program_stubs::SyscallStubs for SyscallStubs {
                     .set_owner(account_info.owner.as_ref())
                     .unwrap();
             }
-            if instruction_account.is_writable() {
-                account_indices
-                    .push((instruction_account.index_in_transaction, account_info_index));
+            if account_meta.is_writable {
+                account_indices.push((index_in_transaction, account_info_index));
             }
         }
 
-        let mut compute_units_consumed = 0;
         invoke_context
-            .process_instruction(&mut compute_units_consumed, &mut ExecuteTimings::default())
+            .native_invoke_signed(instruction.clone(), signers_seeds)
             .map_err(|err| ProgramError::try_from(err).unwrap_or_else(|err| panic!("{}", err)))?;
 
         // Copy invoke_context accounts modifications into caller's account_info

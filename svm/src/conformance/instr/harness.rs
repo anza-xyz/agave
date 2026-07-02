@@ -2,15 +2,12 @@
 
 use {
     super::{context::InstrContext, effects::InstrEffects},
-    crate::{
-        conformance::{
-            callback::DefaultCallback,
-            setup::{
-                InvokeContextFields, compute_budget, prepare_invoke_context_fields,
-                program_runtime_environments,
-            },
+    crate::conformance::{
+        callback::DefaultCallback,
+        setup::{
+            InvokeContextFields, compute_budget, prepare_invoke_context_fields,
+            program_runtime_environments,
         },
-        message_processor::process_message,
     },
     solana_instruction::error::InstructionError,
     solana_program_runtime::{
@@ -20,7 +17,6 @@ use {
     solana_pubkey::Pubkey,
     solana_svm_callback::InvokeContextCallback,
     solana_svm_timings::ExecuteTimings,
-    solana_transaction_error::TransactionError,
     std::rc::Rc,
 };
 #[cfg(feature = "conformance")]
@@ -93,17 +89,13 @@ pub fn execute_instr_with_callback<C: InvokeContextCallback>(
             execution_cost,
         );
 
-        match process_message(
+        match invoke_context.process_message(
             &sanitized_message,
-            &mut invoke_context,
             &mut timings,
             &mut compute_units_consumed,
         ) {
             Ok(()) => Ok(()),
-            Err(TransactionError::InstructionError(_, err)) => Err(err),
-            // `process_message` only ever returns `InstructionError`-shaped
-            // failures.
-            Err(_) => unreachable!(),
+            Err((_, err)) => Err(err),
         }
     };
 

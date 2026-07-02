@@ -21,7 +21,7 @@ name = "solana_program_runtime"
 [features]
 agave-unstable-api = []
 conf-stack-frame-size = ["solana-sbpf/conf-stack-frame-size"]
-dev-context-only-utils = ["dep:solana-message"]
+dev-context-only-utils = ["dep:qualifier_attr", "dep:solana-message"]
 dummy-for-ci-check = ["metrics"]
 frozen-abi = ["dep:solana-frozen-abi", "dep:solana-frozen-abi-macro"]
 metrics = []
@@ -80,12 +80,18 @@ wincode = { workspace = true }
 
 [dev-dependencies]
 assert_matches = { workspace = true }
+libsecp256k1 = { workspace = true }
+openssl = { workspace = true }
 solana-account-info = { workspace = true }
+solana-ed25519-program = { workspace = true }
 solana-instruction = { workspace = true, features = ["bincode"] }
 solana-instruction-error = { workspace = true, features = ["serde"] }
 solana-keypair = { workspace = true }
+solana-precompile-error = { workspace = true }
 solana-program-runtime = { path = ".", features = ["agave-unstable-api", "dev-context-only-utils"] }
 solana-pubkey = { workspace = true, features = ["rand"] }
+solana-secp256k1-program = { workspace = true, features = ["bincode"] }
+solana-secp256r1-program = { workspace = true, features = ["openssl-vendored"] }
 solana-signer = { workspace = true }
 solana-transaction = { workspace = true, features = ["dev-context-only-utils"] }
 solana-transaction-context = { path = "../transaction-context", features = [
