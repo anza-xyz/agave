@@ -21,6 +21,7 @@ use {
             ReedSolomonCache, Shred, ShredFlags, ShredId, ShredType, Shredder,
             filter::ShredRecoveryContext,
             merkle_tree::{MerkleTree, SIZE_OF_MERKLE_PROOF_ENTRY, get_proof_size},
+            tracer::{self as shred_tracer, ShredTraceStage},
         },
         slot_stats::{ShredSource, SlotsStats},
         transaction_address_lookup_table_scanner::scan_transaction,
@@ -1727,6 +1728,9 @@ impl Blockstore {
             &shred_insertion_tracker.just_inserted_shreds,
             shred_recovery_context,
         );
+        for shred in &recovered_shreds {
+            shred_tracer::maybe_trace(ShredTraceStage::Recovered, shred);
+        }
         shred_recovery_context.try_retransmit_shreds(recovered_shreds);
 
         metrics.num_recovered += recovered_data_shreds.len();
@@ -2266,6 +2270,9 @@ impl Blockstore {
         self.write_batch(shred_insertion_tracker.write_batch)?;
         start.stop();
         metrics.write_batch_elapsed_us += start.as_us();
+        for shred in shred_insertion_tracker.just_inserted_shreds.values() {
+            shred_tracer::maybe_trace_shred(ShredTraceStage::Blockstore, shred);
+        }
 
         send_signals(
             &self.new_shreds_signals.lock().unwrap(),

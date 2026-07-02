@@ -19,7 +19,10 @@ use {
     solana_leader_schedule::NUM_CONSECUTIVE_LEADER_SLOTS,
     solana_ledger::{
         leader_schedule_cache::LeaderScheduleCache,
-        shred::{self, ShredFlags, ShredId, ShredType},
+        shred::{
+            self, ShredFlags, ShredId, ShredType,
+            tracer::{self as shred_tracer, ShredTraceStage},
+        },
     },
     solana_measure::measure::Measure,
     solana_net_utils::SocketAddrSpace,
@@ -520,6 +523,7 @@ fn retransmit_shred(
         .unwrap_or_default();
     let mut retransmit_time = Measure::start("retransmit_to");
     let num_addrs = addrs.len();
+    shred_tracer::maybe_trace_with_shred_id(ShredTraceStage::Retransmit, shred.as_ref(), key);
     let num_nodes = match socket {
         RetransmitSocket::Xdp(sender) => {
             let mut sent = num_addrs;
