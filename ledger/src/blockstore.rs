@@ -2435,6 +2435,7 @@ impl Blockstore {
     /// 2. Purges the original column data while preserving alternate columns
     /// 3. Copies shreds from the alternate location to the original location
     /// 4. Verify that the switch was successful
+    /// 5. Clear any stale dead-slot marker
     ///
     /// Holds `insert_shreds_lock` for the entire operation.
     ///
@@ -2496,12 +2497,17 @@ impl Blockstore {
         metrics.copy_elapsed_us = copy_measure.as_us();
 
         // 4. Verify the switch was successful
-        debug_assert!(
-            self.meta(slot)?
-                .expect("Slot must have SlotMeta after switch")
-                .is_full(),
-            "Slot must be full after switch"
-        );
+        let switched_meta = self
+            .meta(slot)?
+            .expect("Slot must have SlotMeta after switch");
+        debug_assert!(switched_meta.is_full(), "Slot must be full after switch");
+
+        // 5. Clear any stale dead-slot marker
+        if switched_meta.is_full() {
+            // Dead markers are slot-scoped. Once the repaired block is installed
+            // as Original, the old marker would make replay reject it.
+            self.remove_dead_slot(slot)?;
+        }
         total_measure.stop();
         metrics.total_elapsed_us = total_measure.as_us();
 

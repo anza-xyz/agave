@@ -6719,6 +6719,71 @@ fn test_get_data_shreds_for_slot() {
     }
 }
 
+#[test]
+fn test_switch_block_from_alternate_clears_dead_slot() {
+    let ledger_path = get_tmp_ledger_path_auto_delete!();
+    let blockstore = Blockstore::open(ledger_path.path()).unwrap();
+    let parent_slot = 990;
+    let slot = 1000;
+    let num_entries = 200;
+    let alternate_location = BlockLocation::Alternate {
+        block_id: Hash::new_unique(),
+    };
+
+    let (alternate_data_shreds, _coding_shreds, leader_schedule_cache) =
+        setup_erasure_shreds(slot, parent_slot, num_entries);
+    let shreds = alternate_data_shreds
+        .iter()
+        .map(|shred| (Cow::Borrowed(shred), true, alternate_location));
+    let insert_results = blockstore
+        .do_insert_shreds(
+            shreds,
+            Some(&leader_schedule_cache),
+            false,
+            None,
+            &mut BlockstoreInsertionMetrics::default(),
+        )
+        .unwrap();
+    assert!(insert_results.duplicate_shreds.is_empty());
+    assert!(blockstore.meta(slot).unwrap().is_none());
+    assert!(
+        blockstore
+            .meta_from_location(slot, alternate_location)
+            .unwrap()
+            .unwrap()
+            .is_full()
+    );
+
+    let expected_block_id = blockstore
+        .get_double_merkle_root(slot, alternate_location)
+        .unwrap()
+        .unwrap();
+
+    blockstore.set_dead_slot(slot).unwrap();
+    assert_matches!(
+        blockstore.get_slot_entries_with_shred_info(slot, 0, false),
+        Err(BlockstoreError::DeadSlot)
+    );
+
+    blockstore
+        .switch_block_from_alternate(slot, alternate_location)
+        .unwrap();
+
+    assert!(!blockstore.is_dead(slot));
+    assert_eq!(
+        blockstore
+            .get_double_merkle_root(slot, BlockLocation::Original)
+            .unwrap(),
+        Some(expected_block_id),
+    );
+
+    let (_entries, num_shreds, is_full) = blockstore
+        .get_slot_entries_with_shred_info(slot, 0, false)
+        .unwrap();
+    assert!(is_full);
+    assert_eq!(num_shreds, alternate_data_shreds.len() as u64);
+}
+
 #[test_matrix([true, false], [
     (990, 980, false, false), // update parent before block header -> not dead
     (980, 990, false, true),  // update parent after block header -> dead
