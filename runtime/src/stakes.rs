@@ -30,6 +30,7 @@ use {
         sync::{Arc, RwLock, RwLockReadGuard},
     },
     thiserror::Error,
+    wincode::{SchemaWrite, containers::FromIntoIterator, len::BincodeLen},
 };
 #[cfg(feature = "dev-context-only-utils")]
 use {
@@ -191,7 +192,7 @@ impl StakesCache {
 /// the need to load the stake account from accounts-db when working with
 /// stake-delegations.
 #[cfg_attr(feature = "frozen-abi", derive(AbiExample, StableAbi, StableAbiSample))]
-#[derive(Default, Clone, PartialEq, Debug, Serialize)]
+#[derive(Default, Clone, PartialEq, Debug, Serialize, SchemaWrite)]
 #[cfg_attr(
     feature = "dev-context-only-utils",
     field_qualifiers(
@@ -212,11 +213,13 @@ pub struct Stakes<T: Clone> {
         feature = "frozen-abi",
         stable_abi_sample(with = "sample_collection_sized(rng, SequenceLenMax(1))")
     )]
+    #[wincode(with = "FromIntoIterator<ImblHashMap<Pubkey, T>, BincodeLen>")]
     stake_delegations: ImblHashMap<Pubkey, T>,
 
     /// current effective stake delegated to each vote account pubkey
     #[cfg_attr(feature = "frozen-abi", stable_abi_sample(with = "Default::default()"))]
     #[serde(skip)]
+    #[wincode(skip)]
     delegated_stakes: DelegatedStakes,
 
     /// unused

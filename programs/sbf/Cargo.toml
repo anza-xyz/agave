@@ -150,7 +150,7 @@ solana-sbf-rust-param-passing-dep = { path = "rust/param_passing_dep", version =
 solana-sbf-rust-realloc-dep = { path = "rust/realloc_dep", version = "=4.3.0-alpha.0" }
 solana-sbf-rust-realloc-invoke-dep = { path = "rust/realloc_invoke_dep", version = "=4.3.0-alpha.0" }
 solana-sdk-ids = "=3.1.0"
-solana-secp256k1-recover = "=3.1.1"
+solana-secp256k1-recover = "=3.2.0"
 solana-sha256-hasher = { version = "=3.1.0", features = ["sha2"] }
 solana-stake-interface = { version = "=4.3.0", features = ["bincode"] }
 solana-svm = { path = "../../svm", version = "=4.3.0-alpha.0" }
@@ -162,7 +162,7 @@ solana-system-interface = { version = "=3.2", features = ["bincode"] }
 solana-sysvar = "=4.0.0"
 solana-test-validator = { path = "../../test-validator", version = "=4.3.0-alpha.0" }
 solana-vote = { path = "../../vote", version = "=4.3.0-alpha.0" }
-solana-vote-interface = "6.0.2"
+solana-vote-interface = "6.0.3"
 solana-vote-program = { path = "../../programs/vote", version = "=4.3.0-alpha.0" }
 test-case = "3.3.1"
 thiserror = "2.0"

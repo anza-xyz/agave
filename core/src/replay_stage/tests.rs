@@ -12,7 +12,7 @@ use {
         vote_simulator::{self, VoteSimulator},
     },
     agave_votor_messages::{
-        certificate::{Certificate, CertificateType},
+        certificate::{CertSignature, GenesisCert},
         consensus_message::Block,
     },
     blockstore_processor::{
@@ -135,10 +135,12 @@ fn post_migration_status_for_tests() -> MigrationStatus {
         slot: 0,
         block_id: Hash::default(),
     };
-    let genesis_certificate = Arc::new(Certificate {
-        cert_type: CertificateType::Genesis(genesis_block),
-        signature: BLSSignature([0; BLS_SIGNATURE_AFFINE_SIZE]),
-        bitmap: vec![],
+    let genesis_certificate = Arc::new(GenesisCert {
+        block: genesis_block,
+        signature: CertSignature {
+            signature: BLSSignature([0; BLS_SIGNATURE_AFFINE_SIZE]),
+            bitmap: vec![],
+        },
     });
     migration_status.set_genesis_block(genesis_block);
     migration_status.set_genesis_certificate(genesis_certificate);

@@ -925,10 +925,10 @@ impl JsonRpcRequestProcessor {
         let bank = self.bank(Some(CommitmentConfig::finalized()));
         bank.get_alpenglow_genesis_certificate()
             .map(|c| WireBlockCertMessage {
-                block: c.cert_type.to_block().unwrap(),
+                block: c.block,
                 signature: WireCertSignature {
-                    signature: c.signature,
-                    bitmap: c.bitmap,
+                    signature: c.signature.signature,
+                    bitmap: c.signature.bitmap,
                 },
             })
     }

@@ -778,7 +778,7 @@ mod tests {
         },
         agave_feature_set::FeatureSet,
         agave_votor_messages::{
-            certificate::{Certificate, CertificateType},
+            certificate::{CertSignature, GenesisCert},
             consensus_message::Block,
             migration::{GENESIS_CERTIFICATE_ACCOUNT, MIGRATION_SLOT_OFFSET},
             wire::{WireBlockCertMessage, WireCertSignature},
@@ -978,7 +978,7 @@ mod tests {
     fn make_root_bank_for_migration_status_test(
         root_slot: Slot,
         ff_activation_slot: Option<Slot>,
-        genesis_cert: Option<Certificate>,
+        genesis_cert: Option<GenesisCert>,
     ) -> Bank {
         let GenesisConfigInfo {
             mut genesis_config, ..
@@ -987,10 +987,10 @@ mod tests {
 
         if let Some(genesis_cert) = genesis_cert {
             let cert = WireBlockCertMessage {
-                block: genesis_cert.cert_type.to_block().unwrap(),
+                block: genesis_cert.block,
                 signature: WireCertSignature {
-                    signature: genesis_cert.signature,
-                    bitmap: genesis_cert.bitmap,
+                    signature: genesis_cert.signature.signature,
+                    bitmap: genesis_cert.signature.bitmap,
                 },
             };
             let cert_data = wincode::serialize(&cert).unwrap();
@@ -1028,13 +1028,15 @@ mod tests {
     #[test]
     fn test_initialize_migration_status() {
         let ff_activation_slot = 5;
-        let genesis_cert = Certificate {
-            cert_type: CertificateType::Genesis(Block {
+        let genesis_cert = GenesisCert {
+            block: Block {
                 slot: 1,
                 block_id: Hash::default(),
-            }),
-            signature: BLSSignature([0; BLS_SIGNATURE_AFFINE_SIZE]),
-            bitmap: vec![],
+            },
+            signature: CertSignature {
+                signature: BLSSignature([0; BLS_SIGNATURE_AFFINE_SIZE]),
+                bitmap: vec![],
+            },
         };
 
         let root_bank = make_root_bank_for_migration_status_test(0, None, None);
@@ -1055,8 +1057,8 @@ mod tests {
             Some(genesis_cert.clone()),
         );
         assert_eq!(
-            root_bank.get_alpenglow_genesis_certificate(),
-            Some(genesis_cert.clone())
+            root_bank.get_alpenglow_genesis_certificate().unwrap(),
+            genesis_cert.clone()
         );
         let migration_status = BankForks::initialize_migration_status(&root_bank);
         assert!(migration_status.is_alpenglow_enabled());
@@ -1111,13 +1113,15 @@ mod tests {
 
         // Migration can still succeed
         let mut bank = Bank::new_from_parent(root_bank, SlotLeader::default(), 10);
-        let genesis_cert = Certificate {
-            cert_type: CertificateType::Genesis(Block {
+        let genesis_cert = GenesisCert {
+            block: Block {
                 slot: 1,
                 block_id: Hash::new_unique(),
-            }),
-            signature: BLSSignature([0; BLS_SIGNATURE_AFFINE_SIZE]),
-            bitmap: vec![],
+            },
+            signature: CertSignature {
+                signature: BLSSignature([0; BLS_SIGNATURE_AFFINE_SIZE]),
+                bitmap: vec![],
+            },
         };
         bank.activate_feature(&agave_feature_set::alpenglow::id());
         bank.set_alpenglow_genesis_certificate(&genesis_cert);

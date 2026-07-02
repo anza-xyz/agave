@@ -15,7 +15,10 @@ use {
     },
     agave_bls_sigverify::generated_cert_types::GeneratedCertTypes,
     agave_votor_messages::{
-        certificate::{Certificate, CertificateType},
+        certificate::{
+            CertSignature, Certificate, CertificateType, FastFinalizeCert, FinalizeCert,
+            GenesisCert, NotarCert,
+        },
         consensus_message::{Block, ConsensusMessage, VoteMessage},
         finalized_slot::FinalizedSlot,
         fraction::Fraction,
@@ -147,6 +150,9 @@ impl ConsensusPool {
             VoteType::Notarize => VotePool::DuplicateBlockVotePool(DuplicateBlockVotePool::new(
                 MAX_ENTRIES_PER_PUBKEY_FOR_OTHER_TYPES,
             )),
+            VoteType::Genesis => VotePool::DuplicateBlockVotePool(DuplicateBlockVotePool::new(
+                MAX_ENTRIES_PER_PUBKEY_FOR_OTHER_TYPES,
+            )),
             _ => VotePool::SimpleVotePool(SimpleVotePool::default()),
         }
     }
@@ -231,7 +237,7 @@ impl ConsensusPool {
                 }
             });
             let new_cert = Arc::new(cert_builder.build()?);
-            self.insert_certificate(root_bank, cert_type, new_cert.clone(), events);
+            self.insert_certificate(root_bank, new_cert.clone(), events);
             self.generated_cert_types.insert_cert(cert_type);
             self.stats.incr_generated_cert(&new_cert.cert_type);
             new_certificates_to_send.push(new_cert);
@@ -276,17 +282,17 @@ impl ConsensusPool {
     fn insert_certificate(
         &mut self,
         root_bank: &Bank,
-        cert_type: CertificateType,
         cert: Arc<Certificate>,
         events: &mut Vec<VotorEvent>,
     ) {
         trace!(
             "{}: Inserting certificate {:?}",
             self.cluster_info.id(),
-            cert_type
+            cert.cert_type
         );
-        self.completed_certificates.insert(cert_type, cert.clone());
-        match cert_type {
+        self.completed_certificates
+            .insert(cert.cert_type, cert.clone());
+        match cert.cert_type {
             CertificateType::NotarizeFallback(block) => {
                 events.push(VotorEvent::BlockNotarFallback(block));
                 self.parent_ready_tracker
@@ -306,10 +312,17 @@ impl ConsensusPool {
                         .highest_finalized_slot()
                         .is_none_or(|s| s < FinalizedSlot::Slow(block.slot))
                     {
+                        let notarize_cert = NotarCert {
+                            block,
+                            signature: CertSignature {
+                                signature: cert.signature,
+                                bitmap: cert.bitmap.clone(),
+                            },
+                        };
                         self.highest_finalized_slot_cert =
                             Some(ValidatedBlockFinalizationCert::from_validated_slow(
-                                Arc::unwrap_or_clone(finalize_cert.clone()),
-                                Arc::unwrap_or_clone(cert),
+                                finalize_cert,
+                                notarize_cert,
                                 root_bank,
                             ));
                     }
@@ -317,16 +330,23 @@ impl ConsensusPool {
             }
             CertificateType::Finalize(slot) => {
                 if let Some(notarize_cert) = self.get_notarize_cert(slot) {
-                    let block = notarize_cert.cert_type.to_block().unwrap();
+                    let block = notarize_cert.block;
                     events.push(VotorEvent::Finalized(block, false));
                     if self
                         .highest_finalized_slot()
                         .is_none_or(|s| s < FinalizedSlot::Slow(slot))
                     {
+                        let finalize_cert = FinalizeCert {
+                            slot,
+                            signature: CertSignature {
+                                signature: cert.signature,
+                                bitmap: cert.bitmap.clone(),
+                            },
+                        };
                         self.highest_finalized_slot_cert =
                             Some(ValidatedBlockFinalizationCert::from_validated_slow(
-                                Arc::unwrap_or_clone(cert),
-                                Arc::unwrap_or_clone(notarize_cert),
+                                finalize_cert,
+                                notarize_cert,
                                 root_bank,
                             ));
                     }
@@ -340,15 +360,29 @@ impl ConsensusPool {
                     .highest_finalized_slot()
                     .is_none_or(|s| s < FinalizedSlot::Fast(block.slot))
                 {
+                    let fast_finalize_cert = FastFinalizeCert {
+                        block,
+                        signature: CertSignature {
+                            signature: cert.signature,
+                            bitmap: cert.bitmap.clone(),
+                        },
+                    };
                     self.highest_finalized_slot_cert =
                         Some(ValidatedBlockFinalizationCert::from_validated_fast(
-                            Arc::unwrap_or_clone(cert),
+                            fast_finalize_cert,
                             root_bank,
                         ));
                 }
             }
             CertificateType::Genesis(block) => {
-                self.migration_status.set_genesis_certificate(cert);
+                let genesis_cert = Arc::new(GenesisCert {
+                    block,
+                    signature: CertSignature {
+                        signature: cert.signature,
+                        bitmap: cert.bitmap.clone(),
+                    },
+                });
+                self.migration_status.set_genesis_certificate(genesis_cert);
                 // The genesis block is automatically certified
                 self.parent_ready_tracker
                     .add_new_notar_fallback_or_stronger(block, events);
@@ -472,26 +506,39 @@ impl ConsensusPool {
             return Ok(vec![]);
         }
         let cert = Arc::new(cert);
-        self.insert_certificate(root_bank, cert_type, cert.clone(), events);
+        self.insert_certificate(root_bank, cert.clone(), events);
         self.stats.incr_ingested_cert(&cert_type);
 
         Ok(vec![cert])
     }
 
     /// Get the Notarize certificate for a slot
-    fn get_notarize_cert(&self, slot: Slot) -> Option<Arc<Certificate>> {
+    fn get_notarize_cert(&self, slot: Slot) -> Option<NotarCert> {
         self.completed_certificates
             .iter()
             .find_map(|(cert_type, cert)| match cert_type {
-                CertificateType::Notarize(block) if slot == block.slot => Some(cert.clone()),
+                CertificateType::Notarize(block) if slot == block.slot => Some(NotarCert {
+                    block: *block,
+                    signature: CertSignature {
+                        signature: cert.signature,
+                        bitmap: cert.bitmap.clone(),
+                    },
+                }),
                 _ => None,
             })
     }
 
     /// Get the Finalize certificate for a slot
-    fn get_finalize_cert(&self, slot: Slot) -> Option<&Arc<Certificate>> {
+    fn get_finalize_cert(&self, slot: Slot) -> Option<FinalizeCert> {
         self.completed_certificates
             .get(&CertificateType::Finalize(slot))
+            .map(|c| FinalizeCert {
+                slot,
+                signature: CertSignature {
+                    signature: c.signature,
+                    bitmap: c.bitmap.clone(),
+                },
+            })
     }
 
     /// Get the highest finalized slot (slow or fast)

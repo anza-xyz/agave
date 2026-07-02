@@ -17,7 +17,7 @@ mod tests {
         },
         agave_feature_set::FeatureSet,
         agave_votor_messages::{
-            certificate::{Certificate, CertificateType},
+            certificate::{CertSignature, GenesisCert},
             consensus_message::Block,
         },
         solana_account::{Account, ReadableAccount, from_account},
@@ -282,7 +282,7 @@ mod tests {
             let first_slot_in_reward_epoch = payout_bank
                 .epoch_schedule
                 .get_first_slot_in_epoch(reward_bank.epoch());
-            let num_tower_slots = genesis_cert.cert_type.slot() - first_slot_in_reward_epoch + 1;
+            let num_tower_slots = genesis_cert.block.slot - first_slot_in_reward_epoch + 1;
             let total_slots = reward_bank.epoch_schedule.slots_per_epoch;
 
             let rent_exempt_reserve = reward_bank
@@ -437,13 +437,15 @@ mod tests {
 
         let bank_with_tower_rewards = state.add_tower_rewards(bank_at_migration0);
 
-        let genesis_cert = Certificate {
-            cert_type: CertificateType::Genesis(Block {
+        let genesis_cert = GenesisCert {
+            block: Block {
                 slot: bank_with_tower_rewards.slot(),
                 block_id: Hash::default(),
-            }),
-            signature: BLSSignature([0; BLS_SIGNATURE_AFFINE_SIZE]),
-            bitmap: vec![],
+            },
+            signature: CertSignature {
+                signature: BLSSignature([0; BLS_SIGNATURE_AFFINE_SIZE]),
+                bitmap: vec![],
+            },
         };
         bank_with_tower_rewards.set_alpenglow_genesis_certificate(&genesis_cert);
         let bank_with_genesis_cert_slot = bank_with_tower_rewards.slot() + 10_000;

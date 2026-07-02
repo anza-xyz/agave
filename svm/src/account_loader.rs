@@ -659,7 +659,7 @@ fn construct_instructions_account(message: &impl SVMMessage) -> Result<AccountSh
 
     Ok(AccountSharedData::from(Account {
         data: construct_instructions_data(&decompiled_instructions)
-            .map_err(|_err| TransactionError::InstructionsSysvarOverflow)?,
+            .map_err(|_err| TransactionError::MaxLoadedAccountsDataSizeExceeded)?,
         owner: sysvar::id(),
         ..Account::default()
     }))
@@ -2328,7 +2328,7 @@ mod tests {
         assert!(matches!(
             load_result,
             TransactionLoadResult::FeesOnly(FeesOnlyTransaction {
-                load_error: TransactionError::InstructionsSysvarOverflow,
+                load_error: TransactionError::MaxLoadedAccountsDataSizeExceeded,
                 ..
             }),
         ));

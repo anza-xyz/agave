@@ -132,7 +132,7 @@
 use {
     crate::entry::{Entry, MaxDataShredsLen},
     agave_votor_messages::{
-        certificate::{Certificate, CertificateType},
+        certificate::{CertSignature, GenesisCert},
         reward_certificate::{NotarRewardCertificate, SkipRewardCertificate},
     },
     solana_bls_signatures::{
@@ -243,25 +243,22 @@ impl GenesisCertBlockMarker {
     pub const MAX_BITMAP_SIZE: usize = 512;
 }
 
-impl TryFrom<Certificate> for GenesisCertBlockMarker {
+impl TryFrom<GenesisCert> for GenesisCertBlockMarker {
     type Error = String;
 
-    fn try_from(cert: Certificate) -> Result<Self, Self::Error> {
-        let CertificateType::Genesis(block) = cert.cert_type else {
-            return Err("expected genesis certificate".into());
-        };
-        if cert.bitmap.len() > Self::MAX_BITMAP_SIZE {
+    fn try_from(cert: GenesisCert) -> Result<Self, Self::Error> {
+        if cert.signature.bitmap.len() > Self::MAX_BITMAP_SIZE {
             return Err(format!(
                 "bitmap size {} exceeds max {}",
-                cert.bitmap.len(),
+                cert.signature.bitmap.len(),
                 Self::MAX_BITMAP_SIZE
             ));
         }
         Ok(Self {
-            slot: block.slot,
-            block_id: block.block_id,
-            bls_signature: cert.signature,
-            bitmap: cert.bitmap,
+            slot: cert.block.slot,
+            block_id: cert.block.block_id,
+            bls_signature: cert.signature.signature,
+            bitmap: cert.signature.bitmap,
         })
     }
 }
@@ -305,11 +302,11 @@ impl VotesAggregate {
     /// # Panics
     /// Panics if the signature cannot be converted to compressed format.
     /// This should never happen for valid certificates from the consensus pool.
-    pub fn from_certificate(cert: &Certificate) -> Self {
+    pub fn from_cert_signature(signature: CertSignature) -> Self {
         Self {
-            signature: BLSSignatureCompressed::try_from(&cert.signature)
+            signature: BLSSignatureCompressed::try_from(&signature.signature)
                 .expect("valid certificate signature should convert to compressed format"),
-            bitmap: cert.bitmap.clone(),
+            bitmap: signature.bitmap,
         }
     }
 

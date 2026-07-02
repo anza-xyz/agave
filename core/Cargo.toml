@@ -93,6 +93,7 @@ serde_bytes = { workspace = true }
 shaq = { workspace = true }
 signal-hook = { workspace = true }
 slab = { workspace = true }
+smallvec = { workspace = true }
 solana-account = { workspace = true }
 solana-accounts-db = { workspace = true }
 solana-address-lookup-table-interface = { workspace = true }

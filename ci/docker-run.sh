@@ -127,7 +127,6 @@ ARGS+=(
   --env CI_JOB_ID
   --env CI_PULL_REQUEST
   --env CI_REPO_SLUG
-  --env CRATES_IO_TOKEN
 )
 
 CODECOV_ENVS=

@@ -1,18 +1,18 @@
-// The VmSlice class is used for cases when you need a slice that is stored in the BPF
-// interpreter's virtual address space. Because this source code can be compiled with
-// addresses of different bit depths, we cannot assume that the 64-bit BPF interpreter's
-// pointer sizes can be mapped to physical pointer sizes. In particular, if you need a
-// slice-of-slices in the virtual space, the inner slices will be different sizes in a
-// 32-bit app build than in the 64-bit virtual space. Therefore instead of a slice-of-slices,
-// you should implement a slice-of-VmSlices, which can then use VmSlice::translate() to
-// map to the physical address.
-// This class must consist only of 16 bytes: a u64 ptr and a u64 len, to match the 64-bit
-// implementation of a slice in Rust. The PhantomData entry takes up 0 bytes.
-
 use std::marker::PhantomData;
 
-/// VmSlice serves as a stable layout for slices shared between the guest and the host.
-/// It is also the layout for SolSignerSeedC and SolSignerSeedsC.
+/// A guest-side representation of a slice of memory.
+///
+/// `VmSlice` serves as a stable layout for memory shared between the guest and the host.
+/// It is also the layout for `SolSignerSeedC` and `SolSignerSeedsC`. `VmSlice` is used anytime you
+/// need a slice that is stored in the BPF interpreter's virtual address space. Because this source
+/// code can be compiled with addresses of different bit depths, we cannot assume that the 64-bit
+/// BPF interpreter's pointer sizes can be mapped to physical pointer sizes (`usize`, `*const u8`,
+/// etc.)
+///
+/// In particular, if you need a slice-of-slices in the virtual space, the inner slices will
+/// be different sizes in a 32-bit app build than in the 64-bit virtual space. Therefore instead of
+/// a slice-of-slices, you should implement a slice-of-VmSlices, which can then use
+/// [`VmSlice::translate`] to map to the physical address.
 #[repr(C)]
 #[derive(Copy, Clone, Debug, PartialEq)]
 pub struct VmSlice<T> {
@@ -47,11 +47,11 @@ impl<T> VmSlice<T> {
             .saturating_add(self.len().saturating_mul(size_of::<T>() as u64))
     }
 
-    /// # Safety
-    /// Set a new length for the mapped area.
-    /// This function is not safe to use if not coupled with the respective change in
-    /// the underlying vector.
-    pub unsafe fn set_len(&mut self, new_len: u64) {
+    pub fn set_len(&mut self, new_len: u64) {
         self.len = new_len;
     }
 }
+
+const _: () = assert!(size_of::<VmSlice<u8>>() == 16);
+const _: () = assert!(size_of::<VmSlice<u64>>() == 16);
+const _: () = assert!(size_of::<VmSlice<VmSlice<u8>>>() == 16);
