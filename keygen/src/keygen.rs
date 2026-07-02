@@ -393,7 +393,8 @@ fn app<'a>(num_threads: &'a str, crate_version: &'a str) -> Command<'a> {
                 ),
         )
         .subcommand(
-            Command::new("bls_pubkey")
+            Command::new("bls-pubkey")
+                .alias("bls_pubkey")
                 .about("Display the compressed BLS pubkey derived from given ed25519 keypair file")
                 .disable_version_flag(true)
                 .arg(
@@ -539,7 +540,7 @@ fn do_main(matches: &ArgMatches) -> Result<(), Box<dyn error::Error>> {
                 println!("{pubkey}");
             }
         }
-        ("bls_pubkey", matches) => {
+        ("bls-pubkey", matches) => {
             let keypair = get_keypair_from_matches(matches, config, &mut wallet_manager)?;
             let bls_keypair = BLSKeypair::derive_from_signer(&keypair, BLS_KEYPAIR_DERIVE_SEED)?;
             let bls_pubkey_compressed = bls_keypair.public.to_bytes_compressed();
@@ -1315,7 +1316,7 @@ mod tests {
 
         process_test_command(&[
             "solana-keygen",
-            "bls_pubkey",
+            "bls-pubkey",
             "--outfile",
             &outfile_path,
             &keypair_file,
