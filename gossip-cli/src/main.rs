@@ -42,7 +42,17 @@ fn get_clap_app<'ab, 'v>(name: &str, about: &'ab str, version: &'v str) -> App<'
         .value_name("HOST")
         .takes_value(true)
         .validator(solana_net_utils::is_host)
-        .help("IP address to bind the node to for gossip");
+        .help("IP address to bind the sockets to");
+
+    let advertised_ip_arg = clap::Arg::with_name("advertised_ip")
+        .long("advertised-ip")
+        .value_name("HOST")
+        .takes_value(true)
+        .validator(solana_net_utils::is_host)
+        .help(
+            "Public IP address for this node to advertise in gossip. [default: ask --entrypoint \
+             via its IP echo server, or 127.0.0.1 when --entrypoint is not provided]",
+        );
 
     App::new(name)
         .about(about)
@@ -92,6 +102,7 @@ fn get_clap_app<'ab, 'v>(name: &str, about: &'ab str, version: &'v str) -> App<'
                 .arg(&shred_version_arg)
                 .arg(&gossip_port_arg)
                 .arg(&bind_address_arg)
+                .arg(&advertised_ip_arg)
                 .setting(AppSettings::DisableVersion),
         )
         .subcommand(
@@ -147,6 +158,7 @@ fn get_clap_app<'ab, 'v>(name: &str, about: &'ab str, version: &'v str) -> App<'
                 .arg(&shred_version_arg)
                 .arg(&gossip_port_arg)
                 .arg(&bind_address_arg)
+                .arg(&advertised_ip_arg)
                 .arg(
                     Arg::with_name("timeout")
                         .long("timeout")
@@ -166,34 +178,57 @@ fn parse_matches() -> ArgMatches<'static> {
     .get_matches()
 }
 
-/// Determine bind address by checking these sources in order:
-/// 1. --bind-address cli arg
-/// 2. connect to entrypoints to determine my public IP address
-fn parse_bind_address(matches: &ArgMatches, entrypoint_addrs: &[SocketAddr]) -> IpAddr {
+/// Parse the local bind address from --bind-address, defaulting to 0.0.0.0.
+fn parse_bind_address(matches: &ArgMatches) -> IpAddr {
     if let Some(bind_address) = matches.value_of("bind_address") {
         solana_net_utils::parse_host(bind_address).unwrap_or_else(|e| {
             eprintln!("failed to parse bind-address: {e}");
             exit(1);
         })
-    } else if let Some(bind_addr) = get_bind_address_from_entrypoints(entrypoint_addrs) {
-        bind_addr
     } else {
-        eprintln!(
-            "Failed to find a valid bind address. Bind address can be provided directly with \
-             --bind-address or by the entrypoint functioning as an ip echo server."
-        );
-        exit(1);
+        IpAddr::V4(Ipv4Addr::UNSPECIFIED)
     }
 }
 
-/// Find my public IP address by attempting connections to entrypoints until one succeeds.
-fn get_bind_address_from_entrypoints(entrypoint_addrs: &[SocketAddr]) -> Option<IpAddr> {
+/// Determine the advertised IP by checking these sources in order:
+/// 1. --advertised-ip cli arg
+/// 2. connect to entrypoints to determine public IP address
+/// 3. fall back to 127.0.0.1
+fn resolve_advertised_ip(
+    matches: &ArgMatches,
+    bind_address: IpAddr,
+    entrypoint_addrs: &[SocketAddr],
+) -> IpAddr {
+    if let Some(advertised_ip) = matches.value_of("advertised_ip") {
+        solana_net_utils::parse_host(advertised_ip).unwrap_or_else(|e| {
+            eprintln!("failed to parse advertised-ip: {e}");
+            exit(1);
+        })
+    } else if let Some(ip) = get_public_ip_from_entrypoints(entrypoint_addrs, bind_address) {
+        ip
+    } else if !entrypoint_addrs.is_empty() {
+        eprintln!("Failed to determine the node's public IP address from entrypoints");
+        exit(1);
+    } else {
+        IpAddr::V4(Ipv4Addr::LOCALHOST)
+    }
+}
+
+/// Query entrypoints as IP echo servers until one returns our public IP.
+fn get_public_ip_from_entrypoints(
+    entrypoint_addrs: &[SocketAddr],
+    bind_address: IpAddr,
+) -> Option<IpAddr> {
     entrypoint_addrs.iter().find_map(|entrypoint_addr| {
-        solana_net_utils::get_public_ip_addr_with_binding(
-            entrypoint_addr,
-            IpAddr::V4(Ipv4Addr::UNSPECIFIED),
-        )
-        .ok()
+        info!("Contacting {entrypoint_addr} to determine the node's public IP address");
+        solana_net_utils::get_public_ip_addr_with_binding(entrypoint_addr, bind_address)
+            .map_or_else(
+                |err| {
+                    warn!("Failed to contact entrypoint {entrypoint_addr}: {err}");
+                    None
+                },
+                Some,
+            )
     })
 }
 
@@ -386,15 +421,13 @@ fn process_rpc_url(
 }
 
 fn get_gossip_address(matches: &ArgMatches, entrypoint_addrs: &[SocketAddr]) -> SocketAddr {
-    let bind_address = parse_bind_address(matches, entrypoint_addrs);
+    let bind_address = parse_bind_address(matches);
+    let advertised_ip = resolve_advertised_ip(matches, bind_address, entrypoint_addrs);
     SocketAddr::new(
-        bind_address,
+        advertised_ip,
         value_t!(matches, "gossip_port", u16).unwrap_or_else(|_| {
-            solana_net_utils::find_available_port_in_range(
-                IpAddr::V4(Ipv4Addr::UNSPECIFIED),
-                (0, 1),
-            )
-            .expect("unable to find an available gossip port")
+            solana_net_utils::find_available_port_in_range(bind_address, (0, 1))
+                .expect("unable to find an available gossip port")
         }),
     )
 }
