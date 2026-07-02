@@ -5,6 +5,7 @@ use {
 };
 
 mod commands;
+mod github;
 
 #[derive(Parser)]
 #[command(name = "xtask", about = "Build tasks", version)]
