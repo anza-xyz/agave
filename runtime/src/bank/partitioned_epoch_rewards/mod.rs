@@ -32,7 +32,7 @@ pub(crate) struct PartitionedStakeReward {
     pub stake_pubkey: Pubkey,
     /// Inflation reward information
     pub inflation: InflationReward,
-    /// Block rewards distributed
+    /// Block rewards due during distribution
     pub block_reward: u64,
 }
 
@@ -457,7 +457,6 @@ mod tests {
         solana_native_token::LAMPORTS_PER_SOL,
         solana_reward_info::RewardType,
         solana_signer::Signer,
-        solana_stake_interface::state::StakeStateV2,
         solana_system_transaction as system_transaction,
         solana_vote::vote_transaction,
         solana_vote_interface::state::{MAX_LOCKOUT_HISTORY, VoteStateV4, VoteStateVersions},
@@ -466,24 +465,6 @@ mod tests {
     };
 
     impl PartitionedStakeReward {
-        fn maybe_from(stake_reward: &StakeReward, block_reward: u64) -> Option<Self> {
-            if let Ok(StakeStateV2::Stake(_meta, stake, _flags)) =
-                stake_reward.stake_account.state()
-            {
-                Some(Self {
-                    stake_pubkey: stake_reward.stake_pubkey,
-                    inflation: InflationReward {
-                        stake,
-                        stake_reward: stake_reward.stake_reward_info.lamports as u64,
-                        commission_bps: stake_reward.stake_reward_info.commission_bps,
-                    },
-                    block_reward,
-                })
-            } else {
-                None
-            }
-        }
-
         pub fn new_random() -> Self {
             let mut rng = rand::rng();
             let stake_reward = rng.random_range(1..200);
@@ -544,17 +525,6 @@ mod tests {
                     .collect::<PartitionedStakeRewards>()
             })
             .collect::<Vec<_>>()
-    }
-
-    pub fn convert_rewards(
-        stake_rewards: impl IntoIterator<Item = (StakeReward, u64)>,
-    ) -> PartitionedStakeRewards {
-        stake_rewards
-            .into_iter()
-            .map(|(stake_reward, block_reward)| {
-                Some(PartitionedStakeReward::maybe_from(&stake_reward, block_reward).unwrap())
-            })
-            .collect()
     }
 
     #[derive(Debug, PartialEq, Eq, Copy, Clone)]

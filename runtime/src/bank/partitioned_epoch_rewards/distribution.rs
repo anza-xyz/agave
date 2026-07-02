@@ -434,7 +434,7 @@ mod tests {
             bank::{
                 partitioned_epoch_rewards::{
                     InflationReward, PartitionedStakeRewards, REWARD_CALCULATION_NUM_BLOCKS,
-                    epoch_rewards_hasher::hash_rewards_into_partitions, tests::convert_rewards,
+                    epoch_rewards_hasher::hash_rewards_into_partitions,
                 },
                 tests::create_genesis_config,
             },
@@ -1247,20 +1247,18 @@ mod tests {
 
         // Below new minimum, small reward, should normally be destaked
         let reward_lamports = 1;
-        let stake_reward =
-            StakeReward::new_with_pre_stake_account(reward_lamports, 0, 1, &lower_rent);
-        bank.store_account(&stake_reward.1.stake_pubkey, &stake_reward.0);
-
-        let stake_pubkey = stake_reward.1.stake_pubkey;
-        let mut stake_account = stake_reward.0;
+        let reward = PartitionedStakeReward::new_with_lamport_amounts(reward_lamports, 0, 1);
+        let rewards_to_distribute = reward.inflation.stake_reward;
+        let stake_pubkey = reward.stake_pubkey;
+        let stake_rewards = [reward];
+        populate_starting_stake_accounts_from_stake_rewards(&bank, &lower_rent, &stake_rewards);
+        let mut stake_account = bank.get_account(&stake_pubkey).unwrap();
 
         let expected_num = 1;
-        let rewards_to_distribute = stake_reward.1.stake_reward_info.lamports as u64;
-        let all_rewards = convert_rewards(vec![(stake_reward.1, stake_reward.2)]);
 
         let partitioned_rewards = StartBlockHeightAndPartitionedRewards {
             distribution_starting_block_height: bank.block_height() + REWARD_CALCULATION_NUM_BLOCKS,
-            all_stake_rewards: Arc::new(all_rewards),
+            all_stake_rewards: Arc::new(stake_rewards.into_iter().collect()),
             partition_indices: vec![(0..expected_num).collect::<Vec<_>>()],
         };
 
@@ -1292,7 +1290,7 @@ mod tests {
         let pre_stake_state: StakeStateV2 = stake_account.state().unwrap();
         assert_eq!(
             post_stake_state.delegation().unwrap().stake,
-            pre_stake_state.delegation().unwrap().stake + reward_lamports as u64
+            pre_stake_state.delegation().unwrap().stake + reward_lamports
         );
     }
 
