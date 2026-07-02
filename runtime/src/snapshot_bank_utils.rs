@@ -1447,6 +1447,175 @@ mod tests {
         }
     }
 
+    /// Test that the full zero-lamport tombstone path works end to end across snapshots.
+    /// Here's the scenario:
+    ///
+    /// slot 1:
+    ///     - fund Account1 (from Account2) to bring it to life
+    ///     - take a full snapshot, capturing Account1 with a non-zero balance
+    /// slot 2:
+    ///     - drain Account1 back to zero lamports (send to Account2)
+    ///     - root and flush so slot 2's storage (holding the zero-lamport Account1) is written
+    /// slot 3:
+    ///     - update Account2 again so its slot-2 version dies, giving slot 2 dead bytes
+    ///     - root, flush, and clean so the slot-1 (funded) version of Account1 is removed, leaving
+    ///       the zero-lamport account at slot 2 as the lone reference
+    ///     - shrink slot 2 into a tombstone: Account1 is removed from the index, its bytes retained
+    ///     - take an incremental snapshot, which must carry the tombstone
+    ///     - ensure deserializing from full + incremental is equal to this bank
+    ///     - ensure Account1 hasn't come back from the dead
+    ///
+    /// The full snapshot is older than slot 2, so shrink must NOT purge the zero-lamport account; it
+    /// has to retain the bytes as a tombstone. The incremental snapshot then carries that tombstone
+    /// so that rebuilding from full + incremental overrides the still-funded full-snapshot version
+    /// and the account ends up deleted. If the tombstone were dropped during shrink, the rebuild
+    /// would resurrect Account1 from the full snapshot and the checks below would fail.
+    #[test]
+    fn test_incremental_snapshots_handle_zero_lamport_tombstones() {
+        let key1 = Keypair::new();
+        let key2 = Keypair::new();
+
+        let (_tmp_dir, accounts_dir) = create_tmp_accounts_dir_for_tests();
+        let bank_snapshots_dir = tempfile::TempDir::new().unwrap();
+        let full_snapshot_archives_dir = tempfile::TempDir::new().unwrap();
+        let incremental_snapshot_archives_dir = tempfile::TempDir::new().unwrap();
+        let snapshot_config = snapshot_config_for_tests(
+            &bank_snapshots_dir,
+            &full_snapshot_archives_dir,
+            &incremental_snapshot_archives_dir,
+        );
+
+        let GenesisConfigInfo {
+            mut genesis_config,
+            mint_keypair,
+            ..
+        } = create_genesis_config_with_leader(
+            1_000_000 * LAMPORTS_PER_SOL,
+            &Pubkey::new_unique(),
+            1_000_000 * LAMPORTS_PER_SOL,
+        );
+        // test expects 0 transaction fee
+        genesis_config.fee_rate_governor = solana_fee_calculator::FeeRateGovernor::new(0, 0);
+
+        let lamports_to_transfer = 123_456 * LAMPORTS_PER_SOL;
+        let (bank0, bank_forks) =
+            Bank::new_with_paths_for_tests(&genesis_config, None, vec![accounts_dir.clone()], None)
+                .wrap_with_bank_forks_for_tests();
+        let leader = *bank0.leader();
+        bank0
+            .transfer(lamports_to_transfer, &mint_keypair, &key2.pubkey())
+            .unwrap();
+        bank0.fill_bank_with_ticks_for_tests();
+
+        let full_snapshot_slot = 1;
+        let bank1 = Bank::new_from_parent_with_bank_forks(
+            bank_forks.as_ref(),
+            bank0,
+            leader,
+            full_snapshot_slot,
+        );
+        bank1
+            .transfer(lamports_to_transfer, &key2, &key1.pubkey())
+            .unwrap();
+        bank1.fill_bank_with_ticks_for_tests();
+        bank1.set_block_id(Some(Hash::default()));
+        let full_snapshot_archive_info =
+            bank_to_full_snapshot_archive(&snapshot_config, &bank1).unwrap();
+
+        let zeroed_slot = full_snapshot_slot + 1;
+        let bank2 =
+            Bank::new_from_parent_with_bank_forks(bank_forks.as_ref(), bank1, leader, zeroed_slot);
+        bank2
+            .transfer(lamports_to_transfer, &key1, &key2.pubkey())
+            .unwrap();
+        assert_eq!(
+            bank2.get_balance(&key1.pubkey()),
+            0,
+            "Ensure Account1's balance is zero"
+        );
+        bank2.fill_bank_with_ticks_for_tests();
+        bank2.set_block_id(Some(Hash::default()));
+        // root and flush so slot 2's storage holding the zero-lamport Account1 is written
+        bank2.squash();
+        bank2.force_flush_accounts_cache();
+
+        let slot = zeroed_slot + 1;
+        let bank3 = Bank::new_from_parent_with_bank_forks(bank_forks.as_ref(), bank2, leader, slot);
+        bank3
+            .transfer(lamports_to_transfer, &mint_keypair, &key2.pubkey())
+            .unwrap();
+        bank3.fill_bank_with_ticks_for_tests();
+        bank3.set_block_id(Some(Hash::default()));
+
+        // flush and clean so slot 1's funded Account1 is removed, leaving the zero-lamport account
+        // at slot 2 as the lone reference
+        bank3.squash();
+        bank3.force_flush_accounts_cache();
+        bank3.clean_accounts();
+
+        let accounts_db = &bank3.rc.accounts.accounts_db;
+        // full snapshot is older than slot 2, so shrink keeps the tombstone instead of purging
+        accounts_db.set_latest_full_snapshot_slot(full_snapshot_slot);
+        assert_eq!(
+            accounts_db
+                .accounts_index
+                .ref_count_from_storage(&key1.pubkey()),
+            1,
+            "Ensure Account1 is a zero-lamport single-ref in the index before shrink"
+        );
+
+        // shrink converts the zero-lamport single-ref into a tombstone
+        accounts_db.shrink_all_slots(false, None);
+        assert_eq!(
+            accounts_db
+                .accounts_index
+                .ref_count_from_storage(&key1.pubkey()),
+            0,
+            "Ensure shrink removed the tombstoned account from the index"
+        );
+        assert!(
+            !accounts_db
+                .get_storages(zeroed_slot..zeroed_slot + 1)
+                .0
+                .is_empty(),
+            "Ensure the zeroed slot's storage is retained so the tombstone survives for the \
+             incremental snapshot"
+        );
+
+        let incremental_snapshot_archive_info =
+            bank_to_incremental_snapshot_archive(&snapshot_config, &bank3, full_snapshot_slot)
+                .unwrap();
+
+        let deserialized_bank = bank_from_snapshot_archives(
+            slice::from_ref(&accounts_dir),
+            &full_snapshot_archive_info,
+            Some(&incremental_snapshot_archive_info),
+            &snapshot_config,
+            &genesis_config,
+            &RuntimeConfig::default(),
+            None,
+            None, // leader_for_tests
+            None,
+            false,
+            false,
+            false,
+            ACCOUNTS_DB_CONFIG_FOR_TESTING,
+            None,
+            Arc::default(),
+        )
+        .unwrap();
+        assert_eq!(
+            deserialized_bank, *bank3,
+            "Ensure rebuilding from full + incremental (with the tombstone) matches the live bank"
+        );
+        assert!(
+            deserialized_bank
+                .get_account_modified_slot(&key1.pubkey())
+                .is_none(),
+            "Ensure Account1 has not been brought back from the dead"
+        );
+    }
+
     /// Test that cleaning works well in the edge cases of zero-lamport accounts and snapshots.
     /// Here's the scenario:
     ///
