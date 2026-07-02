@@ -20,8 +20,10 @@ name = "solana_storage_bigtable"
 
 [features]
 frozen-abi = [
+    "dep:serde",
     "dep:solana-frozen-abi",
     "dep:solana-frozen-abi-macro",
+    "dep:solana-serde",
     "solana-signature/frozen-abi",
     "solana-transaction/frozen-abi",
     "solana-transaction-error/frozen-abi",
@@ -31,7 +33,6 @@ agave-unstable-api = []
 [dependencies]
 agave-reserved-account-keys = { workspace = true }
 base64 = { workspace = true }
-bincode = { workspace = true }
 bzip2 = { workspace = true }
 flate2 = { workspace = true }
 futures = { workspace = true }
@@ -41,7 +42,7 @@ hyper-util = { workspace = true, features = ["client-legacy"] }
 log = { workspace = true }
 prost = { workspace = true }
 prost-types = { workspace = true }
-serde = { workspace = true }
+serde = { workspace = true, optional = true }
 smpl_jwt = { workspace = true }
 solana-clock = { workspace = true }
 solana-frozen-abi = { workspace = true, optional = true, features = [
@@ -53,17 +54,18 @@ solana-frozen-abi-macro = { workspace = true, optional = true, features = [
 solana-message = { workspace = true }
 solana-metrics = { workspace = true }
 solana-pubkey = { workspace = true }
-solana-serde = { workspace = true }
-solana-signature = { workspace = true }
+solana-serde = { workspace = true, optional = true }
+solana-signature = { workspace = true, features = ["wincode"] }
 solana-storage-proto = { workspace = true }
 solana-time-utils = { workspace = true }
-solana-transaction = { workspace = true }
-solana-transaction-error = { workspace = true }
+solana-transaction = { workspace = true, features = ["wincode"] }
+solana-transaction-error = { workspace = true, features = ["wincode"] }
 solana-transaction-status = { workspace = true }
 thiserror = { workspace = true }
 tokio = { workspace = true }
 tonic = { workspace = true, features = ["tls-ring", "transport"] }
 tonic-prost = { workspace = true }
+wincode = { workspace = true }
 zstd = { workspace = true }
 
 [dev-dependencies]
