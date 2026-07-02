@@ -559,7 +559,10 @@ impl AppendVec {
             callback(account)
         } else {
             // not enough was read from file to get `data`
-            assert!(data_len <= MAX_PERMITTED_DATA_LENGTH, "{data_len}");
+            if data_len > MAX_PERMITTED_DATA_LENGTH {
+                // malformed record: data_len exceeds protocol max; bail like the rest of the scan-callback contract
+                return None;
+            }
             let mut data: Box<[MaybeUninit<u8>]> = Box::new_uninit_slice(data_len as usize);
             // instead, we could piece together what we already read here. Maybe we just needed 1 more byte.
             // Note here `next` is a 0-based offset from the beginning of this account.
@@ -657,7 +660,10 @@ impl AppendVec {
             create_account_shared_data(&account)
         } else {
             // not enough was read from file to get `data`
-            assert!(data_len <= MAX_PERMITTED_DATA_LENGTH, "{data_len}");
+            if data_len > MAX_PERMITTED_DATA_LENGTH {
+                // malformed record: data_len exceeds protocol max; bail like the rest of the scan-callback contract
+                return None;
+            }
             let mut data = Vec::with_capacity(data_len as usize);
             let slice = data.spare_capacity_mut();
             // Note here `next` is a 0-based offset from the beginning of this account.
