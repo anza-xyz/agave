@@ -32,5 +32,9 @@ solana-lattice-hash = { path = ".", features = ["agave-unstable-api"] }
 name = "bench_lt_hash"
 harness = false
 
+[[bench]]
+name = "bench_batch"
+harness = false
+
 [lints]
 workspace = true
