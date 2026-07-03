@@ -579,10 +579,17 @@ impl EventHandler {
     ) -> Option<Block> {
         let Block { slot, block_id } = finalized_block;
         let first_slot_of_window = first_of_consecutive_leader_slots(slot);
-        if first_slot_of_window == slot || first_slot_of_window == 0 {
-            // No need to trigger parent ready for the first slot of the window
+        if first_slot_of_window == 0 {
+            // Genesis window is parent-ready from startup; nothing to synthesize.
             return None;
         }
+        // NB: we intentionally do NOT bail when `first_slot_of_window == slot`.
+        // If we only ever hold a finalization cert for the *first* slot of a
+        // window (e.g. every later slot got wedged and never finalized) but the
+        // skip certs that would normally bridge parent-ready into this window
+        // were missed during a partition, this is the only signal we have to
+        // rebuild the chain. The `highest_parent_ready_slot()` check below still
+        // makes this a no-op once parent-ready has advanced into the window.
         if vctx.vote_history.highest_parent_ready_slot() >= Some(first_slot_of_window)
             || !local_context.finalized_blocks.contains(&finalized_block)
         {

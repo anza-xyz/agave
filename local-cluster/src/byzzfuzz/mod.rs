@@ -5,7 +5,7 @@ mod schedule;
 use {
     crate::{
         byzzfuzz::{
-            interceptor::{AlpenglowInterceptAction, AlpenglowInterceptor},
+            interceptor::{AlpenglowInterceptAction, AlpenglowInterceptor, AlpenglowRng},
             invariants::validate_invariants,
             mutations::maybe_mutate_alpenglow_message,
             schedule::{FaultSchedule, message_slot},
@@ -18,6 +18,7 @@ use {
     },
     agave_votor_messages::consensus_message::BLS_KEYPAIR_DERIVE_SEED,
     log::*,
+    rand::{Rng, SeedableRng},
     solana_bls_signatures::keypair::Keypair as BLSKeypair,
     solana_clock::Slot,
     solana_core::validator::ValidatorConfig,
@@ -83,14 +84,21 @@ fn test_alpenglow_byzfuzz() {
     let byzantine_message_count = Arc::new(AtomicU64::new(0));
     let byzantine_message_count_for_policy = byzantine_message_count.clone();
 
-    // set stakes
+    // set stakes: the byzantine node(s) always hold a combined 19% of cluster
+    // stake (kept just under the fault threshold), while the honest nodes split
+    // the remaining 81% in random, seed-deterministic proportions.
+    const BYZANTINE_STAKE_PERCENT: u64 = 19;
     let total_cluster_stake: u64 = DEFAULT_NODE_STAKE.saturating_mul(NUM_NODES as u64);
-    let node_stakes = vec![
-        percent_of(total_cluster_stake, 19),
-        percent_of(total_cluster_stake, 21),
-        percent_of(total_cluster_stake, 30),
-        percent_of(total_cluster_stake, 30),
-    ];
+    let stake_percents = random_stake_percents(
+        random_seed,
+        NUM_NODES,
+        BYZANTINE_INDICES,
+        BYZANTINE_STAKE_PERCENT,
+    );
+    let node_stakes = stake_percents
+        .iter()
+        .map(|&pct| percent_of(total_cluster_stake, pct))
+        .collect::<Vec<_>>();
     assert_eq!(node_stakes.len(), NUM_NODES);
     let source_stakes = node_pubkeys
         .iter()
@@ -152,8 +160,8 @@ fn test_alpenglow_byzfuzz() {
     });
 
     info!(
-        "Alpenglow byzantine test stake distribution (byzantine indices = {BYZANTINE_INDICES:?} \
-         {node_stakes:?} (sum = {total_cluster_stake})",
+        "Alpenglow byzantine test stake distribution (byzantine indices = {BYZANTINE_INDICES:?}, \
+         percents = {stake_percents:?}, stakes = {node_stakes:?} (sum = {total_cluster_stake})",
     );
     // initialize validator config
     let mut validator_config = ValidatorConfig::default_for_test();
@@ -215,4 +223,93 @@ fn test_alpenglow_byzfuzz() {
 
 fn percent_of(total: u64, percent: u64) -> u64 {
     (total / 100) * percent
+}
+
+/// Assign integer stake percentages (summing to exactly 100) across `num_nodes`
+/// nodes: the byzantine nodes hold a combined `byzantine_total_percent`, split
+/// as evenly as possible, and the honest nodes split the remainder in random,
+/// seed-deterministic proportions with every honest node getting at least 1%
+/// and no single node exceeding `MAX_NODE_STAKE_PERCENT` (so no node can form a
+/// stand-alone supermajority).
+fn random_stake_percents(
+    seed: u64,
+    num_nodes: usize,
+    byzantine_indices: &[usize],
+    byzantine_total_percent: u64,
+) -> Vec<u64> {
+    // No single node may hold more than this share of stake.
+    const MAX_NODE_STAKE_PERCENT: u64 = 50;
+    // Salt so stake randomization is independent of the fault-schedule RNG that
+    // also seeds off `seed`.
+    let mut rng = AlpenglowRng::seed_from_u64(seed ^ 0x5741_4b45_5f53_544b);
+    let honest_indices = (0..num_nodes)
+        .filter(|i| !byzantine_indices.contains(i))
+        .collect::<Vec<_>>();
+    assert!(!byzantine_indices.is_empty(), "need at least one byzantine node");
+    assert!(!honest_indices.is_empty(), "need at least one honest node");
+    let honest_total_percent = 100 - byzantine_total_percent;
+    assert!(
+        honest_total_percent as usize >= honest_indices.len(),
+        "not enough honest stake to give each honest node at least 1%",
+    );
+    assert!(
+        honest_total_percent <= honest_indices.len() as u64 * MAX_NODE_STAKE_PERCENT,
+        "honest stake cannot be spread across nodes under the per-node cap",
+    );
+    assert!(
+        byzantine_total_percent / byzantine_indices.len() as u64 <= MAX_NODE_STAKE_PERCENT,
+        "a byzantine node would exceed the per-node cap",
+    );
+
+    // Random positive weight per honest node; distribute the honest stake above
+    // the per-node floor of 1% in proportion to those weights.
+    let weights = honest_indices
+        .iter()
+        .map(|_| rng.random_range(1..=1000u64))
+        .collect::<Vec<_>>();
+    let weight_sum: u64 = weights.iter().sum();
+    let distributable = honest_total_percent - honest_indices.len() as u64;
+    let mut honest_percents = vec![1u64; honest_indices.len()];
+    let mut allocated = 0u64;
+    for (k, w) in weights.iter().enumerate() {
+        let extra = distributable * w / weight_sum;
+        honest_percents[k] += extra;
+        allocated += extra;
+    }
+    // Assign the rounding remainder to the first honest node.
+    honest_percents[0] += distributable - allocated;
+
+    // Enforce the per-node cap: clamp any honest node above the cap and
+    // water-fill the excess one point at a time into nodes that still have
+    // headroom, so the total stays exact and no node keeps a supermajority.
+    let mut excess = 0u64;
+    for p in honest_percents.iter_mut() {
+        if *p > MAX_NODE_STAKE_PERCENT {
+            excess += *p - MAX_NODE_STAKE_PERCENT;
+            *p = MAX_NODE_STAKE_PERCENT;
+        }
+    }
+    let mut k = 0usize;
+    while excess > 0 {
+        let idx = k % honest_percents.len();
+        if honest_percents[idx] < MAX_NODE_STAKE_PERCENT {
+            honest_percents[idx] += 1;
+            excess -= 1;
+        }
+        k += 1;
+    }
+
+    let mut percents = vec![0u64; num_nodes];
+    let per_byz = byzantine_total_percent / byzantine_indices.len() as u64;
+    for &i in byzantine_indices {
+        percents[i] = per_byz;
+    }
+    percents[byzantine_indices[0]] +=
+        byzantine_total_percent - per_byz * byzantine_indices.len() as u64;
+    for (k, &i) in honest_indices.iter().enumerate() {
+        percents[i] = honest_percents[k];
+    }
+    debug_assert_eq!(percents.iter().sum::<u64>(), 100);
+    debug_assert!(percents.iter().all(|&p| p <= MAX_NODE_STAKE_PERCENT));
+    percents
 }
