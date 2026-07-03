@@ -227,6 +227,7 @@ pub fn parse_process_options(ledger_path: &Path, arg_matches: &ArgMatches<'_>) -
     let log_messages_bytes_limit = value_t!(arg_matches, "log_messages_bytes_limit", usize).ok();
     let runtime_config = RuntimeConfig {
         log_messages_bytes_limit,
+        enable_stakes_cache_v2: arg_matches.is_present("enable_stakes_cache_v2"),
         ..RuntimeConfig::default()
     };
 

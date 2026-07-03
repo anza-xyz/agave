@@ -644,8 +644,6 @@ impl Bank {
         thread_pool: &ThreadPool,
         reward_calc_tracer: Option<impl RewardCalcTracer>,
     ) -> StakeDelegationsMap {
-        let stakes = self.stakes_cache.stakes();
-        let stake_delegations = stakes.stake_delegations_vec();
         // Obtain all unique voter pubkeys from stake delegations.
         fn merge(mut acc: HashSet<Pubkey>, other: HashSet<Pubkey>) -> HashSet<Pubkey> {
             if acc.len() < other.len() {
@@ -654,19 +652,34 @@ impl Bank {
             acc.extend(other);
             acc
         }
-        let voter_pubkeys = thread_pool.install(|| {
-            stake_delegations
-                .par_iter()
-                .fold(
-                    HashSet::default,
-                    |mut voter_pubkeys, (_stake_pubkey, stake_account)| {
-                        voter_pubkeys.insert(stake_account.delegation().voter_pubkey);
-                        voter_pubkeys
-                    },
-                )
-                .reduce(HashSet::default, merge)
-        });
+        let voter_pubkeys =
+            if let Some(stake_delegation_frontier) = self.stake_delegation_frontier_query() {
+                thread_pool.install(|| {
+                    stake_delegation_frontier
+                        .par_iter()
+                        .fold(
+                            HashSet::default,
+                            |mut voter_pubkeys, (_stake_pubkey, stake_account)| {
+                                voter_pubkeys.insert(stake_account.delegation().voter_pubkey);
+                                voter_pubkeys
+                            },
+                        )
+                        .reduce(HashSet::default, merge)
+                })
+            } else {
+                let stakes = self.stakes_cache.stakes();
+                thread_pool.install(|| {
+                    stakes.stake_delegations().iter().fold(
+                        HashSet::default(),
+                        |mut voter_pubkeys, (_stake_pubkey, stake_account)| {
+                            voter_pubkeys.insert(stake_account.delegation().voter_pubkey);
+                            voter_pubkeys
+                        },
+                    )
+                })
+            };
         // Obtain vote-accounts for unique voter pubkeys.
+        let stakes = self.stakes_cache.stakes();
         let cached_vote_accounts = stakes.vote_accounts();
         let solana_vote_program: Pubkey = solana_vote_program::id();
         let vote_accounts_cache_miss_count = AtomicUsize::default();
@@ -706,12 +719,12 @@ impl Bank {
                 .collect()
         });
         // Join stake accounts with vote-accounts.
-        for (stake_pubkey, stake_account) in stake_delegations.into_iter() {
+        let push_stake_delegation = |(stake_pubkey, stake_account): (&Pubkey, &StakeAccount<_>)| {
             let delegation = stake_account.delegation();
             let Some(mut vote_delegations) =
                 stake_delegations_map.get_mut(&delegation.voter_pubkey)
             else {
-                continue;
+                return;
             };
             if let Some(reward_calc_tracer) = reward_calc_tracer.as_ref() {
                 let delegation =
@@ -721,8 +734,20 @@ impl Bank {
             }
             let stake_delegation = (*stake_pubkey, stake_account.clone());
             vote_delegations.push(stake_delegation);
+        };
+        if let Some(stake_delegation_frontier) = self.stake_delegation_frontier_query() {
+            thread_pool.install(|| {
+                stake_delegation_frontier
+                    .par_iter()
+                    .for_each(push_stake_delegation);
+            });
+        } else {
+            let stakes = self.stakes_cache.stakes();
+            stakes
+                .stake_delegations()
+                .iter()
+                .for_each(push_stake_delegation);
         }
-
         stake_delegations_map
     }
 }

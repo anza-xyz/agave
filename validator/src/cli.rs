@@ -900,6 +900,12 @@ pub fn test_app<'a>(version: &'a str, default_args: &'a DefaultTestArgs) -> App<
                 .help("Override the runtime's account lock limit per transaction"),
         )
         .arg(
+            Arg::with_name("enable_stakes_cache_v2")
+                .long("enable-stakes-cache-v2")
+                .takes_value(false)
+                .hidden(hidden_unless_forced()),
+        )
+        .arg(
             Arg::with_name("clone_feature_set")
                 .long("clone-feature-set")
                 .takes_value(false)

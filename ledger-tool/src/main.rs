@@ -27,6 +27,7 @@ use {
     serde::Serialize,
     solana_account::{AccountSharedData, ReadableAccount, WritableAccount, state_traits::StateMut},
     solana_clap_utils::{
+        hidden_unless_forced,
         input_parsers::{cluster_type_of, pubkey_of, pubkeys_of},
         input_validators::{
             is_parsable, is_pubkey, is_pubkey_or_keypair, is_slot, is_valid_percentage,
@@ -1137,6 +1138,12 @@ fn main() {
                 .arg(&allow_dead_slots_arg)
                 .arg(&debug_key_arg)
                 .arg(&geyser_plugin_args)
+                .arg(
+                    Arg::with_name("enable_stakes_cache_v2")
+                        .long("enable-stakes-cache-v2")
+                        .takes_value(false)
+                        .hidden(hidden_unless_forced()),
+                )
                 .arg(&log_messages_bytes_limit_arg)
                 .arg(
                     Arg::with_name("skip_poh_verify")

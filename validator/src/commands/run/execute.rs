@@ -829,6 +829,7 @@ pub fn execute(
         wait_to_vote_slot: None,
         runtime_config: RuntimeConfig {
             log_messages_bytes_limit: value_of(matches, "log_messages_bytes_limit"),
+            enable_stakes_cache_v2: matches.is_present("enable_stakes_cache_v2"),
             ..RuntimeConfig::default()
         },
         staked_nodes_overrides: staked_nodes_overrides.clone(),
