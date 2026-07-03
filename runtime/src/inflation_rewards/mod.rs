@@ -318,7 +318,8 @@ fn calculate_stake_rewards<'a>(
     let (voter_rewards, staker_rewards, is_split) = if is_tower_epoch {
         commission_split(voter_commission_bps, rewards)
     } else {
-        commission_split_preserve_lamports(voter_commission_bps, rewards)
+        let (voter, staker) = commission_split_preserve_lamports(voter_commission_bps, rewards);
+        (voter, staker, false) // is_split unused for AG path; unfair-split guard requires is_tower_epoch
     };
     if let Some(inflation_point_calc_tracer) = inflation_point_calc_tracer.as_ref() {
         inflation_point_calc_tracer(&InflationPointCalculationEvent::SplitRewards(
@@ -384,17 +385,17 @@ fn commission_split(commission_bps: u16, on: u64) -> (u64, u64, bool) {
     }
 }
 
-/// returns commission split as (voter_portion, staker_portion, was_split) tuple,
+/// returns commission split as (voter_portion, staker_portion) tuple,
 /// assigning any fractional-lamport remainder to the voter so no lamports are lost.
 ///
 /// This is used only for non-Tower epochs, where small unfair splits no longer defer redemption.
 #[cfg_attr(any(test, feature = "dev-context-only-utils"), qualifiers(pub(crate)))]
-fn commission_split_preserve_lamports(commission_bps: u16, on: u64) -> (u64, u64, bool) {
+fn commission_split_preserve_lamports(commission_bps: u16, on: u64) -> (u64, u64) {
     const MAX_BPS: u16 = 10_000;
     const MAX_BPS_U128: u128 = MAX_BPS as u128;
     match commission_bps.min(MAX_BPS) {
-        0 => (0, on, false),
-        MAX_BPS => (on, 0, false),
+        0 => (0, on),
+        MAX_BPS => (on, 0),
         split => {
             let staker_bps = MAX_BPS
                 .checked_sub(split)
@@ -408,7 +409,7 @@ fn commission_split_preserve_lamports(commission_bps: u16, on: u64) -> (u64, u64
                 .checked_sub(staker_rewards)
                 .expect("staker rewards cannot exceed total rewards");
 
-            (voter_rewards, staker_rewards, voter_rewards != 0 && staker_rewards != 0)
+            (voter_rewards, staker_rewards)
         }
     }
 }
@@ -1384,91 +1385,70 @@ mod tests {
     #[test]
     fn test_commission_split_preserve_lamports_bps() {
         // 0% commission
-        assert_eq!(commission_split_preserve_lamports(0, 1), (0, 1, false));
-        assert_eq!(commission_split_preserve_lamports(0, 10), (0, 10, false));
-        assert_eq!(commission_split_preserve_lamports(0, 100), (0, 100, false));
+        assert_eq!(commission_split_preserve_lamports(0, 1), (0, 1));
+        assert_eq!(commission_split_preserve_lamports(0, 10), (0, 10));
+        assert_eq!(commission_split_preserve_lamports(0, 100), (0, 100));
         assert_eq!(
             commission_split_preserve_lamports(0, u64::MAX),
-            (0, u64::MAX, false)
+            (0, u64::MAX)
         );
 
         // 100% commission (10,000 bps)
-        assert_eq!(commission_split_preserve_lamports(10_000, 1), (1, 0, false));
-        assert_eq!(
-            commission_split_preserve_lamports(10_000, 10),
-            (10, 0, false)
-        );
-        assert_eq!(
-            commission_split_preserve_lamports(10_000, 100),
-            (100, 0, false)
-        );
+        assert_eq!(commission_split_preserve_lamports(10_000, 1), (1, 0));
+        assert_eq!(commission_split_preserve_lamports(10_000, 10), (10, 0));
+        assert_eq!(commission_split_preserve_lamports(10_000, 100), (100, 0));
         assert_eq!(
             commission_split_preserve_lamports(10_000, u64::MAX),
-            (u64::MAX, 0, false)
+            (u64::MAX, 0)
         );
 
         // Values > 10,000 bps are capped at 100%
-        assert_eq!(
-            commission_split_preserve_lamports(u16::MAX, 1),
-            (1, 0, false)
-        );
+        assert_eq!(commission_split_preserve_lamports(u16::MAX, 1), (1, 0));
         assert_eq!(
             commission_split_preserve_lamports(u16::MAX, u64::MAX),
-            (u64::MAX, 0, false)
+            (u64::MAX, 0)
         );
 
         // Remainder lamports go to the voter.
-        assert_eq!(commission_split_preserve_lamports(9_900, 1), (1, 0, false));
-        assert_eq!(commission_split_preserve_lamports(9_900, 10), (10, 0, false));
-        assert_eq!(
-            commission_split_preserve_lamports(9_900, 100),
-            (99, 1, true)
-        );
-        assert_eq!(
-            commission_split_preserve_lamports(9_900, 1_000),
-            (990, 10, true)
-        );
+        assert_eq!(commission_split_preserve_lamports(9_900, 1), (1, 0));
+        assert_eq!(commission_split_preserve_lamports(9_900, 10), (10, 0));
+        assert_eq!(commission_split_preserve_lamports(9_900, 100), (99, 1));
+        assert_eq!(commission_split_preserve_lamports(9_900, 1_000), (990, 10));
 
-        assert_eq!(commission_split_preserve_lamports(100, 1), (1, 0, false));
-        assert_eq!(commission_split_preserve_lamports(100, 10), (1, 9, true));
-        assert_eq!(commission_split_preserve_lamports(100, 100), (1, 99, true));
-        assert_eq!(
-            commission_split_preserve_lamports(100, 1_000),
-            (10, 990, true)
-        );
+        assert_eq!(commission_split_preserve_lamports(100, 1), (1, 0));
+        assert_eq!(commission_split_preserve_lamports(100, 10), (1, 9));
+        assert_eq!(commission_split_preserve_lamports(100, 100), (1, 99));
+        assert_eq!(commission_split_preserve_lamports(100, 1_000), (10, 990));
 
-        assert_eq!(commission_split_preserve_lamports(5_000, 1), (1, 0, false));
-        assert_eq!(commission_split_preserve_lamports(5_000, 10), (5, 5, true));
-        assert_eq!(
-            commission_split_preserve_lamports(5_000, 100),
-            (50, 50, true)
-        );
+        assert_eq!(commission_split_preserve_lamports(5_000, 1), (1, 0));
+        assert_eq!(commission_split_preserve_lamports(5_000, 10), (5, 5));
+        assert_eq!(commission_split_preserve_lamports(5_000, 100), (50, 50));
 
-        assert_eq!(commission_split_preserve_lamports(1_234, 1), (1, 0, false));
-        assert_eq!(commission_split_preserve_lamports(1_234, 10), (2, 8, true));
+        assert_eq!(commission_split_preserve_lamports(1_234, 1), (1, 0));
+        assert_eq!(commission_split_preserve_lamports(1_234, 10), (2, 8));
         assert_eq!(
             commission_split_preserve_lamports(1_234, 1_000),
-            (124, 876, true)
+            (124, 876)
         );
         assert_eq!(
             commission_split_preserve_lamports(1_234, 10_000),
-            (1_234, 8_766, true)
+            (1_234, 8_766)
         );
 
-        assert_eq!(commission_split_preserve_lamports(3_333, 1), (1, 0, false));
-        assert_eq!(commission_split_preserve_lamports(3_333, 10), (4, 6, true));
+        assert_eq!(commission_split_preserve_lamports(3_333, 1), (1, 0));
+        assert_eq!(commission_split_preserve_lamports(3_333, 10), (4, 6));
         assert_eq!(
             commission_split_preserve_lamports(3_333, 1_000),
-            (334, 666, true)
+            (334, 666)
         );
         assert_eq!(
             commission_split_preserve_lamports(3_333, 10_000),
-            (3_333, 6_667, true)
+            (3_333, 6_667)
         );
 
-        // Rounding toward zero can floor one side to 0 lamports; was_split must be false.
-        assert_eq!(commission_split_preserve_lamports(1, 1), (1, 0, false));
-        assert_eq!(commission_split_preserve_lamports(9_999, 9_999), (9_999, 0, false));
+        // Rounding toward zero can floor one side to 0 lamports.
+        assert_eq!(commission_split_preserve_lamports(1, 1), (1, 0));
+        assert_eq!(commission_split_preserve_lamports(9_999, 9_999), (9_999, 0));
     }
 
     proptest! {
@@ -1537,7 +1517,7 @@ mod tests {
             commission_bps in 0..=u16::MAX,
             rewards in 0..=u64::MAX,
         ) {
-            let (voter, staker, was_split) =
+            let (voter, staker) =
                 commission_split_preserve_lamports(commission_bps, rewards);
 
             // Compute expected values independently from inputs, not from function outputs,
@@ -1551,39 +1531,34 @@ mod tests {
             // Invariant 1: The full reward amount is assigned.
             prop_assert_eq!(voter + staker, rewards);
 
-            // Invariant 2: was_split is true iff both parties receive non-zero lamports.
-            // Use independently computed expected values so the check has real bite.
-            prop_assert_eq!(was_split, expected_voter != 0 && expected_staker != 0);
-
-            // Invariant 3: Boundary - 0% commission gives everything to staker.
+            // Invariant 2: Boundary - 0% commission gives everything to staker.
             if effective_bps == 0 {
                 prop_assert_eq!(voter, 0);
                 prop_assert_eq!(staker, rewards);
             }
 
-            // Invariant 4: Boundary - 100% commission gives everything to voter.
+            // Invariant 3: Boundary - 100% commission gives everything to voter.
             if effective_bps == 10_000 {
                 prop_assert_eq!(voter, rewards);
                 prop_assert_eq!(staker, 0);
             }
 
-            // Invariant 5: Clamping - values above 10,000 bps behave as 10,000.
+            // Invariant 4: Clamping - values above 10,000 bps behave as 10,000.
             if commission_bps > 10_000 {
-                let (clamped_voter, clamped_staker, clamped_ws) =
+                let (clamped_voter, clamped_staker) =
                     commission_split_preserve_lamports(10_000, rewards);
                 prop_assert_eq!(voter, clamped_voter);
                 prop_assert_eq!(staker, clamped_staker);
-                prop_assert_eq!(was_split, clamped_ws);
             }
 
-            // Invariant 6: Higher commission does not decrease the voter amount.
+            // Invariant 5: Higher commission does not decrease the voter amount.
             if commission_bps > 0 {
                 let lower_bps = commission_bps - 1;
-                let (lower_voter, _, _) = commission_split_preserve_lamports(lower_bps, rewards);
+                let (lower_voter, _) = commission_split_preserve_lamports(lower_bps, rewards);
                 prop_assert!(voter >= lower_voter);
             }
 
-            // Invariant 7: The staker side is floored, and the voter gets the remainder.
+            // Invariant 6: The staker side is floored, and the voter gets the remainder.
             prop_assert_eq!(voter, expected_voter);
             prop_assert_eq!(staker, expected_staker);
         }
