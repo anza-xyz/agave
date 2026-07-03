@@ -355,8 +355,9 @@ mod tests {
                 let stake_weighted_ag =
                     self.pay_type.ag().map(NonZero::get).unwrap_or(0) * stake / validator_stake;
                 let stake_weighted_reward = stake_weighted_tower + stake_weighted_ag;
-                let (voter_reward, staker_reward) =
+                let (voter_reward, staker_reward, is_split) =
                     commission_split_preserve_lamports(self.commission_bps, stake_weighted_reward);
+                assert!(is_split);
                 assert_eq!(
                     staker_reward,
                     final_lamports - initial_lamports,
