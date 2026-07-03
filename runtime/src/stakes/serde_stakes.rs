@@ -198,7 +198,7 @@ pub(crate) struct DeserializableStakes<T> {
 mod tests {
     use {
         super::*,
-        crate::{stake_utils, stakes::StakesCache},
+        crate::{stake_utils, stakes::StakesCache, stakes_v2::StakesCacheV2},
         rand::Rng,
         serde::Deserialize,
         solana_rent::Rent,
@@ -275,6 +275,7 @@ mod tests {
             epoch: rng.random(),
             ..Stakes::default()
         });
+        let stakes_cache_v2 = StakesCacheV2::empty(0);
         for _ in 0..rng.random_range(5usize..10) {
             let vote_pubkey = solana_pubkey::new_rand();
             let node_pubkey = solana_pubkey::new_rand();
@@ -292,6 +293,7 @@ mod tests {
                 rng.random_range(0..1_000_000), // lamports
             );
             stakes_cache.check_and_store(&vote_pubkey, &vote_account, None, true);
+            stakes_cache_v2.check_and_store(&vote_pubkey, &vote_account);
             for _ in 0..rng.random_range(10usize..20) {
                 let stake_pubkey = solana_pubkey::new_rand();
                 let rent = Rent::free();
@@ -303,6 +305,7 @@ mod tests {
                     rng.random_range(0..1_000_000), // lamports
                 );
                 stakes_cache.check_and_store(&stake_pubkey, &stake_account, None, true);
+                stakes_cache_v2.check_and_store(&stake_pubkey, &stake_account);
             }
         }
         let stakes: Stakes<StakeAccount> = stakes_cache.stakes().clone();

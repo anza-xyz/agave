@@ -47,6 +47,7 @@ pub mod stake_history;
 pub mod stake_utils;
 pub mod stake_weighted_timestamp;
 pub mod stakes;
+mod stakes_v2;
 pub mod static_ids;
 pub mod status_cache;
 pub mod test_utils;
