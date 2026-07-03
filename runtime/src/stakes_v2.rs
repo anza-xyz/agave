@@ -127,7 +127,7 @@ struct FrontierEntry {
 pub(crate) struct FrontierQuery<'a> {
     /// Lock guard holding the index of rooted stake delegations.
     inner: RwLockReadGuard<'a, StakeDelegationIndexInner>,
-    overlay: AHashMap<Pubkey, Option<Arc<StakeAccount>>>,
+    overlay: Overlay,
     overlay_only_inserts: Vec<FrontierEntry>,
     /// Number of rooted entries that are removed by the overlay.
     num_removed: usize,
