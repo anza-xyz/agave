@@ -2086,16 +2086,21 @@ impl Bank {
         // The stakes accounts will not be expected to be loaded again.
         // If we populate the read cache with these loads, then we'll just soon have to evict these.
         let stakes_cache_v2 = runtime_config.enable_stakes_cache_v2.then(|| {
-            let (stakes_cache_v2, stakes_time) = measure_time!(StakesCacheV2::load_from_deserialized_delegations(fields.stakes.clone(), |pubkey| {
-                let (account, _slot) = bank_rc
-                    .accounts
-                    .load_with_fixed_root_do_not_populate_read_cache(&ancestors, pubkey)?;
-                Some(account)
-            })
-            .expect(
-                "Stakes cache v2 is inconsistent with accounts-db. This can indicate a corrupted \
-                 snapshot or bugs in cached accounts or accounts-db.",
-            ));
+            let (stakes_cache_v2, stakes_time) = measure_time!(
+                StakesCacheV2::load_from_deserialized_delegations(
+                    fields.stakes.clone(),
+                    |pubkey| {
+                        let (account, _slot) = bank_rc
+                            .accounts
+                            .load_with_fixed_root_do_not_populate_read_cache(&ancestors, pubkey)?;
+                        Some(account)
+                    }
+                )
+                .expect(
+                    "Stakes cache v2 is inconsistent with accounts-db. This can indicate a \
+                     corrupted snapshot or bugs in cached accounts or accounts-db.",
+                )
+            );
             info!("Loading Stakes cache v2 took: {stakes_time}");
             stakes_cache_v2
         });
