@@ -9,13 +9,6 @@ use {
 pub(super) trait ListFrame {
     type Item;
 
-    // SAFETY: Each implementor MUST enforce that `Self::Item` is alignment 1 to
-    // ensure that after casting it won't have alignment issues, any heap
-    // allocated fields, or any assumptions about endianness.
-    #[cfg(test)]
-    #[allow(dead_code)]
-    const ASSERT_ITEM_ALIGNMENT: ();
-
     fn len(&self) -> usize;
     fn item_size(&self) -> usize {
         core::mem::size_of::<Self::Item>()
@@ -23,10 +16,12 @@ pub(super) trait ListFrame {
 
     /// This function is safe under the following conditions:
     /// SAFETY:
-    /// - `Self::Item` is alignment 1
+    /// - `Self::Item` is alignment 1 (enforced at compile time below) and has
+    ///   no heap allocated fields or assumptions about endianness
     /// - The passed `item_data` slice is large enough for the type `Self::Item`
     /// - `Self::Item` is valid for any sequence of bytes
     unsafe fn read_item<'a>(&self, item_data: &'a [u8]) -> &'a Self::Item {
+        const { assert!(core::mem::align_of::<Self::Item>() == 1) };
         unsafe { &*(item_data.as_ptr() as *const Self::Item) }
     }
 
@@ -46,11 +41,6 @@ pub(super) enum VotesFrame {
 
 impl ListFrame for VotesFrame {
     type Item = LockoutItem;
-
-    #[cfg(test)]
-    const ASSERT_ITEM_ALIGNMENT: () = {
-        static_assertions::const_assert!(core::mem::align_of::<LockoutItem>() == 1);
-    };
 
     fn len(&self) -> usize {
         match self {
@@ -112,11 +102,6 @@ impl LockoutListFrame {
 
 impl ListFrame for LockoutListFrame {
     type Item = LockoutItem;
-
-    #[cfg(test)]
-    const ASSERT_ITEM_ALIGNMENT: () = {
-        static_assertions::const_assert!(core::mem::align_of::<LockoutItem>() == 1);
-    };
 
     fn len(&self) -> usize {
         self.len as usize
@@ -209,11 +194,6 @@ pub(super) struct LandedVoteItem {
 impl ListFrame for LandedVotesListFrame {
     type Item = LockoutItem;
 
-    #[cfg(test)]
-    const ASSERT_ITEM_ALIGNMENT: () = {
-        static_assertions::const_assert!(core::mem::align_of::<LockoutItem>() == 1);
-    };
-
     fn len(&self) -> usize {
         self.len as usize
     }
@@ -223,6 +203,7 @@ impl ListFrame for LandedVotesListFrame {
     }
 
     unsafe fn read_item<'a>(&self, item_data: &'a [u8]) -> &'a Self::Item {
+        const { assert!(core::mem::align_of::<LockoutItem>() == 1) };
         unsafe { &*(item_data[1..].as_ptr() as *const LockoutItem) }
     }
 }
@@ -253,11 +234,6 @@ pub(super) struct AuthorizedVoterItem {
 
 impl ListFrame for AuthorizedVotersListFrame {
     type Item = AuthorizedVoterItem;
-
-    #[cfg(test)]
-    const ASSERT_ITEM_ALIGNMENT: () = {
-        static_assertions::const_assert!(core::mem::align_of::<AuthorizedVoterItem>() == 1);
-    };
 
     fn len(&self) -> usize {
         self.len as usize
@@ -303,11 +279,6 @@ impl EpochCreditsListFrame {
 
 impl ListFrame for EpochCreditsListFrame {
     type Item = EpochCreditsItem;
-
-    #[cfg(test)]
-    const ASSERT_ITEM_ALIGNMENT: () = {
-        static_assertions::const_assert!(core::mem::align_of::<EpochCreditsItem>() == 1);
-    };
 
     fn len(&self) -> usize {
         self.len as usize

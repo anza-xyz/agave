@@ -11751,7 +11751,6 @@ dependencies = [
  "solana-transaction",
  "solana-vote",
  "solana-vote-interface",
- "static_assertions",
  "thiserror 2.0.18",
  "wincode",
 ]
