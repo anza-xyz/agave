@@ -93,9 +93,26 @@ impl<'a> StakeDelegationsView<'a> {
         Self::Legacy(stake_delegations)
     }
 
-    pub(crate) fn len(&self) -> usize {
+    /// Returns the total number of stake delegation entries, including rooted
+    /// entries, frontier-only inserts, without excluding overlay-removed
+    /// roots. The reurned number is equivalent to the number of elements
+    /// yielded by [`StakeDelegationsView::par_iter_unfiltered`], including the
+    /// `None` elements.
+    pub(crate) fn len_unfiltered(&self) -> usize {
         match self {
-            Self::FrontierQuery(stake_delegations) => stake_delegations.len(),
+            Self::FrontierQuery(stake_delegations) => stake_delegations.len_unfiltered(),
+            Self::Legacy(stake_delegations) => stake_delegations.len(),
+        }
+    }
+
+    /// Returns the total number of stake delegation entries, including rooted
+    /// entries, frontier-only inserts, and excluding overlay-removed roots.
+    /// The reurned number is equivalent to the number of elements yielded by
+    /// [`StakeDelegationsView::par_iter_filtered`], and does not include the
+    /// `None` elements.
+    pub(crate) fn len_filtered(&self) -> usize {
+        match self {
+            Self::FrontierQuery(stake_delegations) => stake_delegations.len_filtered(),
             Self::Legacy(stake_delegations) => stake_delegations.len(),
         }
     }
@@ -104,24 +121,25 @@ impl<'a> StakeDelegationsView<'a> {
     /// delegations.
     ///
     /// Each item is `Option<(&Pubkey, &StakeAccount)>` — `None` for tombstones
-    /// that should be skipped.
+    /// that should be skipped, or rooted entries that were removed by the
+    /// overlay.
     ///
     /// # Performance
     ///
     /// Known size of the iterator makes it a good choice for usage that
     /// involves allocating collections.
-    pub(crate) fn par_iter(
+    pub(crate) fn par_iter_unfiltered(
         &'a self,
     ) -> impl IndexedParallelIterator<Item = Option<(&'a Pubkey, &'a StakeAccount)>> {
         match self {
-            Self::FrontierQuery(stake_delegations) => Either::Left(stake_delegations.par_iter()),
-            Self::Legacy(stake_delegations) => {
-                Either::Right(
-                    stake_delegations
-                        .par_iter()
-                        .map(|&(pubkey, stake_account)| Some((pubkey, stake_account))),
-                )
+            Self::FrontierQuery(stake_delegations) => {
+                Either::Left(stake_delegations.par_iter_unfiltered())
             }
+            Self::Legacy(stake_delegations) => Either::Right(
+                stake_delegations
+                    .par_iter()
+                    .map(|&(pubkey, stake_account)| Some((pubkey, stake_account))),
+            ),
         }
     }
 
@@ -131,14 +149,14 @@ impl<'a> StakeDelegationsView<'a> {
     /// # Performance
     ///
     /// Unknown size of the iterator makes it a bad choice for usage that
-    /// involves allocating collections, where [`StakeDelegationsView::par_iter`]
-    /// should be used instead.
-    pub(crate) fn par_iter_some(
+    /// involves allocating collections, where
+    /// [`StakeDelegationsView::par_iter_unfiltered`] should be used instead.
+    pub(crate) fn par_iter_filtered(
         &'a self,
     ) -> impl ParallelIterator<Item = (&'a Pubkey, &'a StakeAccount)> {
         match self {
             Self::FrontierQuery(stake_delegations) => {
-                Either::Left(stake_delegations.par_iter_some())
+                Either::Left(stake_delegations.par_iter_filtered())
             }
             Self::Legacy(stake_delegations) => Either::Right(
                 stake_delegations
@@ -526,7 +544,7 @@ impl Stakes<StakeAccount> {
         // prev epoch.
         let (stake_history_entry, effective_delegated_stakes) = thread_pool.install(|| {
             stake_delegations
-                .par_iter_some()
+                .par_iter_filtered()
                 .fold(
                     || (StakeActivationStatus::default(), HashMap::default()),
                     |(acc, mut delegated_stakes), (_stake_pubkey, stake_account)| {
@@ -873,7 +891,7 @@ fn refresh_vote_accounts(
     }
     let delegated_stakes = thread_pool.install(|| {
         stake_delegations
-            .par_iter_some()
+            .par_iter_filtered()
             .fold(
                 DelegatedStakes::default,
                 |mut delegated_stakes, (_stake_pubkey, stake_account)| {

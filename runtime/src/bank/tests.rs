@@ -656,7 +656,7 @@ impl Bank {
             if let Some(stake_delegation_frontier) = self.stake_delegation_frontier_query() {
                 thread_pool.install(|| {
                     stake_delegation_frontier
-                        .par_iter_some()
+                        .par_iter_filtered()
                         .fold(
                             HashSet::default,
                             |mut voter_pubkeys, (_stake_pubkey, stake_account)| {
@@ -738,7 +738,7 @@ impl Bank {
         if let Some(stake_delegation_frontier) = self.stake_delegation_frontier_query() {
             thread_pool.install(|| {
                 stake_delegation_frontier
-                    .par_iter_some()
+                    .par_iter_filtered()
                     .for_each(push_stake_delegation);
             });
         } else {

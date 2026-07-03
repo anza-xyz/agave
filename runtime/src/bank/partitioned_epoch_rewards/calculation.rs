@@ -417,7 +417,7 @@ impl Bank {
         let capitalization = self.capitalization();
         let epoch_inflation_rewards =
             self.calculate_epoch_inflation_rewards(capitalization, rewarded_epoch);
-        let num_stake_accounts = stake_delegations.len();
+        let num_stake_accounts = stake_delegations.len_filtered();
         // `distribution_epoch_vote_accounts` is the post-VAT-filter snapshot
         // produced upstream of this call (or unfiltered when VAT is off),
         // so its length is the right value for the `epoch_rewards` metric.
@@ -733,10 +733,11 @@ impl Bank {
         // Producing the stake reward with rayon triggers a lot of
         // (re)allocations. To avoid that, we allocate it at the start and
         // pass `stake_rewards.spare_capacity_mut()` as one of iterators.
-        let mut stake_rewards = PartitionedStakeRewards::with_capacity(stake_delegations.len());
+        let mut stake_rewards =
+            PartitionedStakeRewards::with_capacity(stake_delegations.len_unfiltered());
         let rewards_accumulator: RewardsAccumulator = thread_pool.install(|| {
             stake_delegations
-                .par_iter()
+                .par_iter_unfiltered()
                 .zip_eq(stake_rewards.spare_capacity_mut())
                 .with_min_len(500)
                 .filter_map(|(maybe_stake, stake_reward_ref)| {
@@ -873,7 +874,7 @@ impl Bank {
         let use_fixed_point_stake_math = self.use_fixed_point_stake_math();
         let (points, measure_us) = measure_us!(thread_pool.install(|| {
             stake_delegations
-                .par_iter_some()
+                .par_iter_filtered()
                 .map(|(_stake_pubkey, stake_account)| {
                     let vote_pubkey = stake_account.delegation().voter_pubkey;
 

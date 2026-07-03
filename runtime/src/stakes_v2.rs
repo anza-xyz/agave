@@ -107,8 +107,8 @@ struct StakeDelegationIndexInner {
     root_positions: HashMap<Pubkey, usize>,
     /// Indices of all tombstones in `root_entries`.
     free_root_indices: Vec<usize>,
-    /// Manually tracked length of the cache.
-    len: usize,
+    /// Manually tracked length of the cache that excludes tombstones.
+    filtered_len: usize,
 }
 
 /// Index of rooted stake delegations, shared across banks.
@@ -129,26 +129,47 @@ pub(crate) struct FrontierQuery<'a> {
     inner: RwLockReadGuard<'a, StakeDelegationIndexInner>,
     overlay: HashMap<Pubkey, Option<Arc<StakeAccount>>>,
     overlay_only_inserts: Vec<FrontierEntry>,
+    /// Number of rooted entries that are removed by the overlay.
+    num_removed: usize,
 }
 
 impl<'a> FrontierQuery<'a> {
-    /// Returns the total number of stake delegations, including both rooted
-    /// entries and frontier-only inserts.
-    pub(crate) fn len(&self) -> usize {
-        self.inner.len + self.overlay_only_inserts.len()
+    /// Returns the total number of stake delegation entries, including rooted
+    /// entries, frontier-only inserts, without excluding overlay-removed
+    /// roots and tombstones. The reurned number is equivalent to the number of
+    /// elements yielded by [`FrontierQuery::par_iter_unfiltered`], including
+    /// the `None` elements.
+    pub(crate) fn len_unfiltered(&self) -> usize {
+        self.inner
+            .root_entries
+            .len()
+            .wrapping_add(self.overlay_only_inserts.len())
+    }
+
+    /// Returns the total number of stake delegation entries, including rooted
+    /// entries, frontier-only inserts, and excluding overlay-removed roots.
+    /// The reurned number is equivalent to the number of elements yielded by
+    /// [`FrontierQuery::par_iter_filtered`], and does not include the `None`
+    /// elements.
+    pub(crate) fn len_filtered(&self) -> usize {
+        self.inner
+            .filtered_len
+            .wrapping_sub(self.num_removed)
+            .wrapping_add(self.overlay_only_inserts.len())
     }
 
     /// Returns an indexed parallel iterator (with a known size) over all stake
     /// delegations.
     ///
     /// Each item is `Option<(&Pubkey, &StakeAccount)>` — `None` for tombstones
-    /// that should be skipped.
+    /// that should be skipped, or rooted entries that were removed by the
+    /// overlay.
     ///
     /// # Performance
     ///
     /// Known size of the iterator makes it a good choice for usage that
     /// involves allocating collections.
-    pub(crate) fn par_iter(
+    pub(crate) fn par_iter_unfiltered(
         &'a self,
     ) -> impl IndexedParallelIterator<Item = Option<(&'a Pubkey, &'a StakeAccount)>> {
         self.inner
@@ -168,20 +189,31 @@ impl<'a> FrontierQuery<'a> {
     /// # Performance
     ///
     /// Unknown size of the iterator makes it a bad choice for usage that
-    /// involves allocating collections, where [`FrontierQuery::par_iter`]
-    /// should be used instead.
-    pub(crate) fn par_iter_some(
+    /// involves allocating collections, where
+    /// [`FrontierQuery::par_iter_unfiltered`] should be used instead.
+    pub(crate) fn par_iter_filtered(
         &'a self,
     ) -> impl ParallelIterator<Item = (&'a Pubkey, &'a StakeAccount)> {
-        self.par_iter().filter_map(|maybe_stake| maybe_stake)
+        self.par_iter_unfiltered()
+            .filter_map(|maybe_stake| maybe_stake)
     }
 }
 
 #[cfg(feature = "dev-context-only-utils")]
 impl<'a> FrontierQuery<'a> {
-    /// Returns a sequential iterator over all stake delegations, including rooted
-    /// entries with overlay applied and frontier-only inserts.
-    pub(crate) fn iter(&'a self) -> impl Iterator<Item = Option<(&'a Pubkey, &'a StakeAccount)>> {
+    /// Returns an iterator (with a known size) over all stake delegations.
+    ///
+    /// Each item is `Option<(&Pubkey, &StakeAccount)>` — `None` for tombstones
+    /// that should be skipped, or rooted entries that were removed by the
+    /// overlay.
+    ///
+    /// # Performance
+    ///
+    /// Known size of the iterator makes it a good choice for usage that
+    /// involves allocating collections.
+    pub(crate) fn iter_unfiltered(
+        &'a self,
+    ) -> impl Iterator<Item = Option<(&'a Pubkey, &'a StakeAccount)>> {
         self.inner
             .root_entries
             .iter()
@@ -193,10 +225,16 @@ impl<'a> FrontierQuery<'a> {
             )
     }
 
-    /// Returns a sequential iterator over all valid stake delegations, filtering
-    /// out any tombstones.
-    pub(crate) fn iter_some(&'a self) -> impl Iterator<Item = (&'a Pubkey, &'a StakeAccount)> {
-        self.iter().flatten()
+    /// Returns an iterator (with an unknown size) over all valid stake
+    /// delegations, filtering out any tombstones.
+    ///
+    /// # Performance
+    ///
+    /// Unknown size of the iterator makes it a bad choice for usage that
+    /// involves allocating collections, where
+    /// [`FrontierQuery::iter_unfiltered`] should be used instead.
+    pub(crate) fn iter_filtered(&'a self) -> impl Iterator<Item = (&'a Pubkey, &'a StakeAccount)> {
+        self.iter_unfiltered().flatten()
     }
 }
 
@@ -227,14 +265,14 @@ impl StakeDelegationIndex {
                             } else {
                                 inner.root_entries[index] = root_entry;
                             }
-                            inner.len = inner.len.wrapping_add(1);
+                            inner.filtered_len = inner.filtered_len.wrapping_add(1);
                         }
                     }
                     None => {
                         if let Some(index) = inner.root_positions.remove(&stake_pubkey) {
                             inner.root_entries[index] = MaybeRootEntry::tombstone();
                             inner.free_root_indices.push(index);
-                            inner.len = inner.len.wrapping_sub(1);
+                            inner.filtered_len = inner.filtered_len.wrapping_sub(1);
                         }
                     }
                 }
@@ -296,7 +334,7 @@ impl StakesCacheV2 {
             }
         }
 
-        let len = root_entries.len();
+        let filtered_len = root_entries.len();
 
         let mut vote_accounts = VoteAccounts::from(Arc::new(vote_accounts));
         for (vote_pubkey, stake) in delegated_stakes {
@@ -309,7 +347,7 @@ impl StakesCacheV2 {
                     root_entries,
                     root_positions,
                     free_root_indices: Vec::new(),
-                    len,
+                    filtered_len,
                 },
             ))),
             fork_delta: RwLock::new(HashMap::default()),
@@ -329,12 +367,12 @@ impl StakesCacheV2 {
     where
         F: Fn(&Pubkey) -> Option<AccountSharedData> + Sync,
     {
-        let len = stakes.stake_delegations.len();
-        let mut root_entries = Vec::with_capacity(len);
+        let filtered_len = stakes.stake_delegations.len();
+        let mut root_entries = Vec::with_capacity(filtered_len);
         root_entries
             .spare_capacity_mut()
             .par_iter_mut()
-            .take(len)
+            .take(filtered_len)
             .zip_eq(stakes.stake_delegations.into_par_iter())
             .try_for_each(|(root_entry, (pubkey, delegation))| {
                 let Some(stake_account) = get_account(&pubkey) else {
@@ -352,7 +390,7 @@ impl StakesCacheV2 {
         // SAFETY: We initialized all the `root_entries` elements up to
         // `root_entries_len`.
         unsafe {
-            root_entries.set_len(len);
+            root_entries.set_len(filtered_len);
         }
 
         let mut root_positions = HashMap::with_capacity(root_entries.len());
@@ -376,7 +414,7 @@ impl StakesCacheV2 {
                     root_entries,
                     root_positions,
                     free_root_indices: Vec::new(),
-                    len,
+                    filtered_len,
                 },
             ))),
             fork_delta: RwLock::new(HashMap::default()),
@@ -407,16 +445,24 @@ impl StakesCacheV2 {
         caches_in_ancestor_order: impl IntoIterator<Item = &'a Self>,
     ) -> FrontierQuery<'_> {
         let mut overlay = HashMap::new();
+        let mut num_removed: usize = 0;
+        let mut insert_to_overlay =
+            |stake_pubkey: &Pubkey, stake_account: &Option<Arc<StakeAccount>>| {
+                if stake_account.is_none() {
+                    num_removed = num_removed.wrapping_add(1);
+                }
+                overlay.insert(*stake_pubkey, stake_account.clone());
+            };
         for cache in caches_in_ancestor_order {
             let fork_delta = cache.fork_delta.read().unwrap();
             for (stake_pubkey, stake_account) in fork_delta.iter() {
-                overlay.insert(*stake_pubkey, stake_account.clone());
+                insert_to_overlay(stake_pubkey, stake_account);
             }
         }
         {
             let fork_delta = self.fork_delta.read().unwrap();
             for (stake_pubkey, stake_account) in fork_delta.iter() {
-                overlay.insert(*stake_pubkey, stake_account.clone());
+                insert_to_overlay(stake_pubkey, stake_account);
             }
         }
 
@@ -442,6 +488,7 @@ impl StakesCacheV2 {
             inner,
             overlay,
             overlay_only_inserts,
+            num_removed,
         }
     }
 
@@ -523,7 +570,7 @@ impl StakesCacheV2 {
             root_positions.insert(pubkey, root_entries.len() - 1);
         }
 
-        let len = root_entries.len();
+        let filtered_len = root_entries.len();
 
         Self {
             stake_delegation_index: Arc::new(StakeDelegationIndex(RwLock::new(
@@ -531,7 +578,7 @@ impl StakesCacheV2 {
                     root_entries,
                     root_positions,
                     free_root_indices: Vec::new(),
-                    len,
+                    filtered_len,
                 },
             ))),
             fork_delta: RwLock::new(HashMap::default()),
@@ -549,7 +596,7 @@ impl StakesCacheV2 {
                     root_entries: Vec::new(),
                     root_positions: HashMap::new(),
                     free_root_indices: Vec::new(),
-                    len: 0,
+                    filtered_len: 0,
                 },
             ))),
             fork_delta: RwLock::new(HashMap::default()),
@@ -608,7 +655,7 @@ mod tests {
         );
 
         let frontier_query = root_cache.frontier_query([&fork_cache]);
-        let stake_delegations = frontier_query.iter_some().collect::<Vec<_>>();
+        let stake_delegations = frontier_query.iter_filtered().collect::<Vec<_>>();
         assert_eq!(stake_delegations.len(), 2);
         assert!(stake_delegations.iter().any(|(pubkey, account)| {
             **pubkey == stake_pubkey_a && account.delegation().stake == 30
@@ -675,7 +722,7 @@ mod tests {
 
         let frontier_query = root_cache.frontier_query([&fork_cache]);
         let query_entries = frontier_query
-            .iter_some()
+            .iter_filtered()
             .map(|(pubkey, stake_account)| (*pubkey, stake_account.delegation().stake))
             .collect::<Vec<_>>();
         assert_eq!(
@@ -773,7 +820,7 @@ mod tests {
 
         // Verify initial state
         let inner = cache.stake_delegation_index.0.read().unwrap();
-        assert_eq!(inner.len, 2);
+        assert_eq!(inner.filtered_len, 2);
         assert_eq!(inner.root_entries.len(), 2);
         assert!(inner.free_root_indices.is_empty());
         drop(inner);
@@ -790,7 +837,7 @@ mod tests {
 
         let inner = cache.stake_delegation_index.0.read().unwrap();
         // All three keys should be present
-        assert_eq!(inner.len, 3);
+        assert_eq!(inner.filtered_len, 3);
         assert!(inner.root_positions.contains_key(&stake_pubkey_a));
         assert!(inner.root_positions.contains_key(&stake_pubkey_b));
         assert!(inner.root_positions.contains_key(&stake_pubkey_c));
@@ -917,7 +964,7 @@ mod tests {
         root_cache.apply_rooted_stake_delegation_deltas([&fork_cache]);
 
         let inner = root_cache.stake_delegation_index.0.read().unwrap();
-        assert_eq!(inner.len, 0);
+        assert_eq!(inner.filtered_len, 0);
         assert!(inner.root_entries.iter().all(|e| e.is_none()));
     }
 
@@ -940,7 +987,7 @@ mod tests {
 
         // The rooted entry should be unchanged
         let inner = root_cache.stake_delegation_index.0.read().unwrap();
-        assert_eq!(inner.len, 1);
+        assert_eq!(inner.filtered_len, 1);
         let entry = inner
             .root_entries
             .iter()
@@ -977,7 +1024,7 @@ mod tests {
         root_cache.apply_rooted_stake_delegation_deltas([&fork_cache]);
 
         let inner = root_cache.stake_delegation_index.0.read().unwrap();
-        assert_eq!(inner.len, 2);
+        assert_eq!(inner.filtered_len, 2);
         assert!(inner.root_positions.contains_key(&existing_stake_pubkey));
         assert!(inner.root_positions.contains_key(&new_stake_pubkey));
     }

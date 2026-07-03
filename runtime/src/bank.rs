@@ -693,8 +693,8 @@ impl PartialEq for Bank {
                     .stake_delegation_frontier_query()
                     .expect("stakes cache v2 must exist");
                 self_stake_delegation_frontier
-                    .iter()
-                    .eq(other_stake_delegation_frontier.iter())
+                    .iter_unfiltered()
+                    .eq(other_stake_delegation_frontier.iter_unfiltered())
             }
             (None, None) => true,
             _ => false,
@@ -7160,7 +7160,7 @@ impl Bank {
     pub(crate) fn get_stake_accounts(&self, minimized_account_set: &DashSet<Pubkey>) {
         if let Some(stake_delegation_frontier) = self.stake_delegation_frontier_query() {
             stake_delegation_frontier
-                .iter_some()
+                .iter_filtered()
                 .for_each(|(pubkey, _)| {
                     minimized_account_set.insert(*pubkey);
                 });
