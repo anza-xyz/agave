@@ -116,9 +116,11 @@ impl<'a> StakeDelegationsView<'a> {
         match self {
             Self::FrontierQuery(stake_delegations) => Either::Left(stake_delegations.par_iter()),
             Self::Legacy(stake_delegations) => {
-                Either::Right(stake_delegations.par_iter().map(|(pubkey, stake_account)|
-                        // Dereference `&&` to `&`.
-                        Some((*pubkey, *stake_account))))
+                Either::Right(
+                    stake_delegations
+                        .par_iter()
+                        .map(|&(pubkey, stake_account)| Some((pubkey, stake_account))),
+                )
             }
         }
     }
@@ -141,8 +143,7 @@ impl<'a> StakeDelegationsView<'a> {
             Self::Legacy(stake_delegations) => Either::Right(
                 stake_delegations
                     .par_iter()
-                    // Replace `&(&&K, &&V)` with `(&K, &V)`.
-                    .map(|(pubkey, stake_account)| (*pubkey, *stake_account)),
+                    .map(|&(pubkey, stake_account)| (pubkey, stake_account)),
             ),
         }
     }
