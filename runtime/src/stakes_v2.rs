@@ -4,6 +4,7 @@ use {
         stake_history::StakeHistory,
         stakes::{DeserializableStakes, Error},
     },
+    ahash::AHashMap,
     rayon::iter::{
         IndexedParallelIterator, IntoParallelIterator, IntoParallelRefIterator,
         IntoParallelRefMutIterator, ParallelIterator,
@@ -16,7 +17,6 @@ use {
     solana_vote::vote_account::{VoteAccount, VoteAccounts, VoteAccountsHashMap},
     solana_vote_interface::state::VoteStateVersions,
     std::{
-        collections::HashMap,
         ops::Deref,
         sync::{Arc, RwLock, RwLockReadGuard},
     },
@@ -39,7 +39,7 @@ impl StakesCacheV2State {
 }
 
 /// A hash map that contains per-fork changes to the stake accounts.
-type Overlay = HashMap<Pubkey, Option<Arc<StakeAccount>>>;
+type Overlay = AHashMap<Pubkey, Option<Arc<StakeAccount>>>;
 
 /// Rooted stake delegation entry.
 #[derive(Clone, Debug)]
@@ -104,7 +104,7 @@ struct StakeDelegationIndexInner {
     /// Indices of all tombstones are stored in `free_root_indices`.
     root_entries: Vec<MaybeRootEntry>,
     /// Positions of the given pubkeys inside `root_entries`.
-    root_positions: HashMap<Pubkey, usize>,
+    root_positions: AHashMap<Pubkey, usize>,
     /// Indices of all tombstones in `root_entries`.
     free_root_indices: Vec<usize>,
     /// Manually tracked length of the cache that excludes tombstones.
@@ -127,7 +127,7 @@ struct FrontierEntry {
 pub(crate) struct FrontierQuery<'a> {
     /// Lock guard holding the index of rooted stake delegations.
     inner: RwLockReadGuard<'a, StakeDelegationIndexInner>,
-    overlay: HashMap<Pubkey, Option<Arc<StakeAccount>>>,
+    overlay: AHashMap<Pubkey, Option<Arc<StakeAccount>>>,
     overlay_only_inserts: Vec<FrontierEntry>,
     /// Number of rooted entries that are removed by the overlay.
     num_removed: usize,
@@ -243,7 +243,7 @@ impl StakeDelegationIndex {
     /// updating or removing entries and reusing freed slots via the freelist.
     fn apply_rooted_deltas(
         &self,
-        deltas_in_ancestor_order: impl IntoIterator<Item = HashMap<Pubkey, Option<Arc<StakeAccount>>>>,
+        deltas_in_ancestor_order: impl IntoIterator<Item = AHashMap<Pubkey, Option<Arc<StakeAccount>>>>,
     ) {
         let mut inner = self.0.write().unwrap();
         for delta in deltas_in_ancestor_order {
@@ -290,7 +290,7 @@ impl StakeDelegationIndex {
 #[derive(Debug)]
 pub(crate) struct StakesCacheV2 {
     stake_delegation_index: Arc<StakeDelegationIndex>,
-    fork_delta: RwLock<HashMap<Pubkey, Option<Arc<StakeAccount>>>>,
+    fork_delta: RwLock<AHashMap<Pubkey, Option<Arc<StakeAccount>>>>,
     state: RwLock<StakesCacheV2State>,
 }
 
@@ -303,9 +303,9 @@ impl StakesCacheV2 {
         let epoch = 0;
         let stake_history = StakeHistory::default();
         let mut vote_accounts = VoteAccountsHashMap::default();
-        let mut delegated_stakes: HashMap<Pubkey, u64> = HashMap::default();
+        let mut delegated_stakes: AHashMap<Pubkey, u64> = AHashMap::default();
         let mut root_entries = Vec::new();
-        let mut root_positions = HashMap::new();
+        let mut root_positions = AHashMap::new();
 
         for (pubkey, account) in accounts {
             if account.lamports() == 0 {
@@ -348,7 +348,7 @@ impl StakesCacheV2 {
                     filtered_len,
                 },
             ))),
-            fork_delta: RwLock::new(HashMap::default()),
+            fork_delta: RwLock::new(AHashMap::default()),
             state: RwLock::new(StakesCacheV2State {
                 epoch,
                 stake_history,
@@ -391,7 +391,7 @@ impl StakesCacheV2 {
             root_entries.set_len(filtered_len);
         }
 
-        let mut root_positions = HashMap::with_capacity(root_entries.len());
+        let mut root_positions = AHashMap::with_capacity(root_entries.len());
         for (index, root_entry) in root_entries.iter().enumerate() {
             let stake_pubkey = root_entry
                 .as_ref()
@@ -415,7 +415,7 @@ impl StakesCacheV2 {
                     filtered_len,
                 },
             ))),
-            fork_delta: RwLock::new(HashMap::default()),
+            fork_delta: RwLock::new(AHashMap::default()),
             state: RwLock::new(StakesCacheV2State {
                 epoch,
                 stake_history,
@@ -430,7 +430,7 @@ impl StakesCacheV2 {
         let state = parent.state.read().unwrap().clone();
         Self {
             stake_delegation_index,
-            fork_delta: RwLock::new(HashMap::default()),
+            fork_delta: RwLock::new(AHashMap::default()),
             state: RwLock::new(state),
         }
     }
@@ -442,7 +442,7 @@ impl StakesCacheV2 {
         &self,
         caches_in_ancestor_order: impl IntoIterator<Item = &'a Self>,
     ) -> FrontierQuery<'_> {
-        let mut overlay = HashMap::new();
+        let mut overlay = AHashMap::new();
         let mut num_removed: usize = 0;
         let mut insert_to_overlay =
             |stake_pubkey: &Pubkey, stake_account: &Option<Arc<StakeAccount>>| {
@@ -561,7 +561,7 @@ impl StakesCacheV2 {
         epoch: Epoch,
     ) -> Self {
         let mut root_entries = Vec::with_capacity(accounts.len());
-        let mut root_positions = HashMap::with_capacity(accounts.len());
+        let mut root_positions = AHashMap::with_capacity(accounts.len());
 
         for (pubkey, account) in accounts {
             root_entries.push(MaybeRootEntry::new(pubkey, Arc::new(account)));
@@ -579,7 +579,7 @@ impl StakesCacheV2 {
                     filtered_len,
                 },
             ))),
-            fork_delta: RwLock::new(HashMap::default()),
+            fork_delta: RwLock::new(AHashMap::default()),
             state: RwLock::new(StakesCacheV2State {
                 epoch,
                 stake_history: StakeHistory::default(),
@@ -592,12 +592,12 @@ impl StakesCacheV2 {
             stake_delegation_index: Arc::new(StakeDelegationIndex(RwLock::new(
                 StakeDelegationIndexInner {
                     root_entries: Vec::new(),
-                    root_positions: HashMap::new(),
+                    root_positions: AHashMap::new(),
                     free_root_indices: Vec::new(),
                     filtered_len: 0,
                 },
             ))),
-            fork_delta: RwLock::new(HashMap::default()),
+            fork_delta: RwLock::new(AHashMap::default()),
             state: RwLock::new(StakesCacheV2State {
                 epoch,
                 stake_history: StakeHistory::default(),
@@ -762,7 +762,7 @@ mod tests {
         };
 
         // Remove the stake A.
-        index.apply_rooted_deltas([HashMap::from_iter([(stake_pubkey_a, None)])]);
+        index.apply_rooted_deltas([AHashMap::from_iter([(stake_pubkey_a, None)])]);
         {
             let inner = index.0.read().unwrap();
             assert_eq!(inner.root_entries.len(), 2);
@@ -771,7 +771,7 @@ mod tests {
 
         // Add a stake C, make sure it uses the free slot.
         let root_account_c = create_stake_account(30, &vote_pubkey_a, &stake_pubkey_c, &rent);
-        index.apply_rooted_deltas([HashMap::from_iter([(
+        index.apply_rooted_deltas([AHashMap::from_iter([(
             stake_pubkey_c,
             Some(Arc::new(StakeAccount::try_from(root_account_c).unwrap())),
         )])]);
@@ -828,7 +828,7 @@ mod tests {
         let new_account = create_stake_account(30, &vote_pubkey_c, &stake_pubkey_c, &rent);
         cache
             .stake_delegation_index
-            .apply_rooted_deltas([HashMap::from_iter([(
+            .apply_rooted_deltas([AHashMap::from_iter([(
                 stake_pubkey_c,
                 Some(Arc::new(StakeAccount::try_from(new_account).unwrap())),
             )])]);
