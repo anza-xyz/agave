@@ -557,8 +557,7 @@ impl EventHandler {
     ) -> Option<Block> {
         let Block { slot, block_id } = finalized_block;
         let first_slot_of_window = first_of_consecutive_leader_slots(slot);
-        if first_slot_of_window == slot || first_slot_of_window == 0 {
-            // No need to trigger parent ready for the first slot of the window
+        if first_slot_of_window == 0 {
             return None;
         }
         if vctx.vote_history.highest_parent_ready_slot() >= Some(first_slot_of_window)
@@ -2070,6 +2069,39 @@ mod tests {
             Block {
                 slot: 5,
                 block_id: block_id_5,
+            },
+        ));
+    }
+
+    #[test]
+    fn test_parent_ready_for_first_slot_of_window() {
+        let mut test_context = setup();
+
+        let root_bank = test_context
+            .bank_forks
+            .read()
+            .unwrap()
+            .sharable_banks()
+            .root();
+        let bank1 = test_context.create_block_and_send_block_event(1, root_bank);
+        let block_id_1 = bank1.block_id().unwrap();
+
+        let bank4 = test_context.create_block_and_send_block_event(4, bank1);
+        let block_id_4 = bank4.block_id().unwrap();
+
+        test_context.send_finalized_event(
+            Block {
+                slot: 4,
+                block_id: block_id_4,
+            },
+            true,
+        );
+
+        test_context.check_parent_ready_slot((
+            4,
+            Block {
+                slot: 1,
+                block_id: block_id_1,
             },
         ));
     }
