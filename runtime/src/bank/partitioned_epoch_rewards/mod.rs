@@ -586,6 +586,20 @@ mod tests {
         stake_account_stores_per_block: u64,
         advance_num_slots: u64,
     ) -> (RewardBank, Arc<RwLock<BankForks>>) {
+        create_reward_bank_with_specific_stakes_and_runtime_config(
+            stakes,
+            stake_account_stores_per_block,
+            advance_num_slots,
+            RuntimeConfig::default(),
+        )
+    }
+
+    pub(super) fn create_reward_bank_with_specific_stakes_and_runtime_config(
+        stakes: Vec<u64>,
+        stake_account_stores_per_block: u64,
+        advance_num_slots: u64,
+        runtime_config: RuntimeConfig,
+    ) -> (RewardBank, Arc<RwLock<BankForks>>) {
         // Disable slot time reduction features as they will override the custom
         // stores per block provided in this test helper.
         let features_to_deactivate = crate::slot_params::slot_time_feature_ids().to_vec();
@@ -605,7 +619,7 @@ mod tests {
 
         let bank = Bank::new_from_genesis(
             &genesis_config,
-            Arc::new(RuntimeConfig::default()),
+            Arc::new(runtime_config),
             Vec::new(),
             None,
             accounts_db_config,

@@ -1140,7 +1140,9 @@ mod tests {
                     tests::{
                         RewardBank, SLOTS_PER_EPOCH, build_partitioned_stake_rewards,
                         create_default_reward_bank, create_reward_bank,
-                        create_reward_bank_with_specific_stakes, populate_vote_accounts_with_votes,
+                        create_reward_bank_with_specific_stakes,
+                        create_reward_bank_with_specific_stakes_and_runtime_config,
+                        populate_vote_accounts_with_votes,
                     },
                 },
                 tests::create_genesis_config,
@@ -2192,6 +2194,74 @@ mod tests {
                 .as_ref()
                 .unwrap(),
             &expected_reward
+        );
+    }
+
+    #[test]
+    fn test_calculate_stake_rewards_and_commissions_skips_removed_v2_overlay_stake() {
+        agave_logger::setup();
+
+        let (RewardBank { bank, stakers, .. }, bank_forks) =
+            create_reward_bank_with_specific_stakes_and_runtime_config(
+                vec![2_000_000_000],
+                PartitionedEpochRewardsConfig::default().stake_account_stores_per_block,
+                SLOTS_PER_EPOCH,
+                RuntimeConfig {
+                    enable_stakes_cache_v2: true,
+                    ..RuntimeConfig::default()
+                },
+            );
+        let stake_pubkey = *stakers.first().unwrap();
+        assert!(bank.stakes_cache_v2.is_some());
+
+        let slot = bank.slot() + 1;
+        let bank =
+            Bank::new_from_parent_with_bank_forks(&bank_forks, bank, SlotLeader::default(), slot);
+        bank.stakes_cache_v2
+            .as_ref()
+            .unwrap()
+            .remove_stake_delegation(&stake_pubkey);
+
+        let thread_pool = ThreadPoolBuilder::new().num_threads(1).build().unwrap();
+        let mut rewards_metrics = RewardsMetrics::default();
+        let point_value = PointValue {
+            rewards: 100000,
+            points: 1000,
+        };
+        let rewarded_epoch = bank.epoch();
+        let stakes = bank.stakes_cache.stakes();
+        let EpochRewardCalculateParamInfo {
+            stake_history,
+            stake_delegations,
+            cached_vote_accounts,
+        } = bank.get_epoch_params_for_recalculation(rewarded_epoch, &stakes);
+
+        assert_eq!(stake_delegations.len_unfiltered(), 1);
+        assert_eq!(stake_delegations.len_filtered(), 0);
+
+        let (reward_commissions, stake_reward_calculation) = bank
+            .calculate_stake_rewards_and_commissions(
+                &stake_history,
+                &stake_delegations,
+                cached_vote_accounts,
+                rewarded_epoch,
+                point_value,
+                &AlpenglowEpochType::Tower,
+                &thread_pool,
+                null_tracer(),
+                &mut rewards_metrics,
+            );
+
+        assert!(reward_commissions.is_empty());
+        assert_eq!(stake_reward_calculation.total_stake_rewards_lamports, 0);
+        assert_eq!(stake_reward_calculation.stake_rewards.total_len(), 1);
+        assert_eq!(stake_reward_calculation.stake_rewards.num_rewards(), 0);
+        assert!(
+            stake_reward_calculation
+                .stake_rewards
+                .get(0)
+                .unwrap()
+                .is_none()
         );
     }
 
