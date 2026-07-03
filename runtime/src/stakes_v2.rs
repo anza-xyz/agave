@@ -313,24 +313,22 @@ impl StakesCacheV2 {
             }
 
             if solana_vote_program::check_id(account.owner()) {
-                if VoteStateVersions::is_correct_size_and_initialized(account.data()) {
-                    if let Ok(vote_account) =
+                if VoteStateVersions::is_correct_size_and_initialized(account.data())
+                    && let Ok(vote_account) =
                         VoteAccount::try_from(create_account_shared_data(account))
-                    {
-                        vote_accounts.insert(*pubkey, (0, vote_account));
-                    }
-                }
-            } else if stake_program::check_id(account.owner()) {
-                if let Ok(stake_account) =
-                    StakeAccount::try_from(create_account_shared_data(account))
                 {
-                    let delegation = stake_account.delegation();
-                    #[expect(deprecated, reason = "we still use the legacy stake calculation")]
-                    let stake = delegation.stake(epoch, &stake_history, None);
-                    *delegated_stakes.entry(delegation.voter_pubkey).or_default() += stake;
-                    root_entries.push(MaybeRootEntry::new(*pubkey, Arc::new(stake_account)));
-                    root_positions.insert(*pubkey, root_entries.len() - 1);
+                    vote_accounts.insert(*pubkey, (0, vote_account));
                 }
+            } else if stake_program::check_id(account.owner())
+                && let Ok(stake_account) =
+                    StakeAccount::try_from(create_account_shared_data(account))
+            {
+                let delegation = stake_account.delegation();
+                #[expect(deprecated, reason = "we still use the legacy stake calculation")]
+                let stake = delegation.stake(epoch, &stake_history, None);
+                *delegated_stakes.entry(delegation.voter_pubkey).or_default() += stake;
+                root_entries.push(MaybeRootEntry::new(*pubkey, Arc::new(stake_account)));
+                root_positions.insert(*pubkey, root_entries.len() - 1);
             }
         }
 
