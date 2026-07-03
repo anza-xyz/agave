@@ -10262,6 +10262,7 @@ dependencies = [
  "crossbeam-utils",
  "dashmap",
  "imbl",
+ "indexmap 2.14.0",
  "itertools 0.14.0",
  "libc",
  "libsecp256k1",

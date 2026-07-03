@@ -80,6 +80,7 @@ crossbeam-channel = { workspace = true }
 crossbeam-utils = { workspace = true }
 dashmap = { workspace = true, features = ["rayon", "raw-api", "serde"] }
 imbl = { workspace = true, features = ["rayon", "serde"] }
+indexmap = { workspace = true, features = ["rayon"] }
 itertools = { workspace = true }
 libc = { workspace = true }
 log = { workspace = true }
