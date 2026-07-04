@@ -25,10 +25,17 @@ use {
         borrow::Cow,
         hint::black_box,
         num::NonZeroUsize,
-        sync::Arc,
+        sync::{Arc, OnceLock},
         time::{Duration, Instant},
     },
 };
+
+const CONSUMER_PACKETS_PER_ITER: usize = 8192;
+const CONSUMER_MIN_VALID_PACKETS_PER_ITER: usize = CONSUMER_PACKETS_PER_ITER * 99 / 100;
+// Keep enough unique traffic in the prebuilt ring to avoid wrapping inside the
+// sigverify deduper's two-second reset window.
+const CONSUMER_PREGENERATED_BATCH_SETS: usize = 128;
+const CONSUMER_PROGRESS_TIMEOUT: Duration = Duration::from_secs(5);
 
 /// Orphan rules workaround that allows for implementation of `TDynBenchFn`.
 struct Bench<T>(T);
@@ -160,18 +167,55 @@ fn gen_single_packet_batches(
         .collect()
 }
 
+fn consumer_prebuilt_batches() -> &'static [Vec<PacketBatch>] {
+    static PREBUILT_BATCHES: OnceLock<Vec<Vec<PacketBatch>>> = OnceLock::new();
+
+    PREBUILT_BATCHES
+        .get_or_init(|| {
+            let from_keypair = Keypair::new();
+            let to_keypair = Keypair::new();
+            (0..CONSUMER_PREGENERATED_BATCH_SETS)
+                .map(|_| {
+                    gen_single_packet_batches(&from_keypair, &to_keypair, CONSUMER_PACKETS_PER_ITER)
+                })
+                .collect()
+        })
+        .as_slice()
+}
+
 /// Measures signing and serialization cost without channel or sigverify work.
 fn bench_gen_single_packet_batches(bencher: &mut Bencher) {
     let from_keypair = Keypair::new();
     let to_keypair = Keypair::new();
     bencher.iter(|| {
-        black_box(gen_single_packet_batches(&from_keypair, &to_keypair, 8192));
+        black_box(gen_single_packet_batches(
+            &from_keypair,
+            &to_keypair,
+            CONSUMER_PACKETS_PER_ITER,
+        ));
     });
 }
 
-/// Measures one producer feeding a live `SigVerifyStage` worker through the
-/// real sigverify channel.
-fn bench_sigverify_stage_producer_consumer(bencher: &mut Bencher) {
+fn count_received_packets(batches: &[PacketBatch]) -> (usize, usize) {
+    let mut total = 0;
+    let mut valid = 0;
+    for batch in batches {
+        for packet in batch.iter() {
+            total += 1;
+            if !packet.meta().discard() {
+                valid += 1;
+            }
+        }
+    }
+    (total, valid)
+}
+
+/// Measures consumer throughput of a live `SigVerifyStage` worker.
+///
+/// Signing and serialization happen before the timed loop. The timed path keeps
+/// the real sigverify input/output channels, but only feeds already-built packet
+/// batches into the consumer and drains verified output.
+fn bench_sigverify_stage_consumer_throughput(bencher: &mut Bencher) {
     let (_bank, bank_forks) =
         Bank::new_with_bank_forks_for_tests(&create_genesis_config(1).genesis_config);
     let sharable_banks = bank_forks.read().unwrap().sharable_banks();
@@ -186,50 +230,57 @@ fn bench_sigverify_stage_producer_consumer(bencher: &mut Bencher) {
         verified_s,
         tpu_vote_s,
         forward_stage_s,
-        // Keep this to one producer and one worker.
+        // Keep this to one sigverify worker.
         NonZeroUsize::new(1).unwrap(),
         false,
         sharable_banks,
         None,
     );
 
-    const PACKETS_PER_ITER: usize = 8192;
-    let from_keypair = Keypair::new();
-    let to_keypair = Keypair::new();
+    let prebuilt_batches = consumer_prebuilt_batches();
+    let mut next_batch_set = 0;
 
-    bencher.iter(|| {
-        let batches = gen_single_packet_batches(&from_keypair, &to_keypair, PACKETS_PER_ITER);
-
-        let producer_packet_s = packet_s.clone();
-        let producer = std::thread::spawn(move || {
+    let (work_s, work_r) = bounded::<Vec<PacketBatch>>(1);
+    let producer_packet_s = packet_s.clone();
+    let feeder = std::thread::spawn(move || {
+        while let Ok(batches) = work_r.recv() {
             for batch in batches {
-                // Let channel backpressure throttle the producer.
+                // Let channel backpressure throttle the feeder.
                 producer_packet_s.send(batch).unwrap();
             }
-        });
-
-        let mut verified = 0;
-        while verified < PACKETS_PER_ITER {
-            // Deduper false positives can keep this below PACKETS_PER_ITER.
-            match verified_r.recv_timeout(Duration::from_millis(500)) {
-                Ok(batches) => {
-                    verified += batches
-                        .iter()
-                        .map(|batch| {
-                            batch
-                                .iter()
-                                .filter(|packet| !packet.meta().discard())
-                                .count()
-                        })
-                        .sum::<usize>();
-                }
-                Err(_) if producer.is_finished() => break,
-                Err(_) => {}
-            }
         }
-        producer.join().unwrap();
     });
 
+    bencher.iter(|| {
+        let batches = prebuilt_batches[next_batch_set].clone();
+        next_batch_set = (next_batch_set + 1) % prebuilt_batches.len();
+        work_s.send(batches).unwrap();
+
+        let mut received = 0;
+        let mut valid = 0;
+        while received < CONSUMER_PACKETS_PER_ITER {
+            match verified_r.recv_timeout(CONSUMER_PROGRESS_TIMEOUT) {
+                Ok(batches) => {
+                    let (num_received, num_valid) = count_received_packets(&batches);
+                    received += num_received;
+                    valid += num_valid;
+                }
+                Err(err) => panic!(
+                    "timed out waiting for sigverify consumer output: \
+                     received {received}/{CONSUMER_PACKETS_PER_ITER}, \
+                     valid {valid}/{CONSUMER_PACKETS_PER_ITER}: {err}"
+                ),
+            }
+        }
+        assert!(
+            valid >= CONSUMER_MIN_VALID_PACKETS_PER_ITER,
+            "too many packets were deduped/discarded: \
+             valid {valid}/{CONSUMER_PACKETS_PER_ITER}"
+        );
+    });
+
+    drop(work_s);
+    feeder.join().unwrap();
     drop(packet_s);
     drop(vote_packet_s);
     drop(gossip_sigverify_handle);
@@ -319,10 +370,10 @@ fn benches() -> Vec<TestDescAndFn> {
         },
         TestDescAndFn {
             desc: TestDesc {
-                name: Cow::from("bench_sigverify_stage_producer_consumer"),
+                name: Cow::from("bench_sigverify_stage_consumer_throughput"),
                 ignore: false,
             },
-            testfn: TestFn::StaticBenchFn(bench_sigverify_stage_producer_consumer),
+            testfn: TestFn::StaticBenchFn(bench_sigverify_stage_consumer_throughput),
         },
         TestDescAndFn {
             desc: TestDesc {
