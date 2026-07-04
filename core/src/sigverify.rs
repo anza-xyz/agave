@@ -363,25 +363,36 @@ impl SigVerifyWorkerPool {
             .stats
             .max_pre_send_len
             .fetch_max(state.banking_stage_sender.len(), Ordering::Relaxed);
-        match state.banking_stage_sender.send(banking_packet_batch.clone()) {
-            Ok(0) => {} // avoid poking atomics if nothing was evicted (typical case)
+        if should_forward {
+            if !Self::send_to_banking(state, banking_packet_batch.clone()) {
+                return false;
+            }
+            Self::try_forward(forward_stage_sender, banking_packet_batch, is_tpu_vote);
+        } else if !Self::send_to_banking(state, banking_packet_batch) {
+            return false;
+        }
+
+        true
+    }
+
+    fn send_to_banking(
+        state: &SigVerifyWorkerState,
+        banking_packet_batch: BankingPacketBatch,
+    ) -> bool {
+        match state.banking_stage_sender.send(banking_packet_batch) {
+            Ok(0) => true, // avoid poking atomics if nothing was evicted (typical case)
             Ok(evicted) => {
-                // record evicted amount into metrics
                 state
                     .stats
                     .eviction_drops
                     .fetch_add(evicted, Ordering::Relaxed);
+                true
             }
             Err(err) => {
                 error!("sigverify send to banking failed: {err:?}");
-                return false;
+                false
             }
         }
-        if should_forward {
-            Self::try_forward(forward_stage_sender, banking_packet_batch, is_tpu_vote);
-        }
-
-        true
     }
 
     fn run_gossip_task(
