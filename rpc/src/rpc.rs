@@ -3946,7 +3946,9 @@ pub mod rpc_full {
                 let simulation_result = if let Some(err) = verification_error {
                     TransactionSimulationResult::new_error(err)
                 } else {
-                    preflight_bank.simulate_transaction(&transaction, false)
+                    // Preflight simulates a fully-signed transaction, so
+                    // precompiles must be verified (do not skip).
+                    preflight_bank.simulate_transaction(&transaction, false, false)
                 };
 
                 if let TransactionSimulationResult {
@@ -4072,7 +4074,11 @@ pub mod rpc_full {
             let simulation_result = if let Some(err) = verification_error {
                 TransactionSimulationResult::new_error(err)
             } else {
-                bank.simulate_transaction(&transaction, enable_cpi_recording)
+                // When `sigVerify` is false, skip precompile signature
+                // verification so that transactions whose precompile
+                // instructions are not yet signed can still be simulated
+                // (restores pre-SIMD-0159 behavior).
+                bank.simulate_transaction(&transaction, enable_cpi_recording, !sig_verify)
             };
 
             let TransactionSimulationResult {

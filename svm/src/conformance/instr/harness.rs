@@ -98,6 +98,8 @@ pub fn execute_instr_with_callback<C: InvokeContextCallback>(
             &mut invoke_context,
             &mut timings,
             &mut compute_units_consumed,
+            // Conformance harness must verify precompiles like committed execution.
+            false,
         ) {
             Ok(()) => Ok(()),
             Err(TransactionError::InstructionError(_, err)) => Err(err),
