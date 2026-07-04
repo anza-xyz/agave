@@ -14,14 +14,20 @@ use {
     solana_keypair::Keypair,
     solana_measure::measure::Measure,
     solana_perf::{
-        packet::{PacketBatch, to_packet_batches},
+        packet::{BytesPacket, PacketBatch, to_packet_batches},
         sigverify,
         test_tx::test_tx,
     },
     solana_runtime::{bank::Bank, genesis_utils::create_genesis_config},
     solana_signer::Signer,
     solana_system_transaction as system_transaction,
-    std::{borrow::Cow, hint::black_box, num::NonZeroUsize, sync::Arc, time::Instant},
+    std::{
+        borrow::Cow,
+        hint::black_box,
+        num::NonZeroUsize,
+        sync::Arc,
+        time::{Duration, Instant},
+    },
 };
 
 /// Orphan rules workaround that allows for implementation of `TDynBenchFn`.
@@ -133,6 +139,103 @@ fn bench_sigverify_stage(bencher: &mut Bencher, use_same_tx: bool) {
     stage.join().unwrap();
 }
 
+/// Generates distinct single-packet batches, matching QUIC's input shape.
+/// Distinct transactions avoid Deduper drops in the benchmark.
+fn gen_single_packet_batches(
+    from_keypair: &Keypair,
+    to_keypair: &Keypair,
+    count: usize,
+) -> Vec<PacketBatch> {
+    (0..count)
+        .map(|_| {
+            let amount = rng().random();
+            let tx = system_transaction::transfer(
+                from_keypair,
+                &to_keypair.pubkey(),
+                amount,
+                Hash::default(),
+            );
+            PacketBatch::Single(BytesPacket::from_data(tx).expect("serialize request"))
+        })
+        .collect()
+}
+
+/// Measures signing and serialization cost without channel or sigverify work.
+fn bench_gen_single_packet_batches(bencher: &mut Bencher) {
+    let from_keypair = Keypair::new();
+    let to_keypair = Keypair::new();
+    bencher.iter(|| {
+        black_box(gen_single_packet_batches(&from_keypair, &to_keypair, 8192));
+    });
+}
+
+/// Measures one producer feeding a live `SigVerifyStage` worker through the
+/// real sigverify channel.
+fn bench_sigverify_stage_producer_consumer(bencher: &mut Bencher) {
+    let (_bank, bank_forks) =
+        Bank::new_with_bank_forks_for_tests(&create_genesis_config(1).genesis_config);
+    let sharable_banks = bank_forks.read().unwrap().sharable_banks();
+    let (packet_s, packet_r) = bounded(1024);
+    let (vote_packet_s, vote_packet_r) = bounded(1024);
+    let (verified_s, verified_r) = BankingTracer::channel_for_test();
+    let (tpu_vote_s, _tpu_vote_r) = BankingTracer::channel_for_test();
+    let (forward_stage_s, _forward_stage_r) = bounded(1024);
+    let (stage, gossip_sigverify_handle) = SigVerifyStage::new(
+        packet_r,
+        vote_packet_r,
+        verified_s,
+        tpu_vote_s,
+        forward_stage_s,
+        // Keep this to one producer and one worker.
+        NonZeroUsize::new(1).unwrap(),
+        false,
+        sharable_banks,
+        None,
+    );
+
+    const PACKETS_PER_ITER: usize = 8192;
+    let from_keypair = Keypair::new();
+    let to_keypair = Keypair::new();
+
+    bencher.iter(|| {
+        let batches = gen_single_packet_batches(&from_keypair, &to_keypair, PACKETS_PER_ITER);
+
+        let producer_packet_s = packet_s.clone();
+        let producer = std::thread::spawn(move || {
+            for batch in batches {
+                // Let channel backpressure throttle the producer.
+                producer_packet_s.send(batch).unwrap();
+            }
+        });
+
+        let mut verified = 0;
+        while verified < PACKETS_PER_ITER {
+            // Deduper false positives can keep this below PACKETS_PER_ITER.
+            match verified_r.recv_timeout(Duration::from_millis(500)) {
+                Ok(batches) => {
+                    verified += batches
+                        .iter()
+                        .map(|batch| {
+                            batch
+                                .iter()
+                                .filter(|packet| !packet.meta().discard())
+                                .count()
+                        })
+                        .sum::<usize>();
+                }
+                Err(_) if producer.is_finished() => break,
+                Err(_) => {}
+            }
+        }
+        producer.join().unwrap();
+    });
+
+    drop(packet_s);
+    drop(vote_packet_s);
+    drop(gossip_sigverify_handle);
+    stage.join().unwrap();
+}
+
 fn prepare_batches(discard_factor: i32) -> (Vec<PacketBatch>, usize) {
     let len = 10_000; // max batch size
     let chunk_size = 1024;
@@ -213,6 +316,20 @@ fn benches() -> Vec<TestDescAndFn> {
                 ignore: false,
             },
             testfn: TestFn::StaticBenchFn(bench_sigverify_stage_without_same_tx),
+        },
+        TestDescAndFn {
+            desc: TestDesc {
+                name: Cow::from("bench_sigverify_stage_producer_consumer"),
+                ignore: false,
+            },
+            testfn: TestFn::StaticBenchFn(bench_sigverify_stage_producer_consumer),
+        },
+        TestDescAndFn {
+            desc: TestDesc {
+                name: Cow::from("bench_gen_single_packet_batches"),
+                ignore: false,
+            },
+            testfn: TestFn::StaticBenchFn(bench_gen_single_packet_batches),
         },
     ];
 
