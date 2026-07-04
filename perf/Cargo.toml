@@ -19,6 +19,10 @@ name = "solana_perf"
 
 [features]
 agave-unstable-api = []
+# Experimental AVX-512 CPU sigverify backend for benchmarking. Requires
+# AVX-512F/DQ/IFMA, for example `RUSTFLAGS="-C target-cpu=native"`.
+# Not enabled by default; unaudited and unsupported on non-AVX-512 hosts.
+ed25519-simd-verify = ["dep:ed25519-simd"]
 dev-context-only-utils = [
     "dep:solana-clock",
     "dep:solana-keypair",
@@ -44,6 +48,7 @@ ahash = { workspace = true }
 arc-swap = { workspace = true }
 bincode = { workspace = true }
 bytes = { workspace = true, features = ["serde"] }
+ed25519-simd = { git = "https://github.com/efagerho/ed25519-simd-rs", rev = "793aa8ba660af57466fa721c9612e072557348c5", optional = true }
 log = { workspace = true }
 num_cpus = { workspace = true }
 rand = { workspace = true }

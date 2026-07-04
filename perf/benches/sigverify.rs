@@ -106,6 +106,141 @@ fn bench_sigverify_high_packets_large_batch(b: &mut Bencher) {
     })
 }
 
+/// Builds one multi-packet batch for the serial sigverify path.
+fn gen_single_batch(use_same_tx: bool, num_packets: usize) -> PacketBatch {
+    let mut packet_batch = BytesPacketBatch::with_capacity(num_packets);
+    if use_same_tx {
+        let packet = BytesPacket::from_data(test_tx()).expect("serialize request");
+        for _ in 0..num_packets {
+            packet_batch.push(packet.clone());
+        }
+    } else {
+        for _ in 0..num_packets {
+            packet_batch.push(BytesPacket::from_data(test_tx()).expect("serialize request"));
+        }
+    }
+    PacketBatch::from(packet_batch)
+}
+
+/// Builds one-packet batches, matching QUIC packets drained into one serial
+/// verify call.
+fn gen_drained_singles(num_batches: usize) -> Vec<PacketBatch> {
+    (0..num_batches)
+        .map(|_| PacketBatch::Single(BytesPacket::from_data(test_tx()).expect("serialize")))
+        .collect()
+}
+
+fn bench_sigverify_serial_single_packet(b: &mut Bencher) {
+    let mut batches = gen_drained_singles(1);
+    b.iter(|| {
+        sigverify::ed25519_verify_serial(&mut batches, false, false);
+    })
+}
+
+fn bench_sigverify_serial_drained_singles_8(b: &mut Bencher) {
+    // Current worker drain cap.
+    let mut batches = gen_drained_singles(8);
+    b.iter(|| {
+        sigverify::ed25519_verify_serial(&mut batches, false, false);
+    })
+}
+
+fn bench_sigverify_serial_drained_singles_16(b: &mut Bencher) {
+    let mut batches = gen_drained_singles(16);
+    b.iter(|| {
+        sigverify::ed25519_verify_serial(&mut batches, false, false);
+    })
+}
+
+fn bench_sigverify_serial_drained_singles_64(b: &mut Bencher) {
+    let mut batches = gen_drained_singles(64);
+    b.iter(|| {
+        sigverify::ed25519_verify_serial(&mut batches, false, false);
+    })
+}
+
+fn bench_sigverify_serial_drained_singles_256(b: &mut Bencher) {
+    let mut batches = gen_drained_singles(256);
+    b.iter(|| {
+        sigverify::ed25519_verify_serial(&mut batches, false, false);
+    })
+}
+
+fn bench_sigverify_serial_drained_singles_512(b: &mut Bencher) {
+    let mut batches = gen_drained_singles(512);
+    b.iter(|| {
+        sigverify::ed25519_verify_serial(&mut batches, false, false);
+    })
+}
+
+fn bench_sigverify_serial_batch_2(b: &mut Bencher) {
+    let mut batch = gen_single_batch(false, 2);
+    b.iter(|| {
+        sigverify::ed25519_verify_serial(std::slice::from_mut(&mut batch), false, false);
+    })
+}
+
+fn bench_sigverify_serial_batch_4(b: &mut Bencher) {
+    let mut batch = gen_single_batch(false, 4);
+    b.iter(|| {
+        sigverify::ed25519_verify_serial(std::slice::from_mut(&mut batch), false, false);
+    })
+}
+
+fn bench_sigverify_serial_batch_8(b: &mut Bencher) {
+    let mut batch = gen_single_batch(false, 8);
+    b.iter(|| {
+        sigverify::ed25519_verify_serial(std::slice::from_mut(&mut batch), false, false);
+    })
+}
+
+fn bench_sigverify_serial_batch_16(b: &mut Bencher) {
+    let mut batch = gen_single_batch(false, 16);
+    b.iter(|| {
+        sigverify::ed25519_verify_serial(std::slice::from_mut(&mut batch), false, false);
+    })
+}
+
+fn bench_sigverify_serial_batch_32(b: &mut Bencher) {
+    let mut batch = gen_single_batch(false, 32);
+    b.iter(|| {
+        sigverify::ed25519_verify_serial(std::slice::from_mut(&mut batch), false, false);
+    })
+}
+
+fn bench_sigverify_serial_batch_128(b: &mut Bencher) {
+    let mut batch = gen_single_batch(false, LARGE_BATCH_PACKET_COUNT);
+    b.iter(|| {
+        sigverify::ed25519_verify_serial(std::slice::from_mut(&mut batch), false, false);
+    })
+}
+
+fn bench_sigverify_serial_batch_512(b: &mut Bencher) {
+    let mut batch = gen_single_batch(false, 512);
+    b.iter(|| {
+        sigverify::ed25519_verify_serial(std::slice::from_mut(&mut batch), false, false);
+    })
+}
+
+fn bench_sigverify_serial_batch_uneven(b: &mut Bencher) {
+    let simple_tx = test_tx();
+    let multi_tx = test_multisig_tx();
+    let num_packets = LARGE_BATCH_PACKET_COUNT;
+    let mut packet_batch = BytesPacketBatch::with_capacity(num_packets);
+    for i in 0..num_packets {
+        let tx = if i % 2 == 0 {
+            simple_tx.clone()
+        } else {
+            multi_tx.clone()
+        };
+        packet_batch.push(BytesPacket::from_data(&tx).expect("serialize request"));
+    }
+    let mut batch = PacketBatch::from(packet_batch);
+    b.iter(|| {
+        sigverify::ed25519_verify_serial(std::slice::from_mut(&mut batch), false, false);
+    })
+}
+
 fn bench_sigverify_uneven(b: &mut Bencher) {
     agave_logger::setup();
     let threadpool = sigverify::threadpool_for_benches();
@@ -159,6 +294,20 @@ benchmark_group!(
     bench_sigverify_medium_packets_small_batch,
     bench_sigverify_low_packets_large_batch,
     bench_sigverify_low_packets_small_batch,
-    bench_sigverify_simple
+    bench_sigverify_simple,
+    bench_sigverify_serial_single_packet,
+    bench_sigverify_serial_drained_singles_8,
+    bench_sigverify_serial_drained_singles_16,
+    bench_sigverify_serial_drained_singles_64,
+    bench_sigverify_serial_drained_singles_256,
+    bench_sigverify_serial_drained_singles_512,
+    bench_sigverify_serial_batch_2,
+    bench_sigverify_serial_batch_4,
+    bench_sigverify_serial_batch_8,
+    bench_sigverify_serial_batch_16,
+    bench_sigverify_serial_batch_32,
+    bench_sigverify_serial_batch_128,
+    bench_sigverify_serial_batch_512,
+    bench_sigverify_serial_batch_uneven
 );
 benchmark_main!(benches);
