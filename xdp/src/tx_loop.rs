@@ -18,7 +18,7 @@ use {
         umem::{Frame, OwnedUmem, PageAlignedMemory, Umem},
     },
     agave_cpu_utils::set_cpu_affinity,
-    crossbeam_channel::{Receiver, Sender, TryRecvError},
+    crossbeam_channel::{Receiver, TryRecvError},
     libc::{_SC_PAGESIZE, sysconf},
     std::{
         io,
@@ -215,12 +215,12 @@ pub trait TxPacket {
 }
 
 impl<U: Umem> TxLoop<U> {
-    pub fn run<T: TxPacket, R: Fn(&IpAddr) -> Option<NextHop>>(
-        self,
-        receiver: Receiver<T>,
-        drop_sender: Sender<T>,
-        route_fn: R,
-    ) {
+    pub fn run<T, D, R>(self, receiver: Receiver<T>, mut drop_item: D, route_fn: R)
+    where
+        T: TxPacket,
+        D: FnMut(T),
+        R: Fn(&IpAddr) -> Option<NextHop>,
+    {
         // How long we sleep waiting to receive packets from the channel.
         const RECV_TIMEOUT: Duration = Duration::from_nanos(1000);
 
@@ -530,7 +530,7 @@ impl<U: Umem> TxLoop<U> {
                         kick(&ring);
                     }
                 }
-                let _ = drop_sender.try_send(item);
+                drop_item(item);
             }
             debug_assert_eq!(batched_packets, 0);
         }

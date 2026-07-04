@@ -417,13 +417,19 @@ impl TransmitterBuilder {
                 Builder::new()
                     .name(format!("solTransmIO{i:02}"))
                     .spawn(move || {
-                        tx_loop.run(receiver, drop_sender, move |ip| {
-                            let r = atomic_router.load();
-                            match ip {
-                                IpAddr::V4(ip) => r.route_v4(*ip).ok(),
-                                IpAddr::V6(_) => None,
-                            }
-                        })
+                        tx_loop.run(
+                            receiver,
+                            move |item| {
+                                let _ = drop_sender.try_send(item);
+                            },
+                            move |ip| {
+                                let r = atomic_router.load();
+                                match ip {
+                                    IpAddr::V4(ip) => r.route_v4(*ip).ok(),
+                                    IpAddr::V6(_) => None,
+                                }
+                            },
+                        )
                     })
                     .unwrap(),
             );
