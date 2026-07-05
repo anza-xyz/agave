@@ -1511,10 +1511,7 @@ mod tests {
 
         assert_eq!(commission_split_preserve_lamports(1_234, 1), (1, 0));
         assert_eq!(commission_split_preserve_lamports(1_234, 10), (2, 8));
-        assert_eq!(
-            commission_split_preserve_lamports(1_234, 1_000),
-            (124, 876)
-        );
+        assert_eq!(commission_split_preserve_lamports(1_234, 1_000), (124, 876));
         assert_eq!(
             commission_split_preserve_lamports(1_234, 10_000),
             (1_234, 8_766)
@@ -1522,10 +1519,7 @@ mod tests {
 
         assert_eq!(commission_split_preserve_lamports(3_333, 1), (1, 0));
         assert_eq!(commission_split_preserve_lamports(3_333, 10), (4, 6));
-        assert_eq!(
-            commission_split_preserve_lamports(3_333, 1_000),
-            (334, 666)
-        );
+        assert_eq!(commission_split_preserve_lamports(3_333, 1_000), (334, 666));
         assert_eq!(
             commission_split_preserve_lamports(3_333, 10_000),
             (3_333, 6_667)
