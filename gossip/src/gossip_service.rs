@@ -2,7 +2,6 @@
 
 use {
     crate::{
-        XdpSender,
         cluster_info::{ClusterInfo, GOSSIP_CHANNEL_CAPACITY},
         cluster_info_metrics::submit_gossip_stats,
         contact_info::ContactInfo,
@@ -11,7 +10,7 @@ use {
     crossbeam_channel::{Sender, TrySendError},
     solana_keypair::Keypair,
     solana_net_utils::{
-        DEFAULT_IP_ECHO_SERVER_THREADS, SocketAddrSpace,
+        DEFAULT_IP_ECHO_SERVER_THREADS, PinnedXdpSender as XdpSender, SocketAddrSpace,
         multihomed_sockets::{BindIpAddrs, MultihomedSocketProvider, SocketProvider},
     },
     solana_perf::{packet::PacketBatch, recycler::Recycler},
