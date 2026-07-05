@@ -142,7 +142,25 @@ fn find_any_file_under_path(path: &Path) -> io::Result<Option<PathBuf>> {
         return Ok(Some(path.to_path_buf()));
     }
     if path.is_dir() {
-        for entry in fs::read_dir(path)? {
+        let entries = match fs::read_dir(path) {
+            Ok(entries) => entries,
+            // An unreadable directory has no probe file to open, and unreadable files are already
+            // tolerated by check_direct_io_via_open_probe; skip it instead of aborting startup.
+            Err(err) if err.kind() == io::ErrorKind::PermissionDenied => {
+                log::warn!(
+                    "skipping unreadable directory while probing direct-io support: `{}`: {err}",
+                    path.display()
+                );
+                return Ok(None);
+            }
+            Err(err) => {
+                return Err(io::Error::new(
+                    err.kind(),
+                    format!("failed to read directory `{}`: {err}", path.display()),
+                ));
+            }
+        };
+        for entry in entries {
             let entry = entry?;
             if let Some(path) = find_any_file_under_path(&entry.path())? {
                 return Ok(Some(path));
@@ -182,6 +200,25 @@ mod tests {
     fn test_find_any_file_under_path_empty_dir() {
         let dir = TempDir::new().unwrap();
         assert_eq!(find_any_file_under_path(dir.path()).unwrap(), None);
+    }
+
+    #[test]
+    fn test_find_any_file_under_path_skips_unreadable_subdir() {
+        use std::os::unix::fs::PermissionsExt;
+        // read_dir on a mode-0000 dir only fails for non-root; root bypasses the permission bits.
+        if unsafe { libc::geteuid() } == 0 {
+            return;
+        }
+        let dir = TempDir::new().unwrap();
+        let unreadable = dir.path().join("lost+found");
+        std::fs::create_dir(&unreadable).unwrap();
+        std::fs::set_permissions(&unreadable, std::fs::Permissions::from_mode(0o000)).unwrap();
+
+        let found = find_any_file_under_path(dir.path());
+
+        // Restore perms so TempDir cleanup can recurse, then assert.
+        std::fs::set_permissions(&unreadable, std::fs::Permissions::from_mode(0o700)).unwrap();
+        assert_eq!(found.unwrap(), None);
     }
 
     #[test]
