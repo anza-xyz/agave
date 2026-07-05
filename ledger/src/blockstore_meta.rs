@@ -773,11 +773,6 @@ impl ErasureMeta {
         u32::try_from(self.first_received_coding_index).ok()
     }
 
-    pub(crate) fn next_fec_set_index(&self) -> Option<u32> {
-        let num_data = u32::try_from(self.config.num_data).ok()?;
-        self.fec_set_index.checked_add(num_data)
-    }
-
     // Returns true if some data shreds are missing, but there are enough data
     // and coding shreds to recover the erasure batch.
     // TODO: In order to retransmit all shreds from the erasure batch, we need

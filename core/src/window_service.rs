@@ -114,8 +114,6 @@ impl WindowServiceMetrics {
 pub fn check_duplicate_shred(
     blockstore: &Blockstore,
     shred: PossibleDuplicateShred,
-    validate_chained_block_id: bool,
-    validate_chained_block_id_2: bool,
     no_verify_chained_merkle_root: bool,
 ) -> Result<Option<(Shred, shred::Payload)>> {
     let shred_slot = shred.slot();
@@ -123,28 +121,13 @@ pub fn check_duplicate_shred(
         PossibleDuplicateShred::LastIndexConflict(shred, conflict)
         | PossibleDuplicateShred::ErasureConflict(shred, conflict)
         | PossibleDuplicateShred::MerkleRootConflict(shred, conflict) => (shred, conflict),
-        PossibleDuplicateShred::ChainedMerkleRootConflict(_slot) => {
-            if no_verify_chained_merkle_root {
-                // If we're in the full alpenglow epoch, we stop validating the chained merkle root.
-                // In Alpenglow we only use the double merkle root
-                return Ok(None);
-            }
-            if validate_chained_block_id || validate_chained_block_id_2 {
-                // Although chained merkle roots are not necessary for agave duplicate resolution protocols,
-                // We still need to mark the block as dead for other client teams.
-                blockstore.set_dead_slot(shred_slot)?;
-            }
-            return Ok(None);
-        }
         PossibleDuplicateShred::FixedFECChainedMerkleRootConflict(_slot) => {
             if no_verify_chained_merkle_root {
                 // If we're in the full alpenglow epoch, we stop validating the chained merkle root.
                 // In Alpenglow we only use the double merkle root
                 return Ok(None);
             }
-            if validate_chained_block_id_2 {
-                blockstore.set_dead_slot(shred_slot)?;
-            }
+            blockstore.set_dead_slot(shred_slot)?;
             return Ok(None);
         }
         PossibleDuplicateShred::Exists(shred) => {
@@ -188,29 +171,14 @@ fn run_check_duplicate(
             root_bank = bank_forks.read().unwrap().root_bank();
         }
         let shred_slot = shred.slot();
-        let validate_chained_block_id = shred::filter::check_feature_activation_from_bank(
-            &feature_set::validate_chained_block_id::id(),
-            shred_slot,
-            &root_bank,
-        );
-        let validate_chained_block_id_2 = shred::filter::check_feature_activation_from_bank(
-            &feature_set::validate_chained_block_id_2::id(),
-            shred_slot,
-            &root_bank,
-        );
         let no_verify_chained_merkle_root = shred::filter::check_feature_activation_from_bank(
             &feature_set::alpenglow::id(),
             shred_slot,
             &root_bank,
         );
 
-        let Some((shred1, shred2)) = check_duplicate_shred(
-            blockstore,
-            shred,
-            validate_chained_block_id,
-            validate_chained_block_id_2,
-            no_verify_chained_merkle_root,
-        )?
+        let Some((shred1, shred2)) =
+            check_duplicate_shred(blockstore, shred, no_verify_chained_merkle_root)?
         else {
             return Ok(());
         };
@@ -655,8 +623,6 @@ mod test {
             &blockstore,
             PossibleDuplicateShred::Exists(duplicate_shred.clone()),
             true,
-            true,
-            false,
         )
         .unwrap()
         .unwrap();

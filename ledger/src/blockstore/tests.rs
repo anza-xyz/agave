@@ -5685,148 +5685,6 @@ fn test_get_slot_entries_dead_slot_race() {
 }
 
 #[test]
-fn test_previous_erasure_set() {
-    let ledger_path = get_tmp_ledger_path_auto_delete!();
-    let blockstore = Blockstore::open(ledger_path.path()).unwrap();
-    let mut erasure_metas = BTreeMap::new();
-
-    let parent_slot = 0;
-    let prev_slot = 1;
-    let slot = 2;
-    let (data_shreds_0, coding_shreds_0) =
-        setup_erasure_shreds_with_index(slot, parent_slot, 10, 0);
-    let erasure_set_0 = ErasureSetId::new(slot, 0);
-    let erasure_meta_0 = ErasureMeta::from_coding_shred(coding_shreds_0.first().unwrap()).unwrap();
-
-    let prev_fec_set_index = data_shreds_0.len() as u32;
-    let (data_shreds_prev, coding_shreds_prev) =
-        setup_erasure_shreds_with_index(slot, parent_slot, 10, prev_fec_set_index);
-    let erasure_set_prev = ErasureSetId::new(slot, prev_fec_set_index);
-    let erasure_meta_prev =
-        ErasureMeta::from_coding_shred(coding_shreds_prev.first().unwrap()).unwrap();
-
-    let (_, coding_shreds_prev_slot) =
-        setup_erasure_shreds_with_index(prev_slot, parent_slot, 10, prev_fec_set_index);
-    let erasure_set_prev_slot = ErasureSetId::new(prev_slot, prev_fec_set_index);
-    let erasure_meta_prev_slot =
-        ErasureMeta::from_coding_shred(coding_shreds_prev_slot.first().unwrap()).unwrap();
-
-    let fec_set_index = data_shreds_prev.len() as u32 + prev_fec_set_index;
-    let erasure_set = ErasureSetId::new(slot, fec_set_index);
-
-    // Blockstore is empty
-    assert_eq!(
-        blockstore
-            .previous_erasure_set(erasure_set, &erasure_metas)
-            .unwrap(),
-        None
-    );
-
-    // Erasure metas does not contain the previous fec set, but only the one before that
-    erasure_metas.insert(erasure_set_0, WorkingEntry::Dirty(erasure_meta_0));
-    assert_eq!(
-        blockstore
-            .previous_erasure_set(erasure_set, &erasure_metas)
-            .unwrap(),
-        None
-    );
-
-    // Both Erasure metas and blockstore, contain only contain the previous previous fec set
-    erasure_metas.insert(erasure_set_0, WorkingEntry::Clean(erasure_meta_0));
-    blockstore
-        .put_erasure_meta(erasure_set_0, &erasure_meta_0)
-        .unwrap();
-    assert_eq!(
-        blockstore
-            .previous_erasure_set(erasure_set, &erasure_metas)
-            .unwrap(),
-        None
-    );
-
-    // Erasure meta contains the previous FEC set, blockstore only contains the older
-    erasure_metas.insert(erasure_set_prev, WorkingEntry::Dirty(erasure_meta_prev));
-    assert_eq!(
-        blockstore
-            .previous_erasure_set(erasure_set, &erasure_metas)
-            .unwrap()
-            .map(|(erasure_set, erasure_meta)| (erasure_set, erasure_meta.into_owned())),
-        Some((erasure_set_prev, erasure_meta_prev))
-    );
-
-    // Erasure meta only contains the older, blockstore has the previous fec set
-    erasure_metas.remove(&erasure_set_prev);
-    blockstore
-        .put_erasure_meta(erasure_set_prev, &erasure_meta_prev)
-        .unwrap();
-    assert_eq!(
-        blockstore
-            .previous_erasure_set(erasure_set, &erasure_metas)
-            .unwrap()
-            .map(|(erasure_set, erasure_meta)| (erasure_set, erasure_meta.into_owned())),
-        Some((erasure_set_prev, erasure_meta_prev))
-    );
-
-    // Both contain the previous fec set
-    erasure_metas.insert(erasure_set_prev, WorkingEntry::Clean(erasure_meta_prev));
-    assert_eq!(
-        blockstore
-            .previous_erasure_set(erasure_set, &erasure_metas)
-            .unwrap()
-            .map(|(erasure_set, erasure_meta)| (erasure_set, erasure_meta.into_owned())),
-        Some((erasure_set_prev, erasure_meta_prev))
-    );
-
-    // Works even if the previous fec set has index 0
-    assert_eq!(
-        blockstore
-            .previous_erasure_set(erasure_set_prev, &erasure_metas)
-            .unwrap()
-            .map(|(erasure_set, erasure_meta)| (erasure_set, erasure_meta.into_owned())),
-        Some((erasure_set_0, erasure_meta_0))
-    );
-    erasure_metas.remove(&erasure_set_0);
-    assert_eq!(
-        blockstore
-            .previous_erasure_set(erasure_set_prev, &erasure_metas)
-            .unwrap()
-            .map(|(erasure_set, erasure_meta)| (erasure_set, erasure_meta.into_owned())),
-        Some((erasure_set_0, erasure_meta_0))
-    );
-
-    // Does not cross slot boundary
-    let ledger_path = get_tmp_ledger_path_auto_delete!();
-    let blockstore = Blockstore::open(ledger_path.path()).unwrap();
-    erasure_metas.clear();
-    erasure_metas.insert(
-        erasure_set_prev_slot,
-        WorkingEntry::Dirty(erasure_meta_prev_slot),
-    );
-    assert_eq!(
-        erasure_meta_prev_slot.next_fec_set_index().unwrap(),
-        fec_set_index
-    );
-    assert_eq!(
-        blockstore
-            .previous_erasure_set(erasure_set, &erasure_metas)
-            .unwrap(),
-        None,
-    );
-    erasure_metas.insert(
-        erasure_set_prev_slot,
-        WorkingEntry::Clean(erasure_meta_prev_slot),
-    );
-    blockstore
-        .put_erasure_meta(erasure_set_prev_slot, &erasure_meta_prev_slot)
-        .unwrap();
-    assert_eq!(
-        blockstore
-            .previous_erasure_set(erasure_set, &erasure_metas)
-            .unwrap(),
-        None,
-    );
-}
-
-#[test]
 fn test_chained_merkle_root_consistency_backwards() {
     // Insert a coding shred then consistent data and coding shreds from the next FEC set
     let ledger_path = get_tmp_ledger_path_auto_delete!();
@@ -6024,7 +5882,7 @@ fn test_chained_merkle_root_inconsistency_backwards_insert_code() {
     assert_eq!(duplicate_shreds.len(), 1);
     assert_eq!(
         duplicate_shreds[0],
-        PossibleDuplicateShred::ChainedMerkleRootConflict(coding_shred.slot())
+        PossibleDuplicateShred::FixedFECChainedMerkleRootConflict(coding_shred.slot())
     );
 
     // Should not check again, even though this shred conflicts as well
@@ -6072,7 +5930,7 @@ fn test_chained_merkle_root_inconsistency_backwards_insert_data() {
     assert_eq!(duplicate_shreds.len(), 1);
     assert_eq!(
         duplicate_shreds[0],
-        PossibleDuplicateShred::ChainedMerkleRootConflict(data_shred.slot())
+        PossibleDuplicateShred::FixedFECChainedMerkleRootConflict(data_shred.slot())
     );
     // Should not check again, even though this shred conflicts as well
     assert!(
@@ -6117,16 +5975,10 @@ fn test_chained_merkle_root_inconsistency_forwards() {
     // Insert previous FEC set
     let duplicate_shreds = blockstore.insert_shred_return_duplicate(coding_shred.clone());
 
-    assert_eq!(duplicate_shreds.len(), 2);
-    assert!(
-        duplicate_shreds.contains(&PossibleDuplicateShred::ChainedMerkleRootConflict(
-            coding_shred.slot(),
-        ))
-    );
-    assert!(
-        duplicate_shreds.contains(&PossibleDuplicateShred::FixedFECChainedMerkleRootConflict(
-            coding_shred.slot(),
-        ))
+    assert_eq!(duplicate_shreds.len(), 1);
+    assert_eq!(
+        duplicate_shreds[0],
+        PossibleDuplicateShred::FixedFECChainedMerkleRootConflict(coding_shred.slot(),)
     );
 }
 
@@ -6231,18 +6083,14 @@ fn test_chained_merkle_root_inconsistency_both() {
     assert_eq!(duplicate_shreds.len(), 1);
     assert_eq!(
         duplicate_shreds[0],
-        PossibleDuplicateShred::ChainedMerkleRootConflict(data_shred.slot())
+        PossibleDuplicateShred::FixedFECChainedMerkleRootConflict(data_shred.slot())
     );
 
     // Insert coding shred
     let duplicate_shreds = blockstore.insert_shred_return_duplicate(coding_shred.clone());
 
-    // Now the forwards check will be performed
-    assert_eq!(duplicate_shreds.len(), 1);
-    assert_eq!(
-        duplicate_shreds[0],
-        PossibleDuplicateShred::ChainedMerkleRootConflict(coding_shred.slot())
-    );
+    // Since we already have reported the duplicate, no additional are reported
+    assert!(duplicate_shreds.is_empty());
 }
 
 #[test]
