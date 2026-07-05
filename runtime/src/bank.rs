@@ -3828,7 +3828,7 @@ impl Bank {
                 },
                 drop_on_failure: false,
                 all_or_nothing: false,
-                strict_nonce_size_check: false,
+                strict_nonce_size_check: true,
             },
         );
 
