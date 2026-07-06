@@ -448,10 +448,19 @@ impl StakesCacheV2 {
         let inner = self.stake_delegation_index.0.read().unwrap();
         let mut overrides = FrontierOverrides::default();
         let mut inserts = FrontierInserts::default();
+        let mut num_removed: usize = 0;
         let mut insert_to_frontier =
             |stake_pubkey: &Pubkey, stake_account: &Option<Arc<StakeAccount>>| {
                 if let Some((root_index, _, _)) = inner.root_entries.get_full(stake_pubkey) {
-                    overrides.insert(root_index, stake_account.clone());
+                    let previous_stake_account =
+                        overrides.insert(root_index, stake_account.clone());
+                    if stake_account.is_none() {
+                        if !matches!(previous_stake_account, Some(None)) {
+                            num_removed = num_removed.wrapping_add(1);
+                        }
+                    } else if matches!(previous_stake_account, Some(None)) {
+                        num_removed = num_removed.wrapping_sub(1);
+                    }
                 } else {
                     match stake_account {
                         Some(stake_account) => {
@@ -476,10 +485,6 @@ impl StakesCacheV2 {
             }
         }
 
-        let num_removed = overrides
-            .values()
-            .filter(|override_entry| override_entry.is_none())
-            .count();
         FrontierQuery {
             inner,
             overrides,
@@ -647,6 +652,33 @@ mod tests {
         assert!(stake_delegations.iter().any(|(pubkey, account)| {
             **pubkey == stake_pubkey_c && account.delegation().stake == 40
         }));
+    }
+
+    #[test]
+    fn test_frontier_query_counts_only_final_removed_root_overrides() {
+        let rent = Rent::default();
+        let vote_pubkey = new_rand();
+        let stake_pubkey = new_rand();
+
+        let root_account = create_stake_account(10, &vote_pubkey, &stake_pubkey, &rent);
+        let root_cache = StakesCacheV2::new_from_accounts(
+            [(stake_pubkey, StakeAccount::try_from(root_account).unwrap())].into_iter(),
+            0,
+        );
+
+        let ancestor = StakesCacheV2::new_from_parent(&root_cache);
+        let child = StakesCacheV2::new_from_parent(&ancestor);
+
+        ancestor.remove_stake_delegation(&stake_pubkey);
+        let updated_account = create_stake_account(20, &vote_pubkey, &stake_pubkey, &rent);
+        child.upsert_stake_delegation(
+            stake_pubkey,
+            StakeAccount::try_from(updated_account).unwrap(),
+        );
+
+        let frontier_query = child.frontier_query([&ancestor]);
+        assert_eq!(frontier_query.len_unfiltered(), 1);
+        assert_eq!(frontier_query.len_filtered(), 1);
     }
 
     #[test]
