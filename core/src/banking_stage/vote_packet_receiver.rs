@@ -4,9 +4,10 @@ use {
         leader_slot_metrics::LeaderSlotMetricsTracker, vote_storage::VoteStorage,
     },
     crate::banking_stage::transaction_scheduler::transaction_state_container::SharedBytes,
-    agave_banking_stage_ingress_types::BankingPacketReceiver,
+    agave_banking_stage_ingress_types::{BankingPacketBatch, BankingPacketReceiver},
     agave_transaction_view::{
-        result::TransactionViewError, transaction_view::SanitizedTransactionView,
+        result::TransactionViewError, sanitize::SanitizeConfig,
+        transaction_view::SanitizedTransactionView,
     },
     crossbeam_channel::RecvTimeoutError,
     solana_measure::{measure::Measure, measure_us},
@@ -47,24 +48,22 @@ impl VotePacketReceiver {
         let (result, recv_time_us) = measure_us!({
             let recv_timeout = Self::get_receive_timeout(vote_storage);
             let mut recv_and_buffer_measure = Measure::start("recv_and_buffer");
-            self.receive_until(recv_timeout, vote_storage.max_receive_size())
-                // Consumes results if Ok, otherwise we keep the Err
-                .map(|(deserialized_packets, packet_stats)| {
-                    self.buffer_packets(
-                        deserialized_packets,
-                        packet_stats,
-                        vote_storage,
-                        vote_source,
-                        banking_stage_stats,
-                        slot_metrics_tracker,
-                    );
-                    recv_and_buffer_measure.stop();
+            self.receive_until_and_buffer(
+                recv_timeout,
+                vote_storage.max_receive_size(),
+                vote_storage,
+                vote_source,
+                banking_stage_stats,
+                slot_metrics_tracker,
+            )
+            .map(|()| {
+                recv_and_buffer_measure.stop();
 
-                    // Only incremented if packets are received
-                    banking_stage_stats
-                        .receive_and_buffer_packets_elapsed
-                        .fetch_add(recv_and_buffer_measure.as_us(), Ordering::Relaxed);
-                })
+                // Only incremented if packets are received
+                banking_stage_stats
+                    .receive_and_buffer_packets_elapsed
+                    .fetch_add(recv_and_buffer_measure.as_us(), Ordering::Relaxed);
+            })
         });
 
         slot_metrics_tracker.increment_receive_and_buffer_packets_us(recv_time_us);
@@ -72,90 +71,161 @@ impl VotePacketReceiver {
         result
     }
 
-    // Copied from packet_deserializer.rs.
-    fn receive_until(
+    fn receive_until_and_buffer(
         &self,
         recv_timeout: Duration,
         packet_count_upperbound: usize,
-    ) -> Result<
-        (
-            Vec<SanitizedTransactionView<SharedBytes>>,
-            PacketReceiverStats,
-        ),
-        RecvTimeoutError,
-    > {
+        vote_storage: &mut VoteStorage,
+        vote_source: VoteSource,
+        banking_stage_stats: &mut BankingStageStats,
+        slot_metrics_tracker: &mut LeaderSlotMetricsTracker,
+    ) -> Result<(), RecvTimeoutError> {
         let start = Instant::now();
+        let sanitize_config = sanitize_config(true);
+        let mut stats = ReceiveAndBufferStats::default();
 
         let packet_batches = self.banking_packet_receiver.recv_timeout(recv_timeout)?;
-        let mut num_packets_received = packet_batches
-            .iter()
-            .map(|batch| batch.len())
-            .sum::<usize>();
-        let mut messages = vec![packet_batches];
+        self.buffer_packet_batches(
+            &packet_batches,
+            &sanitize_config,
+            vote_storage,
+            vote_source,
+            slot_metrics_tracker,
+            &mut stats,
+        );
 
         while let Ok(packet_batches) = self.banking_packet_receiver.try_recv() {
-            num_packets_received += packet_batches
-                .iter()
-                .map(|batch| batch.len())
-                .sum::<usize>();
-            messages.push(packet_batches);
+            self.buffer_packet_batches(
+                &packet_batches,
+                &sanitize_config,
+                vote_storage,
+                vote_source,
+                slot_metrics_tracker,
+                &mut stats,
+            );
 
-            if start.elapsed() >= recv_timeout || num_packets_received >= packet_count_upperbound {
+            if start.elapsed() >= recv_timeout
+                || stats.num_packets_received >= packet_count_upperbound
+            {
                 break;
             }
         }
 
-        // Parse & collect transaction views.
-        let mut packet_stats = PacketReceiverStats::default();
-        let mut errors = Saturating::<usize>(0);
-        let parsed_packets: Vec<_> = messages
+        self.update_receive_stats(
+            stats,
+            vote_storage,
+            vote_source,
+            banking_stage_stats,
+            slot_metrics_tracker,
+        );
+
+        Ok(())
+    }
+
+    fn buffer_packet_batches(
+        &self,
+        packet_batches: &BankingPacketBatch,
+        sanitize_config: &SanitizeConfig,
+        vote_storage: &mut VoteStorage,
+        vote_source: VoteSource,
+        slot_metrics_tracker: &mut LeaderSlotMetricsTracker,
+        stats: &mut ReceiveAndBufferStats,
+    ) {
+        stats.num_packets_received += packet_batches
             .iter()
-            .flat_map(|batches| batches.iter())
-            .flat_map(|batch| batch.iter())
-            .filter_map(|pkt| {
+            .map(|batch| batch.len())
+            .sum::<usize>();
+
+        for packet_batch in packet_batches.iter() {
+            for packet in packet_batch.iter() {
+                let Some(packet_data) = packet.data(..) else {
+                    continue;
+                };
+
                 match SanitizedTransactionView::try_new_sanitized(
-                    Arc::new(pkt.data(..)?.to_vec()),
-                    // Vote instructions are created in the validator code, and they are not
-                    // referencing more than 255 accounts, so it is safe to enforce the
-                    // instruction accounts limit unconditionally.
-                    &sanitize_config(true),
+                    Arc::new(packet_data.to_vec()),
+                    sanitize_config,
                 ) {
-                    Ok(pkt) => {
-                        if self.should_filter_packet(&pkt) {
-                            packet_stats.filtered_account_key_count += 1;
-                            None
-                        } else {
-                            Some(pkt)
+                    Ok(packet) => {
+                        if self.should_filter_packet(&packet) {
+                            stats.packet_stats.filtered_account_key_count += 1;
+                            continue;
                         }
+
+                        stats.num_buffered_packets += 1;
+                        let vote_batch_insertion_metrics =
+                            vote_storage.insert_batch(vote_source, std::iter::once(packet));
+                        slot_metrics_tracker
+                            .accumulate_vote_batch_insertion_metrics(&vote_batch_insertion_metrics);
+                        stats.dropped_packets_count +=
+                            vote_batch_insertion_metrics.total_dropped_packets();
                     }
                     Err(err) => {
-                        errors += 1;
+                        stats.errors += 1;
                         match err {
                             TransactionViewError::AddressLookupMismatch => {}
                             TransactionViewError::ParseError
                             | TransactionViewError::SanitizeError => {
-                                packet_stats.failed_sanitization_count += 1
+                                stats.packet_stats.failed_sanitization_count += 1
                             }
                         }
-
-                        None
                     }
                 }
-            })
-            .collect();
-        let Saturating(errors) = errors;
-        let filtered_account_key_count = packet_stats.filtered_account_key_count.0 as usize;
+            }
+        }
+    }
+
+    fn update_receive_stats(
+        &self,
+        mut stats: ReceiveAndBufferStats,
+        vote_storage: &VoteStorage,
+        vote_source: VoteSource,
+        banking_stage_stats: &mut BankingStageStats,
+        slot_metrics_tracker: &mut LeaderSlotMetricsTracker,
+    ) {
+        let filtered_account_key_count = stats.packet_stats.filtered_account_key_count.0 as usize;
+        let Saturating(errors) = stats.errors;
         let passed_sigverify_count = errors
-            .saturating_add(parsed_packets.len())
+            .saturating_add(stats.num_buffered_packets)
             .saturating_add(filtered_account_key_count);
-        packet_stats.passed_sigverify_count += passed_sigverify_count as u64;
-        let failed_sigverify_count = num_packets_received
-            .saturating_sub(parsed_packets.len())
+        stats.packet_stats.passed_sigverify_count += passed_sigverify_count as u64;
+        let failed_sigverify_count = stats
+            .num_packets_received
+            .saturating_sub(stats.num_buffered_packets)
             .saturating_sub(errors)
             .saturating_sub(filtered_account_key_count);
-        packet_stats.failed_sigverify_count += failed_sigverify_count as u64;
+        stats.packet_stats.failed_sigverify_count += failed_sigverify_count as u64;
 
-        Ok((parsed_packets, packet_stats))
+        let vote_source_counts = match vote_source {
+            VoteSource::Gossip => &banking_stage_stats.gossip_counts,
+            VoteSource::Tpu => &banking_stage_stats.tpu_counts,
+        };
+
+        vote_source_counts
+            .receive_and_buffer_packets_count
+            .fetch_add(stats.num_buffered_packets, Ordering::Relaxed);
+        {
+            let Saturating(dropped_packets_count) = stats.dropped_packets_count;
+            vote_source_counts.dropped_packets_count.fetch_add(
+                dropped_packets_count.saturating_add(filtered_account_key_count),
+                Ordering::Relaxed,
+            );
+        }
+        vote_source_counts
+            .newly_buffered_packets_count
+            .fetch_add(stats.num_buffered_packets, Ordering::Relaxed);
+        banking_stage_stats
+            .current_buffered_packets_count
+            .swap(vote_storage.len(), Ordering::Relaxed);
+
+        if stats.num_buffered_packets != 0 {
+            let _ = banking_stage_stats
+                .batch_packet_indexes_len
+                .increment(stats.num_buffered_packets as u64);
+            slot_metrics_tracker
+                .increment_newly_buffered_packets_count(stats.num_buffered_packets as u64);
+        }
+        slot_metrics_tracker.increment_received_packet_counts(stats.packet_stats);
     }
 
     fn should_filter_packet(&self, packet: &SanitizedTransactionView<SharedBytes>) -> bool {
@@ -179,81 +249,15 @@ impl VotePacketReceiver {
             Duration::from_millis(100)
         }
     }
+}
 
-    fn buffer_packets(
-        &self,
-        deserialized_packets: Vec<SanitizedTransactionView<SharedBytes>>,
-        packet_stats: PacketReceiverStats,
-        vote_storage: &mut VoteStorage,
-        vote_source: VoteSource,
-        banking_stage_stats: &mut BankingStageStats,
-        slot_metrics_tracker: &mut LeaderSlotMetricsTracker,
-    ) {
-        let packet_count = deserialized_packets.len();
-
-        let filtered_account_key_count = packet_stats.filtered_account_key_count.0 as usize;
-        slot_metrics_tracker.increment_received_packet_counts(packet_stats);
-
-        let mut dropped_packets_count = Saturating(0);
-        let mut newly_buffered_packets_count = 0;
-        Self::push_unprocessed(
-            vote_storage,
-            vote_source,
-            deserialized_packets,
-            &mut dropped_packets_count,
-            &mut newly_buffered_packets_count,
-            banking_stage_stats,
-            slot_metrics_tracker,
-        );
-
-        let vote_source_counts = match vote_source {
-            VoteSource::Gossip => &banking_stage_stats.gossip_counts,
-            VoteSource::Tpu => &banking_stage_stats.tpu_counts,
-        };
-
-        vote_source_counts
-            .receive_and_buffer_packets_count
-            .fetch_add(packet_count, Ordering::Relaxed);
-        {
-            let Saturating(dropped_packets_count) = dropped_packets_count;
-            vote_source_counts.dropped_packets_count.fetch_add(
-                dropped_packets_count.saturating_add(filtered_account_key_count),
-                Ordering::Relaxed,
-            );
-        }
-        vote_source_counts
-            .newly_buffered_packets_count
-            .fetch_add(newly_buffered_packets_count, Ordering::Relaxed);
-        banking_stage_stats
-            .current_buffered_packets_count
-            .swap(vote_storage.len(), Ordering::Relaxed);
-    }
-
-    fn push_unprocessed(
-        vote_storage: &mut VoteStorage,
-        vote_source: VoteSource,
-        deserialized_packets: Vec<SanitizedTransactionView<SharedBytes>>,
-        dropped_packets_count: &mut Saturating<usize>,
-        newly_buffered_packets_count: &mut usize,
-        banking_stage_stats: &mut BankingStageStats,
-        slot_metrics_tracker: &mut LeaderSlotMetricsTracker,
-    ) {
-        if !deserialized_packets.is_empty() {
-            let _ = banking_stage_stats
-                .batch_packet_indexes_len
-                .increment(deserialized_packets.len() as u64);
-
-            *newly_buffered_packets_count += deserialized_packets.len();
-            slot_metrics_tracker
-                .increment_newly_buffered_packets_count(deserialized_packets.len() as u64);
-
-            let vote_batch_insertion_metrics =
-                vote_storage.insert_batch(vote_source, deserialized_packets.into_iter());
-            slot_metrics_tracker
-                .accumulate_vote_batch_insertion_metrics(&vote_batch_insertion_metrics);
-            *dropped_packets_count += vote_batch_insertion_metrics.total_dropped_packets();
-        }
-    }
+#[derive(Default)]
+struct ReceiveAndBufferStats {
+    packet_stats: PacketReceiverStats,
+    num_packets_received: usize,
+    num_buffered_packets: usize,
+    dropped_packets_count: Saturating<usize>,
+    errors: Saturating<usize>,
 }
 
 #[derive(Default, Debug, PartialEq)]
