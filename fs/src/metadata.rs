@@ -134,37 +134,22 @@ fn check_direct_io_via_open_probe(file: &Path) -> DirectIoSupport {
 }
 
 /// Returns a path to any regular file at or under `path`, recursively traversing
-/// directories and returning as soon as one file is found. Returns `Ok(None)` if
-/// no file exists under `path`.
+/// directories and returning as soon as one is found. Directories beneath `path` that
+/// cannot be read are skipped. Returns `Ok(None)` if `path` is readable but holds no
+/// file, or an error if `path` itself cannot be read.
 #[cfg(target_os = "linux")]
 fn find_any_file_under_path(path: &Path) -> io::Result<Option<PathBuf>> {
     if path.is_file() {
         return Ok(Some(path.to_path_buf()));
     }
-    if path.is_dir() {
-        let entries = match fs::read_dir(path) {
-            Ok(entries) => entries,
-            // An unreadable directory has no probe file to open, and unreadable files are already
-            // tolerated by check_direct_io_via_open_probe; skip it instead of aborting startup.
-            Err(err) if err.kind() == io::ErrorKind::PermissionDenied => {
-                log::warn!(
-                    "skipping unreadable directory while probing direct-io support: `{}`: {err}",
-                    path.display()
-                );
-                return Ok(None);
-            }
-            Err(err) => {
-                return Err(io::Error::new(
-                    err.kind(),
-                    format!("failed to read directory `{}`: {err}", path.display()),
-                ));
-            }
-        };
-        for entry in entries {
-            let entry = entry?;
-            if let Some(path) = find_any_file_under_path(&entry.path())? {
-                return Ok(Some(path));
-            }
+    if !path.is_dir() {
+        return Ok(None);
+    }
+    for entry in fs::read_dir(path)? {
+        // Only failing to read the path we were handed is fatal. A directory beneath it that
+        // we cannot read can't hold a probe file, so skip it instead of aborting startup.
+        if let Some(found) = find_any_file_under_path(&entry?.path()).ok().flatten() {
+            return Ok(Some(found));
         }
     }
     Ok(None)
@@ -210,15 +195,54 @@ mod tests {
             return;
         }
         let dir = TempDir::new().unwrap();
+        let file = make_temp_file(&dir, "snapshot.bin", b"data");
         let unreadable = dir.path().join("lost+found");
         std::fs::create_dir(&unreadable).unwrap();
         std::fs::set_permissions(&unreadable, std::fs::Permissions::from_mode(0o000)).unwrap();
 
+        // The readable file is found regardless of readdir order; the unreadable sibling is skipped.
         let found = find_any_file_under_path(dir.path());
 
         // Restore perms so TempDir cleanup can recurse, then assert.
         std::fs::set_permissions(&unreadable, std::fs::Permissions::from_mode(0o700)).unwrap();
+        assert_eq!(found.unwrap(), Some(file));
+    }
+
+    #[test]
+    fn test_find_any_file_under_path_readable_dir_only_unreadable_subdir() {
+        use std::os::unix::fs::PermissionsExt;
+        if unsafe { libc::geteuid() } == 0 {
+            return;
+        }
+        let dir = TempDir::new().unwrap();
+        let unreadable = dir.path().join("lost+found");
+        std::fs::create_dir(&unreadable).unwrap();
+        std::fs::set_permissions(&unreadable, std::fs::Permissions::from_mode(0o000)).unwrap();
+
+        // The dir itself is readable but holds no file, so the caller falls back to the temp
+        // probe rather than aborting; the unreadable subdir doesn't turn this into an error.
+        let found = find_any_file_under_path(dir.path());
+
+        std::fs::set_permissions(&unreadable, std::fs::Permissions::from_mode(0o700)).unwrap();
         assert_eq!(found.unwrap(), None);
+    }
+
+    #[test]
+    fn test_find_any_file_under_path_errors_when_path_unreadable() {
+        use std::os::unix::fs::PermissionsExt;
+        if unsafe { libc::geteuid() } == 0 {
+            return;
+        }
+        let parent = TempDir::new().unwrap();
+        let dir = parent.path().join("accounts");
+        std::fs::create_dir(&dir).unwrap();
+        std::fs::set_permissions(&dir, std::fs::Permissions::from_mode(0o000)).unwrap();
+
+        // Failing to read the path we were handed is fatal, so the caller can report it.
+        let result = find_any_file_under_path(&dir);
+
+        std::fs::set_permissions(&dir, std::fs::Permissions::from_mode(0o700)).unwrap();
+        assert_eq!(result.unwrap_err().kind(), io::ErrorKind::PermissionDenied);
     }
 
     #[test]
