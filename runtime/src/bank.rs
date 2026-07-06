@@ -3179,7 +3179,7 @@ impl Bank {
                 .rev()
                 .filter_map(|bank| bank.stakes_cache_v2.as_ref());
             stakes_cache_v2.apply_rooted_stake_delegation_deltas(rooted_stake_delegation_caches);
-            squash_cache_v2_time.end_as_us()
+            squash_cache_v2_time.end_as_ms()
         });
 
         //this bank and all its parents are now on the rooted path
