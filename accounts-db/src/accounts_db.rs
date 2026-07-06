@@ -5725,7 +5725,7 @@ impl AccountsDb {
         let store_id = storage.id();
         let stored_accounts_info = storage
             .accounts
-            .write_accounts(accounts_and_meta_to_store, 0)
+            .write_accounts(accounts_and_meta_to_store)
             .unwrap_or_else(|| {
                 panic!(
                     "failed to write accounts to storage: slot! {slot}, id: {store_id}, capacity: \

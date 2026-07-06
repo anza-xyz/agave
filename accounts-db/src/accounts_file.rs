@@ -247,10 +247,9 @@ impl AccountsFile {
     pub fn write_accounts<'a>(
         &self,
         accounts: &impl StorableAccounts<'a>,
-        skip: usize,
     ) -> Option<StoredAccountsInfo> {
         match self {
-            Self::AppendVec(av) => av.append_accounts(accounts, skip),
+            Self::AppendVec(av) => av.append_accounts(accounts),
         }
     }
 

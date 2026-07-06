@@ -58,7 +58,7 @@ fn bench_write_accounts_file(c: &mut Criterion) {
                     AppendVec::new(path, true, file_size)
                 },
                 |append_vec| {
-                    let res = append_vec.append_accounts(&storable_accounts, 0).unwrap();
+                    let res = append_vec.append_accounts(&storable_accounts).unwrap();
                     let accounts_written_count = res.offsets.len();
                     assert_eq!(accounts_written_count, accounts_count);
                 },
@@ -97,7 +97,7 @@ fn bench_scan_pubkeys(c: &mut Criterion) {
             .sum();
         let append_vec = AppendVec::new(append_vec_path, true, file_size);
         let stored_accounts_info = append_vec
-            .append_accounts(&(Slot::MAX, storable_accounts.as_slice()), 0)
+            .append_accounts(&(Slot::MAX, storable_accounts.as_slice()))
             .unwrap();
         assert_eq!(stored_accounts_info.offsets.len(), accounts_count);
         append_vec.flush().unwrap();
@@ -148,7 +148,7 @@ fn bench_get_account_shared_data(c: &mut Criterion) {
             .sum();
         let append_vec = AppendVec::new(append_vec_path, true, file_size);
         let stored_accounts_info = append_vec
-            .append_accounts(&(Slot::MAX, storable_accounts.as_slice()), 0)
+            .append_accounts(&(Slot::MAX, storable_accounts.as_slice()))
             .unwrap();
         assert_eq!(stored_accounts_info.offsets.len(), 1);
         append_vec.flush().unwrap();

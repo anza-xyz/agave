@@ -984,18 +984,17 @@ impl AppendVec {
     pub fn append_accounts<'a>(
         &self,
         accounts: &impl StorableAccounts<'a>,
-        skip: usize,
     ) -> Option<StoredAccountsInfo> {
         let _lock = self.read_write_state.append_guard();
         let mut offset = self.len();
         let len = accounts.len();
-        // Here we have `len - skip` number of accounts.  The +1 extra capacity
+        // Here we have `len` number of accounts.  The +1 extra capacity
         // is for storing the aligned offset of the last-plus-one entry,
         // which is used to compute the size of the last stored account.
-        let offsets_len = len - skip + 1;
+        let offsets_len = len + 1;
         let mut offsets = Vec::with_capacity(offsets_len);
         let mut stop = false;
-        for i in skip..len {
+        for i in 0..len {
             if stop {
                 break;
             }
@@ -1107,7 +1106,7 @@ mod tests {
             let slice = &accounts[..];
             let storable_accounts = (slot_ignored, slice);
 
-            self.append_accounts(&storable_accounts, 0)
+            self.append_accounts(&storable_accounts)
                 .map(|res| res.offsets[0])
         }
     }
@@ -1343,7 +1342,7 @@ mod tests {
         let av = ManuallyDrop::new(AppendVec::new(&path.path, true, file_size));
         let slot = 42;
         let stored_accounts_info = av
-            .append_accounts(&(slot, test_accounts.as_slice()), 0)
+            .append_accounts(&(slot, test_accounts.as_slice()))
             .unwrap();
         av.flush().unwrap();
         (av, stored_accounts_info, test_accounts, path)
@@ -1823,7 +1822,7 @@ mod tests {
             let slot = 77; // the specific slot does not matter
             let storable_accounts: Vec<_> = std::iter::zip(&pubkeys, &accounts).collect();
             let stored_accounts_info = append_vec
-                .append_accounts(&(slot, storable_accounts.as_slice()), 0)
+                .append_accounts(&(slot, storable_accounts.as_slice()))
                 .unwrap();
             append_vec.flush().unwrap();
             stored_accounts_info.offsets
@@ -1874,7 +1873,7 @@ mod tests {
             let slot = 42; // the specific slot does not matter
             let storable_accounts: Vec<_> = std::iter::zip(&pubkeys, &accounts).collect();
             let stored_accounts_info = append_vec
-                .append_accounts(&(slot, storable_accounts.as_slice()), 0)
+                .append_accounts(&(slot, storable_accounts.as_slice()))
                 .unwrap();
             append_vec.flush().unwrap();
             stored_accounts_info.offsets

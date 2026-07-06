@@ -198,7 +198,7 @@ fn run_generate_index_duplicates_within_slot_test(db: AccountsDb, reverse: bool)
     let storable_accounts = (slot0, &data[..]);
 
     // construct append vec with account to generate an index from
-    append_vec.accounts.write_accounts(&storable_accounts, 0);
+    append_vec.accounts.write_accounts(&storable_accounts);
 
     assert!(!db.accounts_index.contains(&pubkey));
     let storage = db.get_storage_for_slot(slot0).unwrap();
@@ -233,7 +233,7 @@ fn test_generate_index_for_single_ref_zero_lamport_slot() {
 
     let data = [(&pubkey, &account)];
     let storable_accounts = (slot0, &data[..]);
-    append_vec.accounts.write_accounts(&storable_accounts, 0);
+    append_vec.accounts.write_accounts(&storable_accounts);
     assert!(!db.accounts_index.contains(&pubkey));
     let result = db.generate_index(None, false);
     let slot_list_len = db.accounts_index.get_and_then(&pubkey, |entry| {
@@ -265,10 +265,7 @@ pub(crate) fn append_single_account_with_default_hash(
     let accounts = [(pubkey, account)];
     let slice = &accounts[..];
     let storable_accounts = (slot, slice);
-    let stored_accounts_info = storage
-        .accounts
-        .write_accounts(&storable_accounts, 0)
-        .unwrap();
+    let stored_accounts_info = storage.accounts.write_accounts(&storable_accounts).unwrap();
     if mark_alive {
         // updates 'alive_bytes' on the storage
         storage.add_account(stored_accounts_info.size);
@@ -5051,7 +5048,7 @@ define_accounts_db_test!(test_calculate_storage_count_and_alive_bytes, |accounts
     let storage = accounts.create_and_insert_store(slot0, 4_000, "flush_slot_cache");
     storage
         .accounts
-        .write_accounts(&(slot0, &[(&shared_key, &account)][..]), 0);
+        .write_accounts(&(slot0, &[(&shared_key, &account)][..]));
 
     let storage = accounts.storage.get_slot_storage_entry(slot0).unwrap();
     let mut reader = append_vec::new_scan_accounts_reader();
@@ -5105,10 +5102,9 @@ define_accounts_db_test!(
         let account_big = AccountSharedData::new(1, 1000, AccountSharedData::default().owner());
         let slot0 = 0;
         let storage = accounts.create_and_insert_store(slot0, 4_000, "flush_slot_cache");
-        storage.accounts.write_accounts(
-            &(slot0, &[(&keys[0], &account), (&keys[1], &account_big)][..]),
-            0,
-        );
+        storage
+            .accounts
+            .write_accounts(&(slot0, &[(&keys[0], &account), (&keys[1], &account_big)][..]));
 
         let mut reader = append_vec::new_scan_accounts_reader();
         let mut accum = IndexGenerationAccumulator::with_slots_capacity(1);
@@ -5152,9 +5148,7 @@ fn test_calculate_storage_count_and_alive_bytes_obsolete_account(
 
     let slot0 = 0;
     let storage = accounts.create_and_insert_store(slot0, 10_000, "");
-    let offsets = storage
-        .accounts
-        .write_accounts(&(slot0, &account_list[..]), 0);
+    let offsets = storage.accounts.write_accounts(&(slot0, &account_list[..]));
 
     let offsets = offsets.unwrap().offsets;
     let data_lens = storage.accounts.get_account_data_lens(&offsets);
