@@ -323,11 +323,7 @@ fn sample_storage_with_entries_id_fill_percentage(
         size_aligned as u64,
         AccountsFileProvider::AppendVec,
     );
-    let av = AccountsFile::AppendVec(AppendVec::new(
-        &tf.path,
-        true,
-        (1024 * 1024).max(size_aligned),
-    ));
+    let av = AccountsFile::AppendVec(AppendVec::new(&tf.path, (1024 * 1024).max(size_aligned)));
     data.accounts = av;
 
     let arc = Arc::new(data);
