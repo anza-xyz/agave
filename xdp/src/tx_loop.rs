@@ -18,7 +18,6 @@ use {
         umem::{Frame, OwnedUmem, PageAlignedMemory, Umem},
     },
     agave_cpu_utils::set_cpu_affinity,
-    crossbeam_channel::{Receiver, TryRecvError},
     libc::{_SC_PAGESIZE, sysconf},
     std::{
         io,
@@ -214,10 +213,30 @@ pub trait TxPacket {
     fn allow_mtu_overflow(&self) -> bool;
 }
 
+#[derive(Debug, PartialEq, Eq)]
+pub enum TryRecvError {
+    Empty,
+    Disconnected,
+}
+
+pub trait Receiver<T> {
+    fn try_recv(&self) -> Result<T, TryRecvError>;
+}
+
+impl<T> Receiver<T> for crossbeam_channel::Receiver<T> {
+    fn try_recv(&self) -> Result<T, TryRecvError> {
+        self.try_recv().map_err(|err| match err {
+            crossbeam_channel::TryRecvError::Empty => TryRecvError::Empty,
+            crossbeam_channel::TryRecvError::Disconnected => TryRecvError::Disconnected,
+        })
+    }
+}
+
 impl<U: Umem> TxLoop<U> {
-    pub fn run<T, D, R>(self, receiver: Receiver<T>, mut drop_item: D, route_fn: R)
+    pub fn run<T, Rx, D, R>(self, receiver: Rx, mut drop_item: D, route_fn: R)
     where
         T: TxPacket,
+        Rx: Receiver<T>,
         D: FnMut(T),
         R: Fn(&IpAddr) -> Option<NextHop>,
     {
