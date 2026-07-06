@@ -17,7 +17,7 @@ use {
 };
 
 /// Maximum number of votes a single receive call will accept
-const MAX_NUM_VOTES_RECEIVE: usize = 10_000;
+const MAX_NUM_VOTES_RECEIVE: usize = 1_000;
 
 #[derive(Default, Debug)]
 pub(crate) struct VoteBatchInsertionMetrics {

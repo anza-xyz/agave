@@ -246,7 +246,7 @@ impl VotePacketReceiver {
             Duration::from_millis(0)
         } else {
             // Default wait time
-            Duration::from_millis(100)
+            Duration::from_millis(10)
         }
     }
 }
