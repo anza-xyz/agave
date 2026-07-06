@@ -204,6 +204,7 @@ impl ListFrame for LandedVotesListFrame {
 
     unsafe fn read_item<'a>(&self, item_data: &'a [u8]) -> &'a Self::Item {
         const { assert!(core::mem::align_of::<LockoutItem>() == 1) };
+        const { assert!(core::mem::align_of::<LandedVoteItem>() == 1) };
         unsafe { &*(item_data[1..].as_ptr() as *const LockoutItem) }
     }
 }
