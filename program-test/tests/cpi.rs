@@ -4,13 +4,12 @@ use {
     solana_keypair::Keypair,
     solana_msg::msg,
     solana_program::{instruction::get_stack_height, program::invoke},
-    solana_program_entrypoint::{MAX_PERMITTED_DATA_INCREASE, ProgramResult},
+    solana_program_entrypoint::{MAX_PERMITTED_DATA_INCREASE, ProgramResult, SUCCESS},
     solana_program_test::{ProgramTest, processor},
     solana_pubkey::Pubkey,
     solana_rent::Rent,
     solana_signer::Signer,
     solana_system_interface::{instruction as system_instruction, program as system_program},
-    solana_sysvar::{SysvarSerialize, rent},
     solana_transaction::Transaction,
     std::slice,
 };
@@ -93,8 +92,11 @@ fn invoke_create_account(
     let payer_info = next_account_info(account_info_iter)?;
     let create_account_info = next_account_info(account_info_iter)?;
     let system_program_info = next_account_info(account_info_iter)?;
-    let rent_info = next_account_info(account_info_iter)?;
-    let rent = Rent::from_account_info(rent_info)?;
+    let mut rent = Rent::default();
+    assert_eq!(
+        solana_program_test::sol_get_rent_sysvar(&mut rent as *mut _ as *mut u8),
+        SUCCESS,
+    );
     let minimum_balance = rent.minimum_balance(MAX_PERMITTED_DATA_INCREASE);
     invoke(
         &system_instruction::create_account(
@@ -209,7 +211,6 @@ async fn cpi_create_account() {
             AccountMeta::new(context.payer.pubkey(), true),
             AccountMeta::new(create_account_keypair.pubkey(), true),
             AccountMeta::new_readonly(system_program::id(), false),
-            AccountMeta::new_readonly(rent::id(), false),
         ],
     )];
 

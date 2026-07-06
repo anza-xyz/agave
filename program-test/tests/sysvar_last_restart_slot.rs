@@ -3,6 +3,7 @@ use {
     solana_clock::Slot,
     solana_instruction::{AccountMeta, Instruction},
     solana_msg::msg,
+    solana_program_entrypoint::SUCCESS,
     solana_program_error::ProgramResult,
     solana_program_test::{ProgramTest, ProgramTestContext, processor},
     solana_pubkey::Pubkey,
@@ -34,6 +35,13 @@ fn sysvar_last_restart_slot_process_instruction(
             last_restart_slot: expected_last_hardfork_slot
         }
     );
+
+    let mut slot_via_stub = LastRestartSlot::default();
+    assert_eq!(
+        solana_program_test::sol_get_last_restart_slot(&mut slot_via_stub as *mut _ as *mut u8),
+        SUCCESS,
+    );
+    assert_eq!(slot_via_stub, slot_via_account);
 
     Ok(())
 }
