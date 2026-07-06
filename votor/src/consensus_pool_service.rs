@@ -489,6 +489,15 @@ impl ConsensusPoolService {
                 ctx.cluster_info.id(),
                 root_bank.slot()
             );
+            #[cfg(feature = "fuzzing")]
+            {
+                error!("invariant: {}:{}", file!(), line!());
+                panic!(
+                    "invariant: unable to compute leader for parent-ready slot \
+                     {highest_parent_ready} (root_bank_slot={})",
+                    root_bank.slot()
+                );
+            }
             ctx.exit.store(true, Ordering::Relaxed);
             return;
         };

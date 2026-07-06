@@ -26,7 +26,7 @@ dev-context-only-utils = [
 agave-feature-set = { workspace = true }
 agave-logger = { workspace = true }
 agave-snapshots = { workspace = true }
-agave-votor = { workspace = true }
+agave-votor = { workspace = true, features = ["fuzzing"] }
 agave-votor-messages = { workspace = true }
 crossbeam-channel = { workspace = true }
 itertools = { workspace = true }
@@ -35,11 +35,13 @@ rand = { workspace = true }
 rayon = { workspace = true }
 solana-account = { workspace = true }
 solana-accounts-db = { workspace = true }
+solana-bls-signatures = { workspace = true }
 solana-client = { workspace = true }
 solana-client-traits = { workspace = true }
 solana-clock = { workspace = true }
 solana-cluster-type = { workspace = true }
 solana-commitment-config = { workspace = true }
+solana-connection-cache = { workspace = true }
 solana-core = { workspace = true }
 solana-entry = { workspace = true }
 solana-epoch-schedule = { workspace = true }
@@ -69,6 +71,7 @@ solana-runtime = { workspace = true }
 solana-sdk-ids = { workspace = true }
 solana-shred-version = { workspace = true }
 solana-signer = { workspace = true }
+solana-signer-store = { workspace = true }
 solana-slot-hashes = { workspace = true }
 solana-stake-interface = { workspace = true }
 solana-streamer = { workspace = true }

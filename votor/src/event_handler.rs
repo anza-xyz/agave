@@ -228,6 +228,17 @@ impl EventHandler {
         }
 
         vctx.vote_history.add_parent_ready(slot, parent_block);
+        #[cfg(feature = "fuzzing")]
+        {
+            if !vctx.vote_history.is_parent_ready(slot, &parent_block) {
+                error!("invariant: {}:{}", file!(), line!());
+            }
+            assert!(
+                vctx.vote_history.is_parent_ready(slot, &parent_block),
+                "invariant: {my_pubkey}: parent {parent_block:?} must be ready for slot {slot} after \
+                 add",
+            );
+        }
         Self::check_pending_blocks(my_pubkey, &mut local_context.pending_blocks, vctx, votes)?;
         let root_bank = vctx.sharable_banks.root();
         let delta_block = Duration::from_nanos_u128(root_bank.ns_per_slot_at_slot(slot));
@@ -247,6 +258,17 @@ impl EventHandler {
 
         if slot > current_slot {
             *highest_parent_ready = (slot, parent_block);
+        }
+        #[cfg(feature = "fuzzing")]
+        {
+            if highest_parent_ready.0 < slot {
+                error!("invariant: {}:{}", file!(), line!());
+            }
+            assert!(
+                highest_parent_ready.0 >= slot,
+                "invariant: {my_pubkey}: highest_parent_ready {} must be >= processed slot {slot}",
+                highest_parent_ready.0,
+            );
         }
         Ok(())
     }
@@ -557,10 +579,17 @@ impl EventHandler {
     ) -> Option<Block> {
         let Block { slot, block_id } = finalized_block;
         let first_slot_of_window = first_of_consecutive_leader_slots(slot);
-        if first_slot_of_window == slot || first_slot_of_window == 0 {
-            // No need to trigger parent ready for the first slot of the window
+        if first_slot_of_window == 0 {
+            // Genesis window is parent-ready from startup; nothing to synthesize.
             return None;
         }
+        // NB: we intentionally do NOT bail when `first_slot_of_window == slot`.
+        // If we only ever hold a finalization cert for the *first* slot of a
+        // window (e.g. every later slot got wedged and never finalized) but the
+        // skip certs that would normally bridge parent-ready into this window
+        // were missed during a partition, this is the only signal we have to
+        // rebuild the chain. The `highest_parent_ready_slot()` check below still
+        // makes this a no-op once parent-ready has advanced into the window.
         if vctx.vote_history.highest_parent_ready_slot() >= Some(first_slot_of_window)
             || !local_context.finalized_blocks.contains(&finalized_block)
         {
@@ -654,6 +683,18 @@ impl EventHandler {
             slot: parent_slot,
             block_id: parent_block_id,
         };
+        #[cfg(feature = "fuzzing")]
+        {
+            if parent_block.slot >= block.slot {
+                error!("invariant: {}:{}", file!(), line!());
+            }
+            assert!(
+                parent_block.slot < block.slot,
+                "invariant: parent slot {} must precede block slot {}",
+                parent_block.slot,
+                block.slot,
+            );
+        }
         (block, parent_block)
     }
 
@@ -710,6 +751,30 @@ impl EventHandler {
             &voting_context.commitment_sender,
         )?;
         pending_blocks.remove(&slot);
+
+        // Postconditions: the notarize vote is now recorded, and this slot is no
+        // longer pending. Catches vote_history/pending_blocks desync during fuzzing.
+        #[cfg(feature = "fuzzing")]
+        {
+            if voting_context.vote_history.voted_notar(slot) != Some(block_id) {
+                error!("invariant: {}:{}", file!(), line!());
+            }
+            assert_eq!(
+                voting_context.vote_history.voted_notar(slot),
+                Some(block_id),
+                "invariant: {my_pubkey}: notarize vote for slot {slot} must be recorded after voting",
+            );
+        }
+        #[cfg(feature = "fuzzing")]
+        {
+            if pending_blocks.contains_key(&slot) {
+                error!("invariant: {}:{}", file!(), line!());
+            }
+            assert!(
+                !pending_blocks.contains_key(&slot),
+                "invariant: {my_pubkey}: pending_blocks[{slot}] must be cleared after notarizing",
+            );
+        }
 
         Self::try_final(my_pubkey, Block { slot, block_id }, voting_context, votes)?;
 
@@ -800,6 +865,16 @@ impl EventHandler {
             .max(root_slot)
             .max(1);
         for s in start..=last_of_consecutive_leader_slots(slot) {
+            #[cfg(feature = "fuzzing")]
+            {
+                if s < 1 {
+                    error!("invariant: {}:{}", file!(), line!());
+                }
+                assert!(
+                    s >= 1,
+                    "invariant: {my_pubkey}: must never vote skip for slot 0"
+                );
+            }
             if voting_context.vote_history.voted(s) {
                 continue;
             }
@@ -897,6 +972,16 @@ impl EventHandler {
             // No rootable banks
             return;
         };
+        #[cfg(feature = "fuzzing")]
+        {
+            if new_root <= old_root {
+                error!("invariant: {}:{}", file!(), line!());
+            }
+            assert!(
+                new_root > old_root,
+                "invariant: {my_pubkey}: new root {new_root} must advance past old root {old_root}",
+            );
+        }
         drop(bank_forks_r);
         root_utils::set_root(
             my_pubkey,
@@ -931,6 +1016,14 @@ fn request_repair(
                  send event for slot {}",
                 block.slot
             );
+            #[cfg(feature = "fuzzing")]
+            {
+                error!("invariant: {}:{}", file!(), line!());
+                panic!(
+                    "invariant: {my_pubkey}: Repair event channel is full for slot {}",
+                    block.slot
+                );
+            }
             sender
                 .send(event)
                 .map_err(|_| EventLoopError::SenderDisconnected(SendError(())))
