@@ -1582,6 +1582,94 @@ fn test_shrink_collect_carries_forward_existing_tombstones() {
     assert_eq!(shrink_collect.tombstones_total_bytes, 0);
 }
 
+/// Verify that a storage containing only tombstones is retained by clean if the latest full
+/// snapshot is older than the slot, and reclaimed if the latest full snapshot is newer.
+#[test]
+fn test_fully_tombstoned_storage_reclaim() {
+    let accounts_db = AccountsDb::new_single_for_tests();
+    let slot = 1;
+    let zero_lamport_account = AccountSharedData::new(0, 0, &Pubkey::default());
+
+    // Latest full snapshot older than `slot`: tombstones are not yet purgeable.
+    accounts_db.set_latest_full_snapshot_slot(slot);
+
+    let slot = slot + 1;
+    let (_temp_dirs, paths) = get_temp_accounts_paths(1).unwrap();
+    let storage = Arc::new(AccountStorageEntry::new(
+        &paths[0],
+        slot,
+        100,
+        DEFAULT_FILE_SIZE,
+        AccountsFileProvider::AppendVec,
+    ));
+
+    // Every account is a zero-lamport account physically present but NOT in the index: i.e. the
+    // storage is 100% tombstones carried forward by a prior shrink.
+    let num_tombstones = 3;
+    for _ in 0..num_tombstones {
+        append_single_account_with_default_hash(
+            &storage,
+            &Pubkey::new_unique(),
+            &zero_lamport_account,
+            true,
+            None,
+        );
+    }
+    insert_store(&accounts_db, Arc::clone(&storage));
+    accounts_db.add_root(slot);
+
+    // Record every account's offset on the storage's tombstone list, as a prior shrink would have.
+    let mut tombstone_offsets = Vec::new();
+    storage
+        .accounts
+        .scan_accounts_without_data(|offset, _account| {
+            tombstone_offsets.push(offset);
+        })
+        .unwrap();
+    storage.batch_insert_tombstone_offsets(&tombstone_offsets);
+
+    // The storage reads as entirely tombstones / fully removable.
+    assert!(storage.has_only_tombstones());
+
+    let epoch_schedule = EpochSchedule::default();
+
+    // Shrink routes the fully-dead slot to clean; clean retains the storage because the latest full
+    // snapshot is older than the slot, so the slot is not yet eligible for shrink.
+    accounts_db.shrink_slot_forced(slot);
+    accounts_db.clean_accounts(Some(slot), false);
+    assert!(accounts_db.storage.get_slot_storage_entry(slot).is_some());
+    // Verify that the slot is not queued for shrink at this time
+    assert!(
+        !accounts_db
+            .shrink_candidate_slots
+            .lock()
+            .unwrap()
+            .contains(&slot)
+    );
+
+    // Advance the latest full snapshot past the slot so its tombstones become purgeable. Clean then
+    // queues the slot for shrink.
+    accounts_db.set_latest_full_snapshot_slot(slot + 1);
+    accounts_db.clean_accounts(Some(slot + 1), false);
+    // Verify that it gets queued for shrink
+    assert!(
+        accounts_db
+            .shrink_candidate_slots
+            .lock()
+            .unwrap()
+            .contains(&slot)
+    );
+
+    // Shrink finds nothing to rewrite, routes the fully-dead slot to clean via `dirty_stores`, and
+    // drains it from the shrink candidates. The storage survives until clean reclaims it.
+    accounts_db.shrink_candidate_slots(&epoch_schedule);
+    assert!(accounts_db.storage.get_slot_storage_entry(slot).is_some());
+
+    // Clean reclaims the dirty, fully-tombstoned storage.
+    accounts_db.clean_accounts(Some(slot + 1), false);
+    assert!(accounts_db.storage.get_slot_storage_entry(slot).is_none());
+}
+
 /// unit test for `alive_bytes_after_shrink()`
 ///
 /// Check all the permutations of latest full snapshot slot w.r.t. if/how

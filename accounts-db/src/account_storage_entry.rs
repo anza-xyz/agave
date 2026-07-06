@@ -203,6 +203,13 @@ impl AccountStorageEntry {
         self.tombstone_offsets.read().unwrap()
     }
 
+    /// True if every alive account in this storage is a tombstone. Such a storage holds no live
+    /// index entries (tombstones were removed from the index when created), so it is fully dead.
+    pub(crate) fn has_only_tombstones(&self) -> bool {
+        let num_tombstones = self.tombstone_offsets.read().unwrap().len();
+        num_tombstones > 0 && self.count() == num_tombstones
+    }
+
     /// Return the "alive_bytes" minus "zero_lamport_single_ref_accounts bytes".
     pub(crate) fn alive_bytes_exclude_zero_lamport_single_ref_accounts(&self) -> usize {
         let zero_lamport_dead_bytes = self
