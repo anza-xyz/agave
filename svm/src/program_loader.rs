@@ -35,7 +35,8 @@ pub(crate) fn load_program_accounts<CB: TransactionProcessingCallback>(
     callbacks: &CB,
     pubkey: &Pubkey,
 ) -> Option<(ProgramAccountLoadResult, Slot)> {
-    let (program_account, last_modification_slot) = callbacks.get_account_shared_data(pubkey)?;
+    let (program_account, mut last_modification_slot) =
+        callbacks.get_account_shared_data(pubkey)?;
 
     let load_result = if loader_v4::check_id(program_account.owner()) {
         loader_v4_get_state(program_account.data())
@@ -52,9 +53,10 @@ pub(crate) fn load_program_accounts<CB: TransactionProcessingCallback>(
             programdata_address,
         }) = bincode::deserialize(program_account.data())
         {
-            if let Some((programdata_account, _slot)) =
+            if let Some((programdata_account, slot)) =
                 callbacks.get_account_shared_data(&programdata_address)
             {
+                last_modification_slot = slot;
                 if bpf_loader_upgradeable::check_id(programdata_account.owner()) {
                     if let Ok(UpgradeableLoaderState::ProgramData {
                         slot,
@@ -75,6 +77,7 @@ pub(crate) fn load_program_accounts<CB: TransactionProcessingCallback>(
                     ProgramAccountLoadResult::InvalidAccountData(ProgramCacheEntryOwner::LoaderV3)
                 }
             } else {
+                last_modification_slot = 0;
                 ProgramAccountLoadResult::InvalidAccountData(ProgramCacheEntryOwner::LoaderV3)
             }
         } else {
@@ -243,12 +246,24 @@ pub fn filter_executable_program_accounts<'a, CB: TransactionProcessingCallback>
     for account_key in keys {
         if let Some(cache_entry) = program_cache_for_tx_batch.find(account_key) {
             cache_entry.stats.uses.fetch_add(1, Ordering::Relaxed);
-        } else if let Some((account, last_modification_slot)) =
+        } else if let Some((account, mut last_modification_slot)) =
             callbacks.get_account_shared_data(account_key)
         {
             let loader = if loader_v4::check_id(account.owner()) {
                 ProgramCacheEntryOwner::LoaderV4
             } else if bpf_loader_upgradeable::check_id(account.owner()) {
+                if let Ok(UpgradeableLoaderState::Program {
+                    programdata_address,
+                }) = bincode::deserialize(account.data())
+                {
+                    last_modification_slot = if let Some((_programdata, slot)) =
+                        callbacks.get_account_shared_data(&programdata_address)
+                    {
+                        slot
+                    } else {
+                        0
+                    };
+                }
                 ProgramCacheEntryOwner::LoaderV3
             } else if bpf_loader::check_id(account.owner()) {
                 ProgramCacheEntryOwner::LoaderV2
