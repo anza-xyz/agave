@@ -793,27 +793,37 @@ impl<'ix_data> TransactionContext<'ix_data> {
     }
 
     pub fn instruction_payload_regions(&self) -> impl Iterator<Item = MemoryRegion> {
+        let trace_range = 0..self.get_instruction_trace_length();
+
         let populated_frames = self
             .instruction_trace
+            .get(trace_range.clone())
+            .unwrap()
             .iter()
-            .zip(self.instruction_data.iter())
+            .zip(self.instruction_data.get(trace_range).unwrap().iter())
             .map(|(ix_frame, ix_data)| {
                 MemoryRegion::new(&raw const ix_data[..], ix_frame.instruction_data.ptr())
             });
+
         populated_frames
             .chain(self.fill_missing_instruction_regions(GUEST_INSTRUCTION_DATA_BASE_ADDRESS))
     }
 
     pub fn instruction_accounts_regions(&self) -> impl Iterator<Item = MemoryRegion> {
+        let trace_range = 0..self.get_instruction_trace_length();
+
         let populated_frames = self
             .instruction_trace
+            .get(trace_range.clone())
+            .unwrap()
             .iter()
-            .zip(self.instruction_accounts.iter())
+            .zip(self.instruction_accounts.get(trace_range).unwrap().iter())
             .map(|(ix_frame, accounts)| {
                 let len = ix_frame.instruction_accounts.len();
                 let host_slice = std::ptr::slice_from_raw_parts(accounts.as_ptr(), len as usize);
                 MemoryRegion::new(host_slice, ix_frame.instruction_accounts.ptr())
             });
+
         populated_frames
             .chain(self.fill_missing_instruction_regions(GUEST_INSTRUCTION_ACCOUNT_BASE_ADDRESS))
     }
@@ -841,11 +851,9 @@ impl<'ix_data> TransactionContext<'ix_data> {
                 self.return_data_bytes.resize(new_len as usize, 0);
                 let insn_ctx = self.get_current_instruction_context()?;
                 self.transaction_frame.return_data_pubkey = *insn_ctx.get_program_key()?;
-                unsafe {
-                    self.transaction_frame
-                        .return_data_scratchpad
-                        .set_len(new_len);
-                }
+                self.transaction_frame
+                    .return_data_scratchpad
+                    .set_len(new_len);
                 MemoryRegion::new(&raw mut self.return_data_bytes[..], vm_address)
             }
             GUEST_ACCOUNT_PAYLOAD_BASE_ADDRESS..GUEST_ACCOUNT_PAYLOAD_END_ADDRESS => {
@@ -896,10 +904,7 @@ impl<'ix_data> TransactionContext<'ix_data> {
                     new_len,
                 );
 
-                // SAFETY: The vector backing this virtual memory has just been resized.
-                unsafe {
-                    self.transaction_frame.cpi_data_scratchpad.set_len(new_len);
-                }
+                self.transaction_frame.cpi_data_scratchpad.set_len(new_len);
 
                 MemoryRegion::new(&raw mut data_vec[..], vm_address)
             }
@@ -947,12 +952,9 @@ impl<'ix_data> TransactionContext<'ix_data> {
                     number_of_accounts,
                 );
 
-                // SAFETY: The vector backing this virtual memory has just been resized.
-                unsafe {
-                    self.transaction_frame
-                        .cpi_accounts_scratchpad
-                        .set_len(number_of_accounts);
-                }
+                self.transaction_frame
+                    .cpi_accounts_scratchpad
+                    .set_len(number_of_accounts);
 
                 MemoryRegion::new(&raw mut ix_accs[..], vm_address)
             }

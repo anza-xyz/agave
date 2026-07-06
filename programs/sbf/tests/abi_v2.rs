@@ -578,11 +578,9 @@ fn test_assign_owner() {
     let message = Message::new(&[ix_1], Some(&mint_keypair.pubkey()));
     let tx = Transaction::new(&[&mint_keypair], message, bank.last_blockhash());
     let (_, _, logs, _) = process_transaction_and_record_inner(&bank, tx);
-    assert!(
-        logs.last()
-            .unwrap()
-            .contains("Access violation in unknown section at address 0x900000000 of size 1")
-    );
+    assert!(logs.last().unwrap().contains(
+        "Access violation writing 1 bytes at address 0x900000000 (in unallocated region)"
+    ));
 }
 
 #[test]

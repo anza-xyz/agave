@@ -558,6 +558,8 @@ impl<'a, 'ix_data> InvokeContext<'a, 'ix_data> {
 
             result.map_err(|err| (top_level_instruction_index as u8, err))?;
         }
+
+        Ok(())
     }
     /// Helper to prepare for process_instruction() when the instruction is not a top level one,
     /// and depends on `AccountMeta`s

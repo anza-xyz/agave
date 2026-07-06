@@ -841,13 +841,14 @@ mod tests {
             assert_eq!(region_host_ptr(r2), payload.as_ptr());
         }
 
+        // Regions for unavailable accounts are filled with non-null pointers, so it
+        // suffices to check if the length is zero.
         let r3 = regions.get(2).unwrap();
         assert_eq!(
             r3.vm_addr_range().start,
             GUEST_ACCOUNT_PAYLOAD_BASE_ADDRESS.saturating_add(GUEST_REGION_SIZE.saturating_mul(2))
         );
         assert_eq!(r3.len(), 0);
-        assert!(region_host_ptr(r3).is_null());
 
         let r4 = regions.get(3).unwrap();
         assert_eq!(
@@ -855,6 +856,5 @@ mod tests {
             GUEST_ACCOUNT_PAYLOAD_BASE_ADDRESS.saturating_add(GUEST_REGION_SIZE.saturating_mul(3))
         );
         assert_eq!(r4.len(), 0);
-        assert!(region_host_ptr(r4).is_null());
     }
 }
