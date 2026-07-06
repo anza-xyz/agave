@@ -7,7 +7,7 @@ use {
             ACCOUNTS_INDEX_CONFIG_FOR_TESTING, AccountIndex, AccountSecondaryIndexesIncludeExclude,
             AccountsIndexConfig, IndexLimit, IndexLimitThreshold, test_utils::*,
         },
-        append_vec::{AppendVec, test_utils::TempFile},
+        append_vec::{AppendVec, STORE_META_OVERHEAD, test_utils::TempFile},
         storable_accounts::AccountForStorage,
     },
     itertools::Itertools,
