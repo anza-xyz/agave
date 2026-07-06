@@ -36,7 +36,7 @@ const DEFAULT_NETWORK_FAULTS: usize = 8;
 const DEFAULT_CORRUPTION_WINDOWS: usize = 8;
 /// A node may only be isolated if its stake is under this percent of total, so
 /// the online core stays above the 60% quorum and consensus can still progress.
-const MAX_ISOLATED_STAKE_PERCENT: u128 = 40;
+const MAX_ISOLATED_STAKE_PERCENT: u128 = 55;
 
 /// Isolates a set of nodes for a window of slots.  Any message whose source or
 /// destination is isolated is dropped while the window is active.

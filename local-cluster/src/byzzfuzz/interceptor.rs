@@ -11,7 +11,7 @@ use {
         wire::VersionedWireConsensusMessage,
     },
     crossbeam_channel::bounded,
-    log::{debug, warn},
+    log::{debug, info, warn},
     rand::rngs::StdRng,
     solana_client::connection_cache::ConnectionCache,
     solana_clock::Slot,
@@ -65,6 +65,39 @@ pub enum AlpenglowInterceptAction {
     DuplicateToAll,
     DelayMessages(usize),
     Replace(Box<ConsensusMessage>),
+}
+
+pub(crate) fn describe_consensus_message(message: &ConsensusMessage) -> String {
+    match message {
+        ConsensusMessage::Vote(vote) => format!(
+            "vote type={:?} slot={} block_id={:?} rank={}",
+            vote.vote.get_type(),
+            vote.vote.slot(),
+            vote.vote.block_id(),
+            vote.rank,
+        ),
+        ConsensusMessage::Certificate(certificate) => format!(
+            "certificate type={:?} slot={}",
+            certificate.cert_type,
+            certificate.cert_type.slot(),
+        ),
+    }
+}
+
+pub(crate) fn describe_intercept_action(action: &AlpenglowInterceptAction) -> String {
+    match action {
+        AlpenglowInterceptAction::Forward => "forward".to_string(),
+        AlpenglowInterceptAction::Drop => "drop".to_string(),
+        AlpenglowInterceptAction::Duplicate => "duplicate".to_string(),
+        AlpenglowInterceptAction::DuplicateToAll => "duplicate_to_all".to_string(),
+        AlpenglowInterceptAction::DelayMessages(delay) => format!("delay release_after={delay}"),
+        AlpenglowInterceptAction::Replace(message) => {
+            format!(
+                "replace replacement={}",
+                describe_consensus_message(message)
+            )
+        }
+    }
 }
 
 type InterceptPolicy =
@@ -128,6 +161,7 @@ impl AlpenglowInterceptor {
             let listener_addr = socket
                 .local_addr()
                 .expect("AlpenglowInterceptor: get listener address");
+            info!("byzfuzz alpenglow proxy listener {destination} -> {listener_addr}");
             override_map.insert(destination, listener_addr);
 
             let (packet_sender, packet_receiver) = bounded(1024);
@@ -201,6 +235,7 @@ impl AlpenglowInterceptor {
     pub fn set_destinations(&self, destinations: impl IntoIterator<Item = (Pubkey, SocketAddr)>) {
         let mut write = self.destinations.write().unwrap();
         for (pubkey, addr) in destinations {
+            info!("byzfuzz alpenglow proxy destination {pubkey} -> {addr}");
             write.insert(pubkey, addr);
         }
     }
@@ -312,6 +347,7 @@ impl AlpenglowInterceptor {
                             shred_version,
                             current_slot: now,
                         });
+                        Self::log_intercept_action(source, destination, now, &message, &action);
                         match action {
                             AlpenglowInterceptAction::Forward => Self::forward(
                                 source,
@@ -407,6 +443,25 @@ impl AlpenglowInterceptor {
         }
     }
 
+    fn log_intercept_action(
+        source: Pubkey,
+        destination: Pubkey,
+        current_slot: Slot,
+        message: &ConsensusMessage,
+        action: &AlpenglowInterceptAction,
+    ) {
+        let should_log = matches!(message, ConsensusMessage::Certificate(_))
+            || !matches!(action, AlpenglowInterceptAction::Forward);
+        if should_log {
+            //info!(
+            //    "byzfuzz intercept current_slot={current_slot} source={source} \
+            //     destination={destination} msg=\"{}\" action=\"{}\"",
+            //    describe_consensus_message(message),
+            //    describe_intercept_action(action),
+            //);
+        }
+    }
+
     fn delay_message(
         delayed_messages: &Mutex<Vec<DelayedMessage>>,
         slot: Slot,
@@ -448,6 +503,12 @@ impl AlpenglowInterceptor {
             due
         };
         for delayed in due {
+            //info!(
+            //    "byzfuzz intercept release_delayed source={} destination={} msg=\"{}\"",
+            //    delayed.source,
+            //    delayed.destination,
+            //    describe_consensus_message(&delayed.message),
+            //);
             Self::forward(
                 delayed.source,
                 delayed.destination,

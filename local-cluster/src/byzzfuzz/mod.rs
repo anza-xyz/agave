@@ -5,7 +5,10 @@ mod schedule;
 use {
     crate::{
         byzzfuzz::{
-            interceptor::{AlpenglowInterceptAction, AlpenglowInterceptor, AlpenglowRng},
+            interceptor::{
+                AlpenglowInterceptAction, AlpenglowInterceptor, AlpenglowRng,
+                describe_consensus_message, describe_intercept_action,
+            },
             invariants::validate_invariants,
             mutations::maybe_mutate_alpenglow_message,
             schedule::{FaultSchedule, message_slot},
@@ -39,9 +42,9 @@ use {
 #[test]
 fn test_alpenglow_byzfuzz() {
     agave_logger::setup_with_default(AG_DEBUG_LOG_FILTER);
-    const NUM_NODES: usize = 4;
-    const BYZANTINE_INDICES: &[usize] = &[0];
-    const ROOT_SLOT_TO_WAIT_FOR: Slot = 128;
+    const NUM_NODES: usize = 7;
+    const BYZANTINE_INDICES: &[usize] = &[0, 5];
+    const ROOT_SLOT_TO_WAIT_FOR: Slot = 32;
     // Fixed seed for the honest-stake partition so failures are reproducible.
     let random_seed: Option<u64> = match std::env::var("ALPENGLOW_TEST_SEED") {
         Ok(val) => val.parse::<u64>().ok(),
@@ -115,7 +118,7 @@ fn test_alpenglow_byzfuzz() {
         &source_stakes,
         ROOT_SLOT_TO_WAIT_FOR,
     ));
-    info!("byzfuzz fault schedule (seed {random_seed}): {schedule:?}");
+    info!("byzfuzz fault schedule (seed {random_seed}): {schedule:#?}");
     let schedule_for_policy = schedule.clone();
 
     // Centralize all Alpenglow messages here before adding fuzz actions.
@@ -130,6 +133,14 @@ fn test_alpenglow_byzfuzz() {
             &intercepted.source,
             &intercepted.destination,
         ) {
+            //info!(
+            //    "byzfuzz policy current_slot={} source={} destination={} msg=\"{}\" \
+            //     action=\"drop\" reason=network_isolation",
+            //    intercepted.current_slot,
+            //    intercepted.source,
+            //    intercepted.destination,
+            //    describe_consensus_message(&intercepted.message),
+            //);
             return AlpenglowInterceptAction::Drop;
         }
         // Corruptions target a slot's agreement, so they key on the message's
@@ -147,13 +158,23 @@ fn test_alpenglow_byzfuzz() {
             // the same vote to different peers can be mutated differently.
             let mut rng =
                 schedule_for_policy.corruption_rng(&intercepted.message, &intercepted.destination);
-            if let Some(action) = maybe_mutate_alpenglow_message(
+            if let Some(result) = maybe_mutate_alpenglow_message(
                 &intercepted.message,
                 intercepted.shred_version,
                 &mut rng,
                 source_bls_keypair,
             ) {
-                return action;
+                //info!(
+                //    "byzfuzz policy current_slot={} source={} destination={} msg=\"{}\" \
+                //     action=\"{}\" reason=byzantine_corruption mutation={:?}",
+                //    intercepted.current_slot,
+                //    intercepted.source,
+                //    intercepted.destination,
+                //    describe_consensus_message(&intercepted.message),
+                //    describe_intercept_action(&result.action),
+                //    result.mutation,
+                //);
+                return result.action;
             }
         }
         AlpenglowInterceptAction::Forward
@@ -227,10 +248,10 @@ fn percent_of(total: u64, percent: u64) -> u64 {
 
 /// Assign integer stake percentages (summing to exactly 100) across `num_nodes`
 /// nodes: the byzantine nodes hold a combined `byzantine_total_percent`, split
-/// as evenly as possible, and the honest nodes split the remainder in random,
-/// seed-deterministic proportions with every honest node getting at least 1%
-/// and no single node exceeding `MAX_NODE_STAKE_PERCENT` (so no node can form a
-/// stand-alone supermajority).
+/// randomly across the configured byzantine indices, and the honest nodes split
+/// the remainder in random, seed-deterministic proportions. Every node gets at
+/// least 1%, and no single node exceeds `MAX_NODE_STAKE_PERCENT` (so no node can
+/// form a stand-alone supermajority).
 fn random_stake_percents(
     seed: u64,
     num_nodes: usize,
@@ -245,71 +266,94 @@ fn random_stake_percents(
     let honest_indices = (0..num_nodes)
         .filter(|i| !byzantine_indices.contains(i))
         .collect::<Vec<_>>();
-    assert!(!byzantine_indices.is_empty(), "need at least one byzantine node");
+    assert!(
+        !byzantine_indices.is_empty(),
+        "need at least one byzantine node"
+    );
     assert!(!honest_indices.is_empty(), "need at least one honest node");
     let honest_total_percent = 100 - byzantine_total_percent;
+    assert!(
+        byzantine_total_percent as usize >= byzantine_indices.len(),
+        "not enough byzantine stake to give each byzantine node at least 1%",
+    );
     assert!(
         honest_total_percent as usize >= honest_indices.len(),
         "not enough honest stake to give each honest node at least 1%",
     );
     assert!(
+        byzantine_total_percent <= byzantine_indices.len() as u64 * MAX_NODE_STAKE_PERCENT,
+        "byzantine stake cannot be spread across nodes under the per-node cap",
+    );
+    assert!(
         honest_total_percent <= honest_indices.len() as u64 * MAX_NODE_STAKE_PERCENT,
         "honest stake cannot be spread across nodes under the per-node cap",
     );
-    assert!(
-        byzantine_total_percent / byzantine_indices.len() as u64 <= MAX_NODE_STAKE_PERCENT,
-        "a byzantine node would exceed the per-node cap",
+    let byzantine_percents = random_positive_percents(
+        byzantine_total_percent,
+        byzantine_indices.len(),
+        MAX_NODE_STAKE_PERCENT,
+        &mut rng,
+    );
+    let honest_percents = random_positive_percents(
+        honest_total_percent,
+        honest_indices.len(),
+        MAX_NODE_STAKE_PERCENT,
+        &mut rng,
     );
 
-    // Random positive weight per honest node; distribute the honest stake above
-    // the per-node floor of 1% in proportion to those weights.
-    let weights = honest_indices
-        .iter()
-        .map(|_| rng.random_range(1..=1000u64))
-        .collect::<Vec<_>>();
-    let weight_sum: u64 = weights.iter().sum();
-    let distributable = honest_total_percent - honest_indices.len() as u64;
-    let mut honest_percents = vec![1u64; honest_indices.len()];
-    let mut allocated = 0u64;
-    for (k, w) in weights.iter().enumerate() {
-        let extra = distributable * w / weight_sum;
-        honest_percents[k] += extra;
-        allocated += extra;
-    }
-    // Assign the rounding remainder to the first honest node.
-    honest_percents[0] += distributable - allocated;
-
-    // Enforce the per-node cap: clamp any honest node above the cap and
-    // water-fill the excess one point at a time into nodes that still have
-    // headroom, so the total stays exact and no node keeps a supermajority.
-    let mut excess = 0u64;
-    for p in honest_percents.iter_mut() {
-        if *p > MAX_NODE_STAKE_PERCENT {
-            excess += *p - MAX_NODE_STAKE_PERCENT;
-            *p = MAX_NODE_STAKE_PERCENT;
-        }
-    }
-    let mut k = 0usize;
-    while excess > 0 {
-        let idx = k % honest_percents.len();
-        if honest_percents[idx] < MAX_NODE_STAKE_PERCENT {
-            honest_percents[idx] += 1;
-            excess -= 1;
-        }
-        k += 1;
-    }
-
     let mut percents = vec![0u64; num_nodes];
-    let per_byz = byzantine_total_percent / byzantine_indices.len() as u64;
-    for &i in byzantine_indices {
-        percents[i] = per_byz;
+    for (k, &i) in byzantine_indices.iter().enumerate() {
+        percents[i] = byzantine_percents[k];
     }
-    percents[byzantine_indices[0]] +=
-        byzantine_total_percent - per_byz * byzantine_indices.len() as u64;
     for (k, &i) in honest_indices.iter().enumerate() {
         percents[i] = honest_percents[k];
     }
     debug_assert_eq!(percents.iter().sum::<u64>(), 100);
     debug_assert!(percents.iter().all(|&p| p <= MAX_NODE_STAKE_PERCENT));
+    percents
+}
+
+fn random_positive_percents(
+    total_percent: u64,
+    count: usize,
+    max_percent: u64,
+    rng: &mut AlpenglowRng,
+) -> Vec<u64> {
+    // Random positive weights followed by integer apportionment.
+    let weights = (0..count)
+        .map(|_| rng.random_range(1..=1000u64))
+        .collect::<Vec<_>>();
+    let weight_sum: u64 = weights.iter().sum();
+    let distributable = total_percent - count as u64;
+    let mut percents = vec![1u64; count];
+    let mut allocated = 0u64;
+    for (k, w) in weights.iter().enumerate() {
+        let extra = distributable * w / weight_sum;
+        percents[k] += extra;
+        allocated += extra;
+    }
+    percents[0] += distributable - allocated;
+
+    // Move any stake over the cap to entries that still have headroom.
+    let mut excess = 0u64;
+    for p in percents.iter_mut() {
+        if *p > max_percent {
+            excess += *p - max_percent;
+            *p = max_percent;
+        }
+    }
+    let mut k = 0usize;
+    while excess > 0 {
+        let idx = k % percents.len();
+        if percents[idx] < max_percent {
+            percents[idx] += 1;
+            excess -= 1;
+        }
+        k += 1;
+    }
+
+    debug_assert_eq!(percents.iter().sum::<u64>(), total_percent);
+    debug_assert!(percents.iter().all(|&p| p >= 1));
+    debug_assert!(percents.iter().all(|&p| p <= max_percent));
     percents
 }

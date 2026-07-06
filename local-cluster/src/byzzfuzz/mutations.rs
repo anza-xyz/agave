@@ -15,17 +15,23 @@ use {
 const MIN_DELAY_MESSAGES: usize = 1;
 const MAX_DELAY_MESSAGES: usize = 16;
 
+pub(crate) struct MutationResult {
+    pub(crate) mutation: Mutations,
+    pub(crate) action: AlpenglowInterceptAction,
+}
+
 pub(crate) fn maybe_mutate_alpenglow_message(
     message: &ConsensusMessage,
     shred_version: u16,
     rng: &mut AlpenglowRng,
     source_bls_keypair: Option<&BLSKeypair>,
-) -> Option<AlpenglowInterceptAction> {
+) -> Option<MutationResult> {
     if rng.random_range(0..100) >= 50 {
         return None;
     }
     let mutation = Mutations::ALL[rng.random_range(0..Mutations::ALL.len())];
-    mutation.apply(message, shred_version, rng, source_bls_keypair)
+    let action = mutation.apply(message, shred_version, rng, source_bls_keypair)?;
+    Some(MutationResult { mutation, action })
 }
 
 #[derive(Clone, Copy, Debug)]

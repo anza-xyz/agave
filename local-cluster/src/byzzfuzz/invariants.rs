@@ -159,7 +159,6 @@ fn validate_certificate_thresholds(
     let rank_stakes = rank_stakes(data, source_stakes);
     let total_stake = source_stakes.values().sum::<u64>();
     let total_stake = NonZeroU64::new(total_stake).expect("byzfuzz stake must be nonzero");
-
     for (_, _, certificate) in &data.certificates {
         let signing_stake =
             certificate_signing_stake(certificate, data.validator_count, &rank_stakes);
