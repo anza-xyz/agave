@@ -567,6 +567,15 @@ impl AccountsDb {
             self.store_accounts_for_squash(accounts_to_write, shrink_in_progress.new_storage())
         );
 
+        // Count the bytes actually written into the packed storage
+        self.shrink_ancient_stats
+            .shrink_stats
+            .bytes_written
+            .fetch_add(
+                shrink_in_progress.new_storage().written_bytes(),
+                Ordering::Relaxed,
+            );
+
         write_ancient_accounts.metrics.accumulate(&SquashStatsSub {
             store_accounts_stats,
             rewrite_elapsed_us: Saturating(rewrite_elapsed_us),

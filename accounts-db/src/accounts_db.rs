@@ -279,7 +279,7 @@ struct LoadAccountsIndexForShrink<'a, T: ShrinkCollectRefs<'a>> {
     /// pubkeys that are the last remaining zero lamport instance of an account
     zero_lamport_single_ref_pubkeys: Vec<&'a Pubkey>,
     /// accounts that are zero lamport but not indexed
-    zero_lamport_tombstones: Vec<AccountFromStorage>,
+    tombstones: Vec<AccountFromStorage>,
     /// true if all alive accounts are zero lamport accounts
     all_are_zero_lamports: bool,
 }
@@ -2438,7 +2438,7 @@ impl AccountsDb {
         let mut alive_accounts = T::with_capacity(count, slot_to_shrink);
         let mut pubkeys_to_unref = Vec::with_capacity(count);
         let mut zero_lamport_single_ref_pubkeys = Vec::with_capacity(count);
-        let mut zero_lamport_tombstones = Vec::new();
+        let mut tombstones = Vec::new();
 
         let mut alive = 0;
         let mut dead = 0;
@@ -2459,7 +2459,7 @@ impl AccountsDb {
                             // Newer than the latest full snapshot: keep the bytes in storage as a
                             // tombstone so an incremental snapshot can still propagate the deletion,
                             // rather than dropping it.
-                            zero_lamport_tombstones.push(*stored_account);
+                            tombstones.push(*stored_account);
                         }
                     } else {
                         all_are_zero_lamports &= stored_account.is_zero_lamport();
@@ -2515,7 +2515,7 @@ impl AccountsDb {
             alive_accounts,
             pubkeys_to_unref,
             zero_lamport_single_ref_pubkeys,
-            zero_lamport_tombstones,
+            tombstones,
             all_are_zero_lamports,
         }
     }
@@ -2604,7 +2604,7 @@ impl AccountsDb {
         // Filter and collect tombstones
         let can_purge_zero_lamport_single_ref =
             self.can_purge_zero_lamport_single_ref_after_shrink(slot);
-        let mut tombstones_to_carry_forward: Vec<AccountFromStorage> = Vec::new();
+        let mut tombstones_to_carry_forward = Vec::new();
         let tombstone_offsets = store.tombstone_offsets_read_lock();
         if !tombstone_offsets.is_empty() {
             stored_accounts.retain(|account| {
@@ -2650,7 +2650,7 @@ impl AccountsDb {
                         mut pubkeys_to_unref,
                         all_are_zero_lamports,
                         mut zero_lamport_single_ref_pubkeys,
-                        mut zero_lamport_tombstones,
+                        mut tombstones,
                     } = self.load_accounts_index_for_shrink(stored_accounts, stats, slot);
 
                     // collect
@@ -2664,7 +2664,7 @@ impl AccountsDb {
                         .append(&mut zero_lamport_single_ref_pubkeys);
                     shrink_collect
                         .tombstones_to_carry_forward
-                        .append(&mut zero_lamport_tombstones);
+                        .append(&mut tombstones);
                     if !all_are_zero_lamports {
                         shrink_collect.all_are_zero_lamports = false;
                     }
@@ -2700,9 +2700,6 @@ impl AccountsDb {
                 .saturating_sub(shrink_collect.tombstones_total_bytes as u64),
             Ordering::Relaxed,
         );
-        stats
-            .bytes_written
-            .fetch_add(alive_total_bytes as u64, Ordering::Relaxed);
 
         shrink_collect
     }
@@ -2977,8 +2974,7 @@ impl AccountsDb {
             UpdateIndexThreadSelection::PoolWithThreshold,
         );
 
-        let tombstone_refs: Vec<&AccountFromStorage> =
-            shrink_collect.tombstones_to_carry_forward.iter().collect();
+        let tombstone_refs: Vec<_> = shrink_collect.tombstones_to_carry_forward.iter().collect();
         let tombstone_accounts = [(slot, &tombstone_refs[..])];
         let storable_tombstones = StorableAccountsBySlot::new(slot, &tombstone_accounts, self);
         let (num_tombstones_carried_forward, tombstone_carry_forward_us) = measure_us!(
@@ -2987,6 +2983,12 @@ impl AccountsDb {
         stats_sub.tombstone_carry_forward_us = Saturating(tombstone_carry_forward_us);
         stats_sub.num_tombstones_carried_forward =
             Saturating(num_tombstones_carried_forward as u64);
+
+        // Count the bytes actually written to the new storage
+        self.shrink_stats.bytes_written.fetch_add(
+            shrink_in_progress.new_storage().written_bytes(),
+            Ordering::Relaxed,
+        );
 
         rewrite_elapsed.stop();
         stats_sub.rewrite_elapsed_us = Saturating(rewrite_elapsed.as_us());
@@ -5620,6 +5622,7 @@ impl AccountsDb {
 
     /// Write tombstones into new_storage and store the new offsets on its tombstone_offsets
     /// Note: They are not added to the index
+    /// Returns the number of tombstones stored
     fn store_tombstones<'a>(
         &self,
         new_storage: &AccountStorageEntry,
@@ -5630,8 +5633,7 @@ impl AccountsDb {
         }
         let tombstone_infos =
             self.write_accounts_to_storage(tombstones.target_slot(), new_storage, &tombstones);
-        let tombstone_offsets: Vec<Offset> =
-            tombstone_infos.iter().map(|info| info.offset()).collect();
+        let tombstone_offsets: Vec<_> = tombstone_infos.iter().map(|info| info.offset()).collect();
         new_storage.batch_insert_tombstone_offsets(&tombstone_offsets);
         tombstone_offsets.len()
     }

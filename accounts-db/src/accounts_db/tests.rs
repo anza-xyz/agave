@@ -315,7 +315,7 @@ fn sample_storage_with_entries_id_fill_percentage(
 ) -> Arc<AccountStorageEntry> {
     let (_temp_dirs, paths) = get_temp_accounts_paths(1).unwrap();
     let file_size = account_data_size.unwrap_or(123) * 100 / fill_percentage;
-    let size_aligned: usize = AppendVec::calculate_stored_size(file_size as usize);
+    let size_aligned = AppendVec::calculate_stored_size(file_size as usize);
     let mut data = AccountStorageEntry::new(
         &paths[0],
         slot,
