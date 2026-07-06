@@ -85,6 +85,14 @@ pub fn keyed_account_for_system_program() -> (Pubkey, Account) {
     create_keyed_account_for_builtin_program(&SVM_BUILTINS[0].program_id, SVM_BUILTINS[0].name)
 }
 
+pub fn keyed_account_for_bpf_loader_program() -> (Pubkey, Account) {
+    create_keyed_account_for_builtin_program(&SVM_BUILTINS[2].program_id, SVM_BUILTINS[2].name)
+}
+
+pub fn keyed_account_for_bpf_loader_upgradeable_program() -> (Pubkey, Account) {
+    create_keyed_account_for_builtin_program(&SVM_BUILTINS[3].program_id, SVM_BUILTINS[3].name)
+}
+
 pub fn keyed_account_for_compute_budget_program() -> (Pubkey, Account) {
     create_keyed_account_for_builtin_program(&SVM_BUILTINS[4].program_id, SVM_BUILTINS[4].name)
 }

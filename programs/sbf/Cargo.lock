@@ -8431,6 +8431,7 @@ dependencies = [
  "solana-keypair",
  "solana-loader-v3-interface",
  "solana-message",
+ "solana-program-binaries",
  "solana-program-runtime",
  "solana-pubkey 4.2.0",
  "solana-rent",

@@ -5,10 +5,11 @@ use {
     crate::conformance::{
         callback::DefaultCallback,
         setup::{
-            InvokeContextFields, compute_budget, prepare_invoke_context_fields,
+            InvokeContextFields, compute_budget, prepare_invoke_context_fields, program_loader_key,
             program_runtime_environments,
         },
     },
+    solana_account::AccountSharedData,
     solana_instruction::error::InstructionError,
     solana_program_runtime::{
         invoke_context::InvokeContext, loaded_programs::ProgramCacheForTxBatch,
@@ -17,7 +18,7 @@ use {
     solana_pubkey::Pubkey,
     solana_svm_callback::InvokeContextCallback,
     solana_svm_timings::ExecuteTimings,
-    std::rc::Rc,
+    std::{collections::HashMap, rc::Rc},
 };
 #[cfg(feature = "conformance")]
 use {
@@ -55,10 +56,7 @@ pub fn execute_instr_with_callback<C: InvokeContextCallback>(
     let mut compute_budget = compute_budget(&input.feature_set);
     compute_budget.compute_unit_limit = input.cu_avail; // Clamp budget for execution by cu_avail
 
-    let loader_key = program_cache
-        .find(&input.instruction.program_id)
-        .expect("program not loaded in cache")
-        .account_owner();
+    let loader_key = program_loader_key(&input.accounts, &input.instruction.program_id);
 
     let program_runtime_environments =
         program_runtime_environments(&input.feature_set, &compute_budget);
@@ -113,10 +111,31 @@ pub fn execute_instr_with_callback<C: InvokeContextCallback>(
         .map(|index| {
             *transaction_context
                 .get_key_of_account_at_index(index)
-                .clone()
                 .unwrap()
         })
-        .collect::<Vec<_>>();
+        .collect();
+
+    // Post-execution state of the accounts in the compiled message.
+    let mut executed: HashMap<Pubkey, AccountSharedData> = account_keys
+        .into_iter()
+        .zip(transaction_context.deconstruct_without_keys().unwrap())
+        .collect();
+
+    // Preserve input account order, overlaying executed state for accounts
+    // present in the compiled message.
+    let resulting_accounts = input
+        .accounts
+        .iter()
+        .map(|(pubkey, account)| {
+            (
+                *pubkey,
+                executed
+                    .remove(pubkey)
+                    .map(Into::into)
+                    .unwrap_or_else(|| account.clone()),
+            )
+        })
+        .collect();
 
     InstrEffects {
         custom_err: if let Err(InstructionError::Custom(code)) = result {
@@ -125,13 +144,7 @@ pub fn execute_instr_with_callback<C: InvokeContextCallback>(
             None
         },
         result: result.err(),
-        resulting_accounts: transaction_context
-            .deconstruct_without_keys()
-            .unwrap()
-            .into_iter()
-            .zip(account_keys)
-            .map(|(account, key)| (key, account.into()))
-            .collect(),
+        resulting_accounts,
         cu_avail,
         return_data,
         logs,
@@ -403,9 +416,16 @@ mod tests {
     #[test_case(solana_sdk_ids::bpf_loader_upgradeable::id(); "loader_v3")]
     fn test_bpf_noop_program_exec(loader_key: Pubkey) {
         let program_id = Pubkey::new_unique();
+        let program_account = Account {
+            lamports: 1,
+            data: vec![],
+            owner: loader_key,
+            executable: true,
+            rent_epoch: u64::MAX,
+        };
         let context = InstrContext::new_with_default_budget(
             SVMFeatureSet::default(),
-            vec![],
+            vec![(program_id, program_account)],
             Instruction::new_with_bytes(program_id, &[], vec![]),
         );
         let sysvar_cache = sysvar_cache_with_rent();
