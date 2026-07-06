@@ -153,12 +153,12 @@ impl VotePacketReceiver {
                         }
 
                         stats.num_buffered_packets += 1;
-                        let vote_batch_insertion_metrics =
-                            vote_storage.insert_batch(vote_source, std::iter::once(packet));
+                        let vote_insertion_metrics =
+                            vote_storage.insert_packet(vote_source, packet);
                         slot_metrics_tracker
-                            .accumulate_vote_batch_insertion_metrics(&vote_batch_insertion_metrics);
+                            .accumulate_vote_insertion_metrics(&vote_insertion_metrics);
                         stats.dropped_packets_count +=
-                            vote_batch_insertion_metrics.total_dropped_packets();
+                            vote_insertion_metrics.total_dropped_packets();
                     }
                     Err(err) => {
                         stats.errors += 1;
