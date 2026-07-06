@@ -7164,9 +7164,25 @@ impl Bank {
     /// Get stake and stake node accounts
     pub(crate) fn get_stake_accounts(&self, minimized_account_set: &DashSet<Pubkey>) {
         if let Some(stake_delegation_frontier) = self.stake_delegation_frontier_query() {
+            let stakes = self.stakes_cache.stakes();
+            let stake_delegations = stakes.stake_delegations();
+            assert_eq!(
+                stake_delegation_frontier.len_filtered(),
+                stake_delegations.len(),
+                "stake cache v2 frontier delegation count differs from stake cache v1",
+            );
             stake_delegation_frontier
                 .iter_filtered()
-                .for_each(|(pubkey, _)| {
+                .for_each(|(pubkey, stake_account)| {
+                    let cached_stake_account = stake_delegations.get(pubkey).unwrap_or_else(|| {
+                        panic!(
+                            "stake cache v2 frontier entry {pubkey} is missing from stake cache v1"
+                        )
+                    });
+                    assert_eq!(
+                        stake_account, cached_stake_account,
+                        "stake cache v2 frontier entry {pubkey} differs from stake cache v1",
+                    );
                     minimized_account_set.insert(*pubkey);
                 });
         } else {
