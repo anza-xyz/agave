@@ -18,10 +18,16 @@ use {
         umem::{Frame, OwnedUmem, PageAlignedMemory, Umem},
     },
     agave_cpu_utils::set_cpu_affinity,
+    crossbeam_queue::ArrayQueue,
     libc::{_SC_PAGESIZE, sysconf},
     std::{
-        io,
+        error::Error,
+        fmt, io,
         net::{IpAddr, SocketAddr, SocketAddrV4},
+        sync::{
+            Arc,
+            atomic::{AtomicUsize, Ordering},
+        },
         thread,
         time::Duration,
     },
@@ -213,22 +219,112 @@ pub trait TxPacket {
     fn allow_mtu_overflow(&self) -> bool;
 }
 
-#[derive(Debug, PartialEq, Eq)]
+#[derive(Copy, Clone, Debug, PartialEq, Eq)]
 pub enum TryRecvError {
     Empty,
     Disconnected,
 }
 
+pub enum TrySendError<T> {
+    Full(T),
+    Disconnected(T),
+}
+
+impl<T> fmt::Debug for TrySendError<T> {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::Full(_) => f.write_str("Full(..)"),
+            Self::Disconnected(_) => f.write_str("Disconnected(..)"),
+        }
+    }
+}
+
+impl<T> fmt::Display for TrySendError<T> {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::Full(_) => f.write_str("sending into a full XDP transmit channel"),
+            Self::Disconnected(_) => f.write_str("sending into a closed XDP transmit channel"),
+        }
+    }
+}
+
+impl<T> Error for TrySendError<T> {}
+
 pub trait Receiver<T> {
     fn try_recv(&self) -> Result<T, TryRecvError>;
 }
 
-impl<T> Receiver<T> for crossbeam_channel::Receiver<T> {
+pub struct TxSender<T> {
+    queue: Arc<SharedQueue<T>>,
+}
+
+pub struct TxReceiver<T> {
+    queue: Arc<SharedQueue<T>>,
+}
+
+struct SharedQueue<T> {
+    queue: ArrayQueue<T>,
+    senders: AtomicUsize,
+    receivers: AtomicUsize,
+}
+
+pub fn channel<T>(capacity: usize) -> (TxSender<T>, TxReceiver<T>) {
+    let queue = Arc::new(SharedQueue {
+        queue: ArrayQueue::new(capacity),
+        senders: AtomicUsize::new(1),
+        receivers: AtomicUsize::new(1),
+    });
+    (
+        TxSender {
+            queue: Arc::clone(&queue),
+        },
+        TxReceiver { queue },
+    )
+}
+
+impl<T> Clone for TxSender<T> {
+    fn clone(&self) -> Self {
+        self.queue.senders.fetch_add(1, Ordering::Relaxed);
+        Self {
+            queue: Arc::clone(&self.queue),
+        }
+    }
+}
+
+impl<T> Drop for TxSender<T> {
+    fn drop(&mut self) {
+        self.queue.senders.fetch_sub(1, Ordering::Relaxed);
+    }
+}
+
+impl<T> TxSender<T> {
+    pub fn try_send(&self, item: T) -> Result<(), TrySendError<T>> {
+        if self.queue.receivers.load(Ordering::Relaxed) == 0 {
+            return Err(TrySendError::Disconnected(item));
+        }
+        self.queue.queue.push(item).map_err(TrySendError::Full)
+    }
+}
+
+impl<T> Drop for TxReceiver<T> {
+    fn drop(&mut self) {
+        self.queue.receivers.fetch_sub(1, Ordering::Relaxed);
+    }
+}
+
+impl<T> Receiver<T> for TxReceiver<T> {
     fn try_recv(&self) -> Result<T, TryRecvError> {
-        self.try_recv().map_err(|err| match err {
-            crossbeam_channel::TryRecvError::Empty => TryRecvError::Empty,
-            crossbeam_channel::TryRecvError::Disconnected => TryRecvError::Disconnected,
-        })
+        match self.queue.queue.pop() {
+            Some(item) => Ok(item),
+            // there is a potential race here if the last sender sends an item and then immediately
+            // drops. In that case we'll return Disconnected even though there's an item queued.
+            // That's fine since it's only a shutdown race and we don't guarantee packet delivery in
+            // any case.
+            None if self.queue.senders.load(Ordering::Relaxed) == 0 => {
+                Err(TryRecvError::Disconnected)
+            }
+            None => Err(TryRecvError::Empty),
+        }
     }
 }
 
@@ -614,5 +710,61 @@ fn kick_error(e: std::io::Error) {
         _ => {
             log::error!("network interface driver error: {e:?}");
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use crate::tx_loop::{Receiver, TryRecvError, TrySendError, channel};
+
+    #[test]
+    fn test_send_full() {
+        let (sender, _receiver) = channel(1);
+
+        assert!(sender.try_send(1).is_ok());
+        match sender.try_send(2) {
+            Err(TrySendError::Full(item)) => assert_eq!(item, 2),
+            result => panic!("expected full queue, got {result:?}"),
+        }
+    }
+
+    #[test]
+    fn test_send_disconnected() {
+        let (sender, receiver) = channel(1);
+        drop(receiver);
+
+        match sender.try_send(1) {
+            Err(TrySendError::Disconnected(item)) => assert_eq!(item, 1),
+            result => panic!("expected disconnected queue, got {result:?}"),
+        }
+    }
+
+    #[test]
+    fn test_recv_disconnected() {
+        let (sender, receiver) = channel(1);
+        sender
+            .try_send(1)
+            .expect("send item before dropping sender");
+        drop(sender);
+
+        assert_eq!(receiver.try_recv().expect("receive queued item"), 1);
+        assert!(matches!(
+            receiver.try_recv(),
+            Err(TryRecvError::Disconnected)
+        ));
+    }
+
+    #[test]
+    fn test_recv_waits_for_cloned_sender() {
+        let (sender, receiver) = channel::<i32>(1);
+        let sender_clone = sender.clone();
+        drop(sender);
+
+        assert!(matches!(receiver.try_recv(), Err(TryRecvError::Empty)));
+        drop(sender_clone);
+        assert!(matches!(
+            receiver.try_recv(),
+            Err(TryRecvError::Disconnected)
+        ));
     }
 }

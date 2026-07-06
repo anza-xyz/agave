@@ -20,7 +20,6 @@ agave-unstable-api = []
 agave-cpu-utils = { workspace = true }
 arc-swap = { workspace = true }
 bytes = { workspace = true }
-crossbeam-channel = { workspace = true }
 libc = { workspace = true }
 log = { workspace = true }
 thiserror = { workspace = true }

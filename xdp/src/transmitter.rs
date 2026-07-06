@@ -1,7 +1,8 @@
+#[cfg(target_os = "linux")]
+pub use crate::tx_loop::TrySendError;
 use {
     crate::ecn_codepoint::EcnCodepoint,
     bytes::Bytes,
-    crossbeam_channel::{Sender, TrySendError},
     std::{
         error::Error,
         net::{SocketAddr, SocketAddrV4},
@@ -16,7 +17,7 @@ use {
         load_xdp_program,
         route::{RouteTable, Router, RoutingTables},
         route_monitor::RouteMonitor,
-        tx_loop::{TxLoop, TxLoopBuilder, TxLoopConfigBuilder, TxPacket},
+        tx_loop::{self, TxLoop, TxLoopBuilder, TxLoopConfigBuilder, TxPacket},
         umem::{OwnedUmem, PageAlignedMemory},
     },
     agave_cpu_utils::{CpuId, cpu_affinity, set_cpu_affinity},
@@ -142,6 +143,22 @@ impl BytesTxPacket {
     pub fn set_allow_mtu_overflow(&mut self, _allow: bool) {}
 }
 
+#[cfg(not(target_os = "linux"))]
+pub enum TrySendError<T> {
+    Full(T),
+    Disconnected(T),
+}
+
+#[cfg(not(target_os = "linux"))]
+impl std::fmt::Debug for TrySendError<BytesTxPacket> {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            TrySendError::Full(_) => write!(f, "TrySendError::Full"),
+            TrySendError::Disconnected(_) => write!(f, "TrySendError::Disconnected"),
+        }
+    }
+}
+
 #[cfg(target_os = "linux")]
 impl TxPacket for BytesTxPacket {
     type Addrs = XdpAddrs;
@@ -170,7 +187,8 @@ impl TxPacket for BytesTxPacket {
 
 #[derive(Clone)]
 pub struct XdpSender {
-    senders: Vec<Sender<BytesTxPacket>>,
+    #[cfg(target_os = "linux")]
+    senders: Vec<tx_loop::TxSender<BytesTxPacket>>,
 }
 
 pub enum XdpAddrs {
@@ -209,18 +227,34 @@ impl XdpSender {
         sender_index: usize,
         packet: BytesTxPacket,
     ) -> Result<(), TrySendError<BytesTxPacket>> {
-        let idx = sender_index
-            .checked_rem(self.senders.len())
-            .expect("XdpSender::senders should not be empty");
-        self.senders[idx].try_send(packet)
+        #[cfg(target_os = "linux")]
+        {
+            let idx = sender_index
+                .checked_rem(self.senders.len())
+                .expect("XdpSender::senders should not be empty");
+            self.senders[idx].try_send(packet)
+        }
+        #[cfg(not(target_os = "linux"))]
+        {
+            let _ = sender_index;
+            Err(TrySendError::Disconnected(packet))
+        }
     }
 
     pub fn len(&self) -> usize {
-        self.senders.len()
+        #[cfg(target_os = "linux")]
+        return self.senders.len();
+
+        #[cfg(not(target_os = "linux"))]
+        0
     }
 
     pub fn is_empty(&self) -> bool {
-        self.senders.is_empty()
+        #[cfg(target_os = "linux")]
+        return self.senders.is_empty();
+
+        #[cfg(not(target_os = "linux"))]
+        true
     }
 }
 
@@ -364,10 +398,7 @@ impl TransmitterBuilder {
 
     #[cfg(not(target_os = "linux"))]
     pub fn build(self) -> (Transmitter, XdpSender) {
-        (
-            Transmitter { threads: vec![] },
-            XdpSender { senders: vec![] },
-        )
+        (Transmitter { threads: vec![] }, XdpSender {})
     }
 
     #[cfg(target_os = "linux")]
@@ -413,7 +444,7 @@ impl TransmitterBuilder {
 
         let mut senders = vec![];
         for (i, tx_loop) in tx_loops.into_iter().enumerate() {
-            let (sender, receiver) = crossbeam_channel::bounded(tx_channel_cap);
+            let (sender, receiver) = tx_loop::channel(tx_channel_cap);
             let drop_queue = Arc::clone(&drop_queue);
             let atomic_router = Arc::clone(&atomic_router);
             threads.push(

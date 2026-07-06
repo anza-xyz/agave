@@ -7,10 +7,11 @@ use {
         contact_info::ContactInfo,
         epoch_specs::EpochSpecs,
     },
-    crossbeam_channel::{Sender, TrySendError},
+    crossbeam_channel::Sender,
     solana_keypair::Keypair,
     solana_net_utils::{
         DEFAULT_IP_ECHO_SERVER_THREADS, PinnedXdpSender as XdpSender, SocketAddrSpace,
+        TrySendError,
         multihomed_sockets::{BindIpAddrs, MultihomedSocketProvider, SocketProvider},
     },
     solana_perf::{packet::PacketBatch, recycler::Recycler},
