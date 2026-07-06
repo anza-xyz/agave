@@ -332,5 +332,18 @@ mod tests {
         // DeserializableStakes doesn't preserve same order of elements as Stakes, compare converted
         let other_stakes = Stakes::from_deserialized(other.stakes);
         assert_eq!(other_stakes, dummy.stakes.into());
+
+        let stake_delegation_frontier = stakes_cache_v2.frontier_query([]);
+        let stakes = stakes_cache.stakes();
+        let stake_delegations = stakes.stake_delegations();
+        assert_eq!(
+            stake_delegation_frontier.len_filtered(),
+            stake_delegations.len()
+        );
+        stake_delegation_frontier
+            .iter_filtered()
+            .for_each(|(pubkey, stake_account)| {
+                assert_eq!(stake_delegations.get(pubkey), Some(stake_account));
+            });
     }
 }
