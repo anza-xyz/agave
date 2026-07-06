@@ -95,7 +95,7 @@ impl<'a> StakeDelegationsView<'a> {
 
     /// Returns the total number of stake delegation entries, including rooted
     /// entries, frontier-only inserts, without excluding overlay-removed
-    /// roots. The reurned number is equivalent to the number of elements
+    /// roots. The returned number is equivalent to the number of elements
     /// yielded by [`StakeDelegationsView::par_iter_unfiltered`], including the
     /// `None` elements.
     pub(crate) fn len_unfiltered(&self) -> usize {
@@ -107,7 +107,7 @@ impl<'a> StakeDelegationsView<'a> {
 
     /// Returns the total number of stake delegation entries, including rooted
     /// entries, frontier-only inserts, and excluding overlay-removed roots.
-    /// The reurned number is equivalent to the number of elements yielded by
+    /// The returned number is equivalent to the number of elements yielded by
     /// [`StakeDelegationsView::par_iter_filtered`], and does not include the
     /// `None` elements.
     pub(crate) fn len_filtered(&self) -> usize {
@@ -120,9 +120,8 @@ impl<'a> StakeDelegationsView<'a> {
     /// Returns an indexed parallel iterator (with a known size) over all stake
     /// delegations.
     ///
-    /// Each item is `Option<(&Pubkey, &StakeAccount)>` — `None` for tombstones
-    /// that should be skipped, or rooted entries that were removed by the
-    /// overlay.
+    /// Each item is `Option<(&Pubkey, &StakeAccount)>` — `None` for rooted
+    /// entries that were removed by the overlay.
     ///
     /// # Performance
     ///
@@ -144,7 +143,7 @@ impl<'a> StakeDelegationsView<'a> {
     }
 
     /// Returns a parallel iterator (with an unknown size) over all valid stake
-    /// delegations, filtering out any tombstones.
+    /// delegations, filtering out roots removed by the overlay.
     ///
     /// # Performance
     ///
