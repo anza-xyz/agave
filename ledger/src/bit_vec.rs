@@ -295,8 +295,7 @@ impl<const NUM_BITS: usize> BitVec<NUM_BITS> {
     /// ```
     pub fn prev_set_bit(&self, bound: usize) -> Option<usize> {
         let bound = bound.min(NUM_BITS);
-        let last_word_idx = bound.checked_sub(1)? / BITS_PER_WORD;
-        let bit_in_word = (bound - 1) % BITS_PER_WORD;
+        let (last_word_idx, bit_in_word) = location_of(bound.checked_sub(1)?);
         let last_word =
             self.words[last_word_idx] & (Word::MAX >> (BITS_PER_WORD - 1 - bit_in_word));
         if last_word != 0 {
@@ -304,21 +303,17 @@ impl<const NUM_BITS: usize> BitVec<NUM_BITS> {
             return Some(last_word_idx * BITS_PER_WORD + msb);
         }
         // Scan full 8-byte groups before falling back to single bytes.
-        let mut chunks = self.words[..last_word_idx].rchunks_exact(WORDS_PER_U64);
+        let (remainder, chunks) = self.words[..last_word_idx].as_rchunks::<WORDS_PER_U64>();
         let mut chunk_end_word_idx = last_word_idx;
-        for chunk in &mut chunks {
-            let chunk_word = u64::from_le_bytes(
-                chunk
-                    .try_into()
-                    .expect("chunks_exact(WORDS_PER_U64) yields 8 bytes"),
-            );
+        for &chunk in chunks.iter().rev() {
+            let chunk_word = u64::from_le_bytes(chunk);
             if chunk_word != 0 {
                 let msb = 63 - chunk_word.leading_zeros() as usize;
                 return Some((chunk_end_word_idx - WORDS_PER_U64) * BITS_PER_WORD + msb);
             }
             chunk_end_word_idx -= WORDS_PER_U64;
         }
-        for (word_idx, &word) in chunks.remainder().iter().enumerate().rev() {
+        for (word_idx, &word) in remainder.iter().enumerate().rev() {
             if word != 0 {
                 let msb = BITS_PER_WORD - 1 - word.leading_zeros() as usize;
                 return Some(word_idx * BITS_PER_WORD + msb);
@@ -348,22 +343,18 @@ impl<const NUM_BITS: usize> BitVec<NUM_BITS> {
         // Serialized data may contain non-zero tail bits past NUM_BITS. Match
         // the range iterator by ignoring any hit outside the logical bit length.
         let in_bounds = |pos: usize| (pos < NUM_BITS).then_some(pos);
-        let first_word_idx = from / BITS_PER_WORD;
-        let first_word = self.words[first_word_idx] & (Word::MAX << (from % BITS_PER_WORD));
+        let (first_word_idx, first_bit) = location_of(from);
+        let first_word = self.words[first_word_idx] & (Word::MAX << first_bit);
         if first_word != 0 {
             return in_bounds(
                 first_word_idx * BITS_PER_WORD + first_word.trailing_zeros() as usize,
             );
         }
         // Scan full 8-byte groups before falling back to single bytes.
-        let mut chunks = self.words[first_word_idx + 1..].chunks_exact(WORDS_PER_U64);
+        let (chunks, remainder) = self.words[first_word_idx + 1..].as_chunks::<WORDS_PER_U64>();
         let mut chunk_start_word_idx = first_word_idx + 1;
-        for chunk in &mut chunks {
-            let chunk_word = u64::from_le_bytes(
-                chunk
-                    .try_into()
-                    .expect("chunks_exact(WORDS_PER_U64) yields 8 bytes"),
-            );
+        for &chunk in chunks {
+            let chunk_word = u64::from_le_bytes(chunk);
             if chunk_word != 0 {
                 return in_bounds(
                     chunk_start_word_idx * BITS_PER_WORD + chunk_word.trailing_zeros() as usize,
@@ -371,7 +362,7 @@ impl<const NUM_BITS: usize> BitVec<NUM_BITS> {
             }
             chunk_start_word_idx += WORDS_PER_U64;
         }
-        for (offset, &word) in chunks.remainder().iter().enumerate() {
+        for (offset, &word) in remainder.iter().enumerate() {
             if word != 0 {
                 return in_bounds(
                     (chunk_start_word_idx + offset) * BITS_PER_WORD
