@@ -92,7 +92,7 @@ use {
     ahash::AHashSet,
     log::*,
     partitioned_epoch_rewards::PartitionedRewardsCalculation,
-    rayon::ThreadPool,
+    rayon::{ThreadPool, iter::ParallelIterator},
     serde::{Deserialize, Serialize},
     solana_account::{
         Account, AccountSharedData, InheritableAccountFields, ReadableAccount, WritableAccount,
@@ -223,7 +223,7 @@ use {
 use {
     dashmap::DashSet,
     qualifier_attr::{field_qualifiers, qualifiers},
-    rayon::iter::{IntoParallelRefIterator, ParallelIterator},
+    rayon::iter::IntoParallelRefIterator,
     solana_accounts_db::accounts_db::{
         ACCOUNTS_DB_CONFIG_FOR_BENCHMARKS, ACCOUNTS_DB_CONFIG_FOR_TESTING,
     },
@@ -2117,6 +2117,28 @@ impl Bank {
             )
         );
         info!("Loading Stakes took: {stakes_time}");
+        if let Some(stakes_cache_v2) = &stakes_cache_v2 {
+            let stake_delegation_frontier = stakes_cache_v2.frontier_query([]);
+            let stake_delegations = stakes.stake_delegations();
+            assert_eq!(
+                stake_delegation_frontier.len_filtered(),
+                stake_delegations.len(),
+                "stake cache v2 snapshot delegation count differs from stake cache v1",
+            );
+            stake_delegation_frontier
+                .par_iter_filtered()
+                .for_each(|(pubkey, stake_account)| {
+                    let cached_stake_account = stake_delegations.get(pubkey).unwrap_or_else(|| {
+                        panic!(
+                            "stake cache v2 snapshot entry {pubkey} is missing from stake cache v1"
+                        )
+                    });
+                    assert_eq!(
+                        stake_account, cached_stake_account,
+                        "stake cache v2 snapshot entry {pubkey} differs from stake cache v1",
+                    );
+                });
+        }
         assert!(
             fields.versioned_epoch_stakes.is_empty(),
             "should be already converted and passed in epoch_stakes parameter"
