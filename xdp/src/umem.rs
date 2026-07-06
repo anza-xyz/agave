@@ -76,7 +76,7 @@ impl<'a> SliceUmem<'a> {
         debug_assert!(frame_size.is_power_of_two());
         let capacity = buffer.len() / frame_size as usize;
         Ok(Self {
-            available_frames: Vec::from_iter(0..capacity as u64),
+            available_frames: Vec::from_iter((0..capacity as u64).map(|i| i * frame_size as u64)),
             capacity,
             frame_size,
             buffer,
@@ -104,18 +104,17 @@ impl<'a> Umem for SliceUmem<'a> {
     }
 
     fn reserve(&mut self) -> Option<SliceUmemFrame<'a>> {
-        let index = self.available_frames.pop()?;
+        let offset = self.available_frames.pop()? as usize;
 
         Some(SliceUmemFrame {
-            offset: index as usize * self.frame_size as usize,
+            offset,
             len: 0,
             _buf: PhantomData,
         })
     }
 
     fn release(&mut self, frame: FrameOffset) {
-        let index = frame.0 / self.frame_size as usize;
-        self.available_frames.push(index as u64);
+        self.available_frames.push(frame.0 as u64);
     }
 
     fn capacity(&self) -> usize {
@@ -160,7 +159,7 @@ impl<T: DerefMut<Target = [u8]>> OwnedUmem<T> {
         Ok(Self {
             owned,
             frame_size,
-            available_frames: Vec::from_iter(0..capacity as u64),
+            available_frames: Vec::from_iter((0..capacity as u64).map(|i| i * frame_size as u64)),
             capacity,
         })
     }
@@ -186,17 +185,13 @@ impl<T: DerefMut<Target = [u8]>> Umem for OwnedUmem<T> {
     }
 
     fn reserve(&mut self) -> Option<OwnedUmemFrame> {
-        let index = self.available_frames.pop()?;
+        let offset = self.available_frames.pop()? as usize;
 
-        Some(OwnedUmemFrame {
-            offset: index as usize * self.frame_size as usize,
-            len: 0,
-        })
+        Some(OwnedUmemFrame { offset, len: 0 })
     }
 
     fn release(&mut self, frame: FrameOffset) {
-        let index = frame.0 / self.frame_size as usize;
-        self.available_frames.push(index as u64);
+        self.available_frames.push(frame.0 as u64);
     }
 
     fn capacity(&self) -> usize {
