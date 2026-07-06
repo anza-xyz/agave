@@ -38,8 +38,8 @@ impl StakesCacheV2State {
     }
 }
 
-/// A hash map that contains per-fork changes to the stake accounts.
-type Overlay = AHashMap<Pubkey, Option<Arc<StakeAccount>>>;
+/// Stake delegation changes recorded by one unrooted bank/fork.
+type ForkDelta = AHashMap<Pubkey, Option<Arc<StakeAccount>>>;
 
 type RootEntriesInner = IndexMap<Pubkey, Arc<StakeAccount>, AHashRandomState>;
 
@@ -88,25 +88,59 @@ impl RootEntries {
     }
 }
 
-/// Returns the stake pubkey and account, applying any overlay updates.
+type FrontierOverridesInner = AHashMap<usize, Option<Arc<StakeAccount>>>;
+
+/// Aggregated frontier changes to stake delegations already present in
+/// [`RootEntries`].
 ///
-/// If the overlay contains an update for this entry's stake pubkey, the
-/// overlayed value is returned. If the overlay marks the stake as removed
-/// (`None`), `None` is returned. Otherwise the rooted value is returned.
-fn apply_overlay<'a>(
-    stake_pubkey: &'a Pubkey,
-    stake_account: &'a Arc<StakeAccount>,
-    overlay: &'a Overlay,
-) -> Option<(&'a Pubkey, &'a StakeAccount)> {
-    match overlay.get(stake_pubkey) {
-        // Overlay updates the stake.
-        Some(Some(stake_account)) => Some((stake_pubkey, stake_account.as_ref())),
-        // Overlay removes the stake.
-        Some(None) => None,
-        // Overlay doesn't modify the stake.
-        None => Some((stake_pubkey, stake_account.as_ref())),
+/// A [`FrontierOverrides`] value is built for one frontier query by walking
+/// fork deltas from unrooted ancestors and the current bank in ancestor order.
+/// Entries are keyed by rooted entry index so query iteration does not need to
+/// hash each rooted stake pubkey again.
+#[derive(Debug, Default)]
+struct FrontierOverrides(FrontierOverridesInner);
+
+impl FrontierOverrides {
+    /// Returns the stake pubkey and account, applying any override.
+    ///
+    /// If the override contains an update for this entry's stake pubkey, the
+    /// updated value is returned. If the override marks the stake as removed,
+    /// `None` is returned. Otherwise the rooted value is returned.
+    fn apply_override<'a>(
+        &'a self,
+        root_index: usize,
+        stake_pubkey: &'a Pubkey,
+        stake_account: &'a Arc<StakeAccount>,
+    ) -> Option<(&'a Pubkey, &'a StakeAccount)> {
+        match self.0.get(&root_index) {
+            Some(Some(stake_account)) => Some((stake_pubkey, stake_account.as_ref())),
+            Some(None) => None,
+            None => Some((stake_pubkey, stake_account.as_ref())),
+        }
     }
 }
+
+impl Deref for FrontierOverrides {
+    type Target = FrontierOverridesInner;
+
+    fn deref(&self) -> &Self::Target {
+        &self.0
+    }
+}
+
+impl DerefMut for FrontierOverrides {
+    fn deref_mut(&mut self) -> &mut Self::Target {
+        &mut self.0
+    }
+}
+
+/// Aggregated frontier inserts for stake delegations not present in
+/// [`RootEntries`].
+///
+/// A [`FrontierInserts`] value is built for one frontier query from fork deltas
+/// across unrooted ancestors and the current bank. These entries have no rooted
+/// index, so they remain keyed by stake pubkey.
+type FrontierInserts = IndexMap<Pubkey, Arc<StakeAccount>, AHashRandomState>;
 
 #[derive(Debug)]
 struct StakeDelegationIndexInner {
@@ -118,21 +152,19 @@ struct StakeDelegationIndexInner {
 #[derive(Debug)]
 struct StakeDelegationIndex(RwLock<StakeDelegationIndexInner>);
 
-/// Frontier-only entry that does not exist in the rooted base.
-#[derive(Clone, Debug)]
-struct FrontierEntry {
-    stake_pubkey: Pubkey,
-    stake_account: Arc<StakeAccount>,
-}
-
 /// Merged stake-delegation view for one bank frontier.
+///
+/// The view combines rooted stake delegations with fork deltas from unrooted
+/// ancestors and the current bank.
 #[derive(Debug)]
 pub(crate) struct FrontierQuery<'a> {
     /// Lock guard holding the index of rooted stake delegations.
     inner: RwLockReadGuard<'a, StakeDelegationIndexInner>,
-    overlay: Overlay,
-    overlay_only_inserts: Vec<FrontierEntry>,
-    /// Number of rooted entries that are removed by the overlay.
+    /// Aggregated frontier changes for rooted stake delegations.
+    overrides: FrontierOverrides,
+    /// Aggregated frontier inserts absent from rooted stake delegations.
+    inserts: FrontierInserts,
+    /// Number of rooted entries that are removed by frontier overrides.
     num_removed: usize,
 }
 
@@ -146,7 +178,7 @@ impl<'a> FrontierQuery<'a> {
         self.inner
             .root_entries
             .len()
-            .wrapping_add(self.overlay_only_inserts.len())
+            .wrapping_add(self.inserts.len())
     }
 
     /// Returns the total number of stake delegation entries, including rooted
@@ -159,7 +191,7 @@ impl<'a> FrontierQuery<'a> {
             .root_entries
             .len()
             .wrapping_sub(self.num_removed)
-            .wrapping_add(self.overlay_only_inserts.len())
+            .wrapping_add(self.inserts.len())
     }
 
     /// Returns an indexed parallel iterator (with a known size) over all stake
@@ -178,13 +210,17 @@ impl<'a> FrontierQuery<'a> {
         self.inner
             .root_entries
             .par_iter()
-            .map(|(stake_pubkey, stake_account)| {
-                apply_overlay(stake_pubkey, stake_account, &self.overlay)
+            .enumerate()
+            .map(|(root_index, (stake_pubkey, stake_account))| {
+                self.overrides
+                    .apply_override(root_index, stake_pubkey, stake_account)
             })
             .chain(
-                self.overlay_only_inserts
+                self.inserts
                     .par_iter()
-                    .map(|entry| Some((&entry.stake_pubkey, entry.stake_account.as_ref()))),
+                    .map(|(stake_pubkey, stake_account)| {
+                        Some((stake_pubkey, stake_account.as_ref()))
+                    }),
             )
     }
 
@@ -221,13 +257,15 @@ impl<'a> FrontierQuery<'a> {
         self.inner
             .root_entries
             .iter()
-            .map(|(stake_pubkey, stake_account)| {
-                apply_overlay(stake_pubkey, stake_account, &self.overlay)
+            .enumerate()
+            .map(|(root_index, (stake_pubkey, stake_account))| {
+                self.overrides
+                    .apply_override(root_index, stake_pubkey, stake_account)
             })
             .chain(
-                self.overlay_only_inserts
-                    .iter()
-                    .map(|entry| Some((&entry.stake_pubkey, entry.stake_account.as_ref()))),
+                self.inserts.iter().map(|(stake_pubkey, stake_account)| {
+                    Some((stake_pubkey, stake_account.as_ref()))
+                }),
             )
     }
 
@@ -247,10 +285,11 @@ impl<'a> FrontierQuery<'a> {
 impl StakeDelegationIndex {
     /// Applies rooted stake delegation deltas (in ancestor order) to the index,
     /// updating or removing entries.
-    fn apply_rooted_deltas(
-        &self,
-        deltas_in_ancestor_order: impl IntoIterator<Item = AHashMap<Pubkey, Option<Arc<StakeAccount>>>>,
-    ) {
+    fn apply_rooted_deltas<D, I>(&self, deltas_in_ancestor_order: D)
+    where
+        D: IntoIterator<Item = I>,
+        I: IntoIterator<Item = (Pubkey, Option<Arc<StakeAccount>>)>,
+    {
         let mut inner = self.0.write().unwrap();
         for delta in deltas_in_ancestor_order {
             for (stake_pubkey, maybe_stake_account) in delta {
@@ -276,7 +315,7 @@ impl StakeDelegationIndex {
 #[derive(Debug)]
 pub(crate) struct StakesCacheV2 {
     stake_delegation_index: Arc<StakeDelegationIndex>,
-    fork_delta: RwLock<AHashMap<Pubkey, Option<Arc<StakeAccount>>>>,
+    fork_delta: RwLock<ForkDelta>,
     state: RwLock<StakesCacheV2State>,
 }
 
@@ -325,7 +364,7 @@ impl StakesCacheV2 {
             stake_delegation_index: Arc::new(StakeDelegationIndex(RwLock::new(
                 StakeDelegationIndexInner { root_entries },
             ))),
-            fork_delta: RwLock::new(AHashMap::default()),
+            fork_delta: RwLock::new(ForkDelta::default()),
             state: RwLock::new(StakesCacheV2State {
                 epoch,
                 stake_history,
@@ -379,7 +418,7 @@ impl StakesCacheV2 {
             stake_delegation_index: Arc::new(StakeDelegationIndex(RwLock::new(
                 StakeDelegationIndexInner { root_entries },
             ))),
-            fork_delta: RwLock::new(AHashMap::default()),
+            fork_delta: RwLock::new(ForkDelta::default()),
             state: RwLock::new(StakesCacheV2State {
                 epoch,
                 stake_history,
@@ -394,58 +433,57 @@ impl StakesCacheV2 {
         let state = parent.state.read().unwrap().clone();
         Self {
             stake_delegation_index,
-            fork_delta: RwLock::new(AHashMap::default()),
+            fork_delta: RwLock::new(ForkDelta::default()),
             state: RwLock::new(state),
         }
     }
 
     /// Builds a `FrontierQuery` by merging rooted entries with all fork deltas
-    /// in ancestor order, applying overlay updates and collecting frontier-only
-    /// inserts.
+    /// in ancestor order, applying fork delta updates and collecting
+    /// frontier-only inserts.
     pub(crate) fn frontier_query<'a>(
         &self,
         caches_in_ancestor_order: impl IntoIterator<Item = &'a Self>,
     ) -> FrontierQuery<'_> {
-        let mut overlay = AHashMap::new();
-        let mut insert_to_overlay =
+        let inner = self.stake_delegation_index.0.read().unwrap();
+        let mut overrides = FrontierOverrides::default();
+        let mut inserts = FrontierInserts::default();
+        let mut insert_to_frontier =
             |stake_pubkey: &Pubkey, stake_account: &Option<Arc<StakeAccount>>| {
-                overlay.insert(*stake_pubkey, stake_account.clone());
+                if let Some((root_index, _, _)) = inner.root_entries.get_full(stake_pubkey) {
+                    overrides.insert(root_index, stake_account.clone());
+                } else {
+                    match stake_account {
+                        Some(stake_account) => {
+                            inserts.insert(*stake_pubkey, Arc::clone(stake_account));
+                        }
+                        None => {
+                            inserts.swap_remove(stake_pubkey);
+                        }
+                    }
+                }
             };
         for cache in caches_in_ancestor_order {
             let fork_delta = cache.fork_delta.read().unwrap();
             for (stake_pubkey, stake_account) in fork_delta.iter() {
-                insert_to_overlay(stake_pubkey, stake_account);
+                insert_to_frontier(stake_pubkey, stake_account);
             }
         }
         {
             let fork_delta = self.fork_delta.read().unwrap();
             for (stake_pubkey, stake_account) in fork_delta.iter() {
-                insert_to_overlay(stake_pubkey, stake_account);
+                insert_to_frontier(stake_pubkey, stake_account);
             }
         }
 
-        let inner = self.stake_delegation_index.0.read().unwrap();
-
-        let mut overlay_only_inserts = Vec::new();
-        let mut num_removed: usize = 0;
-        for (stake_pubkey, maybe_stake_account) in overlay.iter() {
-            if inner.root_entries.contains_key(stake_pubkey) {
-                if maybe_stake_account.is_none() {
-                    num_removed = num_removed.wrapping_add(1);
-                }
-            } else if let Some(stake_account) = maybe_stake_account {
-                overlay_only_inserts.push(FrontierEntry {
-                    stake_pubkey: *stake_pubkey,
-                    stake_account: Arc::clone(stake_account),
-                });
-            }
-        }
-        overlay_only_inserts.sort_unstable_by_key(|entry| entry.stake_pubkey);
-
+        let num_removed = overrides
+            .values()
+            .filter(|override_entry| override_entry.is_none())
+            .count();
         FrontierQuery {
             inner,
-            overlay,
-            overlay_only_inserts,
+            overrides,
+            inserts,
             num_removed,
         }
     }
@@ -530,7 +568,7 @@ impl StakesCacheV2 {
             stake_delegation_index: Arc::new(StakeDelegationIndex(RwLock::new(
                 StakeDelegationIndexInner { root_entries },
             ))),
-            fork_delta: RwLock::new(AHashMap::default()),
+            fork_delta: RwLock::new(ForkDelta::default()),
             state: RwLock::new(StakesCacheV2State {
                 epoch,
                 stake_history: StakeHistory::default(),
@@ -545,7 +583,7 @@ impl StakesCacheV2 {
                     root_entries: RootEntries::default(),
                 },
             ))),
-            fork_delta: RwLock::new(AHashMap::default()),
+            fork_delta: RwLock::new(ForkDelta::default()),
             state: RwLock::new(StakesCacheV2State {
                 epoch,
                 stake_history: StakeHistory::default(),
@@ -628,7 +666,7 @@ mod tests {
     }
 
     #[test]
-    fn test_frontier_query_preserves_root_and_insert_order() {
+    fn test_frontier_query_yields_roots_before_frontier_inserts() {
         let rent = Rent::default();
         let vote_pubkey_a = new_rand();
         let vote_pubkey_b = new_rand();
