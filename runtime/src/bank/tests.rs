@@ -11024,17 +11024,17 @@ fn test_squash_timing_add_assign() {
     let mut t0 = SquashTiming::default();
 
     let t1 = SquashTiming {
-        squash_accounts_ms: 1,
-        squash_accounts_cache_ms: 2,
-        squash_cache_ms: 5,
-        squash_accounts_cache_v2_ms: Some(5),
+        squash_accounts_us: 1,
+        squash_accounts_cache_us: 2,
+        squash_cache_us: 5,
+        squash_accounts_cache_v2_us: Some(5),
     };
 
     let expected = SquashTiming {
-        squash_accounts_ms: 2,
-        squash_accounts_cache_ms: 2 * 2,
-        squash_cache_ms: 5 * 2,
-        squash_accounts_cache_v2_ms: Some(5 * 2),
+        squash_accounts_us: 2,
+        squash_accounts_cache_us: 2 * 2,
+        squash_cache_us: 5 * 2,
+        squash_accounts_cache_v2_us: Some(5 * 2),
     };
 
     t0 += t1;
@@ -11045,17 +11045,17 @@ fn test_squash_timing_add_assign() {
     let mut t0 = SquashTiming::default();
 
     let t1 = SquashTiming {
-        squash_accounts_ms: 1,
-        squash_accounts_cache_ms: 2,
-        squash_cache_ms: 5,
-        squash_accounts_cache_v2_ms: None,
+        squash_accounts_us: 1,
+        squash_accounts_cache_us: 2,
+        squash_cache_us: 5,
+        squash_accounts_cache_v2_us: None,
     };
 
     let expected = SquashTiming {
-        squash_accounts_ms: 2,
-        squash_accounts_cache_ms: 2 * 2,
-        squash_cache_ms: 5 * 2,
-        squash_accounts_cache_v2_ms: None,
+        squash_accounts_us: 2,
+        squash_accounts_cache_us: 2 * 2,
+        squash_cache_us: 5 * 2,
+        squash_accounts_cache_v2_us: None,
     };
 
     t0 += t1;

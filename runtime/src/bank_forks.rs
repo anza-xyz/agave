@@ -568,24 +568,24 @@ impl BankForks {
             ),
             ("total_banks", self.banks.len(), i64),
             (
-                "total_squash_cache_ms",
-                set_root_metrics.timings.total_squash_time.squash_cache_ms,
+                "total_squash_cache_us",
+                set_root_metrics.timings.total_squash_time.squash_cache_us,
                 i64
             ),
             (
-                "total_squash_accounts_ms",
+                "total_squash_accounts_us",
                 set_root_metrics
                     .timings
                     .total_squash_time
-                    .squash_accounts_ms,
+                    .squash_accounts_us,
                 i64
             ),
             (
-                "total_squash_accounts_cache_ms",
+                "total_squash_accounts_cache_us",
                 set_root_metrics
                     .timings
                     .total_squash_time
-                    .squash_accounts_cache_ms,
+                    .squash_accounts_cache_us,
                 i64
             ),
             (

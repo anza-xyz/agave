@@ -279,26 +279,26 @@ pub type BankSlotDelta = SlotDelta<Result<()>>;
 
 #[derive(Default, Copy, Clone, Debug, PartialEq, Eq)]
 pub struct SquashTiming {
-    pub squash_accounts_ms: u64,
-    pub squash_accounts_cache_ms: u64,
-    pub squash_accounts_cache_v2_ms: Option<u64>,
-    pub squash_cache_ms: u64,
+    pub squash_accounts_us: u64,
+    pub squash_accounts_cache_us: u64,
+    pub squash_accounts_cache_v2_us: Option<u64>,
+    pub squash_cache_us: u64,
 }
 
 impl AddAssign for SquashTiming {
     fn add_assign(&mut self, rhs: Self) {
-        self.squash_accounts_ms += rhs.squash_accounts_ms;
-        self.squash_accounts_cache_ms += rhs.squash_accounts_cache_ms;
-        self.squash_accounts_cache_v2_ms = match (
-            self.squash_accounts_cache_v2_ms,
-            rhs.squash_accounts_cache_v2_ms,
+        self.squash_accounts_us += rhs.squash_accounts_us;
+        self.squash_accounts_cache_us += rhs.squash_accounts_cache_us;
+        self.squash_accounts_cache_v2_us = match (
+            self.squash_accounts_cache_v2_us,
+            rhs.squash_accounts_cache_v2_us,
         ) {
             (Some(lhs), Some(rhs)) => Some(lhs + rhs),
             (Some(lhs), None) => Some(lhs),
             (None, Some(rhs)) => Some(rhs),
             (None, None) => None,
         };
-        self.squash_cache_ms += rhs.squash_cache_ms;
+        self.squash_cache_us += rhs.squash_cache_us;
     }
 }
 
@@ -3193,7 +3193,7 @@ impl Bank {
     pub fn squash(&self) -> SquashTiming {
         self.freeze();
 
-        let squash_accounts_cache_v2_ms = self.stakes_cache_v2.as_ref().map(|stakes_cache_v2| {
+        let squash_accounts_cache_v2_us = self.stakes_cache_v2.as_ref().map(|stakes_cache_v2| {
             let squash_cache_v2_time = Measure::start("squash_cache_v2_time");
             let parent_banks = self.parents();
             let rooted_stake_delegation_caches = parent_banks
@@ -3201,7 +3201,7 @@ impl Bank {
                 .rev()
                 .filter_map(|bank| bank.stakes_cache_v2.as_ref());
             stakes_cache_v2.apply_rooted_stake_delegation_deltas(rooted_stake_delegation_caches);
-            squash_cache_v2_time.end_as_ms()
+            squash_cache_v2_time.end_as_us()
         });
 
         //this bank and all its parents are now on the rooted path
@@ -3229,10 +3229,10 @@ impl Bank {
         squash_cache_time.stop();
 
         SquashTiming {
-            squash_accounts_ms: squash_accounts_time.as_ms(),
-            squash_accounts_cache_ms: total_cache_us / 1000,
-            squash_accounts_cache_v2_ms,
-            squash_cache_ms: squash_cache_time.as_ms(),
+            squash_accounts_us: squash_accounts_time.as_us(),
+            squash_accounts_cache_us: total_cache_us,
+            squash_accounts_cache_v2_us,
+            squash_cache_us: squash_cache_time.as_us(),
         }
     }
 
