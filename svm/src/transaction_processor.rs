@@ -512,14 +512,14 @@ impl<FG: ForkGraph> TransactionBatchProcessor<FG> {
                     ..
                 }) if config.drop_on_failure || config.drop_noop_transactions => Err(e),
 
+                // SIMD-0290 (fee-payer failure) or SIMD-0297 (nonce failure) is a non-error no-op on replay
+                TransactionLoadResult::NoOp(no_op_tx) =>
+                    Ok(ProcessedTransaction::NoOp(Box::new(no_op_tx))),
+
                 // Loading failures that would be fee-only become errors with `drop_on_failure`
                 TransactionLoadResult::FeesOnly(FeesOnlyTransaction { load_error: e, .. })
                     if config.drop_on_failure =>
                     Err(e),
-
-                // SIMD-0290 (fee-payer failure) or SIMD-0297 (nonce failure) is a non-error no-op on replay
-                TransactionLoadResult::NoOp(no_op_tx) =>
-                    Ok(ProcessedTransaction::NoOp(Box::new(no_op_tx))),
 
                 // Transactions that fail at account loading charge fees and roll nonces
                 TransactionLoadResult::FeesOnly(fees_only_tx) => {
