@@ -291,7 +291,7 @@ unsafe impl<'de, C: wincode::config::Config> wincode::SchemaReadContext<'de, C, 
         let shred_version = <u16 as SchemaRead<'de, C>>::get(reader.by_ref())?;
 
         if shred_version != expected.0 {
-            return Err(wincode::ReadError::Custom("shred version mismatch".into()));
+            return Err(wincode::ReadError::Custom("shred version mismatch"));
         }
 
         dst.write(WireConsensusMessageV1 {
@@ -366,7 +366,7 @@ unsafe impl<'de, C: wincode::config::Config> wincode::SchemaReadContext<'de, C, 
                 dst.write(VersionedWireConsensusMessage::V1(v1));
                 Ok(())
             }
-            _ => Err(wincode::ReadError::Custom("unknown tag for VersionedWireConsensusMessage".into())),
+            _ => Err(wincode::ReadError::Custom("unknown tag for VersionedWireConsensusMessage")),
         }
     }
 }
