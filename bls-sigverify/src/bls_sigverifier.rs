@@ -239,8 +239,7 @@ impl SigVerifier {
                 self.stats.num_malformed_pkts += 1;
                 continue;
             };
-            let Some(decoded_msg) = DecodedWireConsensusMessage::try_new(msg, my_shred_version)
-            else {
+            let Some(decoded_msg) = DecodedWireConsensusMessage::try_new(msg) else {
                 self.stats.num_malformed_pkts += 1;
                 continue;
             };
