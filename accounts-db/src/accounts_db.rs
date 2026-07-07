@@ -1707,18 +1707,23 @@ impl AccountsDb {
             || Box::new(append_vec::new_scan_accounts_reader()),
             |reader, storage| {
                 let slot = storage.slot();
-                // Obsolete accounts are skipped during index generation, so they do not
-                // contribute to the index refcount. Skip them here too, otherwise we would count
-                // a physical copy the index never tracked and report a spurious mismatch.
+                // Obsolete accounts and tombstones are not tracked by the accounts index — obsolete
+                // accounts are skipped during index generation, and tombstones were removed from the
+                // index when shrink created them — so neither contributes to the index refcount.
+                // Skip them here too, otherwise we would count a physical copy the index never
+                // tracked and report a spurious mismatch.
                 let obsolete_accounts: IntSet<_> = storage
                     .obsolete_accounts_read_lock()
                     .filter_obsolete_accounts(None)
                     .map(|(offset, _)| offset)
                     .collect();
+                let tombstone_offsets = storage.tombstone_offsets_read_lock();
                 storage
                     .accounts
                     .scan_accounts(reader.as_mut(), |offset, account| {
-                        if obsolete_accounts.contains(&offset) {
+                        if obsolete_accounts.contains(&offset)
+                            || tombstone_offsets.contains(&offset)
+                        {
                             return;
                         }
                         let pk = account.pubkey();
