@@ -2422,15 +2422,6 @@ declare_builtin_function!(
             params.modulus_len,
             check_aligned,
         )?;
-        let _ = translate_slice_inner!(
-            memory_mapping,
-            AccessType::Store,
-            result_addr,
-            params.modulus_len,
-            u8,
-            check_aligned,
-        )?;
-
         let execution_cost = invoke_context.get_execution_cost();
         let Some(cost) = big_mod_exp_cost(execution_cost, &params, exponent) else {
             ic_msg!(
