@@ -38,6 +38,7 @@ RUN \
   git \
   vim \
   jq \
+  iproute2 \
   ca-certificates \
   curl \
   gnupg \
@@ -81,14 +82,9 @@ RUN \
   rustup component add rustfmt --toolchain=$RUST_NIGHTLY_VERSION && \
   rustup component add miri --toolchain=$RUST_NIGHTLY_VERSION && \
   rustup component add llvm-tools-preview --toolchain=$RUST_NIGHTLY_VERSION && \
-  rustup target add wasm32-unknown-unknown && \
   cargo install cargo-audit && \
   cargo install cargo-hack && \
   cargo install cargo-sort@2.0.2 && \
-  cargo install mdbook && \
-  cargo install mdbook-linkcheck && \
-  cargo install svgbob_cli && \
-  cargo install wasm-pack && \
   cargo install rustfilt && \
   cargo install cargo-build-sbf@4.1.0 --locked && \
   rustup show && \
@@ -114,8 +110,6 @@ RUN \
   chmod -R a+w /.cache && \
   mkdir /.config && \
   chmod -R a+w /.config && \
-  mkdir /.npm && \
-  chmod -R a+w /.npm && \
   # grcov
   curl -LOsS "https://github.com/mozilla/grcov/releases/download/$GRCOV_VERSION/grcov-x86_64-unknown-linux-musl.tar.bz2" && \
   curl -LsS "https://github.com/mozilla/grcov/releases/download/$GRCOV_VERSION/checksums.sha256" | sha256sum -c --ignore-missing - && \

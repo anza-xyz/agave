@@ -748,31 +748,30 @@ impl ClusterInfoVoteListener {
         let reached_duplicate_confirmed = reached_threshold_results[0];
         let reached_optimistic_confirmed = reached_threshold_results[1];
 
-        if reached_duplicate_confirmed {
-            if let Some(ref sender) = notifiers.duplicate_confirmed_slot_sender {
-                let _ = sender.send(vec![(last_vote_slot, last_vote_hash)]);
-            }
+        if reached_duplicate_confirmed
+            && let Some(ref sender) = notifiers.duplicate_confirmed_slot_sender
+        {
+            let _ = sender.send(vec![(last_vote_slot, last_vote_hash)]);
         }
 
         if reached_optimistic_confirmed {
             new_optimistic_confirmed_slots.push((last_vote_slot, last_vote_hash));
-            if let Some(ref sender) = notifiers.bank_notification_sender {
-                if notifiers
+            if let Some(ref sender) = notifiers.bank_notification_sender
+                && notifiers
                     .migration_status
                     .should_report_commitment_or_root(last_vote_slot)
-                {
-                    let dependency_work = sender
-                        .dependency_tracker
-                        .as_ref()
-                        .map(|s| s.get_current_declared_work());
-                    sender
-                        .sender
-                        .send((
-                            BankNotification::OptimisticallyConfirmed(last_vote_slot),
-                            dependency_work,
-                        ))
-                        .unwrap_or_else(|err| warn!("bank_notification_sender failed: {err:?}"));
-                }
+            {
+                let dependency_work = sender
+                    .dependency_tracker
+                    .as_ref()
+                    .map(|s| s.get_current_declared_work());
+                sender
+                    .sender
+                    .send((
+                        BankNotification::OptimisticallyConfirmed(last_vote_slot),
+                        dependency_work,
+                    ))
+                    .unwrap_or_else(|err| warn!("bank_notification_sender failed: {err:?}"));
             }
         }
 

@@ -10,7 +10,7 @@ use {
             writeln_transaction,
         },
     },
-    agave_votor_messages::{certificate::Certificate, migration::AG_MIGRATION_EPOCH_CREDIT},
+    agave_votor_messages::{migration::AG_MIGRATION_EPOCH_CREDIT, wire::WireBlockCertMessage},
     base64::{Engine, prelude::BASE64_STANDARD},
     bitvec::vec::BitVec,
     chrono::{Local, TimeZone, Utc},
@@ -1808,13 +1808,13 @@ pub enum VotesObserved {
 }
 
 impl VotesObserved {
-    pub fn new(vote_state: &VoteStateV4, ag_genesis_cert: &Option<Certificate>) -> Self {
+    pub fn new(vote_state: &VoteStateV4, ag_genesis_cert: &Option<WireBlockCertMessage>) -> Self {
         match ag_genesis_cert {
             None => Self::Tower(vote_state.votes.iter().map(CliLandedVote::from).collect()),
             Some(cert) => match vote_state.votes.iter().last() {
                 None => Self::Alpenglow(None),
                 Some(vote) => {
-                    if vote.lockout.slot() <= cert.cert_type.slot() {
+                    if vote.lockout.slot() <= cert.block.slot {
                         Self::Tower(vote_state.votes.iter().map(CliLandedVote::from).collect())
                     } else {
                         Self::Alpenglow(Some(CliLandedVote::from(vote)))
@@ -2006,7 +2006,7 @@ pub struct AgEpochHistory {
 pub fn get_epoch_history(
     epoch_schedule: &EpochSchedule,
     vote_state: &VoteStateV4,
-    ag_genesis_cert: &Option<Certificate>,
+    ag_genesis_cert: &Option<WireBlockCertMessage>,
     tvc_activation_epoch: Option<Epoch>,
 ) -> Vec<CliEpochVotingHistory> {
     let mut ret = vec![];
@@ -2027,7 +2027,7 @@ pub fn get_epoch_history(
         let tower_or_ag = match ag_genesis_cert {
             None => TowerOrAg::Tower(slots_in_epoch),
             Some(cert) => {
-                let migration_slot = cert.cert_type.slot();
+                let migration_slot = cert.block.slot;
                 let migration_epoch = epoch_schedule.get_epoch(migration_slot);
                 match epoch.cmp(&migration_epoch) {
                     Ordering::Less => TowerOrAg::Tower(slots_in_epoch),

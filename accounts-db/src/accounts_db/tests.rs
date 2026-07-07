@@ -603,7 +603,7 @@ fn test_flush_slots_with_reclaim_old_slots() {
 
     let storage = accounts.create_and_insert_store(new_slot, 4096, "test_flush_slots");
 
-    accounts.accounts_index.add_root(new_slot);
+    accounts.accounts_cache.add_root(new_slot);
 
     // Flushing this storage directly using store_accounts_for_flush. This is done to pass in
     // UpsertReclaim::ReclaimOldSlots
@@ -797,7 +797,7 @@ define_accounts_db_test!(test_remove_unrooted_slot_cached, |db| {
     assert!(!db.contains(&key));
     db.store_for_tests((unrooted_slot, &[(&key, &account0)][..]));
     assert!(db.accounts_cache.contains(unrooted_slot));
-    assert!(!db.accounts_index.is_alive_root(unrooted_slot));
+    assert!(!db.accounts_cache.contains_unflushed_root(unrooted_slot));
     assert!(db.contains(&key));
     db.assert_load_account(unrooted_slot, key, 1);
 
@@ -2989,10 +2989,6 @@ fn test_delete_dependencies() {
         &mut reclaims,
         UpsertReclaim::IgnoreReclaims,
     );
-    accounts_index.add_root(0);
-    accounts_index.add_root(1);
-    accounts_index.add_root(2);
-    accounts_index.add_root(3);
     let num_bins = accounts_index.bins();
     let mut candidates: Box<_> = std::iter::repeat_with(HashMap::<Pubkey, CleaningInfo>::new)
         .take(num_bins)
@@ -3000,7 +2996,7 @@ fn test_delete_dependencies() {
     for key in [&key0, &key1, &key2] {
         let (rooted_entries, ref_count) = accounts_index.get_and_then(key, |entry| {
             let slot_list_lock = entry.unwrap().slot_list_read_lock();
-            let rooted = accounts_index.get_rooted_entries(slot_list_lock.as_ref(), None);
+            let rooted = accounts_index.get_entries_up_to_inclusive(slot_list_lock.as_ref(), None);
             (false, (rooted, entry.unwrap().ref_count()))
         });
         let index = accounts_index.bin_calculator.bin_from_pubkey(key);
@@ -3715,14 +3711,14 @@ fn setup_scan(
                 bank_id,
                 |maybe_account| {
                     ready_.store(true, Ordering::Relaxed);
-                    if let Some((pubkey, _, _)) = maybe_account {
-                        if *pubkey == stall_key {
-                            loop {
-                                if exit_.load(Ordering::Relaxed) {
-                                    break;
-                                } else {
-                                    sleep(Duration::from_millis(10));
-                                }
+                    if let Some((pubkey, _, _)) = maybe_account
+                        && *pubkey == stall_key
+                    {
+                        loop {
+                            if exit_.load(Ordering::Relaxed) {
+                                break;
+                            } else {
+                                sleep(Duration::from_millis(10));
                             }
                         }
                     }
@@ -4155,33 +4151,6 @@ fn test_accounts_db_cache_clean_dead_slots() {
             panic!("Expected slot to be in storage, not cache");
         }
     }
-}
-
-/// A rooted slot whose accounts are all superseded by a newer rooted slot flushes to no storage.
-/// It must be dropped from the index roots metadata: cache writes no longer upsert the index, so
-/// the old per-pubkey purge that used to remove such a dead root is gone, and the flush path must
-/// drop it explicitly. Otherwise it lingers in `alive_roots` as a root with no backing storage.
-#[test]
-fn test_flush_dead_slot_removed_from_alive_roots() {
-    let db = AccountsDb::new_single_for_tests();
-    let pubkey = Pubkey::new_unique();
-    let account = AccountSharedData::new(1, 0, &Pubkey::default());
-
-    // The same pubkey written to two rooted slots, both still in the write cache.
-    db.store_for_tests((0, &[(&pubkey, &account)][..]));
-    db.add_root(0);
-    db.store_for_tests((1, &[(&pubkey, &account)][..]));
-    db.add_root(1);
-
-    // Cleaning flush dedups newest-first: slot 1 keeps the account, slot 0 flushes empty.
-    db.flush_accounts_cache(true, None);
-
-    // Slot 1 holds the surviving version in storage and remains a root.
-    assert!(db.storage.get_slot_storage_entry(1).is_some());
-    assert!(db.accounts_index.is_alive_root(1));
-    // Slot 0 produced no storage and is dead; it must be gone from the roots metadata.
-    assert!(db.storage.get_slot_storage_entry(0).is_none());
-    assert!(!db.accounts_index.is_alive_root(0));
 }
 
 #[test]
@@ -6420,7 +6389,6 @@ pub(crate) fn create_storages_and_update_index(
         let storage =
             sample_storage_with_entries_id(tf, slot, &pubkey1, id, alive, account_data_size);
         insert_store(db, Arc::clone(&storage));
-        db.accounts_index.add_root(slot);
     }
 
     let storage = db.get_storage_for_slot(starting_slot).unwrap();
@@ -6488,41 +6456,8 @@ fn get_one_ancient_append_vec_and_others(num_normal_slots: usize) -> (AccountsDb
     get_one_ancient_append_vec_and_others_with_account_size(num_normal_slots, None)
 }
 
-#[test]
-fn test_handle_dropped_roots_for_ancient() {
-    agave_logger::setup();
-    let db = AccountsDb::new_single_for_tests();
-    db.handle_dropped_roots_for_ancient(std::iter::empty::<Slot>());
-    let slot0 = 0;
-    let dropped_roots = vec![slot0];
-    db.accounts_index.add_root(slot0);
-    assert!(db.accounts_index.is_alive_root(slot0));
-    db.handle_dropped_roots_for_ancient(dropped_roots.into_iter());
-    assert!(!db.accounts_index.is_alive_root(slot0));
-}
-
 fn insert_store(db: &AccountsDb, append_vec: Arc<AccountStorageEntry>) {
     db.storage.insert(append_vec);
-}
-
-#[test]
-#[should_panic(expected = "self.storage.remove")]
-fn test_handle_dropped_roots_for_ancient_assert() {
-    agave_logger::setup();
-    let common_store_path = Path::new("");
-    let store_file_size = 10_000;
-    let entry = Arc::new(AccountStorageEntry::new(
-        common_store_path,
-        0,
-        1,
-        store_file_size,
-        AccountsFileProvider::AppendVec,
-    ));
-    let db = AccountsDb::new_single_for_tests();
-    let slot0 = 0;
-    let dropped_roots = vec![slot0];
-    insert_store(&db, entry);
-    db.handle_dropped_roots_for_ancient(dropped_roots.into_iter());
 }
 
 /// Ensure the calculating capitalization produces the correct value

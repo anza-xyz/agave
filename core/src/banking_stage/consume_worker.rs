@@ -206,6 +206,7 @@ pub(crate) mod external {
             sanitize::SanitizeConfig, transaction_data::TransactionData,
             transaction_view::SanitizedTransactionView,
         },
+        arrayvec::ArrayVec,
         solana_account::ReadableAccount,
         solana_clock::Slot,
         solana_cost_model::cost_model::CostModel,
@@ -778,14 +779,14 @@ pub(crate) mod external {
             bank: &Bank,
             responses_ptr: NonNull<CheckResponse>,
         ) -> (
-            Vec<Result<(), TransactionViewError>>,
-            Vec<TxView>,
+            ArrayVec<Result<(), TransactionViewError>, MAX_TRANSACTIONS_PER_MESSAGE>,
+            ArrayVec<TxView, MAX_TRANSACTIONS_PER_MESSAGE>,
             &'a mut [CheckResponse],
         ) {
             let sanitize_config =
                 sanitize_config(bank.feature_set.snapshot().limit_instruction_accounts);
-            let mut parsing_results = Vec::with_capacity(MAX_TRANSACTIONS_PER_MESSAGE);
-            let mut parsed_transactions = Vec::with_capacity(MAX_TRANSACTIONS_PER_MESSAGE);
+            let mut parsing_results = ArrayVec::new();
+            let mut parsed_transactions = ArrayVec::new();
             for (tx_ptr, _) in batch.iter() {
                 // Parsing and basic sanitization checks
                 match SanitizedTransactionView::try_new_sanitized(tx_ptr, &sanitize_config) {
@@ -971,14 +972,18 @@ pub(crate) mod external {
         fn translate_transaction_batch(
             batch: &TransactionPtrBatch,
             bank: &Bank,
-        ) -> (Vec<Result<(), PacketHandlingError>>, Vec<Tx>, Vec<MaxAge>) {
+        ) -> (
+            ArrayVec<Result<(), PacketHandlingError>, MAX_TRANSACTIONS_PER_MESSAGE>,
+            ArrayVec<Tx, MAX_TRANSACTIONS_PER_MESSAGE>,
+            ArrayVec<MaxAge, MAX_TRANSACTIONS_PER_MESSAGE>,
+        ) {
             let sanitize_config =
                 sanitize_config(bank.feature_set.snapshot().limit_instruction_accounts);
             let transaction_account_lock_limit = bank.get_transaction_account_lock_limit();
 
-            let mut translation_results = Vec::with_capacity(MAX_TRANSACTIONS_PER_MESSAGE);
-            let mut transactions = Vec::with_capacity(MAX_TRANSACTIONS_PER_MESSAGE);
-            let mut max_ages = Vec::with_capacity(MAX_TRANSACTIONS_PER_MESSAGE);
+            let mut translation_results = ArrayVec::new();
+            let mut transactions = ArrayVec::new();
+            let mut max_ages = ArrayVec::new();
             for (transaction_ptr, _) in batch.iter() {
                 match Self::translate_transaction(
                     transaction_ptr,

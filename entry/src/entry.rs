@@ -591,11 +591,15 @@ mod tests {
         solana_hash::Hash,
         solana_keypair::Keypair,
         solana_measure::measure::Measure,
-        solana_message::SimpleAddressLoader,
+        solana_message::{
+            MessageHeader, SimpleAddressLoader, VersionedMessage,
+            compiled_instruction::CompiledInstruction, v1,
+        },
         solana_perf::test_tx::test_tx,
         solana_pubkey::Pubkey,
         solana_runtime_transaction::runtime_transaction::RuntimeTransaction,
         solana_sha256_hasher::hash,
+        solana_signature::Signature,
         solana_signer::Signer,
         solana_system_transaction as system_transaction,
         solana_transaction::{
@@ -604,6 +608,27 @@ mod tests {
         },
         solana_transaction_error::TransactionResult as Result,
     };
+
+    fn simple_v1_transaction_for_deserialization_tests() -> VersionedTransaction {
+        VersionedTransaction {
+            signatures: vec![Signature::default()],
+            message: VersionedMessage::V1(v1::Message {
+                header: MessageHeader {
+                    num_required_signatures: 1,
+                    num_readonly_signed_accounts: 0,
+                    num_readonly_unsigned_accounts: 1,
+                },
+                config: v1::TransactionConfig::empty(),
+                lifetime_specifier: Hash::new_unique(),
+                account_keys: vec![Pubkey::new_unique(), Pubkey::new_unique()],
+                instructions: vec![CompiledInstruction {
+                    program_id_index: 1,
+                    accounts: vec![0],
+                    data: vec![],
+                }],
+            }),
+        }
+    }
 
     fn create_random_ticks(num_ticks: u64, max_hashes_per_tick: u64, mut hash: Hash) -> Vec<Entry> {
         repeat_with(|| {
@@ -1081,5 +1106,44 @@ mod tests {
         transactions.swap(0, 1);
         let hash2 = hash_transactions(&transactions);
         assert_ne!(hash1, hash2);
+    }
+
+    #[test]
+    fn test_deserialize_entries_rejects_txv1_unknown_config_mask_bit() {
+        let tx = simple_v1_transaction_for_deserialization_tests();
+        let entries = vec![next_versioned_entry(&Hash::default(), 1, vec![tx.clone()])];
+        let mut serialized_entries = wincode::serialize(&entries).unwrap();
+
+        assert!(wincode::deserialize::<Vec<Entry>>(&serialized_entries).is_ok());
+
+        let serialized_tx = wincode::serialize(&tx).unwrap();
+        let tx_offset = serialized_entries
+            .windows(serialized_tx.len())
+            .position(|window| window == serialized_tx)
+            .expect("serialized transaction should be embedded in serialized entry");
+
+        // txv1 begins with the version byte and the 3-byte legacy header.
+        const TXV1_CONFIG_MASK_OFFSET: usize = 1 + 3;
+        let mask_offset = tx_offset + TXV1_CONFIG_MASK_OFFSET;
+        let mask_range = mask_offset..mask_offset + core::mem::size_of::<u32>();
+        let mask = u32::from_le_bytes(serialized_entries[mask_range.clone()].try_into().unwrap());
+        assert_eq!(mask, 0);
+
+        let unknown_config_mask_bit = 1u32
+            .checked_shl(v1::TransactionConfigMask::KNOWN_BITS.trailing_ones())
+            .expect("txv1 config mask should have at least one unknown bit");
+        assert_ne!(
+            unknown_config_mask_bit & v1::TransactionConfigMask::KNOWN_BITS,
+            unknown_config_mask_bit
+        );
+        serialized_entries[mask_range]
+            .copy_from_slice(&(mask | unknown_config_mask_bit).to_le_bytes());
+
+        assert!(matches!(
+            wincode::deserialize::<Vec<Entry>>(&serialized_entries),
+            Err(wincode::ReadError::InvalidValue(
+                "invalid transaction config mask"
+            ))
+        ));
     }
 }

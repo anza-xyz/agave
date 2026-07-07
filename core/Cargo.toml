@@ -32,9 +32,11 @@ frozen-abi = [
     "solana-cost-model/frozen-abi",
     "solana-frozen-abi/frozen-abi",
     "solana-gossip/frozen-abi",
+    "solana-hash/frozen-abi",
     "solana-ledger/frozen-abi",
     "solana-packet/frozen-abi",
     "solana-perf/frozen-abi",
+    "solana-pubkey/frozen-abi",
     "solana-runtime/frozen-abi",
     "solana-signature/frozen-abi",
     "solana-svm/frozen-abi",
@@ -90,6 +92,7 @@ serde_bytes = { workspace = true }
 shaq = { workspace = true }
 signal-hook = { workspace = true }
 slab = { workspace = true }
+smallvec = { workspace = true }
 solana-account = { workspace = true }
 solana-accounts-db = { workspace = true }
 solana-address-lookup-table-interface = { workspace = true }

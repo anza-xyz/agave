@@ -454,7 +454,7 @@ impl AncestorHashesService {
                 }
                 stats.ping_count += 1;
                 let pong = RepairProtocol::Pong(Pong::new(&ping, keypair));
-                if let Ok(pong) = bincode::serialize(&pong) {
+                if let Ok(pong) = wincode::serialize(&pong) {
                     let _ = ancestor_socket.send_to(&pong, from_addr);
                 }
                 None
@@ -1270,7 +1270,7 @@ mod test {
                 5,
             );
             blockstore
-                .insert_shreds(shreds, None, false)
+                .insert_shreds(shreds, false)
                 .expect("Expect successful ledger write");
             let mut correct_bank_hashes = HashMap::new();
             for duplicate_confirmed_slot in
@@ -1423,7 +1423,7 @@ mod test {
         // Create slots [slot, slot + num_ancestors) with 5 shreds apiece
         let (shreds, _) = make_many_slot_entries(dead_slot, dead_slot, 5);
         blockstore
-            .insert_shreds(shreds, None, false)
+            .insert_shreds(shreds, false)
             .expect("Expect successful ledger write");
         for duplicate_confirmed_slot in 0..(dead_slot - 1) {
             let bank_hash = correct_bank_hashes

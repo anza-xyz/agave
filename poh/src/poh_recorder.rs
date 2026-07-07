@@ -682,11 +682,11 @@ impl PohRecorder {
             for (entry, tick_height) in &self.tick_cache[..entry_count] {
                 working_bank.bank.register_tick(&entry.hash);
 
-                if let Some(footer) = footer.clone() {
-                    if let Err(err) = self.wait_for_freeze_and_send_footer(footer, working_bank) {
-                        send_result = Err(err);
-                        break;
-                    }
+                if let Some(footer) = footer.clone()
+                    && let Err(err) = self.wait_for_freeze_and_send_footer(footer, working_bank)
+                {
+                    send_result = Err(err);
+                    break;
                 }
 
                 let tick = (EntryOrMarker::from(entry.clone()), *tick_height);

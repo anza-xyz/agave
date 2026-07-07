@@ -191,11 +191,10 @@ impl Restart {
                 let dir = fs::read_dir(drive);
                 if let Ok(dir) = dir {
                     for entry in dir.flatten() {
-                        if let Some(name) = entry.path().file_name() {
-                            if let Some(id) = name.to_str().and_then(|str| str.parse::<u128>().ok())
-                            {
-                                result.insert(id, entry.path());
-                            }
+                        if let Some(name) = entry.path().file_name()
+                            && let Some(id) = name.to_str().and_then(|str| str.parse::<u128>().ok())
+                        {
+                            result.insert(id, entry.path());
                         }
                     }
                 }

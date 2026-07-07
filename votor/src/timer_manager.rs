@@ -49,7 +49,7 @@ impl TimerManager {
                         }
                         Some(next_fire) => next_fire.duration_since(Instant::now()),
                     };
-                    thread::sleep(duration);
+                    thread::park_timeout(duration);
                 }
             })
         };
@@ -61,19 +61,24 @@ impl TimerManager {
         &self,
         slot: Slot,
         standstill_slot: Option<Slot>,
-        delta_first_slice: Duration,
+        delta_first_fec_set: Duration,
         delta_block: Duration,
     ) -> bool {
-        self.timers.write().set_timeouts(
+        let timeout_inserted = self.timers.write().set_timeouts(
             slot,
             Instant::now(),
             standstill_slot,
-            delta_first_slice,
+            delta_first_fec_set,
             delta_block,
-        )
+        );
+        if timeout_inserted {
+            self.handle.thread().unpark();
+        }
+        timeout_inserted
     }
 
     pub(crate) fn join(self) {
+        self.handle.thread().unpark();
         self.handle.join().unwrap();
     }
 
@@ -86,8 +91,11 @@ impl TimerManager {
 #[cfg(test)]
 mod tests {
     use {
-        super::*, crate::event::VotorEvent, crossbeam_channel::bounded,
-        solana_clock::DEFAULT_MS_PER_SLOT, std::time::Duration,
+        super::*,
+        crate::event::VotorEvent,
+        crossbeam_channel::bounded,
+        solana_clock::DEFAULT_MS_PER_SLOT,
+        std::{assert_matches, time::Duration},
     };
 
     #[test]
@@ -100,12 +108,12 @@ mod tests {
             Arc::new(MigrationStatus::post_migration_status()),
         );
         let delta_block = Duration::from_millis(DEFAULT_MS_PER_SLOT);
-        let delta_first_slice = delta_block;
+        let delta_first_fec_set = delta_block;
         let slot = 52;
         let start = Instant::now();
-        assert!(timer_manager.set_timeouts(slot, None, delta_first_slice, delta_block));
-        assert!(!timer_manager.set_timeouts(slot, None, delta_first_slice, delta_block));
-        // Should see two timeouts at delta_block and DELTA_TIMEOUT
+        assert!(timer_manager.set_timeouts(slot, None, delta_first_fec_set, delta_block));
+        assert!(!timer_manager.set_timeouts(slot, None, delta_first_fec_set, delta_block));
+        // Should see the first two timeout events at DELTA_TIMEOUT + delta_block.
         let mut timeouts_received = 0;
         while timeouts_received < 2 && Instant::now().duration_since(start) < Duration::from_secs(2)
         {
@@ -123,7 +131,7 @@ mod tests {
                         assert_eq!(s, slot);
                         assert!(
                             Instant::now().duration_since(start)
-                                >= DELTA_TIMEOUT + delta_first_slice
+                                >= DELTA_TIMEOUT + delta_first_fec_set
                         );
                         timeouts_received += 1;
                     }
@@ -135,6 +143,38 @@ mod tests {
             timeouts_received == 2,
             "Did not receive all expected timeouts"
         );
+        exit.store(true, Ordering::Relaxed);
+        timer_manager.join();
+    }
+
+    #[test]
+    fn test_new_earlier_timer_wakes_sleeping_worker() {
+        let (event_sender, event_receiver) = bounded(1024);
+        let exit = Arc::new(AtomicBool::new(false));
+        let timer_manager = TimerManager::new(
+            event_sender,
+            exit.clone(),
+            Arc::new(MigrationStatus::post_migration_status()),
+        );
+
+        let old_slot = 52;
+        let old_delta = Duration::from_secs(5);
+        assert!(timer_manager.set_timeouts(old_slot, None, old_delta, old_delta));
+        std::thread::sleep(Duration::from_millis(500));
+
+        let new_slot = 1_000;
+        assert!(timer_manager.set_timeouts(
+            new_slot,
+            None,
+            Duration::ZERO,
+            Duration::from_millis(1),
+        ));
+
+        let event = event_receiver
+            .recv_timeout(DELTA_TIMEOUT + Duration::from_millis(500))
+            .expect("new earlier timer should wake the sleeping timer worker");
+        assert_matches!(event, VotorEvent::TimeoutCrashedLeader(slot) if slot == new_slot);
+
         exit.store(true, Ordering::Relaxed);
         timer_manager.join();
     }

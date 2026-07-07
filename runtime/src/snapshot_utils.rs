@@ -529,7 +529,7 @@ pub fn serialize_snapshot(
                 accounts_lt_hash: Some(bank_fields.accounts_lt_hash.clone().into()),
                 block_id: Some(bank_fields.block_id),
             };
-            serde_snapshot::serialize_bank_snapshot_into(
+            serde_snapshot::serialize_bank_snapshot_into_wincode(
                 stream,
                 bank_fields,
                 bank_hash_stats,
@@ -612,6 +612,7 @@ pub fn serialize_snapshot(
             "snapshot_bank",
             ("slot", slot, i64),
             ("bank_size", bank_snapshot_consumed_size, i64),
+            ("num_storages", snapshot_storages.len(), i64),
             ("status_cache_size", status_cache_consumed_size, i64),
             ("flush_storages_us", flush_storages_us, Option<i64>),
             ("serialize_obsolete_accounts_us", serialize_obsolete_accounts_us, Option<i64>),

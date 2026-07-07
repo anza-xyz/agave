@@ -46,7 +46,7 @@ use {
         consensus_message::{Block, ConsensusMessage, VoteMessage},
         vote::Vote,
     },
-    serde::Serialize,
+    serde::{Deserialize, Serialize},
     solana_bls_signatures::Signature as BLSSignature,
     solana_clock::Slot,
     wincode::{SchemaRead, SchemaWrite, pod_wrapper},
@@ -66,8 +66,11 @@ pod_wrapper! {
     unsafe struct PodBLSSignature(BLSSignature);
 }
 
-#[cfg_attr(feature = "frozen-abi", derive(AbiExample, StableAbi, StableAbiSample))]
-#[derive(Clone, Debug, Hash, PartialEq, Eq, SchemaRead, SchemaWrite, Serialize)]
+#[cfg_attr(
+    feature = "frozen-abi",
+    derive(AbiExample, StableAbi, StableAbiSample, Serialize)
+)]
+#[derive(Clone, Debug, Hash, PartialEq, Eq, SchemaRead, SchemaWrite)]
 pub(crate) struct WireVoteSignature {
     #[cfg_attr(
         feature = "frozen-abi",
@@ -87,22 +90,28 @@ impl From<VoteMessage> for WireVoteSignature {
     }
 }
 
-#[cfg_attr(feature = "frozen-abi", derive(AbiExample, StableAbi, StableAbiSample))]
-#[derive(Clone, Debug, Hash, PartialEq, Eq, SchemaRead, SchemaWrite, Serialize)]
+#[cfg_attr(
+    feature = "frozen-abi",
+    derive(AbiExample, StableAbi, StableAbiSample, Serialize)
+)]
+#[derive(Clone, Debug, Hash, PartialEq, Eq, SchemaRead, SchemaWrite)]
 pub(crate) struct WireBlockVoteMessage {
     pub(crate) block: Block,
     pub(crate) signature: WireVoteSignature,
 }
 
-#[cfg_attr(feature = "frozen-abi", derive(AbiExample, StableAbi, StableAbiSample))]
-#[derive(Clone, Debug, Hash, PartialEq, Eq, SchemaRead, SchemaWrite, Serialize)]
+#[cfg_attr(
+    feature = "frozen-abi",
+    derive(AbiExample, StableAbi, StableAbiSample, Serialize)
+)]
+#[derive(Clone, Debug, Hash, PartialEq, Eq, SchemaRead, SchemaWrite)]
 pub(crate) struct WireSlotVoteMessage {
     pub(crate) slot: Slot,
     pub(crate) signature: WireVoteSignature,
 }
 
 #[cfg_attr(feature = "frozen-abi", derive(AbiExample, StableAbi, StableAbiSample))]
-#[derive(Clone, Debug, Hash, PartialEq, Eq, SchemaRead, SchemaWrite, Serialize)]
+#[derive(Clone, Debug, Hash, PartialEq, Eq, SchemaRead, SchemaWrite, Serialize, Deserialize)]
 /// Signature on a wire cert message
 pub struct WireCertSignature {
     #[cfg_attr(
@@ -125,15 +134,18 @@ impl From<Certificate> for WireCertSignature {
     }
 }
 
-#[cfg_attr(feature = "frozen-abi", derive(AbiExample, StableAbi, StableAbiSample))]
-#[derive(Debug, Clone, Hash, PartialEq, Eq, SchemaRead, SchemaWrite, Serialize)]
+#[cfg_attr(
+    feature = "frozen-abi",
+    derive(AbiExample, StableAbi, StableAbiSample, Serialize)
+)]
+#[derive(Debug, Clone, Hash, PartialEq, Eq, SchemaRead, SchemaWrite)]
 pub(crate) struct WireSlotCertMessage {
     pub(crate) slot: Slot,
     pub(crate) signature: WireCertSignature,
 }
 
 #[cfg_attr(feature = "frozen-abi", derive(AbiExample, StableAbi, StableAbiSample))]
-#[derive(Debug, Clone, Hash, PartialEq, Eq, SchemaRead, SchemaWrite, Serialize)]
+#[derive(Debug, Clone, Hash, PartialEq, Eq, SchemaRead, SchemaWrite, Serialize, Deserialize)]
 /// A wire cert message that holds a block.
 pub struct WireBlockCertMessage {
     /// the block the cert is certifying.
@@ -144,9 +156,9 @@ pub struct WireBlockCertMessage {
 
 #[cfg_attr(
     feature = "frozen-abi",
-    derive(AbiExample, StableAbi, StableAbiSample, AbiEnumVisitor)
+    derive(AbiExample, StableAbi, StableAbiSample, AbiEnumVisitor, Serialize)
 )]
-#[derive(Debug, Clone, Hash, PartialEq, Eq, SchemaWrite, SchemaRead, Serialize)]
+#[derive(Debug, Clone, Hash, PartialEq, Eq, SchemaWrite, SchemaRead)]
 #[wincode(tag_encoding = "u8")]
 pub(crate) enum WireConsensusMessageKind {
     #[wincode(tag = 1)]
@@ -252,8 +264,11 @@ impl WireConsensusMessageKind {
     }
 }
 
-#[cfg_attr(feature = "frozen-abi", derive(AbiExample, StableAbi, StableAbiSample))]
-#[derive(Debug, Clone, Hash, PartialEq, Eq, Serialize, SchemaWrite, SchemaRead)]
+#[cfg_attr(
+    feature = "frozen-abi",
+    derive(AbiExample, StableAbi, StableAbiSample, Serialize)
+)]
+#[derive(Debug, Clone, Hash, PartialEq, Eq, SchemaWrite, SchemaRead)]
 /// First version of a wire consensus message
 pub struct WireConsensusMessageV1 {
     pub(crate) kind: WireConsensusMessageKind,
@@ -289,7 +304,7 @@ impl WireConsensusMessageV1 {
 
 #[cfg_attr(
     feature = "frozen-abi",
-    derive(AbiExample, AbiEnumVisitor, StableAbi, StableAbiSample),
+    derive(AbiExample, AbiEnumVisitor, StableAbi, StableAbiSample, Serialize),
     frozen_abi(
         digest = "Gf8GEMXaXezQnGsqwDdpZN3WtNkMZw5wfp3nwep9j55V",
         abi_digest = "AHPJsANgE3T8wfzkFZwao1PAWwd6LtS5GAhGrN9X4Xhy",
@@ -297,7 +312,7 @@ impl WireConsensusMessageV1 {
         test_roundtrip = "eq_and_wire",
     )
 )]
-#[derive(Debug, Clone, Hash, PartialEq, Eq, Serialize, SchemaWrite, SchemaRead)]
+#[derive(Debug, Clone, Hash, PartialEq, Eq, SchemaWrite, SchemaRead)]
 #[wincode(tag_encoding = "u8")]
 /// versioned wire format of consensus message
 pub enum VersionedWireConsensusMessage {
@@ -335,7 +350,7 @@ impl VersionedWireConsensusMessage {
 
 #[cfg_attr(
     feature = "frozen-abi",
-    derive(AbiExample, AbiEnumVisitor, StableAbi, StableAbiSample),
+    derive(AbiExample, AbiEnumVisitor, StableAbi, StableAbiSample, Serialize),
     frozen_abi(
         digest = "AKMt6bqYRf1xh7tWg4eAgG7jNN1qtUvNVPb5XZn9vjtV",
         abi_digest = "2aBMTuPyDgGSYeYX1aBbXURgA4qqr92Eh9yiTeHX6qZq",
@@ -343,7 +358,7 @@ impl VersionedWireConsensusMessage {
         test_roundtrip = "eq_and_wire",
     )
 )]
-#[derive(Debug, Copy, Clone, PartialEq, Eq, Hash, Serialize, SchemaWrite, SchemaRead)]
+#[derive(Debug, Copy, Clone, PartialEq, Eq, Hash, SchemaWrite, SchemaRead)]
 #[wincode(tag_encoding = "u8")]
 /// Vote payload that must be signed
 pub enum VotePayloadToSign {

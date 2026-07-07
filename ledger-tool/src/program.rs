@@ -27,7 +27,7 @@ use {
     solana_runtime::bank::Bank,
     solana_sbpf::{
         assembler::assemble,
-        ebpf::MM_INPUT_START,
+        ebpf::{MM_HEAP_START, MM_INPUT_START, MM_RODATA_START, MM_STACK_START},
         elf::Executable,
         memory_region::{MemoryMapping, MemoryRegion},
         static_analysis::Analysis,
@@ -412,18 +412,17 @@ pub fn program(ledger_path: &Path, matches: &ArgMatches<'_>) {
                     let space = data.len();
                     let account = if let Some(account) = bank.get_account_with_fixed_root(&pubkey) {
                         let owner = *account.owner();
-                        if bpf_loader_upgradeable::check_id(&owner) {
-                            if let Ok(UpgradeableLoaderState::Program {
+                        if bpf_loader_upgradeable::check_id(&owner)
+                            && let Ok(UpgradeableLoaderState::Program {
                                 programdata_address,
                             }) = account.state()
+                        {
+                            debug!("Program data address {programdata_address}");
+                            if bank
+                                .get_account_with_fixed_root(&programdata_address)
+                                .is_some()
                             {
-                                debug!("Program data address {programdata_address}");
-                                if bank
-                                    .get_account_with_fixed_root(&programdata_address)
-                                    .is_some()
-                                {
-                                    cached_account_keys.push(pubkey);
-                                }
+                                cached_account_keys.push(pubkey);
                             }
                         }
                         // Override account data and lamports from input file if provided
@@ -515,10 +514,14 @@ pub fn program(ledger_path: &Path, matches: &ArgMatches<'_>) {
         )
         .unwrap();
 
-    let regions = vec![MemoryRegion::default(); 3]
-        .into_iter()
-        .chain(regions)
-        .collect();
+    let regions = [
+        MemoryRegion::new_empty(MM_RODATA_START),
+        MemoryRegion::new_empty(MM_STACK_START),
+        MemoryRegion::new_empty(MM_HEAP_START),
+    ]
+    .into_iter()
+    .chain(regions)
+    .collect();
     let program = matches.value_of("PROGRAM").unwrap();
     let verified_executable = load_program(Path::new(program), program_id, &invoke_context);
 

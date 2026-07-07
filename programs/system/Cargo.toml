@@ -45,6 +45,7 @@ criterion = { workspace = true }
 solana-compute-budget = { path = "../../compute-budget", features = ["agave-unstable-api"] }
 solana-hash = { workspace = true }
 solana-program-runtime = { workspace = true, features = ["dev-context-only-utils"] }
+solana-pubkey = { workspace = true, features = ["rand"] }
 solana-rent = { workspace = true }
 solana-sha256-hasher = { workspace = true }
 solana-svm-callback = { path = "../../svm-callback", features = ["agave-unstable-api"] }

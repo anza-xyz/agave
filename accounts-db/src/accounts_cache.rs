@@ -344,10 +344,10 @@ impl AccountsCache {
         // range in descending order and return the first (highest) ancestor that has it.
         if let Some(ancestors_min_slot) = ancestors.min_slot() {
             for slot in (ancestors_min_slot..=index_max_slot).rev() {
-                if ancestors.contains_key(&slot) {
-                    if let Some(account) = self.load(slot, pubkey) {
-                        return Some((account, slot));
-                    }
+                if ancestors.contains_key(&slot)
+                    && let Some(account) = self.load(slot, pubkey)
+                {
+                    return Some((account, slot));
                 }
             }
         }
@@ -384,6 +384,11 @@ impl AccountsCache {
 
     pub fn num_unflushed_roots(&self) -> usize {
         self.unflushed_roots.read().unwrap().len()
+    }
+
+    /// Returns whether `slot` is a root that has been added but not yet flushed to storage.
+    pub fn contains_unflushed_root(&self, slot: Slot) -> bool {
+        self.unflushed_roots.read().unwrap().contains(&slot)
     }
 
     /// Returns the unflushed roots up to and including `max_root` (or all roots if `None`). The

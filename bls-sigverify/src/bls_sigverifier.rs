@@ -261,7 +261,6 @@ impl SigVerifier {
                                 sender_bls_pubkey,
                                 sender_vote_account_pubkey,
                                 sender_identity_pubkey,
-                                prepared_payload: None,
                             },
                         );
                     }
@@ -309,7 +308,10 @@ impl SigVerifier {
                 None
             })?;
         let ret = Some((entry.vote_account_pubkey, entry.bls_pubkey));
-        if vote.slot() > root_slot {
+        if vote.slot() > root_slot
+            // Genesis votes should be allowed on the TowerBFT root
+         || (vote.is_genesis_vote() && vote.slot() >= root_slot)
+        {
             return ret;
         }
         if rewards_wants_vote(&self.cluster_info, &self.leader_schedule, root_slot, vote) {

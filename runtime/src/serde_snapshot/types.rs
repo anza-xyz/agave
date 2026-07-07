@@ -1,12 +1,18 @@
 use {
-    solana_accounts_db::accounts_hash::AccountsLtHash, solana_clock::Epoch,
-    solana_epoch_schedule::EpochSchedule, solana_lattice_hash::lt_hash::LtHash, solana_rent::Rent,
+    solana_accounts_db::accounts_hash::AccountsLtHash,
+    solana_clock::Epoch,
+    solana_epoch_schedule::EpochSchedule,
+    solana_lattice_hash::lt_hash::LtHash,
+    solana_rent::Rent,
+    wincode::{SchemaRead, SchemaWrite},
 };
 
 /// Snapshot serde-safe AccountsLtHash
-#[cfg_attr(feature = "frozen-abi", derive(AbiExample))]
+#[cfg_attr(feature = "frozen-abi", derive(AbiExample, StableAbi, StableAbiSample))]
 #[serde_with::serde_as]
-#[derive(Debug, serde::Serialize, serde::Deserialize, Clone, PartialEq, Eq)]
+#[derive(
+    Debug, serde::Serialize, serde::Deserialize, Clone, PartialEq, Eq, SchemaRead, SchemaWrite,
+)]
 pub struct SerdeAccountsLtHash(
     // serde only has array support up to 32 elements; anything larger needs to be handled manually
     // see https://github.com/serde-rs/serde/issues/1937 for more information
@@ -26,8 +32,8 @@ impl From<AccountsLtHash> for SerdeAccountsLtHash {
 
 /// Snapshot serde-safe RentCollector, which is now unused
 #[repr(C)]
-#[cfg_attr(feature = "frozen-abi", derive(solana_frozen_abi_macro::AbiExample))]
-#[derive(Debug, serde::Deserialize, serde::Serialize, Clone)]
+#[cfg_attr(feature = "frozen-abi", derive(AbiExample, StableAbi, StableAbiSample))]
+#[derive(Debug, serde::Deserialize, serde::Serialize, Clone, SchemaRead, SchemaWrite)]
 pub struct UnusedRentCollector {
     epoch: Epoch,
     epoch_schedule: EpochSchedule,

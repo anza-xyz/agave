@@ -9,11 +9,12 @@ use {
         ops::{Deref, DerefMut},
         sync::Arc,
     },
+    wincode::{SchemaRead, SchemaWrite},
 };
 
 /// The SDK's stake history with clone-on-write semantics
-#[cfg_attr(feature = "frozen-abi", derive(AbiExample))]
-#[derive(Default, Clone, PartialEq, Eq, Debug, Deserialize, Serialize)]
+#[cfg_attr(feature = "frozen-abi", derive(AbiExample, StableAbi, StableAbiSample))]
+#[derive(Default, Clone, PartialEq, Eq, Debug, Deserialize, Serialize, SchemaRead, SchemaWrite)]
 pub struct StakeHistory(Arc<StakeHistoryInner>);
 
 impl Deref for StakeHistory {

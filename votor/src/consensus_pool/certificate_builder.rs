@@ -16,7 +16,7 @@ use {
 /// conservative number 4096 for now. During build() we will cut off end
 /// of the bitmaps if the tail contains only zeroes, so actual bitmap
 /// length will be less than or equal to this number.
-const MAXIMUM_VALIDATORS: usize = 4096;
+pub const MAXIMUM_VALIDATORS: usize = 4096;
 
 /// Different types of errors that can be returned from the [`CertificateBuilder::aggregate()`] function.
 #[derive(Debug, Error, PartialEq, Eq)]

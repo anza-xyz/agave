@@ -20,6 +20,7 @@ use {
         num::NonZero,
         sync::{Arc, OnceLock},
     },
+    wincode::{SchemaRead, SchemaWrite, WriteResult},
 };
 
 pub type NodeIdToVoteAccounts = HashMap<Pubkey, NodeVoteAccounts>;
@@ -71,7 +72,7 @@ pub(crate) fn bls_pubkey_compressed_bytes_to_bls_pubkey(
     bls_pubkey_compressed_bytes: [u8; BLS_PUBLIC_KEY_COMPRESSED_SIZE],
 ) -> Option<(BLSPubkeyCompressed, PopVerified<BLSPubkeyAffine>)> {
     let bls_pubkey_compressed: BLSPubkeyCompressed =
-        bincode::deserialize(&bls_pubkey_compressed_bytes).ok()?;
+        wincode::deserialize(&bls_pubkey_compressed_bytes).ok()?;
     let bls_pubkey_affine = BLSPubkeyAffine::try_from(bls_pubkey_compressed).ok()?;
     // It is safe to use `new_unchecked` here because data coming from the vote
     // state has already had its PoP verified.
@@ -175,8 +176,8 @@ impl BLSPubkeyToRankMap {
     }
 }
 
-#[cfg_attr(feature = "frozen-abi", derive(AbiExample))]
-#[derive(Clone, Serialize, Debug, Deserialize, Default, PartialEq, Eq)]
+#[cfg_attr(feature = "frozen-abi", derive(AbiExample, StableAbi, StableAbiSample))]
+#[derive(Clone, Serialize, Debug, Deserialize, Default, PartialEq, Eq, SchemaRead, SchemaWrite)]
 pub struct NodeVoteAccounts {
     pub vote_accounts: Vec<Pubkey>,
     pub total_stake: u64,
@@ -197,8 +198,11 @@ pub(crate) enum DeserializableVersionedEpochStakes {
     },
 }
 
-#[derive(Clone, Debug, Serialize)]
-#[cfg_attr(feature = "frozen-abi", derive(AbiExample, AbiEnumVisitor))]
+#[derive(Clone, Debug, Serialize, SchemaWrite)]
+#[cfg_attr(
+    feature = "frozen-abi",
+    derive(AbiExample, AbiEnumVisitor, StableAbi, StableAbiSample)
+)]
 #[cfg_attr(feature = "dev-context-only-utils", derive(PartialEq))]
 pub enum VersionedEpochStakes {
     Current {
@@ -207,7 +211,9 @@ pub enum VersionedEpochStakes {
         total_stake: u64,
         node_id_to_vote_accounts: Arc<NodeIdToVoteAccounts>,
         epoch_authorized_voters: Arc<EpochAuthorizedVoters>,
+        #[cfg_attr(feature = "frozen-abi", stable_abi_sample(with = "Default::default()"))]
         #[serde(skip)]
+        #[wincode(skip)]
         bls_pubkey_to_rank_map: OnceLock<Arc<BLSPubkeyToRankMap>>,
     },
 }
@@ -369,7 +375,7 @@ impl VersionedEpochStakes {
 
 /// The current version of epoch stakes
 #[derive(Clone, Debug, Default)]
-#[cfg_attr(feature = "frozen-abi", derive(AbiExample))]
+#[cfg_attr(feature = "frozen-abi", derive(AbiExample, StableAbi, StableAbiSample))]
 #[cfg_attr(feature = "dev-context-only-utils", derive(PartialEq))]
 pub struct EpochStakes {
     epoch: Epoch,
@@ -388,29 +394,50 @@ impl EpochStakes {
 
 /// Customization of EpochStakes for snapshot serialization.
 ///
-/// Needed because snapshots require additional fields no longer present in EpochStakes.
+/// Needed because snapshots require additional fields no longer present in EpochStakes: the
+/// fields are reordered relative to `EpochStakes` and an always-empty `stake_delegations` list
+/// plus an unused `u64` are injected to match the historical wire format.
+#[derive(Serialize, SchemaWrite)]
+struct SerializableEpochStakes<'a> {
+    vote_accounts: &'a VoteAccounts,
+    stake_delegations: Vec<(Pubkey, Stake)>,
+    unused: u64,
+    epoch: Epoch,
+    stake_history: &'a StakeHistory,
+}
+
+impl<'a> From<&'a EpochStakes> for SerializableEpochStakes<'a> {
+    fn from(epoch_stakes: &'a EpochStakes) -> Self {
+        Self {
+            vote_accounts: &epoch_stakes.vote_accounts,
+            stake_delegations: Vec::new(), // do not serialize any stake delegations
+            unused: 0,
+            epoch: epoch_stakes.epoch,
+            stake_history: &epoch_stakes.stake_history,
+        }
+    }
+}
+
 impl Serialize for EpochStakes {
     fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
     where
         S: Serializer,
     {
-        #[derive(Serialize)]
-        struct SerializableEpochStakes<'a> {
-            vote_accounts: &'a VoteAccounts,
-            stake_delegations: Vec<(Pubkey, Stake)>,
-            unused: u64,
-            epoch: Epoch,
-            stake_history: &'a StakeHistory,
-        }
+        SerializableEpochStakes::from(self).serialize(serializer)
+    }
+}
 
-        SerializableEpochStakes {
-            vote_accounts: &self.vote_accounts,
-            stake_delegations: Vec::new(), // do not serialize any stake delegations
-            unused: 0,
-            epoch: self.epoch,
-            stake_history: &self.stake_history,
-        }
-        .serialize(serializer)
+// Mirror the `Serialize` impl above for wincode by delegating to the same `SerializableEpochStakes`
+// wire layout, so the snapshot bytes match bincode.
+unsafe impl<C: wincode::config::Config> SchemaWrite<C> for EpochStakes {
+    type Src = Self;
+
+    fn size_of(src: &Self::Src) -> WriteResult<usize> {
+        <SerializableEpochStakes<'_> as SchemaWrite<C>>::size_of(&src.into())
+    }
+
+    fn write(writer: impl wincode::io::Writer, src: &Self::Src) -> WriteResult<()> {
+        <SerializableEpochStakes<'_> as SchemaWrite<C>>::write(writer, &src.into())
     }
 }
 
@@ -525,7 +552,7 @@ pub(crate) mod tests {
                         let bls_pubkey_compressed: BLSPubkeyCompressed =
                             (*BLSKeypair::new().public).into();
                         let bls_pubkey_compressed_serialized =
-                            bincode::serialize(&bls_pubkey_compressed)
+                            wincode::serialize(&bls_pubkey_compressed)
                                 .unwrap()
                                 .try_into()
                                 .unwrap();
@@ -743,7 +770,7 @@ pub(crate) mod tests {
     fn test_bls_pubkey_rank_map_excludes_duplicate_bls_and_identity() {
         let new_bls_pubkey = || {
             let bls_pubkey_compressed: BLSPubkeyCompressed = (*BLSKeypair::new().public).into();
-            let bls_pubkey_compressed_serialized = bincode::serialize(&bls_pubkey_compressed)
+            let bls_pubkey_compressed_serialized = wincode::serialize(&bls_pubkey_compressed)
                 .unwrap()
                 .try_into()
                 .unwrap();

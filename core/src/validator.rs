@@ -562,10 +562,10 @@ impl BlockstoreRootScan {
     }
 
     fn join(self) {
-        if let Some(blockstore_root_scan) = self.thread {
-            if let Err(err) = blockstore_root_scan.join() {
-                warn!("blockstore_root_scan failed to join {err:?}");
-            }
+        if let Some(blockstore_root_scan) = self.thread
+            && let Err(err) = blockstore_root_scan.join()
+        {
+            warn!("blockstore_root_scan failed to join {err:?}");
         }
     }
 }
@@ -949,14 +949,14 @@ impl Validator {
         let shred_version = compute_shred_version(&genesis_config.hash(), Some(&hard_forks));
         info!("shred version: {shred_version}, hard forks: {hard_forks:?}");
 
-        if let Some(expected_shred_version) = config.expected_shred_version {
-            if expected_shred_version != shred_version {
-                return Err(ValidatorError::ShredVersionMismatch {
-                    actual: shred_version,
-                    expected: expected_shred_version,
-                }
-                .into());
+        if let Some(expected_shred_version) = config.expected_shred_version
+            && expected_shred_version != shred_version
+        {
+            return Err(ValidatorError::ShredVersionMismatch {
+                actual: shred_version,
+                expected: expected_shred_version,
             }
+            .into());
         }
 
         if let Some(start_slot) = should_cleanup_blockstore_incorrect_shred_versions(
@@ -995,6 +995,7 @@ impl Validator {
         cluster_info.restore_contact_info(ledger_path, config.contact_save_interval);
         cluster_info.set_bind_ip_addrs(node.bind_ip_addrs.clone());
         let cluster_info = Arc::new(cluster_info);
+        cluster_info.set_migration_status(migration_status.clone());
         let node_multihoming = Arc::new(NodeMultihoming::from(&node));
         migration_status.set_pubkey(cluster_info.id());
 
@@ -1244,8 +1245,6 @@ impl Validator {
             json_rpc_service,
             rpc_subscriptions,
             pubsub_service,
-            completed_data_sets_sender,
-            completed_data_sets_service,
             rpc_completed_slots_service,
             sample_performance_service,
             optimistically_confirmed_bank_tracker,
@@ -1328,27 +1327,6 @@ impl Validator {
                 Some(pubsub_service)
             };
 
-            let (completed_data_sets_sender, completed_data_sets_service) =
-                if !config.rpc_config.full_api {
-                    (None, None)
-                } else {
-                    let (completed_data_sets_sender, completed_data_sets_receiver) =
-                        bounded(MAX_COMPLETED_DATA_SETS_IN_CHANNEL);
-                    let completed_data_sets_service = CompletedDataSetsService::new(
-                        completed_data_sets_receiver,
-                        blockstore.clone(),
-                        rpc_subscriptions.clone(),
-                        deshred_transaction_notifier.clone(),
-                        exit.clone(),
-                        max_slots.clone(),
-                        bank_forks.clone(),
-                    );
-                    (
-                        Some(completed_data_sets_sender),
-                        Some(completed_data_sets_service),
-                    )
-                };
-
             let rpc_completed_slots_service =
                 if config.rpc_config.full_api || geyser_plugin_service.is_some() {
                     let (completed_slots_sender, completed_slots_receiver) =
@@ -1398,16 +1376,42 @@ impl Validator {
                 Some(json_rpc_service),
                 Some(rpc_subscriptions),
                 pubsub_service,
-                completed_data_sets_sender,
-                completed_data_sets_service,
                 rpc_completed_slots_service,
                 sample_performance_service,
                 optimistically_confirmed_bank_tracker,
                 bank_notification_sender_config,
             )
         } else {
-            (None, None, None, None, None, None, None, None, None)
+            (None, None, None, None, None, None, None)
         };
+
+        // CompletedDataSetsService feeds two independent sinks: RPC signatureSubscribe
+        // notifications (which need rpc_subscriptions) and the geyser deshred-transaction notifier
+        // (which does not). Spawn it whenever either sink wants it, kept out of the rpc_addrs block
+        // above so a geyser node started without --rpc-port still gets deshred notifications.
+        // Gating on the notifier itself rather than on a plugin being loaded keeps the per-data-set
+        // blockstore reads off nodes whose plugins don't subscribe; --geyser-plugin-always-enabled
+        // is the exception, where the notifier is present with no subscribers.
+        let (completed_data_sets_sender, completed_data_sets_service) =
+            if config.rpc_config.full_api || deshred_transaction_notifier.is_some() {
+                let (completed_data_sets_sender, completed_data_sets_receiver) =
+                    bounded(MAX_COMPLETED_DATA_SETS_IN_CHANNEL);
+                let completed_data_sets_service = CompletedDataSetsService::new(
+                    completed_data_sets_receiver,
+                    blockstore.clone(),
+                    rpc_subscriptions.clone(),
+                    deshred_transaction_notifier.clone(),
+                    exit.clone(),
+                    max_slots.clone(),
+                    bank_forks.clone(),
+                );
+                (
+                    Some(completed_data_sets_sender),
+                    Some(completed_data_sets_service),
+                )
+            } else {
+                (None, None)
+            };
 
         let ip_echo_server = match node.sockets.ip_echo {
             None => None,
@@ -1869,15 +1873,14 @@ impl Validator {
                 logfile,
                 logrotate_flag,
             }) = self.log_config.as_ref()
+                && logrotate_flag.load(Ordering::Relaxed)
             {
-                if logrotate_flag.load(Ordering::Relaxed) {
-                    info!("Received SIGUSR1, reopening {}", logfile.display());
-                    agave_logger::redirect_stderr(logfile);
-                    // Reset the flag to `false` to allow detection of the
-                    // signal again and to avoid hitting this case every
-                    // iteration
-                    logrotate_flag.store(false, Ordering::Relaxed);
-                }
+                info!("Received SIGUSR1, reopening {}", logfile.display());
+                agave_logger::redirect_stderr(logfile);
+                // Reset the flag to `false` to allow detection of the
+                // signal again and to avoid hitting this case every
+                // iteration
+                logrotate_flag.store(false, Ordering::Relaxed);
             }
 
             // One second is a reasonable response time for these signals to
@@ -2025,10 +2028,10 @@ impl Validator {
 }
 
 fn active_vote_account_exists_in_bank(bank: &Bank, vote_account: &Pubkey) -> bool {
-    if let Some(account) = &bank.get_account(vote_account) {
-        if let Ok(vote_state) = VoteStateV4::deserialize(account.data(), vote_account) {
-            return !vote_state.votes.is_empty();
-        }
+    if let Some(account) = &bank.get_account(vote_account)
+        && let Ok(vote_state) = VoteStateV4::deserialize(account.data(), vote_account)
+    {
+        return !vote_state.votes.is_empty();
     }
     false
 }
@@ -2067,7 +2070,7 @@ pub fn should_require_vote_history_file(
         // New vote account
         return false;
     };
-    let genesis_slot = genesis_certificate.cert_type.slot();
+    let genesis_slot = genesis_certificate.block.slot;
 
     // We've voted past the alpenglow genesis
     last_voted_slot > genesis_slot
@@ -2140,10 +2143,10 @@ fn check_poh_speed(bank: &Bank, maybe_hash_samples: Option<u64>) -> Result<(), V
 
 fn maybe_cluster_restart_with_hard_fork(config: &ValidatorConfig, root_slot: Slot) -> Option<Slot> {
     // detect cluster restart (hard fork) indirectly via wait_for_supermajority...
-    if let Some(wait_slot_for_supermajority) = config.wait_for_supermajority {
-        if wait_slot_for_supermajority == root_slot {
-            return Some(wait_slot_for_supermajority);
-        }
+    if let Some(wait_slot_for_supermajority) = config.wait_for_supermajority
+        && wait_slot_for_supermajority == root_slot
+    {
+        return Some(wait_slot_for_supermajority);
     }
 
     None
@@ -2319,13 +2322,13 @@ fn load_genesis(
     let genesis_hash = genesis_config.hash();
     info!("genesis hash: {genesis_hash}");
 
-    if let Some(expected_genesis_hash) = config.expected_genesis_hash {
-        if genesis_hash != expected_genesis_hash {
-            return Err(ValidatorError::GenesisHashMismatch(
-                genesis_hash,
-                expected_genesis_hash,
-            ));
-        }
+    if let Some(expected_genesis_hash) = config.expected_genesis_hash
+        && genesis_hash != expected_genesis_hash
+    {
+        return Err(ValidatorError::GenesisHashMismatch(
+            genesis_hash,
+            expected_genesis_hash,
+        ));
     }
 
     Ok(genesis_config)
@@ -2858,7 +2861,7 @@ fn cleanup_blockstore_incorrect_shred_versions(
             for (slot, _meta) in slot_meta_iterator {
                 let shreds = blockstore.get_data_shreds_for_slot(slot, 0)?;
                 let shreds = shreds.into_iter().map(Cow::Owned);
-                let _ = backup_blockstore.insert_cow_shreds(shreds, None, true);
+                let _ = backup_blockstore.insert_cow_shreds(shreds, true);
                 num_slots_copied += 1;
 
                 if print_timer.elapsed() > PRINT_INTERVAL {
@@ -2990,13 +2993,13 @@ fn wait_for_supermajority(
                 _ => {}
             }
 
-            if let Some(expected_bank_hash) = config.expected_bank_hash {
-                if bank.hash() != expected_bank_hash {
-                    return Err(ValidatorError::BankHashMismatch(
-                        bank.hash(),
-                        expected_bank_hash,
-                    ));
-                }
+            if let Some(expected_bank_hash) = config.expected_bank_hash
+                && bank.hash() != expected_bank_hash
+            {
+                return Err(ValidatorError::BankHashMismatch(
+                    bank.hash(),
+                    expected_bank_hash,
+                ));
             }
 
             for i in 1.. {
@@ -3151,6 +3154,7 @@ pub fn is_snapshot_config_valid(snapshot_config: &SnapshotConfig) -> bool {
 mod tests {
     use {
         super::*,
+        agave_votor_messages::certificate::{CertSignature, GenesisCert},
         crossbeam_channel::{RecvTimeoutError, bounded},
         solana_entry::entry,
         solana_genesis_config::create_genesis_config,
@@ -3169,10 +3173,7 @@ mod tests {
     #[test]
     fn test_should_require_vote_history_file() {
         use {
-            agave_votor_messages::{
-                certificate::{Certificate, CertificateType},
-                consensus_message::Block,
-            },
+            agave_votor_messages::consensus_message::Block,
             solana_account::{AccountSharedData, state_traits::StateMut},
             solana_bls_signatures::{BLS_SIGNATURE_AFFINE_SIZE, Signature as BLSSignature},
         };
@@ -3230,14 +3231,17 @@ mod tests {
             &identity,
         ));
 
-        bank.set_alpenglow_genesis_certificate(&Certificate {
-            cert_type: CertificateType::Genesis(Block {
+        let cert = GenesisCert {
+            block: Block {
                 slot: 40,
                 block_id: Hash::new_unique(),
-            }),
-            signature: BLSSignature([0; BLS_SIGNATURE_AFFINE_SIZE]),
-            bitmap: vec![],
-        });
+            },
+            signature: CertSignature {
+                signature: BLSSignature([0; BLS_SIGNATURE_AFFINE_SIZE]),
+                bitmap: vec![],
+            },
+        };
+        bank.set_alpenglow_genesis_certificate(&cert);
         assert!(!should_require_vote_history_file(
             &bank,
             &vote_account_pubkey,
@@ -3376,7 +3380,7 @@ mod tests {
                 true,  // is_full_slot
                 1,     // version
             );
-            blockstore.insert_shreds(shreds, None, true).unwrap();
+            blockstore.insert_shreds(shreds, true).unwrap();
         }
 
         // No check as all blockstore data is newer than latest hard fork
@@ -3467,7 +3471,7 @@ mod tests {
                 true,  // is_full_slot
                 1,     // version
             );
-            blockstore.insert_shreds(shreds, None, true).unwrap();
+            blockstore.insert_shreds(shreds, true).unwrap();
         }
 
         // this purges and compacts all slots greater than or equal to 5

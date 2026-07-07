@@ -225,22 +225,21 @@ where
                     // If pacing_fill_time is greater than the bank's slot time,
                     // adjust the pacing_fill_time to be the slot time, and warn.
                     let fill_time = self.config.scheduler_pacing.fill_time();
-                    if let Some(pacing_fill_time) = fill_time.as_ref() {
-                        if pacing_fill_time.as_nanos() > b.ns_per_slot {
-                            warn!(
-                                "scheduler pacing config pacing_fill_time {:?} is greater than \
-                                 the bank's slot time {}, setting to slot time",
-                                pacing_fill_time, b.ns_per_slot,
-                            );
-                            self.config.scheduler_pacing = SchedulerPacing::FillTimeMillis(
-                                NonZeroU64::new(
-                                    (b.ns_per_slot as u64 / 1_000_000).saturating_sub(
-                                        DEFAULT_SCHEDULER_PACING_NON_FILL_TIME_MILLIS,
-                                    ),
-                                )
-                                .unwrap_or(NonZeroU64::new(1).unwrap()),
-                            );
-                        }
+                    if let Some(pacing_fill_time) = fill_time.as_ref()
+                        && pacing_fill_time.as_nanos() > b.ns_per_slot
+                    {
+                        warn!(
+                            "scheduler pacing config pacing_fill_time {:?} is greater than the \
+                             bank's slot time {}, setting to slot time",
+                            pacing_fill_time, b.ns_per_slot,
+                        );
+                        self.config.scheduler_pacing = SchedulerPacing::FillTimeMillis(
+                            NonZeroU64::new(
+                                (b.ns_per_slot as u64 / 1_000_000)
+                                    .saturating_sub(DEFAULT_SCHEDULER_PACING_NON_FILL_TIME_MILLIS),
+                            )
+                            .unwrap_or(NonZeroU64::new(1).unwrap()),
+                        );
                     }
 
                     CostPacer {
@@ -409,11 +408,11 @@ where
 
             txs
         };
-        let lock_results = vec![Ok(()); txs.len()];
+        let lock_results = [const { Ok(()) }; CHECK_CHUNK];
         let mut error_counters = TransactionErrorMetrics::default();
         let results = bank.check_transactions::<R::Transaction>(
             &txs,
-            &lock_results,
+            &lock_results[..txs.len()],
             bank.max_processing_age(),
             true,
             &mut error_counters,

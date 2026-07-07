@@ -581,7 +581,6 @@ fn translate_type<T>(
     check_aligned: bool,
 ) -> Result<&T, Error> {
     translate_type_inner!(memory_mapping, AccessType::Load, vm_addr, T, check_aligned)
-        .map(|value| &*value)
 }
 fn translate_slice<T>(
     memory_mapping: &MemoryMapping,
@@ -2832,7 +2831,6 @@ mod tests {
         solana_program_runtime::{
             execution_budget::MAX_HEAP_FRAME_BYTES,
             invoke_context::{BpfAllocator, InvokeContext},
-            memory::address_is_aligned,
             memory_context::MemoryContext,
             with_mock_invoke_context, with_mock_invoke_context_with_feature_set,
         },
@@ -2941,7 +2939,7 @@ mod tests {
         const LENGTH: u64 = 1000;
 
         let data = vec![0u8; LENGTH as usize];
-        let addr = data.as_ptr() as u64;
+        let addr = data.as_ptr().addr();
         let config = Config::default();
         let memory_mapping = unsafe {
             MemoryMapping::new(
@@ -2958,21 +2956,28 @@ mod tests {
             (true, START, LENGTH, addr),
             (true, START + 1, LENGTH - 1, addr + 1),
             (false, START + 1, LENGTH, 0),
-            (true, START + LENGTH - 1, 1, addr + LENGTH - 1),
-            (true, START + LENGTH, 0, addr + LENGTH),
+            (true, START + LENGTH - 1, 1, addr + LENGTH as usize - 1),
+            (true, START + LENGTH, 0, addr + LENGTH as usize),
             (false, START + LENGTH, 1, 0),
             (false, START, LENGTH + 1, 0),
             (false, 0, 0, 0),
             (false, 0, 1, 0),
             (false, START - 1, 0, 0),
             (false, START - 1, 1, 0),
-            (true, START + LENGTH / 2, LENGTH / 2, addr + LENGTH / 2),
+            (
+                true,
+                START + LENGTH / 2,
+                LENGTH / 2,
+                addr + LENGTH as usize / 2,
+            ),
         ];
         for (ok, start, length, value) in cases {
             if ok {
                 assert_eq!(
                     translate_inner!(&memory_mapping, map, AccessType::Load, start, length)
-                        .unwrap(),
+                        .unwrap()
+                        .ptr()
+                        .addr(),
                     value
                 )
             } else {
@@ -3446,8 +3451,9 @@ mod tests {
             let result =
                 SyscallAllocFree::rust(&mut invoke_context, size_of::<T>() as u64, 0, 0, 0, 0);
             let address = result.unwrap();
+            let align = align_of::<T>() as u64;
             assert_ne!(address, 0);
-            assert!(address_is_aligned::<T>(address));
+            assert!((address % align) == 0);
         }
         aligned::<u8>();
         aligned::<u16>();
@@ -5153,7 +5159,7 @@ mod tests {
          */
 
         // Prepare four top level instructions: A, B, C and D
-        let ixs = [b'A', b'B', b'C', b'D'];
+        let ixs = *b"ABCD";
         for (idx, ix) in ixs.iter().enumerate() {
             invoke_context
                 .transaction_context
@@ -5417,7 +5423,7 @@ mod tests {
         We are invoking the syscall from B5, B6, B8, C, C1 and C2 for comprehensive testing.
         */
 
-        let top_level = [b'A', b'B', b'C'];
+        let top_level = *b"ABC";
         for (idx, ix) in top_level.iter().enumerate() {
             invoke_context
                 .transaction_context
@@ -6533,13 +6539,6 @@ mod tests {
     fn bytes_of_slice_mut<T>(val: &mut [T]) -> *mut [u8] {
         let size = val.len().wrapping_mul(mem::size_of::<T>());
         core::ptr::slice_from_raw_parts_mut(val.as_mut_ptr().cast(), size)
-    }
-
-    #[test]
-    fn test_address_is_aligned() {
-        for address in 0..std::mem::size_of::<u64>() {
-            assert_eq!(address_is_aligned::<u64>(address as u64), address == 0);
-        }
     }
 
     #[test_case(0x100000004, 0x100000004, &[0x00, 0x00, 0x00, 0x00])] // Intra region match

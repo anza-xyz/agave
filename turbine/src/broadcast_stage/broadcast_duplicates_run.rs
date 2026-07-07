@@ -445,7 +445,7 @@ impl BroadcastRun for BroadcastDuplicatesRun {
     fn record(&mut self, receiver: &RecordReceiver, blockstore: &Blockstore) -> Result<()> {
         let (all_shreds, _) = receiver.recv()?;
         blockstore
-            .insert_shreds(all_shreds.to_vec(), None, true)
+            .insert_shreds(all_shreds.to_vec(), true)
             .expect("Failed to insert shreds in blockstore");
         Ok(())
     }

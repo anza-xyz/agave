@@ -4,13 +4,7 @@
 */
 
 use {
-    agave_bls_sigverify::{
-        bls_vote_sigverify::{
-            UnverifiedVotePayload, aggregate_pubkeys_by_payload, aggregate_signatures,
-            verify_individual_votes, verify_votes_optimistic,
-        },
-        stats::SigVerifyVoteStats,
-    },
+    agave_bls_sigverify::bls_vote_sigverify::{UnverifiedVotePayload, verify_individual_votes},
     agave_votor_messages::{
         consensus_message::Block,
         unverified_vote_message::UnverifiedVoteMessage,
@@ -64,7 +58,6 @@ fn generate_test_data(
                     sender_bls_pubkey: bls_keypair.public,
                     sender_vote_account_pubkey: Keypair::new().pubkey(),
                     sender_identity_pubkey: Keypair::new().pubkey(),
-                    prepared_payload: None,
                 }
             })
             .collect(),
@@ -110,76 +103,6 @@ fn bench_verify_single_signature_with_prepared_message(c: &mut Criterion) {
     group.finish();
 }
 
-// Optimistic Verification - aggregates the public keys and signatures first before verifying.
-// Depends on both batch size and message distinctness due to pairing checks.
-fn bench_verify_votes_optimistic(c: &mut Criterion) {
-    let shred_version = 1234;
-    let mut group = c.benchmark_group("verify_votes_optimistic");
-    let mut stats = SigVerifyVoteStats::default();
-    let thread_pool = get_thread_pool();
-
-    for &batch_size in BATCH_SIZES {
-        let (vote, mut unverified_votes) = generate_test_data(shred_version, batch_size);
-        let label = format!("batch_{batch_size}");
-
-        group.bench_function(&label, |b| {
-            b.iter(|| {
-                let res = verify_votes_optimistic(
-                    vote,
-                    black_box(&mut unverified_votes),
-                    &mut stats,
-                    &thread_pool,
-                );
-                black_box(res);
-            })
-        });
-    }
-    group.finish();
-    black_box(stats);
-}
-
-// Public Key Aggregation
-// Depends on message distinctness because keys are grouped by messages.
-fn bench_aggregate_pubkeys(c: &mut Criterion) {
-    let shred_version = 1234;
-    let mut group = c.benchmark_group("aggregate_pubkeys");
-
-    for &batch_size in BATCH_SIZES {
-        let (vote, unverified_votes) = generate_test_data(shred_version, batch_size);
-        let label = format!("batch_{batch_size}");
-
-        group.bench_function(&label, |b| {
-            b.iter(|| {
-                let res = aggregate_pubkeys_by_payload(vote, black_box(&unverified_votes));
-                black_box(res).1.unwrap();
-            })
-        });
-    }
-    group.finish();
-}
-
-// Signature Aggregation
-// Pure G1 addition - message distinctness is irrelevant.
-fn bench_aggregate_signatures(c: &mut Criterion) {
-    let shred_version = 1234;
-    let mut group = c.benchmark_group("aggregate_signatures");
-
-    for &batch_size in BATCH_SIZES {
-        // Use 1 distinct message just to generate valid data cheaply.
-        // It doesn't affect signature aggregation performance.
-        let (_, unverified_votes) = generate_test_data(shred_version, batch_size);
-        let label = format!("batch_{batch_size}");
-
-        group.bench_function(&label, |b| {
-            b.iter(|| {
-                let res = aggregate_signatures(black_box(&unverified_votes));
-                black_box(res).unwrap();
-            })
-        });
-    }
-    group.finish();
-}
-
 // Individual Verification - verifies each signatures in parallel threads
 // Message distinctness is irrelevant.
 fn bench_verify_individual_votes(c: &mut Criterion) {
@@ -210,9 +133,6 @@ criterion_group!(
     benches,
     bench_verify_single_signature,
     bench_verify_single_signature_with_prepared_message,
-    bench_verify_votes_optimistic,
-    bench_aggregate_pubkeys,
-    bench_aggregate_signatures,
     bench_verify_individual_votes
 );
 criterion_main!(benches);
