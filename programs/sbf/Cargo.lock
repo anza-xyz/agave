@@ -6090,6 +6090,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "solana-big-mod-exp"
+version = "4.0.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "f05789c4afc39164132db9dcc117218d412ca1f1271d2c629fc6f554c19e5a44"
+dependencies = [
+ "num-bigint 0.4.6",
+ "solana-define-syscall 5.1.0 (registry+https://github.com/rust-lang/crates.io-index)",
+]
+
+[[package]]
 name = "solana-bincode"
 version = "3.1.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -7698,7 +7708,7 @@ checksum = "778f08fb0eaf52c9a3bef2978247f7fab0ccfddc44cfddb936d5ad9f98ede886"
 dependencies = [
  "memoffset 0.9.1",
  "solana-account-info",
- "solana-big-mod-exp",
+ "solana-big-mod-exp 3.0.0",
  "solana-blake3-hasher",
  "solana-borsh",
  "solana-clock",
@@ -8477,12 +8487,12 @@ dependencies = [
 
 [[package]]
 name = "solana-sbf-rust-big-mod-exp"
-version = "4.2.0-alpha.0"
+version = "4.3.0-alpha.0"
 dependencies = [
  "array-bytes",
  "serde",
  "serde_json",
- "solana-big-mod-exp",
+ "solana-big-mod-exp 3.0.0",
  "solana-msg",
  "solana-program-entrypoint",
 ]
@@ -9583,7 +9593,7 @@ dependencies = [
  "num-traits",
  "solana-account 4.3.1",
  "solana-account-info",
- "solana-big-mod-exp",
+ "solana-big-mod-exp 4.0.0",
  "solana-blake3-hasher",
  "solana-bls12-381-syscall",
  "solana-bn254",
