@@ -8,6 +8,7 @@ use {
         certificate::Certificate,
         consensus_message::{ConsensusMessage, VoteMessage},
         unverified_vote_message::DecodedWireConsensusMessage,
+        vote::Vote,
         wire::VersionedWireConsensusMessage,
     },
     crossbeam_channel::bounded,
@@ -56,6 +57,69 @@ pub struct AlpenglowInterceptedMessage {
     // for temporal faults (partitions) that depend on how far consensus has
     // progressed, not on which slot a given message is about.
     pub current_slot: Slot,
+}
+
+/// How many times an identical vote may be refreshed for the same slot before
+/// the interceptor treats consensus as wedged there.  Votor only refreshes
+/// votes during a standstill (once per second), so a repeatedly re-broadcast
+/// vote is itself the stuck-signal — healthy operation emits each vote once and
+/// moves on.  "More than two refreshes" ⇒ the fourth observation trips it.
+const MAX_VOTE_REFRESHES_BEFORE_ADVANCE: u32 = 2;
+
+/// Forget refresh bookkeeping for slots this far below the frontier; the active
+/// wedge is always at the tip, so far-behind slots can't be the one that's
+/// stuck.  Keeps the tracking map bounded over a long, healthy run.
+const STAGNATION_PRUNE_HORIZON: Slot = 16;
+
+/// Detects a wedged frontier and lets the caller heal it.
+///
+/// Network isolation windows are keyed on the logical clock (the highest slot
+/// consensus has reached).  If the isolated stake is large enough that the
+/// online core can't certify the window's slots, the frontier stops advancing —
+/// but the isolation window is pinned on that very frontier, so it never lifts
+/// and the stall is self-reinforcing.  This watchdog notices the tell-tale of
+/// such a wedge (the same votes refreshed over and over with no new slot) so the
+/// caller can nudge the logical clock forward a slot, sliding the window off and
+/// letting the partition heal instead of deadlocking.
+#[derive(Default)]
+struct StagnationWatchdog {
+    /// Highest slot observed in any message so far.
+    frontier: Slot,
+    /// How many times each identical vote has been observed, keyed by
+    /// (source, destination, slot, vote-kind).  A count past the refresh limit
+    /// means that vote is being re-broadcast during a standstill.
+    refreshes: HashMap<(Pubkey, Pubkey, Slot, std::mem::Discriminant<Vote>), u32>,
+}
+
+impl StagnationWatchdog {
+    /// Record one observed vote and report whether consensus now looks wedged
+    /// (some vote has been refreshed more than the limit without the frontier
+    /// advancing).  On a positive report the internal counts are reset, so the
+    /// next positive requires a fresh burst of refreshes — this paces the caller
+    /// to one nudge per burst as it walks the clock out of the window.
+    fn observe_vote(
+        &mut self,
+        source: Pubkey,
+        destination: Pubkey,
+        slot: Slot,
+        vote: &Vote,
+    ) -> bool {
+        if slot > self.frontier {
+            // A new slot appeared: real progress.  Drop stale counts so a later
+            // standstill is measured fresh and the map stays bounded.
+            self.frontier = slot;
+            let horizon = self.frontier.saturating_sub(STAGNATION_PRUNE_HORIZON);
+            self.refreshes.retain(|(_, _, s, _), _| *s >= horizon);
+        }
+        let key = (source, destination, slot, std::mem::discriminant(vote));
+        let count = self.refreshes.entry(key).or_insert(0);
+        *count += 1;
+        let wedged = *count > MAX_VOTE_REFRESHES_BEFORE_ADVANCE + 1;
+        if wedged {
+            self.refreshes.clear();
+        }
+        wedged
+    }
 }
 
 pub enum AlpenglowInterceptAction {
@@ -145,6 +209,7 @@ impl AlpenglowInterceptor {
         // Highest slot observed across all processor threads — shared logical
         // clock driving temporal faults and delayed-message release.
         let current_slot = Arc::new(AtomicU64::new(0));
+        let stagnation_watchdog = Arc::new(Mutex::new(StagnationWatchdog::default()));
         let state = Arc::new(Mutex::new(AlpenglowInterceptorState {
             validator_count: validator_keys.len(),
             ..AlpenglowInterceptorState::default()
@@ -195,6 +260,7 @@ impl AlpenglowInterceptor {
                 policy.clone(),
                 delayed_messages.clone(),
                 current_slot.clone(),
+                stagnation_watchdog.clone(),
                 state.clone(),
                 exit.clone(),
             );
@@ -284,6 +350,7 @@ impl AlpenglowInterceptor {
         policy: InterceptPolicy,
         delayed_messages: Arc<Mutex<Vec<DelayedMessage>>>,
         current_slot: Arc<AtomicU64>,
+        stagnation_watchdog: Arc<Mutex<StagnationWatchdog>>,
         state: Arc<Mutex<AlpenglowInterceptorState>>,
         exit: Arc<AtomicBool>,
     ) -> JoinHandle<()> {
@@ -333,10 +400,35 @@ impl AlpenglowInterceptor {
                                 )
                             }
                         };
-                        // Advance the shared logical clock; `now` is monotonic.
-                        let now = current_slot
-                            .fetch_max(message_slot(&message), Ordering::Relaxed)
-                            .max(message_slot(&message));
+                        // Advance the shared logical clock; it is monotonic.
+                        let msg_slot = message_slot(&message);
+                        current_slot.fetch_max(msg_slot, Ordering::Relaxed);
+                        // Stagnation watchdog: if a vote keeps being refreshed
+                        // without the frontier advancing, consensus is wedged at
+                        // `msg_slot`.  Nudge the logical clock forward one slot so
+                        // a temporal isolation window slides off and the partition
+                        // can heal, instead of pinning forever on a slot that can
+                        // never advance.
+                        if let ConsensusMessage::Vote(vote_message) = &message {
+                            let wedged = stagnation_watchdog.lock().unwrap().observe_vote(
+                                source,
+                                destination,
+                                msg_slot,
+                                &vote_message.vote,
+                            );
+                            if wedged {
+                                let nudged = current_slot
+                                    .fetch_add(1, Ordering::Relaxed)
+                                    .saturating_add(1);
+                                info!(
+                                    "byzfuzz stagnation watchdog: frontier slot {msg_slot} wedged \
+                                     after repeated vote refreshes; nudging logical clock to \
+                                     {nudged} so isolation windows slide off and consensus can \
+                                     heal"
+                                );
+                            }
+                        }
+                        let now = current_slot.load(Ordering::Relaxed);
 
                         // Record original traffic before policy decisions mutate it.
                         Self::record_message(&state, source, destination, &message);

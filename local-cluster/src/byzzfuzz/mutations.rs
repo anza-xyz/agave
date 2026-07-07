@@ -25,13 +25,30 @@ pub(crate) fn maybe_mutate_alpenglow_message(
     shred_version: u16,
     rng: &mut AlpenglowRng,
     source_bls_keypair: Option<&BLSKeypair>,
+    forced: Option<Mutations>,
 ) -> Option<MutationResult> {
-    if rng.random_range(0..100) >= 50 {
-        return None;
-    }
-    let mutation = Mutations::ALL[rng.random_range(0..Mutations::ALL.len())];
+    // When a mutation is forced (ALPENGLOW_FORCE_MUTATION), always attempt it —
+    // skip the 50% coin flip and random pick — so targeted schedules can drive a
+    // specific adversarial behavior (e.g. always-equivocate) deterministically.
+    let mutation = match forced {
+        Some(mutation) => mutation,
+        None => {
+            if rng.random_range(0..100) >= 50 {
+                return None;
+            }
+            Mutations::ALL[rng.random_range(0..Mutations::ALL.len())]
+        }
+    };
     let action = mutation.apply(message, shred_version, rng, source_bls_keypair)?;
     Some(MutationResult { mutation, action })
+}
+
+impl Mutations {
+    /// Parse a mutation by its Debug name (e.g. "NotarizeEquivocation"), for the
+    /// ALPENGLOW_FORCE_MUTATION targeting knob.
+    pub(crate) fn from_name(name: &str) -> Option<Self> {
+        Self::ALL.iter().copied().find(|m| format!("{m:?}") == name)
+    }
 }
 
 #[derive(Clone, Copy, Debug)]

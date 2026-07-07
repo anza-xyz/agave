@@ -6187,6 +6187,229 @@ fn test_alpenglow_basic_equivocation() {
     );
 }
 
+/// Runs a 4-node Alpenglow cluster where a 19%-stake byzantine validator leads every slot
+/// and equivocates through repair for the entire 64-slot test window.
+#[test]
+#[serial]
+fn test_alpenglow_equivocation_repair() {
+    agave_logger::setup_with_default(AG_DEBUG_LOG_FILTER);
+    let test_name = "test_alpenglow_equivocation_repair";
+    let slots_to_run: Slot = 64;
+
+    let node_stakes = vec![
+        19 * DEFAULT_NODE_STAKE,
+        20 * DEFAULT_NODE_STAKE,
+        27 * DEFAULT_NODE_STAKE,
+        34 * DEFAULT_NODE_STAKE,
+    ];
+    let num_nodes = node_stakes.len();
+    let total_stake = node_stakes.iter().sum::<u64>();
+
+    let (leader_schedule, validator_keys) =
+        create_custom_leader_schedule_with_random_keys(&[slots_to_run as usize, 0, 0, 0]);
+    let byzantine_pubkey = validator_keys[0].node_keypair.pubkey();
+    for slot in 0..slots_to_run {
+        assert_eq!(leader_schedule[slot].id, byzantine_pubkey);
+    }
+    log::error!("byz: {:?}", byzantine_pubkey);
+    log::error!("byz: {:?}", byzantine_pubkey);
+    log::error!("byz: {:?}", byzantine_pubkey);
+    log::error!("byz: {:?}", byzantine_pubkey);
+    log::error!("byz: {:?}", byzantine_pubkey);
+
+    let mut validator_config = ValidatorConfig::default_for_test();
+    validator_config.wait_for_supermajority = Some(0);
+    validator_config.fixed_leader_schedule = Some(FixedSchedule {
+        leader_schedule: Arc::new(leader_schedule),
+    });
+
+    let mut validator_configs = make_identical_validator_configs(&validator_config, num_nodes);
+    validator_configs[0].repair_handler_type =
+        RepairHandlerType::Malicious(MaliciousRepairConfig {
+            bad_shred_slot_frequency: Some(5),
+            bad_shred_index_frequency: None,
+            slot_range: Some((0, slots_to_run - 1)),
+        });
+    //validator_configs[1].turbine_mode = TurbineMode::new(TurbineModeKind::TurbineDisabled);
+    validator_configs[2].turbine_mode = TurbineMode::new(TurbineModeKind::TurbineDisabled);
+
+    let node_pubkeys = validator_keys
+        .iter()
+        .map(|keys| keys.node_keypair.pubkey())
+        .collect::<Vec<_>>();
+    let repair_only_pubkeys = validator_configs
+        .iter()
+        .enumerate()
+        .filter_map(|(i, config)| {
+            (config.turbine_mode.get() == TurbineModeKind::TurbineDisabled)
+                .then_some(node_pubkeys[i])
+        })
+        .collect::<Vec<_>>();
+
+    let mut cluster_config = ClusterConfig {
+        mint_lamports: DEFAULT_MINT_LAMPORTS + total_stake,
+        node_stakes,
+        validator_configs,
+        validator_keys: Some(
+            validator_keys
+                .iter()
+                .cloned()
+                .zip(iter::repeat_with(|| true))
+                .collect(),
+        ),
+        ticks_per_slot: 8,
+        slots_per_epoch: MINIMUM_SLOTS_PER_EPOCH,
+        stakers_slot_offset: MINIMUM_SLOTS_PER_EPOCH,
+        skip_warmup_slots: true,
+        ..ClusterConfig::default()
+    };
+
+    let cluster = LocalCluster::new_alpenglow(&mut cluster_config, SocketAddrSpace::Unspecified);
+    check_min_slot_is_rooted_with_repair_diagnostics(
+        &cluster,
+        &node_pubkeys,
+        &repair_only_pubkeys,
+        slots_to_run,
+        test_name,
+    );
+}
+
+#[derive(Clone, Debug)]
+struct AlpenglowCatchupProgress {
+    node: Pubkey,
+    processed: Option<Slot>,
+    finalized: Option<Slot>,
+    highest_slot: Slot,
+    full_slots: usize,
+    duplicate_slots: usize,
+}
+
+fn alpenglow_catchup_progress(
+    cluster: &LocalCluster,
+    node: Pubkey,
+    diagnostic_max_slot: Slot,
+) -> AlpenglowCatchupProgress {
+    let contact_info = cluster
+        .get_contact_info(&node)
+        .expect("validator contact info must exist");
+    let rpc_client = RpcClient::new_socket_with_commitment(
+        contact_info
+            .rpc()
+            .expect("validator rpc address must exist"),
+        CommitmentConfig::processed(),
+    );
+    let processed = rpc_client
+        .get_slot_with_commitment(CommitmentConfig::processed())
+        .ok();
+    let finalized = rpc_client
+        .get_slot_with_commitment(CommitmentConfig::finalized())
+        .ok();
+
+    let blockstore = Blockstore::open_with_options(
+        &cluster.ledger_path(&node),
+        BlockstoreOptions {
+            access_type: AccessType::ReadOnly,
+            ..BlockstoreOptions::default()
+        },
+    )
+    .expect("validator blockstore must open read-only");
+    let highest_slot = blockstore.highest_slot().ok().flatten().unwrap_or(0);
+    let inspect_through = highest_slot.min(diagnostic_max_slot);
+    let full_slots = (1..=inspect_through)
+        .filter(|slot| blockstore.is_full(*slot))
+        .count();
+    let duplicate_slots = (1..=inspect_through)
+        .filter(|slot| blockstore.has_duplicate_shreds_in_slot(*slot))
+        .count();
+
+    AlpenglowCatchupProgress {
+        node,
+        processed,
+        finalized,
+        highest_slot,
+        full_slots,
+        duplicate_slots,
+    }
+}
+
+fn check_min_slot_is_rooted_with_repair_diagnostics(
+    cluster: &LocalCluster,
+    node_pubkeys: &[Pubkey],
+    repair_only_pubkeys: &[Pubkey],
+    min_root: Slot,
+    test_name: &str,
+) {
+    let timeout = Duration::from_secs(180);
+    let repair_deadlock_grace = Duration::from_secs(15);
+    let diagnostic_max_slot = min_root.saturating_add(MINIMUM_SLOTS_PER_EPOCH);
+    let start = Instant::now();
+    let mut last_print = Instant::now();
+    let mut baseline = HashMap::<Pubkey, AlpenglowCatchupProgress>::new();
+    let mut saw_repair_progress = HashSet::<Pubkey>::new();
+
+    loop {
+        let snapshots = node_pubkeys
+            .iter()
+            .copied()
+            .map(|node| alpenglow_catchup_progress(cluster, node, diagnostic_max_slot))
+            .collect::<Vec<_>>();
+
+        for snapshot in snapshots
+            .iter()
+            .filter(|snapshot| repair_only_pubkeys.contains(&snapshot.node))
+        {
+            let baseline = baseline
+                .entry(snapshot.node)
+                .or_insert_with(|| snapshot.clone());
+            let processed_advanced =
+                snapshot.processed.unwrap_or(0) > baseline.processed.unwrap_or(0);
+            if processed_advanced
+                || snapshot.highest_slot > baseline.highest_slot
+                || snapshot.full_slots > baseline.full_slots
+                || snapshot.duplicate_slots > baseline.duplicate_slots
+            {
+                saw_repair_progress.insert(snapshot.node);
+            }
+        }
+
+        if snapshots
+            .iter()
+            .all(|snapshot| snapshot.finalized.is_some_and(|root| root >= min_root))
+        {
+            error!(
+                "{test_name} rooted target {min_root}; repair_progress={:?}; snapshots={:#?}",
+                saw_repair_progress, snapshots
+            );
+            return;
+        }
+
+        if last_print.elapsed() > Duration::from_secs(3) {
+            error!(
+                "{test_name} waiting for root >= {min_root}; repair_only={:?}; \
+                 repair_progress={:?}; snapshots={:#?}",
+                repair_only_pubkeys, saw_repair_progress, snapshots
+            );
+            last_print = Instant::now();
+        }
+
+        assert!(
+            start.elapsed() <= timeout,
+            "{test_name} failed to root {min_root}; repair made progress on \
+             {saw_repair_progress:?}; snapshots={snapshots:#?}"
+        );
+        assert!(
+            repair_only_pubkeys.is_empty()
+                || saw_repair_progress.len() == repair_only_pubkeys.len()
+                || start.elapsed() <= repair_deadlock_grace,
+            "{test_name} repair appears deadlocked before catch-up: \
+             repair_only={repair_only_pubkeys:?}; repair_progress={saw_repair_progress:?}; \
+             snapshots={snapshots:#?}"
+        );
+
+        sleep(Duration::from_millis(solana_clock::DEFAULT_MS_PER_SLOT / 2));
+    }
+}
+
 fn test_alpenglow_migration(
     num_nodes: usize,
     test_name: &str,

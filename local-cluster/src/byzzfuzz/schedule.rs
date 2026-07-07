@@ -36,7 +36,7 @@ const DEFAULT_NETWORK_FAULTS: usize = 8;
 const DEFAULT_CORRUPTION_WINDOWS: usize = 8;
 /// A node may only be isolated if its stake is under this percent of total, so
 /// the online core stays above the 60% quorum and consensus can still progress.
-const MAX_ISOLATED_STAKE_PERCENT: u128 = 55;
+const MAX_ISOLATED_STAKE_PERCENT: u128 = 40;
 
 /// Isolates a set of nodes for a window of slots.  Any message whose source or
 /// destination is isolated is dropped while the window is active.
@@ -95,6 +95,27 @@ impl FaultSchedule {
             .map(|_| random_window(&mut rng, max_slot))
             .collect();
         let corruption_seed = rng.random();
+        Self {
+            network_faults,
+            corruption_windows,
+            corruption_seed,
+        }
+    }
+
+    /// Build a schedule by hand from explicit faults, bypassing the guardrailed
+    /// sampler. Used by `ALPENGLOW_MANUAL_SCHEDULE` to drive rarely-covered votor
+    /// paths (e.g. intrawindow safe-to-notar repair) that random sampling never
+    /// lines up. Caller owns correctness — nothing here caps isolated stake, so a
+    /// careless schedule can deadlock consensus intentionally.
+    pub(crate) fn manual(
+        network_faults: Vec<(RangeInclusive<Slot>, HashSet<Pubkey>)>,
+        corruption_windows: Vec<RangeInclusive<Slot>>,
+        corruption_seed: u64,
+    ) -> Self {
+        let network_faults = network_faults
+            .into_iter()
+            .map(|(window, isolated)| NetworkFault { window, isolated })
+            .collect();
         Self {
             network_faults,
             corruption_windows,

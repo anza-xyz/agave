@@ -6,14 +6,63 @@ use {
         fraction::Fraction,
         vote::Vote,
     },
+    log::info,
     solana_clock::Slot,
     solana_pubkey::Pubkey,
     solana_signer_store::{Decoded, decode},
     std::{
-        collections::{HashMap, HashSet},
+        collections::{BTreeMap, HashMap, HashSet},
         num::NonZeroU64,
     },
 };
+
+// Emits a per-run coverage summary: the distribution of vote kinds (with unique
+// signer counts) and certificate kinds actually observed on the wire. Combined
+// with the mutation histogram, this shows which protocol surface a run reached
+// and which certificate/vote types stay unproduced under random schedules.
+pub(crate) fn report_coverage(test_name: &str, data: &AlpenglowInterceptorState) {
+    let mut vote_kinds: BTreeMap<&'static str, (u64, HashSet<Pubkey>)> = BTreeMap::new();
+    for (source, _, vote_message) in &data.votes {
+        let kind = match &vote_message.vote {
+            Vote::Notarize(_) => "Notarize",
+            Vote::NotarizeFallback(_) => "NotarizeFallback",
+            Vote::Finalize(_) => "Finalize",
+            Vote::Skip(_) => "Skip",
+            Vote::SkipFallback(_) => "SkipFallback",
+            Vote::Genesis(_) => "Genesis",
+        };
+        let entry = vote_kinds.entry(kind).or_default();
+        entry.0 += 1;
+        entry.1.insert(*source);
+    }
+    let vote_summary = vote_kinds
+        .iter()
+        .map(|(kind, (count, sources))| (*kind, *count, sources.len()))
+        .collect::<Vec<_>>();
+
+    let mut cert_kinds: BTreeMap<&'static str, u64> = BTreeMap::new();
+    for (_, _, certificate) in &data.certificates {
+        let kind = match certificate.cert_type {
+            CertificateType::Finalize(_) => "Finalize",
+            CertificateType::FinalizeFast(_) => "FinalizeFast",
+            CertificateType::Notarize(_) => "Notarize",
+            CertificateType::NotarizeFallback(_) => "NotarizeFallback",
+            CertificateType::Skip(_) => "Skip",
+            CertificateType::Genesis(_) => "Genesis",
+        };
+        *cert_kinds.entry(kind).or_default() += 1;
+    }
+    info!(
+        "{test_name}: byzfuzz coverage votes total={} kinds(count,uniq_sources)={:?}",
+        data.votes.len(),
+        vote_summary,
+    );
+    info!(
+        "{test_name}: byzfuzz coverage certs total={} kinds={:?}",
+        data.certificates.len(),
+        cert_kinds,
+    );
+}
 
 #[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
 enum VoteKind {
@@ -40,9 +89,11 @@ pub(crate) fn validate_invariants(
 ) {
     validate_certified_slot_progress(data, source_stakes, min_certified_slot);
     validate_certificate_thresholds(data, source_stakes);
-    validate_finalizations_are_notarized(data);
-    validate_no_conflicting_notarization_after_finalization(data);
-    validate_finalized_digest_uniqueness(data);
+    validate_no_conflicting_finalization_and_nullification(data);
+    validate_no_quorum_notarizations_for_multiple_digests(data, source_stakes);
+    validate_finalizations_are_notarized(data, source_stakes);
+    validate_no_conflicting_notarization_after_finalization(data, source_stakes);
+    validate_no_quorum_finalizations_for_multiple_digests(data, source_stakes);
     validate_correct_nodes_do_not_double_sign(data, byzantine_sources);
 }
 
@@ -160,34 +211,80 @@ fn validate_certificate_thresholds(
     let total_stake = source_stakes.values().sum::<u64>();
     let total_stake = NonZeroU64::new(total_stake).expect("byzfuzz stake must be nonzero");
     for (_, _, certificate) in &data.certificates {
-        let signing_stake =
-            certificate_signing_stake(certificate, data.validator_count, &rank_stakes);
-        let actual = Fraction::new(signing_stake, total_stake);
+        let summary = certificate_signer_summary(certificate, data.validator_count, &rank_stakes);
+        let actual = Fraction::new(summary.stake, total_stake);
         let required = certificate.cert_type.limits_and_vote_types().0;
         let cert_type = &certificate.cert_type;
         assert!(
+            summary.users > 0,
+            "byzfuzz invariant failed: {cert_type:?} has no signers",
+        );
+        assert!(
+            summary.users <= data.validator_count,
+            "byzfuzz invariant failed: {cert_type:?} has {} signers but only {} validators",
+            summary.users,
+            data.validator_count,
+        );
+        assert!(
             actual >= required,
-            "byzfuzz invariant failed: {cert_type:?} has signing stake {actual}, needs {required}",
+            "byzfuzz invariant failed: {cert_type:?} stake {actual} from {} unique signers, needs \
+             {required}",
+            summary.users,
+        );
+    }
+}
+
+// In this implementation, a skip certificate is the nullification certificate
+// for a view/slot. No slot may be both finalized and nullified.
+fn validate_no_conflicting_finalization_and_nullification(data: &AlpenglowInterceptorState) {
+    let finalized_slots = finalized_slots(data);
+    let nullified_slots = nullified_slots(data);
+    for slot in finalized_slots.intersection(&nullified_slots) {
+        panic!(
+            "byzfuzz invariant failed: slot {slot} has finalization and nullification/skip \
+             certificates",
+        );
+    }
+}
+
+// Ensures a view cannot have notarization-family quorums for multiple digests.
+fn validate_no_quorum_notarizations_for_multiple_digests(
+    data: &AlpenglowInterceptorState,
+    source_stakes: &HashMap<Pubkey, u64>,
+) {
+    let notarized_by_slot = quorum_notarized_blocks_by_slot(data, source_stakes);
+    for (slot, blocks) in notarized_by_slot {
+        assert!(
+            blocks.len() <= 1,
+            "byzfuzz invariant failed: slot {slot} has quorum notarizations for multiple \
+             payloads: {blocks:?}",
         );
     }
 }
 
 // Ensures every finalization has a matching notarization witness.
-fn validate_finalizations_are_notarized(data: &AlpenglowInterceptorState) {
-    let notarized_blocks = notarized_blocks(data);
-    let notarized_slots = notarized_blocks
-        .iter()
-        .map(|block| block.slot)
-        .collect::<HashSet<_>>();
+fn validate_finalizations_are_notarized(
+    data: &AlpenglowInterceptorState,
+    source_stakes: &HashMap<Pubkey, u64>,
+) {
+    let notarized_by_slot = quorum_notarized_blocks_by_slot(data, source_stakes);
 
     for (_, _, certificate) in &data.certificates {
         match certificate.cert_type {
-            CertificateType::Finalize(slot) => assert!(
-                notarized_slots.contains(&slot),
-                "byzfuzz invariant failed: Finalize({slot}) has no notarization"
-            ),
+            CertificateType::Finalize(slot) => {
+                let blocks = notarized_by_slot.get(&slot).unwrap_or_else(|| {
+                    panic!("byzfuzz invariant failed: Finalize({slot}) has no notarization")
+                });
+                assert!(
+                    blocks.len() == 1,
+                    "byzfuzz invariant failed: Finalize({slot}) has multiple notarized payloads: \
+                     {blocks:?}",
+                );
+            }
             CertificateType::FinalizeFast(block) => assert!(
-                notarized_blocks.contains(&block),
+                notarized_by_slot
+                    .get(&block.slot)
+                    .is_some_and(|blocks| blocks.contains(&block)),
                 "byzfuzz invariant failed: FinalizeFast({block:?}) has no matching notarization"
             ),
             _ => {}
@@ -196,8 +293,11 @@ fn validate_finalizations_are_notarized(data: &AlpenglowInterceptorState) {
 }
 
 // Ensures finalized slots do not have notarizations for conflicting blocks.
-fn validate_no_conflicting_notarization_after_finalization(data: &AlpenglowInterceptorState) {
-    let notarized_by_slot = notarized_blocks_by_slot(data);
+fn validate_no_conflicting_notarization_after_finalization(
+    data: &AlpenglowInterceptorState,
+    source_stakes: &HashMap<Pubkey, u64>,
+) {
+    let notarized_by_slot = quorum_notarized_blocks_by_slot(data, source_stakes);
     for (slot, finalized_block) in finalized_blocks_by_slot(data, &notarized_by_slot) {
         if let Some(notarized_blocks) = notarized_by_slot.get(&slot) {
             for block in notarized_blocks {
@@ -212,8 +312,11 @@ fn validate_no_conflicting_notarization_after_finalization(data: &AlpenglowInter
 }
 
 // Ensures all finalization certificates for a slot agree on the same block.
-fn validate_finalized_digest_uniqueness(data: &AlpenglowInterceptorState) {
-    let notarized_by_slot = notarized_blocks_by_slot(data);
+fn validate_no_quorum_finalizations_for_multiple_digests(
+    data: &AlpenglowInterceptorState,
+    source_stakes: &HashMap<Pubkey, u64>,
+) {
+    let notarized_by_slot = quorum_notarized_blocks_by_slot(data, source_stakes);
     let mut finalized_by_slot = HashMap::<Slot, Block>::new();
 
     for (_, _, certificate) in &data.certificates {
@@ -276,11 +379,34 @@ fn finalized_blocks_by_slot(
     finalized_by_slot
 }
 
+fn finalized_slots(data: &AlpenglowInterceptorState) -> HashSet<Slot> {
+    data.certificates
+        .iter()
+        .filter_map(|(_, _, certificate)| match certificate.cert_type {
+            CertificateType::Finalize(slot) => Some(slot),
+            CertificateType::FinalizeFast(block) => Some(block.slot),
+            _ => None,
+        })
+        .collect()
+}
+
+fn nullified_slots(data: &AlpenglowInterceptorState) -> HashSet<Slot> {
+    data.certificates
+        .iter()
+        .filter_map(|(_, _, certificate)| match certificate.cert_type {
+            CertificateType::Skip(slot) => Some(slot),
+            _ => None,
+        })
+        .collect()
+}
+
 fn notarized_blocks(data: &AlpenglowInterceptorState) -> HashSet<Block> {
     data.certificates
         .iter()
         .filter_map(|(_, _, certificate)| match certificate.cert_type {
-            CertificateType::Notarize(block) => Some(block),
+            CertificateType::Notarize(block)
+            | CertificateType::NotarizeFallback(block)
+            | CertificateType::FinalizeFast(block) => Some(block),
             _ => None,
         })
         .collect()
@@ -295,6 +421,58 @@ fn notarized_blocks_by_slot(data: &AlpenglowInterceptorState) -> HashMap<Slot, H
             .insert(block);
     }
     notarized_by_slot
+}
+
+fn quorum_notarized_blocks_by_slot(
+    data: &AlpenglowInterceptorState,
+    source_stakes: &HashMap<Pubkey, u64>,
+) -> HashMap<Slot, HashSet<Block>> {
+    let mut notarized_by_slot = notarized_blocks_by_slot(data);
+    for (block, sources) in notarization_vote_sources_by_block(data) {
+        if sources_have_quorum(&sources, source_stakes) {
+            notarized_by_slot
+                .entry(block.slot)
+                .or_default()
+                .insert(block);
+        }
+    }
+    notarized_by_slot
+}
+
+fn notarization_vote_sources_by_block(
+    data: &AlpenglowInterceptorState,
+) -> HashMap<Block, HashSet<Pubkey>> {
+    let mut sources_by_block = HashMap::<Block, HashSet<Pubkey>>::new();
+    for (source, _, vote_message) in &data.votes {
+        match vote_message.vote {
+            Vote::Notarize(vote) => {
+                sources_by_block
+                    .entry(vote.block)
+                    .or_default()
+                    .insert(*source);
+            }
+            Vote::NotarizeFallback(vote) => {
+                sources_by_block
+                    .entry(vote.block)
+                    .or_default()
+                    .insert(*source);
+            }
+            _ => {}
+        }
+    }
+    sources_by_block
+}
+
+fn sources_have_quorum(sources: &HashSet<Pubkey>, source_stakes: &HashMap<Pubkey, u64>) -> bool {
+    let total_stake = source_stakes
+        .values()
+        .map(|stake| *stake as u128)
+        .sum::<u128>();
+    let signing_stake = sources
+        .iter()
+        .map(|source| source_stakes.get(source).copied().unwrap_or(0) as u128)
+        .sum::<u128>();
+    signing_stake * 100 >= PROGRESS_THRESHOLD_PERCENT * total_stake
 }
 
 // Progress evidence per slot: finalized, skipped, or notarized.  Notarized
@@ -334,30 +512,66 @@ fn record_finalized_block(finalized_by_slot: &mut HashMap<Slot, Block>, slot: Sl
     }
 }
 
-fn certificate_signing_stake(
+#[derive(Debug)]
+struct CertificateSignerSummary {
+    stake: u64,
+    users: usize,
+}
+
+fn certificate_signer_summary(
     certificate: &Certificate,
     validator_count: usize,
     rank_stakes: &HashMap<u16, u64>,
-) -> u64 {
+) -> CertificateSignerSummary {
+    let cert_type = &certificate.cert_type;
     match decode(&certificate.bitmap, validator_count).unwrap_or_else(|err| {
-        let cert_type = &certificate.cert_type;
         panic!("byzfuzz invariant failed: failed to decode {cert_type:?}: {err:?}",)
     }) {
-        Decoded::Base2(signers) => signer_stake(signers.iter_ones(), rank_stakes),
+        Decoded::Base2(signers) => signer_summary(signers.iter_ones(), cert_type, rank_stakes),
         Decoded::Base3(primary, fallback) => {
-            signer_stake(primary.iter_ones().chain(fallback.iter_ones()), rank_stakes)
+            assert_eq!(
+                primary.len(),
+                fallback.len(),
+                "byzfuzz invariant failed: {cert_type:?} has mismatched Base3 bitmap lengths",
+            );
+            let mut seen = HashSet::<usize>::new();
+            let mut ranks = Vec::new();
+            for rank in primary.iter_ones() {
+                assert!(
+                    seen.insert(rank),
+                    "byzfuzz invariant failed: {cert_type:?} has duplicate signer rank {rank}",
+                );
+                ranks.push(rank);
+            }
+            for rank in fallback.iter_ones() {
+                assert!(
+                    seen.insert(rank),
+                    "byzfuzz invariant failed: {cert_type:?} has signer rank {rank} in both Base3 \
+                     bitmaps",
+                );
+                ranks.push(rank);
+            }
+            signer_summary(ranks.into_iter(), cert_type, rank_stakes)
         }
     }
 }
 
-fn signer_stake(ranks: impl Iterator<Item = usize>, rank_stakes: &HashMap<u16, u64>) -> u64 {
-    ranks
-        .map(|rank| {
-            *rank_stakes.get(&(rank as u16)).unwrap_or_else(|| {
-                panic!("byzfuzz invariant failed: missing stake for rank {rank}")
-            })
-        })
-        .sum()
+fn signer_summary(
+    ranks: impl Iterator<Item = usize>,
+    cert_type: &CertificateType,
+    rank_stakes: &HashMap<u16, u64>,
+) -> CertificateSignerSummary {
+    let mut summary = CertificateSignerSummary { stake: 0, users: 0 };
+    for rank in ranks {
+        let rank = u16::try_from(rank).unwrap_or_else(|_| {
+            panic!("byzfuzz invariant failed: {cert_type:?} signer rank {rank} exceeds u16")
+        });
+        summary.stake += *rank_stakes.get(&rank).unwrap_or_else(|| {
+            panic!("byzfuzz invariant failed: {cert_type:?} missing stake for rank {rank}")
+        });
+        summary.users += 1;
+    }
+    summary
 }
 
 fn rank_stakes(
@@ -365,10 +579,18 @@ fn rank_stakes(
     source_stakes: &HashMap<Pubkey, u64>,
 ) -> HashMap<u16, u64> {
     let mut rank_stakes = HashMap::<u16, u64>::new();
+    let mut rank_sources = HashMap::<u16, Pubkey>::new();
     for (source, _, vote_message) in &data.votes {
         let stake = *source_stakes
             .get(source)
             .unwrap_or_else(|| panic!("byzfuzz invariant failed: missing stake for {source}"));
+        if let Some(existing_source) = rank_sources.insert(vote_message.rank, *source) {
+            assert_eq!(
+                existing_source, *source,
+                "byzfuzz invariant failed: rank {} mapped to multiple sources: {} and {}",
+                vote_message.rank, existing_source, source,
+            );
+        }
         if let Some(existing) = rank_stakes.insert(vote_message.rank, stake) {
             assert_eq!(
                 existing, stake,

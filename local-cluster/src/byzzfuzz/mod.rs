@@ -9,8 +9,8 @@ use {
                 AlpenglowInterceptAction, AlpenglowInterceptor, AlpenglowRng,
                 describe_consensus_message, describe_intercept_action,
             },
-            invariants::validate_invariants,
-            mutations::maybe_mutate_alpenglow_message,
+            invariants::{report_coverage, validate_invariants},
+            mutations::{Mutations, maybe_mutate_alpenglow_message},
             schedule::{FaultSchedule, message_slot},
         },
         integration_tests::{
@@ -30,22 +30,30 @@ use {
     solana_net_utils::SocketAddrSpace,
     solana_signer::Signer,
     std::{
-        collections::{HashMap, HashSet},
+        collections::{BTreeMap, HashMap, HashSet},
         sync::{
-            Arc,
+            Arc, Mutex,
             atomic::{AtomicU64, Ordering},
         },
         time::{SystemTime, UNIX_EPOCH},
     },
 };
 
+const ROOT_SLOT_TO_WAIT_FOR: Slot = 32;
+const BYZANTINE_STAKE_PERCENT: u64 = 19;
+
 #[test]
 fn test_alpenglow_byzfuzz() {
     agave_logger::setup_with_default(AG_DEBUG_LOG_FILTER);
-    const NUM_NODES: usize = 7;
-    const BYZANTINE_INDICES: &[usize] = &[0, 5];
-    const ROOT_SLOT_TO_WAIT_FOR: Slot = 32;
-    // Fixed seed for the honest-stake partition so failures are reproducible.
+    run_alpenglow_byzfuzz("test_alpenglow_byzfuzz", 7, &[0, 5]);
+}
+
+fn run_alpenglow_byzfuzz(
+    test_name: &'static str,
+    num_nodes: usize,
+    byzantine_indices: &'static [usize],
+) {
+    // Fixed seed for the stake partition and fault schedule so failures are reproducible.
     let random_seed: Option<u64> = match std::env::var("ALPENGLOW_TEST_SEED") {
         Ok(val) => val.parse::<u64>().ok(),
         Err(_) => None,
@@ -56,20 +64,21 @@ fn test_alpenglow_byzfuzz() {
             .expect("Time went backwards")
             .as_millis() as u64,
     );
-    info!("using seed {random_seed:?}");
-    // create leader schedules & keyts
+    info!("{test_name}: using seed {random_seed:?}");
+
+    let leader_slots = vec![4; num_nodes];
     let (leader_schedule, validator_keys) =
-        create_custom_leader_schedule_with_random_keys(&[4; NUM_NODES]);
+        create_custom_leader_schedule_with_random_keys(&leader_slots);
     let node_pubkeys = validator_keys
         .iter()
         .map(|keys| keys.node_keypair.pubkey())
         .collect::<Vec<_>>();
-    let byzantine_sources = BYZANTINE_INDICES
+    let byzantine_sources = byzantine_indices
         .iter()
         .map(|&i| node_pubkeys[i])
         .collect::<HashSet<_>>();
     let byzantine_bls_keypairs = Arc::new(
-        BYZANTINE_INDICES
+        byzantine_indices
             .iter()
             .map(|&i| {
                 let keys = &validator_keys[i];
@@ -86,23 +95,40 @@ fn test_alpenglow_byzfuzz() {
     let byzantine_bls_keypairs_for_policy = byzantine_bls_keypairs.clone();
     let byzantine_message_count = Arc::new(AtomicU64::new(0));
     let byzantine_message_count_for_policy = byzantine_message_count.clone();
+    // Coverage: histogram of which concrete mutation variants actually took
+    // effect (returned an action), keyed by the mutation's Debug name. Reveals
+    // which fuzzing surface a run exercised and which stays unreached.
+    let mutation_coverage = Arc::new(Mutex::new(BTreeMap::<String, u64>::new()));
+    let mutation_coverage_for_policy = mutation_coverage.clone();
+    // Optional targeting knob: force every byzantine corruption to apply one
+    // specific mutation, so hand-built schedules can deterministically drive a
+    // chosen adversarial behavior into rarely-covered votor paths.
+    let forced_mutation = std::env::var("ALPENGLOW_FORCE_MUTATION")
+        .ok()
+        .and_then(|name| {
+            let parsed = Mutations::from_name(&name);
+            if parsed.is_none() {
+                warn!("{test_name}: unknown ALPENGLOW_FORCE_MUTATION={name:?}, ignoring");
+            }
+            parsed
+        });
+    info!("{test_name}: forced_mutation = {forced_mutation:?}");
 
-    // set stakes: the byzantine node(s) always hold a combined 19% of cluster
-    // stake (kept just under the fault threshold), while the honest nodes split
+    // The byzantine identity/identities hold a combined 19% of cluster stake
+    // (kept just under the fault threshold), while the honest identities split
     // the remaining 81% in random, seed-deterministic proportions.
-    const BYZANTINE_STAKE_PERCENT: u64 = 19;
-    let total_cluster_stake: u64 = DEFAULT_NODE_STAKE.saturating_mul(NUM_NODES as u64);
+    let total_cluster_stake: u64 = DEFAULT_NODE_STAKE.saturating_mul(num_nodes as u64);
     let stake_percents = random_stake_percents(
         random_seed,
-        NUM_NODES,
-        BYZANTINE_INDICES,
+        num_nodes,
+        byzantine_indices,
         BYZANTINE_STAKE_PERCENT,
     );
     let node_stakes = stake_percents
         .iter()
         .map(|&pct| percent_of(total_cluster_stake, pct))
         .collect::<Vec<_>>();
-    assert_eq!(node_stakes.len(), NUM_NODES);
+    assert_eq!(node_stakes.len(), num_nodes);
     let source_stakes = node_pubkeys
         .iter()
         .copied()
@@ -110,22 +136,70 @@ fn test_alpenglow_byzfuzz() {
         .collect::<HashMap<_, _>>();
 
     // Sample the entire fault schedule from the seed before the cluster starts,
-    // so the faults a run applies depend only on the seed.  Logged here so a
+    // so the faults a run applies depend only on the seed. Logged here so a
     // failing run prints its own reproduction recipe.
-    let schedule = Arc::new(FaultSchedule::sample(
-        random_seed,
-        &node_pubkeys,
-        &source_stakes,
-        ROOT_SLOT_TO_WAIT_FOR,
-    ));
-    info!("byzfuzz fault schedule (seed {random_seed}): {schedule:#?}");
+    //
+    // ALPENGLOW_MANUAL_SCHEDULE overrides the sampled schedule with a hand-built
+    // one aimed at a specific rarely-covered votor path (the guardrailed sampler
+    // never lines these up). Currently: "intrawindow_repair".
+    let schedule = match std::env::var("ALPENGLOW_MANUAL_SCHEDULE").ok().as_deref() {
+        Some("intrawindow_repair") => {
+            // Isolate the lowest-stake honest node over the parent+child of several
+            // intrawindow leader slots. The observer misses those blocks while the
+            // supermajority notarizes them; on reconnect it ingests the notarize
+            // votes and fires safe-to-notar for a block it never voted, pushing it
+            // onto pending_safe_to_notar (consensus_pool_service::process_pending_
+            // safe_to_notar -> request_repair, the 0%-covered repair/re-queue path).
+            let byz: HashSet<usize> = byzantine_indices.iter().copied().collect();
+            let observer = (0..num_nodes)
+                .filter(|i| !byz.contains(i))
+                .min_by_key(|&i| node_stakes[i])
+                .expect("byzfuzz: need an honest observer node");
+            let observer_pk = node_pubkeys[observer];
+            info!(
+                "{test_name}: MANUAL intrawindow_repair observer=idx{observer} ({observer_pk}) \
+                 stake={}",
+                node_stakes[observer]
+            );
+            // child slots c with c%4 in {2,3} (intrawindow); isolate [c-1 ..= c] so
+            // both the child and its parent are missed by the observer.
+            let mut faults = Vec::new();
+            let mut c = 6;
+            while c <= ROOT_SLOT_TO_WAIT_FOR.saturating_sub(2) {
+                faults.push(((c - 1)..=c, HashSet::from([observer_pk])));
+                c += 4;
+            }
+            // Corruption across the whole run so byzantine nodes equivocate their
+            // notarize block_ids (pair with ALPENGLOW_FORCE_MUTATION=NotarizeEquivocation).
+            // Votes for a phantom block_id the observer never has in blockstore are
+            // what can drive safe-to-notar -> repair (block-not-received) branch.
+            let corruption = vec![1..=ROOT_SLOT_TO_WAIT_FOR];
+            Arc::new(FaultSchedule::manual(faults, corruption, random_seed))
+        }
+        Some(other) => {
+            warn!("{test_name}: unknown ALPENGLOW_MANUAL_SCHEDULE={other:?}, using sampler");
+            Arc::new(FaultSchedule::sample(
+                random_seed,
+                &node_pubkeys,
+                &source_stakes,
+                ROOT_SLOT_TO_WAIT_FOR,
+            ))
+        }
+        None => Arc::new(FaultSchedule::sample(
+            random_seed,
+            &node_pubkeys,
+            &source_stakes,
+            ROOT_SLOT_TO_WAIT_FOR,
+        )),
+    };
+    info!("{test_name}: byzfuzz fault schedule (seed {random_seed}): {schedule:#?}");
     let schedule_for_policy = schedule.clone();
 
     // Centralize all Alpenglow messages here before adding fuzz actions.
     let proxy = AlpenglowInterceptor::new(&validator_keys, move |intercepted| {
         // Network faults are temporal and apply to every node: a node is
         // isolated while consensus is *progressing through* the window, keyed
-        // on logical time, not the message's subject slot.  Keying on subject
+        // on logical time, not the message's subject slot. Keying on subject
         // slot would drop catch-up traffic for those slots forever and stall
         // the isolated node permanently.
         if schedule_for_policy.drops_link(
@@ -133,16 +207,17 @@ fn test_alpenglow_byzfuzz() {
             &intercepted.source,
             &intercepted.destination,
         ) {
-            //info!(
-            //    "byzfuzz policy current_slot={} source={} destination={} msg=\"{}\" \
-            //     action=\"drop\" reason=network_isolation",
-            //    intercepted.current_slot,
-            //    intercepted.source,
-            //    intercepted.destination,
-            //    describe_consensus_message(&intercepted.message),
-            //);
+            debug!(
+                "byzfuzz policy current_slot={} source={} destination={} msg=\"{}\" \
+                 action=\"drop\" reason=network_isolation",
+                intercepted.current_slot,
+                intercepted.source,
+                intercepted.destination,
+                describe_consensus_message(&intercepted.message),
+            );
             return AlpenglowInterceptAction::Drop;
         }
+
         // Corruptions target a slot's agreement, so they key on the message's
         // subject slot, and only apply to byzantine sources: re-signing a
         // mutated message needs that source's BLS key.
@@ -150,7 +225,6 @@ fn test_alpenglow_byzfuzz() {
         if byzantine_sources_for_policy.contains(&intercepted.source)
             && schedule_for_policy.in_corruption_window(slot)
         {
-            byzantine_message_count_for_policy.fetch_add(1, Ordering::Relaxed);
             let source_bls_keypair = byzantine_bls_keypairs_for_policy
                 .get(&intercepted.source)
                 .map(|keypair| keypair.as_ref());
@@ -158,22 +232,30 @@ fn test_alpenglow_byzfuzz() {
             // the same vote to different peers can be mutated differently.
             let mut rng =
                 schedule_for_policy.corruption_rng(&intercepted.message, &intercepted.destination);
+
+            byzantine_message_count_for_policy.fetch_add(1, Ordering::Relaxed);
             if let Some(result) = maybe_mutate_alpenglow_message(
                 &intercepted.message,
                 intercepted.shred_version,
                 &mut rng,
                 source_bls_keypair,
+                forced_mutation,
             ) {
-                //info!(
-                //    "byzfuzz policy current_slot={} source={} destination={} msg=\"{}\" \
-                //     action=\"{}\" reason=byzantine_corruption mutation={:?}",
-                //    intercepted.current_slot,
-                //    intercepted.source,
-                //    intercepted.destination,
-                //    describe_consensus_message(&intercepted.message),
-                //    describe_intercept_action(&result.action),
-                //    result.mutation,
-                //);
+                debug!(
+                    "byzfuzz policy current_slot={} source={} destination={} msg=\"{}\" \
+                     action=\"{}\" reason=byzantine_corruption mutation={:?}",
+                    intercepted.current_slot,
+                    intercepted.source,
+                    intercepted.destination,
+                    describe_consensus_message(&intercepted.message),
+                    describe_intercept_action(&result.action),
+                    result.mutation,
+                );
+                *mutation_coverage_for_policy
+                    .lock()
+                    .unwrap()
+                    .entry(format!("{:?}", result.mutation))
+                    .or_default() += 1;
                 return result.action;
             }
         }
@@ -181,16 +263,16 @@ fn test_alpenglow_byzfuzz() {
     });
 
     info!(
-        "Alpenglow byzantine test stake distribution (byzantine indices = {BYZANTINE_INDICES:?}, \
-         percents = {stake_percents:?}, stakes = {node_stakes:?} (sum = {total_cluster_stake})",
+        "{test_name}: Alpenglow byzantine test stake distribution (byzantine indices = {:?}, \
+         percents = {:?}, stakes = {:?} (sum = {total_cluster_stake})",
+        byzantine_indices, stake_percents, node_stakes,
     );
-    // initialize validator config
+
     let mut validator_config = ValidatorConfig::default_for_test();
     validator_config.fixed_leader_schedule = Some(FixedSchedule {
         leader_schedule: Arc::new(leader_schedule),
     });
     validator_config.wait_for_supermajority = Some(0);
-    //validator_config.alpenglow_invariant_event_sender = Some(invariant_sender);
     let validator_configs = validator_keys
         .iter()
         .map(|_| {
@@ -199,7 +281,7 @@ fn test_alpenglow_byzfuzz() {
             config
         })
         .collect::<Vec<_>>();
-    // initialize cluster
+
     let mut cluster_config = ClusterConfig {
         validator_configs,
         validator_keys: Some(
@@ -216,7 +298,8 @@ fn test_alpenglow_byzfuzz() {
         skip_warmup_slots: true,
         ..ClusterConfig::default()
     };
-    // Start the cluster only after overrides have been attached.  Then publish
+
+    // Start the cluster only after overrides have been attached. Then publish
     // the actual destination sockets back into the proxy so workers can forward
     // traffic that arrived during startup.
     let cluster = LocalCluster::new_alpenglow(&mut cluster_config, SocketAddrSpace::Unspecified);
@@ -224,16 +307,21 @@ fn test_alpenglow_byzfuzz() {
 
     cluster.check_min_slot_is_rooted(
         ROOT_SLOT_TO_WAIT_FOR,
-        "test_alpenglow_byzfuzz",
+        test_name,
         SocketAddrSpace::Unspecified,
     );
     let byzantine_messages = byzantine_message_count.load(Ordering::Relaxed);
     assert!(
         byzantine_messages > 0,
-        "byzfuzz interceptor saw no byzantine messages"
+        "{test_name}: interceptor saw no byzantine messages"
     );
-    info!("byzfuzz intercepted {byzantine_messages} byzantine messages");
+    info!("{test_name}: intercepted {byzantine_messages} byzantine messages");
+    info!(
+        "{test_name}: byzfuzz mutation coverage (applied): {:?}",
+        mutation_coverage.lock().unwrap(),
+    );
     drop(cluster);
+    report_coverage(test_name, &proxy.state.lock().unwrap());
     validate_invariants(
         &proxy.state.lock().unwrap(),
         &byzantine_sources,
