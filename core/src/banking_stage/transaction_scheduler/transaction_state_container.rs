@@ -4,10 +4,16 @@ use {
     agave_transaction_view::resolved_transaction_view::ResolvedTransactionView,
     slab::{Slab, VacantEntry},
     solana_packet::PACKET_DATA_SIZE,
+    solana_pubkey::{Pubkey, PubkeyHasherBuilder},
     solana_runtime_transaction::{
         runtime_transaction::RuntimeTransaction, transaction_with_meta::TransactionWithMeta,
     },
-    std::{collections::BTreeSet, iter::Rev, ops::Bound, sync::Arc},
+    std::{
+        collections::{BTreeSet, HashMap, hash_map::Entry},
+        iter::Rev,
+        ops::Bound,
+        sync::Arc,
+    },
 };
 
 /// This structure will hold `TransactionState` for the entirety of a
@@ -40,6 +46,7 @@ pub(crate) struct TransactionStateContainer<Tx: TransactionWithMeta> {
     priority_queue: BTreeSet<TransactionPriorityId>,
     id_to_transaction_state: Slab<TransactionState<Tx>>,
     held_transactions: Vec<TransactionPriorityId>,
+    nonces_in_use: HashMap<Pubkey, TransactionPriorityId, PubkeyHasherBuilder>,
 }
 
 pub(crate) trait StateContainer<Tx: TransactionWithMeta> {
@@ -112,6 +119,19 @@ pub(crate) trait StateContainer<Tx: TransactionWithMeta> {
         &self,
         cursor: Option<&TransactionPriorityId>,
     ) -> Rev<std::collections::btree_set::Range<'_, TransactionPriorityId>>;
+
+    fn is_queued(&self, id: &TransactionPriorityId) -> bool;
+
+    fn get_nonce_transaction_priority_id(
+        &self,
+        nonce_address: &Pubkey,
+    ) -> Option<&TransactionPriorityId>;
+
+    fn set_nonce_transaction_priority_id(
+        &mut self,
+        nonce_address: &Pubkey,
+        priority_id: TransactionPriorityId,
+    );
 }
 
 // Extra capacity is added because some additional space is needed when
@@ -125,6 +145,7 @@ impl<Tx: TransactionWithMeta> StateContainer<Tx> for TransactionStateContainer<T
             priority_queue: BTreeSet::new(),
             id_to_transaction_state: Slab::with_capacity(capacity + EXTRA_CAPACITY),
             held_transactions: Vec::with_capacity(capacity),
+            nonces_in_use: HashMap::with_hasher(PubkeyHasherBuilder::default()),
         }
     }
 
@@ -176,7 +197,7 @@ impl<Tx: TransactionWithMeta> StateContainer<Tx> for TransactionStateContainer<T
 
         for _ in 0..num_dropped {
             let priority_id = self.priority_queue.pop_first().expect("queue is not empty");
-            self.id_to_transaction_state.remove(priority_id.id);
+            self.remove_state(priority_id.id);
         }
 
         num_dropped
@@ -187,11 +208,10 @@ impl<Tx: TransactionWithMeta> StateContainer<Tx> for TransactionStateContainer<T
     }
 
     fn remove_by_id(&mut self, id: TransactionId) {
-        let state = self.id_to_transaction_state.remove(id);
+        let priority_id = self.remove_state(id);
         // Remove from queue if present. May not be present if the transaction was already popped
         // (in-flight/scheduling).
-        self.priority_queue
-            .remove(&TransactionPriorityId::new(state.priority(), id));
+        self.priority_queue.remove(&priority_id);
     }
 
     fn flush_held_transactions(&mut self) {
@@ -219,6 +239,28 @@ impl<Tx: TransactionWithMeta> StateContainer<Tx> for TransactionStateContainer<T
                 .rev(),
         }
     }
+
+    fn is_queued(&self, id: &TransactionPriorityId) -> bool {
+        self.priority_queue.contains(id)
+    }
+
+    fn get_nonce_transaction_priority_id(
+        &self,
+        nonce_address: &Pubkey,
+    ) -> Option<&TransactionPriorityId> {
+        self.nonces_in_use.get(nonce_address)
+    }
+
+    fn set_nonce_transaction_priority_id(
+        &mut self,
+        nonce_address: &Pubkey,
+        priority_id: TransactionPriorityId,
+    ) {
+        self.nonces_in_use.insert(*nonce_address, priority_id);
+        if let Some(state) = self.id_to_transaction_state.get_mut(priority_id.id) {
+            state.set_nonce_address(Some(*nonce_address))
+        }
+    }
 }
 
 impl<Tx: TransactionWithMeta> TransactionStateContainer<Tx> {
@@ -235,7 +277,13 @@ impl<Tx: TransactionWithMeta> TransactionStateContainer<Tx> {
         let priority_id = {
             let entry = self.get_vacant_map_entry();
             let transaction_id = entry.key();
-            entry.insert(TransactionState::new(transaction, max_age, priority, cost));
+            entry.insert(TransactionState::new(
+                transaction,
+                max_age,
+                priority,
+                cost,
+                None,
+            ));
             TransactionPriorityId::new(priority, transaction_id)
         };
 
@@ -245,6 +293,20 @@ impl<Tx: TransactionWithMeta> TransactionStateContainer<Tx> {
     fn get_vacant_map_entry(&mut self) -> VacantEntry<'_, TransactionState<Tx>> {
         assert!(self.id_to_transaction_state.len() < self.id_to_transaction_state.capacity());
         self.id_to_transaction_state.vacant_entry()
+    }
+
+    fn remove_state(&mut self, id: TransactionId) -> TransactionPriorityId {
+        let state = self.id_to_transaction_state.remove(id);
+        let priority_id = TransactionPriorityId::new(state.priority(), id);
+
+        if let Some(nonce_address) = state.nonce_address()
+            && let Entry::Occupied(entry) = self.nonces_in_use.entry(*nonce_address)
+            && *entry.get() == priority_id
+        {
+            entry.remove();
+        }
+
+        priority_id
     }
 }
 
@@ -383,6 +445,29 @@ impl StateContainer<RuntimeTransactionView> for TransactionViewStateContainer {
     ) -> Rev<std::collections::btree_set::Range<'_, TransactionPriorityId>> {
         self.inner.recheck_iter(cursor)
     }
+
+    #[inline]
+    fn is_queued(&self, id: &TransactionPriorityId) -> bool {
+        self.inner.is_queued(id)
+    }
+
+    #[inline]
+    fn get_nonce_transaction_priority_id(
+        &self,
+        nonce_address: &Pubkey,
+    ) -> Option<&TransactionPriorityId> {
+        self.inner.get_nonce_transaction_priority_id(nonce_address)
+    }
+
+    #[inline]
+    fn set_nonce_transaction_priority_id(
+        &mut self,
+        nonce_address: &Pubkey,
+        priority_id: TransactionPriorityId,
+    ) {
+        self.inner
+            .set_nonce_transaction_priority_id(nonce_address, priority_id);
+    }
 }
 
 #[cfg(test)]
@@ -501,7 +586,13 @@ mod tests {
             )
             .unwrap();
 
-            Ok(TransactionState::new(view, MaxAge::MAX, priority, cost))
+            Ok(TransactionState::new(
+                view,
+                MaxAge::MAX,
+                priority,
+                cost,
+                None,
+            ))
         };
 
         // Push 2 transactions into the queue so buffer is full.

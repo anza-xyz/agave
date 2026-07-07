@@ -4620,6 +4620,7 @@ fn test_check_ro_durable_nonce_fails() {
             &new_sanitized_message(tx.message().clone()),
             &bank.next_durable_nonce(),
             false,
+            false,
         ),
         None
     );
