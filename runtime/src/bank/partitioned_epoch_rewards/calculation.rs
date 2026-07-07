@@ -722,7 +722,7 @@ impl Bank {
         let rewards_accumulator: RewardsAccumulator = thread_pool.install(|| {
             stake_delegations
                 .par_iter()
-                .zip_eq(stake_rewards.spare_capacity_mut())
+                .zip(stake_rewards.spare_capacity_mut())
                 .with_min_len(500)
                 .filter_map(|((stake_pubkey, stake_account), stake_reward_ref)| {
                     let maybe_reward_record = self.redeem_delegation_rewards(
@@ -793,7 +793,8 @@ impl Bank {
             num_stake_rewards,
             total_stake_rewards_lamports,
         } = rewards_accumulator;
-        // SAFETY: We initialized all the `stake_rewards` elements up to the capacity.
+        // SAFETY: We initialized all the `stake_rewards` elements up to
+        // `num_stake_rewards`.
         unsafe {
             stake_rewards.assume_init(num_stake_rewards);
         }
