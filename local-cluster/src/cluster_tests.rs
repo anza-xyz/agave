@@ -626,9 +626,9 @@ pub fn start_quic_streamer_to_listen_for_votes_and_certs(
 }
 
 fn convert_packet_to_vote_message(packet: PacketRef, my_shred_version: u16) -> Option<VoteMessage> {
-    let Ok(msg) = wincode::config::deserialize_exact::<VersionedWireConsensusMessage, _>(
+    let Ok(msg) = VersionedWireConsensusMessage::deserialize_with_expected_shred_version(
         packet.data(..).unwrap_or_default(),
-        packet_config(),
+        my_shred_version,
     ) else {
         return None;
     };

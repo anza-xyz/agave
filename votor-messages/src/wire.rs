@@ -264,15 +264,43 @@ impl WireConsensusMessageKind {
     }
 }
 
+#[derive(Clone, Copy)]
+/// Context wrapper for the expected shred version during deserialization.
+pub struct ExpectedShredVersion(pub u16);
+
 #[cfg_attr(
     feature = "frozen-abi",
     derive(AbiExample, StableAbi, StableAbiSample, Serialize)
 )]
-#[derive(Debug, Clone, Hash, PartialEq, Eq, SchemaWrite, SchemaRead)]
+#[derive(Debug, Clone, Hash, PartialEq, Eq, SchemaWrite)]
 /// First version of a wire consensus message
 pub struct WireConsensusMessageV1 {
     pub(crate) kind: WireConsensusMessageKind,
     pub(crate) shred_version: u16,
+}
+
+unsafe impl<'de, C: wincode::config::Config> wincode::SchemaReadContext<'de, C, ExpectedShredVersion> for WireConsensusMessageV1 {
+    type Dst = WireConsensusMessageV1;
+
+    fn read_with_context(
+        expected: ExpectedShredVersion,
+        mut reader: impl wincode::io::Reader<'de>,
+        dst: &mut std::mem::MaybeUninit<Self::Dst>,
+    ) -> wincode::ReadResult<()> {
+        let kind = <WireConsensusMessageKind as SchemaRead<'de, C>>::get(reader.by_ref())?;
+        let shred_version = <u16 as SchemaRead<'de, C>>::get(reader.by_ref())?;
+
+        if shred_version != expected.0 {
+            return Err(wincode::ReadError::Custom("shred version mismatch".into()));
+        }
+
+        dst.write(WireConsensusMessageV1 {
+            kind,
+            shred_version,
+        });
+
+        Ok(())
+    }
 }
 
 impl WireConsensusMessageV1 {
@@ -312,7 +340,7 @@ impl WireConsensusMessageV1 {
         test_roundtrip = "eq_and_wire",
     )
 )]
-#[derive(Debug, Clone, Hash, PartialEq, Eq, SchemaWrite, SchemaRead)]
+#[derive(Debug, Clone, Hash, PartialEq, Eq, SchemaWrite)]
 #[wincode(tag_encoding = "u8")]
 /// versioned wire format of consensus message
 pub enum VersionedWireConsensusMessage {
@@ -321,7 +349,40 @@ pub enum VersionedWireConsensusMessage {
     V1(WireConsensusMessageV1),
 }
 
+unsafe impl<'de, C: wincode::config::Config> wincode::SchemaReadContext<'de, C, ExpectedShredVersion> for VersionedWireConsensusMessage {
+    type Dst = VersionedWireConsensusMessage;
+
+    fn read_with_context(
+        expected: ExpectedShredVersion,
+        mut reader: impl wincode::io::Reader<'de>,
+        dst: &mut std::mem::MaybeUninit<Self::Dst>,
+    ) -> wincode::ReadResult<()> {
+        let tag = <u8 as SchemaRead<'de, C>>::get(reader.by_ref())?;
+        match tag {
+            1 => {
+                let mut v1_dst = std::mem::MaybeUninit::uninit();
+                <WireConsensusMessageV1 as wincode::SchemaReadContext<'de, C, ExpectedShredVersion>>::read_with_context(expected, reader, &mut v1_dst)?;
+                let v1 = unsafe { v1_dst.assume_init() };
+                dst.write(VersionedWireConsensusMessage::V1(v1));
+                Ok(())
+            }
+            _ => Err(wincode::ReadError::Custom("unknown tag for VersionedWireConsensusMessage".into())),
+        }
+    }
+}
+
 impl VersionedWireConsensusMessage {
+    /// Deserializes a versioned wire consensus message and verifies the shred version.
+    pub fn deserialize_with_expected_shred_version<'de>(
+        bytes: &'de [u8],
+        expected_shred_version: u16,
+    ) -> wincode::ReadResult<Self> {
+        <Self as wincode::SchemaReadContext<'de, wincode::config::DefaultConfig, ExpectedShredVersion>>::get_with_context(
+            ExpectedShredVersion(expected_shred_version),
+            bytes,
+        )
+    }
+
     /// Constructs a new versioned wire consensus message.
     pub fn new(msg: ConsensusMessage, shred_version: u16) -> Self {
         let v1 = WireConsensusMessageV1::new(msg, shred_version);

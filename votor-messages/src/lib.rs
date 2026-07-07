@@ -29,3 +29,4 @@ extern crate solana_frozen_abi_macro;
 pub type VerifiedVoterSlotsSender = Sender<(Pubkey, Vec<Slot>)>;
 /// Receive side of verified voter channel.
 pub type VerifiedVoterSlotsReceiver = Receiver<(Pubkey, Vec<Slot>)>;
+
