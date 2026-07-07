@@ -2621,7 +2621,7 @@ pub mod tests {
             sync::{Arc, Barrier, RwLock, atomic::Ordering},
             thread,
         },
-        test_case::{test_case, test_matrix},
+        test_case::test_case,
         trees::tr,
     };
 
