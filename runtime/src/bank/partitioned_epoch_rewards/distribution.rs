@@ -387,7 +387,12 @@ impl Bank {
             }
         }
         drop(stakes_cache);
-        self.store_accounts((self.slot(), &updated_stake_rewards[..]));
+        self.store_accounts(
+            (self.slot(), &updated_stake_rewards[..]),
+            // Reuse the rewards calculation thread pool to parallelize
+            // loading the previous versions of the stake accounts.
+            Some(crate::bank::rewards_calculation_thread_pool()),
+        );
         DistributionResults {
             stake_reward_lamports_minted,
             stake_reward_lamports_burned,

@@ -387,7 +387,7 @@ impl Bank {
                 slot: self.slot(),
                 reward_commission_accounts,
             };
-            self.store_accounts(storable);
+            self.store_accounts(storable, None);
         });
 
         metrics
