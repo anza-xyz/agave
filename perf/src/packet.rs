@@ -1,6 +1,6 @@
 //! The `packet` module defines data structures and methods to pull data from the network.
 #[cfg(feature = "dev-context-only-utils")]
-use wincode::{ReadError, ReadResult, SchemaRead, config::DefaultConfig};
+use wincode::{ReadError, config::DefaultConfig};
 use {
     crate::{recycled_vec::RecycledVec, recycler::Recycler},
     bytes::Bytes,
@@ -9,16 +9,19 @@ use {
         prelude::{IntoParallelIterator, IntoParallelRefIterator, IntoParallelRefMutIterator},
     },
     serde::{Deserialize, Serialize},
+    solana_pubkey::Pubkey,
     std::{
-        borrow::Borrow,
         io::Cursor,
-        net::SocketAddr,
+        mem::MaybeUninit,
+        net::{IpAddr, SocketAddr},
         ops::{Deref, DerefMut, Index, IndexMut},
         slice::{Iter, SliceIndex},
     },
     wincode::{
-        SchemaWrite, WriteResult,
+        ReadResult, SchemaRead, SchemaWrite, WriteResult,
         config::{Config, Configuration},
+        io::{Reader, Writer},
+        len::SeqLen,
     },
 };
 pub use {
@@ -166,8 +169,7 @@ impl BytesPacket {
     }
 }
 
-#[cfg_attr(feature = "frozen-abi", derive(AbiExample, AbiEnumVisitor))]
-#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
+#[derive(Clone, Debug, Eq, PartialEq)]
 pub enum PacketBatch {
     Pinned(RecycledPacketBatch),
     Bytes(BytesPacketBatch),
@@ -273,6 +275,109 @@ impl PacketBatch {
             Self::Bytes(batch) => batch.len(),
             Self::Single(_) => 1,
         }
+    }
+}
+
+/// Serialized size of one logical packet: `Meta`'s relevant fields + the payload bytes
+/// up to `Meta::size`. Callers should filter out discarded packets, they have
+/// no readable payload, so there's nothing meaningful to trace for it.
+fn size_of_traced_packet<C: Config>(packet: PacketRef<'_>) -> WriteResult<usize> {
+    let meta = packet.meta();
+    let payload = packet
+        .data(..)
+        .expect("discarded packets must be filtered out before tracing");
+    // A single packet's serialized size can never approach `usize::MAX`.
+    #[allow(clippy::arithmetic_side_effects)]
+    Ok(<IpAddr as SchemaWrite<C>>::size_of(&meta.addr)?
+        + <u8 as SchemaWrite<C>>::size_of(&meta.flags.bits())?
+        + <[u8; 32] as SchemaWrite<C>>::size_of(
+            &meta.remote_pubkey().unwrap_or_default().to_bytes(),
+        )?
+        + <[u8] as SchemaWrite<C>>::size_of(payload)?)
+}
+
+/// Writes one packet for banking trace.
+///
+/// This is dev/debug tooling, only needed for ledger tool and banking
+/// simulation, so only we only write the fields that are actually useful for them.
+fn write_packet_for_banking_trace<C: Config>(
+    mut writer: impl Writer,
+    packet: PacketRef<'_>,
+) -> WriteResult<()> {
+    let meta = packet.meta();
+    let payload = packet
+        .data(..)
+        .expect("discarded packets must be filtered out before tracing");
+    <IpAddr as SchemaWrite<C>>::write(writer.by_ref(), &meta.addr)?;
+    <u8 as SchemaWrite<C>>::write(writer.by_ref(), &meta.flags.bits())?;
+    <[u8; 32] as SchemaWrite<C>>::write(
+        writer.by_ref(),
+        &meta.remote_pubkey().unwrap_or_default().to_bytes(),
+    )?;
+    <[u8] as SchemaWrite<C>>::write(writer, payload)
+}
+
+/// Read one logical packet written by `write_packet_for_banking_trace` back into
+/// an owned `BytesPacket`.
+///
+/// This is dev/debug tooling, only needed for ledger tool and banking
+/// simulation.
+fn read_packet_from_banking_trace<'de, C: Config>(
+    mut reader: impl Reader<'de>,
+) -> ReadResult<BytesPacket> {
+    let addr = <IpAddr as SchemaRead<'de, C>>::get(reader.by_ref())?;
+    let flags = <u8 as SchemaRead<'de, C>>::get(reader.by_ref())?;
+    let remote_pubkey = <[u8; 32] as SchemaRead<'de, C>>::get(reader.by_ref())?;
+    let payload = <Vec<u8> as SchemaRead<'de, C>>::get(reader)?;
+    let meta = Meta::new(
+        payload.len(),
+        addr,
+        0,
+        PacketFlags::from_bits_retain(flags),
+        (remote_pubkey != [0; 32]).then(|| Pubkey::new_from_array(remote_pubkey)),
+    );
+    Ok(BytesPacket::new(Bytes::from(payload), meta))
+}
+
+// SAFETY: `write`/`size_of` operate on exactly the same field sequence.
+unsafe impl<C: Config> SchemaWrite<C> for PacketBatch {
+    type Src = Self;
+
+    // A batch's total serialized size and packet count can never approach `usize::MAX`.
+    #[allow(clippy::arithmetic_side_effects)]
+    fn size_of(src: &Self::Src) -> WriteResult<usize> {
+        let mut count = 0usize;
+        let mut size = 0usize;
+        for packet in src.iter().filter(|p| !p.meta().discard()) {
+            count += 1;
+            size += size_of_traced_packet::<C>(packet)?;
+        }
+        Ok(<C::LengthEncoding as SeqLen<C>>::write_bytes_needed(count)? + size)
+    }
+
+    fn write(mut writer: impl Writer, src: &Self::Src) -> WriteResult<()> {
+        let len = src.iter().filter(|p| !p.meta().discard()).count();
+        <C::LengthEncoding as SeqLen<C>>::write(writer.by_ref(), len)?;
+        for packet in src.iter().filter(|p| !p.meta().discard()) {
+            write_packet_for_banking_trace::<C>(writer.by_ref(), packet)?;
+        }
+        Ok(())
+    }
+}
+
+// SAFETY: `read` only initializes `dst` after every packet has been read successfully.
+unsafe impl<'de, C: Config> SchemaRead<'de, C> for PacketBatch {
+    type Dst = Self;
+
+    fn read(mut reader: impl Reader<'de>, dst: &mut MaybeUninit<Self::Dst>) -> ReadResult<()> {
+        let len =
+            <C::LengthEncoding as SeqLen<C>>::read_prealloc_check::<BytesPacket>(reader.by_ref())?;
+        let mut packets = Vec::with_capacity(len);
+        for _ in 0..len {
+            packets.push(read_packet_from_banking_trace::<C>(reader.by_ref())?);
+        }
+        dst.write(PacketBatch::from(packets));
+        Ok(())
     }
 }
 
@@ -638,8 +743,7 @@ impl IndexedParallelIterator for PacketBatchParIterMut<'_> {
     }
 }
 
-#[cfg_attr(feature = "frozen-abi", derive(AbiExample))]
-#[derive(Debug, Default, Clone, Eq, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Default, Clone, Eq, PartialEq)]
 pub struct RecycledPacketBatch {
     packets: RecycledVec<Packet>,
 }
@@ -675,39 +779,6 @@ impl RecycledPacketBatch {
     ) -> Self {
         let mut batch = Self::new_with_recycler(recycler, packets.len(), name);
         batch.packets.append(&mut packets);
-        batch
-    }
-
-    pub fn new_with_recycler_data_and_dests<S, T>(
-        recycler: &PacketBatchRecycler,
-        name: &'static str,
-        dests_and_data: impl IntoIterator<Item = (S, T), IntoIter: ExactSizeIterator>,
-    ) -> Self
-    where
-        S: Borrow<SocketAddr>,
-        T: solana_packet::Encode,
-    {
-        let dests_and_data = dests_and_data.into_iter();
-        let mut batch = Self::new_with_recycler(recycler, dests_and_data.len(), name);
-        batch
-            .packets
-            .resize(dests_and_data.len(), Packet::default());
-
-        for ((addr, data), packet) in dests_and_data.zip(batch.packets.iter_mut()) {
-            let addr = addr.borrow();
-            if !addr.ip().is_unspecified() && addr.port() != 0 {
-                if let Err(e) = Packet::populate_packet(packet, Some(addr), &data) {
-                    // TODO: This should never happen. Instead the caller should
-                    // break the payload into smaller messages, and here any errors
-                    // should be propagated.
-                    error!("Couldn't write to packet {e:?}. Data skipped.");
-                    packet.meta_mut().set_discard(true);
-                }
-            } else {
-                trace!("Dropping packet, as destination is unknown");
-                packet.meta_mut().set_discard(true);
-            }
-        }
         batch
     }
 
@@ -815,7 +886,7 @@ fn to_packet_batches_for_tests<T: Serialize>(items: &[T]) -> Vec<PacketBatch> {
 }
 
 #[cfg_attr(feature = "frozen-abi", derive(AbiExample))]
-#[derive(Debug, Default, Clone, Eq, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Default, Clone, Eq, PartialEq)]
 pub struct BytesPacketBatch {
     packets: Vec<BytesPacket>,
 }
@@ -918,5 +989,53 @@ mod tests {
             let _first_packets =
                 RecycledPacketBatch::new_with_recycler(&recycler, i + 1, "first one");
         }
+    }
+
+    #[test]
+    fn test_packet_batch_wincode_roundtrip() {
+        use std::net::Ipv4Addr;
+
+        let meta = Meta::new(
+            11,
+            IpAddr::V4(Ipv4Addr::new(1, 2, 3, 4)),
+            1234,
+            PacketFlags::SIMPLE_VOTE_TX | PacketFlags::FROM_STAKED_NODE,
+            Some(Pubkey::new_unique()),
+        );
+        let mut buffer = [0u8; PACKET_DATA_SIZE];
+        buffer[..11].copy_from_slice(b"hello world");
+        let packet = Packet::new(buffer, meta.clone());
+
+        let mut discarded = packet.clone();
+        discarded.meta_mut().set_discard(true);
+
+        let batch = PacketBatch::Pinned(RecycledPacketBatch::new(vec![
+            packet.clone(),
+            packet.clone(),
+            discarded,
+            packet,
+        ]));
+
+        let bytes = wincode::serialize(&batch).unwrap();
+        let restored: PacketBatch = wincode::deserialize(&bytes).unwrap();
+        assert_eq!(restored.len(), 3); // discarded packet must NOT be serialized
+
+        for restored in restored.iter() {
+            assert_eq!(restored.meta().addr, IpAddr::V4(Ipv4Addr::new(1, 2, 3, 4)));
+            // `port` is intentionally not traced: it has no downstream consumer.
+            assert_eq!(restored.meta().port, 0);
+            assert!(restored.meta().is_simple_vote_tx());
+            assert!(restored.meta().is_from_staked_node());
+            assert_eq!(restored.meta().remote_pubkey(), meta.remote_pubkey());
+            assert_eq!(restored.data(..).unwrap(), b"hello world");
+        }
+    }
+
+    #[test]
+    fn test_packet_batch_wincode_roundtrip_empty() {
+        let batch = PacketBatch::from(Vec::<BytesPacket>::new());
+        let bytes = wincode::serialize(&batch).unwrap();
+        let restored: PacketBatch = wincode::deserialize(&bytes).unwrap();
+        assert_eq!(restored.len(), 0);
     }
 }

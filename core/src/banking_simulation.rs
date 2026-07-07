@@ -15,7 +15,6 @@ use {
     agave_banking_stage_ingress_types::{BankingPacketBatch, SchedulerPriorityFloor},
     agave_votor_messages::migration::MigrationStatus,
     assert_matches::assert_matches,
-    bincode::deserialize_from,
     crossbeam_channel::{Sender, bounded, unbounded},
     itertools::Itertools,
     log::*,
@@ -63,6 +62,7 @@ use {
     },
     thiserror::Error,
     tokio::sync::mpsc,
+    wincode::{ReadError, deserialize_from, io::ReadError as IoReadError},
 };
 
 /// This creates a simulated environment around `BankingStage` to produce leader's blocks based on
@@ -130,7 +130,7 @@ pub enum SimulateError {
     IoError(#[from] io::Error),
 
     #[error("Deserialization Error: {0}")]
-    DeserializeError(#[from] bincode::Error),
+    DeserializeError(#[from] ReadError),
 }
 
 // Defined to be enough to cover the holding phase prior to leader slots with some idling (+5 secs)
@@ -166,7 +166,7 @@ impl BankingTraceEvents {
         // EOF is reached at a correct deserialization boundary or just the file is just empty.
         // We want to look-ahead the buf, so NOT calling reader.consume(..) is correct.
         while !reader.fill_buf()?.is_empty() {
-            callback(deserialize_from(&mut reader)?);
+            callback(deserialize_from::<TimedTracedEvent>(&mut reader)?);
         }
 
         Ok(())
@@ -190,11 +190,7 @@ impl BankingTraceEvents {
             if matches!(
                 read_result,
                 Err(SimulateError::DeserializeError(ref deser_err))
-                    if matches!(
-                        &**deser_err,
-                        bincode::ErrorKind::Io(io_err)
-                            if io_err.kind() == std::io::ErrorKind::UnexpectedEof
-                    )
+                    if matches!(deser_err, ReadError::Io(IoReadError::ReadSizeLimit(_)))
             ) {
                 // Silence errors here as this can happen under normal operation...
                 warn!(

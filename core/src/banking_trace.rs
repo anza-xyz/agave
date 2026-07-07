@@ -1,10 +1,8 @@
 use {
     agave_banking_stage_ingress_types::{BankingPacketBatch, BankingPacketReceiver},
-    bincode::serialize_into,
     chrono::{DateTime, Local},
     crossbeam_channel::{Receiver, SendError, TryRecvError, TrySendError, bounded},
     rolling_file::{RollingCondition, RollingConditionBasic, RollingFileAppender},
-    serde::{Deserialize, Serialize},
     solana_clock::Slot,
     solana_hash::Hash,
     solana_streamer::{evicting_sender::EvictingSender, streamer::ChannelSend},
@@ -20,6 +18,7 @@ use {
         time::{Duration, SystemTime},
     },
     thiserror::Error,
+    wincode::{SchemaRead, SchemaWrite, io::std_write::WriteAdapter, serialize_into},
 };
 
 /// Capacity of the vote channel between sigverify and the banking-stage.
@@ -41,7 +40,7 @@ pub enum TraceError {
     IoError(#[from] std::io::Error),
 
     #[error("Serialization Error: {0}")]
-    SerializeError(#[from] bincode::Error),
+    SerializeError(#[from] wincode::WriteError),
 
     #[error("Integer Cast Error: {0}")]
     IntegerCastError(#[from] std::num::TryFromIntError),
@@ -69,26 +68,16 @@ pub struct BankingTracer {
     active_tracer: Option<ActiveTracer>,
 }
 
-#[cfg_attr(
-    feature = "frozen-abi",
-    derive(AbiExample),
-    frozen_abi(digest = "DY2zjwewCSNansb5xwtoxkCcNuXbVmWZe3U9nNH2kzNz")
-)]
-#[derive(Serialize, Deserialize, Debug)]
+#[derive(SchemaWrite, SchemaRead, Debug)]
 pub struct TimedTracedEvent(pub std::time::SystemTime, pub TracedEvent);
 
-#[cfg_attr(feature = "frozen-abi", derive(AbiExample, AbiEnumVisitor))]
-#[derive(Serialize, Deserialize, Debug)]
+#[derive(SchemaWrite, SchemaRead, Debug)]
 pub enum TracedEvent {
     PacketBatch(ChannelLabel, BankingPacketBatch),
     BlockAndBankHash(Slot, Hash, Hash),
 }
 
-#[cfg_attr(
-    feature = "frozen-abi",
-    derive(AbiExample, AbiEnumVisitor, StableAbi, StableAbiSample)
-)]
-#[derive(Serialize, Deserialize, Debug, Clone, Copy)]
+#[derive(SchemaWrite, SchemaRead, Debug, Clone, Copy)]
 pub enum ChannelLabel {
     NonVote,
     TpuVote,
@@ -349,7 +338,10 @@ impl BankingTracer {
                     trace_receiver,
                     |event| -> Result<(), TraceError> {
                         file_appender.condition_mut().reset();
-                        serialize_into(&mut GroupedWriter::new(&mut file_appender), &event)?;
+                        serialize_into(
+                            WriteAdapter::new(GroupedWriter::new(&mut file_appender)),
+                            &event,
+                        )?;
                         Ok(())
                     },
                 )?;
@@ -466,13 +458,9 @@ pub mod for_test {
 mod tests {
     use {
         super::*,
-        bincode::ErrorKind::Io as BincodeIoError,
-        std::{
-            fs::File,
-            io::{BufReader, ErrorKind::UnexpectedEof},
-            str::FromStr,
-        },
+        std::{fs::File, io::BufReader, str::FromStr},
         tempfile::TempDir,
+        wincode::{ReadError, deserialize_from, io::ReadError as IoReadError},
     };
 
     #[test]
@@ -571,7 +559,7 @@ mod tests {
 
         let mut stream = BufReader::new(File::open(path.join(BASENAME)).unwrap());
         let results = (0..=3)
-            .map(|_| bincode::deserialize_from::<_, TimedTracedEvent>(&mut stream))
+            .map(|_| deserialize_from::<TimedTracedEvent>(&mut stream))
             .collect::<Vec<_>>();
 
         let mut i = 0;
@@ -593,10 +581,7 @@ mod tests {
         i += 1;
         assert_matches!(
             results[i],
-            Err(ref err) if matches!(
-                **err,
-                BincodeIoError(ref error) if error.kind() == UnexpectedEof
-            )
+            Err(ref err) if matches!(err, ReadError::Io(IoReadError::ReadSizeLimit(_)))
         );
 
         for_test::drop_and_clean_temp_dir_unless_suppressed(temp_dir);
