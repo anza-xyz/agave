@@ -3,15 +3,14 @@ use {
     crate::{
         genesis_utils::{GenesisConfigInfo, create_genesis_config},
         shred::{
-            MAX_DATA_SHREDS_PER_SLOT,
-            ShredFlags, max_ticks_per_n_shreds,
+            MAX_DATA_SHREDS_PER_SLOT, ShredFlags, max_ticks_per_n_shreds,
             merkle::finish_erasure_batch_for_tests,
             merkle_tree::{SIZE_OF_MERKLE_PROOF_ENTRY, get_proof_size, verify_merkle_proof},
         },
     },
     agave_feature_set::discard_unexpected_data_complete_shreds,
     assert_matches::assert_matches,
-    rand::{rng, seq::SliceRandom, Rng},
+    rand::{Rng, rng, seq::SliceRandom},
     rand_chacha::{ChaChaRng, rand_core::SeedableRng},
     solana_entry::entry::next_entry_mut,
     solana_genesis_utils::{MAX_GENESIS_ARCHIVE_UNPACKED_SIZE, open_genesis_config},
