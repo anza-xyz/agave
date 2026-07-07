@@ -8,13 +8,11 @@ use {
     crossbeam_channel::{Receiver, RecvTimeoutError},
     itertools::izip,
     solana_clock::Slot,
-    solana_ledger::{
-        blockstore::{Blockstore, BlockstoreError},
-        blockstore_processor::{TransactionStatusBatch, TransactionStatusMessage},
-    },
+    solana_ledger::blockstore::{Blockstore, BlockstoreError},
     solana_runtime::{
         bank::{Bank, KeyedRewardsAndNumPartitions},
         dependency_tracker::DependencyTracker,
+        transaction_execution::{TransactionStatusBatch, TransactionStatusMessage},
     },
     solana_svm::transaction_commit_result::CommittedTransaction,
     solana_transaction_status::{

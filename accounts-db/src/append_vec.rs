@@ -205,24 +205,22 @@ impl Drop for AppendVec {
 }
 
 impl AppendVec {
-    pub fn new(file: impl Into<PathBuf>, create: bool, size: usize) -> Self {
+    /// Creates a new AppendVec at path `file` with `size` bytes.
+    pub fn new(file: impl Into<PathBuf>, size: usize) -> Self {
         let file = file.into();
         let initial_len = 0;
         AppendVec::sanitize_len_and_size(initial_len, size).unwrap();
 
-        if create {
-            let _ignored = remove_file(&file);
-        }
+        let _ignored = remove_file(&file);
 
         let mut data = OpenOptions::new()
             .read(true)
             .write(true)
-            .create(create)
+            .create_new(true)
             .open(&file)
             .map_err(|e| {
                 panic!(
-                    "Unable to {} data file {} in current dir({:?}): {:?}",
-                    if create { "create" } else { "open" },
+                    "Unable to create data file {} in current dir({:?}): {:?}",
                     file.display(),
                     std::env::current_dir(),
                     e
@@ -1122,7 +1120,7 @@ mod tests {
     #[should_panic(expected = "FileSizeTooSmall(0)")]
     fn test_append_vec_new_bad_size() {
         let path = get_append_vec_path("test_append_vec_new_bad_size");
-        let _av = AppendVec::new(&path.path, true, 0);
+        let _av = AppendVec::new(&path.path, 0);
     }
 
     #[test]
@@ -1184,7 +1182,7 @@ mod tests {
     #[test]
     fn test_append_vec_one() {
         let path = get_append_vec_path("test_append");
-        let av = AppendVec::new(&path.path, true, 1024 * 1024);
+        let av = AppendVec::new(&path.path, 1024 * 1024);
         let account = create_test_account(0);
         let index = av.append_account_test(&account).unwrap();
         assert_eq!(av.get_account_test(index).unwrap(), account);
@@ -1208,7 +1206,7 @@ mod tests {
     #[test]
     fn test_append_vec_one_with_data() {
         let path = get_append_vec_path("test_append");
-        let av = AppendVec::new(&path.path, true, 1024 * 1024);
+        let av = AppendVec::new(&path.path, 1024 * 1024);
         let data_len = 1;
         let account = create_test_account(data_len);
         let index = av.append_account_test(&account).unwrap();
@@ -1226,7 +1224,7 @@ mod tests {
         let path = get_append_vec_path("test_append");
         let sz = 1024 * 1024;
         let sz64 = sz as u64;
-        let av = AppendVec::new(&path.path, true, sz);
+        let av = AppendVec::new(&path.path, sz);
         assert_eq!(av.capacity(), sz64);
         assert_eq!(av.remaining_bytes(), sz64);
 
@@ -1264,7 +1262,7 @@ mod tests {
     #[test]
     fn test_append_vec_data() {
         let path = get_append_vec_path("test_append_data");
-        let av = AppendVec::new(&path.path, true, 1024 * 1024);
+        let av = AppendVec::new(&path.path, 1024 * 1024);
         let account = create_test_account(5);
         let index = av.append_account_test(&account).unwrap();
         assert_eq!(av.get_account_test(index).unwrap(), account);
@@ -1340,7 +1338,7 @@ mod tests {
         }
 
         let path = get_append_vec_path("test_scan_accounts_stored_meta_correctness");
-        let av = ManuallyDrop::new(AppendVec::new(&path.path, true, file_size));
+        let av = ManuallyDrop::new(AppendVec::new(&path.path, file_size));
         let slot = 42;
         let stored_accounts_info = av
             .append_accounts(&(slot, test_accounts.as_slice()), 0)
@@ -1468,7 +1466,7 @@ mod tests {
     #[test]
     fn test_append_vec_append_many() {
         let path = get_append_vec_path("test_append_many");
-        let av = AppendVec::new(&path.path, true, 1024 * 1024);
+        let av = AppendVec::new(&path.path, 1024 * 1024);
         let size = 1000;
         let mut indexes = vec![];
         let now = Instant::now();
@@ -1593,7 +1591,7 @@ mod tests {
         let path = &file.path;
         let accounts_len = {
             // wrap AppendVec in ManuallyDrop to ensure we do not remove the backing file when dropped
-            let av = ManuallyDrop::new(AppendVec::new(path, true, 1024 * 1024));
+            let av = ManuallyDrop::new(AppendVec::new(path, 1024 * 1024));
 
             av.append_account_test(&create_test_account(10)).unwrap();
             av.flush().unwrap();
@@ -1627,7 +1625,7 @@ mod tests {
         let path = &file.path;
         let accounts_len = {
             // wrap AppendVec in ManuallyDrop to ensure we do not remove the backing file when dropped
-            let av = ManuallyDrop::new(AppendVec::new(path, true, 1024 * 1024));
+            let av = ManuallyDrop::new(AppendVec::new(path, 1024 * 1024));
             av.append_account_test(&create_test_account(10)).unwrap();
             av.len()
         };
@@ -1642,7 +1640,7 @@ mod tests {
         let file = get_append_vec_path("test_append_vec_flush");
         let path = &file.path;
         let accounts_len = {
-            let av = AppendVec::new(path, true, 1024 * 1024);
+            let av = AppendVec::new(path, 1024 * 1024);
             av.append_account_test(&create_test_account(10)).unwrap();
             // wrap AppendVec in ManuallyDrop to ensure we do not remove the backing file when dropped
             let ro_av = ManuallyDrop::new(
@@ -1664,7 +1662,7 @@ mod tests {
         let path = &file.path;
         let accounts_len = {
             // wrap AppendVec in ManuallyDrop to ensure we do not remove the backing file when dropped
-            let av = ManuallyDrop::new(AppendVec::new(path, true, 1024 * 1024));
+            let av = ManuallyDrop::new(AppendVec::new(path, 1024 * 1024));
 
             av.append_account_test(&create_test_account(10)).unwrap();
 
@@ -1701,7 +1699,7 @@ mod tests {
         // Write a valid append vec file.
         let accounts_len = {
             // wrap AppendVec in ManuallyDrop to ensure we do not remove the backing file when dropped
-            let av = ManuallyDrop::new(AppendVec::new(path, true, 1024 * 1024));
+            let av = ManuallyDrop::new(AppendVec::new(path, 1024 * 1024));
             av.append_account_test(&create_test_account(10)).unwrap();
             let offset_1 = {
                 let mut executable_account = create_test_account(10);
@@ -1775,7 +1773,6 @@ mod tests {
             // wrap AppendVec in ManuallyDrop to ensure we do not remove the backing file when dropped
             let av = ManuallyDrop::new(AppendVec::new(
                 path,
-                true,
                 AppendVec::calculate_stored_size(data_len),
             ));
             av.append_account_test(&account).unwrap();
@@ -1817,7 +1814,7 @@ mod tests {
 
         let temp_file = get_append_vec_path("test_get_account_sizes");
         let account_offsets = {
-            let append_vec = AppendVec::new(&temp_file.path, true, total_stored_size);
+            let append_vec = AppendVec::new(&temp_file.path, total_stored_size);
             // wrap AppendVec in ManuallyDrop to ensure we do not remove the backing file when dropped
             let append_vec = ManuallyDrop::new(append_vec);
             let slot = 77; // the specific slot does not matter
@@ -1869,8 +1866,7 @@ mod tests {
         let temp_file = get_append_vec_path("test_scan");
         let account_offsets = {
             // wrap AppendVec in ManuallyDrop to ensure we do not remove the backing file when dropped
-            let append_vec =
-                ManuallyDrop::new(AppendVec::new(&temp_file.path, true, total_stored_size));
+            let append_vec = ManuallyDrop::new(AppendVec::new(&temp_file.path, total_stored_size));
             let slot = 42; // the specific slot does not matter
             let storable_accounts: Vec<_> = std::iter::zip(&pubkeys, &accounts).collect();
             let stored_accounts_info = append_vec
@@ -2162,7 +2158,7 @@ mod tests {
     fn test_is_dirty(begins_dirty: bool) {
         let file = get_append_vec_path("test_is_dirty");
 
-        let mut av1 = AppendVec::new(&file.path, true, 1024 * 1024);
+        let mut av1 = AppendVec::new(&file.path, 1024 * 1024);
         // don't delete the file when the AppendVec is dropped (let TempFile do it)
         *av1.remove_file_on_drop.get_mut() = false;
 

@@ -54,7 +54,7 @@ use {
         accounts_update_notifier_interface::{AccountForGeyser, AccountsUpdateNotifier},
         active_stats::{ActiveStatItem, ActiveStats},
         ancestors::Ancestors,
-        append_vec::{self, AppendVec, STORE_META_OVERHEAD},
+        append_vec::{self, AppendVec},
         contains::Contains,
         is_zero_lamport::IsZeroLamport,
         partitioned_rewards::PartitionedEpochRewardsConfig,
@@ -5716,42 +5716,45 @@ impl AccountsDb {
         storage: &AccountStorageEntry,
         accounts_and_meta_to_store: &impl StorableAccounts<'a>,
     ) -> Vec<AccountInfo> {
-        let mut infos: Vec<AccountInfo> = Vec::with_capacity(accounts_and_meta_to_store.len());
-        while infos.len() < accounts_and_meta_to_store.len() {
-            let stored_accounts_info = storage
-                .accounts
-                .write_accounts(accounts_and_meta_to_store, infos.len());
-            let Some(stored_accounts_info) = stored_accounts_info else {
-                // See if an account overflows the storage in the slot.
-                let data_len = accounts_and_meta_to_store.data_len(infos.len());
-                let data_len = (data_len + STORE_META_OVERHEAD) as u64;
-                if data_len > storage.accounts.remaining_bytes() {
-                    info!(
-                        "write_accounts_to_storage, no space: {}, {}, {}, {}, {}",
-                        storage.accounts.capacity(),
-                        storage.accounts.remaining_bytes(),
-                        data_len,
-                        infos.len(),
-                        accounts_and_meta_to_store.len()
-                    );
-                    let store = self.create_store(slot, data_len * 2, "large create");
-                    self.storage.insert(store);
-                }
-                continue;
-            };
-
-            let store_id = storage.id();
-            for (i, offset) in stored_accounts_info.offsets.iter().enumerate() {
-                infos.push(AccountInfo::new(
-                    StorageLocation::AppendVec(store_id, *offset),
-                    accounts_and_meta_to_store.is_zero_lamport(i),
-                ));
-            }
-            storage.add_accounts(
-                stored_accounts_info.offsets.len(),
-                stored_accounts_info.size,
-            );
+        let num_accounts = accounts_and_meta_to_store.len();
+        let mut infos = Vec::with_capacity(num_accounts);
+        if num_accounts == 0 {
+            return infos;
         }
+
+        let store_id = storage.id();
+        let stored_accounts_info = storage
+            .accounts
+            .write_accounts(accounts_and_meta_to_store, 0)
+            .unwrap_or_else(|| {
+                panic!(
+                    "failed to write accounts to storage: slot! {slot}, id: {store_id}, capacity: \
+                     {} bytes, remaining: {} bytes, num accounts: {num_accounts}",
+                    storage.accounts.capacity(),
+                    storage.accounts.remaining_bytes(),
+                )
+            });
+
+        assert_eq!(
+            stored_accounts_info.offsets.len(),
+            num_accounts,
+            "failed to write all accounts to storage! {slot}, id: {store_id}, capacity: {} bytes, \
+             remaining: {} bytes, num accounts written: {}, num accounts total: {num_accounts}",
+            storage.accounts.capacity(),
+            storage.accounts.remaining_bytes(),
+            stored_accounts_info.offsets.len(),
+        );
+
+        for (i, offset) in stored_accounts_info.offsets.iter().enumerate() {
+            infos.push(AccountInfo::new(
+                StorageLocation::AppendVec(store_id, *offset),
+                accounts_and_meta_to_store.is_zero_lamport(i),
+            ));
+        }
+        storage.add_accounts(
+            stored_accounts_info.offsets.len(),
+            stored_accounts_info.size,
+        );
 
         infos
     }

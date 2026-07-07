@@ -60,7 +60,6 @@ reed-solomon-erasure = { workspace = true, features = ["simd-accel"] }
 scopeguard = { workspace = true }
 serde = { workspace = true }
 solana-account = { workspace = true }
-solana-account-decoder = { workspace = true }
 solana-accounts-db = { workspace = true }
 solana-address-lookup-table-interface = { workspace = true, features = ["wincode"] }
 solana-clock = { workspace = true }
@@ -134,7 +133,6 @@ agave-logger = { path = "../logger", features = ["agave-unstable-api"] }
 bs58 = { workspace = true }
 criterion = { workspace = true }
 proptest = { workspace = true }
-solana-account-decoder = { path = "../account-decoder", features = ["agave-unstable-api"] }
 solana-bls-signatures = { workspace = true }
 # See order-crates-for-publishing.py for using this unusual `path = "."`
 solana-ledger = { path = ".", features = ["dev-context-only-utils", "agave-unstable-api"] }

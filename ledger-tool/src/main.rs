@@ -51,9 +51,7 @@ use {
     solana_ledger::{
         blockstore::{Blockstore, PurgeType, banking_trace_path, create_new_ledger},
         blockstore_options::{AccessType, BLOCKSTORE_DIRECTORY_ROCKS_LEVEL, LedgerColumnOptions},
-        blockstore_processor::{
-            ProcessSlotCallback, TransactionStatusMessage, TransactionStatusSender,
-        },
+        blockstore_processor::ProcessSlotCallback,
         shred::{ProcessShredsStats, ReedSolomonCache, Shred, Shredder},
     },
     solana_measure::{measure::Measure, measure_time},
@@ -72,6 +70,7 @@ use {
         snapshot_bank_utils,
         snapshot_minimizer::SnapshotMinimizer,
         stake_utils,
+        transaction_execution::{TransactionStatusMessage, TransactionStatusSender},
     },
     solana_runtime_transaction::runtime_transaction::RuntimeTransaction,
     solana_shred_version::compute_shred_version,

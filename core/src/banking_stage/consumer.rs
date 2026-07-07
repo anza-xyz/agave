@@ -523,12 +523,9 @@ mod tests {
         solana_instruction::error::InstructionError,
         solana_keypair::Keypair,
         solana_leader_schedule::SlotLeader,
-        solana_ledger::{
-            blockstore_processor::{TransactionStatusMessage, TransactionStatusSender},
-            genesis_utils::{
-                GenesisConfigInfo, bootstrap_validator_stake_lamports,
-                create_genesis_config_with_leader,
-            },
+        solana_ledger::genesis_utils::{
+            GenesisConfigInfo, bootstrap_validator_stake_lamports,
+            create_genesis_config_with_leader,
         },
         solana_message::{
             MessageHeader, VersionedMessage,
@@ -538,7 +535,10 @@ mod tests {
         solana_nonce_account::verify_nonce_account,
         solana_poh::record_channels::{RecordReceiver, record_channels},
         solana_pubkey::Pubkey,
-        solana_runtime::bank_forks::BankForks,
+        solana_runtime::{
+            bank_forks::BankForks,
+            transaction_execution::{TransactionStatusMessage, TransactionStatusSender},
+        },
         solana_runtime_transaction::runtime_transaction::RuntimeTransaction,
         solana_signer::Signer,
         solana_system_interface::program as system_program,
