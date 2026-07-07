@@ -44,9 +44,6 @@ pub struct FeatureSnapshot {
     pub deprecate_legacy_vote_ixs: bool,
     pub disable_sbpf_v0_execution: bool,
     pub reenable_sbpf_v0_execution: bool,
-    pub enable_sbpf_v1_deployment_and_execution: bool,
-    pub enable_sbpf_v2_deployment_and_execution: bool,
-    pub enable_sbpf_v3_deployment_and_execution: bool,
     pub disable_sbpf_v0_v1_v2_deployment: bool,
     pub deplete_cu_meter_on_vm_failure: bool,
     pub fix_alt_bn128_multiplication_input_length: bool,
@@ -139,15 +136,6 @@ impl From<&AHashMap<Pubkey, u64>> for FeatureSnapshot {
             deprecate_legacy_vote_ixs: is_active(&deprecate_legacy_vote_ixs::ID),
             disable_sbpf_v0_execution: is_active(&disable_sbpf_v0_execution::ID),
             reenable_sbpf_v0_execution: is_active(&reenable_sbpf_v0_execution::ID),
-            enable_sbpf_v1_deployment_and_execution: is_active(
-                &enable_sbpf_v1_deployment_and_execution::ID,
-            ),
-            enable_sbpf_v2_deployment_and_execution: is_active(
-                &enable_sbpf_v2_deployment_and_execution::ID,
-            ),
-            enable_sbpf_v3_deployment_and_execution: is_active(
-                &enable_sbpf_v3_deployment_and_execution::ID,
-            ),
             disable_sbpf_v0_v1_v2_deployment: is_active(&disable_sbpf_v0_v1_v2_deployment::ID),
             deplete_cu_meter_on_vm_failure: is_active(&deplete_cu_meter_on_vm_failure::ID),
             fix_alt_bn128_multiplication_input_length: is_active(
@@ -329,12 +317,6 @@ impl FeatureSet {
             enable_poseidon_syscall: snapshot.enable_poseidon_syscall,
             disable_sbpf_v0_execution: snapshot.disable_sbpf_v0_execution,
             reenable_sbpf_v0_execution: snapshot.reenable_sbpf_v0_execution,
-            enable_sbpf_v1_deployment_and_execution: snapshot
-                .enable_sbpf_v1_deployment_and_execution,
-            enable_sbpf_v2_deployment_and_execution: snapshot
-                .enable_sbpf_v2_deployment_and_execution,
-            enable_sbpf_v3_deployment_and_execution: snapshot
-                .enable_sbpf_v3_deployment_and_execution,
             disable_sbpf_v0_v1_v2_deployment: snapshot.disable_sbpf_v0_v1_v2_deployment,
             get_sysvar_syscall_enabled: snapshot.get_sysvar_syscall_enabled,
             last_restart_slot_sysvar: snapshot.last_restart_slot_sysvar,
