@@ -3829,7 +3829,7 @@ impl Bank {
                 drop_on_failure: false,
                 all_or_nothing: false,
                 strict_nonce_size_check: true,
-                skip_record_noops: true,
+                drop_noop_transactions: true,
             },
         );
 
@@ -4584,7 +4584,7 @@ impl Bank {
                 drop_on_failure: false,
                 all_or_nothing: false,
                 strict_nonce_size_check: false,
-                skip_record_noops: false,
+                drop_noop_transactions: false,
             },
         );
 

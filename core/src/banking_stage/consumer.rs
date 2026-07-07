@@ -334,7 +334,7 @@ impl Consumer {
                     drop_on_failure: flags.drop_on_failure,
                     all_or_nothing: flags.all_or_nothing,
                     strict_nonce_size_check: true,
-                    skip_record_noops: true,
+                    drop_noop_transactions: true,
                 }
             ));
         execute_and_commit_timings.load_execute_us = load_execute_us;

@@ -145,10 +145,10 @@ pub struct TransactionProcessingConfig<'a> {
     ///
     /// This is a leader-side filtering policy. It must not be enabled for replay.
     pub strict_nonce_size_check: bool,
-    /// Do not record unprocessable (no-op) transactions to the ledger.
+    /// Do not commit unprocessable (no-op) transactions to the ledger.
     ///
     /// This is a leader-side filtering policy. It must not be enabled for replay.
-    pub skip_record_noops: bool,
+    pub drop_noop_transactions: bool,
 }
 
 /// Runtime environment for transaction batch processing.
@@ -504,22 +504,20 @@ impl<FG: ForkGraph> TransactionBatchProcessor<FG> {
                 // Unprocessable transactions always result in an error
                 TransactionLoadResult::Unprocessable(e) => Err(e),
 
-                // All pre-execution failures become an error with drop_on_failure
+                // Validation failures that would be no-ops become errors with `drop_on_failure` or
+                // `drop_noop_transactions`. These may be produced by SIMD-0290 (fee-payer failure)
+                // or SIMD-0297 (nonce failure), but are dropped during block production to avoid commit.
                 TransactionLoadResult::NoOp(NoOpTransaction {
                     validation_error: e,
                     ..
-                })
-                | TransactionLoadResult::FeesOnly(FeesOnlyTransaction { load_error: e, .. })
+                }) if config.drop_on_failure || config.drop_noop_transactions => Err(e),
+
+                // Loading failures that would be fee-only become errors with `drop_on_failure`
+                TransactionLoadResult::FeesOnly(FeesOnlyTransaction { load_error: e, .. })
                     if config.drop_on_failure =>
                     Err(e),
 
-                // SIMD-0290 fee-payer or SIMD-0297 nonce failure is an error in block production to avoid commit
-                TransactionLoadResult::NoOp(NoOpTransaction {
-                    validation_error: e,
-                    ..
-                }) if config.skip_record_noops => Err(e),
-
-                // SIMD-0290 fee-payer or SIMD-0297 nonce failure is signalled as a non-error no-op on replay
+                // SIMD-0290 (fee-payer failure) or SIMD-0297 (nonce failure) is a non-error no-op on replay
                 TransactionLoadResult::NoOp(no_op_tx) =>
                     Ok(ProcessedTransaction::NoOp(Box::new(no_op_tx))),
 

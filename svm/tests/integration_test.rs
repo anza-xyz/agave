@@ -162,7 +162,7 @@ impl SvmTestEnvironment<'_> {
             },
             drop_on_failure: test_entry.drop_on_failure,
             all_or_nothing: test_entry.all_or_nothing,
-            skip_record_noops: test_entry.skip_record_noops,
+            drop_noop_transactions: test_entry.drop_noop_transactions,
             ..Default::default()
         };
 
@@ -384,7 +384,7 @@ pub struct SvmTestEntry {
     pub all_or_nothing: bool,
 
     // enables transformation of no-op result into error. false in replay, true in block production
-    pub skip_record_noops: bool,
+    pub drop_noop_transactions: bool,
 
     // programs to deploy to the new svm
     pub initial_programs: Vec<(String, Slot, Option<Pubkey>)>,
@@ -408,7 +408,7 @@ impl Default for SvmTestEntry {
             feature_set: SVMFeatureSet::all_enabled(),
             all_or_nothing: false,
             drop_on_failure: false,
-            skip_record_noops: false,
+            drop_noop_transactions: false,
             initial_programs: Vec::new(),
             initial_accounts: HashMap::new(),
             transaction_batch: Vec::new(),
@@ -947,11 +947,11 @@ fn program_medley(drop_on_failure: bool) -> Vec<SvmTestEntry> {
 #[test_matrix([false, true], [false, true], [false, true])]
 fn simple_transfer(
     relax_fee_payer_constraint: bool,
-    skip_record_noops: bool,
+    drop_noop_transactions: bool,
     drop_on_failure: bool,
 ) {
     let mut test_entry = SvmTestEntry {
-        skip_record_noops,
+        drop_noop_transactions,
         drop_on_failure,
         ..Default::default()
     };
@@ -961,7 +961,7 @@ fn simple_transfer(
 
     let ultimate_status = |status: ExecutionStatus| match (
         relax_fee_payer_constraint,
-        skip_record_noops,
+        drop_noop_transactions,
         drop_on_failure,
         status,
     ) {
@@ -3953,7 +3953,7 @@ mod balance_collector {
 
         for _ in 0..100 {
             let mut test_entry = SvmTestEntry {
-                skip_record_noops: true,
+                drop_noop_transactions: true,
                 ..Default::default()
             };
 
@@ -4043,7 +4043,7 @@ mod balance_collector {
 
                         vec![instruction]
                     }
-                    // we run `skip_record_noops` which prevents this from happening
+                    // we run `drop_noop_transactions` which prevents this from happening
                     ExecutionStatus::ProcessedNoOp => unreachable!(),
                 };
 
