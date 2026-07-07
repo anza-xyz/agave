@@ -55,7 +55,6 @@ use {
     solana_ledger::{
         blockstore::{Blockstore, MAX_COMPLETED_SLOTS_IN_CHANNEL, UpdateParentReceiver},
         blockstore_cleanup_service::BlockstoreCleanupService,
-        blockstore_processor::TransactionStatusSender,
         entry_notifier_service::EntryNotifierSender,
         leader_schedule_cache::LeaderScheduleCache,
         shred::filter::TurbineMode,
@@ -74,6 +73,7 @@ use {
         commitment::BlockCommitmentCache,
         prioritization_fee_cache::PrioritizationFeeCache,
         snapshot_controller::SnapshotController,
+        transaction_execution::TransactionStatusSender,
         validated_block_finalization::ValidatedBlockFinalizationCert,
         vote_sender_types::ReplayVoteSender,
     },

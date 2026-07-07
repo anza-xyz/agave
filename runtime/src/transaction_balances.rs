@@ -1,8 +1,8 @@
 use {
+    crate::bank::TransactionBalancesSet,
     solana_account_decoder::{
         parse_account_data::SplTokenAdditionalDataV2, parse_token::token_amount_to_ui_amount_v3,
     },
-    solana_runtime::bank::TransactionBalancesSet,
     solana_svm::transaction_balances::{BalanceCollector, SvmTokenInfo},
     solana_transaction_status::{
         TransactionTokenBalance, token_balances::TransactionTokenBalancesSet,
