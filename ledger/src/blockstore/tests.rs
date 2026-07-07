@@ -5292,7 +5292,6 @@ fn test_update_completed_data_indexes_out_of_order() {
 // original unbounded implementation across randomized insertion orders.
 #[test]
 fn test_update_completed_data_indexes_differential() {
-    
     // The original implementation, with an unbounded forward scan.
     fn reference(
         is_last_in_data: bool,
