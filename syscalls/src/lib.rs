@@ -2406,19 +2406,19 @@ declare_builtin_function!(
 
         let exponent = translate_slice::<u8>(
             memory_mapping,
-            params.exponent as u64,
+            params.exponent,
             params.exponent_len,
             check_aligned,
         )?;
         let base = translate_slice::<u8>(
             memory_mapping,
-            params.base as u64,
+            params.base,
             params.base_len,
             check_aligned,
         )?;
         let modulus = translate_slice::<u8>(
             memory_mapping,
-            params.modulus as u64,
+            params.modulus,
             params.modulus_len,
             check_aligned,
         )?;
@@ -6144,11 +6144,11 @@ mod tests {
             Some(expected.to_vec())
         );
         let params = BigModExpParams {
-            base: VADDR_BASE as *const u8,
+            base: VADDR_BASE,
             base_len: base.len() as u64,
-            exponent: VADDR_EXPONENT as *const u8,
+            exponent: VADDR_EXPONENT,
             exponent_len: exponent.len() as u64,
-            modulus: VADDR_MODULUS as *const u8,
+            modulus: VADDR_MODULUS,
             modulus_len: modulus.len() as u64,
         };
 
@@ -6195,11 +6195,11 @@ mod tests {
         let modulus = [0x02];
         let mut data_out = [0u8; 1];
         let params = BigModExpParams {
-            base: VADDR_BASE as *const u8,
+            base: VADDR_BASE,
             base_len: base.len() as u64,
-            exponent: VADDR_EXPONENT as *const u8,
+            exponent: VADDR_EXPONENT,
             exponent_len: exponent.len() as u64,
-            modulus: VADDR_MODULUS as *const u8,
+            modulus: VADDR_MODULUS,
             modulus_len: modulus.len() as u64,
         };
 
@@ -6247,11 +6247,11 @@ mod tests {
         let modulus = [0x07];
         assert_eq!(big_mod_exp(&[0x05], &[0x02], &[0x07]), Some(vec![0x04]));
         let params = BigModExpParams {
-            base: VADDR_BASE as *const u8,
+            base: VADDR_BASE,
             base_len: 1,
-            exponent: VADDR_EXPONENT as *const u8,
+            exponent: VADDR_EXPONENT,
             exponent_len: 1,
-            modulus: VADDR_MODULUS as *const u8,
+            modulus: VADDR_MODULUS,
             modulus_len: 1,
         };
 
@@ -6292,11 +6292,11 @@ mod tests {
         let data = [0u8; 1];
         let mut data_out = [0u8; 1];
         let params = BigModExpParams {
-            base: VADDR_DATA as *const u8,
+            base: VADDR_DATA,
             base_len: BIG_MOD_EXP_MAX_BYTES + 1,
-            exponent: VADDR_DATA as *const u8,
+            exponent: VADDR_DATA,
             exponent_len: 0,
-            modulus: VADDR_DATA as *const u8,
+            modulus: VADDR_DATA,
             modulus_len: 1,
         };
 
