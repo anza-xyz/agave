@@ -3,8 +3,7 @@ use {
     crate::{
         genesis_utils::{GenesisConfigInfo, create_genesis_config},
         shred::{
-            MAX_DATA_SHREDS_PER_SLOT,
-            ShredFlags, max_ticks_per_n_shreds,
+            MAX_DATA_SHREDS_PER_SLOT, ShredFlags, max_ticks_per_n_shreds,
             merkle::finish_erasure_batch_for_tests,
             merkle_tree::{
                 SIZE_OF_MERKLE_PROOF_ENTRY, get_proof_size, hash_as_merkle_proof_entry,
@@ -13,7 +12,7 @@ use {
         },
     },
     assert_matches::assert_matches,
-    rand::{rng, seq::SliceRandom, Rng},
+    rand::{Rng, rng, seq::SliceRandom},
     rand_chacha::{ChaChaRng, rand_core::SeedableRng},
     solana_entry::entry::{
         entries_to_verification_data, entry_views_to_verification_data, next_entry_mut,
