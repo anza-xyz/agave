@@ -62,7 +62,7 @@ use {
         blockstore_processor::{
             self, AsyncVerificationProgress, BlockstoreProcessorError, ChainedBlockIdCheck,
             ConfirmationProgress, ExecuteBatchesInternalMetrics, ReplaySlotStats,
-            TransactionStatusSender, check_chained_block_id,
+            check_chained_block_id,
         },
         entry_notifier_service::EntryNotifierSender,
         leader_schedule_cache::LeaderScheduleCache,
@@ -90,6 +90,7 @@ use {
         leader_schedule_utils::first_of_consecutive_leader_slots,
         prioritization_fee_cache::PrioritizationFeeCache,
         snapshot_controller::SnapshotController,
+        transaction_execution::TransactionStatusSender,
         vote_sender_types::{ReplayVoteMessage, ReplayVoteSender},
     },
     solana_signer::Signer,
