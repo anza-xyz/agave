@@ -585,7 +585,6 @@ impl TaskHandler for DefaultTaskHandler {
             timings,
             handler_context.log_messages_bytes_limit,
             handler_context.prioritization_fee_cache.as_deref(),
-            None::<fn(&_) -> _>,
         );
         sleepless_testing::at(CheckPoint::TaskHandled(task_id));
     }
