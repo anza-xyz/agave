@@ -10,7 +10,7 @@ use {
     solana_native_token::Sol,
     solana_pubkey::Pubkey,
     solana_rpc_client::rpc_client::RpcClient,
-    solana_rpc_client_api::{client_error, request, response::RpcContactInfo},
+    solana_rpc_client_api::{client_error, request},
     solana_validator_exit::Exit,
     std::{
         net::SocketAddr,
@@ -71,7 +71,7 @@ impl Dashboard {
             let progress_bar = new_spinner_progress_bar();
             progress_bar.set_message("Connecting...");
 
-            let Some((rpc_addr, start_time, mut vat_status)) = runtime.block_on(
+            let Some((rpc_addr, start_time, contact_info, mut vat_status)) = runtime.block_on(
                 wait_for_validator_startup(&ledger_path, &exit, progress_bar, refresh_interval),
             ) else {
                 continue;
@@ -96,25 +96,28 @@ impl Dashboard {
                 println_name_value("Genesis Hash:", &genesis_hash.to_string());
             }
 
-            if let Some(contact_info) = get_contact_info(&rpc_client, &identity) {
-                println_name_value(
-                    "Version:",
-                    &contact_info.version.unwrap_or_else(|| "?".to_string()),
-                );
-                if let Some(shred_version) = contact_info.shred_version {
-                    println_name_value("Shred Version:", &shred_version.to_string());
+            if let Ok(version) = rpc_client.get_version() {
+                println_name_value("Version:", &version.to_string());
+            }
+            if let Some(admin_rpc_service::AdminRpcContactInfo {
+                gossip,
+                rpc,
+                rpc_pubsub,
+                shred_version,
+                tpu_quic,
+                ..
+            }) = contact_info
+            {
+                println_name_value("Shred Version:", &shred_version.to_string());
+                println_name_value("Gossip Address:", &gossip.to_string());
+                if tpu_quic.port() != 0 {
+                    println_name_value("TPU QUIC Address:", &tpu_quic.to_string());
                 }
-                if let Some(gossip) = contact_info.gossip {
-                    println_name_value("Gossip Address:", &gossip.to_string());
-                }
-                if let Some(tpu) = contact_info.tpu_quic {
-                    println_name_value("TPU QUIC Address:", &tpu.to_string());
-                }
-                if let Some(rpc) = contact_info.rpc {
+                if rpc.port() != 0 {
                     println_name_value("JSON RPC URL:", &format!("http://{rpc}"));
                 }
-                if let Some(pubsub) = contact_info.pubsub {
-                    println_name_value("WebSocket PubSub URL:", &format!("ws://{pubsub}"));
+                if rpc_pubsub.port() != 0 {
+                    println_name_value("WebSocket PubSub URL:", &format!("ws://{rpc_pubsub}"));
                 }
             }
 
@@ -276,6 +279,7 @@ async fn wait_for_validator_startup(
 ) -> Option<(
     SocketAddr,
     SystemTime,
+    Option<admin_rpc_service::AdminRpcContactInfo>,
     Option<admin_rpc_service::AdminRpcValidatorAdmissionTicketStatus>,
 )> {
     let mut admin_client = None;
@@ -285,62 +289,59 @@ async fn wait_for_validator_startup(
         }
 
         if admin_client.is_none() {
-            match admin_rpc_service::connect(ledger_path).await {
-                Ok(new_admin_client) => admin_client = Some(new_admin_client),
+            admin_client = Some(match admin_rpc_service::connect(ledger_path).await {
+                Ok(new_admin_client) => new_admin_client,
                 Err(err) => {
                     progress_bar.set_message(format!("Unable to connect to validator: {err}"));
                     thread::sleep(refresh_interval);
                     continue;
                 }
-            }
+            });
         }
 
-        match admin_client.as_ref().unwrap().start_progress().await {
-            Ok(start_progress) => {
-                if start_progress == ValidatorStartProgress::Running {
-                    let admin_client = admin_client.take().unwrap();
-
-                    let validator_info = async move {
-                        let rpc_addr = admin_client.rpc_addr().await?;
-                        let start_time = admin_client.start_time().await?;
-                        let vat_status = if rpc_addr.is_some() {
-                            admin_client.vat_status().await.ok()
-                        } else {
-                            None
-                        };
-                        Ok::<_, jsonrpc_core_client::RpcError>((rpc_addr, start_time, vat_status))
-                    }
-                    .await;
-                    match validator_info {
-                        Ok((None, _, _)) => progress_bar.set_message("RPC service not available"),
-                        Ok((Some(rpc_addr), start_time, vat_status)) => {
-                            return Some((rpc_addr, start_time, vat_status));
-                        }
-                        Err(err) => {
-                            progress_bar
-                                .set_message(format!("Failed to get validator info: {err}"));
-                        }
-                    }
-                } else {
-                    progress_bar.set_message(format!("Validator startup: {start_progress:?}..."));
-                }
-            }
+        let start_progress = match admin_client.as_ref().unwrap().start_progress().await {
+            Ok(start_progress) => start_progress,
             Err(err) => {
                 admin_client = None;
                 progress_bar.set_message(format!("Failed to get validator start progress: {err}"));
+                thread::sleep(refresh_interval);
+                continue;
+            }
+        };
+
+        if start_progress != ValidatorStartProgress::Running {
+            progress_bar.set_message(format!("Validator startup: {start_progress:?}..."));
+            thread::sleep(refresh_interval);
+            continue;
+        }
+
+        let admin_client = admin_client.take().unwrap();
+        match async move {
+            let Some(rpc_addr) = admin_client.rpc_addr().await? else {
+                return Ok(None);
+            };
+            let start_time = admin_client.start_time().await?;
+            let contact_info = admin_client.contact_info().await.ok();
+            let vat_status = admin_client.vat_status().await.ok();
+            Ok::<_, jsonrpc_core_client::RpcError>(Some((
+                rpc_addr,
+                start_time,
+                contact_info,
+                vat_status,
+            )))
+        }
+        .await
+        {
+            Ok(None) => progress_bar.set_message("RPC service not available"),
+            Ok(Some((rpc_addr, start_time, contact_info, vat_status))) => {
+                return Some((rpc_addr, start_time, contact_info, vat_status));
+            }
+            Err(err) => {
+                progress_bar.set_message(format!("Failed to get validator info: {err}"));
             }
         }
         thread::sleep(refresh_interval);
     }
-}
-
-fn get_contact_info(rpc_client: &RpcClient, identity: &Pubkey) -> Option<RpcContactInfo> {
-    rpc_client
-        .get_cluster_nodes()
-        .ok()
-        .unwrap_or_default()
-        .into_iter()
-        .find(|node| node.pubkey == identity.to_string())
 }
 
 fn get_validator_stats(
