@@ -1420,8 +1420,8 @@ const SUPPORTED_THREADS: &[&str] = &["poh"];
 /// Reject unsupported managed thread names.
 #[cfg(target_os = "linux")]
 fn validate_supported_threads(file_config: &ConfigFile) -> Result<(), String> {
-    for name in file_config.thread_names() {
-        if !SUPPORTED_THREADS.contains(&name) {
+    for name in file_config.threads.keys() {
+        if !SUPPORTED_THREADS.contains(&name.as_str()) {
             return Err(format!(
                 "unsupported thread `[threads.{name}]` in config file; supported threads: {}",
                 SUPPORTED_THREADS.join(", ")
@@ -1439,13 +1439,13 @@ fn apply_poh_defaults(file_config: &mut ConfigFile, matches: &ArgMatches) {
     let cpu = match cli {
         Some(cpu) => Some(cpu),
         // No file block: use the built-in default.
-        None if file_config.thread("poh").is_none() => poh_service::DEFAULT_PINNED_CPU_CORE,
+        None if !file_config.threads.contains_key("poh") => poh_service::DEFAULT_PINNED_CPU_CORE,
         // File block: honor it.
         None => return,
     };
     if let Some(cpu) = cpu {
-        file_config.set_thread(
-            "poh",
+        file_config.threads.insert(
+            "poh".to_string(),
             ThreadConfig {
                 cpu,
                 reservation: Reservation::Exclusive,
@@ -1457,7 +1457,7 @@ fn apply_poh_defaults(file_config: &mut ConfigFile, matches: &ArgMatches) {
 /// PoH core from the merged configuration.
 #[cfg(target_os = "linux")]
 fn resolve_poh_pinned_cpu_core(file_config: &ConfigFile) -> Option<usize> {
-    file_config.thread("poh").map(|thread| thread.cpu)
+    file_config.threads.get("poh").map(|thread| thread.cpu)
 }
 
 /// Return the sole configured XDP endpoint, if any.

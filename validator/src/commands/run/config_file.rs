@@ -84,24 +84,10 @@ pub struct ConfigFile {
     /// AF_XDP transmit endpoints, keyed by `[xdp.<name>]`.
     pub xdp: BTreeMap<String, XdpConfig>,
     /// Managed threads (`[threads.<name>]`), keyed by name.
-    threads: BTreeMap<String, ThreadConfig>,
+    pub threads: BTreeMap<String, ThreadConfig>,
 }
 
 impl ConfigFile {
-    pub(crate) fn thread(&self, name: &str) -> Option<&ThreadConfig> {
-        self.threads.get(name)
-    }
-
-    /// Insert or replace a managed thread block.
-    pub(crate) fn set_thread(&mut self, name: impl Into<String>, thread: ThreadConfig) {
-        self.threads.insert(name.into(), thread);
-    }
-
-    /// Names of all declared `[threads.<name>]` blocks.
-    pub(crate) fn thread_names(&self) -> impl Iterator<Item = &str> {
-        self.threads.keys().map(String::as_str)
-    }
-
     /// Exclusive CPU claims from `[threads.*]`, keyed by CPU.
     pub(crate) fn exclusive_thread_cpus(&self) -> Result<BTreeMap<usize, String>, ConfigFileError> {
         let mut owners = BTreeMap::new();
@@ -132,7 +118,8 @@ pub(crate) fn claim_exclusive(
 }
 
 /// CPU-sharing policy for a managed thread.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Deserialize)]
+#[serde(rename_all = "lowercase")]
 pub enum Reservation {
     /// Share this CPU with other work.
     #[default]
@@ -142,11 +129,13 @@ pub enum Reservation {
 }
 
 /// Configuration of a single managed thread (`[threads.<name>]`).
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct ThreadConfig {
     /// Logical CPU the thread pins to.
     pub cpu: usize,
     /// CPU-sharing policy; defaults to [`Reservation::None`].
+    #[serde(default)]
     pub reservation: Reservation,
 }
 
@@ -159,35 +148,7 @@ struct RawFile {
     #[serde(default)]
     xdp: BTreeMap<String, RawXdpEndpoint>,
     #[serde(default)]
-    threads: BTreeMap<String, RawThread>,
-}
-
-/// A single `[threads.<name>]` entry.
-#[derive(Debug, Deserialize)]
-#[serde(deny_unknown_fields)]
-struct RawThread {
-    cpu: usize,
-    #[serde(default)]
-    reservation: Option<RawReservation>,
-}
-
-/// The `reservation` value as written in the file.
-#[derive(Debug, Deserialize)]
-#[serde(rename_all = "lowercase")]
-enum RawReservation {
-    None,
-    Exclusive,
-}
-
-fn build_thread(raw: &RawThread) -> ThreadConfig {
-    let reservation = match raw.reservation {
-        None | Some(RawReservation::None) => Reservation::None,
-        Some(RawReservation::Exclusive) => Reservation::Exclusive,
-    };
-    ThreadConfig {
-        cpu: raw.cpu,
-        reservation,
-    }
+    threads: BTreeMap<String, ThreadConfig>,
 }
 
 /// Settings for one `[interfaces.<name>]`.
@@ -226,14 +187,9 @@ fn parse_str(text: &str) -> Result<ConfigFile, ConfigFileError> {
     let xdp = xdp
         .into_iter()
         .map(|(name, endpoint)| {
-            let config = xdp_config_from_raw(&name, endpoint, &interfaces)?;
-            Ok((name, config))
+            xdp_config_from_raw(&name, endpoint, &interfaces).map(|config| (name, config))
         })
         .collect::<Result<BTreeMap<_, _>, ConfigFileError>>()?;
-    let threads = threads
-        .iter()
-        .map(|(name, raw)| (name.clone(), build_thread(raw)))
-        .collect::<BTreeMap<_, _>>();
     Ok(ConfigFile { xdp, threads })
 }
 
@@ -254,15 +210,14 @@ fn xdp_config_from_raw(
         .and_then(|n| declared_interfaces.get(n))
         .is_some_and(|iface| iface.zero_copy);
 
-    let entries = raw.queue_to_cpu_mapping;
-    if entries.is_empty() {
+    if raw.queue_to_cpu_mapping.is_empty() {
         return Err(ConfigFileError::Mapping("must not be empty".to_string()));
     }
 
-    let mut queues = Vec::with_capacity(entries.len());
+    let mut queues = Vec::with_capacity(raw.queue_to_cpu_mapping.len());
     let mut seen_queues = HashSet::new();
     let mut seen_cpus = HashSet::new();
-    for entry in &entries {
+    for entry in &raw.queue_to_cpu_mapping {
         let mapping_err =
             || ConfigFileError::Mapping(format!("`{entry}` is not a \"<queue>:<cpu>\" pair"));
         let (queue_str, cpu_str) = entry.split_once(':').ok_or_else(mapping_err)?;
@@ -282,11 +237,7 @@ fn xdp_config_from_raw(
 
 #[cfg(test)]
 mod tests {
-    use super::*;
-
-    fn parse(s: &str) -> Result<ConfigFile, ConfigFileError> {
-        parse_str(s)
-    }
+    use super::{parse_str as parse, *};
 
     fn xdp(s: &str) -> XdpConfig {
         parse(s)
@@ -388,27 +339,27 @@ queue_to_cpu_mapping = ["0:2", "1:4", "2:7"]
         let c = parse("[threads.poh]\ncpu = 3\n").unwrap();
         assert!(c.xdp.is_empty());
         assert_eq!(
-            c.thread("poh"),
+            c.threads.get("poh"),
             Some(&ThreadConfig {
                 cpu: 3,
                 reservation: Reservation::None,
             })
         );
-        assert_eq!(c.thread("nonexistent"), None);
+        assert_eq!(c.threads.get("nonexistent"), None);
     }
 
     #[test]
     fn parses_multiple_threads() {
         let c = parse("[threads.poh]\ncpu = 2\n[threads.replay]\ncpu = 8\n").unwrap();
         assert_eq!(
-            c.thread("poh"),
+            c.threads.get("poh"),
             Some(&ThreadConfig {
                 cpu: 2,
                 reservation: Reservation::None,
             })
         );
         assert_eq!(
-            c.thread("replay"),
+            c.threads.get("replay"),
             Some(&ThreadConfig {
                 cpu: 8,
                 reservation: Reservation::None,
@@ -427,8 +378,7 @@ queue_to_cpu_mapping = ["0:2", "1:4", "2:7"]
     fn parses_exclusive_reservation() {
         let t = parse("[threads.poh]\ncpu = 2\nreservation = \"exclusive\"\n")
             .unwrap()
-            .thread("poh")
-            .unwrap()
+            .threads["poh"]
             .reservation;
         assert_eq!(t, Reservation::Exclusive);
     }
@@ -475,13 +425,12 @@ queue_to_cpu_mapping = ["0:2", "1:4", "2:7"]
     fn empty_config_is_allowed() {
         let c = parse("").unwrap();
         assert!(c.xdp.is_empty());
-        assert_eq!(c.thread("poh"), None);
+        assert!(c.threads.is_empty());
     }
 
     #[test]
     fn rejects_unknown_field() {
-        let e =
-            parse("[xdp.tpu]\nrx_size = 8192\nqueue_to_cpu_mapping = [\"0:8\"]\n").unwrap_err();
+        let e = parse("[xdp.tpu]\nrx_size = 8192\nqueue_to_cpu_mapping = [\"0:8\"]\n").unwrap_err();
         assert!(matches!(e, ConfigFileError::Toml(_)));
     }
 
