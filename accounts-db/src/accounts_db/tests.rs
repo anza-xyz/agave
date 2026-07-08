@@ -116,10 +116,10 @@ fn create_store_for_shrink_tests(
     file_size: u64,
     alive_bytes: usize,
     num_zero_lamport_single_ref_accounts: usize,
-) -> (Vec<TempDir>, Arc<AccountStorageEntry>) {
-    let (temp_dirs, common_store_path) = get_temp_accounts_paths(1).unwrap();
+) -> (TempDir, Arc<AccountStorageEntry>) {
+    let temp_dir = TempDir::new().unwrap();
     let store = Arc::new(AccountStorageEntry::new(
-        &common_store_path[0],
+        temp_dir.path(),
         slot,
         slot as AccountsFileId,
         file_size,
@@ -130,7 +130,7 @@ fn create_store_for_shrink_tests(
     for offset in 0..num_zero_lamport_single_ref_accounts {
         store.insert_zero_lamport_single_ref_account_offset(offset);
     }
-    (temp_dirs, store)
+    (temp_dir, store)
 }
 
 /// Macro to define tests for all permutations of accounts-db configs
@@ -1675,7 +1675,7 @@ fn test_alive_bytes_after_shrink() {
     // note the initial alive bytes should be big enough so that subtracting
     // all the zero lamport single ref accounts does not saturate at zero.
     let initial_alive_bytes = 123_456;
-    let (_temp_dirs, store) = create_store_for_shrink_tests(
+    let (_temp_dir, store) = create_store_for_shrink_tests(
         &accounts_db,
         slot,
         4096, // <-- file size
@@ -3024,7 +3024,7 @@ fn test_select_candidates_by_total_usage_with_zero_lamport_single_ref_accounts()
     let file_size = AppendVec::calculate_stored_size(0) * num_zero_lamport_single_ref_accounts;
 
     let slot_with_zlsr = 11;
-    let (_temp_dirs_with_zlsr, store_with_zlsr) = create_store_for_shrink_tests(
+    let (_temp_dir_with_zlsr, store_with_zlsr) = create_store_for_shrink_tests(
         &accounts_db,
         slot_with_zlsr,
         file_size as u64,
@@ -3034,7 +3034,7 @@ fn test_select_candidates_by_total_usage_with_zero_lamport_single_ref_accounts()
     shrink_candidates.insert(slot_with_zlsr);
 
     let slot_no_zlsr = 22;
-    let (_temp_dirs_no_zlsr, store_no_zlsr) = create_store_for_shrink_tests(
+    let (_temp_dir_no_zlsr, store_no_zlsr) = create_store_for_shrink_tests(
         &accounts_db,
         slot_no_zlsr,
         file_size as u64,
