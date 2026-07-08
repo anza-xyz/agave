@@ -5,20 +5,25 @@
 //!
 //! ```toml
 //! [interfaces."ens1f0"]
-//! zero_copy = true # default false
+//! zero_copy = true                       # default false
+//! queue_to_cpu_mapping = ["0:8", "1:9"]  # required, non-empty
 //!
 //! [xdp.tpu]
-//! interfaces = ["ens1f0"]               # omit to auto-detect
-//! queue_to_cpu_mapping = ["0:8", "1:9"] # required
+//! interfaces = ["ens1f0"] # omit to auto-detect
 //!
 //! [threads.poh]
 //! cpu = 2
 //! reservation = "exclusive" # "none" by default
 //! ```
 //!
-//! `[interfaces.<name>]` holds NIC settings referenced by `[xdp.<name>]`. Missing
-//! interface sections use defaults. The validator currently accepts at most one
-//! XDP endpoint and one interface per endpoint.
+//! A hardware queue is serviced by a single CPU-pinned worker thread, which is
+//! a property of the NIC, not of any one endpoint — so `queue_to_cpu_mapping`
+//! (and `zero_copy`) live on `[interfaces.<name>]`. An `[xdp.<name>]` endpoint
+//! just names the interface(s) it reads from; endpoints sharing an interface
+//! share its whole queue/CPU worker pool. Missing interface sections (or an
+//! endpoint naming none) fall back to an auto-selected interface and CPU. The
+//! validator currently accepts at most one XDP endpoint and one interface per
+//! endpoint.
 //!
 //! Each `"<queue>:<cpu>"` mapping is one-to-one. XDP queue CPUs are always
 //! exclusive; `[threads.<name>]` may opt in with `reservation = "exclusive"`.
@@ -151,12 +156,21 @@ struct RawFile {
     threads: BTreeMap<String, ThreadConfig>,
 }
 
-/// Settings for one `[interfaces.<name>]`.
+/// Settings for one `[interfaces.<name>]`: the NIC's hardware queue -> CPU
+/// worker assignment, shared by every endpoint that names this interface.
 #[derive(Debug, Deserialize)]
 #[serde(deny_unknown_fields)]
 struct RawInterface {
     #[serde(default)]
     zero_copy: bool,
+    queue_to_cpu_mapping: Vec<String>,
+}
+
+/// An `[interfaces.<name>]` entry once its `queue_to_cpu_mapping` is parsed
+/// and validated.
+struct Interface {
+    zero_copy: bool,
+    queues: Vec<QueueCpuBinding>,
 }
 
 /// A single `[xdp.<name>]` endpoint.
@@ -166,7 +180,6 @@ struct RawXdpEndpoint {
     /// Interface names; empty means auto-detect.
     #[serde(default)]
     interfaces: Vec<String>,
-    queue_to_cpu_mapping: Vec<String>,
 }
 
 /// Parse the validator config file into a [`ConfigFile`].
@@ -184,6 +197,10 @@ fn parse_str(text: &str) -> Result<ConfigFile, ConfigFileError> {
         xdp,
         threads,
     } = toml::from_str(text)?;
+    let interfaces = interfaces
+        .into_iter()
+        .map(|(name, raw)| interface_from_raw(raw).map(|iface| (name, iface)))
+        .collect::<Result<BTreeMap<_, _>, ConfigFileError>>()?;
     let xdp = xdp
         .into_iter()
         .map(|(name, endpoint)| {
@@ -193,23 +210,7 @@ fn parse_str(text: &str) -> Result<ConfigFile, ConfigFileError> {
     Ok(ConfigFile { xdp, threads })
 }
 
-fn xdp_config_from_raw(
-    name: &str,
-    raw: RawXdpEndpoint,
-    declared_interfaces: &BTreeMap<String, RawInterface>,
-) -> Result<XdpConfig, ConfigFileError> {
-    if raw.interfaces.len() > 1 {
-        return Err(ConfigFileError::MultiInterfaceUnsupported {
-            name: name.to_string(),
-            interfaces: raw.interfaces.join(", "),
-        });
-    }
-    let interface = raw.interfaces.into_iter().next();
-    let zero_copy = interface
-        .as_deref()
-        .and_then(|n| declared_interfaces.get(n))
-        .is_some_and(|iface| iface.zero_copy);
-
+fn interface_from_raw(raw: RawInterface) -> Result<Interface, ConfigFileError> {
     if raw.queue_to_cpu_mapping.is_empty() {
         return Err(ConfigFileError::Mapping("must not be empty".to_string()));
     }
@@ -232,6 +233,30 @@ fn xdp_config_from_raw(
         queues.push(QueueCpuBinding { queue, cpu });
     }
 
+    Ok(Interface {
+        zero_copy: raw.zero_copy,
+        queues,
+    })
+}
+
+fn xdp_config_from_raw(
+    name: &str,
+    raw: RawXdpEndpoint,
+    declared_interfaces: &BTreeMap<String, Interface>,
+) -> Result<XdpConfig, ConfigFileError> {
+    if raw.interfaces.len() > 1 {
+        return Err(ConfigFileError::MultiInterfaceUnsupported {
+            name: name.to_string(),
+            interfaces: raw.interfaces.join(", "),
+        });
+    }
+    let interface = raw.interfaces.into_iter().next();
+    let (queues, zero_copy) = match interface.as_deref().and_then(|n| declared_interfaces.get(n))
+    {
+        Some(iface) => (iface.queues.clone(), iface.zero_copy),
+        None => (Vec::new(), false),
+    };
+
     Ok(XdpConfig::new(interface, queues, zero_copy))
 }
 
@@ -248,30 +273,33 @@ mod tests {
     }
 
     #[test]
-    fn minimal_auto_interface() {
-        let c = xdp("[xdp.tpu]\nqueue_to_cpu_mapping = [\"0:8\"]\n");
+    fn minimal_endpoint_has_no_queues() {
+        // No interfaces named, so there's nothing to resolve a queue mapping
+        // from; the caller falls back to auto-selecting an interface and CPU.
+        let c = xdp("[xdp.tpu]\n");
         assert_eq!(c.interface, None);
         assert!(!c.zero_copy);
-        assert_eq!(c.queues, vec![QueueCpuBinding { queue: 0, cpu: 8 }]);
+        assert!(c.queues.is_empty());
     }
 
     #[test]
-    fn interface_without_section_defaults() {
-        // Missing interface sections use defaults.
-        let c = xdp("[xdp.tpu]\ninterfaces = [\"ens1f0\"]\nqueue_to_cpu_mapping = [\"0:8\"]\n");
+    fn interface_without_section_has_no_queues() {
+        // The endpoint names an interface, but nothing declares its settings.
+        let c = xdp("[xdp.tpu]\ninterfaces = [\"ens1f0\"]\n");
         assert_eq!(c.interface.as_deref(), Some("ens1f0"));
         assert!(!c.zero_copy);
+        assert!(c.queues.is_empty());
     }
 
     #[test]
     fn unreferenced_interface_section_is_ignored() {
-        // Interface settings apply only when referenced.
+        // A declared interface only applies to endpoints that name it.
         let c = xdp(
-            "[interfaces.\"ens1f0\"]\nzero_copy = true\n\n[xdp.tpu]\nqueue_to_cpu_mapping = \
-             [\"0:8\"]\n",
+            "[interfaces.\"ens1f0\"]\nqueue_to_cpu_mapping = [\"0:8\"]\n\n[xdp.tpu]\n",
         );
         assert_eq!(c.interface, None);
         assert!(!c.zero_copy);
+        assert!(c.queues.is_empty());
     }
 
     #[test]
@@ -279,10 +307,10 @@ mod tests {
         let c = xdp(r#"
 [interfaces."ens1f0"]
 zero_copy = true
+queue_to_cpu_mapping = ["0:2", "1:4", "2:7"]
 
 [xdp.tpu]
 interfaces = ["ens1f0"]
-queue_to_cpu_mapping = ["0:2", "1:4", "2:7"]
 "#);
         assert_eq!(c.interface.as_deref(), Some("ens1f0"));
         assert!(c.zero_copy);
@@ -297,11 +325,23 @@ queue_to_cpu_mapping = ["0:2", "1:4", "2:7"]
     }
 
     #[test]
-    fn rejects_multiple_interfaces_per_endpoint() {
-        let e = parse(
-            "[xdp.tpu]\ninterfaces = [\"ens1f0\", \"ens1f1\"]\nqueue_to_cpu_mapping = [\"0:8\"]\n",
+    fn endpoints_sharing_an_interface_get_its_whole_queue_pool() {
+        let c = parse(
+            "[interfaces.\"ens1f0\"]\nqueue_to_cpu_mapping = [\"0:8\", \"1:9\"]\n\n[xdp.tpu]\n\
+             interfaces = [\"ens1f0\"]\n\n[xdp.gossip]\ninterfaces = [\"ens1f0\"]\n",
         )
-        .unwrap_err();
+        .unwrap();
+        let expected = vec![
+            QueueCpuBinding { queue: 0, cpu: 8 },
+            QueueCpuBinding { queue: 1, cpu: 9 },
+        ];
+        assert_eq!(c.xdp["tpu"].queues, expected);
+        assert_eq!(c.xdp["gossip"].queues, expected);
+    }
+
+    #[test]
+    fn rejects_multiple_interfaces_per_endpoint() {
+        let e = parse("[xdp.tpu]\ninterfaces = [\"ens1f0\", \"ens1f1\"]\n").unwrap_err();
         assert!(matches!(
             e,
             ConfigFileError::MultiInterfaceUnsupported { name, .. } if name == "tpu"
@@ -311,11 +351,7 @@ queue_to_cpu_mapping = ["0:2", "1:4", "2:7"]
     #[test]
     fn multiple_xdp_endpoints_parse() {
         // Parser policy allows multiple endpoints; execute.rs limits active use.
-        let c = parse(
-            "[xdp.tpu]\nqueue_to_cpu_mapping = [\"0:8\"]\n\n[xdp.gossip]\nqueue_to_cpu_mapping \
-             = [\"1:9\"]\n",
-        )
-        .unwrap();
+        let c = parse("[xdp.tpu]\n\n[xdp.gossip]\n").unwrap();
         assert_eq!(c.xdp.len(), 2);
         assert!(c.xdp.contains_key("tpu"));
         assert!(c.xdp.contains_key("gossip"));
@@ -323,7 +359,10 @@ queue_to_cpu_mapping = ["0:2", "1:4", "2:7"]
 
     #[test]
     fn non_contiguous_queues() {
-        let c = xdp("[xdp.tpu]\nqueue_to_cpu_mapping = [\"1:10\", \"3:11\", \"5:12\"]\n");
+        let c = xdp(
+            "[interfaces.\"ens1f0\"]\nqueue_to_cpu_mapping = [\"1:10\", \"3:11\", \"5:12\"]\n\n\
+             [xdp.tpu]\ninterfaces = [\"ens1f0\"]\n",
+        );
         assert_eq!(
             c.queues,
             vec![
@@ -430,14 +469,16 @@ queue_to_cpu_mapping = ["0:2", "1:4", "2:7"]
 
     #[test]
     fn rejects_unknown_field() {
-        let e = parse("[xdp.tpu]\nrx_size = 8192\nqueue_to_cpu_mapping = [\"0:8\"]\n").unwrap_err();
+        let e = parse("[xdp.tpu]\nrx_size = 8192\n").unwrap_err();
         assert!(matches!(e, ConfigFileError::Toml(_)));
     }
 
     #[test]
     fn rejects_unknown_interface_field() {
         // Names are open; fields are not.
-        let e = parse("[interfaces.\"ens1f0\"]\nbogus = 2\n").unwrap_err();
+        let e =
+            parse("[interfaces.\"ens1f0\"]\nqueue_to_cpu_mapping = [\"0:8\"]\nbogus = 2\n")
+                .unwrap_err();
         assert!(matches!(e, ConfigFileError::Toml(_)));
     }
 
@@ -450,37 +491,40 @@ queue_to_cpu_mapping = ["0:2", "1:4", "2:7"]
 
     #[test]
     fn rejects_missing_mapping() {
-        let e = parse("[xdp.tpu]\ninterfaces = [\"eth0\"]\n").unwrap_err();
+        // queue_to_cpu_mapping is required once an interface is declared.
+        let e = parse("[interfaces.\"ens1f0\"]\nzero_copy = true\n").unwrap_err();
         assert!(matches!(e, ConfigFileError::Toml(_)));
     }
 
     #[test]
     fn rejects_duplicate_queue() {
-        let e = parse("[xdp.tpu]\nqueue_to_cpu_mapping = [\"0:8\", \"0:9\"]\n").unwrap_err();
+        let e = parse("[interfaces.\"ens1f0\"]\nqueue_to_cpu_mapping = [\"0:8\", \"0:9\"]\n")
+            .unwrap_err();
         assert!(matches!(e, ConfigFileError::DuplicateQueue { queue: 0 }));
     }
 
     #[test]
     fn rejects_duplicate_cpu() {
-        let e = parse("[xdp.tpu]\nqueue_to_cpu_mapping = [\"0:8\", \"1:8\"]\n").unwrap_err();
+        let e = parse("[interfaces.\"ens1f0\"]\nqueue_to_cpu_mapping = [\"0:8\", \"1:8\"]\n")
+            .unwrap_err();
         assert!(matches!(e, ConfigFileError::DuplicateCpu { cpu: 8 }));
     }
 
     #[test]
     fn rejects_bad_mapping_syntax() {
-        let e = parse("[xdp.tpu]\nqueue_to_cpu_mapping = [\"0-1\"]\n").unwrap_err();
+        let e = parse("[interfaces.\"ens1f0\"]\nqueue_to_cpu_mapping = [\"0-1\"]\n").unwrap_err();
         assert!(matches!(e, ConfigFileError::Mapping(_)));
     }
 
     #[test]
     fn rejects_queue_range() {
-        let e = parse("[xdp.tpu]\nqueue_to_cpu_mapping = [\"0-3:8\"]\n").unwrap_err();
+        let e = parse("[interfaces.\"ens1f0\"]\nqueue_to_cpu_mapping = [\"0-3:8\"]\n").unwrap_err();
         assert!(matches!(e, ConfigFileError::Mapping(_)));
     }
 
     #[test]
     fn rejects_empty_mapping() {
-        let e = parse("[xdp.tpu]\nqueue_to_cpu_mapping = []\n").unwrap_err();
+        let e = parse("[interfaces.\"ens1f0\"]\nqueue_to_cpu_mapping = []\n").unwrap_err();
         assert!(matches!(e, ConfigFileError::Mapping(_)));
     }
 }

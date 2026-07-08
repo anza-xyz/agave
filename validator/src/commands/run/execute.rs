@@ -1539,7 +1539,7 @@ fn build_xdp_config(
                 cpu,
             })
             .collect()
-    } else if let Some(file_xdp) = file_xdp {
+    } else if let Some(file_xdp) = file_xdp.filter(|x| !x.queues.is_empty()) {
         file_xdp.queues.clone()
     } else {
         // Avoid CPUs already reserved exclusively.
@@ -1657,8 +1657,8 @@ mod xdp_tests {
         let default_args = DefaultArgs::default();
         let app = add_args(clap::App::new("agave-validator"), &default_args);
         let file = write_config(
-            "[interfaces.\"eth0\"]\nzero_copy = true\n\n[xdp.tpu]\ninterfaces = [\"eth0\"]\n\
-             queue_to_cpu_mapping = [\"0:3\"]\n",
+            "[interfaces.\"eth0\"]\nzero_copy = true\nqueue_to_cpu_mapping = [\"0:3\"]\n\n\
+             [xdp.tpu]\ninterfaces = [\"eth0\"]\n",
         );
         let matches = app.get_matches_from(vec![
             "agave-validator",
@@ -1783,8 +1783,8 @@ mod xdp_tests {
         let default_args = DefaultArgs::default();
         let app = add_args(clap::App::new("agave-validator"), &default_args);
         let file_config = parse_file(
-            "[interfaces.\"eth0\"]\nzero_copy = true\n\n[xdp.tpu]\ninterfaces = [\"eth0\"]\n\
-             queue_to_cpu_mapping = [\"2:3\", \"4:4\", \"7:5\"]\n",
+            "[interfaces.\"eth0\"]\nzero_copy = true\nqueue_to_cpu_mapping = [\"2:3\", \"4:4\", \
+             \"7:5\"]\n\n[xdp.tpu]\ninterfaces = [\"eth0\"]\n",
         );
         let matches = app.get_matches_from(vec!["agave-validator"]);
         let config = build(&matches, &Operation::Run, &single_ip_bind(), file_config)
@@ -1803,13 +1803,27 @@ mod xdp_tests {
     }
 
     #[test]
+    fn test_endpoint_with_no_interface_falls_back_to_auto_select() {
+        // An [xdp.<name>] endpoint with nothing to resolve a queue mapping
+        // from (no interface referenced) must still auto-select a CPU rather
+        // than end up with zero worker queues.
+        let default_args = DefaultArgs::default();
+        let app = add_args(clap::App::new("agave-validator"), &default_args);
+        let file_config = parse_file("[xdp.tpu]\n");
+        let matches = app.get_matches_from(vec!["agave-validator"]);
+        let config = build(&matches, &Operation::Run, &single_ip_bind(), file_config)
+            .unwrap()
+            .expect("config file must enable XDP");
+        assert_eq!(config.interface, None);
+        assert!(!config.zero_copy);
+        assert_eq!(config.queues.len(), 1, "must auto-select exactly one CPU");
+    }
+
+    #[test]
     fn test_multiple_xdp_endpoints_is_error() {
         let default_args = DefaultArgs::default();
         let app = add_args(clap::App::new("agave-validator"), &default_args);
-        let file_config = parse_file(
-            "[xdp.tpu]\nqueue_to_cpu_mapping = [\"0:3\"]\n\n[xdp.gossip]\nqueue_to_cpu_mapping \
-             = [\"1:4\"]\n",
-        );
+        let file_config = parse_file("[xdp.tpu]\n\n[xdp.gossip]\n");
         let matches = app.get_matches_from(vec!["agave-validator"]);
         let result = build(&matches, &Operation::Run, &single_ip_bind(), file_config);
         assert!(
@@ -1824,8 +1838,8 @@ mod xdp_tests {
         let app = add_args(clap::App::new("agave-validator"), &default_args);
         // Both PoH and XDP claim core 6.
         let file_config = parse_file(
-            "[xdp.tpu]\nqueue_to_cpu_mapping = [\"0:6\"]\n[threads.poh]\ncpu = 6\nreservation = \
-             \"exclusive\"\n",
+            "[interfaces.\"eth0\"]\nqueue_to_cpu_mapping = [\"0:6\"]\n\n[xdp.tpu]\ninterfaces = \
+             [\"eth0\"]\n\n[threads.poh]\ncpu = 6\nreservation = \"exclusive\"\n",
         );
         let matches = app.get_matches_from(vec!["agave-validator"]);
         let result = build(&matches, &Operation::Run, &single_ip_bind(), file_config);
@@ -1841,7 +1855,8 @@ mod xdp_tests {
         let app = add_args(clap::App::new("agave-validator"), &default_args);
         // File XDP values.
         let file_config = parse_file(
-            "[xdp.tpu]\ninterfaces = [\"eth0\"]\nqueue_to_cpu_mapping = [\"0:3\", \"1:4\"]\n",
+            "[interfaces.\"eth0\"]\nqueue_to_cpu_mapping = [\"0:3\", \"1:4\"]\n\n[xdp.tpu]\n\
+             interfaces = [\"eth0\"]\n",
         );
         // CLI replaces them.
         let matches = app.get_matches_from(vec![
@@ -1872,8 +1887,8 @@ mod xdp_tests {
         let app = add_args(clap::App::new("agave-validator"), &default_args);
         // A single XDP CLI flag replaces the file endpoint.
         let file_config = parse_file(
-            "[interfaces.\"eth0\"]\nzero_copy = true\n\n[xdp.tpu]\ninterfaces = [\"eth0\"]\n\
-             queue_to_cpu_mapping = [\"0:3\", \"1:4\"]\n",
+            "[interfaces.\"eth0\"]\nzero_copy = true\nqueue_to_cpu_mapping = [\"0:3\", \"1:4\"]\n\n\
+             [xdp.tpu]\ninterfaces = [\"eth0\"]\n",
         );
         let matches = app.get_matches_from(vec!["agave-validator", "--xdp-cpu-cores", "5"]);
         let config = build(&matches, &Operation::Run, &single_ip_bind(), file_config)
