@@ -4512,21 +4512,18 @@ impl Bank {
             recording_config,
             timings,
             log_messages_bytes_limit,
-            None::<fn(&mut _, &_) -> _>,
+            None::<fn(&_) -> _>,
         )
         .unwrap()
     }
 
-    pub fn load_execute_and_commit_transactions_with_pre_commit_callback<'a>(
-        &'a self,
+    pub fn load_execute_and_commit_transactions_with_pre_commit_callback(
+        &self,
         batch: &TransactionBatch<impl TransactionWithMeta>,
         recording_config: ExecutionRecordingConfig,
         timings: &mut ExecuteTimings,
         log_messages_bytes_limit: Option<usize>,
-        pre_commit_callback: impl FnOnce(
-            &mut ExecuteTimings,
-            &[TransactionProcessingResult],
-        ) -> PreCommitResult<'a>,
+        pre_commit_callback: impl FnOnce(&[TransactionProcessingResult]) -> Result<()>,
     ) -> Result<(Vec<TransactionCommitResult>, Option<BalanceCollector>)> {
         self.do_load_execute_and_commit_transactions_with_pre_commit_callback(
             batch,
@@ -4537,15 +4534,13 @@ impl Bank {
         )
     }
 
-    fn do_load_execute_and_commit_transactions_with_pre_commit_callback<'a>(
-        &'a self,
+    fn do_load_execute_and_commit_transactions_with_pre_commit_callback(
+        &self,
         batch: &TransactionBatch<impl TransactionWithMeta>,
         recording_config: ExecutionRecordingConfig,
         timings: &mut ExecuteTimings,
         log_messages_bytes_limit: Option<usize>,
-        pre_commit_callback: Option<
-            impl FnOnce(&mut ExecuteTimings, &[TransactionProcessingResult]) -> PreCommitResult<'a>,
-        >,
+        pre_commit_callback: Option<impl FnOnce(&[TransactionProcessingResult]) -> Result<()>>,
     ) -> Result<(Vec<TransactionCommitResult>, Option<BalanceCollector>)> {
         let LoadAndExecuteTransactionsOutput {
             processing_results,
@@ -4568,22 +4563,16 @@ impl Bank {
             },
         );
 
-        // pre_commit_callback could initiate an atomic operation (i.e. poh recording with block
-        // producing unified scheduler). in that case, it returns Some(freeze_lock), which should
-        // unlocked only after calling commit_transactions() immediately after calling the
-        // callback.
-        let freeze_lock = if let Some(pre_commit_callback) = pre_commit_callback {
-            pre_commit_callback(timings, &processing_results)?
-        } else {
-            None
-        };
+        if let Some(pre_commit_callback) = pre_commit_callback {
+            let () = pre_commit_callback(&processing_results)?;
+        }
+
         let commit_results = self.commit_transactions(
             batch.sanitized_transactions(),
             processing_results,
             &processed_counts,
             timings,
         );
-        drop(freeze_lock);
         Ok((commit_results, balance_collector))
     }
 

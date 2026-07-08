@@ -79,7 +79,7 @@ use {
         fs::{self, File},
         io::Error as IoError,
         num::NonZeroUsize,
-        ops::{Bound, Range},
+        ops::Range,
         path::{Path, PathBuf},
         rc::Rc,
         sync::{
@@ -196,11 +196,8 @@ pub enum PossibleDuplicateShred {
         Shred,          // original
         shred::Payload, // conflict
     ),
-    // Merkle root chaining conflict with previous fec set
-    // As part of SIMD-0340
-    ChainedMerkleRootConflict(Slot),
-    // Secondary chained merkle root conflict with previous fec set
-    // As part of SIMD-0340
+    // Chained merkle root conflict with previous fec set
+    // A part of SIMD-0340
     FixedFECChainedMerkleRootConflict(Slot),
 }
 
@@ -211,8 +208,7 @@ impl PossibleDuplicateShred {
             Self::LastIndexConflict(shred, _) => shred.slot(),
             Self::ErasureConflict(shred, _) => shred.slot(),
             Self::MerkleRootConflict(shred, _) => shred.slot(),
-            Self::ChainedMerkleRootConflict(slot)
-            | Self::FixedFECChainedMerkleRootConflict(slot) => *slot,
+            Self::FixedFECChainedMerkleRootConflict(slot) => *slot,
         }
     }
 }
@@ -916,71 +912,6 @@ impl Blockstore {
             prev_merkle_root_meta.first_received_shred_index(),
             prev_merkle_root_meta.first_received_shred_type(),
         ))
-    }
-
-    /// Attempts to find the previous consecutive erasure set for `erasure_set`.
-    ///
-    /// Checks the map `erasure_metas`, if not present scans blockstore. Returns None
-    /// if the previous consecutive erasure set is not present in either.
-    fn previous_erasure_set<'a>(
-        &'a self,
-        erasure_set: ErasureSetId,
-        erasure_metas: &'a BTreeMap<ErasureSetId, WorkingEntry<ErasureMeta>>,
-    ) -> Result<Option<(ErasureSetId, Cow<'a, ErasureMeta>)>> {
-        let (slot, fec_set_index) = erasure_set.store_key();
-
-        // Check the previous entry from the in memory map to see if it is the consecutive
-        // set to `erasure set`
-        let candidate_erasure_entry = erasure_metas
-            .range((
-                Bound::Included(ErasureSetId::new(slot, 0)),
-                Bound::Excluded(erasure_set),
-            ))
-            .next_back();
-        let candidate_erasure_set_and_meta = candidate_erasure_entry
-            .filter(|(_, candidate_erasure_meta)| {
-                candidate_erasure_meta.as_ref().next_fec_set_index() == Some(fec_set_index)
-            })
-            .map(|(erasure_set, erasure_meta)| {
-                (*erasure_set, Cow::Borrowed(erasure_meta.as_ref()))
-            });
-        if candidate_erasure_set_and_meta.is_some() {
-            return Ok(candidate_erasure_set_and_meta);
-        }
-
-        // Consecutive set was not found in memory, scan blockstore for a potential candidate
-        let Some(((_, candidate_fec_set_index), candidate_erasure_meta)) = self
-            .erasure_meta_cf
-            .iter(IteratorMode::From(
-                (slot, u64::from(fec_set_index)),
-                IteratorDirection::Reverse,
-            ))?
-            // `find` here, to skip the first element in case the erasure meta for fec_set_index is already present
-            .find(|((_, candidate_fec_set_index), _)| {
-                *candidate_fec_set_index != u64::from(fec_set_index)
-            })
-            // Do not consider sets from the previous slot
-            .filter(|((candidate_slot, _), _)| *candidate_slot == slot)
-        else {
-            // No potential candidates
-            return Ok(None);
-        };
-        let candidate_fec_set_index = u32::try_from(candidate_fec_set_index)
-            .expect("fec_set_index from a previously inserted shred should fit in u32");
-        let candidate_erasure_set = ErasureSetId::new(slot, candidate_fec_set_index);
-        let candidate_erasure_meta = cf::ErasureMeta::deserialize(candidate_erasure_meta.as_ref())?;
-
-        // Check if this is actually the consecutive erasure set
-        let Some(next_fec_set_index) = candidate_erasure_meta.next_fec_set_index() else {
-            return Err(BlockstoreError::InvalidErasureConfig);
-        };
-        if next_fec_set_index == fec_set_index {
-            return Ok(Some((
-                candidate_erasure_set,
-                Cow::Owned(candidate_erasure_meta),
-            )));
-        }
-        Ok(None)
     }
 
     fn merkle_root_meta(&self, erasure_set: ErasureSetId) -> Result<Option<MerkleRootMeta>> {
@@ -1765,45 +1696,6 @@ impl Blockstore {
         &self,
         shred_insertion_tracker: &mut ShredInsertionTracker,
     ) {
-        for (erasure_set, working_erasure_meta) in shred_insertion_tracker.erasure_metas.iter() {
-            if !working_erasure_meta.should_write() {
-                // Not a new erasure meta
-                continue;
-            }
-            let (slot, _) = erasure_set.store_key();
-
-            // First coding shred from this erasure batch, check the forward merkle root chaining
-            // Note: This check is not performed on Alternate columns, as we cannot repair coding shreds
-            // and all shreds are trusted as they are verified via a separate merkle proof on repair ingest
-            let erasure_meta = working_erasure_meta.as_ref();
-            let shred_id = ShredId::new(
-                slot,
-                erasure_meta
-                    .first_received_coding_shred_index()
-                    .expect("First received coding index must fit in u32"),
-                ShredType::Code,
-            );
-            let shred = shred_insertion_tracker
-                .just_inserted_shreds
-                .get(&(BlockLocation::Original, shred_id))
-                .expect("Erasure meta was just created, initial shred must exist");
-
-            // Forward check for SIMD-0340
-            if let Some(next_fec_set_index) = erasure_meta.next_fec_set_index() {
-                let next_erasure_set = ErasureSetId::new(slot, next_fec_set_index);
-                if !self.check_forward_chained_merkle_root_consistency(
-                    shred,
-                    next_erasure_set,
-                    &shred_insertion_tracker.just_inserted_shreds,
-                    &shred_insertion_tracker.merkle_root_metas,
-                ) {
-                    shred_insertion_tracker
-                        .duplicate_shreds
-                        .push(PossibleDuplicateShred::ChainedMerkleRootConflict(slot));
-                }
-            }
-        }
-
         for ((location, erasure_set), working_merkle_root_meta) in
             shred_insertion_tracker.merkle_root_metas.iter()
         {
@@ -1813,7 +1705,6 @@ impl Blockstore {
             }
             let (slot, _) = erasure_set.store_key();
 
-            // First shred from this erasure batch, check the backwards merkle root chaining
             // Note: this check is not performed on Alternate columns as they are already validated
             // via a separate merkle proof on repair ingest
             if !matches!(location, BlockLocation::Original) {
@@ -1831,31 +1722,7 @@ impl Blockstore {
                 .get(&(*location, shred_id))
                 .expect("Merkle root meta was just created, initial shred must exist");
 
-            // Backward check for SIMD-0340
-            if let Some((_prev_erasure_set, prev_erasure_meta)) = self
-                .previous_erasure_set(*erasure_set, &shred_insertion_tracker.erasure_metas)
-                .expect("Expect database operations to succeed")
-            {
-                let prev_shred_id = ShredId::new(
-                    slot,
-                    prev_erasure_meta
-                        .first_received_coding_shred_index()
-                        .expect("First received coding index must fit in u32"),
-                    ShredType::Code,
-                );
-                if !self.check_backwards_chained_merkle_root_consistency(
-                    shred,
-                    prev_shred_id,
-                    &shred_insertion_tracker.just_inserted_shreds,
-                ) {
-                    shred_insertion_tracker
-                        .duplicate_shreds
-                        .push(PossibleDuplicateShred::ChainedMerkleRootConflict(slot));
-                    continue;
-                }
-            }
-
-            // Encompassing forward check for SIMD-0340
+            // Forward check for SIMD-0340
             if let Some(next_erasure_set) = erasure_set.next_fec_set()
                 && !self.check_forward_chained_merkle_root_consistency(
                     shred,
@@ -1870,7 +1737,7 @@ impl Blockstore {
                 continue;
             }
 
-            // Encompassing backward check for SIMD-0340
+            // Backwards check for SIMD-0340
             if let Some(prev_shred_id) = self
                 .previous_fec_set_shred_id(erasure_set, &shred_insertion_tracker.merkle_root_metas)
                 && !self.check_backwards_chained_merkle_root_consistency(
@@ -6130,23 +5997,18 @@ fn update_completed_data_indexes<'a>(
     // [i, j), [j, k) that could be completed data ranges
     [
         completed_data_indexes
-            .range(..new_shred_index)
-            .next_back()
+            .previous_completed_index(new_shred_index)
             .map(|index| index + 1)
             .or(Some(0u32)),
         is_last_in_data.then_some(new_shred_index + 1),
         completed_data_indexes
-            .range(new_shred_index + 1..)
-            .next()
+            .next_completed_index(new_shred_index + 1)
             .map(|index| index + 1),
     ]
     .into_iter()
     .flatten()
     .tuple_windows()
-    .filter(|&(start, end)| {
-        let bounds = u64::from(start)..u64::from(end);
-        received_data_shreds.range(bounds.clone()).eq(bounds)
-    })
+    .filter(|&(start, end)| received_data_shreds.contains_range(u64::from(start)..u64::from(end)))
     .map(|(start, end)| start..end)
 }
 

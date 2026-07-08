@@ -111,20 +111,20 @@ mod tests {
         let storage0 = accounts_db.create_and_insert_store(slot0, /*size*/ 4_096, "");
         storage0
             .accounts
-            .write_accounts(&(slot0, [(&key1, &account)].as_slice()), /*skip*/ 0);
+            .write_accounts(&(slot0, [(&key1, &account)].as_slice()));
 
         let slot1 = 1;
         let storage1 = accounts_db.create_and_insert_store(slot1, /*size*/ 4_096, "");
         storage1
             .accounts
-            .write_accounts(&(slot1, [(&key1, &account)].as_slice()), /*skip*/ 0);
+            .write_accounts(&(slot1, [(&key1, &account)].as_slice()));
 
         // Account with key2 is updated in a single slot, should get notified once
         let slot2 = 2;
         let storage2 = accounts_db.create_and_insert_store(slot2, /*size*/ 4_096, "");
         storage2
             .accounts
-            .write_accounts(&(slot2, [(&key2, &account)].as_slice()), /*skip*/ 0);
+            .write_accounts(&(slot2, [(&key2, &account)].as_slice()));
 
         // Do the notification
         let notifier = GeyserTestPlugin::default();

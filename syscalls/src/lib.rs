@@ -350,15 +350,7 @@ pub fn create_program_runtime_environment(
         } else {
             SBPFVersion::V3
         };
-    let max_sbpf_version = if feature_set.enable_sbpf_v3_deployment_and_execution {
-        SBPFVersion::V3
-    } else if feature_set.enable_sbpf_v2_deployment_and_execution {
-        SBPFVersion::V2
-    } else if feature_set.enable_sbpf_v1_deployment_and_execution {
-        SBPFVersion::V1
-    } else {
-        SBPFVersion::V0
-    };
+    let max_sbpf_version = SBPFVersion::V3;
     debug_assert!(min_sbpf_version <= max_sbpf_version);
 
     let config = Config {
@@ -376,7 +368,7 @@ pub fn create_program_runtime_environment(
         enabled_sbpf_versions: min_sbpf_version..=max_sbpf_version,
         optimize_rodata: false,
         aligned_memory_mapping: !feature_set.virtual_address_space_adjustments,
-        allow_memory_region_zero: feature_set.enable_sbpf_v3_deployment_and_execution,
+        allow_memory_region_zero: true,
         // Warning, do not use `Config::default()` so that configuration here is explicit.
     };
 

@@ -2,16 +2,14 @@ use {
     super::leader_slot_timing_metrics::LeaderExecuteAndCommitTimings,
     itertools::Itertools,
     solana_cost_model::cost_model::CostModel,
-    solana_ledger::{
-        blockstore_processor::TransactionStatusSender,
-        transaction_balances::compile_collected_balances,
-    },
     solana_measure::measure_us,
     solana_runtime::{
         bank::{Bank, ProcessedTransactionCounts},
         bank_utils,
         prioritization_fee_cache::PrioritizationFeeCache,
+        transaction_balances::compile_collected_balances,
         transaction_batch::TransactionBatch,
+        transaction_execution::TransactionStatusSender,
         vote_sender_types::{ReplayVoteSendType, ReplayVoteSender},
     },
     solana_runtime_transaction::transaction_with_meta::TransactionWithMeta,

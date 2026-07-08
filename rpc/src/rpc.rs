@@ -4161,10 +4161,10 @@ pub mod rpc_full {
                     pre_balances,
                     post_balances,
                     pre_token_balances: pre_token_balances.map(|balances| {
-                        balances.into_iter().map(|balance| solana_ledger::transaction_balances::svm_token_info_to_token_balance(balance).into()).collect()
+                        balances.into_iter().map(|balance| solana_runtime::transaction_balances::svm_token_info_to_token_balance(balance).into()).collect()
                     }),
                     post_token_balances: post_token_balances.map(|balances| {
-                        balances.into_iter().map(|balance| solana_ledger::transaction_balances::svm_token_info_to_token_balance(balance).into()).collect()
+                        balances.into_iter().map(|balance| solana_runtime::transaction_balances::svm_token_info_to_token_balance(balance).into()).collect()
                     }),
                     loaded_addresses: Some(UiLoadedAddresses::from(&transaction.get_loaded_addresses())),
                 },
@@ -4571,7 +4571,7 @@ pub fn populate_blockstore_for_tests(
             &BankWithScheduler::new_without_scheduler(bank),
             entries,
             Some(
-                &solana_ledger::blockstore_processor::TransactionStatusSender {
+                &solana_runtime::transaction_execution::TransactionStatusSender {
                     sender: transaction_status_sender,
                     dependency_tracker: None,
                 },

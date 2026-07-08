@@ -23,9 +23,6 @@ use {
     log::*,
     scopeguard::defer,
     solana_clock::Slot,
-    solana_ledger::blockstore_processor::{
-        TransactionBatchWithIndexes, TransactionStatusSender, execute_batch,
-    },
     solana_pubkey::Pubkey,
     solana_runtime::{
         installed_scheduler_pool::{
@@ -34,6 +31,9 @@ use {
             UninstalledScheduler, UninstalledSchedulerBox, initialized_result_with_timings,
         },
         prioritization_fee_cache::PrioritizationFeeCache,
+        transaction_execution::{
+            TransactionBatchWithIndexes, TransactionStatusSender, execute_batch,
+        },
         vote_sender_types::{ReplayVoteSendType, ReplayVoteSender},
     },
     solana_runtime_transaction::runtime_transaction::RuntimeTransaction,
@@ -585,7 +585,6 @@ impl TaskHandler for DefaultTaskHandler {
             timings,
             handler_context.log_messages_bytes_limit,
             handler_context.prioritization_fee_cache.as_deref(),
-            None::<fn(&_) -> _>,
         );
         sleepless_testing::at(CheckPoint::TaskHandled(task_id));
     }
