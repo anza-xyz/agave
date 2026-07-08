@@ -1,6 +1,6 @@
 use {
     solana_account::{AccountSharedData, ReadableAccount},
-    solana_clock::{Epoch, Slot},
+    solana_clock::Slot,
     solana_pubkey::Pubkey,
     solana_transaction::sanitized::SanitizedTransaction,
     std::sync::Arc,
@@ -42,7 +42,6 @@ pub struct AccountForGeyser<'a> {
     pub lamports: u64,
     pub owner: &'a Pubkey,
     pub executable: bool,
-    pub rent_epoch: Epoch,
     pub data: &'a [u8],
 }
 
@@ -59,7 +58,8 @@ impl ReadableAccount for AccountForGeyser<'_> {
     fn executable(&self) -> bool {
         self.executable
     }
-    fn rent_epoch(&self) -> Epoch {
-        self.rent_epoch
+    fn rent_epoch(&self) -> u64 {
+        // AccountForGeyser does not contains a rent_epoch field
+        0
     }
 }

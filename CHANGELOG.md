@@ -21,6 +21,9 @@ Release channels have their own copy of this changelog:
 ### Validator
 #### Breaking
 #### Changes
+### Geyser
+#### Changes
+* Account update notifications use a new account info type, `ReplicaAccountInfoV4`.
 
 ## 4.2.0
 ### RPC
