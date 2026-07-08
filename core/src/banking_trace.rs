@@ -55,8 +55,6 @@ const TRACE_FILE_ROTATE_COUNT: u64 = 14; // target 2 weeks retention under norma
 const TRACE_FILE_WRITE_INTERVAL_MS: u64 = 100;
 const BUF_WRITER_CAPACITY: usize = 10 * 1024 * 1024;
 pub const TRACE_FILE_DEFAULT_ROTATE_BYTE_THRESHOLD: u64 = 1024 * 1024 * 1024;
-// disable banking trace by default
-pub const BANKING_TRACE_DIR_DEFAULT_BYTE_LIMIT: DirByteLimit = 0;
 
 #[derive(Clone)]
 struct ActiveTracer {
