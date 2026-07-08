@@ -5,8 +5,7 @@
 //!
 //! ```toml
 //! [interfaces."ens1f0"]
-//! program = "xdp_dispatch.o" # optional
-//! zero_copy = true           # default false
+//! zero_copy = true # default false
 //!
 //! [xdp.tpu]
 //! interfaces = ["ens1f0"]               # omit to auto-detect
@@ -195,9 +194,6 @@ fn build_thread(raw: &RawThread) -> ThreadConfig {
 #[derive(Debug, Deserialize)]
 #[serde(deny_unknown_fields)]
 struct RawInterface {
-    /// Custom eBPF object for this interface.
-    #[serde(default)]
-    program: Option<PathBuf>,
     #[serde(default)]
     zero_copy: bool,
 }
@@ -253,13 +249,10 @@ fn xdp_config_from_raw(
         });
     }
     let interface = raw.interfaces.into_iter().next();
-    let (program_override, zero_copy) = match interface
+    let zero_copy = interface
         .as_deref()
         .and_then(|n| declared_interfaces.get(n))
-    {
-        Some(iface) => (iface.program.clone(), iface.zero_copy),
-        None => (None, false),
-    };
+        .is_some_and(|iface| iface.zero_copy);
 
     let entries = raw.queue_to_cpu_mapping;
     if entries.is_empty() {
@@ -284,9 +277,7 @@ fn xdp_config_from_raw(
         queues.push(QueueCpuBinding { queue, cpu });
     }
 
-    let mut config = XdpConfig::new(interface, queues, zero_copy);
-    config.program_override = program_override;
-    Ok(config)
+    Ok(XdpConfig::new(interface, queues, zero_copy))
 }
 
 #[cfg(test)]
@@ -310,7 +301,6 @@ mod tests {
         let c = xdp("[xdp.tpu]\nqueue_to_cpu_mapping = [\"0:8\"]\n");
         assert_eq!(c.interface, None);
         assert!(!c.zero_copy);
-        assert_eq!(c.program_override, None);
         assert_eq!(c.queues, vec![QueueCpuBinding { queue: 0, cpu: 8 }]);
     }
 
@@ -320,7 +310,6 @@ mod tests {
         let c = xdp("[xdp.tpu]\ninterfaces = [\"ens1f0\"]\nqueue_to_cpu_mapping = [\"0:8\"]\n");
         assert_eq!(c.interface.as_deref(), Some("ens1f0"));
         assert!(!c.zero_copy);
-        assert_eq!(c.program_override, None);
     }
 
     #[test]
@@ -353,18 +342,6 @@ queue_to_cpu_mapping = ["0:2", "1:4", "2:7"]
                 QueueCpuBinding { queue: 1, cpu: 4 },
                 QueueCpuBinding { queue: 2, cpu: 7 },
             ]
-        );
-    }
-
-    #[test]
-    fn program_override_from_interface_section() {
-        let c = xdp(
-            "[interfaces.\"ens1f0\"]\nprogram = \"/opt/xdp_dispatch.o\"\n\n[xdp.tpu]\ninterfaces \
-             = [\"ens1f0\"]\nqueue_to_cpu_mapping = [\"0:8\"]\n",
-        );
-        assert_eq!(
-            c.program_override,
-            Some(PathBuf::from("/opt/xdp_dispatch.o"))
         );
     }
 

@@ -1527,9 +1527,6 @@ fn build_xdp_config(
     // CLI flag, else config file.
     let zero_copy = cli_zero_copy || file_xdp.is_some_and(|x| x.zero_copy);
 
-    // Config-file only; the CLI has no equivalent flag.
-    let program_override = file_xdp.and_then(|x| x.program_override.clone());
-
     // Explicit queue bindings, else auto-select one CPU.
     let queues: Vec<QueueCpuBinding> = if let Some(cpu_str) = cli_cpu_cores {
         // CLI CPU lists map to queues by index.
@@ -1580,9 +1577,7 @@ fn build_xdp_config(
         "XDP enabled on CPU cores: {:?}",
         queues.iter().map(|b| b.cpu).collect::<Vec<_>>()
     );
-    let mut config = XdpConfig::new(interface, queues, zero_copy);
-    config.program_override = program_override;
-    Ok(Some(config))
+    Ok(Some(XdpConfig::new(interface, queues, zero_copy)))
 }
 
 #[cfg(all(target_os = "linux", test))]
@@ -1804,24 +1799,6 @@ mod xdp_tests {
                 QueueCpuBinding { queue: 1, cpu: 4 },
                 QueueCpuBinding { queue: 2, cpu: 5 },
             ]
-        );
-    }
-
-    #[test]
-    fn test_program_override_from_interface_section_reaches_xdp_config() {
-        let default_args = DefaultArgs::default();
-        let app = add_args(clap::App::new("agave-validator"), &default_args);
-        let file_config = parse_file(
-            "[interfaces.\"eth0\"]\nprogram = \"/opt/xdp_dispatch.o\"\n\n[xdp.tpu]\ninterfaces = \
-             [\"eth0\"]\nqueue_to_cpu_mapping = [\"0:3\"]\n",
-        );
-        let matches = app.get_matches_from(vec!["agave-validator"]);
-        let config = build(&matches, &Operation::Run, &single_ip_bind(), file_config)
-            .unwrap()
-            .expect("config file must enable XDP");
-        assert_eq!(
-            config.program_override,
-            Some(std::path::PathBuf::from("/opt/xdp_dispatch.o"))
         );
     }
 
