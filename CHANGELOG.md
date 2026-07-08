@@ -20,6 +20,10 @@ Release channels have their own copy of this changelog:
 #### Changes
 ### Validator
 #### Breaking
+* Banking trace is now disabled by default. To enable, provide `--enable-banking-trace <max bytes>`.
+#### Deprecations
+* `--disable-banking-trace` is now deprecated and a no-op (banking trace is disabled by
+  default). The flag is still accepted for backward compatibility.
 #### Changes
 
 ## 4.2.0

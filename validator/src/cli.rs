@@ -165,6 +165,14 @@ fn deprecated_arguments() -> Vec<DeprecatedArg> {
         replaced_by: "accounts-db-write-cache-limit",
     );
     add_arg!(
+        // deprecated in v4.3.0
+        Arg::with_name("disable_banking_trace")
+            .long("disable-banking-trace")
+            .conflicts_with("banking_trace_dir_byte_limit")
+            .takes_value(false)
+            .help("Disables the banking trace. No-op, banking trace is disabled by default."),
+    );
+    add_arg!(
         // deprecated in v4.0.0
         Arg::with_name("enable_accounts_disk_index")
             .long("enable-accounts-disk-index")
