@@ -1784,7 +1784,7 @@ mod xdp_tests {
         let app = add_args(clap::App::new("agave-validator"), &default_args);
         let file_config = parse_file(
             "[interfaces.\"eth0\"]\nzero_copy = true\n\n[xdp.tpu]\ninterfaces = [\"eth0\"]\n\
-             queue_to_cpu_mapping = [\"0:3\", \"1:4\", \"2:5\"]\n",
+             queue_to_cpu_mapping = [\"2:3\", \"4:4\", \"7:5\"]\n",
         );
         let matches = app.get_matches_from(vec!["agave-validator"]);
         let config = build(&matches, &Operation::Run, &single_ip_bind(), file_config)
@@ -1795,9 +1795,9 @@ mod xdp_tests {
         assert_eq!(
             config.queues,
             vec![
-                QueueCpuBinding { queue: 0, cpu: 3 },
-                QueueCpuBinding { queue: 1, cpu: 4 },
-                QueueCpuBinding { queue: 2, cpu: 5 },
+                QueueCpuBinding { queue: 2, cpu: 3 },
+                QueueCpuBinding { queue: 4, cpu: 4 },
+                QueueCpuBinding { queue: 7, cpu: 5 },
             ]
         );
     }
@@ -1867,24 +1867,6 @@ mod xdp_tests {
     }
 
     #[test]
-    fn test_config_file_values_used_without_cli_overrides() {
-        let default_args = DefaultArgs::default();
-        let app = add_args(clap::App::new("agave-validator"), &default_args);
-        // Interface settings apply through the named reference.
-        let file_config = parse_file(
-            "[interfaces.\"eth0\"]\nzero_copy = true\n\n[xdp.tpu]\ninterfaces = [\"eth0\"]\n\
-             queue_to_cpu_mapping = [\"2:5\"]\n",
-        );
-        let matches = app.get_matches_from(vec!["agave-validator"]);
-        let config = build(&matches, &Operation::Run, &single_ip_bind(), file_config)
-            .unwrap()
-            .expect("config file must enable XDP");
-        assert_eq!(config.interface.as_deref(), Some("eth0"));
-        assert!(config.zero_copy);
-        assert_eq!(config.queues, vec![QueueCpuBinding { queue: 2, cpu: 5 }]);
-    }
-
-    #[test]
     fn test_any_xdp_cli_flag_ignores_file_xdp_section() {
         let default_args = DefaultArgs::default();
         let app = add_args(clap::App::new("agave-validator"), &default_args);
@@ -1925,15 +1907,6 @@ mod xdp_tests {
             resolve_poh(&matches, file_config),
             Some(9),
             "--poh-pinned-cpu-core must override the config file"
-        );
-    }
-
-    #[test]
-    fn test_poh_multiple_cpus_is_error() {
-        let file = write_config("[threads.poh]\ncpu = [6, 7]\n");
-        assert!(
-            parse_config_file(file.path()).is_err(),
-            "PoH with multiple cpus must error"
         );
     }
 

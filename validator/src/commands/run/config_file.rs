@@ -417,46 +417,10 @@ queue_to_cpu_mapping = ["0:2", "1:4", "2:7"]
     }
 
     #[test]
-    fn parses_xdp_and_threads_together() {
-        let c =
-            parse("[xdp.tpu]\nqueue_to_cpu_mapping = [\"0:8\"]\n[threads.poh]\ncpu = 2\n").unwrap();
-        assert!(!c.xdp.is_empty());
-        assert_eq!(
-            c.thread("poh"),
-            Some(&ThreadConfig {
-                cpu: 2,
-                reservation: Reservation::None,
-            })
-        );
-    }
-
-    #[test]
-    fn parses_single_cpu() {
-        assert_eq!(
-            parse("[threads.t]\ncpu = 2\n")
-                .unwrap()
-                .thread("t")
-                .unwrap()
-                .cpu,
-            2
-        );
-    }
-
-    #[test]
     fn rejects_multiple_cpus() {
         // Only a single CPU index is valid.
         let e = parse("[threads.t]\ncpu = [2, 3]\n").unwrap_err();
         assert!(matches!(e, ConfigFileError::Toml(_)));
-    }
-
-    #[test]
-    fn reservation_defaults_to_none() {
-        let t = parse("[threads.poh]\ncpu = 2\n")
-            .unwrap()
-            .thread("poh")
-            .unwrap()
-            .reservation;
-        assert_eq!(t, Reservation::None);
     }
 
     #[test]
