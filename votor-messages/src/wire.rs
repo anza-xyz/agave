@@ -390,12 +390,11 @@ unsafe impl<'de, C: Config> SchemaReadContext<'de, C, ExpectedShredVersion> for 
 impl VersionedWireConsensusMessage {
     /// Deserializes a versioned wire consensus message and verifies the shred version.
     pub fn deserialize_with_expected_shred_version<'de, C: Config>(
-        data: &'de [u8],
+        mut reader: impl Reader<'de>,
         config: C,
         expected_shred_version: u16,
     ) -> wincode::ReadResult<Self> {
-        // We use an internal reader to apply the context, relying on config limits.
-        let mut reader = wincode::io::SliceReader::new(data);
+        let _ = config;
         <Self as SchemaReadContext<'de, C, _>>::get_with_context(
             ExpectedShredVersion(expected_shred_version),
             &mut reader,
