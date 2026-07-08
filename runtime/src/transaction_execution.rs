@@ -106,11 +106,11 @@ pub fn execute_batch<'a>(
     );
 
     if let Some(prioritization_fee_cache) = prioritization_fee_cache {
-        let committed_transactions = commit_results
+        let fee_paying_transactions = commit_results
             .iter()
             .zip(batch.sanitized_transactions())
             .filter_map(|(commit_result, tx)| commit_result.was_fee_paying().then_some(tx));
-        prioritization_fee_cache.update(bank, committed_transactions);
+        prioritization_fee_cache.update(bank, fee_paying_transactions);
     }
     if let Some(transaction_status_sender) = transaction_status_sender {
         let transactions: Vec<SanitizedTransaction> = batch
