@@ -262,7 +262,6 @@ impl TransactionViewReceiveAndBuffer {
         let mut num_dropped_on_capacity = 0;
         let mut num_buffered = 0;
 
-<<<<<<< HEAD
         let mut check_and_push_to_queue =
             |container: &mut TransactionViewStateContainer,
              transaction_priority_ids: &mut ArrayVec<TransactionPriorityId, 64>| {
@@ -275,7 +274,7 @@ impl TransactionViewReceiveAndBuffer {
                             .get_transaction(priority_id.id)
                             .expect("transaction must exist")
                     }));
-                    working_bank.check_transactions::<RuntimeTransaction<_>>(
+                    working_bank.check_transactions_without_status_cache::<RuntimeTransaction<_>>(
                         &transactions,
                         &lock_results[..transactions.len()],
                         working_bank.max_processing_age(),
@@ -283,30 +282,6 @@ impl TransactionViewReceiveAndBuffer {
                         &mut error_counters,
                     )
                 };
-=======
-        let mut check_and_push_to_queue = |container: &mut TransactionViewStateContainer,
-                                           transaction_priority_ids: &mut ArrayVec<
-            TransactionPriorityId,
-            EXTRA_CAPACITY,
-        >| {
-            // Temporary scope so that transaction references are immediately
-            // dropped and transactions not passing
-            let mut check_results = {
-                let mut transactions = ArrayVec::<_, EXTRA_CAPACITY>::new();
-                transactions.extend(transaction_priority_ids.iter().map(|priority_id| {
-                    container
-                        .get_transaction(priority_id.id)
-                        .expect("transaction must exist")
-                }));
-                working_bank.check_transactions_without_status_cache::<RuntimeTransaction<_>>(
-                    &transactions,
-                    &lock_results[..transactions.len()],
-                    working_bank.max_processing_age(),
-                    true,
-                    &mut error_counters,
-                )
-            };
->>>>>>> af62067f8 (receive_and_buffer: remove expensive status-cache check (#13437))
 
                 // Remove errored transactions
                 for (result, priority_id) in check_results
