@@ -229,6 +229,7 @@ impl SigVerifier {
             }
             let Ok(msg) = VersionedWireConsensusMessage::deserialize_with_expected_shred_version(
                 packet.data(..).unwrap_or_default(),
+                packet_config(),
                 my_shred_version,
             ) else {
                 self.stats.num_malformed_pkts += 1;
@@ -239,10 +240,7 @@ impl SigVerifier {
                 self.stats.num_malformed_pkts += 1;
                 continue;
             };
-            let Some(decoded_msg) = DecodedWireConsensusMessage::try_new(msg) else {
-                self.stats.num_malformed_pkts += 1;
-                continue;
-            };
+            let decoded_msg = DecodedWireConsensusMessage::new(msg);
 
             match decoded_msg {
                 DecodedWireConsensusMessage::Vote(unverified_vote) => {

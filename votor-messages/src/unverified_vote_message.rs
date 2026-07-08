@@ -46,7 +46,7 @@ pub enum DecodedWireConsensusMessage {
 
 impl DecodedWireConsensusMessage {
     /// Decodes a wire consensus message.
-    pub fn try_new(msg: VersionedWireConsensusMessage) -> Option<Self> {
+    pub fn new(msg: VersionedWireConsensusMessage) -> Self {
         let VersionedWireConsensusMessage::V1(msg) = msg;
         let msg = match msg.kind {
             WireConsensusMessageKind::NotarVote(v) => Self::Vote(UnverifiedVoteMessage {
@@ -141,7 +141,7 @@ impl DecodedWireConsensusMessage {
                 })
             }
         };
-        Some(msg)
+        msg
     }
 
     /// returns the shred version

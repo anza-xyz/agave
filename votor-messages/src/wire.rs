@@ -283,6 +283,8 @@ pub struct WireConsensusMessageV1 {
     pub(crate) shred_version: u16,
 }
 
+// SAFETY: The custom read_with_context implementation sequentially reads the exact same fields
+// as a derived `SchemaRead` implementation would, guaranteeing the safe initialization of `Dst`.
 unsafe impl<'de, C: Config> SchemaReadContext<'de, C, ExpectedShredVersion> for WireConsensusMessageV1 {
     type Dst = WireConsensusMessageV1;
 
@@ -295,6 +297,12 @@ unsafe impl<'de, C: Config> SchemaReadContext<'de, C, ExpectedShredVersion> for 
         let shred_version = <u16 as SchemaRead<'de, C>>::get(reader.by_ref())?;
 
         if shred_version != expected.0 {
+            #[cfg(feature = "logging")]
+            log::debug!(
+                "shred version mismatch: expected {}, got {}",
+                expected.0,
+                shred_version
+            );
             return Err(ReadError::Custom("shred version mismatch"));
         }
 
@@ -353,6 +361,8 @@ pub enum VersionedWireConsensusMessage {
     V1(WireConsensusMessageV1),
 }
 
+// SAFETY: The custom read_with_context implementation sequentially reads the exact same fields
+// as a derived `SchemaRead` implementation would, guaranteeing the safe initialization of `Dst`.
 unsafe impl<'de, C: Config> SchemaReadContext<'de, C, ExpectedShredVersion> for VersionedWireConsensusMessage {
     type Dst = VersionedWireConsensusMessage;
 
@@ -379,13 +389,16 @@ unsafe impl<'de, C: Config> SchemaReadContext<'de, C, ExpectedShredVersion> for 
 
 impl VersionedWireConsensusMessage {
     /// Deserializes a versioned wire consensus message and verifies the shred version.
-    pub fn deserialize_with_expected_shred_version<'de>(
-        reader: impl Reader<'de>,
+    pub fn deserialize_with_expected_shred_version<'de, C: Config>(
+        data: &'de [u8],
+        config: C,
         expected_shred_version: u16,
     ) -> wincode::ReadResult<Self> {
-        <Self as SchemaReadContext<'de, DefaultConfig, _>>::get_with_context(
+        // We use an internal reader to apply the context, relying on config limits.
+        let mut reader = wincode::io::SliceReader::new(data);
+        <Self as SchemaReadContext<'de, C, _>>::get_with_context(
             ExpectedShredVersion(expected_shred_version),
-            reader,
+            &mut reader,
         )
     }
 
