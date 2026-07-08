@@ -50,9 +50,10 @@ use {
     solana_bls_signatures::Signature as BLSSignature,
     solana_clock::Slot,
     wincode::{
+        ReadError, SchemaRead, SchemaReadContext, SchemaWrite,
         config::{Config, DefaultConfig},
         io::Reader,
-        pod_wrapper, ReadError, SchemaRead, SchemaReadContext, SchemaWrite,
+        pod_wrapper,
     },
 };
 
@@ -285,7 +286,9 @@ pub struct WireConsensusMessageV1 {
 
 // SAFETY: The custom read_with_context implementation sequentially reads the exact same fields
 // as a derived `SchemaRead` implementation would, guaranteeing the safe initialization of `Dst`.
-unsafe impl<'de, C: Config> SchemaReadContext<'de, C, ExpectedShredVersion> for WireConsensusMessageV1 {
+unsafe impl<'de, C: Config> SchemaReadContext<'de, C, ExpectedShredVersion>
+    for WireConsensusMessageV1
+{
     type Dst = WireConsensusMessageV1;
 
     fn read_with_context(
@@ -363,7 +366,9 @@ pub enum VersionedWireConsensusMessage {
 
 // SAFETY: The custom read_with_context implementation sequentially reads the exact same fields
 // as a derived `SchemaRead` implementation would, guaranteeing the safe initialization of `Dst`.
-unsafe impl<'de, C: Config> SchemaReadContext<'de, C, ExpectedShredVersion> for VersionedWireConsensusMessage {
+unsafe impl<'de, C: Config> SchemaReadContext<'de, C, ExpectedShredVersion>
+    for VersionedWireConsensusMessage
+{
     type Dst = VersionedWireConsensusMessage;
 
     fn read_with_context(
@@ -382,7 +387,9 @@ unsafe impl<'de, C: Config> SchemaReadContext<'de, C, ExpectedShredVersion> for 
                 dst.write(VersionedWireConsensusMessage::V1(v1));
                 Ok(())
             }
-            _ => Err(ReadError::Custom("unknown tag for VersionedWireConsensusMessage")),
+            _ => Err(ReadError::Custom(
+                "unknown tag for VersionedWireConsensusMessage",
+            )),
         }
     }
 }
@@ -397,7 +404,7 @@ impl VersionedWireConsensusMessage {
         let _ = config;
         <Self as SchemaReadContext<'de, C, _>>::get_with_context(
             ExpectedShredVersion(expected_shred_version),
-            &mut reader,
+            reader,
         )
     }
 
