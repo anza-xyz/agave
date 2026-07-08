@@ -34,7 +34,7 @@ use {
         state::{DurableNonce, State as NonceState},
         versions::Versions as NonceVersions,
     },
-    solana_nonce_account::{SystemAccountKind, get_system_account_kind, verify_nonce_account},
+    solana_nonce_account::verify_nonce_account,
     solana_program_runtime::{
         execution_budget::{
             SVMTransactionExecutionAndFeeBudgetLimits, SVMTransactionExecutionCost,
@@ -796,9 +796,7 @@ impl<FG: ForkGraph> TransactionBatchProcessor<FG> {
             return Err(TransactionError::AccountNotFound);
         };
 
-        if strict_nonce_size_check
-            && get_system_account_kind(&nonce_account) != Some(SystemAccountKind::Nonce)
-        {
+        if strict_nonce_size_check && nonce_account.data().len() != NonceState::size() {
             error_counters.blockhash_not_found += 1;
             return Err(TransactionError::BlockhashNotFound);
         }

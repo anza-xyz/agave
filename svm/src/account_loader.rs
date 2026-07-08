@@ -17,7 +17,7 @@ use {
     solana_instructions_sysvar::construct_instructions_data,
     solana_loader_v3_interface::state::UpgradeableLoaderState,
     solana_nonce::state::State as NonceState,
-    solana_nonce_account::{SystemAccountKind, get_system_account_kind},
+    solana_nonce_account::SystemAccountKind,
     solana_program_runtime::execution_budget::{
         SVMTransactionExecutionAndFeeBudgetLimits, SVMTransactionExecutionBudget,
     },
@@ -30,6 +30,7 @@ use {
     solana_svm_callback::{AccountState, TransactionProcessingCallback},
     solana_svm_feature_set::SVMFeatureSet,
     solana_svm_transaction::svm_message::SVMMessage,
+    solana_system_interface::program as system_program,
     solana_transaction_context::{IndexOfAccount, transaction_accounts::KeyedAccountSharedData},
     solana_transaction_error::{TransactionError, TransactionResult as Result},
 };
@@ -365,7 +366,7 @@ pub fn validate_fee_payer(
         error_metrics.account_not_found += 1;
         return Err(TransactionError::AccountNotFound);
     }
-    let system_account_kind = get_system_account_kind(payer_account).ok_or_else(|| {
+    let system_account_kind = fast_get_system_account_kind(payer_account).ok_or_else(|| {
         error_metrics.invalid_account_for_fee += 1;
         TransactionError::InvalidAccountForFee
     })?;
@@ -665,6 +666,35 @@ fn construct_instructions_account(message: &impl SVMMessage) -> Result<AccountSh
     }))
 }
 
+// NOTE We temporarily inline this until it replaces the impl in solana-nonce-account.
+// Once Agave updates to a version with this code in it, this function and the test can be deleted.
+fn fast_get_system_account_kind(account: &AccountSharedData) -> Option<SystemAccountKind> {
+    if !system_program::check_id(account.owner()) {
+        return None;
+    }
+
+    let data = account.data();
+
+    if data.is_empty() {
+        Some(SystemAccountKind::System)
+    } else if data.len() == NonceState::size() {
+        const NONCE_VERSIONS_LEGACY: u32 = 0;
+        const NONCE_VERSIONS_CURRENT: u32 = 1;
+        const NONCE_STATE_INITIALIZED: u32 = 1;
+
+        let versions_tag = u32::from_le_bytes(data.get(..4)?.try_into().ok()?);
+        let state_tag = u32::from_le_bytes(data.get(4..8)?.try_into().ok()?);
+
+        match (versions_tag, state_tag) {
+            (NONCE_VERSIONS_LEGACY, NONCE_STATE_INITIALIZED) => Some(SystemAccountKind::Nonce),
+            (NONCE_VERSIONS_CURRENT, NONCE_STATE_INITIALIZED) => Some(SystemAccountKind::Nonce),
+            _ => None,
+        }
+    } else {
+        None
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use {
@@ -684,6 +714,7 @@ mod tests {
         },
         solana_native_token::LAMPORTS_PER_SOL,
         solana_nonce::{self as nonce, versions::Versions as NonceVersions},
+        solana_nonce_account::get_system_account_kind,
         solana_program_runtime::execution_budget::{
             DEFAULT_INSTRUCTION_COMPUTE_UNIT_LIMIT, MAX_LOADED_ACCOUNTS_DATA_SIZE_BYTES,
         },
@@ -2805,5 +2836,107 @@ mod tests {
             &actual_miss_account.unwrap().0.data_clone(),
             &expected_miss_account.0.data_clone()
         ));
+    }
+
+    #[test]
+    fn test_fast_get_system_account_kind() {
+        // protect `fast_get_system_account_kind()` against the addition of new nonce variants.
+        // if anyone even attempts to add a new nonce variant however they should be punished
+        fn _assert_nonce_versions(v: NonceVersions, s: NonceState) {
+            match v {
+                NonceVersions::Legacy(..) => {}
+                NonceVersions::Current(..) => {}
+            }
+            match s {
+                NonceState::Uninitialized => {}
+                NonceState::Initialized(..) => {}
+            }
+        }
+
+        // assert our function produces the expected result and our function agrees with the standard
+        let assert_equivalence = |bytes: &[u8], kind: Option<SystemAccountKind>| {
+            let mut account = AccountSharedData::new(0, 0, &system_program::id());
+            account.set_data(bytes.to_vec());
+
+            assert_eq!(
+                fast_get_system_account_kind(&account),
+                get_system_account_kind(&account)
+            );
+            assert_eq!(fast_get_system_account_kind(&account), kind);
+        };
+
+        // the three (unfortunately rather than two) valid fee-payer types
+        let system_bytes = vec![];
+        let legacy_nonce_bytes = bincode::serialize(&NonceVersions::Legacy(Box::new(
+            NonceState::Initialized(nonce::state::Data::default()),
+        )))
+        .unwrap();
+        let current_nonce_bytes = bincode::serialize(&NonceVersions::Current(Box::new(
+            NonceState::Initialized(nonce::state::Data::default()),
+        )))
+        .unwrap();
+
+        // success
+        assert_equivalence(&system_bytes, Some(SystemAccountKind::System));
+        assert_equivalence(&legacy_nonce_bytes, Some(SystemAccountKind::Nonce));
+        assert_equivalence(&current_nonce_bytes, Some(SystemAccountKind::Nonce));
+
+        // non-system fails
+        for bytes in [&system_bytes, &legacy_nonce_bytes, &current_nonce_bytes] {
+            let mut non_system = AccountSharedData::new(0, 0, &Pubkey::new_unique());
+            non_system.set_data(bytes.to_vec());
+            assert_eq!(fast_get_system_account_kind(&non_system), None);
+            assert_eq!(
+                fast_get_system_account_kind(&non_system),
+                get_system_account_kind(&non_system)
+            );
+        }
+
+        // uninitialized nonce fails
+        for nonce in &[NonceVersions::Legacy, NonceVersions::Current] {
+            let mut bytes =
+                bincode::serialize(&nonce(Box::new(NonceState::Uninitialized))).unwrap();
+            bytes.resize(NonceState::size(), 0);
+            assert_equivalence(&bytes, None);
+        }
+
+        for bytes in [&legacy_nonce_bytes, &current_nonce_bytes] {
+            // length too short fails
+            for len in 1..bytes.len() {
+                assert_equivalence(&bytes[..len], None);
+            }
+
+            // length too long fails
+            let mut extended = bytes.clone();
+            extended.push(0);
+            assert_equivalence(&extended, None);
+
+            // union tag variations fail
+            for byte in 0..=255 {
+                for i in 0..=7 {
+                    // bytes would not change
+                    if bytes[i] == byte {
+                        continue;
+                    }
+
+                    let mut corrupted = bytes.clone();
+                    corrupted[i] = byte;
+
+                    // legacy was changed to current or vice versa
+                    if corrupted == legacy_nonce_bytes || corrupted == current_nonce_bytes {
+                        continue;
+                    }
+
+                    assert_equivalence(&corrupted, None);
+                }
+            }
+
+            // data variation is ok
+            for i in 8..bytes.len() {
+                let mut with_data = bytes.clone();
+                with_data[i] = 255;
+                assert_equivalence(&with_data, Some(SystemAccountKind::Nonce));
+            }
+        }
     }
 }
