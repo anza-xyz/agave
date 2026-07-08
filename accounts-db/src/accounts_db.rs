@@ -5833,9 +5833,9 @@ impl AccountsDb {
             .unwrap_or_else(|| {
                 panic!(
                     "failed to write accounts to storage: slot! {slot}, id: {store_id}, capacity: \
-                     {} bytes, remaining: {} bytes, num accounts: {num_accounts}",
+                     {} bytes, len: {} bytes, num accounts: {num_accounts}",
                     storage.accounts.capacity(),
-                    storage.accounts.remaining_bytes(),
+                    storage.accounts.len(),
                 )
             });
 
@@ -5843,9 +5843,9 @@ impl AccountsDb {
             stored_accounts_info.offsets.len(),
             num_accounts,
             "failed to write all accounts to storage! {slot}, id: {store_id}, capacity: {} bytes, \
-             remaining: {} bytes, num accounts written: {}, num accounts total: {num_accounts}",
+             len: {} bytes, num accounts written: {}, num accounts total: {num_accounts}",
             storage.accounts.capacity(),
-            storage.accounts.remaining_bytes(),
+            storage.accounts.len(),
             stored_accounts_info.offsets.len(),
         );
 

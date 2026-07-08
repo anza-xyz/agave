@@ -100,12 +100,6 @@ impl AccountsFile {
         Ok(())
     }
 
-    pub fn remaining_bytes(&self) -> u64 {
-        match self {
-            Self::AppendVec(av) => av.remaining_bytes(),
-        }
-    }
-
     /// Returns the number of bytes, *not accounts*, used in the AccountsFile
     pub fn len(&self) -> usize {
         match self {
