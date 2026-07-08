@@ -33,7 +33,7 @@ use {
     solana_keypair::Keypair,
     solana_ledger::blockstore::Blockstore,
     solana_net_utils::{SocketAddrSpace, sockets::bind_to_localhost_unique},
-    solana_perf::packet::{PacketRef, packet_config},
+    solana_perf::packet::PacketRef,
     solana_poh_config::PohConfig,
     solana_pubkey::Pubkey,
     solana_rpc_client::rpc_client::RpcClient,
@@ -633,7 +633,7 @@ fn convert_packet_to_vote_message(packet: PacketRef, my_shred_version: u16) -> O
         return None;
     };
     let DecodedWireConsensusMessage::Vote(vote_msg) =
-        DecodedWireConsensusMessage::try_new(msg, my_shred_version).unwrap()
+        DecodedWireConsensusMessage::try_new(msg).unwrap()
     else {
         return None;
     };
