@@ -5997,23 +5997,18 @@ fn update_completed_data_indexes<'a>(
     // [i, j), [j, k) that could be completed data ranges
     [
         completed_data_indexes
-            .range(..new_shred_index)
-            .next_back()
+            .previous_completed_index(new_shred_index)
             .map(|index| index + 1)
             .or(Some(0u32)),
         is_last_in_data.then_some(new_shred_index + 1),
         completed_data_indexes
-            .range(new_shred_index + 1..)
-            .next()
+            .next_completed_index(new_shred_index + 1)
             .map(|index| index + 1),
     ]
     .into_iter()
     .flatten()
     .tuple_windows()
-    .filter(|&(start, end)| {
-        let bounds = u64::from(start)..u64::from(end);
-        received_data_shreds.range(bounds.clone()).eq(bounds)
-    })
+    .filter(|&(start, end)| received_data_shreds.contains_range(u64::from(start)..u64::from(end)))
     .map(|(start, end)| start..end)
 }
 

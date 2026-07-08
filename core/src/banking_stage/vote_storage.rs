@@ -17,15 +17,15 @@ use {
 };
 
 /// Maximum number of votes a single receive call will accept
-const MAX_NUM_VOTES_RECEIVE: usize = 10_000;
+const MAX_NUM_VOTES_RECEIVE: usize = 1_000;
 
 #[derive(Default, Debug)]
-pub(crate) struct VoteBatchInsertionMetrics {
+pub(crate) struct VoteInsertionMetrics {
     pub(crate) num_dropped_gossip: usize,
     pub(crate) num_dropped_tpu: usize,
 }
 
-impl VoteBatchInsertionMetrics {
+impl VoteInsertionMetrics {
     pub fn total_dropped_packets(&self) -> usize {
         self.num_dropped_gossip + self.num_dropped_tpu
     }
@@ -105,23 +105,18 @@ impl VoteStorage {
         MAX_NUM_VOTES_RECEIVE
     }
 
-    pub(crate) fn insert_batch(
+    pub(crate) fn insert_packet(
         &mut self,
         vote_source: VoteSource,
-        votes: impl Iterator<Item = SanitizedTransactionView<SharedBytes>>,
-    ) -> VoteBatchInsertionMetrics {
-        let should_deprecate_legacy_vote_ixs = self.deprecate_legacy_vote_ixs;
-        self.insert_batch_with_replenish(
-            votes.filter_map(|vote| {
-                LatestValidatorVote::new_from_view(
-                    vote,
-                    vote_source,
-                    should_deprecate_legacy_vote_ixs,
-                )
-                .ok()
-            }),
-            false,
-        )
+        packet: SanitizedTransactionView<SharedBytes>,
+    ) -> VoteInsertionMetrics {
+        let Ok(vote) =
+            LatestValidatorVote::new_from_view(packet, vote_source, self.deprecate_legacy_vote_ixs)
+        else {
+            return VoteInsertionMetrics::default();
+        };
+
+        self.insert_vote(vote, false)
     }
 
     // Re-insert re-tryable packets.
@@ -130,17 +125,16 @@ impl VoteStorage {
         packets: impl Iterator<Item = SanitizedTransactionView<SharedBytes>>,
     ) {
         let should_deprecate_legacy_vote_ixs = self.deprecate_legacy_vote_ixs;
-        self.insert_batch_with_replenish(
-            packets.filter_map(|packet| {
-                LatestValidatorVote::new_from_view(
-                    packet,
-                    VoteSource::Tpu, // incorrect, but this bug has been here w/o issue for a long time.
-                    should_deprecate_legacy_vote_ixs,
-                )
-                .ok()
-            }),
-            true,
-        );
+        for vote in packets.filter_map(|packet| {
+            LatestValidatorVote::new_from_view(
+                packet,
+                VoteSource::Tpu, // incorrect, but this bug has been here w/o issue for a long time.
+                should_deprecate_legacy_vote_ixs,
+            )
+            .ok()
+        }) {
+            self.insert_vote(vote, true);
+        }
     }
 
     pub fn drain_unprocessed(&mut self, bank: &Bank) -> Vec<SanitizedTransactionView<SharedBytes>> {
@@ -235,42 +229,40 @@ impl VoteStorage {
         );
     }
 
-    fn insert_batch_with_replenish(
+    fn insert_vote(
         &mut self,
-        votes: impl Iterator<Item = LatestValidatorVote>,
+        vote: LatestValidatorVote,
         should_replenish_taken_votes: bool,
-    ) -> VoteBatchInsertionMetrics {
-        let mut num_dropped_gossip = 0;
-        let mut num_dropped_tpu = 0;
-
-        for vote in votes {
-            if self
-                .cached_epoch_stakes
-                .vote_account_stake(&vote.vote_pubkey())
-                == 0
-            {
-                continue;
-            }
-
-            if self
-                .cached_epoch_authorized_voters
-                .get(&vote.vote_pubkey())
-                .is_none_or(|authorized| authorized != &vote.authorized_voter_pubkey())
-            {
-                continue;
-            }
-
-            if let Some(vote) = self.update_latest_vote(vote, should_replenish_taken_votes) {
-                match vote.source() {
-                    VoteSource::Gossip => num_dropped_gossip += 1,
-                    VoteSource::Tpu => num_dropped_tpu += 1,
-                }
-            }
+    ) -> VoteInsertionMetrics {
+        if self
+            .cached_epoch_stakes
+            .vote_account_stake(&vote.vote_pubkey())
+            == 0
+        {
+            return VoteInsertionMetrics::default();
         }
 
-        VoteBatchInsertionMetrics {
-            num_dropped_gossip,
-            num_dropped_tpu,
+        if self
+            .cached_epoch_authorized_voters
+            .get(&vote.vote_pubkey())
+            .is_none_or(|authorized| authorized != &vote.authorized_voter_pubkey())
+        {
+            return VoteInsertionMetrics::default();
+        }
+
+        if let Some(vote) = self.update_latest_vote(vote, should_replenish_taken_votes) {
+            match vote.source() {
+                VoteSource::Gossip => VoteInsertionMetrics {
+                    num_dropped_gossip: 1,
+                    num_dropped_tpu: 0,
+                },
+                VoteSource::Tpu => VoteInsertionMetrics {
+                    num_dropped_gossip: 0,
+                    num_dropped_tpu: 1,
+                },
+            }
+        } else {
+            VoteInsertionMetrics::default()
         }
     }
 
@@ -527,6 +519,16 @@ pub(crate) mod tests {
         .unwrap()
     }
 
+    fn insert_packets(
+        vote_storage: &mut VoteStorage,
+        vote_source: VoteSource,
+        packets: impl IntoIterator<Item = SanitizedTransactionView<SharedBytes>>,
+    ) {
+        for packet in packets {
+            vote_storage.insert_packet(vote_source, packet);
+        }
+    }
+
     #[test]
     fn test_reinsert_packets() {
         let keypair = ValidatorVoteKeypairs::new_rand();
@@ -537,7 +539,7 @@ pub(crate) mod tests {
 
         let vote = packet_from_slots(vec![(0, 1)], &keypair, None);
         let mut vote_storage = VoteStorage::new(&bank);
-        vote_storage.insert_batch(VoteSource::Tpu, std::iter::once(to_sanitized_view(vote)));
+        vote_storage.insert_packet(VoteSource::Tpu, to_sanitized_view(vote));
         assert_eq!(1, vote_storage.len());
 
         // Drain all packets, then re-insert.
@@ -795,7 +797,7 @@ pub(crate) mod tests {
     }
 
     #[test]
-    fn test_insert_batch_authorized_voter() {
+    fn test_insert_packet_authorized_voter() {
         // Test that votes are only accepted when signed by the correct authorized voter.
         let keypair = ValidatorVoteKeypairs::new_rand();
         let unauthorized_keypair = solana_keypair::Keypair::new();
@@ -813,10 +815,7 @@ pub(crate) mod tests {
             &keypair.vote_keypair,
             None,
         );
-        vote_storage.insert_batch(
-            VoteSource::Tpu,
-            std::iter::once(to_sanitized_view(correct_vote)),
-        );
+        vote_storage.insert_packet(VoteSource::Tpu, to_sanitized_view(correct_vote));
         assert_eq!(1, vote_storage.len());
         assert_eq!(
             Some(0),
@@ -830,10 +829,7 @@ pub(crate) mod tests {
             &unauthorized_keypair,
             None,
         );
-        vote_storage.insert_batch(
-            VoteSource::Tpu,
-            std::iter::once(to_sanitized_view(unauthorized_vote)),
-        );
+        vote_storage.insert_packet(VoteSource::Tpu, to_sanitized_view(unauthorized_vote));
         // Should still be 1 (unauthorized vote was filtered)
         assert_eq!(1, vote_storage.len());
         // Slot should still be 0 (the authorized vote), not 1 (the unauthorized one)
@@ -849,10 +845,7 @@ pub(crate) mod tests {
             &keypair.vote_keypair,
             None,
         );
-        vote_storage.insert_batch(
-            VoteSource::Tpu,
-            std::iter::once(to_sanitized_view(correct_vote_2)),
-        );
+        vote_storage.insert_packet(VoteSource::Tpu, to_sanitized_view(correct_vote_2));
         assert_eq!(1, vote_storage.len());
         assert_eq!(
             Some(2),
@@ -920,10 +913,7 @@ pub(crate) mod tests {
             &epoch1_authorized_voter_keypair,
             None,
         );
-        vote_storage.insert_batch(
-            VoteSource::Tpu,
-            std::iter::once(to_sanitized_view(epoch1_vote)),
-        );
+        vote_storage.insert_packet(VoteSource::Tpu, to_sanitized_view(epoch1_vote));
         assert_eq!(
             1,
             vote_storage.len(),
@@ -938,10 +928,7 @@ pub(crate) mod tests {
             &epoch2_authorized_voter_keypair, // This won't match epoch 1's authorized voter
             None,
         );
-        vote_storage.insert_batch(
-            VoteSource::Tpu,
-            std::iter::once(to_sanitized_view(wrong_epoch_vote)),
-        );
+        vote_storage.insert_packet(VoteSource::Tpu, to_sanitized_view(wrong_epoch_vote));
         // Should still be 1 - the vote with wrong authorized voter was rejected
         assert_eq!(
             1,
@@ -951,7 +938,7 @@ pub(crate) mod tests {
     }
 
     #[test]
-    fn test_insert_batch_unstaked() {
+    fn test_insert_packet_unstaked() {
         let keypair_a = ValidatorVoteKeypairs::new_rand();
         let keypair_b = ValidatorVoteKeypairs::new_rand();
         let keypair_c = ValidatorVoteKeypairs::new_rand();
@@ -975,8 +962,8 @@ pub(crate) mod tests {
         let bank_0 = Bank::new_for_tests(&GenesisConfig::default());
         let mut vote_storage = VoteStorage::new(&bank_0);
 
-        // Insert batch should filter out all votes as they are unstaked
-        vote_storage.insert_batch(VoteSource::Tpu, votes().into_iter());
+        // Insert should filter out all votes as they are unstaked
+        insert_packets(&mut vote_storage, VoteSource::Tpu, votes());
         assert!(vote_storage.is_empty());
 
         // Bank in same epoch should not update stakes
@@ -991,7 +978,7 @@ pub(crate) mod tests {
         );
         assert_eq!(bank.epoch(), 0);
         vote_storage.cache_epoch_boundary_info(&bank);
-        vote_storage.insert_batch(VoteSource::Tpu, votes().into_iter());
+        insert_packets(&mut vote_storage, VoteSource::Tpu, votes());
         assert!(vote_storage.is_empty());
 
         // Bank in next epoch should update stakes
@@ -1002,7 +989,7 @@ pub(crate) mod tests {
         let bank = Bank::new_from_parent(bank_0, SlotLeader::new_unique(), MINIMUM_SLOTS_PER_EPOCH);
         assert_eq!(bank.epoch(), 1);
         vote_storage.cache_epoch_boundary_info(&bank);
-        vote_storage.insert_batch(VoteSource::Gossip, votes().into_iter());
+        insert_packets(&mut vote_storage, VoteSource::Gossip, votes());
         assert_eq!(vote_storage.len(), 1);
         assert_eq!(
             vote_storage.get_latest_vote_slot(keypair_b.vote_keypair.pubkey()),
@@ -1025,7 +1012,7 @@ pub(crate) mod tests {
         assert_eq!(bank.epoch(), 2);
         vote_storage.cache_epoch_boundary_info(&bank);
         assert_eq!(vote_storage.len(), 0);
-        vote_storage.insert_batch(VoteSource::Tpu, votes().into_iter());
+        insert_packets(&mut vote_storage, VoteSource::Tpu, votes());
         assert_eq!(vote_storage.len(), 1);
         assert_eq!(
             vote_storage.get_latest_vote_slot(keypair_c.vote_keypair.pubkey()),
@@ -1090,9 +1077,10 @@ pub(crate) mod tests {
             &keypair_b.vote_keypair,
             None,
         );
-        vote_storage.insert_batch(
+        insert_packets(
+            &mut vote_storage,
             VoteSource::Tpu,
-            vec![to_sanitized_view(vote_a), to_sanitized_view(vote_b)].into_iter(),
+            vec![to_sanitized_view(vote_a), to_sanitized_view(vote_b)],
         );
 
         assert_eq!(2, vote_storage.len());
@@ -1102,7 +1090,7 @@ pub(crate) mod tests {
         // Move to the next epoch where A has rotated its authorized voter but remains staked
         // B remains unchanged.
         //
-        // Use warp_from_parent for the same reason as test_insert_batch_unstaked:
+        // Use warp_from_parent for the same reason as test_insert_packet_unstaked:
         // it populates epoch_stakes(bank.epoch()) with the key cache_epoch_boundary_info expects
         let (bank_0, _bank_forks) =
             Bank::new_for_tests(&genesis_config).wrap_with_bank_forks_for_tests();
@@ -1148,10 +1136,7 @@ pub(crate) mod tests {
             &keypair_a.vote_keypair,
             None,
         );
-        vote_storage.insert_batch(
-            VoteSource::Tpu,
-            std::iter::once(to_sanitized_view(stale_vote_a)),
-        );
+        vote_storage.insert_packet(VoteSource::Tpu, to_sanitized_view(stale_vote_a));
         assert_eq!(1, vote_storage.len());
         assert_eq!(None, vote_storage.get_latest_vote_slot(vote_pubkey_a));
 
@@ -1162,10 +1147,7 @@ pub(crate) mod tests {
             &new_authorized_voter_a,
             None,
         );
-        vote_storage.insert_batch(
-            VoteSource::Tpu,
-            std::iter::once(to_sanitized_view(fresh_vote_a)),
-        );
+        vote_storage.insert_packet(VoteSource::Tpu, to_sanitized_view(fresh_vote_a));
         assert_eq!(2, vote_storage.len());
         assert_eq!(Some(4), vote_storage.get_latest_vote_slot(vote_pubkey_a));
     }
