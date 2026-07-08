@@ -81,7 +81,7 @@ enum VotePayload {
 }
 
 // Runs all byzfuzz invariants over the captured interceptor state.
-pub(crate) fn validate_invariants(
+pub fn validate_invariants(
     data: &AlpenglowInterceptorState,
     byzantine_sources: &HashSet<Pubkey>,
     source_stakes: &HashMap<Pubkey, u64>,

@@ -54,6 +54,10 @@ use {
         use_snapshot_archives_at_startup::UseSnapshotArchivesAtStartup,
     },
     solana_local_cluster::{
+        byzzfuzz::{
+            interceptor::{AlpenglowInterceptAction, AlpenglowInterceptor},
+            invariants::validate_invariants,
+        },
         cluster::{Cluster, ClusterValidatorInfo, QuicTpuClient},
         cluster_tests,
         integration_tests::{
@@ -6187,35 +6191,52 @@ fn test_alpenglow_basic_equivocation() {
     );
 }
 
-/// Runs a 4-node Alpenglow cluster where a 19%-stake byzantine validator leads every slot
-/// and equivocates through repair for the entire 64-slot test window.
+/// Runs a 16-node Alpenglow cluster where 3 malicious validators share 19% stake
+/// and equivocate through repair while half the validators catch up without turbine.
 #[test]
 #[serial]
 fn test_alpenglow_equivocation_repair() {
     agave_logger::setup_with_default(AG_DEBUG_LOG_FILTER);
     let test_name = "test_alpenglow_equivocation_repair";
-    let slots_to_run: Slot = 64;
+    let slots_to_run: Slot = 128;
 
-    let node_stakes = vec![
-        19 * DEFAULT_NODE_STAKE,
-        20 * DEFAULT_NODE_STAKE,
-        27 * DEFAULT_NODE_STAKE,
-        34 * DEFAULT_NODE_STAKE,
-    ];
-    let num_nodes = node_stakes.len();
+    let num_nodes = 16;
+    let num_malicious_nodes = 3;
+    let num_turbine_disabled_nodes = 3;
+    let total_cluster_stake = DEFAULT_NODE_STAKE
+        * num_nodes as u64
+        * num_malicious_nodes as u64
+        * (num_nodes - num_malicious_nodes) as u64;
+    let malicious_total_stake = total_cluster_stake * 19 / 100;
+    let honest_total_stake = total_cluster_stake - malicious_total_stake;
+    let malicious_node_stake = malicious_total_stake / num_malicious_nodes as u64;
+    let honest_node_stake = honest_total_stake / (num_nodes - num_malicious_nodes) as u64;
+    assert_eq!(
+        malicious_node_stake * num_malicious_nodes as u64,
+        malicious_total_stake
+    );
+    assert_eq!(
+        honest_node_stake * (num_nodes - num_malicious_nodes) as u64,
+        honest_total_stake
+    );
+
+    let mut node_stakes = Vec::with_capacity(num_nodes);
+    node_stakes.extend(iter::repeat(malicious_node_stake).take(num_malicious_nodes));
+    node_stakes.extend(iter::repeat(honest_node_stake).take(num_nodes - num_malicious_nodes));
     let total_stake = node_stakes.iter().sum::<u64>();
+    assert_eq!(total_stake, total_cluster_stake);
 
+    // Original all-byzantine-leader schedule:
+    // let (leader_schedule, validator_keys) =
+    //     create_custom_leader_schedule_with_random_keys(&[slots_to_run as usize, 0, 0, 0]);
+    // let byzantine_pubkey = validator_keys[0].node_keypair.pubkey();
+    // for slot in 0..slots_to_run {
+    //     assert_eq!(leader_schedule[slot].id, byzantine_pubkey);
+    // }
+    assert_eq!(slots_to_run as usize % num_nodes, 0);
+    let leader_slots = vec![slots_to_run as usize / num_nodes; num_nodes];
     let (leader_schedule, validator_keys) =
-        create_custom_leader_schedule_with_random_keys(&[slots_to_run as usize, 0, 0, 0]);
-    let byzantine_pubkey = validator_keys[0].node_keypair.pubkey();
-    for slot in 0..slots_to_run {
-        assert_eq!(leader_schedule[slot].id, byzantine_pubkey);
-    }
-    log::error!("byz: {:?}", byzantine_pubkey);
-    log::error!("byz: {:?}", byzantine_pubkey);
-    log::error!("byz: {:?}", byzantine_pubkey);
-    log::error!("byz: {:?}", byzantine_pubkey);
-    log::error!("byz: {:?}", byzantine_pubkey);
+        create_custom_leader_schedule_with_random_keys(&leader_slots);
 
     let mut validator_config = ValidatorConfig::default_for_test();
     validator_config.wait_for_supermajority = Some(0);
@@ -6224,19 +6245,35 @@ fn test_alpenglow_equivocation_repair() {
     });
 
     let mut validator_configs = make_identical_validator_configs(&validator_config, num_nodes);
-    validator_configs[0].repair_handler_type =
-        RepairHandlerType::Malicious(MaliciousRepairConfig {
+    for config in validator_configs.iter_mut().take(num_malicious_nodes) {
+        config.repair_handler_type = RepairHandlerType::Malicious(MaliciousRepairConfig {
             bad_shred_slot_frequency: Some(5),
-            bad_shred_index_frequency: None,
+            bad_shred_index_frequency: Some(1),
             slot_range: Some((0, slots_to_run - 1)),
         });
-    //validator_configs[1].turbine_mode = TurbineMode::new(TurbineModeKind::TurbineDisabled);
-    validator_configs[2].turbine_mode = TurbineMode::new(TurbineModeKind::TurbineDisabled);
+    }
+    for config in validator_configs
+        .iter_mut()
+        .skip(num_malicious_nodes)
+        .take(num_turbine_disabled_nodes)
+    {
+        config.turbine_mode = TurbineMode::new(TurbineModeKind::TurbineDisabled);
+    }
 
     let node_pubkeys = validator_keys
         .iter()
         .map(|keys| keys.node_keypair.pubkey())
         .collect::<Vec<_>>();
+    let byzantine_sources = node_pubkeys
+        .iter()
+        .take(num_malicious_nodes)
+        .copied()
+        .collect::<HashSet<_>>();
+    let source_stakes = node_pubkeys
+        .iter()
+        .copied()
+        .zip(node_stakes.iter().copied())
+        .collect::<HashMap<_, _>>();
     let repair_only_pubkeys = validator_configs
         .iter()
         .enumerate()
@@ -6245,6 +6282,12 @@ fn test_alpenglow_equivocation_repair() {
                 .then_some(node_pubkeys[i])
         })
         .collect::<Vec<_>>();
+
+    let interceptor =
+        AlpenglowInterceptor::new(&validator_keys, |_| AlpenglowInterceptAction::Forward);
+    for config in &mut validator_configs {
+        config.voting_service_test_override = Some(interceptor.voting_service_override());
+    }
 
     let mut cluster_config = ClusterConfig {
         mint_lamports: DEFAULT_MINT_LAMPORTS + total_stake,
@@ -6265,12 +6308,20 @@ fn test_alpenglow_equivocation_repair() {
     };
 
     let cluster = LocalCluster::new_alpenglow(&mut cluster_config, SocketAddrSpace::Unspecified);
+    interceptor.set_destinations_from_cluster(&cluster);
     check_min_slot_is_rooted_with_repair_diagnostics(
         &cluster,
         &node_pubkeys,
         &repair_only_pubkeys,
         slots_to_run,
         test_name,
+    );
+    drop(cluster);
+    validate_invariants(
+        &interceptor.state.lock().unwrap(),
+        &byzantine_sources,
+        &source_stakes,
+        slots_to_run,
     );
 }
 
@@ -6343,7 +6394,6 @@ fn check_min_slot_is_rooted_with_repair_diagnostics(
     let repair_deadlock_grace = Duration::from_secs(15);
     let diagnostic_max_slot = min_root.saturating_add(MINIMUM_SLOTS_PER_EPOCH);
     let start = Instant::now();
-    let mut last_print = Instant::now();
     let mut baseline = HashMap::<Pubkey, AlpenglowCatchupProgress>::new();
     let mut saw_repair_progress = HashSet::<Pubkey>::new();
 
@@ -6376,20 +6426,7 @@ fn check_min_slot_is_rooted_with_repair_diagnostics(
             .iter()
             .all(|snapshot| snapshot.finalized.is_some_and(|root| root >= min_root))
         {
-            error!(
-                "{test_name} rooted target {min_root}; repair_progress={:?}; snapshots={:#?}",
-                saw_repair_progress, snapshots
-            );
             return;
-        }
-
-        if last_print.elapsed() > Duration::from_secs(3) {
-            error!(
-                "{test_name} waiting for root >= {min_root}; repair_only={:?}; \
-                 repair_progress={:?}; snapshots={:#?}",
-                repair_only_pubkeys, saw_repair_progress, snapshots
-            );
-            last_print = Instant::now();
         }
 
         assert!(

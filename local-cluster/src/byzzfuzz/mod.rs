@@ -1,5 +1,6 @@
-mod interceptor;
-mod invariants;
+#![allow(dead_code, unused_imports, unused_variables)]
+pub mod interceptor;
+pub mod invariants;
 mod mutations;
 mod schedule;
 use {
@@ -24,9 +25,15 @@ use {
     rand::{Rng, SeedableRng},
     solana_bls_signatures::keypair::Keypair as BLSKeypair,
     solana_clock::Slot,
-    solana_core::validator::ValidatorConfig,
+    solana_core::{
+        repair::{
+            malicious_repair_handler::MaliciousRepairConfig, repair_handler::RepairHandlerType,
+        },
+        validator::ValidatorConfig,
+    },
     solana_epoch_schedule::MINIMUM_SLOTS_PER_EPOCH,
     solana_leader_schedule::FixedSchedule,
+    solana_ledger::shred::filter::{TurbineMode, TurbineModeKind},
     solana_net_utils::SocketAddrSpace,
     solana_signer::Signer,
     std::{
@@ -273,7 +280,7 @@ fn run_alpenglow_byzfuzz(
         leader_schedule: Arc::new(leader_schedule),
     });
     validator_config.wait_for_supermajority = Some(0);
-    let validator_configs = validator_keys
+    let mut validator_configs = validator_keys
         .iter()
         .map(|_| {
             let mut config = safe_clone_config(&validator_config);
@@ -281,6 +288,14 @@ fn run_alpenglow_byzfuzz(
             config
         })
         .collect::<Vec<_>>();
+    validator_configs[0].repair_handler_type =
+        RepairHandlerType::Malicious(MaliciousRepairConfig {
+            bad_shred_slot_frequency: Some(3),
+            bad_shred_index_frequency: Some(2),
+            slot_range: Some((0, ROOT_SLOT_TO_WAIT_FOR - 1)),
+        });
+    validator_configs[1].turbine_mode = TurbineMode::new(TurbineModeKind::TurbineDisabled);
+    validator_configs[2].turbine_mode = TurbineMode::new(TurbineModeKind::TurbineDisabled);
 
     let mut cluster_config = ClusterConfig {
         validator_configs,
