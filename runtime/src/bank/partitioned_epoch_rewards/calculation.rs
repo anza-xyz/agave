@@ -718,11 +718,12 @@ impl Bank {
         // Producing the stake reward with rayon triggers a lot of
         // (re)allocations. To avoid that, we allocate it at the start and
         // pass `stake_rewards.spare_capacity_mut()` as one of iterators.
-        let mut stake_rewards = PartitionedStakeRewards::with_capacity(stake_delegations.len());
+        let stake_delegations_len = stake_delegations.len();
+        let mut stake_rewards = PartitionedStakeRewards::with_capacity(stake_delegations_len);
         let rewards_accumulator: RewardsAccumulator = thread_pool.install(|| {
             stake_delegations
                 .par_iter()
-                .zip(stake_rewards.spare_capacity_mut())
+                .zip(&mut stake_rewards.spare_capacity_mut()[..stake_delegations_len])
                 .with_min_len(500)
                 .filter_map(|((stake_pubkey, stake_account), stake_reward_ref)| {
                     let maybe_reward_record = self.redeem_delegation_rewards(
@@ -795,6 +796,7 @@ impl Bank {
         } = rewards_accumulator;
         // SAFETY: We initialized all the `stake_rewards` elements up to
         // `num_stake_rewards`.
+        debug_assert!(num_stake_rewards <= stake_delegations_len);
         unsafe {
             stake_rewards.assume_init(num_stake_rewards);
         }
