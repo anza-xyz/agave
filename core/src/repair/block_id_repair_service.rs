@@ -35,7 +35,7 @@ use {
     solana_gossip::ping_pong::{Ping, Pong},
     solana_keypair::signable::Signable,
     solana_ledger::{
-        blockstore::{Blockstore, BlockstoreError, CompletedSlotsReceiver},
+        blockstore::{Blockstore, BlockstoreError, CompletedSlotsReceiver, SlotMeta},
         blockstore_meta::BlockLocation,
         shred::DATA_SHREDS_PER_FEC_BLOCK,
     },
@@ -157,7 +157,7 @@ enum PendingRepairDecision {
 /// Action to perform as a result of a repair event
 enum RepairAction {
     StartRepair { block: Block },
-    QueueParent { slot: Slot, location: BlockLocation },
+    QueueParent { slot_meta: SlotMeta },
 }
 
 struct RepairState {
@@ -457,7 +457,7 @@ impl BlockIdRepairService {
 
         // Generate repair requests for repair actions
         for action in repair_actions {
-            Self::process_repair_decision(&my_pubkey, action, context.blockstore.as_ref(), state)?;
+            Self::process_repair_decision(&my_pubkey, action, state)?;
         }
 
         // Retry requests that have timed out
@@ -731,12 +731,12 @@ impl BlockIdRepairService {
                     return Ok(PendingRepairDecision::Drop);
                 }
 
-                // Check if we already have the block, if so queue fetching the parent
-                // Note: when a block becomes full in blockstore -> we atomically calculate the DMR and populate location
-                if let Some(location) = blockstore.get_block_location(block.slot, block.block_id)? {
+                // Check if we already have the full block, if so queue fetching the parent.
+                if let Some((slot_meta, _location)) =
+                    blockstore.get_slot_meta_for_block_id(block.slot, block.block_id)?
+                {
                     return Ok(PendingRepairDecision::Act(RepairAction::QueueParent {
-                        slot: block.slot,
-                        location,
+                        slot_meta,
                     }));
                 }
 
@@ -783,10 +783,15 @@ impl BlockIdRepairService {
                              fetching parent",
                             block.slot
                         );
-                        Ok(PendingRepairDecision::Act(RepairAction::QueueParent {
-                            slot: block.slot,
-                            location: BlockLocation::Original,
-                        }))
+                        if let Some((slot_meta, _location)) =
+                            blockstore.get_slot_meta_for_block_id(block.slot, block.block_id)?
+                        {
+                            Ok(PendingRepairDecision::Act(RepairAction::QueueParent {
+                                slot_meta,
+                            }))
+                        } else {
+                            Ok(PendingRepairDecision::KeepPending)
+                        }
                     }
                 }
             }
@@ -797,7 +802,6 @@ impl BlockIdRepairService {
     fn process_repair_decision(
         my_pubkey: &Pubkey,
         action: RepairAction,
-        blockstore: &Blockstore,
         state: &mut RepairState,
     ) -> Result<(), BlockstoreError> {
         match action {
@@ -839,29 +843,18 @@ impl BlockIdRepairService {
                 state.requested_blocks.insert(block);
                 Ok(())
             }
-            RepairAction::QueueParent { slot, location } => {
-                Self::queue_fetch_parent_block(blockstore, slot, location, state)
+            RepairAction::QueueParent { slot_meta } => {
+                Self::queue_fetch_parent_block(slot_meta, state)
             }
         }
     }
 
     /// Helper to fetch the parent block for a slot we already have
     fn queue_fetch_parent_block(
-        blockstore: &Blockstore,
-        slot: Slot,
-        location: BlockLocation,
+        meta: SlotMeta,
         state: &mut RepairState,
     ) -> Result<(), BlockstoreError> {
-        debug_assert!(
-            blockstore
-                .meta_from_location(slot, location)
-                .unwrap()
-                .unwrap()
-                .is_full()
-        );
-        let meta = blockstore
-            .meta_from_location(slot, location)?
-            .expect("SlotMeta must be populated for full slots");
+        debug_assert!(meta.is_full());
 
         state.push_pending_repair_event(RepairEvent::FetchBlock {
             block: Block {
@@ -912,14 +905,9 @@ impl BlockIdRepairService {
             return false;
         };
 
-        let location = BlockLocation::Alternate {
-            block_id: *block_id,
-        };
         blockstore
-            .get_index_from_location(*slot, location)
+            .has_alternate_data_shred(*slot, u64::from(*index), *block_id)
             .ok()
-            .flatten()
-            .map(|idx| idx.data().contains(*index as u64))
             .unwrap_or(false)
     }
 
@@ -1173,7 +1161,7 @@ mod tests {
             }
             PendingRepairDecision::Drop => Ok(()),
             PendingRepairDecision::Act(action) => {
-                BlockIdRepairService::process_repair_decision(&my_pubkey, action, blockstore, state)
+                BlockIdRepairService::process_repair_decision(&my_pubkey, action, state)
             }
         }
     }
@@ -1937,13 +1925,7 @@ mod tests {
             .collect();
 
         for action in actions {
-            BlockIdRepairService::process_repair_decision(
-                &my_pubkey,
-                action,
-                &blockstore,
-                &mut state,
-            )
-            .unwrap();
+            BlockIdRepairService::process_repair_decision(&my_pubkey, action, &mut state).unwrap();
         }
 
         assert_eq!(

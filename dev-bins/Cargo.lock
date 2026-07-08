@@ -7164,6 +7164,7 @@ dependencies = [
  "mockall",
  "num_cpus",
  "num_enum",
+ "parking_lot 0.12.5",
  "prost",
  "qualifier_attr",
  "rand 0.9.4",

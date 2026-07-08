@@ -9126,6 +9126,7 @@ dependencies = [
  "mockall",
  "num_cpus",
  "num_enum",
+ "parking_lot 0.12.3",
  "proptest",
  "prost 0.14.4",
  "qualifier_attr",
