@@ -172,6 +172,31 @@ mod tests {
         path
     }
 
+    enum UnreadableDirTest<R> {
+        SkippedAsRoot,
+        Ran(R),
+    }
+
+    // Create an unreadable directory at `path`, run `f`, then restore permissions so the
+    // TempDir can clean up. read_dir on a mode-0000 dir only fails for non-root, so skip as root.
+    fn with_unreadable_dir<R>(
+        path: &std::path::Path,
+        f: impl FnOnce() -> R,
+    ) -> UnreadableDirTest<R> {
+        use std::os::unix::fs::PermissionsExt;
+
+        if unsafe { libc::geteuid() } == 0 {
+            return UnreadableDirTest::SkippedAsRoot;
+        }
+
+        std::fs::create_dir(path).unwrap();
+        std::fs::set_permissions(path, std::fs::Permissions::from_mode(0o000)).unwrap();
+        let result = f();
+        std::fs::set_permissions(path, std::fs::Permissions::from_mode(0o700)).unwrap();
+
+        UnreadableDirTest::Ran(result)
+    }
+
     #[test]
     fn test_find_any_file_under_path_file() {
         let dir = TempDir::new().unwrap();
@@ -196,60 +221,43 @@ mod tests {
 
     #[test]
     fn test_find_any_file_under_path_skips_unreadable_subdir() {
-        use std::os::unix::fs::PermissionsExt;
-        // read_dir on a mode-0000 dir only fails for non-root; root bypasses the permission bits.
-        if unsafe { libc::geteuid() } == 0 {
-            return;
-        }
         let dir = TempDir::new().unwrap();
         let file = make_temp_file(&dir, "snapshot.bin", b"data");
         let unreadable = dir.path().join("lost+found");
-        std::fs::create_dir(&unreadable).unwrap();
-        std::fs::set_permissions(&unreadable, std::fs::Permissions::from_mode(0o000)).unwrap();
 
         // The readable file is found regardless of readdir order; the unreadable sibling is skipped.
-        let found = find_any_file_under_path(dir.path());
-
-        // Restore perms so TempDir cleanup can recurse, then assert.
-        std::fs::set_permissions(&unreadable, std::fs::Permissions::from_mode(0o700)).unwrap();
-        assert_eq!(found, Some(file));
+        if let UnreadableDirTest::Ran(found) =
+            with_unreadable_dir(&unreadable, || find_any_file_under_path(dir.path()))
+        {
+            assert_eq!(found, Some(file));
+        }
     }
 
     #[test]
     fn test_find_any_file_under_path_readable_dir_only_unreadable_subdir() {
-        use std::os::unix::fs::PermissionsExt;
-        if unsafe { libc::geteuid() } == 0 {
-            return;
-        }
         let dir = TempDir::new().unwrap();
         let unreadable = dir.path().join("lost+found");
-        std::fs::create_dir(&unreadable).unwrap();
-        std::fs::set_permissions(&unreadable, std::fs::Permissions::from_mode(0o000)).unwrap();
 
         // The dir itself is readable but holds no file, so the caller falls back to the temp
         // probe rather than aborting; the unreadable subdir doesn't turn this into an error.
-        let found = find_any_file_under_path(dir.path());
-
-        std::fs::set_permissions(&unreadable, std::fs::Permissions::from_mode(0o700)).unwrap();
-        assert_eq!(found, None);
+        if let UnreadableDirTest::Ran(found) =
+            with_unreadable_dir(&unreadable, || find_any_file_under_path(dir.path()))
+        {
+            assert_eq!(found, None);
+        }
     }
 
     #[test]
     fn test_find_any_file_under_path_unreadable_path_returns_none() {
-        use std::os::unix::fs::PermissionsExt;
-        if unsafe { libc::geteuid() } == 0 {
-            return;
-        }
         let parent = TempDir::new().unwrap();
         let dir = parent.path().join("accounts");
-        std::fs::create_dir(&dir).unwrap();
-        std::fs::set_permissions(&dir, std::fs::Permissions::from_mode(0o000)).unwrap();
 
         // An unreadable path is logged and skipped, so the caller falls back to the temp probe.
-        let found = find_any_file_under_path(&dir);
-
-        std::fs::set_permissions(&dir, std::fs::Permissions::from_mode(0o700)).unwrap();
-        assert_eq!(found, None);
+        if let UnreadableDirTest::Ran(found) =
+            with_unreadable_dir(&dir, || find_any_file_under_path(&dir))
+        {
+            assert_eq!(found, None);
+        }
     }
 
     #[test]
