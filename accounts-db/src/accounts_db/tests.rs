@@ -6303,7 +6303,7 @@ fn test_shrink_collect_simple() {
                                 expected_unrefed
                             );
 
-                            let alive_total_one_account = 136 + space;
+                            let alive_total_one_account = AppendVec::calculate_stored_size(space);
                             assert_eq!(
                                 shrink_collect.alive_total_bytes,
                                 expected_alive_accounts.len() * alive_total_one_account
@@ -6311,7 +6311,7 @@ fn test_shrink_collect_simple() {
                             // tombstones (zero-lamport accounts) always store 0 bytes of data
                             assert_eq!(
                                 shrink_collect.tombstones_total_bytes,
-                                expected_tombstones.len() * 136
+                                expected_tombstones.len() * AppendVec::calculate_stored_size(0)
                             );
                             // expected_capacity is determined by what size append vec gets created when the write cache is flushed to an append vec.
                             let mut expected_capacity =

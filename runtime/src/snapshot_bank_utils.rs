@@ -1447,7 +1447,7 @@ mod tests {
         }
     }
 
-    /// Test that the full zero-lamport tombstone path works end to end across snapshots.
+    /// Test that the full tombstone path works end to end across snapshots.
     /// Here's the scenario:
     ///
     /// slot 1:
@@ -1471,7 +1471,7 @@ mod tests {
     /// and the account ends up deleted. If the tombstone were dropped during shrink, the rebuild
     /// would resurrect Account1 from the full snapshot and the checks below would fail.
     #[test]
-    fn test_incremental_snapshots_handle_zero_lamport_tombstones() {
+    fn test_incremental_snapshots_handle_tombstones() {
         let key1 = Keypair::new();
         let key2 = Keypair::new();
 
