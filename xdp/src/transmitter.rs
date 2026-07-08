@@ -5,6 +5,7 @@ use {
     std::{
         error::Error,
         net::{SocketAddr, SocketAddrV4},
+        path::PathBuf,
         sync::{Arc, atomic::AtomicBool},
         thread,
     },
@@ -55,6 +56,8 @@ pub struct XdpConfig {
     /// inferred from position, so callers can target arbitrary hardware queues.
     pub queues: Vec<QueueCpuBinding>,
     pub zero_copy: bool,
+    /// Custom eBPF object; `None` uses the driver-selected default.
+    pub program_override: Option<PathBuf>,
     // The capacity of the channel that sits between senders and each XDP thread that enqueues
     // packets to the NIC.
     pub tx_channel_cap: usize,
@@ -71,6 +74,7 @@ impl Default for XdpConfig {
             interface: None,
             queues: vec![],
             zero_copy: false,
+            program_override: None,
             tx_channel_cap: Self::DEFAULT_TX_CHANNEL_CAP,
         }
     }
@@ -86,6 +90,7 @@ impl XdpConfig {
             interface: interface.map(|s| s.into()),
             queues,
             zero_copy,
+            program_override: None,
             tx_channel_cap: XdpConfig::DEFAULT_TX_CHANNEL_CAP,
         }
     }
@@ -257,6 +262,7 @@ impl TransmitterBuilder {
             interface: maybe_interface,
             queues,
             zero_copy,
+            program_override,
             tx_channel_cap,
         } = config;
 
@@ -311,7 +317,8 @@ impl TransmitterBuilder {
                 CapGuard::raise([CAP_BPF, CAP_PERFMON]).expect("raise ebpf capabilities");
 
             let load_result =
-                load_xdp_program(&dev).map_err(|e| format!("failed to attach xdp program: {e}"));
+                load_xdp_program(&dev, program_override.as_deref())
+                    .map_err(|e| format!("failed to attach xdp program: {e}"));
 
             Some(load_result)
         } else {

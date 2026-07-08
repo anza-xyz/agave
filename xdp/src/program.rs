@@ -6,7 +6,10 @@ use {
         Ebpf, EbpfLoader,
         programs::{Xdp, xdp::XdpMode},
     },
-    std::io::{Cursor, Write},
+    std::{
+        io::{Cursor, Write},
+        path::Path,
+    },
 };
 
 macro_rules! write_fields {
@@ -43,15 +46,24 @@ const XDP_PROG: &[u8] = &[
 // the string table
 const STRTAB: &[u8] = b"\0xdp\0.symtab\0.strtab\0agave_xdp\0";
 
-pub fn load_xdp_program(dev: &NetworkDevice) -> Result<Ebpf, Box<dyn std::error::Error>> {
+/// Loads and attaches a custom or built-in XDP program for `dev`.
+///
+/// Custom objects must define an XDP program named `"agave_xdp"`.
+pub fn load_xdp_program(
+    dev: &NetworkDevice,
+    program_override: Option<&Path>,
+) -> Result<Ebpf, Box<dyn std::error::Error>> {
     let mut loader = EbpfLoader::new();
-    let broken_frags = dev.driver()? == "i40e";
-    let mut ebpf = if broken_frags {
+    let mut ebpf = if let Some(path) = program_override {
+        let bytes = std::fs::read(path)
+            .map_err(|e| format!("failed to read XDP program `{}`: {e}", path.display()))?;
+        loader.load(&bytes)?
+    } else if dev.driver()? == "i40e" {
         loader.override_global("AGAVE_XDP_DROP_MULTI_FRAGS", &1u8, true);
-        loader.load(agave_xdp_ebpf::AGAVE_XDP_EBPF_PROGRAM)
+        loader.load(agave_xdp_ebpf::AGAVE_XDP_EBPF_PROGRAM)?
     } else {
-        loader.load(&generate_xdp_elf())
-    }?;
+        loader.load(&generate_xdp_elf())?
+    };
     let p: &mut Xdp = ebpf.program_mut("agave_xdp").unwrap().try_into().unwrap();
     p.load()?;
 
