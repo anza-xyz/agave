@@ -37,7 +37,7 @@ use {
         self,
         convert::TryFrom,
         fs::{File, OpenOptions, remove_file},
-        io::{self, Seek, SeekFrom, Write},
+        io,
         mem::{self, MaybeUninit},
         path::{Path, PathBuf},
         ptr, slice,
@@ -213,7 +213,7 @@ impl AppendVec {
 
         let _ignored = remove_file(&file);
 
-        let mut data = OpenOptions::new()
+        let data = OpenOptions::new()
             .read(true)
             .write(true)
             .create_new(true)
@@ -228,13 +228,10 @@ impl AppendVec {
             })
             .unwrap();
 
-        // Theoretical performance optimization: write a zero to the end of
-        // the file so that we won't have to resize it later, which may be
-        // expensive.
-        data.seek(SeekFrom::Start((size - 1) as u64)).unwrap();
-        data.write_all(&[0]).unwrap();
-        data.rewind().unwrap();
-        data.flush().unwrap();
+        // Theoretical performance optimization: set the logical/inode size
+        // so that we don't have to resize it later, which may be expensive.
+        let size = u64::try_from(size).unwrap();
+        data.set_len(size).unwrap();
 
         APPEND_VEC_STATS.files_open.fetch_add(1, Ordering::Relaxed);
 
@@ -245,7 +242,7 @@ impl AppendVec {
             // reads. See UNSAFE usage in `append_ptr`
             read_write_state: ReadWriteState::new(true),
             current_len: AtomicUsize::new(initial_len),
-            file_size: size as u64,
+            file_size: size,
             remove_file_on_drop: AtomicBool::new(true),
             is_dirty: AtomicBool::new(false),
         }
@@ -1087,7 +1084,11 @@ mod tests {
         rand_chacha::ChaChaRng,
         solana_account::{AccountSharedData, WritableAccount, accounts_equal},
         solana_clock::Slot,
-        std::{mem::ManuallyDrop, time::Instant},
+        std::{
+            io::{Seek as _, SeekFrom, Write as _},
+            mem::ManuallyDrop,
+            time::Instant,
+        },
         test_case::test_case,
     };
 
