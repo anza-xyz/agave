@@ -262,6 +262,7 @@ impl TransactionViewReceiveAndBuffer {
         let mut num_dropped_on_capacity = 0;
         let mut num_buffered = 0;
 
+<<<<<<< HEAD
         let mut check_and_push_to_queue =
             |container: &mut TransactionViewStateContainer,
              transaction_priority_ids: &mut ArrayVec<TransactionPriorityId, 64>| {
@@ -282,6 +283,30 @@ impl TransactionViewReceiveAndBuffer {
                         &mut error_counters,
                     )
                 };
+=======
+        let mut check_and_push_to_queue = |container: &mut TransactionViewStateContainer,
+                                           transaction_priority_ids: &mut ArrayVec<
+            TransactionPriorityId,
+            EXTRA_CAPACITY,
+        >| {
+            // Temporary scope so that transaction references are immediately
+            // dropped and transactions not passing
+            let mut check_results = {
+                let mut transactions = ArrayVec::<_, EXTRA_CAPACITY>::new();
+                transactions.extend(transaction_priority_ids.iter().map(|priority_id| {
+                    container
+                        .get_transaction(priority_id.id)
+                        .expect("transaction must exist")
+                }));
+                working_bank.check_transactions_without_status_cache::<RuntimeTransaction<_>>(
+                    &transactions,
+                    &lock_results[..transactions.len()],
+                    working_bank.max_processing_age(),
+                    true,
+                    &mut error_counters,
+                )
+            };
+>>>>>>> af62067f8 (receive_and_buffer: remove expensive status-cache check (#13437))
 
                 // Remove errored transactions
                 for (result, priority_id) in check_results
@@ -1016,6 +1041,37 @@ mod tests {
         assert_eq!(num_dropped_on_capacity, 0);
         assert_eq!(num_buffered, 1);
 
+        verify_container(&mut container, 1);
+    }
+
+    #[test]
+    fn test_receive_and_buffer_buffers_already_processed() {
+        let (sender, receiver) = bounded(1024);
+        let (bank_forks, mint_keypair) = test_bank_forks();
+        let (mut receive_and_buffer, mut container) =
+            setup_transaction_view_receive_and_buffer(receiver, bank_forks.clone());
+
+        let bank = bank_forks.read().unwrap().root_bank();
+        let transaction = transfer(
+            &mint_keypair,
+            &Pubkey::new_unique(),
+            1,
+            bank.last_blockhash(),
+        );
+        bank.process_transaction(&transaction).unwrap();
+        drop(bank);
+
+        let packet_batches = Arc::new(to_packet_batches(&[transaction], 1));
+        sender.send(packet_batches).unwrap();
+
+        let stats = receive_and_buffer
+            .receive_and_buffer_packets(&mut container, &BufferedPacketsDecision::Hold)
+            .unwrap();
+
+        assert_eq!(stats.num_received, 1);
+        assert_eq!(stats.num_dropped_on_age, 0);
+        assert_eq!(stats.num_dropped_on_already_processed, 0);
+        assert_eq!(stats.num_buffered, 1);
         verify_container(&mut container, 1);
     }
 
