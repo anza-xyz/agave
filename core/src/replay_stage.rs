@@ -34,7 +34,8 @@ use {
     },
     agave_votor::{
         event::{
-            CompletedBlock, LatestSwitchRequest, LeaderWindowInfo, VotorEvent, VotorEventSender,
+            CompletedBlock, LatestSwitchRequest, LeaderWindowInfo, SwitchBankEvent, VotorEvent,
+            VotorEventSender,
         },
         root_utils,
         vote_history_storage::SavedVoteHistory,
@@ -2393,7 +2394,7 @@ impl ReplayStage {
     fn process_switch_bank_events(
         my_pubkey: &Pubkey,
         latest_switch_request: &LatestSwitchRequest,
-        pending_switch: &mut Option<Block>,
+        pending_switch: &mut Option<SwitchBankEvent>,
         blockstore: &Blockstore,
         bank_forks: &RwLock<BankForks>,
         progress: &mut ProgressMap,
@@ -2401,31 +2402,33 @@ impl ReplayStage {
     ) -> Result<(), BlockstoreError> {
         let root = bank_forks.read().unwrap().root();
 
-        if let Some(block) = latest_switch_request
+        if let Some(event) = latest_switch_request
             .take()
-            .map(|ev| ev.block())
-            .filter(|block| block.slot > root)
+            .filter(|event| event.block().slot > root)
         {
+            let block = event.block();
             match pending_switch {
                 None => {
                     trace!("{my_pubkey}: Setting empty pending_switch to ({block:?})");
-                    *pending_switch = Some(block);
+                    *pending_switch = Some(event);
                 }
-                Some(pending_switch_block) => {
-                    if block.slot >= pending_switch_block.slot {
+                Some(pending_switch_event) => {
+                    if event > *pending_switch_event {
                         trace!(
-                            "{my_pubkey}: Overwriting previous switch request \
-                             {pending_switch_block:?} with ({block:?})"
+                            "{my_pubkey}: Overwriting previous switch request {:?} with \
+                             ({block:?})",
+                            pending_switch_event.block(),
                         );
-                        *pending_switch_block = block;
+                        *pending_switch_event = event;
                     }
                 }
             }
         };
 
-        let Some(block) = *pending_switch else {
+        let Some(event) = *pending_switch else {
             return Ok(());
         };
+        let block = event.block();
 
         if bank_forks.read().unwrap().block_id(block.slot) == Some(block.block_id) {
             // Nothing to switch
