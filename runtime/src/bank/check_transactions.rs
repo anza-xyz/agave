@@ -5,7 +5,7 @@ use {
     solana_accounts_db::blockhash_queue::BlockhashQueue,
     solana_clock::{MAX_TRANSACTION_FORWARDING_DELAY, Slot},
     solana_compute_budget::compute_budget::SVMTransactionExecutionBudget,
-    solana_fee::{FeeFeatures, calculate_fee_details},
+    solana_fee::calculate_fee_details,
     solana_nonce::state::{Data as NonceData, DurableNonce, State as NonceState},
     solana_nonce_account as nonce_account,
     solana_program_runtime::execution_budget::SVMTransactionExecutionAndFeeBudgetLimits,
@@ -148,7 +148,7 @@ impl Bank {
 
         let feature_set: &FeatureSet = &self.feature_set;
         let feature_snapshot = feature_set.snapshot();
-        let fee_features = FeeFeatures::from(feature_set);
+        let fee_features = self.fee_features();
 
         let raise_cpi_limit = feature_snapshot.raise_cpi_nesting_limit_to_8;
 

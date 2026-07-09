@@ -6,7 +6,6 @@ use {
         scheduler_messages::MaxAge,
     },
     smallvec::SmallVec,
-    solana_fee::FeeFeatures,
     solana_measure::measure_us,
     solana_poh::{
         poh_recorder::PohRecorderError,
@@ -484,7 +483,7 @@ impl Consumer {
             transaction,
             bank.fee_structure().lamports_per_signature,
             transaction_configuration.priority_fee_lamports,
-            FeeFeatures::from(bank.feature_set.as_ref()),
+            bank.fee_features(),
         );
         let (mut fee_payer_account, _slot) = bank
             .rc

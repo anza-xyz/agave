@@ -3304,6 +3304,11 @@ impl Bank {
         self.fee_rate_governor.lamports_per_signature
     }
 
+    /// Convert Agave's active feature set into the fee crate's narrowed feature view.
+    pub fn fee_features(&self) -> FeeFeatures {
+        FeeFeatures {}
+    }
+
     pub fn get_lamports_per_signature_for_blockhash(&self, hash: &Hash) -> Option<u64> {
         let blockhash_queue = self.blockhash_queue.read().unwrap();
         blockhash_queue.get_lamports_per_signature(hash)
@@ -3326,7 +3331,7 @@ impl Bank {
             message,
             self.fee_structure().lamports_per_signature,
             transaction_configuration.priority_fee_lamports,
-            FeeFeatures::from(self.feature_set.as_ref()),
+            self.fee_features(),
         ))
     }
 
