@@ -33,7 +33,7 @@ use {
     solana_keypair::Keypair,
     solana_ledger::blockstore::Blockstore,
     solana_net_utils::{SocketAddrSpace, sockets::bind_to_localhost_unique},
-    solana_perf::packet::PacketRef,
+    solana_perf::packet::{PacketRef, packet_config},
     solana_poh_config::PohConfig,
     solana_pubkey::Pubkey,
     solana_rpc_client::rpc_client::RpcClient,
@@ -628,7 +628,7 @@ pub fn start_quic_streamer_to_listen_for_votes_and_certs(
 fn convert_packet_to_vote_message(packet: PacketRef, my_shred_version: u16) -> Option<VoteMessage> {
     let Ok(msg) = VersionedWireConsensusMessage::deserialize_with_expected_shred_version(
         packet.data(..).unwrap_or_default(),
-        solana_perf::packet::packet_config(),
+        packet_config(),
         my_shred_version,
     ) else {
         return None;
