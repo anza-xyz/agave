@@ -121,7 +121,7 @@ Create a PR that makes the following updates to [CHANGELOG.md](https://github.co
 #### Newly Promoted Stable (Former Beta) Branch
 
 1. Pin the spl-token-cli version in the newly promoted stable branch by setting `splTokenCliVersion` in scripts/spl-token-cli-version.sh to the latest release that depends on the stable branch (usually this will be the latest spl-token-cli release).
-1. Pin the cargo-build-sbf and cargo-test-sbf versions in the newly promoted stable branch by setting `cargoBuildSbfVersion` and `cargoTestSbfVersion` in scripts/cargo-build-sbf-version.sh to the latest release that depends on the stable branch (usually this will be the latest releases).
+1. Pin the cargo-build-sbf versions in the newly promoted stable branch by setting `cargoBuildSbfVersion` in scripts/cargo-build-sbf-version.sh to the latest release that depends on the stable branch (usually this will be the latest releases).
 
 #### Newly Created Beta Branch
 
