@@ -10,7 +10,6 @@ use {
         sendmmsg::{SendPktsError, batch_send},
     },
     crossbeam_channel::{Receiver, RecvTimeoutError, SendError, Sender, TrySendError},
-    histogram::Histogram,
     solana_measure::measure::Measure,
     solana_net_utils::{
         SocketAddrSpace,
@@ -323,14 +322,29 @@ impl StreamerSendStats {
     ) {
         const MAX_REPORT_ENTRIES: usize = 5;
         let sample_ms = sample_duration.map(|d| d.as_millis()).unwrap_or_default();
-        let mut hist = Histogram::default();
         let mut byte_sum = 0;
         let mut pkt_count = 0;
-        host_map.iter().for_each(|(_addr, host_stats)| {
-            hist.increment(host_stats.bytes).unwrap();
-            byte_sum += host_stats.bytes;
-            pkt_count += host_stats.count;
-        });
+        let mut host_bytes: Vec<u64> = host_map
+            .iter()
+            .map(|(_addr, host_stats)| {
+                byte_sum += host_stats.bytes;
+                pkt_count += host_stats.count;
+                host_stats.bytes
+            })
+            .collect();
+        host_bytes.sort_unstable();
+
+        let percentile = |p: f64| -> u64 {
+            let n = host_bytes.len();
+            if n == 0 {
+                return 0;
+            }
+            let idx = ((p / 100.0) * n as f64).ceil() as usize;
+            host_bytes[idx.saturating_sub(1).min(n - 1)]
+        };
+        let mean = byte_sum
+            .checked_div(host_bytes.len() as u64)
+            .unwrap_or_default();
 
         datapoint_info!(
             name,
@@ -340,34 +354,18 @@ impl StreamerSendStats {
             ("streamer-send-pkt_count_total", pkt_count, i64),
             (
                 "streamer-send-host_bytes_min",
-                hist.minimum().unwrap_or_default(),
+                host_bytes.first().copied().unwrap_or_default(),
                 i64
             ),
             (
                 "streamer-send-host_bytes_max",
-                hist.maximum().unwrap_or_default(),
+                host_bytes.last().copied().unwrap_or_default(),
                 i64
             ),
-            (
-                "streamer-send-host_bytes_mean",
-                hist.mean().unwrap_or_default(),
-                i64
-            ),
-            (
-                "streamer-send-host_bytes_90pct",
-                hist.percentile(90.0).unwrap_or_default(),
-                i64
-            ),
-            (
-                "streamer-send-host_bytes_50pct",
-                hist.percentile(50.0).unwrap_or_default(),
-                i64
-            ),
-            (
-                "streamer-send-host_bytes_10pct",
-                hist.percentile(10.0).unwrap_or_default(),
-                i64
-            ),
+            ("streamer-send-host_bytes_mean", mean, i64),
+            ("streamer-send-host_bytes_90pct", percentile(90.0), i64),
+            ("streamer-send-host_bytes_50pct", percentile(50.0), i64),
+            ("streamer-send-host_bytes_10pct", percentile(10.0), i64),
         );
 
         let num_entries = host_map.len();

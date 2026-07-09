@@ -10854,7 +10854,6 @@ dependencies = [
  "clap 4.5.31",
  "crossbeam-channel",
  "futures 0.3.32",
- "histogram",
  "indexmap 2.14.0",
  "itertools 0.14.0",
  "libc",
