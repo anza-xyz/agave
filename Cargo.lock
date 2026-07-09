@@ -185,7 +185,7 @@ dependencies = [
  "agave-logger",
  "bzip2",
  "clap 2.33.3",
- "console 0.16.3",
+ "console 0.16.4",
  "crossbeam-channel",
  "ctrlc",
  "dirs-next",
@@ -392,7 +392,7 @@ dependencies = [
  "caps",
  "chrono",
  "clap 2.33.3",
- "console 0.16.3",
+ "console 0.16.4",
  "crossbeam-channel",
  "fd-lock",
  "indicatif",
@@ -1991,9 +1991,9 @@ dependencies = [
 
 [[package]]
 name = "console"
-version = "0.16.3"
+version = "0.16.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "d64e8af5551369d19cf50138de61f1c42074ab970f74e99be916646777f8fc87"
+checksum = "4fe5f465a4f6fee88fad41b85d990f84c835335e85b5d9e6e63e0d06d28cba7c"
 dependencies = [
  "encode_unicode",
  "libc",
@@ -2525,7 +2525,7 @@ version = "0.12.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "25f104b501bf2364e78d0d3974cbc774f738f5865306ed128e1e0d7499c0ad96"
 dependencies = [
- "console 0.16.3",
+ "console 0.16.4",
  "shell-words",
  "tempfile",
  "zeroize",
@@ -4001,7 +4001,7 @@ version = "0.18.5"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "993f007684f2e9727160da8b960ec161264703bfd1af084fd2e34d040c9a0dd4"
 dependencies = [
- "console 0.16.3",
+ "console 0.16.4",
  "portable-atomic",
  "unicode-width 0.2.0",
  "unit-prefix",
@@ -6385,7 +6385,7 @@ dependencies = [
  "errno",
  "libc",
  "linux-raw-sys 0.12.1",
- "windows-sys 0.52.0",
+ "windows-sys 0.61.0",
 ]
 
 [[package]]
@@ -7668,7 +7668,7 @@ dependencies = [
  "bip39",
  "bs58",
  "clap 2.33.3",
- "console 0.16.3",
+ "console 0.16.4",
  "const_format",
  "hex",
  "humantime",
@@ -7767,7 +7767,7 @@ dependencies = [
  "bitvec",
  "chrono",
  "clap 2.33.3",
- "console 0.16.3",
+ "console 0.16.4",
  "humantime",
  "indicatif",
  "pretty-hex",
@@ -9930,7 +9930,7 @@ name = "solana-remote-wallet"
 version = "4.3.0-alpha.0"
 dependencies = [
  "assert_matches",
- "console 0.16.3",
+ "console 0.16.4",
  "dialoguer",
  "hex",
  "hidapi",
@@ -11280,7 +11280,7 @@ dependencies = [
  "bincode",
  "chrono",
  "clap 2.33.3",
- "console 0.16.3",
+ "console 0.16.4",
  "csv",
  "ctrlc",
  "indexmap 2.14.0",
@@ -12357,7 +12357,7 @@ dependencies = [
  "getrandom 0.3.4",
  "once_cell",
  "rustix 1.1.4",
- "windows-sys 0.52.0",
+ "windows-sys 0.61.0",
 ]
 
 [[package]]
