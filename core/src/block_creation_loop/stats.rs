@@ -1,19 +1,43 @@
 //! Stats about the block creation loop
 use {
-    histogram::Histogram,
     solana_clock::Slot,
     solana_metrics::datapoint_info,
     std::time::{Duration, Instant},
 };
 
+/// Running min/mean/max of `bank_completion` durations, in microseconds.
+#[derive(Default)]
+pub(crate) struct BankCompletionTimingSamples {
+    min_us: u64,
+    max_us: u64,
+    sum_us: u64,
+    count: u64,
+}
+
+impl BankCompletionTimingSamples {
+    pub(crate) fn record(&mut self, elapsed_us: u64) {
+        self.min_us = if self.count == 0 {
+            elapsed_us
+        } else {
+            self.min_us.min(elapsed_us)
+        };
+        self.max_us = self.max_us.max(elapsed_us);
+        self.sum_us += elapsed_us;
+        self.count += 1;
+    }
+
+    fn mean(&self) -> u64 {
+        self.sum_us.checked_div(self.count).unwrap_or(0)
+    }
+}
+
 pub(crate) struct LoopMetrics {
     pub(crate) last_report: Instant,
     pub(crate) loop_count: u64,
-    pub(crate) bank_timeout_completion_count: u64,
     pub(crate) skipped_window_behind_parent_ready_count: u64,
 
-    pub(crate) window_production_elapsed: u64,
-    pub(crate) bank_timeout_completion_elapsed_hist: Histogram,
+    pub(crate) window_production_elapsed_us: u64,
+    pub(crate) bank_completion_timing_stats: BankCompletionTimingSamples,
 }
 
 impl Default for LoopMetrics {
@@ -21,10 +45,9 @@ impl Default for LoopMetrics {
         Self {
             last_report: Instant::now(),
             loop_count: 0,
-            bank_timeout_completion_count: 0,
             skipped_window_behind_parent_ready_count: 0,
-            window_production_elapsed: 0,
-            bank_timeout_completion_elapsed_hist: Histogram::default(),
+            window_production_elapsed_us: 0,
+            bank_completion_timing_stats: BankCompletionTimingSamples::default(),
         }
     }
 }
@@ -32,10 +55,9 @@ impl Default for LoopMetrics {
 impl LoopMetrics {
     fn is_empty(&self) -> bool {
         0 == self.loop_count
-            + self.bank_timeout_completion_count
-            + self.window_production_elapsed
+            + self.bank_completion_timing_stats.count
+            + self.window_production_elapsed_us
             + self.skipped_window_behind_parent_ready_count
-            + self.bank_timeout_completion_elapsed_hist.entries()
     }
 
     pub(crate) fn report(&mut self, report_interval: Duration) {
@@ -49,13 +71,13 @@ impl LoopMetrics {
                 "block-creation-loop-metrics",
                 ("loop_count", self.loop_count, i64),
                 (
-                    "bank_timeout_completion_count",
-                    self.bank_timeout_completion_count,
+                    "bank_completion_count",
+                    self.bank_completion_timing_stats.count,
                     i64
                 ),
                 (
-                    "window_production_elapsed",
-                    self.window_production_elapsed,
+                    "window_production_elapsed_us",
+                    self.window_production_elapsed_us,
                     i64
                 ),
                 (
@@ -64,31 +86,18 @@ impl LoopMetrics {
                     i64
                 ),
                 (
-                    "bank_timeout_completion_elapsed_90pct",
-                    self.bank_timeout_completion_elapsed_hist
-                        .percentile(90.0)
-                        .unwrap_or(0),
+                    "bank_completion_elapsed_us_min",
+                    self.bank_completion_timing_stats.min_us,
                     i64
                 ),
                 (
-                    "bank_timeout_completion_elapsed_mean",
-                    self.bank_timeout_completion_elapsed_hist
-                        .mean()
-                        .unwrap_or(0),
+                    "bank_completion_elapsed_us_mean",
+                    self.bank_completion_timing_stats.mean(),
                     i64
                 ),
                 (
-                    "bank_timeout_completion_elapsed_min",
-                    self.bank_timeout_completion_elapsed_hist
-                        .minimum()
-                        .unwrap_or(0),
-                    i64
-                ),
-                (
-                    "bank_timeout_completion_elapsed_max",
-                    self.bank_timeout_completion_elapsed_hist
-                        .maximum()
-                        .unwrap_or(0),
+                    "bank_completion_elapsed_us_max",
+                    self.bank_completion_timing_stats.max_us,
                     i64
                 ),
             );
@@ -131,7 +140,7 @@ impl SlotMetrics {
             ("already_have_bank_count", self.already_have_bank_count, i64),
             ("slot_delay_us", self.slot_delay_us, i64),
             (
-                "replay_is_behind_cumulative_wait_elapsed",
+                "replay_is_behind_cumulative_wait_elapsed_us",
                 self.replay_is_behind_cumulative_wait_elapsed,
                 i64
             ),

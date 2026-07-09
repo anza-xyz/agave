@@ -607,11 +607,9 @@ fn produce_window(
         bank_completion_measure.stop();
         ctx.slot_metrics.report();
 
-        ctx.metrics.bank_timeout_completion_count += 1;
-        let _ = ctx
-            .metrics
-            .bank_timeout_completion_elapsed_hist
-            .increment(bank_completion_measure.as_us());
+        ctx.metrics
+            .bank_completion_timing_stats
+            .record(bank_completion_measure.as_us());
 
         // Produce our next slot
         slot += 1;
@@ -626,7 +624,7 @@ fn produce_window(
     }
 
     window_production_start.stop();
-    ctx.metrics.window_production_elapsed += window_production_start.as_us();
+    ctx.metrics.window_production_elapsed_us += window_production_start.as_us();
     Ok(())
 }
 
