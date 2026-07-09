@@ -275,7 +275,7 @@ unsafe fn test_assign_owner(ix_ctx: &InstructionFrame, accounts: &mut [AccountSh
     let first_account = accounts.get_unchecked(first_account_idx_in_tx);
     let new_ower =
         Pubkey::new_from_array(first_account.payload.as_slice()[0..32].try_into().unwrap());
-    let write_to_account_afterwards = first_account.payload.as_slice()[32];
+    let resize_account_afterwards = first_account.payload.as_slice()[32];
 
     // Asserting old owner
     let program_id = accounts
@@ -292,8 +292,8 @@ unsafe fn test_assign_owner(ix_ctx: &InstructionFrame, accounts: &mut [AccountSh
 
     // I cannot write to the account after changing its owner
     // This write should fail
-    if write_to_account_afterwards == 1 {
-        *second_account.payload.as_slice_mut().get_unchecked_mut(0) = 9;
+    if resize_account_afterwards == 1 {
+        set_buffer_length(second_account.payload.ptr(), 64);
     }
 }
 
