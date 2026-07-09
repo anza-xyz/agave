@@ -189,7 +189,7 @@ impl Votor {
             cluster_info: cluster_info.clone(),
             highest_parent_ready,
             leader_window_info_sender,
-            vote_history_storage,
+            vote_history_storage: vote_history_storage.clone(),
             repair_event_sender: repair_event_sender.clone(),
             latest_switch_request,
         };
@@ -200,6 +200,7 @@ impl Votor {
             vote_account_pubkey: vote_account,
             identity_keypair,
             authorized_voter_keypairs,
+            vote_history_storage,
             derived_bls_keypairs: HashMap::new(),
             own_vote_sender,
             bls_sender: bls_sender.clone(),

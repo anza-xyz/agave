@@ -599,7 +599,6 @@ impl Tvu {
         let bls_voting_service = BLSVotingService::new(
             bls_receiver,
             cluster_info.clone(),
-            vote_history_storage,
             bls_connection_cache,
             bank_forks.clone(),
             highest_finalized,

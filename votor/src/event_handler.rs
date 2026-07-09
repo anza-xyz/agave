@@ -197,7 +197,15 @@ impl EventHandler {
             let mut send_votes_batch_time = Measure::start("send_votes_batch");
             for vote in votes {
                 local_context.stats.incr_vote(&vote);
-                vctx.bls_sender.send(vote).map_err(|_| SendError(()))?;
+                match vctx.bls_sender.try_send(vote) {
+                    Ok(_) => (),
+                    Err(TrySendError::Full(_)) => {
+                        warn!("Vote propagation is backed up, skipping send");
+                    }
+                    Err(TrySendError::Disconnected(_)) => {
+                        return Err(EventLoopError::ReceiverDisconnected(RecvError));
+                    }
+                }
             }
             send_votes_batch_time.stop();
             local_context.stats.send_votes_batch_time_us = local_context
@@ -1017,6 +1025,9 @@ mod tests {
         root_context: RootContext,
         local_context: LocalContext,
         bls_ops: Vec<BLSOp>,
+        vote_history_storage: Arc<FileVoteHistoryStorage>,
+        // Keep the temp directory alive for `vote_history_storage`.
+        _vote_history_storage_dir: TempDir,
     }
 
     struct DirectBankForksController {
@@ -1127,10 +1138,14 @@ mod tests {
         });
         let highest_parent_ready = Arc::new(RwLock::default());
 
+        let vote_history_storage_dir = TempDir::new().unwrap();
+        let vote_history_storage = Arc::new(FileVoteHistoryStorage::new(
+            vote_history_storage_dir.path().to_path_buf(),
+        ));
         let shared_context = SharedContext {
             cluster_info: cluster_info.clone(),
             bank_forks: bank_forks.clone(),
-            vote_history_storage: Arc::new(FileVoteHistoryStorage::default()),
+            vote_history_storage: vote_history_storage.clone(),
             leader_window_info_sender,
             blockstore: blockstore.clone(),
             highest_parent_ready: highest_parent_ready.clone(),
@@ -1149,6 +1164,7 @@ mod tests {
             vote_account_pubkey: my_vote_keypair.pubkey(),
             wait_to_vote_slot: None,
             authorized_voter_keypairs: Arc::new(RwLock::new(vec![Arc::new(my_vote_keypair)])),
+            vote_history_storage: vote_history_storage.clone(),
             derived_bls_keypairs: HashMap::new(),
             own_vote_sender,
             consensus_metrics_sender,
@@ -1186,6 +1202,8 @@ mod tests {
             root_context,
             local_context,
             bls_ops: vec![],
+            vote_history_storage,
+            _vote_history_storage_dir: vote_history_storage_dir,
         }
     }
 
@@ -1504,12 +1522,11 @@ mod tests {
             &mut self,
             new_identity: &Keypair,
         ) -> PathBuf {
-            let file_vote_history_storage = FileVoteHistoryStorage::default();
             let saved_vote_history =
                 SavedVoteHistory::new(&VoteHistory::new(new_identity.pubkey(), 0), &new_identity)
                     .unwrap();
             assert!(
-                file_vote_history_storage
+                self.vote_history_storage
                     .store(&SavedVoteHistoryVersions::from(saved_vote_history),)
                     .is_ok()
             );
@@ -1517,7 +1534,7 @@ mod tests {
                 .set_keypair(Arc::new(new_identity.insecure_clone()));
 
             self.send_set_identity_event();
-            file_vote_history_storage.filename(&new_identity.pubkey())
+            self.vote_history_storage.filename(&new_identity.pubkey())
         }
     }
 
@@ -2263,10 +2280,7 @@ mod tests {
         let mut test_context = setup();
         let old_identity = test_context.cluster_info.keypair().insecure_clone();
         let new_identity = Keypair::new();
-        let temp_dir = TempDir::new().unwrap();
-        let vote_history_storage =
-            Arc::new(FileVoteHistoryStorage::new(temp_dir.path().to_path_buf()));
-        test_context.shared_context.vote_history_storage = vote_history_storage.clone();
+        let vote_history_storage = test_context.vote_history_storage.clone();
 
         let new_vote_history = VoteHistory::new(new_identity.pubkey(), 0);
         let saved_vote_history = SavedVoteHistory::new(&new_vote_history, &new_identity).unwrap();

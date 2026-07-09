@@ -38,7 +38,6 @@ use {
             VotorEventSender,
         },
         root_utils,
-        vote_history_storage::SavedVoteHistory,
         voting_service::BLSOp,
         voting_utils::{self, GenerateVoteTxResult},
     },
@@ -1774,14 +1773,10 @@ impl ReplayStage {
                     "{} Alpenglow migration: Casting genesis vote for ({block:?})",
                     identity_keypair.pubkey()
                 );
-                // If sending fails that means the channel is disconnected and we are shutting down
-                let _ = own_message_sender.send(ConsensusMessage::Vote(vote_msg.clone()));
-                let _ = bls_sender.send(BLSOp::PushVote {
+                // Unlikely that these channels are backed up, but even so we have refresh logic on the genesis vote
+                let _ = own_message_sender.try_send(ConsensusMessage::Vote(vote_msg.clone()));
+                let _ = bls_sender.try_send(BLSOp::PushVote {
                     vote: Arc::new(vote_msg),
-                    saved_vote_history:
-                        agave_votor::vote_history_storage::SavedVoteHistoryVersions::Current(
-                            SavedVoteHistory::default(),
-                        ),
                 });
             }
             e => {

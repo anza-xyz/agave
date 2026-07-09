@@ -2,7 +2,7 @@ use {
     crate::{
         commitment::{CommitmentAggregationData, CommitmentError},
         vote_history::{VoteHistory, VoteHistoryError},
-        vote_history_storage::{SavedVoteHistory, SavedVoteHistoryVersions},
+        vote_history_storage::{SavedVoteHistory, SavedVoteHistoryVersions, VoteHistoryStorage},
         voting_service::BLSOp,
     },
     agave_votor_messages::{
@@ -118,6 +118,7 @@ pub struct VotingContext {
     pub vote_account_pubkey: Pubkey,
     pub identity_keypair: Arc<Keypair>,
     pub authorized_voter_keypairs: Arc<RwLock<Vec<Arc<Keypair>>>>,
+    pub vote_history_storage: Arc<dyn VoteHistoryStorage>,
     // The BLS keypair should always change with authorized_voter_keypairs.
     pub derived_bls_keypairs: HashMap<Pubkey, Arc<BLSKeypair>>,
     pub own_vote_sender: Sender<ConsensusMessage>,
@@ -296,11 +297,13 @@ pub fn insert_vote_and_create_bls_message(
 
     let saved_vote_history =
         SavedVoteHistory::new(&context.vote_history, &context.identity_keypair)?;
+    context
+        .vote_history_storage
+        .store(&SavedVoteHistoryVersions::from(saved_vote_history))?;
 
     // Return vote for sending
     Ok(Some(BLSOp::PushVote {
         vote: Arc::new(vote_msg),
-        saved_vote_history: SavedVoteHistoryVersions::from(saved_vote_history),
     }))
 }
 
@@ -342,6 +345,7 @@ pub fn generate_refresh_vote_message(
 mod tests {
     use {
         super::*,
+        crate::vote_history_storage::NullVoteHistoryStorage,
         agave_votor_messages::consensus_message::Block,
         crossbeam_channel::bounded,
         solana_gossip::contact_info::ContactInfo,
@@ -419,6 +423,7 @@ mod tests {
             authorized_voter_keypairs: Arc::new(RwLock::new(vec![Arc::new(
                 my_keys.vote_keypair.insecure_clone(),
             )])),
+            vote_history_storage: Arc::new(NullVoteHistoryStorage::default()),
             derived_bls_keypairs: HashMap::new(),
             own_vote_sender,
             bls_sender,
@@ -459,23 +464,9 @@ mod tests {
             .unwrap();
         let expected_message =
             generate_expected_consensus_message(&voting_context, vote, &my_bls_keypair);
-        if let BLSOp::PushVote {
-            vote,
-            saved_vote_history,
-        } = result
-        {
+        if let BLSOp::PushVote { vote } = result {
             let msg = Arc::unwrap_or_clone(vote);
             assert_eq!(msg, expected_message);
-            assert_eq!(
-                saved_vote_history,
-                SavedVoteHistoryVersions::from(
-                    SavedVoteHistory::new(
-                        &voting_context.vote_history,
-                        &voting_context.identity_keypair
-                    )
-                    .unwrap()
-                )
-            );
         } else {
             panic!("Expected BLSOp::VotePush, got {result:?}");
         }
