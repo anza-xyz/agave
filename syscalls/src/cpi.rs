@@ -4,6 +4,7 @@ use {
     solana_program_runtime::cpi::{
         SyscallInvokeSigned, TranslatedAccount, cpi_common, translate_accounts_c,
         translate_accounts_rust, translate_instruction_c, translate_instruction_rust,
+        translate_signers,
     },
 };
 
@@ -84,3 +85,34 @@ impl SyscallInvokeSigned for SyscallInvokeSignedC {
         translate_accounts_c(account_infos_addr, account_infos_len, invoke_context)
     }
 }
+
+declare_builtin_function!(
+    /// Cross-program invocation called from ABIv2
+    SyscallInvokeSignedV2,
+    fn rust(
+        invoke_context: &mut InvokeContext<'_, '_>,
+        program_idx_in_tx: u64,
+        signers_seeds_addr: u64,
+        signers_seeds_len: u64,
+        _arg4: u64,
+        _arg5: u64,
+    ) -> Result<u64, Error> {
+        // Deduct cost
+        let compute_cost = invoke_context.get_execution_cost();
+        invoke_context.compute_meter.consume_checked(compute_cost.abi_v2_cpi_base)?;
+
+        // Configure instruction frame
+        let callee_program_index_in_tx = u16::try_from(program_idx_in_tx).map_err(|_| InstructionError::MissingAccount)?;
+        invoke_context.transaction_context.build_abi_v2_frame(callee_program_index_in_tx)?;
+
+        // This check also verifies that the program account is in the transaction
+        let caller_program_id = invoke_context.transaction_context.get_current_instruction_context()?.get_program_key()?;
+
+        // Convert seeds
+        let signers = translate_signers(caller_program_id, signers_seeds_addr, signers_seeds_len, invoke_context)?;
+
+        // Invoke program
+        invoke_context.internal_native_invoke(&signers)?;
+        Ok(0)
+    }
+);

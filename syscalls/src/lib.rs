@@ -13,7 +13,7 @@ pub use self::{
     },
 };
 use {
-    crate::mem_ops::is_nonoverlapping,
+    crate::{cpi::SyscallInvokeSignedV2, mem_ops::is_nonoverlapping},
     solana_blake3_hasher as blake3,
     solana_cpi::MAX_RETURN_DATA,
     solana_hash::Hash,
@@ -584,6 +584,13 @@ pub fn create_program_runtime_environment(
         enable_abiv2,
         "sol_transfer_lamports",
         SyscallTransferLamports,
+    )?;
+
+    register_feature_gated_function!(
+        result,
+        enable_abiv2,
+        "sol_invoke_signed_v2",
+        SyscallInvokeSignedV2,
     )?;
 
     Ok(ProgramRuntimeEnvironment::from(result))

@@ -200,6 +200,8 @@ pub struct SVMTransactionExecutionCost {
     pub abi_v2_assign_owner: u64,
     /// Cost for ABIv2 sol transfer lamports
     pub sol_transfer_lamports_cost: u64,
+    /// ABIv2 base cost
+    pub abi_v2_cpi_base: u64,
 }
 
 impl Default for SVMTransactionExecutionCost {
@@ -257,6 +259,7 @@ impl Default for SVMTransactionExecutionCost {
             set_buffer_length_base_cost: 100,
             abi_v2_assign_owner: 20,
             sol_transfer_lamports_cost: 50,
+            abi_v2_cpi_base: 100,
         }
     }
 }

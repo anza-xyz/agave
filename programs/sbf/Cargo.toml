@@ -15,6 +15,7 @@ edition = { workspace = true }
 members = [
     "rust/128bit",
     "rust/128bit_dep",
+    "rust/abi_v2_cpi",
     "rust/abi_v2_memory",
     "rust/account_mem",
     "rust/account_mem_deprecated",

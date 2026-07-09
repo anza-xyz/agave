@@ -1,0 +1,16 @@
+[package]
+name = "solana-sbf-rust-abi-v2-cpi"
+version = { workspace = true }
+description = { workspace = true }
+authors = { workspace = true }
+repository = { workspace = true }
+homepage = { workspace = true }
+license = { workspace = true }
+edition = { workspace = true }
+
+[lib]
+crate-type = ["cdylib"]
+
+[dependencies]
+solana-pubkey = { workspace = true }
+solana-transaction-context = { workspace = true, features = ["agave-unstable-api"] }
