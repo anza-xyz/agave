@@ -341,9 +341,8 @@ impl<U: Umem> TxLoop<U> {
 
         const MAX_TIMEOUTS: usize = 1;
 
-        // We try to collect _at least_ BATCH_SIZE packets before queueing into the NIC. This is to
-        // avoid introducing too much per-packet overhead and giving the NIC time to complete work
-        // before we queue the next chunk of packets.
+        // Publish TX descriptors in batches to avoid per-packet commits and driver kicks. An idle
+        // timeout commits any partial batch so low rate traffic is not held indefinitely.
         const BATCH_SIZE: usize = 64;
 
         let TxLoop {
@@ -361,26 +360,15 @@ impl<U: Umem> TxLoop<U> {
         let umem_tx_capacity = umem.available();
         let umem_frame_size = umem.frame_size();
 
-        // Local buffer where we store packets before sending them.
-        let mut batched_items = Vec::with_capacity(BATCH_SIZE);
-
-        // How many packets we've batched. This is _not_ batched_items.len(), but item * peers. For
-        // example if we have 3 packets to transmit to 2 destination addresses each, we have 6 batched
-        // packets.
-        let mut batched_packets = 0;
         // How many descriptors are written into the TX ring but not yet committed.
         let mut written_uncommitted = 0;
 
         let mut timeouts = 0;
         loop {
-            match receiver.try_recv() {
+            let item = match receiver.try_recv() {
                 Ok(item) => {
-                    batched_packets += item.dst_addrs().as_ref().len();
-                    batched_items.push(item);
                     timeouts = 0;
-                    if batched_packets < BATCH_SIZE {
-                        continue;
-                    }
+                    item
                 }
                 Err(TryRecvError::Empty) => {
                     if timeouts < MAX_TIMEOUTS {
@@ -392,264 +380,243 @@ impl<U: Umem> TxLoop<U> {
                         // we haven't received anything in a while, kick the driver
                         kick(&ring);
                     }
+                    continue;
                 }
-                Err(TryRecvError::Disconnected) => {
-                    // keep looping until we've flushed all the packets
-                    if batched_packets == 0 {
-                        break;
-                    }
-                }
+                Err(TryRecvError::Disconnected) => break,
             };
 
-            for item in batched_items.drain(..) {
-                let src_addr = item.src_addr();
-                let src_ip = src_addr.ip();
-                let src_port = src_addr.port();
-                let ecn = item.ecn();
-                let can_overflow_mtu = item.allow_mtu_overflow();
-                for addr in item.dst_addrs().as_ref() {
-                    if ring.available() == 0 || umem.available() == 0 {
-                        commit_pending(&mut ring, &mut written_uncommitted);
-                        kick(&ring);
+            let src_addr = item.src_addr();
+            let src_ip = src_addr.ip();
+            let src_port = src_addr.port();
+            let ecn = item.ecn();
+            let can_overflow_mtu = item.allow_mtu_overflow();
+            for addr in item.dst_addrs().as_ref() {
+                if ring.available() == 0 || umem.available() == 0 {
+                    commit_pending(&mut ring, &mut written_uncommitted);
+                    kick(&ring);
 
-                        // loop until we have space for the next packet
-                        loop {
-                            completion.sync(true);
-                            // we haven't written any frames so we only need to sync the consumer position
-                            ring.sync(false);
+                    // loop until we have space for the next packet
+                    loop {
+                        completion.sync(true);
+                        // we haven't written any frames so we only need to sync the consumer position
+                        ring.sync(false);
 
-                            // check if any frames were completed
-                            while let Some(frame_offset) = completion.read() {
-                                umem.release(frame_offset);
-                            }
-
-                            if ring.available() > 0 && umem.available() > 0 {
-                                // we have space for the next packet, break out of the loop
-                                break;
-                            }
-
-                            // queues are full, if NEEDS_WAKEUP is set kick the driver so hopefully it'll
-                            // complete some work
-                            kick(&ring);
+                        // check if any frames were completed
+                        while let Some(frame_offset) = completion.read() {
+                            umem.release(frame_offset);
                         }
+
+                        if ring.available() > 0 && umem.available() > 0 {
+                            // we have space for the next packet, break out of the loop
+                            break;
+                        }
+
+                        // queues are full, if NEEDS_WAKEUP is set kick the driver so hopefully it'll
+                        // complete some work
+                        kick(&ring);
+                    }
+                }
+
+                // at this point we're guaranteed to have a frame to write the next packet into and
+                // a slot in the ring to submit it
+                let mut frame = umem.reserve().unwrap();
+                let IpAddr::V4(dst_ip) = addr.ip() else {
+                    panic!("IPv6 not supported");
+                };
+
+                let payload = item.payload().as_ref();
+                let len = payload.len();
+
+                let dst = addr.ip();
+                let Some(next_hop) = route_fn(&dst) else {
+                    log::warn!("dropping packet: no route for peer {addr}");
+                    umem.release(frame.offset());
+                    continue;
+                };
+
+                if let Some(gre) = &next_hop.gre {
+                    let l3_inner_packet_len = INNER_PACKET_HEADER_SIZE + len;
+                    let l3_outer_gre_packet_len =
+                        IP_HEADER_SIZE + GRE_HEADER_BASE_SIZE + l3_inner_packet_len;
+
+                    if l3_inner_packet_len > gre.mtu as usize
+                        || l3_outer_gre_packet_len > next_hop.mtu as usize
+                    {
+                        if !can_overflow_mtu {
+                            log::warn!(
+                                "dropping packet: GRE payload exceeds MTU for {addr}: L3 inner \
+                                 packet length {l3_inner_packet_len}, L3 outer GRE packet length \
+                                 {l3_outer_gre_packet_len}, MTU: {mtu}, underlay_mtu: \
+                                 {underlay_mtu}.",
+                                mtu = gre.mtu,
+                                underlay_mtu = next_hop.mtu
+                            );
+                        }
+                        umem.release(frame.offset());
+                        continue;
                     }
 
-                    // at this point we're guaranteed to have a frame to write the next packet into and
-                    // a slot in the ring to submit it
-                    let mut frame = umem.reserve().unwrap();
-                    let IpAddr::V4(dst_ip) = addr.ip() else {
-                        panic!("IPv6 not supported");
-                    };
+                    let packet_len = gre_packet_size(len);
+                    if packet_len > umem_frame_size {
+                        log::warn!(
+                            "dropping packet: GRE packet size {packet_len} exceeds frame size \
+                             {umem_frame_size} for {addr}"
+                        );
+                        umem.release(frame.offset());
+                        continue;
+                    }
 
-                    let payload = item.payload().as_ref();
-                    let len = payload.len();
-
-                    let dst = addr.ip();
-                    let Some(next_hop) = route_fn(&dst) else {
-                        log::warn!("dropping packet: no route for peer {addr}");
-                        batched_packets -= 1;
+                    frame.set_len(packet_len);
+                    let packet = umem.map_frame_mut(&frame);
+                    let inner_src_ip = next_hop.preferred_src_ip.as_ref().unwrap_or(src_ip);
+                    if let Err(err) = construct_gre_packet(
+                        packet,
+                        &src_mac,
+                        &gre.mac_addr,
+                        inner_src_ip,
+                        &dst_ip,
+                        src_port,
+                        addr.port(),
+                        payload,
+                        ecn,
+                        &gre.tunnel_info,
+                    ) {
+                        log::warn!("dropping packet: {err}");
+                        umem.release(frame.offset());
+                        continue;
+                    }
+                } else if let Some(vlan) = &next_hop.vlan {
+                    // we need the MAC address to send the packet
+                    let Some(dest_mac) = next_hop.mac_addr else {
+                        log::warn!(
+                            "dropping packet: peer {addr} must be routed through {} which has no \
+                             known MAC address",
+                            next_hop.ip_addr
+                        );
                         umem.release(frame.offset());
                         continue;
                     };
 
-                    if let Some(gre) = &next_hop.gre {
-                        let l3_inner_packet_len = INNER_PACKET_HEADER_SIZE + len;
-                        let l3_outer_gre_packet_len =
-                            IP_HEADER_SIZE + GRE_HEADER_BASE_SIZE + l3_inner_packet_len;
-
-                        if l3_inner_packet_len > gre.mtu as usize
-                            || l3_outer_gre_packet_len > next_hop.mtu as usize
-                        {
-                            if !can_overflow_mtu {
-                                log::warn!(
-                                    "dropping packet: GRE payload exceeds MTU for {addr}: L3 \
-                                     inner packet length {l3_inner_packet_len}, L3 outer GRE \
-                                     packet length {l3_outer_gre_packet_len}, MTU: {mtu}, \
-                                     underlay_mtu: {underlay_mtu}.",
-                                    mtu = gre.mtu,
-                                    underlay_mtu = next_hop.mtu
-                                );
-                            }
-                            batched_packets -= 1;
-                            umem.release(frame.offset());
-                            continue;
-                        }
-
-                        let packet_len = gre_packet_size(len);
-                        if packet_len > umem_frame_size {
+                    // The 802.1Q tag is added at L2, so the L3 size compared against the MTU
+                    // is the same as the untagged path.
+                    let l3_packet_len = IP_HEADER_SIZE + UDP_HEADER_SIZE + len;
+                    if l3_packet_len > next_hop.mtu as usize {
+                        if !can_overflow_mtu {
                             log::warn!(
-                                "dropping packet: GRE packet size {packet_len} exceeds frame size \
-                                 {umem_frame_size} for {addr}"
+                                "dropping packet: packet size {l3_packet_len} exceeds MTU {mtu} \
+                                 for {addr}",
+                                mtu = next_hop.mtu
                             );
-                            batched_packets -= 1;
-                            umem.release(frame.offset());
-                            continue;
                         }
-
-                        frame.set_len(packet_len);
-                        let packet = umem.map_frame_mut(&frame);
-                        let inner_src_ip = next_hop.preferred_src_ip.as_ref().unwrap_or(src_ip);
-                        if let Err(err) = construct_gre_packet(
-                            packet,
-                            &src_mac,
-                            &gre.mac_addr,
-                            inner_src_ip,
-                            &dst_ip,
-                            src_port,
-                            addr.port(),
-                            payload,
-                            ecn,
-                            &gre.tunnel_info,
-                        ) {
-                            log::warn!("dropping packet: {err}");
-                            batched_packets -= 1;
-                            umem.release(frame.offset());
-                            continue;
-                        }
-                    } else if let Some(vlan) = &next_hop.vlan {
-                        // we need the MAC address to send the packet
-                        let Some(dest_mac) = next_hop.mac_addr else {
-                            log::warn!(
-                                "dropping packet: peer {addr} must be routed through {} which has \
-                                 no known MAC address",
-                                next_hop.ip_addr
-                            );
-                            batched_packets -= 1;
-                            umem.release(frame.offset());
-                            continue;
-                        };
-
-                        // The 802.1Q tag is added at L2, so the L3 size compared against the MTU
-                        // is the same as the untagged path.
-                        let l3_packet_len = IP_HEADER_SIZE + UDP_HEADER_SIZE + len;
-                        if l3_packet_len > next_hop.mtu as usize {
-                            if !can_overflow_mtu {
-                                log::warn!(
-                                    "dropping packet: packet size {l3_packet_len} exceeds MTU \
-                                     {mtu} for {addr}",
-                                    mtu = next_hop.mtu
-                                );
-                            }
-                            batched_packets -= 1;
-                            umem.release(frame.offset());
-                            continue;
-                        }
-
-                        let packet_len = VLAN_PACKET_HEADER_SIZE + len;
-                        if packet_len > umem_frame_size {
-                            log::warn!(
-                                "dropping packet: VLAN packet size {packet_len} exceeds frame \
-                                 size {umem_frame_size} for {addr}"
-                            );
-                            batched_packets -= 1;
-                            umem.release(frame.offset());
-                            continue;
-                        }
-
-                        frame.set_len(packet_len);
-                        let packet = umem.map_frame_mut(&frame);
-
-                        // The route's preferred src is the IP assigned to the VLAN sub-interface,
-                        // which is the right inner src for traffic egressing this VLAN. Fall back
-                        // to the device's src IP if the route did not carry one.
-                        let inner_src_ip = next_hop.preferred_src_ip.as_ref().unwrap_or(src_ip);
-
-                        if !construct_vlan_packet(
-                            packet,
-                            &src_mac.0,
-                            &dest_mac.0,
-                            inner_src_ip,
-                            &dst_ip,
-                            src_port,
-                            addr.port(),
-                            vlan.vid,
-                            vlan.pcp,
-                            payload,
-                            ecn,
-                        ) {
-                            log::warn!("dropping packet: VLAN frame did not fit in UMEM slot");
-                            batched_packets -= 1;
-                            umem.release(frame.offset());
-                            continue;
-                        }
-                    } else {
-                        // we need the MAC address to send the packet
-                        let Some(dest_mac) = next_hop.mac_addr else {
-                            log::warn!(
-                                "dropping packet: peer {addr} must be routed through {} which has \
-                                 no known MAC address",
-                                next_hop.ip_addr
-                            );
-                            batched_packets -= 1;
-                            umem.release(frame.offset());
-                            continue;
-                        };
-
-                        let l3_packet_len = IP_HEADER_SIZE + UDP_HEADER_SIZE + len;
-                        if l3_packet_len > next_hop.mtu as usize {
-                            if !can_overflow_mtu {
-                                log::warn!(
-                                    "dropping packet: packet size {l3_packet_len} exceeds MTU \
-                                     {mtu} for {addr}",
-                                    mtu = next_hop.mtu
-                                );
-                            }
-                            batched_packets -= 1;
-                            umem.release(frame.offset());
-                            continue;
-                        }
-
-                        let packet_len = PACKET_HEADER_SIZE + len;
-                        if packet_len > umem_frame_size {
-                            log::warn!(
-                                "dropping packet: packet size {packet_len} exceeds frame size \
-                                 {umem_frame_size} for {addr}"
-                            );
-                            batched_packets -= 1;
-                            umem.release(frame.offset());
-                            continue;
-                        }
-
-                        frame.set_len(packet_len);
-                        let packet = umem.map_frame_mut(&frame);
-
-                        if !construct_packet(
-                            packet,
-                            &src_mac.0,
-                            &dest_mac.0,
-                            src_ip,
-                            &dst_ip,
-                            src_port,
-                            addr.port(),
-                            payload,
-                            ecn,
-                        ) {
-                            log::warn!("dropping packet: frame did not fit in UMEM slot");
-                            batched_packets -= 1;
-                            umem.release(frame.offset());
-                            continue;
-                        }
+                        umem.release(frame.offset());
+                        continue;
                     }
 
-                    ring.write(frame, 0)
-                        .map_err(|_| "ring full")
-                        // this should never happen as we check for available slots above
-                        .expect("failed to write to ring");
+                    let packet_len = VLAN_PACKET_HEADER_SIZE + len;
+                    if packet_len > umem_frame_size {
+                        log::warn!(
+                            "dropping packet: VLAN packet size {packet_len} exceeds frame size \
+                             {umem_frame_size} for {addr}"
+                        );
+                        umem.release(frame.offset());
+                        continue;
+                    }
 
-                    batched_packets -= 1;
-                    written_uncommitted += 1;
+                    frame.set_len(packet_len);
+                    let packet = umem.map_frame_mut(&frame);
 
-                    // check if it's time to publish descriptors and kick the driver
-                    if written_uncommitted >= BATCH_SIZE {
-                        commit_pending(&mut ring, &mut written_uncommitted);
-                        kick(&ring);
+                    // The route's preferred src is the IP assigned to the VLAN sub-interface,
+                    // which is the right inner src for traffic egressing this VLAN. Fall back
+                    // to the device's src IP if the route did not carry one.
+                    let inner_src_ip = next_hop.preferred_src_ip.as_ref().unwrap_or(src_ip);
+
+                    if !construct_vlan_packet(
+                        packet,
+                        &src_mac.0,
+                        &dest_mac.0,
+                        inner_src_ip,
+                        &dst_ip,
+                        src_port,
+                        addr.port(),
+                        vlan.vid,
+                        vlan.pcp,
+                        payload,
+                        ecn,
+                    ) {
+                        log::warn!("dropping packet: VLAN frame did not fit in UMEM slot");
+                        umem.release(frame.offset());
+                        continue;
+                    }
+                } else {
+                    // we need the MAC address to send the packet
+                    let Some(dest_mac) = next_hop.mac_addr else {
+                        log::warn!(
+                            "dropping packet: peer {addr} must be routed through {} which has no \
+                             known MAC address",
+                            next_hop.ip_addr
+                        );
+                        umem.release(frame.offset());
+                        continue;
+                    };
+
+                    let l3_packet_len = IP_HEADER_SIZE + UDP_HEADER_SIZE + len;
+                    if l3_packet_len > next_hop.mtu as usize {
+                        if !can_overflow_mtu {
+                            log::warn!(
+                                "dropping packet: packet size {l3_packet_len} exceeds MTU {mtu} \
+                                 for {addr}",
+                                mtu = next_hop.mtu
+                            );
+                        }
+                        umem.release(frame.offset());
+                        continue;
+                    }
+
+                    let packet_len = PACKET_HEADER_SIZE + len;
+                    if packet_len > umem_frame_size {
+                        log::warn!(
+                            "dropping packet: packet size {packet_len} exceeds frame size \
+                             {umem_frame_size} for {addr}"
+                        );
+                        umem.release(frame.offset());
+                        continue;
+                    }
+
+                    frame.set_len(packet_len);
+                    let packet = umem.map_frame_mut(&frame);
+
+                    if !construct_packet(
+                        packet,
+                        &src_mac.0,
+                        &dest_mac.0,
+                        src_ip,
+                        &dst_ip,
+                        src_port,
+                        addr.port(),
+                        payload,
+                        ecn,
+                    ) {
+                        log::warn!("dropping packet: frame did not fit in UMEM slot");
+                        umem.release(frame.offset());
+                        continue;
                     }
                 }
-                drop_item(item);
+
+                ring.write(frame, 0)
+                    .map_err(|_| "ring full")
+                    // this should never happen as we check for available slots above
+                    .expect("failed to write to ring");
+
+                written_uncommitted += 1;
+
+                // check if it's time to publish descriptors and kick the driver
+                if written_uncommitted >= BATCH_SIZE {
+                    commit_pending(&mut ring, &mut written_uncommitted);
+                    kick(&ring);
+                }
             }
-            debug_assert_eq!(batched_packets, 0);
+            drop_item(item);
         }
-        assert_eq!(batched_packets, 0);
         commit_pending(&mut ring, &mut written_uncommitted);
         kick(&ring);
 
