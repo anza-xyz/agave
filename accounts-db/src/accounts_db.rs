@@ -1643,11 +1643,10 @@ impl AccountsDb {
 
             let last_swept_full_snapshot_slot =
                 self.last_swept_full_snapshot_slot.load(Ordering::Relaxed);
-            let (added_to_shrink_count, sweep_us) =
-                measure_us!(self.check_shrink_eligibility_after_snapshot(
-                    last_swept_full_snapshot_slot,
-                    latest_full_snapshot_slot
-                ));
+            let (added_to_shrink_count, sweep_us) = measure_us!(self.sweep_slots_after_snapshot(
+                last_swept_full_snapshot_slot,
+                latest_full_snapshot_slot
+            ));
             timings.zero_lamport_single_ref_slots_added_to_shrink_count += added_to_shrink_count;
             timings.zero_lamport_sweep_us += sweep_us;
         }
@@ -1656,12 +1655,14 @@ impl AccountsDb {
     }
 
     /// Loop through slots in `[last_swept_full_snapshot_slot + 1, latest_full_snapshot_slot]` and
-    /// check each storage to determine if it is eligible for shrink, since zero-lamport single-ref
-    /// accounts become shrinkable after a full snapshot advances past their slot. Advances the
-    /// `last_swept_full_snapshot_slot` to `latest_full_snapshot_slot` on completion.
+    /// re-examine each storage now that a full snapshot has advanced past its slot:
+    /// 1) if it holds only tombstones, purge it directly; or
+    /// 2) if its dead zero-lamport accounts made it shrinkable, add it to the shrink candidates.
     ///
-    /// Returns the count of storages that were added to the shrink candidates set
-    fn check_shrink_eligibility_after_snapshot(
+    /// Advances `last_swept_full_snapshot_slot` to `latest_full_snapshot_slot` on completion.
+    ///
+    /// Returns the count of storages that were added to the shrink candidates set.
+    fn sweep_slots_after_snapshot(
         &self,
         last_swept_full_snapshot_slot: Slot,
         latest_full_snapshot_slot: Slot,
@@ -1669,20 +1670,28 @@ impl AccountsDb {
         let start = last_swept_full_snapshot_slot.saturating_add(1);
 
         let mut added_to_shrink_count = 0;
-        // Held for the full scan. Safe because the only paths that take this lock in production
-        // validator code run in earlier/later phases of the same AccountsBackgroundService
-        // iteration, never concurrently with clean_accounts.
-        let mut shrink_candidates = self.shrink_candidate_slots.lock().unwrap();
-        for slot in start..=latest_full_snapshot_slot {
-            if let Some(store) = self.storage.get_slot_storage_entry(slot)
-                && self.is_shrinking_productive(&store)
-                && self.is_candidate_for_shrink(&store)
-                && shrink_candidates.insert(slot)
-            {
-                added_to_shrink_count += 1;
+        {
+            // Held for the scan. Safe because the only paths that take this lock in production
+            // validator code run in earlier/later phases of the same AccountsBackgroundService
+            // iteration, never concurrently with clean_accounts.
+            let mut shrink_candidates = self.shrink_candidate_slots.lock().unwrap();
+            for slot in start..=latest_full_snapshot_slot {
+                if let Some(store) = self.storage.get_slot_storage_entry(slot) {
+                    if store.has_only_tombstones() {
+                        // Now just contains tombstones and no live index entries: purge
+                        self.purge_dead_slots_from_storage(
+                            iter::once(&slot),
+                            &self.clean_accounts_stats.purge_stats,
+                        );
+                    } else if self.is_shrinking_productive(&store)
+                        && self.is_candidate_for_shrink(&store)
+                        && shrink_candidates.insert(slot)
+                    {
+                        added_to_shrink_count += 1;
+                    }
+                }
             }
         }
-        drop(shrink_candidates);
 
         self.last_swept_full_snapshot_slot
             .store(latest_full_snapshot_slot, Ordering::Relaxed);

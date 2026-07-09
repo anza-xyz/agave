@@ -1625,8 +1625,6 @@ fn test_fully_tombstoned_storage_reclaim() {
     // The storage reads as entirely tombstones / fully removable.
     assert!(storage.has_only_tombstones());
 
-    let epoch_schedule = EpochSchedule::default();
-
     // Shrink routes the fully-dead slot to clean; clean retains the storage because the latest full
     // snapshot is older than the slot, so the slot is not yet eligible for shrink.
     accounts_db.shrink_slot_forced(slot);
@@ -1642,24 +1640,8 @@ fn test_fully_tombstoned_storage_reclaim() {
     );
 
     // Advance the latest full snapshot past the slot so its tombstones become purgeable. Clean then
-    // queues the slot for shrink.
+    // cleans the storage and it is reclaimed.
     accounts_db.set_latest_full_snapshot_slot(slot + 1);
-    accounts_db.clean_accounts(Some(slot + 1), false);
-    // Verify that it gets queued for shrink
-    assert!(
-        accounts_db
-            .shrink_candidate_slots
-            .lock()
-            .unwrap()
-            .contains(&slot)
-    );
-
-    // Shrink finds nothing to rewrite, routes the fully-dead slot to clean via `dirty_stores`, and
-    // drains it from the shrink candidates. The storage survives until clean reclaims it.
-    accounts_db.shrink_candidate_slots(&epoch_schedule);
-    assert!(accounts_db.storage.get_slot_storage_entry(slot).is_some());
-
-    // Clean reclaims the dirty, fully-tombstoned storage.
     accounts_db.clean_accounts(Some(slot + 1), false);
     assert!(accounts_db.storage.get_slot_storage_entry(slot).is_none());
 }
