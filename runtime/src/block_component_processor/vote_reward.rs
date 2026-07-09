@@ -478,7 +478,7 @@ pub(super) fn calc_vote_rewards_update_vote_states(
         )?,
     };
 
-    bank.store_accounts((bank.slot(), updated_accounts.as_slice()));
+    bank.store_accounts((bank.slot(), updated_accounts.as_slice()), None);
     Ok(())
 }
 
