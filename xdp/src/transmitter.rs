@@ -23,7 +23,7 @@ use {
     arc_swap::ArcSwap,
     arrayvec::ArrayVec,
     aya::Ebpf,
-    crossbeam_channel::TryRecvError,
+    crossbeam_queue::ArrayQueue,
     log::info,
     std::{
         net::{IpAddr, Ipv4Addr},
@@ -382,28 +382,31 @@ impl TransmitterBuilder {
             route_monitor_handle,
         } = self;
 
-        let (drop_sender, drop_receiver) = crossbeam_channel::bounded(DROP_CHANNEL_CAP);
+        let drop_queue = Arc::new(ArrayQueue::new(DROP_CHANNEL_CAP));
         let mut threads = vec![route_monitor_handle];
 
         threads.push(
             Builder::new()
                 .name("solTransmDrop".to_owned())
-                .spawn(move || {
-                    loop {
-                        // drop shreds in a dedicated thread so that we never lock/madvise() from
-                        // the xdp thread
-                        match drop_receiver.try_recv() {
-                            Ok(i) => {
-                                drop(i);
+                .spawn({
+                    let drop_queue = Arc::clone(&drop_queue);
+                    move || {
+                        loop {
+                            // drop shreds in a dedicated thread so that we never lock/madvise() from
+                            // the xdp thread
+                            match drop_queue.pop() {
+                                Some(i) => {
+                                    drop(i);
+                                }
+                                None if Arc::strong_count(&drop_queue) == 1 => break,
+                                None => {
+                                    thread::sleep(Duration::from_millis(1));
+                                }
                             }
-                            Err(TryRecvError::Empty) => {
-                                thread::sleep(Duration::from_millis(1));
-                            }
-                            Err(TryRecvError::Disconnected) => break,
                         }
+                        // move the ebpf program here so it stays attached until we exit
+                        drop(maybe_ebpf);
                     }
-                    // move the ebpf program here so it stays attached until we exit
-                    drop(maybe_ebpf);
                 })
                 .unwrap(),
         );
@@ -411,19 +414,27 @@ impl TransmitterBuilder {
         let mut senders = vec![];
         for (i, tx_loop) in tx_loops.into_iter().enumerate() {
             let (sender, receiver) = crossbeam_channel::bounded(tx_channel_cap);
-            let drop_sender = drop_sender.clone();
+            let drop_queue = Arc::clone(&drop_queue);
             let atomic_router = Arc::clone(&atomic_router);
             threads.push(
                 Builder::new()
                     .name(format!("solTransmIO{i:02}"))
                     .spawn(move || {
-                        tx_loop.run(receiver, drop_sender, move |ip| {
-                            let r = atomic_router.load();
-                            match ip {
-                                IpAddr::V4(ip) => r.route_v4(*ip).ok(),
-                                IpAddr::V6(_) => None,
-                            }
-                        })
+                        tx_loop.run(
+                            receiver,
+                            move |item| {
+                                if let Err(item) = drop_queue.push(item) {
+                                    drop(item);
+                                }
+                            },
+                            move |ip| {
+                                let r = atomic_router.load();
+                                match ip {
+                                    IpAddr::V4(ip) => r.route_v4(*ip).ok(),
+                                    IpAddr::V6(_) => None,
+                                }
+                            },
+                        )
                     })
                     .unwrap(),
             );

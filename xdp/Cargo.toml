@@ -30,6 +30,7 @@ agave-xdp-ebpf = { workspace = true }
 arrayvec = { workspace = true }
 aya = { workspace = true }
 caps = { workspace = true }
+crossbeam-queue = { workspace = true }
 
 [target.'cfg(target_os = "linux")'.dev-dependencies]
 aya = { workspace = true, features = ["test-helpers"] }
