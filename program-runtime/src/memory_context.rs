@@ -1,5 +1,5 @@
 use {
-    crate::invoke_context::BpfAllocator,
+    crate::invoke_context::{BpfAllocator, InvokeContext},
     solana_instruction::error::InstructionError,
     solana_sbpf::{
         ebpf::{MM_BYTECODE_START, MM_HEAP_START, MM_RODATA_START, MM_STACK_START},
@@ -8,20 +8,18 @@ use {
         program::SBPFVersion,
         vm::{Config, ContextObject},
     },
+    solana_sysvar_id::SysvarId,
     solana_transaction_context::{
         IndexOfAccount,
         transaction::TransactionContext,
         vm_addresses::{
-            ACCOUNT_METADATA_AREA, GUEST_ACCOUNT_PAYLOAD_BASE_ADDRESS,
-            GUEST_ACCOUNT_PAYLOAD_END_ADDRESS, GUEST_INSTRUCTION_ACCOUNT_BASE_ADDRESS,
-            GUEST_INSTRUCTION_ACCOUNT_END_ADDRESS, GUEST_INSTRUCTION_DATA_BASE_ADDRESS,
-            GUEST_INSTRUCTION_DATA_END_ADDRESS, INSTRUCTION_TRACE_AREA, RETURN_DATA_SCRATCHPAD,
+            self, ACCOUNT_METADATA_AREA, GUEST_ACCOUNT_PAYLOAD_BASE_ADDRESS,
+            GUEST_INSTRUCTION_ACCOUNT_END_ADDRESS, GUEST_SYSVARS_BASE_ADDRESS,
+            GUEST_SYSVARS_END_ADDRESS, INSTRUCTION_TRACE_AREA, RETURN_DATA_SCRATCHPAD,
             TRANSACTION_FRAME_ADDRESS, abiv2_region_index_from_vm_address,
         },
     },
 };
-
-const NUMBER_OF_REGIONS: usize = 392;
 
 enum MemoryContextType {
     ABIv1(MemoryContext),
@@ -243,17 +241,18 @@ pub struct SerializedAccountMetadata {
 }
 
 #[cfg_attr(feature = "dev-context-only-utils", qualifier_attr::qualifiers(pub))]
-pub(crate) fn create_abiv2_regions(
-    transaction_context: &mut TransactionContext,
-) -> Vec<MemoryRegion> {
+pub(crate) fn create_abiv2_regions(invoke_context: &mut InvokeContext) -> Vec<MemoryRegion> {
+    const NUMBER_OF_REGIONS: usize =
+        vm_addresses::abiv2_region_index_from_vm_address(GUEST_INSTRUCTION_ACCOUNT_END_ADDRESS);
     let mut v2_regions: Vec<MemoryRegion> = Vec::with_capacity(NUMBER_OF_REGIONS);
+    let InvokeContext {
+        transaction_context,
+        environment_config,
+        ..
+    } = invoke_context;
 
     // Filled on a later stage, but we still want to have at least base vm_addrs be accurate so that
     // there are no duplicate regions (for e.g. tests.)
-    // Index 0: ELF rodata
-    // Index 1: ELF text area (not mapped)
-    // Index 2: stack
-    // Index 3: heap
     for vm_addr in [
         MM_RODATA_START,
         MM_BYTECODE_START,
@@ -263,47 +262,48 @@ pub(crate) fn create_abiv2_regions(
         v2_regions.push(MemoryRegion::new_empty(vm_addr));
     }
 
-    // Index 4: Transaction frame area
     let transaction_frame_region = MemoryRegion::new(
         transaction_context.transaction_frame_address(),
         TRANSACTION_FRAME_ADDRESS,
     );
     v2_regions.push(transaction_frame_region);
 
-    // Index 5: Accounts metadata area
     let accounts_slice = transaction_context.accounts().shared_fields_as_raw_slice();
     v2_regions.push(MemoryRegion::new(accounts_slice, ACCOUNT_METADATA_AREA));
 
-    // Index 6: Instruction metadata area
     let instruction_trace_slice = transaction_context.instruction_trace_as_raw_slice();
     v2_regions.push(MemoryRegion::new(
         instruction_trace_slice,
         INSTRUCTION_TRACE_AREA,
     ));
-
-    // Index 7: Return data scratchpad area
     v2_regions.push(transaction_context.return_data_region());
-
-    // Indexes 8..264: Transaction accounts payload
-    let start_idx = abiv2_region_index_from_vm_address(GUEST_ACCOUNT_PAYLOAD_BASE_ADDRESS);
-    debug_assert_eq!(v2_regions.len(), start_idx);
-    let end_idx = abiv2_region_index_from_vm_address(GUEST_ACCOUNT_PAYLOAD_END_ADDRESS);
     v2_regions.extend(transaction_context.accounts().account_payload_regions());
-    debug_assert_eq!(v2_regions.len(), end_idx);
 
-    // Indexes 264..328: Instruction data payload area
-    let start_idx = abiv2_region_index_from_vm_address(GUEST_INSTRUCTION_DATA_BASE_ADDRESS);
-    debug_assert_eq!(v2_regions.len(), start_idx);
-    let end_idx = abiv2_region_index_from_vm_address(GUEST_INSTRUCTION_DATA_END_ADDRESS);
+    // NOTE: there are padding regions between accounts and sysvars which are populated (if needed)
+    // during construction of `MemoryMapping`.
+    let start_idx = abiv2_region_index_from_vm_address(GUEST_SYSVARS_BASE_ADDRESS);
+    let end_idx = abiv2_region_index_from_vm_address(GUEST_SYSVARS_END_ADDRESS);
+    let sysvars = environment_config.sysvar_cache();
+    let sysvar_ids = [
+        solana_clock::Clock::id(),
+        solana_epoch_rewards::EpochRewards::id(),
+        solana_epoch_schedule::EpochSchedule::id(),
+        solana_last_restart_slot::LastRestartSlot::id(),
+        solana_rent::Rent::id(),
+        solana_slot_hashes::SlotHashes::id(),
+        solana_stake_interface::stake_history::StakeHistory::id(),
+    ];
+    for (idx, var) in (start_idx..end_idx).zip(sysvar_ids.into_iter().rev()) {
+        let data = sysvars.sysvar_id_to_buffer(&var).as_deref();
+        let data = data.unwrap_or_default();
+        v2_regions.push(MemoryRegion::new(
+            &raw const data[..],
+            vm_addresses::from_index(idx as u64),
+        ));
+    }
+
     v2_regions.extend(transaction_context.instruction_payload_regions());
-    debug_assert_eq!(v2_regions.len(), end_idx);
-
-    // Indexes 328..392: Instruction accounts area
-    let start_idx = abiv2_region_index_from_vm_address(GUEST_INSTRUCTION_ACCOUNT_BASE_ADDRESS);
-    debug_assert_eq!(v2_regions.len(), start_idx);
-    let end_idx = abiv2_region_index_from_vm_address(GUEST_INSTRUCTION_ACCOUNT_END_ADDRESS);
     v2_regions.extend(transaction_context.instruction_accounts_regions());
-    debug_assert_eq!(v2_regions.len(), end_idx);
 
     v2_regions
 }
@@ -311,18 +311,22 @@ pub(crate) fn create_abiv2_regions(
 #[cfg(test)]
 mod test {
     use {
-        crate::memory_context::{MemoryContexts, create_abiv2_regions},
+        crate::{
+            memory_context::{MemoryContexts, create_abiv2_regions},
+            with_mock_invoke_context,
+        },
         solana_account::AccountSharedData,
         solana_pubkey::Pubkey,
-        solana_rent::Rent,
         solana_sbpf::{
             memory_region::{MemoryMapping, default_access_violation_handler},
             program::SBPFVersion,
             vm::Config,
         },
         solana_transaction_context::{
-            MAX_ACCOUNTS_PER_TRANSACTION, instruction_accounts::InstructionAccount,
-            transaction::TransactionContext, vm_addresses::GUEST_ACCOUNT_PAYLOAD_BASE_ADDRESS,
+            instruction_accounts::InstructionAccount,
+            vm_addresses::{
+                GUEST_ACCOUNT_PAYLOAD_BASE_ADDRESS, abiv2_region_index_from_vm_address,
+            },
         },
     };
 
@@ -351,10 +355,12 @@ mod test {
                 AccountSharedData::new(20, 3, &Pubkey::new_unique()),
             ),
         ];
-
+        with_mock_invoke_context!(invoke_context, _temp_tx_context, Vec::new());
         let mut tx_context = TransactionContext::new(accounts, Rent::default(), 4, 64, 3);
+        invoke_context.transaction_context = &mut tx_context;
 
-        tx_context
+        invoke_context
+            .transaction_context
             .configure_top_level_instruction_for_tests(
                 4,
                 vec![
@@ -368,7 +374,7 @@ mod test {
             .unwrap();
 
         let mut memory_contexts = MemoryContexts::new();
-        let abi_v2_regions = create_abiv2_regions(&mut tx_context);
+        let abi_v2_regions = create_abiv2_regions(&mut invoke_context);
         *memory_contexts.abiv2_mappings = unsafe {
             MemoryMapping::new_uninitialized(
                 abi_v2_regions,
@@ -378,19 +384,18 @@ mod test {
             )
         };
 
-        let accounts_range = ((GUEST_ACCOUNT_PAYLOAD_BASE_ADDRESS >> 32) as usize)
-            ..((GUEST_ACCOUNT_PAYLOAD_BASE_ADDRESS >> 32) as usize)
-                .saturating_add(MAX_ACCOUNTS_PER_TRANSACTION);
+        let start = abiv2_region_index_from_vm_address(GUEST_ACCOUNT_PAYLOAD_BASE_ADDRESS);
 
         // IX 1
         tx_context.push().unwrap();
         memory_contexts
             .abi_v2_prepare_for_instruction(&tx_context)
             .unwrap();
+        let end = start.saturating_add(tx_context.accounts().len());
         let ix1_regions = memory_contexts
             .abiv2_mappings
             .get_regions()
-            .get(accounts_range.clone())
+            .get(start..end)
             .unwrap();
 
         let reg_zero = ix1_regions.first().unwrap();
@@ -428,10 +433,11 @@ mod test {
         memory_contexts
             .abi_v2_prepare_for_instruction(&tx_context)
             .unwrap();
+        let end = start.saturating_add(tx_context.accounts().len());
         let ix2_regions = memory_contexts
             .abiv2_mappings
             .get_regions()
-            .get(accounts_range.clone())
+            .get(start..end)
             .unwrap();
 
         let reg_zero = ix2_regions.first().unwrap();
@@ -469,10 +475,11 @@ mod test {
         memory_contexts
             .abi_v2_prepare_for_instruction(&tx_context)
             .unwrap();
+        let end = start.saturating_add(tx_context.accounts().len());
         let ix3_regions = memory_contexts
             .abiv2_mappings
             .get_regions()
-            .get(accounts_range.clone())
+            .get(start..end)
             .unwrap();
         let reg_zero = ix3_regions.first().unwrap();
         assert_eq!(reg_zero.access_violation_handler_payload, Some(0));
@@ -488,10 +495,11 @@ mod test {
         }
 
         // IX 3 again, but with region made writable
+        let end = start.saturating_add(tx_context.accounts().len());
         let first_account = memory_contexts
             .abiv2_mappings
             .get_regions_mut()
-            .get_mut(accounts_range.clone())
+            .get_mut(start..end)
             .unwrap()
             .first_mut()
             .unwrap();
@@ -502,10 +510,11 @@ mod test {
         memory_contexts
             .abi_v2_prepare_for_instruction(&tx_context)
             .unwrap();
+        let end = start.saturating_add(tx_context.accounts().len());
         let ix3_regions = memory_contexts
             .abiv2_mappings
             .get_regions()
-            .get(accounts_range.clone())
+            .get(start..end)
             .unwrap();
         let reg_zero = ix3_regions.first().unwrap();
         assert!(reg_zero.access_violation_handler_payload.is_none());

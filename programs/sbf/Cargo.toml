@@ -128,11 +128,14 @@ solana-compute-budget-instruction = { path = "../../compute-budget-instruction",
 solana-cpi = "=3.1.0"
 solana-curve25519 = "=4.0.1"
 solana-define-syscall = "=3.0.0"
+solana-epoch-rewards = "3.0.0"
+solana-epoch-schedule = "3.0.0"
 solana-fee = { path = "../../fee", version = "=4.3.0-alpha.1" }
 solana-hash = { version = "=4.5.0", features = ["bytemuck", "serde", "std"] }
 solana-instruction = "=3.4.0"
 solana-instructions-sysvar = "=4.0.0"
 solana-keccak-hasher = { version = "=3.1.0", features = ["sha3"] }
+solana-last-restart-slot = "3.0.0"
 solana-msg = "=3.1.0"
 solana-poseidon = "=4.0.0"
 solana-program = "=4.0.0"
@@ -141,6 +144,7 @@ solana-program-error = "=3.0.1"
 solana-program-memory = "=3.1.0"
 solana-program-runtime = { path = "../../program-runtime", version = "=4.3.0-alpha.1" }
 solana-pubkey = { version = "=4.2.0", default-features = false }
+solana-rent = "4.0.0"
 solana-runtime = { path = "../../runtime", version = "=4.3.0-alpha.1" }
 solana-runtime-transaction = { path = "../../runtime-transaction", version = "=4.3.0-alpha.1" }
 solana-sbf-rust-128bit-dep = { path = "rust/128bit_dep", version = "=4.3.0-alpha.1" }
@@ -154,6 +158,7 @@ solana-sbf-rust-realloc-invoke-dep = { path = "rust/realloc_invoke_dep", version
 solana-sdk-ids = "=3.1.0"
 solana-secp256k1-recover = "=3.2.0"
 solana-sha256-hasher = { version = "=3.1.0", features = ["sha2"] }
+solana-slot-hashes = "3.0.0"
 solana-stake-history = "=1.0.0"
 solana-svm = { path = "../../svm", version = "=4.3.0-alpha.1" }
 solana-svm-feature-set = { path = "../../svm-feature-set", version = "=4.3.0-alpha.1" }

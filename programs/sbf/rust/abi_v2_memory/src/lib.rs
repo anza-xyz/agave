@@ -11,7 +11,7 @@ use {
         transaction::TransactionFrame,
         transaction_accounts::AccountSharedFields,
         vm_addresses::{
-            ACCOUNT_METADATA_AREA, GUEST_INSTRUCTION_ACCOUNT_BASE_ADDRESS,
+            self, ACCOUNT_METADATA_AREA, GUEST_INSTRUCTION_ACCOUNT_BASE_ADDRESS,
             GUEST_INSTRUCTION_DATA_BASE_ADDRESS, GUEST_REGION_SIZE, INSTRUCTION_TRACE_AREA,
             RETURN_DATA_SCRATCHPAD, TRANSACTION_FRAME_ADDRESS,
         },
@@ -349,6 +349,49 @@ unsafe fn test_resize_cpi_scratchpads(tx_frame: &mut TransactionFrame) {
     *slice_mut.get_unchecked_mut(1) = InstructionAccount::new(1, true, true);
 }
 
+unsafe fn test_access_sysvars() {
+    let end = 0x1000_0000_0000;
+    let clock_addr = end - vm_addresses::from_index(1) as usize;
+    let clock = core::slice::from_raw_parts(clock_addr as _, 0x1_0000_0000);
+    let clock = bincode::deserialize::<solana_clock::Clock>(clock).unwrap();
+    sol_log(format!("{:?}", clock).as_bytes());
+
+    let epoch_rewards_addr = end - vm_addresses::from_index(2) as usize;
+    let epoch_rewards = core::slice::from_raw_parts(epoch_rewards_addr as _, 0x1_0000_0000);
+    let epoch_rewards =
+        bincode::deserialize::<solana_epoch_rewards::EpochRewards>(epoch_rewards).unwrap();
+    sol_log(format!("{:?}", epoch_rewards).as_bytes());
+
+    let epoch_schedule_addr = end - vm_addresses::from_index(3) as usize;
+    let epoch_schedule = core::slice::from_raw_parts(epoch_schedule_addr as _, 0x1_0000_0000);
+    let epoch_schedule =
+        bincode::deserialize::<solana_epoch_schedule::EpochSchedule>(epoch_schedule).unwrap();
+    sol_log(format!("{:?}", epoch_schedule).as_bytes());
+
+    let restart_slot_addr = end - vm_addresses::from_index(4) as usize;
+    let restart_slot = core::slice::from_raw_parts(restart_slot_addr as _, 0x1_0000_0000);
+    let restart_slot =
+        bincode::deserialize::<solana_last_restart_slot::LastRestartSlot>(restart_slot).unwrap();
+    sol_log(format!("{:?}", restart_slot).as_bytes());
+
+    let rent_addr = end - vm_addresses::from_index(5) as usize;
+    let rent = core::slice::from_raw_parts(rent_addr as _, 0x1_0000_0000);
+    let rent = bincode::deserialize::<solana_rent::Rent>(rent).unwrap();
+    sol_log(format!("{:?}", rent).as_bytes());
+
+    let slot_hashes_addr = end - vm_addresses::from_index(6) as usize;
+    let slot_hashes = core::slice::from_raw_parts(slot_hashes_addr as _, 0x1_0000_0000);
+    let slot_hashes = bincode::deserialize::<solana_slot_hashes::SlotHashes>(slot_hashes).unwrap();
+    sol_log(format!("{:?}", slot_hashes).as_bytes());
+
+    let stake_history_addr = end - vm_addresses::from_index(7) as usize;
+    let stake_history = core::slice::from_raw_parts(stake_history_addr as _, 0x1_0000_0000);
+    let stake_history =
+        bincode::deserialize::<solana_stake_interface::stake_history::StakeHistory>(stake_history)
+            .unwrap();
+    sol_log(format!("{:?}", stake_history).as_bytes());
+}
+
 #[unsafe(no_mangle)]
 #[allow(clippy::missing_safety_doc)]
 pub unsafe extern "C" fn entrypoint(
@@ -401,6 +444,7 @@ pub unsafe extern "C" fn entrypoint(
         [0x09, ..] => test_assign_owner(current_ix, tx_accounts_metadata),
         [0x0a, ..] => test_sol_transfer_lamports(tx_accounts_metadata, current_ix),
         [0x0b, ..] => test_resize_cpi_scratchpads(tx_frame),
+        [0x0c, ..] => test_access_sysvars(),
         _ => panic!("unknown command"),
     }
     0

@@ -8180,7 +8180,7 @@ mod tests {
         let config = Config::default();
         prepare_mockup!(invoke_context, program_id, bpf_loader_upgradeable::id());
         invoke_context.memory_contexts.set_abi_v2().unwrap();
-        let mut regions = create_abiv2_regions(invoke_context.transaction_context);
+        let mut regions = create_abiv2_regions(&mut invoke_context);
         for region in &mut regions {
             unsafe {
                 // SAFETY: never actually reading or writing host buffers.
@@ -8205,7 +8205,7 @@ mod tests {
         let config = Config::default();
         prepare_mockup!(invoke_context, program_id, bpf_loader_upgradeable::id());
         invoke_context.memory_contexts.set_abi_v2().unwrap();
-        let mut regions = create_abiv2_regions(invoke_context.transaction_context);
+        let mut regions = create_abiv2_regions(&mut invoke_context);
         for region in &mut regions {
             unsafe {
                 // SAFETY: never actually reading or writing host buffers
@@ -8231,7 +8231,7 @@ mod tests {
         let config = Config::default();
         prepare_mockup!(invoke_context, program_id, bpf_loader_upgradeable::id());
         invoke_context.memory_contexts.set_abi_v2().unwrap();
-        let mut regions = create_abiv2_regions(invoke_context.transaction_context);
+        let mut regions = create_abiv2_regions(&mut invoke_context);
         for region in &mut regions {
             unsafe {
                 // SAFETY: never actually reading or writing host buffers.
@@ -8292,7 +8292,7 @@ mod tests {
         with_mock_invoke_context!(invoke_context, transaction_context, 0, transaction_accounts);
 
         let new_owner = Pubkey::new_unique();
-        let mut regions = create_abiv2_regions(invoke_context.transaction_context);
+        let mut regions = create_abiv2_regions(&mut invoke_context);
         *regions.get_mut(1).unwrap() =
             MemoryRegion::new(&raw const new_owner.as_array()[..], 1u64 << 32);
         let account_region_index =
@@ -8468,7 +8468,7 @@ mod tests {
             )
             .unwrap();
 
-        let regions = create_abiv2_regions(invoke_context.transaction_context);
+        let regions = create_abiv2_regions(&mut invoke_context);
         let mapping = unsafe {
             MemoryMapping::new(regions.clone(), &Config::default(), SBPFVersion::V4).unwrap()
         };

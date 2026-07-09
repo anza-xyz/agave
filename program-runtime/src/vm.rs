@@ -576,7 +576,7 @@ fn initialize_abi_v2_areas<C: ContextObject>(
 ) -> Result<(), InstructionError> {
     // Doing a lazy initialization in case we don't have any ABIv2 instruction in the transaction.
     if !invoke_context.memory_contexts.abi_v2_regions_exist() {
-        let abi_v2_regions = create_abiv2_regions(invoke_context.transaction_context);
+        let abi_v2_regions = create_abiv2_regions(invoke_context);
         let access_violation_handler = invoke_context
             .transaction_context
             .abi_v2_access_violation_handler();

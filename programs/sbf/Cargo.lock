@@ -8483,7 +8483,15 @@ dependencies = [
 name = "solana-sbf-rust-abi-v2-memory"
 version = "4.3.0-alpha.1"
 dependencies = [
+ "bincode",
+ "solana-clock",
+ "solana-epoch-rewards",
+ "solana-epoch-schedule",
+ "solana-last-restart-slot",
  "solana-pubkey 4.2.0",
+ "solana-rent",
+ "solana-slot-hashes",
+ "solana-stake-interface",
  "solana-transaction-context",
 ]
 
