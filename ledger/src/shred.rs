@@ -224,7 +224,15 @@ pub enum Error {
 }
 
 #[repr(u8)]
-#[cfg_attr(feature = "frozen-abi", derive(AbiExample, AbiEnumVisitor))]
+#[cfg_attr(
+    feature = "frozen-abi",
+    derive(AbiExample, AbiEnumVisitor, StableAbi, StableAbiSample),
+    frozen_abi(
+        abi_digest = "7R7R5DNkXYiSA35A6p5Ej79TmHSAdLicCo5HUkRAMD9Z",
+        abi_serializer = "wincode",
+        test_roundtrip = "eq_and_wire",
+    )
+)]
 #[derive(
     Clone,
     Copy,
