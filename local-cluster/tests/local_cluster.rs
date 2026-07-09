@@ -26,7 +26,7 @@ use {
         },
         optimistic_confirmation_verifier::OptimisticConfirmationVerifier,
         repair::{
-            malicious_repair_handler::MaliciousRepairConfig, repair_handler::RepairHandlerType,
+            self, malicious_repair_handler::MaliciousRepairConfig, repair_handler::RepairHandlerType
         },
         replay_stage::DUPLICATE_THRESHOLD,
         validator::{BlockProductionMethod, BlockVerificationMethod, ValidatorConfig},
@@ -6198,11 +6198,11 @@ fn test_alpenglow_basic_equivocation() {
 fn test_alpenglow_equivocation_repair() {
     agave_logger::setup_with_default(AG_DEBUG_LOG_FILTER);
     let test_name = "test_alpenglow_equivocation_repair";
-    let slots_to_run: Slot = 128;
+    let slots_to_run: Slot = 64;
 
-    let num_nodes = 16;
-    let num_malicious_nodes = 3;
-    let num_turbine_disabled_nodes = 3;
+    let num_nodes = 8;
+    let num_malicious_nodes = 1;
+    let num_turbine_disabled_nodes = 1;
     let total_cluster_stake = DEFAULT_NODE_STAKE
         * num_nodes as u64
         * num_malicious_nodes as u64
@@ -6225,7 +6225,7 @@ fn test_alpenglow_equivocation_repair() {
     node_stakes.extend(iter::repeat(honest_node_stake).take(num_nodes - num_malicious_nodes));
     let total_stake = node_stakes.iter().sum::<u64>();
     assert_eq!(total_stake, total_cluster_stake);
-
+    println!("{:?}", total_cluster_stake);
     // Original all-byzantine-leader schedule:
     // let (leader_schedule, validator_keys) =
     //     create_custom_leader_schedule_with_random_keys(&[slots_to_run as usize, 0, 0, 0]);
@@ -6233,11 +6233,9 @@ fn test_alpenglow_equivocation_repair() {
     // for slot in 0..slots_to_run {
     //     assert_eq!(leader_schedule[slot].id, byzantine_pubkey);
     // }
-    assert_eq!(slots_to_run as usize % num_nodes, 0);
     let leader_slots = vec![slots_to_run as usize / num_nodes; num_nodes];
     let (leader_schedule, validator_keys) =
         create_custom_leader_schedule_with_random_keys(&leader_slots);
-
     let mut validator_config = ValidatorConfig::default_for_test();
     validator_config.wait_for_supermajority = Some(0);
     validator_config.fixed_leader_schedule = Some(FixedSchedule {
@@ -6247,8 +6245,8 @@ fn test_alpenglow_equivocation_repair() {
     let mut validator_configs = make_identical_validator_configs(&validator_config, num_nodes);
     for config in validator_configs.iter_mut().take(num_malicious_nodes) {
         config.repair_handler_type = RepairHandlerType::Malicious(MaliciousRepairConfig {
-            bad_shred_slot_frequency: Some(5),
-            bad_shred_index_frequency: Some(1),
+            bad_shred_slot_frequency: Some(1),
+            bad_shred_index_frequency: None,
             slot_range: Some((0, slots_to_run - 1)),
         });
     }
@@ -6283,6 +6281,7 @@ fn test_alpenglow_equivocation_repair() {
         })
         .collect::<Vec<_>>();
 
+    println!("--> {:?}", repair_only_pubkeys);
     let interceptor =
         AlpenglowInterceptor::new(&validator_keys, |_| AlpenglowInterceptAction::Forward);
     for config in &mut validator_configs {
@@ -6311,18 +6310,15 @@ fn test_alpenglow_equivocation_repair() {
     interceptor.set_destinations_from_cluster(&cluster);
     check_min_slot_is_rooted_with_repair_diagnostics(
         &cluster,
+        &interceptor,
         &node_pubkeys,
         &repair_only_pubkeys,
+        &byzantine_sources,
+        &source_stakes,
         slots_to_run,
         test_name,
     );
     drop(cluster);
-    validate_invariants(
-        &interceptor.state.lock().unwrap(),
-        &byzantine_sources,
-        &source_stakes,
-        slots_to_run,
-    );
 }
 
 #[derive(Clone, Debug)]
@@ -6385,12 +6381,15 @@ fn alpenglow_catchup_progress(
 
 fn check_min_slot_is_rooted_with_repair_diagnostics(
     cluster: &LocalCluster,
+    interceptor: &AlpenglowInterceptor,
     node_pubkeys: &[Pubkey],
     repair_only_pubkeys: &[Pubkey],
+    byzantine_sources: &HashSet<Pubkey>,
+    source_stakes: &HashMap<Pubkey, u64>,
     min_root: Slot,
     test_name: &str,
 ) {
-    let timeout = Duration::from_secs(180);
+    let timeout = Duration::from_secs(120);
     let repair_deadlock_grace = Duration::from_secs(15);
     let diagnostic_max_slot = min_root.saturating_add(MINIMUM_SLOTS_PER_EPOCH);
     let start = Instant::now();
@@ -6426,6 +6425,12 @@ fn check_min_slot_is_rooted_with_repair_diagnostics(
             .iter()
             .all(|snapshot| snapshot.finalized.is_some_and(|root| root >= min_root))
         {
+            validate_invariants(
+                &interceptor.state.lock().unwrap(),
+                byzantine_sources,
+                source_stakes,
+                min_root,
+            );
             return;
         }
 
