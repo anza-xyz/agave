@@ -1106,16 +1106,6 @@ fn start_leader_wait_for_parent_replay(
                 };
                 wait_start.stop();
                 ctx.slot_metrics.replay_is_behind_cumulative_wait_elapsed += wait_start.as_us();
-                let _ = ctx
-                    .slot_metrics
-                    .replay_is_behind_wait_elapsed_hist
-                    .increment(wait_start.as_us())
-                    .inspect_err(|e| {
-                        error!(
-                            "{}: unable to increment replay is behind histogram {e:?}",
-                            ctx.my_pubkey
-                        );
-                    });
             }
             Err(StartLeaderError::ParentBlockIdMismatch {
                 expected, actual, ..
@@ -1140,10 +1130,6 @@ fn start_leader_wait_for_parent_replay(
                 }
                 wait_start.stop();
                 ctx.slot_metrics.replay_is_behind_cumulative_wait_elapsed += wait_start.as_us();
-                let _ = ctx
-                    .slot_metrics
-                    .replay_is_behind_wait_elapsed_hist
-                    .increment(wait_start.as_us());
             }
             Err(e) => return Err(e),
         }
