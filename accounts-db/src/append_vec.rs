@@ -37,7 +37,7 @@ use {
         self,
         convert::TryFrom,
         fs::{File, OpenOptions, remove_file},
-        io::{self, Seek, SeekFrom, Write},
+        io,
         mem::{self, MaybeUninit},
         path::{Path, PathBuf},
         ptr, slice,
@@ -213,7 +213,7 @@ impl AppendVec {
 
         let _ignored = remove_file(&file);
 
-        let mut data = OpenOptions::new()
+        let data = OpenOptions::new()
             .read(true)
             .write(true)
             .create_new(true)
@@ -228,13 +228,10 @@ impl AppendVec {
             })
             .unwrap();
 
-        // Theoretical performance optimization: write a zero to the end of
-        // the file so that we won't have to resize it later, which may be
-        // expensive.
-        data.seek(SeekFrom::Start((size - 1) as u64)).unwrap();
-        data.write_all(&[0]).unwrap();
-        data.rewind().unwrap();
-        data.flush().unwrap();
+        // Theoretical performance optimization: set the logical/inode size
+        // so that we don't have to resize it later, which may be expensive.
+        let size = u64::try_from(size).unwrap();
+        data.set_len(size).unwrap();
 
         APPEND_VEC_STATS.files_open.fetch_add(1, Ordering::Relaxed);
 
@@ -245,7 +242,7 @@ impl AppendVec {
             // reads. See UNSAFE usage in `append_ptr`
             read_write_state: ReadWriteState::new(true),
             current_len: AtomicUsize::new(initial_len),
-            file_size: size as u64,
+            file_size: size,
             remove_file_on_drop: AtomicBool::new(true),
             is_dirty: AtomicBool::new(false),
         }
@@ -306,12 +303,6 @@ impl AppendVec {
             *new.is_dirty.get_mut() = true;
         }
         Some(new)
-    }
-
-    /// how many more bytes can be stored in this append vec
-    pub fn remaining_bytes(&self) -> u64 {
-        self.capacity()
-            .saturating_sub(u64_align!(self.len()) as u64)
     }
 
     /// Returns the number of bytes, *not items*, used in the AppendVec
@@ -982,18 +973,17 @@ impl AppendVec {
     pub fn append_accounts<'a>(
         &self,
         accounts: &impl StorableAccounts<'a>,
-        skip: usize,
     ) -> Option<StoredAccountsInfo> {
         let _lock = self.read_write_state.append_guard();
         let mut offset = self.len();
         let len = accounts.len();
-        // Here we have `len - skip` number of accounts.  The +1 extra capacity
+        // Here we have `len` number of accounts.  The +1 extra capacity
         // is for storing the aligned offset of the last-plus-one entry,
         // which is used to compute the size of the last stored account.
-        let offsets_len = len - skip + 1;
+        let offsets_len = len + 1;
         let mut offsets = Vec::with_capacity(offsets_len);
         let mut stop = false;
-        for i in skip..len {
+        for i in 0..len {
             if stop {
                 break;
             }
@@ -1094,7 +1084,11 @@ mod tests {
         rand_chacha::ChaChaRng,
         solana_account::{AccountSharedData, WritableAccount, accounts_equal},
         solana_clock::Slot,
-        std::{mem::ManuallyDrop, time::Instant},
+        std::{
+            io::{Seek as _, SeekFrom, Write as _},
+            mem::ManuallyDrop,
+            time::Instant,
+        },
         test_case::test_case,
     };
 
@@ -1105,7 +1099,7 @@ mod tests {
             let slice = &accounts[..];
             let storable_accounts = (slot_ignored, slice);
 
-            self.append_accounts(&storable_accounts, 0)
+            self.append_accounts(&storable_accounts)
                 .map(|res| res.offsets[0])
         }
     }
@@ -1220,46 +1214,6 @@ mod tests {
     }
 
     #[test]
-    fn test_remaining_bytes() {
-        let path = get_append_vec_path("test_append");
-        let sz = 1024 * 1024;
-        let sz64 = sz as u64;
-        let av = AppendVec::new(&path.path, sz);
-        assert_eq!(av.capacity(), sz64);
-        assert_eq!(av.remaining_bytes(), sz64);
-
-        // append first account, an u64 aligned account (136 bytes)
-        let mut av_len = 0;
-        let account = create_test_account(0);
-        av.append_account_test(&account).unwrap();
-        av_len += STORE_META_OVERHEAD;
-        assert_eq!(av.capacity(), sz64);
-        assert_eq!(av.remaining_bytes(), sz64 - (STORE_META_OVERHEAD as u64));
-        assert_eq!(av.len(), av_len);
-
-        // append second account, a *not* u64 aligned account (137 bytes)
-        let account = create_test_account(1);
-        let account_storage_len = STORE_META_OVERHEAD + 1;
-        av_len += account_storage_len;
-        av.append_account_test(&account).unwrap();
-        assert_eq!(av.capacity(), sz64);
-        assert_eq!(av.len(), av_len);
-        let alignment_bytes = u64_align!(av_len) - av_len; // bytes used for alignment (7 bytes)
-        assert_eq!(alignment_bytes, 7);
-        assert_eq!(av.remaining_bytes(), sz64 - u64_align!(av_len) as u64);
-
-        // append third account, a *not* u64 aligned account (137 bytes)
-        let account = create_test_account(1);
-        av.append_account_test(&account).unwrap();
-        let account_storage_len = STORE_META_OVERHEAD + 1;
-        av_len += alignment_bytes; // bytes used for alignment at the end of previous account
-        av_len += account_storage_len;
-        assert_eq!(av.capacity(), sz64);
-        assert_eq!(av.len(), av_len);
-        assert_eq!(av.remaining_bytes(), sz64 - u64_align!(av_len) as u64);
-    }
-
-    #[test]
     fn test_append_vec_data() {
         let path = get_append_vec_path("test_append_data");
         let av = AppendVec::new(&path.path, 1024 * 1024);
@@ -1341,7 +1295,7 @@ mod tests {
         let av = ManuallyDrop::new(AppendVec::new(&path.path, file_size));
         let slot = 42;
         let stored_accounts_info = av
-            .append_accounts(&(slot, test_accounts.as_slice()), 0)
+            .append_accounts(&(slot, test_accounts.as_slice()))
             .unwrap();
         av.flush().unwrap();
         (av, stored_accounts_info, test_accounts, path)
@@ -1820,7 +1774,7 @@ mod tests {
             let slot = 77; // the specific slot does not matter
             let storable_accounts: Vec<_> = std::iter::zip(&pubkeys, &accounts).collect();
             let stored_accounts_info = append_vec
-                .append_accounts(&(slot, storable_accounts.as_slice()), 0)
+                .append_accounts(&(slot, storable_accounts.as_slice()))
                 .unwrap();
             append_vec.flush().unwrap();
             stored_accounts_info.offsets
@@ -1870,7 +1824,7 @@ mod tests {
             let slot = 42; // the specific slot does not matter
             let storable_accounts: Vec<_> = std::iter::zip(&pubkeys, &accounts).collect();
             let stored_accounts_info = append_vec
-                .append_accounts(&(slot, storable_accounts.as_slice()), 0)
+                .append_accounts(&(slot, storable_accounts.as_slice()))
                 .unwrap();
             append_vec.flush().unwrap();
             stored_accounts_info.offsets

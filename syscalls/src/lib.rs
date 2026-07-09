@@ -350,15 +350,7 @@ pub fn create_program_runtime_environment(
         } else {
             SBPFVersion::V3
         };
-    let max_sbpf_version = if feature_set.enable_sbpf_v3_deployment_and_execution {
-        SBPFVersion::V3
-    } else if feature_set.enable_sbpf_v2_deployment_and_execution {
-        SBPFVersion::V2
-    } else if feature_set.enable_sbpf_v1_deployment_and_execution {
-        SBPFVersion::V1
-    } else {
-        SBPFVersion::V0
-    };
+    let max_sbpf_version = SBPFVersion::V3;
     debug_assert!(min_sbpf_version <= max_sbpf_version);
 
     let config = Config {
@@ -376,7 +368,7 @@ pub fn create_program_runtime_environment(
         enabled_sbpf_versions: min_sbpf_version..=max_sbpf_version,
         optimize_rodata: false,
         aligned_memory_mapping: !feature_set.virtual_address_space_adjustments,
-        allow_memory_region_zero: feature_set.enable_sbpf_v3_deployment_and_execution,
+        allow_memory_region_zero: true,
         // Warning, do not use `Config::default()` so that configuration here is explicit.
     };
 
@@ -947,11 +939,16 @@ declare_builtin_function!(
 
         let check_aligned = invoke_context.get_check_aligned();
         let memory_mapping = invoke_context.memory_contexts.memory_mapping_mut()?;
-        translate_mut!(
-            memory_mapping,
-            check_aligned,
-            let secp256k1_recover_result: (&mut [MaybeUninit<u8>]) = map(result_addr, SECP256K1_PUBLIC_KEY_LENGTH as u64)?;
-        );
+
+        {
+            // Just a check that this maps correctly for error compatibility with old code.
+            translate_mut!(
+                memory_mapping,
+                check_aligned,
+                let _result: (&mut [MaybeUninit<u8>]) =
+                    map(result_addr, SECP256K1_PUBLIC_KEY_LENGTH as u64)?;
+            );
+        }
         let hash = translate_slice::<u8>(
             memory_mapping,
             hash_addr,
@@ -977,7 +974,6 @@ declare_builtin_function!(
         let Ok(signature) = libsecp256k1::Signature::parse_standard_slice(signature) else {
             return Ok(Secp256k1RecoverError::InvalidSignature.into());
         };
-
         let public_key = match libsecp256k1::recover(&message, &signature, &recovery_id) {
             Ok(key) => key.serialize(),
             Err(_) => {
@@ -985,7 +981,13 @@ declare_builtin_function!(
             }
         };
 
-        secp256k1_recover_result.write_copy_of_slice(&public_key[1..65]);
+        translate_mut!(
+            memory_mapping,
+            check_aligned,
+            let result: (&mut [MaybeUninit<u8>]) =
+                map(result_addr, SECP256K1_PUBLIC_KEY_LENGTH as u64)?;
+        );
+        result.write_copy_of_slice(&public_key[1..65]);
         Ok(SUCCESS)
     }
 );
@@ -2226,11 +2228,14 @@ declare_builtin_function!(
 
         let check_aligned = invoke_context.get_check_aligned();
         let memory_mapping = invoke_context.memory_contexts.memory_mapping_mut()?;
-        translate_mut!(
-            memory_mapping,
-            check_aligned,
-            let call_result: (&mut [MaybeUninit<u8>]) = map(result_addr, output as u64)?;
-        );
+        {
+            // Just a check that this maps correctly for error compatibility with old code.
+            translate_mut!(
+                memory_mapping,
+                check_aligned,
+                let _result: (&mut [MaybeUninit<u8>]) = map(result_addr, output as u64)?;
+            );
+        }
         let input = translate_slice::<u8>(
             memory_mapping,
             input_addr,
@@ -2292,7 +2297,12 @@ declare_builtin_function!(
 
         match result_point {
             Ok(point) => {
-                call_result.write_copy_of_slice(&point);
+                translate_mut!(
+                    memory_mapping,
+                    check_aligned,
+                    let result: (&mut [MaybeUninit<u8>]) = map(result_addr, output as u64)?;
+                );
+                result.write_copy_of_slice(&point);
                 Ok(SUCCESS)
             }
             Err(_) => {
@@ -2358,11 +2368,15 @@ declare_builtin_function!(
         let check_aligned = invoke_context.get_check_aligned();
         let poseidon_enforce_padding = invoke_context.get_feature_set().poseidon_enforce_padding;
         let memory_mapping = invoke_context.memory_contexts.memory_mapping_mut()?;
-        translate_mut!(
-            memory_mapping,
-            check_aligned,
-            let hash_result: (&mut [MaybeUninit<u8>]) = map(result_addr, poseidon::HASH_BYTES as u64)?;
-        );
+        {
+            // Just a check that this will map later for error compatibility with old code.
+            translate_mut!(
+                memory_mapping,
+                check_aligned,
+                let _result: (&mut [MaybeUninit<u8>]) =
+                    map(result_addr, poseidon::HASH_BYTES as u64)?;
+            );
+        }
         let inputs =
             translate_slice::<VmSlice<u8>>(memory_mapping, vals_addr, vals_len, check_aligned)?;
         let inputs = inputs
@@ -2378,7 +2392,14 @@ declare_builtin_function!(
         let Ok(hash) = result else {
             return Ok(1);
         };
-        hash_result.write_copy_of_slice(&hash.to_bytes());
+        drop(inputs);
+
+        translate_mut!(
+            memory_mapping,
+            check_aligned,
+            let result: (&mut [MaybeUninit<u8>]) = map(result_addr, poseidon::HASH_BYTES as u64)?;
+        );
+        result.write_copy_of_slice(&hash.to_bytes());
 
         Ok(SUCCESS)
     }
@@ -2468,11 +2489,14 @@ declare_builtin_function!(
 
         let check_aligned = invoke_context.get_check_aligned();
         let memory_mapping = invoke_context.memory_contexts.memory_mapping_mut()?;
-        translate_mut!(
-            memory_mapping,
-            check_aligned,
-            let call_result: (&mut [MaybeUninit<u8>]) = map(result_addr, output as u64)?;
-        );
+        {
+            // Just a check that this will map later for error compatibility with old code.
+            translate_mut!(
+                memory_mapping,
+                check_aligned,
+                let _result: (&mut [MaybeUninit<u8>]) = map(result_addr, output as u64)?;
+            );
+        }
         let input = translate_slice::<u8>(
             memory_mapping,
             input_addr,
@@ -2485,49 +2509,89 @@ declare_builtin_function!(
                 let Ok(result_point) = alt_bn128_g1_compress_be(input) else {
                     return Ok(1);
                 };
-                call_result.write_copy_of_slice(&result_point);
+                translate_mut!(
+                    memory_mapping,
+                    check_aligned,
+                    let result: (&mut [MaybeUninit<u8>]) = map(result_addr, output as u64)?;
+                );
+                result.write_copy_of_slice(&result_point);
             }
             ALT_BN128_G1_COMPRESS_LE => {
                 let Ok(result_point) = alt_bn128_g1_compress_le(input) else {
                     return Ok(1);
                 };
-                call_result.write_copy_of_slice(&result_point);
+                translate_mut!(
+                    memory_mapping,
+                    check_aligned,
+                    let result: (&mut [MaybeUninit<u8>]) = map(result_addr, output as u64)?;
+                );
+                result.write_copy_of_slice(&result_point);
             }
             ALT_BN128_G1_DECOMPRESS_BE => {
                 let Ok(result_point) = alt_bn128_g1_decompress_be(input) else {
                     return Ok(1);
                 };
-                call_result.write_copy_of_slice(&result_point);
+                translate_mut!(
+                    memory_mapping,
+                    check_aligned,
+                    let result: (&mut [MaybeUninit<u8>]) = map(result_addr, output as u64)?;
+                );
+                result.write_copy_of_slice(&result_point);
             }
             ALT_BN128_G1_DECOMPRESS_LE => {
                 let Ok(result_point) = alt_bn128_g1_decompress_le(input) else {
                     return Ok(1);
                 };
-                call_result.write_copy_of_slice(&result_point);
+                translate_mut!(
+                    memory_mapping,
+                    check_aligned,
+                    let result: (&mut [MaybeUninit<u8>]) = map(result_addr, output as u64)?;
+                );
+                result.write_copy_of_slice(&result_point);
             }
             ALT_BN128_G2_COMPRESS_BE => {
                 let Ok(result_point) = alt_bn128_g2_compress_be(input) else {
                     return Ok(1);
                 };
-                call_result.write_copy_of_slice(&result_point);
+                translate_mut!(
+                    memory_mapping,
+                    check_aligned,
+                    let result: (&mut [MaybeUninit<u8>]) = map(result_addr, output as u64)?;
+                );
+                result.write_copy_of_slice(&result_point);
             }
             ALT_BN128_G2_COMPRESS_LE => {
                 let Ok(result_point) = alt_bn128_g2_compress_le(input) else {
                     return Ok(1);
                 };
-                call_result.write_copy_of_slice(&result_point);
+                translate_mut!(
+                    memory_mapping,
+                    check_aligned,
+                    let result: (&mut [MaybeUninit<u8>]) = map(result_addr, output as u64)?;
+                );
+                result.write_copy_of_slice(&result_point);
             }
             ALT_BN128_G2_DECOMPRESS_BE => {
                 let Ok(result_point) = alt_bn128_g2_decompress_be(input) else {
                     return Ok(1);
                 };
-                call_result.write_copy_of_slice(&result_point);
+                translate_mut!(
+                    memory_mapping,
+                    check_aligned,
+                    let result: (&mut [MaybeUninit<u8>]) = map(result_addr, output as u64)?;
+                );
+                result.write_copy_of_slice(&result_point);
             }
             ALT_BN128_G2_DECOMPRESS_LE => {
                 let Ok(result_point) = alt_bn128_g2_decompress_le(input) else {
                     return Ok(1);
                 };
-                call_result.write_copy_of_slice(&result_point);
+                translate_mut!(
+                    memory_mapping,
+                    check_aligned,
+                    let result: (&mut [MaybeUninit<u8>]) = map(result_addr, output as u64)?;
+                );
+                result.write_copy_of_slice(&result_point);
             }
             _ => return Err(SyscallError::InvalidAttribute.into()),
         }
@@ -2567,11 +2631,15 @@ declare_builtin_function!(
         let check_aligned = invoke_context.get_check_aligned();
         let mem_op_base_cost = compute_cost.mem_op_base_cost;
         let memory_mapping = invoke_context.memory_contexts.memory_mapping_mut()?;
-        translate_mut!(
-            memory_mapping,
-            check_aligned,
-            let hash_result: (&mut [MaybeUninit<u8>]) = map(result_addr, std::mem::size_of::<H::Output>() as u64)?;
-        );
+        {
+            // Just a check that this maps correctly for error compatibility with old code.
+            translate_mut!(
+                memory_mapping,
+                check_aligned,
+                let _result: (&mut [MaybeUninit<u8>]) =
+                    map(result_addr, std::mem::size_of::<H::Output>() as u64)?;
+            );
+        }
         let mut hasher = H::create_hasher();
         if vals_len > 0 {
             let vals = translate_slice::<VmSlice<u8>>(
@@ -2594,7 +2662,13 @@ declare_builtin_function!(
                 hasher.hash(bytes);
             }
         }
-        hash_result.write_copy_of_slice(hasher.result().as_ref());
+        translate_mut!(
+            memory_mapping,
+            check_aligned,
+            let result: (&mut [MaybeUninit<u8>]) =
+                map(result_addr, std::mem::size_of::<H::Output>() as u64)?;
+        );
+        result.write_copy_of_slice(hasher.result().as_ref());
         Ok(0)
     }
 );

@@ -102,10 +102,7 @@ pub unsafe extern "C" fn sol_compat_elf_loader_v1(
 
 #[cfg(test)]
 mod tests {
-    use {
-        super::*, agave_feature_set::enable_sbpf_v3_deployment_and_execution,
-        protosol::protos::FeatureSet as ProtoFeatureSet,
-    };
+    use {super::*, protosol::protos::FeatureSet as ProtoFeatureSet};
 
     const NOOP_ALIGNED: &[u8] =
         include_bytes!("../../../programs/bpf_loader/test_elfs/out/noop_aligned.so");
@@ -136,11 +133,6 @@ mod tests {
 
     #[test]
     fn test_load_sbpf_v3_with_feature_enabled() {
-        // The v3 ELF only loads when the SBPF v3 feature is active.
-        let v3 = enable_sbpf_v3_deployment_and_execution::id();
-        let features = ProtoFeatureSet {
-            features: vec![u64::from_le_bytes(v3.to_bytes()[..8].try_into().unwrap())],
-        };
-        assert_loads_ok(SBPFV3_RETURN_OK, false, Some(features));
+        assert_loads_ok(SBPFV3_RETURN_OK, false, None);
     }
 }
