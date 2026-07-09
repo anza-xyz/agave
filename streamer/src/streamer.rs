@@ -325,8 +325,8 @@ impl StreamerSendStats {
         let mut byte_sum = 0;
         let mut pkt_count = 0;
         let mut host_bytes: Vec<u64> = host_map
-            .iter()
-            .map(|(_addr, host_stats)| {
+            .values()
+            .map(|host_stats| {
                 byte_sum += host_stats.bytes;
                 pkt_count += host_stats.count;
                 host_stats.bytes
@@ -389,15 +389,13 @@ impl StreamerSendStats {
             return;
         }
 
-        let host_map = std::mem::take(&mut self.host_map);
+        let capacity = self.host_map.len();
+        let host_map = std::mem::replace(&mut self.host_map, HashMap::with_capacity(capacity));
         let _ = sender.send(Box::new(move || {
             Self::report_stats(name, host_map, elapsed);
         }));
 
-        *self = Self {
-            since: Some(Instant::now()),
-            ..Self::default()
-        };
+        self.since = Some(Instant::now());
     }
 
     fn record(&mut self, pkt: PacketRef) {

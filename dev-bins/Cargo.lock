@@ -8461,7 +8461,6 @@ dependencies = [
  "bytes",
  "crossbeam-channel",
  "futures 0.3.32",
- "histogram",
  "indexmap",
  "itertools 0.14.0",
  "libc",
