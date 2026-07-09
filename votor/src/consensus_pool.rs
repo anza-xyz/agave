@@ -384,8 +384,7 @@ impl ConsensusPool {
                 });
                 self.migration_status.set_genesis_certificate(genesis_cert);
                 // The genesis block is automatically certified
-                self.parent_ready_tracker
-                    .add_new_notar_fallback_or_stronger(block, events);
+                self.parent_ready_tracker.add_genesis(block, events);
             }
         }
     }
@@ -710,7 +709,7 @@ impl ConsensusPool {
 #[cfg(test)]
 mod tests {
     use {
-        super::*,
+        super::{parent_ready_tracker::BlockProductionParent, *},
         crate::tests::get_cluster_info,
         agave_votor_messages::{
             consensus_message::{BLS_KEYPAIR_DERIVE_SEED, VoteMessage},
@@ -2251,6 +2250,49 @@ mod tests {
             slot: 12,
             parent_block
         } if parent_block == &Block { slot: 11, block_id: hash }))
+        );
+    }
+
+    #[test]
+    fn test_genesis_certificate_at_root_seeds_parent_ready() {
+        let mut ctx = TestContext::new();
+        let parent_bank = ctx.bank_forks.read().unwrap().root_bank();
+        let root_bank = create_bank(63, parent_bank, SlotLeader::new_unique());
+        let root_block_id = Hash::new_unique();
+        root_bank.set_block_id(Some(root_block_id));
+        root_bank.freeze();
+        let root_block = Block {
+            slot: root_bank.slot(),
+            block_id: root_block_id,
+        };
+        let mut events = vec![];
+
+        ctx.pool.maybe_prune(root_block.slot);
+        assert_eq!(
+            ctx.pool
+                .parent_ready_tracker
+                .block_production_parent(root_block.slot + 1),
+            BlockProductionParent::ParentNotReady
+        );
+
+        ctx.pool
+            .add_message(
+                &root_bank,
+                &Pubkey::new_unique(),
+                ConsensusMessage::Certificate(Certificate {
+                    cert_type: CertificateType::Genesis(root_block),
+                    signature: BLSSignature([0; BLS_SIGNATURE_AFFINE_SIZE]),
+                    bitmap: dummy_bitmap(),
+                }),
+                &mut events,
+            )
+            .unwrap();
+
+        assert_eq!(
+            ctx.pool
+                .parent_ready_tracker
+                .block_production_parent(root_block.slot + 1),
+            BlockProductionParent::Parent(root_block)
         );
     }
 
