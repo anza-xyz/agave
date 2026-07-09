@@ -16,6 +16,16 @@ rustdoc-args = ["--cfg=docsrs"]
 
 [features]
 agave-unstable-api = []
+conformance = [
+    "agave-unstable-api",
+    "dep:prost",
+    "dep:protosol",
+    "dep:solana-inflation",
+    "dep:solana-lattice-hash",
+    "dep:solana-rent",
+    "dep:solana-stake-interface",
+    "dev-context-only-utils",
+]
 dev-context-only-utils = [
     "agave-banking-stage-ingress-types/dev-context-only-utils",
     "solana-entry/dev-context-only-utils",
@@ -26,6 +36,7 @@ dev-context-only-utils = [
     "solana-tpu-client-next/dev-context-only-utils",
     "agave-votor/dev-context-only-utils",
 ]
+dummy-for-ci-check = ["conformance"]
 frozen-abi = [
     "dep:solana-frozen-abi",
     "dep:solana-frozen-abi-macro",
@@ -81,6 +92,8 @@ log = { workspace = true }
 min-max-heap = { workspace = true }
 num_cpus = { workspace = true }
 num_enum = { workspace = true }
+prost = { version = "0.11", optional = true }
+protosol = { workspace = true, optional = true }
 qualifier_attr = { workspace = true }
 rand = { workspace = true }
 rand_chacha = { workspace = true }
@@ -122,8 +135,10 @@ solana-geyser-plugin-manager = { workspace = true }
 solana-gossip = { workspace = true }
 solana-hard-forks = { workspace = true }
 solana-hash = { workspace = true }
+solana-inflation = { workspace = true, optional = true }
 solana-instruction = { workspace = true }
 solana-keypair = { workspace = true }
+solana-lattice-hash = { workspace = true, optional = true }
 solana-leader-schedule = { workspace = true }
 solana-ledger = { workspace = true }
 solana-measure = { workspace = true }
@@ -138,6 +153,7 @@ solana-poh = { workspace = true }
 solana-poh-config = { workspace = true }
 solana-pubkey = { workspace = true }
 solana-rayon-threadlimit = { workspace = true }
+solana-rent = { workspace = true, optional = true }
 solana-rpc = { workspace = true }
 solana-rpc-client-api = { workspace = true }
 solana-runtime = { workspace = true }
@@ -151,6 +167,7 @@ solana-signer = { workspace = true }
 solana-signer-store = { workspace = true }
 solana-slot-hashes = { workspace = true }
 solana-slot-history = { workspace = true }
+solana-stake-interface = { workspace = true, optional = true }
 solana-streamer = { workspace = true }
 solana-svm = { workspace = true, features = ["metrics"] }
 solana-svm-timings = { workspace = true }
@@ -203,7 +220,7 @@ solana-compute-budget = { workspace = true }
 solana-compute-budget-interface = { workspace = true }
 solana-compute-budget-program = { path = "../programs/compute-budget", features = ["agave-unstable-api"] }
 # See order-crates-for-publishing.py for using this unusual `path = "."`
-solana-core = { path = ".", features = ["agave-unstable-api", "dev-context-only-utils"] }
+solana-core = { path = ".", features = ["agave-unstable-api", "conformance", "dev-context-only-utils"] }
 solana-cost-model = { path = "../cost-model", features = ["agave-unstable-api", "dev-context-only-utils"] }
 solana-gossip = { path = "../gossip", features = ["agave-unstable-api", "dev-context-only-utils"] }
 solana-keypair = { workspace = true }
