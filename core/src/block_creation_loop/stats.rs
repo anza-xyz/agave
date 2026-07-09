@@ -115,7 +115,7 @@ pub(crate) struct SlotMetrics {
     pub(crate) replay_is_behind_count: u64,
     pub(crate) already_have_bank_count: u64,
 
-    pub(crate) slot_delay_hist: Histogram,
+    pub(crate) slot_delay_us: u64,
     pub(crate) replay_is_behind_cumulative_wait_elapsed: u64,
     pub(crate) replay_is_behind_wait_elapsed_hist: Histogram,
 }
@@ -130,26 +130,7 @@ impl SlotMetrics {
             ("leader_handover_sad", self.leader_handover_sad, i64),
             ("replay_is_behind_count", self.replay_is_behind_count, i64),
             ("already_have_bank_count", self.already_have_bank_count, i64),
-            (
-                "slot_delay_90pct",
-                self.slot_delay_hist.percentile(90.0).unwrap_or(0),
-                i64
-            ),
-            (
-                "slot_delay_mean",
-                self.slot_delay_hist.mean().unwrap_or(0),
-                i64
-            ),
-            (
-                "slot_delay_min",
-                self.slot_delay_hist.minimum().unwrap_or(0),
-                i64
-            ),
-            (
-                "slot_delay_max",
-                self.slot_delay_hist.maximum().unwrap_or(0),
-                i64
-            ),
+            ("slot_delay_us", self.slot_delay_us, i64),
             (
                 "replay_is_behind_cumulative_wait_elapsed",
                 self.replay_is_behind_cumulative_wait_elapsed,

@@ -1073,16 +1073,7 @@ fn start_leader_wait_for_parent_replay(
         match maybe_start_leader(slot, parent_slot, parent_hash, ctx) {
             Ok(()) => {
                 slot_delay_start.stop();
-                let _ = ctx
-                    .slot_metrics
-                    .slot_delay_hist
-                    .increment(slot_delay_start.as_us())
-                    .inspect_err(|e| {
-                        error!(
-                            "{}: unable to increment slot delay histogram {e:?}",
-                            ctx.my_pubkey
-                        );
-                    });
+                ctx.slot_metrics.slot_delay_us = slot_delay_start.as_us();
 
                 ctx.slot_metrics.report();
                 return Ok(ctx
