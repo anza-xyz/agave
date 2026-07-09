@@ -25,7 +25,7 @@ use {
 /// Distributing rewards to stake accounts begins AFTER this many blocks.
 const REWARD_CALCULATION_NUM_BLOCKS: u64 = 1;
 
-/// Total reward for a stake account, currently just inflation rewards.
+/// Total reward for a stake account, comprising inflation and block rewards.
 #[derive(Debug, Clone, PartialEq)]
 pub(crate) struct PartitionedStakeReward {
     /// Stake account address
