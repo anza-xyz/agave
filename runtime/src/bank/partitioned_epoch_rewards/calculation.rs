@@ -56,6 +56,16 @@ struct RewardsAccumulator {
     total_stake_rewards_lamports: u64,
 }
 
+/// Helper struct used with `RewardsAccumulator` to accumulate individual stake
+/// account rewards
+struct RewardAccumulation {
+    /// Inflation rewards earned by the stake account. May be 0.
+    stake_reward: u64,
+    /// If a stake account receives block rewards, but no stake rewards, there
+    /// isn't a commission entry
+    commission: Option<(Pubkey, RewardCommission)>,
+}
+
 /// Merge the lamport and `is_vote_account` fields of two `RewardCommission`s
 ///
 /// This pays special attention to the case where `is_vote_account` does not
@@ -112,22 +122,19 @@ fn accumulate_lamports(src: &RewardCommission, dst: &mut RewardCommission) {
 }
 
 impl RewardsAccumulator {
-    fn add_reward(
-        &mut self,
-        commission_pubkey: Pubkey,
-        reward_commission: RewardCommission,
-        stakers_reward: u64,
-    ) {
-        self.reward_commissions
-            .entry(commission_pubkey)
-            .and_modify(|dst_reward_commission| {
-                accumulate_lamports(&reward_commission, dst_reward_commission);
-            })
-            .or_insert(reward_commission);
+    fn add_reward(&mut self, reward: RewardAccumulation) {
         self.num_stake_rewards = self.num_stake_rewards.saturating_add(1);
         self.total_stake_rewards_lamports = self
             .total_stake_rewards_lamports
-            .saturating_add(stakers_reward);
+            .saturating_add(reward.stake_reward);
+        if let Some((commission_pubkey, reward_commission)) = reward.commission {
+            self.reward_commissions
+                .entry(commission_pubkey)
+                .and_modify(|dst_reward_commission| {
+                    accumulate_lamports(&reward_commission, dst_reward_commission);
+                })
+                .or_insert(reward_commission);
+        }
     }
 
     /// Merges two instances by combining their reward commissions and stake rewards.
@@ -752,40 +759,38 @@ impl Bank {
                                 commission_pubkey,
                                 reward_commission,
                             } = res;
-                            let stakers_reward = inflation.stake_reward;
+                            let stake_reward = inflation.stake_reward;
                             (
                                 Some(PartitionedStakeReward {
                                     stake_pubkey: **stake_pubkey,
                                     inflation,
                                     block_reward,
                                 }),
-                                Some((stakers_reward, commission_pubkey, reward_commission)),
+                                Some(RewardAccumulation {
+                                    stake_reward,
+                                    commission: Some((commission_pubkey, reward_commission)),
+                                }),
                             )
                         }
                         (_, None) => {
                             // Create a zero entry for distribution
                             let stake = *stake_account.stake();
                             let stake_reward = 0;
-                            let commission_pubkey = stake.delegation.voter_pubkey;
-                            let commission_bps = None;
-                            let reward_commission = RewardCommission {
-                                commission_bps,
-                                commission_lamports: 0,
-                                burned_lamports: 0,
-                                is_vote_account: true,
-                            };
                             (
                                 Some(PartitionedStakeReward {
                                     stake_pubkey: **stake_pubkey,
                                     inflation: InflationReward {
                                         stake,
                                         stake_reward,
-                                        commission_bps,
+                                        commission_bps: None,
                                     },
                                     block_reward,
                                 }),
                                 // Need a reward record for accumulator
-                                Some((stake_reward, commission_pubkey, reward_commission)),
+                                Some(RewardAccumulation {
+                                    stake_reward,
+                                    commission: None,
+                                }),
                             )
                         }
                     };
@@ -800,13 +805,8 @@ impl Bank {
                 })
                 .fold(
                     RewardsAccumulator::default,
-                    |mut rewards_accumulator,
-                     (stakers_reward, commission_pubkey, reward_commission)| {
-                        rewards_accumulator.add_reward(
-                            commission_pubkey,
-                            reward_commission,
-                            stakers_reward,
-                        );
+                    |mut rewards_accumulator, accumulation| {
+                        rewards_accumulator.add_reward(accumulation);
                         rewards_accumulator
                     },
                 )
@@ -2796,46 +2796,54 @@ mod tests {
         let commission_pubkey_b = Pubkey::new_unique();
         let commission_pubkey_c = Pubkey::new_unique();
 
-        accumulator1.add_reward(
-            commission_pubkey_a,
-            RewardCommission {
-                commission_bps: Some(1_000),
-                commission_lamports: 50,
-                burned_lamports: 0,
-                is_vote_account: true,
-            },
-            50,
-        );
-        accumulator1.add_reward(
-            commission_pubkey_b,
-            RewardCommission {
-                commission_bps: Some(1_000),
-                commission_lamports: 50,
-                burned_lamports: 0,
-                is_vote_account: true,
-            },
-            50,
-        );
-        accumulator2.add_reward(
-            commission_pubkey_b,
-            RewardCommission {
-                commission_bps: Some(1_000),
-                commission_lamports: 30,
-                burned_lamports: 0,
-                is_vote_account: true,
-            },
-            30,
-        );
-        accumulator2.add_reward(
-            commission_pubkey_c,
-            RewardCommission {
-                commission_bps: Some(1_000),
-                commission_lamports: 50,
-                burned_lamports: 0,
-                is_vote_account: true,
-            },
-            50,
-        );
+        accumulator1.add_reward(RewardAccumulation {
+            commission: Some((
+                commission_pubkey_a,
+                RewardCommission {
+                    commission_bps: Some(1_000),
+                    commission_lamports: 50,
+                    burned_lamports: 0,
+                    is_vote_account: true,
+                },
+            )),
+            stake_reward: 50,
+        });
+        accumulator1.add_reward(RewardAccumulation {
+            commission: Some((
+                commission_pubkey_b,
+                RewardCommission {
+                    commission_bps: Some(1_000),
+                    commission_lamports: 50,
+                    burned_lamports: 0,
+                    is_vote_account: true,
+                },
+            )),
+            stake_reward: 50,
+        });
+        accumulator2.add_reward(RewardAccumulation {
+            commission: Some((
+                commission_pubkey_b,
+                RewardCommission {
+                    commission_bps: Some(1_000),
+                    commission_lamports: 30,
+                    burned_lamports: 0,
+                    is_vote_account: true,
+                },
+            )),
+            stake_reward: 30,
+        });
+        accumulator2.add_reward(RewardAccumulation {
+            commission: Some((
+                commission_pubkey_c,
+                RewardCommission {
+                    commission_bps: Some(1_000),
+                    commission_lamports: 50,
+                    burned_lamports: 0,
+                    is_vote_account: true,
+                },
+            )),
+            stake_reward: 50,
+        });
 
         assert_eq!(accumulator1.num_stake_rewards, 2);
         assert_eq!(accumulator1.total_stake_rewards_lamports, 100);
@@ -2972,8 +2980,14 @@ mod tests {
             burned_lamports: 1_000,
             is_vote_account: right_is_vote_account,
         };
-        accumulator.add_reward(commission_pubkey, left_reward.clone(), 50);
-        accumulator.add_reward(commission_pubkey, right_reward.clone(), 50);
+        accumulator.add_reward(RewardAccumulation {
+            commission: Some((commission_pubkey, left_reward.clone())),
+            stake_reward: 50,
+        });
+        accumulator.add_reward(RewardAccumulation {
+            commission: Some((commission_pubkey, right_reward.clone())),
+            stake_reward: 50,
+        });
 
         check_accumulator(
             &accumulator,
@@ -3012,8 +3026,14 @@ mod tests {
             is_vote_account: right_is_vote_account,
         };
 
-        accumulator1.add_reward(commission_pubkey, left_reward.clone(), 50);
-        accumulator2.add_reward(commission_pubkey, right_reward.clone(), 50);
+        accumulator1.add_reward(RewardAccumulation {
+            commission: Some((commission_pubkey, left_reward.clone())),
+            stake_reward: 50,
+        });
+        accumulator2.add_reward(RewardAccumulation {
+            commission: Some((commission_pubkey, right_reward.clone())),
+            stake_reward: 50,
+        });
 
         let additional_commission_pubkey = Pubkey::new_unique();
         let additional_reward_commission = RewardCommission {
@@ -3023,17 +3043,15 @@ mod tests {
             is_vote_account: true,
         };
         if right_is_larger {
-            accumulator2.add_reward(
-                additional_commission_pubkey,
-                additional_reward_commission,
-                50,
-            );
+            accumulator2.add_reward(RewardAccumulation {
+                commission: Some((additional_commission_pubkey, additional_reward_commission)),
+                stake_reward: 50,
+            });
         } else {
-            accumulator1.add_reward(
-                additional_commission_pubkey,
-                additional_reward_commission,
-                50,
-            );
+            accumulator1.add_reward(RewardAccumulation {
+                commission: Some((additional_commission_pubkey, additional_reward_commission)),
+                stake_reward: 50,
+            });
         };
 
         let accumulator = accumulator1.accumulate_into_larger(accumulator2);
