@@ -382,8 +382,6 @@ impl<U: Umem> TxLoop<U> {
             };
 
             let src_addr = item.src_addr();
-            let src_ip = src_addr.ip();
-            let src_port = src_addr.port();
             let ecn = item.ecn();
             let can_overflow_mtu = item.allow_mtu_overflow();
             for addr in item.dst_addrs().as_ref() {
@@ -415,191 +413,23 @@ impl<U: Umem> TxLoop<U> {
 
                 // at this point we're guaranteed to have a frame to write the next packet into and
                 // a slot in the ring to submit it
-                let mut frame = umem.reserve().unwrap();
-                let IpAddr::V4(dst_ip) = addr.ip() else {
-                    panic!("IPv6 not supported");
-                };
-
-                let payload = item.payload().as_ref();
-                let len = payload.len();
-
-                let dst = addr.ip();
-                let Some(next_hop) = route_fn(&dst) else {
-                    log::warn!("dropping packet: no route for peer {addr}");
-                    umem.release(frame);
+                let frame = umem.reserve().unwrap();
+                let Some(frame) = build_packet(
+                    umem,
+                    PacketBuildParams {
+                        frame,
+                        src_mac: &src_mac,
+                        src_addr,
+                        dst_addr: addr,
+                        payload: item.payload().as_ref(),
+                        ecn,
+                        can_overflow_mtu,
+                        umem_frame_size,
+                    },
+                    &route_fn,
+                ) else {
                     continue;
                 };
-
-                if let Some(gre) = &next_hop.gre {
-                    let l3_inner_packet_len = INNER_PACKET_HEADER_SIZE + len;
-                    let l3_outer_gre_packet_len =
-                        IP_HEADER_SIZE + GRE_HEADER_BASE_SIZE + l3_inner_packet_len;
-
-                    if l3_inner_packet_len > gre.mtu as usize
-                        || l3_outer_gre_packet_len > next_hop.mtu as usize
-                    {
-                        if !can_overflow_mtu {
-                            log::warn!(
-                                "dropping packet: GRE payload exceeds MTU for {addr}: L3 inner \
-                                 packet length {l3_inner_packet_len}, L3 outer GRE packet length \
-                                 {l3_outer_gre_packet_len}, MTU: {mtu}, underlay_mtu: \
-                                 {underlay_mtu}.",
-                                mtu = gre.mtu,
-                                underlay_mtu = next_hop.mtu
-                            );
-                        }
-                        umem.release(frame);
-                        continue;
-                    }
-
-                    let packet_len = gre_packet_size(len);
-                    if packet_len > umem_frame_size {
-                        log::warn!(
-                            "dropping packet: GRE packet size {packet_len} exceeds frame size \
-                             {umem_frame_size} for {addr}"
-                        );
-                        umem.release(frame);
-                        continue;
-                    }
-
-                    frame.set_len(packet_len);
-                    let mut packet = umem.map_frame_mut(frame);
-                    let inner_src_ip = next_hop.preferred_src_ip.as_ref().unwrap_or(src_ip);
-                    if let Err(err) = construct_gre_packet(
-                        &mut packet,
-                        &src_mac,
-                        &gre.mac_addr,
-                        inner_src_ip,
-                        &dst_ip,
-                        src_port,
-                        addr.port(),
-                        payload,
-                        ecn,
-                        &gre.tunnel_info,
-                    ) {
-                        log::warn!("dropping packet: {err}");
-                        umem.release(packet.into_frame());
-                        continue;
-                    }
-                    frame = packet.into_frame();
-                } else if let Some(vlan) = &next_hop.vlan {
-                    // we need the MAC address to send the packet
-                    let Some(dest_mac) = next_hop.mac_addr else {
-                        log::warn!(
-                            "dropping packet: peer {addr} must be routed through {} which has no \
-                             known MAC address",
-                            next_hop.ip_addr
-                        );
-                        umem.release(frame);
-                        continue;
-                    };
-
-                    // The 802.1Q tag is added at L2, so the L3 size compared against the MTU
-                    // is the same as the untagged path.
-                    let l3_packet_len = IP_HEADER_SIZE + UDP_HEADER_SIZE + len;
-                    if l3_packet_len > next_hop.mtu as usize {
-                        if !can_overflow_mtu {
-                            log::warn!(
-                                "dropping packet: packet size {l3_packet_len} exceeds MTU {mtu} \
-                                 for {addr}",
-                                mtu = next_hop.mtu
-                            );
-                        }
-                        umem.release(frame);
-                        continue;
-                    }
-
-                    let packet_len = VLAN_PACKET_HEADER_SIZE + len;
-                    if packet_len > umem_frame_size {
-                        log::warn!(
-                            "dropping packet: VLAN packet size {packet_len} exceeds frame size \
-                             {umem_frame_size} for {addr}"
-                        );
-                        umem.release(frame);
-                        continue;
-                    }
-
-                    frame.set_len(packet_len);
-                    let mut packet = umem.map_frame_mut(frame);
-
-                    // The route's preferred src is the IP assigned to the VLAN sub-interface,
-                    // which is the right inner src for traffic egressing this VLAN. Fall back
-                    // to the device's src IP if the route did not carry one.
-                    let inner_src_ip = next_hop.preferred_src_ip.as_ref().unwrap_or(src_ip);
-
-                    if !construct_vlan_packet(
-                        &mut packet,
-                        &src_mac.0,
-                        &dest_mac.0,
-                        inner_src_ip,
-                        &dst_ip,
-                        src_port,
-                        addr.port(),
-                        vlan.vid,
-                        vlan.pcp,
-                        payload,
-                        ecn,
-                    ) {
-                        log::warn!("dropping packet: VLAN frame did not fit in UMEM slot");
-                        umem.release(packet.into_frame());
-                        continue;
-                    }
-                    frame = packet.into_frame();
-                } else {
-                    // we need the MAC address to send the packet
-                    let Some(dest_mac) = next_hop.mac_addr else {
-                        log::warn!(
-                            "dropping packet: peer {addr} must be routed through {} which has no \
-                             known MAC address",
-                            next_hop.ip_addr
-                        );
-                        umem.release(frame);
-                        continue;
-                    };
-
-                    let l3_packet_len = IP_HEADER_SIZE + UDP_HEADER_SIZE + len;
-                    if l3_packet_len > next_hop.mtu as usize {
-                        if !can_overflow_mtu {
-                            log::warn!(
-                                "dropping packet: packet size {l3_packet_len} exceeds MTU {mtu} \
-                                 for {addr}",
-                                mtu = next_hop.mtu
-                            );
-                        }
-                        umem.release(frame);
-                        continue;
-                    }
-
-                    let packet_len = PACKET_HEADER_SIZE + len;
-                    if packet_len > umem_frame_size {
-                        log::warn!(
-                            "dropping packet: packet size {packet_len} exceeds frame size \
-                             {umem_frame_size} for {addr}"
-                        );
-                        umem.release(frame);
-                        continue;
-                    }
-
-                    frame.set_len(packet_len);
-                    let mut packet = umem.map_frame_mut(frame);
-
-                    if !construct_packet(
-                        &mut packet,
-                        &src_mac.0,
-                        &dest_mac.0,
-                        src_ip,
-                        &dst_ip,
-                        src_port,
-                        addr.port(),
-                        payload,
-                        ecn,
-                    ) {
-                        log::warn!("dropping packet: frame did not fit in UMEM slot");
-                        umem.release(packet.into_frame());
-                        continue;
-                    }
-                    frame = packet.into_frame();
-                }
 
                 ring.write(frame, 0)
                     .map_err(|_| "ring full")
@@ -638,6 +468,221 @@ impl<U: Umem> TxLoop<U> {
             kick(&ring);
         }
     }
+}
+
+struct PacketBuildParams<'a, F> {
+    frame: F,
+    src_mac: &'a MacAddress,
+    src_addr: SocketAddrV4,
+    dst_addr: &'a SocketAddr,
+    payload: &'a [u8],
+    ecn: Option<EcnCodepoint>,
+    can_overflow_mtu: bool,
+    umem_frame_size: usize,
+}
+
+#[inline]
+fn build_packet<U, R>(
+    umem: &U,
+    params: PacketBuildParams<'_, U::Frame>,
+    route_fn: &R,
+) -> Option<U::Frame>
+where
+    U: Umem,
+    R: Fn(&IpAddr) -> Option<NextHop>,
+{
+    let PacketBuildParams {
+        mut frame,
+        src_mac,
+        src_addr,
+        dst_addr: addr,
+        payload,
+        ecn,
+        can_overflow_mtu,
+        umem_frame_size,
+    } = params;
+    let src_ip = src_addr.ip();
+    let src_port = src_addr.port();
+    let IpAddr::V4(dst_ip) = addr.ip() else {
+        panic!("IPv6 not supported");
+    };
+
+    let len = payload.len();
+
+    let dst = addr.ip();
+    let Some(next_hop) = route_fn(&dst) else {
+        log::warn!("dropping packet: no route for peer {addr}");
+        umem.release(frame);
+        return None;
+    };
+
+    if let Some(gre) = &next_hop.gre {
+        let l3_inner_packet_len = INNER_PACKET_HEADER_SIZE + len;
+        let l3_outer_gre_packet_len = IP_HEADER_SIZE + GRE_HEADER_BASE_SIZE + l3_inner_packet_len;
+
+        if l3_inner_packet_len > gre.mtu as usize || l3_outer_gre_packet_len > next_hop.mtu as usize
+        {
+            if !can_overflow_mtu {
+                log::warn!(
+                    "dropping packet: GRE payload exceeds MTU for {addr}: L3 inner packet length \
+                     {l3_inner_packet_len}, L3 outer GRE packet length {l3_outer_gre_packet_len}, \
+                     MTU: {mtu}, underlay_mtu: {underlay_mtu}.",
+                    mtu = gre.mtu,
+                    underlay_mtu = next_hop.mtu
+                );
+            }
+            umem.release(frame);
+            return None;
+        }
+
+        let packet_len = gre_packet_size(len);
+        if packet_len > umem_frame_size {
+            log::warn!(
+                "dropping packet: GRE packet size {packet_len} exceeds frame size \
+                 {umem_frame_size} for {addr}"
+            );
+            umem.release(frame);
+            return None;
+        }
+
+        frame.set_len(packet_len);
+        let mut packet = umem.map_frame_mut(frame);
+        let inner_src_ip = next_hop.preferred_src_ip.as_ref().unwrap_or(src_ip);
+        if let Err(err) = construct_gre_packet(
+            &mut packet,
+            src_mac,
+            &gre.mac_addr,
+            inner_src_ip,
+            &dst_ip,
+            src_port,
+            addr.port(),
+            payload,
+            ecn,
+            &gre.tunnel_info,
+        ) {
+            log::warn!("dropping packet: {err}");
+            umem.release(packet.into_frame());
+            return None;
+        }
+        frame = packet.into_frame();
+    } else if let Some(vlan) = &next_hop.vlan {
+        // we need the MAC address to send the packet
+        let Some(dest_mac) = next_hop.mac_addr else {
+            log::warn!(
+                "dropping packet: peer {addr} must be routed through {} which has no known MAC \
+                 address",
+                next_hop.ip_addr
+            );
+            umem.release(frame);
+            return None;
+        };
+
+        // The 802.1Q tag is added at L2, so the L3 size compared against the MTU
+        // is the same as the untagged path.
+        let l3_packet_len = IP_HEADER_SIZE + UDP_HEADER_SIZE + len;
+        if l3_packet_len > next_hop.mtu as usize {
+            if !can_overflow_mtu {
+                log::warn!(
+                    "dropping packet: packet size {l3_packet_len} exceeds MTU {mtu} for {addr}",
+                    mtu = next_hop.mtu
+                );
+            }
+            umem.release(frame);
+            return None;
+        }
+
+        let packet_len = VLAN_PACKET_HEADER_SIZE + len;
+        if packet_len > umem_frame_size {
+            log::warn!(
+                "dropping packet: VLAN packet size {packet_len} exceeds frame size \
+                 {umem_frame_size} for {addr}"
+            );
+            umem.release(frame);
+            return None;
+        }
+
+        frame.set_len(packet_len);
+        let mut packet = umem.map_frame_mut(frame);
+
+        // The route's preferred src is the IP assigned to the VLAN sub-interface,
+        // which is the right inner src for traffic egressing this VLAN. Fall back
+        // to the device's src IP if the route did not carry one.
+        let inner_src_ip = next_hop.preferred_src_ip.as_ref().unwrap_or(src_ip);
+
+        if !construct_vlan_packet(
+            &mut packet,
+            &src_mac.0,
+            &dest_mac.0,
+            inner_src_ip,
+            &dst_ip,
+            src_port,
+            addr.port(),
+            vlan.vid,
+            vlan.pcp,
+            payload,
+            ecn,
+        ) {
+            log::warn!("dropping packet: VLAN frame did not fit in UMEM slot");
+            umem.release(packet.into_frame());
+            return None;
+        }
+        frame = packet.into_frame();
+    } else {
+        // we need the MAC address to send the packet
+        let Some(dest_mac) = next_hop.mac_addr else {
+            log::warn!(
+                "dropping packet: peer {addr} must be routed through {} which has no known MAC \
+                 address",
+                next_hop.ip_addr
+            );
+            umem.release(frame);
+            return None;
+        };
+
+        let l3_packet_len = IP_HEADER_SIZE + UDP_HEADER_SIZE + len;
+        if l3_packet_len > next_hop.mtu as usize {
+            if !can_overflow_mtu {
+                log::warn!(
+                    "dropping packet: packet size {l3_packet_len} exceeds MTU {mtu} for {addr}",
+                    mtu = next_hop.mtu
+                );
+            }
+            umem.release(frame);
+            return None;
+        }
+
+        let packet_len = PACKET_HEADER_SIZE + len;
+        if packet_len > umem_frame_size {
+            log::warn!(
+                "dropping packet: packet size {packet_len} exceeds frame size {umem_frame_size} \
+                 for {addr}"
+            );
+            umem.release(frame);
+            return None;
+        }
+
+        frame.set_len(packet_len);
+        let mut packet = umem.map_frame_mut(frame);
+
+        if !construct_packet(
+            &mut packet,
+            &src_mac.0,
+            &dest_mac.0,
+            src_ip,
+            &dst_ip,
+            src_port,
+            addr.port(),
+            payload,
+            ecn,
+        ) {
+            log::warn!("dropping packet: frame did not fit in UMEM slot");
+            umem.release(packet.into_frame());
+            return None;
+        }
+        frame = packet.into_frame();
+    }
+
+    Some(frame)
 }
 
 #[inline(always)]
