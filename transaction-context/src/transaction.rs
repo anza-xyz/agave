@@ -399,16 +399,21 @@ impl<'ix_data> TransactionContext<'ix_data> {
         if !self.instruction_stack.is_empty() && self.accounts.get_lamports_delta() != 0 {
             return Err(InstructionError::UnbalancedInstruction);
         }
+
+        if self.number_of_called_instructions_in_trace() >= self.instruction_trace_capacity {
+            return Err(InstructionError::MaxInstructionTraceLengthExceeded);
+        }
+
+        if nesting_level >= self.instruction_stack_capacity {
+            return Err(InstructionError::CallDepth);
+        }
+
         {
             let instruction = self
                 .instruction_trace
                 .last_mut()
                 .ok_or(InstructionError::CallDepth)?;
             instruction.nesting_level = nesting_level as u16;
-        }
-
-        if self.number_of_called_instructions_in_trace() >= self.instruction_trace_capacity {
-            return Err(InstructionError::MaxInstructionTraceLengthExceeded);
         }
 
         let (index_in_trace, current_top_level_instruction) = if self.instruction_stack.is_empty() {
@@ -429,9 +434,6 @@ impl<'ix_data> TransactionContext<'ix_data> {
             )
         };
 
-        if nesting_level >= self.instruction_stack_capacity {
-            return Err(InstructionError::CallDepth);
-        }
         self.transaction_frame.current_executing_instruction = index_in_trace as u16;
         self.instruction_stack.push(index_in_trace);
         if let Some(index_in_transaction) = self.find_index_of_account(&instructions::id()) {
@@ -773,6 +775,60 @@ mod tests {
 
         let result = instruction_context.get_program_owner();
         assert_eq!(result.err(), Some(InstructionError::MissingAccount));
+    }
+
+    #[test]
+    fn test_failed_push_call_depth_does_not_mutate_trace() {
+        let transaction_accounts = vec![(Pubkey::new_unique(), AccountSharedData::default()); 3];
+        let mut transaction_context =
+            TransactionContext::new(transaction_accounts, Rent::default(), 1, 20, 1);
+
+        transaction_context
+            .configure_top_level_instruction_for_tests(
+                0,
+                vec![InstructionAccount::new(1, false, false)],
+                Vec::new(),
+            )
+            .unwrap();
+        transaction_context.push().unwrap();
+
+        transaction_context
+            .configure_next_cpi_for_tests(
+                0,
+                vec![InstructionAccount::new(2, false, true)],
+                Vec::new(),
+            )
+            .unwrap();
+
+        let trace_length = transaction_context.get_instruction_trace_length();
+        let called_instructions = transaction_context.number_of_called_instructions_in_trace();
+        let cpis_in_trace = transaction_context.number_of_cpis_in_trace();
+        let current_instruction = transaction_context
+            .transaction_frame
+            .current_executing_instruction;
+        let stack_height = transaction_context.get_instruction_stack_height();
+
+        assert_eq!(transaction_context.push(), Err(InstructionError::CallDepth));
+
+        assert_eq!(
+            transaction_context.get_instruction_trace_length(),
+            trace_length
+        );
+        assert_eq!(
+            transaction_context.number_of_called_instructions_in_trace(),
+            called_instructions
+        );
+        assert_eq!(transaction_context.number_of_cpis_in_trace(), cpis_in_trace);
+        assert_eq!(
+            transaction_context
+                .transaction_frame
+                .current_executing_instruction,
+            current_instruction
+        );
+        assert_eq!(
+            transaction_context.get_instruction_stack_height(),
+            stack_height
+        );
     }
 
     #[test]
