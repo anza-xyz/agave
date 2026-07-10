@@ -4105,9 +4105,9 @@ impl AccountsDb {
         self.purge_slots(std::iter::once(&slot));
     }
 
-    /// Purges each slot in `removed_slots` from the write cache (and the accounts index). Slots
-    /// no longer present in the cache are skipped. This never touches backing storage, so it
-    /// cannot delete a flushed (rooted) slot's data. Returns whether any slot was actually
+    /// Purges each slot in `removed_slots` from the write cache and potentially the secondary
+    /// index. Slots no longer present in the cache are skipped. This never touches backing
+    /// storage, so it cannot delete a flushed slot's data. Returns whether any slot was actually
     /// removed from the cache. This allows the snapshot minimizer to determine whether
     /// it should purge the storage as well
     fn purge_slots_from_cache<'a>(
@@ -4119,13 +4119,11 @@ impl AccountsDb {
         let mut num_cached_slots_removed = 0;
         let mut total_removed_cached_bytes = 0;
         for remove_slot in removed_slots {
-            // This function is only currently safe with respect to `flush_slot_cache()` because
-            // both functions run serially in AccountsBackgroundService.
+            // This function runs in parallel with the ABS operations (flush, shrink, clean) and
+            // must be safe with respect to them. ABS operations will not operate on this slot as
+            // it is unrooted (unless the snapshot minimizer is being used), but pubkey operations
+            // must be safe with respect to collisions (eg. write_through and handle_dead_keys)
             let mut remove_cache_elapsed = Measure::start("remove_cache_elapsed");
-            // Note: we cannot remove this slot from the slot cache until we've removed its
-            // entries from the accounts index first. This is because `scan_accounts()` relies on
-            // holding the index lock, finding the index entry, and then looking up the entry
-            // in the cache. If it fails to find that entry, it will panic in `get_loaded_account()`
             if let Some(slot_cache) = self.accounts_cache.slot_cache(*remove_slot) {
                 num_cached_slots_removed += 1;
                 total_removed_cached_bytes += slot_cache.total_bytes();
@@ -4137,12 +4135,12 @@ impl AccountsDb {
                     .remove_slot(*remove_slot)
                     .expect("slot cache entry must still be present");
                 // Cache writes populate the secondary indexes but not the primary index, so a
-                // cache-only account dropped here without ever being flushed would leak its
-                // secondary entry.
-                // Explicitly ignore the return value as there is no need to purge the account
-                // from the primary index as well
+                // cache-only accounts dropped here would otherwise leak its secondary entry.
+                // `handle_dead_keys` removes those secondary entries; its return value (the
+                // pubkeys not present in the primary index) is unused because this path does
+                // no reclaim handling.
                 //
-                // Narrow race: If a write re-adds the same pubkey key between `remove_slot` and
+                // Narrow race: If a write re-adds the same pubkey between `remove_slot` and
                 // `handle_dead_keys`, the new secondary entry will be dropped. Only
                 // secondary-index scans observe it (no consensus impact), and it self-heals: the
                 // entry is re-added when that slot flushes, or stays correctly removed if the slot
