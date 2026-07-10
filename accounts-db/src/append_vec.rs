@@ -1087,7 +1087,6 @@ mod tests {
         std::{
             io::{Seek as _, SeekFrom, Write as _},
             mem::ManuallyDrop,
-            time::Instant,
         },
         test_case::test_case,
     };
@@ -1423,7 +1422,6 @@ mod tests {
         let av = AppendVec::new(&path.path, 1024 * 1024);
         let size = 1000;
         let mut indexes = vec![];
-        let now = Instant::now();
         let mut sizes = vec![];
         for sample in 0..size {
             // sample + 1 is so sample = 0 won't be used.
@@ -1440,15 +1438,12 @@ mod tests {
                 .sum::<usize>();
             assert_eq!(sizes.iter().sum::<usize>(), stored_size);
         }
-        trace!("append time: {} ms", now.elapsed().as_millis());
 
-        let now = Instant::now();
         for _ in 0..size {
             let sample = rng().random_range(0..indexes.len());
             let account = create_test_account(sample + 1);
             assert_eq!(av.get_account_test(indexes[sample]).unwrap(), account);
         }
-        trace!("random read time: {} ms", now.elapsed().as_millis());
         assert_eq!(indexes.len(), size);
         assert_eq!(indexes[0], 0);
         assert_eq!(av.accounts_count(), size);
@@ -1456,7 +1451,6 @@ mod tests {
         let mut reader = new_scan_accounts_reader();
 
         let mut sample = 0;
-        let now = Instant::now();
         av.scan_accounts_stored_meta(&mut reader, |v| {
             let account = create_test_account(sample + 1);
             let recovered = create_account_shared_data(&v);
@@ -1464,7 +1458,6 @@ mod tests {
             sample += 1;
         })
         .expect("must scan accounts storage");
-        trace!("sequential read time: {} ms", now.elapsed().as_millis());
     }
 
     #[test]
@@ -1476,7 +1469,6 @@ mod tests {
         // So, the sanitizing on load behavior can be tested by capturing [u8] that would be created if such a write was possible (as it used to be).
         // The contents of [u8] written by an append vec cannot easily or reasonably change frequently since it has released a long time.
         /*
-            agave_logger::setup();
             // uncomment this code to generate the invalid append vec that will fail on load
             let file = get_append_vec_path("test_append");
             let path = &file.path;
@@ -1508,7 +1500,7 @@ mod tests {
             let mut reader = BufReader::new(f);
             let mut buffer = Vec::new();
             reader.read_to_end(&mut buffer).unwrap();
-            error!("{:?}", buffer);
+            println!("{:?}", buffer);
         */
 
         // create an invalid append vec file using known bytes

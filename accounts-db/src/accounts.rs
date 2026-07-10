@@ -1297,12 +1297,10 @@ mod tests {
 
     #[test]
     fn huge_clean() {
-        agave_logger::setup();
         let accounts_db = AccountsDb::new_single_for_tests();
         let accounts = Accounts::new(Arc::new(accounts_db));
         let mut old_pubkey = Pubkey::default();
         let zero_account = AccountSharedData::new(0, 0, AccountSharedData::default().owner());
-        info!("storing...");
         for i in 0..2_000 {
             let pubkey = solana_pubkey::new_rand();
             let account = AccountSharedData::new(i + 1, 0, AccountSharedData::default().owner());
@@ -1310,12 +1308,7 @@ mod tests {
             accounts.store_for_tests(i, &old_pubkey, &zero_account);
             old_pubkey = pubkey;
             accounts.add_root_and_flush_write_cache(i);
-
-            if i % 1_000 == 0 {
-                info!("  store {i}");
-            }
         }
-        info!("done. cleaning...");
         accounts.accounts_db.clean_accounts_for_tests();
     }
 

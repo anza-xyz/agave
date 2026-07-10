@@ -1731,7 +1731,6 @@ mod tests {
 
     #[test]
     fn test_update_new_slot() {
-        agave_logger::setup();
         let key = solana_pubkey::new_rand();
         let index = AccountsIndex::<bool, bool>::default_for_tests();
         let ancestors = Ancestors::from(vec![0]);
@@ -2024,7 +2023,6 @@ mod tests {
 
     #[test]
     fn test_reclaim_older_items_in_slot_list() {
-        agave_logger::setup();
         let key = solana_pubkey::new_rand();
         let index = AccountsIndex::<u64, u64>::default_for_tests();
         let mut gc = ReclaimsSlotList::new();
@@ -2612,7 +2610,6 @@ mod tests {
 
     #[test]
     fn test_clean_rooted_entries_return() {
-        agave_logger::setup();
         let value = true;
         let key = solana_pubkey::new_rand();
         let key_unknown = solana_pubkey::new_rand();

@@ -2337,7 +2337,6 @@ mod tests {
 
     #[test]
     fn test_age() {
-        agave_logger::setup();
         let test = new_for_test::<u64>();
         assert!(test.get_should_age(test.storage.current_age()));
         assert_eq!(test.storage.count_buckets_flushed(), 0);
@@ -2360,7 +2359,6 @@ mod tests {
 
     #[test]
     fn test_update_slot_list_other_reclaim_old_slots() {
-        agave_logger::setup();
         let reclaim = UpsertReclaim::ReclaimOldSlots;
         let new_slot = 5;
         let info = 1;

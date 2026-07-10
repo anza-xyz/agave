@@ -1307,7 +1307,6 @@ mod tests {
         // n slots
         // m accounts per slot
         // divide into different ideal sizes so that we combine multiple slots sometimes and combine partial slots
-        agave_logger::setup();
         let total_accounts_per_storage = 10;
         let account_size = 184;
         for num_slots in 0..4 {
@@ -1415,7 +1414,6 @@ mod tests {
         // each account has different size
         // divide into different ideal sizes so that we combine multiple slots sometimes and combine partial slots
         // compare at end that all accounts are in result exactly once
-        agave_logger::setup();
         let total_accounts_per_storage = 10;
         let account_size = 184;
         for num_slots in 0..4 {
@@ -1626,8 +1624,6 @@ mod tests {
         // n storages
         // 1 account each
         // all accounts have 1 ref or all accounts have 2 refs
-        agave_logger::setup();
-
         let data_size = 48;
         let alive_bytes_per_slot = AppendVec::calculate_stored_size(data_size as usize) as u64;
 
@@ -2145,7 +2141,6 @@ mod tests {
 
     #[test]
     fn test_calc_accounts_to_combine_opposite() {
-        agave_logger::setup();
         // 1 storage
         // 2 accounts
         // 1 with 1 ref
@@ -2878,7 +2873,6 @@ mod tests {
 
     #[test]
     fn test_truncate_to_max_storages() {
-        agave_logger::setup();
         for filter in [false, true] {
             let ideal_storage_size_large = get_ancient_append_vec_capacity();
             let mut infos = create_test_infos(1);
@@ -3499,8 +3493,6 @@ mod tests {
         // NOTE: The recycler has been removed.  Creating this many extra storages is no longer
         // necessary, but also does no harm either.
         const MAX_RECYCLE_STORES: usize = 1000;
-        agave_logger::setup();
-
         // When we pack ancient append vecs, the packed append vecs are recycled first if possible. This means they aren't dropped directly.
         // This test tests that we are releasing Arc refcounts for storages when we pack them into ancient append vecs.
         let db = AccountsDb::new_single_for_tests();
