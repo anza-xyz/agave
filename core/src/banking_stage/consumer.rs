@@ -28,6 +28,7 @@ use {
         },
         transaction_processor::{ExecutionRecordingConfig, TransactionProcessingConfig},
     },
+    solana_transaction::versioned::VersionedTransaction,
     solana_transaction_error::TransactionError,
     solana_vote::vote_parser,
     std::num::Saturating,
@@ -117,7 +118,7 @@ pub struct Consumer {
 }
 
 struct PreparedProcessedTransactions {
-    transactions: Vec<solana_transaction::versioned::VersionedTransaction>,
+    transactions: Vec<VersionedTransaction>,
     transaction_indexes: Vec<usize>,
     entry_bytes: u64,
 }
