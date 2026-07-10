@@ -1179,16 +1179,6 @@ impl AccountsDb {
         next_id
     }
 
-    fn new_storage_entry(&self, slot: Slot, path: &Path, size: u64) -> AccountStorageEntry {
-        AccountStorageEntry::new(
-            path,
-            slot,
-            self.next_id(),
-            size,
-            self.accounts_file_provider,
-        )
-    }
-
     /// While scanning cleaning candidates obtain slots that can be
     /// reclaimed for each pubkey. In addition, if the pubkey is
     /// removed from the index, insert in pubkeys_removed_from_accounts_index.
@@ -3109,7 +3099,7 @@ impl AccountsDb {
         old_store: Arc<AccountStorageEntry>,
         size: u64,
     ) -> ShrinkInProgress<'_> {
-        let shrunken_store = self.create_store(slot, size);
+        let shrunken_store = Arc::new(self.create_store(slot, size));
         self.storage
             .shrinking_in_progress(slot, old_store, shrunken_store)
     }
@@ -4052,19 +4042,24 @@ impl AccountsDb {
         }
     }
 
-    fn create_store(&self, slot: Slot, size: u64) -> Arc<AccountStorageEntry> {
+    fn create_store(&self, slot: Slot, size: u64) -> AccountStorageEntry {
         self.stats
             .create_store_count
             .fetch_add(1, Ordering::Relaxed);
         let paths = &self.paths;
         let path_index = rng().random_range(0..paths.len());
-        let store = self.new_storage_entry(slot, Path::new(&paths[path_index]), size);
-        Arc::new(store)
+        AccountStorageEntry::new(
+            Path::new(&paths[path_index]),
+            slot,
+            self.next_id(),
+            size,
+            self.accounts_file_provider,
+        )
     }
 
     #[cfg(test)]
     fn create_and_insert_store(&self, slot: Slot, size: u64) -> Arc<AccountStorageEntry> {
-        let store = self.create_store(slot, size);
+        let store = Arc::new(self.create_store(slot, size));
         self.storage.insert(store.clone());
         store
     }
@@ -4688,7 +4683,7 @@ impl AccountsDb {
             // This ensures that all updates are written to an AppendVec, before any
             // updates to the index happen, so anybody that sees a real entry in the index,
             // will be able to find the account in storage
-            let flushed_store = self.create_store(slot, flush_stats.num_bytes_flushed.0);
+            let flushed_store = Arc::new(self.create_store(slot, flush_stats.num_bytes_flushed.0));
             self.storage.insert(Arc::clone(&flushed_store));
 
             let (store_accounts_for_flush_stats, store_accounts_for_flush_us) =
