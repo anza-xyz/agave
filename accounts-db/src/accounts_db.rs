@@ -4057,13 +4057,6 @@ impl AccountsDb {
         )
     }
 
-    #[cfg(test)]
-    fn create_and_insert_store(&self, slot: Slot, size: u64) -> Arc<AccountStorageEntry> {
-        let store = Arc::new(self.create_store(slot, size));
-        self.storage.insert(store.clone());
-        store
-    }
-
     pub fn enable_bank_drop_callback(&self) {
         self.is_bank_drop_callback_enabled
             .store(true, Ordering::Release);

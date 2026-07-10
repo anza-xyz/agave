@@ -178,7 +178,7 @@ fn run_generate_index_duplicates_within_slot_test(db: AccountsDb, reverse: bool)
 
     let pubkey = Pubkey::from([1; 32]);
 
-    let append_vec = db.create_and_insert_store(slot0, 1000);
+    let append_vec = db.create_store(slot0, 1000);
 
     let mut account_small = AccountSharedData::default();
     account_small.set_data(vec![1]);
@@ -200,6 +200,7 @@ fn run_generate_index_duplicates_within_slot_test(db: AccountsDb, reverse: bool)
 
     // construct append vec with account to generate an index from
     append_vec.accounts.write_accounts(&storable_accounts);
+    db.storage.insert(Arc::new(append_vec));
 
     assert!(!db.accounts_index.contains(&pubkey));
     let storage = db.get_storage_for_slot(slot0).unwrap();
@@ -229,12 +230,14 @@ fn test_generate_index_for_single_ref_zero_lamport_slot() {
     let db = AccountsDb::new_single_for_tests();
     let slot0 = 0;
     let pubkey = Pubkey::from([1; 32]);
-    let append_vec = db.create_and_insert_store(slot0, 1000);
+    let append_vec = db.create_store(slot0, 1000);
     let account = AccountSharedData::default();
 
     let data = [(&pubkey, &account)];
     let storable_accounts = (slot0, &data[..]);
     append_vec.accounts.write_accounts(&storable_accounts);
+    let append_vec = Arc::new(append_vec);
+    db.storage.insert(Arc::clone(&append_vec));
     assert!(!db.accounts_index.contains(&pubkey));
     let result = db.generate_index(None, false);
     let slot_list_len = db.accounts_index.get_and_then(&pubkey, |entry| {
@@ -595,7 +598,8 @@ fn test_flush_slots_with_reclaim_old_slots() {
         })
         .collect();
 
-    let storage = accounts.create_and_insert_store(new_slot, 4096);
+    let storage = Arc::new(accounts.create_store(new_slot, 4096));
+    accounts.storage.insert(Arc::clone(&storage));
 
     accounts.accounts_cache.add_root(new_slot);
 
@@ -1412,7 +1416,7 @@ fn test_shrink_converts_zero_lamport_single_ref_account_to_tombstone() {
         true,
         Some(&accounts_db.accounts_index),
     );
-    insert_store(&accounts_db, Arc::clone(&storage1));
+    accounts_db.storage.insert(Arc::clone(&storage1));
     accounts_db.add_root(slot1);
 
     // we manually created the storage, so nothing got marked
@@ -1519,7 +1523,7 @@ fn test_shrink_collect_carries_forward_existing_tombstones() {
         true,
         None,
     );
-    insert_store(&accounts_db, Arc::clone(&storage));
+    accounts_db.storage.insert(Arc::clone(&storage));
     accounts_db.add_root(slot);
 
     // Record the tombstone account's offset on the storage's tombstone list, as a prior shrink
@@ -1604,7 +1608,7 @@ fn test_fully_tombstoned_storage_reclaim() {
             None,
         );
     }
-    insert_store(&accounts_db, Arc::clone(&storage));
+    accounts_db.storage.insert(Arc::clone(&storage));
     accounts_db.add_root(slot);
 
     // Record every account's offset on the storage's tombstone list, as a prior shrink would have.
@@ -2377,7 +2381,8 @@ fn test_storage_finder() {
     let data_len = 8190;
     let account = AccountSharedData::new(lamports, data_len, &solana_pubkey::new_rand());
     // pre-populate with a smaller empty store
-    db.create_and_insert_store(1, 8192);
+    let storage = db.create_store(1, 8192);
+    db.storage.insert(Arc::new(storage));
     db.store_for_tests((1, [(&key, &account)].as_slice()));
 }
 
@@ -5167,10 +5172,11 @@ define_accounts_db_test!(test_calculate_storage_count_and_alive_bytes, |accounts
 
     accounts.accounts_index.set_startup(Startup::Startup);
 
-    let storage = accounts.create_and_insert_store(slot0, 4_000);
+    let storage = accounts.create_store(slot0, 4_000);
     storage
         .accounts
         .write_accounts(&(slot0, &[(&shared_key, &account)][..]));
+    accounts.storage.insert(Arc::new(storage));
 
     let storage = accounts.storage.get_slot_storage_entry(slot0).unwrap();
     let mut reader = append_vec::new_scan_accounts_reader();
@@ -5191,7 +5197,7 @@ define_accounts_db_test!(
     test_calculate_storage_count_and_alive_bytes_0_accounts,
     |accounts| {
         // empty store
-        let storage = accounts.create_and_insert_store(0, 1);
+        let storage = accounts.create_store(0, 1);
         let mut reader = append_vec::new_scan_accounts_reader();
         let mut accum = IndexGenerationAccumulator::with_slots_capacity(1);
         accounts.generate_index_for_slot(&mut reader, &mut accum, 0, &storage);
@@ -5223,7 +5229,7 @@ define_accounts_db_test!(
         let account = AccountSharedData::new(1, 1, AccountSharedData::default().owner());
         let account_big = AccountSharedData::new(1, 1000, AccountSharedData::default().owner());
         let slot0 = 0;
-        let storage = accounts.create_and_insert_store(slot0, 4_000);
+        let storage = accounts.create_store(slot0, 4_000);
         storage
             .accounts
             .write_accounts(&(slot0, &[(&keys[0], &account), (&keys[1], &account_big)][..]));
@@ -5269,7 +5275,7 @@ fn test_calculate_storage_count_and_alive_bytes_obsolete_account(
         .collect();
 
     let slot0 = 0;
-    let storage = accounts.create_and_insert_store(slot0, 10_000);
+    let storage = accounts.create_store(slot0, 10_000);
     let offsets = storage.accounts.write_accounts(&(slot0, &account_list[..]));
 
     let offsets = offsets.unwrap().offsets;
@@ -5792,8 +5798,9 @@ fn test_mark_dirty_dead_stores_no_shrink_in_progress() {
         let slot = 0;
         let db = AccountsDb::new_single_for_tests();
         let size = 1;
-        let existing_store = db.create_and_insert_store(slot, size);
+        let existing_store = db.create_store(slot, size);
         let old_id = existing_store.id();
+        db.storage.insert(Arc::new(existing_store));
         let dead_storages = db.mark_dirty_dead_stores(slot, add_dirty_stores, None, false);
         assert!(db.storage.get_slot_storage_entry(slot).is_none());
         assert_eq!(dead_storages.len(), 1);
@@ -5817,8 +5824,9 @@ fn test_mark_dirty_dead_stores() {
     for add_dirty_stores in [false, true] {
         let db = AccountsDb::new_single_for_tests();
         let size = 1;
-        let old_store = db.create_and_insert_store(slot, size);
+        let old_store = Arc::new(db.create_store(slot, size));
         let old_id = old_store.id();
+        db.storage.insert(Arc::clone(&old_store));
         let shrink_in_progress = db.get_store_for_shrink(slot, old_store, 100);
         let dead_storages =
             db.mark_dirty_dead_stores(slot, add_dirty_stores, Some(shrink_in_progress), false);
@@ -5982,10 +5990,12 @@ define_accounts_db_test!(test_get_sorted_potential_ancient_slots, |db| {
     );
     let root1 = DEFAULT_MAX_ANCIENT_STORAGES as u64 + ancient_append_vec_offset as u64 + 1;
     db.add_root(root1);
-    db.create_and_insert_store(root1, 4096);
+    let store1 = db.create_store(root1, 4096);
+    db.storage.insert(Arc::new(store1));
     let root2 = root1 + 1;
     db.add_root(root2);
-    db.create_and_insert_store(root2, 4096);
+    let store2 = db.create_store(root2, 4096);
+    db.storage.insert(Arc::new(store2));
     let oldest_non_ancient_slot = db.get_oldest_non_ancient_slot(&epoch_schedule);
     assert!(
         db.get_sorted_potential_ancient_slots(oldest_non_ancient_slot)
@@ -6534,7 +6544,7 @@ pub(crate) fn create_storages_and_update_index(
         let slot = starting_slot + i as Slot;
         let storage =
             sample_storage_with_entries_id(tf, slot, &pubkey1, id, alive, account_data_size);
-        insert_store(db, Arc::clone(&storage));
+        db.storage.insert(Arc::clone(&storage));
     }
 
     let storage = db.get_storage_for_slot(starting_slot).unwrap();
@@ -6598,10 +6608,6 @@ fn get_one_ancient_append_vec_and_others_with_account_size(
 
 fn get_one_ancient_append_vec_and_others(num_normal_slots: usize) -> (AccountsDb, Slot) {
     get_one_ancient_append_vec_and_others_with_account_size(num_normal_slots, None)
-}
-
-fn insert_store(db: &AccountsDb, append_vec: Arc<AccountStorageEntry>) {
-    db.storage.insert(append_vec);
 }
 
 /// Ensure the calculating capitalization produces the correct value
@@ -6757,7 +6763,7 @@ fn test_mark_obsolete_accounts_at_startup_multiple_bins() {
 #[test]
 fn test_batch_insert_zero_lamport_single_ref_account_offsets() {
     let accounts = AccountsDb::new_single_for_tests();
-    let storage = accounts.create_and_insert_store(1, 100);
+    let storage = accounts.create_store(1, 100);
 
     // Test inserting new offsets
     let offsets1 = vec![10, 20, 30];
