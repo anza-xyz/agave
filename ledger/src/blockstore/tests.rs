@@ -301,48 +301,6 @@ fn test_write_entries() {
             &blockstore.get_slot_entries(i, 0).unwrap()[..]
         );
     }
-
-    /*
-                // Simulate writing to the end of a slot with existing ticks
-                blockstore
-                    .write_entries(
-                        num_slots,
-                        ticks_per_slot - 1,
-                        ticks_per_slot - 2,
-                        ticks_per_slot,
-                        &ticks[0..2],
-                    )
-                    .unwrap();
-
-                let meta = blockstore.meta(num_slots).unwrap().unwrap();
-                assert_eq!(meta.consumed, 0);
-                // received shred was ticks_per_slot - 2, so received should be ticks_per_slot - 2 + 1
-                assert_eq!(meta.received, ticks_per_slot - 1);
-                // last shred index ticks_per_slot - 2 because that's the shred that made tick_height == ticks_per_slot
-                // for the slot
-                assert_eq!(meta.last_index, ticks_per_slot - 2);
-                assert_eq!(meta.parent_slot, num_slots - 1);
-                assert_eq!(meta.next_slots, vec![num_slots + 1]);
-                assert_eq!(
-                    &ticks[0..1],
-                    &blockstore
-                        .get_slot_entries(num_slots, ticks_per_slot - 2)
-                        .unwrap()[..]
-                );
-
-                // We wrote two entries, the second should spill into slot num_slots + 1
-                let meta = blockstore.meta(num_slots + 1).unwrap().unwrap();
-                assert_eq!(meta.consumed, 1);
-                assert_eq!(meta.received, 1);
-                assert_eq!(meta.last_index, u64::MAX);
-                assert_eq!(meta.parent_slot, num_slots);
-                assert!(meta.next_slots.is_empty());
-
-                assert_eq!(
-                    &ticks[1..2],
-                    &blockstore.get_slot_entries(num_slots + 1, 0).unwrap()[..]
-                );
-    */
 }
 
 #[test]
