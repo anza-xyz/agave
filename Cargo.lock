@@ -5812,9 +5812,9 @@ dependencies = [
 
 [[package]]
 name = "protosol"
-version = "9.1.0"
+version = "9.1.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "61dfab20271ca73268fec941784821bb2ed864d07dba4f1624cb23dbb442092d"
+checksum = "641cd5ba299163225ece6cda8409802849288e483e81dd7e686bb28bc54b654d"
 dependencies = [
  "prost 0.11.9",
 ]
