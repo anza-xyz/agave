@@ -300,13 +300,7 @@ unsafe impl<'de, C: Config> SchemaReadContext<'de, C, ExpectedShredVersion>
         let shred_version = <u16 as SchemaRead<'de, C>>::get(reader.by_ref())?;
 
         if shred_version != expected.0 {
-            return Err(ReadError::Custom(Box::leak(
-                format!(
-                    "shred version mismatch: expected {}, got {}",
-                    expected.0, shred_version
-                )
-                .into_boxed_str(),
-            )));
+            return Err(ReadError::Custom("shred version mismatch"));
         }
 
         dst.write(WireConsensusMessageV1 {
@@ -387,10 +381,9 @@ unsafe impl<'de, C: Config> SchemaReadContext<'de, C, ExpectedShredVersion>
                 dst.write(VersionedWireConsensusMessage::V1(v1));
                 Ok(())
             }
-            _ => Err(ReadError::Custom(Box::leak(
-                format!("unknown tag {tag} for VersionedWireConsensusMessage")
-                    .into_boxed_str(),
-            ))),
+            _ => Err(ReadError::Custom(
+                "unknown tag for VersionedWireConsensusMessage",
+            )),
         }
     }
 }
