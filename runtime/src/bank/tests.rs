@@ -1640,11 +1640,21 @@ fn test_bank_tx_compute_unit_fee() {
     );
 }
 
-#[test]
-fn test_debits_before_credits() {
+#[test_case(false; "strict_fee_payer")]
+#[test_case(true; "relaxed_fee_payer")]
+fn test_debits_before_credits(relax_fee_payer_constraint: bool) {
     let (genesis_config, mint_keypair) =
         create_genesis_config_no_tx_fee_no_rent(2 * LAMPORTS_PER_SOL);
-    let (bank, _bank_forks) = Bank::new_with_bank_forks_for_tests(&genesis_config);
+    let mut bank = Bank::new_for_tests(&genesis_config);
+
+    let expected_transactions = if relax_fee_payer_constraint {
+        2
+    } else {
+        bank.deactivate_feature(&feature_set::relax_fee_payer_constraint::id());
+        1
+    };
+
+    let (bank, _bank_forks) = bank.wrap_with_bank_forks_for_tests();
     let keypair = Keypair::new();
     let tx0 = system_transaction::transfer(
         &keypair,
@@ -1658,13 +1668,18 @@ fn test_debits_before_credits() {
         2 * LAMPORTS_PER_SOL,
         genesis_config.hash(),
     );
-    let txs = [tx0, tx1];
+    let tx2 = system_transaction::transfer(&mint_keypair, &keypair.pubkey(), 1, Hash::new_unique());
+    let txs = [tx0, tx1, tx2];
     let results = bank.process_transactions(txs.iter());
-    assert!(results[0].is_err());
+    assert_eq!(results[0], Err(TransactionError::AccountNotFound));
+    assert_eq!(results[2], Err(TransactionError::BlockhashNotFound));
 
     // Assert bad transactions aren't counted.
-    assert_eq!(bank.transaction_count(), 1);
-    assert_eq!(bank.non_vote_transaction_count_since_restart(), 1);
+    assert_eq!(bank.transaction_count(), expected_transactions);
+    assert_eq!(
+        bank.non_vote_transaction_count_since_restart(),
+        expected_transactions
+    );
 }
 
 #[test]
@@ -12729,5 +12744,60 @@ fn test_new_for_block_tests_with_vote_account() {
     assert_eq!(
         bank.hash().to_string(),
         "8ZixvxzpQPr8zWvMyxoTsnFYFmUUKEytytyztDhgQ7oD"
+    );
+}
+
+#[test_case(false; "strict_fee_payer")]
+#[test_case(true; "relaxed_fee_payer")]
+fn test_commit_noop_transaction_no_fees(relax_fee_payer_constraint: bool) {
+    let leader = SlotLeader::new_unique();
+    let GenesisConfigInfo {
+        mut genesis_config, ..
+    } = create_genesis_config_with_leader(100 * LAMPORTS_PER_SOL, &leader.id, 3);
+    genesis_config.rent = Rent::default();
+    genesis_config.fee_rate_governor = FeeRateGovernor::new(5000, 0);
+
+    let mut bank = Bank::new_for_tests(&genesis_config);
+    if !relax_fee_payer_constraint {
+        bank.deactivate_feature(&feature_set::relax_fee_payer_constraint::id());
+    }
+    let (bank, _bank_forks) = bank.wrap_with_bank_forks_for_tests();
+
+    let unfunded = Keypair::new();
+    let transaction =
+        system_transaction::transfer(&unfunded, &Pubkey::new_unique(), 1, bank.last_blockhash());
+
+    let batch = bank.prepare_batch_for_tests(vec![transaction]);
+    let commit_results = bank
+        .load_execute_and_commit_transactions(
+            &batch,
+            ExecutionRecordingConfig::new_single_setting(false),
+            &mut ExecuteTimings::default(),
+            None,
+        )
+        .0;
+
+    // with relax_fee_payer_constraint, this is committed as a no-op
+    // otherwise, it is discarded as an error
+    if relax_fee_payer_constraint {
+        let committed = commit_results[0].as_ref().unwrap();
+        assert_eq!(committed.status, Err(TransactionError::AccountNotFound));
+        assert_eq!(committed.fee_details, FeeDetails::default());
+    } else {
+        assert_eq!(commit_results[0], Err(TransactionError::AccountNotFound));
+    }
+
+    // no fees have been accumulated
+    assert_eq!(
+        *bank.collector_fee_details.read().unwrap(),
+        CollectorFeeDetails::default()
+    );
+
+    // capitalization remains correct
+    bank.freeze();
+    add_root_and_flush_write_cache(&bank);
+    assert_eq!(
+        bank.capitalization(),
+        bank.calculate_capitalization_for_tests()
     );
 }

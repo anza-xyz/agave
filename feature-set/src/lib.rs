@@ -84,6 +84,7 @@ pub struct FeatureSnapshot {
     pub enable_tx_v1: bool,
     pub define_ltds_fee_only_semantics: bool,
     pub upgrade_bpf_stake_program_to_v5_1: bool,
+    pub relax_fee_payer_constraint: bool,
 }
 
 impl From<&AHashMap<Pubkey, u64>> for FeatureSnapshot {
@@ -188,6 +189,7 @@ impl From<&AHashMap<Pubkey, u64>> for FeatureSnapshot {
             enable_tx_v1: is_active(&enable_tx_v1::ID),
             define_ltds_fee_only_semantics: is_active(&define_ltds_fee_only_semantics::ID),
             upgrade_bpf_stake_program_to_v5_1: is_active(&upgrade_bpf_stake_program_to_v5_1::ID),
+            relax_fee_payer_constraint: is_active(&relax_fee_payer_constraint::ID),
         }
     }
 }
@@ -348,6 +350,7 @@ impl FeatureSet {
             enable_sha512_syscall: snapshot.enable_sha512_syscall,
             relax_post_exec_min_balance_check: snapshot.relax_post_exec_min_balance_check,
             define_ltds_fee_only_semantics: snapshot.define_ltds_fee_only_semantics,
+            relax_fee_payer_constraint: snapshot.relax_fee_payer_constraint,
         }
     }
 }
@@ -1531,6 +1534,10 @@ pub mod alpenglow_fast_leader_handover {
     solana_pubkey::declare_id!("FLHoAWBDjNh6zwmJ5i1NKK4KyD8otAiv7XxvmnFnVnKH");
 }
 
+pub mod relax_fee_payer_constraint {
+    solana_pubkey::declare_id!("FEEXbxUuKobtrt1qNK5pjtzbPQhsppBTrNNG74xu4mai");
+}
+
 pub static FEATURE_NAMES: LazyLock<AHashMap<Pubkey, &'static str>> = LazyLock::new(|| {
     [
         (secp256k1_program_enabled::id(), "secp256k1 program"),
@@ -2608,6 +2615,10 @@ pub static FEATURE_NAMES: LazyLock<AHashMap<Pubkey, &'static str>> = LazyLock::n
         (
             alpenglow_fast_leader_handover::id(),
             "SIMD-0326: Alpenglow fast leader handover",
+        ),
+        (
+            relax_fee_payer_constraint::id(),
+            "SIMD-0290: Relax block constraint requiring valid fee-payer",
         ),
         /*************** ADD NEW FEATURES HERE ***************/
         /***** ADD NEW FEATURE BOOL TO `FeatureSnapshot` *****/

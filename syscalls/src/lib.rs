@@ -2785,8 +2785,8 @@ mod tests {
         solana_sha256_hasher::hashv,
         solana_slot_hashes::{self as slot_hashes, SlotHashes},
         solana_stable_layout::stable_instruction::StableInstruction,
-        solana_stake_interface::stake_history::{
-            self, SIZE as STAKE_HISTORY_ACCOUNT_SIZE, StakeHistory, StakeHistoryEntry,
+        solana_stake_history::{
+            SIZE as STAKE_HISTORY_ACCOUNT_SIZE, StakeHistory, StakeHistoryEntry,
         },
         solana_sysvar_id::SysvarId,
         solana_transaction_context::instruction_accounts::InstructionAccount,
@@ -4613,9 +4613,9 @@ mod tests {
         let mut src_history = StakeHistory::default();
 
         let epochs = if filled {
-            stake_history::MAX_ENTRIES + 1
+            solana_stake_history::MAX_ENTRIES + 1
         } else {
-            stake_history::MAX_ENTRIES / 2
+            solana_stake_history::MAX_ENTRIES / 2
         } as u64;
 
         for epoch in 1..epochs {

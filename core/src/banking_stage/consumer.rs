@@ -6,7 +6,6 @@ use {
         scheduler_messages::MaxAge,
     },
     smallvec::SmallVec,
-    solana_fee::FeeFeatures,
     solana_measure::measure_us,
     solana_poh::{
         poh_recorder::PohRecorderError,
@@ -334,6 +333,7 @@ impl Consumer {
                     drop_on_failure: flags.drop_on_failure,
                     all_or_nothing: flags.all_or_nothing,
                     strict_nonce_size_check: true,
+                    drop_noop_transactions: true,
                 }
             ));
         execute_and_commit_timings.load_execute_us = load_execute_us;
@@ -484,7 +484,7 @@ impl Consumer {
             transaction,
             bank.fee_structure().lamports_per_signature,
             transaction_configuration.priority_fee_lamports,
-            FeeFeatures::from(bank.feature_set.as_ref()),
+            bank.fee_features(),
         );
         let (mut fee_payer_account, _slot) = bank
             .rc
@@ -981,6 +981,55 @@ mod tests {
 
         assert_eq!(get_block_cost(), expected_block_cost);
         assert_eq!(get_tx_count(), 2);
+    }
+
+    #[test]
+    fn test_bank_process_and_record_transactions_cost_tracker_noop() {
+        let TestFrame {
+            mint_keypair: _mint_keypair,
+            bank,
+            bank_forks: _bank_forks,
+            record_receiver: _record_receiver,
+            consumer,
+        } = setup_test(None);
+
+        let get_block_cost = || bank.read_cost_tracker().unwrap().block_cost();
+        let get_tx_count = || bank.read_cost_tracker().unwrap().transaction_count();
+        assert_eq!(get_block_cost(), 0);
+        assert_eq!(get_tx_count(), 0);
+
+        // TEST: a blockhash transaction with an invalid fee-payer is committed as a no-op
+        // on replay (with `relax_fee_payer_constraint`), but during block production
+        // `drop_noop_transactions` turns it into an error. It must not be committed and
+        // must leave the cost tracker untouched.
+        let transactions = sanitize_transactions(vec![system_transaction::transfer(
+            &Keypair::new(),
+            &Pubkey::new_unique(),
+            1,
+            bank.last_blockhash(),
+        )]);
+
+        let process_transactions_batch_output =
+            consumer.process_and_record_transactions(&bank, &transactions);
+
+        let ExecuteAndCommitTransactionsOutput {
+            transaction_counts,
+            commit_transactions_result,
+            ..
+        } = process_transactions_batch_output.execute_and_commit_transactions_output;
+
+        // the no-op transaction is not committed
+        assert_eq!(transaction_counts.processed_with_successful_result_count, 0);
+        assert_eq!(
+            commit_transactions_result.ok(),
+            Some(vec![CommitTransactionDetails::NotCommitted(
+                TransactionError::AccountNotFound
+            )])
+        );
+
+        // and the cost tracker is unchanged after processing it
+        assert_eq!(get_block_cost(), 0);
+        assert_eq!(get_tx_count(), 0);
     }
 
     #[test_case(false; "locked")]

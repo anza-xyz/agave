@@ -102,11 +102,11 @@ impl Committer {
             );
 
             if let Some(prioritization_fee_cache) = self.prioritization_fee_cache.as_ref() {
-                let committed_transactions = commit_results
+                let fee_paying_transactions = commit_results
                     .iter()
                     .zip(batch.sanitized_transactions())
-                    .filter_map(|(commit_result, tx)| commit_result.was_committed().then_some(tx));
-                prioritization_fee_cache.update(bank, committed_transactions);
+                    .filter_map(|(commit_result, tx)| commit_result.was_fee_paying().then_some(tx));
+                prioritization_fee_cache.update(bank, fee_paying_transactions);
             }
 
             self.collect_balances_and_send_status_batch(

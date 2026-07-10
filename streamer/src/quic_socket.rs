@@ -3,10 +3,9 @@
 use {
     agave_xdp::{
         ecn_codepoint::EcnCodepoint as XdpEcnCodepoint,
-        transmitter::{BytesTxPacket, XdpSender},
+        transmitter::{BytesTxPacket, TrySendError, XdpSender},
     },
     bytes::Bytes,
-    crossbeam_channel::TrySendError,
     quinn::{
         AsyncUdpSocket, Runtime, TokioRuntime, UdpPoller,
         udp::{EcnCodepoint as QuinnEcnCodepoint, RecvMeta, Transmit},
