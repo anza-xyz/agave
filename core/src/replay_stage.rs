@@ -280,11 +280,12 @@ impl ProcessActiveBanksContext {
     /// soft dead-slot transition.
     fn dead_slot_context<'a>(
         &'a self,
-        root: Slot,
         duplicate_slots_to_repair: &'a mut DuplicateSlotsToRepair,
         purge_repair_slot_counter: &'a mut PurgeRepairSlotCounter,
         tbft_structs: Option<&'a mut TowerBFTStructures>,
     ) -> DeadSlotContext<'a> {
+        let root = self.bank_forks.read().unwrap().root();
+
         DeadSlotContext {
             notifications: self.dead_slot_notifications(),
             duplicate: DeadSlotDuplicateContext {
@@ -3818,13 +3819,7 @@ impl ReplayStage {
         purge_repair_slot_counter: &mut PurgeRepairSlotCounter,
         tbft_structs: &mut Option<&mut TowerBFTStructures>,
     ) {
-        let root = process_active_banks_context
-            .bank_forks
-            .read()
-            .unwrap()
-            .root();
         let mut dead_slot_context = process_active_banks_context.dead_slot_context(
-            root,
             duplicate_slots_to_repair,
             purge_repair_slot_counter,
             tbft_structs.as_deref_mut(),
