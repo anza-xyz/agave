@@ -6,6 +6,7 @@ use {
     },
     smallvec::SmallVec,
     solana_cost_model::{cost_model::CostModel, transaction_cost::TransactionCost},
+    solana_hash::Hash,
     solana_measure::measure_us,
     solana_poh::{
         poh_recorder::PohRecorderError,
@@ -1463,6 +1464,7 @@ mod tests {
         assert_eq!(get_tx_count(), 0);
     }
 
+    #[test]
     fn test_actual_cost_limit_rejects_after_execution_before_record() {
         const TRANSACTION_COUNT: usize = 32;
 
