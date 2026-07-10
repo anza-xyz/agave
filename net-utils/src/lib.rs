@@ -61,6 +61,13 @@ pub const VALIDATOR_PORT_RANGE: PortRange = (
 
 pub const MINIMUM_VALIDATOR_PORT_RANGE_WIDTH: u16 = 26; // VALIDATOR_PORT_RANGE must be at least this wide
 
+/// Transport protocol used to reach a peer socket.
+#[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
+pub enum Protocol {
+    UDP,
+    QUIC,
+}
+
 pub(crate) const HEADER_LENGTH: usize = 4;
 pub(crate) const IP_ECHO_SERVER_RESPONSE_LENGTH: usize = HEADER_LENGTH + 23;
 
