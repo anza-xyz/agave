@@ -1375,7 +1375,7 @@ fn test_shrink_converts_zero_lamport_single_ref_account_to_tombstone() {
         slot1,
         10,
         DEFAULT_FILE_SIZE,
-        AccountsFileProvider::AppendVec,
+        accounts_db.accounts_file_provider,
     ));
     // store an obsolete account; it should not be marked ZLSR
     append_single_account_with_default_hash(
@@ -1505,7 +1505,7 @@ fn test_shrink_collect_carries_forward_existing_tombstones() {
         slot,
         100,
         DEFAULT_FILE_SIZE,
-        AccountsFileProvider::AppendVec,
+        accounts_db.accounts_file_provider,
     ));
     // An ordinary alive account, present in the index.
     append_single_account_with_default_hash(
@@ -1594,7 +1594,7 @@ fn test_fully_tombstoned_storage_reclaim() {
         slot,
         100,
         DEFAULT_FILE_SIZE,
-        AccountsFileProvider::AppendVec,
+        accounts_db.accounts_file_provider,
     ));
 
     // Every account is a zero-lamport account physically present but NOT in the index: i.e. the
@@ -2859,7 +2859,7 @@ fn test_select_candidates_by_total_usage_3_way_split_condition() {
         store1_slot,
         store1_slot as AccountsFileId,
         store_file_size,
-        AccountsFileProvider::AppendVec,
+        db.accounts_file_provider,
     ));
     db.storage.insert(Arc::clone(&store1));
     store1.num_alive_bytes.store(0, Ordering::Release);
@@ -2871,7 +2871,7 @@ fn test_select_candidates_by_total_usage_3_way_split_condition() {
         store2_slot,
         store2_slot as AccountsFileId,
         store_file_size,
-        AccountsFileProvider::AppendVec,
+        db.accounts_file_provider,
     ));
     db.storage.insert(Arc::clone(&store2));
     store2
@@ -2885,7 +2885,7 @@ fn test_select_candidates_by_total_usage_3_way_split_condition() {
         store3_slot,
         store3_slot as AccountsFileId,
         store_file_size,
-        AccountsFileProvider::AppendVec,
+        db.accounts_file_provider,
     ));
     db.storage.insert(Arc::clone(&store3));
     store3
@@ -2922,7 +2922,7 @@ fn test_select_candidates_by_total_usage_2_way_split_condition() {
         store1_slot,
         store1_slot as AccountsFileId,
         store_file_size,
-        AccountsFileProvider::AppendVec,
+        db.accounts_file_provider,
     ));
     db.storage.insert(Arc::clone(&store1));
     store1.num_alive_bytes.store(0, Ordering::Release);
@@ -2934,7 +2934,7 @@ fn test_select_candidates_by_total_usage_2_way_split_condition() {
         store2_slot,
         store2_slot as AccountsFileId,
         store_file_size,
-        AccountsFileProvider::AppendVec,
+        db.accounts_file_provider,
     ));
     db.storage.insert(Arc::clone(&store2));
     store2
@@ -2948,7 +2948,7 @@ fn test_select_candidates_by_total_usage_2_way_split_condition() {
         store3_slot,
         store3_slot as AccountsFileId,
         store_file_size,
-        AccountsFileProvider::AppendVec,
+        db.accounts_file_provider,
     ));
     db.storage.insert(Arc::clone(&store3));
     store3
@@ -2982,7 +2982,7 @@ fn test_select_candidates_by_total_usage_all_clean() {
         store1_slot,
         store1_slot as AccountsFileId,
         store_file_size,
-        AccountsFileProvider::AppendVec,
+        db.accounts_file_provider,
     ));
     db.storage.insert(Arc::clone(&store1));
     store1
@@ -2996,7 +2996,7 @@ fn test_select_candidates_by_total_usage_all_clean() {
         store2_slot,
         store2_slot as AccountsFileId,
         store_file_size,
-        AccountsFileProvider::AppendVec,
+        db.accounts_file_provider,
     ));
     db.storage.insert(Arc::clone(&store2));
     store2
@@ -4123,14 +4123,10 @@ define_accounts_db_test!(
         assert_eq!(storage.num_zero_lamport_single_ref_accounts(), num_keys);
 
         // assert the "alive_bytes_exclude_zero_lamport_single_ref_accounts"
-        match accounts_db.accounts_file_provider {
-            AccountsFileProvider::AppendVec => {
-                assert_eq!(
-                    storage.alive_bytes_exclude_zero_lamport_single_ref_accounts(),
-                    0
-                );
-            }
-        }
+        assert_eq!(
+            storage.alive_bytes_exclude_zero_lamport_single_ref_accounts(),
+            0,
+        );
     }
 );
 
@@ -5154,7 +5150,7 @@ fn test_shrink_productive() {
         slot,
         slot as AccountsFileId,
         file_size,
-        AccountsFileProvider::AppendVec,
+        accounts.accounts_file_provider,
     ));
     store.add_account(file_size as usize);
     assert!(!accounts.is_shrinking_productive(&store));
@@ -5164,7 +5160,7 @@ fn test_shrink_productive() {
         slot,
         slot as AccountsFileId,
         file_size,
-        AccountsFileProvider::AppendVec,
+        accounts.accounts_file_provider,
     ));
     store.add_account(file_size as usize / 2);
     store.add_account(file_size as usize / 4);
@@ -5187,7 +5183,7 @@ fn test_is_candidate_for_shrink() {
         0,
         1,
         store_file_size,
-        AccountsFileProvider::AppendVec,
+        accounts.accounts_file_provider,
     ));
     match accounts.shrink_ratio {
         AccountShrinkThreshold::TotalSpace { shrink_ratio } => {
