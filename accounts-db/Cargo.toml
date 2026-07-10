@@ -62,7 +62,7 @@ solana-address-lookup-table-interface = { workspace = true, features = [
 solana-bucket-map = { workspace = true }
 solana-clock = { workspace = true }
 solana-epoch-schedule = { workspace = true }
-solana-fee-calculator = { workspace = true, features = ["wincode"] }
+solana-fee-calculator = { workspace = true, features = ["serde", "wincode"] }
 solana-frozen-abi = { workspace = true, optional = true, features = [
     "frozen-abi",
 ] }

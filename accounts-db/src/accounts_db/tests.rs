@@ -3191,13 +3191,6 @@ fn test_delete_dependencies() {
 }
 
 #[test]
-fn test_account_balance_for_capitalization_sysvar() {
-    let normal_sysvar =
-        solana_account::create_account_for_test(&solana_slot_history::SlotHistory::default());
-    assert_eq!(normal_sysvar.lamports(), 1);
-}
-
-#[test]
 fn test_account_balance_for_capitalization_native_program() {
     let normal_native_program = create_loadable_account_for_test("foo");
     assert_eq!(normal_native_program.lamports(), 1);

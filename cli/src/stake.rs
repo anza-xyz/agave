@@ -14,7 +14,7 @@ use {
         spend_utils::{SpendAmount, resolve_spend_tx_and_check_account_balances},
     },
     clap::{App, AppSettings, Arg, ArgGroup, ArgMatches, SubCommand, value_t},
-    solana_account::{Account, from_account, state_traits::StateMut},
+    solana_account::Account,
     solana_clap_utils::{
         ArgConstant,
         compute_budget::{COMPUTE_UNIT_PRICE_ARG, ComputeUnitLimit, compute_unit_price_arg},
@@ -1754,7 +1754,7 @@ pub async fn process_deactivate_stake_account(
             .into());
         }
 
-        let vote_account_address = match stake_account.state() {
+        let vote_account_address = match wincode::deserialize::<StakeStateV2>(&stake_account.data) {
             Ok(stake_state) => match stake_state {
                 StakeStateV2::Stake(_, stake, _) => stake.delegation.voter_pubkey,
                 _ => {
@@ -2585,7 +2585,7 @@ async fn get_stake_account_state(
         ))
         .into());
     }
-    stake_account.state().map_err(|err| {
+    wincode::deserialize(&stake_account.data).map_err(|err| {
         CliError::RpcRequestError(format!(
             "Account data could not be deserialized to stake state: {err}"
         ))
@@ -2745,15 +2745,15 @@ pub async fn get_account_stake_state(
             "{stake_account_address:?} is not a stake account",
         )));
     }
-    match stake_account.state() {
+    match wincode::deserialize::<StakeStateV2>(&stake_account.data) {
         Ok(stake_state) => {
             let stake_history_account = rpc_client.get_account(&stake_history::id()).await?;
-            let stake_history: StakeHistory = bincode::deserialize(&stake_history_account.data)
+            let stake_history: StakeHistory = wincode::deserialize(&stake_history_account.data)
                 .map_err(|_| {
                     CliError::RpcRequestError("Failed to deserialize stake history".to_string())
                 })?;
             let clock_account = rpc_client.get_account(&clock::id()).await?;
-            let clock: Clock = from_account(&clock_account).ok_or_else(|| {
+            let clock: Clock = wincode::deserialize(&clock_account.data).map_err(|_| {
                 CliError::RpcRequestError("Failed to deserialize clock sysvar".to_string())
             })?;
             let new_rate_activation_epoch = get_feature_activation_epoch(
@@ -2818,7 +2818,7 @@ pub async fn process_show_stake_history(
 ) -> ProcessResult {
     let stake_history_account = rpc_client.get_account(&stake_history::id()).await?;
     let stake_history =
-        bincode::deserialize::<StakeHistory>(&stake_history_account.data).map_err(|_| {
+        wincode::deserialize::<StakeHistory>(&stake_history_account.data).map_err(|_| {
             CliError::RpcRequestError("Failed to deserialize stake history".to_string())
         })?;
 

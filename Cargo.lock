@@ -7352,7 +7352,7 @@ dependencies = [
  "solana-signature",
  "solana-signer",
  "solana-system-interface 3.2.0",
- "solana-sysvar",
+ "solana-sysvar-id",
  "solana-transaction",
  "solana-transaction-context",
  "solana-transaction-error",
@@ -7360,6 +7360,7 @@ dependencies = [
  "thiserror 2.0.18",
  "tokio",
  "tokio-serde",
+ "wincode",
 ]
 
 [[package]]
@@ -7961,6 +7962,7 @@ dependencies = [
  "solana-sdk-ids",
  "solana-sdk-macro",
  "solana-sysvar-id",
+ "wincode",
 ]
 
 [[package]]
@@ -8442,6 +8444,7 @@ dependencies = [
  "solana-sdk-ids",
  "solana-sdk-macro",
  "solana-sysvar-id",
+ "wincode",
 ]
 
 [[package]]
@@ -9065,6 +9068,7 @@ dependencies = [
  "solana-sdk-ids",
  "solana-sdk-macro",
  "solana-sysvar-id",
+ "wincode",
 ]
 
 [[package]]
@@ -10236,6 +10240,7 @@ dependencies = [
  "solana-transaction",
  "thiserror 2.0.18",
  "tokio",
+ "wincode",
 ]
 
 [[package]]
@@ -10802,6 +10807,7 @@ dependencies = [
  "solana-sysvar",
  "solana-transaction",
  "solana-version",
+ "wincode",
 ]
 
 [[package]]
@@ -11253,6 +11259,7 @@ dependencies = [
  "solana-slot-history",
  "solana-stake-history",
  "solana-sysvar-id",
+ "wincode",
 ]
 
 [[package]]
@@ -11798,6 +11805,8 @@ dependencies = [
  "solana-serialize-utils",
  "solana-short-vec",
  "solana-system-interface 3.2.0",
+ "solana-wincode-varint",
+ "wincode",
 ]
 
 [[package]]
