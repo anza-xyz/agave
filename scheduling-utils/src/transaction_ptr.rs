@@ -89,7 +89,11 @@ impl TransactionPtr {
 }
 
 /// A batch of transaction pointers that can be iterated over.
-pub struct TransactionPtrBatch<'a, M = ()> {
+///
+/// `CAPACITY` determines the fixed position of the metadata array within the backing allocation.
+/// The reader and writer of a batch must use the same `CAPACITY`; otherwise the reader locates
+/// metadata at the wrong offset.
+pub struct TransactionPtrBatch<'a, M = (), const CAPACITY: usize = MAX_TRANSACTIONS_PER_MESSAGE> {
     tx_ptr: NonNull<SharableTransactionRegion>,
     meta_ptr: NonNull<M>,
     num_transactions: usize,
@@ -98,19 +102,21 @@ pub struct TransactionPtrBatch<'a, M = ()> {
     _meta: PhantomData<M>,
 }
 
-impl<'a, M> TransactionPtrBatch<'a, M> {
+impl<'a, M, const CAPACITY: usize> TransactionPtrBatch<'a, M, CAPACITY> {
     pub const TRANSACTION_CORE_SIZE: usize = size_of::<SharableTransactionRegion>();
-    pub const TRANSACTION_CORE_END: usize =
-        Self::TRANSACTION_CORE_SIZE * MAX_TRANSACTIONS_PER_MESSAGE;
+    pub const TRANSACTION_CORE_END: usize = Self::TRANSACTION_CORE_SIZE * CAPACITY;
 
     pub const TRANSACTION_META_START: usize =
         Self::TRANSACTION_CORE_END.next_multiple_of(align_of::<M>());
-    pub const TRANSACTION_META_SIZE: usize = size_of::<M>() * MAX_TRANSACTIONS_PER_MESSAGE;
+    pub const TRANSACTION_META_SIZE: usize = size_of::<M>() * CAPACITY;
     pub const TRANSACTION_META_END: usize =
         Self::TRANSACTION_META_START + Self::TRANSACTION_META_SIZE;
 
     #[allow(dead_code, reason = "Invariant assertion")]
-    const TRANSACTION_BATCH_SIZE_ASSERT: () = assert!(Self::TRANSACTION_META_END <= 4096);
+    const TRANSACTION_BATCH_SIZE_ASSERT: () = {
+        assert!(CAPACITY <= MAX_TRANSACTIONS_PER_MESSAGE);
+        assert!(Self::TRANSACTION_META_END <= 4096);
+    };
 
     /// # Safety
     /// - [`SharableTransactionBatchRegion`] must reference a valid offset and length
@@ -118,10 +124,18 @@ impl<'a, M> TransactionPtrBatch<'a, M> {
     /// - ALL [`SharableTransactionRegion`]  within the batch must be valid.
     ///   See [`TransactionPtr::from_sharable_transaction_region`] for details.
     /// - `M` must match the actual `M` used within this allocation.
+    /// - `CAPACITY` must match the capacity used when the batch allocation was written. The
+    ///   capacity determines the offset of the metadata array.
     pub unsafe fn from_sharable_transaction_batch_region(
         sharable_transaction_batch_region: &SharableTransactionBatchRegion,
         allocator: &'a Allocator,
     ) -> Self {
+        let num_transactions = usize::from(sharable_transaction_batch_region.num_transactions);
+        assert!(
+            num_transactions <= CAPACITY,
+            "batch exceeds TransactionPtrBatch capacity"
+        );
+        let () = Self::TRANSACTION_BATCH_SIZE_ASSERT;
         // SAFETY: `sharable_transaction_batch_region.transactions_offset` was allocated by `allocator`.
         let base = unsafe {
             allocator.ptr_from_offset(sharable_transaction_batch_region.transactions_offset)
@@ -135,7 +149,7 @@ impl<'a, M> TransactionPtrBatch<'a, M> {
         Self {
             tx_ptr,
             meta_ptr,
-            num_transactions: usize::from(sharable_transaction_batch_region.num_transactions),
+            num_transactions,
             allocator,
 
             _meta: PhantomData,
