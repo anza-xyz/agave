@@ -647,7 +647,7 @@ impl Bank {
         reward_calc_tracer: Option<impl RewardCalcTracer>,
     ) -> StakeDelegationsMap {
         let stakes = self.stakes_cache.stakes();
-        let stake_delegations = stakes.stake_delegations_vec();
+        let stake_delegations = stakes.stake_delegations().indexed();
         // Obtain all unique voter pubkeys from stake delegations.
         fn merge(mut acc: HashSet<Pubkey>, other: HashSet<Pubkey>) -> HashSet<Pubkey> {
             if acc.len() < other.len() {
@@ -658,7 +658,8 @@ impl Bank {
         }
         let voter_pubkeys = thread_pool.install(|| {
             stake_delegations
-                .par_iter()
+                .par_iter_unfiltered()
+                .flatten()
                 .fold(
                     HashSet::default,
                     |mut voter_pubkeys, (_stake_pubkey, stake_account)| {
@@ -708,7 +709,7 @@ impl Bank {
                 .collect()
         });
         // Join stake accounts with vote-accounts.
-        for (stake_pubkey, stake_account) in stake_delegations.into_iter() {
+        for (stake_pubkey, stake_account) in stakes.stake_delegations().iter() {
             let delegation = stake_account.delegation();
             let Some(mut vote_delegations) =
                 stake_delegations_map.get_mut(&delegation.voter_pubkey)
@@ -3297,13 +3298,19 @@ fn test_bank_cloned_stake_delegations() {
         genesis_config.add_account(pubkey, account);
     }
 
-    let (bank, _bank_forks) = Bank::new_with_bank_forks_for_tests(&genesis_config);
+    let (bank, bank_forks) = Bank::new_with_bank_forks_for_tests(&genesis_config);
+    assert_eq!(bank.stakes_cache.stake_delegation_counts(), (1, 0, 0));
     bank.squash();
+    assert_eq!(bank.stakes_cache.stake_delegation_counts(), (1, 0, 0));
     let bank = Bank::new_from_parent(bank, SlotLeader::new_unique(), 1);
+    assert_eq!(bank.stakes_cache.stake_delegation_counts(), (1, 0, 0));
 
-    let stake_delegations = bank.stakes_cache.stakes().stake_delegations().clone();
-    assert_eq!(stake_delegations.len(), 1); // bootstrap validator has
-    // to have a stake delegation
+    {
+        let stakes = bank.stakes_cache.stakes();
+        let stake_delegations = stakes.stake_delegations();
+        assert_eq!(stake_delegations.len(), 1); // bootstrap validator has
+        // to have a stake delegation
+    }
 
     let (vote_balance, stake_balance) = {
         let rent = &bank.rent_collector().rent;
@@ -3354,9 +3361,46 @@ fn test_bank_cloned_stake_delegations() {
 
     bank.process_transaction(&transaction).unwrap();
 
-    let stake_delegations = bank.stakes_cache.stakes().stake_delegations().clone();
+    assert_eq!(bank.stakes_cache.stake_delegation_counts(), (1, 1, 0));
+    {
+        let stakes = bank.stakes_cache.stakes();
+        let stake_delegations = stakes.stake_delegations();
+        assert_eq!(stake_delegations.len(), 2);
+        assert!(stake_delegations.get(&stake_keypair.pubkey()).is_some());
+    }
+
+    let bank_slot = bank.slot();
+    let bank = bank_forks
+        .write()
+        .unwrap()
+        .insert(bank)
+        .clone_without_scheduler();
+    bank_forks.write().unwrap().set_root(bank_slot, None, None);
+    assert_eq!(bank.stakes_cache.stake_delegation_counts(), (1, 1, 0));
+    let stakes = bank.stakes_cache.stakes();
+    let stake_delegations = stakes.stake_delegations();
     assert_eq!(stake_delegations.len(), 2);
     assert!(stake_delegations.get(&stake_keypair.pubkey()).is_some());
+    drop(stakes);
+
+    let next_epoch_slot = bank
+        .epoch_schedule()
+        .get_first_slot_in_epoch(bank.epoch() + 1);
+    let next_epoch_bank = Bank::new_from_parent(bank, SlotLeader::new_unique(), next_epoch_slot);
+    assert_ne!(next_epoch_bank.stakes_cache.stake_delegation_counts().1, 0);
+    let next_epoch_bank = bank_forks
+        .write()
+        .unwrap()
+        .insert(next_epoch_bank)
+        .clone_without_scheduler();
+    bank_forks
+        .write()
+        .unwrap()
+        .set_root(next_epoch_slot, None, None);
+    assert_eq!(
+        next_epoch_bank.stakes_cache.stake_delegation_counts(),
+        (2, 0, 0)
+    );
 }
 
 #[test]

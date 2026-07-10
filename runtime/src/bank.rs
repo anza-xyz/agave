@@ -1760,7 +1760,7 @@ impl Bank {
         // update vote accounts with warmed up stakes before saving a
         // snapshot of stakes in epoch stakes
         let stakes = self.stakes_cache.stakes();
-        let stake_delegations = stakes.stake_delegations_vec();
+        let stake_delegations = stakes.stake_delegations().indexed();
         let (
             (
                 stake_history,
@@ -5796,6 +5796,10 @@ impl Bank {
     pub fn vote_accounts(&self) -> Arc<VoteAccountsHashMap> {
         let stakes = self.stakes_cache.stakes();
         Arc::from(stakes.vote_accounts())
+    }
+
+    pub(crate) fn root_stake_delegations(&self) {
+        self.stakes_cache.update_stake_delegations_snapshot();
     }
 
     /// Vote account for the given vote account pubkey.

@@ -9,7 +9,12 @@ use {
         stake_delegation::{delegation_activation_status, delegation_effective_stake},
         stake_history::StakeHistory,
     },
-    imbl::HashMap as ImblHashMap,
+    ahash::RandomState as AHashRandomState,
+    imbl::{
+        GenericHashMap as ImblGenericHashMap, HashMap as ImblHashMap, HashSet as ImblHashSet,
+        shared_ptr::DefaultSharedPtr,
+    },
+    indexmap::IndexMap,
     log::error,
     num_derive::ToPrimitive,
     rayon::{ThreadPool, prelude::*},
@@ -18,6 +23,7 @@ use {
     solana_accounts_db::utils::create_account_shared_data,
     solana_clock::Epoch,
     solana_leader_schedule::SlotLeader,
+    solana_nohash_hasher::BuildNoHashHasher,
     solana_pubkey::Pubkey,
     solana_stake_interface::{
         program as stake_program,
@@ -26,16 +32,19 @@ use {
     solana_vote::vote_account::{VoteAccount, VoteAccounts, VoteAccountsHashMap},
     solana_vote_interface::state::VoteStateVersions,
     std::{
-        collections::HashMap,
+        borrow::Cow,
+        collections::{HashMap, HashSet},
+        iter::Enumerate,
         sync::{Arc, RwLock, RwLockReadGuard},
     },
     thiserror::Error,
-    wincode::{SchemaWrite, containers::FromIntoIterator, len::BincodeLen},
+    wincode::SchemaWrite,
 };
 #[cfg(feature = "dev-context-only-utils")]
 use {
     qualifier_attr::{field_qualifiers, qualifiers},
     solana_stake_interface::state::Stake,
+    std::collections::BTreeMap,
 };
 
 mod serde_stakes;
@@ -182,6 +191,477 @@ impl StakesCache {
         let mut stakes = self.0.write().unwrap();
         stakes.refresh_delegated_stakes(new_rate_activation_epoch, use_fixed_point_stake_math);
     }
+
+    pub(crate) fn update_stake_delegations_snapshot(&self) {
+        self.0.write().unwrap().update_stake_delegations_snapshot();
+    }
+
+    #[cfg(test)]
+    pub(crate) fn stake_delegation_counts(&self) -> (usize, usize, usize) {
+        let stakes = self.0.read().unwrap();
+        let StakeDelegationsMaps {
+            snapshot,
+            overrides: _,
+            additions,
+            removals,
+        } = &stakes.stake_delegations;
+        (snapshot.len(), additions.len(), removals.len())
+    }
+}
+
+pub(crate) type StakeDelegationsSnapshot<T> = IndexMap<Pubkey, T, AHashRandomState>;
+
+/// Indexed overlay view of stake delegations.
+///
+/// Unrooted delegations override rooted delegations with the same pubkey. Unrooted delegations
+/// without a rooted counterpart are appended after the rooted entries, and unrooted removals hide
+/// rooted entries until the fork is squashed.
+pub(crate) struct IndexedStakeDelegations<'a, T: Clone> {
+    snapshot: Arc<StakeDelegationsSnapshot<T>>,
+    overrides: HashMap<&'a usize, &'a T, BuildNoHashHasher<usize>>,
+    additions: Vec<(&'a Pubkey, &'a T)>,
+    removals: HashSet<&'a Pubkey>,
+}
+
+impl<'a, T: Clone + Sync> IndexedStakeDelegations<'a, T> {
+    pub(crate) fn len_unfiltered(&self) -> usize {
+        let Self {
+            snapshot,
+            additions,
+            ..
+        } = self;
+        snapshot.len().wrapping_add(additions.len())
+    }
+
+    /// Pending rooted removals yield `None` so the iterator remains indexed.
+    pub(crate) fn par_iter_unfiltered(
+        &self,
+    ) -> impl IndexedParallelIterator<Item = Option<(&Pubkey, &T)>> {
+        let Self {
+            snapshot,
+            overrides,
+            additions,
+            removals,
+            ..
+        } = self;
+        snapshot
+            .par_iter()
+            .enumerate()
+            .map(move |(index, (pubkey, snapshot_stake_delegation))| {
+                (!removals.contains(pubkey)).then(|| {
+                    let stake_delegation = overrides
+                        .get(&index)
+                        .map(|&stake_delegation| stake_delegation)
+                        .unwrap_or(snapshot_stake_delegation);
+                    (pubkey, stake_delegation)
+                })
+            })
+            .chain(
+                additions
+                    .par_iter()
+                    .map(|&(pubkey, stake_delegation)| Some((pubkey, stake_delegation))),
+            )
+    }
+
+    pub(crate) fn par_iter_filtered(&self) -> impl ParallelIterator<Item = (&Pubkey, &T)> {
+        self.par_iter_unfiltered().flatten()
+    }
+}
+
+#[cfg_attr(feature = "dev-context-only-utils", qualifiers(pub))]
+pub(crate) struct StakeDelegationsIter<'a, T: Clone> {
+    stake_delegations_snapshot: Enumerate<indexmap::map::Iter<'a, Pubkey, T>>,
+    stake_delegations_overrides:
+        &'a ImblGenericHashMap<usize, T, BuildNoHashHasher<usize>, DefaultSharedPtr>,
+    stake_delegations_additions:
+        imbl::hashmap::Iter<'a, Pubkey, T, imbl::shared_ptr::DefaultSharedPtr>,
+    stake_delegations_removals: &'a ImblHashSet<Pubkey>,
+}
+
+impl<'a, T: Clone> Iterator for StakeDelegationsIter<'a, T> {
+    type Item = (&'a Pubkey, &'a T);
+
+    fn next(&mut self) -> Option<Self::Item> {
+        let Self {
+            stake_delegations_snapshot,
+            stake_delegations_overrides,
+            stake_delegations_additions,
+            stake_delegations_removals,
+        } = self;
+        let stake_delegation = loop {
+            if let Some((index, (pubkey, snapshot_stake_delegation))) =
+                stake_delegations_snapshot.next()
+            {
+                if stake_delegations_removals.contains(&pubkey) {
+                    continue;
+                }
+                let stake_delegation = stake_delegations_overrides
+                    .get(&index)
+                    .unwrap_or(snapshot_stake_delegation);
+                break (pubkey, stake_delegation);
+            } else if let Some((pubkey, stake_delegation)) = stake_delegations_additions.next() {
+                break (pubkey, stake_delegation);
+            } else {
+                return None;
+            }
+        };
+        Some(stake_delegation)
+    }
+}
+
+impl<'a, T: Clone> ExactSizeIterator for StakeDelegationsIter<'a, T> {
+    fn len(&self) -> usize {
+        let Self {
+            stake_delegations_snapshot,
+            stake_delegations_additions,
+            stake_delegations_removals,
+            ..
+        } = self;
+        stake_delegations_snapshot
+            .len()
+            .wrapping_add(stake_delegations_additions.len())
+            .wrapping_add(stake_delegations_removals.len())
+    }
+}
+
+#[cfg_attr(feature = "frozen-abi", derive(AbiExample, StableAbi, StableAbiSample))]
+#[derive(Clone, Debug, Serialize)]
+#[cfg_attr(feature = "dev-context-only-utils", qualifiers(pub))]
+pub(crate) struct StakeDelegationsMaps<T: Clone> {
+    /// Snapshot of stake delegations, that can be updated with new entries
+    /// from `stake_delegations_overrides`, `stake_delegations_additions`, and
+    /// `stake_delegations_removals` via [`Self::update_stake_delegations_snapshot`].
+    #[cfg_attr(
+        feature = "frozen-abi",
+        stable_abi_sample(with = "Arc::new(sample_collection_sized(rng, SequenceLenMax(1)))")
+    )]
+    snapshot: Arc<StakeDelegationsSnapshot<T>>,
+
+    /// Overrides of stake delegations from `stake_delegations_snapshot`, that
+    /// come from committed transactions. They can be applied to the snapshot
+    /// via [`Self::update_stake_delegations_snapshot`].
+    #[cfg_attr(
+        feature = "frozen-abi",
+        stable_abi_sample(with = "sample_collection_sized(rng, SequenceLenMax(1))")
+    )]
+    overrides: ImblGenericHashMap<usize, T, BuildNoHashHasher<usize>, DefaultSharedPtr>,
+
+    /// Additions of stake delegations that are not part of
+    /// `stake_delegations_snapshot`, that come from commited transactions.
+    /// They can be applied to the snapshot via
+    /// [`Self::update_stake_delegations_snapshot`].
+    #[cfg_attr(
+        feature = "frozen-abi",
+        stable_abi_sample(with = "sample_collection_sized(rng, SequenceLenMax(1))")
+    )]
+    additions: ImblHashMap<Pubkey, T>,
+
+    /// Stale delegation removals of `stake_delegations_snapshot` elements,
+    /// that come from commited transactions. The removals are applied with
+    /// [`Self::update_stake_delegations_snapshot`].
+    #[cfg_attr(
+        feature = "frozen-abi",
+        stable_abi_sample(with = "sample_collection_sized(rng, SequenceLenMax(1))")
+    )]
+    removals: ImblHashSet<Pubkey>,
+}
+
+impl<T: Clone> Default for StakeDelegationsMaps<T> {
+    fn default() -> Self {
+        Self {
+            snapshot: Arc::new(StakeDelegationsSnapshot::default()),
+            overrides: ImblGenericHashMap::default(),
+            additions: ImblHashMap::default(),
+            removals: ImblHashSet::default(),
+        }
+    }
+}
+
+impl<'a, T: Clone> StakeDelegationsMaps<T> {
+    fn update_snapshot(&mut self) {
+        if self.is_empty() {
+            return;
+        }
+        let Self {
+            snapshot,
+            overrides,
+            additions,
+            removals,
+        } = self;
+        let snapshot = Arc::make_mut(snapshot);
+        for (ix, new_stake_delegation) in std::mem::take(overrides) {
+            let (_, old_stake_delegation) = snapshot.get_index_mut(ix)
+                .unwrap_or_else(|| panic!(
+                    "index `{ix}` present in `stake_delegation_overrides` does not exist in `stake_delegations_snapshot`"));
+            *old_stake_delegation = new_stake_delegation;
+        }
+        for pubkey in std::mem::take(removals) {
+            snapshot.swap_remove(&pubkey);
+        }
+        for (pubkey, stake_delegation) in std::mem::take(additions) {
+            snapshot.insert(pubkey, stake_delegation);
+        }
+    }
+
+    pub(crate) fn get(&self, pubkey: &Pubkey) -> Option<&T> {
+        let Self {
+            snapshot,
+            overrides,
+            additions,
+            removals,
+        } = self;
+        additions.get(pubkey).or_else(|| {
+            if let Some((index, _pubkey, snapshot_stake_delegation)) = snapshot.get_full(pubkey) {
+                if removals.contains(pubkey) {
+                    None
+                } else {
+                    Some(overrides.get(&index).unwrap_or(snapshot_stake_delegation))
+                }
+            } else {
+                None
+            }
+        })
+    }
+
+    pub(crate) fn len(&self) -> usize {
+        let Self {
+            snapshot,
+            additions,
+            removals,
+            ..
+        } = self;
+        snapshot
+            .len()
+            .wrapping_add(additions.len())
+            .wrapping_sub(removals.len())
+    }
+
+    pub(crate) fn is_empty(&self) -> bool {
+        let Self {
+            snapshot,
+            overrides,
+            additions,
+            removals,
+        } = self;
+        snapshot.is_empty() && overrides.is_empty() && additions.is_empty() && removals.is_empty()
+    }
+
+    /// Returns an iterator of stake delegations.
+    ///
+    /// # Performance
+    ///
+    /// Stake delegations consist of a snapshot represented by `[IndexMap]` and
+    /// overlay changes represented by `[imbl::HashMap]`s. `[imbl::HashMap]` is
+    /// a [hash array mapped trie (HAMT)][hamt], which means that inserts,
+    /// deletions and lookups are average-case O(1) and worst-case O(log n).
+    /// However, the performance of iterations is poor due to depth-first
+    /// traversal and jumps. Currently it's also impossible to iterate over it
+    /// with [`rayon`].
+    ///
+    /// This method is a good choice if the caller iterates over stake
+    /// delegations only once. If there more subsequent iterations needed,
+    /// use [`StakeDelegationsMaps::indexed`].
+    ///
+    /// [hamt]: https://en.wikipedia.org/wiki/Hash_array_mapped_trie
+    pub(crate) fn iter(&'a self) -> StakeDelegationsIter<'a, T> {
+        self.into_iter()
+    }
+
+    /// Collects stake delegations into an [`IndexedStakeDelegations`],
+    /// which then can be used for multiple subsequent iterations and/or
+    /// indexed parallel iteration with [`rayon`].
+    ///
+    /// # Performance
+    ///
+    /// The execution of this method collects elements of multiple [`imbl::HashMap`]
+    /// fields, which are [hash array mapped tries (HAMT)][hamt], so that
+    /// operation involves a depth-first traversal with jumps. However, it's
+    /// still a reasonable tradeoff if the caller iterates over these elements
+    /// multiple times or wants to use [`rayon`].
+    ///
+    /// [hamt]: https://en.wikipedia.org/wiki/Hash_array_mapped_trie
+    pub(crate) fn indexed(&'a self) -> IndexedStakeDelegations<'a, T> {
+        let Self {
+            snapshot,
+            overrides,
+            additions,
+            removals,
+            ..
+        } = self;
+        let snapshot = Arc::clone(snapshot);
+        // Getting a value from `ImblHashMap` is an O(log n) operation. Given
+        // that we have to perform a lookup for every element from
+        // `stake_delegations_snapshot`, that would slow down every iteration.
+        // To avoid that, collect the values into a regular `HashMap`. The
+        // tradeoff of collecting once for faster iterations.
+        let overrides = overrides.iter().collect();
+        // Iterating over `ImblHashMap` is also slow, and involves a
+        // depth-first traversal with jumps. Similarly, collect it once, so
+        // then iteration becomes faster.
+        let additions = additions.iter().collect();
+        let removals = removals.iter().collect();
+        IndexedStakeDelegations {
+            snapshot,
+            overrides,
+            additions,
+            removals,
+        }
+    }
+}
+
+impl<'a> StakeDelegationsMaps<StakeAccount> {
+    fn upsert_stake_delegation(
+        &'a mut self,
+        stake_pubkey: Pubkey,
+        stake_account: StakeAccount,
+    ) -> Option<Cow<'a, StakeAccount>> {
+        let Self {
+            snapshot,
+            overrides,
+            additions,
+            removals,
+        } = self;
+        match snapshot.get_full(&stake_pubkey) {
+            Some((index, _pubkey, snapshot_stake_account)) => {
+                removals.remove(&stake_pubkey);
+                // Insert new `stake_account` to the overrides.
+                // After insertion, we need to subtract the old stake - which
+                // might be represented either by an already existing override
+                // entry, or the snapshot entry.
+                let old_stake_account = overrides
+                    .insert(index, stake_account)
+                    .map(Cow::Owned)
+                    .unwrap_or_else(|| Cow::Borrowed(snapshot_stake_account));
+                Some(old_stake_account)
+            }
+            None => {
+                // Check if stake exists in additions by removing and re-inserting
+                // This is necessary because ImblHashMap doesn't provide a get+insert atomically
+                if let Some(old_stake_account) = additions.remove(&stake_pubkey) {
+                    // Stake already existed - re-insert new account and return old
+                    // old_stake_account is already owned, just return it wrapped in Cow
+                    additions.insert(stake_pubkey, stake_account);
+                    Some(Cow::Owned(old_stake_account))
+                } else {
+                    // New stake - just insert
+                    additions.insert(stake_pubkey, stake_account);
+                    None
+                }
+            }
+        }
+    }
+}
+
+impl<'a, T: Clone> IntoIterator for &'a StakeDelegationsMaps<T> {
+    type Item = <Self::IntoIter as Iterator>::Item;
+    type IntoIter = StakeDelegationsIter<'a, T>;
+
+    fn into_iter(self) -> Self::IntoIter {
+        let StakeDelegationsMaps {
+            snapshot: stake_delegations_snapshot,
+            overrides: stake_delegations_overrides,
+            additions: stake_delegations_additions,
+            removals: stake_delegations_removals,
+        } = self;
+        let stake_delegations_snapshot = stake_delegations_snapshot.iter().enumerate();
+        let stake_delegations_additions = stake_delegations_additions.iter();
+        StakeDelegationsIter {
+            stake_delegations_snapshot,
+            stake_delegations_overrides,
+            stake_delegations_additions,
+            stake_delegations_removals,
+        }
+    }
+}
+
+#[cfg(feature = "dev-context-only-utils")]
+impl<T: Clone + PartialEq> PartialEq for StakeDelegationsMaps<T> {
+    fn eq(&self, other: &Self) -> bool {
+        // Collect into `BTreeMap` to ensure the same order.
+        let self_stakes: BTreeMap<_, _> = self.iter().collect();
+        let other_stakes: BTreeMap<_, _> = other.iter().collect();
+        self_stakes.eq(&other_stakes)
+    }
+}
+
+mod wincode_compat {
+    use {
+        std::borrow::Borrow,
+        wincode::{
+            SchemaWrite, WriteResult, config::Config, containers::FromIntoIterator, len::BincodeLen,
+        },
+    };
+
+    use super::{Pubkey, StakeDelegationsIter, StakeDelegationsMaps};
+
+    // A wrapper bridging `StakeDelegationsMaps` with wincode.
+    //
+    // Wincode's `containers::FromIntoIterator` has the following trait bounds
+    // for the wrapped type `Coll`:
+    //
+    // - `Coll: IntoIterator`
+    // - `for<'a> &'a Coll: IntoIterator<Item: SchemaWrite<C>, IntoIter: ExactSizeIterator>`
+    //
+    // Which practically means that `Coll` needs the following `impl` blocks:
+    //
+    // - `impl IntoIterator for Coll`
+    // - `impl IntoIterator for &'a Coll`
+    //
+    // Implementing the first one for `StakeDelegationsMaps<T>` is difficult,
+    // because:
+    //
+    // - We can't move out of the `Arc<StakeDelegationsSnapshot<T>>` to yield
+    //   owned `(Pubkey, T)` pair from it.
+    // - Yielding references is not possible, since `self` and all its
+    //   non-`Arc` fields would be owned inside the `into_iter()` method and we
+    //   can't return references to the local values.
+    //
+    // It would be great if `FromIntoIterator` worked for types having only
+    // `impl IntoIterator for &'a Coll`, but until that happens, we need to
+    // use this workaround.
+    pub(crate) struct StakeDelegationsMapsRef<'a, T: Clone>(&'a StakeDelegationsMaps<T>);
+
+    impl<'a, T: Clone> IntoIterator for StakeDelegationsMapsRef<'a, T> {
+        type Item = <Self::IntoIter as Iterator>::Item;
+        type IntoIter = StakeDelegationsIter<'a, T>;
+
+        fn into_iter(self) -> Self::IntoIter {
+            self.0.into_iter()
+        }
+    }
+
+    impl<'a, T: Clone> IntoIterator for &StakeDelegationsMapsRef<'a, T> {
+        type Item = <Self::IntoIter as Iterator>::Item;
+        type IntoIter = StakeDelegationsIter<'a, T>;
+
+        fn into_iter(self) -> Self::IntoIter {
+            self.0.into_iter()
+        }
+    }
+
+    unsafe impl<C: Config, T: Clone> SchemaWrite<C> for StakeDelegationsMaps<T>
+    where
+        C: Config,
+        T: Clone + SchemaWrite<C>,
+        for<'a> (&'a Pubkey, &'a T): Borrow<(&'a Pubkey, &'a <T as SchemaWrite<C>>::Src)>,
+    {
+        type Src = Self;
+
+        fn size_of(src: &Self::Src) -> WriteResult<usize> {
+            let stake_delegations = StakeDelegationsMapsRef(&src);
+            <FromIntoIterator<StakeDelegationsMapsRef<'_, T>, BincodeLen> as SchemaWrite<C>>::size_of(
+                &stake_delegations,
+            )
+        }
+
+        fn write(writer: impl wincode::io::Writer, src: &Self::Src) -> WriteResult<()> {
+            let stake_delegations = StakeDelegationsMapsRef(&src);
+            <FromIntoIterator<StakeDelegationsMapsRef<'_, T>, BincodeLen> as SchemaWrite<C>>::write(
+                writer,
+                &stake_delegations,
+            )
+        }
+    }
 }
 
 /// The generic type T is either Delegation or StakeAccount.
@@ -192,7 +672,7 @@ impl StakesCache {
 /// the need to load the stake account from accounts-db when working with
 /// stake-delegations.
 #[cfg_attr(feature = "frozen-abi", derive(AbiExample, StableAbi, StableAbiSample))]
-#[derive(Default, Clone, PartialEq, Debug, Serialize, SchemaWrite)]
+#[derive(Default, Clone, Debug, Serialize, SchemaWrite)]
 #[cfg_attr(
     feature = "dev-context-only-utils",
     field_qualifiers(
@@ -204,17 +684,13 @@ impl StakesCache {
         stake_history(pub),
     )
 )]
+#[cfg_attr(feature = "dev-context-only-utils", derive(PartialEq))]
 pub struct Stakes<T: Clone> {
     /// vote accounts
     vote_accounts: VoteAccounts,
 
     /// stake_delegations
-    #[cfg_attr(
-        feature = "frozen-abi",
-        stable_abi_sample(with = "sample_collection_sized(rng, SequenceLenMax(1))")
-    )]
-    #[wincode(with = "FromIntoIterator<ImblHashMap<Pubkey, T>, BincodeLen>")]
-    stake_delegations: ImblHashMap<Pubkey, T>,
+    stake_delegations: StakeDelegationsMaps<T>,
 
     /// current effective stake delegated to each vote account pubkey
     #[cfg_attr(feature = "frozen-abi", stable_abi_sample(with = "Default::default()"))]
@@ -237,7 +713,7 @@ impl<T: Clone> Stakes<T> {
         Stakes {
             vote_accounts,
             epoch,
-            stake_delegations: ImblHashMap::new(),
+            stake_delegations: StakeDelegationsMaps::default(),
             delegated_stakes: DelegatedStakes::default(),
             unused: 0,
             stake_history: StakeHistory::default(),
@@ -264,6 +740,10 @@ impl<T: Clone> Stakes<T> {
         self.vote_accounts.staked_nodes()
     }
 
+    fn update_stake_delegations_snapshot(&mut self) {
+        self.stake_delegations.update_snapshot();
+    }
+
     /// Destructure self and return the fields needed by EpochStakes
     pub(crate) fn into_epoch_stakes_fields(self) -> (Epoch, VoteAccounts, StakeHistory) {
         let Self {
@@ -287,7 +767,7 @@ impl Stakes<StakeAccount> {
         let stake_history = StakeHistory::default();
         let mut vote_accounts = VoteAccountsHashMap::default();
         let mut delegated_stakes = DelegatedStakes::default();
-        let mut stake_delegations = ImblHashMap::new();
+        let mut snapshot = IndexMap::default();
         let epoch = 0;
 
         for (pubkey, account) in accounts {
@@ -317,7 +797,7 @@ impl Stakes<StakeAccount> {
                 if stake != 0 {
                     *delegated_stakes.entry(delegation.voter_pubkey).or_default() += stake;
                 }
-                stake_delegations.insert(*pubkey, stake_account);
+                snapshot.insert(*pubkey, stake_account);
             }
         }
 
@@ -326,9 +806,16 @@ impl Stakes<StakeAccount> {
             vote_accounts.add_stake(vote_pubkey, *stake);
         }
 
+        let snapshot = Arc::new(snapshot);
+
         Self {
             vote_accounts,
-            stake_delegations,
+            stake_delegations: StakeDelegationsMaps {
+                snapshot,
+                overrides: ImblGenericHashMap::new(),
+                additions: ImblHashMap::new(),
+                removals: ImblHashSet::new(),
+            },
             delegated_stakes,
             unused: 0,
             epoch,
@@ -348,13 +835,14 @@ impl Stakes<StakeAccount> {
     where
         F: Fn(&Pubkey) -> Option<AccountSharedData> + Sync,
     {
-        let stake_delegations = stakes
+        let snapshot = stakes
             .stake_delegations
             .into_par_iter()
             // We use fold/reduce to aggregate the results, which does a bit more work than calling
-            // collect()/collect_vec_list() and then imbl::HashMap::from_iter(collected.into_iter()),
-            // but it does it in background threads, so effectively it's faster.
-            .try_fold(ImblHashMap::new, |mut map, (pubkey, delegation)| {
+            // collect()/collect_vec_list(), then IndexMap::from_iter(collected.into_iter()) and
+            // imbl::HashMap::from_iter(collected.into_iter()), but it does it in background threads,
+            // so effectively it's faster.
+            .try_fold(IndexMap::default, |mut map, (pubkey, delegation)| {
                 let Some(stake_account) = get_account(&pubkey) else {
                     return Err(Error::StakeAccountNotFound(pubkey));
                 };
@@ -381,7 +869,11 @@ impl Stakes<StakeAccount> {
                     Err(Error::InvalidDelegation(pubkey))
                 }
             })
-            .try_reduce(ImblHashMap::new, |a, b| Ok(a.union(b)))?;
+            .try_reduce(IndexMap::default, |mut a, b| {
+                a.extend(b);
+                Ok(a)
+            })?;
+        let snapshot = Arc::new(snapshot);
 
         // Assert that cached vote accounts are consistent with accounts-db.
         //
@@ -400,7 +892,12 @@ impl Stakes<StakeAccount> {
 
         Ok(Self {
             vote_accounts: stakes.vote_accounts.clone(),
-            stake_delegations,
+            stake_delegations: StakeDelegationsMaps {
+                snapshot,
+                overrides: ImblGenericHashMap::new(),
+                additions: ImblHashMap::new(),
+                removals: ImblHashSet::new(),
+            },
             delegated_stakes: DelegatedStakes::default(),
             unused: stakes.unused,
             epoch: stakes.epoch,
@@ -412,14 +909,19 @@ impl Stakes<StakeAccount> {
     pub fn new_for_tests(
         epoch: Epoch,
         vote_accounts: VoteAccounts,
-        stake_delegations: ImblHashMap<Pubkey, StakeAccount>,
+        snapshot: Arc<StakeDelegationsSnapshot<StakeAccount>>,
     ) -> Self {
         let stake_history = StakeHistory::default();
         let delegated_stakes =
-            Self::calculate_delegated_stakes(&stake_delegations, epoch, &stake_history, None, true);
+            Self::calculate_delegated_stakes(snapshot.values(), epoch, &stake_history, None, true);
         Self {
             vote_accounts,
-            stake_delegations,
+            stake_delegations: StakeDelegationsMaps {
+                snapshot,
+                overrides: ImblGenericHashMap::new(),
+                additions: ImblHashMap::new(),
+                removals: ImblHashSet::new(),
+            },
             delegated_stakes,
             unused: 0,
             epoch,
@@ -436,7 +938,7 @@ impl Stakes<StakeAccount> {
         next_epoch: Epoch,
         thread_pool: &ThreadPool,
         new_rate_activation_epoch: Option<Epoch>,
-        stake_delegations: &[(&Pubkey, &StakeAccount)],
+        stake_delegations: &IndexedStakeDelegations<'_, StakeAccount>,
         use_fixed_point_stake_math: bool,
     ) -> (
         StakeHistory,
@@ -448,7 +950,7 @@ impl Stakes<StakeAccount> {
         // prev epoch.
         let (stake_history_entry, effective_delegated_stakes) = thread_pool.install(|| {
             stake_delegations
-                .par_iter()
+                .par_iter_filtered()
                 .fold(
                     || (StakeActivationStatus::default(), HashMap::default()),
                     |(acc, mut delegated_stakes), (_stake_pubkey, stake_account)| {
@@ -514,15 +1016,15 @@ impl Stakes<StakeAccount> {
         self.delegated_stakes = delegated_stakes;
     }
 
-    fn calculate_delegated_stakes(
-        stake_delegations: &ImblHashMap<Pubkey, StakeAccount>,
+    fn calculate_delegated_stakes<'a>(
+        stake_delegations: impl IntoIterator<Item = &'a StakeAccount>,
         epoch: Epoch,
         stake_history: &StakeHistory,
         new_rate_activation_epoch: Option<Epoch>,
         use_fixed_point_stake_math: bool,
     ) -> DelegatedStakes {
         let mut delegated_stakes = DelegatedStakes::new();
-        for stake_account in stake_delegations.values() {
+        for stake_account in stake_delegations {
             let delegation = stake_account.delegation();
             let stake = delegation_effective_stake(
                 delegation,
@@ -543,13 +1045,15 @@ impl Stakes<StakeAccount> {
         new_rate_activation_epoch: Option<Epoch>,
         use_fixed_point_stake_math: bool,
     ) {
-        self.delegated_stakes = Self::calculate_delegated_stakes(
-            &self.stake_delegations,
+        let stake_delegations = self.stake_delegations().iter();
+        let delegated_stakes = Self::calculate_delegated_stakes(
+            stake_delegations.map(|(_pubkey, stake_account)| stake_account),
             self.epoch,
             &self.stake_history,
             new_rate_activation_epoch,
             use_fixed_point_stake_math,
         );
+        self.delegated_stakes = delegated_stakes;
     }
 
     fn add_delegated_stake(&mut self, voter_pubkey: Pubkey, stake: u64) {
@@ -585,19 +1089,55 @@ impl Stakes<StakeAccount> {
         new_rate_activation_epoch: Option<Epoch>,
         use_fixed_point_stake_math: bool,
     ) {
-        if let Some(stake_account) = self.stake_delegations.remove(stake_pubkey) {
-            let removed_delegation = stake_account.delegation();
-            let removed_stake = delegation_effective_stake(
-                removed_delegation,
+        let Self {
+            stake_delegations, ..
+        } = self;
+        let StakeDelegationsMaps {
+            snapshot,
+            overrides,
+            additions,
+            removals,
+        } = stake_delegations;
+        let (voter_pubkey, stake) = if let Some(stake_account) = additions.remove(stake_pubkey) {
+            // The stake delegation we're removing is added in
+            // `stake_delegations_additions`.
+            let delegation = stake_account.delegation();
+            let voter_pubkey = delegation.voter_pubkey;
+            let stake = delegation_effective_stake(
+                delegation,
                 self.epoch,
                 &self.stake_history,
                 new_rate_activation_epoch,
                 use_fixed_point_stake_math,
             );
-            self.sub_delegated_stake(&removed_delegation.voter_pubkey, removed_stake);
-            self.vote_accounts
-                .sub_stake(&removed_delegation.voter_pubkey, removed_stake);
-        }
+            (voter_pubkey, stake)
+        } else if let Some((ix, _, stake_account)) = snapshot.get_full(stake_pubkey) {
+            // The stake delegation we're removing is present in
+            // `stake_delegations_snapshot`, schedule its removal.
+            removals.insert(*stake_pubkey);
+            // Check whether it was updated in `stake_delegation_overrides`.
+            // If yes, use the up-to-date value for calculating the
+            // effective stake.
+            let stake_account = overrides
+                .remove(&ix)
+                .map(Cow::Owned)
+                .unwrap_or(Cow::Borrowed(stake_account));
+
+            let delegation = stake_account.delegation();
+            let voter_pubkey = delegation.voter_pubkey;
+            let stake = delegation_effective_stake(
+                delegation,
+                self.epoch,
+                &self.stake_history,
+                new_rate_activation_epoch,
+                use_fixed_point_stake_math,
+            );
+            (voter_pubkey, stake)
+        } else {
+            return;
+        };
+        self.sub_delegated_stake(&voter_pubkey, stake);
+        self.vote_accounts.sub_stake(&voter_pubkey, stake);
     }
 
     fn upsert_vote_account(
@@ -634,60 +1174,34 @@ impl Stakes<StakeAccount> {
             new_rate_activation_epoch,
             use_fixed_point_stake_math,
         );
-        match self.stake_delegations.insert(stake_pubkey, stake_account) {
-            None => {
+        if let Some(old_stake_account) = self
+            .stake_delegations
+            .upsert_stake_delegation(stake_pubkey, stake_account)
+        {
+            let old_delegation = old_stake_account.delegation();
+            let old_voter_pubkey = old_delegation.voter_pubkey;
+            let old_stake = delegation_effective_stake(
+                old_delegation,
+                self.epoch,
+                &self.stake_history,
+                new_rate_activation_epoch,
+                use_fixed_point_stake_math,
+            );
+            if voter_pubkey != old_voter_pubkey || stake != old_stake {
+                self.sub_delegated_stake(&old_voter_pubkey, old_stake);
                 self.add_delegated_stake(voter_pubkey, stake);
+                self.vote_accounts.sub_stake(&old_voter_pubkey, old_stake);
                 self.vote_accounts.add_stake(&voter_pubkey, stake);
             }
-            Some(old_stake_account) => {
-                let old_delegation = old_stake_account.delegation();
-                let old_voter_pubkey = old_delegation.voter_pubkey;
-                let old_stake = delegation_effective_stake(
-                    old_delegation,
-                    self.epoch,
-                    &self.stake_history,
-                    new_rate_activation_epoch,
-                    use_fixed_point_stake_math,
-                );
-                if voter_pubkey != old_voter_pubkey || stake != old_stake {
-                    self.sub_delegated_stake(&old_voter_pubkey, old_stake);
-                    self.add_delegated_stake(voter_pubkey, stake);
-                    self.vote_accounts.sub_stake(&old_voter_pubkey, old_stake);
-                    self.vote_accounts.add_stake(&voter_pubkey, stake);
-                }
-            }
+        } else {
+            // New stake delegation - add to delegated_stakes and vote_accounts
+            self.add_delegated_stake(voter_pubkey, stake);
+            self.vote_accounts.add_stake(&voter_pubkey, stake);
         }
     }
 
-    /// Returns a reference to the map of stake delegations.
-    ///
-    /// # Performance
-    ///
-    /// `[imbl::HashMap]` is a [hash array mapped trie (HAMT)][hamt], which means
-    /// that inserts, deletions and lookups are average-case O(1) and
-    /// worst-case O(log n). However, the performance of iterations is poor due
-    /// to depth-first traversal and jumps. Currently it's also impossible to
-    /// iterate over it with [`rayon`].
-    ///
-    /// [hamt]: https://en.wikipedia.org/wiki/Hash_array_mapped_trie
-    pub(crate) fn stake_delegations(&self) -> &ImblHashMap<Pubkey, StakeAccount> {
+    pub(crate) fn stake_delegations(&self) -> &StakeDelegationsMaps<StakeAccount> {
         &self.stake_delegations
-    }
-
-    /// Collects stake delegations into a vector, which then can be used for
-    /// parallel iteration with [`rayon`].
-    ///
-    /// # Performance
-    ///
-    /// The execution of this method takes ~200ms and it collects elements of
-    /// the [`imbl::HashMap`], which is a [hash array mapped trie (HAMT)][hamt],
-    /// so that operation involves a depth-first traversal with jumps. However,
-    /// it's still a reasonable tradeoff if the caller iterates over these
-    /// elements.
-    ///
-    /// [hamt]: https://en.wikipedia.org/wiki/Hash_array_mapped_trie
-    pub(crate) fn stake_delegations_vec(&self) -> Vec<(&Pubkey, &StakeAccount)> {
-        self.stake_delegations.iter().collect()
     }
 
     pub(crate) fn highest_staked_node(&self) -> Option<SlotLeader> {
@@ -714,13 +1228,33 @@ macro_rules! impl_stake_format_conversion {
                     epoch,
                     stake_history,
                 } = stakes;
-                let stake_delegations = stake_delegations
+                let StakeDelegationsMaps {
+                    snapshot,
+                    overrides,
+                    additions,
+                    removals,
+                } = stake_delegations;
+                let snapshot = snapshot
+                    .iter()
+                    .map(|(pubkey, $binding)| (*pubkey, $expr))
+                    .collect();
+                let snapshot = Arc::new(snapshot);
+                let overrides = overrides
+                    .into_iter()
+                    .map(|(pubkey, $binding)| (pubkey, $expr))
+                    .collect();
+                let additions = additions
                     .into_iter()
                     .map(|(pubkey, $binding)| (pubkey, $expr))
                     .collect();
                 Self {
                     vote_accounts,
-                    stake_delegations,
+                    stake_delegations: StakeDelegationsMaps {
+                        snapshot,
+                        overrides,
+                        additions,
+                        removals,
+                    },
                     delegated_stakes: DelegatedStakes::default(),
                     unused,
                     epoch,
@@ -757,7 +1291,7 @@ fn refresh_vote_accounts(
     thread_pool: &ThreadPool,
     epoch: Epoch,
     vote_accounts: &VoteAccounts,
-    stake_delegations: &[(&Pubkey, &StakeAccount)],
+    stake_delegations: &IndexedStakeDelegations<'_, StakeAccount>,
     stake_history: &StakeHistory,
     new_rate_activation_epoch: Option<Epoch>,
     use_fixed_point_stake_math: bool,
@@ -773,7 +1307,8 @@ fn refresh_vote_accounts(
     }
     let delegated_stakes = thread_pool.install(|| {
         stake_delegations
-            .par_iter()
+            .par_iter_unfiltered()
+            .flatten()
             .fold(
                 DelegatedStakes::default,
                 |mut delegated_stakes, (_stake_pubkey, stake_account)| {
@@ -823,15 +1358,155 @@ pub(crate) mod tests {
     impl Stakes<Delegation> {
         /// Convert deserialized stakes into runtime stakes representation
         pub(crate) fn from_deserialized(stakes: DeserializableDelegationStakes) -> Self {
+            let DeserializableDelegationStakes {
+                vote_accounts,
+                stake_delegations,
+                unused,
+                epoch,
+                stake_history,
+            } = stakes;
+            let stake_delegations = StakeDelegationsMaps {
+                snapshot: Arc::new(IndexMap::from_iter(stake_delegations)),
+                overrides: ImblGenericHashMap::default(),
+                additions: ImblHashMap::default(),
+                removals: ImblHashSet::default(),
+            };
             Self {
-                vote_accounts: stakes.vote_accounts,
-                stake_delegations: ImblHashMap::from_iter(stakes.stake_delegations),
+                vote_accounts,
+                stake_delegations,
                 delegated_stakes: DelegatedStakes::default(),
-                unused: stakes.unused,
-                epoch: stakes.epoch,
-                stake_history: stakes.stake_history,
+                unused: unused,
+                epoch: epoch,
+                stake_history: stake_history,
             }
         }
+    }
+
+    #[test]
+    fn test_stake_delegations_view_overlay() {
+        let root_only = Pubkey::new_unique();
+        let overridden = Pubkey::new_unique();
+        let removed = Pubkey::new_unique();
+        let unrooted_only = Pubkey::new_unique();
+
+        let snapshot =
+            StakeDelegationsSnapshot::from_iter([(root_only, 1), (overridden, 2), (removed, 3)]);
+        let overridden_ix = snapshot.get_index_of(&overridden).unwrap();
+        let snapshot = Arc::new(snapshot);
+        let overrides = ImblGenericHashMap::from_iter([(overridden_ix, 20)]);
+        let additions = ImblHashMap::from_iter([(unrooted_only, 30)]);
+        let removals = [&removed].into_iter().collect();
+        let stake_delegations = StakeDelegationsMaps {
+            snapshot,
+            overrides,
+            additions,
+            removals,
+        };
+        let expected = HashMap::from([(root_only, 1), (overridden, 20), (unrooted_only, 30)]);
+
+        assert_eq!(stake_delegations.len(), expected.len());
+        assert_eq!(stake_delegations.get(&removed), None);
+        let serial_delegations = stake_delegations.iter().collect::<Vec<_>>();
+        assert_eq!(serial_delegations.len(), expected.len());
+        assert_eq!(
+            serial_delegations
+                .into_iter()
+                .map(|(pubkey, stake_delegation)| (*pubkey, *stake_delegation))
+                .collect::<HashMap<_, _>>(),
+            expected,
+        );
+
+        let indexed = stake_delegations.indexed();
+        let parallel_delegation_slots = indexed.par_iter_unfiltered().collect::<Vec<_>>();
+        assert_eq!(
+            parallel_delegation_slots.len(),
+            expected.len().saturating_add(1)
+        );
+        assert_eq!(
+            parallel_delegation_slots
+                .iter()
+                .filter(|stake_delegation| stake_delegation.is_none())
+                .count(),
+            1,
+        );
+        let parallel_delegations = parallel_delegation_slots
+            .into_iter()
+            .flatten()
+            .map(|(pubkey, stake_delegation)| (*pubkey, *stake_delegation))
+            .collect::<Vec<_>>();
+        assert_eq!(parallel_delegations.len(), expected.len());
+        assert_eq!(
+            parallel_delegations.into_iter().collect::<HashMap<_, _>>(),
+            expected,
+        );
+    }
+
+    #[test]
+    fn test_root_stake_delegations() {
+        let root_only = Pubkey::new_unique();
+        let overridden = Pubkey::new_unique();
+        let removed = Pubkey::new_unique();
+        let unrooted_only = Pubkey::new_unique();
+
+        let mut snapshot = StakeDelegationsSnapshot::default();
+        snapshot.insert(root_only, 1);
+        snapshot.insert(overridden, 2);
+        let overridden_ix = snapshot.get_index_of(&overridden).unwrap();
+        snapshot.insert(removed, 3);
+        let snapshot = Arc::new(snapshot);
+        let overrides = ImblGenericHashMap::from_iter([(overridden_ix, 20)]);
+        let additions = ImblHashMap::from_iter([(unrooted_only, 30)]);
+        let removals = ImblHashSet::from_iter([removed]);
+        let stake_delegations = StakeDelegationsMaps {
+            snapshot,
+            overrides,
+            additions,
+            removals,
+        };
+        let mut stakes = Stakes::<u64> {
+            stake_delegations,
+            ..Stakes::default()
+        };
+        let sibling_fork = stakes.clone();
+
+        stakes.update_stake_delegations_snapshot();
+
+        let Stakes {
+            stake_delegations, ..
+        } = stakes;
+        let StakeDelegationsMaps {
+            snapshot: updated_snapshot,
+            overrides: updated_overrides,
+            additions: updated_additions,
+            removals: updated_removals,
+        } = stake_delegations;
+        assert_eq!(updated_snapshot.len(), 3);
+        assert_eq!(updated_snapshot.get(&root_only), Some(&1));
+        assert_eq!(updated_snapshot.get(&overridden), Some(&20));
+        assert_eq!(updated_snapshot.get(&removed), None);
+        assert_eq!(updated_snapshot.get(&unrooted_only), Some(&30));
+        assert!(updated_overrides.is_empty());
+        assert!(updated_additions.is_empty());
+        assert!(updated_removals.is_empty());
+
+        let Stakes {
+            stake_delegations: sibling_fork_stake_delegations,
+            ..
+        } = sibling_fork;
+        let StakeDelegationsMaps {
+            snapshot: sibling_fork_snapshot,
+            overrides: sibling_fork_overrides,
+            additions: sibling_fork_additions,
+            removals: sibling_fork_removals,
+        } = sibling_fork_stake_delegations;
+        assert_eq!(sibling_fork_snapshot.len(), 3);
+        assert_eq!(sibling_fork_snapshot.get(&overridden), Some(&2));
+        assert_eq!(sibling_fork_overrides.get(&overridden_ix), Some(&20));
+        assert_eq!(
+            sibling_fork_additions.iter().collect::<Vec<_>>(),
+            [(&unrooted_only, &30)]
+        );
+        assert!(sibling_fork_removals.contains(&removed));
     }
 
     //  set up some dummies for a staked node     ((     vote      )  (     stake     ))
@@ -1194,7 +1869,7 @@ pub(crate) mod tests {
         let next_epoch = 3;
         let (stake_history, vote_accounts, delegated_stakes, effective_delegated_stakes) = {
             let stakes = stakes_cache.stakes();
-            let stake_delegations = stakes.stake_delegations_vec();
+            let stake_delegations = stakes.stake_delegations().indexed();
             stakes.calculate_activated_stake(
                 next_epoch,
                 &thread_pool,

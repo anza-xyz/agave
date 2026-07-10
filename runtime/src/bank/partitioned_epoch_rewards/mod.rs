@@ -7,7 +7,7 @@ use {
     super::Bank,
     crate::{
         inflation_rewards::points::PointValue, reward_info::RewardInfo,
-        stake_account::StakeAccount, stake_history::StakeHistory,
+        stake_account::StakeAccount, stake_history::StakeHistory, stakes::IndexedStakeDelegations,
     },
     solana_account::{AccountSharedData, ReadableAccount},
     solana_accounts_db::{
@@ -321,7 +321,7 @@ pub(super) struct CachedVoteAccounts<'a> {
 /// hold reward calc info to avoid recalculation across functions
 pub(super) struct EpochRewardCalculateParamInfo<'a> {
     pub(super) stake_history: StakeHistory,
-    pub(super) stake_delegations: Vec<(&'a Pubkey, &'a StakeAccount<Delegation>)>,
+    pub(super) stake_delegations: IndexedStakeDelegations<'a, StakeAccount<Delegation>>,
     pub(super) cached_vote_accounts: CachedVoteAccounts<'a>,
 }
 
