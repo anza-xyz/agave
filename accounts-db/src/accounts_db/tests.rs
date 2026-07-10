@@ -116,6 +116,7 @@ fn create_store_for_shrink_tests(
     file_size: u64,
     alive_bytes: usize,
     num_zero_lamport_single_ref_accounts: usize,
+    accounts_file_provider: AccountsFileProvider,
 ) -> (TempDir, Arc<AccountStorageEntry>) {
     let temp_dir = TempDir::new().unwrap();
     let store = Arc::new(AccountStorageEntry::new(
@@ -123,7 +124,7 @@ fn create_store_for_shrink_tests(
         slot,
         slot as AccountsFileId,
         file_size,
-        AccountsFileProvider::AppendVec,
+        accounts_file_provider,
     ));
     accounts_db.storage.insert(Arc::clone(&store));
     store.add_accounts(num_zero_lamport_single_ref_accounts.max(1), alive_bytes);
@@ -1658,6 +1659,7 @@ fn test_alive_bytes_after_shrink() {
         4096, // <-- file size
         initial_alive_bytes,
         2, // <-- num zero lamport single ref accounts
+        accounts_db.accounts_file_provider,
     );
 
     // test case: latest full snapshot slot is None -- ZLSR accounts are dead
@@ -2984,6 +2986,7 @@ fn test_select_candidates_by_total_usage_with_zero_lamport_single_ref_accounts()
         file_size as u64,
         file_size,
         num_zero_lamport_single_ref_accounts,
+        accounts_db.accounts_file_provider,
     );
     shrink_candidates.insert(slot_with_zlsr);
 
@@ -2994,6 +2997,7 @@ fn test_select_candidates_by_total_usage_with_zero_lamport_single_ref_accounts()
         file_size as u64,
         file_size * 9 / 10,
         0,
+        accounts_db.accounts_file_provider,
     );
     shrink_candidates.insert(slot_no_zlsr);
 
