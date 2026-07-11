@@ -6987,6 +6987,7 @@ dependencies = [
  "bytemuck",
  "bytemuck_derive",
  "five8",
+ "rand 0.9.4",
  "serde",
  "serde_derive",
  "solana-atomic-u64",

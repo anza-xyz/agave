@@ -133,7 +133,7 @@ solana-frozen-abi-macro = { workspace = true, optional = true, features = [
 ] }
 solana-genesis-config = { workspace = true, features = ["serde"] }
 solana-hard-forks = { workspace = true, features = ["serde", "wincode"] }
-solana-hash = { workspace = true, features = ["atomic", "wincode"] }
+solana-hash = { workspace = true, features = ["atomic", "wincode", "rand"] }
 solana-inflation = { workspace = true, features = ["serde", "wincode"] }
 solana-instruction = { workspace = true }
 solana-keypair = { workspace = true, features = ["seed-derivable"] }
