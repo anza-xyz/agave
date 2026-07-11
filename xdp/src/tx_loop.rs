@@ -293,7 +293,7 @@ impl<T> Clone for TxSender<T> {
 
 impl<T> Drop for TxSender<T> {
     fn drop(&mut self) {
-        self.queue.senders.fetch_sub(1, Ordering::Relaxed);
+        self.queue.senders.fetch_sub(1, Ordering::Release);
     }
 }
 
@@ -314,17 +314,13 @@ impl<T> Drop for TxReceiver<T> {
 
 impl<T> Receiver<T> for TxReceiver<T> {
     fn try_recv(&self) -> Result<T, TryRecvError> {
-        match self.queue.queue.pop() {
-            Some(item) => Ok(item),
-            // there is a potential race here if the last sender sends an item and then immediately
-            // drops. In that case we'll return Disconnected even though there's an item queued.
-            // That's fine since it's only a shutdown race and we don't guarantee packet delivery in
-            // any case.
-            None if self.queue.senders.load(Ordering::Relaxed) == 0 => {
-                Err(TryRecvError::Disconnected)
-            }
-            None => Err(TryRecvError::Empty),
+        if let Some(item) = self.queue.queue.pop() {
+            return Ok(item);
         }
+        if self.queue.senders.load(Ordering::Acquire) != 0 {
+            return Err(TryRecvError::Empty);
+        }
+        self.queue.queue.pop().ok_or(TryRecvError::Disconnected)
     }
 }
 
