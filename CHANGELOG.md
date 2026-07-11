@@ -18,6 +18,9 @@ Release channels have their own copy of this changelog:
 ### RPC
 #### Breaking
 #### Changes
+* `getLeaderSchedule` now accepts a `keyByVoteAccount` config option to key the returned
+  schedule by vote account instead of validator identity. The `identity` filter continues
+  to match on validator identity in both modes.
 ### Validator
 #### Breaking
 * Banking trace is now disabled by default. To enable, provide `--enable-banking-trace <max bytes>`.
