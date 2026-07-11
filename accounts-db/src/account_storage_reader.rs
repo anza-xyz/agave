@@ -241,7 +241,6 @@ mod tests {
         total_accounts: usize,
         number_of_accounts_to_remove: usize,
     ) {
-        agave_logger::setup();
         let (storage, _temp_dirs) =
             create_storage_for_storage_reader(0, AccountsFileProvider::AppendVec);
 

@@ -1179,16 +1179,6 @@ impl AccountsDb {
         next_id
     }
 
-    fn new_storage_entry(&self, slot: Slot, path: &Path, size: u64) -> AccountStorageEntry {
-        AccountStorageEntry::new(
-            path,
-            slot,
-            self.next_id(),
-            size,
-            self.accounts_file_provider,
-        )
-    }
-
     /// While scanning cleaning candidates obtain slots that can be
     /// reclaimed for each pubkey. In addition, if the pubkey is
     /// removed from the index, insert in pubkeys_removed_from_accounts_index.
@@ -1643,11 +1633,10 @@ impl AccountsDb {
 
             let last_swept_full_snapshot_slot =
                 self.last_swept_full_snapshot_slot.load(Ordering::Relaxed);
-            let (added_to_shrink_count, sweep_us) =
-                measure_us!(self.check_shrink_eligibility_after_snapshot(
-                    last_swept_full_snapshot_slot,
-                    latest_full_snapshot_slot
-                ));
+            let (added_to_shrink_count, sweep_us) = measure_us!(self.sweep_slots_after_snapshot(
+                last_swept_full_snapshot_slot,
+                latest_full_snapshot_slot
+            ));
             timings.zero_lamport_single_ref_slots_added_to_shrink_count += added_to_shrink_count;
             timings.zero_lamport_sweep_us += sweep_us;
         }
@@ -1656,12 +1645,14 @@ impl AccountsDb {
     }
 
     /// Loop through slots in `[last_swept_full_snapshot_slot + 1, latest_full_snapshot_slot]` and
-    /// check each storage to determine if it is eligible for shrink, since zero-lamport single-ref
-    /// accounts become shrinkable after a full snapshot advances past their slot. Advances the
-    /// `last_swept_full_snapshot_slot` to `latest_full_snapshot_slot` on completion.
+    /// re-examine each storage now that a full snapshot has advanced past its slot:
+    /// 1) if it holds only tombstones, purge it directly; or
+    /// 2) if its dead zero-lamport accounts made it shrinkable, add it to the shrink candidates.
     ///
-    /// Returns the count of storages that were added to the shrink candidates set
-    fn check_shrink_eligibility_after_snapshot(
+    /// Advances `last_swept_full_snapshot_slot` to `latest_full_snapshot_slot` on completion.
+    ///
+    /// Returns the count of storages that were added to the shrink candidates set.
+    fn sweep_slots_after_snapshot(
         &self,
         last_swept_full_snapshot_slot: Slot,
         latest_full_snapshot_slot: Slot,
@@ -1669,20 +1660,28 @@ impl AccountsDb {
         let start = last_swept_full_snapshot_slot.saturating_add(1);
 
         let mut added_to_shrink_count = 0;
-        // Held for the full scan. Safe because the only paths that take this lock in production
-        // validator code run in earlier/later phases of the same AccountsBackgroundService
-        // iteration, never concurrently with clean_accounts.
-        let mut shrink_candidates = self.shrink_candidate_slots.lock().unwrap();
-        for slot in start..=latest_full_snapshot_slot {
-            if let Some(store) = self.storage.get_slot_storage_entry(slot)
-                && self.is_shrinking_productive(&store)
-                && self.is_candidate_for_shrink(&store)
-                && shrink_candidates.insert(slot)
-            {
-                added_to_shrink_count += 1;
+        {
+            // Held for the scan. Safe because the only paths that take this lock in production
+            // validator code run in earlier/later phases of the same AccountsBackgroundService
+            // iteration, never concurrently with clean_accounts.
+            let mut shrink_candidates = self.shrink_candidate_slots.lock().unwrap();
+            for slot in start..=latest_full_snapshot_slot {
+                if let Some(store) = self.storage.get_slot_storage_entry(slot) {
+                    if store.has_only_tombstones() {
+                        // Now just contains tombstones and no live index entries: purge
+                        self.purge_dead_slots_from_storage(
+                            iter::once(&slot),
+                            &self.clean_accounts_stats.purge_stats,
+                        );
+                    } else if self.is_shrinking_productive(&store)
+                        && self.is_candidate_for_shrink(&store)
+                        && shrink_candidates.insert(slot)
+                    {
+                        added_to_shrink_count += 1;
+                    }
+                }
             }
         }
-        drop(shrink_candidates);
 
         self.last_swept_full_snapshot_slot
             .store(latest_full_snapshot_slot, Ordering::Relaxed);
@@ -3100,7 +3099,7 @@ impl AccountsDb {
         old_store: Arc<AccountStorageEntry>,
         size: u64,
     ) -> ShrinkInProgress<'_> {
-        let shrunken_store = self.create_store(slot, size);
+        let shrunken_store = Arc::new(self.create_store(slot, size));
         self.storage
             .shrinking_in_progress(slot, old_store, shrunken_store)
     }
@@ -4043,19 +4042,24 @@ impl AccountsDb {
         }
     }
 
-    fn create_store(&self, slot: Slot, size: u64) -> Arc<AccountStorageEntry> {
+    fn create_store(&self, slot: Slot, size: u64) -> AccountStorageEntry {
         self.stats
             .create_store_count
             .fetch_add(1, Ordering::Relaxed);
         let paths = &self.paths;
         let path_index = rng().random_range(0..paths.len());
-        let store = self.new_storage_entry(slot, Path::new(&paths[path_index]), size);
-        Arc::new(store)
+        AccountStorageEntry::new(
+            Path::new(&paths[path_index]),
+            slot,
+            self.next_id(),
+            size,
+            self.accounts_file_provider,
+        )
     }
 
     #[cfg(test)]
     fn create_and_insert_store(&self, slot: Slot, size: u64) -> Arc<AccountStorageEntry> {
-        let store = self.create_store(slot, size);
+        let store = Arc::new(self.create_store(slot, size));
         self.storage.insert(store.clone());
         store
     }
@@ -4096,9 +4100,9 @@ impl AccountsDb {
         self.purge_slots(std::iter::once(&slot));
     }
 
-    /// Purges each slot in `removed_slots` from the write cache (and the accounts index). Slots
-    /// no longer present in the cache are skipped. This never touches backing storage, so it
-    /// cannot delete a flushed (rooted) slot's data. Returns whether any slot was actually
+    /// Purges each slot in `removed_slots` from the write cache and potentially the secondary
+    /// index. Slots no longer present in the cache are skipped. This never touches backing
+    /// storage, so it cannot delete a flushed slot's data. Returns whether any slot was actually
     /// removed from the cache. This allows the snapshot minimizer to determine whether
     /// it should purge the storage as well
     fn purge_slots_from_cache<'a>(
@@ -4110,13 +4114,11 @@ impl AccountsDb {
         let mut num_cached_slots_removed = 0;
         let mut total_removed_cached_bytes = 0;
         for remove_slot in removed_slots {
-            // This function is only currently safe with respect to `flush_slot_cache()` because
-            // both functions run serially in AccountsBackgroundService.
+            // This function runs in parallel with the ABS operations (flush, shrink, clean) and
+            // must be safe with respect to them. ABS operations will not operate on this slot as
+            // it is unrooted (unless the snapshot minimizer is being used), but pubkey operations
+            // must be safe with respect to collisions (eg. write_through and handle_dead_keys)
             let mut remove_cache_elapsed = Measure::start("remove_cache_elapsed");
-            // Note: we cannot remove this slot from the slot cache until we've removed its
-            // entries from the accounts index first. This is because `scan_accounts()` relies on
-            // holding the index lock, finding the index entry, and then looking up the entry
-            // in the cache. If it fails to find that entry, it will panic in `get_loaded_account()`
             if let Some(slot_cache) = self.accounts_cache.slot_cache(*remove_slot) {
                 num_cached_slots_removed += 1;
                 total_removed_cached_bytes += slot_cache.total_bytes();
@@ -4128,12 +4130,12 @@ impl AccountsDb {
                     .remove_slot(*remove_slot)
                     .expect("slot cache entry must still be present");
                 // Cache writes populate the secondary indexes but not the primary index, so a
-                // cache-only account dropped here without ever being flushed would leak its
-                // secondary entry.
-                // Explicitly ignore the return value as there is no need to purge the account
-                // from the primary index as well
+                // cache-only accounts dropped here would otherwise leak its secondary entry.
+                // `handle_dead_keys` removes those secondary entries; its return value (the
+                // pubkeys not present in the primary index) is unused because this path does
+                // no reclaim handling.
                 //
-                // Narrow race: If a write re-adds the same pubkey key between `remove_slot` and
+                // Narrow race: If a write re-adds the same pubkey between `remove_slot` and
                 // `handle_dead_keys`, the new secondary entry will be dropped. Only
                 // secondary-index scans observe it (no consensus impact), and it self-heals: the
                 // entry is re-added when that slot flushes, or stays correctly removed if the slot
@@ -4679,7 +4681,7 @@ impl AccountsDb {
             // This ensures that all updates are written to an AppendVec, before any
             // updates to the index happen, so anybody that sees a real entry in the index,
             // will be able to find the account in storage
-            let flushed_store = self.create_store(slot, flush_stats.num_bytes_flushed.0);
+            let flushed_store = Arc::new(self.create_store(slot, flush_stats.num_bytes_flushed.0));
             self.storage.insert(Arc::clone(&flushed_store));
 
             let (store_accounts_for_flush_stats, store_accounts_for_flush_us) =
