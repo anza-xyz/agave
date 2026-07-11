@@ -30,7 +30,7 @@ impl HashInfo {
     feature = "frozen-abi",
     derive(AbiExample, StableAbi, StableAbiSample),
     frozen_abi(
-        api_digest = "DZVVXt4saSgH1CWGrzBcX2sq5yswCuRqGx1Y1ZehtWT6",
+        api_digest = "6dJKUuLbK5FVbUvNf7YwaGxJDkBTWvV9vfXevAFkHR5u",
         abi_digest = "5ojmBDhhu9AjKUc1LSHhZfXF6KeicvZpKP6XdLNaFAdy",
         abi_serializer = ["bincode", "wincode"],
         test_roundtrip = "eq_and_wire"
@@ -44,7 +44,7 @@ pub struct BlockhashQueue {
     /// last hash to be registered
     last_hash: Option<Hash>,
 
-    hashes: HashMap<Hash, HashInfo, ahash::RandomState>,
+    hashes: HashMap<Hash, HashInfo, solana_hash::HashHasherBuilder>,
 
     /// hashes older than `max_age` will be dropped from the queue
     max_age: usize,
