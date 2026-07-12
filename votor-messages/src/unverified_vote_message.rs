@@ -48,7 +48,7 @@ impl DecodedWireConsensusMessage {
     /// Decodes a wire consensus message.
     pub fn new(msg: VersionedWireConsensusMessage) -> Self {
         let VersionedWireConsensusMessage::V1(msg) = msg;
-        let msg = match msg.kind {
+        match msg.kind {
             WireConsensusMessageKind::NotarVote(v) => Self::Vote(UnverifiedVoteMessage {
                 vote: Vote::new_notarization_vote(v.block),
                 signature: v.signature.signature,
@@ -140,8 +140,7 @@ impl DecodedWireConsensusMessage {
                     shred_version: msg.shred_version,
                 })
             }
-        };
-        msg
+        }
     }
 
     /// returns the shred version

@@ -51,7 +51,7 @@ use {
     solana_clock::Slot,
     wincode::{
         ReadError, SchemaRead, SchemaReadContext, SchemaWrite,
-        config::{Config, DefaultConfig},
+        config::{Config},
         io::Reader,
         pod_wrapper,
     },
@@ -391,7 +391,7 @@ unsafe impl<'de, C: Config> SchemaReadContext<'de, C, ExpectedShredVersion>
 impl VersionedWireConsensusMessage {
     /// Deserializes a versioned wire consensus message and verifies the shred version.
     pub fn deserialize_with_expected_shred_version<'de, C: Config>(
-        mut reader: impl Reader<'de>,
+        reader: impl Reader<'de>,
         config: C,
         expected_shred_version: u16,
     ) -> wincode::ReadResult<Self> {
