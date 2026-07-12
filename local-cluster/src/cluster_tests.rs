@@ -36,7 +36,7 @@ use {
     solana_poh_config::PohConfig,
     solana_pubkey::Pubkey,
     solana_rpc_client::rpc_client::RpcClient,
-    solana_signer::Signer,
+    solana_signer::{Signer, signers::Signers},
     solana_streamer::{
         nonblocking::simple_qos::SimpleQosConfig,
         quic::{QuicStreamerConfig, spawn_simple_qos_server},
@@ -135,7 +135,7 @@ impl TpuSender {
 
     /// Send and confirm `transaction` with retries via `sender`, using `rpc_client` for
     /// confirmation and blockhash refresh.
-    fn send_and_confirm_transaction<T: solana_signer::signers::Signers + ?Sized>(
+    fn send_and_confirm_transaction<T: Signers + ?Sized>(
         &self,
         sender: &TransactionSender,
         rpc_client: &RpcClient,
@@ -163,7 +163,7 @@ impl TpuSender {
     /// Open a QUIC connection to `tpu_addr` and send-and-confirm `transaction` with retries.
     ///
     /// Uses `rpc_client` to poll for confirmation and refresh the blockhash between attempts.
-    pub fn send_transaction_with_retries<T: solana_signer::signers::Signers + ?Sized>(
+    pub fn send_transaction_with_retries<T: Signers + ?Sized>(
         &self,
         tpu_addr: SocketAddr,
         rpc_client: &RpcClient,

@@ -578,19 +578,8 @@ impl LocalCluster {
             // setup as a listener
             info!("listener {validator_pubkey} ",);
         } else if should_setup_accounts {
-            let rpc_url = format!("http://{}", self.entry_point_info.rpc().unwrap());
-            let rpc_client = RpcClient::new(rpc_url);
-            let leader_pubkey = rpc_client
-                .get_slot_leader()
-                .expect("do_add_validator: get_slot_leader");
-            let tpu_addr = rpc_client
-                .get_cluster_nodes()
-                .expect("do_add_validator: get_cluster_nodes")
-                .into_iter()
-                .find(|n| n.pubkey == leader_pubkey.to_string())
-                .and_then(|n| n.tpu_quic)
-                .or_else(|| self.entry_point_info.tpu(Protocol::QUIC))
-                .expect("do_add_validator: leader has no QUIC TPU address");
+            let rpc_client = self.build_entrypoint_rpc_client();
+            let tpu_addr = self.get_current_leader_tpu_socket_addr(&rpc_client);
             let tpu_sender = cluster_tests::TpuSender::new();
             Self::transfer_with_client(
                 &tpu_sender,
@@ -804,20 +793,29 @@ impl LocalCluster {
         self.close_preserve_ledgers();
     }
 
-    pub fn transfer(&self, source_keypair: &Keypair, dest_pubkey: &Pubkey, lamports: u64) {
+    /// Build an RPC client pointing to the entrypoint's RPC.
+    fn build_entrypoint_rpc_client(&self) -> RpcClient {
         let rpc_url = format!("http://{}", self.entry_point_info.rpc().unwrap());
-        let rpc_client = RpcClient::new(rpc_url);
-        let leader_pubkey = rpc_client
-            .get_slot_leader()
-            .expect("transfer: get_slot_leader");
-        let tpu_addr = rpc_client
+        RpcClient::new(rpc_url)
+    }
+
+    /// Resolve the current leader's QUIC TPU using `rpc_client`
+    /// address, falling back to the entry point's own QUIC TPU address.
+    fn get_current_leader_tpu_socket_addr(&self, rpc_client: &RpcClient) -> SocketAddr {
+        let leader_pubkey = rpc_client.get_slot_leader().expect("get_slot_leader");
+        rpc_client
             .get_cluster_nodes()
-            .expect("transfer: get_cluster_nodes")
+            .expect("get_cluster_nodes")
             .into_iter()
             .find(|n| n.pubkey == leader_pubkey.to_string())
             .and_then(|n| n.tpu_quic)
             .or_else(|| self.entry_point_info.tpu(Protocol::QUIC))
-            .expect("transfer: leader has no QUIC TPU address");
+            .expect("leader has no QUIC TPU address")
+    }
+
+    pub fn transfer(&self, source_keypair: &Keypair, dest_pubkey: &Pubkey, lamports: u64) {
+        let rpc_client = self.build_entrypoint_rpc_client();
+        let tpu_addr = self.get_current_leader_tpu_socket_addr(&rpc_client);
         let tpu_sender = cluster_tests::TpuSender::new();
         Self::transfer_with_client(
             &tpu_sender,
