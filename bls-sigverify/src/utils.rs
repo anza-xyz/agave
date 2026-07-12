@@ -1,13 +1,13 @@
 use {
     crate::{
         errors::{SigVerifyCertError, SigVerifyVoteError},
-        sig_verified_messages::SigVerifiedBatch,
+        rewards::AddVoteMessage,
         stats::{SigVerifyCertStats, SigVerifyVoteStats},
     },
     agave_votor_messages::{
         VerifiedVoterSlotsSender,
+        certificate::Certificate,
         metric_types::{ConsensusMetricsEvent, ConsensusMetricsEventSender},
-        reward_certificate::AddVoteMessage,
     },
     crossbeam_channel::{Sender, TrySendError},
     log::{error, info},
@@ -55,41 +55,6 @@ pub(super) fn send_votes_to_rewards(
     }
 }
 
-/// Sends the `batch` to the consensus pool.  If the channel is full, then does a
-/// blocking send.
-pub(super) fn send_votes_to_pool(
-    batch: SigVerifiedBatch,
-    channel: &Sender<SigVerifiedBatch>,
-    stats: &mut SigVerifyVoteStats,
-) -> Result<(), SigVerifyVoteError> {
-    if batch.is_empty() {
-        return Ok(());
-    }
-    let len = batch.len();
-    match channel.try_send(batch) {
-        Ok(()) => {
-            stats.pool_sent += len as u64;
-            stats.pool_outstanding_msgs = Saturating(channel.len() as u64);
-            Ok(())
-        }
-        Err(TrySendError::Full(msgs)) => {
-            stats.pool_channel_full += 1;
-            error!("votes channel to consensus pool is full.  Doing a blocking send.");
-            match channel.send(msgs) {
-                Ok(()) => {
-                    info!("votes channel to consensus pool has space again");
-                    stats.pool_sent += len as u64;
-                    Ok(())
-                }
-                Err(_) => Err(SigVerifyVoteError::ConsensusPoolChannelDisconnected),
-            }
-        }
-        Err(TrySendError::Disconnected(_)) => {
-            Err(SigVerifyVoteError::ConsensusPoolChannelDisconnected)
-        }
-    }
-}
-
 pub(super) fn send_votes_to_repair(
     votes: HashMap<Pubkey, Vec<Slot>>,
     channel: &VerifiedVoterSlotsSender,
@@ -114,8 +79,8 @@ pub(super) fn send_votes_to_repair(
 /// Sends the `batch` to the consensus pool.  If the channel is bounded and full, then does a
 /// blocking send.
 pub(super) fn send_certs_to_pool(
-    batch: SigVerifiedBatch,
-    channel_to_pool: &Sender<SigVerifiedBatch>,
+    batch: Vec<Certificate>,
+    channel_to_pool: &Sender<Vec<Certificate>>,
     stats: &mut SigVerifyCertStats,
 ) -> Result<(), SigVerifyCertError> {
     if batch.is_empty() {

@@ -17,9 +17,7 @@ use {
         event::{LeaderWindowInfo, RepairEvent, RepairEventSender, VotorEvent, VotorEventSender},
         voting_service::BLSOp,
     },
-    agave_bls_sigverify::{
-        generated_cert_types::GeneratedCertTypes, sig_verified_messages::SigVerifiedBatch,
-    },
+    agave_bls_sigverify::generated_cert_types::GeneratedCertTypes,
     agave_votor_messages::{
         certificate::Certificate,
         consensus_message::{Block, ConsensusMessage},
@@ -60,7 +58,7 @@ pub(crate) struct ConsensusPoolContext {
     pub(crate) leader_schedule_cache: Arc<LeaderScheduleCache>,
     pub(crate) vote_history_highest_parent_ready: Option<(Slot, Block)>,
 
-    pub(crate) consensus_message_receiver: Receiver<SigVerifiedBatch>,
+    pub(crate) consensus_message_receiver: Receiver<Vec<Certificate>>,
     pub(crate) own_message_receiver: Receiver<ConsensusMessage>,
 
     pub(crate) bls_sender: Sender<BLSOp>,
@@ -628,29 +626,19 @@ impl ConsensusPoolService {
         consensus_pool: &mut ConsensusPool,
         events: &mut Vec<VotorEvent>,
         standstill_timer: &mut Instant,
-        first: SigVerifiedBatch,
+        first: Vec<Certificate>,
         stats: &mut ConsensusPoolServiceStats,
     ) -> Result<(), ()> {
         let receiver = ctx.consensus_message_receiver.clone();
-        for batch in std::iter::once(first).chain(receiver.try_iter()) {
-            match batch {
-                SigVerifiedBatch::Votes(votes) => Self::process_batch(
-                    ctx,
-                    votes.into_iter().map(ConsensusMessage::Vote),
-                    consensus_pool,
-                    events,
-                    standstill_timer,
-                    stats,
-                ),
-                SigVerifiedBatch::Certificates(certs) => Self::process_batch(
-                    ctx,
-                    certs.into_iter().map(ConsensusMessage::Certificate),
-                    consensus_pool,
-                    events,
-                    standstill_timer,
-                    stats,
-                ),
-            }?
+        for certs in std::iter::once(first).chain(receiver.try_iter()) {
+            Self::process_batch(
+                ctx,
+                certs.into_iter().map(ConsensusMessage::Certificate),
+                consensus_pool,
+                events,
+                standstill_timer,
+                stats,
+            )?
         }
         Ok(())
     }

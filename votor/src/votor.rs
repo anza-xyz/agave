@@ -60,10 +60,9 @@ use {
         voting_service::BLSOp,
         voting_utils::VotingContext,
     },
-    agave_bls_sigverify::{
-        generated_cert_types::GeneratedCertTypes, sig_verified_messages::SigVerifiedBatch,
-    },
+    agave_bls_sigverify::generated_cert_types::GeneratedCertTypes,
     agave_votor_messages::{
+        certificate::Certificate,
         consensus_message::{Block, ConsensusMessage},
         metric_types::{ConsensusMetricsEventReceiver, ConsensusMetricsEventSender},
     },
@@ -120,7 +119,7 @@ pub struct VotorConfig {
 
     // Receivers
     pub event_receiver: VotorEventReceiver,
-    pub consensus_message_receiver: Receiver<SigVerifiedBatch>,
+    pub consensus_message_receiver: Receiver<Vec<Certificate>>,
     pub own_message_receiver: Receiver<ConsensusMessage>,
     pub consensus_metrics_receiver: ConsensusMetricsEventReceiver,
 }

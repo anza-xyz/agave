@@ -3,34 +3,29 @@
 use {
     crate::{
         bls_cert_sigverify::{CertPayload, verify_and_send_certificates},
-        bls_vote_sigverify::{UnverifiedVotePayload, verify_and_send_votes},
         errors::SigVerifyError,
         generated_cert_types::GeneratedCertTypes,
-        rewards::rewards_wants_vote,
-        sig_verified_messages::SigVerifiedBatch,
+        rewards::AddVoteMessage,
         stats::SigVerifierStats,
+        vote_pool::{UnverifiedVotePayload, VotePool},
     },
     agave_votor_messages::{
         VerifiedVoterSlotsSender,
-        certificate::CertificateType,
+        certificate::{Certificate, CertificateType},
         metric_types::ConsensusMetricsEventSender,
         migration::MigrationStatus,
-        reward_certificate::AddVoteMessage,
-        unverified_vote_message::{DecodedWireConsensusMessage, UnverifiedVoteMessage},
-        vote::Vote,
+        unverified_vote_message::DecodedWireConsensusMessage,
         wire::{VersionedWireConsensusMessage, VotePayloadToSign},
     },
     crossbeam_channel::{Receiver, RecvTimeoutError, Sender, TryRecvError},
     log::error,
     rayon::{ThreadPool, ThreadPoolBuilder},
-    solana_bls_signatures::pubkey::{PopVerified, PubkeyAffine as BlsPubkeyAffine},
-    solana_clock::Slot,
+    solana_clock::{Epoch, Slot},
     solana_gossip::cluster_info::ClusterInfo,
     solana_ledger::leader_schedule_cache::LeaderScheduleCache,
     solana_measure::measure_us,
     solana_perf::packet::packet_config,
-    solana_pubkey::Pubkey,
-    solana_runtime::{bank::Bank, bank_forks::SharableBanks},
+    solana_runtime::{bank::Bank, bank_forks::SharableBanks, epoch_stakes::BLSPubkeyToRankMap},
     solana_streamer::{nonblocking::simple_qos::SimpleQosBanlist, packet::PacketBatch},
     std::{
         collections::{HashMap, HashSet},
@@ -67,7 +62,7 @@ pub struct SigVerifierChannels {
     pub packet_receiver: Receiver<PacketBatch>,
     pub channel_to_repair: VerifiedVoterSlotsSender,
     pub channel_to_reward: Sender<AddVoteMessage>,
-    pub channel_to_pool: Sender<SigVerifiedBatch>,
+    pub channel_to_pool: Sender<Vec<Certificate>>,
     pub channel_to_metrics: ConsensusMetricsEventSender,
 }
 
@@ -97,10 +92,10 @@ struct SigVerifier {
     /// Tracks when the cache was last pruned.
     last_checked_root_slot: Slot,
     cluster_info: Arc<ClusterInfo>,
-    leader_schedule: Arc<LeaderScheduleCache>,
     /// thread pool to use for all parallel tasks
     thread_pool: ThreadPool,
     generated_cert_types: Arc<GeneratedCertTypes>,
+    vote_pool: VotePool,
 }
 
 impl SigVerifier {
@@ -122,16 +117,16 @@ impl SigVerifier {
         let root_slot = sharable_banks.root().slot();
         Self {
             migration_status,
-            banlist,
+            banlist: banlist.clone(),
             channels,
             sharable_banks,
             stats: SigVerifierStats::new(root_slot),
             verified_certs: HashSet::new(),
             last_checked_root_slot: 0,
-            cluster_info,
-            leader_schedule,
+            cluster_info: cluster_info.clone(),
             thread_pool,
             generated_cert_types,
+            vote_pool: VotePool::new(cluster_info, leader_schedule, banlist),
         }
     }
 
@@ -163,7 +158,7 @@ impl SigVerifier {
         let root_bank = self.sharable_banks.root();
         self.maybe_prune_caches(root_bank.slot());
 
-        let ((certs_to_verify, votes_to_verify), extract_msgs_us) =
+        let ((certs_to_verify, votes_to_verify, rank_map_cache), extract_msgs_us) =
             measure_us!(self.extract_and_filter_msgs(batches, &root_bank));
         self.stats
             .extract_filter_msgs_us
@@ -171,12 +166,10 @@ impl SigVerifier {
 
         let (votes_result, certs_result) = self.thread_pool.join(
             || {
-                verify_and_send_votes(
+                self.vote_pool.verify_and_send_votes(
                     votes_to_verify,
                     &root_bank,
-                    &self.cluster_info,
-                    &self.leader_schedule,
-                    &self.banlist,
+                    rank_map_cache,
                     &self.thread_pool,
                     &self.channels,
                 )
@@ -193,10 +186,9 @@ impl SigVerifier {
             },
         );
 
-        let vote_stats = votes_result?;
+        let () = votes_result?;
         let cert_stats = certs_result?;
 
-        self.stats.vote_stats.merge(vote_stats);
         self.stats.cert_stats.merge(cert_stats);
         Ok(())
     }
@@ -208,17 +200,19 @@ impl SigVerifier {
         }
     }
 
-    fn extract_and_filter_msgs(
+    fn extract_and_filter_msgs<'a>(
         &mut self,
         batches: Vec<PacketBatch>,
-        root_bank: &Bank,
+        root_bank: &'a Bank,
     ) -> (
         Vec<CertPayload>,
         HashMap<VotePayloadToSign, Vec<UnverifiedVotePayload>>,
+        HashMap<Epoch, &'a BLSPubkeyToRankMap>,
     ) {
         let root_slot = root_bank.slot();
         let mut certs = Vec::new();
         let mut votes: HashMap<VotePayloadToSign, Vec<UnverifiedVotePayload>> = HashMap::new();
+        let mut rank_map_cache = HashMap::new();
         let mut num_pkts = 0u64;
         let my_shred_version = self.cluster_info.my_shred_version();
         for packet in batches.iter().flatten() {
@@ -248,21 +242,17 @@ impl SigVerifier {
 
             match decoded_msg {
                 DecodedWireConsensusMessage::Vote(unverified_vote) => {
-                    if let Some((sender_vote_account_pubkey, sender_bls_pubkey)) =
-                        self.keep_vote(&unverified_vote.vote, &unverified_vote, root_bank)
-                    {
+                    if let Some(payload) = self.vote_pool.wants_vote(
+                        &mut rank_map_cache,
+                        unverified_vote,
+                        sender_identity_pubkey,
+                        root_bank,
+                    ) {
                         let vote_payload_to_sign = VotePayloadToSign::new_from_vote(
-                            unverified_vote.vote,
-                            unverified_vote.shred_version,
+                            payload.vote_message.vote,
+                            payload.vote_message.shred_version,
                         );
-                        votes.entry(vote_payload_to_sign).or_default().push(
-                            UnverifiedVotePayload {
-                                vote_message: unverified_vote,
-                                sender_bls_pubkey,
-                                sender_vote_account_pubkey,
-                                sender_identity_pubkey,
-                            },
-                        );
+                        votes.entry(vote_payload_to_sign).or_default().push(payload);
                     }
                 }
                 DecodedWireConsensusMessage::Certificate(cert) => {
@@ -286,39 +276,7 @@ impl SigVerifier {
             }
         }
         self.stats.num_pkts.add_sample(num_pkts);
-        (certs, votes)
-    }
-
-    /// If this vote should be verified, then returns the sender's Pubkey and BlsPubkey.
-    fn keep_vote(
-        &mut self,
-        vote: &Vote,
-        msg: &UnverifiedVoteMessage,
-        root_bank: &Bank,
-    ) -> Option<(Pubkey, PopVerified<BlsPubkeyAffine>)> {
-        let root_slot = root_bank.slot();
-        let Some(rank_map) = root_bank.get_rank_map(vote.slot()) else {
-            self.stats.discard_vote_no_epoch_stakes += 1;
-            return None;
-        };
-        let entry = rank_map
-            .get_pubkey_stake_entry(msg.rank.into())
-            .or_else(|| {
-                self.stats.discard_vote_invalid_rank += 1;
-                None
-            })?;
-        let ret = Some((entry.vote_account_pubkey, entry.bls_pubkey));
-        if vote.slot() > root_slot
-            // Genesis votes should be allowed on the TowerBFT root
-         || (vote.is_genesis_vote() && vote.slot() >= root_slot)
-        {
-            return ret;
-        }
-        if rewards_wants_vote(&self.cluster_info, &self.leader_schedule, root_slot, vote) {
-            return ret;
-        }
-        self.stats.num_old_votes_received += 1;
-        None
+        (certs, votes, rank_map_cache)
     }
 }
 

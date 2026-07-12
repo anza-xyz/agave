@@ -42,8 +42,6 @@ impl Reporting {
 /// Stats for the sigverifier.
 #[derive(Debug)]
 pub(super) struct SigVerifierStats {
-    /// Stats for sigverifying votes.
-    pub(super) vote_stats: SigVerifyVoteStats,
     /// Stats for sigverifying certs.
     pub(super) cert_stats: SigVerifyCertStats,
     /// Stats on how long [`verify_and_send_batch`] took.
@@ -75,7 +73,6 @@ pub(super) struct SigVerifierStats {
 impl SigVerifierStats {
     pub(super) fn new(root_slot: Slot) -> Self {
         Self {
-            vote_stats: SigVerifyVoteStats::default(),
             cert_stats: SigVerifyCertStats::default(),
             extract_filter_msgs_us: WelfordStats::default(),
             num_pkts: WelfordStats::default(),
@@ -105,7 +102,6 @@ impl SigVerifierStats {
     /// Reports stats regardless of when they were last reported.
     pub(super) fn do_report(&mut self, root_slot: Slot) {
         let Self {
-            vote_stats,
             cert_stats,
             extract_filter_msgs_us,
             num_pkts,
@@ -121,7 +117,6 @@ impl SigVerifierStats {
             last_report: _,
         } = self;
 
-        vote_stats.report();
         cert_stats.report();
         datapoint_info!(
             "bls_sig_verifier_stats",

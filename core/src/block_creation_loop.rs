@@ -13,10 +13,11 @@ use {
         },
         replay_stage::{Finalizer, ReplayStage},
     },
+    agave_bls_sigverify::rewards::AddVoteMessage,
     agave_votor::event::LeaderWindowInfo,
     agave_votor_messages::{
         consensus_message::Block,
-        reward_certificate::{AddVoteMessage, NotarRewardCertificate, SkipRewardCertificate},
+        reward_certificate::{NotarRewardCertificate, SkipRewardCertificate},
     },
     crossbeam_channel::{Receiver, Sender, select_biased},
     solana_clock::Slot,

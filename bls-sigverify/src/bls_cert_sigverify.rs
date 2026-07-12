@@ -2,7 +2,6 @@ use {
     crate::{
         bls_sigverifier::{BAN_TIMEOUT, NUM_SLOTS_FOR_VERIFY},
         errors::SigVerifyCertError,
-        sig_verified_messages::SigVerifiedBatch,
         stats::SigVerifyCertStats,
         utils::send_certs_to_pool,
     },
@@ -50,7 +49,7 @@ pub(super) fn verify_and_send_certificates(
     verified_certs_set: &mut HashSet<CertificateType>,
     certs: Vec<CertPayload>,
     root_bank: &Bank,
-    channel_to_pool: &Sender<SigVerifiedBatch>,
+    channel_to_pool: &Sender<Vec<Certificate>>,
     banlist: &SimpleQosBanlist,
     thread_pool: &ThreadPool,
 ) -> Result<SigVerifyCertStats, SigVerifyCertError> {
@@ -95,7 +94,7 @@ fn verify_certs(
     stats: &mut SigVerifyCertStats,
     banlist: &SimpleQosBanlist,
     thread_pool: &ThreadPool,
-) -> SigVerifiedBatch {
+) -> Vec<Certificate> {
     let verified = thread_pool.install(|| {
         certs
             .into_par_iter()
@@ -106,7 +105,7 @@ fn verify_certs(
             .collect::<Vec<_>>()
     });
 
-    let certs = verified
+    verified
         .into_iter()
         .filter_map(|(res, sender_identity_pubkey)| match res {
             Ok(cert) => {
@@ -142,8 +141,7 @@ fn verify_certs(
                 None
             }
         })
-        .collect();
-    SigVerifiedBatch::Certificates(certs)
+        .collect()
 }
 
 fn verify_cert(

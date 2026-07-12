@@ -35,6 +35,7 @@ rayon = { workspace = true }
 solana-bls-signatures = { workspace = true, features = ["parallel"] }
 solana-clock = { workspace = true }
 solana-gossip = { workspace = true }
+solana-hash = { workspace = true }
 solana-ledger = { workspace = true }
 solana-measure = { workspace = true }
 solana-metrics = { workspace = true }
