@@ -7887,6 +7887,7 @@ dependencies = [
  "solana-time-utils",
  "solana-tls-utils",
  "solana-tpu-client",
+ "solana-tpu-client-next",
  "solana-transaction",
  "solana-transaction-error",
  "solana-udp-client",
@@ -7898,7 +7899,9 @@ name = "solana-client-test"
 version = "4.3.0-alpha.1"
 dependencies = [
  "agave-logger",
+ "async-trait",
  "futures-util",
+ "log",
  "serde_json",
  "solana-client",
  "solana-clock",
@@ -7908,6 +7911,7 @@ dependencies = [
  "solana-message",
  "solana-native-token",
  "solana-net-utils",
+ "solana-packet 4.2.0",
  "solana-pubkey 4.2.0",
  "solana-pubsub-client",
  "solana-rpc",
@@ -7918,8 +7922,11 @@ dependencies = [
  "solana-system-interface 3.2.0",
  "solana-system-transaction",
  "solana-test-validator",
+ "solana-tpu-client-next",
  "solana-transaction-status",
  "solana-version",
+ "spl-memo-interface",
+ "test-case",
  "tokio",
  "tungstenite",
 ]
