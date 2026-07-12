@@ -17,17 +17,18 @@ use {
         streamer::StakedNodes,
     },
     solana_tpu_client_next::{
-        ClientBuilder, ConnectionWorkersScheduler, ConnectionWorkersSchedulerError,
-        SendTransactionStats,
+        ClientBuilder, ConnectionWorkerCache, ConnectionWorkersScheduler,
+        ConnectionWorkersSchedulerError, SendTransactionStats,
         connection_workers_scheduler::{
             BindTarget, ConnectionWorkersSchedulerConfig, Fanout, StakeIdentity,
         },
         leader_updater::create_pinned_leader_updater,
         send_transaction_stats::SendTransactionStatsNonAtomic,
         transaction_batch::TransactionBatch,
+        workers_cache::WorkerInfo,
     },
     std::{
-        collections::HashMap,
+        collections::{HashMap, VecDeque},
         net::{IpAddr, Ipv4Addr, Ipv6Addr, SocketAddr},
         num::{NonZeroUsize, Saturating},
         sync::{
@@ -855,10 +856,16 @@ async fn test_proactive_connection_close_detection() {
     );
 }
 
-#[tokio::test]
-async fn test_client_builder() {
+struct ClientBuilderTestContext {
+    builder: ClientBuilder,
+    receiver: CrossbeamReceiver<PacketBatch>,
+    server_handle: JoinHandle<()>,
+    cancel: CancellationToken,
+}
+
+fn setup_client_builder_test() -> ClientBuilderTestContext {
     let SpawnTestServerResult {
-        join_handle: server_handle,
+        join_handle,
         receiver,
         server_address,
         stats: _stats,
@@ -868,9 +875,6 @@ async fn test_client_builder() {
         QuicStreamerConfig::default_for_tests(),
         SwQosConfig::default(),
     );
-
-    let _drop_guard = cancel.clone().drop_guard();
-    let successfully_sent = Arc::new(AtomicU64::new(0));
 
     let port_range = localhost_port_range_for_tests();
     let socket = bind_to(IpAddr::V4(Ipv4Addr::LOCALHOST), port_range.0)
@@ -884,25 +888,45 @@ async fn test_client_builder() {
         .leader_send_fanout(1)
         .identity(None)
         .max_cache_size(NonZeroUsize::new(1).unwrap())
-        .worker_channel_size(100)
-        .metric_reporter({
-            let successfully_sent = successfully_sent.clone();
-            |stats: Arc<SendTransactionStats>, cancel: CancellationToken| async move {
-                let mut interval = interval(Duration::from_millis(10));
-                cancel
-                    .run_until_cancelled(async {
-                        loop {
-                            interval.tick().await;
-                            let view = stats.read_and_reset();
-                            successfully_sent.fetch_add(view.successfully_sent, Ordering::Relaxed);
-                        }
-                    })
-                    .await;
-                // update right after the cancel
-                let view = stats.read_and_reset();
-                successfully_sent.fetch_add(view.successfully_sent, Ordering::Relaxed);
-            }
-        });
+        .worker_channel_size(100);
+
+    ClientBuilderTestContext {
+        builder,
+        receiver,
+        server_handle: join_handle,
+        cancel,
+    }
+}
+
+#[tokio::test]
+async fn test_client_builder() {
+    let ClientBuilderTestContext {
+        builder,
+        receiver,
+        server_handle,
+        cancel,
+    } = setup_client_builder_test();
+
+    let _drop_guard = cancel.clone().drop_guard();
+    let successfully_sent = Arc::new(AtomicU64::new(0));
+    let builder = builder.metric_reporter({
+        let successfully_sent = successfully_sent.clone();
+        |stats: Arc<SendTransactionStats>, cancel: CancellationToken| async move {
+            let mut interval = interval(Duration::from_millis(10));
+            cancel
+                .run_until_cancelled(async {
+                    loop {
+                        interval.tick().await;
+                        let view = stats.read_and_reset();
+                        successfully_sent.fetch_add(view.successfully_sent, Ordering::Relaxed);
+                    }
+                })
+                .await;
+            // update right after the cancel
+            let view = stats.read_and_reset();
+            successfully_sent.fetch_add(view.successfully_sent, Ordering::Relaxed);
+        }
+    });
 
     let (tx_sender, client) = builder
         .build()
@@ -921,18 +945,15 @@ async fn test_client_builder() {
         .try_send_transactions_in_batch(txs.clone())
         .expect("Client should accept the transaction batch");
 
-    // Check results
     let now = Instant::now();
     let mut actual_num_packets = 0;
     while actual_num_packets < expected_num_txs {
-        {
-            let elapsed = now.elapsed();
-            assert!(
-                elapsed < TEST_MAX_TIME,
-                "Failed to send {expected_num_txs} transaction in {elapsed:?}. Only sent \
-                 {actual_num_packets}",
-            );
-        }
+        let elapsed = now.elapsed();
+        assert!(
+            elapsed < TEST_MAX_TIME,
+            "Failed to send {expected_num_txs} transaction in {elapsed:?}. Only sent \
+             {actual_num_packets}",
+        );
 
         let Ok(packets) = receiver.try_recv() else {
             sleep(Duration::from_millis(10)).await;
@@ -941,7 +962,7 @@ async fn test_client_builder() {
 
         actual_num_packets += packets.len();
         for p in packets.iter() {
-            assert_eq!(p.meta().size, 1);
+            assert_eq!(p.meta().size, tx_size);
         }
     }
 
@@ -956,6 +977,116 @@ async fn test_client_builder() {
     );
 
     // Stop server
+    cancel.cancel();
+    server_handle.await.unwrap();
+}
+
+struct FifoWorkersCache {
+    capacity: usize,
+    workers: HashMap<SocketAddr, WorkerInfo>,
+    order: VecDeque<SocketAddr>,
+}
+
+impl FifoWorkersCache {
+    fn new(capacity: NonZeroUsize) -> Self {
+        Self {
+            capacity: capacity.get(),
+            workers: HashMap::new(),
+            order: VecDeque::new(),
+        }
+    }
+}
+
+impl ConnectionWorkerCache for FifoWorkersCache {
+    fn contains(&self, key: &SocketAddr) -> bool {
+        self.workers.contains_key(key)
+    }
+
+    fn get(&mut self, key: &SocketAddr) -> Option<&WorkerInfo> {
+        self.workers.get(key)
+    }
+
+    fn push(&mut self, key: SocketAddr, value: WorkerInfo) -> Option<(SocketAddr, WorkerInfo)> {
+        if let Some(worker) = self.workers.insert(key, value) {
+            return Some((key, worker));
+        }
+
+        self.order.push_back(key);
+        if self.workers.len() > self.capacity {
+            return self.pop_next();
+        }
+
+        None
+    }
+
+    fn pop(&mut self, key: &SocketAddr) -> Option<WorkerInfo> {
+        self.order.retain(|addr| addr != key);
+        self.workers.remove(key)
+    }
+
+    fn pop_next(&mut self) -> Option<(SocketAddr, WorkerInfo)> {
+        while let Some(key) = self.order.pop_front() {
+            if let Some(worker) = self.workers.remove(&key) {
+                return Some((key, worker));
+            }
+        }
+        None
+    }
+}
+
+#[tokio::test]
+async fn test_client_builder_with_custom_workers_cache() {
+    let ClientBuilderTestContext {
+        builder,
+        receiver,
+        server_handle,
+        cancel,
+    } = setup_client_builder_test();
+
+    let _drop_guard = cancel.clone().drop_guard();
+    let cache_factory_calls = Arc::new(AtomicU64::new(0));
+
+    let builder = builder.workers_cache({
+        let cache_factory_calls = cache_factory_calls.clone();
+        move |capacity| {
+            cache_factory_calls.fetch_add(1, Ordering::Relaxed);
+            FifoWorkersCache::new(capacity)
+        }
+    });
+
+    let (tx_sender, client) = builder
+        .build()
+        .expect("Client should be built successfully.");
+
+    tx_sender
+        .send_transactions_in_batch(vec![vec![0_u8; 1]])
+        .await
+        .expect("Client should accept the transaction batch");
+
+    let now = Instant::now();
+    loop {
+        assert!(
+            now.elapsed() < TEST_MAX_TIME,
+            "Failed to send transaction in {:?}",
+            now.elapsed(),
+        );
+
+        let Ok(packets) = receiver.try_recv() else {
+            sleep(Duration::from_millis(10)).await;
+            continue;
+        };
+
+        assert_eq!(packets.len(), 1);
+        assert_eq!(packets.iter().next().unwrap().meta().size, 1);
+        break;
+    }
+
+    client
+        .shutdown()
+        .await
+        .expect("Client should shutdown successfully.");
+    assert_eq!(cache_factory_calls.load(Ordering::Relaxed), 1);
+
     cancel.cancel();
     server_handle.await.unwrap();
 }

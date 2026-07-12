@@ -516,8 +516,9 @@ mod tests {
         while !cache
             .workers
             .get(&peer)
-            .map(|worker| worker.sender.is_closed())
-            .unwrap_or(true)
+            .expect("Worker should remain in cache")
+            .sender
+            .is_closed()
         {
             if start.elapsed() > TEST_MAX_TIME {
                 panic!("Sender did not close in {TEST_MAX_TIME:?}");
@@ -526,11 +527,7 @@ mod tests {
         }
 
         assert!(
-            !cache
-                .workers
-                .get(&peer)
-                .map(|worker| worker.is_active())
-                .unwrap_or(false),
+            !cache.workers.get(&peer).unwrap().is_active(),
             "Worker should be inactive"
         );
 
