@@ -23,6 +23,7 @@ use {
         },
         reward_info::RewardInfo,
         stake_account::StakeAccount,
+        stake_delegation::delegation_effective_stake,
         stakes::Stakes,
     },
     log::{debug, info},
@@ -38,6 +39,7 @@ use {
     solana_stake_history::StakeHistory,
     solana_stake_interface::state::Delegation,
     solana_sysvar::epoch_rewards::EpochRewards,
+    solana_vote::vote_account::VoteAccounts,
     std::sync::{
         Arc,
         atomic::{AtomicU64, Ordering::Relaxed},
@@ -165,6 +167,67 @@ impl RewardsAccumulator {
             .total_stake_rewards_lamports
             .saturating_add(src.total_stake_rewards_lamports);
         dst
+    }
+}
+
+/// Calculates block reward for a stake account based on SIMD-0123
+fn calculate_block_reward(
+    rewarded_epoch: Epoch,
+    delegation: &Delegation,
+    stake_history: &StakeHistory,
+    distribution_epoch_vote_accounts: &VoteAccounts,
+    ag_epoch_type: &AlpenglowEpochType,
+    new_warmup_cooldown_rate_epoch: Option<Epoch>,
+    use_fixed_point_stake_math: bool,
+) -> u64 {
+    let vote_pubkey = delegation.voter_pubkey;
+    let Some(vote_account) = distribution_epoch_vote_accounts.get(&vote_pubkey) else {
+        debug!("could not find vote account {vote_pubkey} in cache");
+        return 0;
+    };
+    let vote_state = vote_account.vote_state_view();
+    let pending_delegator_rewards = vote_state.pending_delegator_rewards();
+    // NOTE: during recalculation, `distribution_epoch_vote_accounts` already
+    // includes updated stake activation values from after the new epoch
+    // calculation, so we need to use `RewardEpochDelegatedStakes` for the exact
+    // values at the end of the reward epoch.
+    let (AlpenglowEpochType::Alpenglow {
+        reward_epoch_delegated_stakes,
+        ..
+    }
+    | AlpenglowEpochType::MigrationEpoch {
+        reward_epoch_delegated_stakes,
+        ..
+    }) = ag_epoch_type
+    else {
+        debug!("Alpenglow must be enabled for block reward calculation");
+        return 0;
+    };
+    let total_active_stake = reward_epoch_delegated_stakes
+        .delegated_stakes
+        .get(&vote_pubkey)
+        .copied()
+        .unwrap_or(0);
+    if total_active_stake == 0 {
+        0
+    } else {
+        let stake = delegation_effective_stake(
+            delegation,
+            rewarded_epoch,
+            stake_history,
+            new_warmup_cooldown_rate_epoch,
+            use_fixed_point_stake_math,
+        );
+        // During recalculation, if stake account has already received rewards,
+        // it's possible to have `stake > total_active_stake`. If
+        // `pending_delegator_rewards` is a huge number, we could potentially
+        // overflow a `u64`. We can also have individual rewards look greater
+        // than the pending rewards. This is harmless in practice, but we
+        // clamp it just to be safe
+        (pending_delegator_rewards as u128 * stake as u128 / total_active_stake as u128)
+            .try_into()
+            .unwrap_or(u64::MAX)
+            .min(pending_delegator_rewards)
     }
 }
 
@@ -727,6 +790,7 @@ impl Bank {
         // part of relaxing post-exec min balance checks.
         let adjust_delegations_for_rent = feature_snapshot.relax_post_exec_min_balance_check;
         let custom_commission_collector = feature_snapshot.custom_commission_collector;
+        let block_revenue_sharing = feature_snapshot.block_revenue_sharing;
 
         let mut measure_redeem_rewards = Measure::start("redeem-rewards");
         // For N stake delegations, where N is >1,000,000, we produce:
@@ -746,7 +810,19 @@ impl Bank {
                 .zip(&mut stake_rewards.spare_capacity_mut()[..stake_delegations_len])
                 .with_min_len(500)
                 .filter_map(|((stake_pubkey, stake_account), reward_ref)| {
-                    let block_reward = 0;
+                    let block_reward = if block_revenue_sharing {
+                        calculate_block_reward(
+                            rewarded_epoch,
+                            stake_account.delegation(),
+                            stake_history,
+                            cached_vote_accounts.distribution_epoch_vote_accounts,
+                            ag_epoch_type,
+                            new_warmup_cooldown_rate_epoch,
+                            use_fixed_point_stake_math,
+                        )
+                    } else {
+                        0
+                    };
                     let maybe_reward_record = self.redeem_delegation_rewards(
                         rewarded_epoch,
                         stake_pubkey,
@@ -1172,6 +1248,7 @@ mod tests {
         },
         agave_feature_set::{FeatureSet, delay_commission_updates},
         agave_votor_messages::consensus_message::BLS_KEYPAIR_DERIVE_SEED,
+        proptest::prelude::*,
         rand::Rng,
         rayon::ThreadPoolBuilder,
         solana_account::{
@@ -1189,10 +1266,12 @@ mod tests {
         solana_rent::Rent,
         solana_sdk_ids::incinerator,
         solana_signer::Signer,
+        solana_stake_history::StakeHistoryEntry,
         solana_stake_interface::{
             stake_flags::StakeFlags,
             state::{Authorized, Delegation, Meta, Stake, StakeStateV2},
         },
+        solana_vote::vote_account::VoteAccount,
         solana_vote_interface::state::{
             BLS_PUBLIC_KEY_COMPRESSED_SIZE, VoteInitV2, VoteStateV4, VoteStateVersions,
         },
@@ -4040,5 +4119,108 @@ mod tests {
             reward_commission.burned_lamports + reward_commission.commission_lamports,
             epoch_rewards.distributed_rewards
         );
+    }
+
+    fn get_block_reward_for_test(
+        individual_stake: u64,
+        total_stake: u64,
+        pending_delegator_rewards: u64,
+        rewarded_epoch: u64,
+    ) -> u64 {
+        let voter_pubkey = Pubkey::new_unique();
+        let vote_account = {
+            let identity = Keypair::new();
+            let bls_keypair =
+                BLSKeypair::derive_from_signer(&identity, BLS_KEYPAIR_DERIVE_SEED).unwrap();
+            let (bls_pubkey, bls_pop) = create_bls_proof_of_possession(&voter_pubkey, &bls_keypair);
+            let vote_init = VoteInitV2 {
+                node_pubkey: identity.pubkey(),
+                authorized_voter: identity.pubkey(),
+                authorized_voter_bls_pubkey: bls_pubkey,
+                authorized_voter_bls_proof_of_possession: bls_pop,
+                ..VoteInitV2::default()
+            };
+            let mut vote_state = VoteStateV4::new(
+                &vote_init,
+                &voter_pubkey,
+                &identity.pubkey(),
+                &Clock::default(),
+            );
+            vote_state.pending_delegator_rewards = pending_delegator_rewards;
+            let mut account = solana_account::AccountSharedData::new(
+                1_000_000_000,
+                VoteStateV4::size_of(),
+                &solana_vote_program::id(),
+            );
+            account
+                .serialize_data(&VoteStateVersions::new_v4(vote_state))
+                .unwrap();
+            VoteAccount::try_from(account).unwrap()
+        };
+
+        let vote_accounts = [(voter_pubkey, (total_stake, vote_account))]
+            .into_iter()
+            .collect();
+        let ag_epoch_type = AlpenglowEpochType::Alpenglow {
+            migration_epoch: 0,
+            reward_epoch_delegated_stakes: RewardEpochDelegatedStakes {
+                epoch: rewarded_epoch,
+                delegated_stakes: [(voter_pubkey, total_stake)].into_iter().collect(),
+            },
+        };
+
+        let delegation = Delegation {
+            voter_pubkey,
+            stake: individual_stake,
+            activation_epoch: u64::MAX, // boostrap stake so it's fully active
+            ..Default::default()
+        };
+
+        let mut stake_history = StakeHistory::default();
+        for epoch in 0..=rewarded_epoch {
+            stake_history.add(epoch, StakeHistoryEntry::with_effective(total_stake));
+        }
+
+        let use_fixed_point_stake_math = true;
+        let new_warmup_cooldown_rate_epoch = Some(0);
+
+        calculate_block_reward(
+            rewarded_epoch,
+            &delegation,
+            &stake_history,
+            &vote_accounts,
+            &ag_epoch_type,
+            new_warmup_cooldown_rate_epoch,
+            use_fixed_point_stake_math,
+        )
+    }
+
+    #[test]
+    fn test_calculate_block_reward_specific() {
+        // get nothing
+        assert_eq!(get_block_reward_for_test(0, 0, 0, 0), 0);
+        // get everything
+        assert_eq!(get_block_reward_for_test(1, 1, 1, 0), 1);
+        // individual stake higher than block reward, capped
+        assert_eq!(get_block_reward_for_test(2, 1, 1, 0), 1);
+        // not truncated
+        assert_eq!(get_block_reward_for_test(1, 10, 10, 0), 1);
+        // truncated
+        assert_eq!(get_block_reward_for_test(1, 10, 9, 0), 0);
+    }
+
+    proptest! {
+        #[test]
+        fn test_calculate_block_reward_prop(
+            individual_stake in 0..=u64::MAX,
+            total_stake in 0..=u64::MAX,
+            pending_delegator_rewards in 0..=u64::MAX,
+            rewarded_epoch in 0..=solana_stake_history::MAX_ENTRIES as u64,
+        ) {
+            let reward = get_block_reward_for_test(individual_stake, total_stake, pending_delegator_rewards, rewarded_epoch);
+            // This check is pedantic since the code clamps the output, so the
+            // test is checking for panics.
+            prop_assert!(reward <= pending_delegator_rewards);
+        }
     }
 }
