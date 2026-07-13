@@ -1757,22 +1757,6 @@ fn test_alive_bytes_after_shrink_with_zero_lamport_single_ref_accounts() {
     accounts_db.set_latest_full_snapshot_slot(slot);
 
     let storage = accounts_db.get_storage_for_slot(slot).unwrap();
-    accounts_db.accounts_index.scan(
-        dead_pubkeys.iter(),
-        |_pubkey, slots_refs| {
-            let (slot_list, ref_count) = slots_refs.unwrap();
-            assert_eq!(slot_list.len(), 1);
-            assert_eq!(ref_count, 1);
-
-            let (indexed_slot, acct_info) = slot_list.first().unwrap();
-            assert_eq!(*indexed_slot, slot);
-            assert!(acct_info.is_zero_lamport());
-            accounts_db.zero_lamport_single_ref_found(*indexed_slot, acct_info.offset());
-            AccountsIndexScanResult::KeepInMemory
-        },
-        None,
-        ScanFilter::All,
-    );
 
     assert_eq!(
         storage.num_zero_lamport_single_ref_accounts(),
@@ -4054,23 +4038,6 @@ define_accounts_db_test!(
         let storage = accounts_db.get_and_assert_single_storage(slot);
         let alive_bytes = storage.alive_bytes();
         assert!(alive_bytes > 0);
-
-        // scan the accounts to track zlsr accounts
-        accounts_db.accounts_index.scan(
-            pubkeys.iter(),
-            |_pubkey, slots_refs| {
-                let (slot_list, ref_count) = slots_refs.unwrap();
-                assert_eq!(slot_list.len(), 1);
-                assert_eq!(ref_count, 1);
-
-                let (slot, acct_info) = slot_list.first().unwrap();
-                assert_eq!(*slot, 0);
-                accounts_db.zero_lamport_single_ref_found(*slot, acct_info.offset());
-                AccountsIndexScanResult::OnlyKeepInMemoryIfDirty
-            },
-            None,
-            ScanFilter::All,
-        );
 
         // assert the number of zlsr accounts
         assert_eq!(storage.num_zero_lamport_single_ref_accounts(), num_keys);
