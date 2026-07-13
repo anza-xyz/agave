@@ -266,8 +266,7 @@ impl<VoteClient: ForwardingClient, NonVoteClient: ForwardingClient>
         is_tpu_vote_batch: bool,
         bank: &Bank,
     ) {
-        let sanitize_config =
-            sanitize_config(bank.feature_set.snapshot().limit_instruction_accounts);
+        let sanitize_config = sanitize_config();
         for packet in packet_batch
             .iter()
             .filter(|p| initial_packet_meta_filter(p.meta()))

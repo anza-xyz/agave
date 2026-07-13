@@ -9116,15 +9116,11 @@ fn test_verify_transactions_instruction_limit() {
     );
 }
 
-#[test_case(false; "pre_simd406_limit_instruction_accounts")]
-#[test_case(true; "simd406_limit_instruction_accounts")]
-fn test_verify_transactions_accounts_limit(simd_406_enabled: bool) {
+#[test]
+fn test_verify_transactions_accounts_limit() {
     let GenesisConfigInfo { genesis_config, .. } =
         create_genesis_config_with_leader(42, &solana_pubkey::new_rand(), 42);
-    let mut bank = Bank::new_for_tests(&genesis_config);
-    if !simd_406_enabled {
-        bank.deactivate_feature(&feature_set::limit_instruction_accounts::id());
-    }
+    let bank = Bank::new_for_tests(&genesis_config);
 
     let recent_blockhash = Hash::new_unique();
     let keypair = Keypair::new();
@@ -9148,17 +9144,10 @@ fn test_verify_transactions_accounts_limit(simd_406_enabled: bool) {
     );
     let tx = Transaction::new(&[&keypair], message, recent_blockhash);
 
-    if simd_406_enabled {
-        assert_matches!(
-            bank.verify_transaction(tx.into(), TransactionVerificationMode::FullVerification),
-            Err(TransactionError::SanitizeFailure)
-        );
-    } else {
-        assert!(
-            bank.verify_transaction(tx.into(), TransactionVerificationMode::FullVerification)
-                .is_ok()
-        );
-    }
+    assert_matches!(
+        bank.verify_transaction(tx.into(), TransactionVerificationMode::FullVerification),
+        Err(TransactionError::SanitizeFailure)
+    );
 }
 
 #[test]

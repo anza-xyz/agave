@@ -619,7 +619,6 @@ mod tests {
             None,
             address_loader,
             &ReservedAccountKeys::empty_key_set(),
-            true,
         );
         rt.unwrap()
     }

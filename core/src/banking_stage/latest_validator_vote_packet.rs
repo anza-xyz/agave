@@ -108,7 +108,7 @@ impl LatestValidatorVote {
 
         let vote = SanitizedTransactionView::try_new_sanitized(
             std::sync::Arc::new(packet.data(..).unwrap().to_vec()),
-            &solana_runtime_transaction::sanitize_config::sanitize_config(true),
+            &solana_runtime_transaction::sanitize_config::sanitize_config(),
         )
         .unwrap();
 

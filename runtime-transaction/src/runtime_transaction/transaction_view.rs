@@ -282,7 +282,7 @@ mod tests {
         let hash = Hash::new_unique();
         let transaction = SanitizedTransactionView::try_new_sanitized(
             &serialized_transaction[..],
-            &sanitize_config(true),
+            &sanitize_config(),
         )
         .unwrap();
         let static_runtime_transaction =
@@ -317,7 +317,7 @@ mod tests {
         ) {
             let bytes = wincode::serialize(&original_transaction).unwrap();
             let transaction_view =
-                SanitizedTransactionView::try_new_sanitized(&bytes[..], &sanitize_config(true))
+                SanitizedTransactionView::try_new_sanitized(&bytes[..], &sanitize_config())
                     .unwrap();
             let runtime_transaction = RuntimeTransaction::<SanitizedTransactionView<_>>::try_new(
                 transaction_view,
@@ -385,7 +385,7 @@ mod tests {
             let bytes =
                 wincode::serialize(&original_transaction.to_versioned_transaction()).unwrap();
             let transaction_view =
-                SanitizedTransactionView::try_new_sanitized(&bytes[..], &sanitize_config(true))
+                SanitizedTransactionView::try_new_sanitized(&bytes[..], &sanitize_config())
                     .unwrap();
             let runtime_transaction = RuntimeTransaction::<SanitizedTransactionView<_>>::try_new(
                 transaction_view,
@@ -475,7 +475,7 @@ mod tests {
             .unwrap();
         let transaction_view = SanitizedTransactionView::try_new_sanitized(
             &serialized_transaction[..],
-            &sanitize_config(true),
+            &sanitize_config(),
         )
         .unwrap();
         let runtime_transaction = RuntimeTransaction::<SanitizedTransactionView<_>>::try_new(

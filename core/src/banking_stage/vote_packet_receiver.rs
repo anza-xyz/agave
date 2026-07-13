@@ -81,7 +81,7 @@ impl VotePacketReceiver {
         slot_metrics_tracker: &mut LeaderSlotMetricsTracker,
     ) -> Result<(), RecvTimeoutError> {
         let start = Instant::now();
-        let sanitize_config = sanitize_config(true);
+        let sanitize_config = sanitize_config();
         let mut stats = ReceiveAndBufferStats::default();
 
         let packet_batch = self.banking_packet_receiver.recv_timeout(recv_timeout)?;

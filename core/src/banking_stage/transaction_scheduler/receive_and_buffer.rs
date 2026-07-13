@@ -247,8 +247,7 @@ impl TransactionViewReceiveAndBuffer {
         // If outside holding window, do not parse.
         let should_parse = !matches!(decision, BufferedPacketsDecision::Forward);
 
-        let sanitize_config =
-            sanitize_config(root_bank.feature_set.snapshot().limit_instruction_accounts);
+        let sanitize_config = sanitize_config();
         let transaction_account_lock_limit = working_bank.get_transaction_account_lock_limit();
 
         // Create temporary batches of transactions to be age-checked.

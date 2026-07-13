@@ -505,7 +505,6 @@ pub(crate) mod external {
                 Self::parse_transactions_and_populate_initial_check_responses(
                     message,
                     &batch,
-                    &root_bank,
                     responses_ptr,
                 )
             };
@@ -776,15 +775,13 @@ pub(crate) mod external {
         unsafe fn parse_transactions_and_populate_initial_check_responses<'a>(
             message: &PackToWorkerMessage,
             batch: &TransactionPtrBatch,
-            bank: &Bank,
             responses_ptr: NonNull<CheckResponse>,
         ) -> (
             ArrayVec<Result<(), TransactionViewError>, MAX_TRANSACTIONS_PER_MESSAGE>,
             ArrayVec<TxView, MAX_TRANSACTIONS_PER_MESSAGE>,
             &'a mut [CheckResponse],
         ) {
-            let sanitize_config =
-                sanitize_config(bank.feature_set.snapshot().limit_instruction_accounts);
+            let sanitize_config = sanitize_config();
             let mut parsing_results = ArrayVec::new();
             let mut parsed_transactions = ArrayVec::new();
             for (tx_ptr, _) in batch.iter() {
@@ -977,8 +974,7 @@ pub(crate) mod external {
             ArrayVec<Tx, MAX_TRANSACTIONS_PER_MESSAGE>,
             ArrayVec<MaxAge, MAX_TRANSACTIONS_PER_MESSAGE>,
         ) {
-            let sanitize_config =
-                sanitize_config(bank.feature_set.snapshot().limit_instruction_accounts);
+            let sanitize_config = sanitize_config();
             let transaction_account_lock_limit = bank.get_transaction_account_lock_limit();
 
             let mut translation_results = ArrayVec::new();
@@ -1455,7 +1451,7 @@ pub(crate) mod external {
                         &simple_tx[..],
                         &bank,
                         bank.get_transaction_account_lock_limit(),
-                        &sanitize_config(true),
+                        &sanitize_config(),
                     )
                     .ok()
                     .unwrap()
@@ -1643,10 +1639,8 @@ pub(crate) mod external {
 
             let parsing_results = [Ok(()), Err(TransactionViewError::ParseError), Ok(())];
             let parsed_transactions = [
-                SanitizedTransactionView::try_new_sanitized(&tx1[..], &sanitize_config(true))
-                    .unwrap(),
-                SanitizedTransactionView::try_new_sanitized(&tx2[..], &sanitize_config(true))
-                    .unwrap(),
+                SanitizedTransactionView::try_new_sanitized(&tx1[..], &sanitize_config()).unwrap(),
+                SanitizedTransactionView::try_new_sanitized(&tx2[..], &sanitize_config()).unwrap(),
             ];
             bank.store_account(
                 &parsed_transactions[1].static_account_keys()[0],
@@ -1696,7 +1690,7 @@ pub(crate) mod external {
             ) -> RuntimeTransaction<ResolvedTransactionView<&'_ [u8]>> {
                 RuntimeTransaction::<ResolvedTransactionView<_>>::try_new(
                     RuntimeTransaction::<SanitizedTransactionView<_>>::try_new(
-                        SanitizedTransactionView::try_new_sanitized(tx, &sanitize_config(true))
+                        SanitizedTransactionView::try_new_sanitized(tx, &sanitize_config())
                             .unwrap(),
                         solana_transaction::sanitized::MessageHash::Compute,
                         Some(false),
@@ -3300,7 +3294,6 @@ mod tests {
                 None,
                 loader,
                 &HashSet::default(),
-                bank.feature_set.snapshot().limit_instruction_accounts,
             )
             .unwrap()
         };

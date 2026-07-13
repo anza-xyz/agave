@@ -3677,8 +3677,6 @@ impl Bank {
         &self,
         txs: Vec<VersionedTransaction>,
     ) -> Result<TransactionBatch<'_, '_, RuntimeTransaction<SanitizedTransaction>>> {
-        let enable_instruction_account_limit =
-            self.feature_set.snapshot().limit_instruction_accounts;
         let sanitized_txs = txs
             .into_iter()
             .map(|tx| {
@@ -3688,7 +3686,6 @@ impl Bank {
                     None,
                     self,
                     self.get_reserved_account_keys(),
-                    enable_instruction_account_limit,
                 )
             })
             .collect::<Result<Vec<_>>>()?;
@@ -3798,13 +3795,9 @@ impl Bank {
             // no writable keys are reserved.
             self.check_reserved_keys(transaction)?;
 
-            if self.feature_set.snapshot().limit_instruction_accounts {
-                for instr in transaction.instructions_iter() {
-                    if instr.accounts.len()
-                        > solana_transaction_context::MAX_ACCOUNTS_PER_INSTRUCTION
-                    {
-                        return Err(solana_transaction_error::TransactionError::SanitizeFailure);
-                    }
+            for instr in transaction.instructions_iter() {
+                if instr.accounts.len() > solana_transaction_context::MAX_ACCOUNTS_PER_INSTRUCTION {
+                    return Err(solana_transaction_error::TransactionError::SanitizeFailure);
                 }
             }
         }
@@ -5557,9 +5550,6 @@ impl Bank {
             _ => PACKET_DATA_SIZE,
         } as u64;
 
-        let enable_instruction_account_limit =
-            self.feature_set.snapshot().limit_instruction_accounts;
-
         // WARNING: Any pending features added here most likely must also be checked in
         //          `Bank::resanitize_transaction_minimally`.
         let sanitized_tx = {
@@ -5589,7 +5579,6 @@ impl Bank {
                 None,
                 self,
                 self.get_reserved_account_keys(),
-                enable_instruction_account_limit,
             )
         }?;
 
