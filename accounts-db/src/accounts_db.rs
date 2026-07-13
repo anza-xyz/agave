@@ -4141,21 +4141,7 @@ impl AccountsDb {
                     .accounts_cache
                     .remove_slot(*remove_slot)
                     .expect("slot cache entry must still be present");
-<<<<<<< HEAD
-                // Cache writes populate the secondary indexes but not the primary index, so a
-                // cache-only account dropped here without ever being flushed would leak its
-                // secondary entry.
-                // Explicitly ignore the return value as there is no need to purge the account
-                // from the primary index as well
-                //
-                // Narrow race: If a write re-adds the same pubkey key between `remove_slot` and
-                // `handle_dead_keys`, the new secondary entry will be dropped. Only
-                // secondary-index scans observe it (no consensus impact), and it self-heals: the
-                // entry is re-added when that slot flushes, or stays correctly removed if the slot
-                // is later purged.
-=======
                 // Potentially purge the secondary entries for any key that has now left the cache
->>>>>>> 22a3ad8ff (Handle dead keys secondary (#13717))
                 if !self.account_indexes.is_empty() {
                     let removed_keys = self.accounts_index.handle_dead_keys(&pubkeys_removed);
                     self.purge_secondary_indexes_for_dead_keys(&removed_keys);
