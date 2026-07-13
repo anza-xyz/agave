@@ -275,7 +275,7 @@ pub struct ExpectedShredVersion(pub u16);
 
 #[cfg_attr(
     feature = "frozen-abi",
-    derive(AbiExample, StableAbi, StableAbiSample, Serialize)
+    derive(AbiExample, StableAbi, StableAbiSample, Serialize, SchemaRead)
 )]
 #[derive(Debug, Clone, Hash, PartialEq, Eq, SchemaWrite)]
 /// First version of a wire consensus message
@@ -341,7 +341,7 @@ impl WireConsensusMessageV1 {
 
 #[cfg_attr(
     feature = "frozen-abi",
-    derive(AbiExample, AbiEnumVisitor, StableAbi, StableAbiSample, Serialize),
+    derive(AbiExample, AbiEnumVisitor, StableAbi, StableAbiSample, Serialize, SchemaRead),
     frozen_abi(
         digest = "Gf8GEMXaXezQnGsqwDdpZN3WtNkMZw5wfp3nwep9j55V",
         abi_digest = "AHPJsANgE3T8wfzkFZwao1PAWwd6LtS5GAhGrN9X4Xhy",
