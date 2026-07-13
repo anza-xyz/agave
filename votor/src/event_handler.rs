@@ -964,6 +964,7 @@ mod tests {
         agave_votor_messages::{
             consensus_message::{BLS_KEYPAIR_DERIVE_SEED, ConsensusMessage, VoteMessage},
             metric_types::ConsensusMetricsEventReceiver,
+            reward_certificate::AddVoteMessage,
             vote::Vote,
             wire::get_vote_payload_to_sign,
         },
@@ -1002,6 +1003,8 @@ mod tests {
         bls_receiver: Receiver<BLSOp>,
         commitment_receiver: Receiver<CommitmentAggregationData>,
         own_vote_receiver: Receiver<ConsensusMessage>,
+        #[allow(dead_code)] // Keep receiver alive to prevent SenderDisconnected errors
+        reward_votes_receiver: Receiver<AddVoteMessage>,
         bank_forks: Arc<RwLock<BankForks>>,
         my_bls_keypair: BLSKeypair,
         timer_manager: Arc<PlRwLock<TimerManager>>,
@@ -1069,6 +1072,7 @@ mod tests {
         let (bls_sender, bls_receiver) = bounded(1024);
         let (commitment_sender, commitment_receiver) = bounded(1024);
         let (own_vote_sender, own_vote_receiver) = bounded(1024);
+        let (reward_votes_sender, reward_votes_receiver) = bounded(1024);
         let (drop_bank_sender, drop_bank_receiver) = bounded(1024);
         let exit = Arc::new(AtomicBool::new(false));
         let (event_sender, _event_receiver) = bounded(1024);
@@ -1151,6 +1155,7 @@ mod tests {
             authorized_voter_keypairs: Arc::new(RwLock::new(vec![Arc::new(my_vote_keypair)])),
             derived_bls_keypairs: HashMap::new(),
             own_vote_sender,
+            reward_votes_sender,
             consensus_metrics_sender,
         };
 
@@ -1172,6 +1177,7 @@ mod tests {
             bls_receiver,
             commitment_receiver,
             own_vote_receiver,
+            reward_votes_receiver,
             bank_forks,
             my_bls_keypair,
             timer_manager,

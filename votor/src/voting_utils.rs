@@ -8,10 +8,11 @@ use {
     agave_votor_messages::{
         consensus_message::{BLS_KEYPAIR_DERIVE_SEED, ConsensusMessage, VoteMessage},
         metric_types::ConsensusMetricsEventSender,
+        reward_certificate::AddVoteMessage,
         vote::Vote,
         wire::get_vote_payload_to_sign,
     },
-    crossbeam_channel::{SendError, Sender},
+    crossbeam_channel::{SendError, Sender, TrySendError},
     solana_bls_signatures::{BlsError, keypair::Keypair as BLSKeypair},
     solana_clock::{Epoch, Slot},
     solana_gossip::cluster_info::ClusterInfo,
@@ -104,6 +105,9 @@ pub enum VoteError {
     #[error("Unable to send to certificate pool")]
     ConsensusPoolError(#[from] SendError<()>),
 
+    #[error("Channel to rewards container disconnected")]
+    RewardsChannelDisconnected,
+
     #[error("Commitment sender error {0}")]
     CommitmentSenderError(#[from] CommitmentError),
 
@@ -121,6 +125,7 @@ pub struct VotingContext {
     // The BLS keypair should always change with authorized_voter_keypairs.
     pub derived_bls_keypairs: HashMap<Pubkey, Arc<BLSKeypair>>,
     pub own_vote_sender: Sender<ConsensusMessage>,
+    pub reward_votes_sender: Sender<AddVoteMessage>,
     pub bls_sender: Sender<BLSOp>,
     pub commitment_sender: Sender<CommitmentAggregationData>,
     pub wait_to_vote_slot: Option<u64>,
@@ -279,8 +284,8 @@ fn handle_skippable_vote_error(err: VoteError, action: &str) -> Result<(), VoteE
 
 /// Build a normal push-vote BLS op.
 ///
-/// This updates vote history, sends the vote to the certificate pool thread for ingestion, and
-/// saves vote history for persistence.
+/// This updates vote history, sends the vote to the certificate pool and reward service for
+/// ingestion, and saves vote history for persistence.
 pub fn insert_vote_and_create_bls_message(
     vote: Vote,
     context: &mut VotingContext,
@@ -322,6 +327,18 @@ pub(crate) fn create_and_send_own_vote_message(
         .send(ConsensusMessage::Vote(vote_msg.clone()))
         .map_err(|_| SendError(()))?;
 
+    match context.reward_votes_sender.try_send(AddVoteMessage {
+        votes: vec![vote_msg.clone()],
+    }) {
+        Ok(()) => (),
+        Err(TrySendError::Full(_)) => {
+            warn!("Reward votes channel is full, dropping own vote {vote:?}");
+        }
+        Err(TrySendError::Disconnected(_)) => {
+            return Err(VoteError::RewardsChannelDisconnected);
+        }
+    }
+
     Ok(Some(vote_msg))
 }
 
@@ -343,7 +360,7 @@ mod tests {
     use {
         super::*,
         agave_votor_messages::consensus_message::Block,
-        crossbeam_channel::bounded,
+        crossbeam_channel::{Receiver, bounded},
         solana_gossip::contact_info::ContactInfo,
         solana_hash::Hash,
         solana_net_utils::SocketAddrSpace,
@@ -376,20 +393,25 @@ mod tests {
         own_vote_sender: Sender<ConsensusMessage>,
         validator_keypairs: &[ValidatorVoteKeypairs],
         my_index: usize,
-    ) -> VotingContext {
-        let (voting_context, _) = setup_voting_context_and_bank_forks_with_forks(
-            own_vote_sender,
-            validator_keypairs,
-            my_index,
-        );
-        voting_context
+    ) -> (VotingContext, Receiver<AddVoteMessage>) {
+        let (voting_context, _, reward_votes_receiver) =
+            setup_voting_context_and_bank_forks_with_forks(
+                own_vote_sender,
+                validator_keypairs,
+                my_index,
+            );
+        (voting_context, reward_votes_receiver)
     }
 
     fn setup_voting_context_and_bank_forks_with_forks(
         own_vote_sender: Sender<ConsensusMessage>,
         validator_keypairs: &[ValidatorVoteKeypairs],
         my_index: usize,
-    ) -> (VotingContext, Arc<RwLock<BankForks>>) {
+    ) -> (
+        VotingContext,
+        Arc<RwLock<BankForks>>,
+        Receiver<AddVoteMessage>,
+    ) {
         // Can't have stake of 0, so start at 1 and go to 10. In descending order, so 0 has largest stake.
         let stakes: Vec<u64> = (1u64..=10).rev().map(|x| x.saturating_mul(100)).collect();
         let genesis = create_genesis_config_with_alpenglow_vote_accounts(
@@ -411,6 +433,7 @@ mod tests {
         let bls_sender = bounded(1024).0;
         let commitment_sender = bounded(1024).0;
         let consensus_metrics_sender = bounded(1024).0;
+        let (reward_votes_sender, reward_votes_receiver) = bounded(1024);
         let voting_context = VotingContext {
             cluster_info,
             vote_history: VoteHistory::new(my_keys.node_keypair.pubkey(), 0),
@@ -421,13 +444,14 @@ mod tests {
             )])),
             derived_bls_keypairs: HashMap::new(),
             own_vote_sender,
+            reward_votes_sender,
             bls_sender,
             commitment_sender,
             wait_to_vote_slot: None,
             sharable_banks,
             consensus_metrics_sender,
         };
-        (voting_context, bank_forks)
+        (voting_context, bank_forks, reward_votes_receiver)
     }
 
     #[test]
@@ -438,7 +462,7 @@ mod tests {
             .map(|_| ValidatorVoteKeypairs::new(Keypair::new(), Keypair::new(), Keypair::new()))
             .collect::<Vec<_>>();
         let my_index = 0;
-        let mut voting_context =
+        let (mut voting_context, reward_votes_receiver) =
             setup_voting_context_and_bank_forks(own_vote_sender, &validator_keypairs, my_index);
         let my_bls_keypair = BLSKeypair::derive_from_signer(
             &validator_keypairs[my_index].vote_keypair,
@@ -487,6 +511,12 @@ mod tests {
             ConsensusMessage::Vote(expected_message.clone())
         );
 
+        // Check that the reward service receives the vote.
+        assert_eq!(
+            reward_votes_receiver.recv().unwrap().votes,
+            vec![expected_message.clone()]
+        );
+
         let refresh_vote = Vote::new_notarization_vote(Block {
             slot: vote_slot,
             block_id,
@@ -498,6 +528,7 @@ mod tests {
         assert_eq!(refresh_result.vote.slot(), vote_slot);
         assert_eq!(refresh_result, expected_message);
         assert!(own_vote_receiver.try_recv().is_err());
+        assert!(reward_votes_receiver.try_recv().is_err());
     }
 
     #[test]
@@ -508,7 +539,7 @@ mod tests {
             .map(|_| ValidatorVoteKeypairs::new(Keypair::new(), Keypair::new(), Keypair::new()))
             .collect::<Vec<_>>();
         let my_index = 0;
-        let mut voting_context =
+        let (mut voting_context, _reward_votes_receiver) =
             setup_voting_context_and_bank_forks(own_vote_sender, &validator_keypairs, my_index);
 
         // If we haven't reached wait_to_vote_slot yet, return Ok(None)
@@ -537,7 +568,7 @@ mod tests {
             .map(|_| ValidatorVoteKeypairs::new(Keypair::new(), Keypair::new(), Keypair::new()))
             .collect::<Vec<_>>();
         let my_index = 0;
-        let mut voting_context =
+        let (mut voting_context, _reward_votes_receiver) =
             setup_voting_context_and_bank_forks(own_vote_sender, &validator_keypairs, my_index);
 
         // Empty authorized voter keypairs to simulate non voting node
@@ -576,7 +607,7 @@ mod tests {
             .map(|_| ValidatorVoteKeypairs::new(Keypair::new(), Keypair::new(), Keypair::new()))
             .collect::<Vec<_>>();
         let my_index = 0;
-        let mut voting_context =
+        let (mut voting_context, _reward_votes_receiver) =
             setup_voting_context_and_bank_forks(own_vote_sender, &validator_keypairs, my_index);
 
         // Wrong identity keypair should return HotSpare based on rank_map.node_pubkey.
@@ -608,7 +639,7 @@ mod tests {
             .map(|_| ValidatorVoteKeypairs::new(Keypair::new(), Keypair::new(), Keypair::new()))
             .collect::<Vec<_>>();
         let my_index = 0;
-        let mut voting_context =
+        let (mut voting_context, _reward_votes_receiver) =
             setup_voting_context_and_bank_forks(own_vote_sender, &validator_keypairs, my_index);
 
         // Wrong vote account pubkey
@@ -642,7 +673,7 @@ mod tests {
             .map(|_| ValidatorVoteKeypairs::new(Keypair::new(), Keypair::new(), Keypair::new()))
             .collect::<Vec<_>>();
         let my_index = 0;
-        let mut voting_context =
+        let (mut voting_context, _reward_votes_receiver) =
             setup_voting_context_and_bank_forks(own_vote_sender, &validator_keypairs, my_index);
 
         // If we try to vote for a slot in the future, we should panic
@@ -662,11 +693,12 @@ mod tests {
             .map(|_| ValidatorVoteKeypairs::new(Keypair::new(), Keypair::new(), Keypair::new()))
             .collect::<Vec<_>>();
         let my_index = 0;
-        let (mut voting_context, bank_forks) = setup_voting_context_and_bank_forks_with_forks(
-            own_vote_sender,
-            &validator_keypairs,
-            my_index,
-        );
+        let (mut voting_context, bank_forks, _reward_votes_receiver) =
+            setup_voting_context_and_bank_forks_with_forks(
+                own_vote_sender,
+                &validator_keypairs,
+                my_index,
+            );
 
         // Set the stake of my_index to 0 in epoch 2
         // For epoch 2, make validator my_index to be zero stake, others have stake in ascending order, 1 < 2 < ... < 9

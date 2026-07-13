@@ -339,7 +339,7 @@ impl Tvu {
                 SigVerifierChannels {
                     packet_receiver: bls_packet_receiver,
                     channel_to_repair: verified_voter_slots_sender,
-                    channel_to_reward: reward_votes_sender,
+                    channel_to_reward: reward_votes_sender.clone(),
                     channel_to_pool: consensus_message_sender,
                     channel_to_metrics: consensus_metrics_sender.clone(),
                 },
@@ -519,6 +519,7 @@ impl Tvu {
             event_sender: votor_event_sender.clone(),
             latest_switch_request: latest_switch_request.clone(),
             own_vote_sender: own_message_sender.clone(),
+            reward_votes_sender,
             repair_event_sender,
             event_receiver: votor_event_receiver,
             consensus_message_receiver,

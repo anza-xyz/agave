@@ -66,6 +66,7 @@ use {
     agave_votor_messages::{
         consensus_message::{Block, ConsensusMessage},
         metric_types::{ConsensusMetricsEventReceiver, ConsensusMetricsEventSender},
+        reward_certificate::AddVoteMessage,
     },
     crossbeam_channel::{Receiver, Sender},
     parking_lot::RwLock as PlRwLock,
@@ -115,6 +116,7 @@ pub struct VotorConfig {
     pub highest_parent_ready: Arc<RwLock<(Slot, Block)>>,
     pub event_sender: VotorEventSender,
     pub own_vote_sender: Sender<ConsensusMessage>,
+    pub reward_votes_sender: Sender<AddVoteMessage>,
     pub repair_event_sender: RepairEventSender,
     pub latest_switch_request: LatestSwitchRequest,
 
@@ -164,6 +166,7 @@ impl Votor {
             highest_parent_ready,
             event_sender,
             own_vote_sender,
+            reward_votes_sender,
             repair_event_sender,
             latest_switch_request,
             event_receiver,
@@ -202,6 +205,7 @@ impl Votor {
             authorized_voter_keypairs,
             derived_bls_keypairs: HashMap::new(),
             own_vote_sender,
+            reward_votes_sender,
             bls_sender: bls_sender.clone(),
             commitment_sender: commitment_sender.clone(),
             wait_to_vote_slot,
