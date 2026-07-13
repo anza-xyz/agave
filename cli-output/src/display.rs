@@ -1,5 +1,8 @@
 use {
-    crate::cli_output::CliSignatureVerificationStatus,
+    crate::{
+        cli_output::CliSignatureVerificationStatus,
+        stdout::{write_stdout_str, writeln_stdout},
+    },
     agave_reserved_account_keys::ReservedAccountKeys,
     base64::{Engine, prelude::BASE64_STANDARD},
     chrono::{DateTime, Local, SecondsFormat, TimeZone, Utc},
@@ -89,13 +92,13 @@ pub fn build_balance_message(lamports: u64, use_lamports_unit: bool, show_unit: 
 }
 
 // Pretty print a "name value"
-pub fn println_name_value(name: &str, value: &str) {
+pub fn println_name_value(name: &str, value: &str) -> io::Result<()> {
     let styled_value = if value.is_empty() {
         style("(not set)").italic()
     } else {
         style(value)
     };
-    println!("{} {}", style(name).bold(), styled_value);
+    writeln_stdout(format_args!("{} {}", style(name).bold(), styled_value))
 }
 
 pub fn writeln_name_value(f: &mut dyn fmt::Write, name: &str, value: &str) -> fmt::Result {
@@ -107,19 +110,19 @@ pub fn writeln_name_value(f: &mut dyn fmt::Write, name: &str, value: &str) -> fm
     writeln!(f, "{} {}", style(name).bold(), styled_value)
 }
 
-pub fn println_name_value_or(name: &str, value: &str, setting_type: SettingType) {
+pub fn println_name_value_or(name: &str, value: &str, setting_type: SettingType) -> io::Result<()> {
     let description = match setting_type {
         SettingType::Explicit => "",
         SettingType::Computed => "(computed)",
         SettingType::SystemDefault => "(default)",
     };
 
-    println!(
+    writeln_stdout(format_args!(
         "{} {} {}",
         style(name).bold(),
         style(value),
         style(description).italic(),
-    );
+    ))
 }
 
 pub fn format_labeled_address(pubkey: &str, address_labels: &HashMap<String, String>) -> String {
@@ -140,22 +143,28 @@ pub fn println_signers(
     signers: &[String],
     absent: &[String],
     bad_sig: &[String],
-) {
-    println!();
-    println!("Blockhash: {blockhash}");
+) -> io::Result<()> {
+    writeln_stdout(format_args!(""))?;
+    writeln_stdout(format_args!("Blockhash: {blockhash}"))?;
     if !signers.is_empty() {
-        println!("Signers (Pubkey=Signature):");
-        signers.iter().for_each(|signer| println!("  {signer}"))
+        writeln_stdout(format_args!("Signers (Pubkey=Signature):"))?;
+        for signer in signers {
+            writeln_stdout(format_args!("  {signer}"))?;
+        }
     }
     if !absent.is_empty() {
-        println!("Absent Signers (Pubkey):");
-        absent.iter().for_each(|pubkey| println!("  {pubkey}"))
+        writeln_stdout(format_args!("Absent Signers (Pubkey):"))?;
+        for pubkey in absent {
+            writeln_stdout(format_args!("  {pubkey}"))?;
+        }
     }
     if !bad_sig.is_empty() {
-        println!("Bad Signatures (Pubkey):");
-        bad_sig.iter().for_each(|pubkey| println!("  {pubkey}"))
+        writeln_stdout(format_args!("Bad Signatures (Pubkey):"))?;
+        for pubkey in bad_sig {
+            writeln_stdout(format_args!("  {pubkey}"))?;
+        }
     }
-    println!();
+    writeln_stdout(format_args!(""))
 }
 
 struct CliAccountMeta {
@@ -662,7 +671,7 @@ pub fn println_transaction(
     prefix: &str,
     sigverify_status: Option<&[CliSignatureVerificationStatus]>,
     block_time: Option<UnixTimestamp>,
-) {
+) -> io::Result<()> {
     let mut w = Vec::new();
     if write_transaction(
         &mut w,
@@ -676,8 +685,9 @@ pub fn println_transaction(
     .is_ok()
         && let Ok(s) = String::from_utf8(w)
     {
-        print!("{s}");
+        write_stdout_str(&s)?;
     }
+    Ok(())
 }
 
 pub fn writeln_transaction(

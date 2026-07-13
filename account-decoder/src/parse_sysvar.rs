@@ -15,7 +15,7 @@ use {
     solana_sdk_ids::sysvar,
     solana_slot_hashes::SlotHashes,
     solana_slot_history::{self as slot_history, SlotHistory},
-    solana_stake_interface::stake_history::{StakeHistory, StakeHistoryEntry},
+    solana_stake_history::{StakeHistory, StakeHistoryEntry},
     solana_sysvar::{
         epoch_rewards::EpochRewards, last_restart_slot::LastRestartSlot, rewards::Rewards,
     },
@@ -274,7 +274,7 @@ mod test {
         solana_account::{Account, create_account_for_test},
         solana_fee_calculator::FeeCalculator,
         solana_hash::Hash,
-        solana_stake_interface::stake_history::SIZE,
+        solana_stake_history::SIZE,
     };
 
     #[test]

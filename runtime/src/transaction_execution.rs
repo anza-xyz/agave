@@ -1,6 +1,6 @@
 use {
     crate::{
-        bank::{Bank, PreCommitResult, TransactionBalancesSet},
+        bank::{Bank, TransactionBalancesSet},
         bank_utils,
         dependency_tracker::DependencyTracker,
         prioritization_fee_cache::PrioritizationFeeCache,
@@ -9,7 +9,7 @@ use {
         vote_sender_types::{ReplayVoteSendType, ReplayVoteSender},
     },
     log::{trace, warn},
-    solana_clock::Slot,
+    solana_clock::{BankId, Slot},
     solana_cost_model::{cost_model::CostModel, transaction_cost::TransactionCost},
     solana_measure::measure::Measure,
     solana_runtime_transaction::transaction_with_meta::TransactionWithMeta,
@@ -18,7 +18,6 @@ use {
         transaction_commit_result::{
             TransactionCommitResult, TransactionCommitResultExtensions as _,
         },
-        transaction_processing_result::ProcessedTransaction,
         transaction_processor::ExecutionRecordingConfig,
     },
     solana_svm_timings::{ExecuteTimingType, ExecuteTimings},
@@ -34,6 +33,7 @@ type WorkSequence = u64;
 #[derive(Debug)]
 pub struct TransactionStatusBatch {
     pub slot: Slot,
+    pub bank_id: BankId,
     pub transactions: Vec<SanitizedTransaction>,
     pub commit_results: Vec<TransactionCommitResult>,
     pub balances: TransactionBalancesSet,
@@ -63,69 +63,17 @@ pub fn execute_batch<'a>(
     timings: &'a mut ExecuteTimings,
     log_messages_bytes_limit: Option<usize>,
     prioritization_fee_cache: Option<&'a PrioritizationFeeCache>,
-    extra_pre_commit_callback: Option<
-        impl FnOnce(&TransactionResult<ProcessedTransaction>) -> TransactionResult<Option<usize>>,
-    >,
 ) -> TransactionResult<()> {
     let TransactionBatchWithIndexes {
         batch,
         transaction_indexes,
     } = batch;
 
-    // extra_pre_commit_callback allows for reuse of this function between the
-    // unified scheduler block production path and block verification path(s)
-    //   Some(_) => unified scheduler block production path
-    //   None    => block verification path(s)
-    let block_verification = extra_pre_commit_callback.is_none();
-    let record_transaction_meta = transaction_status_sender.is_some();
-    let mut transaction_indexes = Cow::from(transaction_indexes);
+    let transaction_indexes = Cow::from(transaction_indexes);
 
-    let pre_commit_callback = |_timings: &mut _, processing_results: &_| -> PreCommitResult {
-        match extra_pre_commit_callback {
-            None => {
-                // We're entering into one of the block-verification methods.
-                get_first_error(batch, processing_results)?;
-                Ok(None)
-            }
-            Some(extra_pre_commit_callback) => {
-                // We're entering into the block-production unified scheduler special case...
-                // `processing_results` should always contain exactly only 1 result in that case.
-                let [result] = processing_results else {
-                    panic!("unexpected result count: {}", processing_results.len());
-                };
-                // transaction_indexes is intended to be populated later; so barely-initialized vec
-                // should be provided.
-                assert!(transaction_indexes.is_empty());
-
-                // From now on, we need to freeze-lock the tpu bank, in order to prevent it from
-                // freezing in the middle of this code-path. Otherwise, the assertion at the start
-                // of commit_transactions() would trigger panic because it's fatal runtime
-                // invariant violation.
-                let freeze_lock = bank.freeze_lock();
-
-                // `result` won't be examined at all here. Rather, `extra_pre_commit_callback` is
-                // responsible for all result handling, including the very basic precondition of
-                // successful execution of transactions as well.
-                let committed_index = extra_pre_commit_callback(result)?;
-
-                // The callback succeeded. Optionally, update transaction_indexes as well.
-                // Refer to TaskHandler::handle()'s transaction_indexes initialization for further
-                // background.
-                if let Some(index) = committed_index {
-                    let transaction_indexes = transaction_indexes.to_mut();
-                    // Adjust the empty new vec with the exact needed capacity. Otherwise, excess
-                    // cap would be reserved on `.push()` in it.
-                    transaction_indexes.reserve_exact(1);
-                    transaction_indexes.push(index);
-                }
-                // At this point, poh should have been succeeded so it's guaranteed that the bank
-                // hasn't been frozen yet and we're still holding the lock. So, it's okay to pass
-                // down freeze_lock without any introspection here to be unconditionally dropped
-                // after commit_transactions(). This reasoning is same as
-                // solana_core::banking_stage::Consumer::execute_and_commit_transactions_locked()
-                Ok(Some(freeze_lock))
-            }
-        }
+    let pre_commit_callback = |processing_results: &_| -> TransactionResult<()> {
+        // We're entering into one of the block-verification methods.
+        get_first_error(batch, processing_results)
     };
 
     let (commit_results, balance_collector) = batch
@@ -139,30 +87,17 @@ pub fn execute_batch<'a>(
         )?;
 
     let mut check_block_costs_elapsed = Measure::start("check_block_costs");
-    let tx_costs = if block_verification {
-        // Block verification (including unified scheduler) case;
-        // collect and check transaction costs
-        let tx_costs = get_transaction_costs(bank, &commit_results, batch.sanitized_transactions());
-        check_block_cost_limits(bank, &tx_costs).map(|_| tx_costs)
-    } else if record_transaction_meta {
-        // Unified scheduler block production case;
-        // the scheduler will track costs elsewhere but costs are recalculated
-        // here so they can be recorded with other transaction metadata
-        Ok(get_transaction_costs(
-            bank,
-            &commit_results,
-            batch.sanitized_transactions(),
-        ))
-    } else {
-        // Unified scheduler block production without metadata recording
-        Ok(vec![])
-    };
+
+    let tx_costs = get_transaction_costs(bank, &commit_results, batch.sanitized_transactions());
+    let checked_tx_costs_result = check_block_cost_limits(bank, &tx_costs);
+
     check_block_costs_elapsed.stop();
     timings.saturating_add_in_place(
         ExecuteTimingType::CheckBlockLimitsUs,
         check_block_costs_elapsed.as_us(),
     );
-    let tx_costs = tx_costs?;
+
+    checked_tx_costs_result?;
 
     bank_utils::find_and_send_votes(
         batch.sanitized_transactions(),
@@ -172,11 +107,11 @@ pub fn execute_batch<'a>(
     );
 
     if let Some(prioritization_fee_cache) = prioritization_fee_cache {
-        let committed_transactions = commit_results
+        let fee_paying_transactions = commit_results
             .iter()
             .zip(batch.sanitized_transactions())
-            .filter_map(|(commit_result, tx)| commit_result.was_committed().then_some(tx));
-        prioritization_fee_cache.update(bank, committed_transactions);
+            .filter_map(|(commit_result, tx)| commit_result.was_fee_paying().then_some(tx));
+        prioritization_fee_cache.update(bank, fee_paying_transactions);
     }
     if let Some(transaction_status_sender) = transaction_status_sender {
         let transactions: Vec<SanitizedTransaction> = batch
@@ -206,6 +141,7 @@ pub fn execute_batch<'a>(
 
         transaction_status_sender.send_transaction_status_batch(
             bank.slot(),
+            bank.bank_id(),
             transactions,
             commit_results,
             balances,
@@ -302,6 +238,7 @@ impl TransactionStatusSender {
     pub fn send_transaction_status_batch(
         &self,
         slot: Slot,
+        bank_id: BankId,
         transactions: Vec<SanitizedTransaction>,
         commit_results: Vec<TransactionCommitResult>,
         balances: TransactionBalancesSet,
@@ -317,6 +254,7 @@ impl TransactionStatusSender {
         if let Err(e) = self.sender.send(TransactionStatusMessage::Batch((
             TransactionStatusBatch {
                 slot,
+                bank_id,
                 transactions,
                 commit_results,
                 balances,
@@ -353,12 +291,18 @@ mod tests {
         },
         crossbeam_channel::bounded,
         solana_account::AccountSharedData,
-        solana_cost_model::cost_tracker::CostTrackerLimits,
+        solana_compute_budget::compute_budget_limits::MAX_LOADED_ACCOUNTS_DATA_SIZE_BYTES,
+        solana_cost_model::{
+            block_cost_limits::{INSTRUCTION_DATA_BYTES_COST, SIGNATURE_COST, WRITE_LOCK_UNITS},
+            cost_tracker::CostTrackerLimits,
+        },
         solana_hash::Hash,
         solana_keypair::Keypair,
         solana_pubkey::Pubkey,
         solana_runtime_transaction::runtime_transaction::RuntimeTransaction,
         solana_signer::Signer as _,
+        solana_system_transaction as system_transaction,
+        solana_transaction_error::TransactionError,
         std::{assert_matches, slice},
         test_case::test_matrix,
     };
@@ -421,33 +365,37 @@ mod tests {
         let present_account = AccountSharedData::new(1, 10, &Pubkey::default());
         bank.store_account(&present_account_key.pubkey(), &present_account);
 
-        let keypair = Keypair::new();
-
         // Create array of two transactions which throw different errors
-        let account_not_found_tx = solana_system_transaction::transfer(
-            &keypair,
+        let already_processed_tx = solana_system_transaction::transfer(
+            &mint_keypair,
             &solana_pubkey::new_rand(),
             42,
             bank.last_blockhash(),
         );
-        let account_not_found_sig = account_not_found_tx.signatures[0];
+        let _ = bank.load_execute_and_commit_transactions(
+            &bank.prepare_batch_for_tests(vec![already_processed_tx.clone()]),
+            ExecutionRecordingConfig::new_single_setting(false),
+            &mut ExecuteTimings::default(),
+            None,
+        );
+        let already_processed_sig = already_processed_tx.signatures[0];
         let invalid_blockhash_tx = solana_system_transaction::transfer(
             &mint_keypair,
             &solana_pubkey::new_rand(),
             42,
             Hash::default(),
         );
-        let txs = vec![account_not_found_tx, invalid_blockhash_tx];
+        let txs = vec![already_processed_tx, invalid_blockhash_tx];
         let batch = bank.prepare_batch_for_tests(txs);
-        let (commit_results, _) = batch.bank().load_execute_and_commit_transactions(
+        let (commit_results, _) = bank.load_execute_and_commit_transactions(
             &batch,
             ExecutionRecordingConfig::new_single_setting(false),
             &mut ExecuteTimings::default(),
             None,
         );
         let (err, signature) = do_get_first_error(&batch, &commit_results).unwrap();
-        assert_eq!(err.unwrap_err(), TransactionError::AccountNotFound);
-        assert_eq!(signature, account_not_found_sig);
+        assert_eq!(err.unwrap_err(), TransactionError::AlreadyProcessed);
+        assert_eq!(signature, already_processed_sig);
     }
 
     enum TxResult {
@@ -457,13 +405,9 @@ mod tests {
     }
 
     #[test_matrix(
-        [TxResult::ExecutedWithSuccess, TxResult::ExecutedWithFailure, TxResult::NotExecuted],
-        [Ok(None), Ok(Some(4)), Err(TransactionError::CommitCancelled)]
+        [TxResult::ExecutedWithSuccess, TxResult::ExecutedWithFailure, TxResult::NotExecuted]
     )]
-    fn test_execute_batch_pre_commit_callback(
-        tx_result: TxResult,
-        poh_result: TransactionResult<Option<usize>>,
-    ) {
+    fn test_execute_batch_cancels_commit_on_processing_error(tx_result: TxResult) {
         agave_logger::setup();
         let dummy_leader_pubkey = solana_pubkey::new_rand();
         let GenesisConfigInfo {
@@ -511,7 +455,6 @@ mod tests {
             OwnedOrBorrowed::Borrowed(slice::from_ref(&tx)),
         );
         batch.set_needs_unlock(false);
-        let poh_with_index = matches!(&poh_result, Ok(Some(_)));
         let batch = TransactionBatchWithIndexes {
             batch,
             transaction_indexes: vec![],
@@ -521,8 +464,7 @@ mod tests {
 
         assert_eq!(bank.transaction_count(), 0);
         assert_eq!(bank.transaction_error_count(), 0);
-        let should_commit = poh_result.is_ok();
-        let mut is_called = false;
+
         let result = execute_batch(
             &batch,
             &bank,
@@ -535,49 +477,92 @@ mod tests {
             &mut timing,
             None,
             None,
-            Some(|processing_result: &'_ TransactionResult<_>| {
-                is_called = true;
-                let ok = poh_result?;
-                if let Err(error) = processing_result {
-                    Err(error.clone())?;
-                };
-                Ok(ok)
-            }),
         );
 
-        // pre_commit_callback() should always be called regardless of tx_result
-        assert!(is_called);
-
-        if should_commit {
-            assert_eq!(result, expected_tx_result);
-            if expected_tx_result.is_ok() {
-                assert_eq!(bank.transaction_count(), 1);
-                if matches!(tx_result, TxResult::ExecutedWithFailure) {
-                    assert_eq!(bank.transaction_error_count(), 1);
-                } else {
-                    assert_eq!(bank.transaction_error_count(), 0);
-                }
+        assert_eq!(result, expected_tx_result);
+        if expected_tx_result.is_ok() {
+            assert_eq!(bank.transaction_count(), 1);
+            if matches!(tx_result, TxResult::ExecutedWithFailure) {
+                assert_eq!(bank.transaction_error_count(), 1);
             } else {
-                assert_eq!(bank.transaction_count(), 0);
+                assert_eq!(bank.transaction_error_count(), 0);
             }
-        } else {
-            assert_matches!(result, Err(TransactionError::CommitCancelled));
-            assert_eq!(bank.transaction_count(), 0);
-        }
-        if poh_with_index && expected_tx_result.is_ok() {
-            assert_matches!(
-                receiver.try_recv(),
-                Ok(TransactionStatusMessage::Batch((TransactionStatusBatch{transaction_indexes, ..}, _sequence)))
-                    if transaction_indexes == vec![4_usize]
-            );
-        } else if should_commit && expected_tx_result.is_ok() {
             assert_matches!(
                 receiver.try_recv(),
                 Ok(TransactionStatusMessage::Batch((TransactionStatusBatch{transaction_indexes, ..}, _sequence)))
                     if transaction_indexes.is_empty()
             );
         } else {
+            // The pre-commit callback surfaced the processing error and
+            // cancelled the commit
+            assert_eq!(bank.transaction_count(), 0);
             assert_matches!(receiver.try_recv(), Err(_));
         }
+    }
+
+    #[test]
+    fn test_check_noop_cost_units_and_replay() {
+        let GenesisConfigInfo { genesis_config, .. } = create_genesis_config(10_000);
+        let (bank, _bank_forks) = Bank::new_with_bank_forks_for_tests(&genesis_config);
+
+        let tx = system_transaction::transfer(
+            &Keypair::new(),
+            &Pubkey::new_unique(),
+            1,
+            bank.last_blockhash(),
+        );
+
+        // one signature, two locks, instruction data
+        let sig = SIGNATURE_COST;
+        let locks = 2 * WRITE_LOCK_UNITS;
+        let data = tx.message.instructions[0].data.len() as u64 / INSTRUCTION_DATA_BYTES_COST;
+
+        let batch = bank.prepare_batch_for_tests(vec![tx.clone()]);
+
+        // 3k compute for calling a builtin
+        let compute =
+            CostModel::calculate_cost(&batch.sanitized_transactions()[0], &bank.feature_set)
+                .programs_execution_cost();
+
+        // 64mb default loaded transaction data size limit
+        let size = CostModel::calculate_loaded_accounts_data_size_cost(
+            MAX_LOADED_ACCOUNTS_DATA_SIZE_BYTES.get(),
+            &bank.feature_set,
+        );
+
+        let (commit_results, _) = bank.load_execute_and_commit_transactions(
+            &batch,
+            ExecutionRecordingConfig::new_single_setting(false),
+            &mut ExecuteTimings::default(),
+            None,
+        );
+
+        let committed = commit_results[0].as_ref().unwrap();
+        assert_eq!(committed.status, Err(TransactionError::AccountNotFound));
+        assert_eq!(committed.executed_units, compute);
+
+        let tx_costs =
+            get_transaction_costs(&bank, &commit_results, batch.sanitized_transactions());
+
+        let noop_cost = tx_costs[0].as_ref().unwrap().sum();
+        assert_eq!(noop_cost, sig + locks + data + compute + size);
+
+        check_block_cost_limits(&bank, &tx_costs).unwrap();
+        assert_eq!(bank.read_cost_tracker().unwrap().block_cost(), noop_cost);
+
+        drop(batch);
+
+        let (commit_results, _) = bank.load_execute_and_commit_transactions(
+            &bank.prepare_batch_for_tests(vec![tx]),
+            ExecutionRecordingConfig::new_single_setting(false),
+            &mut ExecuteTimings::default(),
+            None,
+        );
+
+        // no-ops are added to StatusCache and cannot be re-executed
+        assert_eq!(
+            commit_results,
+            vec![Err(TransactionError::AlreadyProcessed)]
+        );
     }
 }

@@ -696,7 +696,7 @@ fn do_blockstore_process_command(ledger_path: &Path, matches: &ArgMatches<'_>) -
                 };
                 println!(
                     "{:>20} {:>44} {:>32} {:>13}",
-                    slot, &hash_str, &time_str, !contains_nonvote
+                    slot, hash_str, time_str, !contains_nonvote
                 );
             }
         }

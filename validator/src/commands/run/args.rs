@@ -1124,24 +1124,12 @@ pub fn add_args<'a>(app: App<'a, 'a>, default_args: &'a DefaultArgs) -> App<'a, 
             .value_name("BYTES")
             .validator(is_parsable::<DirByteLimit>)
             .takes_value(true)
-            // Firstly, zero limit value causes tracer to be disabled
-            // altogether, intuitively. On the other hand, this non-zero
-            // default doesn't enable banking tracer unless this flag is
-            // explicitly given, similar to --limit-ledger-size.
-            // see configure_banking_trace_dir_byte_limit() for this.
             .default_value(&default_args.banking_trace_dir_byte_limit)
             .help(
-                "Enables the banking trace explicitly, which is enabled by default and writes \
-                 trace files for simulate-leader-blocks, retaining up to the default or specified \
-                 total bytes in the ledger. This flag can be used to override its byte limit.",
+                "Enables the banking trace that writes trace files for simulate-leader-blocks, \
+                 retaining up to the specified total bytes in the ledger. Banking trace is \
+                 disabled by default.",
             ),
-    )
-    .arg(
-        Arg::with_name("disable_banking_trace")
-            .long("disable-banking-trace")
-            .conflicts_with("banking_trace_dir_byte_limit")
-            .takes_value(false)
-            .help("Disables the banking trace"),
     )
     .arg(
         Arg::with_name("no_delay_leader_block_for_pending_fork")

@@ -95,7 +95,7 @@ fn first_err(results: &[Result<()>]) -> Result<()> {
 
 /// Result of checking a child slot's chained block ID against its parent.
 pub enum ChainedBlockIdCheck {
-    /// Feature not active; no validation performed.
+    /// Alpenglow is active; no validation performed.
     Inactive,
     /// Chained block ID matches (or parent has no block ID to compare).
     Pass,
@@ -181,7 +181,6 @@ fn execute_batches_internal(
                     &mut timings,
                     log_messages_bytes_limit,
                     prioritization_fee_cache,
-                    None::<fn(&_) -> _>,
                 ));
 
                 let thread_index = replay_tx_thread_pool.current_thread_index().unwrap();
@@ -1603,6 +1602,7 @@ fn confirm_slot_entries(
     };
 
     let slot = bank.slot();
+    let bank_id = bank.bank_id();
     let (entries, num_shreds, slot_full) = slot_entries_load_result;
     let num_entries = entries.len();
     let mut entry_tx_starting_indexes = Vec::with_capacity(num_entries);
@@ -1615,6 +1615,7 @@ fn confirm_slot_entries(
                 let entry_index = progress.num_entries.saturating_add(i);
                 if let Err(err) = entry_notification_sender.send(EntryNotification {
                     slot,
+                    bank_id,
                     index: entry_index,
                     entry: entry.into(),
                     starting_transaction_index: entry_tx_starting_index,
@@ -2373,24 +2374,13 @@ fn supermajority_root_from_vote_accounts(
 }
 
 /// Validates the chained block ID for a child slot against its parent.
-///
-/// Returns:
-/// - `Inactive`: feature not active, or alpenglow is active, no validation performed
-/// - `Pass`: chained block ID matches parent's block ID (or parent has no
-///   block ID yet)
-/// - `Mismatch`: definitive mismatch between child's chained merkle root
-///   and parent's block ID
-/// - `Unavailable`: data shred 0 not received yet, cannot validate
 pub fn check_chained_block_id(
     blockstore: &Blockstore,
     bank: &Bank,
     migration_status: &MigrationStatus,
 ) -> ChainedBlockIdCheck {
     let slot = bank.slot();
-    let feature_snapshot = bank.feature_set.snapshot();
-    if !(feature_snapshot.validate_chained_block_id || feature_snapshot.validate_chained_block_id_2)
-        || migration_status.should_use_double_merkle_block_id(slot)
-    {
+    if migration_status.should_use_double_merkle_block_id(slot) {
         return ChainedBlockIdCheck::Inactive;
     }
 
@@ -2633,6 +2623,7 @@ pub mod tests {
             sync::{Arc, Barrier, RwLock, atomic::Ordering},
             thread,
         },
+        test_case::test_case,
         trees::tr,
     };
 
@@ -4272,14 +4263,19 @@ pub mod tests {
         }
     }
 
-    #[test]
-    fn test_process_entries_2_entries_tick() {
+    #[test_case(false; "strict_fee_payer")]
+    #[test_case(true; "relaxed_fee_payer")]
+    fn test_process_entries_2_entries_tick(relax_fee_payer_constraint: bool) {
         let GenesisConfigInfo {
             genesis_config,
             mint_keypair,
             ..
         } = create_genesis_config(1000);
-        let (bank, _bank_forks) = Bank::new_with_bank_forks_for_tests(&genesis_config);
+        let mut bank = Bank::new_for_tests(&genesis_config);
+        if !relax_fee_payer_constraint {
+            bank.deactivate_feature(&agave_feature_set::relax_fee_payer_constraint::id());
+        }
+        let (bank, _bank_forks) = bank.wrap_with_bank_forks_for_tests();
         let keypair1 = Keypair::new();
         let keypair2 = Keypair::new();
         let keypair3 = Keypair::new();
@@ -4323,13 +4319,17 @@ pub mod tests {
         assert_eq!(bank.get_balance(&keypair3.pubkey()), 1);
         assert_eq!(bank.get_balance(&keypair4.pubkey()), 1);
 
-        // ensure that an error is returned for an empty account (keypair2)
+        // an error is returned for an empty fee-payer unless `relax_fee_payer_constraint` is enabled
         let tx =
             system_transaction::transfer(&keypair2, &keypair3.pubkey(), 1, bank.last_blockhash());
         let entry_3 = next_entry(&entry_2.hash, 1, vec![tx]);
         assert_eq!(
             process_entries_for_tests_without_scheduler(&bank, vec![entry_3]),
-            Err(TransactionError::AccountNotFound)
+            if relax_fee_payer_constraint {
+                Ok(())
+            } else {
+                Err(TransactionError::AccountNotFound)
+            }
         );
     }
 
@@ -5851,27 +5851,6 @@ pub mod tests {
         assert!(matches!(
             check_chained_block_id(&blockstore, &child_bank, &MigrationStatus::default()),
             ChainedBlockIdCheck::Mismatch
-        ));
-
-        // Case 3a: With only the replacement feature active, replay should
-        // still run the existing inter-slot SIMD-0340 check.
-        insert_shreds_with_chained_merkle_root(14, 0, Hash::new_unique());
-        let mut child_bank = Bank::new_from_parent(parent_bank.clone(), SlotLeader::default(), 14);
-        child_bank.deactivate_feature(&agave_feature_set::validate_chained_block_id::id());
-        child_bank.activate_feature(&agave_feature_set::validate_chained_block_id_2::id());
-        assert!(matches!(
-            check_chained_block_id(&blockstore, &child_bank, &MigrationStatus::default()),
-            ChainedBlockIdCheck::Mismatch
-        ));
-
-        // Case 3b: With both feature gates inactive, replay should not run the
-        // chained block ID check.
-        let mut child_bank = Bank::new_from_parent(parent_bank.clone(), SlotLeader::default(), 14);
-        child_bank.deactivate_feature(&agave_feature_set::validate_chained_block_id::id());
-        child_bank.deactivate_feature(&agave_feature_set::validate_chained_block_id_2::id());
-        assert!(matches!(
-            check_chained_block_id(&blockstore, &child_bank, &MigrationStatus::default()),
-            ChainedBlockIdCheck::Inactive
         ));
 
         // Case 4: UpdateParent metadata does not bypass Tower validation.

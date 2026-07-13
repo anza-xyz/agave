@@ -74,13 +74,13 @@ impl Bank {
     /// Update EpochRewards sysvar with distributed rewards
     pub(in crate::bank::partitioned_epoch_rewards) fn update_epoch_rewards_sysvar(
         &self,
-        distributed: u64,
+        inflation_reward_lamports_minted_and_burned: u64,
         debit_block_reward_lamports: u64,
     ) {
         let mut epoch_rewards = self.get_epoch_rewards_sysvar();
         assert!(epoch_rewards.active);
 
-        epoch_rewards.distribute(distributed);
+        epoch_rewards.distribute(inflation_reward_lamports_minted_and_burned);
 
         self.update_sysvar_account(&sysvar::epoch_rewards::id(), |account| {
             create_account(
