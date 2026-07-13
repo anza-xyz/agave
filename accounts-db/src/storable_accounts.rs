@@ -633,9 +633,8 @@ mod tests {
 
                     let storage = setup_sample_storage(&db, source_slot);
                     // store the accounts so they can be looked up later in `db`
-                    if let Some(offsets) = storage
-                        .accounts
-                        .write_accounts(&(source_slot, &three[..]), 0)
+                    if let Some(offsets) =
+                        storage.accounts.write_accounts(&(source_slot, &three[..]))
                     {
                         three_accounts_from_storage_byval
                             .iter_mut()
@@ -764,7 +763,7 @@ mod tests {
                                     let storage = setup_sample_storage(&db, slot);
                                     if let Some(offsets) = storage
                                         .accounts
-                                        .write_accounts(&(slot, &raw2_refs[range.clone()]), 0)
+                                        .write_accounts(&(slot, &raw2_refs[range.clone()]))
                                     {
                                         result.iter_mut().zip(offsets.offsets.iter()).for_each(
                                             |(account, offset)| {

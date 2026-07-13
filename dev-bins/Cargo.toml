@@ -94,7 +94,7 @@ solana-genesis = { path = "../genesis", version = "=4.3.0-alpha.0", features = [
 solana-genesis-config = "4.0.0"
 solana-genesis-utils = { path = "../genesis-utils", version = "=4.3.0-alpha.0", features = ["agave-unstable-api"] }
 solana-geyser-plugin-manager = { path = "../geyser-plugin-manager", version = "=4.3.0-alpha.0", features = ["agave-unstable-api"] }
-solana-hash = "4.4.0"
+solana-hash = "4.5.0"
 solana-inflation = "3.1.1"
 solana-instruction = "3.4.0"
 solana-instruction-error = "2.4.0"

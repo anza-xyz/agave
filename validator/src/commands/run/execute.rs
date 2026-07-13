@@ -33,7 +33,6 @@ use {
     solana_clock::{DEFAULT_SLOTS_PER_EPOCH, Slot},
     solana_core::{
         banking_stage::transaction_scheduler::scheduler_controller::SchedulerConfig,
-        banking_trace::DISABLED_BAKING_TRACE_DIR,
         consensus::tower_storage,
         repair::repair_handler::RepairHandlerType,
         resource_limits,
@@ -869,7 +868,11 @@ pub fn execute(
         },
         enable_block_production_forwarding: staked_nodes_overrides_path.is_some(),
         enable_scheduler_bindings: matches.is_present("enable_scheduler_bindings"),
-        banking_trace_dir_byte_limit: parse_banking_trace_dir_byte_limit(matches),
+        banking_trace_dir_byte_limit: value_t_or_exit!(
+            matches,
+            "banking_trace_dir_byte_limit",
+            u64
+        ),
         validator_exit: Arc::new(RwLock::new(Exit::default())),
         validator_exit_backpressure: [(
             SnapshotPackagerService::NAME.to_string(),
@@ -1189,19 +1192,6 @@ fn get_cluster_shred_version(entrypoints: &[SocketAddr], bind_address: IpAddr) -
         }
     }
     None
-}
-
-fn parse_banking_trace_dir_byte_limit(matches: &ArgMatches) -> u64 {
-    if matches.is_present("disable_banking_trace") {
-        // disable with an explicit flag; This effectively becomes `opt-out` by resetting to
-        // DISABLED_BAKING_TRACE_DIR, while allowing us to specify a default sensible limit in clap
-        // configuration for cli help.
-        DISABLED_BAKING_TRACE_DIR
-    } else {
-        // a default value in clap configuration (BANKING_TRACE_DIR_DEFAULT_BYTE_LIMIT) or
-        // explicit user-supplied override value
-        value_t_or_exit!(matches, "banking_trace_dir_byte_limit", u64)
-    }
 }
 
 fn new_snapshot_config(

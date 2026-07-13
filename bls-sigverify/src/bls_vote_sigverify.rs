@@ -24,8 +24,9 @@ use {
         ThreadPool,
         iter::{Either, IntoParallelIterator, ParallelIterator},
     },
-    solana_bls_signatures::pubkey::{
-        PopVerified, PubkeyAffine as BlsPubkeyAffine, VerifySignature,
+    solana_bls_signatures::{
+        BlsError,
+        pubkey::{PopVerified, PubkeyAffine as BlsPubkeyAffine, VerifySignature},
     },
     solana_clock::Slot,
     solana_gossip::cluster_info::ClusterInfo,
@@ -62,17 +63,15 @@ pub(super) struct UnverifiedVotePayload {
 }
 
 impl UnverifiedVotePayload {
-    fn verify(self) -> Option<VerifiedVotePayload> {
+    fn verify(self) -> Result<VerifiedVotePayload, BlsError> {
         let payload =
             get_vote_payload_to_sign(self.vote_message.vote, self.vote_message.shred_version);
-        let is_verified = self
-            .sender_bls_pubkey
+        self.sender_bls_pubkey
             .verify_signature(&self.vote_message.signature, &payload)
-            .is_ok();
-        is_verified.then_some(VerifiedVotePayload {
-            vote_message: into_vote_msg(self.vote_message),
-            sender_vote_account_pubkey: self.sender_vote_account_pubkey,
-        })
+            .map(|()| VerifiedVotePayload {
+                vote_message: into_vote_msg(self.vote_message),
+                sender_vote_account_pubkey: self.sender_vote_account_pubkey,
+            })
     }
 }
 
@@ -218,13 +217,14 @@ fn verify_votes(
     // Fallback to individual verification
     let ((verified_votes, invalid_remote_pubkeys), time_us) =
         measure_us!(verify_individual_votes(unverified_votes, thread_pool));
-    for sender_identity_pubkey in invalid_remote_pubkeys {
+    for (sender_identity_pubkey, error) in invalid_remote_pubkeys {
+        stats.banning_validator += 1;
         if banlist.ban(sender_identity_pubkey, BAN_TIMEOUT) {
             stats.already_banned += 1;
         } else {
             info!(
                 "bls_vote_sigverify: banned sender={sender_identity_pubkey} due to failed \
-                 verification"
+                 verification {error:?}"
             );
         }
     }
@@ -242,15 +242,15 @@ fn verify_votes(
 fn verify_individual_votes(
     unverified_votes: Vec<UnverifiedVotePayload>,
     thread_pool: &ThreadPool,
-) -> (Vec<VerifiedVotePayload>, Vec<Pubkey>) {
+) -> (Vec<VerifiedVotePayload>, Vec<(Pubkey, BlsError)>) {
     thread_pool.install(|| {
         unverified_votes
             .into_par_iter()
             .partition_map(|unverified_vote| {
                 let sender_identity_pubkey = unverified_vote.sender_identity_pubkey;
                 match unverified_vote.verify() {
-                    Some(vote) => Either::Left(vote),
-                    None => Either::Right(sender_identity_pubkey),
+                    Ok(vote) => Either::Left(vote),
+                    Err(e) => Either::Right((sender_identity_pubkey, e)),
                 }
             })
     })

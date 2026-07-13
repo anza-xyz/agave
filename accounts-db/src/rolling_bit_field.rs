@@ -305,10 +305,7 @@ impl RollingBitField {
 
 #[cfg(test)]
 mod tests {
-    use {
-        super::*, log::*, solana_clock::Slot, solana_measure::measure::Measure,
-        std::collections::HashSet,
-    };
+    use {super::*, solana_clock::Slot, std::collections::HashSet};
 
     impl RollingBitField {
         pub fn clear(&mut self) {
@@ -318,7 +315,6 @@ mod tests {
 
     #[test]
     fn test_bitfield_delete_non_excess() {
-        agave_logger::setup();
         let len = 16;
         let mut bitfield = RollingBitField::new(len);
         assert_eq!(bitfield.min(), None);
@@ -362,7 +358,6 @@ mod tests {
 
     #[test]
     fn test_bitfield_insert_excess() {
-        agave_logger::setup();
         let len = 16;
         let mut bitfield = RollingBitField::new(len);
 
@@ -394,7 +389,6 @@ mod tests {
 
     #[test]
     fn test_bitfield_permutations() {
-        agave_logger::setup();
         let mut bitfield = RollingBitField::new(2097152);
         let mut hash = HashSet::new();
 
@@ -415,29 +409,19 @@ mod tests {
 
         let max = slot + 1;
 
-        let mut time = Measure::start("");
         let mut count = 0;
         for slot in (min - 10)..max + 100 {
             if hash.contains(&slot) {
                 count += 1;
             }
         }
-        time.stop();
 
-        let mut time2 = Measure::start("");
         let mut count2 = 0;
         for slot in (min - 10)..max + 100 {
             if bitfield.contains(&slot) {
                 count2 += 1;
             }
         }
-        time2.stop();
-        info!(
-            "{}ms, {}ms, {} ratio",
-            time.as_ms(),
-            time2.as_ms(),
-            time.as_ns() / time2.as_ns()
-        );
         assert_eq!(count, count2);
     }
 
@@ -494,7 +478,6 @@ mod tests {
 
     #[test]
     fn test_bitfield_insert_wide() {
-        agave_logger::setup();
         let width = 16;
         let start = 0;
         let mut tester = setup_wide(width, start);
@@ -513,7 +496,6 @@ mod tests {
 
     #[test]
     fn test_bitfield_insert_wide_before() {
-        agave_logger::setup();
         let width = 16;
         let start = 100;
         let mut bitfield = setup_wide(width, start).bitfield;
@@ -528,7 +510,6 @@ mod tests {
 
     #[test]
     fn test_bitfield_insert_wide_before_ok() {
-        agave_logger::setup();
         let width = 16;
         let start = 100;
         let mut bitfield = setup_wide(width, start).bitfield;
@@ -579,7 +560,6 @@ mod tests {
 
     #[test]
     fn test_bitfield_excess2() {
-        agave_logger::setup();
         let width = 16;
         let mut tester = setup_empty(width);
         let slot = 100;
@@ -613,7 +593,6 @@ mod tests {
 
     #[test]
     fn test_bitfield_excess() {
-        agave_logger::setup();
         // start at slot 0 or a separate, higher slot
         for width in [16, 4194304].iter() {
             let width = *width;
@@ -727,8 +706,6 @@ mod tests {
 
     #[test]
     fn test_bitfield_functionality() {
-        agave_logger::setup();
-
         // bitfield sizes are powers of 2, cycle through values of 1, 2, 4, .. 2^9
         for power in 0..10 {
             let max_bitfield_width = 2u64.pow(power);
@@ -890,8 +867,6 @@ mod tests {
     #[test]
     fn test_bitfield_smaller() {
         // smaller bitfield, fewer entries, including 0
-        agave_logger::setup();
-
         for width in 0..34 {
             let mut bitfield = RollingBitField::new(4096);
             let mut hash_set = HashSet::new();
@@ -911,29 +886,19 @@ mod tests {
 
             let max = slot + 1;
 
-            let mut time = Measure::start("");
             let mut count = 0;
             for slot in (min - 10)..max + 100 {
                 if hash_set.contains(&slot) {
                     count += 1;
                 }
             }
-            time.stop();
 
-            let mut time2 = Measure::start("");
             let mut count2 = 0;
             for slot in (min - 10)..max + 100 {
                 if bitfield.contains(&slot) {
                     count2 += 1;
                 }
             }
-            time2.stop();
-            info!(
-                "{}, {}, {}",
-                time.as_ms(),
-                time2.as_ms(),
-                time.as_ns() / time2.as_ns()
-            );
             assert_eq!(count, count2);
         }
     }

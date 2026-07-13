@@ -27,7 +27,6 @@ agave-xdp = { workspace = true }
 bytes = { workspace = true }
 crossbeam-channel = { workspace = true }
 futures = { workspace = true }
-histogram = { workspace = true }
 indexmap = { workspace = true }
 itertools = { workspace = true }
 libc = { workspace = true }

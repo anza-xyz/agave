@@ -121,13 +121,10 @@ pub enum ScanFilter {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 /// how accounts index 'upsert' should handle reclaims
 pub enum UpsertReclaim {
-    /// previous entry for this slot in the index may need to be reclaimed, so return it.
-    /// reclaims is the only output of upsert, requiring a synchronous execution
-    PopulateReclaims,
     /// overwrite existing data in the same slot and do not return in 'reclaims'
     IgnoreReclaims,
-    // Reclaim all older versions of the account from the index and return
-    // in the 'reclaims'
+    /// Reclaim all older versions of the account from the index and return
+    /// in the 'reclaims'
     ReclaimOldSlots,
 }
 pub trait IndexValue: 'static + IsZeroLamport + DiskIndexValue {}
@@ -1151,7 +1148,7 @@ mod tests {
         assert!(index.include_key(&pk2));
     }
 
-    const UPSERT_RECLAIM_TEST_DEFAULT: UpsertReclaim = UpsertReclaim::PopulateReclaims;
+    const UPSERT_RECLAIM_TEST_DEFAULT: UpsertReclaim = UpsertReclaim::ReclaimOldSlots;
 
     #[test]
     fn test_insert_no_ancestors() {
@@ -1548,7 +1545,7 @@ mod tests {
 
     #[test_matrix(
         [false, true],
-        [None, Some(UpsertReclaim::PopulateReclaims), Some(UpsertReclaim::ReclaimOldSlots)]
+        [None, Some(UpsertReclaim::ReclaimOldSlots)]
     )]
     fn test_new_entry_and_update_code_paths(use_disk: bool, upsert_method: Option<UpsertReclaim>) {
         test_new_entry_code_paths_helper([1, 2], upsert_method, use_disk);
@@ -1569,7 +1566,7 @@ mod tests {
                 &key,
                 value,
                 &mut reclaims,
-                UpsertReclaim::PopulateReclaims,
+                UpsertReclaim::ReclaimOldSlots,
             );
             assert!(reclaims.is_empty());
             index.upsert(
@@ -1578,7 +1575,7 @@ mod tests {
                 &key,
                 value,
                 &mut reclaims,
-                UpsertReclaim::PopulateReclaims,
+                UpsertReclaim::ReclaimOldSlots,
             );
             // reclaimed
             assert!(!reclaims.is_empty());
@@ -1734,14 +1731,13 @@ mod tests {
 
     #[test]
     fn test_update_new_slot() {
-        agave_logger::setup();
         let key = solana_pubkey::new_rand();
         let index = AccountsIndex::<bool, bool>::default_for_tests();
         let ancestors = Ancestors::from(vec![0]);
         let mut gc = ReclaimsSlotList::new();
-        index.upsert(0, 0, &key, true, &mut gc, UpsertReclaim::PopulateReclaims);
+        index.upsert(0, 0, &key, true, &mut gc, UpsertReclaim::IgnoreReclaims);
         assert!(gc.is_empty());
-        index.upsert(1, 1, &key, false, &mut gc, UpsertReclaim::PopulateReclaims);
+        index.upsert(1, 1, &key, false, &mut gc, UpsertReclaim::IgnoreReclaims);
         assert!(gc.is_empty());
         index
             .get_with_and_then(&key, &ancestors, false, |(slot, account_info)| {
@@ -1764,12 +1760,12 @@ mod tests {
         let index = AccountsIndex::<bool, bool>::default_for_tests();
         let mut gc = ReclaimsSlotList::new();
         let max_root = 3;
-        index.upsert(0, 0, &key, true, &mut gc, UpsertReclaim::PopulateReclaims);
+        index.upsert(0, 0, &key, true, &mut gc, UpsertReclaim::IgnoreReclaims);
         assert!(gc.is_empty());
-        index.upsert(1, 1, &key, false, &mut gc, UpsertReclaim::PopulateReclaims);
-        index.upsert(2, 2, &key, true, &mut gc, UpsertReclaim::PopulateReclaims);
-        index.upsert(3, 3, &key, true, &mut gc, UpsertReclaim::PopulateReclaims);
-        index.upsert(4, 4, &key, true, &mut gc, UpsertReclaim::PopulateReclaims);
+        index.upsert(1, 1, &key, false, &mut gc, UpsertReclaim::IgnoreReclaims);
+        index.upsert(2, 2, &key, true, &mut gc, UpsertReclaim::IgnoreReclaims);
+        index.upsert(3, 3, &key, true, &mut gc, UpsertReclaim::IgnoreReclaims);
+        index.upsert(4, 4, &key, true, &mut gc, UpsertReclaim::IgnoreReclaims);
 
         // Updating index should not purge older roots, only purges
         // previous updates within the same slot
@@ -2027,7 +2023,6 @@ mod tests {
 
     #[test]
     fn test_reclaim_older_items_in_slot_list() {
-        agave_logger::setup();
         let key = solana_pubkey::new_rand();
         let index = AccountsIndex::<u64, u64>::default_for_tests();
         let mut gc = ReclaimsSlotList::new();
@@ -2615,7 +2610,6 @@ mod tests {
 
     #[test]
     fn test_clean_rooted_entries_return() {
-        agave_logger::setup();
         let value = true;
         let key = solana_pubkey::new_rand();
         let key_unknown = solana_pubkey::new_rand();

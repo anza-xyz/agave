@@ -212,7 +212,7 @@ mod tests {
                     vote_state.serialize().unwrap()
                 })
                 .collect::<Vec<_>>();
-            bank.store_accounts((bank.slot(), updated_accounts.as_slice()));
+            bank.store_accounts((bank.slot(), updated_accounts.as_slice()), None);
             let slot = bank.slot() + 10;
             new_bank_from_parent(bank, slot)
         }
@@ -236,7 +236,7 @@ mod tests {
                     vote_state.serialize().unwrap()
                 })
                 .collect::<Vec<_>>();
-            bank.store_accounts((bank.slot(), updated_accounts.as_slice()));
+            bank.store_accounts((bank.slot(), updated_accounts.as_slice()), None);
             let slot = bank.slot() + 10;
             new_bank_from_parent(bank, slot)
         }

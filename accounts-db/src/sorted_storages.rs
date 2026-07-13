@@ -450,7 +450,7 @@ mod tests {
             size as u64,
             AccountsFileProvider::AppendVec,
         );
-        let av = AccountsFile::AppendVec(AppendVec::new(&tf.path, true, 1024 * 1024));
+        let av = AccountsFile::AppendVec(AppendVec::new(&tf.path, 1024 * 1024));
         data.accounts = av;
 
         Arc::new(data)

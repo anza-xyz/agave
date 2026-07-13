@@ -34,7 +34,8 @@ use {
     solana_measure::{measure::Measure, measure_us},
     solana_pubkey::Pubkey,
     solana_reward_info::RewardType,
-    solana_stake_interface::{stake_history::StakeHistory, state::Delegation},
+    solana_stake_history::StakeHistory,
+    solana_stake_interface::state::Delegation,
     solana_sysvar::epoch_rewards::EpochRewards,
     std::sync::{
         Arc,
@@ -54,6 +55,16 @@ struct RewardsAccumulator {
     reward_commissions: RewardCommissions,
     num_stake_rewards: usize,
     total_stake_rewards_lamports: u64,
+}
+
+/// Helper struct used with `RewardsAccumulator` to accumulate individual stake
+/// account rewards
+struct RewardAccumulation {
+    /// Inflation rewards earned by the stake account. May be 0.
+    stake_reward: u64,
+    /// If a stake account receives block rewards, but no stake rewards, there
+    /// isn't a commission entry
+    commission: Option<(Pubkey, RewardCommission)>,
 }
 
 /// Merge the lamport and `is_vote_account` fields of two `RewardCommission`s
@@ -112,22 +123,19 @@ fn accumulate_lamports(src: &RewardCommission, dst: &mut RewardCommission) {
 }
 
 impl RewardsAccumulator {
-    fn add_reward(
-        &mut self,
-        commission_pubkey: Pubkey,
-        reward_commission: RewardCommission,
-        stakers_reward: u64,
-    ) {
-        self.reward_commissions
-            .entry(commission_pubkey)
-            .and_modify(|dst_reward_commission| {
-                accumulate_lamports(&reward_commission, dst_reward_commission);
-            })
-            .or_insert(reward_commission);
+    fn add_reward(&mut self, reward: RewardAccumulation) {
         self.num_stake_rewards = self.num_stake_rewards.saturating_add(1);
         self.total_stake_rewards_lamports = self
             .total_stake_rewards_lamports
-            .saturating_add(stakers_reward);
+            .saturating_add(reward.stake_reward);
+        if let Some((commission_pubkey, reward_commission)) = reward.commission {
+            self.reward_commissions
+                .entry(commission_pubkey)
+                .and_modify(|dst_reward_commission| {
+                    accumulate_lamports(&reward_commission, dst_reward_commission);
+                })
+                .or_insert(reward_commission);
+        }
     }
 
     /// Merges two instances by combining their reward commissions and stake rewards.
@@ -387,7 +395,7 @@ impl Bank {
                 slot: self.slot(),
                 reward_commission_accounts,
             };
-            self.store_accounts(storable);
+            self.store_accounts(storable, None);
         });
 
         metrics
@@ -718,13 +726,15 @@ impl Bank {
         // Producing the stake reward with rayon triggers a lot of
         // (re)allocations. To avoid that, we allocate it at the start and
         // pass `stake_rewards.spare_capacity_mut()` as one of iterators.
-        let mut stake_rewards = PartitionedStakeRewards::with_capacity(stake_delegations.len());
+        let stake_delegations_len = stake_delegations.len();
+        let mut stake_rewards = PartitionedStakeRewards::with_capacity(stake_delegations_len);
         let rewards_accumulator: RewardsAccumulator = thread_pool.install(|| {
             stake_delegations
                 .par_iter()
-                .zip_eq(stake_rewards.spare_capacity_mut())
+                .zip(&mut stake_rewards.spare_capacity_mut()[..stake_delegations_len])
                 .with_min_len(500)
-                .filter_map(|((stake_pubkey, stake_account), stake_reward_ref)| {
+                .filter_map(|((stake_pubkey, stake_account), reward_ref)| {
+                    let block_reward = 0;
                     let maybe_reward_record = self.redeem_delegation_rewards(
                         rewarded_epoch,
                         stake_pubkey,
@@ -742,23 +752,48 @@ impl Bank {
                         use_fixed_point_stake_math,
                     );
 
-                    let (stake_reward, maybe_reward_record) = match maybe_reward_record {
-                        Some(res) => {
+                    let (reward, maybe_reward_record) = match (block_reward, maybe_reward_record) {
+                        (0, None) => (None, None),
+                        (_, Some(res)) => {
                             let InflationRewardWithCommission {
                                 inflation,
                                 commission_pubkey,
                                 reward_commission,
                             } = res;
-                            let stakers_reward = inflation.stake_reward;
+                            let stake_reward = inflation.stake_reward;
                             (
                                 Some(PartitionedStakeReward {
                                     stake_pubkey: **stake_pubkey,
                                     inflation,
+                                    block_reward,
                                 }),
-                                Some((stakers_reward, commission_pubkey, reward_commission)),
+                                Some(RewardAccumulation {
+                                    stake_reward,
+                                    commission: Some((commission_pubkey, reward_commission)),
+                                }),
                             )
                         }
-                        None => (None, None),
+                        (_, None) => {
+                            // Create a zero entry for distribution
+                            let stake = *stake_account.stake();
+                            let stake_reward = 0;
+                            (
+                                Some(PartitionedStakeReward {
+                                    stake_pubkey: **stake_pubkey,
+                                    inflation: InflationReward {
+                                        stake,
+                                        stake_reward,
+                                        commission_bps: None,
+                                    },
+                                    block_reward,
+                                }),
+                                // Need a reward record for accumulator
+                                Some(RewardAccumulation {
+                                    stake_reward,
+                                    commission: None,
+                                }),
+                            )
+                        }
                     };
                     // It's important that for every stake delegation, we write
                     // a value to the cell of the stake rewards vector,
@@ -766,18 +801,13 @@ impl Bank {
                     // This allows us to pre-allocate the vector with the known
                     // size and avoid re-allocations, which were the bottleneck
                     // in this path.
-                    stake_reward_ref.write(stake_reward);
+                    reward_ref.write(reward);
                     maybe_reward_record
                 })
                 .fold(
                     RewardsAccumulator::default,
-                    |mut rewards_accumulator,
-                     (stakers_reward, commission_pubkey, reward_commission)| {
-                        rewards_accumulator.add_reward(
-                            commission_pubkey,
-                            reward_commission,
-                            stakers_reward,
-                        );
+                    |mut rewards_accumulator, accumulation| {
+                        rewards_accumulator.add_reward(accumulation);
                         rewards_accumulator
                     },
                 )
@@ -793,7 +823,9 @@ impl Bank {
             num_stake_rewards,
             total_stake_rewards_lamports,
         } = rewards_accumulator;
-        // SAFETY: We initialized all the `stake_rewards` elements up to the capacity.
+        // SAFETY: We initialized all the `stake_rewards` elements up to
+        // `num_stake_rewards`.
+        debug_assert!(num_stake_rewards <= stake_delegations_len);
         unsafe {
             stake_rewards.assume_init(num_stake_rewards);
         }
@@ -1407,6 +1439,7 @@ mod tests {
                 stake_reward: stake_reward_lamports,
                 commission_bps: Some(0),
             },
+            block_reward: 0,
         })]
         .into_iter()
         .collect::<PartitionedStakeRewards>();
@@ -2154,6 +2187,7 @@ mod tests {
                     stake_reward,
                     commission_bps: None,
                 },
+                block_reward: 0,
             }
         };
         assert_eq!(
@@ -2763,46 +2797,54 @@ mod tests {
         let commission_pubkey_b = Pubkey::new_unique();
         let commission_pubkey_c = Pubkey::new_unique();
 
-        accumulator1.add_reward(
-            commission_pubkey_a,
-            RewardCommission {
-                commission_bps: Some(1_000),
-                commission_lamports: 50,
-                burned_lamports: 0,
-                is_vote_account: true,
-            },
-            50,
-        );
-        accumulator1.add_reward(
-            commission_pubkey_b,
-            RewardCommission {
-                commission_bps: Some(1_000),
-                commission_lamports: 50,
-                burned_lamports: 0,
-                is_vote_account: true,
-            },
-            50,
-        );
-        accumulator2.add_reward(
-            commission_pubkey_b,
-            RewardCommission {
-                commission_bps: Some(1_000),
-                commission_lamports: 30,
-                burned_lamports: 0,
-                is_vote_account: true,
-            },
-            30,
-        );
-        accumulator2.add_reward(
-            commission_pubkey_c,
-            RewardCommission {
-                commission_bps: Some(1_000),
-                commission_lamports: 50,
-                burned_lamports: 0,
-                is_vote_account: true,
-            },
-            50,
-        );
+        accumulator1.add_reward(RewardAccumulation {
+            commission: Some((
+                commission_pubkey_a,
+                RewardCommission {
+                    commission_bps: Some(1_000),
+                    commission_lamports: 50,
+                    burned_lamports: 0,
+                    is_vote_account: true,
+                },
+            )),
+            stake_reward: 50,
+        });
+        accumulator1.add_reward(RewardAccumulation {
+            commission: Some((
+                commission_pubkey_b,
+                RewardCommission {
+                    commission_bps: Some(1_000),
+                    commission_lamports: 50,
+                    burned_lamports: 0,
+                    is_vote_account: true,
+                },
+            )),
+            stake_reward: 50,
+        });
+        accumulator2.add_reward(RewardAccumulation {
+            commission: Some((
+                commission_pubkey_b,
+                RewardCommission {
+                    commission_bps: Some(1_000),
+                    commission_lamports: 30,
+                    burned_lamports: 0,
+                    is_vote_account: true,
+                },
+            )),
+            stake_reward: 30,
+        });
+        accumulator2.add_reward(RewardAccumulation {
+            commission: Some((
+                commission_pubkey_c,
+                RewardCommission {
+                    commission_bps: Some(1_000),
+                    commission_lamports: 50,
+                    burned_lamports: 0,
+                    is_vote_account: true,
+                },
+            )),
+            stake_reward: 50,
+        });
 
         assert_eq!(accumulator1.num_stake_rewards, 2);
         assert_eq!(accumulator1.total_stake_rewards_lamports, 100);
@@ -2939,8 +2981,14 @@ mod tests {
             burned_lamports: 1_000,
             is_vote_account: right_is_vote_account,
         };
-        accumulator.add_reward(commission_pubkey, left_reward.clone(), 50);
-        accumulator.add_reward(commission_pubkey, right_reward.clone(), 50);
+        accumulator.add_reward(RewardAccumulation {
+            commission: Some((commission_pubkey, left_reward.clone())),
+            stake_reward: 50,
+        });
+        accumulator.add_reward(RewardAccumulation {
+            commission: Some((commission_pubkey, right_reward.clone())),
+            stake_reward: 50,
+        });
 
         check_accumulator(
             &accumulator,
@@ -2979,8 +3027,14 @@ mod tests {
             is_vote_account: right_is_vote_account,
         };
 
-        accumulator1.add_reward(commission_pubkey, left_reward.clone(), 50);
-        accumulator2.add_reward(commission_pubkey, right_reward.clone(), 50);
+        accumulator1.add_reward(RewardAccumulation {
+            commission: Some((commission_pubkey, left_reward.clone())),
+            stake_reward: 50,
+        });
+        accumulator2.add_reward(RewardAccumulation {
+            commission: Some((commission_pubkey, right_reward.clone())),
+            stake_reward: 50,
+        });
 
         let additional_commission_pubkey = Pubkey::new_unique();
         let additional_reward_commission = RewardCommission {
@@ -2990,17 +3044,15 @@ mod tests {
             is_vote_account: true,
         };
         if right_is_larger {
-            accumulator2.add_reward(
-                additional_commission_pubkey,
-                additional_reward_commission,
-                50,
-            );
+            accumulator2.add_reward(RewardAccumulation {
+                commission: Some((additional_commission_pubkey, additional_reward_commission)),
+                stake_reward: 50,
+            });
         } else {
-            accumulator1.add_reward(
-                additional_commission_pubkey,
-                additional_reward_commission,
-                50,
-            );
+            accumulator1.add_reward(RewardAccumulation {
+                commission: Some((additional_commission_pubkey, additional_reward_commission)),
+                stake_reward: 50,
+            });
         };
 
         let accumulator = accumulator1.accumulate_into_larger(accumulator2);

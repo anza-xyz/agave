@@ -269,6 +269,54 @@ fn get_sysvar<T: Default + SysvarSerialize + Sized + serde::de::DeserializeOwned
     }
 }
 
+/// Calls the native program-test stub for the legacy clock sysvar syscall.
+pub fn sol_get_clock_sysvar(var_addr: *mut u8) -> u64 {
+    <SyscallStubs as solana_sysvar::program_stubs::SyscallStubs>::sol_get_clock_sysvar(
+        &SyscallStubs {},
+        var_addr,
+    )
+}
+
+/// Calls the native program-test stub for the legacy epoch schedule sysvar syscall.
+pub fn sol_get_epoch_schedule_sysvar(var_addr: *mut u8) -> u64 {
+    <SyscallStubs as solana_sysvar::program_stubs::SyscallStubs>::sol_get_epoch_schedule_sysvar(
+        &SyscallStubs {},
+        var_addr,
+    )
+}
+
+/// Calls the native program-test stub for the legacy epoch rewards sysvar syscall.
+pub fn sol_get_epoch_rewards_sysvar(var_addr: *mut u8) -> u64 {
+    <SyscallStubs as solana_sysvar::program_stubs::SyscallStubs>::sol_get_epoch_rewards_sysvar(
+        &SyscallStubs {},
+        var_addr,
+    )
+}
+
+/// Calls the native program-test stub for the legacy fees sysvar syscall.
+pub fn sol_get_fees_sysvar(var_addr: *mut u8) -> u64 {
+    <SyscallStubs as solana_sysvar::program_stubs::SyscallStubs>::sol_get_fees_sysvar(
+        &SyscallStubs {},
+        var_addr,
+    )
+}
+
+/// Calls the native program-test stub for the legacy rent sysvar syscall.
+pub fn sol_get_rent_sysvar(var_addr: *mut u8) -> u64 {
+    <SyscallStubs as solana_sysvar::program_stubs::SyscallStubs>::sol_get_rent_sysvar(
+        &SyscallStubs {},
+        var_addr,
+    )
+}
+
+/// Calls the native program-test stub for the legacy last restart slot syscall.
+pub fn sol_get_last_restart_slot(var_addr: *mut u8) -> u64 {
+    <SyscallStubs as solana_sysvar::program_stubs::SyscallStubs>::sol_get_last_restart_slot(
+        &SyscallStubs {},
+        var_addr,
+    )
+}
+
 struct SyscallStubs {}
 
 impl SyscallStubs {

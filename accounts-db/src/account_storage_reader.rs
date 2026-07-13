@@ -213,7 +213,7 @@ mod tests {
             (&Pubkey::new_unique(), &account2),
         ];
 
-        storage.accounts.write_accounts(&(slot, &accounts[..]), 0);
+        storage.accounts.write_accounts(&(slot, &accounts[..]));
 
         let files = open_storage_files(iter::once(&storage), false)
             .collect::<io::Result<Vec<_>>>()
@@ -241,7 +241,6 @@ mod tests {
         total_accounts: usize,
         number_of_accounts_to_remove: usize,
     ) {
-        agave_logger::setup();
         let (storage, _temp_dirs) =
             create_storage_for_storage_reader(0, AccountsFileProvider::AppendVec);
 
@@ -260,7 +259,7 @@ mod tests {
 
         let offsets = storage
             .accounts
-            .write_accounts(&(slot, &accounts_to_append[..]), 0);
+            .write_accounts(&(slot, &accounts_to_append[..]));
 
         // Generate a seed from entropy and log the original seed
         let seed: u64 = rand::random();
@@ -367,7 +366,7 @@ mod tests {
 
         let offsets = storage
             .accounts
-            .write_accounts(&(slot, &accounts_to_append[..]), 0);
+            .write_accounts(&(slot, &accounts_to_append[..]));
 
         // Generate a seed from entropy and log the original seed
         let seed: u64 = rand::random();

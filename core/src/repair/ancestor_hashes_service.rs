@@ -16,7 +16,7 @@ use {
         },
         replay_stage::DUPLICATE_THRESHOLD,
     },
-    crossbeam_channel::{Receiver, RecvTimeoutError, Sender, bounded, unbounded},
+    crossbeam_channel::{Receiver, RecvTimeoutError, Sender, TrySendError, bounded},
     dashmap::{DashMap, mapref::entry::Entry::Occupied},
     solana_clock::Slot,
     solana_gossip::{contact_info::Protocol, ping_pong::Pong},
@@ -189,7 +189,8 @@ impl AncestorHashesService {
 
         let ancestor_hashes_request_statuses: Arc<DashMap<Slot, AncestorRequestStatus>> =
             Arc::new(DashMap::new());
-        let (retryable_slots_sender, retryable_slots_receiver) = unbounded();
+        // MAX_ANCESTOR_HASHES_SLOT_REQUESTS_PER_SECOND = 2, so we can buffer for > minute here.
+        let (retryable_slots_sender, retryable_slots_receiver) = bounded(128);
 
         // Listen for responses to our ancestor requests
         let t_ancestor_hashes_responses = Self::run_responses_listener(
@@ -467,11 +468,13 @@ impl AncestorHashesService {
         ancestor_duplicate_slots_sender: &AncestorDuplicateSlotsSender,
         retryable_slots_sender: &RetryableSlotsSender,
     ) {
-        if ancestor_request_decision.is_retryable() {
-            let _ = retryable_slots_sender.send((
+        if ancestor_request_decision.is_retryable()
+            && let Err(TrySendError::Full(_)) = retryable_slots_sender.try_send((
                 ancestor_request_decision.slot,
                 ancestor_request_decision.request_type,
-            ));
+            ))
+        {
+            warn!("Dropping ancestor request decision - retryable_slots channel is full");
         }
 
         // TODO: In the case of DuplicateAncestorDecision::ContinueSearch

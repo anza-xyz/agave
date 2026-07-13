@@ -19,7 +19,7 @@ use {
         input_validators::{is_pubkey, is_url},
         keypair::DefaultSigner,
     },
-    solana_cli_output::{CliValidatorInfo, CliValidatorInfoVec},
+    solana_cli_output::{CliValidatorInfo, CliValidatorInfoVec, stdout::writeln_stdout},
     solana_config_interface::{
         instruction::{self as config_instruction},
         state::{ConfigKeys, get_config_data},
@@ -282,7 +282,9 @@ pub async fn process_publish_validator_info(
     // Validate keybase username
     if let Some(string) = validator_info.get("keybaseUsername") {
         if force_keybase {
-            println!("--force supplied, skipping Keybase verification");
+            writeln_stdout(format_args!(
+                "--force supplied, skipping Keybase verification"
+            ))?;
         } else {
             let result = verify_keybase(&config.signers[0].pubkey(), string);
             if result.is_err() {
@@ -349,7 +351,9 @@ pub async fn process_publish_validator_info(
 
     let signers = if balance == 0 {
         if info_pubkey != info_keypair.pubkey() {
-            println!("Account {info_pubkey:?} does not exist. Generating new keypair...");
+            writeln_stdout(format_args!(
+                "Account {info_pubkey:?} does not exist. Generating new keypair..."
+            ))?;
             info_pubkey = info_keypair.pubkey();
         }
         vec![config.signers[0], &info_keypair]
@@ -358,13 +362,21 @@ pub async fn process_publish_validator_info(
     };
 
     let compute_unit_limit = ComputeUnitLimit::Simulated;
+    if balance == 0 {
+        writeln_stdout(format_args!(
+            "Publishing info for Validator {:?}",
+            config.signers[0].pubkey()
+        ))?;
+    } else {
+        writeln_stdout(format_args!(
+            "Updating Validator {:?} info at: {:?}",
+            config.signers[0].pubkey(),
+            info_pubkey
+        ))?;
+    }
     let build_message = |lamports| {
         let keys = keys.clone();
         if balance == 0 {
-            println!(
-                "Publishing info for Validator {:?}",
-                config.signers[0].pubkey()
-            );
             let mut instructions =
                 config_instruction::create_account_with_max_config_space::<ValidatorInfo>(
                     &config.signers[0].pubkey(),
@@ -385,11 +397,6 @@ pub async fn process_publish_validator_info(
             )]);
             Message::new(&instructions, Some(&config.signers[0].pubkey()))
         } else {
-            println!(
-                "Updating Validator {:?} info at: {:?}",
-                config.signers[0].pubkey(),
-                info_pubkey
-            );
             let instructions = vec![config_instruction::store(
                 &info_pubkey,
                 false,
@@ -427,8 +434,10 @@ pub async fn process_publish_validator_info(
         )
         .await?;
 
-    println!("Success! Validator info published at: {info_pubkey:?}");
-    println!("{signature_str}");
+    writeln_stdout(format_args!(
+        "Success! Validator info published at: {info_pubkey:?}"
+    ))?;
+    writeln_stdout(format_args!("{signature_str}"))?;
     Ok("".to_string())
 }
 
