@@ -336,7 +336,7 @@ fn transmitter_sends_udp_payload_over_veth_in_copy_mode() {
     let payload = Bytes::from_static(b"agave-xdp-transmitter-smoke");
 
     let exit = Arc::new(AtomicBool::new(false));
-    let mut config = XdpConfig::new(
+    let config = XdpConfig::new(
         Some(common::LEFT_IFACE.to_string()),
         vec![QueueCpuBinding {
             queue: 0,
@@ -344,7 +344,6 @@ fn transmitter_sends_udp_payload_over_veth_in_copy_mode() {
         }],
         false,
     );
-    config.tx_channel_cap = 16;
 
     let (transmitter, sender) = TransmitterBuilder::new(config, Arc::clone(&exit))
         .expect("build copy-mode transmitter")
@@ -401,7 +400,7 @@ fn transmitter_sends_udp_payload_over_gre_tunnel_in_copy_mode() {
     let payload = Bytes::from_static(b"agave-xdp-transmitter-gre-smoke");
 
     let exit = Arc::new(AtomicBool::new(false));
-    let mut config = XdpConfig::new(
+    let config = XdpConfig::new(
         Some(common::LEFT_IFACE.to_string()),
         vec![QueueCpuBinding {
             queue: 0,
@@ -409,7 +408,6 @@ fn transmitter_sends_udp_payload_over_gre_tunnel_in_copy_mode() {
         }],
         false,
     );
-    config.tx_channel_cap = 16;
 
     let (transmitter, sender) = TransmitterBuilder::new(config, Arc::clone(&exit))
         .expect("build copy-mode transmitter")

@@ -441,11 +441,11 @@ impl ResponseSender for GossipXdpSender {
                 Ok(()) => {
                     num_sent += 1;
                 }
-                Err(TrySendError::Full(_)) => {
+                Err(TrySendError::Full(_, _)) => {
                     num_dropped_full += 1;
                     continue;
                 }
-                Err(TrySendError::Disconnected(_)) => {
+                Err(TrySendError::Disconnected(_, _)) => {
                     num_dropped_disconnected += 1;
                     continue;
                 }

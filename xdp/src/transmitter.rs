@@ -1,5 +1,3 @@
-#[cfg(target_os = "linux")]
-pub use crate::tx_loop::TrySendError;
 use {
     crate::ecn_codepoint::EcnCodepoint,
     bytes::Bytes,
@@ -8,6 +6,7 @@ use {
         net::{SocketAddr, SocketAddrV4},
         sync::{Arc, atomic::AtomicBool},
         thread,
+        time::Duration,
     },
 };
 #[cfg(target_os = "linux")]
@@ -15,22 +14,18 @@ use {
     crate::{
         device::{NetworkDevice, QueueId},
         load_xdp_program,
+        netlink::MacAddress,
         route::{RouteTable, Router, RoutingTables},
         route_monitor::RouteMonitor,
-        tx_loop::{self, TxLoop, TxLoopBuilder, TxLoopConfigBuilder, TxPacket},
-        umem::OwnedUmem,
+        tx_loop::{self, PacketBuildParams, TxLoop, TxLoopBuilder, TxSender, build_packet},
+        umem::{Frame, OwnedUmem, OwnedUmemFrame, Umem},
     },
     agave_cpu_utils::{CpuId, cpu_affinity, set_cpu_affinity},
     arc_swap::ArcSwap,
     arrayvec::ArrayVec,
     aya::Ebpf,
-    crossbeam_queue::ArrayQueue,
     log::info,
-    std::{
-        net::{IpAddr, Ipv4Addr},
-        thread::Builder,
-        time::Duration,
-    },
+    std::{net::Ipv4Addr, thread::Builder},
 };
 
 #[cfg(target_os = "linux")]
@@ -48,7 +43,7 @@ pub struct QueueCpuBinding {
     pub cpu: usize,
 }
 
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, Default)]
 pub struct XdpConfig {
     pub interface: Option<String>,
     /// NIC-queue -> CPU-core bindings. One TX worker is created per entry, in
@@ -56,25 +51,6 @@ pub struct XdpConfig {
     /// inferred from position, so callers can target arbitrary hardware queues.
     pub queues: Vec<QueueCpuBinding>,
     pub zero_copy: bool,
-    // The capacity of the channel that sits between senders and each XDP thread that enqueues
-    // packets to the NIC.
-    pub tx_channel_cap: usize,
-}
-
-impl XdpConfig {
-    // A nice round number
-    const DEFAULT_TX_CHANNEL_CAP: usize = 1_000_000;
-}
-
-impl Default for XdpConfig {
-    fn default() -> Self {
-        Self {
-            interface: None,
-            queues: vec![],
-            zero_copy: false,
-            tx_channel_cap: Self::DEFAULT_TX_CHANNEL_CAP,
-        }
-    }
 }
 
 impl XdpConfig {
@@ -87,7 +63,6 @@ impl XdpConfig {
             interface: interface.map(|s| s.into()),
             queues,
             zero_copy,
-            tx_channel_cap: XdpConfig::DEFAULT_TX_CHANNEL_CAP,
         }
     }
 }
@@ -104,6 +79,7 @@ pub struct BytesTxPacket {
 }
 
 #[cfg(not(target_os = "linux"))]
+#[derive(Debug)]
 pub struct BytesTxPacket;
 
 #[cfg(target_os = "linux")]
@@ -143,52 +119,45 @@ impl BytesTxPacket {
     pub fn set_allow_mtu_overflow(&mut self, _allow: bool) {}
 }
 
-#[cfg(not(target_os = "linux"))]
-pub enum TrySendError<T> {
-    Full(T),
-    Disconnected(T),
+#[cfg(target_os = "linux")]
+impl std::fmt::Debug for BytesTxPacket {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("BytesTxPacket")
+            .field("src_addr", &self.src_addr)
+            .field("num_destinations", &self.dst_addrs.as_ref().len())
+            .field("ecn", &self.ecn)
+            .field("allow_mtu_overflow", &self.allow_mtu_overflow)
+            .field("payload_len", &self.payload.len())
+            .finish()
+    }
 }
 
-#[cfg(not(target_os = "linux"))]
-impl std::fmt::Debug for TrySendError<BytesTxPacket> {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        match self {
-            TrySendError::Full(_) => write!(f, "TrySendError::Full"),
-            TrySendError::Disconnected(_) => write!(f, "TrySendError::Disconnected"),
-        }
-    }
+/// Error returned when an XDP packet cannot be fully enqueued.
+///
+/// The second field is the number of unsent destinations.
+#[derive(Debug)]
+pub enum TrySendError<T> {
+    Full(T, usize),
+    Disconnected(T, usize),
 }
 
 #[cfg(target_os = "linux")]
-impl TxPacket for BytesTxPacket {
-    type Addrs = XdpAddrs;
-    type Payload = Bytes;
-
-    fn dst_addrs(&self) -> &Self::Addrs {
-        &self.dst_addrs
-    }
-
-    fn payload(&self) -> &Self::Payload {
-        &self.payload
-    }
-
-    fn src_addr(&self) -> SocketAddrV4 {
-        self.src_addr
-    }
-
-    fn ecn(&self) -> Option<EcnCodepoint> {
-        self.ecn
-    }
-
-    fn allow_mtu_overflow(&self) -> bool {
-        self.allow_mtu_overflow
-    }
-}
-
 #[derive(Clone)]
 pub struct XdpSender {
-    #[cfg(target_os = "linux")]
-    senders: Vec<tx_loop::TxSender<BytesTxPacket>>,
+    queues: Vec<TxQueue>,
+    atomic_router: Arc<ArcSwap<Router>>,
+    src_mac: MacAddress,
+}
+
+#[cfg(not(target_os = "linux"))]
+#[derive(Clone)]
+pub struct XdpSender;
+
+#[cfg(target_os = "linux")]
+#[derive(Clone)]
+struct TxQueue {
+    sender: TxSender<OwnedUmemFrame>,
+    umem: Arc<OwnedUmem>,
 }
 
 pub enum XdpAddrs {
@@ -221,6 +190,7 @@ impl AsRef<[SocketAddr]> for XdpAddrs {
 }
 
 impl XdpSender {
+    /// Attempts to send a `packet` without blocking.
     #[inline]
     pub fn try_send(
         &self,
@@ -230,20 +200,93 @@ impl XdpSender {
         #[cfg(target_os = "linux")]
         {
             let idx = sender_index
-                .checked_rem(self.senders.len())
-                .expect("XdpSender::senders should not be empty");
-            self.senders[idx].try_send(packet)
+                .checked_rem(self.queues.len())
+                .expect("XdpSender::queues should not be empty");
+            let queue = &self.queues[idx];
+            let router = self.atomic_router.load();
+
+            for (i, addr) in packet.dst_addrs.as_ref().iter().enumerate() {
+                let addr = *addr;
+                match self.try_send_one(queue, &router, &packet, addr) {
+                    Ok(_) => {}
+                    Err(tx_loop::TrySendError::Full(())) => {
+                        let num_unsent = packet.dst_addrs.as_ref().len().saturating_sub(i);
+                        return Err(TrySendError::Full(packet, num_unsent));
+                    }
+                    Err(tx_loop::TrySendError::Disconnected(())) => {
+                        let num_unsent = packet.dst_addrs.as_ref().len().saturating_sub(i);
+                        return Err(TrySendError::Disconnected(packet, num_unsent));
+                    }
+                };
+            }
+
+            Ok(())
         }
         #[cfg(not(target_os = "linux"))]
         {
             let _ = sender_index;
-            Err(TrySendError::Disconnected(packet))
+            Err(TrySendError::Disconnected(packet, 0))
+        }
+    }
+
+    #[cfg(target_os = "linux")]
+    fn try_send_one(
+        &self,
+        queue: &TxQueue,
+        router: &Router,
+        packet: &BytesTxPacket,
+        addr: SocketAddr,
+    ) -> Result<(), tx_loop::TrySendError<()>> {
+        let SocketAddr::V4(dst_addr) = addr else {
+            panic!("IPv6 not supported");
+        };
+        let Ok(next_hop) = router.route_v4(*dst_addr.ip()) else {
+            log::warn!("dropping packet: no route for peer {addr}");
+            return Ok(());
+        };
+
+        let Some(mut frame) = queue.umem.reserve() else {
+            return Err(tx_loop::TrySendError::Full(()));
+        };
+        frame.set_len(queue.umem.frame_size());
+
+        let mut mapped = queue.umem.map_frame_mut(frame);
+        let Some(packet_len) = build_packet(PacketBuildParams {
+            packet: &mut mapped,
+            src_mac: &self.src_mac,
+            src_addr: packet.src_addr,
+            dst_addr,
+            next_hop: &next_hop,
+            payload: packet.payload.as_ref(),
+            ecn: packet.ecn,
+            allow_mtu_overflow: packet.allow_mtu_overflow,
+        }) else {
+            queue.umem.release(mapped.into_frame());
+            return Ok(());
+        };
+
+        let mut frame = mapped.into_frame();
+        frame.set_len(packet_len);
+
+        if let Err(err) = queue.sender.try_send(frame) {
+            match err {
+                tx_loop::TrySendError::Full(frame) => {
+                    queue.umem.release(frame);
+                    Err(tx_loop::TrySendError::Full(()))
+                }
+                tx_loop::TrySendError::Disconnected(frame) => {
+                    queue.umem.release(frame);
+                    Err(tx_loop::TrySendError::Disconnected(()))
+                }
+            }
+        } else {
+            Ok(())
         }
     }
 
     pub fn len(&self) -> usize {
         #[cfg(target_os = "linux")]
-        return self.senders.len();
+        return self.queues.len();
 
         #[cfg(not(target_os = "linux"))]
         0
@@ -251,7 +294,7 @@ impl XdpSender {
 
     pub fn is_empty(&self) -> bool {
         #[cfg(target_os = "linux")]
-        return self.senders.is_empty();
+        return self.queues.is_empty();
 
         #[cfg(not(target_os = "linux"))]
         true
@@ -260,6 +303,8 @@ impl XdpSender {
 
 pub struct Transmitter {
     threads: Vec<thread::JoinHandle<()>>,
+    #[cfg(target_os = "linux")]
+    _maybe_ebpf: Option<Ebpf>,
 }
 
 #[cfg(not(target_os = "linux"))]
@@ -267,8 +312,8 @@ pub struct TransmitterBuilder {}
 
 #[cfg(target_os = "linux")]
 pub struct TransmitterBuilder {
-    tx_loops: Vec<TxLoop<OwnedUmem>>,
-    tx_channel_cap: usize,
+    tx_loops: Vec<TxLoop<Arc<OwnedUmem>>>,
+    src_mac: MacAddress,
     maybe_ebpf: Option<Ebpf>,
     atomic_router: Arc<ArcSwap<Router>>,
     route_monitor_handle: thread::JoinHandle<()>,
@@ -291,7 +336,6 @@ impl TransmitterBuilder {
             interface: maybe_interface,
             queues,
             zero_copy,
-            tx_channel_cap,
         } = config;
 
         let dev = Arc::new(if let Some(interface) = maybe_interface {
@@ -299,10 +343,6 @@ impl TransmitterBuilder {
         } else {
             NetworkDevice::new_from_default_route().unwrap()
         });
-
-        let mut tx_loop_config_builder = TxLoopConfigBuilder::new();
-        tx_loop_config_builder.zero_copy(zero_copy);
-        let tx_loop_config = tx_loop_config_builder.build_with_src_device(&dev);
 
         let reserved_cores = queues
             .iter()
@@ -324,12 +364,8 @@ impl TransmitterBuilder {
             // is allocated to the correct numa node
             let cpu = CpuId::new(binding.cpu)?;
             set_cpu_affinity(None, [cpu])?;
-            let tx_loop_builder = TxLoopBuilder::new(
-                binding.cpu,
-                QueueId(binding.queue as u64),
-                tx_loop_config.clone(),
-                &dev,
-            );
+            let tx_loop_builder =
+                TxLoopBuilder::new(binding.cpu, QueueId(binding.queue as u64), zero_copy, &dev);
             // migrate main thread back off of the last xdp reserved cpu
             set_cpu_affinity(None, unreserved_cores.iter().copied())?;
             tx_loop_builders.push(tx_loop_builder);
@@ -389,7 +425,7 @@ impl TransmitterBuilder {
 
         Ok(Self {
             tx_loops,
-            tx_channel_cap,
+            src_mac: dev.mac_addr()?,
             maybe_ebpf,
             atomic_router,
             route_monitor_handle,
@@ -403,76 +439,40 @@ impl TransmitterBuilder {
 
     #[cfg(target_os = "linux")]
     pub fn build(self) -> (Transmitter, XdpSender) {
-        const DROP_CHANNEL_CAP: usize = 1_000_000;
-
         let Self {
             tx_loops,
-            tx_channel_cap,
+            src_mac,
             maybe_ebpf,
             atomic_router,
             route_monitor_handle,
         } = self;
 
-        let drop_queue = Arc::new(ArrayQueue::new(DROP_CHANNEL_CAP));
         let mut threads = vec![route_monitor_handle];
 
-        threads.push(
-            Builder::new()
-                .name("solTransmDrop".to_owned())
-                .spawn({
-                    let drop_queue = Arc::clone(&drop_queue);
-                    move || {
-                        loop {
-                            // drop shreds in a dedicated thread so that we never lock/madvise() from
-                            // the xdp thread
-                            match drop_queue.pop() {
-                                Some(i) => {
-                                    drop(i);
-                                }
-                                None if Arc::strong_count(&drop_queue) == 1 => break,
-                                None => {
-                                    thread::sleep(Duration::from_millis(1));
-                                }
-                            }
-                        }
-                        // move the ebpf program here so it stays attached until we exit
-                        drop(maybe_ebpf);
-                    }
-                })
-                .unwrap(),
-        );
-
-        let mut senders = vec![];
+        let mut queues = vec![];
         for (i, tx_loop) in tx_loops.into_iter().enumerate() {
-            let (sender, receiver) = tx_loop::channel(tx_channel_cap);
-            let drop_queue = Arc::clone(&drop_queue);
-            let atomic_router = Arc::clone(&atomic_router);
+            let umem = Arc::clone(tx_loop.umem());
+            let (sender, receiver) = tx_loop::channel(tx_loop.umem_tx_capacity());
             threads.push(
                 Builder::new()
                     .name(format!("solTransmIO{i:02}"))
-                    .spawn(move || {
-                        tx_loop.run(
-                            receiver,
-                            move |item| {
-                                if let Err(item) = drop_queue.push(item) {
-                                    drop(item);
-                                }
-                            },
-                            move |ip| {
-                                let r = atomic_router.load();
-                                match ip {
-                                    IpAddr::V4(ip) => r.route_v4(*ip).ok(),
-                                    IpAddr::V6(_) => None,
-                                }
-                            },
-                        )
-                    })
+                    .spawn(move || tx_loop.run(receiver))
                     .unwrap(),
             );
-            senders.push(sender);
+            queues.push(TxQueue { sender, umem });
         }
 
-        (Transmitter { threads }, XdpSender { senders })
+        (
+            Transmitter {
+                threads,
+                _maybe_ebpf: maybe_ebpf,
+            },
+            XdpSender {
+                queues,
+                atomic_router,
+                src_mac,
+            },
+        )
     }
 }
 

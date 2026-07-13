@@ -522,17 +522,24 @@ fn retransmit_shred(
     let num_addrs = addrs.len();
     let num_nodes = match socket {
         RetransmitSocket::Xdp(sender) => {
-            let mut sent = num_addrs;
-            if num_addrs > 0
-                && let Err(e) = sender.try_send(key.index() as usize, addrs.to_vec(), shred.bytes)
-            {
-                log::warn!("xdp channel full: {e:?}");
-                stats
-                    .num_shreds_dropped_xdp_full
-                    .fetch_add(num_addrs, Ordering::Relaxed);
-                sent = 0;
+            if num_addrs == 0 {
+                0
+            } else {
+                match sender.try_send(key.index() as usize, addrs.to_vec(), shred.bytes) {
+                    Ok(()) => num_addrs,
+                    Err(solana_net_utils::TrySendError::Full(_, num_unsent)) => {
+                        log::warn!("xdp channel full");
+                        stats
+                            .num_shreds_dropped_xdp_full
+                            .fetch_add(num_unsent, Ordering::Relaxed);
+                        num_addrs - num_unsent
+                    }
+                    Err(solana_net_utils::TrySendError::Disconnected(_, num_unsent)) => {
+                        log::warn!("xdp channel disconnected");
+                        num_addrs - num_unsent
+                    }
+                }
             }
-            sent
         }
         RetransmitSocket::Socket(_) | RetransmitSocket::Multihomed { .. } => {
             let socket = socket.get_socket();
