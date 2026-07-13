@@ -2376,7 +2376,7 @@ mod tests {
     fn assert_storage_info(info: &SlotInfo, storage: &AccountStorageEntry, should_shrink: bool) {
         assert_eq!(storage.id(), info.storage.id());
         assert_eq!(storage.slot(), info.slot);
-        assert_eq!(storage.capacity(), info.capacity);
+        assert_eq!(storage.written_bytes(), info.written_bytes);
         assert_eq!(storage.alive_bytes(), info.alive_bytes as usize);
         assert_eq!(should_shrink, info.should_shrink);
     }

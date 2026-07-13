@@ -235,11 +235,6 @@ impl AccountStorageEntry {
         self.accounts.len() as u64
     }
 
-    /// Returns the number of bytes, not accounts, this storage can hold
-    pub fn capacity(&self) -> u64 {
-        self.accounts.capacity()
-    }
-
     pub fn has_accounts(&self) -> bool {
         self.count() > 0
     }
