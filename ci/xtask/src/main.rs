@@ -29,7 +29,7 @@ enum Commands {
     #[command(about = "Generate Buildkite pipeline")]
     GeneratePipeline(commands::generate_pipeline::CommandArgs),
     #[command(about = "Print release channel info")]
-    ChannelInfo,
+    ChannelInfo(commands::channel_info::CommandArgs),
     #[command(about = "Run XDP integration tests")]
     XdpTest(commands::xdp_test::CommandArgs),
 }
