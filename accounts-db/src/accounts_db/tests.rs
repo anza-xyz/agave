@@ -1467,7 +1467,7 @@ fn test_shrink_converts_zero_lamport_single_ref_account_to_tombstone() {
     );
 
     // it is recorded on the new storage's tombstone list, not the zero-lamport-single-ref list
-    assert_eq!(new_storage1.tombstone_offsets_read_lock().len(), 1);
+    assert_eq!(new_storage1.num_tombstones(), 1);
     assert!(
         new_storage1
             .zero_lamport_single_ref_offsets()
