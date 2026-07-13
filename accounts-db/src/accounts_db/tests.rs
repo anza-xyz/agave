@@ -1872,6 +1872,77 @@ fn test_clean_old_with_both_normal_and_zero_lamport_accounts() {
     assert_eq!(found_accounts, vec![pubkey2]);
 }
 
+// Verify that purge_keys_exact does not remove pubkeys from the secondary index if the pubkey
+// is still present in the write cache
+#[test]
+fn test_clean_retains_secondary_index_for_still_cached_key() {
+    let accounts = AccountsDb {
+        account_indexes: spl_token_mint_index_enabled(),
+        ..AccountsDb::new_with_config(
+            Vec::new(),
+            ACCOUNTS_DB_CONFIG_FOR_TESTING,
+            None,
+            Arc::default(),
+        )
+    };
+    let pubkey = solana_pubkey::new_rand();
+    let index_slot = 1;
+    let cache_slot = 2;
+
+    // Set up a token account to be added to the secondary index.
+    const SPL_TOKEN_INITIALIZED_OFFSET: usize = 108;
+    let mint_key = Pubkey::new_unique();
+    let mut account_data_with_mint = vec![0; spl_generic_token::token::Account::get_packed_len()];
+    account_data_with_mint[..PUBKEY_BYTES].clone_from_slice(&(mint_key.to_bytes()));
+    account_data_with_mint[SPL_TOKEN_INITIALIZED_OFFSET] = 1;
+    let mut token_account = AccountSharedData::new(1, 0, &spl_generic_token::token::id());
+    token_account.set_data(account_data_with_mint);
+
+    let zero_account = AccountSharedData::new(0, 0, &Pubkey::default());
+
+    // Slot 1: a rooted zero-lamport tombstone. Flush with `PubkeysToFlush::All` so it is not
+    // reclaimed
+    accounts.store_for_tests((index_slot, [(&pubkey, &zero_account)].as_slice()));
+    accounts.add_root(index_slot);
+    accounts.flush_accounts_cache_slot_for_tests(index_slot);
+
+    // Slot 2: the account is written to the write cache,
+    accounts.store_for_tests((cache_slot, [(&pubkey, &token_account)].as_slice()));
+    assert_eq!(
+        accounts
+            .accounts_index
+            .get_index_key_size(&AccountIndex::SplTokenMint, &mint_key),
+        Some(1),
+    );
+
+    // Clean removes the entry from the accounts index (as the newest rooted version is zero
+    // lamport)
+    accounts.clean_accounts_for_tests();
+
+    // The pubkey is still live in the write cache, so its secondary index entry must survive.
+    assert!(accounts.accounts_cache.contains_pubkey(&pubkey));
+    assert_eq!(
+        accounts
+            .accounts_index
+            .get_index_key_size(&AccountIndex::SplTokenMint, &mint_key),
+        Some(1),
+        "clean purged the secondary index entry for a live cached account",
+    );
+
+    accounts.purge_slots_from_cache(iter::once(&cache_slot), &PurgeStats::default());
+
+    // The pubkey has been removed from both the index and the write cache. Ensure it is
+    // removed from the secondary index as well.
+    assert!(!accounts.accounts_cache.contains_pubkey(&pubkey));
+    assert_eq!(
+        accounts
+            .accounts_index
+            .get_index_key_size(&AccountIndex::SplTokenMint, &mint_key),
+        None,
+        "Entry should be removed from the secondary index, but it is not",
+    );
+}
+
 #[test]
 fn test_clean_max_slot_zero_lamport_account() {
     agave_logger::setup();

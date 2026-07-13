@@ -1341,6 +1341,60 @@ impl AccountsDb {
         }
     }
 
+    /// Purges each key in `removed_keys` from the enabled secondary indexes, unless the key is
+    /// still alive in the write cache. `removed_keys` must be keys that are not present in the
+    /// primary index
+    ///
+    /// The cache check is all-or-nothing per key: a key kept because it is cache-live retains all
+    /// of its secondary entries, including stale ones from its dead rooted versions (e.g. an old
+    /// mint after the account is re-created with a new one). Scans tolerate stale entries by
+    /// post-filtering against account data, and they are removed the next time the key dies while
+    /// not cache-resident.
+    ///
+    /// Cache writes populate the secondary indexes but not the primary index, so a key that is gone
+    /// from the primary index can still be alive in the write cache and must keep its secondary
+    /// entries. This is tricky due to the races that need to be considered:
+    /// 1) Removed from the cache then re-added to the cache by replay
+    /// - This is protected by re-checking the cache in the closure passed to purge. Since purge
+    ///   holds the secondary index's reverse-index lock when it re-checks cache presence, and a
+    ///   cache store writes the cache before inserting into the secondary index under that same
+    ///   lock, either the re-check sees the cache write and the entry is not removed, or the
+    ///   removal wins and the store's later insert re-adds it.
+    /// 2) Removed from the cache, and also simultaneously removed from storage by clean
+    /// - Since both the cache removal and the index removal are done before the removal from the
+    ///   secondary index, the worst case is a double removal (both paths remove the same secondary
+    ///   index entry). This is safe since the secondary index removal is idempotent.
+    /// 3) Removed from the storage, but still present in the cache
+    /// - This is protected by checking the cache presence in the closure. If the pubkey is still
+    ///   present in the cache, the secondary index entry is not removed.
+    ///
+    /// We do not need to consider removed from cache -> added to storage. Adding to storage
+    /// requires a cache entry to be present first, so a fresh store of the key would have to be
+    /// rooted and flushed inside this window — impossible because rooting is driven by the same
+    /// ReplayStage thread that purges unrooted slots, and clean runs serially with flush on the
+    /// ABS thread.
+    fn purge_secondary_indexes_for_dead_keys(
+        &self,
+        removed_keys: &PubkeysRemovedFromAccountsIndex,
+    ) {
+        if self.account_indexes.is_empty() {
+            return;
+        }
+        for key in removed_keys {
+            // Purging secondary entries for a key that is still alive in the primary index
+            // would leave a live account invisible to secondary-index scans
+            debug_assert!(
+                !self.accounts_index.contains(key),
+                "key removed from the primary index must not be present: {key}"
+            );
+            self.accounts_index.purge_secondary_indexes_by_inner_key_if(
+                key,
+                &self.account_indexes,
+                || !self.accounts_cache.contains_pubkey(key),
+            );
+        }
+    }
+
     #[must_use]
     pub fn purge_keys_exact<C>(
         &self,
@@ -1367,10 +1421,11 @@ impl AccountsDb {
                 }
             });
 
-        let (pubkeys_removed_from_accounts_index, handle_dead_keys_us) = measure_us!(
-            self.accounts_index
-                .handle_dead_keys(&dead_keys, &self.account_indexes)
-        );
+        let (pubkeys_removed_from_accounts_index, handle_dead_keys_us) = measure_us!({
+            let removed_keys = self.accounts_index.handle_dead_keys(&dead_keys);
+            self.purge_secondary_indexes_for_dead_keys(&removed_keys);
+            removed_keys
+        });
 
         self.stats
             .purge_exact_count
@@ -4086,6 +4141,7 @@ impl AccountsDb {
                     .accounts_cache
                     .remove_slot(*remove_slot)
                     .expect("slot cache entry must still be present");
+<<<<<<< HEAD
                 // Cache writes populate the secondary indexes but not the primary index, so a
                 // cache-only account dropped here without ever being flushed would leak its
                 // secondary entry.
@@ -4097,10 +4153,12 @@ impl AccountsDb {
                 // secondary-index scans observe it (no consensus impact), and it self-heals: the
                 // entry is re-added when that slot flushes, or stays correctly removed if the slot
                 // is later purged.
+=======
+                // Potentially purge the secondary entries for any key that has now left the cache
+>>>>>>> 22a3ad8ff (Handle dead keys secondary (#13717))
                 if !self.account_indexes.is_empty() {
-                    let _ = self
-                        .accounts_index
-                        .handle_dead_keys(&pubkeys_removed, &self.account_indexes);
+                    let removed_keys = self.accounts_index.handle_dead_keys(&pubkeys_removed);
+                    self.purge_secondary_indexes_for_dead_keys(&removed_keys);
                 }
                 self.accounts_index.write_through_pubkeys(pubkeys_removed);
             }

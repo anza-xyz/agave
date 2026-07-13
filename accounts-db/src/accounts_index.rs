@@ -340,7 +340,6 @@ impl<T: IndexValue, U: DiskIndexValue + From<T> + Into<T>> AccountsIndex<T, U> {
     }
 
     /// Is `pubkey` in the index?
-    #[cfg(feature = "dev-context-only-utils")]
     pub(crate) fn contains(&self, pubkey: &Pubkey) -> bool {
         self.get_and_then(pubkey, |entry| (false, entry.is_some()))
     }
@@ -362,23 +361,20 @@ impl<T: IndexValue, U: DiskIndexValue + From<T> + Into<T>> AccountsIndex<T, U> {
     }
 
     /// Remove keys from the account index if the key's slot list is empty.
-    /// Returns the keys that were removed from the index. These keys should not be accessed again in the current code path.
+    /// Returns the keys that were removed from the index. These keys should not be accessed again
+    /// in the current code path.
+    ///
+    /// When secondary indexes are enabled, callers must pass the returned keys to
+    /// `AccountsDb::purge_secondary_indexes_for_dead_keys`, otherwise their secondary index
+    /// entries leak.
     #[must_use]
-    pub fn handle_dead_keys(
-        &self,
-        dead_keys: &[Pubkey],
-        account_indexes: &AccountSecondaryIndexes,
-    ) -> HashSet<Pubkey> {
+    pub fn handle_dead_keys(&self, dead_keys: &[Pubkey]) -> HashSet<Pubkey> {
         let mut pubkeys_removed_from_accounts_index = HashSet::default();
         if !dead_keys.is_empty() {
             for key in dead_keys.iter() {
                 let w_index = self.get_bin(key);
                 if w_index.remove_if_slot_list_empty(*key) {
                     pubkeys_removed_from_accounts_index.insert(*key);
-                    // Note it's only safe to remove all the entries for this key
-                    // because we have the lock for this key's entry in the AccountsIndex,
-                    // so no other thread is also updating the index
-                    self.purge_secondary_indexes_by_inner_key(key, account_indexes);
                 }
             }
         }
@@ -973,21 +969,26 @@ impl<T: IndexValue, U: DiskIndexValue + From<T> + Into<T>> AccountsIndex<T, U> {
         })
     }
 
-    fn purge_secondary_indexes_by_inner_key(
+    /// Purges `inner_key` from each enabled secondary index
+    pub(crate) fn purge_secondary_indexes_by_inner_key_if(
         &self,
         inner_key: &Pubkey,
         account_indexes: &AccountSecondaryIndexes,
+        should_remove: impl Fn() -> bool,
     ) {
         if account_indexes.contains(&AccountIndex::ProgramId) {
-            self.program_id_index.remove_by_inner_key(inner_key);
+            self.program_id_index
+                .remove_by_inner_key_if(inner_key, &should_remove);
         }
 
         if account_indexes.contains(&AccountIndex::SplTokenOwner) {
-            self.spl_token_owner_index.remove_by_inner_key(inner_key);
+            self.spl_token_owner_index
+                .remove_by_inner_key_if(inner_key, &should_remove);
         }
 
         if account_indexes.contains(&AccountIndex::SplTokenMint) {
-            self.spl_token_mint_index.remove_by_inner_key(inner_key);
+            self.spl_token_mint_index
+                .remove_by_inner_key_if(inner_key, &should_remove);
         }
     }
 
@@ -2372,7 +2373,10 @@ mod tests {
             &mut ReclaimsSlotList::new(),
         );
 
-        let _ = index.handle_dead_keys(&[account_key], secondary_indexes);
+        let pubkeys = index.handle_dead_keys(&[account_key]);
+        for pubkey in pubkeys {
+            index.purge_secondary_indexes_by_inner_key_if(&pubkey, secondary_indexes, || true);
+        }
         assert!(secondary_index.index.is_empty());
         assert!(secondary_index.reverse_index.is_empty());
     }
@@ -2730,7 +2734,10 @@ mod tests {
         index.slot_list_mut(&account_key, |mut slot_list| slot_list.clear());
 
         // Everything should be deleted
-        let _ = index.handle_dead_keys(&[account_key], &secondary_indexes);
+        let pubkeys = index.handle_dead_keys(&[account_key]);
+        for pubkey in pubkeys {
+            index.purge_secondary_indexes_by_inner_key_if(&pubkey, &secondary_indexes, || true);
+        }
         assert!(secondary_index.index.is_empty());
         assert!(secondary_index.reverse_index.is_empty());
     }
@@ -2879,7 +2886,10 @@ mod tests {
         // pubkey as dead and finally remove all the secondary indexes
         let mut reclaims = ReclaimsSlotList::new();
         index.purge_exact(&account_key, later_slot, &mut reclaims);
-        let _ = index.handle_dead_keys(&[account_key], secondary_indexes);
+        let pubkeys = index.handle_dead_keys(&[account_key]);
+        for pubkey in pubkeys {
+            index.purge_secondary_indexes_by_inner_key_if(&pubkey, secondary_indexes, || true);
+        }
         assert!(secondary_index.index.is_empty());
         assert!(secondary_index.reverse_index.is_empty());
     }
@@ -3168,7 +3178,7 @@ mod tests {
         let index = AccountsIndex::<bool, bool>::default_for_tests();
 
         assert_eq!(
-            index.handle_dead_keys(&[key], &AccountSecondaryIndexes::default()),
+            index.handle_dead_keys(&[key]),
             vec![key].into_iter().collect::<HashSet<_>>()
         );
     }
