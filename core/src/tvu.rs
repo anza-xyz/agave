@@ -126,6 +126,7 @@ pub struct Tvu {
     bls_sigverify_threads: (JoinHandle<()>, JoinHandle<()>),
     votor: Votor,
     commitment_service: AggregateCommitmentService,
+    mesh_layer_service: Option<agave_mesh_layer::MeshLayerService>,
 }
 
 pub struct TvuSockets {
@@ -135,6 +136,9 @@ pub struct TvuSockets {
     pub ancestor_hashes_requests: UdpSocket,
     pub alpenglow: UdpSocket,
     pub block_id_repair: UdpSocket,
+    /// Optional dedicated socket for the mesh layer.  Only used when
+    /// `enable_mesh_layer` is true in the validator config.
+    pub mesh: Option<UdpSocket>,
 }
 
 pub struct TvuConfig {
@@ -151,6 +155,9 @@ pub struct TvuConfig {
     pub bls_sigverify_threads: NonZeroUsize,
     pub turbine_xdp_sender: Option<TurbineXdpSender>,
     pub repair_xdp_sender: Option<PinnedXdpSender>,
+    /// Configuration for the optional mesh layer.  Only used when
+    /// `ValidatorConfig::enable_mesh_layer` is true.
+    pub mesh_layer_config: Option<agave_mesh_layer::MeshLayerConfig>,
 }
 
 impl Default for TvuConfig {
@@ -167,6 +174,7 @@ impl Default for TvuConfig {
             bls_sigverify_threads: NonZeroUsize::new(1).expect("1 is non-zero"),
             turbine_xdp_sender: None,
             repair_xdp_sender: None,
+            mesh_layer_config: None,
         }
     }
 }
@@ -260,6 +268,7 @@ impl Tvu {
             ancestor_hashes_requests: ancestor_hashes_socket,
             alpenglow: bls_socket,
             block_id_repair,
+            mesh: mesh_socket,
         } = sockets;
 
         let AlpenglowInitializationState {
@@ -352,6 +361,11 @@ impl Tvu {
 
         let (fetch_sender, fetch_receiver) = EvictingSender::new_bounded(SHRED_FETCH_CHANNEL_SIZE);
 
+        // Clone fetch_sender for mesh-layer use: when verify_mesh_shreds is
+        // enabled, mesh-reconstructed shreds are routed back through the
+        // fetch/sigverify path for re-verification.
+        let mesh_fetch_sender = fetch_sender.clone();
+
         let repair_socket = Arc::new(repair_socket);
         let ancestor_hashes_socket = Arc::new(ancestor_hashes_socket);
         let block_id_repair_socket = Arc::new(block_id_repair);
@@ -373,13 +387,21 @@ impl Tvu {
         let (retransmit_sender, retransmit_receiver) =
             EvictingSender::new_bounded(CHANNEL_SIZE_RETRANSMIT_INGRESS);
 
+        // The mesh-layer tap on the retransmit path.  When the mesh layer is
+        // disabled, mesh_tap_receiver is simply dropped and the DualSender's
+        // secondary sends silently fail (best-effort, never blocks).
+        let (mesh_tap_sender, mesh_tap_receiver) =
+            EvictingSender::new_bounded(CHANNEL_SIZE_RETRANSMIT_INGRESS);
+
+        let mesh_layer_config = tvu_config.mesh_layer_config.clone();
+
         let shred_sigverify = solana_turbine::sigverify_shreds::spawn_shred_sigverify(
             cluster_info.clone(),
             bank_forks.clone(),
             leader_schedule_cache.clone(),
             fetch_receiver,
-            retransmit_sender.clone(),
-            verified_sender,
+            agave_mesh_layer::DualSender::new(retransmit_sender.clone(), mesh_tap_sender),
+            verified_sender.clone(),
             Arc::new({
                 let outstanding_repair_requests = outstanding_repair_requests.clone();
                 move |nonce| {
@@ -404,6 +426,33 @@ impl Tvu {
             tvu_config.turbine_xdp_sender,
             votor_event_sender.clone(),
         );
+
+        // Optionally start the mesh layer service.
+        let mesh_layer_service = if let (Some(mesh_socket), Some(mesh_config)) =
+            (mesh_socket, mesh_layer_config)
+        {
+            let fetch_sender = if mesh_config.verify_mesh_shreds {
+                Some(mesh_fetch_sender)
+            } else {
+                None
+            };
+            let service = agave_mesh_layer::MeshLayerService::new(
+                cluster_info.clone(),
+                Arc::new(mesh_socket),
+                mesh_config,
+                exit.clone(),
+                mesh_tap_receiver,
+                verified_sender,
+                fetch_sender,
+            );
+            Some(service)
+        } else {
+            // Mesh disabled — drop the tap receiver so the DualSender's
+            // secondary sends become no-ops (channel disconnected, errors
+            // silently ignored).
+            drop(mesh_tap_receiver);
+            None
+        };
 
         let (ancestor_duplicate_slots_sender, ancestor_duplicate_slots_receiver) = unbounded();
         // This channel is used by both gossip and window service. Gossip will not fill this
@@ -660,6 +709,7 @@ impl Tvu {
             bls_sigverify_threads,
             votor,
             commitment_service,
+            mesh_layer_service,
         })
     }
 
@@ -684,6 +734,9 @@ impl Tvu {
         sigverifier.join()?;
         self.votor.join()?;
         self.commitment_service.join()?;
+        if let Some(mesh) = self.mesh_layer_service {
+            mesh.join()?;
+        }
         Ok(())
     }
 }
@@ -853,6 +906,7 @@ pub mod tests {
                 ancestor_hashes_requests: target1.sockets.ancestor_hashes_requests,
                 alpenglow: target1.sockets.alpenglow,
                 block_id_repair: target1.sockets.block_id_repair,
+                mesh: None,
             },
             blockstore,
             ledger_signal_receiver,
