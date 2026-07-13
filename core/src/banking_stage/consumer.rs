@@ -127,7 +127,7 @@ impl PreparedProcessedTransactions {
     fn retain_transactions<Tx: TransactionWithMeta>(
         &mut self,
         transactions: &[Tx],
-        mut retain: impl FnMut(usize) -> bool,
+        transaction_costs: &[Option<TransactionCost<'_, Tx>>],
     ) {
         let mut transaction_indexes = std::mem::take(&mut self.transaction_indexes).into_iter();
         let mut retained_transaction_indexes = Vec::with_capacity(self.transactions.len());
@@ -138,7 +138,7 @@ impl PreparedProcessedTransactions {
             let index = transaction_indexes
                 .next()
                 .expect("processed transaction indexes match processed transactions");
-            let retain_transaction = retain(index);
+            let retain_transaction = transaction_costs[index].is_some();
             if retain_transaction {
                 retained_transaction_indexes.push(index);
             } else {
@@ -384,9 +384,7 @@ impl Consumer {
         if cost_model_throttled_transactions_count != 0 {
             let ((), retain_processed_transactions_us) = measure_us!({
                 prepared_processed_transactions
-                    .retain_transactions(batch.sanitized_transactions(), |index| {
-                        transaction_costs[index].is_some()
-                    });
+                    .retain_transactions(batch.sanitized_transactions(), &transaction_costs);
             });
             processing_results_to_transactions_us = processing_results_to_transactions_us
                 .saturating_add(retain_processed_transactions_us);
@@ -1013,7 +1011,8 @@ mod tests {
             SERIALIZED_ENTRIES_OVERHEAD + transactions[0].serialized_size() as u64
         );
 
-        prepared_processed_transactions.retain_transactions(&transactions, |_| false);
+        let transaction_costs = vec![None];
+        prepared_processed_transactions.retain_transactions(&transactions, &transaction_costs);
 
         assert!(prepared_processed_transactions.transactions.is_empty());
         assert!(
