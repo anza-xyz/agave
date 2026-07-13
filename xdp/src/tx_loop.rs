@@ -29,7 +29,7 @@ use {
             atomic::{AtomicUsize, Ordering},
         },
         thread,
-        time::Duration,
+        time::{Duration, Instant},
     },
 };
 
@@ -341,6 +341,11 @@ impl<U: Umem> TxLoop<U> {
 
         const MAX_TIMEOUTS: usize = 1;
 
+        // If we're out of space and no completions come back for this long, the TX path is wedged
+        // (e.g. a reset dropped in-flight frames) and won't recover on its own, so bail and let the
+        // process restart. Well above normal completion latency, so backpressure won't trip it.
+        const COMPLETION_TIMEOUT: Duration = Duration::from_secs(1);
+
         // Publish TX descriptors in batches to avoid per-packet commits and driver kicks. An idle
         // timeout commits any partial batch so low rate traffic is not held indefinitely.
         const BATCH_SIZE: usize = 64;
@@ -396,19 +401,35 @@ impl<U: Umem> TxLoop<U> {
                     kick(&ring);
 
                     // loop until we have space for the next packet
+                    let mut last_progress = Instant::now();
                     loop {
                         completion.sync(true);
                         // we haven't written any frames so we only need to sync the consumer position
                         ring.sync(false);
 
                         // check if any frames were completed
+                        let mut released = 0;
                         while let Some(frame_offset) = completion.read() {
                             umem.release(frame_offset);
+                            released += 1;
                         }
 
                         if ring.available() > 0 && umem.available() > 0 {
                             // we have space for the next packet, break out of the loop
                             break;
+                        }
+
+                        // Completions coming back means it's just backpressure; only give up once
+                        // nothing's been released for COMPLETION_TIMEOUT.
+                        if released > 0 {
+                            last_progress = Instant::now();
+                        } else if last_progress.elapsed() > COMPLETION_TIMEOUT {
+                            panic!(
+                                "xdp tx_loop wedged: no completions for {COMPLETION_TIMEOUT:?} \
+                                 while out of frames (umem {}, ring {}); restarting",
+                                umem.available(),
+                                ring.available(),
+                            );
                         }
 
                         // queues are full, if NEEDS_WAKEUP is set kick the driver so hopefully it'll
@@ -621,6 +642,7 @@ impl<U: Umem> TxLoop<U> {
         kick(&ring);
 
         // drain the ring
+        let mut last_progress = Instant::now();
         while umem.available() < umem_tx_capacity || ring.available() < ring.capacity() {
             log::debug!(
                 "draining xdp ring umem {}/{} ring {}/{}",
@@ -631,8 +653,25 @@ impl<U: Umem> TxLoop<U> {
             );
 
             completion.sync(true);
+            let mut released = 0;
             while let Some(frame_offset) = completion.read() {
                 umem.release(frame_offset);
+                released += 1;
+            }
+
+            // Shutting down, so if completions stop coming back just give up on the outstanding
+            // frames instead of draining forever.
+            if released > 0 {
+                last_progress = Instant::now();
+            } else if last_progress.elapsed() > COMPLETION_TIMEOUT {
+                log::warn!(
+                    "xdp tx_loop drain gave up with frames outstanding (umem {}/{}, ring {}/{})",
+                    umem.available(),
+                    umem_tx_capacity,
+                    ring.available(),
+                    ring.capacity(),
+                );
+                break;
             }
 
             ring.sync(false);
