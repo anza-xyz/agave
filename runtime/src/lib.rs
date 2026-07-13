@@ -15,6 +15,8 @@ pub mod bank_forks_controller;
 pub mod bank_utils;
 pub mod block_component_processor;
 pub mod commitment;
+#[cfg(any(feature = "conformance", feature = "dev-context-only-utils"))]
+pub mod conformance;
 pub mod dependency_tracker;
 pub mod epoch_stakes;
 pub mod genesis_utils;
@@ -48,7 +50,9 @@ pub mod stakes;
 pub mod static_ids;
 pub mod status_cache;
 pub mod test_utils;
+pub mod transaction_balances;
 pub mod transaction_batch;
+pub mod transaction_execution;
 pub mod validated_block_finalization;
 pub mod validated_reward_certificate;
 pub mod vote_sender_types;

@@ -1104,6 +1104,7 @@ pub fn add_args<'a>(app: App<'a, 'a>, default_args: &'a DefaultArgs) -> App<'a, 
         Arg::with_name("allow_private_addr")
             .long("allow-private-addr")
             .takes_value(false)
+            .requires("no_xdp")
             .help("Allow contacting private ip addresses")
             .hidden(hidden_unless_forced()),
     )
@@ -1123,24 +1124,12 @@ pub fn add_args<'a>(app: App<'a, 'a>, default_args: &'a DefaultArgs) -> App<'a, 
             .value_name("BYTES")
             .validator(is_parsable::<DirByteLimit>)
             .takes_value(true)
-            // Firstly, zero limit value causes tracer to be disabled
-            // altogether, intuitively. On the other hand, this non-zero
-            // default doesn't enable banking tracer unless this flag is
-            // explicitly given, similar to --limit-ledger-size.
-            // see configure_banking_trace_dir_byte_limit() for this.
             .default_value(&default_args.banking_trace_dir_byte_limit)
             .help(
-                "Enables the banking trace explicitly, which is enabled by default and writes \
-                 trace files for simulate-leader-blocks, retaining up to the default or specified \
-                 total bytes in the ledger. This flag can be used to override its byte limit.",
+                "Enables the banking trace that writes trace files for simulate-leader-blocks, \
+                 retaining up to the specified total bytes in the ledger. Banking trace is \
+                 disabled by default.",
             ),
-    )
-    .arg(
-        Arg::with_name("disable_banking_trace")
-            .long("disable-banking-trace")
-            .conflicts_with("banking_trace_dir_byte_limit")
-            .takes_value(false)
-            .help("Disables the banking trace"),
     )
     .arg(
         Arg::with_name("no_delay_leader_block_for_pending_fork")
@@ -1266,14 +1255,14 @@ fn validators_set(
         let validators_set: Option<HashSet<Pubkey>> = values_t!(matches, matches_name, Pubkey)
             .ok()
             .map(|validators| validators.into_iter().collect());
-        if let Some(validators_set) = &validators_set {
-            if validators_set.contains(identity_pubkey) {
-                return Err(crate::commands::Error::Dynamic(
-                    Box::<dyn std::error::Error>::from(format!(
-                        "the validator's identity pubkey cannot be a {arg_name}: {identity_pubkey}"
-                    )),
-                ));
-            }
+        if let Some(validators_set) = &validators_set
+            && validators_set.contains(identity_pubkey)
+        {
+            return Err(crate::commands::Error::Dynamic(
+                Box::<dyn std::error::Error>::from(format!(
+                    "the validator's identity pubkey cannot be a {arg_name}: {identity_pubkey}"
+                )),
+            ));
         }
         Ok(validators_set)
     } else {
@@ -1849,7 +1838,7 @@ mod tests {
         };
         verify_args_struct_by_command_run_with_identity_setup(
             default_run_args,
-            vec!["--allow-private-addr"],
+            vec!["--allow-private-addr", "--no-xdp"],
             expected_args,
         );
     }

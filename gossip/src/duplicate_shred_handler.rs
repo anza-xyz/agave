@@ -4,6 +4,7 @@ use {
         duplicate_shred_listener::DuplicateShredHandlerTrait,
         epoch_specs::EpochSpecs,
     },
+    agave_votor_messages::migration::MigrationStatus,
     crossbeam_channel::Sender,
     log::error,
     solana_clock::Slot,
@@ -39,12 +40,19 @@ pub struct DuplicateShredHandler {
     // Used to notify duplicate consensus state machine
     duplicate_slots_sender: Sender<Slot>,
     shred_version: u16,
+    /// Alpenglow migration status
+    migration_status: Arc<MigrationStatus>,
 }
 
 impl DuplicateShredHandlerTrait for DuplicateShredHandler {
     // Here we are sending data one by one rather than in a batch because in the future
     // we may send different type of CrdsData to different senders.
     fn handle(&mut self, shred_data: DuplicateShred) {
+        if self.migration_status.is_full_alpenglow_epoch() {
+            // turn into noop and clear any existing buffer
+            self.buffer.clear();
+            return;
+        }
         self.cache_root_info();
         self.maybe_prune_buffer();
         let slot = shred_data.slot;
@@ -72,6 +80,7 @@ impl DuplicateShredHandler {
         epoch_specs: Box<dyn EpochSpecs>,
         duplicate_slots_sender: Sender<Slot>,
         shred_version: u16,
+        migration_status: Arc<MigrationStatus>,
     ) -> Self {
         Self {
             buffer: HashMap::<(Slot, Pubkey), BufferEntry>::default(),
@@ -83,6 +92,7 @@ impl DuplicateShredHandler {
             epoch_specs,
             duplicate_slots_sender,
             shred_version,
+            migration_status,
         }
     }
 
@@ -314,12 +324,14 @@ mod tests {
         let (sender, receiver) = bounded(1024);
         let start_slot: Slot = 10;
 
+        let migration_status = bank_forks_arc.read().unwrap().migration_status();
         let mut duplicate_shred_handler = DuplicateShredHandler::new(
             blockstore.clone(),
             leader_schedule_cache,
             epoch_specs.clone_box(),
             sender,
             shred_version,
+            migration_status,
         );
         let chunks = create_duplicate_proof(
             my_keypair.clone(),
@@ -416,12 +428,14 @@ mod tests {
             &bank_forks_arc.read().unwrap().working_bank(),
         ));
         let (sender, receiver) = bounded(1024);
+        let migration_status = bank_forks_arc.read().unwrap().migration_status();
         let mut duplicate_shred_handler = DuplicateShredHandler::new(
             blockstore.clone(),
             leader_schedule_cache,
             epoch_specs.clone_box(),
             sender,
             shred_version,
+            migration_status,
         );
         let start_slot: Slot = 10;
 

@@ -1,6 +1,6 @@
 //! The `packet` module defines data structures and methods to pull data from the network.
 #[cfg(feature = "dev-context-only-utils")]
-use wincode::{SchemaWrite, WriteResult, config::DefaultConfig};
+use wincode::{ReadError, ReadResult, SchemaRead, config::DefaultConfig};
 use {
     crate::{recycled_vec::RecycledVec, recycler::Recycler},
     bytes::Bytes,
@@ -11,11 +11,15 @@ use {
     serde::{Deserialize, Serialize},
     std::{
         borrow::Borrow,
+        io::Cursor,
         net::SocketAddr,
         ops::{Deref, DerefMut, Index, IndexMut},
         slice::{Iter, SliceIndex},
     },
-    wincode::config::{Config, Configuration},
+    wincode::{
+        SchemaWrite, WriteResult,
+        config::{Config, Configuration},
+    },
 };
 pub use {
     bytes,
@@ -27,18 +31,55 @@ pub const NUM_PACKETS: usize = 1024 * 8;
 pub const PACKETS_PER_BATCH: usize = 64;
 pub const NUM_RCVMMSGS: usize = 64;
 
+pub type PacketConfig = Configuration<true, PACKET_DATA_SIZE>;
+
 /// wincode configuration setup to use for deserializing a Packet.
 /// - Zero-copy alignment check is enabled.
 /// - Preallocation size limit is PACKET_DATA_SIZE.
 #[inline]
-pub const fn packet_config() -> impl Config {
+const fn packet_config_inner() -> PacketConfig {
     Configuration::default().with_preallocation_size_limit::<{ solana_packet::PACKET_DATA_SIZE }>()
 }
 
+#[inline]
+pub const fn packet_config() -> impl Config {
+    packet_config_inner()
+}
+
+#[cfg(feature = "dev-context-only-utils")]
+pub fn deserialize_slice_from_packet<'de, T, I>(packet: &'de Packet, index: I) -> ReadResult<T>
+where
+    T: SchemaRead<'de, PacketConfig, Dst = T>,
+    I: SliceIndex<[u8], Output = [u8]>,
+{
+    let data = packet
+        .data(index)
+        .ok_or(ReadError::Custom("packet discarded"))?;
+    wincode::config::deserialize(data, packet_config_inner())
+}
+
+pub fn packet_from_data<T>(dest: Option<&SocketAddr>, data: T) -> WriteResult<Packet>
+where
+    T: SchemaWrite<PacketConfig, Src = T>,
+{
+    let mut packet = Packet::default();
+    let mut wr = Cursor::new(packet.buffer_mut());
+    wincode::config::serialize_into(&mut wr, &data, packet_config_inner())?;
+    packet.meta_mut().size = wr.position() as usize;
+    if let Some(dest) = dest {
+        packet.meta_mut().set_socket_addr(dest);
+    }
+    Ok(packet)
+}
+
 /// Representation of a packet used in TPU.
-#[cfg_attr(feature = "frozen-abi", derive(AbiExample))]
+#[cfg_attr(feature = "frozen-abi", derive(AbiExample, StableAbi, StableAbiSample))]
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
 pub struct BytesPacket {
+    #[cfg_attr(
+        feature = "frozen-abi",
+        stable_abi_sample(with = "solana_frozen_abi::stable_abi::sample_collection(rng)")
+    )]
     buffer: Bytes,
     meta: Meta,
 }
@@ -129,7 +170,10 @@ impl BytesPacket {
     }
 }
 
-#[cfg_attr(feature = "frozen-abi", derive(AbiExample, AbiEnumVisitor))]
+#[cfg_attr(
+    feature = "frozen-abi",
+    derive(AbiExample, AbiEnumVisitor, StableAbi, StableAbiSample)
+)]
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
 pub enum PacketBatch {
     Pinned(RecycledPacketBatch),
@@ -601,7 +645,7 @@ impl IndexedParallelIterator for PacketBatchParIterMut<'_> {
     }
 }
 
-#[cfg_attr(feature = "frozen-abi", derive(AbiExample))]
+#[cfg_attr(feature = "frozen-abi", derive(AbiExample, StableAbi, StableAbiSample))]
 #[derive(Debug, Default, Clone, Eq, PartialEq, Serialize, Deserialize)]
 pub struct RecycledPacketBatch {
     packets: RecycledVec<Packet>,
@@ -777,7 +821,7 @@ fn to_packet_batches_for_tests<T: Serialize>(items: &[T]) -> Vec<PacketBatch> {
     to_packet_batches(items, NUM_PACKETS)
 }
 
-#[cfg_attr(feature = "frozen-abi", derive(AbiExample))]
+#[cfg_attr(feature = "frozen-abi", derive(AbiExample, StableAbi, StableAbiSample))]
 #[derive(Debug, Default, Clone, Eq, PartialEq, Serialize, Deserialize)]
 pub struct BytesPacketBatch {
     packets: Vec<BytesPacket>,

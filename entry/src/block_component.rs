@@ -132,7 +132,7 @@
 use {
     crate::entry::{Entry, MaxDataShredsLen},
     agave_votor_messages::{
-        certificate::{Certificate, CertificateType},
+        certificate::{CertSignature, GenesisCert},
         reward_certificate::{NotarRewardCertificate, SkipRewardCertificate},
     },
     solana_bls_signatures::{
@@ -143,8 +143,8 @@ use {
     solana_hash::Hash,
     std::mem::MaybeUninit,
     wincode::{
-        ReadResult, SchemaRead, SchemaWrite, WriteResult,
-        config::{Config, DefaultConfig},
+        ReadResult, SchemaRead, SchemaWrite, TypeMeta, WriteResult,
+        config::{Config, ConfigCore, DefaultConfig},
         containers::Vec as WincodeVec,
         error::write_length_encoding_overflow,
         io::{Reader, Writer},
@@ -165,10 +165,39 @@ pod_wrapper! {
 /// Wraps a value with a u16 length prefix for TLV-style serialization.
 ///
 /// The length prefix represents the serialized byte size of the inner value.
-#[derive(Debug, Clone, PartialEq, Eq, SchemaRead, SchemaWrite)]
+#[derive(Debug, Clone, PartialEq, Eq, SchemaWrite)]
 pub struct LengthPrefixed<T> {
     len: u16,
     inner: T,
+}
+
+unsafe impl<'de, T, C: ConfigCore> SchemaRead<'de, C> for LengthPrefixed<T>
+where
+    T: SchemaRead<'de, C, Dst = T> + SchemaWrite<C, Src = T>,
+{
+    type Dst = Self;
+
+    const TYPE_META: TypeMeta = TypeMeta::join_types([
+        <u16 as SchemaRead<'de, C>>::TYPE_META,
+        <T as SchemaRead<'de, C>>::TYPE_META,
+    ])
+    .keep_zero_copy(false);
+
+    fn read(mut reader: impl Reader<'de>, dst: &mut MaybeUninit<Self::Dst>) -> ReadResult<()> {
+        let len = <u16 as SchemaRead<'de, C>>::get(reader.by_ref())?;
+        let inner = T::get(reader)?;
+        let inner_size = T::size_of(&inner)
+            .map_err(|_| wincode::ReadError::Custom("LengthPrefixed: inner size_of overflow"))?;
+
+        if inner_size != usize::from(len) {
+            return Err(wincode::ReadError::Custom(
+                "LengthPrefixed: inner serialized size does not match length prefix",
+            ));
+        }
+
+        dst.write(Self { len, inner });
+        Ok(())
+    }
 }
 
 impl<T> LengthPrefixed<T>
@@ -243,25 +272,22 @@ impl GenesisCertBlockMarker {
     pub const MAX_BITMAP_SIZE: usize = 512;
 }
 
-impl TryFrom<Certificate> for GenesisCertBlockMarker {
+impl TryFrom<GenesisCert> for GenesisCertBlockMarker {
     type Error = String;
 
-    fn try_from(cert: Certificate) -> Result<Self, Self::Error> {
-        let CertificateType::Genesis(block) = cert.cert_type else {
-            return Err("expected genesis certificate".into());
-        };
-        if cert.bitmap.len() > Self::MAX_BITMAP_SIZE {
+    fn try_from(cert: GenesisCert) -> Result<Self, Self::Error> {
+        if cert.signature.bitmap.len() > Self::MAX_BITMAP_SIZE {
             return Err(format!(
                 "bitmap size {} exceeds max {}",
-                cert.bitmap.len(),
+                cert.signature.bitmap.len(),
                 Self::MAX_BITMAP_SIZE
             ));
         }
         Ok(Self {
-            slot: block.slot,
-            block_id: block.block_id,
-            bls_signature: cert.signature,
-            bitmap: cert.bitmap,
+            slot: cert.block.slot,
+            block_id: cert.block.block_id,
+            bls_signature: cert.signature.signature,
+            bitmap: cert.signature.bitmap,
         })
     }
 }
@@ -305,11 +331,11 @@ impl VotesAggregate {
     /// # Panics
     /// Panics if the signature cannot be converted to compressed format.
     /// This should never happen for valid certificates from the consensus pool.
-    pub fn from_certificate(cert: &Certificate) -> Self {
+    pub fn from_cert_signature(signature: CertSignature) -> Self {
         Self {
-            signature: BLSSignatureCompressed::try_from(&cert.signature)
+            signature: BLSSignatureCompressed::try_from(&signature.signature)
                 .expect("valid certificate signature should convert to compressed format"),
-            bitmap: cert.bitmap.clone(),
+            bitmap: signature.bitmap,
         }
     }
 
@@ -635,6 +661,47 @@ mod tests {
         let bytes = wincode::serialize(&comp).unwrap();
         let deser: BlockComponent = wincode::deserialize(&bytes).unwrap();
         assert_eq!(comp, deser);
+    }
+
+    #[test]
+    fn length_prefixed_rejects_inner_size_mismatch() {
+        let header = VersionedBlockHeader::V1(BlockHeaderV1 {
+            parent_slot: 12345,
+            parent_block_id: Hash::new_unique(),
+        });
+        let prefixed = LengthPrefixed::new(header);
+        let mut bytes = wincode::serialize(&prefixed).unwrap();
+        let wrong_len = prefixed.len + 1;
+        bytes[..std::mem::size_of::<u16>()].copy_from_slice(&wrong_len.to_le_bytes());
+
+        assert!(matches!(
+            wincode::deserialize::<LengthPrefixed<VersionedBlockHeader>>(&bytes),
+            Err(wincode::ReadError::Custom(
+                "LengthPrefixed: inner serialized size does not match length prefix"
+            ))
+        ));
+    }
+
+    #[test]
+    fn length_prefixed_rejects_oversized_deserialized_inner() {
+        let marker = GenesisCertBlockMarker {
+            slot: 999,
+            block_id: Hash::new_unique(),
+            bls_signature: BLSSignature([0; BLS_SIGNATURE_AFFINE_SIZE]),
+            bitmap: vec![0xAB; usize::from(u16::MAX) + 1],
+        };
+        let wire = LengthPrefixed {
+            len: 7,
+            inner: marker,
+        };
+        let bytes = wincode::serialize(&wire).unwrap();
+
+        assert!(matches!(
+            wincode::deserialize::<LengthPrefixed<GenesisCertBlockMarker>>(&bytes),
+            Err(wincode::ReadError::Custom(
+                "LengthPrefixed: inner serialized size does not match length prefix"
+            ))
+        ));
     }
 
     #[test]

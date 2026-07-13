@@ -38,9 +38,10 @@ use {
             PULL_RESPONSE_MIN_SERIALIZED_SIZE, PUSH_MESSAGE_MAX_PAYLOAD_SIZE, Ping, PingCache,
             Protocol, PruneData, deserialize_protocol, split_gossip_messages,
         },
-        verifying_key_cache::VerifyingKeyCache,
+        sigverify_cache::SigVerifyCache,
         weighted_shuffle::WeightedShuffle,
     },
+    agave_votor_messages::migration::MigrationStatus,
     arc_swap::ArcSwap,
     crossbeam_channel::{Receiver, TrySendError},
     itertools::{Either, Itertools},
@@ -194,8 +195,9 @@ pub struct ClusterInfo {
     contact_info_path: PathBuf,
     socket_addr_space: SocketAddrSpace,
     bind_ip_addrs: Arc<BindIpAddrs>,
-    /// Caches decompressed Ed25519 verifying keys for the gossip receive path.
-    verifying_key_cache: VerifyingKeyCache,
+    sigverify_cache: SigVerifyCache,
+    /// Alpenglow migration status
+    migration_status: OnceLock<Arc<MigrationStatus>>,
 }
 
 impl ClusterInfo {
@@ -233,10 +235,24 @@ impl ClusterInfo {
             contact_save_interval: 0, // disabled
             socket_addr_space,
             bind_ip_addrs: Arc::new(BindIpAddrs::default()),
-            verifying_key_cache: VerifyingKeyCache::new(),
+            sigverify_cache: SigVerifyCache::new(),
+            migration_status: OnceLock::new(),
         };
         me.refresh_my_gossip_contact_info();
         me
+    }
+
+    /// Wires in the Alpenglow MigrationStatus.
+    pub fn set_migration_status(&self, migration_status: Arc<MigrationStatus>) {
+        let _ = self.migration_status.set(migration_status);
+    }
+
+    /// Returns `true` iff the migration status has been wired AND the cluster
+    /// has completed the full Alpenglow epoch transition.
+    fn is_full_alpenglow_epoch(&self) -> bool {
+        self.migration_status
+            .get()
+            .is_some_and(|m| m.is_full_alpenglow_epoch())
     }
 
     pub fn set_contact_debug_interval(&mut self, new: u64) {
@@ -1026,6 +1042,10 @@ impl ClusterInfo {
         shred: &Shred,
         other_payload: &[u8],
     ) -> Result<(), GossipError> {
+        if self.is_full_alpenglow_epoch() {
+            // Alpenglow does not propagate duplicate-shred proofs via gossip.
+            return Ok(());
+        }
         self.gossip.push_duplicate_shred(
             &self.keypair(),
             shred,
@@ -1303,12 +1323,18 @@ impl ClusterInfo {
         stakes: &HashMap<Pubkey, u64>,
     ) -> impl Iterator<Item = (SocketAddr, Protocol)> + use<> {
         let self_id = self.id();
+        let is_full_alpenglow_epoch = self.is_full_alpenglow_epoch();
         let (entries, push_messages, num_pushes) = {
             let _st = ScopedTimer::from(&self.stats.new_push_requests);
             self.flush_push_queue();
             self.gossip
                 .new_push_messages(&self_id, timestamp(), stakes, |value| {
-                    should_retain_crds_value(value, stakes, GossipFilterDirection::EgressPush)
+                    should_retain_crds_value(
+                        value,
+                        stakes,
+                        GossipFilterDirection::EgressPush,
+                        is_full_alpenglow_epoch,
+                    )
                 })
         };
         self.stats
@@ -1713,6 +1739,7 @@ impl ClusterInfo {
         });
         let now = timestamp();
         let self_id = self.id();
+        let is_full_alpenglow_epoch = self.is_full_alpenglow_epoch();
         let pull_responses = {
             let _st = ScopedTimer::from(&self.stats.generate_pull_responses);
             self.gossip.generate_pull_responses(
@@ -1725,6 +1752,7 @@ impl ClusterInfo {
                         value,
                         stakes,
                         GossipFilterDirection::EgressPullResponse,
+                        is_full_alpenglow_epoch,
                     )
                 },
                 |request, crds_len| self.try_consume_pull_request_scan_budget(request, crds_len),
@@ -2153,7 +2181,8 @@ impl ClusterInfo {
             packet: PacketRef,
             stakes: &HashMap<Pubkey, u64>,
             stats: &GossipStats,
-            vk_cache: &VerifyingKeyCache,
+            sigverify_cache: &SigVerifyCache,
+            is_full_alpenglow_epoch: bool,
         ) -> Option<(SocketAddr, Protocol)> {
             let result: wincode::ReadResult<Protocol> = packet
                 .data(..)
@@ -2165,13 +2194,18 @@ impl ClusterInfo {
                 &mut protocol
             {
                 values.retain(|value| {
-                    should_retain_crds_value(value, stakes, GossipFilterDirection::Ingress)
+                    should_retain_crds_value(
+                        value,
+                        stakes,
+                        GossipFilterDirection::Ingress,
+                        is_full_alpenglow_epoch,
+                    )
                 });
                 if values.is_empty() {
                     return None;
                 }
             }
-            protocol.verify(vk_cache).then(|| {
+            protocol.verify(sigverify_cache).then(|| {
                 stats.packets_received_verified_count.add_relaxed(1);
                 (packet.meta().socket_addr(), protocol)
             })
@@ -2179,6 +2213,7 @@ impl ClusterInfo {
         let stakes = epoch_specs
             .map(|es| es.current_epoch_staked_nodes())
             .unwrap_or_default();
+        let is_full_alpenglow_epoch = self.is_full_alpenglow_epoch();
         let packets_verified: Vec<_> = {
             let _st = ScopedTimer::from(&self.stats.verify_gossip_packets_time);
             thread_pool.install(|| {
@@ -2186,7 +2221,13 @@ impl ClusterInfo {
                     packet_buf[0]
                         .par_iter()
                         .filter_map(|packet| {
-                            verify_packet(packet, &stakes, &self.stats, &self.verifying_key_cache)
+                            verify_packet(
+                                packet,
+                                &stakes,
+                                &self.stats,
+                                &self.sigverify_cache,
+                                is_full_alpenglow_epoch,
+                            )
                         })
                         .collect()
                 } else {
@@ -2194,7 +2235,13 @@ impl ClusterInfo {
                         .par_iter()
                         .flatten()
                         .filter_map(|packet| {
-                            verify_packet(packet, &stakes, &self.stats, &self.verifying_key_cache)
+                            verify_packet(
+                                packet,
+                                &stakes,
+                                &self.stats,
+                                &self.sigverify_cache,
+                                is_full_alpenglow_epoch,
+                            )
                         })
                         .collect()
                 }
@@ -3057,10 +3104,10 @@ mod tests {
             .collect::<HashMap<_, Vec<_>>>();
         // there should be some pushes ready
         assert!(!push_messages.is_empty());
-        let vk_cache = VerifyingKeyCache::new();
+        let sigverify_cache = SigVerifyCache::new();
         push_messages.values().for_each(|v| {
             v.par_iter()
-                .for_each(|v| assert!(v.verify_with_cache(&vk_cache)))
+                .for_each(|v| assert!(v.verify_with_cache(&sigverify_cache)))
         });
 
         let mut pings = Vec::new();
@@ -3388,7 +3435,7 @@ mod tests {
             assert_eq!(addr, entrypoint.gossip().unwrap());
             match msg {
                 Protocol::PullRequest(_, value) => {
-                    assert!(value.verify_with_cache(&VerifyingKeyCache::new()));
+                    assert!(value.verify_with_cache(&SigVerifyCache::new()));
                     assert_eq!(value.pubkey(), cluster_info.id())
                 }
                 _ => panic!("wrong protocol"),

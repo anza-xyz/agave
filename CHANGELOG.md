@@ -8,13 +8,32 @@ This project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
 and follows a [Backwards Compatibility Policy](https://docs.anza.xyz/backwards-compatibility)
 
 Release channels have their own copy of this changelog:
-* [edge - v4.2](#edge-channel)
-* [alpha - v4.1](https://github.com/anza-xyz/agave/blob/v4.1/CHANGELOG.md)
-* [beta - v4.0](https://github.com/anza-xyz/agave/blob/v4.0/CHANGELOG.md)
-* [stable - v3.1](https://github.com/anza-xyz/agave/blob/v3.1/CHANGELOG.md)
+* [edge - v4.3](#edge-channel)
+* [alpha - v4.2](https://github.com/anza-xyz/agave/blob/v4.2/CHANGELOG.md)
+* [beta - v4.1](https://github.com/anza-xyz/agave/blob/v4.1/CHANGELOG.md)
+* [stable - v4.0](https://github.com/anza-xyz/agave/blob/v4.0/CHANGELOG.md)
 
 <a name="edge-channel"></a>
-## 4.2.0-Unreleased
+## 4.3.0-Unreleased
+### RPC
+#### Breaking
+#### Changes
+### Validator
+#### Breaking
+* Banking trace is now disabled by default. To enable, provide `--enable-banking-trace <max bytes>`.
+#### Deprecations
+* `--disable-banking-trace` is now deprecated and a no-op (banking trace is disabled by
+  default). The flag is still accepted for backward compatibility.
+#### Changes
+### SDK
+#### Breaking
+* solana-program-test: syscall getters (e.g. `Rent::get()`, `Clock::get()`) and `solana_sysvar::get_sysvar()` now return
+  `ProgramError::UnsupportedSysvar` in native-mode processors (programs registered with `processor!`). Programs
+  executed as BPF (including the bundled SPL programs), are unaffected, even when invoked via CPI from a native
+  processor. Native-mode processors can use the `solana_program_test::sol_get_*` sysvar helpers directly. See
+  `program-test/tests/sysvar.rs` for examples of what is and is not supported.
+
+## 4.2.0
 ### RPC
 #### Breaking
 * The `jsonParsed` output for confidential transfer `Deposit` (`depositConfidentialTransfer`) and `Withdraw` (`withdrawConfidentialTransfer`) instructions has been corrected. These instructions operate on a single token account, so the mislabeled `source` and `destination` fields have been replaced by a single `account` field (the `mint` field is unchanged).
@@ -40,6 +59,7 @@ Release channels have their own copy of this changelog:
 * `--experimental-poh-pinned-cpu-core` is now deprecated. Use `--poh-pinned-cpu-core` instead.
 #### Changes
 * Turbine shred ingestion now rejects shreds more than half an epoch in the future (previously up to 2 full epochs ahead was accepted).
+* When XDP is enabled, gossip egress does not support private and loopback addresses. Operators running with `--allow-private-addr` must also pass `--no-xdp`.
 ### CLI
 #### Breaking
 #### Changes

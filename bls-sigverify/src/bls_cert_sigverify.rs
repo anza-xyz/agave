@@ -118,6 +118,7 @@ fn verify_certs(
             Err(e) => {
                 match &e {
                     CertVerifyError::CertVerifyFailed(_) => {
+                        stats.banning_validator += 1;
                         if banlist.ban(sender_identity_pubkey, BAN_TIMEOUT) {
                             stats.already_banned += 1;
                         } else {

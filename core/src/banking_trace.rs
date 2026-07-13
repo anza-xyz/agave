@@ -55,9 +55,6 @@ const TRACE_FILE_ROTATE_COUNT: u64 = 14; // target 2 weeks retention under norma
 const TRACE_FILE_WRITE_INTERVAL_MS: u64 = 100;
 const BUF_WRITER_CAPACITY: usize = 10 * 1024 * 1024;
 pub const TRACE_FILE_DEFAULT_ROTATE_BYTE_THRESHOLD: u64 = 1024 * 1024 * 1024;
-pub const DISABLED_BAKING_TRACE_DIR: DirByteLimit = 0;
-pub const BANKING_TRACE_DIR_DEFAULT_BYTE_LIMIT: DirByteLimit =
-    TRACE_FILE_DEFAULT_ROTATE_BYTE_THRESHOLD * TRACE_FILE_ROTATE_COUNT;
 
 #[derive(Clone)]
 struct ActiveTracer {
@@ -71,20 +68,37 @@ pub struct BankingTracer {
 
 #[cfg_attr(
     feature = "frozen-abi",
-    derive(AbiExample),
-    frozen_abi(digest = "DY2zjwewCSNansb5xwtoxkCcNuXbVmWZe3U9nNH2kzNz")
+    derive(AbiExample, StableAbi, StableAbiSample, PartialEq),
+    frozen_abi(
+        api_digest = "DY2zjwewCSNansb5xwtoxkCcNuXbVmWZe3U9nNH2kzNz",
+        abi_digest = "HS75JiZzndk2y6Az92iEFMwqGj5eWzXpsExVtTveqyZV",
+        test_roundtrip = "eq_and_wire",
+    )
 )]
 #[derive(Serialize, Deserialize, Debug)]
-pub struct TimedTracedEvent(pub std::time::SystemTime, pub TracedEvent);
+pub struct TimedTracedEvent(
+    #[cfg_attr(
+        feature = "frozen-abi",
+        stable_abi_sample(with = "SystemTime::UNIX_EPOCH + Duration::from_nanos(rng.next_u64())")
+    )]
+    pub SystemTime,
+    pub TracedEvent,
+);
 
-#[cfg_attr(feature = "frozen-abi", derive(AbiExample, AbiEnumVisitor))]
+#[cfg_attr(
+    feature = "frozen-abi",
+    derive(AbiExample, AbiEnumVisitor, StableAbi, StableAbiSample, PartialEq)
+)]
 #[derive(Serialize, Deserialize, Debug)]
 pub enum TracedEvent {
     PacketBatch(ChannelLabel, BankingPacketBatch),
     BlockAndBankHash(Slot, Hash, Hash),
 }
 
-#[cfg_attr(feature = "frozen-abi", derive(AbiExample, AbiEnumVisitor))]
+#[cfg_attr(
+    feature = "frozen-abi",
+    derive(AbiExample, AbiEnumVisitor, StableAbi, StableAbiSample, PartialEq)
+)]
 #[derive(Serialize, Deserialize, Debug, Clone, Copy)]
 pub enum ChannelLabel {
     NonVote,
@@ -250,11 +264,11 @@ impl BankingTracer {
     }
 
     fn trace_event(&self, on_trace: impl Fn() -> TimedTracedEvent) {
-        if let Some(ActiveTracer { trace_sender, exit }) = &self.active_tracer {
-            if !exit.load(Ordering::Relaxed) {
-                // Ignore errors in sending to tracer - it is a non-critical component.
-                let _ = trace_sender.try_send(on_trace());
-            }
+        if let Some(ActiveTracer { trace_sender, exit }) = &self.active_tracer
+            && !exit.load(Ordering::Relaxed)
+        {
+            // Ignore errors in sending to tracer - it is a non-critical component.
+            let _ = trace_sender.try_send(on_trace());
         }
     }
 
@@ -397,14 +411,14 @@ impl TracedSender {
     /// room; in that case `Ok(n)` is returned where `n` is the number of
     /// evicted packets. On channel disconnect returns `Err(SendError)`.
     pub fn send(&self, batch: BankingPacketBatch) -> Result<usize, SendError<BankingPacketBatch>> {
-        if let Some(ActiveTracer { trace_sender, exit }) = &self.active_tracer {
-            if !exit.load(Ordering::Relaxed) {
-                // Ignore errors in sending to tracer - it is a non-critical component.
-                let _ = trace_sender.try_send(TimedTracedEvent(
-                    SystemTime::now(),
-                    TracedEvent::PacketBatch(self.label, BankingPacketBatch::clone(&batch)),
-                ));
-            }
+        if let Some(ActiveTracer { trace_sender, exit }) = &self.active_tracer
+            && !exit.load(Ordering::Relaxed)
+        {
+            // Ignore errors in sending to tracer - it is a non-critical component.
+            let _ = trace_sender.try_send(TimedTracedEvent(
+                SystemTime::now(),
+                TracedEvent::PacketBatch(self.label, BankingPacketBatch::clone(&batch)),
+            ));
         }
         match self.sender.try_send(batch) {
             Ok(()) => Ok(0),

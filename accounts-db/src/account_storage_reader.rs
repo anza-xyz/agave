@@ -130,13 +130,13 @@ impl<'a, R: FileBufRead<'a>> Read for AccountStorageReader<'_, R> {
         while total_read < buf_len {
             let next_obsolete_account = self.sorted_obsolete_accounts.last();
             let file_offset = self.reader.get_file_offset() as usize;
-            if let Some(&(obsolete_start, obsolete_size)) = next_obsolete_account {
-                if file_offset == obsolete_start {
-                    let skip_len = obsolete_size.min(self.num_total_bytes - obsolete_start);
-                    self.reader.consume_or_skip(skip_len);
-                    self.sorted_obsolete_accounts.pop();
-                    continue;
-                }
+            if let Some(&(obsolete_start, obsolete_size)) = next_obsolete_account
+                && file_offset == obsolete_start
+            {
+                let skip_len = obsolete_size.min(self.num_total_bytes - obsolete_start);
+                self.reader.consume_or_skip(skip_len);
+                self.sorted_obsolete_accounts.pop();
+                continue;
             }
 
             // Cannot read beyond the end of the buffer
@@ -213,7 +213,7 @@ mod tests {
             (&Pubkey::new_unique(), &account2),
         ];
 
-        storage.accounts.write_accounts(&(slot, &accounts[..]), 0);
+        storage.accounts.write_accounts(&(slot, &accounts[..]));
 
         let files = open_storage_files(iter::once(&storage), false)
             .collect::<io::Result<Vec<_>>>()
@@ -241,7 +241,6 @@ mod tests {
         total_accounts: usize,
         number_of_accounts_to_remove: usize,
     ) {
-        agave_logger::setup();
         let (storage, _temp_dirs) =
             create_storage_for_storage_reader(0, AccountsFileProvider::AppendVec);
 
@@ -260,7 +259,7 @@ mod tests {
 
         let offsets = storage
             .accounts
-            .write_accounts(&(slot, &accounts_to_append[..]), 0);
+            .write_accounts(&(slot, &accounts_to_append[..]));
 
         // Generate a seed from entropy and log the original seed
         let seed: u64 = rand::random();
@@ -367,7 +366,7 @@ mod tests {
 
         let offsets = storage
             .accounts
-            .write_accounts(&(slot, &accounts_to_append[..]), 0);
+            .write_accounts(&(slot, &accounts_to_append[..]));
 
         // Generate a seed from entropy and log the original seed
         let seed: u64 = rand::random();

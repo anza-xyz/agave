@@ -55,7 +55,6 @@ use {
     solana_ledger::{
         blockstore::{Blockstore, MAX_COMPLETED_SLOTS_IN_CHANNEL, UpdateParentReceiver},
         blockstore_cleanup_service::BlockstoreCleanupService,
-        blockstore_processor::TransactionStatusSender,
         entry_notifier_service::EntryNotifierSender,
         leader_schedule_cache::LeaderScheduleCache,
         shred::filter::TurbineMode,
@@ -74,6 +73,7 @@ use {
         commitment::BlockCommitmentCache,
         prioritization_fee_cache::PrioritizationFeeCache,
         snapshot_controller::SnapshotController,
+        transaction_execution::TransactionStatusSender,
         validated_block_finalization::ValidatedBlockFinalizationCert,
         vote_sender_types::ReplayVoteSender,
     },
@@ -467,7 +467,6 @@ impl Tvu {
                 exit.clone(),
                 repair_info,
                 window_service_channels,
-                leader_schedule_cache.clone(),
                 tvu_config.shred_version,
                 outstanding_repair_requests,
                 tvu_config.repair_xdp_sender,
@@ -627,6 +626,7 @@ impl Tvu {
             exit.clone(),
         );
 
+        let migration_status = bank_forks.read().unwrap().migration_status();
         let epoch_specs: Box<dyn solana_gossip::epoch_specs::EpochSpecs> =
             Box::new(EpochSpecs::from(bank_forks));
 
@@ -639,6 +639,7 @@ impl Tvu {
                 epoch_specs,
                 duplicate_slots_sender,
                 tvu_config.shred_version,
+                migration_status,
             ),
         );
 

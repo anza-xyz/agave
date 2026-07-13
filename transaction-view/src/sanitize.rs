@@ -85,17 +85,14 @@ fn sanitize_config(
     view: &UnsanitizedTransactionView<impl TransactionData>,
     config: &SanitizeConfig,
 ) -> Result<()> {
-    #[allow(clippy::collapsible_if)]
     if let Some(requested_heap_bytes) = view
         .transaction_config()
         .and_then(|config| config.requested_heap_size())
-    {
-        if !(config.min_requested_heap_size..=config.max_requested_heap_size)
+        && (!(config.min_requested_heap_size..=config.max_requested_heap_size)
             .contains(&requested_heap_bytes)
-            || !requested_heap_bytes.is_multiple_of(1024)
-        {
-            return Err(TransactionViewError::SanitizeError);
-        }
+            || !requested_heap_bytes.is_multiple_of(1024))
+    {
+        return Err(TransactionViewError::SanitizeError);
     }
 
     Ok(())

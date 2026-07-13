@@ -1,7 +1,6 @@
 use {
     agave_transaction_view::transaction_view::SanitizedTransactionView,
     solana_cost_model::cost_model::CostModel,
-    solana_fee::FeeFeatures,
     solana_runtime::bank::{Bank, CollectorFeeDetails},
     solana_runtime_transaction::{
         runtime_transaction::RuntimeTransaction,
@@ -35,12 +34,18 @@ pub(crate) fn calculate_priority_and_cost<Tx: TransactionMeta + SVMStaticMessage
     transaction: &Tx,
     transaction_configuration: &TransactionConfiguration,
 ) -> (u64, u64) {
-    let cost = CostModel::calculate_cost(transaction, &bank.feature_set).sum();
+    let cost = CostModel::calculate_cost_for_executed_transaction(
+        transaction,
+        u64::from(transaction_configuration.compute_unit_limit),
+        transaction_configuration.loaded_accounts_data_size_limit,
+        &bank.feature_set,
+    )
+    .sum();
     let fee_details = solana_fee::calculate_fee_details(
         transaction,
         bank.fee_structure().lamports_per_signature,
         transaction_configuration.priority_fee_lamports,
-        FeeFeatures::from(bank.feature_set.as_ref()),
+        bank.fee_features(),
     );
     let reward = bank
         .calculate_reward_and_burn_fee_details(&CollectorFeeDetails::from(fee_details))

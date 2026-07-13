@@ -39,6 +39,7 @@ libc = { workspace = true }
 nix = { workspace = true, features = ["socket", "uio"] }
 
 [dev-dependencies]
+solana-pubkey = { workspace = true, features = ["rand"] }
 tempfile = { workspace = true }
 
 [target."cfg(unix)".dev-dependencies]

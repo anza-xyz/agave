@@ -19,9 +19,9 @@ frozen-abi = []
 integration-tests = []
 
 [dependencies]
-anyhow = "1.0.102"
+anyhow = "1.0.103"
 clap = { version = "4.6.1", features = ["derive"] }
-env_logger = "0.11.10"
+env_logger = "0.11.11"
 futures-util = "0.3.31"
 log = "0.4.28"
 octocrab = { version = "0.53.1", features = ["stream"] }
@@ -44,3 +44,15 @@ debug = "line-tables-only"
 [profile.full-dev]
 inherits = "dev"
 debug = "full"
+
+# Keep in sync with the root [workspace.lints.clippy].
+[lints.clippy]
+# Denied lints
+arithmetic_side_effects = "deny"
+default_trait_access = "deny"
+manual_let_else = "deny"
+uninlined_format_args = "deny"
+used_underscore_binding = "deny"
+
+# Allowed lints
+new_without_default = "allow"

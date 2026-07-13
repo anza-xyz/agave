@@ -388,7 +388,7 @@ pub mod test {
                 shreds.pop().unwrap();
                 shreds.push(shred);
 
-                blockstore.insert_shreds(shreds, None, false).unwrap();
+                blockstore.insert_shreds(shreds, false).unwrap();
             }
             walk.forward();
         }

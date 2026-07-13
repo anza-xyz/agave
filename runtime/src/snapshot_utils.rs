@@ -529,7 +529,7 @@ pub fn serialize_snapshot(
                 accounts_lt_hash: Some(bank_fields.accounts_lt_hash.clone().into()),
                 block_id: Some(bank_fields.block_id),
             };
-            serde_snapshot::serialize_bank_snapshot_into(
+            serde_snapshot::serialize_bank_snapshot_into_wincode(
                 stream,
                 bank_fields,
                 bank_hash_stats,
@@ -612,6 +612,7 @@ pub fn serialize_snapshot(
             "snapshot_bank",
             ("slot", slot, i64),
             ("bank_size", bank_snapshot_consumed_size, i64),
+            ("num_storages", snapshot_storages.len(), i64),
             ("status_cache_size", status_cache_consumed_size, i64),
             ("flush_storages_us", flush_storages_us, Option<i64>),
             ("serialize_obsolete_accounts_us", serialize_obsolete_accounts_us, Option<i64>),
@@ -2684,13 +2685,14 @@ mod tests {
     fn test_serialize_deserialize_account_storage_entries(num_storages: u64) {
         let temp_dir = tempfile::tempdir().unwrap();
         let bank_snapshot_dir = temp_dir.path();
+        let storage_dir = tempfile::tempdir().unwrap();
         let snapshot_slot = num_storages + 1 as Slot;
 
         // Create AccountStorageEntries
         let mut snapshot_storages = Vec::new();
         for i in 0..num_storages {
             let storage = Arc::new(AccountStorageEntry::new(
-                &PathBuf::new(),
+                storage_dir.path(),
                 i,        // Incrementing slot
                 i as u32, // Incrementing id
                 1024,
@@ -2726,6 +2728,7 @@ mod tests {
     fn test_serialize_obsolete_accounts_too_large_file() {
         let temp_dir = tempfile::tempdir().unwrap();
         let bank_snapshot_dir = temp_dir.path();
+        let storage_dir = tempfile::tempdir().unwrap();
         let num_storages = 10;
         let snapshot_slot = num_storages + 1 as Slot;
 
@@ -2733,7 +2736,7 @@ mod tests {
         let mut snapshot_storages = Vec::new();
         for i in 0..num_storages {
             let storage = Arc::new(AccountStorageEntry::new(
-                &PathBuf::new(),
+                storage_dir.path(),
                 i,        // Incrementing slot
                 i as u32, // Incrementing id
                 1024,
@@ -2761,6 +2764,7 @@ mod tests {
     fn test_deserialize_obsolete_accounts_too_large_file() {
         let temp_dir = tempfile::tempdir().unwrap();
         let bank_snapshot_dir = temp_dir.path();
+        let storage_dir = tempfile::tempdir().unwrap();
         let num_storages = 10;
         let snapshot_slot = num_storages + 1 as Slot;
 
@@ -2768,7 +2772,7 @@ mod tests {
         let mut snapshot_storages = Vec::new();
         for i in 0..num_storages {
             let storage = Arc::new(AccountStorageEntry::new(
-                &PathBuf::new(),
+                storage_dir.path(),
                 i,        // Incrementing slot
                 i as u32, // Incrementing id
                 1024,

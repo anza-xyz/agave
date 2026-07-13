@@ -51,21 +51,32 @@ pub const PROGRAM_OWNERS: &[Pubkey] = &[
 // bytes: 8192 bytes for the maximum table size plus 56 bytes for metadata.
 const ADDRESS_LOOKUP_TABLE_BASE_SIZE: usize = 8248;
 
-// for the load instructions
+// Result of pre-SVM (runtime) transaction checks.
 pub type TransactionCheckResult = Result<CheckedTransactionDetails>;
-type TransactionValidationResult = Result<ValidatedTransactionDetails>;
+
+// Combined result of runtime, fee-payer, and nonce checks.
+#[allow(clippy::large_enum_variant)]
+#[derive(PartialEq, Eq, Debug, Clone)]
+pub(crate) enum TransactionValidationResult {
+    Loadable(ValidatedTransactionDetails),
+    NoOp(NoOpTransaction),
+    Unprocessable(TransactionError),
+}
 
 #[derive(PartialEq, Eq, Debug)]
 pub(crate) enum TransactionLoadResult {
-    /// All transaction accounts were loaded successfully
+    /// All transaction accounts were loaded successfully.
     Loaded(LoadedTransaction),
     /// Some transaction accounts needed for execution were unable to be loaded
     /// but the fee payer and any nonce account needed for fee collection were
-    /// loaded successfully
+    /// loaded successfully.
     FeesOnly(FeesOnlyTransaction),
-    /// Some transaction accounts needed for fee collection were unable to be
-    /// loaded
-    NotLoaded(TransactionError),
+    /// This transaction will be processed but entail no account state changes.
+    /// With SIMD-0290 enabled, invalid fee-payers for blockhash transactions are processable.
+    /// With SIMD-0297 enabled, invalid nonce accounts are processable.
+    NoOp(NoOpTransaction),
+    /// Mandatory checks failed; this transaction will be discarded as unprocessable.
+    Unprocessable(TransactionError),
 }
 
 #[derive(PartialEq, Eq, Debug, Clone)]
@@ -157,6 +168,14 @@ pub struct FeesOnlyTransaction {
     pub rollback_accounts: RollbackAccounts,
     pub fee_details: FeeDetails,
     pub loaded_accounts_data_size: u32,
+}
+
+#[derive(PartialEq, Eq, Debug, Clone)]
+pub struct NoOpTransaction {
+    pub validation_error: TransactionError,
+    pub fee_payer_balance: Option<u64>,
+    pub compute_unit_limit: u64,
+    pub loaded_accounts_bytes_limit: u32,
 }
 
 // This is an internal SVM type that tracks account changes throughout a
@@ -411,8 +430,9 @@ pub(crate) fn load_transaction<CB: TransactionProcessingCallback>(
     rent: &Rent,
 ) -> TransactionLoadResult {
     match validation_result {
-        Err(e) => TransactionLoadResult::NotLoaded(e),
-        Ok(tx_details) => {
+        TransactionValidationResult::Unprocessable(e) => TransactionLoadResult::Unprocessable(e),
+        TransactionValidationResult::NoOp(tx_details) => TransactionLoadResult::NoOp(tx_details),
+        TransactionValidationResult::Loadable(tx_details) => {
             let mut loaded_transaction_data_size =
                 LoadedTransactionDataSize::with_max_size(tx_details.loaded_accounts_bytes_limit);
 
@@ -581,7 +601,7 @@ fn load_transaction_accounts<CB: TransactionProcessingCallback>(
     // Attempt to load and collect remaining non-fee payer accounts.
     for (account_index, account_key) in account_keys.iter().enumerate().skip(1) {
         let loaded_account =
-            load_transaction_account(account_loader, message, account_key, account_index, rent);
+            load_transaction_account(account_loader, message, account_key, account_index, rent)?;
         collect_loaded_account(account_loader, account_key, loaded_account)?;
     }
 
@@ -607,33 +627,33 @@ fn load_transaction_account<CB: TransactionProcessingCallback>(
     account_key: &Pubkey,
     account_index: usize,
     rent: &Rent,
-) -> LoadedTransactionAccount {
+) -> Result<LoadedTransactionAccount> {
     let is_writable = message.is_writable(account_index);
     if solana_sdk_ids::sysvar::instructions::check_id(account_key) {
         // Since the instructions sysvar is constructed by the SVM and modified
         // for each transaction instruction, it cannot be loaded.
-        LoadedTransactionAccount {
+        Ok(LoadedTransactionAccount {
             loaded_size: 0,
-            account: construct_instructions_account(message),
-        }
+            account: construct_instructions_account(message)?,
+        })
     } else if let Some(mut loaded_account) =
         account_loader.load_transaction_account(account_key, is_writable)
     {
         if is_writable {
             update_rent_exempt_status_for_account(rent, &mut loaded_account.account);
         }
-        loaded_account
+        Ok(loaded_account)
     } else {
         let mut default_account = AccountSharedData::default();
         default_account.set_rent_epoch(RENT_EXEMPT_RENT_EPOCH);
-        LoadedTransactionAccount {
+        Ok(LoadedTransactionAccount {
             loaded_size: default_account.data().len(),
             account: default_account,
-        }
+        })
     }
 }
 
-fn construct_instructions_account(message: &impl SVMMessage) -> AccountSharedData {
+fn construct_instructions_account(message: &impl SVMMessage) -> Result<AccountSharedData> {
     let account_keys = message.account_keys();
     let mut decompiled_instructions = Vec::with_capacity(message.num_instructions());
     for (program_id, instruction) in message.program_instructions_iter() {
@@ -657,11 +677,12 @@ fn construct_instructions_account(message: &impl SVMMessage) -> AccountSharedDat
         });
     }
 
-    AccountSharedData::from(Account {
-        data: construct_instructions_data(&decompiled_instructions),
+    Ok(AccountSharedData::from(Account {
+        data: construct_instructions_data(&decompiled_instructions)
+            .map_err(|_err| TransactionError::MaxLoadedAccountsDataSizeExceeded)?,
         owner: sysvar::id(),
         ..Account::default()
-    })
+    }))
 }
 
 #[cfg(test)]
@@ -679,6 +700,7 @@ mod tests {
             LegacyMessage, Message, MessageHeader, SanitizedMessage,
             compiled_instruction::CompiledInstruction,
             v0::{LoadedAddresses, LoadedMessage},
+            v1,
         },
         solana_native_token::LAMPORTS_PER_SOL,
         solana_nonce::{self as nonce, versions::Versions as NonceVersions},
@@ -791,7 +813,7 @@ mod tests {
         load_transaction(
             &mut account_loader,
             &sanitized_tx,
-            Ok(ValidatedTransactionDetails {
+            TransactionValidationResult::Loadable(ValidatedTransactionDetails {
                 loaded_fee_payer_account: LoadedTransactionAccount {
                     account: fee_payer_account,
                     ..LoadedTransactionAccount::default()
@@ -1038,7 +1060,8 @@ mod tests {
                 assert_eq!(loaded_transaction.accounts[1].1, accounts[1].1);
             }
             TransactionLoadResult::FeesOnly(fees_only_tx) => panic!("{}", fees_only_tx.load_error),
-            TransactionLoadResult::NotLoaded(e) => panic!("{e}"),
+            TransactionLoadResult::NoOp(no_op_tx) => panic!("{}", no_op_tx.validation_error),
+            TransactionLoadResult::Unprocessable(e) => panic!("{e}"),
         }
     }
 
@@ -1096,7 +1119,8 @@ mod tests {
                 assert_eq!(loaded_transaction.accounts[0].1, accounts[0].1);
             }
             TransactionLoadResult::FeesOnly(fees_only_tx) => panic!("{}", fees_only_tx.load_error),
-            TransactionLoadResult::NotLoaded(e) => panic!("{e}"),
+            TransactionLoadResult::NoOp(no_op_tx) => panic!("{}", no_op_tx.validation_error),
+            TransactionLoadResult::Unprocessable(e) => panic!("{e}"),
         }
     }
 
@@ -1126,7 +1150,7 @@ mod tests {
         load_transaction(
             &mut account_loader,
             &tx,
-            Ok(ValidatedTransactionDetails::default()),
+            TransactionValidationResult::Loadable(ValidatedTransactionDetails::default()),
             &mut error_metrics,
             &Rent::default(),
         )
@@ -1196,7 +1220,8 @@ mod tests {
                 assert_eq!(loaded_transaction.accounts[1].1.lamports(), 42);
             }
             TransactionLoadResult::FeesOnly(fees_only_tx) => panic!("{}", fees_only_tx.load_error),
-            TransactionLoadResult::NotLoaded(e) => panic!("{e}"),
+            TransactionLoadResult::NoOp(no_op_tx) => panic!("{}", no_op_tx.validation_error),
+            TransactionLoadResult::Unprocessable(e) => panic!("{e}"),
         }
     }
 
@@ -1464,9 +1489,9 @@ mod tests {
             is_writable_account_cache: vec![false],
         };
         let message = SanitizedMessage::V0(loaded_message);
-        let shared_data = construct_instructions_account(&message);
+        let shared_data = construct_instructions_account(&message).unwrap();
         let expected = AccountSharedData::from(Account {
-            data: construct_instructions_data(&message.decompile_instructions()),
+            data: construct_instructions_data(&message.decompile_instructions()).unwrap(),
             owner: sysvar::id(),
             ..Account::default()
         });
@@ -2068,7 +2093,7 @@ mod tests {
         let load_result = load_transaction(
             &mut account_loader,
             &sanitized_tx,
-            Ok(ValidatedTransactionDetails::default()),
+            TransactionValidationResult::Loadable(ValidatedTransactionDetails::default()),
             &mut error_metrics,
             &Rent::default(),
         );
@@ -2168,13 +2193,14 @@ mod tests {
             false,
         );
 
-        let validation_result = Ok(ValidatedTransactionDetails {
-            loaded_fee_payer_account: LoadedTransactionAccount {
-                account: fee_payer_account,
-                loaded_size: TRANSACTION_ACCOUNT_BASE_SIZE,
-            },
-            ..ValidatedTransactionDetails::default()
-        });
+        let validation_result =
+            TransactionValidationResult::Loadable(ValidatedTransactionDetails {
+                loaded_fee_payer_account: LoadedTransactionAccount {
+                    account: fee_payer_account,
+                    loaded_size: TRANSACTION_ACCOUNT_BASE_SIZE,
+                },
+                ..ValidatedTransactionDetails::default()
+            });
 
         let load_result = load_transaction(
             &mut account_loader,
@@ -2239,7 +2265,9 @@ mod tests {
             false,
         );
 
-        let validation_result = Ok(ValidatedTransactionDetails::default());
+        let validation_result =
+            TransactionValidationResult::Loadable(ValidatedTransactionDetails::default());
+
         let load_result = load_transaction(
             &mut account_loader,
             &sanitized_transaction,
@@ -2256,7 +2284,8 @@ mod tests {
             }),
         ));
 
-        let validation_result = Err(TransactionError::InvalidWritableAccount);
+        let validation_result =
+            TransactionValidationResult::Unprocessable(TransactionError::InvalidWritableAccount);
 
         let load_result = load_transaction(
             &mut account_loader,
@@ -2268,7 +2297,67 @@ mod tests {
 
         assert!(matches!(
             load_result,
-            TransactionLoadResult::NotLoaded(TransactionError::InvalidWritableAccount),
+            TransactionLoadResult::Unprocessable(TransactionError::InvalidWritableAccount),
+        ));
+    }
+
+    #[test]
+    fn test_load_accounts_v1_instructions_sysvar_overflow() {
+        const NUM_INSTRUCTIONS: usize = 64;
+        const ACCOUNTS_PER_INSTRUCTION: usize = 31;
+
+        let fee_payer = Pubkey::new_unique();
+        let instructions_sysvar = sysvar::instructions::id();
+        let program = native_loader::id();
+        let message = v1::Message::new(
+            MessageHeader {
+                num_required_signatures: 1,
+                num_readonly_signed_accounts: 0,
+                num_readonly_unsigned_accounts: 2,
+            },
+            v1::TransactionConfig::empty(),
+            Hash::default(),
+            vec![fee_payer, instructions_sysvar, program],
+            vec![
+                CompiledInstruction {
+                    program_id_index: 2,
+                    accounts: vec![1; ACCOUNTS_PER_INSTRUCTION],
+                    data: vec![],
+                };
+                NUM_INSTRUCTIONS
+            ],
+        );
+        message.validate().unwrap();
+        assert!(
+            1 + message.size() + Signature::default().as_ref().len() <= v1::MAX_TRANSACTION_SIZE
+        );
+
+        let sanitized_message =
+            SanitizedMessage::V1(v1::CachedMessage::new(message, &HashSet::new()));
+        let mock_bank = TestCallbacks::default();
+        let mut account_loader = (&mock_bank).into();
+
+        let fee_payer_account = AccountSharedData::new(200, 0, &Pubkey::default());
+        let load_result = load_transaction(
+            &mut account_loader,
+            &sanitized_message,
+            TransactionValidationResult::Loadable(ValidatedTransactionDetails {
+                loaded_fee_payer_account: LoadedTransactionAccount {
+                    account: fee_payer_account,
+                    loaded_size: TRANSACTION_ACCOUNT_BASE_SIZE,
+                },
+                ..ValidatedTransactionDetails::default()
+            }),
+            &mut TransactionErrorMetrics::default(),
+            &Rent::default(),
+        );
+
+        assert!(matches!(
+            load_result,
+            TransactionLoadResult::FeesOnly(FeesOnlyTransaction {
+                load_error: TransactionError::MaxLoadedAccountsDataSizeExceeded,
+                ..
+            }),
         ));
     }
 
@@ -2362,13 +2451,14 @@ mod tests {
             vec![Signature::new_unique()],
             false,
         );
-        let validation_result = Ok(ValidatedTransactionDetails {
-            loaded_fee_payer_account: LoadedTransactionAccount {
-                account: account0.clone(),
-                ..LoadedTransactionAccount::default()
-            },
-            ..ValidatedTransactionDetails::default()
-        });
+        let validation_result =
+            TransactionValidationResult::Loadable(ValidatedTransactionDetails {
+                loaded_fee_payer_account: LoadedTransactionAccount {
+                    account: account0.clone(),
+                    ..LoadedTransactionAccount::default()
+                },
+                ..ValidatedTransactionDetails::default()
+            });
         let _load_results = load_transaction(
             &mut account_loader,
             &sanitized_transaction,

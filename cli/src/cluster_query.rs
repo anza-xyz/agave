@@ -3,7 +3,7 @@ use {
         cli::{CliCommand, CliCommandInfo, CliConfig, CliError, ProcessResult},
         feature::get_feature_activation_epoch,
     },
-    agave_votor_messages::certificate::Certificate,
+    agave_votor_messages::wire::WireBlockCertMessage,
     clap::{App, AppSettings, Arg, ArgMatches, SubCommand, value_t, value_t_or_exit},
     console::style,
     serde::{Deserialize, Serialize},
@@ -16,6 +16,7 @@ use {
             build_balance_message, format_labeled_address, new_spinner_progress_bar,
             writeln_name_value,
         },
+        stdout::writeln_stdout,
         *,
     },
     solana_clock::{self as clock, Clock, Epoch, Slot},
@@ -43,7 +44,8 @@ use {
     solana_signature::Signature,
     solana_signer_store::{Decoded, decode},
     solana_slot_history::{self as slot_history, SlotHistory},
-    solana_stake_interface::{self as stake, stake_history::StakeHistory, state::StakeStateV2},
+    solana_stake_history::StakeHistory,
+    solana_stake_interface::{self as stake, state::StakeStateV2},
     solana_system_interface::MAX_PERMITTED_DATA_LENGTH,
     solana_transaction_status::{
         EncodableWithMeta, EncodedConfirmedTransactionWithStatusMeta, UiTransactionEncoding,
@@ -664,10 +666,10 @@ pub async fn process_catchup(
         match node_json_rpc_url.as_ref() {
             Some(node_json_rpc_url) if node_json_rpc_url != &gussed_default => {
                 // go to new line to leave this message on console
-                println!(
+                writeln_stdout(format_args!(
                     "Preferring explicitly given rpc ({node_json_rpc_url}) as us, although \
                      --our-localhost is given\n"
-                )
+                ))?;
             }
             _ => {
                 node_json_rpc_url = Some(gussed_default);
@@ -683,10 +685,10 @@ pub async fn process_catchup(
             (match node_pubkey {
                 Some(node_pubkey) if node_pubkey != guessed_default => {
                     // go to new line to leave this message on console
-                    println!(
+                    writeln_stdout(format_args!(
                         "Preferring explicitly given node pubkey ({node_pubkey}) as us, although \
                          --our-localhost is given\n"
-                    );
+                    ))?;
                     node_pubkey
                 }
                 _ => guessed_default,
@@ -769,7 +771,10 @@ pub async fn process_catchup(
                     *retry_count = retry_count.saturating_add(1);
                     if log {
                         // go to new line to leave this message on console
-                        println!("Retrying({}/{max_retry_count}): {e}\n", *retry_count);
+                        writeln_stdout(format_args!(
+                            "Retrying({}/{max_retry_count}): {e}\n",
+                            *retry_count
+                        ))?;
                     }
                     sleep(Duration::from_secs(1));
                 }
@@ -890,7 +895,7 @@ pub async fn process_catchup(
             },
         ));
         if log {
-            println!();
+            writeln_stdout(format_args!(""))?;
         }
 
         sleep(sleep_interval);
@@ -1092,26 +1097,21 @@ pub async fn process_get_ag_genesis_info(
     let cert = rpc_client.get_ag_genesis_cert().await?;
     let ag_genesis_info = match cert {
         None => CliAgGenesisInfo::Tower,
-        Some(Certificate {
-            cert_type,
-            signature,
-            bitmap,
-        }) => {
-            debug_assert!(cert_type.is_genesis());
+        Some(WireBlockCertMessage { block, signature }) => {
             let epoch_schedule = rpc_client.get_epoch_schedule().await?;
-            let epoch = epoch_schedule.get_epoch(cert_type.slot());
+            let epoch = epoch_schedule.get_epoch(block.slot);
             const MAX_VALIDATORS: usize = 4096;
-            let Decoded::Base2(bitvec) = decode(&bitmap, MAX_VALIDATORS)
+            let Decoded::Base2(bitvec) = decode(&signature.bitmap, MAX_VALIDATORS)
                 .map_err(|_| Box::new(CliError::InvalidAgGenesisCert))?
             else {
                 return Err(Box::new(CliError::InvalidAgGenesisCert));
             };
             CliAgGenesisInfo::Ag(CliAgGenesisInfoPayload {
                 epoch,
-                slot: cert_type.slot(),
-                block_id: cert_type.to_block().unwrap().block_id,
+                slot: block.slot,
+                block_id: block.block_id,
                 bitvec,
-                signature,
+                signature: signature.signature,
             })
         }
     };
@@ -1471,7 +1471,7 @@ pub fn parse_logs(
 }
 
 pub fn process_logs(config: &CliConfig, filter: &RpcTransactionLogsFilter) -> ProcessResult {
-    println!(
+    writeln_stdout(format_args!(
         "Streaming transaction logs{}. {:?} commitment",
         match filter {
             RpcTransactionLogsFilter::All => "".into(),
@@ -1480,7 +1480,7 @@ pub fn process_logs(config: &CliConfig, filter: &RpcTransactionLogsFilter) -> Pr
                 format!(" mentioning {}", addresses.join(",")),
         },
         config.commitment.commitment
-    );
+    ))?;
 
     let (_client, receiver) = PubsubClient::logs_subscribe(
         &config.websocket_url,
@@ -1493,18 +1493,21 @@ pub fn process_logs(config: &CliConfig, filter: &RpcTransactionLogsFilter) -> Pr
     loop {
         match receiver.recv() {
             Ok(logs) => {
-                println!("Transaction executed in slot {}:", logs.context.slot);
-                println!("  Signature: {}", logs.value.signature);
-                println!(
+                writeln_stdout(format_args!(
+                    "Transaction executed in slot {}:",
+                    logs.context.slot
+                ))?;
+                writeln_stdout(format_args!("  Signature: {}", logs.value.signature))?;
+                writeln_stdout(format_args!(
                     "  Status: {}",
                     logs.value
                         .err
                         .map(|err| err.to_string())
                         .unwrap_or_else(|| "Ok".to_string())
-                );
-                println!("  Log Messages:");
+                ))?;
+                writeln_stdout(format_args!("  Log Messages:"))?;
                 for log in logs.value.logs {
-                    println!("    {log}");
+                    writeln_stdout(format_args!("    {log}"))?;
                 }
             }
             Err(err) => {

@@ -8,26 +8,63 @@ use {
         vote::{Vote, VoteType},
         wire::get_vote_payload_to_sign,
     },
-    serde::{Deserialize, Serialize},
     solana_bls_signatures::Signature as BLSSignature,
     solana_clock::Slot,
-    wincode::{SchemaRead, SchemaWrite, pod_wrapper},
 };
 
-// Use `BLSSignature` directly once `BLSSignature` wincode support
-// is released in solana-sdk.
-pod_wrapper! {
-    unsafe struct PodBLSSignature(BLSSignature);
+#[derive(Debug, Clone, PartialEq, Eq)]
+/// A cert signature
+pub struct CertSignature {
+    /// The aggregate signature.
+    pub signature: BLSSignature,
+    /// A rank bitmap for validators' signatures included in the aggregate.
+    /// See solana-signer-store for encoding format.
+    pub bitmap: Vec<u8>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+/// Genesis cert
+pub struct GenesisCert {
+    /// Block the cert is for.
+    pub block: Block,
+    /// the signature on the cert
+    pub signature: CertSignature,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+/// A notarize cert
+pub struct NotarCert {
+    /// Block the cert is for.
+    pub block: Block,
+    /// the signature on the cert
+    pub signature: CertSignature,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+/// A slow finalized cert
+pub struct FinalizeCert {
+    /// Slot the cert is for.
+    pub slot: Slot,
+    /// the signature on the cert
+    pub signature: CertSignature,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+/// A fast finalized cert
+pub struct FastFinalizeCert {
+    /// Block the cert is for.
+    pub block: Block,
+    /// the signature on the cert
+    pub signature: CertSignature,
 }
 
 /// The actual certificate with the aggregate signature and bitmap for which validators are included in the aggregate.
 /// BLS vote message, we need rank to look up pubkey
-#[derive(Clone, Debug, PartialEq, Eq, Hash, Serialize, Deserialize, SchemaWrite, SchemaRead)]
+#[derive(Clone, Debug, PartialEq, Eq, Hash)]
 pub struct Certificate {
     /// The certificate type.
     pub cert_type: CertificateType,
     /// The aggregate signature.
-    #[wincode(with = "PodBLSSignature")]
     pub signature: BLSSignature,
     /// A rank bitmap for validators' signatures included in the aggregate.
     /// See solana-signer-store for encoding format.
@@ -35,20 +72,7 @@ pub struct Certificate {
 }
 
 /// The different types of certificates and their relevant state.
-#[derive(
-    Debug,
-    Copy,
-    Clone,
-    PartialEq,
-    Eq,
-    PartialOrd,
-    Ord,
-    Hash,
-    Deserialize,
-    Serialize,
-    SchemaWrite,
-    SchemaRead,
-)]
+#[derive(Debug, Copy, Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub enum CertificateType {
     /// Finalize certificate
     Finalize(Slot),

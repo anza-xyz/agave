@@ -462,13 +462,13 @@ fn query_endpoint(
                     validator_errors.push(format!("{formatted_validator_identity} missing"));
                 }
 
-                if let Some(balance) = validator_balances.get(validator_identity) {
-                    if *balance < config.minimum_validator_identity_balance {
-                        failures.push((
-                            "balance",
-                            format!("{} has {}", formatted_validator_identity, Sol(*balance)),
-                        ));
-                    }
+                if let Some(balance) = validator_balances.get(validator_identity)
+                    && *balance < config.minimum_validator_identity_balance
+                {
+                    failures.push((
+                        "balance",
+                        format!("{} has {}", formatted_validator_identity, Sol(*balance)),
+                    ));
                 }
 
                 if let Some(minimum_vat_vote_account_balance) = minimum_vat_vote_account_balance {
@@ -518,13 +518,12 @@ fn query_endpoint(
             Ok(failures.into_iter().next()) // Only report the first failure if any
         }
         Err(err) => {
-            if let client_error::ErrorKind::Reqwest(reqwest_err) = err.kind() {
-                if let Some(client_error::reqwest::StatusCode::BAD_GATEWAY) = reqwest_err.status() {
-                    if config.ignore_http_bad_gateway {
-                        warn!("Error suppressed: {err}");
-                        return Ok(None);
-                    }
-                }
+            if let client_error::ErrorKind::Reqwest(reqwest_err) = err.kind()
+                && let Some(client_error::reqwest::StatusCode::BAD_GATEWAY) = reqwest_err.status()
+                && config.ignore_http_bad_gateway
+            {
+                warn!("Error suppressed: {err}");
+                return Ok(None);
             }
             warn!("rpc-error: {err}");
             Err(err)

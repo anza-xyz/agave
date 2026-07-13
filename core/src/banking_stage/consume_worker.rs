@@ -206,6 +206,7 @@ pub(crate) mod external {
             sanitize::SanitizeConfig, transaction_data::TransactionData,
             transaction_view::SanitizedTransactionView,
         },
+        arrayvec::ArrayVec,
         solana_account::ReadableAccount,
         solana_clock::Slot,
         solana_cost_model::cost_model::CostModel,
@@ -778,14 +779,14 @@ pub(crate) mod external {
             bank: &Bank,
             responses_ptr: NonNull<CheckResponse>,
         ) -> (
-            Vec<Result<(), TransactionViewError>>,
-            Vec<TxView>,
+            ArrayVec<Result<(), TransactionViewError>, MAX_TRANSACTIONS_PER_MESSAGE>,
+            ArrayVec<TxView, MAX_TRANSACTIONS_PER_MESSAGE>,
             &'a mut [CheckResponse],
         ) {
             let sanitize_config =
                 sanitize_config(bank.feature_set.snapshot().limit_instruction_accounts);
-            let mut parsing_results = Vec::with_capacity(MAX_TRANSACTIONS_PER_MESSAGE);
-            let mut parsed_transactions = Vec::with_capacity(MAX_TRANSACTIONS_PER_MESSAGE);
+            let mut parsing_results = ArrayVec::new();
+            let mut parsed_transactions = ArrayVec::new();
             for (tx_ptr, _) in batch.iter() {
                 // Parsing and basic sanitization checks
                 match SanitizedTransactionView::try_new_sanitized(tx_ptr, &sanitize_config) {
@@ -971,14 +972,18 @@ pub(crate) mod external {
         fn translate_transaction_batch(
             batch: &TransactionPtrBatch,
             bank: &Bank,
-        ) -> (Vec<Result<(), PacketHandlingError>>, Vec<Tx>, Vec<MaxAge>) {
+        ) -> (
+            ArrayVec<Result<(), PacketHandlingError>, MAX_TRANSACTIONS_PER_MESSAGE>,
+            ArrayVec<Tx, MAX_TRANSACTIONS_PER_MESSAGE>,
+            ArrayVec<MaxAge, MAX_TRANSACTIONS_PER_MESSAGE>,
+        ) {
             let sanitize_config =
                 sanitize_config(bank.feature_set.snapshot().limit_instruction_accounts);
             let transaction_account_lock_limit = bank.get_transaction_account_lock_limit();
 
-            let mut translation_results = Vec::with_capacity(MAX_TRANSACTIONS_PER_MESSAGE);
-            let mut transactions = Vec::with_capacity(MAX_TRANSACTIONS_PER_MESSAGE);
-            let mut max_ages = Vec::with_capacity(MAX_TRANSACTIONS_PER_MESSAGE);
+            let mut translation_results = ArrayVec::new();
+            let mut transactions = ArrayVec::new();
+            let mut max_ages = ArrayVec::new();
             for (transaction_ptr, _) in batch.iter() {
                 match Self::translate_transaction(
                     transaction_ptr,
@@ -1138,6 +1143,7 @@ pub(crate) mod external {
                 collections::HashSet,
                 sync::{RwLock, atomic::AtomicBool},
             },
+            test_case::test_case,
         };
 
         struct SharedBatch {
@@ -1307,11 +1313,18 @@ pub(crate) mod external {
         }
 
         fn setup_external_test_frame() -> ExternalTestFrame {
+            setup_external_test_frame_disable_features(&[])
+        }
+
+        fn setup_external_test_frame_disable_features(feature_ids: &[Pubkey]) -> ExternalTestFrame {
             let GenesisConfigInfo {
-                genesis_config,
+                mut genesis_config,
                 mint_keypair,
                 ..
             } = create_slow_genesis_config(10_000);
+            for feature_id in feature_ids {
+                genesis_config.accounts.remove(feature_id);
+            }
             let (root_bank, _root_bank_forks) =
                 Bank::new_with_bank_forks_for_tests(&genesis_config);
             let child_bank = Bank::new_from_parent(root_bank, SlotLeader::new_unique(), 1);
@@ -2137,13 +2150,20 @@ pub(crate) mod external {
             test_frame.free_batch(batch);
         }
 
-        #[test]
-        fn test_run_execute_mixed_batch_results() {
-            let mut test_frame = setup_external_test_frame();
+        #[test_case(false; "strict_fee_payer")]
+        #[test_case(true; "relaxed_fee_payer")]
+        fn test_run_execute_mixed_batch_results(relax_fee_payer_constraint: bool) {
+            let feature_ids = if relax_fee_payer_constraint {
+                vec![]
+            } else {
+                vec![agave_feature_set::relax_fee_payer_constraint::id()]
+            };
+            let mut test_frame = setup_external_test_frame_disable_features(&feature_ids);
             test_frame.enable_execution();
 
             let unfunded = Keypair::new();
             let batch = test_frame.allocate_batch(&[
+                // valid transfer
                 wincode::serialize(&transfer(
                     &test_frame.mint_keypair,
                     &Pubkey::new_unique(),
@@ -2151,6 +2171,7 @@ pub(crate) mod external {
                     test_frame.bank.confirmed_last_blockhash(),
                 ))
                 .unwrap(),
+                // unfunded fee-payer: error regardless of `relax_fee_payer_constraint` in block production
                 wincode::serialize(&transfer(
                     &unfunded,
                     &Pubkey::new_unique(),

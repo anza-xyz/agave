@@ -194,6 +194,8 @@ pub(super) struct SigVerifyCertStats {
     pub(super) unnecessary_certs_verified: Saturating<u64>,
     /// Number of times we are banning a validator that was already banned.
     pub(super) already_banned: Saturating<u64>,
+    /// Number of times we are banning a validator.
+    pub(super) banning_validator: Saturating<u64>,
 
     /// Number of times cert verification failed.
     pub(super) certificate_verification_failed: Saturating<u64>,
@@ -218,6 +220,7 @@ impl SigVerifyCertStats {
             sig_verified_certs,
             unnecessary_certs_verified,
             already_banned,
+            banning_validator,
             certificate_verification_failed,
             too_far_in_future,
             pool_outstanding_msgs,
@@ -229,6 +232,7 @@ impl SigVerifyCertStats {
         self.sig_verified_certs += sig_verified_certs;
         self.unnecessary_certs_verified += unnecessary_certs_verified;
         self.already_banned += already_banned;
+        self.banning_validator += banning_validator;
         self.certificate_verification_failed += certificate_verification_failed;
         self.too_far_in_future += too_far_in_future;
         self.pool_outstanding_msgs += pool_outstanding_msgs;
@@ -244,6 +248,7 @@ impl SigVerifyCertStats {
             sig_verified_certs,
             unnecessary_certs_verified,
             already_banned,
+            banning_validator,
             certificate_verification_failed,
             too_far_in_future,
             pool_outstanding_msgs,
@@ -262,6 +267,7 @@ impl SigVerifyCertStats {
                 i64
             ),
             ("already_banned", already_banned.0, i64),
+            ("banning_validator", banning_validator.0, i64),
             (
                 "certificate_verification_failed",
                 certificate_verification_failed.0,
@@ -298,6 +304,8 @@ pub(super) struct SigVerifyVoteStats {
     pub(super) too_far_in_future: Saturating<u64>,
     /// Number of times we are banning a validator that was already banned.
     pub(super) already_banned: Saturating<u64>,
+    /// Number of times we are banning a validator.
+    pub(super) banning_validator: Saturating<u64>,
 
     /// Number of votes sent successfully over the channel to metrics.
     pub(super) metrics_sent: Saturating<u64>,
@@ -320,8 +328,6 @@ pub(super) struct SigVerifyVoteStats {
 
     /// Stats for [`verify_and_send_votes`].
     pub(super) fn_verify_and_send_votes_stats: WelfordStats,
-    /// Stats for [`verify_votes_optimistic`].
-    pub(super) fn_verify_votes_optimistic_stats: WelfordStats,
     /// Stats for [`verify_individual_votes`].
     pub(super) fn_verify_individual_votes_stats: WelfordStats,
 
@@ -336,6 +342,7 @@ impl SigVerifyVoteStats {
             sig_verified_votes,
             too_far_in_future,
             already_banned,
+            banning_validator,
             metrics_sent,
             metrics_channel_full,
             rewards_sent,
@@ -346,7 +353,6 @@ impl SigVerifyVoteStats {
             pool_sent,
             pool_channel_full,
             fn_verify_and_send_votes_stats,
-            fn_verify_votes_optimistic_stats,
             fn_verify_individual_votes_stats,
             distinct_votes_stats,
         } = other;
@@ -354,6 +360,7 @@ impl SigVerifyVoteStats {
         self.sig_verified_votes += sig_verified_votes;
         self.too_far_in_future += too_far_in_future;
         self.already_banned += already_banned;
+        self.banning_validator += banning_validator;
         self.metrics_sent += metrics_sent;
         self.metrics_channel_full += metrics_channel_full;
         self.rewards_sent += rewards_sent;
@@ -365,8 +372,6 @@ impl SigVerifyVoteStats {
         self.pool_channel_full += pool_channel_full;
         self.fn_verify_and_send_votes_stats
             .merge(fn_verify_and_send_votes_stats);
-        self.fn_verify_votes_optimistic_stats
-            .merge(fn_verify_votes_optimistic_stats);
         self.fn_verify_individual_votes_stats
             .merge(fn_verify_individual_votes_stats);
         self.distinct_votes_stats.merge(distinct_votes_stats);
@@ -378,6 +383,7 @@ impl SigVerifyVoteStats {
             sig_verified_votes,
             too_far_in_future,
             already_banned,
+            banning_validator,
             metrics_sent,
             metrics_channel_full,
             rewards_sent,
@@ -388,7 +394,6 @@ impl SigVerifyVoteStats {
             pool_sent,
             pool_channel_full,
             fn_verify_and_send_votes_stats,
-            fn_verify_votes_optimistic_stats,
             fn_verify_individual_votes_stats,
             distinct_votes_stats,
         } = self;
@@ -398,6 +403,7 @@ impl SigVerifyVoteStats {
             ("sig_verified_votes", sig_verified_votes.0, i64),
             ("too_far_in_future", too_far_in_future.0, i64),
             ("already_banned", already_banned.0, i64),
+            ("banning_validator", banning_validator.0, i64),
             ("metrics_sent", metrics_sent.0, i64),
             ("metrics_channel_full", metrics_channel_full.0, i64),
             ("rewards_sent", rewards_sent.0, i64),
@@ -415,16 +421,6 @@ impl SigVerifyVoteStats {
             (
                 "fn_verify_and_send_votes_mean",
                 fn_verify_and_send_votes_stats.mean().unwrap_or(0),
-                i64
-            ),
-            (
-                "fn_verify_votes_optimistic_count",
-                fn_verify_votes_optimistic_stats.count(),
-                i64
-            ),
-            (
-                "fn_verify_votes_optimistic_mean",
-                fn_verify_votes_optimistic_stats.mean().unwrap_or(0),
                 i64
             ),
             (

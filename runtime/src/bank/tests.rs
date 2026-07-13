@@ -1006,14 +1006,6 @@ fn test_bank_update_rewards_determinism() {
     }
 }
 
-impl VerifyAccountsHashConfig {
-    fn default_for_test() -> Self {
-        Self {
-            require_rooted_bank: false,
-        }
-    }
-}
-
 // Test that purging 0 lamports accounts works.
 #[test]
 fn test_purge_empty_accounts() {
@@ -1083,7 +1075,7 @@ fn test_purge_empty_accounts() {
 
         if pass == 0 {
             add_root_and_flush_write_cache(&bank0);
-            assert!(bank0.verify_accounts(VerifyAccountsHashConfig::default_for_test(), None));
+            assert!(bank0.verify_accounts(None));
             continue;
         }
 
@@ -1092,14 +1084,14 @@ fn test_purge_empty_accounts() {
         bank0.squash();
         add_root_and_flush_write_cache(&bank0);
         if pass == 1 {
-            assert!(bank0.verify_accounts(VerifyAccountsHashConfig::default_for_test(), None));
+            assert!(bank0.verify_accounts(None));
             continue;
         }
 
         bank1.freeze();
         bank1.squash();
         add_root_and_flush_write_cache(&bank1);
-        assert!(bank1.verify_accounts(VerifyAccountsHashConfig::default_for_test(), None));
+        assert!(bank1.verify_accounts(None));
 
         // keypair should have 0 tokens on both forks
         assert_eq!(bank0.get_account(&keypair.pubkey()), None);
@@ -1107,7 +1099,7 @@ fn test_purge_empty_accounts() {
 
         bank1.clean_accounts_for_tests();
 
-        assert!(bank1.verify_accounts(VerifyAccountsHashConfig::default_for_test(), None));
+        assert!(bank1.verify_accounts(None));
     }
 }
 
@@ -1648,11 +1640,21 @@ fn test_bank_tx_compute_unit_fee() {
     );
 }
 
-#[test]
-fn test_debits_before_credits() {
+#[test_case(false; "strict_fee_payer")]
+#[test_case(true; "relaxed_fee_payer")]
+fn test_debits_before_credits(relax_fee_payer_constraint: bool) {
     let (genesis_config, mint_keypair) =
         create_genesis_config_no_tx_fee_no_rent(2 * LAMPORTS_PER_SOL);
-    let (bank, _bank_forks) = Bank::new_with_bank_forks_for_tests(&genesis_config);
+    let mut bank = Bank::new_for_tests(&genesis_config);
+
+    let expected_transactions = if relax_fee_payer_constraint {
+        2
+    } else {
+        bank.deactivate_feature(&feature_set::relax_fee_payer_constraint::id());
+        1
+    };
+
+    let (bank, _bank_forks) = bank.wrap_with_bank_forks_for_tests();
     let keypair = Keypair::new();
     let tx0 = system_transaction::transfer(
         &keypair,
@@ -1666,13 +1668,18 @@ fn test_debits_before_credits() {
         2 * LAMPORTS_PER_SOL,
         genesis_config.hash(),
     );
-    let txs = [tx0, tx1];
+    let tx2 = system_transaction::transfer(&mint_keypair, &keypair.pubkey(), 1, Hash::new_unique());
+    let txs = [tx0, tx1, tx2];
     let results = bank.process_transactions(txs.iter());
-    assert!(results[0].is_err());
+    assert_eq!(results[0], Err(TransactionError::AccountNotFound));
+    assert_eq!(results[2], Err(TransactionError::BlockhashNotFound));
 
     // Assert bad transactions aren't counted.
-    assert_eq!(bank.transaction_count(), 1);
-    assert_eq!(bank.non_vote_transaction_count_since_restart(), 1);
+    assert_eq!(bank.transaction_count(), expected_transactions);
+    assert_eq!(
+        bank.non_vote_transaction_count_since_restart(),
+        expected_transactions
+    );
 }
 
 #[test]
@@ -2286,7 +2293,7 @@ fn test_bank_hash_internal_state() {
     bank2.transfer(amount, &mint_keypair, &pubkey2).unwrap();
     bank2.squash();
     bank2.force_flush_accounts_cache();
-    assert!(bank2.verify_accounts(VerifyAccountsHashConfig::default_for_test(), None));
+    assert!(bank2.verify_accounts(None));
 }
 
 #[test]
@@ -2320,7 +2327,7 @@ fn test_bank_hash_internal_state_verify() {
             // we later modify bank 2, so this flush is destructive to the test
             bank2.freeze();
             add_root_and_flush_write_cache(&bank2);
-            assert!(bank2.verify_accounts(VerifyAccountsHashConfig::default_for_test(), None));
+            assert!(bank2.verify_accounts(None));
         }
         let bank3 = Bank::new_from_parent_with_bank_forks(
             &bank_forks,
@@ -2331,7 +2338,7 @@ fn test_bank_hash_internal_state_verify() {
         assert_eq!(bank0_state, bank0.hash_internal_state());
         if pass == 0 {
             // this relies on us having set bank2's accounts hash in the pass==0 if above
-            assert!(bank2.verify_accounts(VerifyAccountsHashConfig::default_for_test(), None));
+            assert!(bank2.verify_accounts(None));
             continue;
         }
         if pass == 1 {
@@ -2340,7 +2347,7 @@ fn test_bank_hash_internal_state_verify() {
             // Doing so throws an assert. So, we can't flush 3 until 2 is flushed.
             bank3.freeze();
             add_root_and_flush_write_cache(&bank3);
-            assert!(bank3.verify_accounts(VerifyAccountsHashConfig::default_for_test(), None));
+            assert!(bank3.verify_accounts(None));
             continue;
         }
 
@@ -2349,7 +2356,7 @@ fn test_bank_hash_internal_state_verify() {
         bank2.freeze(); // <-- keep freeze() *outside* `if pass == 2 {}`
         if pass == 2 {
             add_root_and_flush_write_cache(&bank2);
-            assert!(bank2.verify_accounts(VerifyAccountsHashConfig::default_for_test(), None));
+            assert!(bank2.verify_accounts(None));
 
             // Verifying the accounts lt hash is only intended to be called at startup, and
             // normally in the background.  Since here we're *not* at startup, and doing it
@@ -2364,7 +2371,7 @@ fn test_bank_hash_internal_state_verify() {
 
         bank3.freeze();
         add_root_and_flush_write_cache(&bank3);
-        assert!(bank3.verify_accounts(VerifyAccountsHashConfig::default_for_test(), None));
+        assert!(bank3.verify_accounts(None));
     }
 }
 
@@ -5286,9 +5293,9 @@ fn test_bank_hash_consistency(deprecate_rent_exemption_threshold: bool) {
             assert_eq!(
                 bank.hash().to_string(),
                 if deprecate_rent_exemption_threshold {
-                    "9ycftRwjpQ17PrhnwhGPbVzDKd3Q9BybmLYU8UD1Pg1T"
+                    "7JJ15D1ce8yW5NceFtK3YN4JMeRV9epZRbpNjiw4Y2BW"
                 } else {
-                    "4XzjZMjhP9s8iBeFQsnHFwaQ991dpiBGHEkzj1ifAcpS"
+                    "GFDc9UWSp6E6sbjgk9EhZLBrX3bUyC8bkh9YmLUxsH23"
                 },
             );
         }
@@ -5297,9 +5304,9 @@ fn test_bank_hash_consistency(deprecate_rent_exemption_threshold: bool) {
             assert_eq!(
                 bank.hash().to_string(),
                 if deprecate_rent_exemption_threshold {
-                    "7sbqfkN4W3PkBREyduDc3R2eiKu68JKYRXZt6gCWNt4N"
+                    "AxoMcCKN43V2JPtAc3ivoCFTfS2wmjB7xpZkn7u9KbLQ"
                 } else {
-                    "ArB3XNVLJsyV7AtrG3C3Bj4akb8s7AzpS5rHJnqGW5sw"
+                    "79wpAVbcHWEJGLWtW4rDNjwdHnuRKbJheEstvsx9g3Xf"
                 },
             );
             break;
@@ -7712,14 +7719,15 @@ fn test_remove_unrooted_scan_interleaved_with_remove_unrooted_slots() {
          starting_lamports| {
             loop {
                 let step_size = 2;
-                let (bank_at_fork_tip, slots_on_fork, ancestors) = setup_banks_on_fork_to_remove(
-                    bank0.clone(),
-                    pubkeys_to_modify.clone(),
-                    &program_id,
-                    starting_lamports,
-                    10,
-                    step_size,
-                );
+                let (bank_at_fork_tip, mut slots_on_fork, ancestors) =
+                    setup_banks_on_fork_to_remove(
+                        bank0.clone(),
+                        pubkeys_to_modify.clone(),
+                        &program_id,
+                        starting_lamports,
+                        10,
+                        step_size,
+                    );
                 // Although we dumped the slots last iteration via `remove_unrooted_slots()`,
                 // we've recreated those slots this iteration, so they should be findable
                 // again
@@ -7737,7 +7745,7 @@ fn test_remove_unrooted_scan_interleaved_with_remove_unrooted_slots() {
                 // Remove 1 < `step_size` of the *latest* slots while the scan is happening.
                 // This should create inconsistency between the account balances of accounts
                 // stored in that slot, and the accounts stored in earlier slots
-                let slot_to_remove = *slots_on_fork.last().unwrap();
+                let slot_to_remove = slots_on_fork.pop().unwrap();
                 bank_at_fork_tip.remove_unrooted_slots(&[slot_to_remove]);
 
                 // Wait for scan to finish before starting next iteration
@@ -7747,7 +7755,8 @@ fn test_remove_unrooted_scan_interleaved_with_remove_unrooted_slots() {
                 }
                 assert_eq!(finished_scan_bank_id.unwrap(), bank_at_fork_tip.bank_id());
 
-                // Remove the rest of the slots before the next iteration
+                // Remove the rest of the slots before the next iteration. The last slot
+                // was already popped and removed above.
                 for (slot, bank_id) in slots_on_fork {
                     bank_at_fork_tip.remove_unrooted_slots(&[(slot, bank_id)]);
                 }
@@ -10997,7 +11006,7 @@ fn test_verify_accounts() {
     bank.force_flush_accounts_cache();
 
     // ensure the accounts verify successfully
-    assert!(bank.verify_accounts(VerifyAccountsHashConfig::default_for_test(), None));
+    assert!(bank.verify_accounts(None));
 }
 
 #[test]
@@ -11007,14 +11016,12 @@ fn test_squash_timing_add_assign() {
     let t1 = SquashTiming {
         squash_accounts_ms: 1,
         squash_accounts_cache_ms: 2,
-        squash_accounts_index_ms: 3,
         squash_cache_ms: 5,
     };
 
     let expected = SquashTiming {
         squash_accounts_ms: 2,
         squash_accounts_cache_ms: 2 * 2,
-        squash_accounts_index_ms: 3 * 2,
         squash_cache_ms: 5 * 2,
     };
 
@@ -12473,7 +12480,7 @@ fn test_new_for_txn_tests_system_transfer() {
 
     let refs: Vec<_> = owned_accounts.iter().map(|(k, v)| (k, v)).collect();
     let ancestors = Ancestors::from(vec![parent_slot]);
-    accounts.store_accounts_seq((parent_slot, refs.as_slice()), None, &ancestors);
+    accounts.store_accounts_seq((parent_slot, refs.as_slice()), 0, None, &ancestors);
     accounts.accounts_db.add_root(parent_slot);
 
     let bank_rc = BankRc::new(accounts);
@@ -12652,7 +12659,7 @@ fn test_new_for_block_tests_with_vote_account() {
 
     let refs: Vec<_> = owned_accounts.iter().map(|(k, v)| (k, v)).collect();
     let ancestors = Ancestors::from(vec![parent_slot]);
-    accounts.store_accounts_seq((parent_slot, refs.as_slice()), None, &ancestors);
+    accounts.store_accounts_seq((parent_slot, refs.as_slice()), 0, None, &ancestors);
     accounts.accounts_db.add_root(parent_slot);
 
     let bank_rc = BankRc::new(accounts);
@@ -12737,5 +12744,60 @@ fn test_new_for_block_tests_with_vote_account() {
     assert_eq!(
         bank.hash().to_string(),
         "8ZixvxzpQPr8zWvMyxoTsnFYFmUUKEytytyztDhgQ7oD"
+    );
+}
+
+#[test_case(false; "strict_fee_payer")]
+#[test_case(true; "relaxed_fee_payer")]
+fn test_commit_noop_transaction_no_fees(relax_fee_payer_constraint: bool) {
+    let leader = SlotLeader::new_unique();
+    let GenesisConfigInfo {
+        mut genesis_config, ..
+    } = create_genesis_config_with_leader(100 * LAMPORTS_PER_SOL, &leader.id, 3);
+    genesis_config.rent = Rent::default();
+    genesis_config.fee_rate_governor = FeeRateGovernor::new(5000, 0);
+
+    let mut bank = Bank::new_for_tests(&genesis_config);
+    if !relax_fee_payer_constraint {
+        bank.deactivate_feature(&feature_set::relax_fee_payer_constraint::id());
+    }
+    let (bank, _bank_forks) = bank.wrap_with_bank_forks_for_tests();
+
+    let unfunded = Keypair::new();
+    let transaction =
+        system_transaction::transfer(&unfunded, &Pubkey::new_unique(), 1, bank.last_blockhash());
+
+    let batch = bank.prepare_batch_for_tests(vec![transaction]);
+    let commit_results = bank
+        .load_execute_and_commit_transactions(
+            &batch,
+            ExecutionRecordingConfig::new_single_setting(false),
+            &mut ExecuteTimings::default(),
+            None,
+        )
+        .0;
+
+    // with relax_fee_payer_constraint, this is committed as a no-op
+    // otherwise, it is discarded as an error
+    if relax_fee_payer_constraint {
+        let committed = commit_results[0].as_ref().unwrap();
+        assert_eq!(committed.status, Err(TransactionError::AccountNotFound));
+        assert_eq!(committed.fee_details, FeeDetails::default());
+    } else {
+        assert_eq!(commit_results[0], Err(TransactionError::AccountNotFound));
+    }
+
+    // no fees have been accumulated
+    assert_eq!(
+        *bank.collector_fee_details.read().unwrap(),
+        CollectorFeeDetails::default()
+    );
+
+    // capitalization remains correct
+    bank.freeze();
+    add_root_and_flush_write_cache(&bank);
+    assert_eq!(
+        bank.capitalization(),
+        bank.calculate_capitalization_for_tests()
     );
 }

@@ -7,8 +7,8 @@ use {
             update_bank_forks_and_poh_recorder_for_new_tpu_bank,
         },
         banking_trace::{
-            BANKING_TRACE_DIR_DEFAULT_BYTE_LIMIT, BASENAME, BankingTracer, ChannelLabel, Channels,
-            TimedTracedEvent, TracedEvent, TracedSender, TracerThread,
+            BASENAME, BankingTracer, ChannelLabel, Channels, TimedTracedEvent, TracedEvent,
+            TracedSender,
         },
         validator::BlockProductionMethod,
     },
@@ -292,26 +292,26 @@ impl SimulatorLoopLogger {
 
     fn log_jitter(&self, bank: &Bank) {
         let old_slot = bank.slot();
-        if let Some(event_time) = self.freeze_time_by_slot.get(&old_slot) {
-            if log_enabled!(log::Level::Info) {
-                let current_simulation_time = SystemTime::now();
-                let elapsed_simulation_time = current_simulation_time
-                    .duration_since(self.base_simulation_time)
-                    .unwrap();
-                let elapsed_event_time = event_time.duration_since(self.base_event_time).unwrap();
-                info!(
-                    "jitter(parent_slot: {}): {}{:?} (sim: {:?} event: {:?})",
-                    old_slot,
-                    if elapsed_simulation_time > elapsed_event_time {
-                        "+"
-                    } else {
-                        "-"
-                    },
-                    elapsed_simulation_time.abs_diff(elapsed_event_time),
-                    elapsed_simulation_time,
-                    elapsed_event_time,
-                );
-            }
+        if let Some(event_time) = self.freeze_time_by_slot.get(&old_slot)
+            && log_enabled!(log::Level::Info)
+        {
+            let current_simulation_time = SystemTime::now();
+            let elapsed_simulation_time = current_simulation_time
+                .duration_since(self.base_simulation_time)
+                .unwrap();
+            let elapsed_event_time = event_time.duration_since(self.base_event_time).unwrap();
+            info!(
+                "jitter(parent_slot: {}): {}{:?} (sim: {:?} event: {:?})",
+                old_slot,
+                if elapsed_simulation_time > elapsed_event_time {
+                    "+"
+                } else {
+                    "-"
+                },
+                elapsed_simulation_time.abs_diff(elapsed_event_time),
+                elapsed_simulation_time,
+                elapsed_event_time,
+            );
         }
     }
 
@@ -421,7 +421,6 @@ struct SimulatorLoop {
     blockstore: Arc<Blockstore>,
     leader_schedule_cache: Arc<LeaderScheduleCache>,
     retransmit_slots_sender: Sender<Slot>,
-    retracer: Arc<BankingTracer>,
 }
 
 impl SimulatorLoop {
@@ -489,10 +488,6 @@ impl SimulatorLoop {
                 }
                 let new_bank =
                     Bank::new_from_parent(bank.clone_without_scheduler(), new_leader, new_slot);
-                // make sure parent is frozen for finalized hashes via the above
-                // new()-ing of its child bank
-                self.retracer
-                    .hash_event(bank.slot(), &bank.last_blockhash(), &bank.hash());
                 if *bank.leader_id() == self.simulated_leader {
                     logger.log_frozen_bank_cost(&bank, bank_created.elapsed());
                 }
@@ -531,7 +526,6 @@ struct SimulatorThreads {
     poh_service: PohService,
     banking_stage: BankingStageHandle,
     broadcast_stage: BroadcastStage,
-    retracer_thread: TracerThread,
     exit: Arc<AtomicBool>,
 }
 
@@ -542,13 +536,10 @@ impl SimulatorThreads {
         self.exit.store(true, Ordering::Relaxed);
 
         // The order is important. Consuming sender_thread by joining will drop some channels. That
-        // triggers termination of banking_stage, in turn retracer thread will be terminated.
+        // triggers termination of banking_stage.
         sender_thread.join().unwrap();
         self.banking_stage.join().unwrap();
         self.poh_service.join().unwrap();
-        if let Some(retracer_thread) = self.retracer_thread {
-            retracer_thread.join().unwrap().unwrap();
-        }
 
         info!("Joining broadcast stage...");
         drop(retransmit_slots_sender);
@@ -767,27 +758,8 @@ impl BankingSimulator {
             record_receiver_sender,
         );
 
-        // Enable BankingTracer to approximate the real environment as close as possible because
-        // it's not expected to disable BankingTracer on production environments.
-        //
-        // It's not likely for it to affect the banking stage performance noticeably. So, make sure
-        // that assumption is held here. That said, it incurs additional channel sending,
-        // SystemTime::now() and buffered seq IO, and indirectly functions as a background dropper
-        // of `BankingPacketBatch`.
-        //
-        // Lastly, the actual retraced events can be used to evaluate simulation timing accuracy in
-        // the future.
-        let (retracer, retracer_thread) = BankingTracer::new(Some((
-            &blockstore.banking_retracer_path(),
-            exit.clone(),
-            BANKING_TRACE_DIR_DEFAULT_BYTE_LIMIT,
-        )))
-        .unwrap();
-        assert!(retracer.is_enabled());
-        info!("Enabled banking retracer (dir_byte_limit: {BANKING_TRACE_DIR_DEFAULT_BYTE_LIMIT})",);
-
         let num_workers = BankingStage::default_num_workers();
-        let banking_tracer_channels = retracer.create_channels();
+        let banking_tracer_channels = BankingTracer::new_disabled().create_channels();
         let Channels {
             non_vote_sender,
             non_vote_receiver,
@@ -908,14 +880,12 @@ impl BankingSimulator {
             blockstore,
             leader_schedule_cache,
             retransmit_slots_sender,
-            retracer,
         };
 
         let simulator_threads = SimulatorThreads {
             poh_service,
             banking_stage,
             broadcast_stage,
-            retracer_thread,
             exit,
         };
 

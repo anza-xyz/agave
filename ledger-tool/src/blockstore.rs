@@ -642,7 +642,7 @@ fn do_blockstore_process_command(ledger_path: &Path, matches: &ArgMatches<'_>) -
                 }
                 let shreds = source.get_data_shreds_for_slot(slot, 0)?;
                 let shreds = shreds.into_iter().map(Cow::Owned);
-                if target.insert_cow_shreds(shreds, None, true).is_err() {
+                if target.insert_cow_shreds(shreds, true).is_err() {
                     warn!("error inserting shreds for slot {slot}");
                 }
             }
@@ -696,7 +696,7 @@ fn do_blockstore_process_command(ledger_path: &Path, matches: &ArgMatches<'_>) -
                 };
                 println!(
                     "{:>20} {:>44} {:>32} {:>13}",
-                    slot, &hash_str, &time_str, !contains_nonvote
+                    slot, hash_str, time_str, !contains_nonvote
                 );
             }
         }
@@ -1009,7 +1009,7 @@ pub mod tests {
         let num_slots = 5;
         let entries_per_shred = 5;
         let (shreds, _) = make_many_slot_entries(start_slot, num_slots, entries_per_shred);
-        blockstore.insert_shreds(shreds, None, false).unwrap();
+        blockstore.insert_shreds(shreds, false).unwrap();
 
         // Mark even shreds as optimistically confirmed
         (0..num_slots).step_by(2).for_each(|slot| {

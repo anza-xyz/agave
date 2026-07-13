@@ -1,5 +1,7 @@
 //! Stakes serve as a cache of stake and vote accounts to derive
 //! node stakes
+#[cfg(feature = "frozen-abi")]
+use solana_frozen_abi::stable_abi::{context::SequenceLenMax, sample_collection_sized};
 use {
     crate::{
         alpenglow_epoch_type::RewardEpochDelegatedStakes,
@@ -28,6 +30,7 @@ use {
         sync::{Arc, RwLock, RwLockReadGuard},
     },
     thiserror::Error,
+    wincode::{SchemaWrite, containers::FromIntoIterator, len::BincodeLen},
 };
 #[cfg(feature = "dev-context-only-utils")]
 use {
@@ -188,8 +191,8 @@ impl StakesCache {
 /// account and StakeStateV2 deserialized from the account. Doing so, will remove
 /// the need to load the stake account from accounts-db when working with
 /// stake-delegations.
-#[cfg_attr(feature = "frozen-abi", derive(AbiExample))]
-#[derive(Default, Clone, PartialEq, Debug, Serialize)]
+#[cfg_attr(feature = "frozen-abi", derive(AbiExample, StableAbi, StableAbiSample))]
+#[derive(Default, Clone, PartialEq, Debug, Serialize, SchemaWrite)]
 #[cfg_attr(
     feature = "dev-context-only-utils",
     field_qualifiers(
@@ -206,10 +209,17 @@ pub struct Stakes<T: Clone> {
     vote_accounts: VoteAccounts,
 
     /// stake_delegations
+    #[cfg_attr(
+        feature = "frozen-abi",
+        stable_abi_sample(with = "sample_collection_sized(rng, SequenceLenMax(1))")
+    )]
+    #[wincode(with = "FromIntoIterator<ImblHashMap<Pubkey, T>, BincodeLen>")]
     stake_delegations: ImblHashMap<Pubkey, T>,
 
     /// current effective stake delegated to each vote account pubkey
+    #[cfg_attr(feature = "frozen-abi", stable_abi_sample(with = "Default::default()"))]
     #[serde(skip)]
+    #[wincode(skip)]
     delegated_stakes: DelegatedStakes,
 
     /// unused
@@ -286,30 +296,28 @@ impl Stakes<StakeAccount> {
             }
 
             if solana_vote_program::check_id(account.owner()) {
-                if VoteStateVersions::is_correct_size_and_initialized(account.data()) {
-                    if let Ok(vote_account) =
+                if VoteStateVersions::is_correct_size_and_initialized(account.data())
+                    && let Ok(vote_account) =
                         VoteAccount::try_from(create_account_shared_data(account))
-                    {
-                        vote_accounts.insert(*pubkey, (0, vote_account));
-                    }
-                }
-            } else if stake_program::check_id(account.owner()) {
-                if let Ok(stake_account) =
-                    StakeAccount::try_from(create_account_shared_data(account))
                 {
-                    let delegation = stake_account.delegation();
-                    let stake = delegation_effective_stake(
-                        delegation,
-                        epoch,
-                        &stake_history,
-                        new_rate_activation_epoch,
-                        use_fixed_point_stake_math,
-                    );
-                    if stake != 0 {
-                        *delegated_stakes.entry(delegation.voter_pubkey).or_default() += stake;
-                    }
-                    stake_delegations.insert(*pubkey, stake_account);
+                    vote_accounts.insert(*pubkey, (0, vote_account));
                 }
+            } else if stake_program::check_id(account.owner())
+                && let Ok(stake_account) =
+                    StakeAccount::try_from(create_account_shared_data(account))
+            {
+                let delegation = stake_account.delegation();
+                let stake = delegation_effective_stake(
+                    delegation,
+                    epoch,
+                    &stake_history,
+                    new_rate_activation_epoch,
+                    use_fixed_point_stake_math,
+                );
+                if stake != 0 {
+                    *delegated_stakes.entry(delegation.voter_pubkey).or_default() += stake;
+                }
+                stake_delegations.insert(*pubkey, stake_account);
             }
         }
 
@@ -354,15 +362,13 @@ impl Stakes<StakeAccount> {
                 // Assert that all valid vote-accounts referenced in stake delegations are already
                 // contained in `stakes.vote_account`.
                 let voter_pubkey = &delegation.voter_pubkey;
-                if stakes.vote_accounts.get(voter_pubkey).is_none() {
-                    if let Some(account) = get_account(voter_pubkey) {
-                        if VoteStateVersions::is_correct_size_and_initialized(account.data())
-                            && VoteAccount::try_from(account.clone()).is_ok()
-                        {
-                            error!("vote account not cached: {voter_pubkey}, {account:?}");
-                            return Err(Error::VoteAccountNotCached(*voter_pubkey));
-                        }
-                    }
+                if stakes.vote_accounts.get(voter_pubkey).is_none()
+                    && let Some(account) = get_account(voter_pubkey)
+                    && VoteStateVersions::is_correct_size_and_initialized(account.data())
+                    && VoteAccount::try_from(account.clone()).is_ok()
+                {
+                    error!("vote account not cached: {voter_pubkey}, {account:?}");
+                    return Err(Error::VoteAccountNotCached(*voter_pubkey));
                 }
 
                 let stake_account = StakeAccount::try_from(stake_account)?;

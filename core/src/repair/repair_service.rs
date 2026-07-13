@@ -657,8 +657,16 @@ impl RepairService {
         popular_pruned_forks_requests: &mut HashSet<Slot>,
         dumped_slots_receiver: &DumpedSlotsReceiver,
         verified_voter_slots_receiver: &VerifiedVoterSlotsReceiver,
+        migration_status: &MigrationStatus,
         repair_metrics: &mut RepairMetrics,
     ) {
+        if repair_weight.is_pruned_tree_tracking_enabled()
+            && migration_status.is_alpenglow_enabled()
+        {
+            repair_weight.disable_pruned_tree_tracking();
+            popular_pruned_forks_requests.clear();
+        }
+
         // Purge outdated slots from the weighting heuristic
         let mut set_root_us = Measure::start("set_root_us");
         repair_weight.set_root(root_bank.slot());
@@ -883,6 +891,7 @@ impl RepairService {
             popular_pruned_forks_requests,
             dumped_slots_receiver,
             verified_voter_slots_receiver,
+            migration_status,
             repair_metrics,
         );
 
@@ -1480,7 +1489,7 @@ mod test {
         let (mut shreds, _) = make_slot_entries(1, 0, 1);
         let (shreds2, _) = make_slot_entries(5, 2, 1);
         shreds.extend(shreds2);
-        blockstore.insert_shreds(shreds, None, false).unwrap();
+        blockstore.insert_shreds(shreds, false).unwrap();
         let mut repair_weight = RepairWeight::new(0);
         assert_eq!(
             repair_weight.get_best_weighted_repairs(
@@ -1511,7 +1520,7 @@ mod test {
 
         // Write this shred to slot 2, should chain to slot 0, which we haven't received
         // any shreds for
-        blockstore.insert_shreds(shreds, None, false).unwrap();
+        blockstore.insert_shreds(shreds, false).unwrap();
         let mut repair_weight = RepairWeight::new(0);
 
         // Check that repair tries to patch the empty slot
@@ -1560,9 +1569,7 @@ mod test {
                 missing_indexes_per_slot.insert(0, index);
             }
         }
-        blockstore
-            .insert_shreds(shreds_to_write, None, false)
-            .unwrap();
+        blockstore.insert_shreds(shreds_to_write, false).unwrap();
         let expected: Vec<ShredRepairType> = (0..num_slots)
             .flat_map(|slot| {
                 missing_indexes_per_slot
@@ -1652,7 +1659,6 @@ mod test {
                     shreds_by_index.get(&0).unwrap().clone(),
                     shreds_by_index.get(&(missing_index + 1)).unwrap().clone(),
                 ],
-                None,
                 false,
             )
             .unwrap();
@@ -1691,9 +1697,7 @@ mod test {
             .chain(std::iter::once(future_fec_start))
             .map(|index| shreds_by_index.get(&index).unwrap().clone())
             .collect();
-        blockstore
-            .insert_shreds(shreds_to_insert, None, false)
-            .unwrap();
+        blockstore.insert_shreds(shreds_to_insert, false).unwrap();
 
         let slot_meta = blockstore.meta_repair(slot).unwrap().unwrap();
         let mut repair_eligibility = RepairEligibility::default();
@@ -1741,7 +1745,7 @@ mod test {
         // Remove last shred (which is also last in slot) so that slot is not complete
         shreds.pop();
 
-        blockstore.insert_shreds(shreds, None, false).unwrap();
+        blockstore.insert_shreds(shreds, false).unwrap();
 
         // We didn't get the last shred for this slot, so ask for the highest shred for that slot
         let expected: Vec<ShredRepairType> =
@@ -1794,7 +1798,7 @@ mod test {
             .collect();
 
         blockstore
-            .insert_shreds(vec![shreds_by_index.get(&0).unwrap().clone()], None, false)
+            .insert_shreds(vec![shreds_by_index.get(&0).unwrap().clone()], false)
             .unwrap();
         let mut repair_eligibility = RepairEligibility::default();
         let slot_meta = blockstore.meta_repair(0).unwrap().unwrap();
@@ -1811,7 +1815,7 @@ mod test {
         );
 
         blockstore
-            .insert_shreds(vec![shreds_by_index.get(&1).unwrap().clone()], None, false)
+            .insert_shreds(vec![shreds_by_index.get(&1).unwrap().clone()], false)
             .unwrap();
         let slot_meta = blockstore.meta_repair(0).unwrap().unwrap();
         assert_eq!(
@@ -1851,7 +1855,7 @@ mod test {
         let shreds = make_chaining_slot_entries(&slots, num_entries_per_slot, 0);
         for (mut slot_shreds, _) in shreds.into_iter() {
             slot_shreds.remove(0);
-            blockstore.insert_shreds(slot_shreds, None, false).unwrap();
+            blockstore.insert_shreds(slot_shreds, false).unwrap();
         }
 
         // Iterate through all possible combinations of start..end (inclusive on both
@@ -1905,7 +1909,7 @@ mod test {
                 num_entries_per_slot as u64,
             );
 
-            blockstore.insert_shreds(shreds, None, false).unwrap();
+            blockstore.insert_shreds(shreds, false).unwrap();
         }
 
         let end = 4;
@@ -1942,7 +1946,7 @@ mod test {
             num_entries_per_slot,
         );
         blockstore
-            .insert_shreds(shreds[..shreds.len() - 1].to_vec(), None, false)
+            .insert_shreds(shreds[..shreds.len() - 1].to_vec(), false)
             .unwrap();
         assert!(
             RepairService::generate_duplicate_repairs_for_slot(&blockstore, dead_slot,).is_some()
@@ -1950,7 +1954,7 @@ mod test {
 
         // SlotMeta is full, should make no repairs
         blockstore
-            .insert_shreds(vec![shreds.pop().unwrap()], None, false)
+            .insert_shreds(vec![shreds.pop().unwrap()], false)
             .unwrap();
         assert!(
             RepairService::generate_duplicate_repairs_for_slot(&blockstore, dead_slot,).is_none()
@@ -1990,7 +1994,7 @@ mod test {
         let num_entries_per_slot = max_ticks_per_n_shreds(1, None) + 1;
         let (mut shreds, _) = make_slot_entries(dead_slot, dead_slot - 1, num_entries_per_slot);
         blockstore
-            .insert_shreds(shreds[..shreds.len() - 1].to_vec(), None, false)
+            .insert_shreds(shreds[..shreds.len() - 1].to_vec(), false)
             .unwrap();
 
         duplicate_slot_repair_statuses.insert(dead_slot, duplicate_status);
@@ -2042,7 +2046,7 @@ mod test {
         // Insert rest of shreds. Slot is full, should get filtered from
         // `duplicate_slot_repair_statuses`
         blockstore
-            .insert_shreds(vec![shreds.pop().unwrap()], None, false)
+            .insert_shreds(vec![shreds.pop().unwrap()], false)
             .unwrap();
         RepairService::generate_and_send_duplicate_repairs(
             &mut duplicate_slot_repair_statuses,

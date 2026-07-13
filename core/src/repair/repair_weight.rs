@@ -70,6 +70,9 @@ pub struct RepairWeight {
     // Maps each slot to the root of the tree that contains it
     slot_to_tree: HashMap<Slot, TreeRoot>,
     root: Slot,
+
+    // When Alpenglow is active we no longer need to track pruned trees
+    pruned_tree_tracking_enabled: bool,
 }
 
 impl RepairWeight {
@@ -82,7 +85,17 @@ impl RepairWeight {
             slot_to_tree,
             root,
             pruned_trees: HashMap::new(),
+            pruned_tree_tracking_enabled: true,
         }
+    }
+
+    pub fn disable_pruned_tree_tracking(&mut self) {
+        self.pruned_tree_tracking_enabled = false;
+        self.clear_pruned_tree_state();
+    }
+
+    pub fn is_pruned_tree_tracking_enabled(&self) -> bool {
+        self.pruned_tree_tracking_enabled
     }
 
     pub fn add_voters(
@@ -129,6 +142,9 @@ impl RepairWeight {
                         // If this earliest known ancestor is not part of the rooted path, create a new
                         // pruned tree from the ancestor that is `> self.root` instead.
                         if earliest_ancestor < self.root {
+                            if !self.pruned_tree_tracking_enabled {
+                                continue;
+                            }
                             // If the next ancestor exists, it is guaranteed to be `> self.root` because
                             // `find_ancestor_subtree_of_slot` can return at max one ancestor `<
                             // self.root`.
@@ -422,9 +438,13 @@ impl RepairWeight {
                 .remove(&subtree_root)
                 .expect("Must exist, was found in `self.trees` above");
 
-            // Track these trees as part of the pruned set
-            self.rename_tree_root(&subtree, TreeRoot::PrunedRoot(subtree_root));
-            self.pruned_trees.insert(subtree_root, subtree);
+            if self.pruned_tree_tracking_enabled {
+                // Track these trees as part of the pruned set
+                self.rename_tree_root(&subtree, TreeRoot::PrunedRoot(subtree_root));
+                self.pruned_trees.insert(subtree_root, subtree);
+            } else {
+                self.remove_tree_slots(&subtree);
+            }
         }
 
         if let Some(new_root_tree_root) = new_root_tree_root {
@@ -437,10 +457,16 @@ impl RepairWeight {
             // Prune these out and add to `self.pruned_trees`
             trace!("pruning tree {new_root_tree_root} with {new_root}");
             let (removed, pruned) = new_root_tree.purge_prune((new_root, Hash::default()));
-            for pruned_tree in pruned {
-                let pruned_tree_root = pruned_tree.tree_root().0;
-                self.rename_tree_root(&pruned_tree, TreeRoot::PrunedRoot(pruned_tree_root));
-                self.pruned_trees.insert(pruned_tree_root, pruned_tree);
+            if self.pruned_tree_tracking_enabled {
+                for pruned_tree in pruned {
+                    let pruned_tree_root = pruned_tree.tree_root().0;
+                    self.rename_tree_root(&pruned_tree, TreeRoot::PrunedRoot(pruned_tree_root));
+                    self.pruned_trees.insert(pruned_tree_root, pruned_tree);
+                }
+            } else {
+                for pruned_tree in pruned {
+                    self.remove_tree_slots(&pruned_tree);
+                }
             }
 
             for (slot, _) in removed {
@@ -459,38 +485,44 @@ impl RepairWeight {
             self.insert_new_tree(new_root);
         }
 
-        // Clean up the pruned set by trimming slots that are less than `new_root` and removing
-        // empty trees
-        self.pruned_trees = self
-            .pruned_trees
-            .drain()
-            .flat_map(|(tree_root, mut pruned_tree)| {
-                if tree_root < new_root {
-                    trace!("pruning tree {tree_root} with {new_root}");
-                    let (removed, pruned) = pruned_tree.purge_prune((new_root, Hash::default()));
-                    for (slot, _) in removed {
-                        self.slot_to_tree.remove(&slot);
+        if self.pruned_tree_tracking_enabled {
+            // Clean up the pruned set by trimming slots that are less than `new_root` and removing
+            // empty trees
+            self.pruned_trees = self
+                .pruned_trees
+                .drain()
+                .flat_map(|(tree_root, mut pruned_tree)| {
+                    if tree_root < new_root {
+                        trace!("pruning tree {tree_root} with {new_root}");
+                        let (removed, pruned) =
+                            pruned_tree.purge_prune((new_root, Hash::default()));
+                        for (slot, _) in removed {
+                            self.slot_to_tree.remove(&slot);
+                        }
+                        pruned
+                            .into_iter()
+                            .chain(iter::once(pruned_tree)) // Add back the original pruned tree
+                            .filter(|pruned_tree| !pruned_tree.is_empty()) // Clean up empty trees
+                            .map(|new_pruned_subtree| {
+                                let new_pruned_tree_root = new_pruned_subtree.tree_root().0;
+                                // Resync `self.slot_to_tree`
+                                for ((slot, _), _) in
+                                    new_pruned_subtree.all_slots_stake_voted_subtree()
+                                {
+                                    *self.slot_to_tree.get_mut(slot).unwrap() =
+                                        TreeRoot::PrunedRoot(new_pruned_tree_root);
+                                }
+                                (new_pruned_tree_root, new_pruned_subtree)
+                            })
+                            .collect()
+                    } else {
+                        vec![(tree_root, pruned_tree)]
                     }
-                    pruned
-                        .into_iter()
-                        .chain(iter::once(pruned_tree)) // Add back the original pruned tree
-                        .filter(|pruned_tree| !pruned_tree.is_empty()) // Clean up empty trees
-                        .map(|new_pruned_subtree| {
-                            let new_pruned_tree_root = new_pruned_subtree.tree_root().0;
-                            // Resync `self.slot_to_tree`
-                            for ((slot, _), _) in new_pruned_subtree.all_slots_stake_voted_subtree()
-                            {
-                                *self.slot_to_tree.get_mut(slot).unwrap() =
-                                    TreeRoot::PrunedRoot(new_pruned_tree_root);
-                            }
-                            (new_pruned_tree_root, new_pruned_subtree)
-                        })
-                        .collect()
-                } else {
-                    vec![(tree_root, pruned_tree)]
-                }
-            })
-            .collect::<HashMap<u64, HeaviestSubtreeForkChoice>>();
+                })
+                .collect::<HashMap<u64, HeaviestSubtreeForkChoice>>();
+        } else {
+            self.clear_pruned_tree_state();
+        }
         self.root = new_root;
     }
 
@@ -726,6 +758,9 @@ impl RepairWeight {
                         self.rename_tree_root(&orphan_tree, TreeRoot::Root(*earliest_ancestor));
                         assert!(self.trees.insert(*earliest_ancestor, orphan_tree).is_none());
                         orphan_tree_root = *earliest_ancestor;
+                    } else if !self.pruned_tree_tracking_enabled {
+                        self.remove_tree_slots(&orphan_tree);
+                        return None;
                     } else {
                         // In this case we should create a new pruned subtree
                         let next_earliest_ancestor =
@@ -766,6 +801,10 @@ impl RepairWeight {
         epoch_stakes: &HashMap<Epoch, VersionedEpochStakes>,
         epoch_schedule: &EpochSchedule,
     ) -> Vec<Slot> {
+        if !self.pruned_tree_tracking_enabled {
+            return vec![];
+        }
+
         #[cfg(test)]
         static_assertions::const_assert!(DUPLICATE_THRESHOLD > 0.5);
         let mut repairs = vec![];
@@ -865,6 +904,9 @@ impl RepairWeight {
 
     /// Returns true iff `slot` is currently tracked and in a pruned tree
     pub fn is_pruned(&self, slot: Slot) -> bool {
+        if !self.pruned_tree_tracking_enabled {
+            return false;
+        }
         self.get_tree_root(slot)
             .as_ref()
             .map(TreeRoot::is_pruned)
@@ -894,6 +936,7 @@ impl RepairWeight {
 
     /// Assumes that `new_pruned_tree_root` does not already exist in `self.pruned_trees`
     fn insert_new_pruned_tree(&mut self, new_pruned_tree_root: Slot) {
+        assert!(self.pruned_tree_tracking_enabled);
         assert!(!self.pruned_trees.contains_key(&new_pruned_tree_root));
 
         // Update `self.slot_to_tree`
@@ -974,6 +1017,18 @@ impl RepairWeight {
                 .get_mut(slot)
                 .expect("Nodes in tree must exist in `self.slot_to_tree`") = root2;
         }
+    }
+
+    fn remove_tree_slots(&mut self, tree: &HeaviestSubtreeForkChoice) {
+        for ((slot, _), _) in tree.all_slots_stake_voted_subtree() {
+            self.slot_to_tree.remove(slot);
+        }
+    }
+
+    fn clear_pruned_tree_state(&mut self) {
+        self.pruned_trees.clear();
+        self.slot_to_tree
+            .retain(|_, tree_root| !tree_root.is_pruned());
     }
 
     // Heavier, smaller slots come first
@@ -1955,6 +2010,58 @@ mod test {
     }
 
     #[test]
+    fn test_disable_pruned_tree_tracking_drops_existing_and_future_pruned_trees() {
+        let blockstore = setup_big_forks();
+        let stake = 100;
+        let (bank, vote_pubkeys) = bank_utils::setup_bank_and_vote_pubkeys_for_tests(3, stake);
+        let votes = vec![
+            (4, vote_pubkeys.clone()),
+            (6, vote_pubkeys.clone()),
+            (11, vote_pubkeys.clone()),
+            (23, vote_pubkeys.clone()),
+        ];
+
+        let mut repair_weight = RepairWeight::new(0);
+        repair_weight.add_voters(
+            &blockstore,
+            votes.into_iter(),
+            bank.epoch_stakes_map(),
+            bank.epoch_schedule(),
+        );
+        repair_weight.set_root(3);
+
+        assert!(repair_weight.is_pruned(4));
+        assert!(!repair_weight.pruned_trees.is_empty());
+
+        repair_weight.disable_pruned_tree_tracking();
+
+        assert!(!repair_weight.is_pruned(4));
+        assert!(repair_weight.pruned_trees.is_empty());
+        assert!(
+            repair_weight
+                .slot_to_tree
+                .values()
+                .all(|tree_root| !tree_root.is_pruned())
+        );
+
+        repair_weight.add_voters(
+            &blockstore,
+            vec![(4, vote_pubkeys.clone()), (11, vote_pubkeys)].into_iter(),
+            bank.epoch_stakes_map(),
+            bank.epoch_schedule(),
+        );
+
+        assert!(repair_weight.pruned_trees.is_empty());
+        assert!(!repair_weight.slot_to_tree.contains_key(&4));
+        assert!(!repair_weight.slot_to_tree.contains_key(&11));
+        assert!(
+            repair_weight
+                .get_popular_pruned_forks(bank.epoch_stakes_map(), bank.epoch_schedule())
+                .is_empty()
+        );
+    }
+
+    #[test]
     fn test_set_root_pruned_tree_split() {
         let blockstore = setup_big_forks();
         let stake = 100;
@@ -2445,7 +2552,7 @@ mod test {
 
         // Simulate repair on 6 and 5
         for (shreds, _) in make_chaining_slot_entries(&[5, 6], 100, 0) {
-            blockstore.insert_shreds(shreds, None, true).unwrap();
+            blockstore.insert_shreds(shreds, true).unwrap();
         }
 
         // Verify orphans properly updated and chained
