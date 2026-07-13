@@ -8255,13 +8255,10 @@ dependencies = [
  "ahash 0.8.12",
  "itertools 0.14.0",
  "log",
- "rand 0.9.4",
  "solana-bincode",
  "solana-clock",
  "solana-compute-budget",
- "solana-compute-budget-instruction",
  "solana-compute-budget-interface",
- "solana-compute-budget-program",
  "solana-cost-model",
  "solana-frozen-abi",
  "solana-frozen-abi-macro",
@@ -8278,14 +8275,11 @@ dependencies = [
  "solana-signer",
  "solana-svm-transaction",
  "solana-system-interface 3.2.0",
- "solana-system-program",
  "solana-system-transaction",
  "solana-transaction",
  "solana-transaction-error",
  "solana-vote",
  "solana-vote-program",
- "static_assertions",
- "test-case",
 ]
 
 [[package]]

@@ -6708,8 +6708,6 @@ dependencies = [
  "solana-bincode",
  "solana-clock",
  "solana-compute-budget",
- "solana-compute-budget-instruction",
- "solana-compute-budget-interface",
  "solana-metrics",
  "solana-packet 4.2.0",
  "solana-pubkey 4.2.0",
