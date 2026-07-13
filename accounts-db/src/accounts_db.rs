@@ -1207,8 +1207,6 @@ impl AccountsDb {
     }
 
     /// Reclaim older states of accounts older than max_clean_root_inclusive for AccountsDb bloat mitigation.
-    /// Any accounts which are removed from the accounts index are returned in PubkeysRemovedFromAccountsIndex.
-    /// These should NOT be unref'd later from the accounts index.
     fn clean_accounts_older_than_root(&self, reclaims: &SlotList<AccountInfo>) -> ReclaimResult {
         if reclaims.is_empty() {
             return ReclaimResult::default();
@@ -2297,9 +2295,6 @@ impl AccountsDb {
     ///   is the slot == `S`. This is true for instance when `handle_reclaims` is called
     ///   from store or slot shrinking, as those should only touch the slot they are
     ///   currently storing to or shrinking.
-    /// * `pubkeys_removed_from_accounts_index` - These keys have already been removed from the
-    ///   accounts index and should not be unref'd. If they exist in the accounts index,
-    ///   they are NEW.
     /// * `handle_reclaims`. `purge_stats` are stats used to track performance of purging
     ///   dead slots if value is `ProcessDeadSlots`.
     ///   Otherwise, there can be no dead slots
@@ -2422,12 +2417,6 @@ impl AccountsDb {
 
     // Must be kept private!, does sensitive cleanup that should only be called from
     // supported pipelines in AccountsDb
-    /// pubkeys_removed_from_accounts_index - These keys have already been removed from the accounts index
-    ///    and should not be unref'd. If they exist in the accounts index, they are NEW.
-    /// clean_stored_dead_slots - clean_stored_dead_slots iterates through all the pubkeys in the dead
-    ///    slots and unrefs them in the accounts index if they are not present in
-    ///    pubkeys_removed_from_accounts_index. Skipping clean is the equivalent to
-    ///    pubkeys_removed_from_accounts_index containing all the pubkeys in the dead slots
     fn process_dead_slots(&self, dead_slots: &IntSet<Slot>, purge_stats: &PurgeStats) {
         if dead_slots.is_empty() {
             return;
