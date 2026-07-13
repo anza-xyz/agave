@@ -16,8 +16,8 @@ use {
         consensus_message::Block,
     },
     blockstore_processor::{
-        ConfirmationProgress, ProcessOptions, confirm_full_slot, fill_blockstore_slot_with_ticks,
-        process_bank_0,
+        AsyncVerificationProgress, ConfirmationProgress, ProcessOptions, confirm_full_slot,
+        fill_blockstore_slot_with_ticks, process_bank_0,
     },
     crossbeam_channel::bounded,
     itertools::Itertools,
@@ -1081,6 +1081,95 @@ fn test_dead_slot_on_complete_bank_replay_err() {
 #[test]
 fn test_dead_slot_on_complete_bank_verify_err() {
     do_test_dead_slot_on_complete_bank(CompleteBankFailure::VerifyError);
+}
+
+#[test]
+fn test_complete_replay_verification_recycles_async_verification() {
+    let replay_stats = RwLock::new(ReplaySlotStats::default());
+    {
+        let mut replay_stats = replay_stats.write().unwrap();
+        replay_stats.poh_verify_elapsed = 11;
+        replay_stats.transaction_verify_elapsed = 17;
+    }
+    let replay_progress = RwLock::new(ConfirmationProgress::new_with_async_verification(
+        Hash::new_unique(),
+        Some(AsyncVerificationProgress::new()),
+    ));
+    let mut async_verification_freelist = Vec::new();
+
+    assert_matches!(
+        ReplayStage::complete_replay_verification(
+            &replay_stats,
+            &replay_progress,
+            &mut async_verification_freelist,
+        ),
+        Ok(())
+    );
+
+    assert_eq!(async_verification_freelist.len(), 1);
+    assert!(
+        replay_progress
+            .write()
+            .unwrap()
+            .take_async_verification()
+            .is_none()
+    );
+    let replay_stats = replay_stats.read().unwrap();
+    assert_eq!(replay_stats.poh_verify_elapsed, 11);
+    assert_eq!(replay_stats.transaction_verify_elapsed, 17);
+}
+
+#[test]
+fn test_complete_bank_replay_sends_bank_complete() {
+    let ReplayBlockstoreComponents {
+        blockstore,
+        vote_simulator,
+        ..
+    } = replay_blockstore_components(Some(tr(0)), 1, None);
+    let bank_forks = vote_simulator.bank_forks;
+    let bank = bank_forks.read().unwrap().get_with_scheduler(0).unwrap();
+    let (replay_vote_sender, replay_vote_receiver) = bounded(1024);
+    let process_active_banks_context = ProcessActiveBanksContext::new_for_tests(
+        bank_forks.clone(),
+        blockstore,
+        replay_vote_sender,
+    );
+    let mut bank_progress = ForkProgress::new(
+        bank.last_blockhash(),
+        None,
+        None,
+        0,
+        0,
+        Some(AsyncVerificationProgress::new()),
+    );
+    let mut async_verification_freelist = Vec::new();
+
+    let completed_replay = ReplayStage::complete_bank_replay(
+        &process_active_banks_context,
+        &bank,
+        &mut bank_progress,
+        &mut async_verification_freelist,
+    )
+    .unwrap();
+
+    assert!(!completed_replay.is_unified_scheduler_enabled);
+    assert!(Arc::ptr_eq(
+        &completed_replay.replay_stats,
+        &bank_progress.replay_stats
+    ));
+    assert!(Arc::ptr_eq(
+        &completed_replay.replay_progress,
+        &bank_progress.replay_progress
+    ));
+    assert_eq!(async_verification_freelist.len(), 1);
+    assert_eq!(
+        replay_vote_receiver.try_recv(),
+        Ok(ReplayVoteMessage::BankComplete {
+            replay_bank_id: bank.bank_id(),
+            replay_slot: bank.slot(),
+        })
+    );
+    assert!(replay_vote_receiver.try_recv().is_err());
 }
 
 #[test]
