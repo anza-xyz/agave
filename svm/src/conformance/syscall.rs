@@ -25,7 +25,7 @@ use {
         solana_sbpf::{
             aligned_memory::AlignedMemory,
             ebpf::{HOST_ALIGN, MM_BYTECODE_START, MM_HEAP_START, MM_INPUT_START, MM_STACK_START},
-            error::{ProgramResult, StableResult},
+            error::{EbpfError, ProgramResult, StableResult},
             memory_region::{AccessViolationHandler, MemoryMapping, MemoryRegion},
             program::{BuiltinProgram, SBPFVersion},
             vm::{Config, ContextObject, EbpfVm},
@@ -180,15 +180,19 @@ pub fn execute_vm_syscall(input: ProtoSyscallContext) -> ProtoSyscallEffects {
         virtual_address_space_adjustments,
     );
 
+    let cu_avail = invoke_context.get_remaining();
+    let mut program_result = program_result;
+    if let Err(pop_err) = invoke_context.pop()
+        && matches!(program_result, StableResult::Ok(_))
+    {
+        program_result = StableResult::Err(EbpfError::SyscallError(Box::new(pop_err)));
+    }
+
     let UnpackedResult {
         error,
         error_kind,
         r0,
     } = unpack_stable_result(program_result);
-    let cu_avail = invoke_context.get_remaining();
-    invoke_context
-        .pop()
-        .expect("failed to pop instruction context");
 
     ProtoSyscallEffects {
         error,
