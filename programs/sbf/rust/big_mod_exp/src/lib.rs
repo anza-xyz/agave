@@ -64,23 +64,25 @@ fn big_mod_exp_test() {
         ),
     ];
 
-    test_cases.iter().for_each(|(base, exponent, modulus, expected)| {
-        let mut base = array_bytes::hex2bytes_unchecked(base);
-        let mut exponent = array_bytes::hex2bytes_unchecked(exponent);
-        let mut modulus = array_bytes::hex2bytes_unchecked(modulus);
-        let mut expected = array_bytes::hex2bytes_unchecked(expected);
-        base.reverse();
-        exponent.reverse();
-        modulus.reverse();
-        expected.reverse();
+    test_cases
+        .iter()
+        .for_each(|(base, exponent, modulus, expected)| {
+            let mut base = array_bytes::hex2bytes_unchecked(base);
+            let mut exponent = array_bytes::hex2bytes_unchecked(exponent);
+            let mut modulus = array_bytes::hex2bytes_unchecked(modulus);
+            let mut expected = array_bytes::hex2bytes_unchecked(expected);
+            base.reverse();
+            exponent.reverse();
+            modulus.reverse();
+            expected.reverse();
 
-        let result = big_mod_exp(base.as_slice(), exponent.as_slice(), modulus.as_slice());
-        if is_supported_modulus(&modulus) {
-            assert_eq!(result, Some(expected));
-        } else {
-            assert_eq!(result, None);
-        }
-    });
+            let result = big_mod_exp(base.as_slice(), exponent.as_slice(), modulus.as_slice());
+            if is_supported_modulus(&modulus) {
+                assert_eq!(result, Some(expected));
+            } else {
+                assert_eq!(result, None);
+            }
+        });
 }
 
 fn is_supported_modulus(modulus: &[u8]) -> bool {
