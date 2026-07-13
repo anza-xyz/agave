@@ -2352,8 +2352,10 @@ fn big_mod_exp_is_one_le(bytes: &[u8]) -> bool {
     matches!(bytes.first(), Some(1)) && bytes[1..].iter().all(|byte| *byte == 0)
 }
 
-fn big_mod_exp_cost(
-    execution_cost: &SVMTransactionExecutionCost,
+/// Compute the operation cost of a big integer modular exponentiation, i.e. the
+/// cost charged on top of the flat `big_modular_exponentiation_base_cost`.
+fn big_mod_exp_operation_cost(
+    cost_divisor: u64,
     params: &BigModExpParams,
     exponent: &[u8],
 ) -> Option<u64> {
@@ -2366,7 +2368,7 @@ fn big_mod_exp_cost(
             big_mod_exp_adjusted_exponent_length(exponent).max(BIG_MOD_EXP_MIN_EXPONENT_LENGTH);
         mult_complexity.checked_mul(u128::from(adjusted_exponent_length))?
     };
-    let divisor = execution_cost.big_modular_exponentiation_cost_divisor as u128;
+    let divisor = u128::from(cost_divisor);
     if divisor == 0 {
         return None;
     }
@@ -2374,11 +2376,7 @@ fn big_mod_exp_cost(
     let operation_cost = operation_complexity
         .checked_add(divisor.checked_sub(1)?)?
         .checked_div(divisor)?;
-    let operation_cost = u64::try_from(operation_cost).ok()?;
-
-    execution_cost
-        .big_modular_exponentiation_base_cost
-        .checked_add(operation_cost)
+    u64::try_from(operation_cost).ok()
 }
 
 declare_builtin_function!(
@@ -2393,6 +2391,14 @@ declare_builtin_function!(
         _arg5: u64,
     ) -> Result<u64, Error> {
         let check_aligned = invoke_context.get_check_aligned();
+
+        // Charge the flat base cost of the syscall up front, before doing any
+        // translation or work that could fail without being paid for.
+        let execution_cost = invoke_context.get_execution_cost();
+        let base_cost = execution_cost.big_modular_exponentiation_base_cost;
+        let cost_divisor = execution_cost.big_modular_exponentiation_cost_divisor;
+        invoke_context.compute_meter.consume_checked(base_cost)?;
+
         let memory_mapping = invoke_context.memory_contexts.memory_mapping()?;
         let params =
             *translate_type::<BigModExpParams>(memory_mapping, params_addr, check_aligned)?;
@@ -2404,12 +2410,23 @@ declare_builtin_function!(
             return Err(SyscallError::InvalidLength.into());
         }
 
+        // Only the exponent (and the lengths in `params`) is needed to compute
+        // the operation cost, so translate it and charge before translating the
+        // base and modulus.
         let exponent = translate_slice::<u8>(
             memory_mapping,
             params.exponent,
             params.exponent_len,
             check_aligned,
         )?;
+        let Some(cost) = big_mod_exp_operation_cost(cost_divisor, &params, exponent) else {
+            // The operation cost cannot be represented as a `u64`, so it can
+            // never be paid for; drain the remaining budget and fail.
+            invoke_context.compute_meter.consume_checked(u64::MAX)?;
+            return Err(Box::new(InstructionError::ComputationalBudgetExceeded));
+        };
+        invoke_context.compute_meter.consume_checked(cost)?;
+
         let base = translate_slice::<u8>(
             memory_mapping,
             params.base,
@@ -2422,15 +2439,6 @@ declare_builtin_function!(
             params.modulus_len,
             check_aligned,
         )?;
-        let execution_cost = invoke_context.get_execution_cost();
-        let Some(cost) = big_mod_exp_cost(execution_cost, &params, exponent) else {
-            ic_msg!(
-                invoke_context,
-                "Overflow while calculating the compute cost"
-            );
-            return Err(SyscallError::ArithmeticOverflow.into());
-        };
-        invoke_context.compute_meter.consume_checked(cost)?;
 
         let Some(value) = big_mod_exp(base, exponent, modulus) else {
             return Err(SyscallError::InvalidAttribute.into());
@@ -2440,9 +2448,9 @@ declare_builtin_function!(
         translate_mut!(
             memory_mapping,
             check_aligned,
-            let result_ref_mut: (&mut [u8]) = map(result_addr, params.modulus_len)?;
+            let result_ref_mut: (&mut [MaybeUninit<u8>]) = map(result_addr, params.modulus_len)?;
         );
-        result_ref_mut.copy_from_slice(value.as_slice());
+        result_ref_mut.write_copy_of_slice(value.as_slice());
 
         Ok(SUCCESS)
     }
@@ -6161,7 +6169,13 @@ mod tests {
             .memory_contexts
             .mock_set_mapping_abi_v1(memory_mapping);
         let budget = invoke_context.get_execution_cost();
-        let cost = big_mod_exp_cost(budget, &params, &exponent).unwrap();
+        let cost = budget.big_modular_exponentiation_base_cost
+            + big_mod_exp_operation_cost(
+                budget.big_modular_exponentiation_cost_divisor,
+                &params,
+                &exponent,
+            )
+            .unwrap();
         invoke_context.compute_meter.mock_set_remaining(cost);
 
         let result = SyscallBigModExp::rust(&mut invoke_context, VADDR_PARAMS, VADDR_OUT, 0, 0, 0);
@@ -6212,7 +6226,13 @@ mod tests {
             .memory_contexts
             .mock_set_mapping_abi_v1(memory_mapping);
         let budget = invoke_context.get_execution_cost();
-        let cost = big_mod_exp_cost(budget, &params, &exponent).unwrap();
+        let cost = budget.big_modular_exponentiation_base_cost
+            + big_mod_exp_operation_cost(
+                budget.big_modular_exponentiation_cost_divisor,
+                &params,
+                &exponent,
+            )
+            .unwrap();
         invoke_context.compute_meter.mock_set_remaining(cost);
 
         let result = SyscallBigModExp::rust(&mut invoke_context, VADDR_PARAMS, VADDR_OUT, 0, 0, 0);
@@ -6263,7 +6283,13 @@ mod tests {
             .memory_contexts
             .mock_set_mapping_abi_v1(memory_mapping);
         let budget = invoke_context.get_execution_cost();
-        let cost = big_mod_exp_cost(budget, &params, &exponent).unwrap();
+        let cost = budget.big_modular_exponentiation_base_cost
+            + big_mod_exp_operation_cost(
+                budget.big_modular_exponentiation_cost_divisor,
+                &params,
+                &exponent,
+            )
+            .unwrap();
         invoke_context.compute_meter.mock_set_remaining(cost);
 
         let result = SyscallBigModExp::rust(&mut invoke_context, VADDR_PARAMS, VADDR_BASE, 0, 0, 0);

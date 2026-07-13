@@ -8475,8 +8475,6 @@ name = "solana-sbf-rust-big-mod-exp"
 version = "4.3.0-alpha.0"
 dependencies = [
  "array-bytes",
- "serde",
- "serde_json",
  "solana-big-mod-exp 4.0.0",
  "solana-msg",
  "solana-program-entrypoint",
