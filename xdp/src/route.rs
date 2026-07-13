@@ -605,12 +605,14 @@ impl Router {
         }
     }
 
+    #[inline]
     fn lookup_route_v4(&self, dest_ip: Ipv4Addr) -> Option<&Route<Ipv4Addr>> {
         self.ipv4_lpm
             .lookup(dest_ip)
             .and_then(|route_idx| self.routes.get(route_idx as usize))
     }
 
+    #[inline]
     pub fn route_v4(&self, dest_ip: Ipv4Addr) -> Result<NextHop, RouteError> {
         let route = self
             .lookup_route_v4(dest_ip)

@@ -12,7 +12,7 @@ use {
     solana_rent::Rent,
     solana_sdk_ids::sysvar,
     solana_slot_hashes::SlotHashes,
-    solana_stake_interface::stake_history::StakeHistory,
+    solana_stake_history::StakeHistory,
     solana_svm_type_overrides::sync::Arc,
     solana_sysvar::SysvarSerialize,
     solana_sysvar_id::SysvarId,
@@ -367,8 +367,7 @@ pub mod get_sysvar_with_account_check {
 #[cfg(test)]
 mod tests {
     use {
-        super::*, solana_stake_interface::stake_history::SIZE as STAKE_HISTORY_ACCOUNT_SIZE,
-        test_case::test_case,
+        super::*, solana_stake_history::SIZE as STAKE_HISTORY_ACCOUNT_SIZE, test_case::test_case,
     };
 
     // sysvar cache provides the full account data of a sysvar

@@ -487,12 +487,6 @@ impl Stats {
                     i64
                 ),
                 (
-                    "disk_index_flush_file_us",
-                    disk.map(|disk| disk.stats.index.flush_file_us.swap(0, Ordering::Relaxed))
-                        .unwrap_or_default(),
-                    i64
-                ),
-                (
                     "disk_index_file_size",
                     disk.map(|disk| disk.stats.index.total_file_size.load(Ordering::Relaxed))
                         .unwrap_or_default(),
@@ -557,12 +551,6 @@ impl Stats {
                 (
                     "disk_data_resize_us",
                     disk.map(|disk| disk.stats.data.resize_us.swap(0, Ordering::Relaxed))
-                        .unwrap_or_default(),
-                    i64
-                ),
-                (
-                    "disk_data_flush_file_us",
-                    disk.map(|disk| disk.stats.data.flush_file_us.swap(0, Ordering::Relaxed))
                         .unwrap_or_default(),
                     i64
                 ),

@@ -2685,13 +2685,14 @@ mod tests {
     fn test_serialize_deserialize_account_storage_entries(num_storages: u64) {
         let temp_dir = tempfile::tempdir().unwrap();
         let bank_snapshot_dir = temp_dir.path();
+        let storage_dir = tempfile::tempdir().unwrap();
         let snapshot_slot = num_storages + 1 as Slot;
 
         // Create AccountStorageEntries
         let mut snapshot_storages = Vec::new();
         for i in 0..num_storages {
             let storage = Arc::new(AccountStorageEntry::new(
-                &PathBuf::new(),
+                storage_dir.path(),
                 i,        // Incrementing slot
                 i as u32, // Incrementing id
                 1024,
@@ -2727,6 +2728,7 @@ mod tests {
     fn test_serialize_obsolete_accounts_too_large_file() {
         let temp_dir = tempfile::tempdir().unwrap();
         let bank_snapshot_dir = temp_dir.path();
+        let storage_dir = tempfile::tempdir().unwrap();
         let num_storages = 10;
         let snapshot_slot = num_storages + 1 as Slot;
 
@@ -2734,7 +2736,7 @@ mod tests {
         let mut snapshot_storages = Vec::new();
         for i in 0..num_storages {
             let storage = Arc::new(AccountStorageEntry::new(
-                &PathBuf::new(),
+                storage_dir.path(),
                 i,        // Incrementing slot
                 i as u32, // Incrementing id
                 1024,
@@ -2762,6 +2764,7 @@ mod tests {
     fn test_deserialize_obsolete_accounts_too_large_file() {
         let temp_dir = tempfile::tempdir().unwrap();
         let bank_snapshot_dir = temp_dir.path();
+        let storage_dir = tempfile::tempdir().unwrap();
         let num_storages = 10;
         let snapshot_slot = num_storages + 1 as Slot;
 
@@ -2769,7 +2772,7 @@ mod tests {
         let mut snapshot_storages = Vec::new();
         for i in 0..num_storages {
             let storage = Arc::new(AccountStorageEntry::new(
-                &PathBuf::new(),
+                storage_dir.path(),
                 i,        // Incrementing slot
                 i as u32, // Incrementing id
                 1024,

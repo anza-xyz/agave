@@ -682,13 +682,17 @@ fn test_dead_fork_transaction_error() {
             &blockhash,
             hashes_per_tick.saturating_sub(1),
             vec![
-                system_transaction::transfer(&keypair1, &keypair2.pubkey(), 2, blockhash), // should be fine,
+                // valid transfer
+                system_transaction::transfer(&keypair1, &keypair2.pubkey(), 2, blockhash),
+                // unfunded fee-payer, successful no-op
                 system_transaction::transfer(
                     &missing_keypair,
                     &missing_keypair2.pubkey(),
                     2,
                     blockhash,
-                ), // should cause AccountNotFound error
+                ),
+                // invalid blockhash
+                system_transaction::transfer(&keypair1, &keypair2.pubkey(), 2, Hash::new_unique()),
             ],
         );
         entries_to_test_shreds(
@@ -703,7 +707,7 @@ fn test_dead_fork_transaction_error() {
     assert_matches!(
         res,
         Err(BlockstoreProcessorError::InvalidTransaction(
-            TransactionError::AccountNotFound
+            TransactionError::BlockhashNotFound
         ))
     );
 }
@@ -906,17 +910,17 @@ impl SlotStatusNotifierForTest {
 }
 
 impl SlotStatusNotifierInterface for SlotStatusNotifierForTest {
-    fn notify_slot_confirmed(&self, _slot: Slot, _parent: Option<Slot>) {}
+    fn notify_slot_confirmed(&self, _slot: Slot, _parent: Option<Slot>, _bank_id: BankId) {}
 
-    fn notify_slot_processed(&self, _slot: Slot, _parent: Option<Slot>) {}
+    fn notify_slot_processed(&self, _slot: Slot, _parent: Option<Slot>, _bank_id: BankId) {}
 
-    fn notify_slot_rooted(&self, _slot: Slot, _parent: Option<Slot>) {}
+    fn notify_slot_rooted(&self, _slot: Slot, _parent: Option<Slot>, _bank_id: BankId) {}
 
     fn notify_first_shred_received(&self, _slot: Slot) {}
 
     fn notify_completed(&self, _slot: Slot) {}
 
-    fn notify_created_bank(&self, _slot: Slot, _parent: Slot) {}
+    fn notify_created_bank(&self, _slot: Slot, _parent: Slot, _bank_id: BankId) {}
 
     fn notify_slot_dead(&self, slot: Slot, _parent: Slot, _error: String) {
         self.dead_slots.lock().unwrap().insert(slot);
@@ -999,12 +1003,12 @@ fn do_test_dead_slot_on_complete_bank(failure: CompleteBankFailure) {
             .or_insert_with(|| ForkProgress::new(bank.last_blockhash(), None, None, 0, 0, None));
         let tx = match failure {
             CompleteBankFailure::ReplayError => {
-                // trigger a replay error since from_keypair is not funded
+                // trigger a replay error since blockhash is invalid
                 system_transaction::transfer(
-                    &Keypair::new(),
+                    &funded_keypair,
                     &Keypair::new().pubkey(),
                     1,
-                    bank.last_blockhash(),
+                    Hash::new_unique(),
                 )
             }
             CompleteBankFailure::VerifyError => {

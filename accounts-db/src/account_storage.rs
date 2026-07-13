@@ -514,12 +514,7 @@ fn select_from_range_with_start_end_rates(
 
 #[cfg(test)]
 mod tests {
-    use {
-        super::*,
-        crate::accounts_file::AccountsFileProvider,
-        std::{iter, path::Path},
-        tempfile::TempDir,
-    };
+    use {super::*, crate::accounts_file::AccountsFileProvider, std::iter, tempfile::TempDir};
 
     fn new_test_storage() -> (TempDir, Arc<AccountStorageEntry>) {
         new_test_storage_with(0, 0)
@@ -551,19 +546,19 @@ mod tests {
         assert!(storage.get_account_storage_entry(slot, id).is_none());
 
         // add a map store
-        let common_store_path = Path::new("");
+        let common_store_path = TempDir::new().unwrap();
         let store_file_size = 4000;
         let store_file_size2 = store_file_size * 2;
         // 2 append vecs with same id, but different sizes
         let entry = Arc::new(AccountStorageEntry::new(
-            common_store_path,
+            common_store_path.path(),
             slot,
             id,
             store_file_size,
             AccountsFileProvider::AppendVec,
         ));
         let entry2 = Arc::new(AccountStorageEntry::new(
-            common_store_path,
+            common_store_path.path(),
             slot,
             id,
             store_file_size2,
@@ -810,13 +805,14 @@ mod tests {
     fn test_get_if() {
         let storage = AccountStorage::default();
         assert!(storage.get_if(|_, _| true).is_empty());
+        let common_store_path = TempDir::new().unwrap();
 
         // add some entries
         let ids = [123, 456, 789];
         for id in ids {
             let slot = id as Slot;
             let entry = AccountStorageEntry::new(
-                Path::new(""),
+                common_store_path.path(),
                 slot,
                 id,
                 5000,

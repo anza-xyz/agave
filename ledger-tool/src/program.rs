@@ -75,9 +75,9 @@ fn load_accounts(path: &Path) -> Result<Input> {
     let file = File::open(path).unwrap();
     let input: Input = serde_json::from_reader(file)?;
     info!("Program input:");
-    info!("program_id: {}", &input.program_id);
-    info!("accounts {:?}", &input.accounts);
-    info!("instruction_data {:?}", &input.instruction_data);
+    info!("program_id: {}", input.program_id);
+    info!("accounts {:?}", input.accounts);
+    info!("instruction_data {:?}", input.instruction_data);
     info!("----------------------------------------");
     Ok(input)
 }

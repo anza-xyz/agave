@@ -22,7 +22,6 @@ use {
         },
     },
     solana_clock::Slot,
-    solana_core::banking_trace::BANKING_TRACE_DIR_DEFAULT_BYTE_LIMIT,
     solana_epoch_schedule::MINIMUM_SLOTS_PER_EPOCH,
     solana_faucet::faucet::{self, FAUCET_PORT},
     solana_hash::Hash,
@@ -163,6 +162,14 @@ fn deprecated_arguments() -> Vec<DeprecatedArg> {
             )
             .conflicts_with("accounts_db_write_cache_limit"),
         replaced_by: "accounts-db-write-cache-limit",
+    );
+    add_arg!(
+        // deprecated in v4.3.0
+        Arg::with_name("disable_banking_trace")
+            .long("disable-banking-trace")
+            .conflicts_with("banking_trace_dir_byte_limit")
+            .takes_value(false)
+            .help("Disables the banking trace. No-op, banking trace is disabled by default."),
     );
     add_arg!(
         // deprecated in v4.0.0
@@ -356,7 +363,7 @@ impl DefaultArgs {
             tpu_max_fwd_unstaked_connections: 0.to_string(),
             tpu_max_streams_per_ms: DEFAULT_MAX_STREAMS_PER_MS.to_string(),
             num_quic_endpoints: DEFAULT_QUIC_ENDPOINTS.to_string(),
-            banking_trace_dir_byte_limit: BANKING_TRACE_DIR_DEFAULT_BYTE_LIMIT.to_string(),
+            banking_trace_dir_byte_limit: 0.to_string(),
             block_production_pacing_fill_time_millis: BankingStage::default_fill_time_millis()
                 .to_string(),
             thread_args: DefaultThreadArgs::default(),

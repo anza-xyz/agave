@@ -23,9 +23,6 @@ use {
     log::*,
     scopeguard::defer,
     solana_clock::Slot,
-    solana_ledger::blockstore_processor::{
-        TransactionBatchWithIndexes, TransactionStatusSender, execute_batch,
-    },
     solana_pubkey::Pubkey,
     solana_runtime::{
         installed_scheduler_pool::{
@@ -34,6 +31,9 @@ use {
             UninstalledScheduler, UninstalledSchedulerBox, initialized_result_with_timings,
         },
         prioritization_fee_cache::PrioritizationFeeCache,
+        transaction_execution::{
+            TransactionBatchWithIndexes, TransactionStatusSender, execute_batch,
+        },
         vote_sender_types::{ReplayVoteSendType, ReplayVoteSender},
     },
     solana_runtime_transaction::runtime_transaction::RuntimeTransaction,
@@ -585,7 +585,6 @@ impl TaskHandler for DefaultTaskHandler {
             timings,
             handler_context.log_messages_bytes_limit,
             handler_context.prioritization_fee_cache.as_deref(),
-            None::<fn(&_) -> _>,
         );
         sleepless_testing::at(CheckPoint::TaskHandled(task_id));
     }
@@ -1904,6 +1903,7 @@ mod tests {
         crate::sleepless_testing,
         assert_matches::assert_matches,
         solana_clock::Slot,
+        solana_hash::Hash,
         solana_keypair::Keypair,
         solana_pubkey::Pubkey,
         solana_runtime::{
@@ -2760,12 +2760,11 @@ mod tests {
         let context = SchedulingContext::new(bank.clone());
         let scheduler = pool.take_scheduler(context).unwrap();
 
-        let unfunded_keypair = Keypair::new();
         let bad_tx = RuntimeTransaction::from_transaction_for_tests(system_transaction::transfer(
-            &unfunded_keypair,
+            &mint_keypair,
             &solana_pubkey::new_rand(),
             2,
-            genesis_config.hash(),
+            Hash::new_unique(),
         ));
         assert_eq!(bank.transaction_count(), 0);
         scheduler.schedule_execution(bad_tx, 0).unwrap();
@@ -2790,7 +2789,7 @@ mod tests {
         if extra_tx_after_failure {
             assert_matches!(
                 bank.schedule_transaction_executions([(good_tx_after_bad_tx, 1)].into_iter()),
-                Err(TransactionError::AccountNotFound)
+                Err(TransactionError::BlockhashNotFound)
             );
         }
         // transaction_count should remain same as scheduler should be bailing out.
@@ -2803,7 +2802,7 @@ mod tests {
         assert_eq!(pool_raw.trashed_scheduler_inners.lock().unwrap().len(), 0);
         assert_matches!(
             bank.wait_for_completed_scheduler(),
-            Some((Err(TransactionError::AccountNotFound), _timings))
+            Some((Err(TransactionError::BlockhashNotFound), _timings))
         );
 
         // Block solScCleaner until we see trashed schedler...

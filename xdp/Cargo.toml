@@ -20,7 +20,6 @@ agave-unstable-api = []
 agave-cpu-utils = { workspace = true }
 arc-swap = { workspace = true }
 bytes = { workspace = true }
-crossbeam-channel = { workspace = true }
 libc = { workspace = true }
 log = { workspace = true }
 thiserror = { workspace = true }
@@ -30,6 +29,7 @@ agave-xdp-ebpf = { workspace = true }
 arrayvec = { workspace = true }
 aya = { workspace = true }
 caps = { workspace = true }
+crossbeam-queue = { workspace = true }
 
 [target.'cfg(target_os = "linux")'.dev-dependencies]
 aya = { workspace = true, features = ["test-helpers"] }

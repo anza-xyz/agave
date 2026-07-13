@@ -3788,7 +3788,7 @@ fn test_program_fees() {
         &sanitized_message,
         fee_structure.lamports_per_signature,
         prioritization_fee,
-        bank.feature_set.as_ref().into(),
+        bank.fee_features(),
     );
     bank_client
         .send_and_confirm_message(&[&mint_keypair], message)
@@ -3819,7 +3819,7 @@ fn test_program_fees() {
         &sanitized_message,
         fee_structure.lamports_per_signature,
         prioritization_fee,
-        bank.feature_set.as_ref().into(),
+        bank.fee_features(),
     );
     assert!(expected_normal_fee < expected_prioritized_fee);
 

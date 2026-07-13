@@ -154,11 +154,10 @@ use {
     solana_signature::Signature,
     solana_slot_hashes::SlotHashes,
     solana_slot_history::{Check, SlotHistory},
-    solana_stake_interface::{
-        stake_history::{SIZE as STAKE_HISTORY_ACCOUNT_SIZE, StakeHistory},
-        state::Delegation,
-        sysvar::stake_history,
+    solana_stake_history::{
+        SIZE as STAKE_HISTORY_ACCOUNT_SIZE, StakeHistory, sysvar as stake_history,
     },
+    solana_stake_interface::state::Delegation,
     solana_svm::{
         account_loader::LoadedTransaction,
         account_overrides::AccountOverrides,
@@ -2669,7 +2668,7 @@ impl Bank {
         );
         accounts_to_store.push((incinerator::id(), incinerator_account));
 
-        self.store_accounts((self.slot, accounts_to_store.as_slice()));
+        self.store_accounts((self.slot, accounts_to_store.as_slice()), None);
         info!(
             "Transferred total VAT of {total_vat} lamports to incinerator from staked vote \
              accounts"
@@ -3316,6 +3315,11 @@ impl Bank {
         self.fee_rate_governor.lamports_per_signature
     }
 
+    /// Convert Agave's active feature set into the fee crate's narrowed feature view.
+    pub fn fee_features(&self) -> FeeFeatures {
+        FeeFeatures {}
+    }
+
     pub fn get_lamports_per_signature_for_blockhash(&self, hash: &Hash) -> Option<u64> {
         let blockhash_queue = self.blockhash_queue.read().unwrap();
         blockhash_queue.get_lamports_per_signature(hash)
@@ -3338,7 +3342,7 @@ impl Bank {
             message,
             self.fee_structure().lamports_per_signature,
             transaction_configuration.priority_fee_lamports,
-            FeeFeatures::from(self.feature_set.as_ref()),
+            self.fee_features(),
         ))
     }
 
@@ -3841,6 +3845,7 @@ impl Bank {
                 drop_on_failure: false,
                 all_or_nothing: false,
                 strict_nonce_size_check: true,
+                drop_noop_transactions: true,
             },
         );
 
@@ -3887,6 +3892,16 @@ impl Bank {
                         vec![],
                         Err(fees_only_tx.load_error),
                         Some(fees_only_tx.fee_details.total_fee()),
+                        None,
+                        None,
+                        None,
+                        executed_units,
+                        loaded_accounts_data_size,
+                    ),
+                    ProcessedTransaction::NoOp(no_op_tx) => (
+                        vec![],
+                        Err(no_op_tx.validation_error),
+                        None,
                         None,
                         None,
                         None,
@@ -4348,12 +4363,15 @@ impl Bank {
 
             let to_store = (self.slot(), accounts_to_store.as_slice());
             self.update_bank_hash_stats(&to_store);
-            self.enqueue_accounts_lt_hash_updates(&to_store);
+            self.enqueue_on_chain_accounts_lt_hash_updates(&to_store);
             // See https://github.com/solana-labs/solana/pull/31455 for discussion
             // on *not* updating the index within a threadpool.
-            self.rc
-                .accounts
-                .store_accounts_seq(to_store, transactions.as_deref(), &self.ancestors);
+            self.rc.accounts.store_accounts_seq(
+                to_store,
+                self.bank_id(),
+                transactions.as_deref(),
+                &self.ancestors,
+            );
         });
 
         // Cached vote and stake accounts are synchronized with accounts-db
@@ -4477,6 +4495,19 @@ impl Bank {
                             .1
                             .lamports(),
                     }),
+                    ProcessedTransaction::NoOp(no_op_tx) => Ok(CommittedTransaction {
+                        status: Err(no_op_tx.validation_error),
+                        log_messages: None,
+                        inner_instructions: None,
+                        return_data: None,
+                        executed_units,
+                        fee_details: FeeDetails::default(),
+                        loaded_account_stats: TransactionLoadedAccountsStats {
+                            loaded_accounts_count: 0,
+                            loaded_accounts_data_size,
+                        },
+                        fee_payer_post_balance: no_op_tx.fee_payer_balance.unwrap_or(0),
+                    }),
                 }
             })
             .collect()
@@ -4524,21 +4555,18 @@ impl Bank {
             recording_config,
             timings,
             log_messages_bytes_limit,
-            None::<fn(&mut _, &_) -> _>,
+            None::<fn(&_) -> _>,
         )
         .unwrap()
     }
 
-    pub fn load_execute_and_commit_transactions_with_pre_commit_callback<'a>(
-        &'a self,
+    pub fn load_execute_and_commit_transactions_with_pre_commit_callback(
+        &self,
         batch: &TransactionBatch<impl TransactionWithMeta>,
         recording_config: ExecutionRecordingConfig,
         timings: &mut ExecuteTimings,
         log_messages_bytes_limit: Option<usize>,
-        pre_commit_callback: impl FnOnce(
-            &mut ExecuteTimings,
-            &[TransactionProcessingResult],
-        ) -> PreCommitResult<'a>,
+        pre_commit_callback: impl FnOnce(&[TransactionProcessingResult]) -> Result<()>,
     ) -> Result<(Vec<TransactionCommitResult>, Option<BalanceCollector>)> {
         self.do_load_execute_and_commit_transactions_with_pre_commit_callback(
             batch,
@@ -4549,15 +4577,13 @@ impl Bank {
         )
     }
 
-    fn do_load_execute_and_commit_transactions_with_pre_commit_callback<'a>(
-        &'a self,
+    fn do_load_execute_and_commit_transactions_with_pre_commit_callback(
+        &self,
         batch: &TransactionBatch<impl TransactionWithMeta>,
         recording_config: ExecutionRecordingConfig,
         timings: &mut ExecuteTimings,
         log_messages_bytes_limit: Option<usize>,
-        pre_commit_callback: Option<
-            impl FnOnce(&mut ExecuteTimings, &[TransactionProcessingResult]) -> PreCommitResult<'a>,
-        >,
+        pre_commit_callback: Option<impl FnOnce(&[TransactionProcessingResult]) -> Result<()>>,
     ) -> Result<(Vec<TransactionCommitResult>, Option<BalanceCollector>)> {
         let LoadAndExecuteTransactionsOutput {
             processing_results,
@@ -4577,25 +4603,20 @@ impl Bank {
                 drop_on_failure: false,
                 all_or_nothing: false,
                 strict_nonce_size_check: false,
+                drop_noop_transactions: false,
             },
         );
 
-        // pre_commit_callback could initiate an atomic operation (i.e. poh recording with block
-        // producing unified scheduler). in that case, it returns Some(freeze_lock), which should
-        // unlocked only after calling commit_transactions() immediately after calling the
-        // callback.
-        let freeze_lock = if let Some(pre_commit_callback) = pre_commit_callback {
-            pre_commit_callback(timings, &processing_results)?
-        } else {
-            None
-        };
+        if let Some(pre_commit_callback) = pre_commit_callback {
+            let () = pre_commit_callback(&processing_results)?;
+        }
+
         let commit_results = self.commit_transactions(
             batch.sanitized_transactions(),
             processing_results,
             &processed_counts,
             timings,
         );
-        drop(freeze_lock);
         Ok((commit_results, balance_collector))
     }
 
@@ -4713,10 +4734,19 @@ impl Bank {
     /// fn store the single `account` with `pubkey`.
     /// Uses `store_accounts`, which works on a vector of accounts.
     pub fn store_account(&self, pubkey: &Pubkey, account: &AccountSharedData) {
-        self.store_accounts((self.slot(), &[(pubkey, account)][..]))
+        self.store_accounts((self.slot(), &[(pubkey, account)][..]), None)
     }
 
-    pub fn store_accounts<'a>(&self, accounts: impl StorableAccounts<'a>) {
+    // Store `accounts`.
+    //
+    // - Callers must ensure there are no duplicates in `accounts`.
+    // - `thread_pool_for_loading_accounts` is used for accounts lt hashing,
+    //   to load the previous version of accounts in parallel.
+    pub fn store_accounts<'a>(
+        &self,
+        accounts: impl StorableAccounts<'a>,
+        thread_pool_for_loading_accounts: Option<&ThreadPool>,
+    ) {
         assert!(!self.freeze_started());
         let mut m = Measure::start("stakes_cache.check_and_store");
         let new_warmup_cooldown_rate_epoch = self.new_warmup_cooldown_rate_epoch();
@@ -4732,7 +4762,7 @@ impl Bank {
                 )
             })
         });
-        self.store_accounts_without_stakes_cache(accounts);
+        self.store_accounts_without_stakes_cache(accounts, thread_pool_for_loading_accounts);
         m.stop();
         self.rc
             .accounts
@@ -4743,16 +4773,28 @@ impl Bank {
     }
 
     fn store_account_without_stakes_cache(&self, pubkey: &Pubkey, account: &AccountSharedData) {
-        self.store_accounts_without_stakes_cache((self.slot(), &[(pubkey, account)][..]))
+        self.store_accounts_without_stakes_cache((self.slot(), &[(pubkey, account)][..]), None)
     }
 
-    fn store_accounts_without_stakes_cache<'a>(&self, accounts: impl StorableAccounts<'a>) {
+    // Store `accounts`, without updating the stakes cache.
+    //
+    // - Callers must ensure there are no duplicates in `accounts`.
+    // - `thread_pool_for_loading_accounts` is used for accounts lt hashing,
+    //   to load the previous version of accounts in parallel.
+    fn store_accounts_without_stakes_cache<'a>(
+        &self,
+        accounts: impl StorableAccounts<'a>,
+        thread_pool_for_loading_accounts: Option<&ThreadPool>,
+    ) {
         assert!(!self.freeze_started());
         self.update_bank_hash_stats(&accounts);
-        self.enqueue_accounts_lt_hash_updates(&accounts);
+        self.enqueue_off_chain_accounts_lt_hash_updates(
+            &accounts,
+            thread_pool_for_loading_accounts,
+        );
         self.rc
             .accounts
-            .store_accounts_par(accounts, None, &self.ancestors);
+            .store_accounts_par(accounts, self.bank_id(), None, &self.ancestors);
     }
 
     pub fn force_flush_accounts_cache(&self) {

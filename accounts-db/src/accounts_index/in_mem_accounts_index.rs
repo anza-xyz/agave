@@ -778,7 +778,7 @@ impl<T: IndexValue, U: DiskIndexValue + From<T> + Into<T>> InMemAccountsIndex<T,
                 // Replace the item
                 let reclaim_item = mem::replace(cur_item, (slot, account_info));
                 match reclaim {
-                    UpsertReclaim::ReclaimOldSlots | UpsertReclaim::PopulateReclaims => {
+                    UpsertReclaim::ReclaimOldSlots => {
                         reclaims.push(reclaim_item);
                     }
                     UpsertReclaim::IgnoreReclaims => {
@@ -2051,185 +2051,6 @@ mod tests {
     }
 
     #[test]
-    fn test_update_slot_list_other_populate_reclaims() {
-        agave_logger::setup();
-        let reclaim = UpsertReclaim::PopulateReclaims;
-        let new_slot = 5;
-        let info = 1;
-        let other_value = info + 1;
-        let at_new_slot = (new_slot, info);
-        let unique_other_slot = new_slot + 1;
-        for other_slot in [Some(new_slot), Some(unique_other_slot), None] {
-            let mut reclaims = ReclaimsSlotList::new();
-            let entry = AccountMapEntry::empty_for_tests();
-            let mut slot_list = entry.slot_list_write_lock();
-            // upserting into empty slot_list, so always addref
-            assert_eq!(
-                InMemAccountsIndex::<u64, u64>::update_slot_list(
-                    &mut slot_list,
-                    new_slot,
-                    info,
-                    other_slot,
-                    &mut reclaims,
-                    reclaim
-                ),
-                (1, 1),
-                "other_slot: {other_slot:?}"
-            );
-            assert_eq!(slot_list.clone_list(), SlotList::from([at_new_slot]));
-            assert!(reclaims.is_empty());
-        }
-
-        // replace other
-        let entry = AccountMapEntry::new(
-            SlotList::from([(unique_other_slot, other_value)]),
-            1,
-            AccountMapEntryMeta::default(),
-        );
-        let mut slot_list = entry.slot_list_write_lock();
-        let expected_reclaims = ReclaimsSlotList::from(slot_list.as_ref());
-        let other_slot = Some(unique_other_slot);
-        let mut reclaims = ReclaimsSlotList::new();
-        assert_eq!(
-            // upserting into slot_list that does NOT contain an entry at 'new_slot'
-            // but, it DOES contain an entry at other_slot, so we do NOT add-ref. The assumption is that 'other_slot' is going away
-            // and that the previously held add-ref is now used by 'new_slot'
-            InMemAccountsIndex::<u64, u64>::update_slot_list(
-                &mut slot_list,
-                new_slot,
-                info,
-                other_slot,
-                &mut reclaims,
-                reclaim
-            ),
-            (0, 1),
-            "other_slot: {other_slot:?}"
-        );
-        assert_eq!(slot_list.clone_list(), SlotList::from([at_new_slot]));
-        assert_eq!(reclaims, expected_reclaims);
-
-        // nothing will exist at this slot
-        let missing_other_slot = unique_other_slot + 1;
-        let ignored_slot = 10; // bigger than is used elsewhere in the test
-        let ignored_value = info + 10;
-
-        // build a list of possible contents in the slot_list prior to calling 'update_slot_list'
-        let possible_initial_slot_list_contents = {
-            let mut possible_initial_slot_list_contents = Vec::new();
-
-            // Add ignored slot account_info entries (slots with larger slot #s than 'new_slot' or 'other_slot')
-            possible_initial_slot_list_contents
-                .extend((0..3).map(|i| (ignored_slot + i, ignored_value + i)));
-
-            // Add account_info for 'new_slot'
-            possible_initial_slot_list_contents.push(at_new_slot);
-            // Add account_info for 'other_slot'
-            possible_initial_slot_list_contents.push((unique_other_slot, other_value));
-            possible_initial_slot_list_contents
-        };
-
-        /*
-         * loop over all possible permutations of 'possible_initial_slot_list_contents'
-         * some examples:
-         * []
-         * [other]
-         * [other, new_slot]
-         * [new_slot, other]
-         * [dummy0, new_slot, dummy1, other] (and all permutation of this order)
-         * [other, dummy1, new_slot] (and all permutation of this order)
-         * ...
-         * [dummy0, new_slot, dummy1, other_slot, dummy2] (and all permutation of this order)
-         */
-        let mut attempts = 0;
-        // loop over each initial size of 'slot_list'
-        for initial_slot_list_len in 0..=possible_initial_slot_list_contents.len() {
-            // loop over every permutation of possible_initial_slot_list_contents within a list of len 'initial_slot_list_len'
-            for content_source_indexes in
-                (0..possible_initial_slot_list_contents.len()).permutations(initial_slot_list_len)
-            {
-                // loop over each possible parameter for 'other_slot'
-                for other_slot in [
-                    Some(new_slot),
-                    Some(unique_other_slot),
-                    Some(missing_other_slot),
-                    None,
-                ] {
-                    if other_slot.is_some()
-                        && new_slot != other_slot.unwrap()
-                        && slot_list.contains(&(new_slot, info))
-                    {
-                        // skip this permutation if 'new_slot' is already in the slot_list, but we are trying to reclaim other slot
-                        // This is an assert case as only one of new_slot and other_slot should be in the slot list
-                        continue;
-                    }
-
-                    attempts += 1;
-                    // initialize slot_list prior to call to 'InMemAccountsIndex::update_slot_list'
-                    // by inserting each possible entry at each possible position
-                    let entry = AccountMapEntry::new(
-                        content_source_indexes
-                            .iter()
-                            .map(|i| possible_initial_slot_list_contents[*i])
-                            .collect(),
-                        1,
-                        AccountMapEntryMeta::default(),
-                    );
-                    let mut slot_list = entry.slot_list_write_lock();
-                    let mut expected = slot_list.clone_list();
-                    let original = slot_list.clone_list();
-                    let mut reclaims = ReclaimsSlotList::new();
-
-                    let (result, _len) = InMemAccountsIndex::<u64, u64>::update_slot_list(
-                        &mut slot_list,
-                        new_slot,
-                        info,
-                        other_slot,
-                        &mut reclaims,
-                        reclaim,
-                    );
-                    let mut slot_list = slot_list.clone_list();
-
-                    // calculate expected reclaims
-                    let mut expected_reclaims = ReclaimsSlotList::new();
-                    expected.retain(|(slot, info)| {
-                        let retain = slot != &new_slot && Some(*slot) != other_slot;
-                        if !retain {
-                            expected_reclaims.push((*slot, *info));
-                        }
-                        retain
-                    });
-                    expected.push((new_slot, info));
-
-                    // Calculate the expected ref count change. It is expected to be 1 - the number of reclaims
-                    let expected_result = 1 - expected_reclaims.len() as i32;
-                    assert_eq!(
-                        expected_result, result,
-                        "return value different. other: {other_slot:?}, {expected:?}, \
-                         {slot_list:?}, original: {original:?}"
-                    );
-                    // sort for easy comparison
-                    expected_reclaims.sort_unstable();
-                    reclaims.sort_unstable();
-                    assert_eq!(
-                        expected_reclaims, reclaims,
-                        "reclaims different. other: {other_slot:?}, {expected:?}, {slot_list:?}, \
-                         original: {original:?}"
-                    );
-                    // sort for easy comparison
-                    slot_list.sort_unstable();
-                    expected.sort_unstable();
-                    assert_eq!(
-                        slot_list, expected,
-                        "slot_list different. other: {other_slot:?}, {expected:?}, {slot_list:?}, \
-                         original: {original:?}"
-                    );
-                }
-            }
-        }
-        assert_eq!(attempts, 652); // complicated permutations, so make sure we ran the right #
-    }
-
-    #[test]
     fn test_gather_possible_flush_evict_candidates() {
         const AGE_MAX: Age = 255;
         let ref_count = 1;
@@ -2516,7 +2337,6 @@ mod tests {
 
     #[test]
     fn test_age() {
-        agave_logger::setup();
         let test = new_for_test::<u64>();
         assert!(test.get_should_age(test.storage.current_age()));
         assert_eq!(test.storage.count_buckets_flushed(), 0);
@@ -2539,7 +2359,6 @@ mod tests {
 
     #[test]
     fn test_update_slot_list_other_reclaim_old_slots() {
-        agave_logger::setup();
         let reclaim = UpsertReclaim::ReclaimOldSlots;
         let new_slot = 5;
         let info = 1;
