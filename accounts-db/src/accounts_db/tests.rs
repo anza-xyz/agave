@@ -6353,15 +6353,15 @@ fn test_shrink_collect_simple() {
                                 shrink_collect.tombstones_total_bytes,
                                 expected_tombstones.len() * AppendVec::calculate_stored_size(0)
                             );
-                            // expected_capacity is determined by what size append vec gets created when the write cache is flushed to an append vec.
-                            let mut expected_capacity =
+                            // expected_written_bytes is determined by what size append vec gets created when the write cache is flushed to an append vec.
+                            let mut expected_written_bytes =
                                 (account_count * AppendVec::calculate_stored_size(space)) as u64;
                             if append_opposite_zero_lamport_account && space != 0 {
                                 // zero lamport accounts always write space = 0
-                                expected_capacity -= space as u64;
+                                expected_written_bytes -= space as u64;
                             }
 
-                            assert_eq!(shrink_collect.capacity, expected_capacity);
+                            assert_eq!(shrink_collect.written_bytes, expected_written_bytes);
                             assert_eq!(shrink_collect.total_starting_accounts, account_count);
                             assert_eq!(
                                 shrink_collect.all_are_zero_lamports,

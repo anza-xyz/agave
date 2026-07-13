@@ -489,7 +489,7 @@ impl AccountsDb {
         // be re-packed together with other older/colder accounts.
         accounts_to_combine
             .accounts_to_combine
-            .sort_unstable_by_key(|a| a.capacity);
+            .sort_unstable_by_key(|a| a.written_bytes);
 
         // pack the accounts with 1 ref or refs > 1 but the slot we're packing is the highest alive slot for the pubkey.
         // Note the `chain` below combining the 2 types of refs.
@@ -3803,7 +3803,7 @@ mod tests {
                 // irrelevant fields
                 zero_lamport_single_ref_pubkeys: Vec::default(),
                 slot: 0,
-                capacity: 0,
+                written_bytes: 0,
                 alive_accounts: ShrinkCollectAliveSeparatedByRefs {
                     one_ref: AliveAccounts::default(),
                     many_refs_this_is_newest_alive: AliveAccounts::default(),
