@@ -6390,6 +6390,77 @@ fn test_reduce_slot_time_features() {
 }
 
 #[test]
+fn test_vat_burn_leaves_stale_lamports_in_epoch_stakes_snapshot() {
+    let voting_keypair = ValidatorVoteKeypairs::new_rand();
+    let validator_keypairs = [&voting_keypair];
+    let vote_pubkey = voting_keypair.vote_keypair.pubkey();
+
+    let GenesisConfigInfo {
+        mut genesis_config, ..
+    } = genesis_utils::create_genesis_config_with_vote_accounts_and_cluster_type(
+        1_000 * LAMPORTS_PER_SOL,
+        &validator_keypairs,
+        vec![minimum_vote_account_balance_for_vat(100)],
+        ClusterType::Development,
+        &FeatureSet::default(),
+        false,
+    );
+    activate_feature(&mut genesis_config, feature_set::alpenglow::id());
+    activate_feature(
+        &mut genesis_config,
+        feature_set::validator_admission_ticket::id(),
+    );
+
+    // Parent bank at genesis (epoch 0), vote account fully funded, no burn yet.
+    let (parent_bank, _bank_forks) = Bank::new_with_bank_forks_for_tests(&genesis_config);
+    let lamports_before = parent_bank.get_balance(&vote_pubkey);
+    assert!(lamports_before >= parent_bank.vat_to_burn_per_epoch());
+
+    // Cross into epoch 1: `new_from_parent` -> `process_new_epoch` ->
+    // `update_epoch_stakes` -> `maybe_burn_vat_from_staked_accounts` runs
+    // automatically during construction.
+    let epoch_1_slot = parent_bank.epoch_schedule().get_first_slot_in_epoch(1);
+    let bank = Bank::new_from_parent(parent_bank, SlotLeader::default(), epoch_1_slot);
+    let vat = bank.vat_to_burn_per_epoch();
+
+    // View A: live accounts-db — burned (correct).
+    let live_lamports = bank.get_balance(&vote_pubkey);
+    assert_eq!(
+        live_lamports,
+        lamports_before - vat,
+        "live account should be debited by one VAT"
+    );
+
+    // View B: stakes cache — `store_accounts` updated it (correct).
+    let stakes_cache_lamports = bank
+        .get_vote_account(&vote_pubkey)
+        .expect("vote account in stakes cache")
+        .lamports();
+    assert_eq!(
+        stakes_cache_lamports, live_lamports,
+        "stakes cache should match the live (post-burn) balance"
+    );
+
+    // View C: the epoch_stakes snapshot inserted for the burned epoch — STALE.
+    // The snapshot is keyed by the leader-schedule epoch computed for this slot.
+    let snapshot_epoch = bank.get_leader_schedule_epoch(bank.slot());
+    let snapshot_lamports = bank
+        .epoch_stakes(snapshot_epoch)
+        .expect("epoch_stakes snapshot exists for the burned epoch")
+        .stakes()
+        .vote_accounts()
+        .get(&vote_pubkey)
+        .expect("vote account present in epoch_stakes snapshot")
+        .lamports();
+
+    // The fix: the snapshot now correctly holds the post-burn balance.
+    assert_eq!(
+        snapshot_lamports, live_lamports,
+        "epoch_stakes snapshot should reflect the post-burn lamports"
+    );
+}
+
+#[test]
 fn test_vat_burn_slot_params() {
     let voting_keypair = ValidatorVoteKeypairs::new_rand();
     let validator_keypairs = [&voting_keypair];

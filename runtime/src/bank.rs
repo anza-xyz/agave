@@ -2593,6 +2593,18 @@ impl Bank {
 
             self.maybe_burn_vat_from_staked_accounts(&new_epoch_stakes);
 
+            let final_epoch_stakes = if self.feature_set.snapshot().alpenglow
+                && self.feature_set.snapshot().validator_admission_ticket
+            {
+                // We burned VAT in AccountsDB, so the previous snapshot is now stale.
+                // Re-fetch the updated balances directly from the updated stakes cache.
+                let stakes = self.get_top_epoch_stakes();
+                let stakes = SerdeStakesToStakeFormat::from(stakes);
+                VersionedEpochStakes::new(stakes, leader_schedule_epoch)
+            } else {
+                new_epoch_stakes
+            };
+
             // It is expensive to log the details of epoch stakes. Only log them at "trace"
             // level for debugging purpose.
             if log::log_enabled!(log::Level::Trace) {
@@ -2606,7 +2618,7 @@ impl Bank {
                 trace!("new epoch stakes, stakes: {vote_stakes:#?}");
             }
             self.epoch_stakes
-                .insert(leader_schedule_epoch, new_epoch_stakes);
+                .insert(leader_schedule_epoch, final_epoch_stakes);
         }
     }
 
