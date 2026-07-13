@@ -510,7 +510,6 @@ impl CrdsGossipPull {
         let mut dropped_requests = 0usize;
         let mut total_skipped = 0usize;
         let crds = crds.read().unwrap();
-        let crds_len = crds.len();
         let apply_filter = |request: &PullRequest| {
             if output_size_limit == 0 {
                 return Vec::default();
@@ -521,8 +520,9 @@ impl CrdsGossipPull {
                 dropped_requests += 1;
                 return Vec::default();
             }
+            let scan_len = crds.filter_bitmask_scan_count(filter.mask, filter.mask_bits);
             // Charge only requests that passed cheaper pre-scan checks.
-            if !try_consume_scan_budget(request, crds_len) {
+            if !try_consume_scan_budget(request, scan_len) {
                 return Vec::default();
             }
             let caller_wallclock = caller_wallclock.checked_add(jitter).unwrap_or(0);
