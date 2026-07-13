@@ -6751,12 +6751,11 @@ impl AccountsDb {
         for slot in &slots {
             let entry = self.storage.get_slot_storage_entry(*slot).unwrap();
             info!(
-                "  slot: {} id: {} count: {} len: {} capacity: {}",
+                "  slot: {} id: {} count: {} len: {}",
                 slot,
                 entry.id(),
                 entry.count(),
                 entry.accounts.len(),
-                entry.accounts.capacity(),
             );
         }
     }
