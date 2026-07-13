@@ -25,7 +25,7 @@ use {
     arrayvec::ArrayVec,
     aya::Ebpf,
     log::info,
-    std::{net::Ipv4Addr, thread::Builder},
+    std::{hint, net::Ipv4Addr, thread::Builder, time::Instant},
 };
 
 #[cfg(target_os = "linux")]
@@ -141,6 +141,15 @@ pub enum TrySendError<T> {
     Disconnected(T, usize),
 }
 
+/// Error returned when a timed XDP send does not enqueue every destination.
+///
+/// The `usize` is the number of unsent destinations.
+#[derive(Debug)]
+pub enum SendTimeoutError<T> {
+    Timeout(T, usize),
+    Disconnected(T, usize),
+}
+
 #[cfg(target_os = "linux")]
 #[derive(Clone)]
 pub struct XdpSender {
@@ -226,6 +235,66 @@ impl XdpSender {
         {
             let _ = sender_index;
             Err(TrySendError::Disconnected(packet, 0))
+        }
+    }
+
+    /// Sends a `packet`.
+    ///
+    /// If sending takes longer than `timeout`, the operation is aborted and an error is returned.
+    pub fn send_timeout(
+        &self,
+        sender_index: usize,
+        packet: BytesTxPacket,
+        timeout: Duration,
+    ) -> Result<(), SendTimeoutError<BytesTxPacket>> {
+        #[cfg(target_os = "linux")]
+        {
+            const SPINS_BEFORE_YIELD: usize = 64;
+
+            let started = Instant::now();
+            let idx = sender_index
+                .checked_rem(self.queues.len())
+                .expect("XdpSender::queues should not be empty");
+            let queue = &self.queues[idx];
+            let router = self.atomic_router.load();
+            let mut dst_index = 0;
+            let mut spins = 0;
+
+            while dst_index < packet.dst_addrs.as_ref().len() {
+                let addr = packet.dst_addrs.as_ref()[dst_index];
+                #[allow(clippy::arithmetic_side_effects)]
+                match self.try_send_one(queue, &router, &packet, addr) {
+                    Ok(()) => {
+                        dst_index += 1;
+                        spins = 0;
+                    }
+                    Err(tx_loop::TrySendError::Disconnected(())) => {
+                        let num_unsent = packet.dst_addrs.as_ref().len().saturating_sub(dst_index);
+                        return Err(SendTimeoutError::Disconnected(packet, num_unsent));
+                    }
+                    Err(tx_loop::TrySendError::Full(())) => {
+                        if started.elapsed() >= timeout {
+                            let num_unsent =
+                                packet.dst_addrs.as_ref().len().saturating_sub(dst_index);
+                            return Err(SendTimeoutError::Timeout(packet, num_unsent));
+                        }
+                        if spins < SPINS_BEFORE_YIELD {
+                            spins += 1;
+                            hint::spin_loop();
+                        } else {
+                            spins = 0;
+                            thread::yield_now();
+                        }
+                    }
+                }
+            }
+
+            Ok(())
+        }
+        #[cfg(not(target_os = "linux"))]
+        {
+            let _ = (sender_index, timeout);
+            Err(SendTimeoutError::Disconnected(packet, 0))
         }
     }
 

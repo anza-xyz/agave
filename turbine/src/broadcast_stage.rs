@@ -29,7 +29,7 @@ use {
     },
     solana_measure::measure::Measure,
     solana_metrics::inc_new_counter_error,
-    solana_net_utils::SocketAddrSpace,
+    solana_net_utils::{SendTimeoutError, SocketAddrSpace},
     solana_poh::poh_recorder::WorkingBankEntryOrMarker,
     solana_pubkey::Pubkey,
     solana_runtime::{bank::MAX_LEADER_SCHEDULE_STAKES, bank_forks::BankForks},
@@ -606,10 +606,20 @@ pub fn broadcast_shreds(
         BroadcastSocket::Xdp(s) => {
             let mut send_xdp_time = Measure::start("send_xdp");
             for (idx, (payload, addr)) in packets.into_iter().enumerate() {
-                if let Err(e) = s.try_send(idx, addr, payload.bytes.clone()) {
-                    log::warn!("xdp channel full: {e:?}");
-                    transmit_stats.dropped_packets_xdp += 1;
-                    result = Err(Error::XdpChannelFull);
+                match s.send_timeout(idx, addr, payload.bytes.clone(), Duration::from_millis(5)) {
+                    Ok(()) => (),
+                    Err(e @ SendTimeoutError::Timeout(_, _)) => {
+                        log::warn!("xdp send failed: {e:?}");
+                        transmit_stats.dropped_packets_xdp += 1;
+                        // we keep going and only fail if all the sends fail
+                        result = Err(Error::XdpChannelFull);
+                    }
+                    // the errors here are a mess but Error::Send causes broadcast stage to
+                    // exit, which is what we want when the channel is disconnected
+                    Err(SendTimeoutError::Disconnected(_, _)) => {
+                        result = Err(Error::Send);
+                        break;
+                    }
                 }
             }
             send_xdp_time.stop();

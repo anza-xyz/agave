@@ -358,8 +358,8 @@ fn transmitter_sends_udp_payload_over_veth_in_copy_mode() {
     );
     transmitter
         .sender()
-        .try_send(0, packet)
-        .expect("queue packet through XdpSender::try_send");
+        .send_timeout(0, packet, Duration::from_millis(5))
+        .expect("queue packet through XdpSender::send_timeout");
 
     let received = receiver
         .recv_matching_udp(
@@ -422,8 +422,8 @@ fn transmitter_sends_udp_payload_over_gre_tunnel_in_copy_mode() {
     );
     transmitter
         .sender()
-        .try_send(0, packet)
-        .expect("queue packet through XdpSender::try_send");
+        .send_timeout(0, packet, Duration::from_millis(5))
+        .expect("queue packet through XdpSender::send_timeout");
 
     let received = receiver
         .recv_matching_gre_udp(
