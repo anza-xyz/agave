@@ -58,7 +58,6 @@ fn runtime_transaction_from_proto(
         None,
         SimpleAddressLoader::Disabled,
         &std::collections::HashSet::new(),
-        true,
     )
     .expect("failed to create RuntimeTransaction")
 }
