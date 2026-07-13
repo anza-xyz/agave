@@ -2,7 +2,7 @@
 
 use {
     super::{context::InstrContext, effects::InstrEffects},
-    crate::conformance::{
+    crate::{
         callback::DefaultCallback,
         setup::{
             InvokeContextFields, compute_budget, prepare_invoke_context_fields,
@@ -19,9 +19,9 @@ use {
     solana_svm_timings::ExecuteTimings,
     std::rc::Rc,
 };
-#[cfg(feature = "conformance")]
+#[cfg(feature = "ffi")]
 use {
-    crate::conformance::{
+    crate::{
         callback::ConformanceCallback,
         programs::{fill_program_cache_from_accounts, new_program_cache_with_builtins},
         setup::sysvar_cache_from_accounts,
@@ -138,7 +138,7 @@ pub fn execute_instr_with_callback<C: InvokeContextCallback>(
     }
 }
 
-#[cfg(feature = "conformance")]
+#[cfg(feature = "ffi")]
 pub fn execute_instr_proto(input: ProtoInstrContext) -> ProtoInstrEffects {
     let instr_context = InstrContext::from(input);
 
@@ -202,7 +202,7 @@ pub fn execute_instr_proto(input: ProtoInstrContext) -> ProtoInstrEffects {
 /// virtual_address_space_adjustments is enabled and execution fails with the
 /// CU meter exhausted, we cannot compare the data region of the accounts with
 /// Agave.  Clears each supplied data buffer in that case.
-#[cfg(feature = "conformance")]
+#[cfg(feature = "ffi")]
 fn direct_mapping_handle_cu_exhaustion<'a>(
     virtual_address_space_adjustments_active: bool,
     cu_avail: u64,
@@ -221,7 +221,7 @@ fn direct_mapping_handle_cu_exhaustion<'a>(
 /// `in_ptr` must point to `in_sz` initialized bytes. `out_ptr` must point
 /// to a writable buffer of at least `*out_psz` bytes. On return, `*out_psz`
 /// is updated to the number of bytes written.
-#[cfg(feature = "conformance")]
+#[cfg(feature = "ffi")]
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn sol_compat_instr_execute_v1(
     out_ptr: *mut u8,
@@ -250,7 +250,7 @@ pub unsafe extern "C" fn sol_compat_instr_execute_v1(
 mod tests {
     use {
         super::*,
-        crate::conformance::programs::{
+        crate::programs::{
             add_program_to_program_cache, keyed_account_for_system_program,
             new_program_cache_with_builtins,
         },
@@ -303,7 +303,7 @@ mod tests {
         sysvar_cache
     }
 
-    #[cfg(feature = "conformance")]
+    #[cfg(feature = "ffi")]
     fn proto_account(pubkey: Pubkey, account: Account) -> protosol::protos::AcctState {
         protosol::protos::AcctState {
             address: pubkey.to_bytes().to_vec(),
@@ -314,7 +314,7 @@ mod tests {
         }
     }
 
-    #[cfg(feature = "conformance")]
+    #[cfg(feature = "ffi")]
     fn proto_sysvar_account<T: serde::Serialize>(
         pubkey: Pubkey,
         sysvar: &T,
@@ -424,7 +424,7 @@ mod tests {
         assert_eq!(effects.custom_err, None);
     }
 
-    #[cfg(feature = "conformance")]
+    #[cfg(feature = "ffi")]
     #[test]
     #[should_panic(expected = "invariant violation: duplicate account load")]
     fn test_duplicate_accounts_panic_with_invariant_violation() {

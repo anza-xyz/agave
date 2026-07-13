@@ -132,6 +132,7 @@ exclude = [
     "ci/xtask",
     "dev-bins",
     "programs/sbf",
+    "svm-conformance",
     "svm/tests/example-programs",
 ]
 

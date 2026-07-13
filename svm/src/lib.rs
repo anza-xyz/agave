@@ -4,8 +4,6 @@
 
 pub mod account_loader;
 pub mod account_overrides;
-#[cfg(any(feature = "conformance", feature = "dev-context-only-utils"))]
-pub mod conformance;
 pub mod nonce_info;
 pub mod program_loader;
 pub mod rent_calculator;

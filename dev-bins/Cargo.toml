@@ -1,5 +1,9 @@
 [workspace]
-members = ["../accounts-db/store-tool", "../ledger-tool"]
+members = [
+    "../accounts-db/store-tool",
+    "../ledger-tool",
+    "../svm-conformance",
+]
 
 resolver = "2"
 
@@ -110,6 +114,7 @@ solana-native-token = "3.0.0"
 solana-net-utils = { path = "../net-utils", version = "=4.3.0-alpha.0", features = ["agave-unstable-api"] }
 solana-nonce = "3.2.0"
 solana-precompile-error = "3.0.0"
+solana-poseidon = "4.0.0"
 solana-program-runtime = { path = "../program-runtime", version = "=4.3.0-alpha.0", features = ["agave-unstable-api"] }
 solana-pubkey = { version = "4.2.0", default-features = false }
 solana-quic-client = { path = "../quic-client", version = "=4.3.0-alpha.0", features = ["agave-unstable-api"] }
@@ -142,15 +147,18 @@ solana-test-validator = { path = "../test-validator", version = "=4.3.0-alpha.0"
 solana-time-utils = "3.0.0"
 solana-tpu-client = { path = "../tpu-client", version = "=4.3.0-alpha.0", default-features = false, features = ["agave-unstable-api"] }
 solana-transaction = "4.1.0"
+solana-transaction-error = "3.3.0"
 solana-transaction-context = { path = "../transaction-context", version = "=4.3.0-alpha.0", features = ["agave-unstable-api", "bincode"] }
 solana-transaction-status = { path = "../transaction-status", version = "=4.3.0-alpha.0", features = ["agave-unstable-api"] }
 solana-unified-scheduler-pool = { path = "../unified-scheduler-pool", version = "=4.3.0-alpha.0", features = ["agave-unstable-api"] }
 solana-version = { path = "../version", version = "=4.3.0-alpha.0", features = ["agave-unstable-api"] }
 solana-vote = { path = "../vote", version = "=4.3.0-alpha.0", features = ["agave-unstable-api"] }
 solana-vote-program = { path = "../programs/vote", version = "=4.3.0-alpha.0", default-features = false, features = ["agave-unstable-api"] }
+solana-zk-elgamal-proof-program = { path = "../programs/zk-elgamal-proof", version = "=4.3.0-alpha.0", features = ["agave-unstable-api"] }
 tempfile = "3.23.0"
 thiserror = "2.0.17"
 tokio = "1.48.0"
+xxhash-rust = "0.8.5"
 
 [profile.dev]
 debug = "line-tables-only"
