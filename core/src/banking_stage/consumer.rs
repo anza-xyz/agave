@@ -6,7 +6,6 @@ use {
     },
     smallvec::SmallVec,
     solana_cost_model::{cost_model::CostModel, transaction_cost::TransactionCost},
-    solana_hash::Hash,
     solana_measure::measure_us,
     solana_poh::{
         poh_recorder::PohRecorderError,
@@ -28,7 +27,6 @@ use {
         },
         transaction_processor::{ExecutionRecordingConfig, TransactionProcessingConfig},
     },
-    solana_transaction::versioned::VersionedTransaction,
     solana_transaction_error::TransactionError,
     solana_vote::vote_parser,
     std::num::Saturating,
@@ -115,42 +113,6 @@ pub struct Consumer {
     committer: Committer,
     transaction_recorder: TransactionRecorder,
     log_messages_bytes_limit: Option<usize>,
-}
-
-struct PreparedProcessedTransactions {
-    transactions: Vec<VersionedTransaction>,
-    transaction_indexes: Vec<usize>,
-    entry_bytes: u64,
-}
-
-impl PreparedProcessedTransactions {
-    fn retain_transactions<Tx: TransactionWithMeta>(
-        &mut self,
-        transactions: &[Tx],
-        transaction_costs: &[Option<TransactionCost<'_, Tx>>],
-    ) {
-        let mut transaction_indexes = std::mem::take(&mut self.transaction_indexes).into_iter();
-        let mut retained_transaction_indexes = Vec::with_capacity(self.transactions.len());
-        let processed_transactions = &mut self.transactions;
-        let entry_bytes = &mut self.entry_bytes;
-
-        processed_transactions.retain(|_| {
-            let index = transaction_indexes
-                .next()
-                .expect("processed transaction indexes match processed transactions");
-            let retain_transaction = transaction_costs[index].is_some();
-            if retain_transaction {
-                retained_transaction_indexes.push(index);
-            } else {
-                *entry_bytes =
-                    (*entry_bytes).saturating_sub(transactions[index].serialized_size() as u64);
-            }
-            retain_transaction
-        });
-        debug_assert!(transaction_indexes.next().is_none());
-
-        self.transaction_indexes = retained_transaction_indexes;
-    }
 }
 
 impl Consumer {
@@ -330,16 +292,6 @@ impl Consumer {
             balance_collector,
         } = load_and_execute_transactions_output;
 
-        // prepare processed transactions before blocking freeze, keeps to_versioned_transaction()
-        // out of freeze_lock window. Processed transactions are filtered by cost tracker will be
-        // removed, and entry_bytes adjusted, before recording.
-        let (mut prepared_processed_transactions, mut processing_results_to_transactions_us) =
-            measure_us!(Self::prepare_processed_transactions(
-                batch.sanitized_transactions(),
-                &processing_results,
-                processed_counts.processed_transactions_count,
-            ));
-
         // Calculate actual transaction costs before blocking freeze. Processed
         // transactions' costs are added to Cost Tracker while holding bank
         // freeze_lock, ensuring cost_update_service to report finalized stats.
@@ -352,18 +304,6 @@ impl Consumer {
 
         let (freeze_lock, freeze_lock_us) = measure_us!(bank.freeze_lock());
         execute_and_commit_timings.freeze_lock_us = freeze_lock_us;
-
-        // if bank is already frozen, send processed transactions for immediate retry
-        if *freeze_lock != Hash::default() {
-            return Self::frozen_bank_execute_and_commit_transactions_output(
-                &processed_counts,
-                &processing_results,
-                retryable_transaction_indexes,
-                cost_model_us,
-                execute_and_commit_timings,
-                error_counters,
-            );
-        }
 
         let ((transaction_costs, mut actual_cost_retryable_transaction_indexes), cost_add_us) =
             measure_us!(Self::try_add_processed_transaction_costs(
@@ -381,15 +321,6 @@ impl Consumer {
         retryable_transaction_indexes.append(&mut actual_cost_retryable_transaction_indexes);
         retryable_transaction_indexes.sort_unstable();
 
-        if cost_model_throttled_transactions_count != 0 {
-            let ((), retain_processed_transactions_us) = measure_us!({
-                prepared_processed_transactions
-                    .retain_transactions(batch.sanitized_transactions(), &transaction_costs);
-            });
-            processing_results_to_transactions_us = processing_results_to_transactions_us
-                .saturating_add(retain_processed_transactions_us);
-        }
-
         let transaction_counts = LeaderProcessedTransactionCounts {
             processed_count: processed_counts.processed_transactions_count,
             processed_with_successful_result_count: processed_counts
@@ -397,15 +328,31 @@ impl Consumer {
             attempted_processing_count: processing_results.len() as u64,
         };
 
-        let reserved_bytes = bank
-            .entry_bytes_budget()
-            .reserve(prepared_processed_transactions.entry_bytes)
-            .map_err(|err| match err {
-                EntryBytesReserveError::ExceedsSlotLimit => PohRecorderError::MaxHeightReached,
-            });
+        let mut entry_bytes = SERIALIZED_ENTRIES_OVERHEAD;
+        let (processed_transactions, processing_results_to_transactions_us) = measure_us!({
+            let mut processed_transactions =
+                Vec::with_capacity(processed_counts.processed_transactions_count as usize);
+            for (processing_result, tx) in processing_results
+                .iter()
+                .zip(batch.sanitized_transactions())
+            {
+                if processing_result.was_processed() {
+                    entry_bytes += tx.serialized_size() as u64;
+                    processed_transactions.push(tx.to_versioned_transaction());
+                }
+            }
+            processed_transactions
+        });
+
+        let reserved_bytes =
+            bank.entry_bytes_budget()
+                .reserve(entry_bytes)
+                .map_err(|err| match err {
+                    EntryBytesReserveError::ExceedsSlotLimit => PohRecorderError::MaxHeightReached,
+                });
         let (record_transactions_summary, record_us) = measure_us!(reserved_bytes.map(|_| {
             self.transaction_recorder
-                .record_transactions(bank.bank_id(), prepared_processed_transactions.transactions)
+                .record_transactions(bank.bank_id(), processed_transactions)
         }));
         execute_and_commit_timings.record_us = record_us;
 
@@ -498,37 +445,6 @@ impl Consumer {
         }
     }
 
-    fn frozen_bank_execute_and_commit_transactions_output(
-        processed_counts: &ProcessedTransactionCounts,
-        processing_results: &[TransactionProcessingResult],
-        mut retryable_transaction_indexes: Vec<RetryableIndex>,
-        cost_model_us: u64,
-        execute_and_commit_timings: LeaderExecuteAndCommitTimings,
-        error_counters: TransactionErrorMetrics,
-    ) -> ExecuteAndCommitTransactionsOutput {
-        let transaction_counts = LeaderProcessedTransactionCounts {
-            processed_count: processed_counts.processed_transactions_count,
-            processed_with_successful_result_count: processed_counts
-                .processed_with_successful_result_count,
-            attempted_processing_count: processing_results.len() as u64,
-        };
-
-        Self::extend_processed_retryable_transaction_indexes(
-            &mut retryable_transaction_indexes,
-            processing_results,
-        );
-
-        ExecuteAndCommitTransactionsOutput {
-            cost_model_throttled_transactions_count: 0,
-            cost_model_us,
-            transaction_counts,
-            retryable_transaction_indexes,
-            commit_transactions_result: Err(PohRecorderError::MaxHeightReached),
-            execute_and_commit_timings,
-            error_counters,
-        }
-    }
-
     fn extend_processed_retryable_transaction_indexes(
         retryable_transaction_indexes: &mut Vec<RetryableIndex>,
         processing_results: &[TransactionProcessingResult],
@@ -545,36 +461,6 @@ impl Consumer {
         // retryable indexes are expected to be sorted - in this case the
         // `extend` can cause that assumption to be violated.
         retryable_transaction_indexes.sort_unstable();
-    }
-
-    fn prepare_processed_transactions<Tx: TransactionWithMeta>(
-        transactions: &[Tx],
-        processing_results: &[TransactionProcessingResult],
-        processed_transactions_count: u64,
-    ) -> PreparedProcessedTransactions {
-        debug_assert_eq!(transactions.len(), processing_results.len());
-
-        let mut prepared_processed_transactions = PreparedProcessedTransactions {
-            transactions: Vec::with_capacity(processed_transactions_count as usize),
-            transaction_indexes: Vec::with_capacity(processed_transactions_count as usize),
-            entry_bytes: SERIALIZED_ENTRIES_OVERHEAD,
-        };
-
-        for (index, (processing_result, tx)) in
-            processing_results.iter().zip(transactions).enumerate()
-        {
-            if processing_result.was_processed() {
-                prepared_processed_transactions.entry_bytes += tx.serialized_size() as u64;
-                prepared_processed_transactions
-                    .transactions
-                    .push(tx.to_versioned_transaction());
-                prepared_processed_transactions
-                    .transaction_indexes
-                    .push(index);
-            }
-        }
-
-        prepared_processed_transactions
     }
 
     fn calculate_processed_transaction_costs<'a, Tx: TransactionWithMeta>(
@@ -792,7 +678,6 @@ mod tests {
         },
         solana_cost_model::{cost_model::CostModel, cost_tracker::CostTrackerLimits},
         solana_fee_calculator::FeeCalculator,
-        solana_fee_structure::FeeDetails,
         solana_hash::Hash,
         solana_instruction::error::InstructionError,
         solana_keypair::Keypair,
@@ -815,10 +700,6 @@ mod tests {
         },
         solana_runtime_transaction::runtime_transaction::RuntimeTransaction,
         solana_signer::Signer,
-        solana_svm::{
-            account_loader::FeesOnlyTransaction, rollback_accounts::RollbackAccounts,
-            transaction_processing_result::ProcessedTransaction,
-        },
         solana_system_interface::program as system_program,
         solana_system_transaction as system_transaction,
         solana_transaction::{
@@ -894,17 +775,6 @@ mod tests {
         consumer.process_and_record_transactions(&bank, &transactions)
     }
 
-    fn fees_only_processing_result() -> TransactionProcessingResult {
-        Ok(ProcessedTransaction::FeesOnly(Box::new(
-            FeesOnlyTransaction {
-                load_error: TransactionError::InvalidProgramForExecution,
-                rollback_accounts: RollbackAccounts::default(),
-                fee_details: FeeDetails::default(),
-                loaded_accounts_data_size: 0,
-            },
-        )))
-    }
-
     fn generate_new_address_lookup_table(
         authority: Option<Pubkey>,
         num_addresses: usize,
@@ -947,83 +817,6 @@ mod tests {
         bank.store_account(&account_address, &account);
 
         account
-    }
-
-    #[test]
-    fn test_prepare_processed_transactions_only_prepares_processed_results() {
-        let TestFrame {
-            mint_keypair, bank, ..
-        } = setup_test(None);
-        let recipient = Pubkey::new_unique();
-        let locked_out_recipient = Pubkey::new_unique();
-        let transactions = sanitize_transactions(vec![
-            system_transaction::transfer(
-                &mint_keypair,
-                &recipient,
-                1,
-                bank.confirmed_last_blockhash(),
-            ),
-            system_transaction::transfer(
-                &mint_keypair,
-                &locked_out_recipient,
-                1,
-                bank.confirmed_last_blockhash(),
-            ),
-        ]);
-        let processing_results = vec![
-            fees_only_processing_result(),
-            Err(TransactionError::AccountInUse),
-        ];
-
-        let prepared_processed_transactions =
-            Consumer::prepare_processed_transactions(&transactions, &processing_results, 1);
-
-        assert_eq!(prepared_processed_transactions.transaction_indexes, vec![0]);
-        assert_eq!(
-            prepared_processed_transactions.entry_bytes,
-            SERIALIZED_ENTRIES_OVERHEAD + transactions[0].serialized_size() as u64
-        );
-        assert_eq!(
-            prepared_processed_transactions.transactions,
-            vec![transactions[0].to_versioned_transaction()]
-        );
-    }
-
-    #[test]
-    fn test_prepared_processed_transactions_retain_transactions_updates_indexes_and_bytes() {
-        let TestFrame {
-            mint_keypair, bank, ..
-        } = setup_test(None);
-        let recipient = Pubkey::new_unique();
-        let transactions = sanitize_transactions(vec![system_transaction::transfer(
-            &mint_keypair,
-            &recipient,
-            1,
-            bank.confirmed_last_blockhash(),
-        )]);
-        let processing_results = vec![fees_only_processing_result()];
-        let mut prepared_processed_transactions =
-            Consumer::prepare_processed_transactions(&transactions, &processing_results, 1);
-
-        assert_eq!(prepared_processed_transactions.transaction_indexes, vec![0]);
-        assert_eq!(
-            prepared_processed_transactions.entry_bytes,
-            SERIALIZED_ENTRIES_OVERHEAD + transactions[0].serialized_size() as u64
-        );
-
-        let transaction_costs = vec![None];
-        prepared_processed_transactions.retain_transactions(&transactions, &transaction_costs);
-
-        assert!(prepared_processed_transactions.transactions.is_empty());
-        assert!(
-            prepared_processed_transactions
-                .transaction_indexes
-                .is_empty()
-        );
-        assert_eq!(
-            prepared_processed_transactions.entry_bytes,
-            SERIALIZED_ENTRIES_OVERHEAD
-        );
     }
 
     #[test]
@@ -1108,67 +901,6 @@ mod tests {
         );
 
         assert_eq!(bank.get_balance(&pubkey), 1);
-    }
-
-    #[test]
-    fn test_bank_process_and_record_transactions_does_not_add_cost_after_freeze() {
-        let TestFrame {
-            mint_keypair,
-            bank,
-            bank_forks: _bank_forks,
-            record_receiver,
-            consumer,
-        } = setup_test(None);
-
-        let pubkey = solana_pubkey::new_rand();
-        let transactions = sanitize_transactions(vec![system_transaction::transfer(
-            &mint_keypair,
-            &pubkey,
-            1,
-            bank.confirmed_last_blockhash(),
-        )]);
-
-        bank.freeze();
-
-        let process_transactions_batch_output =
-            consumer.process_and_record_transactions(&bank, &transactions);
-        let ProcessTransactionBatchOutput {
-            cost_model_throttled_transactions_count,
-            execute_and_commit_transactions_output,
-            ..
-        } = process_transactions_batch_output;
-        let ExecuteAndCommitTransactionsOutput {
-            transaction_counts,
-            retryable_transaction_indexes,
-            commit_transactions_result,
-            ..
-        } = execute_and_commit_transactions_output;
-
-        assert_eq!(cost_model_throttled_transactions_count, 0);
-        assert_eq!(
-            transaction_counts,
-            LeaderProcessedTransactionCounts {
-                attempted_processing_count: 1,
-                processed_count: 1,
-                processed_with_successful_result_count: 1,
-            }
-        );
-        assert_eq!(
-            retryable_transaction_indexes,
-            vec![RetryableIndex::new(0, true)]
-        );
-        assert_matches!(
-            commit_transactions_result,
-            Err(PohRecorderError::MaxHeightReached)
-        );
-
-        let cost_tracker = bank.read_cost_tracker().unwrap();
-        assert_eq!(cost_tracker.transaction_count(), 0);
-        assert_eq!(cost_tracker.block_cost(), 0);
-        drop(cost_tracker);
-
-        assert!(record_receiver.try_recv().is_err());
-        assert_eq!(bank.get_balance(&pubkey), 0);
     }
 
     #[test]
