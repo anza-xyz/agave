@@ -2834,7 +2834,7 @@ fn test_shrink_candidate_slots_with_dead_ancient_account() {
     // accounts it holds.  This is the data lengths of the
     // accounts plus the length of their metadata.
     assert_eq!(
-        created_accounts.capacity as usize,
+        created_accounts.written_bytes as usize,
         AppendVec::calculate_stored_size(1000) + AppendVec::calculate_stored_size(2000),
     );
     // The above check works only when the AppendVec storage is
@@ -6697,10 +6697,10 @@ fn get_one_ancient_append_vec_and_others_with_account_size(
     let after_store = db.get_storage_for_slot(slot1).unwrap();
     let GetUniqueAccountsResult {
         stored_accounts: after_stored_accounts,
-        capacity: after_capacity,
+        written_bytes: after_written_bytes,
         ..
     } = db.get_unique_accounts_from_storage(&after_store);
-    assert!(created_accounts.capacity <= after_capacity);
+    assert!(created_accounts.written_bytes <= after_written_bytes);
     assert_eq!(created_accounts.stored_accounts.len(), 1);
     // always 1 account: either we leave the append vec alone if it is all dead
     // or we create a new one and copy into it if account is alive

@@ -2362,10 +2362,10 @@ mod tests {
         let after_store = db.storage.get_slot_storage_entry(slot1).unwrap();
         let GetUniqueAccountsResult {
             stored_accounts: after_stored_accounts,
-            capacity: after_capacity,
+            written_bytes: after_written_bytes,
             ..
         } = db.get_unique_accounts_from_storage(&after_store);
-        assert_eq!(created_accounts.capacity, after_capacity);
+        assert_eq!(created_accounts.written_bytes, after_written_bytes);
         assert_eq!(created_accounts.stored_accounts.len(), 1);
         // always 1 account: either we leave the append vec alone if it is all dead
         // or we create a new one and copy into it if account is alive

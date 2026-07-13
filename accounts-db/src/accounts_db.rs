@@ -327,7 +327,7 @@ impl AccountFromStorage {
 
 pub struct GetUniqueAccountsResult {
     pub stored_accounts: Vec<AccountFromStorage>,
-    pub capacity: u64,
+    pub written_bytes: u64,
 }
 
 pub struct AccountsAddRootTiming {
@@ -2609,7 +2609,7 @@ impl AccountsDb {
         &self,
         store: &AccountStorageEntry,
     ) -> GetUniqueAccountsResult {
-        let capacity = store.capacity();
+        let written_bytes = store.written_bytes();
         let mut stored_accounts = Vec::with_capacity(store.count());
         store
             .accounts
@@ -2636,7 +2636,7 @@ impl AccountsDb {
 
         GetUniqueAccountsResult {
             stored_accounts,
-            capacity,
+            written_bytes,
         }
     }
 
@@ -2665,7 +2665,7 @@ impl AccountsDb {
 
         let GetUniqueAccountsResult {
             stored_accounts,
-            capacity,
+            written_bytes,
         } = unique_accounts;
 
         let mut index_read_elapsed = Measure::start("index_read_elapsed");
