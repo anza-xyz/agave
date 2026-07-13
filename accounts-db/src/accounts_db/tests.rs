@@ -2025,8 +2025,8 @@ fn test_clean_old_with_both_normal_and_zero_lamport_accounts() {
     assert_eq!(found_accounts, vec![pubkey2]);
 }
 
-// Verify that purge_keys exact does not remove pubkeys from the secondary index if the pubkey
-// is still present in the secondary index
+// Verify that purge_keys_exact does not remove pubkeys from the secondary index if the pubkey
+// is still present in the write cache
 #[test]
 fn test_clean_retains_secondary_index_for_still_cached_key() {
     let accounts = AccountsDb {
@@ -2048,13 +2048,13 @@ fn test_clean_retains_secondary_index_for_still_cached_key() {
     let mut account_data_with_mint = vec![0; spl_generic_token::token::Account::get_packed_len()];
     account_data_with_mint[..PUBKEY_BYTES].clone_from_slice(&(mint_key.to_bytes()));
     account_data_with_mint[SPL_TOKEN_INITIALIZED_OFFSET] = 1;
-    let mut token_account = AccountSharedData::new(1, 0, AccountSharedData::default().owner());
-    token_account.set_owner(spl_generic_token::token::id());
+    let mut token_account = AccountSharedData::new(1, 0, &spl_generic_token::token::id());
     token_account.set_data(account_data_with_mint);
 
-    let zero_account = AccountSharedData::new(0, 0, AccountSharedData::default().owner());
+    let zero_account = AccountSharedData::new(0, 0, &Pubkey::default());
 
-    // Slot 1: a rooted zero-lamport tombstone. Flush with `All` so it is not reclaimed
+    // Slot 1: a rooted zero-lamport tombstone. Flush with `PubkeysToFlush::All` so it is not
+    // reclaimed
     accounts.store_for_tests((index_slot, [(&pubkey, &zero_account)].as_slice()));
     accounts.add_root(index_slot);
     accounts.flush_accounts_cache_slot_for_tests(index_slot);
@@ -2068,8 +2068,8 @@ fn test_clean_retains_secondary_index_for_still_cached_key() {
         Some(1),
     );
 
-    // Clean empties the primary slot list (the newest rooted version is zero lamport) and routes
-    // the pubkey through the secondary purge.
+    // Clean removes the entry from the accounts index (as the newest rooted version is zero
+    // lamport)
     accounts.clean_accounts_for_tests();
 
     // The pubkey is still live in the write cache, so its secondary index entry must survive.

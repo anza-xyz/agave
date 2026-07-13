@@ -335,9 +335,12 @@ impl<T: IndexValue, U: DiskIndexValue + From<T> + Into<T>> AccountsIndex<T, U> {
     }
 
     /// Remove keys from the account index if the key's slot list is empty.
-    /// Returns the keys that were removed from the index. These keys should not be accessed again in the current code path.
+    /// Returns the keys that were removed from the index. These keys should not be accessed again
+    /// in the current code path.
+    ///
     /// When secondary indexes are enabled, callers must pass the returned keys to
-    /// `AccountsDb::purge_secondary_indexes_for_dead_keys`, otherwise their secondary entries leak.
+    /// `AccountsDb::purge_secondary_indexes_for_dead_keys`, otherwise their secondary index
+    /// entries leak.
     #[must_use]
     pub fn handle_dead_keys(&self, dead_keys: &[Pubkey]) -> HashSet<Pubkey> {
         let mut pubkeys_removed_from_accounts_index = HashSet::default();

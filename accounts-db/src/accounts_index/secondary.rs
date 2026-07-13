@@ -217,7 +217,7 @@ impl<SecondaryIndexEntryType: SecondaryIndexEntry + Default + Sync + Send>
     /// correct decision if writers update the state that `should_remove` reads before calling
     /// `insert()`; otherwise the check can pass against stale state and remove a mapping that a
     /// concurrent writer expects to survive.
-    pub fn remove_by_inner_key_if(&self, inner_key: &Pubkey, should_remove: impl FnOnce() -> bool) {
+    pub fn remove_by_inner_key_if(&self, inner_key: &Pubkey, should_remove: impl Fn() -> bool) {
         // Note: Always lock the reverse-index first, so we synchronize with insert().
         let DashMapEntry::Occupied(reverse_index_entry) = self.reverse_index.entry(*inner_key)
         else {
