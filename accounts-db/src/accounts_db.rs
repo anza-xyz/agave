@@ -5854,9 +5854,8 @@ impl AccountsDb {
             .write_accounts(accounts_and_meta_to_store)
             .unwrap_or_else(|| {
                 panic!(
-                    "failed to write accounts to storage: slot! {slot}, id: {store_id}, capacity: \
-                     {} bytes, len: {} bytes, num accounts: {num_accounts}",
-                    storage.accounts.capacity(),
+                    "failed to write accounts to storage: slot! {slot}, id: {store_id}, len: {} \
+                     bytes, num accounts: {num_accounts}",
                     storage.accounts.len(),
                 )
             });
@@ -5864,9 +5863,8 @@ impl AccountsDb {
         assert_eq!(
             stored_accounts_info.offsets.len(),
             num_accounts,
-            "failed to write all accounts to storage! {slot}, id: {store_id}, capacity: {} bytes, \
-             len: {} bytes, num accounts written: {}, num accounts total: {num_accounts}",
-            storage.accounts.capacity(),
+            "failed to write all accounts to storage! {slot}, id: {store_id}, len: {} bytes, num \
+             accounts written: {}, num accounts total: {num_accounts}",
             storage.accounts.len(),
             stored_accounts_info.offsets.len(),
         );
