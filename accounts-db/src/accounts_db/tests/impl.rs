@@ -1012,6 +1012,39 @@ fn test_clean_zero_lamport_and_dead_slot() {
     assert_eq!(accounts.alive_account_count_in_slot(1), 0);
 }
 
+// When a dead slot is cleaned, the pubkeys it held are unreffed.
+#[test]
+fn test_clean_dead_slot_unrefs_reclaimed_pubkeys() {
+    let accounts = AccountsDb::default_for_tests();
+    let pubkey = Pubkey::new_unique();
+    let account = AccountSharedData::new(1, 0, &Pubkey::default());
+    let updated_account = AccountSharedData::new(2, 0, &Pubkey::default());
+
+    // Store pubkey in slot 10, then update it in slot 11.
+    accounts.store_for_tests((10, [(&pubkey, &account)].as_slice()));
+    accounts.add_root(10);
+    accounts.store_for_tests((11, [(&pubkey, &updated_account)].as_slice()));
+    accounts.add_root(11);
+
+    // Flush both roots without cleaning, so slot 10's version survives and the ref count reaches 2.
+    accounts.flush_rooted_accounts_cache_without_clean();
+
+    // Both slots are in pubkey's slot list, each in its own storage, so its ref count is 2.
+    assert_eq!(accounts.accounts_index.ref_count_from_storage(&pubkey), 2);
+    assert!(accounts.storage.get_slot_storage_entry(10).is_some());
+    assert!(accounts.storage.get_slot_storage_entry(11).is_some());
+
+    // Clean drops slot 10 from the slot list; slot 10 held only pubkey, so it is removed.
+    accounts.clean_accounts_for_tests();
+
+    // Slot 10's storage is gone; slot 11's remains.
+    assert!(accounts.storage.get_slot_storage_entry(10).is_none());
+    assert!(accounts.storage.get_slot_storage_entry(11).is_some());
+
+    // pubkey is now in one storage (slot 11), so its ref count is 1.
+    assert_eq!(accounts.accounts_index.ref_count_from_storage(&pubkey), 1);
+}
+
 #[test]
 fn test_clean_dead_slot_with_obsolete_accounts() {
     // This test is triggering a scenario in reclaim_accounts where the entire slot is reclaimed
