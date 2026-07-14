@@ -8537,7 +8537,7 @@ dependencies = [
 
 [[package]]
 name = "solana-sbf-rust-big-mod-exp"
-version = "4.3.0-alpha.0"
+version = "4.3.0-alpha.1"
 dependencies = [
  "array-bytes",
  "solana-big-mod-exp 4.0.0",
