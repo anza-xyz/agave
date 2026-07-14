@@ -86,7 +86,7 @@ use {prost::Message, std::ffi::c_int};
 pub enum BankTxnProcessingResult {
     /// The transaction failed verification before processing.
     FailedVerification(TransactionError),
-    /// The transaction was processed (executed or fees-only). Carries the
+    /// The transaction was processed (executed, fees-only, or no-op). Carries the
     /// processing result and transaction for effect extraction.
     Processed {
         result: TransactionProcessingResult,
@@ -324,6 +324,11 @@ impl ProtoTxnEffects {
                 executed_transaction_effects(executed_tx, sanitized_message)
             }
             ProcessedTransaction::FeesOnly(tx) => fees_only_transaction_effects(tx),
+            ProcessedTransaction::NoOp(_) => ProtoTxnEffects {
+                modified_accounts: vec![],
+                rollback_accounts: vec![],
+                return_data: vec![],
+            },
         }
     }
 }
@@ -861,6 +866,47 @@ mod tests {
         assert_eq!(fields.custom_error, 7);
         assert_ne!(fields.instruction_error, 0);
         assert_eq!(fields.instruction_error_index, 0);
+    }
+
+    #[cfg(feature = "conformance")]
+    #[test]
+    fn output_txn_result_handles_noop_transaction() {
+        const COMPUTE_UNIT_LIMIT: u64 = 123_456;
+        const LOADED_ACCOUNTS_BYTES_LIMIT: u32 = 654_321;
+        let validation_error = solana_transaction_error::TransactionError::AccountNotFound;
+        let processing_result = Ok(ProcessedTransaction::NoOp(Box::new(
+            solana_svm::account_loader::NoOpTransaction {
+                validation_error: validation_error.clone(),
+                fee_payer_balance: Some(42),
+                compute_unit_limit: COMPUTE_UNIT_LIMIT,
+                loaded_accounts_bytes_limit: LOADED_ACCOUNTS_BYTES_LIMIT,
+            },
+        )));
+
+        let result = super::output_txn_result(
+            &processing_result,
+            &sanitized_message_with_program(Pubkey::new_unique()),
+        );
+
+        assert!(result.executed);
+        assert_eq!(
+            result.txn_error,
+            solana_svm::conformance::err::serialized_error_code(&validation_error)
+        );
+        assert_eq!(result.instruction_error, 0);
+        assert_eq!(result.instruction_error_index, 0);
+        assert_eq!(result.custom_error, 0);
+        assert_eq!(result.executed_units, COMPUTE_UNIT_LIMIT);
+        assert_eq!(
+            result.loaded_accounts_data_size,
+            u64::from(LOADED_ACCOUNTS_BYTES_LIMIT)
+        );
+        let fee_details = result.fee_details.unwrap();
+        assert_eq!(fee_details.transaction_fee, 0);
+        assert_eq!(fee_details.prioritization_fee, 0);
+        assert!(result.modified_accounts.is_empty());
+        assert!(result.rollback_accounts.is_empty());
+        assert!(result.return_data.is_empty());
     }
 
     #[test]
