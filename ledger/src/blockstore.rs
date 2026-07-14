@@ -6082,7 +6082,7 @@ fn update_completed_data_indexes<'a>(
     // `SlotMeta::received` past `new_shred_index` first. This makes
     // `received` a tight exclusive bound for the forward scan below, which
     // would otherwise walk the bit vector's empty tail on every in-order
-    // shred insertion. `BitVec::range` clamps to capacity, so saturating
+    // shred insertion. The bounded scan clamps to capacity, so saturating
     // the conversion is safe.
     let received = u32::try_from(received).unwrap_or(u32::MAX);
     debug_assert!(completed_data_indexes.range(received..).next().is_none());

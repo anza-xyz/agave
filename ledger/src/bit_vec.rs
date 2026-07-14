@@ -337,40 +337,75 @@ impl<const NUM_BITS: usize> BitVec<NUM_BITS> {
     /// assert_eq!(bit_vec.next_set_bit(6), None);
     /// ```
     pub fn next_set_bit(&self, from: usize) -> Option<usize> {
-        if from >= NUM_BITS {
+        self.next_set_bit_in_range(from, NUM_BITS)
+    }
+
+    /// Returns the lowest set bit in `from..end`.
+    ///
+    /// Equivalent to `range(from..end).iter_ones().next()`, but scans whole
+    /// 8-byte groups at a time and stops at `end`, so callers that know an
+    /// upper bound on the highest set bit avoid walking the trailing words.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// # use solana_ledger::bit_vec::BitVec;
+    /// let mut bit_vec = BitVec::<64>::default();
+    /// bit_vec.insert(5);
+    /// assert_eq!(bit_vec.next_set_bit_in_range(0, 64), Some(5));
+    /// assert_eq!(bit_vec.next_set_bit_in_range(5, 6), Some(5));
+    /// assert_eq!(bit_vec.next_set_bit_in_range(0, 5), None);
+    /// assert_eq!(bit_vec.next_set_bit_in_range(6, 64), None);
+    /// ```
+    pub fn next_set_bit_in_range(&self, from: usize, end: usize) -> Option<usize> {
+        // Clamping to the logical bit length also excludes any non-zero tail
+        // bits past NUM_BITS that serialized data may contain, matching the
+        // range iterator.
+        let end = end.min(NUM_BITS);
+        if from >= end {
             return None;
         }
-        // Serialized data may contain non-zero tail bits past NUM_BITS. Match
-        // the range iterator by ignoring any hit outside the logical bit length.
-        let in_bounds = |pos: usize| (pos < NUM_BITS).then_some(pos);
         let (first_word_idx, first_bit) = location_of(from);
-        let first_word = self.words[first_word_idx] & (Word::MAX << first_bit);
-        if first_word != 0 {
-            return in_bounds(
-                first_word_idx * BITS_PER_WORD + first_word.trailing_zeros() as usize,
+        let (last_word_idx, last_bit) = location_of(end - 1);
+        // Bits at or above `from` within the first word.
+        let first_word_mask = Word::MAX << first_bit;
+        // Bits at or below `end - 1` within the last word.
+        let last_word_mask = Word::MAX >> (BITS_PER_WORD - 1 - last_bit);
+        // Lowest set bit of a masked word, as a bit index in the vector.
+        let lowest_one = |word_idx: usize, word: Word| {
+            (word != 0).then(|| word_idx * BITS_PER_WORD + word.trailing_zeros() as usize)
+        };
+
+        if first_word_idx == last_word_idx {
+            return lowest_one(
+                first_word_idx,
+                self.words[first_word_idx] & first_word_mask & last_word_mask,
             );
         }
+
+        if let Some(bit) = lowest_one(first_word_idx, self.words[first_word_idx] & first_word_mask)
+        {
+            return Some(bit);
+        }
         // Scan full 8-byte groups before falling back to single bytes.
-        let (chunks, remainder) = self.words[first_word_idx + 1..].as_chunks::<WORDS_PER_U64>();
+        let (chunks, remainder) =
+            self.words[first_word_idx + 1..last_word_idx].as_chunks::<WORDS_PER_U64>();
         let mut chunk_start_word_idx = first_word_idx + 1;
         for &chunk in chunks {
             let chunk_word = u64::from_le_bytes(chunk);
             if chunk_word != 0 {
-                return in_bounds(
+                return Some(
                     chunk_start_word_idx * BITS_PER_WORD + chunk_word.trailing_zeros() as usize,
                 );
             }
             chunk_start_word_idx += WORDS_PER_U64;
         }
         for (offset, &word) in remainder.iter().enumerate() {
-            if word != 0 {
-                return in_bounds(
-                    (chunk_start_word_idx + offset) * BITS_PER_WORD
-                        + word.trailing_zeros() as usize,
-                );
+            if let Some(bit) = lowest_one(chunk_start_word_idx + offset, word) {
+                return Some(bit);
             }
         }
-        None
+        lowest_one(last_word_idx, self.words[last_word_idx] & last_word_mask)
     }
 
     /// Get an iterator over the positions of the set bits in the array.
@@ -713,9 +748,55 @@ mod tests {
         assert_eq!(bv.iter_ones().next(), None);
         assert_eq!(bv.next_set_bit(0), None);
         assert_eq!(bv.next_set_bit(11), None);
+        assert_eq!(bv.next_set_bit_in_range(0, 12), None);
+        assert_eq!(bv.next_set_bit_in_range(0, usize::MAX), None);
+        // A range confined to the final word takes the single-word branch,
+        // which must apply the same tail masking.
+        assert_eq!(bv.next_set_bit_in_range(8, 12), None);
         bv.insert_unchecked(11);
         assert_eq!(bv.next_set_bit(0), Some(11));
         assert_eq!(bv.prev_set_bit(12), Some(11));
+        assert_eq!(bv.next_set_bit_in_range(0, 12), Some(11));
+        assert_eq!(bv.next_set_bit_in_range(0, 11), None);
+        assert_eq!(bv.next_set_bit_in_range(8, 12), Some(11));
+        assert_eq!(bv.next_set_bit_in_range(11, 12), Some(11));
+    }
+
+    #[test]
+    fn test_next_set_bit_in_range_edges() {
+        let empty = BitVec::<1024>::default();
+        assert_eq!(empty.next_set_bit_in_range(0, 0), None);
+        assert_eq!(empty.next_set_bit_in_range(0, 1024), None);
+        assert_eq!(empty.next_set_bit_in_range(0, usize::MAX), None);
+        // Single bits at byte, chunk, and array boundaries.
+        for idx in [0, 1, 7, 8, 63, 64, 65, 511, 512, 1022, 1023] {
+            let mut bv = BitVec::<1024>::default();
+            bv.insert_unchecked(idx);
+            // Empty and descending ranges.
+            assert_eq!(bv.next_set_bit_in_range(idx, idx), None, "idx={idx}");
+            assert_eq!(bv.next_set_bit_in_range(idx + 1, idx), None, "idx={idx}");
+            // The bit is found iff the range covers it.
+            assert_eq!(
+                bv.next_set_bit_in_range(idx, idx + 1),
+                Some(idx),
+                "idx={idx}"
+            );
+            assert_eq!(bv.next_set_bit_in_range(0, idx + 1), Some(idx), "idx={idx}");
+            assert_eq!(bv.next_set_bit_in_range(0, idx), None, "idx={idx}");
+            assert_eq!(bv.next_set_bit_in_range(idx + 1, 1024), None, "idx={idx}");
+            assert_eq!(
+                bv.next_set_bit_in_range(0, usize::MAX),
+                Some(idx),
+                "idx={idx}"
+            );
+        }
+        // The bound excludes a set bit at or beyond it.
+        let mut bv = BitVec::<1024>::default();
+        bv.insert_unchecked(100);
+        bv.insert_unchecked(700);
+        assert_eq!(bv.next_set_bit_in_range(0, 700), Some(100));
+        assert_eq!(bv.next_set_bit_in_range(101, 700), None);
+        assert_eq!(bv.next_set_bit_in_range(101, 701), Some(700));
     }
 
     proptest! {
@@ -755,6 +836,25 @@ mod tests {
             prop_assert_eq!(
                 bit_vec.next_set_bit(query),
                 bit_vec.range(query..).iter_ones().next()
+            );
+        }
+
+        // Property: the bounded fast scan matches its iterator equivalent
+        // across empty sets, word and chunk boundaries, empty and descending
+        // ranges, and bounds past NUM_BITS.
+        #[test]
+        fn next_set_bit_in_range_correctness(
+            bits in proptest::collection::btree_set(0..1024_usize, 0..64),
+            from in 0..=1200_usize,
+            end in 0..=1200_usize,
+        ) {
+            let mut bit_vec = BitVec::<1024>::default();
+            for &idx in &bits {
+                bit_vec.insert_unchecked(idx);
+            }
+            prop_assert_eq!(
+                bit_vec.next_set_bit_in_range(from, end),
+                bit_vec.range(from..end).iter_ones().next()
             );
         }
 

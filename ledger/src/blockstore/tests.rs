@@ -5288,7 +5288,9 @@ fn test_update_completed_data_indexes_out_of_order() {
 //
 // The bounded scan is correct only if no completed data index exists at or
 // above `received`. Check both returned ranges and mutated state against the
-// original unbounded implementation across randomized insertion orders.
+// original unbounded implementation across randomized insertion orders, and
+// check that `received` values past the bit vector capacity — including the
+// u32 saturation of `u64::MAX` — degrade to the unbounded scan.
 #[test]
 fn test_update_completed_data_indexes_differential() {
     // The original implementation, with an unbounded forward scan.
@@ -5350,6 +5352,7 @@ fn test_update_completed_data_indexes_differential() {
         let mut received = 0u64;
         let mut completed_data_indexes = CompletedDataIndexes::default();
         let mut completed_data_indexes_ref = CompletedDataIndexes::default();
+        let mut completed_data_indexes_sat = CompletedDataIndexes::default();
 
         for &index in &indexes {
             let is_last_in_data = rng.random_bool(0.25);
@@ -5373,6 +5376,22 @@ fn test_update_completed_data_indexes_differential() {
             assert_eq!(ranges, expected, "seed {seed}, index {index}");
             assert_eq!(
                 completed_data_indexes, completed_data_indexes_ref,
+                "seed {seed}, index {index}"
+            );
+
+            // A `received` that saturates the u32 conversion must behave
+            // exactly like the unbounded scan.
+            let saturated: Vec<_> = update_completed_data_indexes(
+                is_last_in_data,
+                index,
+                u64::MAX,
+                &shred_index,
+                &mut completed_data_indexes_sat,
+            )
+            .collect();
+            assert_eq!(saturated, expected, "seed {seed}, index {index}");
+            assert_eq!(
+                completed_data_indexes_sat, completed_data_indexes_ref,
                 "seed {seed}, index {index}"
             );
         }
