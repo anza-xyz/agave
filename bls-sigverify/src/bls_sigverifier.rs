@@ -218,6 +218,7 @@ impl SigVerifier {
     ) {
         let root_slot = root_bank.slot();
         let mut cert_groups = HashMap::<CertificateType, Vec<CertPayload>>::new();
+        let mut seen_cert_senders = HashSet::<(CertificateType, Pubkey)>::new();
         let mut votes: HashMap<VotePayloadToSign, Vec<UnverifiedVotePayload>> = HashMap::new();
         let mut num_pkts = 0u64;
         let my_shred_version = self.cluster_info.my_shred_version();
@@ -276,6 +277,9 @@ impl SigVerifier {
                     }
                     if self.generated_cert_types.has_cert(&cert.cert_type) {
                         self.stats.num_generated_certs_received += 1;
+                        continue;
+                    }
+                    if !seen_cert_senders.insert((cert.cert_type, sender_identity_pubkey)) {
                         continue;
                     }
                     cert_groups
@@ -1639,16 +1643,20 @@ mod tests {
             block_id: Hash::new_unique(),
         });
         let num_signers = 7;
-        let mut bitmap = BitVec::<u8, Lsb0>::new();
-        bitmap.resize(num_signers, false);
-        for i in 0..num_signers {
-            bitmap.set(i, true);
-        }
-        let invalid_cert = Certificate {
+        let mut invalid_cert1 = create_signed_certificate_message(
+            ctx.verifier.cluster_info.my_shred_version(),
+            &ctx.validator_keypairs,
             cert_type,
-            signature: Signature([0; BLS_SIGNATURE_AFFINE_SIZE]),
-            bitmap: encode_base2(&bitmap).unwrap(),
-        };
+            &(0..num_signers).collect::<Vec<_>>(),
+        );
+        invalid_cert1.signature = Signature([0; BLS_SIGNATURE_AFFINE_SIZE]);
+        let mut invalid_cert2 = create_signed_certificate_message(
+            ctx.verifier.cluster_info.my_shred_version(),
+            &ctx.validator_keypairs,
+            cert_type,
+            &(1..=num_signers).collect::<Vec<_>>(),
+        );
+        invalid_cert2.signature = Signature([0; BLS_SIGNATURE_AFFINE_SIZE]);
         let valid_cert = create_signed_certificate_message(
             ctx.verifier.cluster_info.my_shred_version(),
             &ctx.validator_keypairs,
@@ -1660,7 +1668,9 @@ mod tests {
         let redundant_sender = Pubkey::new_unique();
         let packet_batches = messages_to_batches_with_remote_pubkeys(
             &[
-                (ConsensusMessage::Certificate(invalid_cert), invalid_sender),
+                // Only the first candidate for a certificate type from a sender is retained.
+                (ConsensusMessage::Certificate(invalid_cert1), invalid_sender),
+                (ConsensusMessage::Certificate(invalid_cert2), invalid_sender),
                 (
                     ConsensusMessage::Certificate(valid_cert.clone()),
                     valid_sender,
@@ -1685,6 +1695,8 @@ mod tests {
         assert!(!ctx.banlist.is_banned(&redundant_sender));
         assert_eq!(ctx.verifier.stats.cert_stats.certs_to_sig_verify.0, 2);
         assert_eq!(ctx.verifier.stats.cert_stats.sig_verified_certs.0, 1);
+        assert_eq!(ctx.verifier.stats.cert_stats.banning_validator.0, 1);
+        assert_eq!(ctx.verifier.stats.cert_stats.already_banned.0, 0);
         assert_eq!(
             ctx.verifier
                 .stats
