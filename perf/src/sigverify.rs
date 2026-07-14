@@ -125,10 +125,167 @@ pub fn ed25519_verify(
     });
 }
 
-pub fn ed25519_verify_serial(batch: &mut PacketBatch, reject_non_vote: bool, enable_tx_v1: bool) {
-    for mut packet in batch.iter_mut() {
+/// Verifies every packet across all of `batches` on the current thread.
+#[cfg(not(feature = "ed25519-simd-verify"))]
+pub fn ed25519_verify_serial(
+    batches: &mut [PacketBatch],
+    reject_non_vote: bool,
+    enable_tx_v1: bool,
+) {
+    for mut packet in batches.iter_mut().flatten() {
         if !packet.meta().discard() && !verify_packet(&mut packet, reject_non_vote, enable_tx_v1) {
             packet.meta_mut().set_discard(true);
+        }
+    }
+}
+
+/// AVX-512-backed `ed25519_verify_serial` for the experimental feature.
+#[cfg(feature = "ed25519-simd-verify")]
+pub fn ed25519_verify_serial(
+    batches: &mut [PacketBatch],
+    reject_non_vote: bool,
+    enable_tx_v1: bool,
+) {
+    simd_verify::ed25519_verify_serial(batches, reject_non_vote, enable_tx_v1)
+}
+
+#[cfg(feature = "ed25519-simd-verify")]
+mod simd_verify {
+    use {
+        super::{
+            PacketBatch, PacketFlags, TransactionVersion, is_simple_vote_transaction_view,
+            sanitize_config,
+        },
+        agave_transaction_view::transaction_view::SanitizedTransactionView,
+        ed25519_simd::{Verifier, VerifyInput, VerifyPolicy},
+        solana_signature::Signature,
+        std::cell::RefCell,
+    };
+
+    thread_local! {
+        // Match the non-SIMD `verify_strict` policy.
+        static VERIFIER: RefCell<Verifier> = RefCell::new(Verifier::with_policy(VerifyPolicy::Dalek));
+    }
+
+    // SIMD setup is slower for a single signature.
+    const SIMD_BATCH_THRESHOLD: usize = 2;
+
+    struct PendingSig {
+        public_key: [u8; 32],
+        signature: [u8; 64],
+        message_start: usize,
+        message_end: usize,
+    }
+
+    enum PacketSummary {
+        Discard,
+        Verify {
+            is_simple_vote_tx: bool,
+            sig_start: usize,
+            sig_end: usize,
+        },
+    }
+
+    pub(super) fn ed25519_verify_serial(
+        batches: &mut [PacketBatch],
+        reject_non_vote: bool,
+        enable_tx_v1: bool,
+    ) {
+        let mut summaries = Vec::with_capacity(batches.iter().map(PacketBatch::len).sum());
+        let mut pending: Vec<PendingSig> = Vec::new();
+        let mut message_arena: Vec<u8> = Vec::new();
+
+        for packet in batches.iter().flatten() {
+            if packet.meta().discard() {
+                summaries.push(PacketSummary::Discard);
+                continue;
+            }
+
+            let Some(data) = packet.data(..) else {
+                summaries.push(PacketSummary::Discard);
+                continue;
+            };
+
+            let Ok(view) =
+                SanitizedTransactionView::try_new_sanitized(data, &sanitize_config(true))
+            else {
+                summaries.push(PacketSummary::Discard);
+                continue;
+            };
+
+            if !enable_tx_v1 && matches!(view.version(), TransactionVersion::V1) {
+                summaries.push(PacketSummary::Discard);
+                continue;
+            }
+
+            let is_simple_vote_tx = is_simple_vote_transaction_view(&view);
+            if reject_non_vote && !is_simple_vote_tx {
+                summaries.push(PacketSummary::Discard);
+                continue;
+            }
+
+            let signatures = view.signatures();
+            if signatures.is_empty() {
+                summaries.push(PacketSummary::Discard);
+                continue;
+            }
+
+            let message_start = message_arena.len();
+            message_arena.extend_from_slice(view.message_data());
+            let message_end = message_arena.len();
+
+            let sig_start = pending.len();
+            for (signature, pubkey) in signatures.iter().zip(view.static_account_keys()) {
+                pending.push(PendingSig {
+                    public_key: pubkey.to_bytes(),
+                    signature: *signature.as_array(),
+                    message_start,
+                    message_end,
+                });
+            }
+            summaries.push(PacketSummary::Verify {
+                is_simple_vote_tx,
+                sig_start,
+                sig_end: pending.len(),
+            });
+        }
+
+        let mut results = vec![false; pending.len()];
+        if pending.len() < SIMD_BATCH_THRESHOLD {
+            for (result, p) in results.iter_mut().zip(&pending) {
+                *result = Signature::from(p.signature)
+                    .verify(&p.public_key, &message_arena[p.message_start..p.message_end]);
+            }
+        } else if !pending.is_empty() {
+            let verify_inputs: Vec<VerifyInput> = pending
+                .iter()
+                .map(|p| VerifyInput {
+                    public_key: p.public_key,
+                    signature: p.signature,
+                    message: &message_arena[p.message_start..p.message_end],
+                })
+                .collect();
+            VERIFIER.with(|verifier| {
+                verifier.borrow_mut().verify_batch(&verify_inputs, &mut results);
+            });
+        }
+
+        for (mut packet, summary) in batches.iter_mut().flatten().zip(summaries.iter()) {
+            match summary {
+                PacketSummary::Discard => packet.meta_mut().set_discard(true),
+                PacketSummary::Verify {
+                    is_simple_vote_tx,
+                    sig_start,
+                    sig_end,
+                } => {
+                    if *is_simple_vote_tx {
+                        packet.meta_mut().flags |= PacketFlags::SIMPLE_VOTE_TX;
+                    }
+                    if !results[*sig_start..*sig_end].iter().all(|&ok| ok) {
+                        packet.meta_mut().set_discard(true);
+                    }
+                }
+            }
         }
     }
 }
@@ -587,6 +744,86 @@ mod tests {
                     }
                 })
         );
+    }
+
+    #[test]
+    fn test_verify_serial() {
+        agave_logger::setup();
+
+        let valid_simple = test_tx();
+        let valid_multisig = test_multisig_tx();
+        let mut tampered_multisig_data = bincode::serialize(&valid_multisig).unwrap();
+        tampered_multisig_data[40] = tampered_multisig_data[40].wrapping_add(8);
+
+        let mut packet_batch = BytesPacketBatch::with_capacity(4);
+        packet_batch.push(BytesPacket::from_data(&valid_simple).unwrap());
+        packet_batch.push(BytesPacket::from_data(&valid_multisig).unwrap());
+        packet_batch.push(BytesPacket::from_bytes(
+            None,
+            Bytes::from(tampered_multisig_data),
+        ));
+        let mut already_discarded = BytesPacket::from_data(&valid_simple).unwrap();
+        already_discarded.meta_mut().set_discard(true);
+        packet_batch.push(already_discarded);
+
+        let mut batch = PacketBatch::from(packet_batch);
+        ed25519_verify_serial(std::slice::from_mut(&mut batch), false, false);
+
+        let discards: Vec<bool> = batch.iter().map(|p| p.meta().discard()).collect();
+        assert_eq!(discards, vec![false, false, true, true]);
+    }
+
+    #[test]
+    fn test_verify_serial_single_signature() {
+        // Exercises the scalar fallback path.
+        agave_logger::setup();
+
+        let mut tx = test_tx();
+        let mut packet_batch = BytesPacketBatch::with_capacity(1);
+        packet_batch.push(BytesPacket::from_data(&tx).unwrap());
+        let mut batch = PacketBatch::from(packet_batch);
+        ed25519_verify_serial(std::slice::from_mut(&mut batch), false, false);
+        assert!(!batch.get(0).unwrap().meta().discard());
+
+        tx.signatures[0] = solana_signature::Signature::default();
+        let mut packet_batch = BytesPacketBatch::with_capacity(1);
+        packet_batch.push(BytesPacket::from_data(&tx).unwrap());
+        let mut batch = PacketBatch::from(packet_batch);
+        ed25519_verify_serial(std::slice::from_mut(&mut batch), false, false);
+        assert!(batch.get(0).unwrap().meta().discard());
+    }
+
+    #[test]
+    fn test_verify_serial_across_multiple_batches() {
+        // Verify separate source batches in one call.
+        agave_logger::setup();
+
+        let valid_tx = test_tx();
+        let mut tampered_data = bincode::serialize(&valid_tx).unwrap();
+        // Corrupt the signature while keeping the transaction parseable.
+        tampered_data[5] ^= 0xff;
+
+        let mut batches: Vec<PacketBatch> = (0..8)
+            .map(|i| {
+                let mut packet_batch = BytesPacketBatch::with_capacity(1);
+                if i % 2 == 0 {
+                    packet_batch.push(BytesPacket::from_data(&valid_tx).unwrap());
+                } else {
+                    packet_batch.push(BytesPacket::from_bytes(
+                        None,
+                        Bytes::from(tampered_data.clone()),
+                    ));
+                }
+                PacketBatch::from(packet_batch)
+            })
+            .collect();
+
+        ed25519_verify_serial(&mut batches, false, false);
+
+        for (i, batch) in batches.iter().enumerate() {
+            let discarded = batch.get(0).unwrap().meta().discard();
+            assert_eq!(discarded, i % 2 != 0, "batch {i}");
+        }
     }
 
     #[test]

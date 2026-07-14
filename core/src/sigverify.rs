@@ -8,7 +8,7 @@ use {
         transaction_priority::calculate_priority_from_bytes,
     },
     agave_banking_stage_ingress_types::{BankingPacketBatch, SchedulerPriorityFloor},
-    crossbeam_channel::{Receiver, Sender, TrySendError, bounded},
+    crossbeam_channel::{bounded, Receiver, Sender, TrySendError},
     solana_measure::measure_us,
     solana_perf::{
         deduper::{self, Deduper},
@@ -20,8 +20,8 @@ use {
     std::{
         num::NonZeroUsize,
         sync::{
-            Arc,
             atomic::{AtomicBool, AtomicUsize, Ordering},
+            Arc,
         },
         thread::JoinHandle,
         time::Duration,
@@ -130,6 +130,10 @@ impl GossipSigVerifier {
 /// Gossip votes use a bounded queue into the worker pool.
 const SIGVERIFY_GOSSIP_VOTE_WORK_CHANNEL_SIZE: usize = 50_000;
 
+/// Caps one drained verification call at the SIMD lane width while bounding
+/// worker latency.
+const MAX_SIGVERIFY_DRAIN_BATCHES: usize = 8;
+
 pub(crate) struct SigVerifyWorkerSenders {
     pub(crate) gossip_verified_vote_sender: Sender<GossipVerifiedVoteBatch>,
     pub(crate) forward_stage_sender: Sender<(BankingPacketBatch, bool)>,
@@ -219,13 +223,30 @@ impl SigVerifyWorkerPool {
         }
     }
 
+    /// Adds already queued batches to `first`, without blocking.
+    ///
+    /// This lets sigverify batch under load while preserving single-batch
+    /// latency when idle.
+    fn drain_pending(receiver: &Receiver<PacketBatch>, first: PacketBatch) -> Vec<PacketBatch> {
+        let pending_capacity = receiver.len().min(MAX_SIGVERIFY_DRAIN_BATCHES - 1);
+        let mut batches = Vec::with_capacity(1 + pending_capacity);
+        batches.push(first);
+        while batches.len() < MAX_SIGVERIFY_DRAIN_BATCHES {
+            match receiver.try_recv() {
+                Ok(batch) => batches.push(batch),
+                Err(_) => break,
+            }
+        }
+        batches
+    }
+
     /// Returns false if some channel connection is disconnected.
     fn worker_iteration(channels: &WorkerPoolChannels, forward_non_votes: bool) -> bool {
         crossbeam_channel::select! {
             recv(&channels.non_vote_receiver) -> maybe_work => {
                 match maybe_work {
                     Ok(batch) => Self::run_transaction_task(
-                        batch,
+                        Self::drain_pending(&channels.non_vote_receiver, batch),
                         false,
                         &channels.forward_stage_sender,
                         forward_non_votes,
@@ -239,7 +260,7 @@ impl SigVerifyWorkerPool {
             recv(&channels.tpu_vote_receiver) -> maybe_work => {
                 match maybe_work {
                     Ok(batch) => Self::run_transaction_task(
-                        batch,
+                        Self::drain_pending(&channels.tpu_vote_receiver, batch),
                         true,
                         &channels.forward_stage_sender,
                         true,
@@ -264,7 +285,7 @@ impl SigVerifyWorkerPool {
     }
 
     fn run_transaction_task(
-        mut batch: PacketBatch,
+        mut batches: Vec<PacketBatch>,
         reject_non_vote: bool,
         forward_stage_sender: &Sender<(BankingPacketBatch, bool)>,
         should_forward: bool,
@@ -272,17 +293,19 @@ impl SigVerifyWorkerPool {
         sharable_banks: &SharableBanks,
         state: &SigVerifyWorkerState,
     ) -> bool {
-        state.stats.total_batches.fetch_add(1, Ordering::Relaxed);
+        state
+            .stats
+            .total_batches
+            .fetch_add(batches.len(), Ordering::Relaxed);
+        let total_packets: usize = batches.iter().map(PacketBatch::len).sum();
         state
             .stats
             .total_packets
-            .fetch_add(batch.len(), Ordering::Relaxed);
+            .fetch_add(total_packets, Ordering::Relaxed);
 
-        let (discard_or_dedup_fail, dedup_time_us) =
-            measure_us!(deduper::dedup_packets_and_count_discards(
-                &state.deduper,
-                std::slice::from_mut(&mut batch)
-            ));
+        let (discard_or_dedup_fail, dedup_time_us) = measure_us!(
+            deduper::dedup_packets_and_count_discards(&state.deduper, &mut batches)
+        );
         state
             .stats
             .total_dedup
@@ -298,7 +321,7 @@ impl SigVerifyWorkerPool {
             let floor = floor.get();
             if floor > 0 {
                 let ((dropped, all_below), priority_floor_time_us) = measure_us!(
-                    apply_priority_floor_to_batch(&mut batch, floor, &working_bank)
+                    apply_priority_floor_to_batches(&mut batches, floor, &working_bank)
                 );
                 state
                     .stats
@@ -311,8 +334,7 @@ impl SigVerifyWorkerPool {
                         .fetch_add(dropped, Ordering::Relaxed);
                 }
                 if all_below {
-                    // Entire batch went below-floor: nothing left to verify or
-                    // forward.
+                    // Nothing left to verify or forward.
                     return true;
                 }
             }
@@ -320,11 +342,11 @@ impl SigVerifyWorkerPool {
 
         let enable_tx_v1 = working_bank.feature_set.snapshot().enable_tx_v1;
         let (_, verify_time_us) = measure_us!(sigverify::ed25519_verify_serial(
-            &mut batch,
+            &mut batches,
             reject_non_vote,
             enable_tx_v1,
         ));
-        let num_valid_packets = sigverify::count_valid_packets(std::iter::once(&batch));
+        let num_valid_packets = sigverify::count_valid_packets(batches.iter());
         state
             .stats
             .total_valid_packets
@@ -334,43 +356,52 @@ impl SigVerifyWorkerPool {
             .total_verify_time_us
             .fetch_add(verify_time_us as usize, Ordering::Relaxed);
 
-        let banking_packet_batch = BankingPacketBatch::new(vec![batch]);
+        let banking_packet_batch = BankingPacketBatch::new(batches);
         // Sample backlog before the push: measures consumer health without
         // including this batch's own contribution.
         state
             .stats
             .max_pre_send_len
             .fetch_max(state.banking_stage_sender.len(), Ordering::Relaxed);
-        match state
-            .banking_stage_sender
-            .send(banking_packet_batch.clone())
-        {
-            Ok(0) => {} // avoid poking atomics if nothing was evicted (typical case)
+        if should_forward {
+            if !Self::send_to_banking(state, banking_packet_batch.clone()) {
+                return false;
+            }
+            Self::try_forward(forward_stage_sender, banking_packet_batch, is_tpu_vote);
+        } else if !Self::send_to_banking(state, banking_packet_batch) {
+            return false;
+        }
+
+        true
+    }
+
+    fn send_to_banking(
+        state: &SigVerifyWorkerState,
+        banking_packet_batch: BankingPacketBatch,
+    ) -> bool {
+        match state.banking_stage_sender.send(banking_packet_batch) {
+            Ok(0) => true, // avoid poking atomics if nothing was evicted (typical case)
             Ok(evicted) => {
-                // record evicted amount into metrics
                 state
                     .stats
                     .eviction_drops
                     .fetch_add(evicted, Ordering::Relaxed);
+                true
             }
             Err(err) => {
                 error!("sigverify send to banking failed: {err:?}");
-                return false;
+                false
             }
         }
-        if should_forward {
-            Self::try_forward(forward_stage_sender, banking_packet_batch, is_tpu_vote);
-        }
-
-        true
     }
 
     fn run_gossip_task(
         mut work: GossipVerifyTask,
         verified_vote_sender: &Sender<GossipVerifiedVoteBatch>,
     ) -> bool {
-        // Gossip votes are legacy Transaction values, not tx-v1 packets.
-        sigverify::ed25519_verify_serial(&mut work.batch, true, false);
+        // Gossip votes are legacy Transaction values; keep one response per
+        // submitted task.
+        sigverify::ed25519_verify_serial(std::slice::from_mut(&mut work.batch), true, false);
 
         if let Err(err) = verified_vote_sender.send(GossipVerifiedVoteBatch {
             transaction: work.transaction,
@@ -395,20 +426,17 @@ impl SigVerifyWorkerPool {
     }
 }
 
-/// Apply the scheduler-published priority floor to a single batch in place.
+/// Apply the scheduler-published priority floor across drained batches.
 ///
-/// Below-floor packets are marked `discard`. Returns `(dropped, all_below)`,
-/// where `dropped` is the number of packets newly marked and `all_below` is
-/// true iff no useful packets remain in the batch (so the caller can skip
-/// downstream work for this batch entirely).
-fn apply_priority_floor_to_batch(
-    batch: &mut PacketBatch,
+/// Returns newly dropped packets and whether no useful packets remain.
+fn apply_priority_floor_to_batches(
+    batches: &mut [PacketBatch],
     floor: u64,
     bank: &Bank,
 ) -> (usize, bool) {
     let mut dropped: usize = 0;
     let mut any_kept = false;
-    for mut packet in batch.iter_mut() {
+    for mut packet in batches.iter_mut().flatten() {
         if packet.meta().discard() {
             continue;
         }

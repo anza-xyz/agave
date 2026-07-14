@@ -2755,6 +2755,11 @@ dependencies = [
 ]
 
 [[package]]
+name = "ed25519-simd"
+version = "0.1.0"
+source = "git+https://github.com/efagerho/ed25519-simd-rs?rev=793aa8ba660af57466fa721c9612e072557348c5#793aa8ba660af57466fa721c9612e072557348c5"
+
+[[package]]
 name = "educe"
 version = "0.4.18"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -9530,6 +9535,7 @@ dependencies = [
  "bincode",
  "bytes",
  "caps",
+ "ed25519-simd",
  "libc",
  "log",
  "nix",
