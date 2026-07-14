@@ -26,6 +26,20 @@ frozen-abi = [
     "solana-runtime/frozen-abi",
 ]
 agave-unstable-api = []
+conformance = [
+    "agave-unstable-api",
+    "dep:bincode",
+    "dep:prost-011",
+    "dep:protosol",
+    "dep:solana-fee-calculator",
+    "dep:solana-hard-forks",
+    "dep:solana-inflation",
+    "dep:solana-lattice-hash",
+    "dep:solana-rent",
+    "dep:solana-sdk-ids",
+    "dev-context-only-utils",
+]
+dummy-for-ci-check = ["conformance"]
 
 [dependencies]
 agave-feature-set = { workspace = true }
@@ -34,6 +48,7 @@ agave-snapshots = { workspace = true }
 agave-votor-messages = { workspace = true }
 anyhow = { workspace = true }
 assert_matches = { workspace = true }
+bincode = { workspace = true, optional = true }
 bitflags = { workspace = true }
 bytes = { workspace = true }
 bzip2 = { workspace = true }
@@ -53,6 +68,8 @@ num_cpus = { workspace = true }
 num_enum = { workspace = true }
 parking_lot = { workspace = true }
 prost = { workspace = true }
+prost-011 = { package = "prost", version = "0.11", optional = true }
+protosol = { workspace = true, optional = true }
 qualifier_attr = { workspace = true }
 rand = { workspace = true }
 rand_chacha = { workspace = true }
@@ -67,6 +84,7 @@ solana-clock = { workspace = true }
 solana-cost-model = { workspace = true }
 solana-entry = { workspace = true }
 solana-epoch-schedule = { workspace = true }
+solana-fee-calculator = { workspace = true, optional = true }
 solana-frozen-abi = { workspace = true, optional = true, features = [
     "frozen-abi",
 ] }
@@ -75,9 +93,12 @@ solana-frozen-abi-macro = { workspace = true, optional = true, features = [
 ] }
 solana-genesis-config = { workspace = true }
 solana-genesis-utils = { workspace = true }
+solana-hard-forks = { workspace = true, optional = true }
 solana-hash = { workspace = true }
+solana-inflation = { workspace = true, optional = true }
 solana-instruction = { workspace = true }
 solana-keypair = { workspace = true }
+solana-lattice-hash = { workspace = true, optional = true }
 solana-leader-schedule = { workspace = true }
 solana-measure = { workspace = true }
 solana-message = { workspace = true }
@@ -90,8 +111,10 @@ solana-perf = { workspace = true }
 solana-program-runtime = { workspace = true, features = ["metrics"] }
 solana-pubkey = { workspace = true, features = ["wincode"] }
 solana-rayon-threadlimit = { workspace = true }
+solana-rent = { workspace = true, optional = true }
 solana-runtime = { workspace = true }
 solana-runtime-transaction = { workspace = true }
+solana-sdk-ids = { workspace = true, optional = true }
 solana-sha256-hasher = { workspace = true }
 solana-shred-version = { workspace = true }
 solana-signature = { workspace = true, features = ["wincode"] }
@@ -136,7 +159,7 @@ criterion = { workspace = true }
 proptest = { workspace = true }
 solana-bls-signatures = { workspace = true }
 # See order-crates-for-publishing.py for using this unusual `path = "."`
-solana-ledger = { path = ".", features = ["dev-context-only-utils", "agave-unstable-api"] }
+solana-ledger = { path = ".", features = ["agave-unstable-api", "conformance", "dev-context-only-utils"] }
 solana-net-utils = { path = "../net-utils", features = ["agave-unstable-api", "dev-context-only-utils"] }
 solana-perf = { path = "../perf", features = ["agave-unstable-api", "dev-context-only-utils"] }
 solana-program-option = { workspace = true }

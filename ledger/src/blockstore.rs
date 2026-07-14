@@ -216,6 +216,52 @@ impl PossibleDuplicateShred {
     }
 }
 
+/// Per-shred duplicate handling, extracted from `run_check_duplicate` so callers
+/// can run the same duplicate-detection path without gossip/channel side effects.
+///
+/// Returns the duplicate proof (`shred` and the conflicting payload) when one is
+/// detected, leaving propagation to the caller.
+pub fn check_duplicate_shred(
+    blockstore: &Blockstore,
+    shred: PossibleDuplicateShred,
+    no_verify_chained_merkle_root: bool,
+) -> Result<Option<(Shred, shred::Payload)>> {
+    let shred_slot = shred.slot();
+    let (shred1, shred2) = match shred {
+        PossibleDuplicateShred::LastIndexConflict(shred, conflict)
+        | PossibleDuplicateShred::ErasureConflict(shred, conflict)
+        | PossibleDuplicateShred::MerkleRootConflict(shred, conflict) => (shred, conflict),
+        PossibleDuplicateShred::FixedFECChainedMerkleRootConflict(_slot) => {
+            if no_verify_chained_merkle_root {
+                // If we're in the full alpenglow epoch, we stop validating the chained merkle root.
+                // In Alpenglow we only use the double merkle root
+                return Ok(None);
+            }
+            blockstore.set_dead_slot(shred_slot)?;
+            return Ok(None);
+        }
+        PossibleDuplicateShred::Exists(shred) => {
+            // Unlike the other cases we have to wait until here to decide to handle the duplicate and store
+            // in blockstore. This is because the duplicate could have been part of the same insert batch,
+            // so we wait until the batch has been written.
+            if blockstore.has_duplicate_shreds_in_slot(shred_slot) {
+                return Ok(None); // A duplicate is already recorded
+            }
+            let Some(existing_shred_payload) = blockstore.is_shred_duplicate(&shred) else {
+                return Ok(None); // Not a duplicate
+            };
+            blockstore.store_duplicate_slot(
+                shred_slot,
+                existing_shred_payload.clone(),
+                shred.clone().into_payload(),
+            )?;
+            (shred, shred::Payload::from(existing_shred_payload))
+        }
+    };
+
+    Ok(Some((shred1, shred2)))
+}
+
 enum WorkingEntry<T> {
     Dirty(T), // Value has been modified with respect to the blockstore column
     Clean(T), // Value matches what is currently in the blockstore column

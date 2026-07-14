@@ -1,15 +1,17 @@
 #![cfg(feature = "conformance")]
 
 use {
-    prost::Message,
+    prost_011::Message,
     protosol::protos::{BlockParseResult, ShredParseContext, ShredParseEffects, ShredParseFixture},
-    solana_core::conformance::shred::{execute_shred_parse, sol_compat_shred_parse_v1},
     solana_entry::entry::Entry,
     solana_hash::Hash,
     solana_keypair::Keypair,
-    solana_ledger::shred::{
-        DATA_SHREDS_PER_FEC_BLOCK, ProcessShredsStats, ReedSolomonCache, Shredder,
-        max_entries_per_n_shred_last_or_not,
+    solana_ledger::{
+        conformance::shred::{execute_shred_parse, sol_compat_shred_parse_v1},
+        shred::{
+            DATA_SHREDS_PER_FEC_BLOCK, ProcessShredsStats, ReedSolomonCache, Shredder,
+            max_entries_per_n_shred_last_or_not,
+        },
     },
     solana_signer::Signer,
     std::{mem::MaybeUninit, path::PathBuf, sync::Arc},
