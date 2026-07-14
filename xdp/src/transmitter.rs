@@ -64,20 +64,7 @@ pub struct XdpConfig {
 impl XdpConfig {
     // A nice round number
     const DEFAULT_TX_CHANNEL_CAP: usize = 1_000_000;
-}
 
-impl Default for XdpConfig {
-    fn default() -> Self {
-        Self {
-            interface: None,
-            queues: vec![],
-            zero_copy: false,
-            tx_channel_cap: Self::DEFAULT_TX_CHANNEL_CAP,
-        }
-    }
-}
-
-impl XdpConfig {
     pub fn new(
         interface: Option<impl Into<String>>,
         queues: Vec<QueueCpuBinding>,
