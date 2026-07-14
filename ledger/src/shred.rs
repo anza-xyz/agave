@@ -475,6 +475,14 @@ impl Shred {
         }
     }
 
+    /// Returns the application data carried by a data shred.
+    pub fn data(&self) -> Result<&[u8], Error> {
+        match self {
+            Self::ShredCode(_) => Err(Error::InvalidShredType),
+            Self::ShredData(shred) => shred.data(),
+        }
+    }
+
     pub fn index(&self) -> u32 {
         self.common_header().index
     }

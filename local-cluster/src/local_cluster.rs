@@ -28,7 +28,10 @@ use {
         node::Node,
     },
     solana_keypair::Keypair,
-    solana_ledger::{create_new_tmp_ledger, shred::Shred},
+    solana_ledger::{
+        create_new_tmp_ledger,
+        shred::{Shred, filter::TurbineMode},
+    },
     solana_message::Message,
     solana_native_token::LAMPORTS_PER_SOL,
     solana_net_utils::{SocketAddrSpace, sockets::bind_to_localhost_unique},
@@ -37,9 +40,12 @@ use {
     solana_pubkey::Pubkey,
     solana_rent::Rent,
     solana_rpc_client::rpc_client::RpcClient,
-    solana_runtime::genesis_utils::{
-        GenesisConfigInfo, ValidatorVoteKeypairs,
-        create_genesis_config_with_vote_accounts_and_cluster_type,
+    solana_runtime::{
+        bank_forks::BankForks,
+        genesis_utils::{
+            GenesisConfigInfo, ValidatorVoteKeypairs,
+            create_genesis_config_with_vote_accounts_and_cluster_type,
+        },
     },
     solana_shred_version::compute_shred_version,
     solana_signer::Signer,
@@ -85,6 +91,9 @@ pub struct ClusterConfig {
     pub validator_configs: Vec<ValidatorConfig>,
     /// Number of nodes that are unstaked and not voting (a.k.a listening)
     pub num_listeners: u64,
+    /// Optional turbine mode shared by all listener nodes. When unset, listeners inherit the
+    /// bootstrap validator's turbine mode.
+    pub listener_turbine_mode: Option<TurbineMode>,
     /// List of tuples (pubkeys, in_genesis) of each node if specified. If
     /// `in_genesis` == true, the validator's vote and stake accounts
     //  will be inserted into the genesis block instead of warming up through
@@ -129,6 +138,7 @@ impl Default for ClusterConfig {
         ClusterConfig {
             validator_configs: vec![],
             num_listeners: 0,
+            listener_turbine_mode: None,
             validator_keys: None,
             node_stakes: vec![],
             mint_lamports: DEFAULT_MINT_LAMPORTS,
@@ -467,6 +477,10 @@ impl LocalCluster {
 
         let mut listener_config = safe_clone_config(&config.validator_configs[0]);
         listener_config.voting_disabled = true;
+        listener_config.wait_for_supermajority = None;
+        if let Some(turbine_mode) = &config.listener_turbine_mode {
+            listener_config.turbine_mode = turbine_mode.clone();
+        }
         (0..config.num_listeners).for_each(|_| {
             cluster.add_validator_listener(
                 &listener_config,
@@ -900,16 +914,7 @@ impl LocalCluster {
         node_stakes: &[u64],
     ) {
         let alive_node_contact_infos = self.discover_nodes(socket_addr_space, test_name);
-        let bank_forks = self
-            .validators
-            .values()
-            .find_map(|validator_info| {
-                validator_info
-                    .validator
-                    .as_ref()
-                    .map(|validator| Arc::clone(&validator.bank_forks))
-            })
-            .expect("cluster must contain a running validator");
+        let bank_forks = self.bank_forks();
         info!("{test_name} looking for new notarized votes on all nodes");
         cluster_tests::check_for_new_notarized_votes(
             compute_shred_version(&self.genesis_config.hash(), None),
@@ -922,6 +927,18 @@ impl LocalCluster {
             bank_forks,
         );
         info!("{test_name} done waiting for notarized votes");
+    }
+
+    pub fn bank_forks(&self) -> Arc<RwLock<BankForks>> {
+        self.validators
+            .values()
+            .find_map(|validator_info| {
+                validator_info
+                    .validator
+                    .as_ref()
+                    .map(|validator| Arc::clone(&validator.bank_forks))
+            })
+            .expect("cluster must contain a running validator")
     }
 
     pub fn check_no_new_roots(
