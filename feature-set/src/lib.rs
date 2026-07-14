@@ -1442,6 +1442,10 @@ pub mod remove_simple_vote_from_cost_model {
     solana_pubkey::declare_id!("2GCrNXbzmt4xrwdcKS2RdsLzsgu4V5zHAemW57pcHT6a");
 }
 
+pub mod limit_instruction_accounts {
+    solana_pubkey::declare_id!("6aHuNsUmwSzCEMjrBzBCYaxHAyAcQBjVES92JigHBDuC");
+}
+
 pub mod block_revenue_sharing {
     solana_pubkey::declare_id!("B1ockRevenueSharing111111111111111111111111");
 }
@@ -2551,6 +2555,10 @@ pub static FEATURE_NAMES: LazyLock<AHashMap<Pubkey, &'static str>> = LazyLock::n
         (
             remove_simple_vote_from_cost_model::id(),
             "stop use static SimpleVote transaction cost, issue #10227",
+        ),
+        (
+            limit_instruction_accounts::id(),
+            "SIMD-0406: Maximum instruction accounts",
         ),
         (
             block_revenue_sharing::id(),
