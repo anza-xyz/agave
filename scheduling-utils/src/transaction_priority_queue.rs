@@ -178,6 +178,74 @@ mod tests {
     }
 
     #[test]
+    fn push_evicts_lowest_priorities_across_existing_and_incoming_ids() {
+        fn assert_eviction(
+            case: &str,
+            existing_priorities: &[u64],
+            incoming_priorities: &[u64],
+            num_to_evict: usize,
+            expected_queued_priorities: &[u64],
+            expected_evicted_priorities: &[u64],
+        ) {
+            let mut queue = TransactionPriorityQueue::with_capacity(3);
+            queue.push(
+                existing_priorities
+                    .iter()
+                    .enumerate()
+                    .map(|(id, &priority)| TransactionPriorityId::new(priority, id)),
+                0,
+                |_| unreachable!(),
+            );
+
+            let mut evicted_priorities = Vec::new();
+            queue.push(
+                incoming_priorities
+                    .iter()
+                    .enumerate()
+                    .map(|(id, &priority)| {
+                        TransactionPriorityId::new(priority, existing_priorities.len() + id)
+                    }),
+                num_to_evict,
+                |id| evicted_priorities.push(id.priority),
+            );
+
+            let queued_priorities = queue
+                .descending_from(None)
+                .map(|id| id.priority)
+                .collect::<Vec<_>>();
+            assert_eq!(queued_priorities, expected_queued_priorities, "{case}");
+
+            evicted_priorities.sort_unstable();
+            assert_eq!(evicted_priorities, expected_evicted_priorities, "{case}");
+        }
+
+        assert_eviction(
+            "at capacity, priority order",
+            &[60, 50, 40],
+            &[80, 70, 20, 10],
+            4,
+            &[80, 70, 60],
+            &[10, 20, 40, 50],
+        );
+        assert_eviction(
+            "at capacity, reverse priority order",
+            &[60, 50, 40],
+            &[10, 20, 70, 80],
+            4,
+            &[80, 70, 60],
+            &[10, 20, 40, 50],
+        );
+        assert_eviction(
+            "below capacity",
+            &[60],
+            &[100, 90, 50, 40],
+            2,
+            &[100, 90, 60],
+            &[40, 50],
+        );
+    }
+
+    #[test]
     #[should_panic(expected = "num_to_evict must not exceed the number of queued IDs")]
     fn rejects_too_many_evictions() {
         let mut queue = TransactionPriorityQueue::with_capacity(1);
