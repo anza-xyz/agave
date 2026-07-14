@@ -187,7 +187,11 @@ pub(crate) fn make_pull_request_bytes(filter_bytes: &[u8], value_bytes: &[u8]) -
 /// so we construct and serialize the Rust object.
 pub(crate) fn make_crds_filter_bytes() -> Vec<u8> {
     use solana_gossip::crds_gossip_pull::CrdsFilter;
-    bincode::serialize(&CrdsFilter::new_rand(1, 128)).unwrap()
+    // A 128-byte bloom filter holds at most 178 items. 178 * 2^5 + 1 is the
+    // minimum item estimate for CrdsFilter::mask_bits to return 6.
+    let filter = CrdsFilter::new_rand(5_697, 128);
+    assert_eq!(filter.get_mask_bits(), 6);
+    bincode::serialize(&filter).unwrap()
 }
 
 /// Build a Vote CrdsData (variant 1).

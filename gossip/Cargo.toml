@@ -34,6 +34,7 @@ frozen-abi = [
     "solana-vote-program/frozen-abi",
 ]
 agave-unstable-api = []
+small-cluster-gossip = []
 dev-context-only-utils = [
     "agave-votor-messages/dev-context-only-utils",
     "solana-bloom/dev-context-only-utils",

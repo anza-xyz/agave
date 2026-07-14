@@ -19,6 +19,7 @@ echo "--- coverage: coverage (part 3)"
 "$git_root"/ci/test-coverage.sh \
   --features frozen-abi \
   --features dev-context-only-utils \
+  --features solana-gossip/small-cluster-gossip \
   --workspace \
   --lib \
   --bins \
