@@ -28,9 +28,11 @@ dev-context-only-utils = [
     "solana-bls-signatures/solana-signer-derive",
 ]
 frozen-abi = [
+    "dep:solana-bls-signatures",
     "dep:solana-frozen-abi",
     "dep:solana-frozen-abi-macro",
     "solana-account/frozen-abi",
+    "solana-bls-signatures/solana-signer-derive",
     "solana-pubkey/frozen-abi",
     "solana-vote-interface/frozen-abi",
 ]

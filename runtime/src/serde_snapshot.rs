@@ -218,7 +218,7 @@ impl From<DeserializableVersionedBank> for BankFieldsToDeserialize {
     // Write-only type (its deserialize counterpart is `DeserializableVersionedBank`), so the abi
     // digest only verifies the serialized wire format; there is no roundtrip.
     frozen_abi(
-        abi_digest = "6sm6hSNiTsNBAbSAiNe2BSQgnum3UdeNBpZnZiX7aM9r",
+        abi_digest = "7bTCffg34CBt8zAyc1H81TUazqPTUC1Xtkd597FV7wjr",
         abi_serializer = ["bincode", "wincode"],
         test_roundtrip = "no"
     )
@@ -438,7 +438,7 @@ struct ExtraFieldsToDeserialize {
     // Write-only type (its deserialize counterpart is `ExtraFieldsToDeserialize`), so the abi digest
     // only verifies the serialized wire format; there is no roundtrip.
     frozen_abi(
-        abi_digest = "726M1TRfibJsSAGcFqan4TSC8qKkJhDZfiK2P3h71eoo",
+        abi_digest = "A1hmQvmrkwy33dXMpHXTweArYefPfWtsmwXK6EbNV4K6",
         abi_serializer = ["bincode", "wincode"],
         test_roundtrip = "no"
     )
@@ -660,7 +660,7 @@ struct SerializableBankSnapshot<E> {
 // roundtrip.
 #[cfg(all(test, feature = "frozen-abi"))]
 #[frozen_abi(
-    abi_digest = "E4waD1iVxUYi3x9xA5xQHhCEbhhGtV9bqmo2TJ9ZsqTw",
+    abi_digest = "2TVKjhahaEGqUZAJtMmaaagcxWzhMPUsNrVHsSoNboK7",
     abi_serializer = ["bincode", "wincode"],
     test_roundtrip = "no"
 )]
