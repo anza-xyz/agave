@@ -524,7 +524,8 @@ impl Consumer {
     /// `added_transaction_costs` has one entry per input transaction. `Some(cost)` means
     /// the processed transaction's actual cost was added to the cost tracker.
     /// `None` means no cost added for that transaction due to: the transaction was
-    /// not processed, its cost was rejected by the cost tracker, or an
+    /// not processed, its cost was rejected by the cost tracker, a prior
+    /// cost-tracker rejection canceled the rest of the batch, or an
     /// all-or-nothing cost failure rolled back the batch.
     fn try_add_processed_transaction_costs<'a, Tx: TransactionWithMeta>(
         bank: &Bank,
@@ -537,19 +538,10 @@ impl Consumer {
     ) -> (Vec<Option<TransactionCost<'a, Tx>>>, Vec<RetryableIndex>) {
         let mut retryable_transaction_indexes = Vec::with_capacity(processing_results.len());
         let mut all_or_nothing_error = None;
+        let mut remaining_batch_error = None;
         let mut cost_tracker = bank.write_cost_tracker().unwrap();
 
-        for (index, ((tx, processing_result), transaction_cost)) in transactions
-            .iter()
-            .zip(processing_results.iter_mut())
-            .zip(transaction_costs.iter_mut())
-            .enumerate()
-        {
-            if all_or_nothing_error.is_some() {
-                *transaction_cost = None;
-                continue;
-            }
-
+        for (index, transaction_cost) in transaction_costs.iter_mut().enumerate() {
             let Some(cost) = transaction_cost.as_ref() else {
                 continue;
             };
@@ -562,46 +554,80 @@ impl Consumer {
                     *transaction_cost = None;
                     if all_or_nothing {
                         all_or_nothing_error = Some((index, transaction_error));
+                        break;
                     } else {
-                        Self::decrement_processed_counts(tx, processing_result, processed_counts);
-                        *processing_result = Err(transaction_error);
-                        retryable_transaction_indexes.push(RetryableIndex {
-                            index,
-                            immediately_retryable: false,
-                        });
+                        remaining_batch_error = Some((index, transaction_error));
+                        break;
                     }
                 }
             }
         }
 
         if let Some((failed_index, transaction_error)) = all_or_nothing_error {
-            for transaction_cost in transaction_costs.iter().flatten() {
+            for transaction_cost in transaction_costs[..failed_index].iter().flatten() {
                 cost_tracker.remove(transaction_cost);
             }
             transaction_costs.iter_mut().for_each(|cost| *cost = None);
             retryable_transaction_indexes.clear();
 
-            for (index, (tx, processing_result)) in transactions
-                .iter()
-                .zip(processing_results.iter_mut())
-                .enumerate()
-            {
-                if processing_result.was_processed() {
-                    Self::decrement_processed_counts(tx, processing_result, processed_counts);
-                    *processing_result = Err(if index == failed_index {
-                        transaction_error.clone()
-                    } else {
-                        TransactionError::CommitCancelled
-                    });
-                    retryable_transaction_indexes.push(RetryableIndex {
-                        index,
-                        immediately_retryable: false, // all-or-nothing cost failures are held
-                    });
-                }
-            }
+            Self::cancel_processed_transactions_for_retry(
+                transactions,
+                processing_results,
+                processed_counts,
+                &mut retryable_transaction_indexes,
+                failed_index,
+                &transaction_error,
+                0,
+            );
+        } else if let Some((failed_index, transaction_error)) = remaining_batch_error {
+            transaction_costs[failed_index..]
+                .iter_mut()
+                .for_each(|cost| *cost = None);
+
+            Self::cancel_processed_transactions_for_retry(
+                transactions,
+                processing_results,
+                processed_counts,
+                &mut retryable_transaction_indexes,
+                failed_index,
+                &transaction_error,
+                failed_index,
+            );
         }
 
         (transaction_costs, retryable_transaction_indexes)
+    }
+
+    fn cancel_processed_transactions_for_retry<Tx: TransactionWithMeta>(
+        transactions: &[Tx],
+        processing_results: &mut [TransactionProcessingResult],
+        processed_counts: &mut ProcessedTransactionCounts,
+        retryable_transaction_indexes: &mut Vec<RetryableIndex>,
+        failed_index: usize,
+        transaction_error: &TransactionError,
+        start_index: usize,
+    ) {
+        for (index, (tx, processing_result)) in transactions
+            .iter()
+            .zip(processing_results.iter_mut())
+            .enumerate()
+            .skip(start_index)
+        {
+            if processing_result.was_processed() {
+                Self::decrement_processed_counts(tx, processing_result, processed_counts);
+                *processing_result = Err(if index == failed_index {
+                    transaction_error.clone()
+                } else {
+                    TransactionError::CommitCancelled
+                });
+                retryable_transaction_indexes.push(RetryableIndex {
+                    index,
+                    // The cost-limit failure should be held until a later retry opportunity.
+                    // Transactions canceled behind it did not fail cost are immediately retryable..
+                    immediately_retryable: index != failed_index,
+                });
+            }
+        }
     }
 
     fn remove_added_transaction_costs<Tx: TransactionWithMeta>(
@@ -1356,12 +1382,28 @@ mod tests {
                 .then_some(index)
             })
             .collect::<Vec<_>>();
+        let commit_cancelled_count = commit_transaction_details
+            .iter()
+            .filter(|details| {
+                matches!(
+                    details,
+                    CommitTransactionDetails::NotCommitted(TransactionError::CommitCancelled)
+                )
+            })
+            .count();
+        let retryable_indexes = (committed_count..TRANSACTION_COUNT)
+            .map(|index| RetryableIndex::new(index, index != committed_count))
+            .collect::<Vec<_>>();
 
         assert!(committed_count > 0);
-        assert!(!late_cost_rejected_indexes.is_empty());
+        assert_eq!(late_cost_rejected_indexes, vec![committed_count]);
+        assert_eq!(
+            commit_cancelled_count,
+            TRANSACTION_COUNT - committed_count - late_cost_rejected_indexes.len()
+        );
         assert_eq!(
             cost_model_throttled_transactions_count,
-            late_cost_rejected_indexes.len() as u64
+            retryable_indexes.len() as u64
         );
         assert_eq!(
             transaction_counts.attempted_processing_count,
@@ -1372,13 +1414,7 @@ mod tests {
             transaction_counts.processed_with_successful_result_count,
             committed_count as u64
         );
-        assert_eq!(
-            retryable_transaction_indexes,
-            late_cost_rejected_indexes
-                .iter()
-                .map(|index| RetryableIndex::new(*index, false))
-                .collect::<Vec<_>>()
-        );
+        assert_eq!(retryable_transaction_indexes, retryable_indexes);
 
         let cost_tracker = bank.read_cost_tracker().unwrap();
         assert_eq!(cost_tracker.transaction_count(), committed_count as u64);
@@ -1461,17 +1497,19 @@ mod tests {
         );
         assert_eq!(transaction_counts.processed_count, 0);
         assert_eq!(transaction_counts.processed_with_successful_result_count, 0);
-        let cost_limit_failure_count = commit_transaction_details
+        let cost_limit_failure_indexes = commit_transaction_details
             .iter()
-            .filter(|details| {
+            .enumerate()
+            .filter_map(|(index, details)| {
                 matches!(
                     details,
                     CommitTransactionDetails::NotCommitted(
                         TransactionError::WouldExceedMaxBlockCostLimit
                     )
                 )
+                .then_some(index)
             })
-            .count();
+            .collect::<Vec<_>>();
         let commit_cancelled_count = commit_transaction_details
             .iter()
             .filter(|details| {
@@ -1481,12 +1519,13 @@ mod tests {
                 )
             })
             .count();
-        assert_eq!(cost_limit_failure_count, 1);
+        assert_eq!(cost_limit_failure_indexes.len(), 1);
         assert_eq!(commit_cancelled_count, TRANSACTION_COUNT - 1);
+        let failed_index = cost_limit_failure_indexes[0];
         assert_eq!(
             retryable_transaction_indexes,
             (0..TRANSACTION_COUNT)
-                .map(|index| RetryableIndex::new(index, false))
+                .map(|index| RetryableIndex::new(index, index != failed_index))
                 .collect::<Vec<_>>()
         );
 
