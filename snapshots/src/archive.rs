@@ -138,6 +138,10 @@ pub fn archive_snapshot(
                 matches!(snapshot_archive_kind, SnapshotArchiveKind::Incremental(_));
             let use_direct_io = io_setup.use_direct_io && !use_page_cache;
 
+            // Full archives do not need to persist tombstones as their older versions are
+            // guaranteed to be skipped as obsolete accounts
+            let exclude_tombstones = matches!(snapshot_archive_kind, SnapshotArchiveKind::Full);
+
             // Walk storages and their (lazily-opened) file handles in chunks,
             // bounding how many archive-mode fds are simultaneously open.
             let mut storage_file_pairs = storages_orderer
@@ -176,11 +180,15 @@ pub fn archive_snapshot(
                         .map_err(|err| {
                             E::AccountStorageReaderError(err, storage.path().to_path_buf())
                         })?;
-                    let reader =
-                        AccountStorageReader::new(storage, Some(snapshot_slot), &mut chunk_reader)
-                            .map_err(|err| {
-                                E::AccountStorageReaderError(err, storage.path().to_path_buf())
-                            })?;
+                    let reader = AccountStorageReader::new(
+                        storage,
+                        Some(snapshot_slot),
+                        exclude_tombstones,
+                        &mut chunk_reader,
+                    )
+                    .map_err(|err| {
+                        E::AccountStorageReaderError(err, storage.path().to_path_buf())
+                    })?;
                     let mut header = tar::Header::new_gnu();
                     header.set_path(path_in_archive).map_err(|err| {
                         E::ArchiveAccountStorageFile(err, storage.path().to_path_buf())
