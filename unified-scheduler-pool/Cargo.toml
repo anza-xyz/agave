@@ -16,7 +16,7 @@ rustdoc-args = ["--cfg=docsrs"]
 
 [features]
 agave-unstable-api = []
-dev-context-only-utils = []
+dev-context-only-utils = ["solana-runtime/dev-context-only-utils"]
 
 [dependencies]
 agave-banking-stage-ingress-types = { workspace = true }
@@ -30,7 +30,6 @@ log = { workspace = true }
 scopeguard = { workspace = true }
 solana-clock = { workspace = true }
 solana-cost-model = { workspace = true }
-solana-ledger = { workspace = true }
 solana-metrics = { workspace = true }
 solana-poh = { workspace = true }
 solana-pubkey = { workspace = true }

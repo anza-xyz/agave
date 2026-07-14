@@ -89,7 +89,6 @@ use {
         commitment::BlockCommitmentCache,
         installed_scheduler_pool::BankWithScheduler,
         leader_schedule_utils::first_of_consecutive_leader_slots,
-        prioritization_fee_cache::PrioritizationFeeCache,
         snapshot_controller::SnapshotController,
         transaction_execution::TransactionStatusSender,
         vote_sender_types::{ReplayVoteMessage, ReplayVoteSender},
@@ -261,10 +260,8 @@ struct ProcessActiveBanksContext {
     ancestor_hashes_replay_update_sender: AncestorHashesReplayUpdateSender,
     block_metadata_notifier: Option<BlockMetadataNotifierArc>,
     votor_event_sender: VotorEventSender,
-    log_messages_bytes_limit: Option<usize>,
     replay_mode: ForkReplayMode,
     replay_tx_thread_pool: ThreadPool,
-    prioritization_fee_cache: Option<Arc<PrioritizationFeeCache>>,
     migration_status: Arc<MigrationStatus>,
 }
 
@@ -439,8 +436,6 @@ pub struct ReplayStageConfig {
     pub tower: Tower,
     pub vote_tracker: Arc<VoteTracker>,
     pub cluster_slots: Arc<ClusterSlots>,
-    pub log_messages_bytes_limit: Option<usize>,
-    pub prioritization_fee_cache: Option<Arc<PrioritizationFeeCache>>,
     pub banking_tracer: Arc<BankingTracer>,
     pub snapshot_controller: Option<Arc<SnapshotController>>,
     pub replay_highest_frozen: Arc<ReplayHighestFrozen>,
@@ -760,8 +755,6 @@ impl ReplayStage {
             mut tower,
             vote_tracker,
             cluster_slots,
-            log_messages_bytes_limit,
-            prioritization_fee_cache,
             banking_tracer,
             snapshot_controller,
             replay_highest_frozen,
@@ -923,10 +916,8 @@ impl ReplayStage {
                 ancestor_hashes_replay_update_sender: ancestor_hashes_replay_update_sender.clone(),
                 block_metadata_notifier: block_metadata_notifier.clone(),
                 votor_event_sender: votor_event_sender.clone(),
-                log_messages_bytes_limit,
                 replay_mode,
                 replay_tx_thread_pool,
-                prioritization_fee_cache: prioritization_fee_cache.clone(),
                 migration_status: migration_status.clone(),
             };
             let process_bank_forks_context = ProcessBankForksContext {
@@ -3016,18 +3007,11 @@ impl ReplayStage {
             &mut w_replay_progress,
             false,
             process_active_banks_context
-                .transaction_status_sender
-                .as_ref(),
-            process_active_banks_context
                 .entry_notification_sender
                 .as_ref(),
             Some(&process_active_banks_context.replay_vote_sender),
             Some(finalization_cert_sender),
             false,
-            process_active_banks_context.log_messages_bytes_limit,
-            process_active_banks_context
-                .prioritization_fee_cache
-                .as_deref(),
             process_active_banks_context.migration_status.as_ref(),
         )?;
         let tx_count_after = w_replay_progress.num_txs;

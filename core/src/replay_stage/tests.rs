@@ -119,10 +119,8 @@ impl ProcessActiveBanksContext {
             ancestor_hashes_replay_update_sender,
             block_metadata_notifier: None,
             votor_event_sender,
-            log_messages_bytes_limit: None,
             replay_mode: ForkReplayMode::Serial,
             replay_tx_thread_pool,
-            prioritization_fee_cache: None,
             migration_status,
         }
     }
@@ -1319,6 +1317,9 @@ where
         let bank0 = bank_forks.read().unwrap().get(0).unwrap();
         assert!(bank0.is_frozen());
         assert_eq!(bank0.tick_height(), bank0.max_tick_height());
+        bank_forks.write().unwrap().install_scheduler_pool(
+            DefaultSchedulerPool::new_for_verification(None, None, None, None, None),
+        );
         let bank1 = Bank::new_from_parent(bank0, SlotLeader::default(), 1);
         bank_forks.write().unwrap().insert(bank1);
         let bank1 = bank_forks.read().unwrap().get_with_scheduler(1).unwrap();
@@ -1362,6 +1363,11 @@ where
                 stats.transaction_verify_elapsed += tx_verify_elapsed;
             }
             verify_result?;
+            // Transaction errors from the unified scheduler surface when waiting for its
+            // completion, like replay stage does before freezing the bank.
+            if let Some((result, _timings)) = bank1.wait_for_completed_scheduler() {
+                result?;
+            }
             Ok(replay_tx_count)
         });
         let max_complete_transaction_status_slot = Arc::new(AtomicU64::default());
@@ -6293,7 +6299,6 @@ fn test_initialize_progress_and_fork_choice_with_duplicates() {
         &replay_tx_thread_pool,
         &ProcessOptions::default(),
         &mut ConfirmationProgress::new(bank0.last_blockhash()),
-        None,
         None,
         None,
         &mut ExecuteTimings::default(),

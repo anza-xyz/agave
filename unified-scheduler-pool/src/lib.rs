@@ -1909,7 +1909,10 @@ mod tests {
         solana_runtime::{
             bank::{Bank, SlotLeader},
             bank_forks::BankForks,
-            genesis_utils::{GenesisConfigInfo, create_genesis_config},
+            genesis_utils::{
+                GenesisConfigInfo, bootstrap_validator_stake_lamports, create_genesis_config,
+                create_genesis_config_with_leader,
+            },
             installed_scheduler_pool::{
                 BankWithScheduler, InstalledSchedulerPoolArc, SchedulingContext,
             },
@@ -2980,13 +2983,17 @@ mod tests {
     }
 
     fn create_genesis_config_for_block_production(lamports: u64) -> GenesisConfigInfo {
-        // The in-scope create_genesis_config(), which is imported from the `solana-runtime`,
-        // doesn't properly setup leader schedule, causing the following panic if used for poh
-        // recorder, so use the one from the `solana-ledger` crate:
+        // The in-scope create_genesis_config() doesn't properly setup leader schedule, causing
+        // the following panic if used for poh recorder, so set up a bootstrap validator stake
+        // like `solana-ledger`'s genesis_utils does:
         //
         //   thread 'tests::...' panicked at ledger/src/leader_schedule.rs:LL:CC:
         //   called `Result::unwrap()` on an `Err` value: NoItem
-        solana_ledger::genesis_utils::create_genesis_config(lamports)
+        create_genesis_config_with_leader(
+            lamports,
+            &Pubkey::new_unique(),
+            bootstrap_validator_stake_lamports(),
+        )
     }
 
     #[test]

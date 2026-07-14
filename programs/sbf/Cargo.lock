@@ -10120,7 +10120,6 @@ dependencies = [
  "scopeguard",
  "solana-clock",
  "solana-cost-model",
- "solana-ledger",
  "solana-metrics",
  "solana-poh",
  "solana-pubkey 4.2.0",

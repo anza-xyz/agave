@@ -1676,8 +1676,6 @@ impl Validator {
             block_metadata_notifier,
             config.wait_to_vote_slot,
             Some(snapshot_controller.clone()),
-            config.runtime_config.log_messages_bytes_limit,
-            prioritization_fee_cache.clone(),
             banking_tracer,
             outstanding_repair_requests.clone(),
             cluster_slots.clone(),
