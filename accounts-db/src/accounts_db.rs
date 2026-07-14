@@ -1368,9 +1368,9 @@ impl AccountsDb {
     /// rooted and flushed inside this window — impossible because rooting is driven by the same
     /// ReplayStage thread that purges unrooted slots, and clean runs serially with flush on the
     /// ABS thread.
-    fn purge_secondary_indexes_for_dead_keys(
+    fn purge_secondary_indexes_for_dead_keys<'a>(
         &self,
-        removed_keys: &PubkeysRemovedFromAccountsIndex,
+        removed_keys: impl IntoIterator<Item = &'a Pubkey>,
     ) {
         if self.account_indexes.is_empty() {
             return;
