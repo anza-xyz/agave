@@ -146,7 +146,6 @@ jobs:
       - name: Summary
         env:
           BRANCH: ${{ steps.prepare.outputs.branch }}
-          BUILDKITE_PIPELINE: ${{ vars.BUILDKITE_PIPELINE }}
           BUILD_URL: ${{ steps.trigger.outputs.build_url }}
           COMMIT: ${{ github.event.pull_request.head.sha }}
           MESSAGE: ${{ steps.prepare.outputs.message }}
@@ -157,7 +156,6 @@ jobs:
             echo ""
             echo "| Key | Value |"
             echo "|-----|-------|"
-            echo "| Pipeline | \`$BUILDKITE_PIPELINE\` |"
             echo "| Branch | \`$BRANCH\` |"
             echo "| Commit | \`$COMMIT\` |"
             echo "| PR Number | #$PR_NUMBER |"
