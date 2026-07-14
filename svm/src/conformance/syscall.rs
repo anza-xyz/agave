@@ -42,7 +42,7 @@ const STACK_SIZE: usize = 64 * STACK_GAP_SIZE as usize;
 const HEAP_MAX: usize = 256 * 1024;
 const SBPF_VERSION: SBPFVersion = SBPFVersion::V0;
 
-pub fn execute_vm_syscall(input: ProtoSyscallContext) -> ProtoSyscallEffects {
+pub fn execute_vm_syscall(input: ProtoSyscallContext) -> Option<ProtoSyscallEffects> {
     let instr_context = InstrContext::from(input.instr_ctx.expect("missing instr context"));
     let mut vm_context = input.vm_ctx.expect("missing vm context");
     let syscall_invocation = input.syscall_invocation.unwrap_or_default();
@@ -152,8 +152,7 @@ pub fn execute_vm_syscall(input: ProtoSyscallContext) -> ProtoSyscallEffects {
 
     let syscall_function = execution_environment
         .get_function_registry()
-        .lookup_by_name(&syscall_invocation.function_name)
-        .expect("syscall function not registered")
+        .lookup_by_name(&syscall_invocation.function_name)?
         .1
         .0;
 
@@ -194,7 +193,7 @@ pub fn execute_vm_syscall(input: ProtoSyscallContext) -> ProtoSyscallEffects {
         r0,
     } = unpack_stable_result(program_result);
 
-    ProtoSyscallEffects {
+    Some(ProtoSyscallEffects {
         error,
         error_kind,
         r0,
@@ -206,7 +205,7 @@ pub fn execute_vm_syscall(input: ProtoSyscallContext) -> ProtoSyscallEffects {
         rodata: rodata.as_slice().to_vec(),
         pc: 0,
         ..Default::default()
-    }
+    })
 }
 
 fn get_registers(vm_context: &ProtoVmContext) -> [u64; 12] {
@@ -347,7 +346,9 @@ pub unsafe extern "C" fn sol_compat_vm_syscall_execute_v1(
         return 0;
     };
 
-    let syscall_effects = execute_vm_syscall(syscall_context);
+    let Some(syscall_effects) = execute_vm_syscall(syscall_context) else {
+        return 0;
+    };
     let out_slice = unsafe { std::slice::from_raw_parts_mut(out_ptr, (*out_psz) as usize) };
     let out_vec = syscall_effects.encode_to_vec();
     if out_vec.len() > out_slice.len() {
@@ -430,7 +431,8 @@ mod tests {
             0,
             0,
             msg.to_vec(),
-        ));
+        ))
+        .unwrap();
 
         assert_eq!(effects.error, 0);
         // Logs are no longer collected (the harness runs without a log
@@ -447,7 +449,8 @@ mod tests {
             8,             // r3: count
             0,
             vec![0u8; 16],
-        ));
+        ))
+        .unwrap();
 
         assert_eq!(effects.error, 0);
         assert_eq!(&effects.heap[..8], &[0x42; 8]);
@@ -467,8 +470,17 @@ mod tests {
             10,            // r3: line
             5,             // r4: column
             b"x".to_vec(),
-        ));
+        ))
+        .unwrap();
 
         assert_ne!(effects.error, 0);
+    }
+
+    #[test]
+    fn test_unregistered_syscall_returns_none() {
+        let effects =
+            execute_vm_syscall(syscall_context(b"unregistered_syscall", 0, 0, 0, 0, vec![]));
+
+        assert!(effects.is_none());
     }
 }
