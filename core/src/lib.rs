@@ -17,8 +17,6 @@ pub mod cluster_info_vote_listener;
 pub mod cluster_slots_service;
 pub mod commitment_service;
 pub mod completed_data_sets_service;
-#[cfg(feature = "conformance")]
-pub mod conformance;
 pub mod consensus;
 pub mod cost_update_service;
 pub mod drop_bank_service;

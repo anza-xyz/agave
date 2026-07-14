@@ -5,7 +5,20 @@
 //! from the shred bytes.
 
 use {
-    crate::window_service::check_duplicate_shred,
+    crate::{
+        blockstore::{
+            Blockstore, BlockstoreInsertionMetrics, PossibleDuplicateShred,
+            blockstore_purge::PurgeType, check_duplicate_shred,
+        },
+        blockstore_meta::BlockLocation,
+        blockstore_processor::verify_ticks,
+        shred::{
+            CODING_SHREDS_PER_FEC_BLOCK, DATA_SHREDS_PER_FEC_BLOCK, Payload, ReedSolomonCache,
+            Shred,
+            filter::{ShredFilterContext, ShredRecoveryContext},
+            wire,
+        },
+    },
     agave_feature_set::{FeatureSet, discard_unexpected_data_complete_shreds},
     agave_votor_messages::migration::MigrationStatus,
     protosol::protos::{BlockParseResult, FecSetParseResult, ShredParseContext, ShredParseEffects},
@@ -26,20 +39,6 @@ use {
     solana_hash::Hash,
     solana_inflation::Inflation,
     solana_lattice_hash::lt_hash::LtHash,
-    solana_ledger::{
-        blockstore::{
-            Blockstore, BlockstoreInsertionMetrics, PossibleDuplicateShred,
-            blockstore_purge::PurgeType,
-        },
-        blockstore_meta::BlockLocation,
-        blockstore_processor::verify_ticks,
-        shred::{
-            CODING_SHREDS_PER_FEC_BLOCK, DATA_SHREDS_PER_FEC_BLOCK, Payload, ReedSolomonCache,
-            Shred,
-            filter::{ShredFilterContext, ShredRecoveryContext},
-            wire,
-        },
-    },
     solana_message::AccountKeys,
     solana_packet::PACKET_DATA_SIZE,
     solana_pubkey::Pubkey,
@@ -65,7 +64,7 @@ use {
     },
 };
 #[cfg(not(test))]
-use {prost::Message, std::ffi::c_int};
+use {prost_011::Message, std::ffi::c_int};
 
 /// # Safety
 ///
