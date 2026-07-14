@@ -1538,7 +1538,7 @@ fn test_shrink_collect_carries_forward_existing_tombstones() {
             }
         })
         .unwrap();
-    storage.batch_insert_tombstone_offsets(&[tombstone_offset.unwrap()]);
+    storage.batch_insert_tombstone_offsets([tombstone_offset.unwrap()]);
     assert_eq!(storage.num_zero_lamport_single_ref_accounts(), 1);
 
     // Newer than the latest full snapshot: the tombstone must be carried forward, not dropped and
@@ -1620,7 +1620,7 @@ fn test_fully_tombstoned_storage_reclaim() {
             tombstone_offsets.push(offset);
         })
         .unwrap();
-    storage.batch_insert_tombstone_offsets(&tombstone_offsets);
+    storage.batch_insert_tombstone_offsets(tombstone_offsets);
 
     // The storage reads as entirely tombstones / fully removable.
     assert!(storage.has_only_tombstones());

@@ -5684,9 +5684,7 @@ impl AccountsDb {
         }
         let tombstone_infos =
             self.write_accounts_to_storage(tombstones.target_slot(), new_storage, &tombstones);
-        let tombstone_offsets: Vec<_> = tombstone_infos.iter().map(|info| info.offset()).collect();
-        new_storage.batch_insert_tombstone_offsets(&tombstone_offsets);
-        tombstone_offsets.len()
+        new_storage.batch_insert_tombstone_offsets(tombstone_infos.iter().map(|info| info.offset()))
     }
 
     /// Stores accounts in the storage and updates the index.
