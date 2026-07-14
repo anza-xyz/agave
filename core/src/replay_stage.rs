@@ -233,6 +233,11 @@ struct BankReplayResultTracker {
     bank_replay_tracker: Option<BankReplayTracker>,
 }
 
+enum SchedulerReplayOutcome {
+    NoSchedulerReplay,
+    SchedulerReplayCompleted(Result<(), BlockstoreProcessorError>),
+}
+
 struct CompletedBankReplay {
     // Metrics around replaying this bank.
     replay_stats: Arc<RwLock<ReplaySlotStats>>,
@@ -3819,9 +3824,9 @@ impl ReplayStage {
     fn complete_scheduler_replay(
         bank: &BankWithScheduler,
         replay_stats: &RwLock<ReplaySlotStats>,
-    ) -> (Result<(), BlockstoreProcessorError>, bool) {
+    ) -> SchedulerReplayOutcome {
         let Some((result, completed_execute_timings)) = bank.wait_for_completed_scheduler() else {
-            return (Ok(()), false);
+            return SchedulerReplayOutcome::NoSchedulerReplay;
         };
 
         let metrics = ExecuteBatchesInternalMetrics::new_with_timings_from_all_threads(
@@ -3833,9 +3838,8 @@ impl ReplayStage {
             .batch_execute
             .accumulate(metrics, true);
 
-        (
+        SchedulerReplayOutcome::SchedulerReplayCompleted(
             result.map_err(BlockstoreProcessorError::InvalidTransaction),
-            true,
         )
     }
 
@@ -3875,8 +3879,11 @@ impl ReplayStage {
     ) -> Result<CompletedBankReplay, BlockstoreProcessorError> {
         let replay_stats = bank_progress.replay_stats.clone();
 
-        let (replay_result, is_unified_scheduler_enabled) =
-            Self::complete_scheduler_replay(bank, &replay_stats);
+        let scheduler_replay_outcome = Self::complete_scheduler_replay(bank, &replay_stats);
+        let is_unified_scheduler_enabled = matches!(
+            scheduler_replay_outcome,
+            SchedulerReplayOutcome::SchedulerReplayCompleted(_)
+        );
         let verify_result = Self::complete_replay_verification(
             &replay_stats,
             &bank_progress.replay_progress,
@@ -3893,6 +3900,10 @@ impl ReplayStage {
                     replay_slot: bank.slot(),
                 });
 
+        let replay_result = match scheduler_replay_outcome {
+            SchedulerReplayOutcome::NoSchedulerReplay => Ok(()),
+            SchedulerReplayOutcome::SchedulerReplayCompleted(replay_result) => replay_result,
+        };
         replay_result.and(verify_result)?;
 
         Ok(CompletedBankReplay {
