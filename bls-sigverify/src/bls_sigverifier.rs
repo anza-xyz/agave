@@ -16,11 +16,13 @@ use {
         migration::MigrationStatus,
         reward_certificate::AddVoteMessage,
         sig_verified_messages::SigVerifiedBatch,
-        unverified_vote_message::{DecodedWireConsensusMessage, UnverifiedVoteMessage},
+        unverified_vote_message::{
+            DecodedWireConsensusMessage, UnverifiedCertificate, UnverifiedVoteMessage,
+        },
         vote::Vote,
         wire::{VersionedWireConsensusMessage, VotePayloadToSign},
     },
-    crossbeam_channel::{Receiver, RecvTimeoutError, Sender, TryRecvError},
+    crossbeam_channel::{Receiver, Sender, TryRecvError, select},
     log::error,
     rayon::{ThreadPool, ThreadPoolBuilder},
     solana_bls_signatures::pubkey::{PopVerified, PubkeyAffine as BlsPubkeyAffine},
@@ -49,9 +51,12 @@ use {
 /// This also sets an upper bound on how much storage the various structs in this module require.
 pub(super) const NUM_SLOTS_FOR_VERIFY: Slot = 90_000;
 
-/// If we receive an invalid certificate or vote from a QUIC connection, we ban the sender.
-/// We ban the sender for 2 days which roughly corresponds to an epoch
+/// If we receive an invalid certificate or vote, we ban its attributed sender. For certificates
+/// received from blockstore, that sender is the scheduled leader for the carrier slot. We ban the
+/// sender for 2 days, which roughly corresponds to an epoch.
 pub(super) const BAN_TIMEOUT: Duration = Duration::from_hours(48);
+
+type SigVerifierInputs = (Vec<PacketBatch>, Vec<(Slot, UnverifiedCertificate)>);
 
 pub struct SigVerifierContext {
     pub migration_status: Arc<MigrationStatus>,
@@ -65,6 +70,7 @@ pub struct SigVerifierContext {
 
 pub struct SigVerifierChannels {
     pub packet_receiver: Receiver<PacketBatch>,
+    pub certificate_receiver: Receiver<(Slot, UnverifiedCertificate)>,
     pub channel_to_repair: VerifiedVoterSlotsSender,
     pub channel_to_reward: Sender<AddVoteMessage>,
     pub channel_to_pool: Sender<SigVerifiedBatch>,
@@ -138,15 +144,23 @@ impl SigVerifier {
     fn run(mut self, exit: Arc<AtomicBool>) {
         while !exit.load(Ordering::Relaxed) {
             const SOFT_RECEIVE_CAP: usize = 5000;
-            let Ok(batches) = recv_batches(&self.channels.packet_receiver, SOFT_RECEIVE_CAP) else {
-                error!("packet_receiver disconnected:  Exiting.");
+            let Ok((batches, certificates)) = recv_inputs(
+                &self.channels.packet_receiver,
+                &self.channels.certificate_receiver,
+                SOFT_RECEIVE_CAP,
+            ) else {
+                error!("sigverifier input channel disconnected: Exiting.");
                 break;
             };
-            if batches.is_empty() || self.migration_status.is_pre_feature_activation() {
+            if self.migration_status.is_pre_feature_activation() {
+                continue;
+            }
+            if batches.is_empty() && certificates.is_empty() {
                 continue;
             }
 
-            let (verify_res, verify_time_us) = measure_us!(self.verify_and_send_batches(batches));
+            let (verify_res, verify_time_us) =
+                measure_us!(self.verify_and_send_inputs(batches, certificates));
             self.stats
                 .verify_and_send_batch_us
                 .add_sample(verify_time_us);
@@ -159,12 +173,21 @@ impl SigVerifier {
         self.stats.do_report(self.sharable_banks.root().slot());
     }
 
+    #[cfg(test)]
     fn verify_and_send_batches(&mut self, batches: Vec<PacketBatch>) -> Result<(), SigVerifyError> {
+        self.verify_and_send_inputs(batches, vec![])
+    }
+
+    fn verify_and_send_inputs(
+        &mut self,
+        batches: Vec<PacketBatch>,
+        certificates: Vec<(Slot, UnverifiedCertificate)>,
+    ) -> Result<(), SigVerifyError> {
         let root_bank = self.sharable_banks.root();
         self.maybe_prune_caches(root_bank.slot());
 
         let ((cert_groups, votes_to_verify), extract_msgs_us) =
-            measure_us!(self.extract_and_filter_msgs(batches, &root_bank));
+            measure_us!(self.extract_and_filter_msgs(batches, certificates, &root_bank));
         self.stats
             .extract_filter_msgs_us
             .add_sample(extract_msgs_us);
@@ -208,9 +231,33 @@ impl SigVerifier {
         }
     }
 
+    fn add_certificate_to_group(
+        &mut self,
+        cert_groups: &mut HashMap<CertificateType, Vec<CertPayload>>,
+        cert: UnverifiedCertificate,
+        sender_identity_pubkey: Pubkey,
+    ) {
+        if self.verified_certs.contains(&cert.cert_type) {
+            self.stats.num_verified_certs_received += 1;
+            return;
+        }
+        if self.generated_cert_types.has_cert(&cert.cert_type) {
+            self.stats.num_generated_certs_received += 1;
+            return;
+        }
+        cert_groups
+            .entry(cert.cert_type)
+            .or_default()
+            .push(CertPayload {
+                cert,
+                sender_identity_pubkey,
+            });
+    }
+
     fn extract_and_filter_msgs(
         &mut self,
         batches: Vec<PacketBatch>,
+        certificates: Vec<(Slot, UnverifiedCertificate)>,
         root_bank: &Bank,
     ) -> (
         HashMap<CertificateType, Vec<CertPayload>>,
@@ -270,23 +317,37 @@ impl SigVerifier {
                         self.stats.num_old_certs_received += 1;
                         continue;
                     }
-                    if self.verified_certs.contains(&cert.cert_type) {
-                        self.stats.num_verified_certs_received += 1;
-                        continue;
-                    }
-                    if self.generated_cert_types.has_cert(&cert.cert_type) {
-                        self.stats.num_generated_certs_received += 1;
-                        continue;
-                    }
-                    cert_groups
-                        .entry(cert.cert_type)
-                        .or_default()
-                        .push(CertPayload {
-                            cert,
-                            sender_identity_pubkey,
-                        });
+                    self.add_certificate_to_group(&mut cert_groups, cert, sender_identity_pubkey);
                 }
             }
+        }
+        for (carrier_slot, certificate) in certificates {
+            let is_genesis = matches!(&certificate.cert_type, CertificateType::Genesis(_));
+            let is_active = if is_genesis {
+                // Genesis certificates from blockstore are only allowed when we are in migration
+                self.migration_status.is_in_migration()
+            } else {
+                self.migration_status
+                    .should_allow_block_markers(carrier_slot)
+            };
+            if carrier_slot < root_slot
+                || certificate.shred_version != my_shred_version
+                || !is_active
+            {
+                continue;
+            }
+            if certificate.cert_type.slot() < root_slot {
+                self.stats.num_old_certs_received += 1;
+                continue;
+            }
+            let Some(sender_identity_pubkey) = self
+                .leader_schedule
+                .slot_leader_at(carrier_slot, Some(root_bank))
+                .map(|leader| leader.id)
+            else {
+                continue;
+            };
+            self.add_certificate_to_group(&mut cert_groups, certificate, sender_identity_pubkey);
         }
         self.stats.num_pkts.add_sample(num_pkts);
         (cert_groups, votes)
@@ -325,38 +386,34 @@ impl SigVerifier {
     }
 }
 
-/// Receives a `Vec<PacketBatch>` from the `receiver` while adhering to the `soft_receive_cap` limit.
-///
-/// Returns `Err(())` if the channel disconnected.
-fn recv_batches(
-    receiver: &Receiver<PacketBatch>,
+/// Receives BLS packet batches and certificates recovered from blockstore. Certificate-only
+/// traffic wakes the verifier immediately; packet batches retain their existing soft receive cap.
+fn recv_inputs(
+    packet_receiver: &Receiver<PacketBatch>,
+    certificate_receiver: &Receiver<(Slot, UnverifiedCertificate)>,
     soft_receive_cap: usize,
-) -> Result<Vec<PacketBatch>, ()> {
-    let batch = match receiver.recv_timeout(Duration::from_secs(1)) {
-        Ok(b) => b,
-        Err(e) => match e {
-            RecvTimeoutError::Timeout => {
-                return Ok(vec![]);
-            }
-            RecvTimeoutError::Disconnected => {
-                return Err(());
-            }
-        },
-    };
+) -> Result<SigVerifierInputs, ()> {
     let mut batches = Vec::with_capacity(soft_receive_cap);
-    batches.push(batch);
+    let mut certificates = vec![];
+    select! {
+        recv(packet_receiver) -> batch => batches.push(batch.map_err(|_| ())?),
+        recv(certificate_receiver) -> certificate => {
+            certificates.push(certificate.map_err(|_| ())?);
+        },
+        default(Duration::from_secs(1)) => return Ok((batches, certificates)),
+    }
     while batches.len() < soft_receive_cap {
-        match receiver.try_recv() {
+        match packet_receiver.try_recv() {
             Ok(b) => {
                 batches.push(b);
             }
-            Err(e) => match e {
-                TryRecvError::Empty => return Ok(batches),
-                TryRecvError::Disconnected => return Err(()),
-            },
+            Err(TryRecvError::Empty) => break,
+            Err(TryRecvError::Disconnected) => return Err(()),
         }
     }
-    Ok(batches)
+    // Certificates from blockstore are very low throughput (1 per slot), so no need for a cap here
+    certificates.extend(certificate_receiver.try_iter());
+    Ok((batches, certificates))
 }
 
 #[cfg(test)]
@@ -391,6 +448,7 @@ mod tests {
         },
         solana_signer::Signer,
         solana_signer_store::encode_base2,
+        std::sync::RwLock,
     };
 
     fn new_test_banlist() -> Arc<SimpleQosBanlist> {
@@ -409,6 +467,8 @@ mod tests {
         pool_receiver: Receiver<SigVerifiedBatch>,
         _metrics_receiver: ConsensusMetricsEventReceiver,
         generated_cert_types: Arc<GeneratedCertTypes>,
+        _certificate_sender: Sender<(Slot, UnverifiedCertificate)>,
+        _bank_forks: Arc<RwLock<BankForks>>,
     }
 
     impl TestContext {
@@ -450,6 +510,7 @@ mod tests {
             let (channel_to_repair, repair_receiver) = bounded(1024);
             let (channel_to_reward, reward_receiver) = bounded(1024);
             let (packet_sender, packet_receiver) = bounded(1024);
+            let (certificate_sender, certificate_receiver) = bounded(1024);
             let (channel_to_metrics, metrics_receiver) = bounded(1024);
 
             let generated_cert_types = Arc::new(GeneratedCertTypes::default());
@@ -466,6 +527,7 @@ mod tests {
                 },
                 SigVerifierChannels {
                     packet_receiver,
+                    certificate_receiver,
                     channel_to_repair,
                     channel_to_reward,
                     channel_to_pool,
@@ -482,6 +544,8 @@ mod tests {
                 pool_receiver,
                 _metrics_receiver: metrics_receiver,
                 generated_cert_types,
+                _certificate_sender: certificate_sender,
+                _bank_forks: bank_forks,
             }
         }
     }
@@ -522,6 +586,18 @@ mod tests {
         builder.build().expect("Failed to build certificate")
     }
 
+    fn unverified_certificate(
+        certificate: Certificate,
+        shred_version: u16,
+    ) -> UnverifiedCertificate {
+        UnverifiedCertificate {
+            cert_type: certificate.cert_type,
+            signature: certificate.signature,
+            bitmap: certificate.bitmap,
+            shred_version,
+        }
+    }
+
     fn expect_no_receive<T: std::fmt::Debug>(receiver: &Receiver<T>) {
         match receiver.try_recv().unwrap_err() {
             TryRecvError::Empty => (),
@@ -540,6 +616,65 @@ mod tests {
         let mut packet = BytesPacket::from_data(&msg).unwrap();
         packet.meta_mut().set_remote_pubkey(remote_pubkey);
         packet
+    }
+
+    #[test]
+    fn test_blockstore_certificate_requires_active_alpenglow() {
+        let mut ctx = TestContext::new();
+        let shred_version = ctx.verifier.cluster_info.my_shred_version();
+        let block = Block {
+            slot: 1,
+            block_id: Hash::new_unique(),
+        };
+        let certificate = create_signed_certificate_message(
+            shred_version,
+            &ctx.validator_keypairs,
+            CertificateType::FinalizeFast(block),
+            &[0, 1, 2, 3, 4, 5, 6, 7],
+        );
+        let certificate = (2, unverified_certificate(certificate, shred_version));
+
+        ctx.verifier
+            .verify_and_send_inputs(vec![], vec![certificate.clone()])
+            .unwrap();
+        expect_no_receive(&ctx.pool_receiver);
+
+        ctx.verifier.migration_status.enable_alpenglow_for_tests();
+        ctx.verifier
+            .verify_and_send_inputs(vec![], vec![certificate])
+            .unwrap();
+        let SigVerifiedBatch::Certificates(certs) = ctx.pool_receiver.try_recv().unwrap() else {
+            panic!("expected a certificate batch");
+        };
+        assert_eq!(certs.len(), 1);
+        assert_eq!(certs[0].cert_type, CertificateType::FinalizeFast(block));
+    }
+
+    #[test]
+    fn test_old_blockstore_certificate_is_filtered() {
+        let mut ctx = TestContext::new();
+        let shred_version = ctx.verifier.cluster_info.my_shred_version();
+        let block = Block {
+            slot: 1,
+            block_id: Hash::new_unique(),
+        };
+        let certificate = create_signed_certificate_message(
+            shred_version,
+            &ctx.validator_keypairs,
+            CertificateType::FinalizeFast(block),
+            &[0, 1, 2, 3, 4, 5, 6, 7],
+        );
+        let certificate = (6, unverified_certificate(certificate, shred_version));
+        let root_bank =
+            Bank::new_from_parent(ctx.verifier.sharable_banks.root(), SlotLeader::default(), 5);
+        ctx.verifier.migration_status.enable_alpenglow_for_tests();
+
+        let (cert_groups, votes) =
+            ctx.verifier
+                .extract_and_filter_msgs(vec![], vec![certificate], &root_bank);
+        assert!(cert_groups.is_empty());
+        assert!(votes.is_empty());
+        assert_eq!(ctx.verifier.stats.num_old_certs_received.0, 1);
     }
 
     #[test]
@@ -1486,6 +1621,7 @@ mod tests {
         ));
         let leader_schedule = Arc::new(LeaderScheduleCache::new_from_bank(&sharable_banks.root()));
         let (_packet_sender, packet_receiver) = bounded(1024);
+        let (_certificate_sender, certificate_receiver) = bounded(1024);
         let mut sig_verifier = SigVerifier::new(
             SigVerifierContext {
                 migration_status: Arc::new(MigrationStatus::default()),
@@ -1498,6 +1634,7 @@ mod tests {
             },
             SigVerifierChannels {
                 packet_receiver,
+                certificate_receiver,
                 channel_to_repair: votes_for_repair_sender,
                 channel_to_reward: reward_votes_sender,
                 channel_to_pool: message_sender,

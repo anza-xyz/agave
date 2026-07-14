@@ -109,6 +109,9 @@ pub(crate) const MAX_ALPENGLOW_PACKET_NUM: usize = 10_000;
 /// of votes / certificate need to be refreshed.
 const MAX_BLS_MESSAGES_TO_SEND: usize = 1000;
 
+/// Bounds certificates recovered from blockstore and awaiting BLS verification.
+const MAX_CERTIFICATES_FROM_BLOCKSTORE: usize = 1_024;
+
 pub struct Tvu {
     fetch_stage: ShredFetchStage,
     shred_sigverify: JoinHandle<()>,
@@ -286,6 +289,8 @@ impl Tvu {
         let (consensus_metrics_sender, consensus_metrics_receiver) =
             bounded(MAX_IN_FLIGHT_CONSENSUS_EVENTS);
         let generated_cert_types = Arc::new(GeneratedCertTypes::default());
+        let (certificate_sender, certificate_receiver) = bounded(MAX_CERTIFICATES_FROM_BLOCKSTORE);
+        blockstore.set_certificate_sender(certificate_sender);
 
         let bls_sigverify_threads = {
             let (bls_packet_sender, bls_packet_receiver) = bounded(MAX_ALPENGLOW_PACKET_NUM);
@@ -338,6 +343,7 @@ impl Tvu {
                 },
                 SigVerifierChannels {
                     packet_receiver: bls_packet_receiver,
+                    certificate_receiver,
                     channel_to_repair: verified_voter_slots_sender,
                     channel_to_reward: reward_votes_sender.clone(),
                     channel_to_pool: consensus_message_sender,

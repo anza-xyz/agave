@@ -26,7 +26,9 @@ use {
         transaction_address_lookup_table_scanner::scan_transaction,
     },
     agave_snapshots::unpack_genesis_archive,
-    agave_votor_messages::migration::MigrationStatus,
+    agave_votor_messages::{
+        migration::MigrationStatus, unverified_vote_message::UnverifiedCertificate,
+    },
     assert_matches::{assert_matches, debug_assert_matches},
     crossbeam_channel::{Receiver, Sender, TrySendError, bounded},
     dashmap::DashSet,
@@ -84,7 +86,7 @@ use {
         path::{Path, PathBuf},
         rc::Rc,
         sync::{
-            Arc, Mutex, MutexGuard, RwLock,
+            Arc, Mutex, MutexGuard, OnceLock, RwLock,
             atomic::{AtomicBool, AtomicU64, Ordering},
         },
     },
@@ -338,6 +340,7 @@ pub struct Blockstore {
     /// parent. This tiny cache avoids a blockstore lookup for each later shred
     /// in small insertion batches.
     update_parent_shred_parent_cache: Mutex<UpdateParentShredParentCache>,
+    certificate_sender: OnceLock<Sender<(Slot, UnverifiedCertificate)>>,
     pub lowest_cleanup_slot: RwLock<Slot>,
     // A sender that feeds into the BlockstoreCleanupService request channel
     // to enable manual Blockstore purge requests to be issued
@@ -579,6 +582,19 @@ impl Blockstore {
         banking_trace_path(&self.ledger_path)
     }
 
+    /// Wires the channel used to hand certificates recovered from blockstore to the BLS
+    /// sigverifier.
+    ///
+    /// The accompanying slot is the carrier slot whose entries contained the certificate, while
+    /// the slot in the certificate is the block being certified. The carrier slot is needed to
+    /// check whether block markers were active and to attribute an invalid certificate to the
+    /// leader that included it.
+    pub fn set_certificate_sender(&self, sender: Sender<(Slot, UnverifiedCertificate)>) {
+        self.certificate_sender
+            .set(sender)
+            .expect("certificate sender already set");
+    }
+
     /// Opens a Ledger in directory, provides "infinite" window of shreds
     pub fn open(ledger_path: &Path) -> Result<Blockstore> {
         Self::do_open(ledger_path, BlockstoreOptions::default())
@@ -669,6 +685,7 @@ impl Blockstore {
             update_parent_shred_parent_cache: Mutex::new(LruCache::new(
                 UPDATE_PARENT_SHRED_PARENT_CACHE_CAPACITY,
             )),
+            certificate_sender: OnceLock::new(),
             insert_shreds_lock: Mutex::<()>::default(),
             switch_block_lock: SwitchBlockLock(FairMutex::new(())),
             max_root,
