@@ -537,7 +537,7 @@ impl Consumer {
                     Self::accumulate_cost_limit_error(&transaction_error, error_counters);
                     *transaction_cost = None;
                     if all_or_nothing {
-                        all_or_nothing_error = Some(transaction_error);
+                        all_or_nothing_error = Some((index, transaction_error));
                     } else {
                         Self::decrement_processed_counts(tx, processing_result, processed_counts);
                         *processing_result = Err(transaction_error);
@@ -550,7 +550,7 @@ impl Consumer {
             }
         }
 
-        if let Some(transaction_error) = all_or_nothing_error {
+        if let Some((failed_index, transaction_error)) = all_or_nothing_error {
             for transaction_cost in transaction_costs.iter().flatten() {
                 cost_tracker.remove(transaction_cost);
             }
@@ -564,10 +564,14 @@ impl Consumer {
             {
                 if processing_result.was_processed() {
                     Self::decrement_processed_counts(tx, processing_result, processed_counts);
-                    *processing_result = Err(transaction_error.clone());
+                    *processing_result = Err(if index == failed_index {
+                        transaction_error.clone()
+                    } else {
+                        TransactionError::CommitCancelled
+                    });
                     retryable_transaction_indexes.push(RetryableIndex {
                         index,
-                        immediately_retryable: false, // cost limits isn't immediately retryable
+                        immediately_retryable: false, // all-or-nothing cost failures are held
                     });
                 }
             }
@@ -1375,14 +1379,28 @@ mod tests {
         );
         assert_eq!(transaction_counts.processed_count, 0);
         assert_eq!(transaction_counts.processed_with_successful_result_count, 0);
-        assert!(commit_transaction_details.iter().all(|details| {
-            matches!(
-                details,
-                CommitTransactionDetails::NotCommitted(
-                    TransactionError::WouldExceedMaxBlockCostLimit
+        let cost_limit_failure_count = commit_transaction_details
+            .iter()
+            .filter(|details| {
+                matches!(
+                    details,
+                    CommitTransactionDetails::NotCommitted(
+                        TransactionError::WouldExceedMaxBlockCostLimit
+                    )
                 )
-            )
-        }));
+            })
+            .count();
+        let commit_cancelled_count = commit_transaction_details
+            .iter()
+            .filter(|details| {
+                matches!(
+                    details,
+                    CommitTransactionDetails::NotCommitted(TransactionError::CommitCancelled)
+                )
+            })
+            .count();
+        assert_eq!(cost_limit_failure_count, 1);
+        assert_eq!(commit_cancelled_count, TRANSACTION_COUNT - 1);
         assert_eq!(
             retryable_transaction_indexes,
             (0..TRANSACTION_COUNT)
