@@ -6,6 +6,7 @@ use {
     },
     smallvec::SmallVec,
     solana_cost_model::{cost_model::CostModel, transaction_cost::TransactionCost},
+    solana_hash::Hash,
     solana_measure::measure_us,
     solana_poh::{
         poh_recorder::PohRecorderError,
@@ -304,6 +305,29 @@ impl Consumer {
 
         let (freeze_lock, freeze_lock_us) = measure_us!(bank.freeze_lock());
         execute_and_commit_timings.freeze_lock_us = freeze_lock_us;
+        let bank_already_frozen = *freeze_lock != Hash::default();
+        if bank_already_frozen {
+            let transaction_counts = LeaderProcessedTransactionCounts {
+                processed_count: processed_counts.processed_transactions_count,
+                processed_with_successful_result_count: processed_counts
+                    .processed_with_successful_result_count,
+                attempted_processing_count: processing_results.len() as u64,
+            };
+            Self::extend_processed_retryable_transaction_indexes(
+                &mut retryable_transaction_indexes,
+                &processing_results,
+            );
+
+            return ExecuteAndCommitTransactionsOutput {
+                cost_model_throttled_transactions_count: 0,
+                cost_model_us,
+                transaction_counts,
+                retryable_transaction_indexes,
+                commit_transactions_result: Err(PohRecorderError::MaxHeightReached),
+                execute_and_commit_timings,
+                error_counters,
+            };
+        }
 
         let ((transaction_costs, mut actual_cost_retryable_transaction_indexes), cost_add_us) =
             measure_us!(Self::try_add_processed_transaction_costs(
@@ -905,6 +929,64 @@ mod tests {
         );
 
         assert_eq!(bank.get_balance(&pubkey), 1);
+    }
+
+    #[test]
+    fn test_bank_process_and_record_transactions_already_frozen() {
+        let TestFrame {
+            mint_keypair,
+            bank,
+            bank_forks: _bank_forks,
+            record_receiver,
+            consumer,
+        } = setup_test(None);
+
+        let pubkey = solana_pubkey::new_rand();
+        let transactions = sanitize_transactions(vec![system_transaction::transfer(
+            &mint_keypair,
+            &pubkey,
+            1,
+            bank.confirmed_last_blockhash(),
+        )]);
+
+        bank.freeze();
+        assert_ne!(bank.hash(), Hash::default());
+
+        let process_transactions_batch_output =
+            consumer.process_and_record_transactions(&bank, &transactions);
+
+        let ExecuteAndCommitTransactionsOutput {
+            transaction_counts,
+            retryable_transaction_indexes,
+            commit_transactions_result,
+            ..
+        } = process_transactions_batch_output.execute_and_commit_transactions_output;
+        assert_eq!(
+            transaction_counts,
+            LeaderProcessedTransactionCounts {
+                attempted_processing_count: 1,
+                processed_count: 1,
+                processed_with_successful_result_count: 1,
+            }
+        );
+        assert_eq!(
+            retryable_transaction_indexes,
+            vec![RetryableIndex {
+                index: 0,
+                immediately_retryable: true,
+            }]
+        );
+        assert_matches!(
+            commit_transactions_result,
+            Err(PohRecorderError::MaxHeightReached)
+        );
+
+        let cost_tracker = bank.read_cost_tracker().unwrap();
+        assert_eq!(cost_tracker.transaction_count(), 0);
+        assert_eq!(cost_tracker.block_cost(), 0);
+        drop(cost_tracker);
+        assert!(record_receiver.try_recv().is_err());
+        assert_eq!(bank.get_balance(&pubkey), 0);
     }
 
     #[test]
