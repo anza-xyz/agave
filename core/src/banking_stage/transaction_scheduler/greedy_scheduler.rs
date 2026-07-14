@@ -5,7 +5,6 @@ use {
             SchedulingCommon, TransactionSchedulingError, TransactionSchedulingInfo, select_thread,
         },
         scheduler_error::SchedulerError,
-        transaction_priority_id::TransactionPriorityId,
         transaction_state::TransactionState,
         transaction_state_container::StateContainer,
     },
@@ -13,8 +12,9 @@ use {
         consumer::{ENTRY_OVERHEAD_BYTES, TARGET_NUM_TRANSACTIONS_PER_BATCH},
         scheduler_messages::{ConsumeWork, FinishedConsumeWork},
     },
-    agave_scheduling_utils::thread_aware_account_locks::{
-        ThreadAwareAccountLocks, ThreadId, ThreadSet, TryLockError,
+    agave_scheduling_utils::{
+        thread_aware_account_locks::{ThreadAwareAccountLocks, ThreadId, ThreadSet, TryLockError},
+        transaction_priority_queue::TransactionPriorityId,
     },
     crossbeam_channel::{Receiver, Sender},
     solana_cost_model::block_cost_limits::MAX_BLOCK_UNITS,

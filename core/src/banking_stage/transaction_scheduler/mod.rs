@@ -7,6 +7,5 @@ pub(crate) mod scheduler_common;
 pub mod scheduler_controller;
 pub(crate) mod scheduler_error;
 mod scheduler_metrics;
-mod transaction_priority_id;
 pub(crate) mod transaction_state;
 pub(crate) mod transaction_state_container;
