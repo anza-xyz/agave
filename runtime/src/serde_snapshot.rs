@@ -596,15 +596,28 @@ pub(crate) fn bank_to_stream<W>(
     stream: &mut io::BufWriter<W>,
     bank: &Bank,
     snapshot_storages: &[Arc<AccountStorageEntry>],
-) -> Result<(), Error>
+) -> wincode::WriteResult<()>
 where
     W: Write,
 {
-    bincode::serialize_into(
+    let mut bank_fields = bank.get_fields_to_serialize();
+    let bank_hash_stats = bank.get_bank_hash_stats();
+    let lamports_per_signature = bank_fields.fee_rate_governor.lamports_per_signature;
+    let versioned_epoch_stakes = std::mem::take(&mut bank_fields.versioned_epoch_stakes);
+    let accounts_lt_hash = Some(bank_fields.accounts_lt_hash.clone().into());
+    let block_id = Some(bank_fields.block_id);
+    serialize_bank_snapshot_into_wincode(
         stream,
-        &SerializableBankAndStorage {
-            bank,
-            snapshot_storages,
+        bank_fields,
+        bank_hash_stats,
+        snapshot_storages,
+        ExtraFieldsToSerialize {
+            lamports_per_signature,
+            unused_incremental_snapshot_persistence: None,
+            unused_epoch_accounts_hash: None,
+            versioned_epoch_stakes,
+            accounts_lt_hash,
+            block_id,
         },
     )
 }
@@ -694,78 +707,6 @@ pub fn serialize_bank_snapshot_into_wincode(
         extra_fields,
     };
     serialize_into(stream, &snapshot)
-}
-
-#[cfg(test)]
-struct SerializableBankAndStorage<'a> {
-    bank: &'a Bank,
-    snapshot_storages: &'a [Arc<AccountStorageEntry>],
-}
-
-#[cfg(test)]
-impl Serialize for SerializableBankAndStorage<'_> {
-    fn serialize<S>(&self, serializer: S) -> std::result::Result<S::Ok, S::Error>
-    where
-        S: serde::ser::Serializer,
-    {
-        let slot = self.bank.slot();
-        let mut bank_fields = self.bank.get_fields_to_serialize();
-        let bank_hash_stats = self.bank.get_bank_hash_stats();
-        let lamports_per_signature = bank_fields.fee_rate_governor.lamports_per_signature;
-        let versioned_epoch_stakes = std::mem::take(&mut bank_fields.versioned_epoch_stakes);
-        let accounts_lt_hash = Some(bank_fields.accounts_lt_hash.clone().into());
-        let block_id = Some(bank_fields.block_id);
-        let bank_fields_to_serialize = SerializableBankSnapshot {
-            bank: SerializableVersionedBank::from(bank_fields),
-            accounts_db: SerializableAccountsDb::new(slot, self.snapshot_storages, bank_hash_stats),
-            extra_fields: ExtraFieldsToSerialize {
-                lamports_per_signature,
-                unused_incremental_snapshot_persistence: None,
-                unused_epoch_accounts_hash: None,
-                versioned_epoch_stakes,
-                accounts_lt_hash,
-                block_id,
-            },
-        };
-        bank_fields_to_serialize.serialize(serializer)
-    }
-}
-
-#[cfg(test)]
-struct SerializableBankAndStorageNoExtra<'a> {
-    bank: &'a Bank,
-    snapshot_storages: &'a [Arc<AccountStorageEntry>],
-}
-
-#[cfg(test)]
-impl Serialize for SerializableBankAndStorageNoExtra<'_> {
-    fn serialize<S>(&self, serializer: S) -> std::result::Result<S::Ok, S::Error>
-    where
-        S: serde::ser::Serializer,
-    {
-        let slot = self.bank.slot();
-        let bank_fields = self.bank.get_fields_to_serialize();
-        let bank_hash_stats = self.bank.get_bank_hash_stats();
-        (
-            SerializableVersionedBank::from(bank_fields),
-            SerializableAccountsDb::new(slot, self.snapshot_storages, bank_hash_stats),
-        )
-            .serialize(serializer)
-    }
-}
-
-#[cfg(test)]
-impl<'a> From<SerializableBankAndStorageNoExtra<'a>> for SerializableBankAndStorage<'a> {
-    fn from(s: SerializableBankAndStorageNoExtra<'a>) -> SerializableBankAndStorage<'a> {
-        let SerializableBankAndStorageNoExtra {
-            bank,
-            snapshot_storages,
-        } = s;
-        SerializableBankAndStorage {
-            bank,
-            snapshot_storages,
-        }
-    }
 }
 
 // Serializable counterpart of `AccountsDbFields`, generic over the type used to serialize the

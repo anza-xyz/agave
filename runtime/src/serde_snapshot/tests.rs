@@ -5,12 +5,12 @@ mod serde_snapshot_tests {
             bank::BankHashStats,
             serde_snapshot::{
                 SerializableAccountsDb, SnapshotAccountsDbFields, deserialize_accounts_db_fields,
-                reconstruct_accountsdb_from_fields, remap_append_vec_file,
+                reconstruct_accountsdb_from_fields, remap_append_vec_file, serialize_into,
             },
             snapshot_utils::StorageAndNextAccountsFileId,
         },
         agave_fs::{FileInfo, buffered_reader::FileBufRead as _, io_setup::IoSetupState},
-        bincode::{Error, serialize_into},
+        bincode::Error,
         log::info,
         rand::{Rng, rng},
         solana_account::{AccountSharedData, ReadableAccount},
@@ -99,7 +99,7 @@ mod serde_snapshot_tests {
         stream: &mut W,
         slot: Slot,
         account_storage_entries: &[Arc<AccountStorageEntry>],
-    ) -> Result<(), Error>
+    ) -> wincode::WriteResult<()>
     where
         W: Write,
     {

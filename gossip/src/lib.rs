@@ -52,6 +52,6 @@ extern crate solana_metrics;
 pub use protocol::gossip_decode_to_effects;
 
 #[cfg(feature = "conformance")]
-mod harness;
+pub mod harness;
 
 mod wire_format_tests;

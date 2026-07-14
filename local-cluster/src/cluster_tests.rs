@@ -4,7 +4,7 @@
 /// discover the rest of the network.
 use log::*;
 use {
-    crate::{cluster::QuicTpuClient, local_cluster::LocalCluster},
+    crate::local_cluster::LocalCluster,
     agave_votor_messages::{
         consensus_message::VoteMessage, unverified_vote_message::DecodedWireConsensusMessage,
         wire::VersionedWireConsensusMessage,
@@ -12,7 +12,6 @@ use {
     crossbeam_channel::bounded,
     rand::{Rng, rng},
     rayon::{ThreadPool, prelude::*},
-    solana_client::connection_cache::ConnectionCache,
     solana_clock::{self as clock, Slot},
     solana_commitment_config::CommitmentConfig,
     solana_core::consensus::tower_storage::{
@@ -37,7 +36,7 @@ use {
     solana_poh_config::PohConfig,
     solana_pubkey::Pubkey,
     solana_rpc_client::rpc_client::RpcClient,
-    solana_signer::Signer,
+    solana_signer::{Signer, signers::Signers},
     solana_streamer::{
         nonblocking::simple_qos::SimpleQosConfig,
         quic::{QuicStreamerConfig, spawn_simple_qos_server},
@@ -45,7 +44,6 @@ use {
     },
     solana_system_transaction as system_transaction,
     solana_time_utils::timestamp,
-    solana_tpu_client::tpu_client::{TpuClient, TpuClientConfig, TpuSenderError},
     solana_tpu_client_next::{
         client_builder::{ClientBuilder, TransactionSender},
         leader_updater::create_pinned_leader_updater,
@@ -72,6 +70,7 @@ use {
 
 /// Packages a multi-threaded tokio runtime with a tpu-client-next sender, providing
 /// a synchronous interface for sending transactions in local-cluster tests.
+#[derive(Clone)]
 pub struct TpuSender {
     runtime: Arc<tokio::runtime::Runtime>,
 }
@@ -115,15 +114,28 @@ impl TpuSender {
         result
     }
 
-    fn send_wire_transaction(&self, sender: &TransactionSender, wire_tx: Vec<u8>) {
+    /// Send a pre-serialized transaction wire frame through an open `sender`.
+    pub fn send_wire_transaction(&self, sender: &TransactionSender, wire_tx: Vec<u8>) {
         self.runtime
             .block_on(async { sender.send_transactions_in_batch(vec![wire_tx]).await })
             .expect("TpuSender: should send transactions in batch");
     }
 
+    /// Send a pre-serialized wire frame, logging any error rather than panicking.
+    ///
+    /// Use this in tests that tolerate transient send failures (e.g. partition tests).
+    pub fn try_send_wire_transaction(&self, sender: &TransactionSender, wire_tx: Vec<u8>) {
+        if let Err(e) = self
+            .runtime
+            .block_on(async { sender.send_transactions_in_batch(vec![wire_tx]).await })
+        {
+            debug!("TpuSender: send_wire_transaction failed: {e:?}");
+        }
+    }
+
     /// Send and confirm `transaction` with retries via `sender`, using `rpc_client` for
     /// confirmation and blockhash refresh.
-    fn send_and_confirm_transaction<T: solana_signer::signers::Signers + ?Sized>(
+    fn send_and_confirm_transaction<T: Signers + ?Sized>(
         &self,
         sender: &TransactionSender,
         rpc_client: &RpcClient,
@@ -146,6 +158,29 @@ impl TpuSender {
             warn!("send_and_confirm_transaction: attempt {attempt} failed, retrying");
         }
         Err(std::io::Error::other("failed to confirm transaction after max retries").into())
+    }
+
+    /// Open a QUIC connection to `tpu_addr` and send-and-confirm `transaction` with retries.
+    ///
+    /// Uses `rpc_client` to poll for confirmation and refresh the blockhash between attempts.
+    pub fn send_transaction_with_retries<T: Signers + ?Sized>(
+        &self,
+        tpu_addr: SocketAddr,
+        rpc_client: &RpcClient,
+        signers: &T,
+        transaction: &mut Transaction,
+        attempts: usize,
+    ) -> Result<(), TransportError> {
+        let sender_clone = self.clone();
+        self.with_connection(tpu_addr, move |sender| {
+            sender_clone.send_and_confirm_transaction(
+                sender,
+                rpc_client,
+                signers,
+                transaction,
+                attempts,
+            )
+        })
     }
 }
 
@@ -997,25 +1032,5 @@ pub fn submit_vote_to_cluster_gossip(
         node_keypair.pubkey(),
         gossip_addr,
         socket_addr_space,
-    )
-}
-
-pub fn new_tpu_quic_client(
-    contact_info: &ContactInfo,
-    connection_cache: Arc<ConnectionCache>,
-) -> Result<QuicTpuClient, TpuSenderError> {
-    let rpc_pubsub_url = format!("ws://{}/", contact_info.rpc_pubsub().unwrap());
-    let rpc_url = format!("http://{}", contact_info.rpc().unwrap());
-
-    let cache = match &*connection_cache {
-        ConnectionCache::Quic(cache) => cache,
-        ConnectionCache::Udp(_) => panic!("Expected a Quic ConnectionCache. Got UDP"),
-    };
-
-    TpuClient::new_with_connection_cache(
-        Arc::new(RpcClient::new(rpc_url)),
-        rpc_pubsub_url.as_str(),
-        TpuClientConfig::default(),
-        cache.clone(),
     )
 }
