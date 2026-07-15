@@ -48,7 +48,7 @@ use {
         bank::{Bank, BankFieldsToDeserialize, BankRc},
         epoch_stakes::VersionedEpochStakes,
         stake_history::StakeHistory,
-        stakes::{DeserializableStakes, SerdeStakesToStakeFormat, Stakes},
+        stakes::{DeserializableDelegationStakes, SerdeStakesToStakeFormat, Stakes},
     },
     agave_feature_set::FeatureSet,
     solana_account::AccountSharedData,
@@ -137,7 +137,7 @@ pub fn execute_txn(
 
     // `new_for_txn_tests` ignores `stakes`/`versioned_epoch_stakes`, but the
     // struct still has to be constructed.
-    let stakes = DeserializableStakes {
+    let stakes = DeserializableDelegationStakes {
         vote_accounts: VoteAccounts::default(),
         stake_delegations: vec![],
         unused: 0,

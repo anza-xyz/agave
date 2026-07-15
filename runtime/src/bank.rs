@@ -572,7 +572,7 @@ impl Default for BankFieldsToDeserialize {
             fee_rate_governor: FeeRateGovernor::default(),
             epoch_schedule: EpochSchedule::default(),
             inflation: Inflation::default(),
-            stakes: DeserializableStakes {
+            stakes: DeserializableDelegationStakes {
                 vote_accounts: VoteAccounts::default(),
                 stake_delegations: Vec::default(),
                 unused: u64::default(),
