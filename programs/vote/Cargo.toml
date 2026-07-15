@@ -72,6 +72,7 @@ solana-sdk-ids = { workspace = true }
 solana-sha256-hasher = { workspace = true }
 solana-svm-feature-set = { path = "../../svm-feature-set", features = ["agave-unstable-api"] }
 solana-system-program = { path = "../system", features = ["agave-unstable-api"] }
+solana-transaction-context = { workspace = true, features = ["dev-context-only-utils"] }
 solana-vote-program = { path = ".", features = ["agave-unstable-api", "dev-context-only-utils"] }
 test-case = { workspace = true }
 

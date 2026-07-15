@@ -104,7 +104,7 @@ pub fn execute_txn_with_callback<C: InvokeContextCallback>(
     let program_runtime_environments =
         program_runtime_environments(&runtime_features, &compute_budget);
 
-    let transaction_context = TransactionContext::new(
+    let transaction_context = TransactionContext::new_with_feature_flags(
         transaction_accounts,
         rent.clone(),
         execution_budget.max_instruction_stack_depth,
