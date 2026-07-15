@@ -1,6 +1,6 @@
 // Binary layout helpers.
 //
-// Protocol is bincode-serialized with fixint encoding:
+// Protocol is wincode-serialized with fixint encoding:
 //   4-byte LE u32 variant discriminant, then variant fields.
 //
 // Variant indices (from enum declaration order):
@@ -116,7 +116,7 @@ pub(crate) fn make_contact_info_crds_data(pubkey: &[u8; 32], wallclock: u64) -> 
         wallclock,
         0, // shred_version
     );
-    bincode::serialize(&CrdsData::ContactInfo(ci)).unwrap()
+    wincode::serialize(&CrdsData::ContactInfo(ci)).unwrap()
 }
 
 /// Build a ContactInfo CrdsData with localhost sockets populated.
@@ -124,7 +124,7 @@ pub(crate) fn make_contact_info_localhost_crds_data(pubkey: &[u8; 32], wallclock
     use solana_gossip::{contact_info::ContactInfo, crds_data::CrdsData};
     let mut ci = ContactInfo::new_localhost(&solana_pubkey::Pubkey::from(*pubkey), wallclock);
     ci.set_wallclock(wallclock);
-    bincode::serialize(&CrdsData::ContactInfo(ci)).unwrap()
+    wincode::serialize(&CrdsData::ContactInfo(ci)).unwrap()
 }
 
 /// Build a SnapshotHashes CrdsData (variant 10).
@@ -153,10 +153,10 @@ pub(crate) fn make_snapshot_hashes_crds_data(
 
 /// Build an EpochSlots CrdsData (variant 5).
 pub(crate) fn make_epoch_slots_crds_data(index: u8, from: &[u8; 32], wallclock: u64) -> Vec<u8> {
-    // EpochSlots is serialized by bincode. Build and serialize.
+    // EpochSlots is serialized by wincode. Build and serialize.
     use solana_gossip::{crds_data::CrdsData, epoch_slots::EpochSlots};
     let es = EpochSlots::new(solana_pubkey::Pubkey::from(*from), wallclock);
-    bincode::serialize(&CrdsData::EpochSlots(index, es)).unwrap()
+    wincode::serialize(&CrdsData::EpochSlots(index, es)).unwrap()
 }
 
 /// Build a LowestSlot CrdsData (variant 2).
@@ -168,7 +168,7 @@ pub(crate) fn make_lowest_slot_crds_data(
 ) -> Vec<u8> {
     use solana_gossip::crds_data::{CrdsData, LowestSlot};
     let ls = LowestSlot::new(solana_pubkey::Pubkey::from(*from), lowest, wallclock);
-    let mut data = bincode::serialize(&CrdsData::LowestSlot(0, ls)).unwrap();
+    let mut data = wincode::serialize(&CrdsData::LowestSlot(0, ls)).unwrap();
     // Patch the index byte (offset 4 in the serialized CrdsData)
     data[4] = index;
     data
@@ -191,7 +191,7 @@ pub(crate) fn make_crds_filter_bytes() -> Vec<u8> {
     // minimum item estimate for CrdsFilter::mask_bits to return 6.
     let filter = CrdsFilter::new_rand(5_697, 128);
     assert_eq!(filter.get_mask_bits(), 6);
-    bincode::serialize(&filter).unwrap()
+    wincode::serialize(&filter).unwrap()
 }
 
 /// Build a Vote CrdsData (variant 1).
@@ -211,7 +211,7 @@ pub(crate) fn make_vote_crds_data(index: u8, from: &[u8; 32], wallclock: u64) ->
     vote_tx.partial_sign(&[&keypair], solana_hash::Hash::default());
     let crds_vote = CrdsVote::new(solana_pubkey::Pubkey::from(*from), vote_tx, wallclock)
         .expect("valid vote tx");
-    bincode::serialize(&CrdsData::Vote(index, crds_vote)).unwrap()
+    wincode::serialize(&CrdsData::Vote(index, crds_vote)).unwrap()
 }
 
 /// Build a DuplicateShred CrdsData (variant 9).
