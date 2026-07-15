@@ -1,3 +1,12 @@
+#[cfg(feature = "dev-context-only-utils")]
+use qualifier_attr::field_qualifiers;
+// The rng traits come straight from `rand` when sampling for tests, and from frozen-abi's re-export
+// when sampling for abi digests (which enables `frozen-abi` without the `rand` dependency). Both
+// resolve to the same `rand` crate, so `sample_vote_account` is shared between the two.
+#[cfg(feature = "dev-context-only-utils")]
+use rand::{Rng, RngCore};
+#[cfg(all(feature = "frozen-abi", not(feature = "dev-context-only-utils")))]
+use solana_frozen_abi::rand::{Rng, RngCore};
 use {
     crate::vote_state_view::VoteStateView,
     log::*,
@@ -21,10 +30,8 @@ use {
     thiserror::Error,
     wincode::{TypeMeta, WriteResult},
 };
-#[cfg(feature = "dev-context-only-utils")]
+#[cfg(any(feature = "dev-context-only-utils", feature = "frozen-abi"))]
 use {
-    qualifier_attr::field_qualifiers,
-    rand::Rng,
     solana_bls_signatures::Keypair as BLSKeypair,
     solana_clock::Clock,
     solana_keypair::Keypair,
@@ -34,7 +41,7 @@ use {
     },
 };
 
-#[cfg_attr(feature = "frozen-abi", derive(AbiExample, StableAbi, StableAbiSample))]
+#[cfg_attr(feature = "frozen-abi", derive(AbiExample))]
 #[derive(Clone, Debug, PartialEq)]
 pub struct VoteAccount(Arc<VoteAccountInner>);
 
@@ -46,16 +53,10 @@ pub enum Error {
     InvalidOwner(/*owner:*/ Pubkey),
 }
 
-// No `SchemaWrite`: `VoteAccount` has a custom impl that writes only `account` (see above).
-#[cfg_attr(feature = "frozen-abi", derive(AbiExample, StableAbi, StableAbiSample))]
+#[cfg_attr(feature = "frozen-abi", derive(AbiExample))]
 #[derive(Debug)]
 struct VoteAccountInner {
     account: AccountSharedData,
-    // Skipped by the custom serializer, and hard to instantiate other than via `AbiExample`.
-    #[cfg_attr(
-        feature = "frozen-abi",
-        stable_abi_sample(with = "solana_frozen_abi::abi_example::AbiExample::example()")
-    )]
     vote_state_view: VoteStateView,
 }
 
@@ -120,19 +121,26 @@ impl VoteAccount {
 
     #[cfg(feature = "dev-context-only-utils")]
     pub fn new_random() -> VoteAccount {
+        Self::sample_vote_account(&mut rand::rng())
+    }
+
+    /// Samples a valid, parseable vote account (owner = vote program, data = a well-formed
+    /// `VoteStateV4` with a real BLS keypair derived from `rng`) from `rng`. Shared by `new_random`
+    /// and the frozen-abi `StableAbi` sampler.
+    #[cfg(any(feature = "dev-context-only-utils", feature = "frozen-abi"))]
+    fn sample_vote_account(rng: &mut (impl RngCore + ?Sized)) -> VoteAccount {
         const BLS_KEYPAIR_DERIVE_SEED: &[u8; 9] = b"alpenglow";
 
-        let mut rng = rand::rng();
-        let authorized_voter_bls_proof_of_possession = [0; BLS_PROOF_OF_POSSESSION_COMPRESSED_SIZE];
-        let keypair = Keypair::new();
+        let keypair = Keypair::new_from_array(rng.random());
         let bls_keypair =
             BLSKeypair::derive_from_signer(&keypair, BLS_KEYPAIR_DERIVE_SEED).unwrap();
         let vote_init = VoteInitV2 {
-            node_pubkey: Pubkey::new_unique(),
+            node_pubkey: Pubkey::from(rng.random::<[u8; 32]>()),
             authorized_voter: keypair.pubkey(),
             authorized_voter_bls_pubkey: bls_keypair.public.to_bytes_compressed(),
-            authorized_voter_bls_proof_of_possession,
-            authorized_withdrawer: Pubkey::new_unique(),
+            // A valid proof of possession isn't required for the account to parse.
+            authorized_voter_bls_proof_of_possession: [0; BLS_PROOF_OF_POSSESSION_COMPRESSED_SIZE],
+            authorized_withdrawer: Pubkey::from(rng.random::<[u8; 32]>()),
             inflation_rewards_commission_bps: rng.random_range(0..10_000),
             block_revenue_commission_bps: rng.random_range(0..10_000),
         };
@@ -145,8 +153,8 @@ impl VoteAccount {
         };
         let vote_state = VoteStateV4::new(
             &vote_init,
-            &Pubkey::new_unique(),
-            &Pubkey::new_unique(),
+            &Pubkey::from(rng.random::<[u8; 32]>()),
+            &Pubkey::from(rng.random::<[u8; 32]>()),
             &clock,
         );
         let account = AccountSharedData::new_data(
@@ -413,6 +421,13 @@ impl VoteAccounts {
             }
             Ordering::Greater => *current_stake -= stake,
         }
+    }
+}
+
+#[cfg(feature = "frozen-abi")]
+impl solana_frozen_abi::stable_abi::StableAbi for VoteAccount {
+    fn random_with_context(rng: &mut (impl RngCore + ?Sized), _ctx: ()) -> Self {
+        Self::sample_vote_account(rng)
     }
 }
 

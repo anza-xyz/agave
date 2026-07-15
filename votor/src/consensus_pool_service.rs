@@ -581,21 +581,14 @@ impl ConsensusPoolService {
             }
 
             // Check if we've received the full block in blockstore
-            let Some(location) = ctx
+            let Some((slot_meta, _location)) = ctx
                 .blockstore
-                .get_block_location(block.slot, block.block_id)
+                .get_slot_meta_for_block_id(block.slot, block.block_id)
                 .expect("Blockstore operations must succeed")
             else {
                 // Block not yet received, keep waiting
                 return true;
             };
-
-            // Block has been received, get the parent meta
-            let slot_meta = ctx
-                .blockstore
-                .meta_from_location(block.slot, location)
-                .expect("Blockstore operations must succeed")
-                .expect("SlotMeta must exist if block location is present");
 
             let parent_block = Block {
                 slot: slot_meta

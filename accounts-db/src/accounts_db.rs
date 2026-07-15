@@ -1336,6 +1336,60 @@ impl AccountsDb {
         }
     }
 
+    /// Purges each key in `removed_keys` from the enabled secondary indexes, unless the key is
+    /// still alive in the write cache. `removed_keys` must be keys that are not present in the
+    /// primary index
+    ///
+    /// The cache check is all-or-nothing per key: a key kept because it is cache-live retains all
+    /// of its secondary entries, including stale ones from its dead rooted versions (e.g. an old
+    /// mint after the account is re-created with a new one). Scans tolerate stale entries by
+    /// post-filtering against account data, and they are removed the next time the key dies while
+    /// not cache-resident.
+    ///
+    /// Cache writes populate the secondary indexes but not the primary index, so a key that is gone
+    /// from the primary index can still be alive in the write cache and must keep its secondary
+    /// entries. This is tricky due to the races that need to be considered:
+    /// 1) Removed from the cache then re-added to the cache by replay
+    /// - This is protected by re-checking the cache in the closure passed to purge. Since purge
+    ///   holds the secondary index's reverse-index lock when it re-checks cache presence, and a
+    ///   cache store writes the cache before inserting into the secondary index under that same
+    ///   lock, either the re-check sees the cache write and the entry is not removed, or the
+    ///   removal wins and the store's later insert re-adds it.
+    /// 2) Removed from the cache, and also simultaneously removed from storage by clean
+    /// - Since both the cache removal and the index removal are done before the removal from the
+    ///   secondary index, the worst case is a double removal (both paths remove the same secondary
+    ///   index entry). This is safe since the secondary index removal is idempotent.
+    /// 3) Removed from the storage, but still present in the cache
+    /// - This is protected by checking the cache presence in the closure. If the pubkey is still
+    ///   present in the cache, the secondary index entry is not removed.
+    ///
+    /// We do not need to consider removed from cache -> added to storage. Adding to storage
+    /// requires a cache entry to be present first, so a fresh store of the key would have to be
+    /// rooted and flushed inside this window — impossible because rooting is driven by the same
+    /// ReplayStage thread that purges unrooted slots, and clean runs serially with flush on the
+    /// ABS thread.
+    fn purge_secondary_indexes_for_dead_keys<'a>(
+        &self,
+        removed_keys: impl IntoIterator<Item = &'a Pubkey>,
+    ) {
+        if self.account_indexes.is_empty() {
+            return;
+        }
+        for key in removed_keys {
+            // Purging secondary entries for a key that is still alive in the primary index
+            // would leave a live account invisible to secondary-index scans
+            debug_assert!(
+                !self.accounts_index.contains(key),
+                "key removed from the primary index must not be present: {key}"
+            );
+            self.accounts_index.purge_secondary_indexes_by_inner_key_if(
+                key,
+                &self.account_indexes,
+                || !self.accounts_cache.contains_pubkey(key),
+            );
+        }
+    }
+
     #[must_use]
     pub fn purge_keys_exact<C>(
         &self,
@@ -1362,10 +1416,11 @@ impl AccountsDb {
                 }
             });
 
-        let (pubkeys_removed_from_accounts_index, handle_dead_keys_us) = measure_us!(
-            self.accounts_index
-                .handle_dead_keys(&dead_keys, &self.account_indexes)
-        );
+        let (pubkeys_removed_from_accounts_index, handle_dead_keys_us) = measure_us!({
+            let removed_keys = self.accounts_index.handle_dead_keys(&dead_keys);
+            self.purge_secondary_indexes_for_dead_keys(&removed_keys);
+            removed_keys
+        });
 
         self.stats
             .purge_exact_count
@@ -4057,13 +4112,6 @@ impl AccountsDb {
         )
     }
 
-    #[cfg(test)]
-    fn create_and_insert_store(&self, slot: Slot, size: u64) -> Arc<AccountStorageEntry> {
-        let store = Arc::new(self.create_store(slot, size));
-        self.storage.insert(store.clone());
-        store
-    }
-
     pub fn enable_bank_drop_callback(&self) {
         self.is_bank_drop_callback_enabled
             .store(true, Ordering::Release);
@@ -4129,21 +4177,10 @@ impl AccountsDb {
                     .accounts_cache
                     .remove_slot(*remove_slot)
                     .expect("slot cache entry must still be present");
-                // Cache writes populate the secondary indexes but not the primary index, so a
-                // cache-only accounts dropped here would otherwise leak its secondary entry.
-                // `handle_dead_keys` removes those secondary entries; its return value (the
-                // pubkeys not present in the primary index) is unused because this path does
-                // no reclaim handling.
-                //
-                // Narrow race: If a write re-adds the same pubkey between `remove_slot` and
-                // `handle_dead_keys`, the new secondary entry will be dropped. Only
-                // secondary-index scans observe it (no consensus impact), and it self-heals: the
-                // entry is re-added when that slot flushes, or stays correctly removed if the slot
-                // is later purged.
+                // Potentially purge the secondary entries for any key that has now left the cache
                 if !self.account_indexes.is_empty() {
-                    let _ = self
-                        .accounts_index
-                        .handle_dead_keys(&pubkeys_removed, &self.account_indexes);
+                    let removed_keys = self.accounts_index.handle_dead_keys(&pubkeys_removed);
+                    self.purge_secondary_indexes_for_dead_keys(&removed_keys);
                 }
                 self.accounts_index.write_through_pubkeys(pubkeys_removed);
             }
@@ -4196,7 +4233,7 @@ impl AccountsDb {
         for remove_slot in removed_slots {
             // Remove the storage entries and collect some metrics
             if let Some(store) = self.storage.remove(remove_slot, false) {
-                total_removed_stored_bytes += store.accounts.capacity();
+                total_removed_stored_bytes += store.written_bytes();
                 all_removed_slot_storages.push(store);
             }
         }
@@ -4763,7 +4800,7 @@ impl AccountsDb {
             oldest_slot = std::cmp::min(oldest_slot, slot);
 
             total_alive_bytes += store.alive_bytes();
-            total_bytes += store.capacity();
+            total_bytes += store.written_bytes();
         }
         info!(
             "total_stores: {total_count}, newest_slot: {newest_slot}, oldest_slot: {oldest_slot}"
@@ -5647,9 +5684,7 @@ impl AccountsDb {
         }
         let tombstone_infos =
             self.write_accounts_to_storage(tombstones.target_slot(), new_storage, &tombstones);
-        let tombstone_offsets: Vec<_> = tombstone_infos.iter().map(|info| info.offset()).collect();
-        new_storage.batch_insert_tombstone_offsets(&tombstone_offsets);
-        tombstone_offsets.len()
+        new_storage.batch_insert_tombstone_offsets(tombstone_infos.iter().map(|info| info.offset()))
     }
 
     /// Stores accounts in the storage and updates the index.
@@ -5817,9 +5852,8 @@ impl AccountsDb {
             .write_accounts(accounts_and_meta_to_store)
             .unwrap_or_else(|| {
                 panic!(
-                    "failed to write accounts to storage: slot! {slot}, id: {store_id}, capacity: \
-                     {} bytes, len: {} bytes, num accounts: {num_accounts}",
-                    storage.accounts.capacity(),
+                    "failed to write accounts to storage: slot! {slot}, id: {store_id}, len: {} \
+                     bytes, num accounts: {num_accounts}",
                     storage.accounts.len(),
                 )
             });
@@ -5827,9 +5861,8 @@ impl AccountsDb {
         assert_eq!(
             stored_accounts_info.offsets.len(),
             num_accounts,
-            "failed to write all accounts to storage! {slot}, id: {store_id}, capacity: {} bytes, \
-             len: {} bytes, num accounts written: {}, num accounts total: {num_accounts}",
-            storage.accounts.capacity(),
+            "failed to write all accounts to storage! {slot}, id: {store_id}, len: {} bytes, num \
+             accounts written: {}, num accounts total: {num_accounts}",
             storage.accounts.len(),
             stored_accounts_info.offsets.len(),
         );
@@ -6714,12 +6747,11 @@ impl AccountsDb {
         for slot in &slots {
             let entry = self.storage.get_slot_storage_entry(*slot).unwrap();
             info!(
-                "  slot: {} id: {} count: {} len: {} capacity: {}",
+                "  slot: {} id: {} count: {} len: {}",
                 slot,
                 entry.id(),
                 entry.count(),
                 entry.accounts.len(),
-                entry.accounts.capacity(),
             );
         }
     }

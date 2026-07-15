@@ -6400,15 +6400,27 @@ fn test_get_double_merkle_root(use_alternate_location: bool) {
     assert_eq!(double_merkle_meta.proofs.len(), 0);
 
     // Generate the proofs
-    let double_merkle_meta = blockstore
-        .get_double_merkle_meta_maybe_populate_proofs(slot, block_location)
+    let (double_merkle_meta, _slot_meta) = blockstore
+        .get_parent_repair_metadata(slot, expected_double_merkle_root)
         .unwrap()
         .unwrap();
+    assert_eq!(
+        blockstore
+            .get_block_location(slot, expected_double_merkle_root)
+            .unwrap(),
+        Some(block_location)
+    );
     let proof_size = get_proof_size(double_merkle_meta.fec_set_count as usize + 1) as usize;
     assert_eq!(
         double_merkle_meta.proofs.len(),
         4 * proof_size * SIZE_OF_MERKLE_PROOF_ENTRY
     ); // 3 FEC sets + 1 parent info
+    let cached_double_merkle_meta = blockstore
+        .double_merkle_meta_cf
+        .get((slot, block_location))
+        .unwrap()
+        .unwrap();
+    assert_eq!(cached_double_merkle_meta.proofs, double_merkle_meta.proofs);
 
     // Verify the proofs
     // FEC sets
@@ -6463,6 +6475,120 @@ fn test_get_double_merkle_root(use_alternate_location: bool) {
             .get_double_merkle_root(incomplete_slot, block_location)
             .unwrap()
             .is_none()
+    );
+}
+
+fn insert_test_block_at_location(
+    blockstore: &Blockstore,
+    slot: Slot,
+    parent_slot: Slot,
+    location: BlockLocation,
+) -> (Vec<Shred>, Hash) {
+    let (data_shreds, _) = setup_erasure_shreds(slot, parent_slot, 200);
+    let is_repaired = location != BlockLocation::Original;
+    let shreds = data_shreds
+        .iter()
+        .map(|shred| (Cow::Borrowed(shred), is_repaired, location));
+    let insert_results = blockstore
+        .do_insert_shreds(
+            shreds,
+            false,
+            None,
+            &mut BlockstoreInsertionMetrics::default(),
+        )
+        .unwrap();
+    assert!(insert_results.duplicate_shreds.is_empty());
+
+    let block_id = blockstore
+        .get_double_merkle_root(slot, location)
+        .unwrap()
+        .unwrap();
+    (data_shreds, block_id)
+}
+
+#[test]
+fn test_block_id_reads_remain_consistent_after_switch() {
+    let ledger_path = get_tmp_ledger_path_auto_delete!();
+    let blockstore = Blockstore::open(ledger_path.path()).unwrap();
+    let slot = 1000;
+    let parent_slot = 990;
+
+    let (original_shreds, original_block_id) =
+        insert_test_block_at_location(&blockstore, slot, parent_slot, BlockLocation::Original);
+    let temporary_alternate_location = BlockLocation::Alternate {
+        block_id: Hash::new_unique(),
+    };
+    let (alternate_shreds, alternate_block_id) =
+        insert_test_block_at_location(&blockstore, slot, parent_slot, temporary_alternate_location);
+
+    assert_ne!(original_block_id, alternate_block_id);
+
+    blockstore
+        .switch_block_from_alternate(slot, temporary_alternate_location)
+        .unwrap();
+
+    assert_eq!(
+        blockstore
+            .get_double_merkle_root(slot, BlockLocation::Original)
+            .unwrap(),
+        Some(alternate_block_id)
+    );
+
+    let (slot_meta, location) = blockstore
+        .get_slot_meta_for_block_id(slot, alternate_block_id)
+        .unwrap()
+        .unwrap();
+    assert_eq!(location, BlockLocation::Original);
+    assert!(slot_meta.is_full());
+
+    let backup_location = BlockLocation::Alternate {
+        block_id: original_block_id,
+    };
+    let (slot_meta, location) = blockstore
+        .get_slot_meta_for_block_id(slot, original_block_id)
+        .unwrap()
+        .unwrap();
+    assert_eq!(location, backup_location);
+    assert!(slot_meta.is_full());
+
+    assert_eq!(
+        blockstore
+            .get_data_shred_for_block_id(slot, 0, alternate_block_id)
+            .unwrap()
+            .unwrap(),
+        alternate_shreds[0].payload().as_ref()
+    );
+    assert_eq!(
+        blockstore
+            .get_data_shred_for_block_id(slot, 0, original_block_id)
+            .unwrap()
+            .unwrap(),
+        original_shreds[0].payload().as_ref()
+    );
+
+    let (double_merkle_meta, slot_meta) = blockstore
+        .get_parent_repair_metadata(slot, original_block_id)
+        .unwrap()
+        .unwrap();
+    assert_eq!(double_merkle_meta.double_merkle_root, original_block_id);
+    assert!(!double_merkle_meta.proofs.is_empty());
+    assert!(slot_meta.is_full());
+
+    let (double_merkle_meta, merkle_root_meta) = blockstore
+        .get_fec_set_root_repair_metadata(slot, alternate_block_id, 0)
+        .unwrap()
+        .unwrap();
+    assert_eq!(double_merkle_meta.double_merkle_root, alternate_block_id);
+    assert_eq!(
+        merkle_root_meta.merkle_root().unwrap(),
+        alternate_shreds[0].merkle_root().unwrap()
+    );
+    assert!(!double_merkle_meta.proofs.is_empty());
+    assert_eq!(
+        blockstore
+            .get_double_merkle_root(slot, BlockLocation::Original)
+            .unwrap(),
+        Some(alternate_block_id)
     );
 }
 

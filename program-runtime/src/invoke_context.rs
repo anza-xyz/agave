@@ -606,6 +606,7 @@ impl<'a, 'ix_data> InvokeContext<'a, 'ix_data> {
     }
 
     /// Processes a precompile instruction
+    #[cfg_attr(feature = "dev-context-only-utils", qualifiers(pub))]
     fn process_precompile(
         &mut self,
         program_id: &Pubkey,

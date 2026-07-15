@@ -186,16 +186,23 @@ impl AccountStorageEntry {
     /// entries (`zero_lamport_single_ref_offsets`) and tombstones removed from the index
     /// (`tombstone_offsets`). Used for shrink-productivity accounting.
     pub(crate) fn num_zero_lamport_single_ref_accounts(&self) -> usize {
-        self.zero_lamport_single_ref_offsets.read().unwrap().len()
-            + self.tombstone_offsets.read().unwrap().len()
+        self.zero_lamport_single_ref_offsets.read().unwrap().len() + self.num_tombstones()
     }
 
-    /// Batch-insert tombstone offsets.
-    pub(crate) fn batch_insert_tombstone_offsets(&self, offsets: &[Offset]) {
+    /// Batch-insert tombstone offsets, taking the offsets lock once.
+    /// Returns the number of offsets inserted.
+    pub(crate) fn batch_insert_tombstone_offsets(
+        &self,
+        offsets: impl IntoIterator<Item = Offset>,
+    ) -> usize {
         let mut tombstone_offsets = self.tombstone_offsets.write().unwrap();
+        let mut num_inserted = 0;
         for offset in offsets {
-            tombstone_offsets.insert(*offset);
+            if tombstone_offsets.insert(offset) {
+                num_inserted += 1;
+            }
         }
+        num_inserted
     }
 
     /// Locks the tombstone offset set with a read lock and returns it with the guard.
@@ -203,10 +210,15 @@ impl AccountStorageEntry {
         self.tombstone_offsets.read().unwrap()
     }
 
+    /// Number of tombstone offsets in the storage.
+    pub(crate) fn num_tombstones(&self) -> usize {
+        self.tombstone_offsets.read().unwrap().len()
+    }
+
     /// True if every alive account in this storage is a tombstone. Such a storage holds no live
     /// index entries (tombstones were removed from the index when created), so it is fully dead.
     pub(crate) fn has_only_tombstones(&self) -> bool {
-        let num_tombstones = self.tombstone_offsets.read().unwrap().len();
+        let num_tombstones = self.num_tombstones();
         num_tombstones > 0 && self.count() == num_tombstones
     }
 

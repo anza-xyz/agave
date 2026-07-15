@@ -38,7 +38,6 @@ use {
             VotorEventSender,
         },
         root_utils,
-        vote_history_storage::SavedVoteHistory,
         voting_service::BLSOp,
         voting_utils::{self, GenerateVoteTxResult},
     },
@@ -280,11 +279,12 @@ impl ProcessActiveBanksContext {
     /// soft dead-slot transition.
     fn dead_slot_context<'a>(
         &'a self,
-        root: Slot,
         duplicate_slots_to_repair: &'a mut DuplicateSlotsToRepair,
         purge_repair_slot_counter: &'a mut PurgeRepairSlotCounter,
         tbft_structs: Option<&'a mut TowerBFTStructures>,
     ) -> DeadSlotContext<'a> {
+        let root = self.bank_forks.read().unwrap().root();
+
         DeadSlotContext {
             notifications: self.dead_slot_notifications(),
             duplicate: DeadSlotDuplicateContext {
@@ -1773,14 +1773,10 @@ impl ReplayStage {
                     "{} Alpenglow migration: Casting genesis vote for ({block:?})",
                     identity_keypair.pubkey()
                 );
-                // If sending fails that means the channel is disconnected and we are shutting down
-                let _ = own_message_sender.send(ConsensusMessage::Vote(vote_msg.clone()));
-                let _ = bls_sender.send(BLSOp::PushVote {
+                // Unlikely that these channels are backed up, but even so we have refresh logic on the genesis vote
+                let _ = own_message_sender.try_send(ConsensusMessage::Vote(vote_msg.clone()));
+                let _ = bls_sender.try_send(BLSOp::PushVote {
                     vote: Arc::new(vote_msg),
-                    saved_vote_history:
-                        agave_votor::vote_history_storage::SavedVoteHistoryVersions::Current(
-                            SavedVoteHistory::default(),
-                        ),
                 });
             }
             e => {
@@ -2450,7 +2446,8 @@ impl ReplayStage {
                 return Ok(());
             }
 
-            let Some(location) = blockstore.get_block_location(ancestor_slot, ancestor_block_id)?
+            let Some((slot_meta, location)) =
+                blockstore.get_slot_meta_for_block_id(ancestor_slot, ancestor_block_id)?
             else {
                 trace!(
                     "{my_pubkey}: Waiting for repair, deferring switch to block {ancestor_slot} \
@@ -2465,9 +2462,6 @@ impl ReplayStage {
                 blocks_to_switch.push((ancestor_slot, location));
             }
 
-            let slot_meta = blockstore
-                .meta_from_location(ancestor_slot, location)?
-                .expect("Full slots must contain SlotMeta");
             let parent_slot = slot_meta
                 .parent_slot
                 .expect("Full slots must have a parent");
@@ -3854,14 +3848,17 @@ impl ReplayStage {
                         continue;
                     }
                     Err(err) => {
-                        let root = bank_forks.read().unwrap().root();
-                        let mut dead_slot_context = process_active_banks_context.dead_slot_context(
-                            root,
-                            duplicate_slots_to_repair,
-                            purge_repair_slot_counter,
-                            tbft_structs.as_deref_mut(),
+                        mark_replay_dead_slot(
+                            bank,
+                            err,
+                            progress,
+                            &mut process_active_banks_context.dead_slot_context(
+                                duplicate_slots_to_repair,
+                                purge_repair_slot_counter,
+                                tbft_structs.as_deref_mut(),
+                            ),
                         );
-                        mark_replay_dead_slot(bank, err, progress, &mut dead_slot_context);
+
                         // don't try to run the below logic to check if the bank is completed
                         continue;
                     }
@@ -3930,14 +3927,16 @@ impl ReplayStage {
                     },
                 );
                 if let Err(err) = replay_res.and(verify_res) {
-                    let root = bank_forks.read().unwrap().root();
-                    let mut dead_slot_context = process_active_banks_context.dead_slot_context(
-                        root,
-                        duplicate_slots_to_repair,
-                        purge_repair_slot_counter,
-                        tbft_structs.as_deref_mut(),
+                    mark_replay_dead_slot(
+                        bank,
+                        &err,
+                        progress,
+                        &mut process_active_banks_context.dead_slot_context(
+                            duplicate_slots_to_repair,
+                            purge_repair_slot_counter,
+                            tbft_structs.as_deref_mut(),
+                        ),
                     );
-                    mark_replay_dead_slot(bank, &err, progress, &mut dead_slot_context);
                     // don't try to run the remaining normal processing for the completed bank
                     continue;
                 }
@@ -3994,13 +3993,6 @@ impl ReplayStage {
                         warn!("Unable to write bank hash details file: {err}");
                     }
 
-                    let root = bank_forks.read().unwrap().root();
-                    let mut dead_slot_context = process_active_banks_context.dead_slot_context(
-                        root,
-                        duplicate_slots_to_repair,
-                        purge_repair_slot_counter,
-                        tbft_structs.as_deref_mut(),
-                    );
                     mark_replay_dead_slot(
                         bank,
                         &BlockstoreProcessorError::BankHashMismatch(
@@ -4009,7 +4001,11 @@ impl ReplayStage {
                             computed_hash,
                         ),
                         progress,
-                        &mut dead_slot_context,
+                        &mut process_active_banks_context.dead_slot_context(
+                            duplicate_slots_to_repair,
+                            purge_repair_slot_counter,
+                            tbft_structs.as_deref_mut(),
+                        ),
                     );
 
                     continue;
