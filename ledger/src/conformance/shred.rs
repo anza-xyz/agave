@@ -8,7 +8,7 @@ use {
     crate::{
         blockstore::{
             Blockstore, BlockstoreInsertionMetrics, PossibleDuplicateShred,
-            blockstore_purge::PurgeType, check_duplicate_shred,
+            blockstore_purge::PurgeType, handle_duplicate_shred,
         },
         blockstore_meta::BlockLocation,
         blockstore_processor::verify_ticks,
@@ -246,11 +246,12 @@ pub fn execute_shred_parse(ctx: &ShredParseContext) -> ShredParseEffects {
     );
     let mut metrics = BlockstoreInsertionMetrics::default();
     let handle_duplicate = |duplicate: PossibleDuplicateShred| {
-        let _ = check_duplicate_shred(
+        let _duplicate_proof = handle_duplicate_shred(
             &blockstore,
             duplicate,
             false, // no_verify_chained_merkle_root: keep pre-Alpenglow validation
-        );
+        )
+        .expect("handle duplicate shred");
     };
     let shreds_iter = parsed.iter().map(|shred| {
         (
@@ -286,7 +287,7 @@ pub fn execute_shred_parse(ctx: &ShredParseContext) -> ShredParseEffects {
         // Mirror FD's fd_sched_parse_txn: reject non-sanitizable, duplicate-account, or over-MTU txns.
         for tx in entries.iter().flat_map(|entry| &entry.transactions) {
             let oversized =
-                bincode::serialized_size(tx).map_or(true, |size| size > PACKET_DATA_SIZE as u64);
+                wincode::serialized_size(tx).map_or(true, |size| size > PACKET_DATA_SIZE as u64);
             let bad_locks = validate_account_locks(
                 AccountKeys::new(tx.message.static_account_keys(), None),
                 MAX_TX_ACCOUNT_LOCKS,
@@ -401,7 +402,7 @@ fn build_root_bank(root_slot: Slot, feature_set: FeatureSet) -> Arc<Bank> {
     let epoch = epoch_schedule.get_epoch(root_slot);
     let parent_slot = root_slot.saturating_sub(1);
 
-    let accounts = create_accounts_db(vec![]);
+    let accounts = create_accounts_db();
     let rent_account = AccountSharedData::new_data(1, &Rent::default(), &sysvar::id()).unwrap();
     accounts.store_accounts_seq(
         (parent_slot, &[(sysvar::rent::id(), rent_account)][..]),
@@ -469,7 +470,7 @@ fn build_root_bank(root_slot: Slot, feature_set: FeatureSet) -> Arc<Bank> {
     ))
 }
 
-fn create_accounts_db(paths: Vec<PathBuf>) -> Accounts {
+fn create_accounts_db() -> Accounts {
     let index = Some(AccountsIndexConfig {
         bins: Some(2),
         num_flush_threads: Some(NonZeroUsize::new(1).unwrap()),
@@ -486,7 +487,7 @@ fn create_accounts_db(paths: Vec<PathBuf>) -> Accounts {
         ..AccountsDbConfig::default()
     };
     let accounts_db = AccountsDb::new_with_config(
-        paths,
+        vec![],
         accounts_db_config,
         None,
         Arc::new(AtomicBool::new(false)),

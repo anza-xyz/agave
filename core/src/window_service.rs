@@ -20,7 +20,7 @@ use {
     solana_gossip::cluster_info::ClusterInfo,
     solana_ledger::{
         blockstore::{
-            Blockstore, BlockstoreInsertionMetrics, PossibleDuplicateShred, check_duplicate_shred,
+            Blockstore, BlockstoreInsertionMetrics, PossibleDuplicateShred, handle_duplicate_shred,
         },
         blockstore_meta::BlockLocation,
         shred::{self, ReedSolomonCache, Shred, filter::ShredRecoveryContext},
@@ -134,7 +134,7 @@ fn run_check_duplicate(
         );
 
         let Some((shred1, shred2)) =
-            check_duplicate_shred(blockstore, shred, no_verify_chained_merkle_root)?
+            handle_duplicate_shred(blockstore, shred, no_verify_chained_merkle_root)?
         else {
             return Ok(());
         };

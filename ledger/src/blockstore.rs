@@ -221,7 +221,7 @@ impl PossibleDuplicateShred {
 ///
 /// Returns the duplicate proof (`shred` and the conflicting payload) when one is
 /// detected, leaving propagation to the caller.
-pub fn check_duplicate_shred(
+pub fn handle_duplicate_shred(
     blockstore: &Blockstore,
     shred: PossibleDuplicateShred,
     no_verify_chained_merkle_root: bool,

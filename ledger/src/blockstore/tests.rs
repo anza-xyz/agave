@@ -1817,7 +1817,7 @@ fn test_should_insert_data_shred() {
 }
 
 #[test]
-fn test_check_duplicate_shred_returns_duplicate_proof() {
+fn test_handle_duplicate_shred_returns_duplicate_proof() {
     let ledger_path = get_tmp_ledger_path_auto_delete!();
     let blockstore = Blockstore::open(ledger_path.path()).unwrap();
     let (shreds, _) = make_many_slot_entries(5, 5, 10);
@@ -1831,7 +1831,7 @@ fn test_check_duplicate_shred_returns_duplicate_proof() {
     let duplicate_shred_slot = duplicate_shred.slot();
     assert!(!blockstore.has_duplicate_shreds_in_slot(duplicate_shred_slot));
 
-    let (returned_shred, conflicting_payload) = check_duplicate_shred(
+    let (returned_shred, conflicting_payload) = handle_duplicate_shred(
         &blockstore,
         PossibleDuplicateShred::Exists(duplicate_shred.clone()),
         true,

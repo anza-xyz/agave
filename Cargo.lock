@@ -9111,7 +9111,6 @@ dependencies = [
  "agave-votor-messages",
  "anyhow",
  "assert_matches",
- "bincode",
  "bitflags 2.13.0",
  "bs58",
  "bytes",
