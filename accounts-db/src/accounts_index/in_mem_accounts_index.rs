@@ -3082,15 +3082,15 @@ mod tests {
         // Reallocate only runs in Threshold mode. For this test HWM must be less
         // than the number of inserts to ensure the calculated bucket size is
         // the same for hwm and num_inserts
-        let hwm = 99;
-        let lwm = 70;
+        let hwm = 199;
+        let lwm = 140;
         let index = new_should_write_through_for_test(Some((hwm, lwm)));
 
-        // Fill the bin's hashmap exactly to hashbrown's max_load (7/8 of 128 buckets).
-        // At 100% load every remove is guaranteed to create a tombstone
-        let num_inserts = 112;
+        // Fill the bin's hashmap exactly to hashbrown's max_load (7/8 of 256 buckets).
+        // At this size at least one remove is all but guaranteed (odds ~1e-10) to create a tombstone
+        let num_inserts = 224;
         // Then remove enough entries to drop down to the low water mark
-        let num_removes = 42;
+        let num_removes = 84;
         let pubkeys: Vec<_> = (0..num_inserts)
             .map(|_| solana_pubkey::new_rand())
             .collect();
