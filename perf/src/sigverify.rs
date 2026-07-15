@@ -28,8 +28,7 @@ fn verify_packet(packet: &mut PacketRefMut, reject_non_vote: bool, enable_tx_v1:
     };
 
     let (is_simple_vote_tx, verified) = {
-        let Ok(view) = SanitizedTransactionView::try_new_sanitized(data, &sanitize_config(true))
-        else {
+        let Ok(view) = SanitizedTransactionView::try_new_sanitized(data, &sanitize_config()) else {
             return false;
         };
 
@@ -606,7 +605,7 @@ mod tests {
             let packet = BytesPacket::from_data(tx).unwrap();
             let view = SanitizedTransactionView::try_new_sanitized(
                 packet.as_ref().data(..).unwrap(),
-                &sanitize_config(true),
+                &sanitize_config(),
             )
             .unwrap();
             assert!(!is_simple_vote_transaction_view(&view));
@@ -619,7 +618,7 @@ mod tests {
             let packet = BytesPacket::from_data(tx).unwrap();
             let view = SanitizedTransactionView::try_new_sanitized(
                 packet.as_ref().data(..).unwrap(),
-                &sanitize_config(true),
+                &sanitize_config(),
             )
             .unwrap();
             assert!(is_simple_vote_transaction_view(&view));
@@ -632,7 +631,7 @@ mod tests {
 
             let view = SanitizedTransactionView::try_new_sanitized(
                 packet.as_ref().data(..).unwrap(),
-                &sanitize_config(true),
+                &sanitize_config(),
             )
             .unwrap();
             assert!(!is_simple_vote_transaction_view(&view));
@@ -657,7 +656,7 @@ mod tests {
             let packet = BytesPacket::from_data(tx).unwrap();
             let view = SanitizedTransactionView::try_new_sanitized(
                 packet.as_ref().data(..).unwrap(),
-                &sanitize_config(true),
+                &sanitize_config(),
             )
             .unwrap();
             assert!(!is_simple_vote_transaction_view(&view));
@@ -672,7 +671,7 @@ mod tests {
             let packet = BytesPacket::from_data(tx).unwrap();
             let view = SanitizedTransactionView::try_new_sanitized(
                 packet.as_ref().data(..).unwrap(),
-                &sanitize_config(true),
+                &sanitize_config(),
             )
             .unwrap();
             assert!(!is_simple_vote_transaction_view(&view));

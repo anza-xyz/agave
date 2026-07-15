@@ -34,6 +34,7 @@ frozen-abi = [
     "solana-vote-program/frozen-abi",
 ]
 agave-unstable-api = []
+small-cluster-gossip = []
 dev-context-only-utils = [
     "agave-votor-messages/dev-context-only-utils",
     "solana-bloom/dev-context-only-utils",
@@ -66,7 +67,6 @@ serde = { workspace = true }
 serde-big-array = { workspace = true }
 serde_bytes = { workspace = true }
 solana-bloom = { workspace = true }
-solana-client = { workspace = true }
 solana-clock = { workspace = true }
 solana-entry = { workspace = true }
 solana-epoch-schedule = { workspace = true }

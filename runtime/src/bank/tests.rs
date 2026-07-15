@@ -27,7 +27,10 @@ use {
         stake_delegation::effective_stake,
         stake_history::StakeHistory,
         stake_utils,
-        stakes::{DeserializableStakes, InvalidCacheEntryReason, SerdeStakesToStakeFormat, Stakes},
+        stakes::{
+            DeserializableDelegationStakes, InvalidCacheEntryReason, SerdeStakesToStakeFormat,
+            Stakes,
+        },
     },
     agave_feature_set::{self as feature_set, FeatureSet},
     agave_reserved_account_keys::ReservedAccount,
@@ -9116,15 +9119,11 @@ fn test_verify_transactions_instruction_limit() {
     );
 }
 
-#[test_case(false; "pre_simd406_limit_instruction_accounts")]
-#[test_case(true; "simd406_limit_instruction_accounts")]
-fn test_verify_transactions_accounts_limit(simd_406_enabled: bool) {
+#[test]
+fn test_verify_transactions_accounts_limit() {
     let GenesisConfigInfo { genesis_config, .. } =
         create_genesis_config_with_leader(42, &solana_pubkey::new_rand(), 42);
-    let mut bank = Bank::new_for_tests(&genesis_config);
-    if !simd_406_enabled {
-        bank.deactivate_feature(&feature_set::limit_instruction_accounts::id());
-    }
+    let bank = Bank::new_for_tests(&genesis_config);
 
     let recent_blockhash = Hash::new_unique();
     let keypair = Keypair::new();
@@ -9148,17 +9147,10 @@ fn test_verify_transactions_accounts_limit(simd_406_enabled: bool) {
     );
     let tx = Transaction::new(&[&keypair], message, recent_blockhash);
 
-    if simd_406_enabled {
-        assert_matches!(
-            bank.verify_transaction(tx.into(), TransactionVerificationMode::FullVerification),
-            Err(TransactionError::SanitizeFailure)
-        );
-    } else {
-        assert!(
-            bank.verify_transaction(tx.into(), TransactionVerificationMode::FullVerification)
-                .is_ok()
-        );
-    }
+    assert_matches!(
+        bank.verify_transaction(tx.into(), TransactionVerificationMode::FullVerification),
+        Err(TransactionError::SanitizeFailure)
+    );
 }
 
 #[test]
@@ -12496,7 +12488,7 @@ fn test_new_for_txn_tests_system_transfer() {
         );
     }
 
-    let stakes = DeserializableStakes {
+    let stakes = DeserializableDelegationStakes {
         vote_accounts: VoteAccounts::default(),
         stake_delegations: vec![],
         unused: 0,
@@ -12673,7 +12665,7 @@ fn test_new_for_block_tests_with_vote_account() {
         );
     }
 
-    let stakes_deser = DeserializableStakes {
+    let stakes_deser = DeserializableDelegationStakes {
         vote_accounts: VoteAccounts::default(),
         stake_delegations: vec![],
         unused: 0,

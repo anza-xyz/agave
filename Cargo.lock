@@ -66,6 +66,7 @@ version = "4.3.0-alpha.1"
 dependencies = [
  "crossbeam-channel",
  "solana-perf",
+ "wincode",
 ]
 
 [[package]]
@@ -8828,7 +8829,6 @@ dependencies = [
  "serde_bytes",
  "serial_test",
  "solana-bloom",
- "solana-client",
  "solana-clock",
  "solana-entry",
  "solana-epoch-schedule",
@@ -10293,10 +10293,8 @@ dependencies = [
  "reqwest 0.12.28",
  "serde_json",
  "solana-account-decoder",
- "solana-client",
  "solana-clock",
  "solana-commitment-config",
- "solana-connection-cache",
  "solana-hash 4.5.0",
  "solana-keypair",
  "solana-net-utils",
@@ -10309,11 +10307,11 @@ dependencies = [
  "solana-signer",
  "solana-system-transaction",
  "solana-test-validator",
- "solana-tpu-client",
  "solana-tpu-client-next",
  "solana-transaction",
  "solana-transaction-status",
  "tokio",
+ "tokio-util 0.7.18",
 ]
 
 [[package]]

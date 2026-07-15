@@ -40,7 +40,7 @@ use {
 
 mod serde_stakes;
 #[cfg_attr(feature = "dev-context-only-utils", qualifiers(pub))]
-pub(crate) use serde_stakes::DeserializableStakes;
+pub(crate) use serde_stakes::DeserializableDelegationStakes;
 pub use serde_stakes::SerdeStakesToStakeFormat;
 #[cfg_attr(feature = "dev-context-only-utils", qualifiers(pub))]
 pub(crate) use serde_stakes::serialize_stake_accounts_to_delegation_format;
@@ -336,13 +336,13 @@ impl Stakes<StakeAccount> {
         }
     }
 
-    /// Creates a Stake<StakeAccount> from DeserializableStakes<Delegation> by loading the
+    /// Creates a Stake<StakeAccount> from DeserializableDelegationStakes by loading the
     /// full account state for respective stake pubkeys. get_account function
     /// should return the account at the respective slot where stakes where
     /// cached.
     #[cfg_attr(feature = "dev-context-only-utils", qualifiers(pub))]
     pub(crate) fn load_from_deserialized_delegations<F>(
-        stakes: DeserializableStakes<Delegation>,
+        stakes: DeserializableDelegationStakes,
         get_account: F,
     ) -> Result<Self, Error>
     where
@@ -842,9 +842,9 @@ pub(crate) mod tests {
         solana_vote_program::vote_state,
     };
 
-    impl<T: Clone> Stakes<T> {
+    impl Stakes<Delegation> {
         /// Convert deserialized stakes into runtime stakes representation
-        pub(crate) fn from_deserialized(stakes: DeserializableStakes<T>) -> Self {
+        pub(crate) fn from_deserialized(stakes: DeserializableDelegationStakes) -> Self {
             Self {
                 vote_accounts: stakes.vote_accounts,
                 stake_delegations: ImblHashMap::from_iter(stakes.stake_delegations),

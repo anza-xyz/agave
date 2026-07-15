@@ -2703,6 +2703,94 @@ mod tests {
     }
 
     #[test]
+    fn test_pull_request_scan_cost() {
+        assert_eq!(pull_request_scan_cost(0, 0, 0), 8);
+        assert_eq!(pull_request_scan_cost(1_024, 6, 8), 128);
+        assert_eq!(pull_request_scan_cost(1_024, 6, 12), 192);
+        let crds_len = 1usize << (CRDS_SHARDS_BITS + 1);
+        assert_eq!(
+            pull_request_scan_cost(crds_len, CRDS_SHARDS_BITS + 1, 8),
+            16,
+        );
+    }
+
+    #[cfg(not(feature = "small-cluster-gossip"))]
+    #[test]
+    fn test_pull_request_scan_budget_production_config() {
+        assert_eq!(GOSSIP_PULL_SCAN_BUDGET_CAPACITY, 1_048_576);
+        assert_eq!(GOSSIP_PULL_SCAN_BUDGET_REFILL_PER_SEC, 262_144);
+    }
+
+    #[cfg(feature = "small-cluster-gossip")]
+    #[test]
+    fn test_pull_request_scan_budget_small_cluster_config() {
+        assert_eq!(GOSSIP_PULL_SCAN_BUDGET_CAPACITY, 8_192);
+        assert_eq!(GOSSIP_PULL_SCAN_BUDGET_REFILL_PER_SEC, 2_048);
+    }
+
+    #[test]
+    fn test_pull_request_scan_budget_exhaustion_isolated_per_ip() {
+        let keypair = Arc::new(Keypair::new());
+        let contact_info = ContactInfo::new_localhost(&keypair.pubkey(), timestamp());
+        let mut cluster_info =
+            ClusterInfo::new(contact_info, keypair, SocketAddrSpace::Unspecified);
+        // Keep the test independent of wall-clock refill.
+        cluster_info.pull_request_budget = KeyedRateLimiter::new(
+            GOSSIP_PULL_SCAN_BUDGET_CACHE_CAPACITY,
+            TokenBucket::new(
+                GOSSIP_PULL_SCAN_BUDGET_CAPACITY,
+                GOSSIP_PULL_SCAN_BUDGET_CAPACITY,
+                f64::MIN_POSITIVE,
+            ),
+            GOSSIP_PULL_SCAN_BUDGET_SHARD_COUNT,
+        );
+        let request = PullRequest {
+            pubkey: Pubkey::new_unique(),
+            addr: SocketAddr::from(([127, 0, 0, 1], 12_345)),
+            wallclock: timestamp(),
+            filter: CrdsFilter::new_rand(
+                crds_gossip_pull::MIN_NUM_BLOOM_ITEMS,
+                solana_packet::PACKET_DATA_SIZE,
+            ),
+        };
+        let second_ip_request = PullRequest {
+            pubkey: request.pubkey,
+            addr: SocketAddr::from(([127, 0, 0, 2], request.addr.port())),
+            wallclock: request.wallclock,
+            filter: request.filter.clone(),
+        };
+        request.filter.sanitize().unwrap();
+        let crds_len = crds_gossip_pull::MIN_NUM_BLOOM_ITEMS;
+        let cost = pull_request_scan_cost(
+            crds_len,
+            request.filter.get_mask_bits(),
+            request.filter.bloom_hash_count(),
+        );
+        let successful_requests = GOSSIP_PULL_SCAN_BUDGET_CAPACITY / cost;
+
+        assert!(cost <= GOSSIP_PULL_SCAN_BUDGET_CAPACITY);
+        assert_eq!(
+            cluster_info
+                .stats
+                .pull_request_scan_budget_exhausted
+                .load_relaxed(),
+            0,
+        );
+        for _ in 0..successful_requests {
+            assert!(cluster_info.try_consume_pull_request_scan_budget(&request, crds_len));
+        }
+        assert!(!cluster_info.try_consume_pull_request_scan_budget(&request, crds_len));
+        assert!(cluster_info.try_consume_pull_request_scan_budget(&second_ip_request, crds_len));
+        assert_eq!(
+            cluster_info
+                .stats
+                .pull_request_scan_budget_exhausted
+                .load_relaxed(),
+            1,
+        );
+    }
+
+    #[test]
     fn test_gossip_node() {
         //check that a gossip nodes always show up as spies
         let (node, _, _) = ClusterInfo::spy_node(solana_pubkey::new_rand(), 0);

@@ -3024,6 +3024,15 @@ mod tests {
                         storage
                     })
                     .collect::<Vec<_>>();
+                for storage in &storages {
+                    append_single_account_with_default_hash(
+                        storage,
+                        &Pubkey::new_unique(),
+                        &AccountSharedData::default(),
+                        false,
+                        None,
+                    );
+                }
                 let alive_bytes_expected = storages
                     .iter()
                     .map(|storage| storage.alive_bytes() as u64)
@@ -3861,6 +3870,14 @@ mod tests {
         create_storages_and_update_index(&db, None, non_ancient_slot, 1, true, Some(data_size));
         let mut slot_vec = (slot1..(slot1 + num_slots as Slot)).collect::<Vec<_>>();
         slot_vec.push(non_ancient_slot);
+        for slot in &slot_vec {
+            // reduce the storage's alive bytes to ensure it is a shrink candidate
+            db.storage
+                .get_slot_storage_entry(*slot)
+                .unwrap()
+                .num_alive_bytes
+                .fetch_sub(1, Ordering::Release);
+        }
         let infos = db.collect_sort_filter_ancient_slots(slot_vec.clone(), &mut tuning);
         let ideal_storage_size = tuning.ideal_storage_size.get();
         let max_resulting_storages = tuning.max_resulting_storages.get();

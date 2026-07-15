@@ -19,8 +19,7 @@ pub struct SanitizeConfig {
     /// SIMD-160: maximum number of top-level instructions.
     pub max_instructions: usize,
     /// SIMD-406: maximum number of accounts per instruction.
-    /// `None` means the limit is not enforced.
-    pub max_accounts_per_instruction: Option<usize>,
+    pub max_accounts_per_instruction: usize,
 }
 
 pub(crate) fn sanitize(
@@ -178,9 +177,7 @@ fn sanitize_instructions(
             }
         }
 
-        if let Some(max_accounts_per_instruction) = config.max_accounts_per_instruction
-            && instruction.accounts.len() > max_accounts_per_instruction
-        {
+        if instruction.accounts.len() > config.max_accounts_per_instruction {
             return Err(TransactionViewError::SanitizeError);
         }
     }
@@ -233,7 +230,7 @@ mod tests {
             min_requested_heap_size: 32 * 1024,
             max_requested_heap_size: 256 * 1024,
             max_instructions: 64,
-            max_accounts_per_instruction: Some(255),
+            max_accounts_per_instruction: 255,
         }
     }
 

@@ -23,7 +23,6 @@ use {
     crossbeam_channel::{Receiver as CrossbeamReceiver, Sender as CrossbeamSender},
     lazy_lru::LruCache,
     rand::prelude::IndexedRandom as _,
-    solana_client::connection_cache::Protocol,
     solana_clock::Slot,
     solana_epoch_schedule::EpochSchedule,
     solana_gossip::cluster_info::ClusterInfo,
@@ -35,7 +34,7 @@ use {
         shred,
     },
     solana_measure::measure::Measure,
-    solana_net_utils::PinnedXdpSender,
+    solana_net_utils::{PinnedXdpSender, Protocol},
     solana_pubkey::Pubkey,
     solana_runtime::{
         bank::Bank,

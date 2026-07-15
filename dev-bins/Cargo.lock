@@ -60,6 +60,7 @@ version = "4.3.0-alpha.1"
 dependencies = [
  "crossbeam-channel",
  "solana-perf",
+ "wincode",
 ]
 
 [[package]]
@@ -6416,6 +6417,7 @@ dependencies = [
  "solana-keypair",
  "solana-measure",
  "solana-metrics",
+ "solana-net-utils",
  "solana-time-utils",
  "solana-transaction-error",
  "thiserror 2.0.18",
@@ -6935,7 +6937,6 @@ dependencies = [
  "serde-big-array",
  "serde_bytes",
  "solana-bloom",
- "solana-client",
  "solana-clock",
  "solana-entry",
  "solana-epoch-schedule",
@@ -7812,7 +7813,6 @@ dependencies = [
  "solana-account-decoder",
  "solana-accounts-db",
  "solana-cli-output",
- "solana-client",
  "solana-clock",
  "solana-commitment-config",
  "solana-entry",
@@ -7829,6 +7829,7 @@ dependencies = [
  "solana-measure",
  "solana-message",
  "solana-metrics",
+ "solana-net-utils",
  "solana-perf",
  "solana-poh",
  "solana-poh-config",

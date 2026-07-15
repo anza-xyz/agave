@@ -70,7 +70,8 @@ use {
             MaxAllowableDrift, calculate_stake_weighted_timestamp,
         },
         stakes::{
-            DelegatedStakes, DeserializableStakes, SerdeStakesToStakeFormat, Stakes, StakesCache,
+            DelegatedStakes, DeserializableDelegationStakes, SerdeStakesToStakeFormat, Stakes,
+            StakesCache,
         },
         status_cache::{SlotDelta, StatusCache},
         transaction_batch::{OwnedOrBorrowed, TransactionBatch},
@@ -535,7 +536,7 @@ pub struct BankFieldsToDeserialize {
     pub(crate) fee_rate_governor: FeeRateGovernor,
     pub(crate) epoch_schedule: EpochSchedule,
     pub(crate) inflation: Inflation,
-    pub(crate) stakes: DeserializableStakes<Delegation>,
+    pub(crate) stakes: DeserializableDelegationStakes,
     /// Transformed into `HashMap<Epoch, VersionedEpochStakes>` in `serde_snapshot` and passed to
     /// `Bank::new_from_snapshot` as separate parameter for performance (conversion is time consuming)
     pub(crate) versioned_epoch_stakes: Vec<(Epoch, DeserializableVersionedEpochStakes)>,
@@ -571,7 +572,7 @@ impl Default for BankFieldsToDeserialize {
             fee_rate_governor: FeeRateGovernor::default(),
             epoch_schedule: EpochSchedule::default(),
             inflation: Inflation::default(),
-            stakes: DeserializableStakes {
+            stakes: DeserializableDelegationStakes {
                 vote_accounts: VoteAccounts::default(),
                 stake_delegations: Vec::default(),
                 unused: u64::default(),
@@ -3677,8 +3678,6 @@ impl Bank {
         &self,
         txs: Vec<VersionedTransaction>,
     ) -> Result<TransactionBatch<'_, '_, RuntimeTransaction<SanitizedTransaction>>> {
-        let enable_instruction_account_limit =
-            self.feature_set.snapshot().limit_instruction_accounts;
         let sanitized_txs = txs
             .into_iter()
             .map(|tx| {
@@ -3688,7 +3687,6 @@ impl Bank {
                     None,
                     self,
                     self.get_reserved_account_keys(),
-                    enable_instruction_account_limit,
                 )
             })
             .collect::<Result<Vec<_>>>()?;
@@ -3798,13 +3796,9 @@ impl Bank {
             // no writable keys are reserved.
             self.check_reserved_keys(transaction)?;
 
-            if self.feature_set.snapshot().limit_instruction_accounts {
-                for instr in transaction.instructions_iter() {
-                    if instr.accounts.len()
-                        > solana_transaction_context::MAX_ACCOUNTS_PER_INSTRUCTION
-                    {
-                        return Err(solana_transaction_error::TransactionError::SanitizeFailure);
-                    }
+            for instr in transaction.instructions_iter() {
+                if instr.accounts.len() > solana_transaction_context::MAX_ACCOUNTS_PER_INSTRUCTION {
+                    return Err(solana_transaction_error::TransactionError::SanitizeFailure);
                 }
             }
         }
@@ -5557,9 +5551,6 @@ impl Bank {
             _ => PACKET_DATA_SIZE,
         } as u64;
 
-        let enable_instruction_account_limit =
-            self.feature_set.snapshot().limit_instruction_accounts;
-
         // WARNING: Any pending features added here most likely must also be checked in
         //          `Bank::resanitize_transaction_minimally`.
         let sanitized_tx = {
@@ -5589,7 +5580,6 @@ impl Bank {
                 None,
                 self,
                 self.get_reserved_account_keys(),
-                enable_instruction_account_limit,
             )
         }?;
 

@@ -21,7 +21,6 @@ use {
     },
     regex::Regex,
     solana_cli_output::display::build_balance_message,
-    solana_client::connection_cache::Protocol,
     solana_genesis_config::DEFAULT_GENESIS_DOWNLOAD_PATH,
     solana_gossip::cluster_info::ClusterInfo,
     solana_hash::Hash,
@@ -32,6 +31,7 @@ use {
         leader_schedule_cache::LeaderScheduleCache,
     },
     solana_metrics::inc_new_counter_info,
+    solana_net_utils::Protocol,
     solana_perf::thread::renice_this_thread,
     solana_poh::poh_recorder::PohRecorder,
     solana_runtime::{

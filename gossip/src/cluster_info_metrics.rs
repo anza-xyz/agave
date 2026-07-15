@@ -25,6 +25,10 @@ impl Counter {
     pub(crate) fn add_relaxed(&self, x: u64) {
         self.0.fetch_add(x, Ordering::Relaxed);
     }
+    #[cfg(test)]
+    pub(crate) fn load_relaxed(&self) -> u64 {
+        self.0.load(Ordering::Relaxed)
+    }
     fn clear(&self) -> u64 {
         self.0.swap(0, Ordering::Relaxed)
     }

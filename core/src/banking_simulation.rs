@@ -838,12 +838,7 @@ impl BankingSimulator {
         let timed_batches_to_send = packet_batches_by_time.split_off(&base_event_time);
         let batch_and_tx_counts = timed_batches_to_send
             .values()
-            .map(|(_label, batches)| {
-                (
-                    batches.len(),
-                    batches.iter().map(|batch| batch.len()).sum::<usize>(),
-                )
-            })
+            .map(|(_label, batch)| (1, batch.len()))
             .collect::<Vec<_>>();
         // Convert to a large plain old Vec and drain on it, finally dropping it outside
         // the simulation loop to avoid jitter due to interleaved deallocs of BTreeMap.

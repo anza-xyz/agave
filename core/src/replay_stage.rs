@@ -232,6 +232,20 @@ struct BankReplayResultTracker {
     bank_replay_tracker: Option<BankReplayTracker>,
 }
 
+enum SchedulerReplayOutcome {
+    NoSchedulerReplay,
+    SchedulerReplayCompleted(Result<(), BlockstoreProcessorError>),
+}
+
+struct CompletedBankReplay {
+    // Metrics around replaying this bank.
+    replay_stats: Arc<RwLock<ReplaySlotStats>>,
+    // Accounting around replaying this bank.
+    replay_progress: Arc<RwLock<ConfirmationProgress>>,
+    // True when the bank completed via the unified scheduler path.
+    is_unified_scheduler_enabled: bool,
+}
+
 struct ProcessActiveBanksContext {
     bank_forks: Arc<RwLock<BankForks>>,
     blockstore: Arc<Blockstore>,
@@ -3802,6 +3816,98 @@ impl ReplayStage {
         }
     }
 
+    fn complete_scheduler_replay(
+        bank: &BankWithScheduler,
+        replay_stats: &RwLock<ReplaySlotStats>,
+    ) -> SchedulerReplayOutcome {
+        let Some((result, completed_execute_timings)) = bank.wait_for_completed_scheduler() else {
+            return SchedulerReplayOutcome::NoSchedulerReplay;
+        };
+
+        let metrics = ExecuteBatchesInternalMetrics::new_with_timings_from_all_threads(
+            completed_execute_timings,
+        );
+        replay_stats
+            .write()
+            .unwrap()
+            .batch_execute
+            .accumulate(metrics, true);
+
+        SchedulerReplayOutcome::SchedulerReplayCompleted(
+            result.map_err(BlockstoreProcessorError::InvalidTransaction),
+        )
+    }
+
+    fn complete_replay_verification(
+        replay_stats: &RwLock<ReplaySlotStats>,
+        replay_progress: &RwLock<ConfirmationProgress>,
+        async_verification_freelist: &mut Vec<AsyncVerificationProgress>,
+    ) -> Result<(), BlockstoreProcessorError> {
+        let mut poh_verify_elapsed = 0;
+        let mut tx_verify_elapsed = 0;
+        let (verify_result, async_verification) = {
+            let mut replay_progress = replay_progress.write().unwrap();
+            (
+                replay_progress.wait_for_all_verification_results(
+                    &mut poh_verify_elapsed,
+                    &mut tx_verify_elapsed,
+                ),
+                replay_progress.take_async_verification(),
+            )
+        };
+
+        {
+            let mut stats = replay_stats.write().unwrap();
+            stats.poh_verify_elapsed += poh_verify_elapsed;
+            stats.transaction_verify_elapsed += tx_verify_elapsed;
+        }
+
+        Self::recycle_async_verification(async_verification_freelist, async_verification);
+        verify_result
+    }
+
+    fn complete_bank_replay(
+        process_active_banks_context: &ProcessActiveBanksContext,
+        bank: &BankWithScheduler,
+        bank_progress: &mut ForkProgress,
+        async_verification_freelist: &mut Vec<AsyncVerificationProgress>,
+    ) -> Result<CompletedBankReplay, BlockstoreProcessorError> {
+        let replay_stats = bank_progress.replay_stats.clone();
+
+        let scheduler_replay_outcome = Self::complete_scheduler_replay(bank, &replay_stats);
+        let is_unified_scheduler_enabled = matches!(
+            scheduler_replay_outcome,
+            SchedulerReplayOutcome::SchedulerReplayCompleted(_)
+        );
+        let verify_result = Self::complete_replay_verification(
+            &replay_stats,
+            &bank_progress.replay_progress,
+            async_verification_freelist,
+        );
+
+        // Send this whether the block was valid or not. It is only used to
+        // release buffered votes, if any.
+        let _ =
+            process_active_banks_context
+                .replay_vote_sender
+                .send(ReplayVoteMessage::BankComplete {
+                    replay_bank_id: bank.bank_id(),
+                    replay_slot: bank.slot(),
+                });
+
+        let replay_result = match scheduler_replay_outcome {
+            SchedulerReplayOutcome::NoSchedulerReplay => Ok(()),
+            SchedulerReplayOutcome::SchedulerReplayCompleted(replay_result) => replay_result,
+        };
+        replay_result.and(verify_result)?;
+
+        Ok(CompletedBankReplay {
+            replay_stats,
+            replay_progress: bank_progress.replay_progress.clone(),
+            is_unified_scheduler_enabled,
+        })
+    }
+
     fn process_replay_results(
         process_active_banks_context: &ProcessActiveBanksContext,
         progress: &mut ProgressMap,
@@ -3872,74 +3978,28 @@ impl ReplayStage {
                     .get_mut(&bank.slot())
                     .expect("Bank fork progress entry missing for completed bank");
 
-                let replay_stats = bank_progress.replay_stats.clone();
-                let mut is_unified_scheduler_enabled = false;
-
-                let replay_res = if let Some((result, completed_execute_timings)) =
-                    bank.wait_for_completed_scheduler()
-                {
-                    // It's guaranteed that wait_for_completed_scheduler() returns Some(_), iff the
-                    // unified scheduler is enabled for the bank.
-                    is_unified_scheduler_enabled = true;
-                    let metrics = ExecuteBatchesInternalMetrics::new_with_timings_from_all_threads(
-                        completed_execute_timings,
-                    );
-                    replay_stats
-                        .write()
-                        .unwrap()
-                        .batch_execute
-                        .accumulate(metrics, is_unified_scheduler_enabled);
-
-                    result.map_err(BlockstoreProcessorError::InvalidTransaction)
-                } else {
-                    Ok(())
-                };
-                let verify_res = {
-                    let mut poh_verify_elapsed = 0;
-                    let mut tx_verify_elapsed = 0;
-                    let (res, async_verification) = {
-                        let mut replay_progress = bank_progress.replay_progress.write().unwrap();
-                        (
-                            replay_progress.wait_for_all_verification_results(
-                                &mut poh_verify_elapsed,
-                                &mut tx_verify_elapsed,
+                let completed_replay = match Self::complete_bank_replay(
+                    process_active_banks_context,
+                    bank,
+                    bank_progress,
+                    async_verification_freelist,
+                ) {
+                    Ok(completed_replay) => completed_replay,
+                    Err(err) => {
+                        mark_replay_dead_slot(
+                            bank,
+                            &err,
+                            progress,
+                            &mut process_active_banks_context.dead_slot_context(
+                                duplicate_slots_to_repair,
+                                purge_repair_slot_counter,
+                                tbft_structs.as_deref_mut(),
                             ),
-                            replay_progress.take_async_verification(),
-                        )
-                    };
-                    {
-                        let mut stats = replay_stats.write().unwrap();
-                        stats.poh_verify_elapsed += poh_verify_elapsed;
-                        stats.transaction_verify_elapsed += tx_verify_elapsed;
+                        );
+                        // don't try to run the remaining normal processing for the completed bank
+                        continue;
                     }
-                    Self::recycle_async_verification(
-                        async_verification_freelist,
-                        async_verification,
-                    );
-                    res
                 };
-                // we send this whether the block was valid or not. It's only
-                // used to release buffered votes if any.
-                let _ = process_active_banks_context.replay_vote_sender.send(
-                    ReplayVoteMessage::BankComplete {
-                        replay_bank_id: bank.bank_id(),
-                        replay_slot: bank.slot(),
-                    },
-                );
-                if let Err(err) = replay_res.and(verify_res) {
-                    mark_replay_dead_slot(
-                        bank,
-                        &err,
-                        progress,
-                        &mut process_active_banks_context.dead_slot_context(
-                            duplicate_slots_to_repair,
-                            purge_repair_slot_counter,
-                            tbft_structs.as_deref_mut(),
-                        ),
-                    );
-                    // don't try to run the remaining normal processing for the completed bank
-                    continue;
-                }
                 let is_leader_block = Self::leader_is_me(bank.leader_id(), my_pubkey);
 
                 // The block id is the merkle root of the last data shred
@@ -4011,9 +4071,8 @@ impl ReplayStage {
                     continue;
                 }
 
-                let r_replay_stats = replay_stats.read().unwrap();
-                let replay_progress = bank_progress.replay_progress.clone();
-                let r_replay_progress = replay_progress.read().unwrap();
+                let r_replay_stats = completed_replay.replay_stats.read().unwrap();
+                let r_replay_progress = completed_replay.replay_progress.read().unwrap();
                 debug!(
                     "bank {} has completed replay from blockstore, contribute to update cost with \
                      {:?}",
@@ -4200,7 +4259,7 @@ impl ReplayStage {
                     r_replay_progress.num_entries,
                     r_replay_progress.num_shreds,
                     bank_complete_time.as_us(),
-                    is_unified_scheduler_enabled,
+                    completed_replay.is_unified_scheduler_enabled,
                 );
             } else {
                 trace!(

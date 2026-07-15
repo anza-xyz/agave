@@ -2869,7 +2869,9 @@ fn test_select_candidates_by_total_usage_3_way_split_condition() {
     let db = AccountsDb::new_single_for_tests();
 
     let (_temp_dirs, common_store_path) = get_temp_accounts_paths(1).unwrap();
-    let store_file_size = 100;
+    let account_size = 100;
+    let store_file_size = account_size + 10_000;
+    let account = AccountSharedData::new(1, account_size as usize, &Pubkey::default());
 
     let store1_slot = 11;
     let store1 = Arc::new(AccountStorageEntry::new(
@@ -2879,6 +2881,9 @@ fn test_select_candidates_by_total_usage_3_way_split_condition() {
         store_file_size,
         db.accounts_file_provider,
     ));
+    store1
+        .accounts
+        .write_accounts(&(store1_slot, [(&Pubkey::new_unique(), &account)].as_slice()));
     db.storage.insert(Arc::clone(&store1));
     store1.num_alive_bytes.store(0, Ordering::Release);
     candidates.insert(store1_slot);
@@ -2891,10 +2896,13 @@ fn test_select_candidates_by_total_usage_3_way_split_condition() {
         store_file_size,
         db.accounts_file_provider,
     ));
+    store2
+        .accounts
+        .write_accounts(&(store2_slot, [(&Pubkey::new_unique(), &account)].as_slice()));
     db.storage.insert(Arc::clone(&store2));
     store2
         .num_alive_bytes
-        .store(store_file_size as usize / 2, Ordering::Release);
+        .store(store2.written_bytes() as usize / 2, Ordering::Release);
     candidates.insert(store2_slot);
 
     let store3_slot = 33;
@@ -2905,10 +2913,13 @@ fn test_select_candidates_by_total_usage_3_way_split_condition() {
         store_file_size,
         db.accounts_file_provider,
     ));
+    store3
+        .accounts
+        .write_accounts(&(store3_slot, [(&Pubkey::new_unique(), &account)].as_slice()));
     db.storage.insert(Arc::clone(&store3));
     store3
         .num_alive_bytes
-        .store(store_file_size as usize, Ordering::Release);
+        .store(store3.written_bytes() as usize, Ordering::Release);
     candidates.insert(store3_slot);
 
     // Set the target alive ratio to 0.6 so that we can just get rid of store1, the remaining two stores
@@ -2931,7 +2942,9 @@ fn test_select_candidates_by_total_usage_2_way_split_condition() {
     let mut candidates = ShrinkCandidates::default();
 
     let (_temp_dirs, common_store_path) = get_temp_accounts_paths(1).unwrap();
-    let store_file_size = 100;
+    let account_size = 100;
+    let store_file_size = account_size + 10_000;
+    let account = AccountSharedData::new(1, account_size as usize, &Pubkey::default());
 
     let store1_slot = 11;
     let store1 = Arc::new(AccountStorageEntry::new(
@@ -2941,6 +2954,9 @@ fn test_select_candidates_by_total_usage_2_way_split_condition() {
         store_file_size,
         db.accounts_file_provider,
     ));
+    store1
+        .accounts
+        .write_accounts(&(store1_slot, [(&Pubkey::new_unique(), &account)].as_slice()));
     db.storage.insert(Arc::clone(&store1));
     store1.num_alive_bytes.store(0, Ordering::Release);
     candidates.insert(store1_slot);
@@ -2953,10 +2969,13 @@ fn test_select_candidates_by_total_usage_2_way_split_condition() {
         store_file_size,
         db.accounts_file_provider,
     ));
+    store2
+        .accounts
+        .write_accounts(&(store2_slot, [(&Pubkey::new_unique(), &account)].as_slice()));
     db.storage.insert(Arc::clone(&store2));
     store2
         .num_alive_bytes
-        .store(store_file_size as usize / 2, Ordering::Release);
+        .store(store2.written_bytes() as usize / 2, Ordering::Release);
     candidates.insert(store2_slot);
 
     let store3_slot = 33;
@@ -2967,10 +2986,13 @@ fn test_select_candidates_by_total_usage_2_way_split_condition() {
         store_file_size,
         db.accounts_file_provider,
     ));
+    store3
+        .accounts
+        .write_accounts(&(store3_slot, [(&Pubkey::new_unique(), &account)].as_slice()));
     db.storage.insert(Arc::clone(&store3));
     store3
         .num_alive_bytes
-        .store(store_file_size as usize, Ordering::Release);
+        .store(store3.written_bytes() as usize, Ordering::Release);
     candidates.insert(store3_slot);
 
     // Set the target ratio to default (0.8), both store1 and store2 must be selected and store3 is ignored.
@@ -2990,7 +3012,9 @@ fn test_select_candidates_by_total_usage_all_clean() {
     let mut candidates = ShrinkCandidates::default();
 
     let (_temp_dirs, common_store_path) = get_temp_accounts_paths(1).unwrap();
-    let store_file_size = 100;
+    let account_size = 100;
+    let store_file_size = account_size + 10_000;
+    let account = AccountSharedData::new(1, account_size as usize, &Pubkey::default());
 
     let store1_slot = 11;
     let store1 = Arc::new(AccountStorageEntry::new(
@@ -3000,10 +3024,13 @@ fn test_select_candidates_by_total_usage_all_clean() {
         store_file_size,
         db.accounts_file_provider,
     ));
+    store1
+        .accounts
+        .write_accounts(&(store1_slot, [(&Pubkey::new_unique(), &account)].as_slice()));
     db.storage.insert(Arc::clone(&store1));
     store1
         .num_alive_bytes
-        .store(store_file_size as usize / 4, Ordering::Release);
+        .store(store1.written_bytes() as usize / 4, Ordering::Release);
     candidates.insert(store1_slot);
 
     let store2_slot = 22;
@@ -3014,10 +3041,13 @@ fn test_select_candidates_by_total_usage_all_clean() {
         store_file_size,
         db.accounts_file_provider,
     ));
+    store2
+        .accounts
+        .write_accounts(&(store2_slot, [(&Pubkey::new_unique(), &account)].as_slice()));
     db.storage.insert(Arc::clone(&store2));
     store2
         .num_alive_bytes
-        .store(store_file_size as usize / 2, Ordering::Release);
+        .store(store2.written_bytes() as usize / 2, Ordering::Release);
     candidates.insert(store2_slot);
 
     // Set the target ratio to default (0.8), both stores from the two different slots must be selected.
@@ -3033,32 +3063,55 @@ fn test_select_candidates_by_total_usage_all_clean() {
 /// Ensure selecting shrink candidates respects zero-lamport single-ref accounts.
 #[test]
 fn test_select_candidates_by_total_usage_with_zero_lamport_single_ref_accounts() {
+    let temp_dir = TempDir::new().unwrap();
     let accounts_db = AccountsDb::new_single_for_tests();
     let mut shrink_candidates = ShrinkCandidates::default();
 
+    let file_size = 10_000;
     let num_zero_lamport_single_ref_accounts = 4;
-    let file_size = AppendVec::calculate_stored_size(0) * num_zero_lamport_single_ref_accounts;
+    let closed_account = AccountSharedData::new(0, 0, &Pubkey::default());
+    let accounts_to_store: Vec<_> =
+        iter::repeat_with(|| (Pubkey::new_unique(), closed_account.clone()))
+            .take(num_zero_lamport_single_ref_accounts)
+            .collect();
 
     let slot_with_zlsr = 11;
-    let (_temp_dir_with_zlsr, store_with_zlsr) = create_store_for_shrink_tests(
-        &accounts_db,
+    let store_with_zlsr = Arc::new(AccountStorageEntry::new(
+        temp_dir.path(),
         slot_with_zlsr,
-        file_size as u64,
+        slot_with_zlsr as AccountsFileId,
         file_size,
-        num_zero_lamport_single_ref_accounts,
         accounts_db.accounts_file_provider,
+    ));
+    let stored_accounts_info = store_with_zlsr
+        .accounts
+        .write_accounts(&(slot_with_zlsr, accounts_to_store.as_slice()))
+        .unwrap();
+    store_with_zlsr.batch_insert_zero_lamport_single_ref_account_offsets(
+        &stored_accounts_info.offsets[..num_zero_lamport_single_ref_accounts],
     );
+    store_with_zlsr
+        .num_alive_bytes
+        .store(store_with_zlsr.written_bytes() as usize, Ordering::Release);
+    accounts_db.storage.insert(Arc::clone(&store_with_zlsr));
     shrink_candidates.insert(slot_with_zlsr);
 
     let slot_no_zlsr = 22;
-    let (_temp_dir_no_zlsr, store_no_zlsr) = create_store_for_shrink_tests(
-        &accounts_db,
+    let store_no_zlsr = Arc::new(AccountStorageEntry::new(
+        temp_dir.path(),
         slot_no_zlsr,
-        file_size as u64,
-        file_size * 9 / 10,
-        0,
+        slot_no_zlsr as AccountsFileId,
+        file_size,
         accounts_db.accounts_file_provider,
-    );
+    ));
+    store_no_zlsr
+        .accounts
+        .write_accounts(&(slot_with_zlsr, accounts_to_store.as_slice()))
+        .unwrap();
+    store_no_zlsr
+        .num_alive_bytes
+        .store(store_no_zlsr.written_bytes() as usize, Ordering::Release);
+    accounts_db.storage.insert(Arc::clone(&store_no_zlsr));
     shrink_candidates.insert(slot_no_zlsr);
 
     // test case: The latest full snapshot slot is *older* than
@@ -3099,7 +3152,10 @@ fn test_select_candidates_by_total_usage_with_zero_lamport_single_ref_accounts()
             *accounts_db.latest_full_snapshot_slot.lock_write() = latest_full_snapshot_slot;
 
             // Bytes from ZLSR accounts are alive, but would be dead after shrink.
-            assert_eq!(store_with_zlsr.alive_bytes(), file_size);
+            assert_eq!(
+                store_with_zlsr.alive_bytes() as u64,
+                store_with_zlsr.written_bytes(),
+            );
             assert_eq!(accounts_db.alive_bytes_after_shrink(&store_with_zlsr), 0);
             assert!(accounts_db.is_candidate_for_shrink(&store_with_zlsr));
             assert!(accounts_db.is_shrinking_productive(&store_with_zlsr));
@@ -5122,11 +5178,12 @@ fn test_remove_uncleaned_slots_and_collect_pubkeys_up_to_slot() {
 }
 
 #[test]
-fn test_shrink_productive() {
+fn test_is_shrinking_productive() {
     let accounts = AccountsDb::new_single_for_tests();
     let (_temp_dirs, path) = get_temp_accounts_paths(1).unwrap();
 
-    let file_size = 100;
+    let account_size = 100;
+    let file_size = 10_000;
     let slot = 11;
 
     let store = Arc::new(AccountStorageEntry::new(
@@ -5136,22 +5193,22 @@ fn test_shrink_productive() {
         file_size,
         accounts.accounts_file_provider,
     ));
-    store.add_account(file_size as usize);
+    store.accounts.write_accounts(&(
+        slot,
+        [(
+            Pubkey::new_unique(),
+            AccountSharedData::new(1, account_size, &Pubkey::default()),
+        )]
+        .as_slice(),
+    ));
+
+    store.add_accounts(5, store.written_bytes() as usize);
     assert!(!accounts.is_shrinking_productive(&store));
 
-    let store = Arc::new(AccountStorageEntry::new(
-        &path[0],
-        slot,
-        slot as AccountsFileId,
-        file_size,
-        accounts.accounts_file_provider,
-    ));
-    store.add_account(file_size as usize / 2);
-    store.add_account(file_size as usize / 4);
-    store.remove_accounts(file_size as usize / 4, 1);
+    store.remove_accounts(account_size, 1);
     assert!(accounts.is_shrinking_productive(&store));
 
-    store.add_account(file_size as usize / 2);
+    store.add_accounts(1, account_size);
     assert!(!accounts.is_shrinking_productive(&store));
 }
 
@@ -5159,14 +5216,24 @@ fn test_shrink_productive() {
 fn test_is_candidate_for_shrink() {
     let mut accounts = AccountsDb::new_single_for_tests();
     let (_temp_dirs, common_store_path) = get_temp_accounts_paths(1).unwrap();
+    let slot = 0;
     let store_file_size = 100_000;
     let entry = Arc::new(AccountStorageEntry::new(
         &common_store_path[0],
-        0,
+        slot,
         1,
         store_file_size,
         accounts.accounts_file_provider,
     ));
+    entry.accounts.write_accounts(&(
+        slot,
+        [(
+            Pubkey::new_unique(),
+            AccountSharedData::new(1, 100, &Pubkey::default()),
+        )]
+        .as_slice(),
+    ));
+    let written_bytes = entry.written_bytes() as usize;
     match accounts.shrink_ratio {
         AccountShrinkThreshold::TotalSpace { shrink_ratio } => {
             assert_eq!(
@@ -5181,15 +5248,15 @@ fn test_is_candidate_for_shrink() {
 
     entry
         .num_alive_bytes
-        .store(store_file_size as usize - 1, Ordering::Release);
+        .store(written_bytes - 1, Ordering::Release);
     assert!(accounts.is_candidate_for_shrink(&entry));
     entry
         .num_alive_bytes
-        .store(store_file_size as usize, Ordering::Release);
+        .store(written_bytes, Ordering::Release);
     assert!(!accounts.is_candidate_for_shrink(&entry));
 
     let shrink_ratio = 0.3;
-    let file_size_shrink_limit = (store_file_size as f64 * shrink_ratio) as usize;
+    let file_size_shrink_limit = (written_bytes as f64 * shrink_ratio) as usize;
     entry
         .num_alive_bytes
         .store(file_size_shrink_limit + 1, Ordering::Release);
