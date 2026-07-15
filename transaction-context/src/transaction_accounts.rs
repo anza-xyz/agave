@@ -238,12 +238,14 @@ pub struct TransactionAccounts {
     touched_flags: Box<[Cell<bool>]>,
     resize_delta: Cell<i64>,
     lamports_delta: Cell<i128>,
+    _is_in_replay: bool,
 }
 
 #[cfg(not(any(target_arch = "bpf", target_arch = "sbf")))]
 impl TransactionAccounts {
     pub(crate) fn new_with_feature_flags(
         accounts: Vec<KeyedAccountSharedData>,
+        is_in_replay: bool,
     ) -> TransactionAccounts {
         let touched_flags = vec![Cell::new(false); accounts.len()].into_boxed_slice();
         let borrow_counters = vec![BorrowCounter::default(); accounts.len()].into_boxed_slice();
@@ -281,12 +283,13 @@ impl TransactionAccounts {
             touched_flags,
             resize_delta: Cell::new(0),
             lamports_delta: Cell::new(0),
+            _is_in_replay: is_in_replay,
         }
     }
 
     #[cfg(feature = "dev-context-only-utils")]
     pub fn new(accounts: Vec<KeyedAccountSharedData>) -> TransactionAccounts {
-        TransactionAccounts::new_with_feature_flags(accounts)
+        TransactionAccounts::new_with_feature_flags(accounts, true)
     }
 
     pub(crate) fn len(&self) -> usize {
