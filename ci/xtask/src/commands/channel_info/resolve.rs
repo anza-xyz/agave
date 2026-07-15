@@ -1,6 +1,7 @@
 use {
     anyhow::{Result, anyhow, bail},
     semver::Version,
+    serde::Serialize,
     std::{collections::BTreeMap, fmt, str::FromStr},
 };
 
@@ -57,7 +58,8 @@ pub fn stage_of(v: &Version) -> Result<Stage> {
     }
 }
 
-#[derive(Debug)]
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "SCREAMING_SNAKE_CASE")]
 pub struct ChannelInfo {
     pub edge_channel: String,
     pub beta_channel: String,
@@ -155,6 +157,12 @@ pub fn print_channel_info(info: &ChannelInfo) {
     );
     println!("CHANNEL={}", info.channel);
     println!("CHANNEL_LATEST_TAG={}", info.channel_latest_tag);
+}
+
+pub fn print_channel_info_json(info: &ChannelInfo) -> Result<()> {
+    println!("{}", serde_json::to_string_pretty(info)?);
+
+    Ok(())
 }
 
 #[cfg(test)]
@@ -278,6 +286,23 @@ mod tests {
         let info = derive_channels(&vs, &[], Some("master"), Some("stable")).unwrap();
 
         assert_eq!(info.channel, "stable");
+    }
+
+    #[test]
+    fn json_uses_screaming_snake_case_keys() {
+        let vs = versions(&[(bv(4, 0), "4.0.0"), (bv(4, 1), "4.1.0-beta.0")]);
+        let info = derive_channels(&vs, &[], None, None).unwrap();
+
+        let json: serde_json::Value =
+            serde_json::from_str(&serde_json::to_string(&info).unwrap()).unwrap();
+
+        assert_eq!(json["EDGE_CHANNEL"], "master");
+        assert_eq!(json["BETA_CHANNEL"], "v4.1");
+        assert_eq!(json["STABLE_CHANNEL"], "v4.0");
+        assert_eq!(json["BETA_CHANNEL_LATEST_TAG"], "");
+        assert_eq!(json["STABLE_CHANNEL_LATEST_TAG"], "");
+        assert_eq!(json["CHANNEL"], "");
+        assert_eq!(json["CHANNEL_LATEST_TAG"], "");
     }
 
     #[test]

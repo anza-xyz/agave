@@ -5,8 +5,8 @@ use {
         bank::BankFieldsToDeserialize,
         serde_snapshot::{
             self, AccountsDbFields, ExtraFieldsToSerialize, SerdeObsoleteAccountsMap,
-            SerializableAccountStorageEntry, SnapshotAccountsDbFields, SnapshotBankFields,
-            SnapshotStreams, StorageListItem, StoragesList,
+            SnapshotAccountsDbFields, SnapshotBankFields, SnapshotStreams, StorageListItem,
+            StoragesList,
         },
         snapshot_package::BankSnapshotPackage,
         snapshot_utils::snapshot_storage_rebuilder::{
@@ -222,7 +222,7 @@ pub struct UnarchivedSnapshot {
     unpack_dir: TempDir,
     pub storage: AccountStorageMap,
     pub bank_fields: BankFieldsToDeserialize,
-    pub(crate) accounts_db_fields: AccountsDbFields<SerializableAccountStorageEntry>,
+    pub(crate) accounts_db_fields: AccountsDbFields,
     pub unpacked_snapshots_dir_and_version: UnpackedSnapshotsDirAndVersion,
     pub measure_untar: Measure,
 }
@@ -233,7 +233,7 @@ pub struct UnarchivedSnapshots {
     pub full_storage: AccountStorageMap,
     pub incremental_storage: Option<AccountStorageMap>,
     pub bank_fields: SnapshotBankFields,
-    pub accounts_db_fields: SnapshotAccountsDbFields<SerializableAccountStorageEntry>,
+    pub accounts_db_fields: SnapshotAccountsDbFields,
     pub full_unpacked_snapshots_dir_and_version: UnpackedSnapshotsDirAndVersion,
     pub incremental_unpacked_snapshots_dir_and_version: Option<UnpackedSnapshotsDirAndVersion>,
     pub full_measure_untar: Measure,
@@ -1153,7 +1153,7 @@ fn get_version_and_snapshot_files(
 struct SnapshotFieldsBundle {
     snapshot_version: SnapshotVersion,
     bank_fields: BankFieldsToDeserialize,
-    accounts_db_fields: AccountsDbFields<SerializableAccountStorageEntry>,
+    accounts_db_fields: AccountsDbFields,
     append_vec_files: Vec<FileInfo>,
 }
 
@@ -1476,11 +1476,7 @@ pub(crate) fn rebuild_storages_from_snapshot_dir(
     snapshot_info: &BankSnapshotInfo,
     account_paths: &[PathBuf],
     next_append_vec_id: Arc<AtomicAccountsFileId>,
-) -> Result<(
-    AccountStorageMap,
-    BankFieldsToDeserialize,
-    AccountsDbFields<SerializableAccountStorageEntry>,
-)> {
+) -> Result<(AccountStorageMap, BankFieldsToDeserialize, AccountsDbFields)> {
     let bank_snapshot_dir = &snapshot_info.snapshot_dir;
 
     // With fastboot_version >= 2, obsolete accounts are tracked and stored in the snapshot

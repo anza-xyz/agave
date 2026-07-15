@@ -18,7 +18,7 @@ use {
         route::{RouteTable, Router, RoutingTables},
         route_monitor::RouteMonitor,
         tx_loop::{self, TxLoop, TxLoopBuilder, TxLoopConfigBuilder, TxPacket},
-        umem::{OwnedUmem, PageAlignedMemory},
+        umem::OwnedUmem,
     },
     agave_cpu_utils::{CpuId, cpu_affinity, set_cpu_affinity},
     arc_swap::ArcSwap,
@@ -267,7 +267,7 @@ pub struct TransmitterBuilder {}
 
 #[cfg(target_os = "linux")]
 pub struct TransmitterBuilder {
-    tx_loops: Vec<TxLoop<OwnedUmem<PageAlignedMemory>>>,
+    tx_loops: Vec<TxLoop<OwnedUmem>>,
     tx_channel_cap: usize,
     maybe_ebpf: Option<Ebpf>,
     atomic_router: Arc<ArcSwap<Router>>,

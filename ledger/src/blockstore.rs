@@ -33,6 +33,7 @@ use {
     itertools::Itertools,
     log::*,
     lru::LruCache,
+    parking_lot::{FairMutex, FairMutexGuard},
     rand::Rng,
     rayon::iter::{IntoParallelIterator, ParallelIterator},
     rocksdb::LiveFile,
@@ -273,6 +274,20 @@ pub struct BlockstoreSignals {
     pub update_parent_receiver: UpdateParentReceiver,
 }
 
+struct SwitchBlockLock(FairMutex<()>);
+
+struct SwitchBlockGuard<'a> {
+    _guard: FairMutexGuard<'a, ()>,
+}
+
+impl SwitchBlockLock {
+    fn lock(&self) -> SwitchBlockGuard<'_> {
+        SwitchBlockGuard {
+            _guard: self.0.lock(),
+        }
+    }
+}
+
 // ledger window
 pub struct Blockstore {
     ledger_path: PathBuf,
@@ -312,6 +327,7 @@ pub struct Blockstore {
 
     max_root: AtomicU64,
     insert_shreds_lock: Mutex<()>,
+    switch_block_lock: SwitchBlockLock,
     new_shreds_signals: Mutex<Vec<Sender<bool>>>,
     completed_slots_senders: Mutex<Vec<CompletedSlotsSender>>,
     update_parent_signals: Mutex<Vec<UpdateParentSender>>,
@@ -654,6 +670,7 @@ impl Blockstore {
                 UPDATE_PARENT_SHRED_PARENT_CACHE_CAPACITY,
             )),
             insert_shreds_lock: Mutex::<()>::default(),
+            switch_block_lock: SwitchBlockLock(FairMutex::new(())),
             max_root,
             lowest_cleanup_slot: RwLock::<Slot>::default(),
             manual_purge_request_sender: Mutex::default(),
@@ -761,7 +778,7 @@ impl Blockstore {
 
     /// Checks all available block versions, if we have a *complete* block for
     /// `block_id`, returns the location where it is stored
-    pub fn get_block_location(&self, slot: Slot, block_id: Hash) -> Result<Option<BlockLocation>> {
+    fn get_block_location(&self, slot: Slot, block_id: Hash) -> Result<Option<BlockLocation>> {
         for location in [
             BlockLocation::Original,
             BlockLocation::Alternate { block_id },
@@ -771,6 +788,23 @@ impl Blockstore {
             }
         }
         Ok(None)
+    }
+
+    /// Returns the SlotMeta for a complete block identified by `block_id`, along with
+    /// its current location.
+    pub fn get_slot_meta_for_block_id(
+        &self,
+        slot: Slot,
+        block_id: Hash,
+    ) -> Result<Option<(SlotMeta, BlockLocation)>> {
+        let _lock = self.switch_block_lock.lock();
+        let Some(location) = self.get_block_location(slot, block_id)? else {
+            return Ok(None);
+        };
+        let Some(slot_meta) = self.meta_from_location(slot, location)? else {
+            return Ok(None);
+        };
+        Ok(Some((slot_meta, location)))
     }
 
     /// Returns the SlotMeta of the specified slot.
@@ -788,11 +822,7 @@ impl Blockstore {
     }
 
     /// Returns the SlotMeta of the specified slot from the specified location
-    pub fn meta_from_location(
-        &self,
-        slot: Slot,
-        location: BlockLocation,
-    ) -> Result<Option<SlotMeta>> {
+    fn meta_from_location(&self, slot: Slot, location: BlockLocation) -> Result<Option<SlotMeta>> {
         match location {
             BlockLocation::Original => self.meta_cf.get(slot),
             BlockLocation::Alternate { block_id } => self.alt_meta_cf.get((slot, block_id)),
@@ -910,7 +940,7 @@ impl Blockstore {
         self.merkle_root_meta_cf.get(erasure_set.store_key())
     }
 
-    pub fn merkle_root_meta_from_location(
+    fn merkle_root_meta_from_location(
         &self,
         erasure_set: ErasureSetId,
         location: BlockLocation,
@@ -948,13 +978,61 @@ impl Blockstore {
         }
     }
 
-    /// Gets the double merkle meta for the given block denoted by block id
-    /// If the meta is present but the proofs have not yet been populated - generate and store them
-    /// returning the updated double merkle meta along with the location
-    pub fn get_double_merkle_meta_maybe_populate_proofs_for_block_id(
+    /// For serving parent fec-set-count block id repair responses.
+    ///
+    /// Returns relevant metadata for the complete block identified by `block_id`.
+    ///
+    /// If the repair proofs are missing, these are also populated.
+    pub fn get_parent_repair_metadata(
         &self,
         slot: Slot,
         block_id: Hash,
+    ) -> Result<Option<(DoubleMerkleMeta, SlotMeta)>> {
+        let lock = self.switch_block_lock.lock();
+        let Some((double_merkle_meta, location)) =
+            self.get_double_merkle_meta_with_proofs_locked(slot, block_id, &lock)?
+        else {
+            return Ok(None);
+        };
+        let Some(slot_meta) = self.meta_from_location(slot, location)? else {
+            return Ok(None);
+        };
+        Ok(Some((double_merkle_meta, slot_meta)))
+    }
+
+    /// For serving fec-set-root block id repair responses.
+    ///
+    /// Returns relevant metadata for the complete block identified by `block_id`.
+    ///
+    /// If the repair proofs are missing, these are also populated.
+    pub fn get_fec_set_root_repair_metadata(
+        &self,
+        slot: Slot,
+        block_id: Hash,
+        fec_set_index: u32,
+    ) -> Result<Option<(DoubleMerkleMeta, MerkleRootMeta)>> {
+        let lock = self.switch_block_lock.lock();
+        let Some((double_merkle_meta, location)) =
+            self.get_double_merkle_meta_with_proofs_locked(slot, block_id, &lock)?
+        else {
+            return Ok(None);
+        };
+        let erasure_set = ErasureSetId::new(slot, fec_set_index);
+        let Some(merkle_root_meta) = self.merkle_root_meta_from_location(erasure_set, location)?
+        else {
+            return Ok(None);
+        };
+        Ok(Some((double_merkle_meta, merkle_root_meta)))
+    }
+
+    /// Gets the double merkle meta for a complete block identified by `block_id`.
+    /// If the meta is present but the proofs have not yet been populated, generate
+    /// and store them and return the updated double merkle meta.
+    fn get_double_merkle_meta_with_proofs_locked(
+        &self,
+        slot: Slot,
+        block_id: Hash,
+        _switch_block_lock: &SwitchBlockGuard<'_>,
     ) -> Result<Option<(DoubleMerkleMeta, BlockLocation)>> {
         // Find which column this block resides in (if any)
         let Some(location) = self.get_block_location(slot, block_id)? else {
@@ -962,24 +1040,7 @@ impl Blockstore {
         };
 
         // Block was full above, get_block_location returned Some, but may have
-        // been purged by BlockstoreCleanupService in between, or swapped out.
-        if let Some(dmm) = self.get_double_merkle_meta_maybe_populate_proofs(slot, location)?
-            && dmm.double_merkle_root == block_id
-        {
-            Ok(Some((dmm, location)))
-        } else {
-            Ok(None)
-        }
-    }
-
-    /// Gets the double merkle meta for the given block.
-    /// If the meta is present but the proofs have not yet been populated - generate and store them
-    /// and return the updated double merkle meta
-    pub fn get_double_merkle_meta_maybe_populate_proofs(
-        &self,
-        slot: Slot,
-        location: BlockLocation,
-    ) -> Result<Option<DoubleMerkleMeta>> {
+        // been purged by BlockstoreCleanupService in between
         let Some(mut double_merkle_meta) = self.double_merkle_meta_cf.get((slot, location))? else {
             return Ok(None);
         };
@@ -990,7 +1051,11 @@ impl Blockstore {
                 .put((slot, location), &double_merkle_meta)?;
         }
 
-        Ok(Some(double_merkle_meta))
+        if double_merkle_meta.double_merkle_root == block_id {
+            Ok(Some((double_merkle_meta, location)))
+        } else {
+            Ok(None)
+        }
     }
 
     /// Gets the double merkle root for the block in the given location.
@@ -1794,7 +1859,7 @@ impl Blockstore {
 
         let double_merkle_root = *merkle_tree.root();
         // We don't build the proofs here as they are only needed to serve repair requests.
-        // These will be built later when calling `get_double_merkle_meta_maybe_populate_proofs`
+        // These will be built later when serving block-id repair requests.
         let proofs = Vec::new();
 
         // Create and add DoubleMerkleMeta to write batch
@@ -2295,7 +2360,7 @@ impl Blockstore {
     /// 3. Copies shreds from the alternate location to the original location
     /// 4. Verify that the switch was successful
     ///
-    /// Holds `insert_shreds_lock` for the entire operation.
+    /// Holds `switch_block_lock` and `insert_shreds_lock` for the entire operation.
     ///
     /// Assumes that the block at `location` is full.
     pub fn switch_block_from_alternate(
@@ -2312,8 +2377,9 @@ impl Blockstore {
 
         let mut total_measure = Measure::start("switch_block_from_alternate_total");
 
-        let (lock, lock_time_us) = measure_us!(self.insert_shreds_lock.lock().unwrap());
-        metrics.lock_elapsed_us = lock_time_us;
+        let (_switch_block_lock, switch_lock_time_us) = measure_us!(self.switch_block_lock.lock());
+        let (lock, insert_lock_time_us) = measure_us!(self.insert_shreds_lock.lock().unwrap());
+        metrics.lock_elapsed_us = switch_lock_time_us.saturating_add(insert_lock_time_us);
 
         // 1. Backup the original block if needed
         let mut backup_measure = Measure::start("switch_block_from_alternate_backup");
@@ -3474,7 +3540,7 @@ impl Blockstore {
             .collect()
     }
 
-    pub fn get_data_shred_from_location(
+    fn get_data_shred_from_location(
         &self,
         slot: Slot,
         index: u64,
@@ -3488,9 +3554,32 @@ impl Blockstore {
         }
     }
 
+    /// Returns a data shred for a complete block identified by `block_id`.
+    pub fn get_data_shred_for_block_id(
+        &self,
+        slot: Slot,
+        index: u64,
+        block_id: Hash,
+    ) -> Result<Option<Vec<u8>>> {
+        let _lock = self.switch_block_lock.lock();
+        let Some(location) = self.get_block_location(slot, block_id)? else {
+            return Ok(None);
+        };
+        self.get_data_shred_from_location(slot, index, location)
+    }
+
+    /// Returns true if an alternate data shred for `block_id` has been stored.
+    pub fn has_alternate_data_shred(&self, slot: Slot, index: u64, block_id: Hash) -> Result<bool> {
+        Ok(self
+            .alt_index_cf
+            .get((slot, block_id))?
+            .map(|index_meta| index_meta.data().contains(index))
+            .unwrap_or(false))
+    }
+
     /// Gets all data shreds for a slot from the specified location.
     /// Returns shreds in index order starting from `start_index`.
-    pub fn get_data_shreds_for_slot_from_location(
+    fn get_data_shreds_for_slot_from_location(
         &self,
         slot: Slot,
         start_index: u64,
@@ -3673,7 +3762,7 @@ impl Blockstore {
         self.index_cf.get_pinned_t(slot)
     }
 
-    pub fn get_index_from_location(
+    fn get_index_from_location(
         &self,
         slot: Slot,
         location: BlockLocation,

@@ -94,13 +94,13 @@ pub struct TxLoopBuilder<U: Umem> {
     umem: U,
 }
 
-impl TxLoopBuilder<OwnedUmem<PageAlignedMemory>> {
+impl TxLoopBuilder<OwnedUmem> {
     pub fn new(
         cpu_id: usize,
         queue_id: QueueId,
         config: TxLoopConfig,
         dev: &NetworkDevice,
-    ) -> TxLoopBuilder<OwnedUmem<PageAlignedMemory>> {
+    ) -> TxLoopBuilder<OwnedUmem> {
         let TxLoopConfig { zero_copy, src_mac } = config;
 
         log::info!(
@@ -151,7 +151,7 @@ impl TxLoopBuilder<OwnedUmem<PageAlignedMemory>> {
         }
     }
 
-    pub fn build(self) -> Result<TxLoop<OwnedUmem<PageAlignedMemory>>, io::Error> {
+    pub fn build(self) -> Result<TxLoop<OwnedUmem>, io::Error> {
         let TxLoopBuilder {
             cpu_id,
             zero_copy,
@@ -293,7 +293,7 @@ impl<T> Clone for TxSender<T> {
 
 impl<T> Drop for TxSender<T> {
     fn drop(&mut self) {
-        self.queue.senders.fetch_sub(1, Ordering::Relaxed);
+        self.queue.senders.fetch_sub(1, Ordering::Release);
     }
 }
 
@@ -314,17 +314,13 @@ impl<T> Drop for TxReceiver<T> {
 
 impl<T> Receiver<T> for TxReceiver<T> {
     fn try_recv(&self) -> Result<T, TryRecvError> {
-        match self.queue.queue.pop() {
-            Some(item) => Ok(item),
-            // there is a potential race here if the last sender sends an item and then immediately
-            // drops. In that case we'll return Disconnected even though there's an item queued.
-            // That's fine since it's only a shutdown race and we don't guarantee packet delivery in
-            // any case.
-            None if self.queue.senders.load(Ordering::Relaxed) == 0 => {
-                Err(TryRecvError::Disconnected)
-            }
-            None => Err(TryRecvError::Empty),
+        if let Some(item) = self.queue.queue.pop() {
+            return Ok(item);
         }
+        if self.queue.senders.load(Ordering::Acquire) != 0 {
+            return Err(TryRecvError::Empty);
+        }
+        self.queue.queue.pop().ok_or(TryRecvError::Disconnected)
     }
 }
 
@@ -348,7 +344,7 @@ impl<U: Umem> TxLoop<U> {
         let TxLoop {
             cpu_id,
             src_mac,
-            mut socket,
+            socket,
             mut ring,
             mut completion,
         } = self;
@@ -402,8 +398,8 @@ impl<U: Umem> TxLoop<U> {
                         ring.sync(false);
 
                         // check if any frames were completed
-                        while let Some(frame_offset) = completion.read() {
-                            umem.release(frame_offset);
+                        while let Some(frame) = completion.read() {
+                            umem.release_completed(frame);
                         }
 
                         if ring.available() > 0 && umem.available() > 0 {
@@ -430,7 +426,7 @@ impl<U: Umem> TxLoop<U> {
                 let dst = addr.ip();
                 let Some(next_hop) = route_fn(&dst) else {
                     log::warn!("dropping packet: no route for peer {addr}");
-                    umem.release(frame.offset());
+                    umem.release(frame);
                     continue;
                 };
 
@@ -452,7 +448,7 @@ impl<U: Umem> TxLoop<U> {
                                 underlay_mtu = next_hop.mtu
                             );
                         }
-                        umem.release(frame.offset());
+                        umem.release(frame);
                         continue;
                     }
 
@@ -462,15 +458,15 @@ impl<U: Umem> TxLoop<U> {
                             "dropping packet: GRE packet size {packet_len} exceeds frame size \
                              {umem_frame_size} for {addr}"
                         );
-                        umem.release(frame.offset());
+                        umem.release(frame);
                         continue;
                     }
 
                     frame.set_len(packet_len);
-                    let packet = umem.map_frame_mut(&frame);
+                    let mut packet = umem.map_frame_mut(frame);
                     let inner_src_ip = next_hop.preferred_src_ip.as_ref().unwrap_or(src_ip);
                     if let Err(err) = construct_gre_packet(
-                        packet,
+                        &mut packet,
                         &src_mac,
                         &gre.mac_addr,
                         inner_src_ip,
@@ -482,9 +478,10 @@ impl<U: Umem> TxLoop<U> {
                         &gre.tunnel_info,
                     ) {
                         log::warn!("dropping packet: {err}");
-                        umem.release(frame.offset());
+                        umem.release(packet.into_frame());
                         continue;
                     }
+                    frame = packet.into_frame();
                 } else if let Some(vlan) = &next_hop.vlan {
                     // we need the MAC address to send the packet
                     let Some(dest_mac) = next_hop.mac_addr else {
@@ -493,7 +490,7 @@ impl<U: Umem> TxLoop<U> {
                              known MAC address",
                             next_hop.ip_addr
                         );
-                        umem.release(frame.offset());
+                        umem.release(frame);
                         continue;
                     };
 
@@ -508,7 +505,7 @@ impl<U: Umem> TxLoop<U> {
                                 mtu = next_hop.mtu
                             );
                         }
-                        umem.release(frame.offset());
+                        umem.release(frame);
                         continue;
                     }
 
@@ -518,12 +515,12 @@ impl<U: Umem> TxLoop<U> {
                             "dropping packet: VLAN packet size {packet_len} exceeds frame size \
                              {umem_frame_size} for {addr}"
                         );
-                        umem.release(frame.offset());
+                        umem.release(frame);
                         continue;
                     }
 
                     frame.set_len(packet_len);
-                    let packet = umem.map_frame_mut(&frame);
+                    let mut packet = umem.map_frame_mut(frame);
 
                     // The route's preferred src is the IP assigned to the VLAN sub-interface,
                     // which is the right inner src for traffic egressing this VLAN. Fall back
@@ -531,7 +528,7 @@ impl<U: Umem> TxLoop<U> {
                     let inner_src_ip = next_hop.preferred_src_ip.as_ref().unwrap_or(src_ip);
 
                     if !construct_vlan_packet(
-                        packet,
+                        &mut packet,
                         &src_mac.0,
                         &dest_mac.0,
                         inner_src_ip,
@@ -544,9 +541,10 @@ impl<U: Umem> TxLoop<U> {
                         ecn,
                     ) {
                         log::warn!("dropping packet: VLAN frame did not fit in UMEM slot");
-                        umem.release(frame.offset());
+                        umem.release(packet.into_frame());
                         continue;
                     }
+                    frame = packet.into_frame();
                 } else {
                     // we need the MAC address to send the packet
                     let Some(dest_mac) = next_hop.mac_addr else {
@@ -555,7 +553,7 @@ impl<U: Umem> TxLoop<U> {
                              known MAC address",
                             next_hop.ip_addr
                         );
-                        umem.release(frame.offset());
+                        umem.release(frame);
                         continue;
                     };
 
@@ -568,7 +566,7 @@ impl<U: Umem> TxLoop<U> {
                                 mtu = next_hop.mtu
                             );
                         }
-                        umem.release(frame.offset());
+                        umem.release(frame);
                         continue;
                     }
 
@@ -578,15 +576,15 @@ impl<U: Umem> TxLoop<U> {
                             "dropping packet: packet size {packet_len} exceeds frame size \
                              {umem_frame_size} for {addr}"
                         );
-                        umem.release(frame.offset());
+                        umem.release(frame);
                         continue;
                     }
 
                     frame.set_len(packet_len);
-                    let packet = umem.map_frame_mut(&frame);
+                    let mut packet = umem.map_frame_mut(frame);
 
                     if !construct_packet(
-                        packet,
+                        &mut packet,
                         &src_mac.0,
                         &dest_mac.0,
                         src_ip,
@@ -597,9 +595,10 @@ impl<U: Umem> TxLoop<U> {
                         ecn,
                     ) {
                         log::warn!("dropping packet: frame did not fit in UMEM slot");
-                        umem.release(frame.offset());
+                        umem.release(packet.into_frame());
                         continue;
                     }
+                    frame = packet.into_frame();
                 }
 
                 ring.write(frame, 0)
@@ -631,8 +630,8 @@ impl<U: Umem> TxLoop<U> {
             );
 
             completion.sync(true);
-            while let Some(frame_offset) = completion.read() {
-                umem.release(frame_offset);
+            while let Some(frame) = completion.read() {
+                umem.release_completed(frame);
             }
 
             ring.sync(false);

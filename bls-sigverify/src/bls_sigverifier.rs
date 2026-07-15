@@ -163,7 +163,7 @@ impl SigVerifier {
         let root_bank = self.sharable_banks.root();
         self.maybe_prune_caches(root_bank.slot());
 
-        let ((certs_to_verify, votes_to_verify), extract_msgs_us) =
+        let ((cert_groups, votes_to_verify), extract_msgs_us) =
             measure_us!(self.extract_and_filter_msgs(batches, &root_bank));
         self.stats
             .extract_filter_msgs_us
@@ -184,7 +184,7 @@ impl SigVerifier {
             || {
                 verify_and_send_certificates(
                     &mut self.verified_certs,
-                    certs_to_verify,
+                    cert_groups,
                     &root_bank,
                     &self.channels.channel_to_pool,
                     &self.banlist,
@@ -213,11 +213,11 @@ impl SigVerifier {
         batches: Vec<PacketBatch>,
         root_bank: &Bank,
     ) -> (
-        Vec<CertPayload>,
+        HashMap<CertificateType, Vec<CertPayload>>,
         HashMap<VotePayloadToSign, Vec<UnverifiedVotePayload>>,
     ) {
         let root_slot = root_bank.slot();
-        let mut certs = Vec::new();
+        let mut cert_groups = HashMap::<CertificateType, Vec<CertPayload>>::new();
         let mut votes: HashMap<VotePayloadToSign, Vec<UnverifiedVotePayload>> = HashMap::new();
         let mut num_pkts = 0u64;
         let my_shred_version = self.cluster_info.my_shred_version();
@@ -274,15 +274,18 @@ impl SigVerifier {
                         self.stats.num_generated_certs_received += 1;
                         continue;
                     }
-                    certs.push(CertPayload {
-                        cert,
-                        sender_identity_pubkey,
-                    });
+                    cert_groups
+                        .entry(cert.cert_type)
+                        .or_default()
+                        .push(CertPayload {
+                            cert,
+                            sender_identity_pubkey,
+                        });
                 }
             }
         }
         self.stats.num_pkts.add_sample(num_pkts);
-        (certs, votes)
+        (cert_groups, votes)
     }
 
     /// If this vote should be verified, then returns the sender's Pubkey and BlsPubkey.
@@ -1574,6 +1577,119 @@ mod tests {
         expect_no_receive(&ctx.pool_receiver);
         assert_eq!(ctx.verifier.stats.num_verified_certs_received.0, 1);
         assert_eq!(ctx.verifier.stats.cert_stats.certs_to_sig_verify.0, 0);
+    }
+
+    #[test]
+    fn test_same_type_certs_verify_until_first_valid() {
+        let mut ctx = TestContext::new();
+
+        let cert_type = CertificateType::Notarize(Block {
+            slot: 10,
+            block_id: Hash::new_unique(),
+        });
+        let cert1 = create_signed_certificate_message(
+            ctx.verifier.cluster_info.my_shred_version(),
+            &ctx.validator_keypairs,
+            cert_type,
+            &(0..7).collect::<Vec<_>>(),
+        );
+        let cert2 = create_signed_certificate_message(
+            ctx.verifier.cluster_info.my_shred_version(),
+            &ctx.validator_keypairs,
+            cert_type,
+            &(1..8).collect::<Vec<_>>(),
+        );
+        let packet_batches = messages_to_batches(
+            &[
+                ConsensusMessage::Certificate(cert1),
+                ConsensusMessage::Certificate(cert2),
+            ],
+            ctx.verifier.cluster_info.my_shred_version(),
+        );
+
+        ctx.verifier
+            .verify_and_send_batches(packet_batches)
+            .unwrap();
+
+        let batches = ctx.pool_receiver.try_iter().collect::<Vec<_>>();
+        assert_eq!(batches.len(), 1);
+        match &batches[0] {
+            SigVerifiedBatch::Certificates(certs) => assert_eq!(certs.len(), 1),
+            rest => panic!("unexpected type: {rest:?}"),
+        }
+        assert_eq!(ctx.verifier.stats.cert_stats.certs_to_sig_verify.0, 1);
+        assert_eq!(ctx.verifier.stats.cert_stats.sig_verified_certs.0, 1);
+        assert_eq!(ctx.verifier.stats.cert_stats.redundant_certs_skipped.0, 1);
+        assert_eq!(
+            ctx.verifier.stats.cert_stats.unnecessary_certs_verified.0,
+            0
+        );
+    }
+
+    #[test]
+    fn test_same_type_certs_try_next_candidate_after_failure() {
+        let mut ctx = TestContext::new();
+
+        let cert_type = CertificateType::Notarize(Block {
+            slot: 10,
+            block_id: Hash::new_unique(),
+        });
+        let num_signers = 7;
+        let mut bitmap = BitVec::<u8, Lsb0>::new();
+        bitmap.resize(num_signers, false);
+        for i in 0..num_signers {
+            bitmap.set(i, true);
+        }
+        let invalid_cert = Certificate {
+            cert_type,
+            signature: Signature([0; BLS_SIGNATURE_AFFINE_SIZE]),
+            bitmap: encode_base2(&bitmap).unwrap(),
+        };
+        let valid_cert = create_signed_certificate_message(
+            ctx.verifier.cluster_info.my_shred_version(),
+            &ctx.validator_keypairs,
+            cert_type,
+            &(0..num_signers).collect::<Vec<_>>(),
+        );
+        let invalid_sender = Pubkey::new_unique();
+        let valid_sender = Pubkey::new_unique();
+        let redundant_sender = Pubkey::new_unique();
+        let packet_batches = messages_to_batches_with_remote_pubkeys(
+            &[
+                (ConsensusMessage::Certificate(invalid_cert), invalid_sender),
+                (
+                    ConsensusMessage::Certificate(valid_cert.clone()),
+                    valid_sender,
+                ),
+                (ConsensusMessage::Certificate(valid_cert), redundant_sender),
+            ],
+            ctx.verifier.cluster_info.my_shred_version(),
+        );
+
+        ctx.verifier
+            .verify_and_send_batches(packet_batches)
+            .unwrap();
+
+        let batches = ctx.pool_receiver.try_iter().collect::<Vec<_>>();
+        assert_eq!(batches.len(), 1);
+        match &batches[0] {
+            SigVerifiedBatch::Certificates(certs) => assert_eq!(certs.len(), 1),
+            rest => panic!("unexpected type: {rest:?}"),
+        }
+        assert!(ctx.banlist.is_banned(&invalid_sender));
+        assert!(!ctx.banlist.is_banned(&valid_sender));
+        assert!(!ctx.banlist.is_banned(&redundant_sender));
+        assert_eq!(ctx.verifier.stats.cert_stats.certs_to_sig_verify.0, 2);
+        assert_eq!(ctx.verifier.stats.cert_stats.sig_verified_certs.0, 1);
+        assert_eq!(
+            ctx.verifier
+                .stats
+                .cert_stats
+                .certificate_verification_failed
+                .0,
+            1
+        );
+        assert_eq!(ctx.verifier.stats.cert_stats.redundant_certs_skipped.0, 1);
     }
 
     #[test]

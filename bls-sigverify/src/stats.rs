@@ -185,13 +185,16 @@ impl SigVerifierStats {
 /// Stats from sigverifying certs.
 #[derive(Default, Debug)]
 pub(super) struct SigVerifyCertStats {
-    /// Number of certs [`verify_and_send_certificates`] was requested to verify the signature of.
+    /// Number of certs [`verify_and_send_certificates`] attempted to verify the signature of.
     pub(super) certs_to_sig_verify: Saturating<u64>,
     /// Number of certs [`verify_and_send_certificates`] successfully verified the signature of.
     pub(super) sig_verified_certs: Saturating<u64>,
     /// Number of certs that were verified unnecessarily because another cert of the same
     /// `CertificateType` was already verified.
     pub(super) unnecessary_certs_verified: Saturating<u64>,
+    /// Number of certs skipped because another cert of the same `CertificateType` was verified in
+    /// the same batch.
+    pub(super) redundant_certs_skipped: Saturating<u64>,
     /// Number of times we are banning a validator that was already banned.
     pub(super) already_banned: Saturating<u64>,
     /// Number of times we are banning a validator.
@@ -219,6 +222,7 @@ impl SigVerifyCertStats {
             certs_to_sig_verify,
             sig_verified_certs,
             unnecessary_certs_verified,
+            redundant_certs_skipped,
             already_banned,
             banning_validator,
             certificate_verification_failed,
@@ -231,6 +235,7 @@ impl SigVerifyCertStats {
         self.certs_to_sig_verify += certs_to_sig_verify;
         self.sig_verified_certs += sig_verified_certs;
         self.unnecessary_certs_verified += unnecessary_certs_verified;
+        self.redundant_certs_skipped += redundant_certs_skipped;
         self.already_banned += already_banned;
         self.banning_validator += banning_validator;
         self.certificate_verification_failed += certificate_verification_failed;
@@ -247,6 +252,7 @@ impl SigVerifyCertStats {
             certs_to_sig_verify,
             sig_verified_certs,
             unnecessary_certs_verified,
+            redundant_certs_skipped,
             already_banned,
             banning_validator,
             certificate_verification_failed,
@@ -266,6 +272,7 @@ impl SigVerifyCertStats {
                 unnecessary_certs_verified.0,
                 i64
             ),
+            ("redundant_certs_skipped", redundant_certs_skipped.0, i64),
             ("already_banned", already_banned.0, i64),
             ("banning_validator", banning_validator.0, i64),
             (
