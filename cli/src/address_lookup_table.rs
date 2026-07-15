@@ -596,8 +596,7 @@ async fn process_create_lookup_table(
     }
 }
 
-pub const FREEZE_LOOKUP_TABLE_WARNING: &str =
-    "WARNING! Once a lookup table is frozen, it can never be modified or unfrozen again. To \
+pub const FREEZE_LOOKUP_TABLE_WARNING: &str = "WARNING! Once a lookup table is frozen, it can never be modified or unfrozen again. To \
      proceed with freezing, rerun the `freeze` command with the `--bypass-warning` flag";
 
 async fn process_freeze_lookup_table(

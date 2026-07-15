@@ -50,9 +50,7 @@ use {
     solana_bls_signatures::Signature as BLSSignature,
     solana_clock::Slot,
     wincode::{
-        ReadError, SchemaRead, SchemaReadContext, SchemaWrite,
-        config::{Config},
-        io::Reader,
+        ReadError, SchemaRead, SchemaReadContext, SchemaWrite, config::Config, io::Reader,
         pod_wrapper,
     },
 };
@@ -341,7 +339,14 @@ impl WireConsensusMessageV1 {
 
 #[cfg_attr(
     feature = "frozen-abi",
-    derive(AbiExample, AbiEnumVisitor, StableAbi, StableAbiSample, Serialize, SchemaRead),
+    derive(
+        AbiExample,
+        AbiEnumVisitor,
+        StableAbi,
+        StableAbiSample,
+        Serialize,
+        SchemaRead
+    ),
     frozen_abi(
         digest = "Gf8GEMXaXezQnGsqwDdpZN3WtNkMZw5wfp3nwep9j55V",
         abi_digest = "AHPJsANgE3T8wfzkFZwao1PAWwd6LtS5GAhGrN9X4Xhy",

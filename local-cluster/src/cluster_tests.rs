@@ -633,9 +633,7 @@ fn convert_packet_to_vote_message(packet: PacketRef, my_shred_version: u16) -> O
     ) else {
         return None;
     };
-    let DecodedWireConsensusMessage::Vote(vote_msg) =
-        DecodedWireConsensusMessage::new(msg)
-    else {
+    let DecodedWireConsensusMessage::Vote(vote_msg) = DecodedWireConsensusMessage::new(msg) else {
         return None;
     };
     Some(VoteMessage {
