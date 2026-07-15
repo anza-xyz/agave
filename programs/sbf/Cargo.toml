@@ -160,6 +160,10 @@ solana-secp256k1-recover = "=3.2.0"
 solana-sha256-hasher = { version = "=3.1.0", features = ["sha2"] }
 solana-slot-hashes = "3.0.0"
 solana-stake-history = "=1.0.0"
+# upstream removed solana-stake-interface in https://github.com/anza-xyz/agave/pull/13550
+# it breaks https://github.com/anza-xyz/agave-runtime/pull/12
+# it needs a follow-up PR to fix, or a fixup to that commit to drop this entirely
+solana-stake-interface = { version = "=4.3.1", features = ["bincode"] }
 solana-svm = { path = "../../svm", version = "=4.3.0-alpha.1" }
 solana-svm-feature-set = { path = "../../svm-feature-set", version = "=4.3.0-alpha.1" }
 solana-svm-timings = { path = "../../svm-timings", version = "=4.3.0-alpha.1" }

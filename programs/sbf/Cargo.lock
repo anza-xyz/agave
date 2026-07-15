@@ -7870,6 +7870,7 @@ dependencies = [
  "solana-slot-hashes",
  "solana-stable-layout",
  "solana-stake-history",
+ "solana-stake-interface",
  "solana-svm-callback",
  "solana-svm-feature-set",
  "solana-svm-log-collector",
