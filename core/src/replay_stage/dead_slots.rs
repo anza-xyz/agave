@@ -119,6 +119,9 @@ fn is_update_parent_recoverable_replay_error(err: &BlockstoreProcessorError) -> 
         | BlockstoreProcessorError::InvalidTransaction(_)
         | BlockstoreProcessorError::UserTransactionsInVoteOnlyBank(_)
         | BlockstoreProcessorError::ChainedBlockIdFailure(_, _) => true,
+        BlockstoreProcessorError::FailedToLoadEntries(
+            BlockstoreError::InvalidShredData(_) | BlockstoreError::BlockAborted(_),
+        ) => true,
         BlockstoreProcessorError::BlockComponentProcessor(err) => {
             err.is_update_parent_recoverable_replay_error()
         }
