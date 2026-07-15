@@ -48,9 +48,14 @@ pub struct BLSPubkeyStakeEntry {
 #[derive(Clone, Debug)]
 #[cfg_attr(feature = "dev-context-only-utils", derive(PartialEq))]
 pub struct BLSPubkeyToRankMap {
+    /// stores a mapping from the bls pubkey to the node's rank.
     rank_map: HashMap<BLSPubkeyCompressed, u16>,
+    /// stores a mapping from the vote account pubkey to the node's rank.
     vote_pubkey_to_rank: HashMap<Pubkey, u16>,
+    node_pubkey_map: HashMap<Pubkey, BLSPubkeyStakeEntry>,
+    /// a mapping from rank to [`BLSPubkeyStakeEntry`].
     sorted_pubkeys: Vec<BLSPubkeyStakeEntry>,
+    /// Total stake delegated to this validator.
     total_stake: NonZero<u64>,
 }
 
@@ -64,6 +69,7 @@ impl solana_frozen_abi::abi_example::AbiExample for BLSPubkeyToRankMap {
             vote_pubkey_to_rank: HashMap::new(),
             sorted_pubkeys: Vec::new(),
             total_stake: NonZero::new(1).unwrap(),
+            node_pubkey_map: HashMap::new(),
         }
     }
 }
@@ -135,17 +141,20 @@ impl BLSPubkeyToRankMap {
             HashMap::with_capacity(keys_stake_entry_with_compressed.len());
         let mut vote_pubkey_to_rank_map =
             HashMap::with_capacity(keys_stake_entry_with_compressed.len());
+        let mut node_pubkey_map = HashMap::with_capacity(keys_stake_entry_with_compressed.len());
         for (rank, (entry, bls_pubkey_compressed)) in
             keys_stake_entry_with_compressed.into_iter().enumerate()
         {
             vote_pubkey_to_rank_map.insert(entry.vote_account_pubkey, rank as u16);
             bls_pubkey_to_rank_map.insert(bls_pubkey_compressed, rank as u16);
+            node_pubkey_map.insert(entry.node_pubkey, entry.clone());
             sorted_pubkeys.push(entry);
         }
         Self {
             rank_map: bls_pubkey_to_rank_map,
             vote_pubkey_to_rank: vote_pubkey_to_rank_map,
             sorted_pubkeys,
+            node_pubkey_map,
             total_stake,
         }
     }
@@ -173,6 +182,10 @@ impl BLSPubkeyToRankMap {
 
     pub fn get_pubkey_stake_entry(&self, index: usize) -> Option<&BLSPubkeyStakeEntry> {
         self.sorted_pubkeys.get(index)
+    }
+
+    pub fn node_pubkey_to_stake_entry(&self, node_pubkey: &Pubkey) -> Option<&BLSPubkeyStakeEntry> {
+        self.node_pubkey_map.get(node_pubkey)
     }
 }
 
