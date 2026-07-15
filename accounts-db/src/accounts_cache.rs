@@ -343,7 +343,10 @@ impl AccountsCache {
         // Ancestors take priority over roots regardless of slot. Iterate every slot in the
         // range in descending order and return the first (highest) ancestor that has it.
         if let Some(ancestors_min_slot) = ancestors.min_slot() {
-            for slot in (ancestors_min_slot..=index_max_slot).rev() {
+            // Bound the search to ancestors.max_slot() as slots > than ancestors max_slot
+            // are not visible to the querying bank.
+            let max_slot = ancestors.max_slot().min(index_max_slot);
+            for slot in (ancestors_min_slot..=max_slot).rev() {
                 if ancestors.contains_key(&slot)
                     && let Some(account) = self.load(slot, pubkey)
                 {
