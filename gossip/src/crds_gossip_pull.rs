@@ -65,9 +65,6 @@ pub struct CrdsFilter {
     mask_bits: u32,
 }
 
-#[cfg(feature = "small-cluster-gossip")]
-pub(crate) const MIN_NUM_BLOOM_ITEMS: usize = 512;
-#[cfg(not(feature = "small-cluster-gossip"))]
 pub(crate) const MIN_NUM_BLOOM_ITEMS: usize = 65_536;
 
 // Loosest mask_bits floor accepted for incoming pull requests.
@@ -692,12 +689,7 @@ pub(crate) mod tests {
         test_case::test_case,
     };
 
-    // Active filter slots per request set for these small-CRDS tests:
-    // `ceil(buckets / SAMPLE_RATE)`, with 1 bucket using the small-cluster
-    // feature and 64 in production.
-    #[cfg(feature = "small-cluster-gossip")]
-    pub(crate) const MIN_NUM_BLOOM_FILTERS: usize = 1usize.div_ceil(super::SAMPLE_RATE);
-    #[cfg(not(feature = "small-cluster-gossip"))]
+    // Active filter slots per request set for these tests:
     pub(crate) const MIN_NUM_BLOOM_FILTERS: usize = 64usize.div_ceil(super::SAMPLE_RATE);
 
     impl CrdsGossipPull {
@@ -786,9 +778,8 @@ pub(crate) mod tests {
         }
     }
 
-    #[cfg(not(feature = "small-cluster-gossip"))]
     #[test]
-    fn test_crds_filter_sanitize_production_mask_bits_floor() {
+    fn test_crds_filter_sanitize_mask_bits_floor() {
         use solana_sanitize::{Sanitize, SanitizeError};
 
         assert_eq!(MIN_NUM_BLOOM_ITEMS, 65_536);
@@ -800,20 +791,6 @@ pub(crate) mod tests {
         assert_eq!(filter.sanitize(), Err(SanitizeError::InvalidValue));
         let filter = CrdsFilter {
             mask_bits: 6,
-            ..CrdsFilter::default()
-        };
-        assert_eq!(filter.sanitize(), Ok(()));
-    }
-
-    #[cfg(feature = "small-cluster-gossip")]
-    #[test]
-    fn test_crds_filter_sanitize_small_cluster_mask_bits_floor() {
-        use solana_sanitize::Sanitize;
-
-        assert_eq!(MIN_NUM_BLOOM_ITEMS, 512);
-        assert_eq!(*MIN_PULL_REQUEST_MASK_BITS, 0);
-        let filter = CrdsFilter {
-            mask_bits: 0,
             ..CrdsFilter::default()
         };
         assert_eq!(filter.sanitize(), Ok(()));

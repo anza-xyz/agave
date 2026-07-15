@@ -23,9 +23,6 @@ pub(crate) struct PushActiveSet([PushActiveSetEntry; NUM_PUSH_ACTIVE_SET_ENTRIES
 struct PushActiveSetEntry(IndexMap</*node:*/ Pubkey, /*origins:*/ ConcurrentBloom<Pubkey>>);
 
 impl PushActiveSet {
-    #[cfg(feature = "small-cluster-gossip")]
-    const MIN_NUM_BLOOM_ITEMS: usize = 512;
-    #[cfg(not(feature = "small-cluster-gossip"))]
     const MIN_NUM_BLOOM_ITEMS: usize = crate::cluster_info::CRDS_UNIQUE_PUBKEY_CAPACITY;
 
     pub(crate) fn get_nodes<'a>(

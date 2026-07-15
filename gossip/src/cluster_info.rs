@@ -2714,18 +2714,10 @@ mod tests {
         );
     }
 
-    #[cfg(not(feature = "small-cluster-gossip"))]
     #[test]
     fn test_pull_request_scan_budget_production_config() {
         assert_eq!(GOSSIP_PULL_SCAN_BUDGET_CAPACITY, 1_048_576);
         assert_eq!(GOSSIP_PULL_SCAN_BUDGET_REFILL_PER_SEC, 262_144);
-    }
-
-    #[cfg(feature = "small-cluster-gossip")]
-    #[test]
-    fn test_pull_request_scan_budget_small_cluster_config() {
-        assert_eq!(GOSSIP_PULL_SCAN_BUDGET_CAPACITY, 8_192);
-        assert_eq!(GOSSIP_PULL_SCAN_BUDGET_REFILL_PER_SEC, 2_048);
     }
 
     #[test]
