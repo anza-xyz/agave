@@ -242,7 +242,9 @@ pub struct TransactionAccounts {
 
 #[cfg(not(any(target_arch = "bpf", target_arch = "sbf")))]
 impl TransactionAccounts {
-    pub(crate) fn new(accounts: Vec<KeyedAccountSharedData>) -> TransactionAccounts {
+    pub(crate) fn new_with_feature_flags(
+        accounts: Vec<KeyedAccountSharedData>,
+    ) -> TransactionAccounts {
         let touched_flags = vec![Cell::new(false); accounts.len()].into_boxed_slice();
         let borrow_counters = vec![BorrowCounter::default(); accounts.len()].into_boxed_slice();
         let (shared_accounts, private_fields) = accounts
@@ -280,6 +282,11 @@ impl TransactionAccounts {
             resize_delta: Cell::new(0),
             lamports_delta: Cell::new(0),
         }
+    }
+
+    #[cfg(feature = "dev-context-only-utils")]
+    pub fn new(accounts: Vec<KeyedAccountSharedData>) -> TransactionAccounts {
+        TransactionAccounts::new_with_feature_flags(accounts)
     }
 
     pub(crate) fn len(&self) -> usize {
