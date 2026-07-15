@@ -165,6 +165,7 @@ impl Bank {
                 compute_budget.max_instruction_stack_depth,
                 compute_budget.max_instruction_trace_length,
                 1,
+                true,
             );
 
             struct MockCallback {}
