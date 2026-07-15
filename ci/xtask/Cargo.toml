@@ -24,7 +24,7 @@ clap = { version = "4.6.1", features = ["derive"] }
 env_logger = "0.11.11"
 futures-util = "0.3.31"
 log = "0.4.28"
-octocrab = { version = "0.53.1", features = ["stream"] }
+octocrab = { version = "0.54.0", features = ["stream"] }
 regex = "1.12.4"
 reqwest = { version = "0.12", default-features = false, features = ["rustls-tls"] }
 semver = { version = "1.0.27", features = ["serde"] }
