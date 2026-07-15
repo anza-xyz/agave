@@ -25,6 +25,7 @@ use {
     solana_clock::{Epoch, Slot},
     solana_hash::Hash,
     solana_instruction::TRANSACTION_LEVEL_STACK_HEIGHT,
+    solana_instruction_error::InstructionError,
     solana_message::{
         compiled_instruction::CompiledInstruction,
         inner_instruction::{InnerInstruction, InnerInstructionsList},
@@ -604,6 +605,14 @@ impl<FG: ForkGraph> TransactionBatchProcessor<FG> {
 
                             Ok(ProcessedTransaction::Executed(Box::new(executed_tx)))
                         }
+                        // If it failed with GenericError then this transaction will be dropped from the batch.
+                        (
+                            Err(TransactionError::InstructionError(
+                                _,
+                                InstructionError::GenericError,
+                            )),
+                            _,
+                        ) => Err(TransactionError::CommitCancelled),
                         // If the transaction failed & drop on failure is set then we don't want to
                         // update the accounts as this transaction will be dropped from the batch.
                         (Err(err), true) => Err(err.clone()),
