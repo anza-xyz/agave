@@ -70,7 +70,8 @@ use {
             MaxAllowableDrift, calculate_stake_weighted_timestamp,
         },
         stakes::{
-            DelegatedStakes, DeserializableStakes, SerdeStakesToStakeFormat, Stakes, StakesCache,
+            DelegatedStakes, DeserializableDelegationStakes, SerdeStakesToStakeFormat, Stakes,
+            StakesCache,
         },
         status_cache::{SlotDelta, StatusCache},
         transaction_batch::{OwnedOrBorrowed, TransactionBatch},
@@ -535,7 +536,7 @@ pub struct BankFieldsToDeserialize {
     pub(crate) fee_rate_governor: FeeRateGovernor,
     pub(crate) epoch_schedule: EpochSchedule,
     pub(crate) inflation: Inflation,
-    pub(crate) stakes: DeserializableStakes<Delegation>,
+    pub(crate) stakes: DeserializableDelegationStakes,
     /// Transformed into `HashMap<Epoch, VersionedEpochStakes>` in `serde_snapshot` and passed to
     /// `Bank::new_from_snapshot` as separate parameter for performance (conversion is time consuming)
     pub(crate) versioned_epoch_stakes: Vec<(Epoch, DeserializableVersionedEpochStakes)>,

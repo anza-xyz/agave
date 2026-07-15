@@ -1,3 +1,5 @@
+#[cfg(feature = "frozen-abi")]
+use solana_frozen_abi::stable_abi;
 #[cfg(all(target_os = "linux", target_env = "gnu"))]
 use std::{
     ffi::{CStr, CString},
@@ -10,7 +12,9 @@ use {
         runtime_config::RuntimeConfig,
         snapshot_utils::StorageAndNextAccountsFileId,
         stake_account::StakeAccount,
-        stakes::{DeserializableStakes, Stakes, serialize_stake_accounts_to_delegation_format},
+        stakes::{
+            DeserializableDelegationStakes, Stakes, serialize_stake_accounts_to_delegation_format,
+        },
     },
     agave_fs::FileInfo,
     agave_snapshots::error::SnapshotError,
@@ -98,7 +102,10 @@ pub(crate) struct SlotAccountStorageEntries {
     entries: SmallVec<[SerializableAccountStorageEntry; 1]>,
 }
 
-#[cfg_attr(feature = "frozen-abi", derive(AbiExample))]
+#[cfg_attr(
+    feature = "frozen-abi",
+    derive(AbiExample, Serialize, StableAbi, StableAbiSample)
+)]
 #[derive(Debug, Deserialize)]
 pub(crate) struct AccountsDbFields(
     Vec<SlotAccountStorageEntries>,
@@ -150,9 +157,9 @@ struct UnusedAccounts {
     unused3: HashMap<Pubkey, u64>,
 }
 
-// Deserializable version of Bank which need not be serializable,
-// because it's handled by SerializableVersionedBank.
-// So, sync fields with it!
+// Deserializable version of Bank; keep fields synced with SerializableVersionedBank.
+// frozen-abi Serialize exists only to pin the read-path abi digest (see DeserializableBankSnapshot).
+#[cfg_attr(feature = "frozen-abi", derive(Serialize, StableAbi, StableAbiSample))]
 #[derive(Clone, Deserialize)]
 struct DeserializableVersionedBank {
     blockhash_queue: BlockhashQueue,
@@ -183,7 +190,7 @@ struct DeserializableVersionedBank {
     _unused_rent_collector: UnusedRentCollector,
     epoch_schedule: EpochSchedule,
     inflation: Inflation,
-    stakes: DeserializableStakes<Delegation>,
+    stakes: DeserializableDelegationStakes,
     _unused_accounts: UnusedAccounts,
     unused_epoch_stakes: HashMap<Epoch, ()>,
     is_delta: bool,
@@ -411,6 +418,7 @@ where
         .deserialize_from::<R, T>(reader)
 }
 
+#[cfg(test)]
 fn deserialize_accounts_db_fields<R>(stream: &mut BufReader<R>) -> Result<AccountsDbFields, Error>
 where
     R: Read,
@@ -424,7 +432,10 @@ where
 /// ExtraFieldsToSerialize with the exception that new "extra fields" should be
 /// added to this struct a minor release before they are added to the serialize
 /// struct.
-#[cfg_attr(feature = "frozen-abi", derive(AbiExample))]
+#[cfg_attr(
+    feature = "frozen-abi",
+    derive(AbiExample, Serialize, StableAbi, StableAbiSample)
+)]
 #[derive(Clone, Debug, Deserialize)]
 struct ExtraFieldsToDeserialize {
     #[serde(deserialize_with = "default_on_eof")]
@@ -434,6 +445,12 @@ struct ExtraFieldsToDeserialize {
     #[serde(deserialize_with = "default_on_eof")]
     _unused_epoch_accounts_hash: Option<Hash>,
     #[serde(deserialize_with = "default_on_eof")]
+    // Match the serialize side's `HashMap<u64, VersionedEpochStakes>`, which samples `0..=1` entries.
+    #[cfg_attr(
+        feature = "frozen-abi",
+        stable_abi_sample(with = "stable_abi::sample_collection_sized(rng, \
+                                  stable_abi::context::SequenceLenMax(1))")
+    )]
     versioned_epoch_stakes: Vec<(u64, DeserializableVersionedEpochStakes)>,
     #[serde(deserialize_with = "default_on_eof")]
     accounts_lt_hash: Option<SerdeAccountsLtHash>,
@@ -469,42 +486,70 @@ pub struct ExtraFieldsToSerialize {
     pub block_id: Option<Hash>,
 }
 
+/// Deserializable counterpart of [`SerializableBankSnapshot`], read as one struct (bincode reads
+/// the parts sequentially, matching separate reads).
+///
+/// Its frozen-abi digest must equal [`SerializableBankSnapshotForAbi`]'s, so the read and write
+/// wire formats can't diverge.
+#[cfg_attr(
+    feature = "frozen-abi",
+    derive(Serialize, StableAbi, StableAbiSample),
+    frozen_abi(
+        abi_digest = "2TVKjhahaEGqUZAJtMmaaagcxWzhMPUsNrVHsSoNboK7",
+        abi_serializer = "bincode",
+        test_roundtrip = "wire_only"
+    )
+)]
+#[derive(Deserialize)]
+struct DeserializableBankSnapshot {
+    bank: DeserializableVersionedBank,
+    accounts_db: AccountsDbFields,
+    extra_fields: ExtraFieldsToDeserialize,
+}
+
+impl DeserializableBankSnapshot {
+    /// Folds the extra fields into the bank fields; errors if `unused_epoch_stakes` is non-empty.
+    fn into_fields(self) -> Result<(BankFieldsToDeserialize, AccountsDbFields), Error> {
+        let Self {
+            bank,
+            accounts_db,
+            extra_fields,
+        } = self;
+        if !bank.unused_epoch_stakes.is_empty() {
+            return Err(Box::new(bincode::ErrorKind::Custom(
+                "Expected deserialized bank's unused_epoch_stakes field to be empty".to_string(),
+            )));
+        }
+        let mut bank_fields = BankFieldsToDeserialize::from(bank);
+        let ExtraFieldsToDeserialize {
+            lamports_per_signature,
+            _unused_incremental_snapshot_persistence,
+            _unused_epoch_accounts_hash,
+            versioned_epoch_stakes,
+            accounts_lt_hash,
+            block_id,
+        } = extra_fields;
+
+        bank_fields.fee_rate_governor = bank_fields
+            .fee_rate_governor
+            .clone_with_lamports_per_signature(lamports_per_signature);
+        bank_fields.versioned_epoch_stakes = versioned_epoch_stakes;
+        bank_fields.accounts_lt_hash = accounts_lt_hash
+            .expect("snapshot must have accounts_lt_hash")
+            .into();
+        bank_fields.block_id = block_id;
+
+        Ok((bank_fields, accounts_db))
+    }
+}
+
 fn deserialize_bank_fields<R>(
-    mut stream: &mut BufReader<R>,
+    stream: &mut BufReader<R>,
 ) -> Result<(BankFieldsToDeserialize, AccountsDbFields), Error>
 where
     R: Read,
 {
-    let deserializable_bank = deserialize_from::<_, DeserializableVersionedBank>(&mut stream)?;
-    if !deserializable_bank.unused_epoch_stakes.is_empty() {
-        return Err(Box::new(bincode::ErrorKind::Custom(
-            "Expected deserialized bank's unused_epoch_stakes field to be empty".to_string(),
-        )));
-    }
-    let mut bank_fields = BankFieldsToDeserialize::from(deserializable_bank);
-    let accounts_db_fields = deserialize_accounts_db_fields(stream)?;
-    let extra_fields = deserialize_from(stream)?;
-
-    // Process extra fields
-    let ExtraFieldsToDeserialize {
-        lamports_per_signature,
-        _unused_incremental_snapshot_persistence,
-        _unused_epoch_accounts_hash,
-        versioned_epoch_stakes,
-        accounts_lt_hash,
-        block_id,
-    } = extra_fields;
-
-    bank_fields.fee_rate_governor = bank_fields
-        .fee_rate_governor
-        .clone_with_lamports_per_signature(lamports_per_signature);
-    bank_fields.versioned_epoch_stakes = versioned_epoch_stakes;
-    bank_fields.accounts_lt_hash = accounts_lt_hash
-        .expect("snapshot must have accounts_lt_hash")
-        .into();
-    bank_fields.block_id = block_id;
-
-    Ok((bank_fields, accounts_db_fields))
+    deserialize_from::<_, DeserializableBankSnapshot>(stream)?.into_fields()
 }
 
 pub(crate) fn fields_from_stream<R: Read>(

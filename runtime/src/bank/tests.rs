@@ -27,7 +27,10 @@ use {
         stake_delegation::effective_stake,
         stake_history::StakeHistory,
         stake_utils,
-        stakes::{DeserializableStakes, InvalidCacheEntryReason, SerdeStakesToStakeFormat, Stakes},
+        stakes::{
+            DeserializableDelegationStakes, InvalidCacheEntryReason, SerdeStakesToStakeFormat,
+            Stakes,
+        },
     },
     agave_feature_set::{self as feature_set, FeatureSet},
     agave_reserved_account_keys::ReservedAccount,
@@ -12485,7 +12488,7 @@ fn test_new_for_txn_tests_system_transfer() {
         );
     }
 
-    let stakes = DeserializableStakes {
+    let stakes = DeserializableDelegationStakes {
         vote_accounts: VoteAccounts::default(),
         stake_delegations: vec![],
         unused: 0,
@@ -12662,7 +12665,7 @@ fn test_new_for_block_tests_with_vote_account() {
         );
     }
 
-    let stakes_deser = DeserializableStakes {
+    let stakes_deser = DeserializableDelegationStakes {
         vote_accounts: VoteAccounts::default(),
         stake_delegations: vec![],
         unused: 0,
