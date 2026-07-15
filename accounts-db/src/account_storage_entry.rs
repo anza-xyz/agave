@@ -189,12 +189,20 @@ impl AccountStorageEntry {
         self.zero_lamport_single_ref_offsets.read().unwrap().len() + self.num_tombstones()
     }
 
-    /// Batch-insert tombstone offsets.
-    pub(crate) fn batch_insert_tombstone_offsets(&self, offsets: &[Offset]) {
+    /// Batch-insert tombstone offsets, taking the offsets lock once.
+    /// Returns the number of offsets inserted.
+    pub(crate) fn batch_insert_tombstone_offsets(
+        &self,
+        offsets: impl IntoIterator<Item = Offset>,
+    ) -> usize {
         let mut tombstone_offsets = self.tombstone_offsets.write().unwrap();
+        let mut num_inserted = 0;
         for offset in offsets {
-            tombstone_offsets.insert(*offset);
+            if tombstone_offsets.insert(offset) {
+                num_inserted += 1;
+            }
         }
+        num_inserted
     }
 
     /// Locks the tombstone offset set with a read lock and returns it with the guard.

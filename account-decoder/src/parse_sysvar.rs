@@ -5,7 +5,6 @@ use {
         StringAmount, UiFeeCalculator,
         parse_account_data::{ParsableAccount, ParseAccountError},
     },
-    bincode::deserialize,
     bv::BitVec,
     serde::{Deserialize, Serialize},
     solana_clock::{Clock, Epoch, Slot, UnixTimestamp},
@@ -19,6 +18,7 @@ use {
     solana_sysvar::{
         epoch_rewards::EpochRewards, last_restart_slot::LastRestartSlot, rewards::Rewards,
     },
+    wincode::deserialize,
 };
 
 pub fn parse_sysvar(data: &[u8], pubkey: &Pubkey) -> Result<SysvarAccountType, ParseAccountError> {
@@ -270,18 +270,23 @@ mod test {
     #[allow(deprecated)]
     use solana_sysvar::recent_blockhashes::IterItem;
     use {
-        super::*,
-        solana_account::{Account, create_account_for_test},
-        solana_fee_calculator::FeeCalculator,
-        solana_hash::Hash,
-        solana_stake_history::SIZE,
+        super::*, solana_account::Account, solana_fee_calculator::FeeCalculator, solana_hash::Hash,
     };
+
+    fn create_account_for_test<T>(value: &T, size: usize) -> Account
+    where
+        T: wincode::Serialize<Src = T>,
+    {
+        let mut account = Account::new(1, size, &sysvar::id());
+        wincode::serialize_into(&mut account.data[..], value).unwrap();
+        account
+    }
 
     #[test]
     fn test_parse_sysvars() {
         let hash = Hash::new_from_array([1; 32]);
 
-        let clock_sysvar = create_account_for_test(&Clock::default());
+        let clock_sysvar = create_account_for_test(&Clock::default(), solana_clock::SIZE);
         assert_eq!(
             parse_sysvar(&clock_sysvar.data, &sysvar::clock::id()).unwrap(),
             SysvarAccountType::Clock(UiClock::default()),
@@ -294,7 +299,8 @@ mod test {
             first_normal_epoch: 1,
             first_normal_slot: 12,
         };
-        let epoch_schedule_sysvar = create_account_for_test(&epoch_schedule);
+        let epoch_schedule_sysvar =
+            create_account_for_test(&epoch_schedule, solana_epoch_schedule::SIZE);
         assert_eq!(
             parse_sysvar(&epoch_schedule_sysvar.data, &sysvar::epoch_schedule::id()).unwrap(),
             SysvarAccountType::EpochSchedule(epoch_schedule),
@@ -302,7 +308,7 @@ mod test {
 
         #[allow(deprecated)]
         {
-            let fees_sysvar = create_account_for_test(&Fees::default());
+            let fees_sysvar = create_account_for_test(&Fees::default(), solana_sysvar::fees::SIZE);
             assert_eq!(
                 parse_sysvar(&fees_sysvar.data, &sysvar::fees::id()).unwrap(),
                 SysvarAccountType::Fees(UiFees::default()),
@@ -310,7 +316,10 @@ mod test {
 
             let recent_blockhashes: RecentBlockhashes =
                 vec![IterItem(0, &hash, 10)].into_iter().collect();
-            let recent_blockhashes_sysvar = create_account_for_test(&recent_blockhashes);
+            let recent_blockhashes_sysvar = create_account_for_test(
+                &recent_blockhashes,
+                solana_sysvar::recent_blockhashes::SIZE,
+            );
             assert_eq!(
                 parse_sysvar(
                     &recent_blockhashes_sysvar.data,
@@ -328,13 +337,14 @@ mod test {
             lamports_per_byte: 10,
             ..Default::default()
         };
-        let rent_sysvar = create_account_for_test(&rent);
+        let rent_sysvar = create_account_for_test(&rent, solana_rent::SIZE);
         assert_eq!(
             parse_sysvar(&rent_sysvar.data, &sysvar::rent::id()).unwrap(),
             SysvarAccountType::Rent(rent.into()),
         );
 
-        let rewards_sysvar = create_account_for_test(&Rewards::default());
+        let rewards_sysvar =
+            create_account_for_test(&Rewards::default(), solana_sysvar::rewards::SIZE);
         assert_eq!(
             parse_sysvar(&rewards_sysvar.data, &sysvar::rewards::id()).unwrap(),
             SysvarAccountType::Rewards(UiRewards::default()),
@@ -342,7 +352,7 @@ mod test {
 
         let mut slot_hashes = SlotHashes::default();
         slot_hashes.add(1, hash);
-        let slot_hashes_sysvar = create_account_for_test(&slot_hashes);
+        let slot_hashes_sysvar = create_account_for_test(&slot_hashes, solana_slot_hashes::SIZE);
         assert_eq!(
             parse_sysvar(&slot_hashes_sysvar.data, &sysvar::slot_hashes::id()).unwrap(),
             SysvarAccountType::SlotHashes(vec![UiSlotHashEntry {
@@ -353,7 +363,7 @@ mod test {
 
         let mut slot_history = SlotHistory::default();
         slot_history.add(42);
-        let slot_history_sysvar = create_account_for_test(&slot_history);
+        let slot_history_sysvar = create_account_for_test(&slot_history, solana_slot_history::SIZE);
         assert_eq!(
             parse_sysvar(&slot_history_sysvar.data, &sysvar::slot_history::id()).unwrap(),
             SysvarAccountType::SlotHistory(UiSlotHistory {
@@ -370,7 +380,7 @@ mod test {
         };
         stake_history.add(1, stake_history_entry.clone());
         let stake_history_sysvar =
-            Account::new_data_with_space(1, &stake_history, SIZE, &sysvar::id()).unwrap();
+            create_account_for_test(&stake_history, solana_stake_history::SIZE);
         assert_eq!(
             parse_sysvar(&stake_history_sysvar.data, &sysvar::stake_history::id()).unwrap(),
             SysvarAccountType::StakeHistory(vec![UiStakeHistoryEntry {
@@ -388,7 +398,8 @@ mod test {
         let last_restart_slot = LastRestartSlot {
             last_restart_slot: 1282,
         };
-        let last_restart_slot_account = create_account_for_test(&last_restart_slot);
+        let last_restart_slot_account =
+            create_account_for_test(&last_restart_slot, solana_sysvar::last_restart_slot::SIZE);
         assert_eq!(
             parse_sysvar(
                 &last_restart_slot_account.data,
@@ -407,7 +418,8 @@ mod test {
             active: true,
             ..EpochRewards::default()
         };
-        let epoch_rewards_sysvar = create_account_for_test(&epoch_rewards);
+        let epoch_rewards_sysvar =
+            create_account_for_test(&epoch_rewards, solana_sysvar::epoch_rewards::SIZE);
         assert_eq!(
             parse_sysvar(&epoch_rewards_sysvar.data, &sysvar::epoch_rewards::id()).unwrap(),
             SysvarAccountType::EpochRewards(epoch_rewards.into()),

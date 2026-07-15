@@ -2,7 +2,7 @@
 
 #[cfg(feature = "conformance")]
 use {
-    crate::conformance::{account_state::account_to_proto, err::instruction_error_code},
+    crate::conformance::{account_state::account_to_proto, err::serialized_error_code},
     protosol::protos::InstrEffects as ProtoInstrEffects,
 };
 use {solana_account::Account, solana_instruction::error::InstructionError, solana_pubkey::Pubkey};
@@ -42,7 +42,7 @@ impl From<InstrEffects> for ProtoInstrEffects {
         Self {
             result: result
                 .as_ref()
-                .map(instruction_error_code)
+                .map(|error| serialized_error_code(error) as i32)
                 .unwrap_or_default(),
             custom_err: custom_err.unwrap_or_default(),
             modified_accounts: resulting_accounts

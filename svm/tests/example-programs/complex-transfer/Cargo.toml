@@ -1,0 +1,11 @@
+[package]
+name = "complex-transfer-program"
+version = "4.3.0-alpha.1"
+edition = "2021"
+
+[dependencies]
+
+[lib]
+crate-type = ["cdylib", "rlib"]
+
+[workspace]

@@ -2,7 +2,7 @@
 
 use {
     crate::conformance::{
-        callback::DefaultCallback,
+        callback::ConformanceCallback,
         err::{UnpackedResult, unpack_stable_result},
         instr::context::InstrContext,
         programs::{fill_program_cache_from_accounts, new_program_cache_with_builtins},
@@ -92,7 +92,7 @@ pub fn execute_vm_syscall(input: ProtoSyscallContext) -> ProtoSyscallEffects {
         ..
     } = prepare_invoke_context_fields(
         &instr_context,
-        &DefaultCallback,
+        &ConformanceCallback,
         &loader_key,
         &sysvar_cache,
         &compute_budget,

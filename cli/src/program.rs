@@ -3165,54 +3165,41 @@ async fn send_deploy_messages(
             let cache = ConnectionCache::new_quic_for_tests("connection_cache_cli_program_quic", 1);
             #[cfg(not(feature = "dev-context-only-utils"))]
             let cache = ConnectionCache::new_quic("connection_cache_cli_program_quic", 1);
+            let ConnectionCache::Quic(cache) = cache else {
+                unreachable!("by construction")
+            };
             cache
         };
-        let transaction_errors = match connection_cache {
-            ConnectionCache::Udp(cache) => {
-                solana_tpu_client::nonblocking::tpu_client::TpuClient::new_with_connection_cache(
+        let transaction_errors = {
+            // `solana_client` type currently required by `send_and_confirm_transactions_in_parallel_v2`
+            let tpu_client_fut =
+                solana_client::nonblocking::tpu_client::TpuClient::new_with_connection_cache(
                     rpc_client.clone(),
-                    &config.websocket_url,
+                    config.websocket_url.as_str(),
                     TpuClientConfig::default(),
-                    cache,
+                    connection_cache,
+                );
+            let tpu_client = if use_rpc {
+                None
+            } else {
+                Some(
+                    tpu_client_fut
+                        .await
+                        .expect("Should return a valid tpu client"),
                 )
-                .await?
-                .send_and_confirm_messages_with_spinner(
-                    &write_messages,
-                    &[fee_payer_signer, write_signer],
-                )
-                .await
-            }
-            ConnectionCache::Quic(cache) => {
-                // `solana_client` type currently required by `send_and_confirm_transactions_in_parallel_v2`
-                let tpu_client_fut =
-                    solana_client::nonblocking::tpu_client::TpuClient::new_with_connection_cache(
-                        rpc_client.clone(),
-                        config.websocket_url.as_str(),
-                        TpuClientConfig::default(),
-                        cache,
-                    );
-                let tpu_client = if use_rpc {
-                    None
-                } else {
-                    Some(
-                        tpu_client_fut
-                            .await
-                            .expect("Should return a valid tpu client"),
-                    )
-                };
-                send_and_confirm_transactions_in_parallel_v2(
-                    rpc_client.clone(),
-                    tpu_client,
-                    &write_messages,
-                    &[fee_payer_signer, write_signer],
-                    SendAndConfirmConfigV2 {
-                        resign_txs_count: Some(max_sign_attempts),
-                        with_spinner: true,
-                        rpc_send_transaction_config: config.send_transaction_config,
-                    },
-                )
-                .await
-            }
+            };
+            send_and_confirm_transactions_in_parallel_v2(
+                rpc_client.clone(),
+                tpu_client,
+                &write_messages,
+                &[fee_payer_signer, write_signer],
+                SendAndConfirmConfigV2 {
+                    resign_txs_count: Some(max_sign_attempts),
+                    with_spinner: true,
+                    rpc_send_transaction_config: config.send_transaction_config,
+                },
+            )
+            .await
         }
         .map_err(|err| format!("Data writes to account failed: {err}"))?
         .into_iter()

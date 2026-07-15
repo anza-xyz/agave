@@ -44,7 +44,7 @@ use {
         ops::Index,
         sync::{
             LazyLock, Mutex, RwLock,
-            atomic::{AtomicI64, AtomicUsize, Ordering},
+            atomic::{AtomicUsize, Ordering},
         },
         time::Duration,
     },
@@ -342,17 +342,15 @@ impl CrdsGossipPull {
 
     /// Create gossip responses to pull requests
     pub(crate) fn generate_pull_responses(
-        thread_pool: &ThreadPool,
         crds: &RwLock<Crds>,
         requests: &[PullRequest],
         output_size_limit: usize, // Limit number of crds values returned.
         now: u64,
-        should_retain_crds_value: impl Fn(&CrdsValue) -> bool + Sync,
-        try_consume_scan_budget: impl Fn(&PullRequest, usize) -> bool + Sync,
+        should_retain_crds_value: impl Fn(&CrdsValue) -> bool,
+        try_consume_scan_budget: impl Fn(&PullRequest, usize) -> bool,
         stats: &GossipStats,
     ) -> Vec<Vec<CrdsValue>> {
         Self::filter_crds_values(
-            thread_pool,
             crds,
             requests,
             output_size_limit,
@@ -496,16 +494,15 @@ impl CrdsGossipPull {
 
     /// Filter values that fail the bloom filter up to `max_bytes`.
     fn filter_crds_values(
-        thread_pool: &ThreadPool,
         crds: &RwLock<Crds>,
         requests: &[PullRequest],
-        output_size_limit: usize, // Limit number of crds values returned.
+        mut output_size_limit: usize, // Limit number of crds values returned.
         now: u64,
         // Predicate returning false if the CRDS value should be discarded.
-        should_retain_crds_value: impl Fn(&CrdsValue) -> bool + Sync,
+        should_retain_crds_value: impl Fn(&CrdsValue) -> bool,
         // False drops the request before scanning CRDS.
         // Implementations may consume caller-owned scan budget.
-        try_consume_scan_budget: impl Fn(&PullRequest, usize) -> bool + Sync,
+        try_consume_scan_budget: impl Fn(&PullRequest, usize) -> bool,
         stats: &GossipStats,
     ) -> Vec<Vec<CrdsValue>> {
         let msg_timeout = CRDS_GOSSIP_PULL_CRDS_TIMEOUT_MS;
@@ -513,20 +510,18 @@ impl CrdsGossipPull {
         //skip filters from callers that are too old
         let caller_wallclock_window =
             now.saturating_sub(msg_timeout)..now.saturating_add(msg_timeout);
-        let dropped_requests = AtomicUsize::default();
-        let total_skipped = AtomicUsize::default();
-        let output_size_limit = output_size_limit.try_into().unwrap_or(i64::MAX);
-        let output_size_limit = AtomicI64::new(output_size_limit);
+        let mut dropped_requests = 0usize;
+        let mut total_skipped = 0usize;
         let crds = crds.read().unwrap();
         let crds_len = crds.len();
         let apply_filter = |request: &PullRequest| {
-            if output_size_limit.load(Ordering::Relaxed) <= 0 {
+            if output_size_limit == 0 {
                 return Vec::default();
             }
             let filter = &request.filter;
             let caller_wallclock = request.wallclock;
             if !caller_wallclock_window.contains(&caller_wallclock) {
-                dropped_requests.fetch_add(1, Ordering::Relaxed);
+                dropped_requests += 1;
                 return Vec::default();
             }
             // Charge only requests that passed cheaper pre-scan checks.
@@ -538,7 +533,7 @@ impl CrdsGossipPull {
                 debug_assert!(filter.test_mask(entry.value.hash()));
                 // Skip values that are too new.
                 if entry.value.wallclock() > caller_wallclock {
-                    total_skipped.fetch_add(1, Ordering::Relaxed);
+                    total_skipped += 1;
                     false
                 } else {
                     !filter.filter_contains(entry.value.hash())
@@ -549,18 +544,18 @@ impl CrdsGossipPull {
                 .filter_bitmask(filter.mask, filter.mask_bits)
                 .filter(pred)
                 .map(|entry| entry.value.clone())
-                .take(output_size_limit.load(Ordering::Relaxed).max(0) as usize)
+                .take(output_size_limit)
                 .collect();
-            output_size_limit.fetch_sub(out.len() as i64, Ordering::Relaxed);
+            output_size_limit = output_size_limit.saturating_sub(out.len());
             out
         };
-        let ret: Vec<_> = thread_pool.install(|| requests.par_iter().map(apply_filter).collect());
+        let ret: Vec<_> = requests.iter().map(apply_filter).collect();
         stats
             .filter_crds_values_dropped_requests
-            .add_relaxed(dropped_requests.into_inner() as u64);
+            .add_relaxed(dropped_requests as u64);
         stats
             .filter_crds_values_dropped_values
-            .add_relaxed(total_skipped.into_inner() as u64);
+            .add_relaxed(total_skipped as u64);
         ret
     }
 
@@ -1108,7 +1103,6 @@ pub(crate) mod tests {
 
     #[test]
     fn test_generate_pull_responses() {
-        let thread_pool = ThreadPoolBuilder::new().build().unwrap();
         let now = timestamp();
         let new_wallclock = now + CRDS_GOSSIP_PULL_CRDS_TIMEOUT_MS;
         let new = CrdsValue::new_unsigned(CrdsData::from(ContactInfo::new_localhost(
@@ -1135,7 +1129,6 @@ pub(crate) mod tests {
             make_request(new_wallclock + 1), // recent enough to see `new`
         ];
         let rsp = CrdsGossipPull::generate_pull_responses(
-            &thread_pool,
             &dest_crds,
             &requests,
             usize::MAX,

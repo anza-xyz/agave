@@ -36,6 +36,7 @@ conformance = [
     "solana-pubkey/default",
 ]
 dev-context-only-utils = [
+    "dep:bincode",
     "dep:qualifier_attr",
     "dep:solana-bpf-loader-program",
     "dep:solana-compute-budget",
@@ -130,6 +131,7 @@ libsecp256k1 = { workspace = true }
 openssl = { workspace = true }
 rand = { workspace = true }
 shuttle = { workspace = true }
+solana-account = { workspace = true, features = ["dev-context-only-utils"] }
 solana-bpf-loader-program = { path = "../programs/bpf_loader", default-features = false, features = ["agave-unstable-api"] }
 solana-clock = { workspace = true }
 solana-compute-budget = { path = "../compute-budget", features = ["agave-unstable-api"] }

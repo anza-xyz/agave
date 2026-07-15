@@ -2,6 +2,7 @@
 
 #[cfg(feature = "conformance")]
 pub mod cost;
+pub mod txn;
 
 #[cfg(feature = "conformance")]
 use {

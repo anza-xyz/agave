@@ -57,6 +57,7 @@ solana-transaction-context = { workspace = true, features = ["bincode"] }
 assert_matches = { workspace = true }
 criterion = { workspace = true }
 rand = { workspace = true }
+solana-account = { workspace = true, features = ["dev-context-only-utils"] }
 solana-bpf-loader-program = { path = ".", features = ["agave-unstable-api", "svm-internal"] }
 solana-epoch-rewards = { workspace = true }
 solana-epoch-schedule = { workspace = true }

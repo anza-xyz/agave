@@ -1,6 +1,6 @@
 //! Shared setup helpers for the execution harnesses.
 
-#[cfg(feature = "conformance")]
+#[cfg(any(feature = "conformance", feature = "dev-context-only-utils"))]
 use solana_account::ReadableAccount;
 use {
     crate::conformance::instr::context::InstrContext,
@@ -91,7 +91,6 @@ pub(crate) fn compute_budget(feature_set: &SVMFeatureSet) -> ComputeBudget {
 /// The loader that owns the program account in `accounts`, used as the program
 /// account's owner when compiling the transaction. `None` if the program
 /// account isn't present.
-#[cfg(feature = "conformance")]
 pub(crate) fn program_loader_key(accounts: &[(Pubkey, Account)], program_id: &Pubkey) -> Pubkey {
     accounts
         .iter()
@@ -156,11 +155,31 @@ pub(crate) fn recent_blockhash(sysvar_cache: &SysvarCache) -> (Hash, u64) {
 pub(crate) fn sysvar_cache_from_accounts(accounts: &[(Pubkey, Account)]) -> SysvarCache {
     let mut cache = SysvarCache::default();
     cache.fill_missing_entries(|pubkey, set_sysvar| {
-        if let Some(account) = accounts.iter().find(|(key, _)| key == pubkey)
-            && account.1.lamports() > 0
-        {
-            set_sysvar(account.1.data());
+        if let Some(data) = sysvar_account_data(accounts, pubkey) {
+            set_sysvar(data);
         }
     });
     cache
+}
+
+/// Read and bincode-decode a sysvar account from the input set, ignoring
+/// zero-lamport (nonexistent) entries.
+#[cfg(any(feature = "conformance", feature = "dev-context-only-utils"))]
+pub fn sysvar_from_accounts<T, A>(accounts: &[(Pubkey, A)], id: &Pubkey) -> T
+where
+    T: serde::de::DeserializeOwned,
+    A: ReadableAccount,
+{
+    bincode::deserialize(sysvar_account_data(accounts, id).unwrap()).unwrap()
+}
+
+#[cfg(any(feature = "conformance", feature = "dev-context-only-utils"))]
+fn sysvar_account_data<'a, A>(accounts: &'a [(Pubkey, A)], id: &Pubkey) -> Option<&'a [u8]>
+where
+    A: ReadableAccount,
+{
+    accounts
+        .iter()
+        .find(|(address, account)| address == id && account.lamports() > 0)
+        .map(|(_, account)| account.data())
 }

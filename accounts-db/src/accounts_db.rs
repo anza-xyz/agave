@@ -1368,9 +1368,9 @@ impl AccountsDb {
     /// rooted and flushed inside this window — impossible because rooting is driven by the same
     /// ReplayStage thread that purges unrooted slots, and clean runs serially with flush on the
     /// ABS thread.
-    fn purge_secondary_indexes_for_dead_keys(
+    fn purge_secondary_indexes_for_dead_keys<'a>(
         &self,
-        removed_keys: &PubkeysRemovedFromAccountsIndex,
+        removed_keys: impl IntoIterator<Item = &'a Pubkey>,
     ) {
         if self.account_indexes.is_empty() {
             return;
@@ -4233,7 +4233,7 @@ impl AccountsDb {
         for remove_slot in removed_slots {
             // Remove the storage entries and collect some metrics
             if let Some(store) = self.storage.remove(remove_slot, false) {
-                total_removed_stored_bytes += store.accounts.capacity();
+                total_removed_stored_bytes += store.written_bytes();
                 all_removed_slot_storages.push(store);
             }
         }
@@ -4800,7 +4800,7 @@ impl AccountsDb {
             oldest_slot = std::cmp::min(oldest_slot, slot);
 
             total_alive_bytes += store.alive_bytes();
-            total_bytes += store.capacity();
+            total_bytes += store.written_bytes();
         }
         info!(
             "total_stores: {total_count}, newest_slot: {newest_slot}, oldest_slot: {oldest_slot}"
@@ -5684,9 +5684,7 @@ impl AccountsDb {
         }
         let tombstone_infos =
             self.write_accounts_to_storage(tombstones.target_slot(), new_storage, &tombstones);
-        let tombstone_offsets: Vec<_> = tombstone_infos.iter().map(|info| info.offset()).collect();
-        new_storage.batch_insert_tombstone_offsets(&tombstone_offsets);
-        tombstone_offsets.len()
+        new_storage.batch_insert_tombstone_offsets(tombstone_infos.iter().map(|info| info.offset()))
     }
 
     /// Stores accounts in the storage and updates the index.
@@ -5854,9 +5852,8 @@ impl AccountsDb {
             .write_accounts(accounts_and_meta_to_store)
             .unwrap_or_else(|| {
                 panic!(
-                    "failed to write accounts to storage: slot! {slot}, id: {store_id}, capacity: \
-                     {} bytes, len: {} bytes, num accounts: {num_accounts}",
-                    storage.accounts.capacity(),
+                    "failed to write accounts to storage: slot! {slot}, id: {store_id}, len: {} \
+                     bytes, num accounts: {num_accounts}",
                     storage.accounts.len(),
                 )
             });
@@ -5864,9 +5861,8 @@ impl AccountsDb {
         assert_eq!(
             stored_accounts_info.offsets.len(),
             num_accounts,
-            "failed to write all accounts to storage! {slot}, id: {store_id}, capacity: {} bytes, \
-             len: {} bytes, num accounts written: {}, num accounts total: {num_accounts}",
-            storage.accounts.capacity(),
+            "failed to write all accounts to storage! {slot}, id: {store_id}, len: {} bytes, num \
+             accounts written: {}, num accounts total: {num_accounts}",
             storage.accounts.len(),
             stored_accounts_info.offsets.len(),
         );
@@ -6751,12 +6747,11 @@ impl AccountsDb {
         for slot in &slots {
             let entry = self.storage.get_slot_storage_entry(*slot).unwrap();
             info!(
-                "  slot: {} id: {} count: {} len: {} capacity: {}",
+                "  slot: {} id: {} count: {} len: {}",
                 slot,
                 entry.id(),
                 entry.count(),
                 entry.accounts.len(),
-                entry.accounts.capacity(),
             );
         }
     }

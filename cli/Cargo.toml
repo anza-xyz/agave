@@ -58,7 +58,7 @@ solana-clap-utils = { workspace = true }
 solana-cli-config = { workspace = true }
 solana-cli-output = { workspace = true }
 solana-client = { workspace = true }
-solana-clock = { workspace = true }
+solana-clock = { workspace = true, features = ["wincode"] }
 solana-cluster-type = { workspace = true }
 solana-commitment-config = { workspace = true }
 solana-compute-budget-interface = { workspace = true, features = ["borsh"] }
@@ -78,7 +78,7 @@ solana-program-runtime = { workspace = true }
 solana-pubkey = { workspace = true }
 solana-pubsub-client = { workspace = true }
 solana-remote-wallet = { workspace = true, features = ["keystone"] }
-solana-rent = { workspace = true }
+solana-rent = { workspace = true, features = ["wincode"] }
 solana-rpc-client = { workspace = true, features = ["default"] }
 solana-rpc-client-api = { workspace = true }
 solana-rpc-client-nonce-utils = { workspace = true, features = ["clap"] }
@@ -88,8 +88,8 @@ solana-signature = { workspace = true }
 solana-signer = { workspace = true }
 solana-signer-store = { workspace = true }
 solana-slot-history = { workspace = true, features = ["wincode"] }
-solana-stake-history = { workspace = true }
-solana-stake-interface = { workspace = true }
+solana-stake-history = { workspace = true, features = ["wincode"] }
+solana-stake-interface = { workspace = true, features = ["wincode"] }
 solana-syscalls = { workspace = true }
 solana-system-interface = { workspace = true, features = ["bincode"] }
 solana-tpu-client = { workspace = true, features = ["default"] }
@@ -110,6 +110,7 @@ solana-faucet = { path = "../faucet", features = ["agave-unstable-api", "dev-con
 solana-fee-calculator = { workspace = true }
 solana-fee-structure = { workspace = true }
 solana-net-utils = { path = "../net-utils", features = ["agave-unstable-api"] }
+solana-nonce = { workspace = true, features = ["wincode"] }
 solana-nonce-account = { workspace = true }
 solana-presigner = { workspace = true }
 solana-rpc = { path = "../rpc", features = ["agave-unstable-api"] }

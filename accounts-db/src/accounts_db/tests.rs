@@ -1538,7 +1538,7 @@ fn test_shrink_collect_carries_forward_existing_tombstones() {
             }
         })
         .unwrap();
-    storage.batch_insert_tombstone_offsets(&[tombstone_offset.unwrap()]);
+    storage.batch_insert_tombstone_offsets([tombstone_offset.unwrap()]);
     assert_eq!(storage.num_zero_lamport_single_ref_accounts(), 1);
 
     // Newer than the latest full snapshot: the tombstone must be carried forward, not dropped and
@@ -1620,7 +1620,7 @@ fn test_fully_tombstoned_storage_reclaim() {
             tombstone_offsets.push(offset);
         })
         .unwrap();
-    storage.batch_insert_tombstone_offsets(&tombstone_offsets);
+    storage.batch_insert_tombstone_offsets(tombstone_offsets);
 
     // The storage reads as entirely tombstones / fully removable.
     assert!(storage.has_only_tombstones());
@@ -3248,13 +3248,6 @@ fn test_delete_dependencies() {
                 .unwrap_or(true)
         );
     }
-}
-
-#[test]
-fn test_account_balance_for_capitalization_sysvar() {
-    let normal_sysvar =
-        solana_account::create_account_for_test(&solana_slot_history::SlotHistory::default());
-    assert_eq!(normal_sysvar.lamports(), 1);
 }
 
 #[test]

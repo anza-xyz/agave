@@ -7,7 +7,6 @@ use {
     clap::{App, AppSettings, Arg, ArgMatches, SubCommand, value_t, value_t_or_exit},
     console::style,
     serde::{Deserialize, Serialize},
-    solana_account::{from_account, state_traits::StateMut},
     solana_clap_utils::{input_parsers::*, input_validators::*},
     solana_cli_output::{
         cli_clientid::CliClientId,
@@ -910,7 +909,7 @@ pub async fn process_cluster_date(rpc_client: &RpcClient, config: &CliConfig<'_>
         .get_account_with_commitment(&sysvar::clock::id(), config.commitment)
         .await?;
     if let Some(clock_account) = result.value {
-        let clock: Clock = from_account(&clock_account).ok_or_else(|| {
+        let clock: Clock = wincode::deserialize(&clock_account.data).map_err(|_| {
             CliError::RpcRequestError("Failed to deserialize clock sysvar".to_string())
         })?;
         let block_time = CliBlockTime {
@@ -1703,12 +1702,11 @@ pub async fn process_show_stakes(
     let stake_history_account = rpc_client.get_account(&stake_history::id()).await?;
     let clock_account = rpc_client.get_account(&sysvar::clock::id()).await?;
     let rent_account = rpc_client.get_account(&sysvar::rent::id()).await?;
-    let clock: Clock = from_account(&clock_account).ok_or_else(|| {
-        CliError::RpcRequestError("Failed to deserialize clock sysvar".to_string())
-    })?;
-    let rent: Rent = rent_account.deserialize_data()?;
+    let clock: Clock = wincode::deserialize(&clock_account.data)
+        .map_err(|_| CliError::RpcRequestError("Failed to deserialize clock sysvar".to_string()))?;
+    let rent: Rent = wincode::deserialize(&rent_account.data)?;
     let stake_history: StakeHistory =
-        bincode::deserialize(&stake_history_account.data).map_err(|_| {
+        wincode::deserialize(&stake_history_account.data).map_err(|_| {
             CliError::RpcRequestError("Failed to deserialize stake history".to_string())
         })?;
     let new_rate_activation_epoch = get_feature_activation_epoch(
@@ -1731,7 +1729,7 @@ pub async fn process_show_stakes(
             "It should be impossible at this point for the account data not to be decodable. \
              Ensure that the account was fetched using a binary encoding.",
         );
-        if let Ok(stake_state) = stake_account.state() {
+        if let Ok(stake_state) = wincode::deserialize::<StakeStateV2>(&stake_account.data) {
             let rent_exempt_balance = rent.minimum_balance(stake_account.data.len()).max(1);
 
             match stake_state {
@@ -2168,7 +2166,7 @@ pub async fn process_calculate_rent(
         );
     }
     let rent_account = rpc_client.get_account(&sysvar::rent::id()).await?;
-    let rent: Rent = rent_account.deserialize_data()?;
+    let rent: Rent = wincode::deserialize(&rent_account.data)?;
     let rent_exempt_minimum_lamports = rent.minimum_balance(data_length);
     let cli_rent_calculation = CliRentCalculation {
         lamports_per_byte_year: 0,
