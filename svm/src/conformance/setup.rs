@@ -120,6 +120,7 @@ pub(crate) fn compile_transaction_context(
         compute_budget.max_instruction_stack_depth,
         compute_budget.max_instruction_trace_length,
         sanitized_message.num_instructions(),
+        true,
     );
     (sanitized_message, transaction_context)
 }

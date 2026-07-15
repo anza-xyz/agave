@@ -1064,6 +1064,7 @@ impl<FG: ForkGraph> TransactionBatchProcessor<FG> {
             compute_budget.max_instruction_stack_depth,
             compute_budget.max_instruction_trace_length,
             tx.num_instructions(),
+            !config.drop_noop_transactions,
         );
 
         let relax_post_exec_min_balance_check =
