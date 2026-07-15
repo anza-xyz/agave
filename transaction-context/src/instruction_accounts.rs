@@ -259,11 +259,11 @@ impl BorrowedInstructionAccount<'_, '_> {
     pub fn set_state<T: serde::Serialize>(&mut self, state: &T) -> Result<(), InstructionError> {
         let data = self.get_data_mut()?;
         let serialized_size =
-            bincode::serialized_size(state).map_err(|_| InstructionError::GenericError)?;
+            bincode::serialized_size(state).map_err(|_| InstructionError::InvalidAccountData)?;
         if serialized_size > data.len() as u64 {
             return Err(InstructionError::AccountDataTooSmall);
         }
-        bincode::serialize_into(&mut *data, state).map_err(|_| InstructionError::GenericError)?;
+        bincode::serialize_into(&mut *data, state).map_err(|_| InstructionError::InvalidAccountData)?;
         Ok(())
     }
 
