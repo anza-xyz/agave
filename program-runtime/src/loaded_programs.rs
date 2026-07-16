@@ -909,13 +909,11 @@ impl<FG: ForkGraph> ProgramCache<FG> {
                     .find(|entry| entry == &remove_entry)
                     .expect("Program entry not found");
 
-                // Certain entry types cannot be unloaded, such as tombstones, or already unloaded entries.
-                // For such entries, `to_unloaded()` will return None.
-                // These entry types do not occupy much memory.
-                if let Some(unloaded) = candidate
-                    .program
-                    .get_environment()
-                    .and_then(|env| candidate.to_unloaded(ProgramRuntimeEnvironment::clone(env)))
+                // Only loaded entries shall be unloaded by eviction.
+                if let ProgramCacheEntryType::Loaded(_) = candidate.program
+                    && let Some(unloaded) = candidate.program.get_environment().and_then(|env| {
+                        candidate.to_unloaded(ProgramRuntimeEnvironment::clone(env))
+                    })
                 {
                     if candidate.stats.uses.load(Ordering::Relaxed) == 1 {
                         self.stats.one_hit_wonders.fetch_add(1, Ordering::Relaxed);
@@ -2285,9 +2283,7 @@ pub(crate) mod tests {
         let mut cache = ProgramCache::<TestForkGraph>::new(0);
         let env = get_mock_program_runtime_environment();
         for program_cache_entry_type in [
-            ProgramCacheEntryType::FailedVerification(get_mock_program_runtime_environment()),
             ProgramCacheEntryType::Closed,
-            ProgramCacheEntryType::Unloaded(get_mock_program_runtime_environment()),
             ProgramCacheEntryType::Builtin(BuiltinProgram::new_mock()),
         ] {
             let entry = Arc::new(ProgramCacheEntry {

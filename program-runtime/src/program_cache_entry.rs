@@ -287,11 +287,11 @@ impl ProgramCacheEntry {
 
     pub fn to_unloaded(&self, environment: ProgramRuntimeEnvironment) -> Option<Self> {
         match &self.program {
-            ProgramCacheEntryType::Loaded(_) => {}
-            ProgramCacheEntryType::FailedVerification(_)
-            | ProgramCacheEntryType::Closed
+            ProgramCacheEntryType::Loaded(_)
+            | ProgramCacheEntryType::FailedVerification(_)
+            | ProgramCacheEntryType::Unloaded(_) => {}
+            ProgramCacheEntryType::Closed
             | ProgramCacheEntryType::DelayVisibility
-            | ProgramCacheEntryType::Unloaded(_)
             | ProgramCacheEntryType::Builtin(_) => {
                 return None;
             }
