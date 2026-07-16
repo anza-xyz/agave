@@ -175,6 +175,7 @@ dependencies = [
  "agave-snapshots",
  "agave-votor",
  "assert_cmd",
+ "bincode",
  "chrono",
  "clap",
  "crossbeam-channel",
