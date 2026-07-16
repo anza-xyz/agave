@@ -11,6 +11,8 @@ edition = { workspace = true }
 
 [package.metadata.docs.rs]
 targets = ["x86_64-unknown-linux-gnu"]
+all-features = true
+rustdoc-args = ["--cfg=docsrs"]
 
 [features]
 agave-unstable-api = []
@@ -31,7 +33,7 @@ solana-address-lookup-table-interface = { workspace = true, features = [
 ] }
 solana-clock = { workspace = true }
 solana-config-interface = { workspace = true, features = ["bincode"] }
-solana-epoch-schedule = { workspace = true }
+solana-epoch-schedule = { workspace = true, features = ["serde"] }
 solana-fee-calculator = { workspace = true }
 solana-instruction = { workspace = true }
 solana-loader-v3-interface = { workspace = true, features = ["serde"] }
@@ -41,22 +43,24 @@ solana-program-pack = { workspace = true }
 solana-pubkey = { workspace = true }
 solana-rent = { workspace = true }
 solana-sdk-ids = { workspace = true }
-solana-slot-hashes = { workspace = true }
-solana-slot-history = { workspace = true }
-solana-stake-interface = { workspace = true, features = ["bincode", "sysvar"] }
-solana-sysvar = { workspace = true }
+solana-slot-hashes = { workspace = true, features = ["wincode"] }
+solana-slot-history = { workspace = true, features = ["wincode"] }
+solana-stake-history = { workspace = true }
+solana-stake-interface = { workspace = true, features = ["bincode"] }
+solana-sysvar = { workspace = true, features = ["wincode"] }
 solana-vote-interface = { workspace = true, features = ["bincode"] }
+solana-zk-sdk-pod = { workspace = true }
 spl-generic-token = { workspace = true }
 spl-token-2022-interface = { workspace = true }
 spl-token-group-interface = { workspace = true }
 spl-token-interface = { workspace = true }
 spl-token-metadata-interface = { workspace = true }
 thiserror = { workspace = true }
+wincode = { workspace = true }
 zstd = { workspace = true }
 
 [dev-dependencies]
 assert_matches = { workspace = true }
-solana-account = { workspace = true, features = ["bincode"] }
 solana-hash = { workspace = true }
 solana-pubkey = { workspace = true, features = ["rand"] }
 spl-pod = { workspace = true }

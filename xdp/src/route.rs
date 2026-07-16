@@ -1,12 +1,17 @@
 use {
-    crate::netlink::{
-        GreTunnelInfo, InterfaceInfo, MacAddress, NeighborEntry, RouteEntry,
-        netlink_get_interfaces, netlink_get_neighbors, netlink_get_routes,
+    crate::{
+        lpm::Ipv4Lpm,
+        netlink::{
+            GreTunnelInfo, InterfaceInfo, MacAddress, NeighborEntry, RouteEntry,
+            netlink_get_interfaces, netlink_get_neighbors, netlink_get_routes,
+        },
     },
-    libc::{AF_INET, AF_INET6},
+    libc::{AF_INET, RT_TABLE_DEFAULT, RT_TABLE_LOCAL, RT_TABLE_MAIN},
+    log::warn,
     std::{
-        io,
-        net::{IpAddr, Ipv4Addr, Ipv6Addr},
+        cmp::Ordering,
+        fmt, io,
+        net::{IpAddr, Ipv4Addr},
     },
     thiserror::Error,
 };
@@ -29,8 +34,26 @@ pub enum RouteError {
 #[derive(Debug, Clone)]
 pub struct GreRouteInfo {
     pub if_index: u32,
+    pub mtu: u32,
+    pub underlay_mtu: u32,
     pub tunnel_info: GreTunnelInfo,
     pub mac_addr: MacAddress,
+}
+
+/// VLAN encapsulation directive carried on a resolved NextHop.
+///
+/// When present, the tx loop prepends an 802.1Q tag to the Ethernet header before the inner IP
+/// header. The MAC and IP fields on the NextHop are still the real packet destinations: VLAN
+/// encapsulation changes the L2 framing only. XDP cannot transmit on a VLAN sub-interface
+/// directly (it is bound to the physical parent), so the tag has to be written in userspace.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct VlanRouteInfo {
+    /// if_index of the VLAN sub-interface the route resolved to.
+    pub if_index: u32,
+    pub vid: u16,
+    /// Priority Code Point. Always 0 for now, matching the kernel's default egress QoS mapping;
+    /// a configurable mapping can be added later if needed.
+    pub pcp: u8,
 }
 
 #[derive(Debug, Clone)]
@@ -38,149 +61,133 @@ pub struct NextHop {
     pub mac_addr: Option<MacAddress>,
     pub ip_addr: IpAddr,
     pub if_index: u32,
+    pub mtu: u32,
     pub preferred_src_ip: Option<Ipv4Addr>,
     pub gre: Option<GreRouteInfo>,
+    pub vlan: Option<VlanRouteInfo>,
 }
 
-fn lookup_route<'a, I>(routes: I, dest: IpAddr) -> Option<&'a RouteEntry>
-where
-    I: Iterator<Item = &'a RouteEntry>,
-{
-    let mut best_match = None;
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum RouteTable {
+    Default,
+    Local,
+    Main,
+    Other(u32),
+}
 
-    let family = match dest {
-        IpAddr::V4(_) => AF_INET as u8,
-        IpAddr::V6(_) => AF_INET6 as u8,
-    };
-
-    for route in routes.filter(|r| r.family == family) {
-        match (dest, route.destination) {
-            // this is the default route
-            (_, None) => {
-                if best_match.is_none() {
-                    best_match = Some((route, 0));
-                }
-            }
-
-            (IpAddr::V4(dest_addr), Some(IpAddr::V4(route_addr))) => {
-                let prefix_len = route.dst_len;
-                if !is_ipv4_match(dest_addr, route_addr, prefix_len) {
-                    continue;
-                }
-
-                if best_match.is_none() || prefix_len > best_match.unwrap().1 {
-                    best_match = Some((route, prefix_len));
-                }
-            }
-
-            (IpAddr::V6(dest_addr), Some(IpAddr::V6(route_addr))) => {
-                let prefix_len = route.dst_len;
-                if !is_ipv6_match(dest_addr, route_addr, prefix_len) {
-                    continue;
-                }
-
-                if best_match.is_none() || prefix_len > best_match.unwrap().1 {
-                    best_match = Some((route, prefix_len));
-                }
-            }
-
-            // mixed address families - can't match
-            _ => continue,
+impl std::fmt::Display for RouteTable {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::Default => f.write_str("default"),
+            Self::Local => f.write_str("local"),
+            Self::Main => f.write_str("main"),
+            Self::Other(table) => write!(f, "{table}"),
         }
     }
-
-    best_match.map(|(route, _)| route)
 }
 
-fn is_ipv4_match(addr: Ipv4Addr, network: Ipv4Addr, prefix_len: u8) -> bool {
-    if prefix_len == 0 {
-        return true;
-    }
-
-    let mask = 0xFFFFFFFF << 32u32.saturating_sub(prefix_len as u32);
-    let addr_bits = u32::from(addr) & mask;
-    let network_bits = u32::from(network) & mask;
-
-    addr_bits == network_bits
-}
-
-fn is_ipv6_match(addr: Ipv6Addr, network: Ipv6Addr, prefix_len: u8) -> bool {
-    if prefix_len == 0 {
-        return true;
-    }
-
-    let addr_segments = addr.segments();
-    let network_segments = network.segments();
-
-    let full_segments = (prefix_len / 16) as usize;
-    if addr_segments[..full_segments] != network_segments[..full_segments] {
-        return false;
-    }
-
-    if let Some(remaining_bits) = prefix_len.checked_rem(16).filter(|&b| b != 0) {
-        let mask = 0xFFFF_u16 << 16u16.saturating_sub(remaining_bits as u16);
-        if (addr_segments[full_segments] & mask) != (network_segments[full_segments] & mask) {
-            return false;
+impl From<RouteTable> for u32 {
+    fn from(table: RouteTable) -> Self {
+        match table {
+            RouteTable::Default => u32::from(RT_TABLE_DEFAULT),
+            RouteTable::Local => u32::from(RT_TABLE_LOCAL),
+            RouteTable::Main => u32::from(RT_TABLE_MAIN),
+            RouteTable::Other(table) => table,
         }
     }
-
-    true
 }
 
-#[derive(Clone)]
-struct RouteTable {
-    routes: Vec<RouteEntry>,
+impl From<u32> for RouteTable {
+    fn from(table: u32) -> Self {
+        match table {
+            table if table == u32::from(RT_TABLE_DEFAULT) => Self::Default,
+            table if table == u32::from(RT_TABLE_LOCAL) => Self::Local,
+            table if table == u32::from(RT_TABLE_MAIN) => Self::Main,
+            table => Self::Other(table),
+        }
+    }
 }
 
-impl RouteTable {
-    pub fn new() -> Result<Self, io::Error> {
-        let routes = netlink_get_routes(AF_INET as u8)?;
-        Ok(Self { routes })
-    }
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Route<T> {
+    pub destination: Option<T>,
+    pub gateway: Option<T>,
+    pub preferred_src: Option<T>,
+    pub out_if_index: Option<u32>,
+    pub priority: Option<u32>,
+    pub type_: u8,
+    pub dst_len: u8,
+}
 
-    pub fn iter(&self) -> impl ExactSizeIterator<Item = &RouteEntry> {
-        self.routes.iter()
+impl<T: PartialEq> Route<T> {
+    fn same_key(&self, other: &Self) -> bool {
+        self.destination == other.destination
+            && self.dst_len == other.dst_len
+            && self.priority == other.priority
+            && self.type_ == other.type_
     }
+}
 
-    pub fn upsert(&mut self, new_route: RouteEntry) -> bool {
-        if let Some(existing) = self.routes.iter_mut().find(|old| old.same_key(&new_route)) {
-            if existing != &new_route {
-                *existing = new_route;
-                return true;
-            }
-            false
-        } else {
-            self.routes.push(new_route);
-            true
+impl TryFrom<RouteEntry> for Route<Ipv4Addr> {
+    type Error = ();
+
+    fn try_from(entry: RouteEntry) -> Result<Self, Self::Error> {
+        if entry.family != AF_INET as u8 {
+            return Err(());
         }
-    }
 
-    pub fn remove(&mut self, new_route: RouteEntry) -> bool {
-        if let Some(i) = self.routes.iter().position(|old| old.same_key(&new_route)) {
-            self.routes.swap_remove(i);
-            return true;
-        }
-        false
+        let destination = match entry.destination {
+            Some(IpAddr::V4(addr)) => Some(addr),
+            Some(IpAddr::V6(_)) => return Err(()),
+            None => None,
+        };
+        let gateway = match entry.gateway {
+            Some(IpAddr::V4(addr)) => Some(addr),
+            Some(IpAddr::V6(_)) => return Err(()),
+            None => None,
+        };
+        let preferred_src = match entry.pref_src {
+            Some(IpAddr::V4(addr)) => Some(addr),
+            Some(IpAddr::V6(_)) => return Err(()),
+            None => None,
+        };
+        let out_if_index = entry
+            .out_if_index
+            .map(u32::try_from)
+            .transpose()
+            .map_err(|_| ())?;
+
+        Ok(Self {
+            destination,
+            gateway,
+            preferred_src,
+            out_if_index,
+            priority: entry.priority,
+            type_: entry.type_,
+            dst_len: entry.dst_len.min(32),
+        })
     }
 }
 
 #[derive(Clone, Debug)]
-struct InterfaceTable {
+pub struct Interfaces {
     interfaces: Vec<InterfaceInfo>,
 }
 
-impl InterfaceTable {
-    pub fn new() -> Result<Self, io::Error> {
-        Ok(Self {
-            interfaces: netlink_get_interfaces(AF_INET as u8)?.into_iter().collect(),
-        })
+impl Interfaces {
+    pub fn new(interfaces: Vec<InterfaceInfo>) -> Self {
+        Self { interfaces }
+    }
+
+    pub fn from_netlink() -> Result<Self, io::Error> {
+        Ok(Self::new(netlink_get_interfaces(AF_INET as u8)?))
     }
 
     pub fn iter(&self) -> impl ExactSizeIterator<Item = &InterfaceInfo> {
         self.interfaces.iter()
     }
 
-    pub fn upsert(&mut self, new_interface: InterfaceInfo) -> bool {
+    fn upsert(&mut self, new_interface: InterfaceInfo) -> bool {
         if let Some(existing) = self
             .interfaces
             .iter_mut()
@@ -196,7 +203,7 @@ impl InterfaceTable {
         true
     }
 
-    pub fn remove(&mut self, if_index: u32) -> bool {
+    fn remove(&mut self, if_index: u32) -> bool {
         if let Some(i) = self
             .interfaces
             .iter()
@@ -210,220 +217,31 @@ impl InterfaceTable {
 }
 
 #[derive(Clone)]
-pub struct Router {
-    arp_table: ArpTable,
-    route_table: RouteTable,
-    interface_table: InterfaceTable,
-    // cache for the default route next hop so we can avoid arp table lookups on the common case
-    cached_default_route: Option<NextHop>,
-    // cache for gre route info to avoid repeated lookups in the common case
-    // where there is only one gre interface
-    cached_gre_info: Option<GreRouteInfo>,
-}
-
-impl Router {
-    pub fn new() -> Result<Self, io::Error> {
-        Ok(Self {
-            arp_table: ArpTable::new()?,
-            route_table: RouteTable::new()?,
-            interface_table: InterfaceTable::new()?,
-            cached_default_route: None,
-            cached_gre_info: None,
-        })
-    }
-
-    fn default_route(&self) -> Result<NextHop, RouteError> {
-        let default_route = self
-            .route_table
-            .iter()
-            .find(|r| r.destination.is_none())
-            .ok_or(RouteError::NoRouteFound(IpAddr::V4(Ipv4Addr::UNSPECIFIED)))?;
-
-        let if_index = default_route
-            .out_if_index
-            .ok_or(RouteError::MissingOutputInterface)? as u32;
-
-        let next_hop_ip = match default_route.gateway {
-            Some(gateway) => gateway,
-            None => IpAddr::V4(Ipv4Addr::UNSPECIFIED),
-        };
-
-        let mac_addr = self.arp_table.lookup(next_hop_ip, if_index).cloned();
-        let preferred_src_ip = match default_route.pref_src {
-            Some(IpAddr::V4(v4)) => Some(v4),
-            _ => None,
-        };
-
-        let gre = self
-            .interface_table
-            .iter()
-            .find(|i| i.if_index == if_index)
-            .and_then(|interface| self.interface_gre_route_info(interface));
-
-        Ok(NextHop {
-            ip_addr: next_hop_ip,
-            mac_addr,
-            if_index,
-            preferred_src_ip,
-            gre,
-        })
-    }
-
-    pub fn default(&self) -> Result<NextHop, RouteError> {
-        if let Some(default_route) = &self.cached_default_route {
-            Ok(default_route.clone())
-        } else {
-            self.default_route()
-        }
-    }
-
-    pub fn route(&self, dest_ip: IpAddr) -> Result<NextHop, RouteError> {
-        let route = lookup_route(self.route_table.iter(), dest_ip)
-            .ok_or(RouteError::NoRouteFound(dest_ip))?;
-
-        let if_index = route
-            .out_if_index
-            .ok_or(RouteError::MissingOutputInterface)? as u32;
-
-        let next_hop_ip = match route.gateway {
-            Some(gateway) => gateway,
-            None => dest_ip,
-        };
-
-        let preferred_src_ip = match route.pref_src {
-            Some(IpAddr::V4(v4)) => Some(v4),
-            _ => None,
-        };
-
-        if let Some(default_route) = &self.cached_default_route {
-            if default_route.ip_addr == next_hop_ip && default_route.if_index == if_index {
-                return Ok(NextHop {
-                    ip_addr: next_hop_ip,
-                    if_index,
-                    mac_addr: default_route.mac_addr,
-                    preferred_src_ip,
-                    gre: default_route.gre.clone(),
-                });
-            }
-        }
-
-        if let Some(gre) = &self.cached_gre_info {
-            if gre.if_index == if_index {
-                return Ok(NextHop {
-                    if_index,
-                    ip_addr: next_hop_ip,
-                    mac_addr: Some(gre.mac_addr),
-                    preferred_src_ip,
-                    gre: Some(gre.clone()),
-                });
-            }
-        }
-
-        let mac_addr = self.arp_table.lookup(next_hop_ip, if_index).cloned();
-
-        let next_hop = NextHop {
-            ip_addr: next_hop_ip,
-            mac_addr,
-            if_index,
-            preferred_src_ip,
-            gre: None,
-        };
-        Ok(next_hop)
-    }
-
-    // called to rebuild cached values after route/neigh/interface updates right
-    // before a new Router instance is published
-    pub fn build_caches(&mut self) -> Result<(), io::Error> {
-        self.cached_default_route = None;
-        self.cached_gre_info = None;
-
-        let mut has_gre_interface = false;
-        for interface in self.interface_table.iter() {
-            if interface.gre_tunnel.is_some() {
-                has_gre_interface = true;
-                if self.cached_gre_info.is_none() {
-                    self.cached_gre_info = self.interface_gre_route_info(interface);
-                }
-            }
-        }
-        if self.cached_gre_info.is_none() && has_gre_interface {
-            log::warn!("GRE cache: GRE interface(s) present but none with valid remote resolved");
-        }
-        self.cached_default_route = match self.default_route() {
-            Ok(hop) => Some(hop),
-            Err(RouteError::NoRouteFound(_)) => None,
-            Err(e) => return Err(io::Error::other(e)),
-        };
-
-        Ok(())
-    }
-
-    fn interface_gre_route_info(&self, interface: &InterfaceInfo) -> Option<GreRouteInfo> {
-        let tunnel_info = interface.gre_tunnel.as_ref()?;
-        let remote = tunnel_info.remote;
-        let local = tunnel_info.local;
-        // Skip unconfigured tunnels (remote/local 0.0.0.0)
-        if remote == IpAddr::V4(Ipv4Addr::UNSPECIFIED) || local == IpAddr::V4(Ipv4Addr::UNSPECIFIED)
-        {
-            return None;
-        }
-        // ARP for the GRE remote is on the egress interface. Caches must be cleared
-        // at the start of build_caches() for route() to be safe.
-        debug_assert!(self.cached_gre_info.is_none());
-        let next_hop = self.route(remote).ok()?;
-        let mac_addr = next_hop.mac_addr?;
-
-        Some(GreRouteInfo {
-            if_index: interface.if_index,
-            tunnel_info: tunnel_info.clone(),
-            mac_addr,
-        })
-    }
-
-    pub fn upsert_route(&mut self, new_route: RouteEntry) -> bool {
-        self.route_table.upsert(new_route)
-    }
-
-    pub fn remove_route(&mut self, new_route: RouteEntry) -> bool {
-        self.route_table.remove(new_route)
-    }
-
-    pub fn upsert_neighbor(&mut self, new_neighbor: NeighborEntry) -> bool {
-        self.arp_table.upsert(new_neighbor)
-    }
-
-    pub fn remove_neighbor(&mut self, ip: Ipv4Addr, if_index: u32) -> bool {
-        self.arp_table.remove(ip, if_index)
-    }
-
-    pub fn upsert_interface(&mut self, new_interface: InterfaceInfo) -> bool {
-        self.interface_table.upsert(new_interface)
-    }
-
-    pub fn remove_interface(&mut self, if_index: u32) -> bool {
-        self.interface_table.remove(if_index)
-    }
-}
-
-#[derive(Clone)]
-struct ArpTable {
+pub struct Neighbors {
     neighbors: Vec<NeighborEntry>,
 }
 
-impl ArpTable {
-    pub fn new() -> Result<Self, io::Error> {
-        let neighbors = netlink_get_neighbors(None, AF_INET as u8)?;
-        Ok(Self { neighbors })
+impl Neighbors {
+    pub fn new(neighbors: Vec<NeighborEntry>) -> Self {
+        Self { neighbors }
     }
 
-    pub fn lookup(&self, ip: IpAddr, if_index: u32) -> Option<&MacAddress> {
+    pub fn from_netlink() -> Result<Self, io::Error> {
+        Ok(Self::new(netlink_get_neighbors(None, AF_INET as u8)?))
+    }
+
+    pub fn iter(&self) -> impl ExactSizeIterator<Item = &NeighborEntry> {
+        self.neighbors.iter()
+    }
+
+    fn lookup(&self, ip: IpAddr, if_index: u32) -> Option<&MacAddress> {
         self.neighbors
             .iter()
             .find(|n| n.ifindex == if_index as i32 && n.destination == Some(ip))
             .and_then(|n| n.lladdr.as_ref())
     }
 
-    pub fn upsert(&mut self, new_neighbor: NeighborEntry) -> bool {
+    fn upsert(&mut self, new_neighbor: NeighborEntry) -> bool {
         let Some((ifidx, ip)) = new_neighbor.key() else {
             return false;
         };
@@ -444,7 +262,7 @@ impl ArpTable {
         }
     }
 
-    pub fn remove(&mut self, ip: Ipv4Addr, if_index: u32) -> bool {
+    fn remove(&mut self, ip: Ipv4Addr, if_index: u32) -> bool {
         if let Some(i) = self.neighbors.iter().position(|old| {
             old.ifindex == if_index as i32 && old.destination == Some(IpAddr::V4(ip))
         }) {
@@ -455,87 +273,584 @@ impl ArpTable {
     }
 }
 
+#[derive(Clone)]
+pub struct Routes {
+    pub(crate) table: RouteTable,
+    routes: Vec<Route<Ipv4Addr>>,
+}
+
+impl Routes {
+    pub fn new(table: RouteTable, mut routes: Vec<Route<Ipv4Addr>>) -> Self {
+        routes.sort_by(Self::compare_routes);
+        Self { table, routes }
+    }
+
+    pub fn from_netlink(table: RouteTable) -> Result<Self, io::Error> {
+        let routes = netlink_get_routes(AF_INET as u8, u32::from(table))?
+            .into_iter()
+            .filter_map(|entry| Route::try_from(entry).ok())
+            .collect();
+        Ok(Self::new(table, routes))
+    }
+
+    fn compare_routes(left: &Route<Ipv4Addr>, right: &Route<Ipv4Addr>) -> Ordering {
+        right
+            .dst_len
+            .cmp(&left.dst_len)
+            .then_with(|| left.priority.unwrap_or(0).cmp(&right.priority.unwrap_or(0)))
+    }
+
+    pub fn iter(&self) -> impl ExactSizeIterator<Item = &Route<Ipv4Addr>> {
+        self.routes.iter()
+    }
+
+    fn get(&self, route_idx: usize) -> Option<&Route<Ipv4Addr>> {
+        self.routes.get(route_idx)
+    }
+
+    fn as_slice(&self) -> &[Route<Ipv4Addr>] {
+        &self.routes
+    }
+
+    fn upsert(&mut self, new_route: RouteEntry) -> bool {
+        if !new_route
+            .table
+            .is_some_and(|table| self.table == RouteTable::from(table))
+        {
+            return false;
+        }
+
+        let Ok(new_route) = Route::try_from(new_route) else {
+            return false;
+        };
+
+        if let Some(existing) = self.routes.iter_mut().find(|old| old.same_key(&new_route)) {
+            if existing != &new_route {
+                *existing = new_route;
+                return true;
+            }
+            false
+        } else {
+            let route = new_route;
+            let insert_at = self.routes.partition_point(|existing| {
+                matches!(
+                    Self::compare_routes(existing, &route),
+                    Ordering::Less | Ordering::Equal
+                )
+            });
+            self.routes.insert(insert_at, route);
+            true
+        }
+    }
+
+    fn remove(&mut self, new_route: RouteEntry) -> bool {
+        if !new_route
+            .table
+            .is_some_and(|table| self.table == RouteTable::from(table))
+        {
+            return false;
+        }
+
+        let Ok(new_route) = Route::try_from(new_route) else {
+            return false;
+        };
+
+        if let Some(i) = self.routes.iter().position(|old| old.same_key(&new_route)) {
+            self.routes.remove(i);
+            true
+        } else {
+            false
+        }
+    }
+}
+
+#[derive(Clone)]
+pub struct RoutingTables {
+    pub(crate) routes: Routes,
+    neighbors: Neighbors,
+    interfaces: Interfaces,
+}
+
+impl RoutingTables {
+    pub fn new(routes: Routes, neighbors: Neighbors, interfaces: Interfaces) -> Self {
+        Self {
+            routes,
+            neighbors,
+            interfaces,
+        }
+    }
+
+    pub fn from_netlink(table: RouteTable) -> Result<Self, io::Error> {
+        Ok(Self::new(
+            Routes::from_netlink(table)?,
+            Neighbors::from_netlink()?,
+            Interfaces::from_netlink()?,
+        ))
+    }
+
+    pub fn upsert_route(&mut self, new_route: RouteEntry) -> bool {
+        self.routes.upsert(new_route)
+    }
+
+    pub fn remove_route(&mut self, new_route: RouteEntry) -> bool {
+        self.routes.remove(new_route)
+    }
+
+    pub fn upsert_neighbor(&mut self, new_neighbor: NeighborEntry) -> bool {
+        self.neighbors.upsert(new_neighbor)
+    }
+
+    pub fn remove_neighbor(&mut self, ip: Ipv4Addr, if_index: u32) -> bool {
+        self.neighbors.remove(ip, if_index)
+    }
+
+    pub fn upsert_interface(&mut self, new_interface: InterfaceInfo) -> bool {
+        self.interfaces.upsert(new_interface)
+    }
+
+    pub fn remove_interface(&mut self, if_index: u32) -> bool {
+        self.interfaces.remove(if_index)
+    }
+}
+
+#[derive(Clone)]
+pub struct Router {
+    neighbors: Neighbors,
+    routes: Routes,
+    ipv4_lpm: Ipv4Lpm,
+    interfaces: Interfaces,
+    // cache for the default route next hop so we can avoid arp table lookups on the common case
+    cached_default_route: Option<NextHop>,
+    // cache for gre route info keyed by interface index. This stays tiny in practice.
+    cached_gre_info: Vec<GreRouteInfo>,
+    // cache for vlan encap info keyed by interface index. One entry per VLAN sub-interface.
+    cached_vlan_info: Vec<VlanRouteInfo>,
+}
+
+struct RoutingTableDisplay<'a>(&'a [Route<Ipv4Addr>]);
+
+impl fmt::Display for RoutingTableDisplay<'_> {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        if self.0.is_empty() {
+            return f.write_str("<empty>");
+        }
+
+        for (i, route) in self.0.iter().enumerate() {
+            if i > 0 {
+                f.write_str("\n")?;
+            }
+            format_route(f, route)?;
+        }
+
+        Ok(())
+    }
+}
+
+impl Router {
+    pub fn new() -> Result<Self, io::Error> {
+        Self::from_tables(RoutingTables::from_netlink(RouteTable::Main)?)
+    }
+
+    pub fn from_tables(tables: RoutingTables) -> Result<Self, io::Error> {
+        let ipv4_lpm = Ipv4Lpm::build(tables.routes.as_slice());
+        let mut router = Self {
+            neighbors: tables.neighbors,
+            routes: tables.routes,
+            ipv4_lpm,
+            interfaces: tables.interfaces,
+            cached_default_route: None,
+            cached_gre_info: Vec::new(),
+            cached_vlan_info: Vec::new(),
+        };
+
+        let mut has_gre_interface = false;
+        for interface in router.interfaces.iter() {
+            if interface.gre_tunnel.is_some() {
+                has_gre_interface = true;
+                if let Some(gre) = router.interface_gre_route_info(interface) {
+                    router.cached_gre_info.push(gre);
+                }
+            }
+            if let Some(vlan) = interface.vlan_link {
+                router.cached_vlan_info.push(VlanRouteInfo {
+                    if_index: interface.if_index,
+                    vid: vlan.vid,
+                    // Kernel default egress QoS mapping; a configurable mapping can come later.
+                    pcp: 0,
+                });
+            }
+        }
+        if router.cached_gre_info.is_empty() && has_gre_interface {
+            warn!("GRE cache: GRE interface(s) present but none with valid remote resolved");
+        }
+
+        router.cached_default_route = match router.default_route() {
+            Ok(hop) => Some(hop),
+            Err(RouteError::NoRouteFound(_)) => None,
+            Err(e) => return Err(io::Error::other(e)),
+        };
+
+        Ok(router)
+    }
+
+    pub fn routing_table(&self) -> impl fmt::Display + '_ {
+        RoutingTableDisplay(self.routes.as_slice())
+    }
+
+    fn cached_gre_route_info(&self, if_index: u32) -> Option<&GreRouteInfo> {
+        self.cached_gre_info
+            .iter()
+            .find(|gre| gre.if_index == if_index)
+    }
+
+    fn gre_route_info(&self, if_index: u32) -> Option<GreRouteInfo> {
+        if let Some(gre) = self.cached_gre_route_info(if_index) {
+            return Some(gre.clone());
+        }
+
+        let interface = self
+            .interfaces
+            .iter()
+            .find(|interface| interface.if_index == if_index)?;
+        self.interface_gre_route_info(interface)
+    }
+
+    fn cached_vlan_route_info(&self, if_index: u32) -> Option<VlanRouteInfo> {
+        self.cached_vlan_info
+            .iter()
+            .find(|vlan| vlan.if_index == if_index)
+            .copied()
+    }
+
+    fn resolve_next_hop(
+        &self,
+        route_ip: Ipv4Addr,
+        route: &Route<Ipv4Addr>,
+    ) -> Result<NextHop, RouteError> {
+        let if_index = route
+            .out_if_index
+            .ok_or(RouteError::MissingOutputInterface)?;
+        let next_hop_v4 = route.gateway.unwrap_or(route_ip);
+        let next_hop_ip = IpAddr::V4(next_hop_v4);
+        let preferred_src_ip = route.preferred_src;
+
+        if let Some(default_route) = &self.cached_default_route
+            && default_route.ip_addr == next_hop_ip
+            && default_route.if_index == if_index
+        {
+            return Ok(NextHop {
+                ip_addr: next_hop_ip,
+                if_index,
+                mtu: default_route.mtu,
+                mac_addr: default_route.mac_addr,
+                preferred_src_ip,
+                gre: default_route.gre.clone(),
+                vlan: default_route.vlan,
+            });
+        }
+
+        if let Some(gre) = self.gre_route_info(if_index) {
+            return Ok(NextHop {
+                if_index,
+                mtu: gre.underlay_mtu,
+                ip_addr: next_hop_ip,
+                mac_addr: Some(gre.mac_addr),
+                preferred_src_ip,
+                gre: Some(gre),
+                vlan: None,
+            });
+        }
+
+        let mtu = self
+            .interfaces
+            .iter()
+            .find(|interface| interface.if_index == if_index)
+            .map(|interface| interface.mtu)
+            .ok_or(RouteError::UnknownInterfaceIndex(if_index))?;
+        let vlan = self.cached_vlan_route_info(if_index);
+
+        // IPv4 multicast destinations map deterministically to a multicast MAC (RFC 1112 §6.4)
+        // and never participate in ARP, so there is no neighbor entry to look up. Otherwise
+        // consult the neighbor cache for the unicast MAC.
+        let mac_addr = if next_hop_v4.is_multicast() {
+            Some(ipv4_multicast_mac(next_hop_v4))
+        } else {
+            self.neighbors.lookup(next_hop_ip, if_index).cloned()
+        };
+        Ok(NextHop {
+            ip_addr: next_hop_ip,
+            mac_addr,
+            if_index,
+            mtu,
+            preferred_src_ip,
+            gre: None,
+            vlan,
+        })
+    }
+
+    fn default_route(&self) -> Result<NextHop, RouteError> {
+        let default_route = self
+            .ipv4_lpm
+            .default_route()
+            .and_then(|route_idx| self.routes.get(route_idx as usize))
+            .ok_or(RouteError::NoRouteFound(IpAddr::V4(Ipv4Addr::UNSPECIFIED)))?;
+        self.resolve_next_hop(Ipv4Addr::UNSPECIFIED, default_route)
+    }
+
+    pub fn default(&self) -> Result<NextHop, RouteError> {
+        if let Some(default_route) = &self.cached_default_route {
+            Ok(default_route.clone())
+        } else {
+            self.default_route()
+        }
+    }
+
+    #[inline]
+    fn lookup_route_v4(&self, dest_ip: Ipv4Addr) -> Option<&Route<Ipv4Addr>> {
+        self.ipv4_lpm
+            .lookup(dest_ip)
+            .and_then(|route_idx| self.routes.get(route_idx as usize))
+    }
+
+    #[inline]
+    pub fn route_v4(&self, dest_ip: Ipv4Addr) -> Result<NextHop, RouteError> {
+        let route = self
+            .lookup_route_v4(dest_ip)
+            .ok_or(RouteError::NoRouteFound(dest_ip.into()))?;
+        self.resolve_next_hop(dest_ip, route)
+    }
+
+    fn interface_gre_route_info(&self, interface: &InterfaceInfo) -> Option<GreRouteInfo> {
+        let tunnel_info = interface.gre_tunnel.as_ref()?;
+        let remote = match tunnel_info.remote {
+            IpAddr::V4(remote) => remote,
+            IpAddr::V6(_) => return None,
+        };
+        let local = match tunnel_info.local {
+            IpAddr::V4(local) => local,
+            IpAddr::V6(_) => return None,
+        };
+        // Skip unconfigured tunnels (remote/local 0.0.0.0)
+        if remote == Ipv4Addr::UNSPECIFIED || local == Ipv4Addr::UNSPECIFIED {
+            return None;
+        }
+
+        let underlay_route = self.lookup_route_v4(remote)?;
+        let underlay_if_index = underlay_route.out_if_index?;
+        let underlay_interface = self
+            .interfaces
+            .iter()
+            .find(|candidate| candidate.if_index == underlay_if_index)?;
+        if underlay_interface.is_gre() {
+            warn!(
+                "GRE interface {} has remote {} that routes via another GRE interface {}. \
+                 gre-over-gre is not supported.",
+                interface.if_index, tunnel_info.remote, underlay_interface.if_index
+            );
+            return None;
+        }
+        let underlay_next_hop_ip = IpAddr::V4(underlay_route.gateway.unwrap_or(remote));
+        let mac_addr = self
+            .neighbors
+            .lookup(underlay_next_hop_ip, underlay_if_index)
+            .copied()?;
+
+        Some(GreRouteInfo {
+            if_index: interface.if_index,
+            mtu: interface.mtu,
+            underlay_mtu: underlay_interface.mtu,
+            tunnel_info: tunnel_info.clone(),
+            mac_addr,
+        })
+    }
+}
+
+/// Map an IPv4 multicast address to its Ethernet destination MAC per RFC 1112 §6.4:
+/// the low 23 bits of the address are placed into the low 23 bits of `01:00:5e:00:00:00`.
+#[inline]
+fn ipv4_multicast_mac(ip: Ipv4Addr) -> MacAddress {
+    let [_, b1, b2, b3] = ip.octets();
+    MacAddress([0x01, 0x00, 0x5e, b1 & 0x7f, b2, b3])
+}
+
+fn format_route(f: &mut fmt::Formatter<'_>, route: &Route<Ipv4Addr>) -> fmt::Result {
+    match route.destination {
+        Some(destination) if route.dst_len == 32 => write!(f, "{destination}")?,
+        Some(destination) => write!(f, "{destination}/{}", route.dst_len)?,
+        None => f.write_str("default")?,
+    }
+
+    if let Some(gateway) = route.gateway {
+        write!(f, " via {gateway}")?;
+    }
+    if let Some(if_index) = route.out_if_index {
+        write!(f, " dev if{if_index}")?;
+    }
+    if let Some(preferred_src) = route.preferred_src {
+        write!(f, " src {preferred_src}")?;
+    }
+    if let Some(priority) = route.priority {
+        write!(f, " metric {priority}")?;
+    }
+
+    Ok(())
+}
+
 #[cfg(test)]
 mod tests {
     use {
         super::*,
-        crate::netlink::{MacAddress, NeighborEntry, RouteEntry},
+        crate::netlink::{MacAddress, NeighborEntry, RouteEntry, VlanLinkInfo},
         libc::{AF_INET, NUD_REACHABLE},
         std::net::{IpAddr, Ipv4Addr},
     };
 
-    #[test]
-    fn test_ipv4_match() {
-        assert!(is_ipv4_match(
-            Ipv4Addr::new(192, 168, 1, 10),
-            Ipv4Addr::new(192, 168, 1, 0),
-            24
-        ));
+    const DEFAULT_MTU_FOR_TESTS: u32 = 1500;
 
-        assert!(!is_ipv4_match(
-            Ipv4Addr::new(192, 168, 2, 10),
-            Ipv4Addr::new(192, 168, 1, 0),
-            24
-        ));
-
-        // Match with default route
-        assert!(is_ipv4_match(
-            Ipv4Addr::new(1, 2, 3, 4),
-            Ipv4Addr::new(0, 0, 0, 0),
-            0
-        ));
+    fn test_route(destination: Option<Ipv4Addr>, out_if_index: u32) -> Route<Ipv4Addr> {
+        Route {
+            destination,
+            gateway: None,
+            preferred_src: None,
+            out_if_index: Some(out_if_index),
+            priority: None,
+            type_: 0,
+            dst_len: 32,
+        }
     }
 
-    #[test]
-    fn test_ipv6_match() {
-        assert!(is_ipv6_match(
-            Ipv6Addr::new(
-                0x2001, 0xdb8, 0x1234, 0x5678, 0xabcd, 0xef01, 0x2345, 0x6789
-            ),
-            Ipv6Addr::new(0x2001, 0xdb8, 0x1234, 0x5678, 0, 0, 0, 0),
-            64
-        ));
+    fn test_route_entry(
+        destination: Option<Ipv4Addr>,
+        gateway: Option<Ipv4Addr>,
+        out_if_index: u32,
+        dst_len: u8,
+        table: u32,
+    ) -> RouteEntry {
+        test_route_entry_with_priority(destination, gateway, out_if_index, dst_len, table, None)
+    }
 
-        assert!(!is_ipv6_match(
-            Ipv6Addr::new(
-                0x2001, 0xdb8, 0x1235, 0x5678, 0xabcd, 0xef01, 0x2345, 0x6789
-            ),
-            Ipv6Addr::new(0x2001, 0xdb8, 0x1234, 0x5678, 0, 0, 0, 0),
-            64
-        ));
+    fn test_route_entry_with_priority(
+        destination: Option<Ipv4Addr>,
+        gateway: Option<Ipv4Addr>,
+        out_if_index: u32,
+        dst_len: u8,
+        table: u32,
+        priority: Option<u32>,
+    ) -> RouteEntry {
+        RouteEntry {
+            destination: destination.map(IpAddr::V4),
+            gateway: gateway.map(IpAddr::V4),
+            pref_src: None,
+            out_if_index: Some(out_if_index as i32),
+            in_if_index: None,
+            priority,
+            table: Some(table),
+            protocol: 0,
+            scope: 0,
+            type_: 0,
+            family: AF_INET as u8,
+            dst_len,
+            flags: 0,
+        }
+    }
 
-        // Match with partial segment
-        assert!(is_ipv6_match(
-            Ipv6Addr::new(0x2001, 0xdb8, 0x1234, 0x6700, 0, 0, 0, 0),
-            Ipv6Addr::new(0x2001, 0xdb8, 0x1234, 0x6600, 0, 0, 0, 0),
-            52
-        ));
+    fn router_from_tables(
+        neighbors: Vec<NeighborEntry>,
+        routes: Vec<Route<Ipv4Addr>>,
+        interfaces: Vec<InterfaceInfo>,
+    ) -> Router {
+        let tables = RoutingTables::new(
+            Routes::new(RouteTable::Main, routes),
+            Neighbors::new(neighbors),
+            Interfaces::new(interfaces),
+        );
+        Router::from_tables(tables).unwrap()
+    }
 
-        assert!(!is_ipv6_match(
-            Ipv6Addr::new(0x2001, 0xdb8, 0x1234, 0x6700, 0, 0, 0, 0),
-            Ipv6Addr::new(0x2001, 0xdb8, 0x1234, 0x5600, 0, 0, 0, 0),
-            52
-        ));
+    fn empty_tables() -> RoutingTables {
+        RoutingTables::new(
+            Routes::new(RouteTable::Main, Vec::new()),
+            Neighbors::new(Vec::new()),
+            Interfaces::new(Vec::new()),
+        )
+    }
+
+    fn dual_default_tables(primary_gateway: Ipv4Addr, backup_gateway: Ipv4Addr) -> RoutingTables {
+        let mut tables = empty_tables();
+        assert!(tables.upsert_interface(InterfaceInfo {
+            if_index: 1,
+            mtu: DEFAULT_MTU_FOR_TESTS,
+            gre_tunnel: None,
+            vlan_link: None,
+        }));
+        assert!(tables.upsert_interface(InterfaceInfo {
+            if_index: 2,
+            mtu: DEFAULT_MTU_FOR_TESTS,
+            gre_tunnel: None,
+            vlan_link: None,
+        }));
+        assert!(tables.upsert_neighbor(NeighborEntry {
+            destination: Some(IpAddr::V4(primary_gateway)),
+            lladdr: Some(MacAddress([0x02, 0xaa, 0xbb, 0xcc, 0xdd, 0x01])),
+            ifindex: 1,
+            state: NUD_REACHABLE,
+        }));
+        assert!(tables.upsert_neighbor(NeighborEntry {
+            destination: Some(IpAddr::V4(backup_gateway)),
+            lladdr: Some(MacAddress([0x02, 0xaa, 0xbb, 0xcc, 0xdd, 0x02])),
+            ifindex: 2,
+            state: NUD_REACHABLE,
+        }));
+        assert!(tables.upsert_route(test_route_entry_with_priority(
+            None,
+            Some(backup_gateway),
+            2,
+            0,
+            u32::from(RouteTable::Main),
+            Some(200),
+        )));
+        assert!(tables.upsert_route(test_route_entry_with_priority(
+            None,
+            Some(primary_gateway),
+            1,
+            0,
+            u32::from(RouteTable::Main),
+            Some(100),
+        )));
+        tables
     }
 
     #[test]
     fn test_router() {
-        let mut router = Router::new().unwrap();
-        let next_hop = router.route("1.1.1.1".parse().unwrap()).unwrap();
-        eprintln!("{next_hop:?}");
+        let mut tables = empty_tables();
+        let before_routes_len = tables.routes.iter().len();
 
-        let before_routes_len = router.route_table.iter().len();
+        assert!(tables.upsert_interface(InterfaceInfo {
+            if_index: 1,
+            mtu: DEFAULT_MTU_FOR_TESTS,
+            gre_tunnel: None,
+            vlan_link: None,
+        }));
+
+        let gateway = Ipv4Addr::new(10, 255, 255, 1);
+        let neighbor = NeighborEntry {
+            destination: Some(IpAddr::V4(gateway)),
+            lladdr: Some(MacAddress([0x02, 0xaa, 0xbb, 0xcc, 0xdd, 0x01])),
+            ifindex: 1,
+            state: NUD_REACHABLE,
+        };
+        assert!(tables.upsert_neighbor(neighbor));
 
         // Create a unique, private IPv4 /32 route to avoid collisions
         let test_dst = Ipv4Addr::new(10, 255, 255, 123);
         let route = RouteEntry {
             destination: Some(IpAddr::V4(test_dst)),
-            gateway: Some(IpAddr::V4(Ipv4Addr::new(10, 255, 255, 1))),
+            gateway: Some(IpAddr::V4(gateway)),
             pref_src: None,
             out_if_index: Some(1),
             in_if_index: None,
             priority: None,
-            table: None,
+            table: Some(u32::from(RouteTable::Main)),
             protocol: 0,
             scope: 0,
             type_: 0,
@@ -545,20 +860,81 @@ mod tests {
         };
 
         // Upsert new route and check that it was inserted and routes are dirty
-        assert!(router.upsert_route(route.clone()));
-        assert!(router.route_table.iter().any(|r| r == &route));
-        assert!(router.route_table.iter().len() >= before_routes_len);
+        assert!(tables.upsert_route(route.clone()));
+        assert!(tables.routes.iter().any(|r| {
+            r.destination == Some(test_dst)
+                && r.gateway == Some(gateway)
+                && r.out_if_index == Some(1)
+        }));
+        assert!(tables.routes.iter().len() >= before_routes_len);
+
+        let router = Router::from_tables(tables.clone()).unwrap();
+        let next_hop = router.route_v4(test_dst).unwrap();
+        assert_eq!(next_hop.if_index, 1);
+        assert_eq!(next_hop.ip_addr, IpAddr::V4(gateway));
 
         // Delete using same key should remove the route
-        assert!(router.remove_route(route.clone()));
-        assert!(router.route_table.iter().all(|r| r != &route));
-        assert_eq!(router.route_table.iter().len(), before_routes_len);
+        assert!(tables.remove_route(route.clone()));
+        assert!(
+            tables
+                .routes
+                .iter()
+                .all(|r| r.destination != Some(test_dst))
+        );
+        assert_eq!(tables.routes.iter().len(), before_routes_len);
     }
 
     #[test]
-    fn test_arp_table() {
-        let mut router = Router::new().unwrap();
-        let before_neigh_len = router.arp_table.neighbors.len();
+    fn test_routing_table_display() {
+        let router = router_from_tables(
+            vec![],
+            vec![
+                Route {
+                    destination: Some(Ipv4Addr::new(10, 0, 0, 0)),
+                    gateway: Some(Ipv4Addr::new(192, 168, 1, 1)),
+                    preferred_src: Some(Ipv4Addr::new(192, 168, 1, 10)),
+                    out_if_index: Some(2),
+                    priority: Some(100),
+                    type_: 0,
+                    dst_len: 24,
+                },
+                Route {
+                    destination: None,
+                    gateway: Some(Ipv4Addr::new(192, 168, 1, 254)),
+                    preferred_src: None,
+                    out_if_index: Some(3),
+                    priority: None,
+                    type_: 0,
+                    dst_len: 0,
+                },
+            ],
+            vec![
+                InterfaceInfo {
+                    if_index: 2,
+                    mtu: DEFAULT_MTU_FOR_TESTS,
+                    gre_tunnel: None,
+                    vlan_link: None,
+                },
+                InterfaceInfo {
+                    if_index: 3,
+                    mtu: DEFAULT_MTU_FOR_TESTS,
+                    gre_tunnel: None,
+                    vlan_link: None,
+                },
+            ],
+        );
+
+        assert_eq!(
+            router.routing_table().to_string(),
+            "10.0.0.0/24 via 192.168.1.1 dev if2 src 192.168.1.10 metric 100\ndefault via \
+             192.168.1.254 dev if3"
+        );
+    }
+
+    #[test]
+    fn test_neighbors_table() {
+        let mut tables = empty_tables();
+        let before_neigh_len = tables.neighbors.iter().len();
 
         // Create a unique, private neighbor entry on a dummy ifindex
         let neigh_ip = Ipv4Addr::new(10, 255, 255, 77);
@@ -570,35 +946,37 @@ mod tests {
         };
 
         // Upsert new neighbor and check that it was inserted and neighbors are dirty
-        assert!(router.upsert_neighbor(entry.clone()));
-        assert!(router.arp_table.neighbors.iter().any(|n| n == &entry));
-        assert!(router.arp_table.neighbors.len() >= before_neigh_len);
+        assert!(tables.upsert_neighbor(entry.clone()));
+        assert!(tables.neighbors.iter().any(|n| n == &entry));
+        assert!(tables.neighbors.iter().len() >= before_neigh_len);
 
         // Delete neighbor and check that it was deleted
-        assert!(router.remove_neighbor(neigh_ip, 1));
-        assert!(router.arp_table.neighbors.iter().all(|n| n != &entry));
-        assert_eq!(router.arp_table.neighbors.len(), before_neigh_len);
+        assert!(tables.remove_neighbor(neigh_ip, 1));
+        assert!(tables.neighbors.iter().all(|n| n != &entry));
+        assert_eq!(tables.neighbors.iter().len(), before_neigh_len);
     }
 
     #[test]
     fn test_interface_table() {
-        let mut router = Router::new().unwrap();
-        let before_interface_len = router.interface_table.iter().len();
+        let mut tables = empty_tables();
+        let before_interface_len = tables.interfaces.iter().len();
 
         // Create a unique, private interface with a dummy ifindex
         let test_if_index = 99999;
         let interface = InterfaceInfo {
             if_index: test_if_index,
+            mtu: DEFAULT_MTU_FOR_TESTS,
             gre_tunnel: None,
+            vlan_link: None,
         };
 
         // Upsert new interface and check that it was inserted
-        assert!(router.upsert_interface(interface.clone()));
-        assert!(router.interface_table.iter().any(|i| i == &interface));
-        assert!(router.interface_table.iter().len() >= before_interface_len);
+        assert!(tables.upsert_interface(interface.clone()));
+        assert!(tables.interfaces.iter().any(|i| i == &interface));
+        assert!(tables.interfaces.iter().len() >= before_interface_len);
 
         // Upsert same interface with no changes should return false
-        assert!(!router.upsert_interface(interface.clone()));
+        assert!(!tables.upsert_interface(interface.clone()));
 
         // Upsert with changes should return true
         let mut modified_interface = interface.clone();
@@ -609,23 +987,572 @@ mod tests {
             tos: 0,
             pmtudisc: 0,
         });
-        assert!(router.upsert_interface(modified_interface.clone()));
-        assert!(
-            router
-                .interface_table
-                .iter()
-                .any(|i| i == &modified_interface)
-        );
-        assert!(router.interface_table.iter().all(|i| i != &interface));
+        assert!(tables.upsert_interface(modified_interface.clone()));
+        assert!(tables.interfaces.iter().any(|i| i == &modified_interface));
+        assert!(tables.interfaces.iter().all(|i| i != &interface));
 
         // Delete interface and check that it was deleted
-        assert!(router.remove_interface(test_if_index));
+        assert!(tables.remove_interface(test_if_index));
         assert!(
-            router
-                .interface_table
+            tables
+                .interfaces
                 .iter()
                 .all(|i| i.if_index != test_if_index)
         );
-        assert_eq!(router.interface_table.iter().len(), before_interface_len);
+        assert_eq!(tables.interfaces.iter().len(), before_interface_len);
+    }
+
+    #[test]
+    fn test_routes_ignore_other_table_updates() {
+        let test_dst = Ipv4Addr::new(10, 0, 0, 1);
+        let main_gateway = Ipv4Addr::new(10, 0, 0, 2);
+        let other_gateway = Ipv4Addr::new(10, 0, 0, 3);
+        let main_table = u32::from(RouteTable::Main);
+
+        let mut tables = empty_tables();
+        assert!(tables.upsert_interface(InterfaceInfo {
+            if_index: 1,
+            mtu: DEFAULT_MTU_FOR_TESTS,
+            gre_tunnel: None,
+            vlan_link: None,
+        }));
+        assert!(tables.upsert_neighbor(NeighborEntry {
+            destination: Some(IpAddr::V4(main_gateway)),
+            lladdr: Some(MacAddress([0x02, 0xaa, 0xbb, 0xcc, 0xdd, 0x01])),
+            ifindex: 1,
+            state: NUD_REACHABLE,
+        }));
+        assert!(tables.upsert_route(test_route_entry(
+            Some(test_dst),
+            Some(main_gateway),
+            1,
+            32,
+            main_table,
+        )));
+
+        assert!(!tables.upsert_route(test_route_entry(
+            Some(test_dst),
+            Some(other_gateway),
+            2,
+            32,
+            100,
+        )));
+
+        let router = Router::from_tables(tables).unwrap();
+        let next_hop = router.route_v4(test_dst).unwrap();
+        assert_eq!(next_hop.if_index, 1);
+        assert_eq!(next_hop.ip_addr, IpAddr::V4(main_gateway));
+    }
+
+    #[test]
+    fn test_routes_ignore_other_table_deletes() {
+        let test_dst = Ipv4Addr::new(10, 0, 0, 1);
+        let main_gateway = Ipv4Addr::new(10, 0, 0, 2);
+        let main_table = u32::from(RouteTable::Main);
+
+        let mut tables = empty_tables();
+        assert!(tables.upsert_interface(InterfaceInfo {
+            if_index: 1,
+            mtu: DEFAULT_MTU_FOR_TESTS,
+            gre_tunnel: None,
+            vlan_link: None,
+        }));
+        assert!(tables.upsert_neighbor(NeighborEntry {
+            destination: Some(IpAddr::V4(main_gateway)),
+            lladdr: Some(MacAddress([0x02, 0xaa, 0xbb, 0xcc, 0xdd, 0x01])),
+            ifindex: 1,
+            state: NUD_REACHABLE,
+        }));
+        assert!(tables.upsert_route(test_route_entry(
+            Some(test_dst),
+            Some(main_gateway),
+            1,
+            32,
+            main_table,
+        )));
+
+        assert!(!tables.remove_route(test_route_entry(
+            Some(test_dst),
+            Some(Ipv4Addr::new(10, 0, 0, 3)),
+            2,
+            32,
+            100,
+        )));
+
+        let router = Router::from_tables(tables).unwrap();
+        let next_hop = router.route_v4(test_dst).unwrap();
+        assert_eq!(next_hop.if_index, 1);
+        assert_eq!(next_hop.ip_addr, IpAddr::V4(main_gateway));
+    }
+
+    #[test]
+    fn test_multiple_gre_interfaces() {
+        let remote1 = Ipv4Addr::new(10, 0, 0, 1);
+        let remote2 = Ipv4Addr::new(10, 0, 0, 2);
+        let gre_dest1 = Ipv4Addr::new(192, 168, 0, 1);
+        let gre_dest2 = Ipv4Addr::new(192, 168, 0, 2);
+        let if_index_underlay = 1;
+        let if_index_gre1 = 100;
+        let if_index_gre2 = 200;
+        let mac1 = MacAddress([0x02, 0xaa, 0xbb, 0xcc, 0xdd, 0x01]);
+        let mac2 = MacAddress([0x02, 0xaa, 0xbb, 0xcc, 0xdd, 0x02]);
+
+        let neighbors = vec![
+            NeighborEntry {
+                destination: Some(IpAddr::V4(remote1)),
+                lladdr: Some(mac1),
+                ifindex: if_index_underlay,
+                state: NUD_REACHABLE,
+            },
+            NeighborEntry {
+                destination: Some(IpAddr::V4(remote2)),
+                lladdr: Some(mac2),
+                ifindex: if_index_underlay,
+                state: NUD_REACHABLE,
+            },
+        ];
+
+        let routes = vec![
+            test_route(Some(remote1), if_index_underlay as u32),
+            test_route(Some(remote2), if_index_underlay as u32),
+            test_route(Some(gre_dest1), if_index_gre1 as u32),
+            test_route(Some(gre_dest2), if_index_gre2 as u32),
+        ];
+
+        let interfaces = vec![
+            InterfaceInfo {
+                if_index: if_index_underlay as u32,
+                mtu: DEFAULT_MTU_FOR_TESTS,
+                gre_tunnel: None,
+                vlan_link: None,
+            },
+            InterfaceInfo {
+                if_index: if_index_gre1 as u32,
+                mtu: DEFAULT_MTU_FOR_TESTS - 100,
+                gre_tunnel: Some(GreTunnelInfo {
+                    local: IpAddr::V4(Ipv4Addr::new(10, 0, 0, 3)),
+                    remote: IpAddr::V4(remote1),
+                    ttl: 0,
+                    tos: 0,
+                    pmtudisc: 0,
+                }),
+                vlan_link: None,
+            },
+            InterfaceInfo {
+                if_index: if_index_gre2 as u32,
+                mtu: DEFAULT_MTU_FOR_TESTS + 100,
+                gre_tunnel: Some(GreTunnelInfo {
+                    local: IpAddr::V4(Ipv4Addr::new(10, 0, 0, 4)),
+                    remote: IpAddr::V4(remote2),
+                    ttl: 0,
+                    tos: 0,
+                    pmtudisc: 0,
+                }),
+                vlan_link: None,
+            },
+        ];
+
+        let router = router_from_tables(neighbors, routes, interfaces);
+        let hop1 = router.route_v4(gre_dest1).unwrap();
+        assert_eq!(hop1.if_index, if_index_gre1 as u32);
+        assert_eq!(hop1.mtu, DEFAULT_MTU_FOR_TESTS);
+        assert_eq!(hop1.mac_addr, Some(mac1));
+
+        let hop1_gre = hop1.gre.as_ref().unwrap();
+        assert_eq!(hop1_gre.if_index, if_index_gre1 as u32);
+        assert_eq!(hop1_gre.mtu, DEFAULT_MTU_FOR_TESTS - 100);
+        assert_eq!(hop1_gre.underlay_mtu, DEFAULT_MTU_FOR_TESTS);
+        assert_eq!(hop1.mtu, hop1_gre.underlay_mtu);
+
+        let hop2 = router.route_v4(gre_dest2).unwrap();
+        assert_eq!(hop2.if_index, if_index_gre2 as u32);
+        assert_eq!(hop2.mtu, DEFAULT_MTU_FOR_TESTS);
+        assert_eq!(hop2.mac_addr, Some(mac2));
+
+        let hop2_gre = hop2.gre.as_ref().unwrap();
+        assert_eq!(hop2_gre.if_index, if_index_gre2 as u32);
+        assert_eq!(hop2_gre.mtu, DEFAULT_MTU_FOR_TESTS + 100);
+        assert_eq!(hop2_gre.underlay_mtu, DEFAULT_MTU_FOR_TESTS);
+        assert_eq!(hop2.mtu, hop2_gre.underlay_mtu);
+    }
+
+    #[test]
+    fn test_default_route_via_gre() {
+        let remote = Ipv4Addr::new(10, 0, 0, 1);
+        let dest = Ipv4Addr::new(203, 0, 113, 9);
+        let if_index_underlay = 1;
+        let if_index_gre = 100;
+        let mac = MacAddress([0x02, 0xaa, 0xbb, 0xcc, 0xdd, 0x01]);
+
+        let neighbors = vec![NeighborEntry {
+            destination: Some(IpAddr::V4(remote)),
+            lladdr: Some(mac),
+            ifindex: if_index_underlay,
+            state: NUD_REACHABLE,
+        }];
+
+        let routes = vec![
+            test_route(Some(remote), if_index_underlay as u32),
+            Route {
+                destination: None,
+                gateway: None,
+                preferred_src: None,
+                out_if_index: Some(if_index_gre as u32),
+                priority: None,
+                type_: 0,
+                dst_len: 0,
+            },
+        ];
+
+        let interfaces = vec![
+            InterfaceInfo {
+                if_index: if_index_underlay as u32,
+                mtu: DEFAULT_MTU_FOR_TESTS,
+                gre_tunnel: None,
+                vlan_link: None,
+            },
+            InterfaceInfo {
+                if_index: if_index_gre as u32,
+                mtu: DEFAULT_MTU_FOR_TESTS - 100,
+                gre_tunnel: Some(GreTunnelInfo {
+                    local: IpAddr::V4(Ipv4Addr::new(10, 1, 0, 1)),
+                    remote: IpAddr::V4(remote),
+                    ttl: 0,
+                    tos: 0,
+                    pmtudisc: 0,
+                }),
+                vlan_link: None,
+            },
+        ];
+
+        let router = router_from_tables(neighbors, routes, interfaces);
+
+        let hop_default = router.default().unwrap();
+        assert_eq!(hop_default.if_index, if_index_gre as u32);
+        assert_eq!(hop_default.mtu, DEFAULT_MTU_FOR_TESTS);
+        assert_eq!(hop_default.mac_addr, Some(mac));
+
+        let hop_default_gre = hop_default.gre.as_ref().unwrap();
+        assert_eq!(hop_default_gre.if_index, if_index_gre as u32);
+        assert_eq!(hop_default_gre.mtu, DEFAULT_MTU_FOR_TESTS - 100);
+        assert_eq!(hop_default_gre.underlay_mtu, DEFAULT_MTU_FOR_TESTS);
+        assert_eq!(hop_default.mtu, hop_default_gre.underlay_mtu);
+
+        let hop_route = router.route_v4(dest).unwrap();
+        assert_eq!(hop_route.if_index, if_index_gre as u32);
+        assert_eq!(hop_route.mtu, DEFAULT_MTU_FOR_TESTS);
+        assert_eq!(hop_route.mac_addr, Some(mac));
+
+        let hop_route_gre = hop_route.gre.as_ref().unwrap();
+        assert_eq!(hop_route_gre.if_index, if_index_gre as u32);
+        assert_eq!(hop_route_gre.mtu, DEFAULT_MTU_FOR_TESTS - 100);
+        assert_eq!(hop_route_gre.underlay_mtu, DEFAULT_MTU_FOR_TESTS);
+        assert_eq!(hop_route.mtu, hop_route_gre.underlay_mtu);
+    }
+
+    #[test]
+    fn test_missing_output_interface_blocks_fallback_route() {
+        let blocked_dst = Ipv4Addr::new(10, 0, 0, 2);
+        let default_gateway = Ipv4Addr::new(10, 0, 0, 1);
+
+        let mut tables = empty_tables();
+        assert!(tables.upsert_interface(InterfaceInfo {
+            if_index: 1,
+            mtu: DEFAULT_MTU_FOR_TESTS,
+            gre_tunnel: None,
+            vlan_link: None,
+        }));
+        assert!(tables.upsert_neighbor(NeighborEntry {
+            destination: Some(IpAddr::V4(default_gateway)),
+            lladdr: Some(MacAddress([0x02, 0xaa, 0xbb, 0xcc, 0xdd, 0x01])),
+            ifindex: 1,
+            state: NUD_REACHABLE,
+        }));
+
+        assert!(tables.upsert_route(test_route_entry(
+            None,
+            Some(default_gateway),
+            1,
+            0,
+            u32::from(RouteTable::Main),
+        )));
+
+        assert!(tables.upsert_route(RouteEntry {
+            destination: Some(IpAddr::V4(blocked_dst)),
+            gateway: None,
+            pref_src: None,
+            out_if_index: None, // missing output interface should block this route
+            in_if_index: None,
+            priority: None,
+            table: Some(u32::from(RouteTable::Main)),
+            protocol: 0,
+            scope: 0,
+            type_: 0,
+            family: AF_INET as u8,
+            dst_len: 32,
+            flags: 0,
+        }));
+
+        let router = Router::from_tables(tables).unwrap();
+        assert!(matches!(
+            router.route_v4(blocked_dst),
+            Err(RouteError::MissingOutputInterface)
+        ));
+    }
+
+    #[test]
+    fn test_same_prefix_diff_priority() {
+        let primary = Ipv4Addr::new(10, 0, 0, 1);
+        let backup = Ipv4Addr::new(10, 0, 0, 2);
+        let tables = dual_default_tables(primary, backup);
+
+        let router = Router::from_tables(tables.clone()).unwrap();
+        let next_hop = router.default().unwrap();
+        assert_eq!(next_hop.if_index, 1);
+        assert_eq!(next_hop.ip_addr, IpAddr::V4(primary));
+
+        {
+            let mut tables = tables.clone();
+            assert!(tables.remove_route(test_route_entry_with_priority(
+                None,
+                Some(backup),
+                2,
+                0,
+                u32::from(RouteTable::Main),
+                Some(200),
+            )));
+
+            let router = Router::from_tables(tables).unwrap();
+            let next_hop = router.default().unwrap();
+            assert_eq!(next_hop.if_index, 1);
+            assert_eq!(next_hop.ip_addr, IpAddr::V4(primary));
+        }
+
+        let mut tables = tables;
+        assert!(tables.remove_route(test_route_entry_with_priority(
+            None,
+            Some(primary),
+            1,
+            0,
+            u32::from(RouteTable::Main),
+            Some(100),
+        )));
+
+        let router = Router::from_tables(tables).unwrap();
+        let next_hop = router.default().unwrap();
+        assert_eq!(next_hop.if_index, 2);
+        assert_eq!(next_hop.ip_addr, IpAddr::V4(backup));
+    }
+
+    #[test]
+    fn test_vlan_route_resolves_with_vlan_info() {
+        // A route through a configured VLAN sub-interface attaches VlanRouteInfo to the NextHop;
+        // the MAC still comes from the neighbor cache and no GRE encap is set.
+        let peer = Ipv4Addr::new(10, 228, 0, 99);
+        let vlan_if = 100u32;
+        let vlan_src = Ipv4Addr::new(10, 228, 0, 5);
+        let peer_mac = MacAddress([0x02, 0xaa, 0xbb, 0xcc, 0xdd, 0x09]);
+
+        let neighbors = vec![NeighborEntry {
+            destination: Some(IpAddr::V4(peer)),
+            lladdr: Some(peer_mac),
+            ifindex: vlan_if as i32,
+            state: NUD_REACHABLE,
+        }];
+        let interfaces = vec![InterfaceInfo {
+            if_index: vlan_if,
+            mtu: DEFAULT_MTU_FOR_TESTS,
+            gre_tunnel: None,
+            vlan_link: Some(VlanLinkInfo { vid: 900 }),
+        }];
+        let routes = vec![Route {
+            destination: Some(Ipv4Addr::new(10, 228, 0, 0)),
+            gateway: None,
+            preferred_src: Some(vlan_src),
+            out_if_index: Some(vlan_if),
+            priority: None,
+            type_: 0,
+            dst_len: 22,
+        }];
+
+        let router = router_from_tables(neighbors, routes, interfaces);
+        let next_hop = router.route_v4(peer).unwrap();
+        assert_eq!(next_hop.if_index, vlan_if);
+        assert_eq!(next_hop.preferred_src_ip, Some(vlan_src));
+        assert_eq!(next_hop.mac_addr, Some(peer_mac));
+        assert!(next_hop.gre.is_none());
+        let vlan = next_hop.vlan.expect("vlan info must be populated");
+        assert_eq!(vlan.if_index, vlan_if);
+        assert_eq!(vlan.vid, 900);
+        assert_eq!(vlan.pcp, 0);
+    }
+
+    #[test]
+    fn test_multiple_vlan_interfaces_resolve_their_own_vid() {
+        // With more than one VLAN sub-interface, each route is tagged with the vid of the
+        // interface it egresses through.
+        let peer_a = Ipv4Addr::new(10, 1, 0, 9);
+        let peer_b = Ipv4Addr::new(10, 2, 0, 9);
+        let vlan_if_a = 100u32;
+        let vlan_if_b = 101u32;
+        let mac_a = MacAddress([0x02, 0x00, 0x00, 0x00, 0x00, 0x0a]);
+        let mac_b = MacAddress([0x02, 0x00, 0x00, 0x00, 0x00, 0x0b]);
+
+        let neighbors = vec![
+            NeighborEntry {
+                destination: Some(IpAddr::V4(peer_a)),
+                lladdr: Some(mac_a),
+                ifindex: vlan_if_a as i32,
+                state: NUD_REACHABLE,
+            },
+            NeighborEntry {
+                destination: Some(IpAddr::V4(peer_b)),
+                lladdr: Some(mac_b),
+                ifindex: vlan_if_b as i32,
+                state: NUD_REACHABLE,
+            },
+        ];
+        let interfaces = vec![
+            InterfaceInfo {
+                if_index: vlan_if_a,
+                mtu: DEFAULT_MTU_FOR_TESTS,
+                gre_tunnel: None,
+                vlan_link: Some(VlanLinkInfo { vid: 900 }),
+            },
+            InterfaceInfo {
+                if_index: vlan_if_b,
+                mtu: DEFAULT_MTU_FOR_TESTS,
+                gre_tunnel: None,
+                vlan_link: Some(VlanLinkInfo { vid: 901 }),
+            },
+        ];
+        let routes = vec![
+            test_route(Some(peer_a), vlan_if_a),
+            test_route(Some(peer_b), vlan_if_b),
+        ];
+
+        let router = router_from_tables(neighbors, routes, interfaces);
+        let hop_a = router.route_v4(peer_a).unwrap();
+        assert_eq!(hop_a.vlan.map(|v| v.vid), Some(900));
+        assert_eq!(hop_a.mac_addr, Some(mac_a));
+        let hop_b = router.route_v4(peer_b).unwrap();
+        assert_eq!(hop_b.vlan.map(|v| v.vid), Some(901));
+        assert_eq!(hop_b.mac_addr, Some(mac_b));
+    }
+
+    #[test]
+    fn test_gre_wins_when_both_gre_and_vlan_configured() {
+        // Defensive: if a configured VLAN if_index also happens to be a GRE interface, the resolve
+        // path picks GRE first (single-encap-per-interface contract).
+        let remote = Ipv4Addr::new(10, 0, 0, 1);
+        let gre_dest = Ipv4Addr::new(192, 168, 0, 1);
+        let if_index_underlay = 1u32;
+        let if_index_iface = 100u32;
+        let underlay_mac = MacAddress([0x02, 0xaa, 0xbb, 0xcc, 0xdd, 0x01]);
+
+        let neighbors = vec![NeighborEntry {
+            destination: Some(IpAddr::V4(remote)),
+            lladdr: Some(underlay_mac),
+            ifindex: if_index_underlay as i32,
+            state: NUD_REACHABLE,
+        }];
+        let routes = vec![
+            test_route(Some(remote), if_index_underlay),
+            test_route(Some(gre_dest), if_index_iface),
+        ];
+        let interfaces = vec![
+            InterfaceInfo {
+                if_index: if_index_underlay,
+                mtu: DEFAULT_MTU_FOR_TESTS,
+                gre_tunnel: None,
+                vlan_link: None,
+            },
+            InterfaceInfo {
+                if_index: if_index_iface,
+                mtu: DEFAULT_MTU_FOR_TESTS,
+                gre_tunnel: Some(GreTunnelInfo {
+                    local: IpAddr::V4(Ipv4Addr::new(10, 0, 0, 3)),
+                    remote: IpAddr::V4(remote),
+                    ttl: 0,
+                    tos: 0,
+                    pmtudisc: 0,
+                }),
+                vlan_link: Some(VlanLinkInfo { vid: 5 }),
+            },
+        ];
+        let router = router_from_tables(neighbors, routes, interfaces);
+        let next_hop = router.route_v4(gre_dest).unwrap();
+        assert!(next_hop.gre.is_some());
+        assert!(next_hop.vlan.is_none());
+    }
+
+    #[test]
+    fn test_ipv4_multicast_mac_mapping() {
+        // RFC 1112: 01:00:5e + (octet1 & 0x7f) + octet2 + octet3
+        assert_eq!(
+            ipv4_multicast_mac(Ipv4Addr::new(224, 0, 0, 1)),
+            MacAddress([0x01, 0x00, 0x5e, 0x00, 0x00, 0x01]),
+        );
+        assert_eq!(
+            ipv4_multicast_mac(Ipv4Addr::new(239, 0, 0, 3)),
+            MacAddress([0x01, 0x00, 0x5e, 0x00, 0x00, 0x03]),
+        );
+        // High bit of the second octet must be cleared (only the low 23 bits map).
+        assert_eq!(
+            ipv4_multicast_mac(Ipv4Addr::new(239, 128, 0, 1)),
+            MacAddress([0x01, 0x00, 0x5e, 0x00, 0x00, 0x01]),
+        );
+        assert_eq!(
+            ipv4_multicast_mac(Ipv4Addr::new(239, 255, 255, 250)),
+            MacAddress([0x01, 0x00, 0x5e, 0x7f, 0xff, 0xfa]),
+        );
+    }
+
+    #[test]
+    fn test_multicast_route_resolves_with_computed_mac_without_arp() {
+        // Route 239.0.0.0/8 dev iface (no gateway, no ARP entry): resolution must yield the
+        // RFC-1112 multicast MAC instead of falling through to a missing neighbor.
+        let multicast_dst = Ipv4Addr::new(239, 0, 0, 3);
+        let if_index = 100u32;
+        let routes = vec![Route {
+            destination: Some(Ipv4Addr::new(239, 0, 0, 0)),
+            gateway: None,
+            preferred_src: None,
+            out_if_index: Some(if_index),
+            priority: None,
+            type_: 0,
+            dst_len: 8,
+        }];
+        let interfaces = vec![InterfaceInfo {
+            if_index,
+            mtu: DEFAULT_MTU_FOR_TESTS,
+            gre_tunnel: None,
+            vlan_link: None,
+        }];
+        let router = router_from_tables(vec![], routes, interfaces);
+        let next_hop = router.route_v4(multicast_dst).unwrap();
+        assert_eq!(
+            next_hop.mac_addr,
+            Some(MacAddress([0x01, 0x00, 0x5e, 0x00, 0x00, 0x03]))
+        );
+        assert_eq!(next_hop.if_index, if_index);
+    }
+
+    #[test]
+    fn test_unicast_without_neighbor_returns_no_mac() {
+        // Regression guard for the unicast branch: with no neighbor entry the MAC stays None so
+        // the tx loop drops the packet rather than sending it to a bogus address.
+        let dst = Ipv4Addr::new(10, 1, 2, 3);
+        let if_index = 5u32;
+        let routes = vec![test_route(Some(dst), if_index)];
+        let interfaces = vec![InterfaceInfo {
+            if_index,
+            mtu: DEFAULT_MTU_FOR_TESTS,
+            gre_tunnel: None,
+            vlan_link: None,
+        }];
+        let router = router_from_tables(vec![], routes, interfaces);
+        let next_hop = router.route_v4(dst).unwrap();
+        assert!(next_hop.mac_addr.is_none());
     }
 }

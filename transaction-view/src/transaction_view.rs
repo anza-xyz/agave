@@ -1,8 +1,12 @@
 use {
     crate::{
         address_table_lookup_frame::AddressTableLookupIterator,
-        instructions_frame::InstructionsIterator, result::Result, sanitize::sanitize,
-        transaction_data::TransactionData, transaction_frame::TransactionFrame,
+        instructions_frame::InstructionsIterator,
+        result::Result,
+        sanitize::{SanitizeConfig, sanitize},
+        transaction_config_frame::TransactionConfigView,
+        transaction_data::TransactionData,
+        transaction_frame::TransactionFrame,
         transaction_version::TransactionVersion,
     },
     core::fmt::{Debug, Formatter},
@@ -39,16 +43,8 @@ impl<D: TransactionData> TransactionView<false, D> {
     }
 
     /// Sanitizes the transaction view, returning a sanitized view on success.
-    pub fn sanitize(
-        self,
-        enable_static_instruction_limit: bool,
-        enable_instruction_accounts_limit: bool,
-    ) -> Result<SanitizedTransactionView<D>> {
-        sanitize(
-            &self,
-            enable_static_instruction_limit,
-            enable_instruction_accounts_limit,
-        )?;
+    pub fn sanitize(self, config: &SanitizeConfig) -> Result<SanitizedTransactionView<D>> {
+        sanitize(&self, config)?;
         Ok(SanitizedTransactionView {
             data: self.data,
             frame: self.frame,
@@ -58,16 +54,9 @@ impl<D: TransactionData> TransactionView<false, D> {
 
 impl<D: TransactionData> TransactionView<true, D> {
     /// Creates a new `TransactionView`, running sanitization checks.
-    pub fn try_new_sanitized(
-        data: D,
-        enable_static_instruction_limit: bool,
-        enable_instruction_accounts_limit: bool,
-    ) -> Result<Self> {
+    pub fn try_new_sanitized(data: D, config: &SanitizeConfig) -> Result<Self> {
         let unsanitized_view = TransactionView::try_new_unsanitized(data)?;
-        unsanitized_view.sanitize(
-            enable_static_instruction_limit,
-            enable_instruction_accounts_limit,
-        )
+        unsanitized_view.sanitize(config)
     }
 }
 
@@ -172,6 +161,18 @@ impl<const SANITIZED: bool, D: TransactionData> TransactionView<SANITIZED, D> {
         unsafe { self.frame.address_table_lookup_iter(data) }
     }
 
+    /// Return Some(TransactionConfigView) for V1, None for legacy/V0
+    #[inline]
+    pub fn transaction_config(&self) -> Option<TransactionConfigView<'_>> {
+        let transaction_config_frame = self.frame.transaction_config_frame();
+        transaction_config_frame
+            .is_present()
+            .then_some(TransactionConfigView {
+                transaction_config_frame,
+                bytes: self.data(),
+            })
+    }
+
     /// Return the full serialized transaction data.
     #[inline]
     pub fn data(&self) -> &[u8] {
@@ -182,7 +183,8 @@ impl<const SANITIZED: bool, D: TransactionData> TransactionView<SANITIZED, D> {
     /// This does not include the signatures.
     #[inline]
     pub fn message_data(&self) -> &[u8] {
-        &self.data()[usize::from(self.frame.message_offset())..]
+        let (start, end) = self.frame.message_range();
+        &self.data()[usize::from(start)..usize::from(end)]
     }
 
     #[inline]
@@ -268,6 +270,10 @@ impl<const SANITIZED: bool, D: TransactionData> Debug for TransactionView<SANITI
 }
 
 impl<D: TransactionData> SVMStaticMessage for TransactionView<true, D> {
+    fn version(&self) -> solana_transaction::versioned::TransactionVersion {
+        self.version().into()
+    }
+
     fn num_transaction_signatures(&self) -> u64 {
         self.num_required_signatures() as u64
     }
@@ -314,6 +320,10 @@ impl<D: TransactionData> SVMStaticMessage for TransactionView<true, D> {
 }
 
 impl<D: TransactionData> SVMStaticMessage for &TransactionView<true, D> {
+    fn version(&self) -> solana_transaction::versioned::TransactionVersion {
+        <TransactionView<true, D> as SVMStaticMessage>::version(self)
+    }
+
     fn num_transaction_signatures(&self) -> u64 {
         <TransactionView<true, D> as SVMStaticMessage>::num_transaction_signatures(self)
     }
@@ -363,7 +373,9 @@ impl<D: TransactionData> SVMStaticMessage for &TransactionView<true, D> {
 mod tests {
     use {
         super::*,
-        solana_message::{Message, VersionedMessage},
+        solana_message::{
+            Message, MessageHeader, VersionedMessage, compiled_instruction::CompiledInstruction, v1,
+        },
         solana_pubkey::Pubkey,
         solana_signature::Signature,
         solana_system_interface::instruction as system_instruction,
@@ -371,7 +383,7 @@ mod tests {
     };
 
     fn verify_transaction_view_frame(tx: &VersionedTransaction) {
-        let bytes = bincode::serialize(tx).unwrap();
+        let bytes = wincode::serialize(tx).unwrap();
         let view = TransactionView::try_new_unsanitized(bytes.as_ref()).unwrap();
 
         assert_eq!(view.num_signatures(), tx.signatures.len() as u8);
@@ -404,6 +416,8 @@ mod tests {
                 .map(|x| x.len() as u8)
                 .unwrap_or(0)
         );
+
+        assert!(view.transaction_config().is_none());
     }
 
     fn multiple_transfers() -> VersionedTransaction {
@@ -423,5 +437,81 @@ mod tests {
     #[test]
     fn test_multiple_transfers() {
         verify_transaction_view_frame(&multiple_transfers());
+    }
+
+    fn simple_v1_transaction() -> VersionedTransaction {
+        let payer = Pubkey::new_unique();
+        let program = Pubkey::new_unique();
+
+        VersionedTransaction {
+            signatures: vec![Signature::default()],
+            message: VersionedMessage::V1(v1::Message {
+                header: MessageHeader {
+                    num_required_signatures: 1,
+                    num_readonly_signed_accounts: 0,
+                    num_readonly_unsigned_accounts: 0,
+                },
+                config: v1::TransactionConfig {
+                    priority_fee: Some(111),
+                    compute_unit_limit: Some(222),
+                    loaded_accounts_data_size_limit: Some(333),
+                    heap_size: Some(1024),
+                },
+                lifetime_specifier: Hash::default(),
+                account_keys: vec![payer, program],
+                instructions: vec![CompiledInstruction {
+                    program_id_index: 1,
+                    accounts: vec![0],
+                    data: vec![1, 2, 3, 4],
+                }],
+            }),
+        }
+    }
+
+    #[test]
+    fn test_v1_transaction_config_present() {
+        let tx = simple_v1_transaction();
+        let bytes = wincode::serialize(&tx).unwrap();
+        let view = TransactionView::try_new_unsanitized(bytes.as_ref()).unwrap();
+
+        assert!(matches!(view.version(), TransactionVersion::V1));
+
+        let config = view.transaction_config().expect("v1 should have config");
+        assert_eq!(config.priority_fee_lamports().unwrap(), 111);
+        assert_eq!(config.compute_unit_limit().unwrap(), 222);
+        assert_eq!(config.loaded_accounts_data_size_limit().unwrap(), 333);
+        assert_eq!(config.requested_heap_size().unwrap(), 1024);
+    }
+
+    #[test]
+    fn test_v1_message_data_excludes_signatures() {
+        let tx = simple_v1_transaction();
+        let bytes = wincode::serialize(&tx).unwrap();
+        let view = TransactionView::try_new_unsanitized(bytes.as_ref()).unwrap();
+
+        let message_data = view.message_data();
+
+        // For v1, message_data should stop before the signatures region.
+        assert!(message_data.len() < bytes.len());
+
+        let full_message = &bytes
+            [usize::from(view.frame.message_offset())..usize::from(view.frame.signatures_offset())];
+        assert_eq!(message_data, full_message);
+    }
+
+    #[test]
+    fn test_v1_signatures_accessible() {
+        let tx = simple_v1_transaction();
+        let bytes = wincode::serialize(&tx).unwrap();
+        let view = TransactionView::try_new_unsanitized(bytes.as_ref()).unwrap();
+
+        assert_eq!(view.signatures().len(), 1);
+        assert_eq!(view.static_account_keys().len(), 2);
+
+        let instructions: Vec<_> = view.instructions_iter().collect();
+        assert_eq!(instructions.len(), 1);
+        assert_eq!(instructions[0].program_id_index, 1);
+        assert_eq!(instructions[0].accounts, &[0]);
+        assert_eq!(instructions[0].data, &[1, 2, 3, 4]);
     }
 }

@@ -1,5 +1,5 @@
 use {
-    agave_transaction_view::transaction_view::TransactionView,
+    agave_transaction_view::{sanitize::SanitizeConfig, transaction_view::TransactionView},
     criterion::{
         BenchmarkGroup, Criterion, Throughput, criterion_group, criterion_main,
         measurement::Measurement,
@@ -22,10 +22,18 @@ use {
 
 const NUM_TRANSACTIONS: usize = 1024;
 
+// Current protocol values; production callers supply these from agave.
+const SANITIZE_CONFIG: SanitizeConfig = SanitizeConfig {
+    min_requested_heap_size: 32 * 1024,
+    max_requested_heap_size: 256 * 1024,
+    max_instructions: 64,
+    max_accounts_per_instruction: 255,
+};
+
 fn serialize_transactions(transactions: Vec<VersionedTransaction>) -> Vec<Vec<u8>> {
     transactions
         .into_iter()
-        .map(|transaction| bincode::serialize(&transaction).unwrap())
+        .map(|transaction| wincode::serialize(&transaction).unwrap())
         .collect()
 }
 
@@ -37,7 +45,7 @@ fn bench_transactions_parsing(
     group.bench_function("VersionedTransaction", |c| {
         c.iter(|| {
             for bytes in serialized_transactions.iter() {
-                let _ = bincode::deserialize::<VersionedTransaction>(black_box(bytes)).unwrap();
+                let _ = wincode::deserialize::<VersionedTransaction>(black_box(bytes)).unwrap();
             }
         });
     });
@@ -46,7 +54,7 @@ fn bench_transactions_parsing(
     group.bench_function("SanitizedVersionedTransaction", |c| {
         c.iter(|| {
             for bytes in serialized_transactions.iter() {
-                let tx = bincode::deserialize::<VersionedTransaction>(black_box(bytes)).unwrap();
+                let tx = wincode::deserialize::<VersionedTransaction>(black_box(bytes)).unwrap();
                 let _ = SanitizedVersionedTransaction::try_new(tx).unwrap();
             }
         });
@@ -65,8 +73,9 @@ fn bench_transactions_parsing(
     group.bench_function("TransactionView (Sanitized)", |c| {
         c.iter(|| {
             for bytes in serialized_transactions.iter() {
-                let _ = TransactionView::try_new_sanitized(black_box(bytes.as_ref()), true, true)
-                    .unwrap();
+                let _ =
+                    TransactionView::try_new_sanitized(black_box(bytes.as_ref()), &SANITIZE_CONFIG)
+                        .unwrap();
             }
         });
     });

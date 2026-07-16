@@ -1,11 +1,11 @@
 use {
-    crate::transaction_meta::StaticMeta,
+    crate::transaction_meta::TransactionMeta,
     solana_svm_transaction::svm_transaction::SVMTransaction,
     solana_transaction::{sanitized::SanitizedTransaction, versioned::VersionedTransaction},
     std::borrow::Cow,
 };
 
-pub trait TransactionWithMeta: StaticMeta + SVMTransaction {
+pub trait TransactionWithMeta: TransactionMeta + SVMTransaction {
     /// Required to interact with geyser plugins.
     /// This function should not be used except for interacting with geyser.
     /// It may do numerous allocations that negatively impact performance.
@@ -14,4 +14,8 @@ pub trait TransactionWithMeta: StaticMeta + SVMTransaction {
     /// `VersionedTransaction`. This should not be used unless necessary, as it
     /// performs numerous allocations that negatively impact performance.
     fn to_versioned_transaction(&self) -> VersionedTransaction;
+
+    /// Returns the serialized transaction size in bytes.
+    /// Runtime metadata is not included.
+    fn serialized_size(&self) -> usize;
 }

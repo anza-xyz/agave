@@ -101,7 +101,7 @@ if pushd "${tmpdir}" &>/dev/null; then
   cat <<EOF > "Cargo.toml"
 [package]
 name = "${package_name}"
-version = "0.0.0"
+version = "0.0.1-reserved"
 description = "reserved for future use"
 authors = ["Anza Maintainers <maintainers@anza.xyz>"]
 repository = "https://github.com/anza-xyz/agave"

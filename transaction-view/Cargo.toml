@@ -7,7 +7,12 @@ authors = { workspace = true }
 repository = { workspace = true }
 homepage = { workspace = true }
 license = { workspace = true }
-edition = "2024"
+edition = { workspace = true }
+
+[package.metadata.docs.rs]
+targets = ["x86_64-unknown-linux-gnu"]
+all-features = true
+rustdoc-args = ["--cfg=docsrs"]
 
 [features]
 agave-unstable-api = []
@@ -22,7 +27,7 @@ solana-sdk-ids = { workspace = true }
 solana-short-vec = { workspace = true }
 solana-signature = { workspace = true }
 solana-svm-transaction = { workspace = true }
-solana-transaction-context = { workspace = true }
+solana-transaction = { workspace = true }
 
 [dev-dependencies]
 # See order-crates-for-publishing.py for using this unusual `path = "."`
@@ -32,10 +37,12 @@ criterion = { workspace = true }
 solana-instruction = { workspace = true }
 solana-keypair = { workspace = true }
 solana-message = { workspace = true, features = ["serde"] }
+solana-pubkey = { workspace = true, features = ["rand"] }
 solana-signature = { workspace = true, features = ["serde"] }
 solana-signer = { workspace = true }
-solana-system-interface = { workspace = true, features = ["bincode"] }
-solana-transaction = { workspace = true, features = ["bincode"] }
+solana-system-interface = { workspace = true, features = ["wincode"] }
+solana-transaction = { workspace = true, features = ["serde", "wincode"] }
+wincode = { workspace = true }
 
 [[bench]]
 name = "bytes"
@@ -44,3 +51,6 @@ harness = false
 [[bench]]
 name = "transaction_view"
 harness = false
+
+[lints]
+workspace = true

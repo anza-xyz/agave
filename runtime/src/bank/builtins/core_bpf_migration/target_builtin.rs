@@ -130,10 +130,6 @@ mod tests {
             (solana_system_interface::program::id(), None),
             (solana_vote_interface::program::id(), None),
             (
-                solana_sdk_ids::loader_v4::id(),
-                Some(feature_set::enable_loader_v4::id())
-            ),
-            (
                 solana_sdk_ids::zk_token_proof_program::id(),
                 Some(feature_set::zk_token_sdk_enabled::id())
             ),

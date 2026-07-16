@@ -5,8 +5,15 @@ use core::arch::x86_64::{__cpuid, __cpuid_count, __get_cpuid_max, CpuidResult};
 #[cfg(any(target_arch = "x86", target_arch = "x86_64"))]
 use num_enum::{IntoPrimitive, TryFromPrimitive};
 #[cfg(target_os = "linux")]
-use std::{fs::File, io::BufReader};
 use {
+    agave_xdp::device::NetworkDevice,
+    std::{
+        fs::{self, File},
+        io::{self, BufReader, ErrorKind},
+    },
+};
+use {
+    solana_metrics::datapoint::DataPoint,
     solana_time_utils::AtomicInterval,
     std::{
         collections::HashMap,
@@ -26,6 +33,7 @@ const MS_PER_M: u64 = MS_PER_S * 60;
 const MS_PER_H: u64 = MS_PER_M * 60;
 const SAMPLE_INTERVAL_UDP_MS: u64 = 2 * MS_PER_S;
 const SAMPLE_INTERVAL_OS_NETWORK_LIMITS_MS: u64 = MS_PER_H;
+const SAMPLE_INTERVAL_XDP_NETWORK_CONFIG_MS: u64 = MS_PER_H;
 const SAMPLE_INTERVAL_MEM_MS: u64 = 5 * MS_PER_S;
 const SAMPLE_INTERVAL_CPU_MS: u64 = 10 * MS_PER_S;
 const SAMPLE_INTERVAL_CPU_ID_MS: u64 = MS_PER_H;
@@ -38,6 +46,22 @@ const PROC_NET_SNMP_PATH: &str = "/proc/net/snmp";
 const PROC_NET_DEV_PATH: &str = "/proc/net/dev";
 #[cfg(target_os = "linux")]
 const SYS_BLOCK_PATH: &str = "/sys/block";
+#[cfg(target_os = "linux")]
+const PCI_IDS_PATHS: &[&str] = &["/usr/share/hwdata/pci.ids", "/usr/share/misc/pci.ids"];
+
+#[derive(Clone, Debug)]
+pub struct XdpNetworkConfigReport {
+    pub zero_copy: bool,
+    pub interface: String,
+}
+
+#[cfg_attr(not(target_os = "linux"), allow(dead_code))]
+struct XdpNetworkConfigMetrics {
+    kernel_version: String,
+    driver: String,
+    vendor: String,
+    model: String,
+}
 
 pub struct SystemMonitorService {
     thread_hdl: JoinHandle<()>,
@@ -298,6 +322,157 @@ fn parse_net_dev_stats(reader_dev: &mut impl BufRead) -> Result<NetDevStats, Str
 }
 
 #[cfg(target_os = "linux")]
+fn try_resolve_network_device_pci_names(
+    interface: &str,
+    vendor_id: &str,
+    model_id: &str,
+) -> Result<(String, String), String> {
+    let class = match read_network_device_sysfs_value(interface, "class") {
+        Ok(class) => class,
+        Err(err) => {
+            return Err(err.to_string());
+        }
+    };
+    if !normalize_pci_id(&class).is_some_and(|class| class.starts_with("02")) {
+        return Err(format!(
+            "xdp network config device for interface {interface} has non-network PCI class {class}"
+        ));
+    }
+
+    let (Some(vendor_id), Some(model_id)) =
+        (normalize_pci_id(vendor_id), normalize_pci_id(model_id))
+    else {
+        return Err(format!(
+            "failed to normalize xdp network config PCI ids for interface {interface}: \
+             vendor_id={vendor_id} model_id={model_id}"
+        ));
+    };
+
+    match read_pci_database_device_names(&vendor_id, &model_id) {
+        Ok(Some((vendor, model))) => Ok((vendor, model)),
+        Ok(None) => Err(format!(
+            "failed to find xdp network config PCI names for vendor_id={vendor_id} \
+             model_id={model_id}"
+        )),
+        Err(err) => Err(format!(
+            "failed to read PCI database for xdp network config: {err}"
+        )),
+    }
+}
+
+#[cfg(target_os = "linux")]
+fn read_network_device_sysfs_value(interface: &str, file_name: &str) -> io::Result<String> {
+    let path = format!("/sys/class/net/{interface}/device/{file_name}");
+    let value = fs::read_to_string(&path)
+        .map_err(|e| {
+            io::Error::new(
+                e.kind(),
+                format!("Failed to read {file_name} for interface {interface}: {e}"),
+            )
+        })?
+        .trim()
+        .to_string();
+
+    if value.is_empty() {
+        return Err(io::Error::new(
+            ErrorKind::InvalidData,
+            format!("Empty {file_name} for interface {interface}"),
+        ));
+    }
+
+    Ok(value)
+}
+
+#[cfg(target_os = "linux")]
+fn normalize_pci_id(value: &str) -> Option<String> {
+    let value = value
+        .strip_prefix("0x")
+        .or_else(|| value.strip_prefix("0X"))
+        .unwrap_or(value);
+
+    (!value.is_empty() && value.chars().all(|char| char.is_ascii_hexdigit()))
+        .then(|| value.to_ascii_lowercase())
+}
+
+#[cfg(target_os = "linux")]
+fn read_pci_database_device_names(
+    vendor_id: &str,
+    model_id: &str,
+) -> io::Result<Option<(String, String)>> {
+    for path in PCI_IDS_PATHS {
+        let contents = match fs::read_to_string(path) {
+            Ok(contents) => contents,
+            Err(err) if err.kind() == ErrorKind::NotFound => continue,
+            Err(err) => {
+                return Err(io::Error::new(
+                    err.kind(),
+                    format!("Failed to read {path}: {err}"),
+                ));
+            }
+        };
+        return Ok(parse_pci_database_device_names(
+            &contents, vendor_id, model_id,
+        ));
+    }
+
+    Err(io::Error::new(
+        ErrorKind::NotFound,
+        format!("PCI database not found in {}", PCI_IDS_PATHS.join(", ")),
+    ))
+}
+
+#[cfg_attr(not(target_os = "linux"), allow(dead_code))]
+fn parse_pci_database_device_names(
+    contents: &str,
+    vendor_id: &str,
+    model_id: &str,
+) -> Option<(String, String)> {
+    let mut matching_vendor_name: Option<String> = None;
+
+    for line in contents.lines() {
+        if line.is_empty() || line.starts_with('#') || line.starts_with("\t\t") {
+            continue;
+        }
+        //  PCI class-code section starts, done with the vendor/device section.
+        if line.starts_with("C ") {
+            break;
+        }
+
+        if let Some(device_line) = line.strip_prefix('\t') {
+            let Some(vendor_name) = matching_vendor_name.as_ref() else {
+                continue;
+            };
+
+            let Some((device_line_id, device_name)) = parse_pci_ids_line(device_line) else {
+                continue;
+            };
+            if device_line_id.eq_ignore_ascii_case(model_id) {
+                return Some((vendor_name.clone(), device_name.to_string()));
+            }
+            continue;
+        }
+
+        let Some((vendor_line_id, vendor_name)) = parse_pci_ids_line(line) else {
+            continue;
+        };
+        matching_vendor_name = vendor_line_id
+            .eq_ignore_ascii_case(vendor_id)
+            .then(|| vendor_name.to_string());
+    }
+
+    None
+}
+
+#[cfg_attr(not(target_os = "linux"), allow(dead_code))]
+fn parse_pci_ids_line(line: &str) -> Option<(&str, &str)> {
+    let line = line.trim();
+    let id_end = line.find(char::is_whitespace)?;
+    let id = &line[..id_end];
+    let name = line[id_end..].trim();
+    (!id.is_empty() && !name.is_empty()).then_some((id, name))
+}
+
+#[cfg(target_os = "linux")]
 pub fn verify_net_stats_access() -> Result<(), String> {
     read_net_stats()?;
     Ok(())
@@ -386,6 +561,7 @@ fn parse_disk_stats(reader_diskstats: &mut impl BufRead) -> Result<DiskStats, St
 pub struct SystemMonitorStatsReportConfig {
     pub report_os_memory_stats: bool,
     pub report_os_network_stats: bool,
+    pub xdp_network_config_report: Option<XdpNetworkConfigReport>,
     pub report_os_cpu_stats: bool,
     pub report_os_disk_stats: bool,
 }
@@ -448,12 +624,13 @@ impl SystemMonitorService {
 
     #[cfg_attr(not(target_os = "linux"), allow(dead_code))]
     fn linux_report_network_limits(
+        mut datapoint: DataPoint,
         current_limits: &[(&'static str, &'static InterestingLimit, i64)],
     ) -> bool {
-        current_limits
+        let ret = current_limits
             .iter()
             .all(|(key, interesting_limit, current_value)| {
-                datapoint_warn!("os-config", (key, *current_value, i64));
+                datapoint.add_field_i64(key, *current_value);
                 match interesting_limit {
                     InterestingLimit::Recommend(recommended_value)
                         if current_value < recommended_value =>
@@ -473,7 +650,9 @@ impl SystemMonitorService {
                         true
                     }
                 }
-            })
+            });
+        solana_metrics::submit(datapoint, log::Level::Info);
+        ret
     }
 
     #[cfg(not(target_os = "linux"))]
@@ -484,9 +663,10 @@ impl SystemMonitorService {
 
     #[cfg(target_os = "linux")]
     pub fn check_os_network_limits() -> bool {
-        datapoint_info!("os-config", ("platform", platform_id(), String));
+        let mut datapoint = DataPoint::new("os-config");
+        datapoint.add_field_str("platform", platform_id().as_str());
         let current_limits = Self::linux_get_current_network_limits();
-        Self::linux_report_network_limits(&current_limits)
+        Self::linux_report_network_limits(datapoint, &current_limits)
     }
 
     #[cfg(target_os = "linux")]
@@ -703,6 +883,34 @@ impl SystemMonitorService {
         }
     }
 
+    #[cfg(not(any(target_env = "msvc", target_os = "freebsd")))]
+    fn report_jemalloc_stats() {
+        use jemalloc_ctl::{epoch, stats};
+        // Advance the epoch so jemalloc refreshes its cached stat values.
+        epoch::mib().unwrap().advance().unwrap();
+        let allocated = stats::allocated::mib()
+            .and_then(|m| m.read())
+            .expect("Jemalloc stats is compiled in");
+        let active = stats::active::mib()
+            .and_then(|m| m.read())
+            .expect("Jemalloc stats is compiled in");
+        let resident = stats::resident::mib()
+            .and_then(|m| m.read())
+            .expect("Jemalloc stats is compiled in");
+        let retained = stats::retained::mib()
+            .and_then(|m| m.read())
+            .expect("Jemalloc stats is compiled in");
+        datapoint_info!(
+            "jemalloc_stats",
+            ("allocated_bytes", allocated, i64),
+            ("active_bytes", active, i64),
+            ("resident_bytes", resident, i64),
+            ("retained_bytes", retained, i64),
+            // Freed memory jemalloc is holding but hasn't returned to the OS yet.
+            ("dirty_bytes", resident.saturating_sub(active), i64),
+        );
+    }
+
     fn cpu_info() -> Result<CpuInfo, Error> {
         let cpu_num = sys_info::cpu_num()?;
         let cpu_freq_mhz = sys_info::cpu_speed()?;
@@ -726,88 +934,86 @@ impl SystemMonitorService {
         const CPUID_MANUFACTURER_EDX_AMD: u32 = 0x69746e65;
         const CPUID_MANUFACTURER_ECX_AMD: u32 = 0x444d4163;
 
-        unsafe {
-            let cpuid_mfr = __cpuid(0);
-            let cpuid_empty = CpuidResult {
-                eax: 0,
-                ebx: 0,
-                ecx: 0,
-                edx: 0,
-            };
-
-            let max_leaf = match CpuidParamValue::try_from(std::cmp::min(
-                cpuid_mfr.eax,
-                CPUID_PARAM_MAX_SUPPORTED_VALUE,
-            )) {
-                Ok(val) => val,
-                Err(_err) => CpuidParamValue::Manufacturer,
-            };
-
-            let mfr_id = if cpuid_mfr.ebx == CPUID_MANUFACTURER_EBX_INTEL
-                && cpuid_mfr.edx == CPUID_MANUFACTURER_EDX_INTEL
-                && cpuid_mfr.ecx == CPUID_MANUFACTURER_ECX_INTEL
-            {
-                CpuManufacturer::Intel // GenuineIntel
-            } else if cpuid_mfr.ebx == CPUID_MANUFACTURER_EBX_AMD
-                && cpuid_mfr.edx == CPUID_MANUFACTURER_EDX_AMD
-                && cpuid_mfr.ecx == CPUID_MANUFACTURER_ECX_AMD
-            {
-                CpuManufacturer::Amd // AuthenticAMD
-            } else {
-                CpuManufacturer::Other // anything else
-            };
-
-            let cpuid_processor = if CpuidParamValue::Processor <= max_leaf {
-                __cpuid(CpuidParamValue::Processor.into())
-            } else {
-                cpuid_empty
-            };
-            let cpuid_cache = if CpuidParamValue::Cache <= max_leaf {
-                __cpuid(CpuidParamValue::Cache.into())
-            } else {
-                cpuid_empty
-            };
-            let cpuid_topology = if CpuidParamValue::Topology <= max_leaf {
-                __cpuid(CpuidParamValue::Topology.into())
-            } else {
-                cpuid_empty
-            };
-            let cpuid_extended_0 = if CpuidParamValue::Extended <= max_leaf {
-                __cpuid_count(CpuidParamValue::Extended.into(), 0)
-            } else {
-                cpuid_empty
-            };
-            let cpuid_extended_1 = if CpuidParamValue::Extended <= max_leaf {
-                if 1 <= __get_cpuid_max(CpuidParamValue::Extended.into()).1 {
-                    __cpuid_count(CpuidParamValue::Extended.into(), 1)
-                } else {
-                    cpuid_empty
-                }
-            } else {
-                cpuid_empty
-            };
-
-            datapoint_info!(
-                "cpuid-values",
-                ("manufacturer_id", i64::from(mfr_id), i64),
-                ("cpuid_processor_eax", i64::from(cpuid_processor.eax), i64),
-                ("cpuid_processor_ebx", i64::from(cpuid_processor.ebx), i64),
-                ("cpuid_processor_ecx", i64::from(cpuid_processor.ecx), i64),
-                ("cpuid_processor_edx", i64::from(cpuid_processor.edx), i64),
-                ("cpuid_cache_eax", i64::from(cpuid_cache.eax), i64),
-                ("cpuid_cache_ebx", i64::from(cpuid_cache.ebx), i64),
-                ("cpuid_cache_ecx", i64::from(cpuid_cache.ecx), i64),
-                ("cpuid_cache_edx", i64::from(cpuid_cache.edx), i64),
-                ("cpuid_topology_eax", i64::from(cpuid_topology.eax), i64),
-                ("cpuid_topology_ebx", i64::from(cpuid_topology.ebx), i64),
-                ("cpuid_topology_ecx", i64::from(cpuid_topology.ecx), i64),
-                ("cpuid_topology_edx", i64::from(cpuid_topology.edx), i64),
-                ("cpuid_extended_0_ebx", i64::from(cpuid_extended_0.ebx), i64),
-                ("cpuid_extended_0_ecx", i64::from(cpuid_extended_0.ecx), i64),
-                ("cpuid_extended_0_edx", i64::from(cpuid_extended_0.edx), i64),
-                ("cpuid_extended_1_eax", i64::from(cpuid_extended_1.eax), i64),
-            );
+        let cpuid_mfr = __cpuid(0);
+        let cpuid_empty = CpuidResult {
+            eax: 0,
+            ebx: 0,
+            ecx: 0,
+            edx: 0,
         };
+
+        let max_leaf = match CpuidParamValue::try_from(std::cmp::min(
+            cpuid_mfr.eax,
+            CPUID_PARAM_MAX_SUPPORTED_VALUE,
+        )) {
+            Ok(val) => val,
+            Err(_err) => CpuidParamValue::Manufacturer,
+        };
+
+        let mfr_id = if cpuid_mfr.ebx == CPUID_MANUFACTURER_EBX_INTEL
+            && cpuid_mfr.edx == CPUID_MANUFACTURER_EDX_INTEL
+            && cpuid_mfr.ecx == CPUID_MANUFACTURER_ECX_INTEL
+        {
+            CpuManufacturer::Intel // GenuineIntel
+        } else if cpuid_mfr.ebx == CPUID_MANUFACTURER_EBX_AMD
+            && cpuid_mfr.edx == CPUID_MANUFACTURER_EDX_AMD
+            && cpuid_mfr.ecx == CPUID_MANUFACTURER_ECX_AMD
+        {
+            CpuManufacturer::Amd // AuthenticAMD
+        } else {
+            CpuManufacturer::Other // anything else
+        };
+
+        let cpuid_processor = if CpuidParamValue::Processor <= max_leaf {
+            __cpuid(CpuidParamValue::Processor.into())
+        } else {
+            cpuid_empty
+        };
+        let cpuid_cache = if CpuidParamValue::Cache <= max_leaf {
+            __cpuid(CpuidParamValue::Cache.into())
+        } else {
+            cpuid_empty
+        };
+        let cpuid_topology = if CpuidParamValue::Topology <= max_leaf {
+            __cpuid(CpuidParamValue::Topology.into())
+        } else {
+            cpuid_empty
+        };
+        let cpuid_extended_0 = if CpuidParamValue::Extended <= max_leaf {
+            __cpuid_count(CpuidParamValue::Extended.into(), 0)
+        } else {
+            cpuid_empty
+        };
+        let cpuid_extended_1 = if CpuidParamValue::Extended <= max_leaf {
+            if 1 <= __get_cpuid_max(CpuidParamValue::Extended.into()).1 {
+                __cpuid_count(CpuidParamValue::Extended.into(), 1)
+            } else {
+                cpuid_empty
+            }
+        } else {
+            cpuid_empty
+        };
+
+        datapoint_info!(
+            "cpuid-values",
+            ("manufacturer_id", i64::from(mfr_id), i64),
+            ("cpuid_processor_eax", i64::from(cpuid_processor.eax), i64),
+            ("cpuid_processor_ebx", i64::from(cpuid_processor.ebx), i64),
+            ("cpuid_processor_ecx", i64::from(cpuid_processor.ecx), i64),
+            ("cpuid_processor_edx", i64::from(cpuid_processor.edx), i64),
+            ("cpuid_cache_eax", i64::from(cpuid_cache.eax), i64),
+            ("cpuid_cache_ebx", i64::from(cpuid_cache.ebx), i64),
+            ("cpuid_cache_ecx", i64::from(cpuid_cache.ecx), i64),
+            ("cpuid_cache_edx", i64::from(cpuid_cache.edx), i64),
+            ("cpuid_topology_eax", i64::from(cpuid_topology.eax), i64),
+            ("cpuid_topology_ebx", i64::from(cpuid_topology.ebx), i64),
+            ("cpuid_topology_ecx", i64::from(cpuid_topology.ecx), i64),
+            ("cpuid_topology_edx", i64::from(cpuid_topology.edx), i64),
+            ("cpuid_extended_0_ebx", i64::from(cpuid_extended_0.ebx), i64),
+            ("cpuid_extended_0_ecx", i64::from(cpuid_extended_0.ecx), i64),
+            ("cpuid_extended_0_edx", i64::from(cpuid_extended_0.edx), i64),
+            ("cpuid_extended_1_eax", i64::from(cpuid_extended_1.eax), i64),
+        );
     }
 
     fn report_cpu_stats() {
@@ -963,11 +1169,13 @@ impl SystemMonitorService {
         let mut udp_stats = None;
         let mut disk_stats = None;
         let network_limits_timer = AtomicInterval::default();
+        let xdp_network_config_timer = AtomicInterval::default();
         let udp_timer = AtomicInterval::default();
         let mem_timer = AtomicInterval::default();
         let cpu_timer = AtomicInterval::default();
         let cpuid_timer = AtomicInterval::default();
         let disk_timer = AtomicInterval::default();
+        let mut xdp_network_config_metrics = None;
 
         loop {
             if exit.load(Ordering::Relaxed) {
@@ -981,8 +1189,19 @@ impl SystemMonitorService {
                     Self::process_net_stats(&mut udp_stats);
                 }
             }
+            if let Some(xdp_network_config_report) = &config.xdp_network_config_report
+                && xdp_network_config_timer
+                    .should_update_ext(SAMPLE_INTERVAL_XDP_NETWORK_CONFIG_MS, false)
+            {
+                let metrics = xdp_network_config_metrics.get_or_insert_with(|| {
+                    Self::load_xdp_network_config_metrics(xdp_network_config_report)
+                });
+                Self::report_xdp_network_config(xdp_network_config_report, metrics);
+            }
             if config.report_os_memory_stats && mem_timer.should_update(SAMPLE_INTERVAL_MEM_MS) {
                 Self::report_mem_stats();
+                #[cfg(not(any(target_env = "msvc", target_os = "freebsd")))]
+                Self::report_jemalloc_stats();
             }
             if config.report_os_cpu_stats {
                 if cpu_timer.should_update(SAMPLE_INTERVAL_CPU_MS) {
@@ -1000,6 +1219,114 @@ impl SystemMonitorService {
         }
     }
 
+    #[cfg(not(target_os = "linux"))]
+    fn report_xdp_network_config(
+        _config: &XdpNetworkConfigReport,
+        _metrics: &XdpNetworkConfigMetrics,
+    ) {
+    }
+
+    #[cfg(target_os = "linux")]
+    fn load_xdp_network_config_metrics(config: &XdpNetworkConfigReport) -> XdpNetworkConfigMetrics {
+        let Ok(device) = NetworkDevice::new(&config.interface) else {
+            warn!(
+                "failed to get xdp network config device for interface {}",
+                config.interface
+            );
+            return XdpNetworkConfigMetrics {
+                kernel_version: Self::kernel_version(),
+                driver: "unknown".to_string(),
+                vendor: "unknown".to_string(),
+                model: "unknown".to_string(),
+            };
+        };
+        let driver = device.driver().unwrap_or_else(|err| {
+            warn!(
+                "failed to get xdp network config driver for interface {}: {err}",
+                config.interface
+            );
+            "unknown".to_string()
+        });
+        let vendor_id = read_network_device_sysfs_value(&config.interface, "vendor")
+            .unwrap_or_else(|err| {
+                warn!(
+                    "failed to get xdp network config vendor id for interface {}: {err}",
+                    config.interface
+                );
+                "unknown".to_string()
+            });
+        let model_id =
+            read_network_device_sysfs_value(&config.interface, "device").unwrap_or_else(|err| {
+                warn!(
+                    "failed to get xdp network config model id for interface {}: {err}",
+                    config.interface
+                );
+                "unknown".to_string()
+            });
+        let (vendor, model) =
+            match try_resolve_network_device_pci_names(&config.interface, &vendor_id, &model_id) {
+                Ok((vendor, model)) => (vendor, model),
+                Err(err) => {
+                    warn!(
+                        "failed to resolve xdp network config PCI names for interface {}: {}",
+                        config.interface, err
+                    );
+                    // Fall back to reporting raw PCI IDs if name resolution fails
+                    let fallback_vendor =
+                        normalize_pci_id(&vendor_id).unwrap_or_else(|| vendor_id.clone());
+                    let fallback_model =
+                        normalize_pci_id(&model_id).unwrap_or_else(|| model_id.clone());
+                    (fallback_vendor, fallback_model)
+                }
+            };
+
+        XdpNetworkConfigMetrics {
+            kernel_version: Self::kernel_version(),
+            driver,
+            vendor,
+            model,
+        }
+    }
+
+    #[cfg(not(target_os = "linux"))]
+    fn load_xdp_network_config_metrics(
+        _config: &XdpNetworkConfigReport,
+    ) -> XdpNetworkConfigMetrics {
+        XdpNetworkConfigMetrics {
+            kernel_version: "unknown".to_string(),
+            driver: "unknown".to_string(),
+            vendor: "unknown".to_string(),
+            model: "unknown".to_string(),
+        }
+    }
+
+    #[cfg(target_os = "linux")]
+    fn report_xdp_network_config(
+        config: &XdpNetworkConfigReport,
+        metrics: &XdpNetworkConfigMetrics,
+    ) {
+        solana_metrics::datapoint_info!(
+            "xdp-network-config",
+            "driver" => metrics.driver.clone(),
+            "zero_copy" => config.zero_copy.to_string(),
+            ("kernel_version", metrics.kernel_version.clone(), String),
+            ("vendor", metrics.vendor.clone(), String),
+            ("model", metrics.model.clone(), String),
+        );
+    }
+
+    #[cfg(target_os = "linux")]
+    fn kernel_version() -> String {
+        let mut utsname = unsafe { std::mem::zeroed::<libc::utsname>() };
+        if unsafe { libc::uname(&mut utsname) } != 0 {
+            return format!("unknown: {}", std::io::Error::last_os_error());
+        }
+
+        unsafe { std::ffi::CStr::from_ptr(utsname.release.as_ptr()) }
+            .to_string_lossy()
+            .into_owned()
+    }
+
     pub fn join(self) -> thread::Result<()> {
         self.thread_hdl.join()
     }
@@ -1008,6 +1335,43 @@ impl SystemMonitorService {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn test_parse_pci_database_device_names() {
+        let pci_ids = "\
+8086  Intel Corporation
+\t1593  Ethernet Controller E810-C for QSFP
+\t\t8086 0001  Ethernet Network Adapter E810-C-Q1
+10ec  Realtek Semiconductor Co., Ltd.
+\t8136  RTL810xE PCI Express Fast Ethernet controller
+C 02  Network controller
+\t00  Ethernet controller
+";
+
+        assert_eq!(
+            parse_pci_database_device_names(pci_ids, "8086", "1593"),
+            Some((
+                "Intel Corporation".to_string(),
+                "Ethernet Controller E810-C for QSFP".to_string()
+            ))
+        );
+        assert_eq!(
+            parse_pci_database_device_names(pci_ids, "10EC", "8136"),
+            Some((
+                "Realtek Semiconductor Co., Ltd.".to_string(),
+                "RTL810xE PCI Express Fast Ethernet controller".to_string()
+            ))
+        );
+        assert_eq!(
+            parse_pci_database_device_names(pci_ids, "8086", "0001"),
+            None
+        );
+        assert_eq!(
+            parse_pci_database_device_names(pci_ids, "0000", "1593"),
+            None
+        );
+        assert_eq!(parse_pci_database_device_names(pci_ids, "C", "02"), None);
+    }
 
     #[test]
     fn test_parse_udp_stats() {

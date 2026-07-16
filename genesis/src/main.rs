@@ -2,20 +2,20 @@
 #![allow(clippy::arithmetic_side_effects)]
 
 use {
-    agave_feature_set::{FEATURE_NAMES, vote_state_v4},
+    agave_feature_set::FEATURE_NAMES,
     base64::{Engine, prelude::BASE64_STANDARD},
     clap::{App, Arg, ArgMatches, crate_description, crate_name, value_t, value_t_or_exit},
     itertools::Itertools,
     solana_account::{Account, AccountSharedData, ReadableAccount, WritableAccount},
-    solana_bls_signatures::{Pubkey as BLSPubkey, PubkeyCompressed as BLSPubkeyCompressed},
+    solana_bls_signatures::PubkeyCompressed as BLSPubkeyCompressed,
     solana_clap_utils::{
         input_parsers::{
-            bls_pubkeys_of, cluster_type_of, pubkey_of, pubkeys_of,
+            bls_pubkey_compressed_from_str, bls_pubkeys_of, cluster_type_of, pubkey_of, pubkeys_of,
             unix_timestamp_from_rfc3339_datetime,
         },
         input_validators::{
-            is_pubkey, is_pubkey_or_keypair, is_rfc3339_datetime, is_slot, is_url_or_moniker,
-            is_valid_percentage, normalize_to_url_if_moniker,
+            is_non_zero, is_pubkey, is_pubkey_or_keypair, is_rfc3339_datetime, is_slot,
+            is_url_or_moniker, is_valid_percentage, normalize_to_url_if_moniker,
         },
     },
     solana_clock as clock,
@@ -42,21 +42,20 @@ use {
     solana_rpc_client::rpc_client::RpcClient,
     solana_rpc_client_api::request::MAX_MULTIPLE_ACCOUNTS,
     solana_runtime::{
-        bank::VAT_TO_BURN_PER_EPOCH,
+        bank::DEFAULT_VAT_TO_BURN_PER_EPOCH,
         genesis_utils::{add_genesis_epoch_rewards_account, add_genesis_stake_config_account},
         stake_utils,
     },
     solana_sdk_ids::system_program,
     solana_signer::Signer,
     solana_stake_interface::state::StakeStateV2,
-    solana_vote_program::vote_state::{
-        self, BLS_PUBLIC_KEY_COMPRESSED_SIZE, VoteStateV3, VoteStateV4,
-    },
+    solana_vote_program::vote_state::{self, BLS_PUBLIC_KEY_COMPRESSED_SIZE, VoteStateV4},
     std::{
         collections::HashMap,
         error,
         fs::File,
         io::{self, Read},
+        num::NonZeroU64,
         path::PathBuf,
         process,
         slice::Iter,
@@ -67,7 +66,7 @@ use {
 
 /// In order to satisfy the VAT we need to fund all vote accounts
 /// This corresponds to 100 epochs worth of VAT
-const VAT_MINIMUM_LAMPORTS: u64 = VAT_TO_BURN_PER_EPOCH * 100;
+const DEFAULT_VAT_MINIMUM_LAMPORTS: u64 = DEFAULT_VAT_TO_BURN_PER_EPOCH * 100;
 
 pub enum AccountFileFormat {
     Pubkey,
@@ -84,13 +83,7 @@ fn pubkey_from_str(key_str: &str) -> Result<Pubkey, Box<dyn error::Error>> {
 }
 
 fn bls_pubkey_from_str(key_str: &str) -> Result<BLSPubkeyCompressed, Box<dyn error::Error>> {
-    match BLSPubkeyCompressed::from_str(key_str) {
-        Ok(bls_pubkey) => Ok(bls_pubkey),
-        Err(_) => {
-            let bls_pubkey = BLSPubkey::from_str(key_str)?;
-            Ok(bls_pubkey.try_into()?)
-        }
-    }
+    bls_pubkey_compressed_from_str(key_str).map_err(Into::into)
 }
 
 pub fn load_genesis_accounts(file: &str, genesis_config: &mut GenesisConfig) -> io::Result<u64> {
@@ -138,7 +131,6 @@ pub fn load_validator_accounts(
     commission: u8,
     rent: &Rent,
     genesis_config: &mut GenesisConfig,
-    vote_state_v4_enabled: bool,
 ) -> io::Result<()> {
     let accounts_file = File::open(file)?;
     let validator_genesis_accounts: Vec<StakedValidatorAccountInfo> =
@@ -187,7 +179,6 @@ pub fn load_validator_accounts(
             commission,
             rent,
             None,
-            vote_state_v4_enabled,
         )?;
     }
 
@@ -267,7 +258,6 @@ fn add_validator_accounts(
     commission: u8,
     rent: &Rent,
     authorized_pubkey: Option<&Pubkey>,
-    vote_state_v4_enabled: bool,
 ) -> io::Result<()> {
     rent_exempt_check(
         stake_lamports,
@@ -287,30 +277,20 @@ fn add_validator_accounts(
             .next()
             .map(|bls_pubkey| bls_pubkey.0)
             .unwrap_or([0u8; BLS_PUBLIC_KEY_COMPRESSED_SIZE]);
-        let vote_account = if vote_state_v4_enabled {
-            // Vote account needs enough lamports for rent exemption plus VAT
-            let vote_account_lamports =
-                rent.minimum_balance(VoteStateV4::size_of()) + VAT_MINIMUM_LAMPORTS;
-            vote_state::create_v4_account_with_authorized(
-                identity_pubkey,
-                identity_pubkey,
-                bls_pubkey_compressed_bytes,
-                identity_pubkey,
-                u16::from(commission) * 100,
-                identity_pubkey,
-                0,
-                identity_pubkey,
-                vote_account_lamports,
-            )
-        } else {
-            vote_state::create_v3_account_with_authorized(
-                identity_pubkey,
-                identity_pubkey,
-                identity_pubkey,
-                commission,
-                rent.minimum_balance(VoteStateV3::size_of()).max(1),
-            )
-        };
+        // Vote account needs enough lamports for rent exemption plus VAT
+        let vote_account_lamports =
+            rent.minimum_balance(VoteStateV4::size_of()) + DEFAULT_VAT_MINIMUM_LAMPORTS;
+        let vote_account = vote_state::create_v4_account_with_authorized(
+            identity_pubkey,
+            identity_pubkey,
+            bls_pubkey_compressed_bytes,
+            identity_pubkey,
+            u16::from(commission) * 100,
+            vote_pubkey,
+            0,
+            identity_pubkey,
+            vote_account_lamports,
+        );
 
         genesis_config.add_account(
             *stake_pubkey,
@@ -338,6 +318,7 @@ fn rent_exempt_check(stake_lamports: u64, exempt: u64) -> io::Result<()> {
     }
 }
 
+#[allow(deprecated)]
 #[allow(clippy::cognitive_complexity)]
 fn main() -> Result<(), Box<dyn error::Error>> {
     let default_faucet_pubkey = solana_cli_config::Config::default().keypair_path;
@@ -355,14 +336,10 @@ fn main() -> Result<(), Box<dyn error::Error>> {
     };
 
     let rent = Rent::default();
-    let (
-        default_lamports_per_byte_year,
-        default_rent_exemption_threshold,
-        default_rent_burn_percentage,
-    ) = {
+    let (default_lamports_per_byte, default_rent_exemption_threshold, default_rent_burn_percentage) = {
         (
-            &rent.lamports_per_byte_year.to_string(),
-            &rent.exemption_threshold.to_string(),
+            &rent.lamports_per_byte.to_string(),
+            &f64::from_le_bytes(rent.exemption_threshold).to_string(),
             &rent.burn_percent.to_string(),
         )
     };
@@ -431,6 +408,8 @@ fn main() -> Result<(), Box<dyn error::Error>> {
                 .long("faucet-lamports")
                 .value_name("LAMPORTS")
                 .takes_value(true)
+                .requires("faucet_pubkey")
+                .validator(is_non_zero)
                 .help("Number of lamports to assign to the faucet"),
         )
         .arg(
@@ -483,15 +462,27 @@ fn main() -> Result<(), Box<dyn error::Error>> {
                 ),
         )
         .arg(
+            Arg::with_name("lamports_per_byte")
+                .long("lamports-per-byte")
+                .value_name("LAMPORTS")
+                .takes_value(true)
+                .default_value(default_lamports_per_byte)
+                .help(
+                    "The cost in lamports that the cluster will charge per byte for accounts with \
+                     data",
+                ),
+        )
+        .arg(
             Arg::with_name("lamports_per_byte_year")
                 .long("lamports-per-byte-year")
                 .value_name("LAMPORTS")
                 .takes_value(true)
-                .default_value(default_lamports_per_byte_year)
+                .default_value(default_lamports_per_byte)
                 .help(
-                    "The cost in lamports that the cluster will charge per byte per year for \
-                     accounts with data",
-                ),
+                    "The cost in lamports that the cluster will charge per byte for accounts with \
+                     data",
+                )
+                .conflicts_with("lamports_per_byte"),
         )
         .arg(
             Arg::with_name("rent_exemption_threshold")
@@ -686,9 +677,24 @@ fn main() -> Result<(), Box<dyn error::Error>> {
 
     let ledger_path = PathBuf::from(matches.value_of("ledger_path").unwrap());
 
+    if matches.is_present("lamports_per_byte_year") {
+        eprintln!("lamports_per_byte_year is deprecated and will be removed in a future release");
+    }
+    if matches.is_present("rent_exemption_threshold") {
+        eprintln!("rent_exemption_threshold is deprecated and will be removed in a future release");
+    }
+    if matches.is_present("rent_burn_percentage") {
+        eprintln!("rent_burn_percentage is deprecated and will be removed in a future release");
+    }
+
     let rent = Rent {
-        lamports_per_byte_year: value_t_or_exit!(matches, "lamports_per_byte_year", u64),
-        exemption_threshold: value_t_or_exit!(matches, "rent_exemption_threshold", f64),
+        lamports_per_byte: if matches.is_present("lamports_per_byte_year") {
+            value_t_or_exit!(matches, "lamports_per_byte_year", u64)
+        } else {
+            value_t_or_exit!(matches, "lamports_per_byte", u64)
+        },
+        exemption_threshold: value_t_or_exit!(matches, "rent_exemption_threshold", f64)
+            .to_le_bytes(),
         burn_percent: value_t_or_exit!(matches, "rent_burn_percentage", u8),
     };
 
@@ -724,7 +730,6 @@ fn main() -> Result<(), Box<dyn error::Error>> {
 
     let bootstrap_stake_authorized_pubkey =
         pubkey_of(&matches, "bootstrap_stake_authorized_pubkey");
-    let faucet_lamports = value_t!(matches, "faucet_lamports", u64).unwrap_or(0);
     let faucet_pubkey = pubkey_of(&matches, "faucet_pubkey");
 
     let ticks_per_slot = value_t_or_exit!(matches, "ticks_per_slot", u64);
@@ -817,12 +822,17 @@ fn main() -> Result<(), Box<dyn error::Error>> {
         genesis_config.creation_time = creation_time;
     }
 
-    if let Some(faucet_pubkey) = faucet_pubkey {
-        genesis_config.add_account(
-            faucet_pubkey,
-            AccountSharedData::new(faucet_lamports, 0, &system_program::id()),
-        );
-    }
+    let faucet_account_lamports = faucet_pubkey
+        .map(|faucet_pubkey| {
+            let faucet_lamports =
+                u64::from(value_t_or_exit!(matches, "faucet_lamports", NonZeroU64));
+            genesis_config.add_account(
+                faucet_pubkey,
+                AccountSharedData::new(faucet_lamports, 0, &system_program::id()),
+            );
+            faucet_lamports
+        })
+        .unwrap_or(0);
 
     add_genesis_stake_config_account(&mut genesis_config);
     add_genesis_epoch_rewards_account(&mut genesis_config);
@@ -846,22 +856,6 @@ fn main() -> Result<(), Box<dyn error::Error>> {
         }
     }
 
-    // After primordial accounts are read in, check to see if vote state v4
-    // was manually deactivated by providing an inactive Feature account.
-    let vote_state_v4_enabled = {
-        use solana_feature_gate_interface::from_account;
-
-        let is_primordial_inactive_feature = genesis_config
-            .accounts
-            .iter()
-            .find(|(key, _)| key.eq(&&vote_state_v4::id()))
-            .is_some_and(|(_, acct)| from_account(acct).is_none());
-
-        let is_explicitly_deactivated = features_to_deactivate.contains(&vote_state_v4::id());
-
-        !is_primordial_inactive_feature && !is_explicitly_deactivated
-    };
-
     add_validator_accounts(
         &mut genesis_config,
         &mut bootstrap_validator_pubkeys.iter(),
@@ -871,18 +865,11 @@ fn main() -> Result<(), Box<dyn error::Error>> {
         commission,
         &rent,
         bootstrap_stake_authorized_pubkey.as_ref(),
-        vote_state_v4_enabled,
     )?;
 
     if let Some(files) = matches.values_of("validator_accounts_file") {
         for file in files {
-            load_validator_accounts(
-                file,
-                commission,
-                &rent,
-                &mut genesis_config,
-                vote_state_v4_enabled,
-            )?;
+            load_validator_accounts(file, commission, &rent, &mut genesis_config)?;
         }
     }
 
@@ -895,7 +882,10 @@ fn main() -> Result<(), Box<dyn error::Error>> {
         .map(|account| account.lamports)
         .sum::<u64>();
 
-    add_genesis_stake_accounts(&mut genesis_config, issued_lamports - faucet_lamports);
+    add_genesis_stake_accounts(
+        &mut genesis_config,
+        issued_lamports - faucet_account_lamports,
+    );
 
     let parse_address = |address: &str, input_type: &str| {
         address.parse::<Pubkey>().unwrap_or_else(|err| {
@@ -1005,7 +995,7 @@ fn main() -> Result<(), Box<dyn error::Error>> {
 mod tests {
     use {
         super::*,
-        solana_bls_signatures::keypair::Keypair as BLSKeypair,
+        solana_bls_signatures::{Pubkey as BLSPubkey, keypair::Keypair as BLSKeypair},
         solana_borsh::v1 as borsh1,
         solana_genesis_config::GenesisConfig,
         solana_stake_interface as stake,
@@ -1361,12 +1351,14 @@ mod tests {
         assert_eq!(genesis_config.accounts.len(), 3);
     }
 
-    #[test_case(true, true; "add bls compressed pubkey")]
-    #[test_case(true, false; "add bls pubkey")]
-    #[test_case(false, false; "no bls pubkey")]
+    #[test_case(true, true, false; "add bls compressed pubkey")]
+    #[test_case(true, true, true; "add bls base58 compressed pubkey")]
+    #[test_case(true, false, false; "add bls pubkey")]
+    #[test_case(false, false, false; "no bls pubkey")]
     fn test_append_validator_accounts_to_genesis(
         add_bls_pubkey: bool,
         use_compressed_pubkey: bool,
+        use_base58_pubkey: bool,
     ) {
         // Test invalid file returns error
         assert!(
@@ -1375,7 +1367,6 @@ mod tests {
                 100,
                 &Rent::default(),
                 &mut GenesisConfig::default(),
-                true, // vote_state_v4_enabled
             )
             .is_err()
         );
@@ -1384,10 +1375,14 @@ mod tests {
 
         let generate_bls_pubkey = || {
             if add_bls_pubkey {
-                let bls_pubkey: BLSPubkey = BLSKeypair::new().public.into();
+                let bls_pubkey: BLSPubkey = BLSKeypair::new().public.into_inner().into();
                 if use_compressed_pubkey {
                     let bls_pubkey_compressed: BLSPubkeyCompressed = bls_pubkey.try_into().unwrap();
-                    Some(bls_pubkey_compressed.to_string())
+                    if use_base58_pubkey {
+                        Some(bs58::encode(bls_pubkey_compressed.0).into_string())
+                    } else {
+                        Some(bls_pubkey_compressed.to_string())
+                    }
                 } else {
                     Some(bls_pubkey.to_string())
                 }
@@ -1428,7 +1423,9 @@ mod tests {
         let filename = format!(
             "test_append_validator_accounts_to_genesis_{}_{}_bls.yml",
             if add_bls_pubkey { "with" } else { "without" },
-            if use_compressed_pubkey {
+            if use_base58_pubkey {
+                "base58_compressed"
+            } else if use_compressed_pubkey {
                 "compressed"
             } else {
                 "uncompressed"
@@ -1439,14 +1436,8 @@ mod tests {
         file.write_all(b"validator_accounts:\n").unwrap();
         file.write_all(serialized.as_bytes()).unwrap();
 
-        load_validator_accounts(
-            &filename,
-            100,
-            &Rent::default(),
-            &mut genesis_config,
-            true, // vote_state_v4_enabled
-        )
-        .expect("Failed to load validator accounts");
+        load_validator_accounts(&filename, 100, &Rent::default(), &mut genesis_config)
+            .expect("Failed to load validator accounts");
 
         remove_file(path).unwrap();
 
@@ -1477,15 +1468,9 @@ mod tests {
                 let authorized_voters = &vote_state.authorized_voters;
                 assert_eq!(authorized_voters.first().unwrap().1, &identity_pk);
                 if add_bls_pubkey {
-                    let bls_pubkey_compressed_from_input = if use_compressed_pubkey {
-                        BLSPubkeyCompressed::from_str(b64_account.bls_pubkey.as_ref().unwrap())
-                            .expect("failed to parse BLS pubkey from input")
-                    } else {
-                        BLSPubkey::from_str(b64_account.bls_pubkey.as_ref().unwrap())
-                            .expect("failed to parse BLS pubkey from input")
-                            .try_into()
-                            .expect("failed to convert BLS pubkey to compressed form")
-                    };
+                    let bls_pubkey_compressed_from_input =
+                        bls_pubkey_from_str(b64_account.bls_pubkey.as_ref().unwrap())
+                            .expect("failed to parse BLS pubkey from input");
                     let bls_pubkey_compressed_from_account = BLSPubkeyCompressed(
                         vote_state
                             .bls_pubkey_compressed

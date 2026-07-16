@@ -11,6 +11,8 @@ edition = { workspace = true }
 
 [package.metadata.docs.rs]
 targets = ["x86_64-unknown-linux-gnu"]
+all-features = true
+rustdoc-args = ["--cfg=docsrs"]
 
 [lib]
 name = "solana_metrics"
@@ -39,3 +41,6 @@ solana-sha256-hasher = { workspace = true, features = ["sha2"] }
 [[bench]]
 name = "metrics"
 harness = false
+
+[lints]
+workspace = true

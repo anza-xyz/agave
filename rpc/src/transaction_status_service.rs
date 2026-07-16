@@ -8,13 +8,11 @@ use {
     crossbeam_channel::{Receiver, RecvTimeoutError},
     itertools::izip,
     solana_clock::Slot,
-    solana_ledger::{
-        blockstore::{Blockstore, BlockstoreError},
-        blockstore_processor::{TransactionStatusBatch, TransactionStatusMessage},
-    },
+    solana_ledger::blockstore::{Blockstore, BlockstoreError},
     solana_runtime::{
         bank::{Bank, KeyedRewardsAndNumPartitions},
         dependency_tracker::DependencyTracker,
+        transaction_execution::{TransactionStatusBatch, TransactionStatusMessage},
     },
     solana_svm::transaction_commit_result::CommittedTransaction,
     solana_transaction_status::{
@@ -132,6 +130,7 @@ impl TransactionStatusService {
             TransactionStatusMessage::Batch((
                 TransactionStatusBatch {
                     slot,
+                    bank_id,
                     transactions,
                     commit_results,
                     balances,
@@ -212,6 +211,7 @@ impl TransactionStatusService {
                         let transaction = transaction.to_versioned_transaction();
                         transaction_notifier.notify_transaction(
                             slot,
+                            bank_id,
                             transaction_index,
                             signature,
                             message_hash,
@@ -259,10 +259,10 @@ impl TransactionStatusService {
                     blockstore.write_batch(batch)?;
                 }
 
-                if let Some(dependency_tracker) = dependency_tracker.as_ref() {
-                    if let Some(work_id) = work_id {
-                        dependency_tracker.mark_this_and_all_previous_work_processed(work_id);
-                    }
+                if let Some(dependency_tracker) = dependency_tracker.as_ref()
+                    && let Some(work_id) = work_id
+                {
+                    dependency_tracker.mark_this_and_all_previous_work_processed(work_id);
                 }
             }
             TransactionStatusMessage::Freeze(bank) => {
@@ -288,9 +288,8 @@ impl TransactionStatusService {
                 keyed_rewards,
                 num_partitions,
             } = rewards;
-            let commission_rate_in_basis_points = bank
-                .feature_set
-                .is_active(&agave_feature_set::commission_rate_in_basis_points::id());
+            let commission_rate_in_basis_points =
+                bank.feature_set.snapshot().commission_rate_in_basis_points;
             let rewards = keyed_rewards
                 .into_iter()
                 .map(|(pubkey, reward_info)| Reward {
@@ -350,13 +349,13 @@ pub(crate) mod tests {
         super::*,
         crate::transaction_notifier_interface::TransactionNotifier,
         agave_reserved_account_keys::ReservedAccountKeys,
-        crossbeam_channel::unbounded,
+        crossbeam_channel::bounded,
         dashmap::DashMap,
         solana_account::state_traits::StateMut,
         solana_account_decoder::{
             parse_account_data::SplTokenAdditionalDataV2, parse_token::token_amount_to_ui_amount_v3,
         },
-        solana_clock::Slot,
+        solana_clock::{BankId, Slot},
         solana_fee_structure::FeeDetails,
         solana_hash::Hash,
         solana_keypair::Keypair,
@@ -385,6 +384,7 @@ pub(crate) mod tests {
     #[derive(Eq, Hash, PartialEq)]
     struct TestNotifierKey {
         slot: Slot,
+        bank_id: BankId,
         transaction_index: usize,
         message_hash: Hash,
     }
@@ -410,6 +410,7 @@ pub(crate) mod tests {
         fn notify_transaction(
             &self,
             slot: Slot,
+            bank_id: BankId,
             transaction_index: usize,
             _signature: &Signature,
             message_hash: &Hash,
@@ -420,6 +421,7 @@ pub(crate) mod tests {
             self.notifications.insert(
                 TestNotifierKey {
                     slot,
+                    bank_id,
                     transaction_index,
                     message_hash: *message_hash,
                 },
@@ -443,7 +445,7 @@ pub(crate) mod tests {
         let genesis_config = create_genesis_config(2).genesis_config;
         let (bank, _bank_forks) = Bank::new_with_bank_forks_for_tests(&genesis_config);
 
-        let (transaction_status_sender, transaction_status_receiver) = unbounded();
+        let (transaction_status_sender, transaction_status_receiver) = bounded(1024);
         let ledger_path = get_tmp_ledger_path_auto_delete!();
         let blockstore = Blockstore::open(ledger_path.path())
             .expect("Expected to be able to open database ledger");
@@ -517,10 +519,12 @@ pub(crate) mod tests {
         };
 
         let slot = bank.slot();
+        let bank_id = bank.bank_id();
         let message_hash = *transaction.message_hash();
         let transaction_index: usize = bank.transaction_count().try_into().unwrap();
         let transaction_status_batch = TransactionStatusBatch {
             slot,
+            bank_id,
             transactions: vec![transaction],
             commit_results: vec![commit_result],
             balances,
@@ -554,6 +558,7 @@ pub(crate) mod tests {
         assert_eq!(test_notifier.notifications.len(), 1);
         let key = TestNotifierKey {
             slot,
+            bank_id,
             transaction_index,
             message_hash,
         };
@@ -571,7 +576,7 @@ pub(crate) mod tests {
         let genesis_config = create_genesis_config(2).genesis_config;
         let (bank, _bank_forks) = Bank::new_with_bank_forks_for_tests(&genesis_config);
 
-        let (transaction_status_sender, transaction_status_receiver) = unbounded();
+        let (transaction_status_sender, transaction_status_receiver) = bounded(1024);
         let ledger_path = get_tmp_ledger_path_auto_delete!();
         let blockstore = Blockstore::open(ledger_path.path())
             .expect("Expected to be able to open database ledger");
@@ -624,11 +629,13 @@ pub(crate) mod tests {
         };
 
         let slot = bank.slot();
+        let bank_id = bank.bank_id();
         let transaction_index1: usize = bank.transaction_count().try_into().unwrap();
         let transaction_index2: usize = transaction_index1 + 1;
 
         let transaction_status_batch = TransactionStatusBatch {
             slot,
+            bank_id,
             transactions: vec![transaction1, transaction2],
             commit_results: vec![commit_result.clone(), commit_result],
             balances: balances.clone(),
@@ -663,11 +670,13 @@ pub(crate) mod tests {
 
         let key1 = TestNotifierKey {
             slot,
+            bank_id,
             transaction_index: transaction_index1,
             message_hash: *expected_transaction1.message_hash(),
         };
         let key2 = TestNotifierKey {
             slot,
+            bank_id,
             transaction_index: transaction_index2,
             message_hash: *expected_transaction2.message_hash(),
         };

@@ -352,7 +352,6 @@ mod tests {
     use {
         super::*,
         arbitrary::{Arbitrary, Unstructured},
-        serde::{Deserialize, Serialize},
         solana_clock::Clock,
         solana_vote_interface::{
             authorized_voters::AuthorizedVoters,
@@ -363,14 +362,6 @@ mod tests {
         },
         std::collections::VecDeque,
     };
-
-    #[derive(Debug, Clone, Deserialize, Serialize)]
-    enum TestVoteStateVersions {
-        V0_23_5,
-        V1_14_11,
-        V3,
-        V4(Box<VoteStateV4>),
-    }
 
     fn new_test_vote_state_v4() -> VoteStateV4 {
         let votes = (0..MAX_LOCKOUT_HISTORY)
@@ -435,8 +426,7 @@ mod tests {
     #[test]
     fn test_vote_state_view_v4() {
         let target_vote_state = new_test_vote_state_v4();
-        let target_vote_state_versions =
-            TestVoteStateVersions::V4(Box::new(target_vote_state.clone()));
+        let target_vote_state_versions = VoteStateVersions::new_v4(target_vote_state.clone());
         let vote_state_buf = bincode::serialize(&target_vote_state_versions).unwrap();
         let vote_state_view = VoteStateView::try_new(Arc::new(vote_state_buf)).unwrap();
         assert_eq_vote_state_v4(&vote_state_view, &target_vote_state);
@@ -445,8 +435,7 @@ mod tests {
     #[test]
     fn test_vote_state_view_v4_default() {
         let target_vote_state = VoteStateV4::default();
-        let target_vote_state_versions =
-            TestVoteStateVersions::V4(Box::new(target_vote_state.clone()));
+        let target_vote_state_versions = VoteStateVersions::new_v4(target_vote_state.clone());
         let vote_state_buf = bincode::serialize(&target_vote_state_versions).unwrap();
         let vote_state_view = VoteStateView::try_new(Arc::new(vote_state_buf)).unwrap();
         assert_eq_vote_state_v4(&vote_state_view, &target_vote_state);
@@ -470,8 +459,7 @@ mod tests {
                 continue;
             }
 
-            let target_vote_state_versions =
-                TestVoteStateVersions::V4(Box::new(target_vote_state.clone()));
+            let target_vote_state_versions = VoteStateVersions::new_v4(target_vote_state.clone());
             let vote_state_buf = bincode::serialize(&target_vote_state_versions).unwrap();
             let vote_state_view = VoteStateView::try_new(Arc::new(vote_state_buf)).unwrap();
             assert_eq_vote_state_v4(&vote_state_view, &target_vote_state);
@@ -774,5 +762,125 @@ mod tests {
         let vote_data = Arc::new(4u32.to_le_bytes().to_vec());
         let vote_state_view_err = VoteStateView::try_new(vote_data).unwrap_err();
         assert_eq!(vote_state_view_err, VoteStateViewError::UnsupportedVersion);
+    }
+
+    #[test]
+    fn test_commission_frame_dispatch_cross_version() {
+        // Verify inflation_rewards_commission() returns correct bps for
+        // all vote state versions.
+        for commission_pct in [0u8, 1, 50, 100, 255] {
+            let expected_bps = commission_pct as u16 * 100;
+
+            // V1_14_11
+            {
+                let state = VoteState1_14_11 {
+                    commission: commission_pct,
+                    authorized_voters: AuthorizedVoters::new(0, Pubkey::default()),
+                    ..Default::default()
+                };
+                let versioned = VoteStateVersions::V1_14_11(Box::new(state));
+                let buf = Arc::new(bincode::serialize(&versioned).unwrap());
+                let view = VoteStateView::try_new(buf).unwrap();
+                assert_eq!(view.commission(), commission_pct);
+                assert_eq!(view.inflation_rewards_commission(), expected_bps);
+            }
+
+            // V3
+            {
+                let state = VoteStateV3::new(
+                    &VoteInit {
+                        node_pubkey: Pubkey::default(),
+                        authorized_voter: Pubkey::default(),
+                        authorized_withdrawer: Pubkey::default(),
+                        commission: commission_pct,
+                    },
+                    &Clock::default(),
+                );
+                let versioned = VoteStateVersions::V3(Box::new(state));
+                let buf = Arc::new(bincode::serialize(&versioned).unwrap());
+                let view = VoteStateView::try_new(buf).unwrap();
+                assert_eq!(view.commission(), commission_pct);
+                assert_eq!(view.inflation_rewards_commission(), expected_bps);
+            }
+
+            // V4
+            {
+                let state = VoteStateV4 {
+                    inflation_rewards_commission_bps: expected_bps,
+                    ..VoteStateV4::default()
+                };
+                let versioned = VoteStateVersions::new_v4(state);
+                let buf = Arc::new(bincode::serialize(&versioned).unwrap());
+                let view = VoteStateView::try_new(buf).unwrap();
+                assert_eq!(
+                    view.commission(),
+                    (expected_bps / 100).min(u8::MAX as u16) as u8
+                );
+                assert_eq!(view.inflation_rewards_commission(), expected_bps);
+            }
+        }
+    }
+
+    #[test]
+    fn test_vote_state_view_v4_commission_clamps() {
+        // The VoteStateView commission() getter must clamp values
+        // > u8::MAX to u8::MAX for V4 accounts with large bps.
+        for (bps, expected) in [
+            (0u16, 0u8),
+            (10_000, 100),
+            (25_500, 255),
+            (25_600, 255),
+            (u16::MAX, 255),
+        ] {
+            let state = VoteStateV4 {
+                inflation_rewards_commission_bps: bps,
+                ..VoteStateV4::default()
+            };
+            let versioned = VoteStateVersions::new_v4(state);
+            let buf = Arc::new(bincode::serialize(&versioned).unwrap());
+            let view = VoteStateView::try_new(buf).unwrap();
+            assert_eq!(view.commission(), expected);
+        }
+    }
+
+    #[test]
+    fn test_vote_state_view_v4_trailing_nonzero_bytes() {
+        // Verify that trailing non-zero (garbage) bytes do not affect
+        // VoteStateView accessor results.
+        let target_vote_state = new_test_vote_state_v4();
+        let versioned = VoteStateVersions::new_v4(target_vote_state.clone());
+        let mut buf = bincode::serialize(&versioned).unwrap();
+        buf.extend_from_slice(&[0xAB; 100]);
+        let view = VoteStateView::try_new(Arc::new(buf)).unwrap();
+        assert_eq_vote_state_v4(&view, &target_vote_state);
+    }
+
+    #[test]
+    fn test_vote_state_view_v4_trailing_zero_vs_nonzero_equal() {
+        // Two V4 accounts — one with trailing zeros, one with trailing
+        // garbage — should produce identical accessor results.
+        let target_vote_state = new_test_vote_state_v4();
+        let versioned = VoteStateVersions::new_v4(target_vote_state);
+        let base = bincode::serialize(&versioned).unwrap();
+
+        let mut buf_zero = base.clone();
+        buf_zero.extend_from_slice(&[0x00; 100]);
+        let view_zero = VoteStateView::try_new(Arc::new(buf_zero)).unwrap();
+
+        let mut buf_garbage = base;
+        buf_garbage.extend_from_slice(&[0xFF; 100]);
+        let view_garbage = VoteStateView::try_new(Arc::new(buf_garbage)).unwrap();
+
+        assert_eq!(view_zero.node_pubkey(), view_garbage.node_pubkey());
+        assert_eq!(view_zero.commission(), view_garbage.commission());
+        assert_eq!(
+            view_zero.inflation_rewards_commission(),
+            view_garbage.inflation_rewards_commission()
+        );
+        assert_eq!(view_zero.root_slot(), view_garbage.root_slot());
+        assert_eq!(
+            view_zero.num_epoch_credits(),
+            view_garbage.num_epoch_credits()
+        );
     }
 }

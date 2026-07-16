@@ -14,21 +14,22 @@ use {
     solana_cli_output::{
         OutputFormat,
         display::{println_name_value, println_name_value_or},
+        stdout::writeln_stdout,
     },
     solana_remote_wallet::remote_wallet::RemoteWalletManager,
     solana_rpc_client_api::config::RpcSendTransactionConfig,
-    std::{collections::HashMap, error, path::PathBuf, rc::Rc, time::Duration},
+    std::{collections::HashMap, error, io, path::PathBuf, rc::Rc, time::Duration},
 };
 
 fn parse_settings(matches: &ArgMatches<'_>) -> Result<bool, Box<dyn error::Error>> {
     let parse_args = match matches.subcommand() {
         ("config", Some(matches)) => {
             let Some(config_file) = matches.value_of("config_file") else {
-                println!(
+                writeln_stdout(format_args!(
                     "{} Either provide the `--config` arg or ensure home directory exists to use \
                      the default config location",
                     style("No config file found.").bold()
-                );
+                ))?;
                 return Ok(false);
             };
             let mut config = Config::load(config_file).unwrap_or_default();
@@ -61,17 +62,21 @@ fn parse_settings(matches: &ArgMatches<'_>) -> Result<bool, Box<dyn error::Error
                             ),
                             _ => unreachable!(),
                         };
-                        println_name_value_or(&format!("{field_name}:"), &value, setting_type);
+                        println_name_value_or(&format!("{field_name}:"), &value, setting_type)?;
                     } else {
-                        println_name_value("Config File:", config_file);
-                        println_name_value_or("RPC URL:", &json_rpc_url, url_setting_type);
-                        println_name_value_or("WebSocket URL:", &websocket_url, ws_setting_type);
-                        println_name_value_or("Keypair Path:", &keypair_path, keypair_setting_type);
+                        println_name_value("Config File:", config_file)?;
+                        println_name_value_or("RPC URL:", &json_rpc_url, url_setting_type)?;
+                        println_name_value_or("WebSocket URL:", &websocket_url, ws_setting_type)?;
+                        println_name_value_or(
+                            "Keypair Path:",
+                            &keypair_path,
+                            keypair_setting_type,
+                        )?;
                         println_name_value_or(
                             "Commitment:",
                             &commitment.commitment.to_string(),
                             commitment_setting_type,
-                        );
+                        )?;
                     }
                 }
                 ("set", Some(subcommand_matches)) => {
@@ -107,26 +112,26 @@ fn parse_settings(matches: &ArgMatches<'_>) -> Result<bool, Box<dyn error::Error
                     let (commitment_setting_type, commitment) =
                         ConfigInput::compute_commitment_config("", &config.commitment);
 
-                    println_name_value("Config File:", config_file);
-                    println_name_value_or("RPC URL:", &json_rpc_url, url_setting_type);
-                    println_name_value_or("WebSocket URL:", &websocket_url, ws_setting_type);
-                    println_name_value_or("Keypair Path:", &keypair_path, keypair_setting_type);
+                    println_name_value("Config File:", config_file)?;
+                    println_name_value_or("RPC URL:", &json_rpc_url, url_setting_type)?;
+                    println_name_value_or("WebSocket URL:", &websocket_url, ws_setting_type)?;
+                    println_name_value_or("Keypair Path:", &keypair_path, keypair_setting_type)?;
                     println_name_value_or(
                         "Commitment:",
                         &commitment.commitment.to_string(),
                         commitment_setting_type,
-                    );
+                    )?;
                 }
                 ("import-address-labels", Some(subcommand_matches)) => {
                     let filename = value_t_or_exit!(subcommand_matches, "filename", PathBuf);
                     config.import_address_labels(&filename)?;
                     config.save(config_file)?;
-                    println!("Address labels imported from {filename:?}");
+                    writeln_stdout(format_args!("Address labels imported from {filename:?}"))?;
                 }
                 ("export-address-labels", Some(subcommand_matches)) => {
                     let filename = value_t_or_exit!(subcommand_matches, "filename", PathBuf);
                     config.export_address_labels(&filename)?;
-                    println!("Address labels exported to {filename:?}");
+                    writeln_stdout(format_args!("Address labels exported to {filename:?}"))?;
                 }
                 _ => unreachable!(),
             }
@@ -178,12 +183,11 @@ pub fn parse_args<'a>(
         mut signers,
     } = parse_command(matches, &default_signer, wallet_manager)?;
 
-    if signers.is_empty() {
-        if let Ok(signer_info) =
+    if signers.is_empty()
+        && let Ok(signer_info) =
             default_signer.generate_unique_signers(vec![None], matches, wallet_manager)
-        {
-            signers.extend(signer_info.signers);
-        }
+    {
+        signers.extend(signer_info.signers);
     }
 
     let verbose = matches.is_present("verbose");
@@ -201,8 +205,6 @@ pub fn parse_args<'a>(
     };
 
     let skip_preflight = matches.is_present("skip_preflight");
-
-    let use_tpu_client = matches.is_present("use_tpu_client");
 
     Ok((
         CliConfig {
@@ -223,7 +225,6 @@ pub fn parse_args<'a>(
             },
             confirm_transaction_initial_timeout,
             address_labels,
-            use_tpu_client,
         },
         signers,
     ))
@@ -239,9 +240,11 @@ async fn main() -> Result<(), Box<dyn error::Error>> {
     )
     .get_matches();
 
-    do_main(&matches)
-        .await
-        .map_err(|err| DisplayError::new_as_boxed(err).into())
+    match do_main(&matches).await {
+        Ok(()) => Ok(()),
+        Err(err) if is_broken_pipe(err.as_ref()) => Ok(()),
+        Err(err) => Err(DisplayError::new_as_boxed(err).into()),
+    }
 }
 
 async fn do_main(matches: &ArgMatches<'_>) -> Result<(), Box<dyn error::Error>> {
@@ -251,7 +254,26 @@ async fn do_main(matches: &ArgMatches<'_>) -> Result<(), Box<dyn error::Error>> 
         let (mut config, signers) = parse_args(matches, &mut wallet_manager)?;
         config.signers = signers.iter().map(|s| s.as_ref()).collect();
         let result = process_command(&config).await?;
-        println!("{result}");
+        writeln_stdout(format_args!("{result}"))?;
     };
     Ok(())
+}
+
+fn is_broken_pipe(err: &(dyn error::Error + 'static)) -> bool {
+    if let Some(err) = err.downcast_ref::<io::Error>()
+        && err.kind() == io::ErrorKind::BrokenPipe
+    {
+        return true;
+    }
+
+    let mut source = err.source();
+    while let Some(err) = source {
+        if let Some(err) = err.downcast_ref::<io::Error>()
+            && err.kind() == io::ErrorKind::BrokenPipe
+        {
+            return true;
+        }
+        source = err.source();
+    }
+    false
 }

@@ -7,7 +7,7 @@ authors = { workspace = true }
 repository = { workspace = true }
 homepage = { workspace = true }
 license = { workspace = true }
-edition = "2024"
+edition = { workspace = true }
 
 [package.metadata.docs.rs]
 targets = ["x86_64-unknown-linux-gnu"]
@@ -16,15 +16,17 @@ rustdoc-args = ["--cfg=docsrs"]
 
 [features]
 agave-unstable-api = []
-bincode = ["dep:bincode", "serde", "solana-account/bincode"]
-dev-context-only-utils = ["bincode", "solana-account/dev-context-only-utils", "dep:qualifier_attr"]
+bincode = ["dep:bincode", "serde"]
+dev-context-only-utils = ["bincode", "dep:qualifier_attr"]
 serde = ["serde/derive", "solana-pubkey/serde"]
+wincode = ["dep:wincode", "solana-pubkey/wincode"]
 
 [dependencies]
 solana-account = { workspace = true }
 solana-instruction = { workspace = true, features = ["std"] }
 solana-instructions-sysvar = { workspace = true }
 solana-pubkey = { workspace = true }
+wincode = { workspace = true, optional = true }
 
 [target.'cfg(not(any(target_arch = "sbf", target_arch = "bpf")))'.dependencies]
 bincode = { workspace = true, optional = true }
@@ -38,6 +40,7 @@ solana-signature = { workspace = true, optional = true }
 [dev-dependencies]
 solana-account-info = { workspace = true }
 solana-program-entrypoint = { workspace = true }
+solana-pubkey = { workspace = true, features = ["rand"] }
 solana-system-interface = { workspace = true }
 solana-transaction-context = { path = ".", features = [
     "agave-unstable-api",

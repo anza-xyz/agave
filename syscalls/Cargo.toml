@@ -1,7 +1,7 @@
 [package]
-name = "agave-syscalls"
-description = "Agave implementation of the Solana syscalls."
-documentation = "https://docs.rs/agave-syscalls"
+name = "solana-syscalls"
+description = "Solana syscalls."
+documentation = "https://docs.rs/solana-syscalls"
 version = { workspace = true }
 authors = { workspace = true }
 repository = { workspace = true }
@@ -11,6 +11,8 @@ edition = { workspace = true }
 
 [package.metadata.docs.rs]
 targets = ["x86_64-unknown-linux-gnu"]
+all-features = true
+rustdoc-args = ["--cfg=docsrs"]
 
 [features]
 default = ["metrics"]
@@ -24,22 +26,21 @@ shuttle-test = [
 svm-internal = []
 
 [dependencies]
-agave-bls12-381 = { workspace = true }
 bincode = { workspace = true }
 libsecp256k1 = { workspace = true }
 num-traits = { workspace = true }
 solana-account = { workspace = true }
 solana-account-info = { workspace = true }
-solana-big-mod-exp = { workspace = true }
 solana-blake3-hasher = { workspace = true, features = ["blake3"] }
+solana-bls12-381-syscall = { workspace = true }
 solana-bn254 = { workspace = true }
 solana-clock = { workspace = true }
 solana-cpi = { workspace = true }
 solana-curve25519 = { workspace = true }
-solana-hash = { workspace = true }
+solana-hash = { workspace = true, features = ["wincode"] }
+solana-hash-512 = { workspace = true }
 solana-instruction = { workspace = true }
 solana-keccak-hasher = { workspace = true, features = ["sha3"] }
-solana-loader-v3-interface = { workspace = true, features = ["serde"] }
 solana-poseidon = { workspace = true }
 solana-program-entrypoint = { workspace = true }
 solana-program-runtime = { workspace = true }
@@ -48,18 +49,17 @@ solana-sbpf = { workspace = true, features = ["jit"] }
 solana-sdk-ids = { workspace = true }
 solana-secp256k1-recover = { workspace = true }
 solana-sha256-hasher = { workspace = true }
+solana-sha512-hasher = { workspace = true, features = ["sha2"] }
 solana-stable-layout = { workspace = true }
-solana-stake-interface = { workspace = true }
-solana-svm-callback = { workspace = true }
+solana-stake-history = { workspace = true }
 solana-svm-feature-set = { workspace = true }
 solana-svm-log-collector = { workspace = true }
-solana-svm-measure = { workspace = true }
-solana-svm-timings = { workspace = true }
 solana-svm-type-overrides = { workspace = true }
 solana-sysvar = { workspace = true }
 solana-sysvar-id = { workspace = true }
 solana-transaction-context = { workspace = true, features = ["bincode"] }
 thiserror = { workspace = true }
+wincode = { workspace = true }
 
 [dev-dependencies]
 assert_matches = { workspace = true }
@@ -68,12 +68,11 @@ solana-epoch-schedule = { workspace = true }
 solana-fee-calculator = { workspace = true }
 solana-last-restart-slot = { workspace = true }
 solana-program = { workspace = true }
-solana-program-runtime = { workspace = true, features = ["dev-context-only-utils"] }
+solana-program-runtime = { path = "../program-runtime", features = ["agave-unstable-api", "dev-context-only-utils"] }
 solana-pubkey = { workspace = true, features = ["rand"] }
-solana-rent = { workspace = true }
 solana-slot-hashes = { workspace = true }
-solana-transaction-context = { workspace = true, features = ["dev-context-only-utils"] }
-static_assertions = { workspace = true }
+solana-svm-callback = { path = "../svm-callback", features = ["agave-unstable-api"] }
+solana-transaction-context = { path = "../transaction-context", features = ["agave-unstable-api", "bincode", "dev-context-only-utils"] }
 test-case = { workspace = true }
 
 [lints]

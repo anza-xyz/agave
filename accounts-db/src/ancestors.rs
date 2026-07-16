@@ -2,7 +2,6 @@ use {
     crate::rolling_bit_field::RollingBitField,
     core::fmt::{Debug, Formatter},
     solana_clock::Slot,
-    std::collections::HashMap,
 };
 
 #[cfg_attr(feature = "frozen-abi", derive(AbiExample))]
@@ -18,13 +17,13 @@ impl Debug for Ancestors {
 }
 
 // some tests produce ancestors ranges that are too large such
-// that we prefer to implement them in a sparse HashMap
-const ANCESTORS_HASH_MAP_SIZE: u64 = 8192;
+// that we prefer to implement them in a sparse HashSet
+const ANCESTORS_SIZE: u64 = 8192;
 
 impl Default for Ancestors {
     fn default() -> Self {
         Self {
-            ancestors: RollingBitField::new(ANCESTORS_HASH_MAP_SIZE),
+            ancestors: RollingBitField::new(ANCESTORS_SIZE),
         }
     }
 }
@@ -42,26 +41,13 @@ impl From<Vec<Slot>> for Ancestors {
     }
 }
 
-impl From<&HashMap<Slot, usize>> for Ancestors {
-    fn from(source: &HashMap<Slot, usize>) -> Ancestors {
-        let vec = source.keys().copied().collect::<Vec<_>>();
-        Ancestors::from(vec)
-    }
-}
-
-impl From<&Ancestors> for HashMap<Slot, usize> {
-    fn from(source: &Ancestors) -> HashMap<Slot, usize> {
-        let mut result = HashMap::with_capacity(source.len());
-        source.keys().iter().for_each(|slot| {
-            result.insert(*slot, 0);
-        });
-        result
-    }
-}
-
 impl Ancestors {
     pub fn keys(&self) -> Vec<Slot> {
         self.ancestors.get_all()
+    }
+
+    pub fn iter(&self) -> impl Iterator<Item = Slot> + '_ {
+        self.ancestors.iter_ones()
     }
 
     pub fn remove(&mut self, slot: &Slot) {
@@ -80,8 +66,8 @@ impl Ancestors {
         self.len() == 0
     }
 
-    pub fn min_slot(&self) -> Slot {
-        self.ancestors.min().unwrap_or_default()
+    pub fn min_slot(&self) -> Option<Slot> {
+        self.ancestors.min()
     }
 
     pub fn max_slot(&self) -> Slot {
@@ -89,47 +75,21 @@ impl Ancestors {
     }
 }
 
-// These functions/fields are only usable from a dev context (i.e. tests and benches)
-#[cfg(feature = "dev-context-only-utils")]
-impl std::iter::FromIterator<(Slot, usize)> for Ancestors {
-    fn from_iter<I>(iter: I) -> Self
-    where
-        I: IntoIterator<Item = (Slot, usize)>,
-    {
-        let mut data = Vec::new();
-        for i in iter {
-            data.push(i);
-        }
-        Ancestors::from(data)
-    }
-}
-
-#[cfg(feature = "dev-context-only-utils")]
-impl From<Vec<(Slot, usize)>> for Ancestors {
-    fn from(source: Vec<(Slot, usize)>) -> Ancestors {
-        Ancestors::from(source.into_iter().map(|(slot, _)| slot).collect::<Vec<_>>())
-    }
-}
-
 #[cfg(feature = "dev-context-only-utils")]
 impl Ancestors {
-    pub fn insert(&mut self, slot: Slot, _size: usize) {
+    pub fn insert(&mut self, slot: Slot) {
         self.ancestors.insert(slot);
     }
 }
 
 #[cfg(test)]
 mod tests {
-    use {
-        super::*, crate::contains::Contains, log::*, solana_measure::measure::Measure,
-        std::collections::HashSet,
-    };
+    use {super::*, log::*, solana_measure::measure::Measure, std::collections::HashSet};
 
     #[test]
     fn test_ancestors_permutations() {
-        agave_logger::setup();
         let mut ancestors = Ancestors::default();
-        let mut hash = HashMap::new();
+        let mut hash = HashSet::new();
 
         let min = 101_000;
         let width = 400_000;
@@ -141,8 +101,8 @@ mod tests {
             if slot % dead == 0 {
                 continue;
             }
-            hash.insert(slot, 0);
-            ancestors.insert(slot, 0);
+            hash.insert(slot);
+            ancestors.insert(slot);
         }
         compare_ancestors(&hash, &ancestors);
 
@@ -174,13 +134,13 @@ mod tests {
         assert_eq!(count, count2);
     }
 
-    fn compare_ancestors(hashset: &HashMap<u64, usize>, ancestors: &Ancestors) {
+    fn compare_ancestors(hashset: &HashSet<u64>, ancestors: &Ancestors) {
         assert_eq!(hashset.len(), ancestors.len());
         assert_eq!(hashset.is_empty(), ancestors.is_empty());
         let mut min = u64::MAX;
         let mut max = 0;
         for item in hashset.iter() {
-            let key = item.0;
+            let key = item;
             min = std::cmp::min(min, *key);
             max = std::cmp::max(max, *key);
             assert!(ancestors.contains_key(key));
@@ -192,8 +152,6 @@ mod tests {
 
     #[test]
     fn test_ancestors_smaller() {
-        agave_logger::setup();
-
         for width in 0..34 {
             let mut hash = HashSet::new();
 
@@ -208,7 +166,7 @@ mod tests {
                     continue;
                 }
                 hash.insert(slot);
-                slots.push((slot, 0));
+                slots.push(slot);
             }
             let ancestors = Ancestors::from(slots);
 
@@ -243,5 +201,17 @@ mod tests {
             );
             assert_eq!(count, count2);
         }
+    }
+
+    #[test]
+    fn test_ancestors_iter_matches_keys() {
+        let ancestors = Ancestors::from(vec![3, 42, 128_007, 128_017, 128_107]);
+
+        let mut keys = ancestors.keys();
+        let mut iter_keys = ancestors.iter().collect::<Vec<_>>();
+        keys.sort_unstable();
+        iter_keys.sort_unstable();
+
+        assert_eq!(iter_keys, keys);
     }
 }

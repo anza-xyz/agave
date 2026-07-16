@@ -226,6 +226,7 @@ impl ShredData {
             .contains(ShredFlags::DATA_COMPLETE_SHRED)
     }
 
+    #[cfg(test)]
     pub(super) fn reference_tick(&self) -> u8 {
         (self.data_header.flags & ShredFlags::SHRED_TICK_REFERENCE_MASK).bits()
     }
@@ -1328,6 +1329,31 @@ fn finish_erasure_batch(
         }
     }
     Ok(*tree.root())
+}
+
+#[cfg(test)]
+pub(crate) fn finish_erasure_batch_for_tests(
+    keypair: &Keypair,
+    shreds: &mut [crate::shred::Shred],
+    chained_merkle_root: Hash,
+    reed_solomon_cache: &ReedSolomonCache,
+) -> Result<Hash, Error> {
+    let mut batch: Vec<_> = shreds
+        .iter()
+        .cloned()
+        .map(crate::shred::Shred::try_into)
+        .collect::<Result<_, _>>()?;
+    let chained_merkle_root = finish_erasure_batch(
+        None,
+        keypair,
+        &mut batch,
+        chained_merkle_root,
+        reed_solomon_cache,
+    )?;
+    for (dst, src) in shreds.iter_mut().zip(batch) {
+        *dst = crate::shred::Shred::from(src);
+    }
+    Ok(chained_merkle_root)
 }
 
 #[cfg(test)]

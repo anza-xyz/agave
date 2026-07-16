@@ -36,6 +36,21 @@ pub fn parse_v0_message_accounts(message: &LoadedMessage) -> Vec<ParsedAccount> 
     accounts
 }
 
+pub fn parse_v1_message_accounts(message: &solana_message::v1::Message) -> Vec<ParsedAccount> {
+    let reserved_account_keys = ReservedAccountKeys::new_all_activated().active;
+    let mut accounts = Vec::with_capacity(message.account_keys.len());
+    for (i, account_key) in message.account_keys.iter().enumerate() {
+        accounts.push(ParsedAccount {
+            pubkey: account_key.to_string(),
+            writable: message.is_maybe_writable(i, Some(&reserved_account_keys)),
+            signer: message.is_signer(i),
+            source: Some(ParsedAccountSource::Transaction),
+        });
+    }
+
+    accounts
+}
+
 #[cfg(test)]
 mod test {
     use {

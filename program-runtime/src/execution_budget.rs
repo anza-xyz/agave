@@ -18,23 +18,10 @@ fn get_max_instruction_stack_depth(simd_0268_active: bool) -> usize {
 }
 
 //Default CPI invocation cost
-pub const DEFAULT_INVOCATION_COST: u64 = 1000;
-//CPI Invocation cost with SIMD-0339 active
-pub const INVOKE_UNITS_COST_SIMD_0339: u64 = 946;
-
-fn get_invoke_unit_cost(simd_0339_active: bool) -> u64 {
-    if simd_0339_active {
-        INVOKE_UNITS_COST_SIMD_0339
-    } else {
-        DEFAULT_INVOCATION_COST
-    }
-}
+pub const DEFAULT_INVOCATION_COST: u64 = 946;
 
 /// Max call depth. This is the maximum nesting of SBF to SBF call that can happen within a program.
 pub const MAX_CALL_DEPTH: usize = 64;
-
-/// The size of one SBF stack frame.
-pub const STACK_FRAME_SIZE: usize = 4096;
 
 pub const MAX_COMPUTE_UNIT_LIMIT: u32 = 1_400_000;
 
@@ -91,7 +78,7 @@ impl SVMTransactionExecutionBudget {
             max_instruction_trace_length: MAX_INSTRUCTION_TRACE_LENGTH,
             sha256_max_slices: 20_000,
             max_call_depth: MAX_CALL_DEPTH,
-            stack_frame_size: STACK_FRAME_SIZE,
+            stack_frame_size: solana_sbpf::vm::get_stack_frame_size(),
             heap_size: u32::try_from(solana_program_entrypoint::HEAP_LENGTH).unwrap(),
         }
     }
@@ -165,12 +152,6 @@ pub struct SVMTransactionExecutionCost {
     /// + alt_bn128_pairing_one_pair_cost_other * (num_elems - 1)
     pub alt_bn128_pairing_one_pair_cost_first: u64,
     pub alt_bn128_pairing_one_pair_cost_other: u64,
-    /// Big integer modular exponentiation base cost
-    pub big_modular_exponentiation_base_cost: u64,
-    /// Big integer moduler exponentiation cost divisor
-    /// The modular exponentiation cost is computed as
-    /// `input_length`/`big_modular_exponentiation_cost_divisor` + `big_modular_exponentiation_base_cost`
-    pub big_modular_exponentiation_cost_divisor: u64,
     /// Coefficient `a` of the quadratic function which determines the number
     /// of compute units consumed to call poseidon syscall for a given number
     /// of inputs.
@@ -217,16 +198,10 @@ pub struct SVMTransactionExecutionCost {
 
 impl Default for SVMTransactionExecutionCost {
     fn default() -> Self {
-        Self::new_with_defaults(/* simd_0339_active */ false)
-    }
-}
-
-impl SVMTransactionExecutionCost {
-    pub fn new_with_defaults(simd_0339_active: bool) -> Self {
         SVMTransactionExecutionCost {
             log_64_units: 100,
             create_program_address_units: 1500,
-            invoke_units: get_invoke_unit_cost(simd_0339_active),
+            invoke_units: DEFAULT_INVOCATION_COST,
             sha256_base_cost: 85,
             sha256_byte_cost: 1,
             log_pubkey_units: 100,
@@ -254,8 +229,6 @@ impl SVMTransactionExecutionCost {
             alt_bn128_g2_multiplication_cost: 15_670,
             alt_bn128_pairing_one_pair_cost_first: 36_364,
             alt_bn128_pairing_one_pair_cost_other: 12_121,
-            big_modular_exponentiation_base_cost: 190,
-            big_modular_exponentiation_cost_divisor: 2,
             poseidon_cost_coefficient_a: 61,
             poseidon_cost_coefficient_c: 542,
             get_remaining_compute_units_cost: 100,
@@ -277,7 +250,9 @@ impl SVMTransactionExecutionCost {
             bls12_381_additional_pair_cost: 13_023,
         }
     }
+}
 
+impl SVMTransactionExecutionCost {
     /// Returns cost of the Poseidon hash function for the given number of
     /// inputs is determined by the following quadratic function:
     ///
@@ -311,7 +286,7 @@ impl SVMTransactionExecutionCost {
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct SVMTransactionExecutionAndFeeBudgetLimits {
     pub budget: SVMTransactionExecutionBudget,
-    pub loaded_accounts_data_size_limit: NonZeroU32,
+    pub loaded_accounts_data_size_limit: u32,
     pub fee_details: FeeDetails,
 }
 
@@ -320,7 +295,7 @@ impl Default for SVMTransactionExecutionAndFeeBudgetLimits {
     fn default() -> Self {
         Self {
             budget: SVMTransactionExecutionBudget::default(),
-            loaded_accounts_data_size_limit: MAX_LOADED_ACCOUNTS_DATA_SIZE_BYTES,
+            loaded_accounts_data_size_limit: MAX_LOADED_ACCOUNTS_DATA_SIZE_BYTES.get(),
             fee_details: FeeDetails::default(),
         }
     }

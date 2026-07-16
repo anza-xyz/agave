@@ -1,3 +1,12 @@
+#[cfg(feature = "dev-context-only-utils")]
+use qualifier_attr::field_qualifiers;
+// The rng traits come straight from `rand` when sampling for tests, and from frozen-abi's re-export
+// when sampling for abi digests (which enables `frozen-abi` without the `rand` dependency). Both
+// resolve to the same `rand` crate, so `sample_vote_account` is shared between the two.
+#[cfg(feature = "dev-context-only-utils")]
+use rand::{Rng, RngCore};
+#[cfg(all(feature = "frozen-abi", not(feature = "dev-context-only-utils")))]
+use solana_frozen_abi::rand::{Rng, RngCore};
 use {
     crate::vote_state_view::VoteStateView,
     log::*,
@@ -9,6 +18,7 @@ use {
     solana_account::{AccountSharedData, ReadableAccount},
     solana_instruction::error::InstructionError,
     solana_pubkey::Pubkey,
+    solana_transaction::SchemaWrite,
     std::{
         cmp::Ordering,
         collections::{HashMap, hash_map::Entry},
@@ -18,6 +28,17 @@ use {
         sync::{Arc, OnceLock},
     },
     thiserror::Error,
+    wincode::{TypeMeta, WriteResult},
+};
+#[cfg(any(feature = "dev-context-only-utils", feature = "frozen-abi"))]
+use {
+    solana_bls_signatures::Keypair as BLSKeypair,
+    solana_clock::Clock,
+    solana_keypair::Keypair,
+    solana_signer::Signer,
+    solana_vote_interface::state::{
+        BLS_PROOF_OF_POSSESSION_COMPRESSED_SIZE, VoteInitV2, VoteStateV4, VoteStateVersions,
+    },
 };
 
 #[cfg_attr(feature = "frozen-abi", derive(AbiExample))]
@@ -40,13 +61,19 @@ struct VoteAccountInner {
 }
 
 pub type VoteAccountsHashMap = HashMap<Pubkey, (/*stake:*/ u64, VoteAccount)>;
-#[cfg_attr(feature = "frozen-abi", derive(AbiExample))]
-#[derive(Debug, Serialize, Deserialize)]
+#[cfg_attr(feature = "frozen-abi", derive(AbiExample, StableAbi, StableAbiSample))]
+#[derive(Debug, Serialize, Deserialize, SchemaWrite)]
+#[cfg_attr(
+    feature = "dev-context-only-utils",
+    field_qualifiers(vote_accounts(pub))
+)]
 pub struct VoteAccounts {
     #[serde(deserialize_with = "deserialize_accounts_hash_map")]
     vote_accounts: Arc<VoteAccountsHashMap>,
     // Inner Arc is meant to implement copy-on-write semantics.
+    #[cfg_attr(feature = "frozen-abi", stable_abi_sample(with = "Default::default()"))]
     #[serde(skip)]
+    #[wincode(skip)]
     staked_nodes: OnceLock<
         Arc<
             HashMap<
@@ -94,20 +121,28 @@ impl VoteAccount {
 
     #[cfg(feature = "dev-context-only-utils")]
     pub fn new_random() -> VoteAccount {
-        use {
-            rand::Rng as _,
-            solana_clock::Clock,
-            solana_vote_interface::state::{VoteInit, VoteStateV4, VoteStateVersions},
-        };
+        Self::sample_vote_account(&mut rand::rng())
+    }
 
-        let mut rng = rand::rng();
-        let vote_pubkey = Pubkey::new_unique();
+    /// Samples a valid, parseable vote account (owner = vote program, data = a well-formed
+    /// `VoteStateV4` with a real BLS keypair derived from `rng`) from `rng`. Shared by `new_random`
+    /// and the frozen-abi `StableAbi` sampler.
+    #[cfg(any(feature = "dev-context-only-utils", feature = "frozen-abi"))]
+    fn sample_vote_account(rng: &mut (impl RngCore + ?Sized)) -> VoteAccount {
+        const BLS_KEYPAIR_DERIVE_SEED: &[u8; 9] = b"alpenglow";
 
-        let vote_init = VoteInit {
-            node_pubkey: Pubkey::new_unique(),
-            authorized_voter: Pubkey::new_unique(),
-            authorized_withdrawer: Pubkey::new_unique(),
-            commission: rng.random(),
+        let keypair = Keypair::new_from_array(rng.random());
+        let bls_keypair =
+            BLSKeypair::derive_from_signer(&keypair, BLS_KEYPAIR_DERIVE_SEED).unwrap();
+        let vote_init = VoteInitV2 {
+            node_pubkey: Pubkey::from(rng.random::<[u8; 32]>()),
+            authorized_voter: keypair.pubkey(),
+            authorized_voter_bls_pubkey: bls_keypair.public.to_bytes_compressed(),
+            // A valid proof of possession isn't required for the account to parse.
+            authorized_voter_bls_proof_of_possession: [0; BLS_PROOF_OF_POSSESSION_COMPRESSED_SIZE],
+            authorized_withdrawer: Pubkey::from(rng.random::<[u8; 32]>()),
+            inflation_rewards_commission_bps: rng.random_range(0..10_000),
+            block_revenue_commission_bps: rng.random_range(0..10_000),
         };
         let clock = Clock {
             slot: rng.random(),
@@ -116,14 +151,19 @@ impl VoteAccount {
             leader_schedule_epoch: rng.random(),
             unix_timestamp: rng.random(),
         };
-        let vote_state = VoteStateV4::new_with_defaults(&vote_pubkey, &vote_init, &clock);
-        let account = AccountSharedData::new_data(
+        let vote_state = VoteStateV4::new(
+            &vote_init,
+            &Pubkey::from(rng.random::<[u8; 32]>()),
+            &Pubkey::from(rng.random::<[u8; 32]>()),
+            &clock,
+        );
+        let data = wincode::serialize(&VoteStateVersions::new_v4(vote_state)).unwrap();
+        let mut account = AccountSharedData::new(
             rng.random(), // lamports
-            &VoteStateVersions::new_v4(vote_state),
+            data.len(),
             &solana_sdk_ids::vote::id(), // owner
-        )
-        .unwrap();
-
+        );
+        account.set_data_from_slice(&data);
         VoteAccount::try_from(account).unwrap()
     }
 }
@@ -215,7 +255,11 @@ impl VoteAccounts {
                 .map(|(pubkey, vote_account, stake)| (*pubkey, (stake, vote_account.clone()))),
         );
         if top_entries.is_empty() {
-            error!("no valid vote accounts found");
+            if cfg!(test) {
+                info!("No valid vote accounts found");
+            } else {
+                error!("No valid vote accounts found");
+            }
         }
         info!(
             "Out of {} vote accounts, {} are valid vote accounts after filtering, {} remain after \
@@ -254,10 +298,10 @@ impl VoteAccounts {
             .map(|(vote_pubkey, (stake, _vote_account))| (vote_pubkey, *stake))
     }
 
-    pub fn find_max_by_delegated_stake(&self) -> Option<&VoteAccount> {
-        let key = |(_pubkey, (stake, _vote_account)): &(_, &(u64, _))| *stake;
-        let (_pubkey, (_stake, vote_account)) = self.vote_accounts.iter().max_by_key(key)?;
-        Some(vote_account)
+    pub fn find_max_by_delegated_stake(&self) -> Option<(&Pubkey, &VoteAccount)> {
+        let key = |(pubkey, (stake, _vote_account)): &(_, &(u64, _))| (*stake, *pubkey);
+        let (vote_address, (_stake, vote_account)) = self.vote_accounts.iter().max_by_key(key)?;
+        Some((vote_address, vote_account))
     }
 
     pub fn insert(
@@ -287,7 +331,8 @@ impl VoteAccounts {
                 Some(mem::replace(old_vote_account, new_vote_account))
             }
             Entry::Vacant(entry) => {
-                // This is a new vote account. We don't know the stake yet, so we need to compute it.
+                // This is a new vote account. Use the caller-provided stake for the initial
+                // cache entry.
                 let (stake, vote_account) = entry.insert((calculate_stake(), new_vote_account));
                 if let Some(staked_nodes) = self.staked_nodes.get_mut() {
                     Self::do_add_node_stake(staked_nodes, *stake, *vote_account.node_pubkey());
@@ -377,6 +422,31 @@ impl VoteAccounts {
             }
             Ordering::Greater => *current_stake -= stake,
         }
+    }
+}
+
+#[cfg(feature = "frozen-abi")]
+impl solana_frozen_abi::stable_abi::StableAbi for VoteAccount {
+    fn random_with_context(rng: &mut (impl RngCore + ?Sized), _ctx: ()) -> Self {
+        Self::sample_vote_account(rng)
+    }
+}
+
+// `VoteAccount` serializes only its `account` (see the `Serialize` impl below). Mirror that for
+// wincode so the snapshot wire format matches bincode: `vote_state_view` is a parsed view of the
+// account data, rebuilt on read, and is intentionally not written.
+unsafe impl<C: wincode::config::Config> SchemaWrite<C> for VoteAccount {
+    type Src = Self;
+
+    const TYPE_META: TypeMeta =
+        <AccountSharedData as SchemaWrite<C>>::TYPE_META.keep_zero_copy(false);
+
+    fn size_of(src: &Self::Src) -> WriteResult<usize> {
+        <AccountSharedData as SchemaWrite<C>>::size_of(&src.0.account)
+    }
+
+    fn write(writer: impl wincode::io::Writer, src: &Self::Src) -> WriteResult<()> {
+        <AccountSharedData as SchemaWrite<C>>::write(writer, &src.0.account)
     }
 }
 

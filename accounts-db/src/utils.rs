@@ -1,5 +1,5 @@
 use {
-    agave_fs::dirs,
+    agave_fs::{dirs, metadata::DirectIoSupport},
     log::*,
     solana_account::{AccountSharedData, ReadableAccount},
     solana_measure::measure_time,
@@ -161,6 +161,47 @@ pub fn create_account_shared_data(account: &impl ReadableAccount) -> AccountShar
         account.executable(),
         account.rent_epoch(),
     )
+}
+
+/// Validates that all `paths` reside on filesystems that support direct I/O (`O_DIRECT`).
+///
+/// Returns a descriptive `Err` early at startup rather than letting silent failures surface
+/// at runtime. No-op when `use_direct_io` is `false`.
+pub fn validate_account_paths_for_direct_io(
+    use_direct_io: bool,
+    paths: impl IntoIterator<Item = impl AsRef<Path>>,
+) -> io::Result<()> {
+    if use_direct_io {
+        let mut unsupported_paths = vec![];
+        for path in paths.into_iter() {
+            let path = path.as_ref();
+            let support = agave_fs::metadata::check_direct_io_capability(path).map_err(|err| {
+                io::Error::new(
+                    err.kind(),
+                    format!(
+                        "failed to validate direct-io support for account path `{}`: {err}",
+                        path.display()
+                    ),
+                )
+            })?;
+            if support == DirectIoSupport::Unsupported {
+                unsupported_paths.push(path.display().to_string());
+            }
+        }
+        if !unsupported_paths.is_empty() {
+            let paths_str = unsupported_paths.join(",");
+            return Err(io::Error::new(
+                io::ErrorKind::Unsupported,
+                format!(
+                    "direct-io (O_DIRECT) is not supported for paths `{paths_str}`. Ensure the \
+                     filesystem hosting that path supports direct-io, or disable direct-io with \
+                     --no-accounts-db-snapshots-direct-io flag.",
+                ),
+            ));
+        }
+    }
+
+    Ok(())
 }
 
 #[cfg(test)]

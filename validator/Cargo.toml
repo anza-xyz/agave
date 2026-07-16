@@ -13,20 +13,23 @@ edition = { workspace = true }
 
 [package.metadata.docs.rs]
 targets = ["x86_64-unknown-linux-gnu"]
+all-features = true
+rustdoc-args = ["--cfg=docsrs"]
 
 [features]
 agave-unstable-api = []
 
 [dependencies]
-agave-geyser-plugin-interface = { workspace = true }
+agave-cpu-utils = { workspace = true }
+agave-feature-set = { workspace = true }
 agave-logger = { workspace = true }
 agave-snapshots = { workspace = true }
 agave-votor = { workspace = true }
 agave-xdp = { workspace = true }
+bytesize = { workspace = true }
 chrono = { workspace = true, features = ["default", "serde"] }
 clap = { workspace = true }
 console = { workspace = true }
-core_affinity = { workspace = true }
 crossbeam-channel = { workspace = true }
 fd-lock = { workspace = true }
 indicatif = { workspace = true }
@@ -36,7 +39,6 @@ jsonrpc-core-client = { workspace = true, features = ["ipc"] }
 jsonrpc-derive = { workspace = true }
 jsonrpc-ipc-server = { workspace = true }
 libc = { workspace = true }
-libloading = { workspace = true }
 log = { workspace = true }
 num_cpus = { workspace = true }
 qualifier_attr = { workspace = true }
@@ -59,17 +61,17 @@ solana-epoch-schedule = { workspace = true }
 solana-faucet = { workspace = true }
 solana-genesis-utils = { workspace = true }
 solana-geyser-plugin-manager = { workspace = true }
-solana-gossip = { workspace = true, features = ["agave-unstable-api"] }
+solana-gossip = { workspace = true }
 solana-hash = { workspace = true }
 solana-inflation = { workspace = true }
 solana-keypair = { workspace = true }
 solana-ledger = { workspace = true }
+solana-message = { workspace = true }
 solana-metrics = { workspace = true }
 solana-native-token = { workspace = true }
 solana-net-utils = { workspace = true }
 solana-perf = { workspace = true }
 solana-poh = { workspace = true }
-solana-program-runtime = { workspace = true }
 solana-pubkey = { workspace = true }
 solana-rayon-threadlimit = { workspace = true }
 solana-rent = { workspace = true }
@@ -105,16 +107,18 @@ libc = { workspace = true }
 
 [dev-dependencies]
 assert_cmd = { workspace = true }
+assert_matches = { workspace = true }
 predicates = { workspace = true }
 pretty_assertions = { workspace = true }
 scopeguard = { workspace = true }
-solana-account-decoder = { workspace = true }
-solana-core = { workspace = true, features = ["dev-context-only-utils"] }
+solana-account-decoder = { path = "../account-decoder", features = ["agave-unstable-api"] }
+solana-core = { path = "../core", features = ["agave-unstable-api", "dev-context-only-utils"] }
 solana-program-option = { workspace = true }
 solana-program-pack = { workspace = true }
-solana-runtime = { workspace = true, features = ["dev-context-only-utils"] }
+solana-runtime = { path = "../runtime", features = ["agave-unstable-api", "dev-context-only-utils"] }
 solana-time-utils = { workspace = true }
-spl-generic-token = { workspace = true }
-spl-token-2022-interface = { workspace = true }
 tempfile = { workspace = true }
 test-case = { workspace = true }
+
+[lints]
+workspace = true

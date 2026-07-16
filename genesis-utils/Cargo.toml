@@ -11,6 +11,8 @@ edition = { workspace = true }
 
 [package.metadata.docs.rs]
 targets = ["x86_64-unknown-linux-gnu"]
+all-features = true
+rustdoc-args = ["--cfg=docsrs"]
 
 [lib]
 crate-type = ["lib"]
@@ -27,3 +29,6 @@ solana-genesis-config = { workspace = true }
 solana-hash = { workspace = true }
 solana-rpc-client = { workspace = true }
 thiserror = { workspace = true }
+
+[lints]
+workspace = true

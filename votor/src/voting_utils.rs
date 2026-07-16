@@ -1,27 +1,30 @@
 use {
     crate::{
         commitment::{CommitmentAggregationData, CommitmentError},
-        consensus_metrics::ConsensusMetricsEventSender,
         vote_history::{VoteHistory, VoteHistoryError},
-        vote_history_storage::{SavedVoteHistory, SavedVoteHistoryVersions},
+        vote_history_storage::{SavedVoteHistory, SavedVoteHistoryVersions, VoteHistoryStorage},
         voting_service::BLSOp,
     },
     agave_votor_messages::{
         consensus_message::{BLS_KEYPAIR_DERIVE_SEED, ConsensusMessage, VoteMessage},
+        metric_types::ConsensusMetricsEventSender,
+        reward_certificate::AddVoteMessage,
         vote::Vote,
+        wire::get_vote_payload_to_sign,
     },
-    crossbeam_channel::{SendError, Sender},
-    solana_bls_signatures::{
-        BlsError, Pubkey as BLSPubkey, keypair::Keypair as BLSKeypair,
-        pubkey::PubkeyCompressed as BLSPubkeyCompressed,
-    },
-    solana_clock::Slot,
+    crossbeam_channel::{SendError, Sender, TrySendError},
+    solana_bls_signatures::{BlsError, keypair::Keypair as BLSKeypair},
+    solana_clock::{Epoch, Slot},
+    solana_gossip::cluster_info::ClusterInfo,
     solana_keypair::Keypair,
     solana_pubkey::Pubkey,
-    solana_runtime::{bank::Bank, bank_forks::SharableBanks},
+    solana_runtime::{bank::Bank, bank_forks::SharableBanks, epoch_stakes::BLSPubkeyStakeEntry},
     solana_signer::Signer,
     solana_transaction::Transaction,
-    std::{collections::HashMap, sync::Arc},
+    std::{
+        collections::{HashMap, hash_map::Entry},
+        sync::{Arc, RwLock},
+    },
     thiserror::Error,
 };
 
@@ -46,15 +49,15 @@ pub enum GenerateVoteTxResult {
 
     // The following are misconfiguration errors
     // The authorized voter for the given pubkey and Epoch does not exist
-    NoAuthorizedVoter(Pubkey, u64),
+    NoAuthorizedVoter(Pubkey, Epoch),
     // The vote account associated with given pubkey does not exist
     VoteAccountNotFound(Pubkey),
 
     // The following are the successful cases
     // Generated a vote transaction
     Tx(Transaction),
-    // Generated a ConsensusMessage
-    ConsensusMessage(ConsensusMessage),
+    // Generated a VoteMessage
+    Vote(VoteMessage),
 }
 
 impl GenerateVoteTxResult {
@@ -74,7 +77,7 @@ impl GenerateVoteTxResult {
             | Self::WaitForStartupVerification
             | Self::WaitToVoteSlot(_)
             | Self::NoRankFound => false,
-            Self::Tx(_) | Self::ConsensusMessage(_) => false,
+            Self::Tx(_) | Self::Vote(_) => false,
         }
     }
 
@@ -86,7 +89,7 @@ impl GenerateVoteTxResult {
             | Self::WaitForStartupVerification
             | Self::WaitToVoteSlot(_)
             | Self::NoRankFound => true,
-            Self::Tx(_) | Self::ConsensusMessage(_) => false,
+            Self::Tx(_) | Self::Vote(_) => false,
         }
     }
 }
@@ -102,6 +105,9 @@ pub enum VoteError {
     #[error("Unable to send to certificate pool")]
     ConsensusPoolError(#[from] SendError<()>),
 
+    #[error("Channel to rewards container disconnected")]
+    RewardsChannelDisconnected,
+
     #[error("Commitment sender error {0}")]
     CommitmentSenderError(#[from] CommitmentError),
 
@@ -111,14 +117,16 @@ pub enum VoteError {
 
 /// Context required to construct vote transactions
 pub struct VotingContext {
+    pub cluster_info: Arc<ClusterInfo>,
     pub vote_history: VoteHistory,
     pub vote_account_pubkey: Pubkey,
     pub identity_keypair: Arc<Keypair>,
-    pub authorized_voter_keypairs: Arc<std::sync::RwLock<Vec<Arc<Keypair>>>>,
+    pub authorized_voter_keypairs: Arc<RwLock<Vec<Arc<Keypair>>>>,
+    pub vote_history_storage: Arc<dyn VoteHistoryStorage>,
     // The BLS keypair should always change with authorized_voter_keypairs.
     pub derived_bls_keypairs: HashMap<Pubkey, Arc<BLSKeypair>>,
-    pub has_new_vote_been_rooted: bool,
-    pub own_vote_sender: Sender<Vec<ConsensusMessage>>,
+    pub own_vote_sender: Sender<ConsensusMessage>,
+    pub reward_votes_sender: Sender<AddVoteMessage>,
     pub bls_sender: Sender<BLSOp>,
     pub commitment_sender: Sender<CommitmentAggregationData>,
     pub wait_to_vote_slot: Option<u64>,
@@ -128,210 +136,240 @@ pub struct VotingContext {
 
 fn get_or_insert_bls_keypair(
     derived_bls_keypairs: &mut HashMap<Pubkey, Arc<BLSKeypair>>,
-    authorized_voter_keypair: &Arc<Keypair>,
+    authorized_voter_keypair: &Keypair,
 ) -> Result<Arc<BLSKeypair>, BlsError> {
     let pubkey = authorized_voter_keypair.pubkey();
-    if let Some(existing) = derived_bls_keypairs.get(&pubkey) {
-        return Ok(existing.clone());
+    match derived_bls_keypairs.entry(pubkey) {
+        Entry::Occupied(e) => Ok(e.get().clone()),
+        Entry::Vacant(e) => {
+            let bls_keypair = Arc::new(BLSKeypair::derive_from_signer(
+                authorized_voter_keypair,
+                BLS_KEYPAIR_DERIVE_SEED,
+            )?);
+            e.insert(bls_keypair.clone());
+            Ok(bls_keypair)
+        }
     }
-
-    let bls_keypair = Arc::new(BLSKeypair::derive_from_signer(
-        authorized_voter_keypair,
-        BLS_KEYPAIR_DERIVE_SEED,
-    )?);
-
-    derived_bls_keypairs.insert(pubkey, bls_keypair.clone());
-
-    Ok(bls_keypair)
 }
 
 pub fn generate_vote_tx(
-    vote: &Vote,
+    vote: Vote,
     bank: &Bank,
     vote_account_pubkey: Pubkey,
-    identity_keypair: &Arc<Keypair>,
-    authorized_voter_keypairs: &Arc<std::sync::RwLock<Vec<Arc<Keypair>>>>,
+    shred_version: u16,
+    identity_keypair: &Keypair,
+    authorized_voter_keypairs: &RwLock<Vec<Arc<Keypair>>>,
     wait_to_vote_slot: Option<u64>,
     derived_bls_keypairs: &mut HashMap<Pubkey, Arc<BLSKeypair>>,
 ) -> GenerateVoteTxResult {
-    let authorized_voter_keypair;
-    let bls_pubkey_in_vote_account;
+    if authorized_voter_keypairs.read().unwrap().is_empty() {
+        return GenerateVoteTxResult::NonVoting;
+    }
+    if bank.get_vote_account(&vote_account_pubkey).is_none() {
+        return GenerateVoteTxResult::VoteAccountNotFound(vote_account_pubkey);
+    }
+    if let Some(slot) = wait_to_vote_slot
+        && vote.slot() < slot
     {
-        let authorized_voter_keypairs = authorized_voter_keypairs.read().unwrap();
-        if authorized_voter_keypairs.is_empty() {
-            return GenerateVoteTxResult::NonVoting;
-        }
-        if let Some(slot) = wait_to_vote_slot {
-            if vote.slot() < slot {
-                return GenerateVoteTxResult::WaitToVoteSlot(slot);
-            }
-        }
-        let Some(vote_account) = bank.get_vote_account(&vote_account_pubkey) else {
-            return GenerateVoteTxResult::VoteAccountNotFound(vote_account_pubkey);
-        };
-        let vote_state_view = vote_account.vote_state_view();
-        if vote_state_view.node_pubkey() != &identity_keypair.pubkey() {
-            info!(
-                "Vote account node_pubkey mismatch: {} (expected: {}).  Unable to vote",
-                vote_state_view.node_pubkey(),
-                identity_keypair.pubkey()
-            );
-            return GenerateVoteTxResult::HotSpare;
-        }
-        let Some(bls_pubkey_serialized) = vote_state_view.bls_pubkey_compressed() else {
-            panic!(
-                "No BLS pubkey in vote account {}",
-                identity_keypair.pubkey()
-            );
-        };
-        bls_pubkey_in_vote_account =
-            (bincode::deserialize::<BLSPubkeyCompressed>(&bls_pubkey_serialized).unwrap())
-                .try_into()
-                .unwrap_or_else(|_| {
-                    panic!(
-                        "Failed to decompress BLS pubkey in vote account {}",
-                        identity_keypair.pubkey()
-                    );
-                });
-        let Some(authorized_voter_pubkey) = vote_state_view.get_authorized_voter(bank.epoch())
-        else {
-            return GenerateVoteTxResult::NoAuthorizedVoter(vote_account_pubkey, bank.epoch());
-        };
-
-        let Some(keypair) = authorized_voter_keypairs
-            .iter()
-            .find(|keypair| &keypair.pubkey() == authorized_voter_pubkey)
-        else {
-            warn!(
-                "The authorized keypair {authorized_voter_pubkey} for vote account \
-                 {vote_account_pubkey} is not available.  Unable to vote"
-            );
-            return GenerateVoteTxResult::NonVoting;
-        };
-
-        authorized_voter_keypair = keypair.clone();
+        return GenerateVoteTxResult::WaitToVoteSlot(slot);
     }
 
-    let bls_keypair = get_or_insert_bls_keypair(derived_bls_keypairs, &authorized_voter_keypair)
-        .unwrap_or_else(|e| panic!("Failed to derive my own BLS keypair: {e:?}"));
-    let my_bls_pubkey: BLSPubkey = bls_keypair.public.into();
-    if my_bls_pubkey != bls_pubkey_in_vote_account {
-        panic!(
-            "Vote account bls_pubkey mismatch: {bls_pubkey_in_vote_account:?} (expected: \
-             {my_bls_pubkey:?}).  Unable to vote"
-        );
-    }
-    let vote_serialized = bincode::serialize(&vote).unwrap();
+    let rank_map = bank
+        .get_rank_map(vote.slot())
+        .unwrap_or_else(|| panic!("could not find rank map for slot {}", vote.slot()));
 
-    let epoch = bank.epoch_schedule().get_epoch(vote.slot());
-
-    let Some(epoch_stakes) = bank.epoch_stakes(epoch) else {
-        panic!(
-            "The bank {} doesn't have its own epoch_stakes for {}",
-            bank.slot(),
-            epoch
-        );
-    };
-    let Some(my_rank) = epoch_stakes
-        .bls_pubkey_to_rank_map()
-        .get_rank(&my_bls_pubkey)
-    else {
+    let Some(&my_rank) = rank_map.get_rank_for_vote_pubkey(&vote_account_pubkey) else {
         return GenerateVoteTxResult::NoRankFound;
     };
-    GenerateVoteTxResult::ConsensusMessage(ConsensusMessage::Vote(VoteMessage {
-        vote: *vote,
-        signature: bls_keypair.sign(&vote_serialized).into(),
-        rank: *my_rank,
-    }))
-}
+    let BLSPubkeyStakeEntry {
+        vote_account_pubkey: expected_vote_pubkey,
+        node_pubkey: expected_node_pubkey,
+        bls_pubkey: expected_bls_pubkey,
+        stake: _,
+    } = rank_map
+        .get_pubkey_stake_entry(my_rank as usize)
+        .expect("rank-map index should be valid");
 
-/// Send an alpenglow vote as a BLSMessage
-/// `bank` will be used for:
-/// - startup verification
-/// - vote account checks
-/// - authorized voter checks
-///
-/// We also update the vote history and send the vote to
-/// the certificate pool thread for ingestion.
-///
-/// Returns false if we are currently a non-voting node
-fn insert_vote_and_create_bls_message(
-    vote: Vote,
-    is_refresh: bool,
-    context: &mut VotingContext,
-) -> Result<BLSOp, VoteError> {
-    // Update and save the vote history
-    if !is_refresh {
-        context.vote_history.add_vote(vote);
+    if expected_vote_pubkey != &vote_account_pubkey {
+        warn!(
+            "Rank-map vote pubkey mismatch: rank={my_rank}; expected={vote_account_pubkey}; \
+             got={expected_vote_pubkey}",
+        );
+        return GenerateVoteTxResult::VoteAccountNotFound(vote_account_pubkey);
+    }
+    if expected_node_pubkey != &identity_keypair.pubkey() {
+        warn!(
+            "Rank-map node pubkey mismatch: rank={my_rank}; expected={expected_node_pubkey}; \
+             got={}",
+            identity_keypair.pubkey(),
+        );
+        return GenerateVoteTxResult::HotSpare;
     }
 
-    let bank = context.sharable_banks.root();
-    let message = match generate_vote_tx(
-        &vote,
-        &bank,
-        context.vote_account_pubkey,
-        &context.identity_keypair,
-        &context.authorized_voter_keypairs,
-        context.wait_to_vote_slot,
-        &mut context.derived_bls_keypairs,
-    ) {
-        GenerateVoteTxResult::ConsensusMessage(m) => m,
-        e => {
-            if e.is_transient_error() {
-                return Err(VoteError::TransientError(Box::new(e)));
-            } else {
-                return Err(VoteError::InvalidConfig(Box::new(e)));
-            }
-        }
+    let Some(bls_keypair) =
+        authorized_voter_keypairs
+            .read()
+            .unwrap()
+            .iter()
+            .find_map(|authorized_voter_keypair| {
+                let bls_keypair =
+                    get_or_insert_bls_keypair(derived_bls_keypairs, authorized_voter_keypair)
+                        .unwrap_or_else(|e| panic!("Failed to derive my own BLS keypair: {e}"));
+                (&bls_keypair.public == expected_bls_pubkey).then_some(bls_keypair)
+            })
+    else {
+        warn!(
+            "No authorized voter keypair matches rank-map BLS key for vote account \
+             {vote_account_pubkey}. Unable to vote"
+        );
+        return GenerateVoteTxResult::NonVoting;
     };
-    context
-        .own_vote_sender
-        .send(vec![message.clone()])
-        .map_err(|_| SendError(()))?;
 
-    // TODO: for refresh votes use a different BLSOp so we don't have to rewrite the same vote history to file
-    let saved_vote_history =
-        SavedVoteHistory::new(&context.vote_history, &context.identity_keypair)?;
-
-    // Return vote for sending
-    Ok(BLSOp::PushVote {
-        message: Arc::new(message),
-        slot: vote.slot(),
-        saved_vote_history: SavedVoteHistoryVersions::from(saved_vote_history),
+    let vote_payload_to_sign = get_vote_payload_to_sign(vote, shred_version);
+    GenerateVoteTxResult::Vote(VoteMessage {
+        vote,
+        signature: bls_keypair.sign(&vote_payload_to_sign).into(),
+        rank: my_rank,
     })
 }
 
-pub fn generate_vote_message(
+/// Creates a vote message from `vote`, respecting `context.wait_to_vote_slot` only if `respect_wait_to_vote` is true
+fn create_vote_message(
     vote: Vote,
-    is_refresh: bool,
-    vctx: &mut VotingContext,
-) -> Result<Option<BLSOp>, VoteError> {
-    let bls_op = match insert_vote_and_create_bls_message(vote, is_refresh, vctx) {
-        Ok(bls_op) => bls_op,
-        Err(VoteError::InvalidConfig(e)) => {
-            warn!("Failed to generate vote and push to votes: {e:?}");
-            // These are not fatal errors, just skip the vote for now. But they are misconfigurations
-            // that should be warned about.
-            return Ok(None);
-        }
-        Err(VoteError::TransientError(e)) => {
-            info!("Failed to generate vote and push to votes: {e:?}");
-            // These are transient errors, just skip the vote for now.
-            return Ok(None);
-        }
-        Err(e) => return Err(e),
+    context: &mut VotingContext,
+    respect_wait_to_vote: bool,
+) -> Result<VoteMessage, VoteError> {
+    let bank = context.sharable_banks.root();
+    let wait_to_vote_slot = if respect_wait_to_vote {
+        context.wait_to_vote_slot
+    } else {
+        None
     };
-    Ok(Some(bls_op))
+    match generate_vote_tx(
+        vote,
+        &bank,
+        context.vote_account_pubkey,
+        context.cluster_info.my_shred_version(),
+        &context.identity_keypair,
+        &context.authorized_voter_keypairs,
+        wait_to_vote_slot,
+        &mut context.derived_bls_keypairs,
+    ) {
+        GenerateVoteTxResult::Vote(vote) => Ok(vote),
+        e => {
+            if e.is_transient_error() {
+                Err(VoteError::TransientError(Box::new(e)))
+            } else {
+                Err(VoteError::InvalidConfig(Box::new(e)))
+            }
+        }
+    }
+}
+
+fn handle_skippable_vote_error(err: VoteError, action: &str) -> Result<(), VoteError> {
+    match err {
+        VoteError::InvalidConfig(e) => {
+            warn!("Failed to {action}: {e:?}");
+            // These are not fatal errors, just skip the vote for now. But they are
+            // misconfigurations that should be warned about.
+            Ok(())
+        }
+        VoteError::TransientError(e) => {
+            info!("Failed to {action}: {e:?}");
+            // These are transient errors, just skip the vote for now.
+            Ok(())
+        }
+        e => Err(e),
+    }
+}
+
+/// Build a normal push-vote BLS op.
+///
+/// This updates vote history, sends the vote to the certificate pool and reward service for
+/// ingestion, and saves vote history for persistence.
+pub fn insert_vote_and_create_bls_message(
+    vote: Vote,
+    context: &mut VotingContext,
+) -> Result<Option<BLSOp>, VoteError> {
+    // Update and save the vote history
+    context.vote_history.add_vote(vote);
+
+    let Some(vote_msg) =
+        create_and_send_own_vote_message(vote, context, /* respect_wait_to_vote */ true)?
+    else {
+        return Ok(None);
+    };
+
+    let saved_vote_history =
+        SavedVoteHistory::new(&context.vote_history, &context.identity_keypair)?;
+    context
+        .vote_history_storage
+        .store(&SavedVoteHistoryVersions::from(saved_vote_history))?;
+
+    // Return vote for sending
+    Ok(Some(BLSOp::PushVote {
+        vote: Arc::new(vote_msg),
+    }))
+}
+
+pub(crate) fn create_and_send_own_vote_message(
+    vote: Vote,
+    context: &mut VotingContext,
+    respect_wait_to_vote: bool,
+) -> Result<Option<VoteMessage>, VoteError> {
+    let vote_msg = match create_vote_message(vote, context, respect_wait_to_vote) {
+        Ok(vote_msg) => vote_msg,
+        Err(e) => {
+            handle_skippable_vote_error(e, "generate vote message")?;
+            return Ok(None);
+        }
+    };
+
+    context
+        .own_vote_sender
+        .send(ConsensusMessage::Vote(vote_msg.clone()))
+        .map_err(|_| SendError(()))?;
+
+    match context.reward_votes_sender.try_send(AddVoteMessage {
+        votes: vec![vote_msg.clone()],
+    }) {
+        Ok(()) => (),
+        Err(TrySendError::Full(_)) => {
+            warn!("Reward votes channel is full, dropping own vote {vote:?}");
+        }
+        Err(TrySendError::Disconnected(_)) => {
+            return Err(VoteError::RewardsChannelDisconnected);
+        }
+    }
+
+    Ok(Some(vote_msg))
+}
+
+pub fn generate_refresh_vote_message(
+    vote: Vote,
+    vctx: &mut VotingContext,
+) -> Result<Option<VoteMessage>, VoteError> {
+    match create_vote_message(vote, vctx, /* respect_wait_to_vote */ true) {
+        Ok(vote_msg) => Ok(Some(vote_msg)),
+        Err(e) => {
+            handle_skippable_vote_error(e, "generate refresh vote message")?;
+            Ok(None)
+        }
+    }
 }
 
 #[cfg(test)]
 mod tests {
     use {
         super::*,
-        crossbeam_channel::unbounded,
+        crate::vote_history_storage::NullVoteHistoryStorage,
+        agave_votor_messages::consensus_message::Block,
+        crossbeam_channel::{Receiver, bounded},
+        solana_gossip::contact_info::ContactInfo,
         solana_hash::Hash,
+        solana_net_utils::SocketAddrSpace,
         solana_runtime::{
-            bank::Bank,
+            bank::{Bank, SlotLeader},
             bank_forks::BankForks,
             epoch_stakes::VersionedEpochStakes,
             genesis_utils::{
@@ -342,23 +380,42 @@ mod tests {
     };
 
     fn generate_expected_consensus_message(
+        ctx: &VotingContext,
         vote: Vote,
         my_bls_keypair: &BLSKeypair,
-    ) -> ConsensusMessage {
-        let vote_serialized = bincode::serialize(&vote).unwrap();
-        let signature = my_bls_keypair.sign(&vote_serialized);
-        ConsensusMessage::Vote(VoteMessage {
+    ) -> VoteMessage {
+        let payload = get_vote_payload_to_sign(vote, ctx.cluster_info.my_shred_version());
+        let signature = my_bls_keypair.sign(&payload);
+        VoteMessage {
             vote,
             signature: signature.into(),
             rank: 0,
-        })
+        }
     }
 
     fn setup_voting_context_and_bank_forks(
-        own_vote_sender: Sender<Vec<ConsensusMessage>>,
+        own_vote_sender: Sender<ConsensusMessage>,
         validator_keypairs: &[ValidatorVoteKeypairs],
         my_index: usize,
-    ) -> VotingContext {
+    ) -> (VotingContext, Receiver<AddVoteMessage>) {
+        let (voting_context, _, reward_votes_receiver) =
+            setup_voting_context_and_bank_forks_with_forks(
+                own_vote_sender,
+                validator_keypairs,
+                my_index,
+            );
+        (voting_context, reward_votes_receiver)
+    }
+
+    fn setup_voting_context_and_bank_forks_with_forks(
+        own_vote_sender: Sender<ConsensusMessage>,
+        validator_keypairs: &[ValidatorVoteKeypairs],
+        my_index: usize,
+    ) -> (
+        VotingContext,
+        Arc<RwLock<BankForks>>,
+        Receiver<AddVoteMessage>,
+    ) {
         // Can't have stake of 0, so start at 1 and go to 10. In descending order, so 0 has largest stake.
         let stakes: Vec<u64> = (1u64..=10).rev().map(|x| x.saturating_mul(100)).collect();
         let genesis = create_genesis_config_with_alpenglow_vote_accounts(
@@ -370,37 +427,47 @@ mod tests {
         let bank_forks = BankForks::new_rw_arc(bank0);
 
         let my_keys = &validator_keypairs[my_index];
+        let contact_info = ContactInfo::new_localhost(&my_keys.node_keypair.pubkey(), 0);
+        let cluster_info = Arc::new(ClusterInfo::new(
+            contact_info,
+            Arc::new(my_keys.node_keypair.insecure_clone()),
+            SocketAddrSpace::Unspecified,
+        ));
         let sharable_banks = bank_forks.read().unwrap().sharable_banks();
-        let bls_sender = unbounded().0;
-        let commitment_sender = unbounded().0;
-        let consensus_metrics_sender = unbounded().0;
-        VotingContext {
+        let bls_sender = bounded(1024).0;
+        let commitment_sender = bounded(1024).0;
+        let consensus_metrics_sender = bounded(1024).0;
+        let (reward_votes_sender, reward_votes_receiver) = bounded(1024);
+        let voting_context = VotingContext {
+            cluster_info,
             vote_history: VoteHistory::new(my_keys.node_keypair.pubkey(), 0),
             vote_account_pubkey: my_keys.vote_keypair.pubkey(),
             identity_keypair: Arc::new(my_keys.node_keypair.insecure_clone()),
             authorized_voter_keypairs: Arc::new(RwLock::new(vec![Arc::new(
                 my_keys.vote_keypair.insecure_clone(),
             )])),
+            vote_history_storage: Arc::new(NullVoteHistoryStorage::default()),
             derived_bls_keypairs: HashMap::new(),
-            has_new_vote_been_rooted: false,
             own_vote_sender,
+            reward_votes_sender,
             bls_sender,
             commitment_sender,
             wait_to_vote_slot: None,
             sharable_banks,
             consensus_metrics_sender,
-        }
+        };
+        (voting_context, bank_forks, reward_votes_receiver)
     }
 
     #[test]
     fn test_generate_own_vote_message() {
-        let (own_vote_sender, own_vote_receiver) = crossbeam_channel::unbounded();
+        let (own_vote_sender, own_vote_receiver) = bounded(1024);
         // Create 10 node validatorvotekeypairs vec
         let validator_keypairs = (0..10)
             .map(|_| ValidatorVoteKeypairs::new(Keypair::new(), Keypair::new(), Keypair::new()))
             .collect::<Vec<_>>();
         let my_index = 0;
-        let mut voting_context =
+        let (mut voting_context, reward_votes_receiver) =
             setup_voting_context_and_bank_forks(own_vote_sender, &validator_keypairs, my_index);
         let my_bls_keypair = BLSKeypair::derive_from_signer(
             &validator_keypairs[my_index].vote_keypair,
@@ -411,55 +478,66 @@ mod tests {
         // Generate a normal notarization vote and check it's sent out correctly.
         let block_id = Hash::new_unique();
         let vote_slot = 2;
-        let vote = Vote::new_notarization_vote(vote_slot, block_id);
-        let result = generate_vote_message(vote, false, &mut voting_context)
+        let vote = Vote::new_notarization_vote(Block {
+            slot: vote_slot,
+            block_id,
+        });
+        let result = insert_vote_and_create_bls_message(vote, &mut voting_context)
             .ok()
             .unwrap()
             .unwrap();
-        let expected_message = generate_expected_consensus_message(vote, &my_bls_keypair);
-        if let BLSOp::PushVote {
-            message,
-            slot,
-            saved_vote_history,
-        } = &result
-        {
-            assert_eq!(slot, &vote_slot);
-            assert_eq!(**message, expected_message);
-            assert_eq!(
-                saved_vote_history,
-                &SavedVoteHistoryVersions::from(
-                    SavedVoteHistory::new(
-                        &voting_context.vote_history,
-                        &voting_context.identity_keypair
-                    )
-                    .unwrap()
-                )
-            );
+        let expected_message =
+            generate_expected_consensus_message(&voting_context, vote, &my_bls_keypair);
+        if let BLSOp::PushVote { vote } = result {
+            let msg = Arc::unwrap_or_clone(vote);
+            assert_eq!(msg, expected_message);
         } else {
-            panic!("Expected BLSOp::PushVote, got {result:?}");
+            panic!("Expected BLSOp::VotePush, got {result:?}");
         }
 
         // Check that own vote sender receives the vote
         let received_message = own_vote_receiver.recv().unwrap();
-        assert_eq!(received_message, vec![expected_message]);
+        assert_eq!(
+            received_message,
+            ConsensusMessage::Vote(expected_message.clone())
+        );
+
+        // Check that the reward service receives the vote.
+        assert_eq!(
+            reward_votes_receiver.recv().unwrap().votes,
+            vec![expected_message.clone()]
+        );
+
+        let refresh_vote = Vote::new_notarization_vote(Block {
+            slot: vote_slot,
+            block_id,
+        });
+        let refresh_result = generate_refresh_vote_message(refresh_vote, &mut voting_context)
+            .ok()
+            .unwrap()
+            .unwrap();
+        assert_eq!(refresh_result.vote.slot(), vote_slot);
+        assert_eq!(refresh_result, expected_message);
+        assert!(own_vote_receiver.try_recv().is_err());
+        assert!(reward_votes_receiver.try_recv().is_err());
     }
 
     #[test]
     fn test_wait_to_vote_slot() {
-        let (own_vote_sender, _own_vote_receiver) = crossbeam_channel::unbounded();
+        let (own_vote_sender, _own_vote_receiver) = bounded(1024);
         // Create 10 node validatorvotekeypairs vec
         let validator_keypairs = (0..10)
             .map(|_| ValidatorVoteKeypairs::new(Keypair::new(), Keypair::new(), Keypair::new()))
             .collect::<Vec<_>>();
         let my_index = 0;
-        let mut voting_context =
+        let (mut voting_context, _reward_votes_receiver) =
             setup_voting_context_and_bank_forks(own_vote_sender, &validator_keypairs, my_index);
 
         // If we haven't reached wait_to_vote_slot yet, return Ok(None)
         voting_context.wait_to_vote_slot = Some(4);
         let vote = Vote::new_finalization_vote(2);
         assert!(
-            generate_vote_message(vote, false, &mut voting_context)
+            insert_vote_and_create_bls_message(vote, &mut voting_context)
                 .unwrap()
                 .is_none()
         );
@@ -467,7 +545,7 @@ mod tests {
         // If we have reached wait_to_vote_slot, we should be able to vote
         voting_context.wait_to_vote_slot = Some(1);
         assert!(
-            generate_vote_message(vote, false, &mut voting_context)
+            insert_vote_and_create_bls_message(vote, &mut voting_context)
                 .unwrap()
                 .is_some()
         );
@@ -475,31 +553,38 @@ mod tests {
 
     #[test]
     fn test_non_voting_node() {
-        let (own_vote_sender, _own_vote_receiver) = crossbeam_channel::unbounded();
+        let (own_vote_sender, _own_vote_receiver) = bounded(1024);
         // Create 10 node validatorvotekeypairs vec
         let validator_keypairs = (0..10)
             .map(|_| ValidatorVoteKeypairs::new(Keypair::new(), Keypair::new(), Keypair::new()))
             .collect::<Vec<_>>();
         let my_index = 0;
-        let mut voting_context =
+        let (mut voting_context, _reward_votes_receiver) =
             setup_voting_context_and_bank_forks(own_vote_sender, &validator_keypairs, my_index);
 
         // Empty authorized voter keypairs to simulate non voting node
         voting_context.authorized_voter_keypairs = Arc::new(std::sync::RwLock::new(vec![]));
         let vote = Vote::new_skip_vote(5);
-        // For non-voting nodes, we just return Ok(None)
-        assert!(
-            generate_vote_message(vote, false, &mut voting_context)
-                .unwrap()
-                .is_none()
-        );
+        assert!(matches!(
+            generate_vote_tx(
+                vote,
+                &voting_context.sharable_banks.root(),
+                voting_context.vote_account_pubkey,
+                voting_context.cluster_info.my_shred_version(),
+                &voting_context.identity_keypair,
+                &voting_context.authorized_voter_keypairs,
+                voting_context.wait_to_vote_slot,
+                &mut voting_context.derived_bls_keypairs,
+            ),
+            GenerateVoteTxResult::NonVoting
+        ));
 
         // Recover correct value to vote again
         voting_context.authorized_voter_keypairs = Arc::new(RwLock::new(vec![Arc::new(
             validator_keypairs[my_index].vote_keypair.insecure_clone(),
         )]));
         assert!(
-            generate_vote_message(vote, false, &mut voting_context)
+            insert_vote_and_create_bls_message(vote, &mut voting_context)
                 .unwrap()
                 .is_some()
         );
@@ -507,50 +592,55 @@ mod tests {
 
     #[test]
     fn test_wrong_identity_keypair() {
-        let (own_vote_sender, _own_vote_receiver) = crossbeam_channel::unbounded();
+        let (own_vote_sender, _own_vote_receiver) = bounded(1024);
         // Create 10 node validatorvotekeypairs vec
         let validator_keypairs = (0..10)
             .map(|_| ValidatorVoteKeypairs::new(Keypair::new(), Keypair::new(), Keypair::new()))
             .collect::<Vec<_>>();
         let my_index = 0;
-        let mut voting_context =
+        let (mut voting_context, _reward_votes_receiver) =
             setup_voting_context_and_bank_forks(own_vote_sender, &validator_keypairs, my_index);
 
-        // Wrong identity keypair
-        voting_context.identity_keypair = Arc::new(Keypair::new());
-        let vote = Vote::new_notarization_vote(6, Hash::new_unique());
-        assert!(
-            generate_vote_message(vote, true, &mut voting_context)
-                .unwrap()
-                .is_none()
-        );
-
-        // Recover correct value to vote again
-        voting_context.identity_keypair =
-            Arc::new(validator_keypairs[my_index].node_keypair.insecure_clone());
-        assert!(
-            generate_vote_message(vote, true, &mut voting_context)
-                .unwrap()
-                .is_some()
-        );
+        // Wrong identity keypair should return HotSpare based on rank_map.node_pubkey.
+        let wrong_identity_keypair = Arc::new(Keypair::new());
+        let vote = Vote::new_notarization_vote(Block {
+            slot: 6,
+            block_id: Hash::new_unique(),
+        });
+        assert!(matches!(
+            generate_vote_tx(
+                vote,
+                &voting_context.sharable_banks.root(),
+                voting_context.vote_account_pubkey,
+                voting_context.cluster_info.my_shred_version(),
+                &wrong_identity_keypair,
+                &voting_context.authorized_voter_keypairs,
+                voting_context.wait_to_vote_slot,
+                &mut voting_context.derived_bls_keypairs,
+            ),
+            GenerateVoteTxResult::HotSpare
+        ));
     }
 
     #[test]
     fn test_wrong_vote_account_pubkey() {
-        let (own_vote_sender, _own_vote_receiver) = crossbeam_channel::unbounded();
+        let (own_vote_sender, _own_vote_receiver) = bounded(1024);
         // Create 10 node validatorvotekeypairs vec
         let validator_keypairs = (0..10)
             .map(|_| ValidatorVoteKeypairs::new(Keypair::new(), Keypair::new(), Keypair::new()))
             .collect::<Vec<_>>();
         let my_index = 0;
-        let mut voting_context =
+        let (mut voting_context, _reward_votes_receiver) =
             setup_voting_context_and_bank_forks(own_vote_sender, &validator_keypairs, my_index);
 
         // Wrong vote account pubkey
         voting_context.vote_account_pubkey = Pubkey::new_unique();
-        let vote = Vote::new_notarization_vote(7, Hash::new_unique());
+        let vote = Vote::new_notarization_vote(Block {
+            slot: 7,
+            block_id: Hash::new_unique(),
+        });
         assert!(
-            generate_vote_message(vote, true, &mut voting_context)
+            generate_refresh_vote_message(vote, &mut voting_context)
                 .unwrap()
                 .is_none()
         );
@@ -558,65 +648,48 @@ mod tests {
         // Recover correct value to vote again
         voting_context.vote_account_pubkey = validator_keypairs[my_index].vote_keypair.pubkey();
         assert!(
-            generate_vote_message(vote, true, &mut voting_context)
+            generate_refresh_vote_message(vote, &mut voting_context)
                 .unwrap()
                 .is_some()
         );
     }
 
     #[test]
-    #[should_panic(expected = "Vote account bls_pubkey mismatch")]
-    fn test_wrong_bls_pubkey() {
-        let (own_vote_sender, _own_vote_receiver) = crossbeam_channel::unbounded();
-        // Create 10 node validatorvotekeypairs vec
-        let validator_keypairs = (0..10)
-            .map(|_| ValidatorVoteKeypairs::new(Keypair::new(), Keypair::new(), Keypair::new()))
-            .collect::<Vec<_>>();
-        let my_index = 0;
-        let mut voting_context =
-            setup_voting_context_and_bank_forks(own_vote_sender, &validator_keypairs, my_index);
-
-        voting_context.derived_bls_keypairs.insert(
-            validator_keypairs[my_index].vote_keypair.pubkey(),
-            Arc::new(BLSKeypair::new()),
-        );
-        let vote = Vote::new_notarization_vote(8, Hash::new_unique());
-        assert!(
-            generate_vote_message(vote, true, &mut voting_context)
-                .unwrap()
-                .is_none()
-        );
-    }
-
-    #[test]
-    #[should_panic(expected = "The bank 0 doesn't have its own epoch_stakes for")]
+    #[should_panic(expected = "could not find rank map for slot 1000000000")]
     fn test_panic_on_future_slot() {
         agave_logger::setup();
-        let (own_vote_sender, _own_vote_receiver) = crossbeam_channel::unbounded();
+        let (own_vote_sender, _own_vote_receiver) = bounded(1024);
         // Create 10 node validatorvotekeypairs vec
         let validator_keypairs = (0..10)
             .map(|_| ValidatorVoteKeypairs::new(Keypair::new(), Keypair::new(), Keypair::new()))
             .collect::<Vec<_>>();
         let my_index = 0;
-        let mut voting_context =
+        let (mut voting_context, _reward_votes_receiver) =
             setup_voting_context_and_bank_forks(own_vote_sender, &validator_keypairs, my_index);
 
         // If we try to vote for a slot in the future, we should panic
-        let vote = Vote::new_notarization_vote(1_000_000_000, Hash::new_unique());
-        let _ = generate_vote_message(vote, false, &mut voting_context);
+        let vote = Vote::new_notarization_vote(Block {
+            slot: 1_000_000_000,
+            block_id: Hash::new_unique(),
+        });
+        let _ = insert_vote_and_create_bls_message(vote, &mut voting_context);
     }
 
     #[test]
     fn test_zero_staked_validator_fails_voting() {
         agave_logger::setup();
-        let (own_vote_sender, _own_vote_receiver) = crossbeam_channel::unbounded();
+        let (own_vote_sender, _own_vote_receiver) = bounded(1024);
         // Create 10 node validatorvotekeypairs vec
         let validator_keypairs = (0..10)
             .map(|_| ValidatorVoteKeypairs::new(Keypair::new(), Keypair::new(), Keypair::new()))
             .collect::<Vec<_>>();
         let my_index = 0;
-        let mut voting_context =
-            setup_voting_context_and_bank_forks(own_vote_sender, &validator_keypairs, my_index);
+        let (mut voting_context, bank_forks, _reward_votes_receiver) =
+            setup_voting_context_and_bank_forks_with_forks(
+                own_vote_sender,
+                &validator_keypairs,
+                my_index,
+            );
 
         // Set the stake of my_index to 0 in epoch 2
         // For epoch 2, make validator my_index to be zero stake, others have stake in ascending order, 1 < 2 < ... < 9
@@ -638,13 +711,14 @@ mod tests {
                 (authorized_voter, (stake as u64, vote_account))
             })
             .collect();
-        let mut new_bank = Bank::new_from_parent(bank, &Pubkey::default(), 1);
+        let mut new_bank = Bank::new_from_parent(bank, SlotLeader::default(), 1);
         assert!(new_bank.epoch_stakes(2).is_none());
         let epoch2_epoch_stakes = VersionedEpochStakes::new_for_tests(vote_accounts_hash_map, 2);
         new_bank.set_epoch_stakes_for_test(2, epoch2_epoch_stakes);
         assert!(new_bank.epoch_stakes(2).is_some());
         new_bank.freeze();
-        let bank_forks = BankForks::new_rw_arc(new_bank);
+        bank_forks.write().unwrap().insert(new_bank);
+        bank_forks.write().unwrap().set_root(1, None, None);
         voting_context.sharable_banks = bank_forks.read().unwrap().sharable_banks();
 
         // If we try to vote for a slot in epoch 1, it should succeed
@@ -653,9 +727,12 @@ mod tests {
             .root()
             .epoch_schedule()
             .get_first_slot_in_epoch(1);
-        let vote = Vote::new_notarization_vote(first_slot_in_epoch_1, Hash::new_unique());
+        let vote = Vote::new_notarization_vote(Block {
+            slot: first_slot_in_epoch_1,
+            block_id: Hash::new_unique(),
+        });
         assert!(
-            generate_vote_message(vote, false, &mut voting_context)
+            insert_vote_and_create_bls_message(vote, &mut voting_context)
                 .unwrap()
                 .is_some()
         );
@@ -666,9 +743,12 @@ mod tests {
             .root()
             .epoch_schedule()
             .get_first_slot_in_epoch(2);
-        let vote = Vote::new_notarization_vote(first_slot_in_epoch_2, Hash::new_unique());
+        let vote = Vote::new_notarization_vote(Block {
+            slot: first_slot_in_epoch_2,
+            block_id: Hash::new_unique(),
+        });
         assert!(
-            generate_vote_message(vote, false, &mut voting_context)
+            insert_vote_and_create_bls_message(vote, &mut voting_context)
                 .unwrap()
                 .is_none()
         );

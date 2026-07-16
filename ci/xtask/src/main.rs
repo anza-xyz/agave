@@ -5,6 +5,7 @@ use {
 };
 
 mod commands;
+mod github;
 
 #[derive(Parser)]
 #[command(name = "xtask", about = "Build tasks", version)]
@@ -26,6 +27,12 @@ enum Commands {
     UpdateCrate(xtask_shared::commands::update_crate::CommandArgs),
     #[command(about = "Publish crates")]
     Publish(xtask_shared::commands::publish::CommandArgs),
+    #[command(about = "Generate Buildkite pipeline")]
+    GeneratePipeline(commands::generate_pipeline::CommandArgs),
+    #[command(about = "Print release channel info")]
+    ChannelInfo(commands::channel_info::CommandArgs),
+    #[command(about = "Run XDP integration tests")]
+    XdpTest(commands::xdp_test::CommandArgs),
 }
 
 #[derive(Args, Debug)]
@@ -72,6 +79,15 @@ async fn try_main(xtask: Xtask) -> Result<()> {
         }
         Commands::Publish(args) => {
             xtask_shared::commands::publish::run(args)?;
+        }
+        Commands::GeneratePipeline(args) => {
+            commands::generate_pipeline::run(args).await?;
+        }
+        Commands::ChannelInfo(args) => {
+            commands::channel_info::run(args).await?;
+        }
+        Commands::XdpTest(args) => {
+            commands::xdp_test::run(args)?;
         }
     }
 

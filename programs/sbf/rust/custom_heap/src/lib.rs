@@ -35,7 +35,7 @@ unsafe impl std::alloc::GlobalAlloc for BumpAllocator {
             const TOP_ADDRESS: usize = HEAP_START_ADDRESS as usize + HEAP_LENGTH;
             const BOTTOM_ADDRESS: usize = HEAP_START_ADDRESS as usize + size_of::<*mut u8>();
 
-            let mut pos = *POS_PTR;
+            let mut pos = unsafe { *POS_PTR };
             if pos == 0 {
                 // First time, set starting position
                 pos = TOP_ADDRESS;
@@ -45,7 +45,7 @@ unsafe impl std::alloc::GlobalAlloc for BumpAllocator {
             if pos < BOTTOM_ADDRESS {
                 return null_mut();
             }
-            *POS_PTR = pos;
+            unsafe { *POS_PTR = pos };
             pos as *mut u8
         }
     }

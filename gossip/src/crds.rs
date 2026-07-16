@@ -29,6 +29,7 @@ use {
     crate::{
         cluster_info_metrics::{last_four_chars, should_report_message_signature},
         contact_info::ContactInfo,
+        contact_info_notifier::{ContactInfoEvent, ContactInfoSender, ContactInfoSnapshot},
         crds_data::CrdsData,
         crds_entry::CrdsEntry,
         crds_gossip_pull::CrdsTimeouts,
@@ -40,20 +41,21 @@ use {
         map::{Entry, IndexMap, rayon::ParValues},
         set::IndexSet,
     },
-    lru::LruCache,
+    lazy_lru::LruCache,
+    rand::{rng, seq::IteratorRandom},
     rayon::{ThreadPool, prelude::*},
     solana_clock::Slot,
     solana_hash::Hash,
     solana_pubkey::Pubkey,
     std::{
         cmp::Ordering,
-        collections::{BTreeMap, HashMap, VecDeque, hash_map},
+        collections::{BTreeMap, HashMap, HashSet, VecDeque, hash_map},
         ops::{Bound, Index, IndexMut},
         sync::Mutex,
     },
 };
 
-const CRDS_SHARDS_BITS: u32 = 12;
+pub(crate) const CRDS_SHARDS_BITS: u32 = 12;
 // Number of vote slots to track in an lru-cache for metrics.
 const VOTE_SLOTS_METRICS_CAP: usize = 100;
 // Required number of leading zero bits for crds signature to get reported to influx
@@ -82,13 +84,18 @@ pub struct Crds {
     // Hash of recently purged values.
     purged: VecDeque<(Hash, u64 /*timestamp*/)>,
     stats: Mutex<CrdsStats>,
+    // Optional channel that receives a snapshot of every accepted contact
+    // info update. When `None` (the default), no work is done on the hot
+    // path. When set, each accepted insert performs a single non-blocking
+    // `try_send`; dropped events are acceptable because contact info
+    // rebroadcasts via gossip on a multi-second cadence.
+    contact_info_sender: Option<ContactInfoSender>,
 }
 
 #[derive(PartialEq, Eq, Debug)]
 pub enum CrdsError {
     DuplicatePush(/*num dups:*/ u8),
     InsertFailed,
-    UnknownStakes,
 }
 
 #[derive(Clone, Copy)]
@@ -178,6 +185,7 @@ impl Default for Crds {
             entries: BTreeMap::default(),
             purged: VecDeque::default(),
             stats: Mutex::<CrdsStats>::default(),
+            contact_info_sender: None,
         }
     }
 }
@@ -205,6 +213,29 @@ fn overrides(value: &CrdsValue, other: &VersionedCrdsValue) -> bool {
     }
 }
 
+/// Best-effort emit of a contact info update to any attached consumer.
+/// Non-blocking (`try_send`); when the channel is full the event is
+/// dropped and the `gossip_contact_info_dropped` counter is bumped so
+/// operators can detect chronic backpressure. Drops on `Updated` are
+/// normally self-healing on the next gossip rebroadcast (~6 s); drops on
+/// `Removed` are not — consumers will keep a stale cache entry until the
+/// validator either republishes (turning into an `Updated`) or stays
+/// gone, in which case consumer-side wallclock staleness eventually
+/// catches it.
+///
+/// Free function rather than `&self` method so it composes with the
+/// `&mut self.table` borrow held during `Crds::insert()` /
+/// `Crds::remove()`.
+fn emit_contact_info_event(sender: Option<&ContactInfoSender>, event: ContactInfoEvent) {
+    let Some(sender) = sender else { return };
+    if sender.try_send(event).is_err() {
+        // "this should never happen" in steady state, but flag it
+        // immediately if it does — sustained drops indicate a slow
+        // consumer or a misconfigured channel capacity.
+        solana_metrics::inc_new_counter_warn!("gossip_contact_info_dropped", 1);
+    }
+}
+
 impl Crds {
     /// Returns true if the given value updates an existing one in the table.
     /// The value is outdated and fails to insert, if it already exists in the
@@ -214,6 +245,17 @@ impl Crds {
             Some(other) => overrides(value, other),
             None => true,
         }
+    }
+
+    /// Attach a channel that receives an owned `ContactInfoSnapshot` for
+    /// every accepted contact info insert. Intended to be wired up once at
+    /// startup by a consumer (typically the Geyser plugin manager) that has
+    /// at least one plugin opting into contact info notifications.
+    ///
+    /// Leaving this unset is the zero-cost default: the hot path in
+    /// `insert()` sees `None` and performs no notification work.
+    pub fn set_contact_info_sender(&mut self, sender: ContactInfoSender) {
+        self.contact_info_sender = Some(sender);
     }
 
     pub fn insert(
@@ -232,8 +274,12 @@ impl Crds {
                 let entry_index = entry.index();
                 self.shards.insert(entry_index, &value);
                 match value.value.data() {
-                    CrdsData::ContactInfo(_node) => {
+                    CrdsData::ContactInfo(node) => {
                         self.nodes.insert(entry_index);
+                        emit_contact_info_event(
+                            self.contact_info_sender.as_ref(),
+                            ContactInfoEvent::Updated(ContactInfoSnapshot::from(node)),
+                        );
                     }
                     CrdsData::Vote(_, _) => {
                         self.votes.insert(value.ordinal, entry_index);
@@ -258,10 +304,14 @@ impl Crds {
                 self.shards.remove(entry_index, entry.get());
                 self.shards.insert(entry_index, &value);
                 match value.value.data() {
-                    CrdsData::ContactInfo(_node) => {
+                    CrdsData::ContactInfo(node) => {
                         // self.nodes does not need to be updated since the
                         // entry at this index was and stays contact-info.
                         debug_assert_matches!(entry.get().value.data(), CrdsData::ContactInfo(_));
+                        emit_contact_info_event(
+                            self.contact_info_sender.as_ref(),
+                            ContactInfoEvent::Updated(ContactInfoSnapshot::from(node)),
+                        );
                     }
                     CrdsData::Vote(_, _) => {
                         self.votes.remove(&entry.get().ordinal);
@@ -453,24 +503,16 @@ impl Crds {
 
     /// Returns all crds values which the first 'mask_bits'
     /// of their hash value is equal to 'mask'.
-    /// Excludes deprecated values and ContactInfo with invalid shred version
+    /// Excludes deprecated values.
     pub(crate) fn filter_bitmask(
         &self,
         mask: u64,
         mask_bits: u32,
-        self_shred_version: u16,
     ) -> impl Iterator<Item = &VersionedCrdsValue> {
         self.shards
             .find(mask, mask_bits)
             .map(move |i| self.table.index(i))
-            .filter(move |VersionedCrdsValue { value, .. }| {
-                let data = value.data();
-                !value.data().is_deprecated()
-                    && match data {
-                        CrdsData::ContactInfo(info) => info.shred_version() == self_shred_version,
-                        _ => true,
-                    }
-            })
+            .filter(move |VersionedCrdsValue { value, .. }| !value.data().is_deprecated())
     }
 
     /// Update the timestamp's of all the labels that are associated with Pubkey
@@ -554,8 +596,18 @@ impl Crds {
         self.purged.push_back((*value.value.hash(), now));
         self.shards.remove(index, &value);
         match value.value.data() {
-            CrdsData::ContactInfo(_) => {
+            CrdsData::ContactInfo(node) => {
                 self.nodes.swap_remove(&index);
+                // Tell any attached Geyser-side listener that this
+                // validator is no longer in CRDS (timeout-based purge
+                // via `purge_active`, or size-based trim via
+                // `trim_crds_table`), so consumers can invalidate any
+                // cached endpoint they hold instead of relying on a
+                // wallclock-staleness heuristic.
+                emit_contact_info_event(
+                    self.contact_info_sender.as_ref(),
+                    ContactInfoEvent::Removed(*node.pubkey()),
+                );
             }
             CrdsData::Vote(_, _) => {
                 self.votes.remove(&value.ordinal);
@@ -621,35 +673,36 @@ impl Crds {
         10 * self.records.len() > 11 * cap
     }
 
-    /// Trims the table by dropping all values associated with the pubkeys with
-    /// the lowest stake, so that the number of unique pubkeys are bounded.
+    /// Trims the table so that the number of unique pubkeys are bounded.
     pub(crate) fn trim(
         &mut self,
         cap: usize, // Capacity hint for number of unique pubkeys.
         // Set of pubkeys to never drop.
-        // e.g. known validators, self pubkey, ...
-        keep: &[Pubkey],
+        // e.g. known validators, self pubkey, entrypoints, ...
+        keep: &HashSet<Pubkey>,
         stakes: &HashMap<Pubkey, u64>,
         now: u64,
-    ) -> Result</*num purged:*/ usize, CrdsError> {
+    ) -> usize {
         if self.should_trim(cap) {
             let size = self.records.len().saturating_sub(cap);
             self.drop(size, keep, stakes, now)
         } else {
-            Ok(0)
+            0
         }
     }
 
-    // Drops 'size' many pubkeys with the lowest stake.
+    // Drops 'size' many pubkeys with the lowest stake if stakes are known
+    // Otherwise select and drop a random sample of `size` many pubkeys
     fn drop(
         &mut self,
         size: usize,
-        keep: &[Pubkey],
+        keep: &HashSet<Pubkey>,
         stakes: &HashMap<Pubkey, u64>,
         now: u64,
-    ) -> Result</*num purged:*/ usize, CrdsError> {
+    ) -> usize {
         if stakes.values().all(|&stake| stake == 0) {
-            return Err(CrdsError::UnknownStakes);
+            // Stakes are unavailable, evict amount above cap
+            return self.drop_random(size, keep, now);
         }
         let mut keys: Vec<_> = self
             .records
@@ -670,7 +723,25 @@ impl Crds {
         for key in &keys {
             self.remove(key, now);
         }
-        Ok(keys.len())
+        keys.len()
+    }
+
+    // Drop `size` many pubkeys randomly
+    fn drop_random(&mut self, size: usize, keep: &HashSet<Pubkey>, now: u64) -> usize {
+        let mut rng = rng();
+        let keys: Vec<_> = self
+            .records
+            .iter()
+            .filter(|(pubkey, _)| !keep.contains(pubkey))
+            .choose_multiple(&mut rng, size)
+            .into_iter()
+            .flat_map(|(_, indices)| indices.iter().copied())
+            .map(|index| self.table.get_index(index).unwrap().0.clone())
+            .collect();
+        for key in &keys {
+            self.remove(key, now);
+        }
+        keys.len()
     }
 
     pub(crate) fn take_stats(&self) -> CrdsStats {
@@ -774,13 +845,22 @@ impl CrdsStats {
 mod tests {
     use {
         super::*,
-        crate::crds_data::{AccountsHashes, new_rand_timestamp},
+        crate::{
+            crds_data::{Deprecated, LowestSlot, SnapshotHashes, new_rand_timestamp},
+            restart_crds_values::{RestartHeaviestFork, RestartLastVotedForkSlots},
+        },
         rand::{Rng, rng},
         rayon::ThreadPoolBuilder,
         solana_keypair::Keypair,
+        solana_sanitize::Sanitize,
         solana_signer::Signer,
         solana_time_utils::timestamp,
-        std::{collections::HashSet, iter::repeat_with, net::Ipv4Addr, time::Duration},
+        std::{
+            collections::{HashMap, HashSet},
+            iter::repeat_with,
+            net::Ipv4Addr,
+            time::Duration,
+        },
     };
 
     #[test]
@@ -794,6 +874,91 @@ mod tests {
         assert_eq!(crds.table.len(), 1);
         assert!(crds.table.contains_key(&val.label()));
         assert_eq!(crds.table[&val.label()].local_timestamp, 0);
+    }
+
+    #[test]
+    fn test_contact_info_sender_emits_on_insert_and_overriding_update() {
+        // Attach a bounded channel and verify that both the vacant
+        // (new identity) and occupied-overriding (semantic update) arms
+        // of `Crds::insert` produce `Updated` events.
+        let mut crds = Crds::default();
+        let (sender, receiver) = crossbeam_channel::bounded(8);
+        crds.set_contact_info_sender(sender);
+
+        let pubkey = Pubkey::new_unique();
+        let v0 = CrdsValue::new_unsigned(CrdsData::from(ContactInfo::new_localhost(&pubkey, 0)));
+        assert_matches!(crds.insert(v0, 0, GossipRoute::LocalMessage), Ok(()));
+
+        let event_a = receiver
+            .try_recv()
+            .expect("vacant insert should push an Updated event");
+        let ContactInfoEvent::Updated(snap_a) = event_a else {
+            panic!("expected Updated, got {event_a:?}");
+        };
+        assert_eq!(snap_a.pubkey, pubkey);
+        assert_eq!(snap_a.wallclock, 0);
+
+        // Overriding update: same identity, advanced wallclock.
+        let v1 = CrdsValue::new_unsigned(CrdsData::from(ContactInfo::new_localhost(&pubkey, 100)));
+        assert_matches!(crds.insert(v1, 1, GossipRoute::LocalMessage), Ok(()));
+
+        let event_b = receiver
+            .try_recv()
+            .expect("overriding update should push an Updated event");
+        let ContactInfoEvent::Updated(snap_b) = event_b else {
+            panic!("expected Updated, got {event_b:?}");
+        };
+        assert_eq!(snap_b.pubkey, pubkey);
+        assert_eq!(snap_b.wallclock, 100);
+
+        // No further events.
+        assert!(receiver.try_recv().is_err());
+    }
+
+    #[test]
+    fn test_contact_info_sender_emits_removed_on_crds_remove() {
+        // Insert a contact info, then remove it via `Crds::remove`
+        // (the same code path used by timeout-based and size-based
+        // purges) and verify a `Removed` event is emitted carrying the
+        // identity pubkey.
+        let mut crds = Crds::default();
+        let (sender, receiver) = crossbeam_channel::bounded(8);
+        crds.set_contact_info_sender(sender);
+
+        let pubkey = Pubkey::new_unique();
+        let val = CrdsValue::new_unsigned(CrdsData::from(ContactInfo::new_localhost(&pubkey, 0)));
+        assert_matches!(crds.insert(val, 0, GossipRoute::LocalMessage), Ok(()));
+
+        // Discard the initial Updated event.
+        let _ = receiver.try_recv().expect("Updated event from insert");
+
+        // Now remove the entry — `Crds::remove` is the central path
+        // exercised by both timeout-based and size-based eviction.
+        let label = CrdsValueLabel::ContactInfo(pubkey);
+        crds.remove(&label, /*now:*/ 1);
+
+        let event = receiver
+            .try_recv()
+            .expect("remove should push a Removed event");
+        let ContactInfoEvent::Removed(removed_pubkey) = event else {
+            panic!("expected Removed, got {event:?}");
+        };
+        assert_eq!(removed_pubkey, pubkey);
+        assert!(receiver.try_recv().is_err());
+    }
+
+    #[test]
+    fn test_contact_info_sender_unattached_is_zero_overhead() {
+        // With no sender attached, inserts succeed normally and no
+        // notification path runs. This guards the "zero impact when
+        // disabled" property at the unit level.
+        let mut crds = Crds::default();
+        let val = CrdsValue::new_unsigned(CrdsData::from(ContactInfo::new_localhost(
+            &Pubkey::new_unique(),
+            0,
+        )));
+        assert_matches!(crds.insert(val, 0, GossipRoute::LocalMessage), Ok(()));
+        assert!(crds.contact_info_sender.is_none());
     }
     #[test]
     fn test_update_old() {
@@ -1304,8 +1469,12 @@ mod tests {
         );
         assert_eq!(crds.get_shred_version(&pubkey), Some(8));
         // Add other crds values with the same pubkey.
-        let val = AccountsHashes::new_rand(&mut rng, Some(pubkey));
-        let val = CrdsData::AccountsHashes(val);
+        let val = CrdsData::SnapshotHashes(SnapshotHashes {
+            from: pubkey,
+            full: (0, solana_hash::Hash::default()),
+            incremental: vec![],
+            wallclock: 0,
+        });
         let val = CrdsValue::new_unsigned(val);
         assert_eq!(
             crds.insert(val, timestamp(), GossipRoute::LocalMessage),
@@ -1317,7 +1486,7 @@ mod tests {
         assert_eq!(crds.get::<&ContactInfo>(pubkey), None);
         assert_eq!(crds.get_shred_version(&pubkey), None);
         // Remove the remaining entry with the same pubkey.
-        crds.remove(&CrdsValueLabel::AccountsHashes(pubkey), timestamp());
+        crds.remove(&CrdsValueLabel::SnapshotHashes(pubkey), timestamp());
         assert_eq!(crds.get_records(&pubkey).count(), 0);
     }
 
@@ -1351,7 +1520,7 @@ mod tests {
         assert!(!crds.should_trim(num_pubkeys));
         assert!(crds.should_trim(num_pubkeys * 5 / 6));
         let values: Vec<_> = crds.table.values().cloned().collect();
-        crds.drop(16, &[], &stakes, /*now=*/ 0).unwrap();
+        crds.drop(16, &HashSet::new(), &stakes, /*now=*/ 0);
         let purged: Vec<_> = {
             let purged: HashSet<_> = crds.purged.iter().map(|(hash, _)| hash).copied().collect();
             values
@@ -1497,5 +1666,67 @@ mod tests {
         assert_ne!(v1, v2);
         assert!(!(v1 == v2));
         assert!(!overrides(&v2.value, &v1));
+    }
+
+    #[test]
+    fn test_filter_bitmask_excludes_deprecated() {
+        let mut crds = Crds::default();
+        let mut rng = rng();
+
+        // Insert a non-deprecated value; it must appear in filter_bitmask results.
+        let ci = CrdsValue::new_unsigned(CrdsData::from(ContactInfo::new_localhost(
+            &solana_pubkey::new_rand(),
+            timestamp(),
+        )));
+        crds.insert(ci, timestamp(), GossipRoute::LocalMessage)
+            .unwrap();
+
+        // label() panics via unreachable!() on these deprecated types, and
+        // insert() calls label(), so sanitize() must reject them before any
+        // caller reaches insert(). Verify each is rejected, since that is
+        // the barrier all real code paths (pull/push handlers) rely on.
+        let sanitize_blocked = vec![
+            CrdsData::LegacyContactInfo(Deprecated {}),
+            CrdsData::LegacySnapshotHashes(Deprecated {}),
+            CrdsData::AccountsHashes(Deprecated {}),
+            CrdsData::LegacyVersion(Deprecated {}),
+            CrdsData::Version(Deprecated {}),
+            CrdsData::NodeInstance(Deprecated {}),
+            CrdsData::LowestSlot(
+                1,
+                LowestSlot::new(solana_pubkey::new_rand(), 0, timestamp()),
+            ),
+        ];
+        for data in sanitize_blocked {
+            assert!(CrdsValue::new_unsigned(data).sanitize().is_err());
+        }
+
+        // These deprecated types pass sanitize() and have valid labels, so
+        // they can arrive over the wire and be inserted. filter_bitmask()
+        // must exclude them.
+        crds.insert(
+            CrdsValue::new_unsigned(CrdsData::RestartLastVotedForkSlots(
+                RestartLastVotedForkSlots::new_rand(&mut rng, Some(solana_pubkey::new_rand())),
+            )),
+            timestamp(),
+            GossipRoute::LocalMessage,
+        )
+        .unwrap();
+        crds.insert(
+            CrdsValue::new_unsigned(CrdsData::RestartHeaviestFork(
+                RestartHeaviestFork::new_rand(&mut rng, Some(solana_pubkey::new_rand())),
+            )),
+            timestamp(),
+            GossipRoute::LocalMessage,
+        )
+        .unwrap();
+
+        // All 3 values were inserted, but the 2 deprecated ones must not appear
+        // in filter_bitmask results.
+        assert_eq!(crds.table.len(), 3);
+        assert!(
+            crds.filter_bitmask(0, 0)
+                .all(|e| !e.value.data().is_deprecated())
+        );
     }
 }

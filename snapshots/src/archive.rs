@@ -3,11 +3,19 @@ use {
         ArchiveFormat, Result, SnapshotArchiveKind, error::ArchiveSnapshotPackageError, paths,
         snapshot_archive_info::SnapshotArchiveInfo, snapshot_hash::SnapshotHash,
     },
-    agave_fs::buffered_writer::large_file_buf_writer,
+    agave_fs::{
+        FileSize, buffered_reader::FileBufRead as _, buffered_writer::large_file_buf_writer,
+        io_setup::IoSetupState,
+    },
     log::info,
     solana_accounts_db::{
-        account_storage::AccountStoragesOrderer, account_storage_entry::AccountStorageEntry,
-        account_storage_reader::AccountStorageReader, accounts_file::AccountsFile,
+        account_storage::AccountStoragesOrderer,
+        account_storage_entry::AccountStorageEntry,
+        account_storage_reader::{
+            ACCOUNT_STORAGE_MAX_BUFFER_SIZE, AccountStorageReader, open_storage_files,
+            storage_file_buf_reader,
+        },
+        accounts_file::AccountsFile,
     },
     solana_clock::Slot,
     solana_measure::measure::Measure,
@@ -20,6 +28,13 @@ use {
 // and towards the end of archive (sizes equalize) writes are >256KiB / file.
 const INTERLEAVE_TAR_ENTRIES_SMALL_TO_LARGE_RATIO: (usize, usize) = (4, 1);
 
+// Max number of storage files to open at once for archiving. Bounds extra fd
+// usage and io_uring prefetch queue depth. A multiple of the interleave ratio
+// sum keeps each chunk balanced between small and large files.
+const STORAGE_FILE_OPEN_CHUNK_SIZE: usize = 25
+    * (INTERLEAVE_TAR_ENTRIES_SMALL_TO_LARGE_RATIO.0
+        + INTERLEAVE_TAR_ENTRIES_SMALL_TO_LARGE_RATIO.1);
+
 /// Archives a snapshot into `archive_path`
 pub fn archive_snapshot(
     snapshot_archive_kind: SnapshotArchiveKind,
@@ -29,6 +44,7 @@ pub fn archive_snapshot(
     bank_snapshot_dir: impl AsRef<Path>,
     archive_path: impl AsRef<Path>,
     archive_format: ArchiveFormat,
+    io_setup: &IoSetupState,
 ) -> Result<SnapshotArchiveInfo> {
     use ArchiveSnapshotPackageError as E;
     const ACCOUNTS_DIR: &str = "accounts";
@@ -88,7 +104,7 @@ pub fn archive_snapshot(
     ));
 
     {
-        let archive_writer = large_file_buf_writer(&staging_archive_path)
+        let archive_writer = large_file_buf_writer(&staging_archive_path, io_setup)
             .map_err(|err| E::CreateArchiveFile(err, staging_archive_path.clone()))?;
 
         let do_archive_files = |encoder: &mut dyn Write| -> std::result::Result<(), E> {
@@ -115,23 +131,70 @@ pub fn archive_snapshot(
                 snapshot_storages,
                 INTERLEAVE_TAR_ENTRIES_SMALL_TO_LARGE_RATIO,
             );
-            for storage in storages_orderer.iter() {
-                let path_in_archive = Path::new(ACCOUNTS_DIR)
-                    .join(AccountsFile::file_name(storage.slot(), storage.id()));
+            // For incremental snapshots, the storage files have just been
+            // written and are likely still hot in the page cache, so prefer
+            // page-cached reads over direct I/O.
+            let use_page_cache =
+                matches!(snapshot_archive_kind, SnapshotArchiveKind::Incremental(_));
+            let use_direct_io = io_setup.use_direct_io && !use_page_cache;
 
-                let reader =
-                    AccountStorageReader::new(storage, Some(snapshot_slot)).map_err(|err| {
-                        E::AccountStorageReaderError(err, storage.path().to_path_buf())
+            // Walk storages and their (lazily-opened) file handles in chunks,
+            // bounding how many archive-mode fds are simultaneously open.
+            let mut storage_file_pairs = storages_orderer
+                .iter()
+                .zip(open_storage_files(storages_orderer.iter(), use_direct_io));
+            let mut buf_reader =
+                storage_file_buf_reader(ACCOUNT_STORAGE_MAX_BUFFER_SIZE, use_page_cache, io_setup)
+                    .map_err(E::StorageFileBufReaderError)?;
+            let mut chunk = Vec::with_capacity(STORAGE_FILE_OPEN_CHUNK_SIZE);
+            loop {
+                chunk.clear();
+                for (storage, file) in (&mut storage_file_pairs).take(STORAGE_FILE_OPEN_CHUNK_SIZE)
+                {
+                    chunk.push((storage, file.map_err(E::StorageFileBufReaderError)?));
+                }
+                if chunk.is_empty() {
+                    break;
+                }
+                // Cheaply re-bind the reader to scope file borrows to this chunk.
+                let mut chunk_reader = buf_reader.rebind().map_err(E::StorageFileBufReaderError)?;
+
+                // Queue the whole chunk for read-ahead before consuming any of
+                // it, so the io_uring pipeline can saturate across files.
+                for (storage, file) in &chunk {
+                    chunk_reader
+                        .add_file_to_prefetch(file.as_ref(), storage.accounts.len() as FileSize)
+                        .map_err(E::StorageFileBufReaderError)?;
+                }
+
+                for (storage, file) in &chunk {
+                    let path_in_archive = Path::new(ACCOUNTS_DIR)
+                        .join(AccountsFile::file_name(storage.slot(), storage.id()));
+
+                    chunk_reader
+                        .set_file(file.as_ref(), storage.accounts.len() as FileSize)
+                        .map_err(|err| {
+                            E::AccountStorageReaderError(err, storage.path().to_path_buf())
+                        })?;
+                    let reader =
+                        AccountStorageReader::new(storage, Some(snapshot_slot), &mut chunk_reader)
+                            .map_err(|err| {
+                                E::AccountStorageReaderError(err, storage.path().to_path_buf())
+                            })?;
+                    let mut header = tar::Header::new_gnu();
+                    header.set_path(path_in_archive).map_err(|err| {
+                        E::ArchiveAccountStorageFile(err, storage.path().to_path_buf())
                     })?;
-                let mut header = tar::Header::new_gnu();
-                header.set_path(path_in_archive).map_err(|err| {
-                    E::ArchiveAccountStorageFile(err, storage.path().to_path_buf())
-                })?;
-                header.set_size(reader.len() as u64);
-                header.set_cksum();
-                archive.append(&header, reader).map_err(|err| {
-                    E::ArchiveAccountStorageFile(err, storage.path().to_path_buf())
-                })?;
+                    header.set_size(reader.len() as u64);
+                    header.set_cksum();
+                    archive.append(&header, reader).map_err(|err| {
+                        E::ArchiveAccountStorageFile(err, storage.path().to_path_buf())
+                    })?;
+                }
+
+                buf_reader = chunk_reader
+                    .rebind()
+                    .map_err(E::StorageFileBufReaderError)?;
             }
 
             archive.into_inner().map_err(E::FinishArchive)?;

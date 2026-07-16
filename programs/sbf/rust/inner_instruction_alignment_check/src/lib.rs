@@ -36,7 +36,7 @@ fn process_instruction(
 
 custom_heap_default!();
 
-#[no_mangle]
+#[unsafe(no_mangle)]
 fn custom_panic(info: &core::panic::PanicInfo<'_>) {
     // Full panic reporting
     msg!(&format!("{info}"));

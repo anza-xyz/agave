@@ -126,7 +126,11 @@ fn bench_process_compute_budget_instructions_builtins(c: &mut Criterion) {
                         &(),
                         vec![],
                     ),
-                    Instruction::new_with_bincode(solana_sdk_ids::loader_v4::id(), &(), vec![]),
+                    Instruction::new_with_bincode(
+                        solana_sdk_ids::bpf_loader_upgradeable::id(),
+                        &(),
+                        vec![],
+                    ),
                 ];
                 let tx = build_sanitized_transaction(&Keypair::new(), &ixs);
                 bencher.iter(|| {

@@ -6,7 +6,7 @@ use {
     solana_program_entrypoint::{custom_heap_default, custom_panic_default},
 };
 
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub extern "C" fn entrypoint(_input: *mut u8) -> u64 {
     let scalar_one = scalar::PodScalar([
         1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,

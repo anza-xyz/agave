@@ -6,7 +6,7 @@ description = "Blockchain, Rebuilt for Scale"
 repository = "https://github.com/anza-xyz/agave"
 homepage = "https://anza.xyz/"
 license = "Apache-2.0"
-edition = "2021"
+edition = "2024"
 publish = false
 
 # Prevents auto-detection of parent workspace (ie. git worktrees).
@@ -16,14 +16,27 @@ publish = false
 agave-unstable-api = []
 dummy-for-ci-check = []
 frozen-abi = []
+integration-tests = []
 
 [dependencies]
-anyhow = "1.0.102"
-clap = { version = "4.5.59", features = ["derive"] }
-env_logger = "0.11.9"
+anyhow = "1.0.103"
+clap = { version = "4.6.1", features = ["derive"] }
+env_logger = "0.11.11"
+futures-util = "0.3.31"
 log = "0.4.28"
-tokio = { version = "1.48.0", features = ["full"] }
-xtask_shared = { package = "xtask", git = "https://github.com/anza-xyz/xtask", rev = "d189441" }
+octocrab = { version = "0.53.1", features = ["stream"] }
+regex = "1.12.4"
+reqwest = { version = "0.12", default-features = false, features = ["rustls-tls"] }
+semver = { version = "1.0.27", features = ["serde"] }
+serde = { version = "1.0.228", features = ["derive"] }
+serde_json = "1.0.145"
+serde_yaml = "0.9.34"
+tokio = { version = "1.52.3", features = ["full"] }
+toml = "1.0"
+xtask_shared = { package = "xtask", git = "https://github.com/anza-xyz/xtask", rev = "a9b0cf5facf85eb11458bbefc651132722c18dae" }
+
+[dev-dependencies]
+pretty_assertions = "1.4.1"
 
 [profile.dev]
 debug = "line-tables-only"
@@ -31,3 +44,15 @@ debug = "line-tables-only"
 [profile.full-dev]
 inherits = "dev"
 debug = "full"
+
+# Keep in sync with the root [workspace.lints.clippy].
+[lints.clippy]
+# Denied lints
+arithmetic_side_effects = "deny"
+default_trait_access = "deny"
+manual_let_else = "deny"
+uninlined_format_args = "deny"
+used_underscore_binding = "deny"
+
+# Allowed lints
+new_without_default = "allow"

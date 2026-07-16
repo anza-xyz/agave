@@ -9,6 +9,11 @@ homepage = { workspace = true }
 license = { workspace = true }
 edition = { workspace = true }
 
+[package.metadata.docs.rs]
+targets = ["x86_64-unknown-linux-gnu"]
+all-features = true
+rustdoc-args = ["--cfg=docsrs"]
+
 [features]
 agave-unstable-api = []
 dev-context-only-utils = []
@@ -21,15 +26,13 @@ frozen-abi = [
 
 [dependencies]
 agave-feature-set = { workspace = true }
-agave-logger = { workspace = true }
-bitvec = { workspace = true }
-bytemuck = { workspace = true }
+crossbeam-channel = { workspace = true }
 log = { workspace = true }
-num_enum = { workspace = true }
 serde = { workspace = true }
 solana-address = { workspace = true, features = ["curve25519"] }
 solana-bls-signatures = { workspace = true, features = [
-    "bytemuck", "solana-signer-derive",
+    "bytemuck",
+    "solana-signer-derive",
 ] }
 solana-clock = { workspace = true }
 solana-epoch-schedule = { workspace = true }
@@ -39,14 +42,15 @@ solana-frozen-abi = { workspace = true, optional = true, features = [
 solana-frozen-abi-macro = { workspace = true, optional = true, features = [
     "frozen-abi",
 ] }
-solana-hash = { workspace = true, features = ["serde", "copy", "decode", "wincode"] }
+solana-hash = { workspace = true, features = ["serde", "copy", "decode", "wincode", "atomic"] }
 solana-pubkey = { workspace = true }
+solana-short-vec = { workspace = true, features = ["wincode"] }
 solana-signer-store = { workspace = true }
 thiserror = { workspace = true }
 wincode = { workspace = true }
 
 [dev-dependencies]
-agave-votor-messages = { path = ".", features = ["dev-context-only-utils"] }
+agave-votor-messages = { path = ".", features = ["agave-unstable-api", "dev-context-only-utils"] }
 tempfile = { workspace = true }
 
 [lints]

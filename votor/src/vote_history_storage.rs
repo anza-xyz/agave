@@ -1,21 +1,31 @@
+#[cfg(feature = "frozen-abi")]
+use serde::{Deserialize, Serialize};
 use {
     super::vote_history::*,
     log::trace,
-    serde::{Deserialize, Serialize},
     solana_pubkey::Pubkey,
     solana_signature::Signature,
     solana_signer::Signer,
     std::{
         fs::{self, File},
-        io::{self, BufReader},
+        io::{self, BufReader, BufWriter},
         path::PathBuf,
     },
+    wincode::{SchemaRead, SchemaWrite},
 };
 
 pub type Result<T> = std::result::Result<T, VoteHistoryError>;
 
-#[cfg_attr(feature = "frozen-abi", derive(AbiExample))]
-#[derive(Clone, Serialize, Deserialize, Debug, PartialEq, Eq)]
+#[cfg_attr(
+    feature = "frozen-abi",
+    derive(AbiExample, AbiEnumVisitor, StableAbi, StableAbiSample, Serialize, Deserialize),
+    frozen_abi(
+        abi_digest = "4VVxd5brhUZgopYJ7zwAYC8J62zU2nUZSAV4kETb3m9q",
+        abi_serializer = ["bincode", "wincode"],
+        test_roundtrip = "eq_and_wire",
+    )
+)]
+#[derive(Clone, Debug, PartialEq, Eq, SchemaWrite, SchemaRead)]
 pub enum SavedVoteHistoryVersions {
     Current(SavedVoteHistory),
 }
@@ -30,25 +40,22 @@ impl SavedVoteHistoryVersions {
                 if !t.signature.verify(node_pubkey.as_ref(), &t.data) {
                     return Err(VoteHistoryError::InvalidSignature);
                 }
-                bincode::deserialize(&t.data).map(VoteHistoryVersions::Current)
+                wincode::deserialize(&t.data).map(VoteHistoryVersions::Current)?
             }
         };
-        vote_history
-            .map_err(|e| e.into())
-            .and_then(|vote_history: VoteHistoryVersions| {
-                let vote_history = vote_history.convert_to_current();
-                if vote_history.node_pubkey != *node_pubkey {
-                    return Err(VoteHistoryError::WrongVoteHistory(format!(
-                        "node_pubkey is {:?} but found vote history for {:?}",
-                        node_pubkey, vote_history.node_pubkey
-                    )));
-                }
-                Ok(vote_history)
-            })
+        let vote_history = vote_history.convert_to_current();
+        if vote_history.node_pubkey != *node_pubkey {
+            return Err(VoteHistoryError::WrongVoteHistory(format!(
+                "node_pubkey is {:?} but found vote history for {:?}",
+                node_pubkey, vote_history.node_pubkey
+            )));
+        }
+        Ok(vote_history)
     }
 
     fn serialize_into(&self, file: &mut File) -> Result<()> {
-        bincode::serialize_into(file, self).map_err(|e| e.into())
+        wincode::serialize_into(BufWriter::new(file), self)?;
+        Ok(())
     }
 
     fn pubkey(&self) -> Pubkey {
@@ -66,15 +73,24 @@ impl From<SavedVoteHistory> for SavedVoteHistoryVersions {
 
 #[cfg_attr(
     feature = "frozen-abi",
-    derive(AbiExample),
-    frozen_abi(digest = "J6vB6FWFT8CFEvxndXWes461hroo8Q5L9Wq9cv4FEzaQ")
+    derive(AbiExample, StableAbi, StableAbiSample, Serialize, Deserialize),
+    frozen_abi(
+        digest = "J6vB6FWFT8CFEvxndXWes461hroo8Q5L9Wq9cv4FEzaQ",
+        abi_digest = "Mhh4tHGaVTfWbkJ78sY1dDbYZHtQjXiVFBtC3BfQH5C",
+        abi_serializer = ["bincode", "wincode"],
+    )
 )]
-#[derive(Default, Clone, Serialize, Deserialize, Debug, PartialEq, Eq)]
+#[derive(Default, Clone, Debug, PartialEq, Eq, SchemaWrite, SchemaRead)]
 pub struct SavedVoteHistory {
     signature: Signature,
-    #[serde(with = "serde_bytes")]
+    #[cfg_attr(feature = "frozen-abi", serde(with = "serde_bytes"))]
     data: Vec<u8>,
-    #[serde(skip)]
+    #[wincode(skip)]
+    #[cfg_attr(
+        feature = "frozen-abi",
+        serde(skip),
+        stable_abi_sample(with = "Default::default()")
+    )]
     node_pubkey: Pubkey,
 }
 
@@ -88,7 +104,7 @@ impl SavedVoteHistory {
             )));
         }
 
-        let data = bincode::serialize(&vote_history)?;
+        let data = wincode::serialize(&vote_history)?;
         let signature = keypair.sign_message(&data);
         Ok(Self {
             signature,
@@ -147,9 +163,8 @@ impl VoteHistoryStorage for FileVoteHistoryStorage {
         let file = File::open(&filename)?;
         let mut stream = BufReader::new(file);
 
-        bincode::deserialize_from(&mut stream)
-            .map_err(|e| e.into())
-            .and_then(|t: SavedVoteHistoryVersions| t.try_into_vote_history(node_pubkey))
+        let saved_vote_history: SavedVoteHistoryVersions = wincode::deserialize_from(&mut stream)?;
+        saved_vote_history.try_into_vote_history(node_pubkey)
     }
 
     fn store(&self, saved_vote_history: &SavedVoteHistoryVersions) -> Result<()> {
@@ -172,7 +187,10 @@ impl VoteHistoryStorage for FileVoteHistoryStorage {
 
 #[cfg(test)]
 mod test {
-    use {super::*, agave_votor_messages::vote::Vote, solana_keypair::Keypair, tempfile::TempDir};
+    use {
+        super::*, agave_votor_messages::vote::Vote, solana_keypair::Keypair, solana_signer::Signer,
+        tempfile::TempDir,
+    };
 
     #[test]
     fn test_file_vote_history_storage() {
@@ -237,5 +255,37 @@ mod test {
         // NullVoteHistoryStorage::save() always succeeds
         storage.store(&saved_vote_history_versions).unwrap();
         assert!(storage.load(&pubkey).is_err());
+    }
+
+    #[test]
+    fn test_load_corrupt_vote_history_storage_returns_deserialize_error() {
+        let tmp_dir = TempDir::new().unwrap();
+        let storage = FileVoteHistoryStorage::new(tmp_dir.path().to_path_buf());
+        let pubkey = Pubkey::new_unique();
+
+        fs::write(storage.filename(&pubkey), [1, 2, 3]).unwrap();
+
+        let error = storage.load(&pubkey).err().unwrap();
+        assert!(matches!(error, VoteHistoryError::DeserializeError(_)));
+    }
+
+    #[test]
+    fn test_load_signed_corrupt_vote_history_data_returns_deserialize_error() {
+        let tmp_dir = TempDir::new().unwrap();
+        let storage = FileVoteHistoryStorage::new(tmp_dir.path().to_path_buf());
+        let keypair = Keypair::new();
+        let pubkey = keypair.pubkey();
+        let data = Vec::new();
+        let saved_vote_history = SavedVoteHistory {
+            signature: keypair.sign_message(&data),
+            data,
+            node_pubkey: pubkey,
+        };
+        storage
+            .store(&SavedVoteHistoryVersions::from(saved_vote_history))
+            .unwrap();
+
+        let error = storage.load(&pubkey).err().unwrap();
+        assert!(matches!(error, VoteHistoryError::DeserializeError(_)));
     }
 }

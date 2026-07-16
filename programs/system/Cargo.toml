@@ -11,6 +11,8 @@ edition = { workspace = true }
 
 [package.metadata.docs.rs]
 targets = ["x86_64-unknown-linux-gnu"]
+all-features = true
+rustdoc-args = ["--cfg=docsrs"]
 
 [lib]
 crate-type = ["lib"]
@@ -22,19 +24,17 @@ agave-unstable-api = []
 [dependencies]
 bincode = { workspace = true }
 log = { workspace = true }
-serde = { workspace = true }
 solana-account = { workspace = true }
 solana-bincode = { workspace = true }
 solana-fee-calculator = { workspace = true }
 solana-instruction = { workspace = true }
 solana-nonce = { workspace = true, features = ["serde"] }
-solana-nonce-account = { workspace = true }
+solana-nonce-account = { workspace = true, features = ["wincode"] }
 solana-packet = { workspace = true }
 solana-program-runtime = { workspace = true }
 solana-pubkey = { workspace = true, features = ["sha2"] }
 solana-sdk-ids = { workspace = true }
 solana-svm-log-collector = { workspace = true }
-solana-svm-type-overrides = { workspace = true }
 solana-system-interface = { workspace = true, features = ["serde"] }
 solana-sysvar = { workspace = true }
 solana-transaction-context = { workspace = true, features = ["bincode"] }
@@ -42,16 +42,20 @@ solana-transaction-context = { workspace = true, features = ["bincode"] }
 [dev-dependencies]
 assert_matches = { workspace = true }
 criterion = { workspace = true }
-solana-compute-budget = { workspace = true }
+solana-compute-budget = { path = "../../compute-budget", features = ["agave-unstable-api"] }
 solana-hash = { workspace = true }
-solana-nonce-account = { workspace = true }
+solana-program-runtime = { workspace = true, features = ["dev-context-only-utils"] }
+solana-pubkey = { workspace = true, features = ["rand"] }
 solana-rent = { workspace = true }
 solana-sha256-hasher = { workspace = true }
-solana-svm-callback = { workspace = true }
-solana-svm-feature-set = { workspace = true }
+solana-svm-callback = { path = "../../svm-callback", features = ["agave-unstable-api"] }
+solana-svm-feature-set = { path = "../../svm-feature-set", features = ["agave-unstable-api"] }
 solana-system-program = { path = ".", features = ["agave-unstable-api"] }
-solana-transaction-context = { workspace = true, features = ["dev-context-only-utils"] }
+solana-transaction-context = { path = "../../transaction-context", features = ["agave-unstable-api", "bincode", "dev-context-only-utils"] }
 
 [[bench]]
 name = "system"
 harness = false
+
+[lints]
+workspace = true

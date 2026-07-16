@@ -1,5 +1,4 @@
 #![cfg(feature = "agave-unstable-api")]
-#![cfg_attr(feature = "frozen-abi", feature(min_specialization))]
 #![allow(clippy::arithmetic_side_effects)]
 
 #[cfg(feature = "dev-context-only-utils")]
@@ -84,7 +83,7 @@ static BUILTIN_INSTRUCTION_COSTS: std::sync::LazyLock<AHashMap<Pubkey, BuiltinCo
 /// it MUST be moved from NON_MIGRATING_BUILTINS_COSTS to MIGRATING_BUILTINS_COSTS, then
 /// correctly furnishing `core_bpf_migration_feature`.
 ///
-#[allow(dead_code)]
+#[cfg(test)]
 const TOTAL_COUNT_BUILTINS: usize = 9;
 #[cfg(test)]
 static_assertions::const_assert_eq!(
@@ -112,6 +111,9 @@ const NON_MIGRATING_BUILTINS_COSTS: &[(Pubkey, BuiltinCost)] = &[
     (bpf_loader_upgradeable::id(), BuiltinCost::NotMigrating),
     (bpf_loader_deprecated::id(), BuiltinCost::NotMigrating),
     (bpf_loader::id(), BuiltinCost::NotMigrating),
+    // We're going to need a feature gate to "fake migrate" Loader V4 to BPF,
+    // whenever we deploy the program on-chain. The builtin shouldn't have been
+    // added here without a feature gate.
     (loader_v4::id(), BuiltinCost::NotMigrating),
     (secp256k1_program::id(), BuiltinCost::NotMigrating),
     (ed25519_program::id(), BuiltinCost::NotMigrating),
@@ -148,7 +150,6 @@ pub fn get_builtin_migration_feature_index(program_id: &Pubkey) -> BuiltinMigrat
 }
 
 /// const function validates `position` correctness at compile time.
-#[allow(dead_code)]
 const fn validate_position(migrating_builtins: &[(Pubkey, BuiltinCost)]) {
     let mut index = 0;
     while index < migrating_builtins.len() {

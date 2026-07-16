@@ -174,14 +174,25 @@ impl RecordSender {
 /// The receiver can shutdown the channel, preventing any further sends,
 /// and can restart the channel for a new bank id, re-enabling sends.
 pub struct RecordReceiver {
+    /// Maximum number of record batches that may be reserved for the active bank.
     capacity: u64,
+    /// Number of senders between reservation and channel insertion.
     active_senders: Arc<AtomicU64>,
+    /// Packed active bank id and remaining insertions, or disabled when shut down.
     bank_id_allowed_insertions: BankIdAllowedInsertions,
+    /// Bounded channel carrying reserved records.
     receiver: Receiver<Record>,
+    /// Optional monotonic transaction index shared with senders.
     transaction_indexes: Option<Arc<Mutex<usize>>>,
 }
 
 impl RecordReceiver {
+    /// Returns a reference to the inner receiver for use in `select!` macros.
+    /// After receiving from this, you must call `on_received_record` manually.
+    pub fn inner(&self) -> &Receiver<Record> {
+        &self.receiver
+    }
+
     /// Returns true if the channel should be shutdown.
     pub fn should_shutdown(&self, remaining_hashes_in_slot: u64, ticks_per_slot: u64) -> bool {
         // This channel must guarantee that all sent records are recorded.
@@ -228,9 +239,17 @@ impl RecordReceiver {
         drop(transaction_indexes_lock);
     }
 
-    /// Drain all available records from the channel with `try_recv` loop.
+    /// Drain all records that have been enqueued or reserved by active senders.
     pub fn drain(&self) -> impl Iterator<Item = Record> + '_ {
         core::iter::from_fn(|| self.try_recv().ok())
+    }
+
+    /// Drain all records that were already reserved by senders before shutdown.
+    ///
+    /// This names the shutdown use case explicitly, while sharing `try_recv()`'s
+    /// active-sender guarantee.
+    pub fn drain_after_shutdown(&self) -> impl Iterator<Item = Record> + '_ {
+        self.drain()
     }
 
     /// Channel is empty and there are no active threads attempting to send.
@@ -246,6 +265,10 @@ impl RecordReceiver {
     }
 
     /// Try to receive a record from the channel.
+    ///
+    /// If a sender has already reserved capacity for this bank, do not report
+    /// `Empty` until that sender either enqueues its record or fails. PoH uses
+    /// this to avoid hashing/ticking past a record that was already admitted.
     pub fn try_recv(&self) -> Result<Record, TryRecvError> {
         loop {
             match self.receiver.try_recv() {
@@ -286,7 +309,9 @@ impl RecordReceiver {
         Ok(record)
     }
 
-    fn on_received_record(&self, num_batches: u64) {
+    /// Notify that a record has been received.
+    /// Must be called after receiving a record from `inner()` directly.
+    pub fn on_received_record(&self, num_batches: u64) {
         // The record has been received and processed, so increment the number
         // of allowed insertions, so that new records can be sent.
         self.bank_id_allowed_insertions
@@ -498,7 +523,7 @@ mod shuttle_tests {
     }
 
     #[test]
-    fn test_try_recv_not_sent_on_inner_channel_yet() {
+    fn test_try_recv_waits_active() {
         const NUM_TEST_RUNS: usize = 100_000;
         shuttle::check_random(
             || {
@@ -512,20 +537,42 @@ mod shuttle_tests {
                     });
                 }
 
-                // Snapshot active_senders *before* try_recv
                 let active_at_start = sender.active_senders.load(Ordering::Acquire);
-
-                // Perform try_recv
                 let result = receiver.try_recv();
-
-                // Only fail if it returned None *and* we know there was an active sender at start
                 if result.is_err() && active_at_start > 0 {
                     panic!(
-                        "try_recv returned None while a sender was active at start of call \
-                         (active_senders={})",
-                        active_at_start
+                        "try_recv returned Empty while a sender was active at start of call \
+                         (active_senders={active_at_start})"
                     );
                 }
+            },
+            NUM_TEST_RUNS,
+        )
+    }
+
+    #[test]
+    fn test_drain_shutdown_waits_active() {
+        const NUM_TEST_RUNS: usize = 100_000;
+        shuttle::check_random(
+            || {
+                let (sender, mut receiver) = record_channels(false);
+                receiver.restart(0);
+
+                // Model a sender that reserved capacity before shutdown but
+                // has not yet enqueued its record on the inner channel.
+                sender.active_senders.fetch_add(1, Ordering::AcqRel);
+                let active_senders = sender.active_senders.clone();
+                let inner_sender = sender.sender.clone();
+                shuttle::thread::spawn(move || {
+                    inner_sender.try_send(test_record(0, 1)).unwrap();
+                    active_senders.fetch_sub(1, Ordering::AcqRel);
+                });
+
+                receiver.shutdown();
+                let records: Vec<_> = receiver.drain_after_shutdown().collect();
+                assert_eq!(records.len(), 1);
+                assert_eq!(records[0].bank_id, 0);
+                assert!(receiver.is_safe_to_restart());
             },
             NUM_TEST_RUNS,
         )

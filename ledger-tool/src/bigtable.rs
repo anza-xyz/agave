@@ -54,8 +54,8 @@ use {
 
 async fn upload(
     blockstore: Blockstore,
-    starting_slot: Option<Slot>,
-    ending_slot: Option<Slot>,
+    mut starting_slot: Slot,
+    ending_slot: Slot,
     force_reupload: bool,
     config: solana_storage_bigtable::LedgerStorageConfig,
 ) -> Result<(), Box<dyn std::error::Error>> {
@@ -68,17 +68,6 @@ async fn upload(
         ..ConfirmedBlockUploadConfig::default()
     };
     let blockstore = Arc::new(blockstore);
-
-    let mut starting_slot = match starting_slot {
-        Some(slot) => slot,
-        // It is possible that the slot returned below could get purged by
-        // LedgerCleanupService before upload_confirmed_blocks() receives the
-        // value. This is ok because upload_confirmed_blocks() doesn't need
-        // the exact slot to be in ledger, the slot is only used as a bound.
-        None => blockstore.get_first_available_block()?,
-    };
-
-    let ending_slot = ending_slot.unwrap_or_else(|| blockstore.max_root());
 
     while starting_slot <= ending_slot {
         let current_ending_slot = min(
@@ -351,7 +340,7 @@ async fn shreds(
                     let parent_blockhash = Hash::from_str(&block.previous_blockhash)?;
                     let virtual_ticks_entries =
                         create_ticks(num_virtual_ticks, num_hashes_per_tick, parent_blockhash);
-                    entries.extend(virtual_ticks_entries.into_iter());
+                    entries.extend(virtual_ticks_entries);
                 }
 
                 // Create transaction entries
@@ -362,7 +351,7 @@ async fn shreds(
                     hash: Hash::default(),
                     transactions: vec![tx_with_meta.get_transaction()],
                 });
-                entries.extend(transaction_entries.into_iter());
+                entries.extend(transaction_entries);
 
                 // Create the tick entries for this slot
                 //
@@ -383,7 +372,7 @@ async fn shreds(
                         transactions: vec![],
                     }
                 });
-                entries.extend(tick_entries.into_iter());
+                entries.extend(tick_entries);
 
                 entries
             }
@@ -403,7 +392,7 @@ async fn shreds(
             )
             .filter(Shred::is_data)
             .collect();
-        blockstore.insert_shreds(data_shreds, None, false)?;
+        blockstore.insert_shreds(data_shreds, false)?;
     }
     Ok(())
 }
@@ -579,32 +568,29 @@ pub async fn transaction_history(
                 // and keep it around.  This helps reduce BigTable query traffic and speeds up the
                 // results for high-volume addresses
                 loop {
-                    if let Some((slot, block)) = &loaded_block {
-                        if *slot == result.slot {
-                            match block.transactions.get(index as usize).map(|tx_with_meta| {
-                                (
-                                    tx_with_meta.get_transaction(),
-                                    tx_with_meta.get_status_meta(),
-                                )
-                            }) {
-                                None => {
-                                    println!(
-                                        "  Transaction info for {} is corrupt",
-                                        result.signature
-                                    );
-                                }
-                                Some((transaction, meta)) => {
-                                    println_transaction(
-                                        &transaction,
-                                        meta.map(|m| m.into()).as_ref(),
-                                        "  ",
-                                        None,
-                                        None,
-                                    );
-                                }
+                    if let Some((slot, block)) = &loaded_block
+                        && *slot == result.slot
+                    {
+                        match block.transactions.get(index as usize).map(|tx_with_meta| {
+                            (
+                                tx_with_meta.get_transaction(),
+                                tx_with_meta.get_status_meta(),
+                            )
+                        }) {
+                            None => {
+                                println!("  Transaction info for {} is corrupt", result.signature);
                             }
-                            break;
+                            Some((transaction, meta)) => {
+                                println_transaction(
+                                    &transaction,
+                                    meta.map(|m| m.into()).as_ref(),
+                                    "  ",
+                                    None,
+                                    None,
+                                )?;
+                            }
                         }
+                        break;
                     }
                     match bigtable.get_confirmed_block(result.slot).await {
                         Err(err) => {
@@ -682,7 +668,7 @@ async fn copy(args: CopyArgs) -> Result<(), Box<dyn std::error::Error>> {
     debug!("from_slot: {from_slot}, to_slot: {to_slot}");
 
     if from_slot > to_slot {
-        return Err("starting slot should be less than or equal to ending slot")?;
+        Err("starting slot should be less than or equal to ending slot")?;
     }
 
     let source_bigtable = get_bigtable(GetBigtableArgs {
@@ -925,9 +911,8 @@ impl BigTableSubCommand for App<'_, '_> {
                                 .value_name("START_SLOT")
                                 .takes_value(true)
                                 .index(1)
-                                .help(
-                                    "Start uploading at this slot [default: first available slot]",
-                                ),
+                                .required(true)
+                                .help("Start uploading at this slot"),
                         )
                         .arg(
                             Arg::with_name("ending_slot")
@@ -936,7 +921,8 @@ impl BigTableSubCommand for App<'_, '_> {
                                 .value_name("END_SLOT")
                                 .takes_value(true)
                                 .index(2)
-                                .help("Stop uploading at this slot [default: last available slot]"),
+                                .required(true)
+                                .help("Stop uploading at this slot"),
                         )
                         .arg(
                             Arg::with_name("force_reupload")
@@ -1370,8 +1356,8 @@ pub fn bigtable_process_command(ledger_path: &Path, matches: &ArgMatches<'_>) {
 
     let future = match (subcommand, sub_matches) {
         ("upload", Some(arg_matches)) => {
-            let starting_slot = value_t!(arg_matches, "starting_slot", Slot).ok();
-            let ending_slot = value_t!(arg_matches, "ending_slot", Slot).ok();
+            let starting_slot = value_t_or_exit!(arg_matches, "starting_slot", Slot);
+            let ending_slot = value_t_or_exit!(arg_matches, "ending_slot", Slot);
             let force_reupload = arg_matches.is_present("force_reupload");
             let blockstore = crate::open_blockstore(
                 &canonicalize_ledger_path(ledger_path),

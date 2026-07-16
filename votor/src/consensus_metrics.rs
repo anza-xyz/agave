@@ -1,7 +1,10 @@
 use {
-    crate::welford_stats::WelfordStats,
-    agave_votor_messages::vote::Vote,
-    crossbeam_channel::{Receiver, RecvTimeoutError, Sender},
+    agave_math_utils::welford_stats::WelfordStats,
+    agave_votor_messages::{
+        metric_types::{ConsensusMetricsEvent, ConsensusMetricsEventReceiver},
+        vote::Vote,
+    },
+    crossbeam_channel::RecvTimeoutError,
     solana_clock::{Epoch, Slot},
     solana_epoch_schedule::EpochSchedule,
     solana_metrics::datapoint_info,
@@ -17,34 +20,8 @@ use {
     },
 };
 
-/// Even at 10 events per slot, this supports 1000 slots in flight
-/// With 2000 active validators, we can't have more than:
-/// - 1 Notarize vote
-/// - 3 Notarize-fallback votes
-/// - 1 Skip-fallback vote
-/// - 1 Finalize vote
-///
-/// Per validator, resulting in 12k vote events.
-/// We overprovision this channel at 15k total events.
-pub const MAX_IN_FLIGHT_CONSENSUS_EVENTS: usize = 15_000;
-
 /// Number of epochs to retain metrics for (current + previous).
 const EPOCHS_TO_RETAIN: u64 = 2;
-
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub enum ConsensusMetricsEvent {
-    /// A vote was received from the node with `id`.
-    Vote { id: Pubkey, vote: Vote },
-    /// A block hash was seen for `slot` and the `leader` is responsible for producing it.
-    BlockHashSeen { leader: Pubkey, slot: Slot },
-    /// Start of slot
-    StartOfSlot { slot: Slot },
-    /// A slot was finalized
-    SlotFinalized { slot: Slot },
-}
-
-pub type ConsensusMetricsEventSender = Sender<(Instant, Vec<ConsensusMetricsEvent>)>;
-pub type ConsensusMetricsEventReceiver = Receiver<(Instant, Vec<ConsensusMetricsEvent>)>;
 
 /// Tracks all [`Vote`] metrics for a given node.
 #[derive(Debug, Default)]
@@ -79,20 +56,6 @@ impl NodeVoteMetrics {
             Vote::Genesis(_) => (), // Only for migration, tracked elsewhere
         }
     }
-}
-
-/// Errors returned from [`ConsensusMetrics::record_vote`].
-#[derive(Debug)]
-pub enum RecordVoteError {
-    /// Could not find start of slot entry.
-    SlotNotFound,
-}
-
-/// Errors returned from [`ConsensusMetrics::record_block_hash_seen`].
-#[derive(Debug)]
-pub enum RecordBlockHashError {
-    /// Could not find start of slot entry.
-    SlotNotFound,
 }
 
 /// Per-epoch metrics container.
@@ -343,14 +306,14 @@ mod tests {
     use {
         super::*,
         agave_votor_messages::vote::{SkipVote, Vote},
-        crossbeam_channel::unbounded,
+        crossbeam_channel::bounded,
         solana_keypair::Keypair,
         solana_signer::Signer,
         std::thread::sleep,
     };
 
     fn new_metrics() -> ConsensusMetrics {
-        let (_, rx) = unbounded();
+        let (_, rx) = bounded(1024);
         ConsensusMetrics::new(EpochSchedule::custom(100, 100, false), rx) // 100 slots/epoch
     }
 

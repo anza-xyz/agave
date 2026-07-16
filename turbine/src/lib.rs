@@ -11,6 +11,8 @@ pub mod retransmit_stage;
 
 pub mod sigverify_shreds;
 
+pub use solana_net_utils::PinnedXdpSender as XdpSender;
+
 #[macro_use]
 extern crate log;
 

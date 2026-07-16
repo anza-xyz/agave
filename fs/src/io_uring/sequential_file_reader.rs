@@ -138,7 +138,7 @@ impl<'sp> SequentialFileReaderBuilder<'sp> {
 
         if self.register_buffer {
             // Safety: kernel holds unsafe pointers to `buffer`, struct field declaration order
-            // guarantees that the ring is destroyed before `_backing_buffer` is dropped.
+            // guarantees that the ring is destroyed before `backing_buffer` is dropped.
             unsafe { IoBufferChunk::register(buf_slice_mut, &ring)? };
         }
 
@@ -165,7 +165,7 @@ impl<'sp> SequentialFileReaderBuilder<'sp> {
             ring,
             state: SequentialFileReaderState::default(),
             open_file_flags,
-            _backing_buffer: buffer,
+            backing_buffer: buffer,
             _phantom: PhantomData,
         })
     }
@@ -199,14 +199,14 @@ impl<'sp> SequentialFileReaderBuilder<'sp> {
 ///
 /// Implements read-ahead using io_uring.
 pub struct SequentialFileReader<'a> {
-    // Note: ring's state is tied to `_backing_buffer` - contains unsafe pointer references
-    // to the buffer. Ring should be drained and dropped before `_backing_buffer`.
+    // Note: ring's state is tied to `backing_buffer` - contains unsafe pointer references
+    // to the buffer. Ring should be drained and dropped before `backing_buffer`.
     ring: Ring<BuffersState, ReadOp>,
     open_file_flags: i32,
     state: SequentialFileReaderState,
     /// Owned buffer used (chunked into `FixedIoBuffer` items) across lifespan of `inner`
     /// (should get dropped last)
-    _backing_buffer: PageAlignedMemory,
+    backing_buffer: PageAlignedMemory,
     _phantom: PhantomData<&'a ()>,
 }
 
@@ -250,8 +250,20 @@ impl<'a> SequentialFileReader<'a> {
         Ok(())
     }
 
-    fn add_file_to_prefetch(&mut self, file: &'a File, read_limit: FileSize) -> io::Result<()> {
-        self.add_file_by_fd(file.as_raw_fd(), read_limit)
+    /// Reset to idle state and re-type with a fresh lifetime `'b`.
+    ///
+    /// Drains the prefetch queue (cancels in-flight reads) before returning.
+    pub fn rebind<'b>(mut self) -> io::Result<SequentialFileReader<'b>> {
+        while !self.state.files.is_empty() {
+            self.move_to_next_file()?;
+        }
+        Ok(SequentialFileReader {
+            ring: self.ring,
+            open_file_flags: self.open_file_flags,
+            state: self.state,
+            backing_buffer: self.backing_buffer,
+            _phantom: PhantomData,
+        })
     }
 
     /// Caller must ensure that the file is not closed while the reader is using it.
@@ -287,31 +299,36 @@ impl<'a> SequentialFileReader<'a> {
         // Always reset in-file and in-buffer state
         state.current_offset = 0;
         state.current_buf_pos = 0;
-        state.current_buf_len = 0;
+        state.current_buf_remaining = 0;
         state.left_to_consume = 0;
 
-        // Reclaim current and all subsequent unread buffers of removed file as uninitialized.
-        let sentinel_buf_index = state
-            .files
-            .front()
-            .and_then(|f| f.start_buf_index)
-            .unwrap_or(state.current_buf_index);
-        let num_bufs = self.ring.context().len();
-        loop {
-            self.ring.process_completions()?;
-            let current_buf = self.ring.context_mut().get_mut(state.current_buf_index);
-            if current_buf.is_reading() {
-                // Still no data, wait for more completions, but submit in case there are queued
-                // entries in the submission queue.
-                self.ring.submit()?;
-                continue;
-            }
-            current_buf.transition_to_uninit();
+        if removed_file.had_scheduled_reads() {
+            // Reclaim current and all subsequent unread buffers of removed file as uninitialized.
+            // This includes all buffers until sentinel index, which is:
+            // * an index used for next scheduled read (if any file has some scheduled)
+            // * otherwise `state.next_read_buf_index` (default buffer index to start read from)
+            let sentinel_buf_index = state
+                .files
+                .iter()
+                .find_map(|f| f.start_buf_index)
+                .unwrap_or(state.next_read_buf_index);
+            let num_bufs = self.ring.context().len();
+            loop {
+                self.ring.process_completions()?;
+                let current_buf = self.ring.context_mut().get_mut(state.current_buf_index);
+                if current_buf.is_reading() {
+                    // Still no data, wait for more completions, but submit in case there are queued
+                    // entries in the submission queue.
+                    self.ring.submit()?;
+                    continue;
+                }
+                current_buf.transition_to_uninit();
 
-            let next_buf_index = (state.current_buf_index + 1) % num_bufs;
-            state.current_buf_index = next_buf_index;
-            if sentinel_buf_index == next_buf_index {
-                break;
+                let next_buf_index = (state.current_buf_index + 1) % num_bufs;
+                state.current_buf_index = next_buf_index;
+                if sentinel_buf_index == next_buf_index {
+                    break;
+                }
             }
         }
 
@@ -351,7 +368,12 @@ impl<'a> SequentialFileReader<'a> {
     }
 
     fn wait_current_buf_full(&mut self) -> io::Result<bool> {
-        if self.state.files.is_empty() {
+        if self
+            .state
+            .files
+            .front()
+            .is_none_or(|file| !file.had_scheduled_reads())
+        {
             return Ok(false);
         }
         let num_bufs = self.ring.context().len();
@@ -362,19 +384,22 @@ impl<'a> SequentialFileReader<'a> {
             let current_buf = &mut self.ring.context_mut().get_mut(state.current_buf_index);
             match current_buf {
                 ReadBufState::Full { buf, eof_pos } => {
-                    if state.current_buf_len == 0 {
-                        state.current_buf_len = eof_pos.unwrap_or(buf.len());
+                    if state.current_buf_remaining == 0 && state.current_buf_pos == 0 {
+                        // Initialize consuming new buffer.
+                        state.current_buf_remaining = eof_pos.unwrap_or(buf.len());
                         if state.left_to_consume > 0 {
+                            // Skip any bytes remaining from previous unfulfilled consumes.
                             let consumed = state
                                 .left_to_consume
-                                .min((state.current_buf_len - state.current_buf_pos) as usize);
+                                .min(state.current_buf_remaining as usize);
                             state.left_to_consume -= consumed;
-                            state.current_buf_pos += consumed as u32;
+                            state.current_buf_pos += consumed as IoSize;
+                            state.current_buf_remaining -= consumed as IoSize;
                         }
                     }
 
                     // Note: we might have consumed whole buf from `left_to_consume`
-                    if state.current_buf_pos < state.current_buf_len {
+                    if state.current_buf_remaining > 0 {
                         // We have some data available.
                         return Ok(true);
                     }
@@ -415,26 +440,43 @@ impl<'a> Read for SequentialFileReader<'a> {
             return Ok(0); // EOF or empty `buf`
         }
         buf[..bytes_to_read].copy_from_slice(&available[..bytes_to_read]);
-        self.consume(bytes_to_read);
+        self.state.consume_in_current_buf(bytes_to_read);
         Ok(bytes_to_read)
+    }
+
+    #[inline]
+    fn read_exact(&mut self, mut buf: &mut [u8]) -> io::Result<()> {
+        while !buf.is_empty() {
+            if self.state.current_buf_remaining == 0 && !self.wait_current_buf_full()? {
+                return Err(io::Error::new(io::ErrorKind::UnexpectedEof, "read_exact"));
+            }
+            let current_buf = self.ring.context().get_fast(self.state.current_buf_index);
+            let to_copy_len = buf.len().min(self.state.current_buf_remaining as usize);
+            let slice = current_buf.slice(self.state.current_buf_pos, to_copy_len as IoSize);
+            self.state.consume_in_current_buf(to_copy_len);
+            // Safety: to_copy_len is at most buf.len() checked with `min` above
+            let (to_fill, remaining) = unsafe { buf.split_at_mut_unchecked(to_copy_len) };
+            to_fill.copy_from_slice(slice);
+            buf = remaining;
+        }
+        Ok(())
     }
 }
 
 impl<'a> BufRead for SequentialFileReader<'a> {
     fn fill_buf(&mut self) -> io::Result<&[u8]> {
-        if self.state.current_buf_pos == self.state.current_buf_len
-            && !self.wait_current_buf_full()?
-        {
+        if self.state.current_buf_remaining == 0 && !self.wait_current_buf_full()? {
             return Ok(&[]);
         }
 
         // At this point we must have data or be at EOF.
         let current_buf = self.ring.context().get_fast(self.state.current_buf_index);
-        Ok(current_buf.slice(self.state.current_buf_pos, self.state.current_buf_len))
+        Ok(current_buf.slice(self.state.current_buf_pos, self.state.current_buf_remaining))
     }
 
+    #[inline]
     fn consume(&mut self, amt: usize) {
-        self.state.consume(amt);
+        self.state.consume_in_current_buf(amt);
     }
 }
 
@@ -443,12 +485,14 @@ impl<'a> FileBufRead<'a> for SequentialFileReader<'a> {
     /// `read_limit` must be less than the file size if using direct io.
     /// See `add_owned_file_to_prefetch` for more details.
     fn set_file(&mut self, file: &'a File, read_limit: FileSize) -> io::Result<()> {
-        while self
-            .state
-            .files
-            .front()
-            .is_some_and(|file_state| !file_state.is_same_file(file))
-        {
+        // Pop the front file while it's a different file, or while it's the same file
+        // but already partially consumed (so re-prefetching restarts at offset 0,
+        // honoring the trait contract).
+        while self.state.files.front().is_some_and(|file_state| {
+            !file_state.is_same_file(file)
+                || file_state.read_limit != read_limit
+                || self.state.current_offset > 0
+        }) {
             self.move_to_next_file()?;
         }
         if self.state.files.is_empty() {
@@ -457,8 +501,16 @@ impl<'a> FileBufRead<'a> for SequentialFileReader<'a> {
         Ok(())
     }
 
+    fn add_file_to_prefetch(&mut self, file: &'a File, read_limit: FileSize) -> io::Result<()> {
+        self.add_file_by_fd(file.as_raw_fd(), read_limit)
+    }
+
     fn get_file_offset(&self) -> FileSize {
         self.state.current_offset
+    }
+
+    fn consume_or_skip(&mut self, amt: usize) {
+        self.state.consume_or_skip(amt);
     }
 }
 
@@ -511,8 +563,8 @@ struct SequentialFileReaderState {
     current_buf_index: u16,
     /// Position in buffer (pointed by `current_buf_index`) to consume data from
     current_buf_pos: IoSize,
-    /// Cached length of the current buffer (0 until `wait_current_buf_full` initializes it)
-    current_buf_len: IoSize,
+    /// Remaining bytes in the current buffer (0 until `wait_current_buf_full` initializes it)
+    current_buf_remaining: IoSize,
     /// File offset of the next `fill_buf()` buffer available to consume
     current_offset: FileSize,
 
@@ -525,17 +577,26 @@ struct SequentialFileReaderState {
 }
 
 impl SequentialFileReaderState {
-    fn consume(&mut self, amt: usize) {
+    #[inline]
+    fn consume_in_current_buf(&mut self, amt: usize) {
+        self.current_offset += amt as FileSize;
+        self.current_buf_pos += amt as IoSize;
+        self.current_buf_remaining -= amt as IoSize;
+    }
+
+    fn consume_or_skip(&mut self, amt: usize) {
         if amt == 0 || self.files.is_empty() {
             return;
         }
         self.current_offset += amt as FileSize;
 
-        let unconsumed_buf_len = (self.current_buf_len - self.current_buf_pos) as usize;
-        if amt <= unconsumed_buf_len {
+        let unconsumed_buf_len = self.current_buf_remaining as usize;
+        if let Some(new_remaining) = unconsumed_buf_len.checked_sub(amt) {
             self.current_buf_pos += amt as IoSize;
+            self.current_buf_remaining = new_remaining as IoSize;
         } else {
-            self.current_buf_pos = self.current_buf_len;
+            self.current_buf_pos += self.current_buf_remaining;
+            self.current_buf_remaining = 0;
             // Keep track of any bytes left to consume beyond current buffer, they will be
             // accounted for during next `wait_current_buf_full` call.
             self.left_to_consume += amt - unconsumed_buf_len;
@@ -576,7 +637,7 @@ impl SequentialFileReaderState {
         self.current_buf_index = (self.current_buf_index + 1) % num_bufs;
         self.current_buf_pos = 0;
         // Buffer might still be reading, len will be intialized on first `wait_current_buf_full`
-        self.current_buf_len = 0;
+        self.current_buf_remaining = 0;
     }
 
     /// Returns `true` if there are no more buffers available for reading.
@@ -612,6 +673,10 @@ impl FileState {
 
     fn is_same_file(&self, file: &File) -> bool {
         self.raw_fd == file.as_raw_fd()
+    }
+
+    fn had_scheduled_reads(&self) -> bool {
+        self.start_buf_index.is_some()
     }
 
     /// Create a new read operation into the `bufs[index]` buffer and update file state.
@@ -688,14 +753,13 @@ impl ReadBufState {
     }
 
     #[inline]
-    fn slice(&self, start_pos: IoSize, end_pos: IoSize) -> &[u8] {
+    fn slice(&self, start_pos: IoSize, len: IoSize) -> &[u8] {
         match self {
             Self::Full { buf, eof_pos } => {
-                debug_assert!(eof_pos.unwrap_or(buf.len()) >= end_pos);
-                let limit = (end_pos - start_pos) as usize;
+                debug_assert!(eof_pos.unwrap_or(buf.len()) >= start_pos + len);
                 // Safety: `limit` is at most `buf.len() - start_pos` (as asserted for `end_pos`),
                 // so the slice is valid given buffer's validity
-                unsafe { slice::from_raw_parts(buf.as_ptr().add(start_pos as usize), limit) }
+                unsafe { slice::from_raw_parts(buf.as_ptr().add(start_pos as usize), len as usize) }
             }
             Self::Uninit(_) | Self::Reading => {
                 unreachable!("must call as_slice only on full buffer")
@@ -840,6 +904,12 @@ impl RingOp<BuffersState> for ReadOp {
 mod tests {
     use {super::*, std::io::Seek, tempfile::NamedTempFile};
 
+    fn write_test_pattern(num_bytes: usize, dst: &mut impl io::Write) -> Vec<u8> {
+        let pattern = (0..num_bytes).map(|i| i as u8).collect::<Vec<_>>();
+        io::Write::write_all(dst, &pattern).expect("must write prepared pattern");
+        pattern
+    }
+
     fn read_as_vec(mut reader: impl Read) -> Vec<u8> {
         let mut buf = Vec::new();
         reader.read_to_end(&mut buf).unwrap();
@@ -884,6 +954,11 @@ mod tests {
         }
     }
 
+    #[test]
+    fn test_reading_empty_file() {
+        check_reading_file(0, 4096, 1024, false);
+    }
+
     /// Test with buffer larger than the whole file
     #[test]
     fn test_reading_small_file() {
@@ -915,8 +990,7 @@ mod tests {
     fn test_non_registered_buffer_read() {
         let file_size = 64 * 1024;
         let mut temp_file = tempfile::NamedTempFile::new().unwrap();
-        let data = (0..).take(file_size).map(|v| v as u8).collect::<Vec<_>>();
-        io::Write::write_all(temp_file.as_file_mut(), &data).unwrap();
+        let data = write_test_pattern(file_size, &mut temp_file);
 
         let mut reader = SequentialFileReaderBuilder::new()
             .read_capacity(4 * 1024)
@@ -951,6 +1025,7 @@ mod tests {
 
     #[test]
     fn test_direct_io_read() {
+        check_reading_file(0, 4096, 4096, true);
         check_reading_file(2_500, 4096, 4096, true);
         check_reading_file(2_500, 16384, 4096, true);
         check_reading_file(25_000, 4096, 4096, true);
@@ -999,9 +1074,8 @@ mod tests {
 
     #[test]
     fn test_get_offset() {
-        let pattern = (0..600).map(|i| i as u8).collect::<Vec<_>>();
         let mut temp1 = NamedTempFile::new().unwrap();
-        io::Write::write_all(&mut temp1, &pattern).unwrap();
+        write_test_pattern(600, &mut temp1);
 
         let mut reader = SequentialFileReaderBuilder::new()
             .read_capacity(512)
@@ -1034,9 +1108,8 @@ mod tests {
 
     #[test]
     fn test_consume_skip_filled_buf_len() {
-        let pattern = (0..6000).map(|i| i as u8).collect::<Vec<_>>();
         let mut temp1 = NamedTempFile::new().unwrap();
-        io::Write::write_all(&mut temp1, &pattern).unwrap();
+        let pattern = write_test_pattern(6000, &mut temp1);
 
         let mut reader = SequentialFileReaderBuilder::new()
             .read_capacity(512)
@@ -1047,18 +1120,18 @@ mod tests {
         assert_eq!(reader.fill_buf().unwrap(), &pattern[..512]);
         assert_eq!(0, reader.get_file_offset());
 
-        reader.consume(600);
+        reader.consume_or_skip(600);
         assert_eq!(600, reader.get_file_offset());
         assert_eq!(reader.fill_buf().unwrap(), &pattern[600..1024]);
 
-        reader.consume(400);
+        reader.consume_or_skip(400);
         assert_eq!(1000, reader.get_file_offset());
         assert_eq!(reader.fill_buf().unwrap(), &pattern[1000..1024]);
 
-        reader.consume(25);
+        reader.consume_or_skip(25);
         assert_eq!(reader.fill_buf().unwrap(), &pattern[1025..1536]);
 
-        reader.consume(2000);
+        reader.consume_or_skip(2000);
         assert_eq!(reader.fill_buf().unwrap(), &pattern[3025..3072]);
     }
 
@@ -1093,5 +1166,88 @@ mod tests {
 
         reader.set_file(temp2.as_file(), 4).unwrap();
         assert_eq!(read_as_vec(&mut reader), vec![0xd, 0xe, 0xf, 0x10]);
+
+        // Re-setting the same file after consuming it must rewind to offset 0.
+        reader.set_file(temp2.as_file(), 4).unwrap();
+        assert_eq!(reader.get_file_offset(), 0);
+        assert_eq!(read_as_vec(&mut reader), vec![0xd, 0xe, 0xf, 0x10]);
+
+        // Re-setting the same file at offset 0 but with a different `read_limit`
+        // must also re-prefetch the file so the new limit takes effect.
+        reader.set_file(temp2.as_file(), 2).unwrap();
+        assert_eq!(reader.get_file_offset(), 0);
+        // Only `read_limit` differs from the front file (offset is still 0):
+        // this exercises the `read_limit` mismatch branch of `set_file`.
+        reader.set_file(temp2.as_file(), 3).unwrap();
+        assert_eq!(reader.get_file_offset(), 0);
+        assert_eq!(read_as_vec(&mut reader), vec![0xd, 0xe, 0xf]);
+    }
+
+    #[test]
+    fn test_multiple_files_including_zero_limit() {
+        let mut temp1 = NamedTempFile::new().unwrap();
+        io::Write::write_all(&mut temp1, &[0xa, 0xb, 0xc]).unwrap();
+        let mut temp2 = NamedTempFile::new().unwrap();
+        io::Write::write_all(&mut temp2, &[0xd, 0xe, 0xf, 0x10]).unwrap();
+
+        let mut reader = SequentialFileReaderBuilder::new()
+            .read_capacity(512)
+            .build(1024)
+            .unwrap();
+
+        reader.add_file_to_prefetch(temp1.as_file(), 3).unwrap();
+        reader.add_file_to_prefetch(temp2.as_file(), 0).unwrap();
+        reader.add_file_to_prefetch(temp1.as_file(), 10).unwrap();
+
+        assert_eq!(read_as_vec(&mut reader), vec![0xa, 0xb, 0xc]);
+
+        reader.move_to_next_file().unwrap();
+        assert_eq!(read_as_vec(&mut reader), vec![]);
+
+        reader.move_to_next_file().unwrap();
+        assert_eq!(read_as_vec(&mut reader), vec![0xa, 0xb, 0xc]);
+
+        reader.add_file_to_prefetch(temp1.as_file(), 0).unwrap();
+        reader.move_to_next_file().unwrap();
+        assert_eq!(read_as_vec(&mut reader), vec![]);
+
+        reader.add_file_to_prefetch(temp2.as_file(), 4).unwrap();
+        reader.move_to_next_file().unwrap();
+        assert_eq!(read_as_vec(&mut reader), vec![0xd, 0xe, 0xf, 0x10]);
+    }
+
+    #[test]
+    fn test_read_exact() {
+        let mut temp1 = NamedTempFile::new().unwrap();
+        let pattern = write_test_pattern(6000, &mut temp1);
+
+        let mut reader = SequentialFileReaderBuilder::new()
+            .read_capacity(512)
+            .build(2048)
+            .unwrap();
+        reader.add_file_to_prefetch(temp1.as_file(), 6000).unwrap();
+
+        // Read within a single read_capacity chunk.
+        let mut buf = [0u8; 100];
+        reader.read_exact(&mut buf).unwrap();
+        assert_eq!(buf, pattern[..100]);
+
+        // Empty read is a no-op.
+        reader.read_exact(&mut []).unwrap();
+        assert_eq!(reader.get_file_offset(), 100);
+
+        // Read crossing multiple read_capacity boundaries.
+        let mut buf = vec![0u8; 2000];
+        reader.read_exact(&mut buf).unwrap();
+        assert_eq!(buf, pattern[100..2100]);
+
+        // Read remaining data exactly to EOF.
+        let mut buf = vec![0u8; 3900];
+        reader.read_exact(&mut buf).unwrap();
+        assert_eq!(buf, pattern[2100..6000]);
+
+        // Reading past EOF returns UnexpectedEof.
+        let err = reader.read_exact(&mut [0u8; 1]).unwrap_err();
+        assert_eq!(err.kind(), io::ErrorKind::UnexpectedEof);
     }
 }

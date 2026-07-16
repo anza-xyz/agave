@@ -34,7 +34,7 @@ async fn test_nonce(
 ) {
     let mint_keypair = Keypair::new();
     let faucet_addr = run_local_faucet_with_unique_port_for_tests(mint_keypair.insecure_clone());
-    let test_validator = TestValidator::async_with_no_fees(
+    let test_validator = TestValidator::async_start_with_config(
         &mint_keypair,
         Some(faucet_addr),
         SocketAddrSpace::Unspecified,
@@ -227,9 +227,8 @@ async fn test_create_account_with_seed() {
     agave_logger::setup();
     let mint_keypair = Keypair::new();
     let faucet_addr = run_local_faucet_with_unique_port_for_tests(mint_keypair.insecure_clone());
-    let test_validator = TestValidator::async_with_custom_fees(
+    let test_validator = TestValidator::async_start_with_config(
         &mint_keypair,
-        ONE_SIG_FEE,
         Some(faucet_addr),
         SocketAddrSpace::Unspecified,
     )

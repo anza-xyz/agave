@@ -6,6 +6,7 @@ use {
         latest_validator_votes_for_frozen_banks::LatestValidatorVotesForFrozenBanks,
         progress_map::ProgressMap, tree_diff::TreeDiff,
     },
+    ahash::AHashMap,
     solana_clock::{Epoch, Slot},
     solana_epoch_schedule::EpochSchedule,
     solana_hash::Hash,
@@ -19,7 +20,7 @@ use {
             BTreeMap, BTreeSet, HashMap, HashSet, VecDeque, btree_set::Iter, hash_map::Entry,
         },
         sync::{Arc, RwLock},
-        time::Instant,
+        time::{Duration, Instant},
     },
 };
 
@@ -27,7 +28,7 @@ pub type ForkWeight = u64;
 pub type SlotHashKey = (Slot, Hash);
 type UpdateOperations = BTreeMap<(SlotHashKey, UpdateLabel), UpdateOperation>;
 
-const MAX_ROOT_PRINT_SECONDS: u64 = 30;
+const MAX_ROOT_PRINT_INTERVAL: Duration = Duration::from_secs(30);
 
 #[derive(PartialEq, Eq, Clone, Debug, PartialOrd, Ord)]
 enum UpdateLabel {
@@ -140,15 +141,15 @@ impl ForkInfo {
         my_key: &SlotHashKey,
         newly_valid_ancestor: Slot,
     ) {
-        if let Some(latest_invalid_ancestor) = self.latest_invalid_ancestor {
-            if latest_invalid_ancestor <= newly_valid_ancestor {
-                info!(
-                    "Fork choice for {my_key:?} clearing latest invalid ancestor \
-                     {latest_invalid_ancestor:?} because {newly_valid_ancestor:?} was duplicate \
-                     confirmed"
-                );
-                self.latest_invalid_ancestor = None;
-            }
+        if let Some(latest_invalid_ancestor) = self.latest_invalid_ancestor
+            && latest_invalid_ancestor <= newly_valid_ancestor
+        {
+            info!(
+                "Fork choice for {my_key:?} clearing latest invalid ancestor \
+                 {latest_invalid_ancestor:?} because {newly_valid_ancestor:?} was duplicate \
+                 confirmed"
+            );
+            self.latest_invalid_ancestor = None;
         }
     }
 
@@ -183,7 +184,7 @@ impl PartialEq for ForkInfo {
 
 #[derive(Debug, Clone)]
 pub struct HeaviestSubtreeForkChoice {
-    fork_infos: HashMap<SlotHashKey, ForkInfo>,
+    fork_infos: AHashMap<SlotHashKey, ForkInfo>,
     latest_votes: HashMap<Pubkey, SlotHashKey>,
     tree_root: SlotHashKey,
     last_root_time: Instant,
@@ -220,7 +221,7 @@ impl HeaviestSubtreeForkChoice {
             tree_root,
             // Doesn't implement default because `root` must
             // exist in all the fields
-            fork_infos: HashMap::new(),
+            fork_infos: AHashMap::new(),
             latest_votes: HashMap::new(),
             last_root_time: Instant::now(),
         };
@@ -448,7 +449,7 @@ impl HeaviestSubtreeForkChoice {
     }
 
     pub fn maybe_print_state(&mut self) {
-        if self.last_root_time.elapsed().as_secs() > MAX_ROOT_PRINT_SECONDS {
+        if self.last_root_time.elapsed() > MAX_ROOT_PRINT_INTERVAL {
             self.print_state();
             self.last_root_time = Instant::now();
         }
@@ -608,7 +609,7 @@ impl HeaviestSubtreeForkChoice {
         self.process_update_operations(update_operations);
 
         // Remove node + all children and add to new tree
-        let mut split_tree_fork_infos = HashMap::new();
+        let mut split_tree_fork_infos = AHashMap::new();
         let mut to_visit = vec![*slot_hash_key];
         while let Some(current_node) = to_visit.pop() {
             let current_fork_info = self
@@ -1381,13 +1382,13 @@ impl ForkChoice for HeaviestSubtreeForkChoice {
 
 struct AncestorIterator<'a> {
     current_slot_hash_key: SlotHashKey,
-    fork_infos: &'a HashMap<SlotHashKey, ForkInfo>,
+    fork_infos: &'a AHashMap<SlotHashKey, ForkInfo>,
 }
 
 impl<'a> AncestorIterator<'a> {
     fn new(
         start_slot_hash_key: SlotHashKey,
-        fork_infos: &'a HashMap<SlotHashKey, ForkInfo>,
+        fork_infos: &'a AHashMap<SlotHashKey, ForkInfo>,
     ) -> Self {
         Self {
             current_slot_hash_key: start_slot_hash_key,

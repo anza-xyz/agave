@@ -1,11 +1,13 @@
+#[cfg(feature = "dev-context-only-utils")]
+use qualifier_attr::qualifiers;
 use {
     super::{StakeAccount, Stakes},
     crate::stake_history::StakeHistory,
-    im::HashMap as ImHashMap,
+    imbl::HashMap as ImblHashMap,
     serde::{Deserialize, Serialize, Serializer, ser::SerializeMap},
     solana_clock::Epoch,
     solana_pubkey::Pubkey,
-    solana_stake_interface::state::Stake,
+    solana_stake_interface::state::{Delegation, Stake},
     solana_vote::vote_account::VoteAccounts,
     std::{collections::HashMap, sync::Arc},
 };
@@ -70,6 +72,7 @@ impl Serialize for SerdeStakesToStakeFormat {
     }
 }
 
+#[cfg_attr(feature = "dev-context-only-utils", qualifiers(pub))]
 pub(crate) fn serialize_stake_accounts_to_delegation_format<S: Serializer>(
     stakes: &Stakes<StakeAccount>,
     serializer: S,
@@ -89,6 +92,7 @@ impl From<Stakes<StakeAccount>> for SerdeStakeAccountsToDelegationFormat {
         let Stakes {
             vote_accounts,
             stake_delegations,
+            delegated_stakes: _,
             unused,
             epoch,
             stake_history,
@@ -109,6 +113,7 @@ impl From<Stakes<StakeAccount>> for SerdeStakeAccountsToStakeFormat {
         let Stakes {
             vote_accounts,
             stake_delegations,
+            delegated_stakes: _,
             unused,
             epoch,
             stake_history,
@@ -145,7 +150,7 @@ struct SerdeStakeAccountsToStakeFormat {
 }
 
 #[cfg_attr(feature = "frozen-abi", derive(AbiExample))]
-struct SerdeStakeAccountMapToDelegationFormat(ImHashMap<Pubkey, StakeAccount>);
+struct SerdeStakeAccountMapToDelegationFormat(ImblHashMap<Pubkey, StakeAccount>);
 impl Serialize for SerdeStakeAccountMapToDelegationFormat {
     fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
     where
@@ -160,7 +165,7 @@ impl Serialize for SerdeStakeAccountMapToDelegationFormat {
 }
 
 #[cfg_attr(feature = "frozen-abi", derive(AbiExample))]
-struct SerdeStakeAccountMapToStakeFormat(ImHashMap<Pubkey, StakeAccount>);
+struct SerdeStakeAccountMapToStakeFormat(ImblHashMap<Pubkey, StakeAccount>);
 impl Serialize for SerdeStakeAccountMapToStakeFormat {
     fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
     where
@@ -177,15 +182,35 @@ impl Serialize for SerdeStakeAccountMapToStakeFormat {
 /// Simplified, intermediate representation of [`Stakes<T>`]
 ///
 /// Its bincode serializaiton format is identical as Stakes<T>, but allows faster
-/// deserialization without creating im::HashMap (such conversion is deferred until
+/// deserialization without creating imbl::HashMap (such conversion is deferred until
 /// data is actually needed).
+#[cfg_attr(feature = "frozen-abi", derive(Serialize, StableAbi, StableAbiSample))]
 #[derive(Clone, Debug, Deserialize)]
-pub(crate) struct DeserializableStakes<T> {
+#[cfg_attr(feature = "dev-context-only-utils", qualifiers(pub))]
+pub(crate) struct DeserializableDelegationStakes {
     pub vote_accounts: VoteAccounts,
-    pub stake_delegations: Vec<(Pubkey, T)>,
+    // Sampled as `StakeAccount`s (as the serialize side does) reduced to the written `Delegation`.
+    #[cfg_attr(
+        feature = "frozen-abi",
+        stable_abi_sample(with = "stable_abi_sample_stake_delegations(rng)")
+    )]
+    pub stake_delegations: Vec<(Pubkey, Delegation)>,
     pub unused: u64,
     pub epoch: Epoch,
     pub stake_history: StakeHistory,
+}
+
+#[cfg(feature = "frozen-abi")]
+fn stable_abi_sample_stake_delegations(
+    rng: &mut (impl solana_frozen_abi::rand::RngCore + ?Sized),
+) -> Vec<(Pubkey, Delegation)> {
+    use solana_frozen_abi::stable_abi::{context::SequenceLenMax, sample_collection_sized};
+    let stake_accounts: Vec<(Pubkey, StakeAccount)> =
+        sample_collection_sized(rng, SequenceLenMax(1));
+    stake_accounts
+        .into_iter()
+        .map(|(pubkey, account)| (pubkey, *account.delegation()))
+        .collect()
 }
 
 #[cfg(test)]
@@ -196,54 +221,9 @@ mod tests {
         rand::Rng,
         serde::Deserialize,
         solana_rent::Rent,
-        solana_stake_interface::state::Delegation,
         solana_vote_interface::state::BLS_PUBLIC_KEY_COMPRESSED_SIZE,
         solana_vote_program::vote_state,
     };
-
-    #[test]
-    fn test_serde_stakes_to_stake_format() {
-        let mut stake_delegations = ImHashMap::new();
-        let vote_pubkey = Pubkey::new_unique();
-        let node_pubkey = Pubkey::new_unique();
-        stake_delegations.insert(
-            Pubkey::new_unique(),
-            StakeAccount::try_from(stake_utils::create_stake_account(
-                &Pubkey::new_unique(),
-                &vote_pubkey,
-                &vote_state::create_v4_account_with_authorized(
-                    &node_pubkey,
-                    &vote_pubkey,
-                    [0u8; BLS_PUBLIC_KEY_COMPRESSED_SIZE],
-                    &vote_pubkey,
-                    0,
-                    &vote_pubkey,
-                    0,
-                    &vote_pubkey,
-                    1_000_000_000,
-                ),
-                &Rent::default(),
-                1_000_000_000,
-            ))
-            .unwrap(),
-        );
-
-        let stake_account_stakes = Stakes {
-            vote_accounts: VoteAccounts::default(),
-            stake_delegations,
-            unused: 0,
-            epoch: 0,
-            stake_history: StakeHistory::default(),
-        };
-
-        let wrapped_stakes = SerdeStakesToStakeFormat::Account(stake_account_stakes.clone());
-        let serialized_stakes = bincode::serialize(&wrapped_stakes).unwrap();
-        let stake_stakes = Stakes::from_deserialized(
-            bincode::deserialize::<DeserializableStakes<Stake>>(&serialized_stakes).unwrap(),
-        );
-        let expected_stake_stakes = Stakes::<Stake>::from(stake_account_stakes);
-        assert_eq!(expected_stake_stakes, stake_stakes);
-    }
 
     #[test]
     fn test_serde_stakes_to_delegation_format() {
@@ -258,7 +238,7 @@ mod tests {
         #[derive(Debug, Deserialize)]
         struct DeserializableDummy {
             head: String,
-            stakes: DeserializableStakes<Delegation>,
+            stakes: DeserializableDelegationStakes,
             tail: String,
         }
 
@@ -281,13 +261,13 @@ mod tests {
                 commission_bps,
                 &vote_pubkey,
                 0,
-                &vote_pubkey,
+                &node_pubkey,
                 rng.random_range(0..1_000_000), // lamports
             );
-            stakes_cache.check_and_store(&vote_pubkey, &vote_account, None);
+            stakes_cache.check_and_store(&vote_pubkey, &vote_account, None, true);
             for _ in 0..rng.random_range(10usize..20) {
                 let stake_pubkey = solana_pubkey::new_rand();
-                let rent = Rent::with_slots_per_epoch(rng.random());
+                let rent = Rent::free();
                 let stake_account = stake_utils::create_stake_account(
                     &stake_pubkey, // authorized
                     &vote_pubkey,
@@ -295,7 +275,7 @@ mod tests {
                     &rent,
                     rng.random_range(0..1_000_000), // lamports
                 );
-                stakes_cache.check_and_store(&stake_pubkey, &stake_account, None);
+                stakes_cache.check_and_store(&stake_pubkey, &stake_account, None, true);
             }
         }
         let stakes: Stakes<StakeAccount> = stakes_cache.stakes().clone();
@@ -319,7 +299,7 @@ mod tests {
         assert_eq!(other.stakes.stake_history, stakes.stake_history);
 
         assert!(other.stakes.stake_delegations.len() >= 50);
-        // DeserializableStakes doesn't preserve same order of elements as Stakes, compare converted
+        // DeserializableDelegationStakes doesn't preserve same order of elements as Stakes, compare converted
         let other_stakes = Stakes::from_deserialized(other.stakes);
         assert_eq!(other_stakes, dummy.stakes.into());
     }

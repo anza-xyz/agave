@@ -17,6 +17,7 @@ use {
         validator_configs::*,
     },
     agave_snapshots::{SnapshotInterval, snapshot_config::SnapshotConfig},
+    agave_votor::voting_service::{AlpenglowPortOverride, VotingServiceOverride},
     log::*,
     solana_account::AccountSharedData,
     solana_accounts_db::utils::create_accounts_run_and_snapshot_dirs,
@@ -35,23 +36,22 @@ use {
         blockstore::{Blockstore, PurgeType},
         blockstore_meta::DuplicateSlotProof,
         blockstore_options::{AccessType, BlockstoreOptions},
+        shred::filter::{TurbineMode, TurbineModeKind},
     },
     solana_native_token::LAMPORTS_PER_SOL,
-    solana_net_utils::SocketAddrSpace,
+    solana_net_utils::{SocketAddrSpace, sockets::bind_to_localhost_unique},
     solana_pubkey::Pubkey,
     solana_rpc_client::rpc_client::RpcClient,
     solana_signer::Signer,
     solana_turbine::broadcast_stage::BroadcastStageType,
     static_assertions,
     std::{
-        collections::HashSet,
+        collections::{HashMap, HashSet},
         fs, iter,
+        net::SocketAddr,
         num::{NonZeroU64, NonZeroUsize},
         path::{Path, PathBuf},
-        sync::{
-            Arc,
-            atomic::{AtomicBool, Ordering},
-        },
+        sync::{Arc, atomic::AtomicBool},
         thread::sleep,
         time::Duration,
     },
@@ -76,7 +76,6 @@ pub struct ValidatorKeys {
 }
 
 impl ValidatorKeys {
-    #[allow(clippy::new_without_default)]
     pub fn new() -> Self {
         Self {
             node_keypair: Arc::new(Keypair::new()),
@@ -188,11 +187,10 @@ pub fn wait_for_duplicate_proof(ledger_path: &Path, dup_slot: Slot) -> Option<Du
         let duplicate_fork_validator_blockstore = open_blockstore(ledger_path);
         if let Some((found_dup_slot, found_duplicate_proof)) =
             duplicate_fork_validator_blockstore.get_first_duplicate_proof()
+            && found_dup_slot == dup_slot
         {
-            if found_dup_slot == dup_slot {
-                return Some(found_duplicate_proof);
-            };
-        }
+            return Some(found_duplicate_proof);
+        };
 
         sleep(Duration::from_millis(1000));
     }
@@ -207,7 +205,7 @@ pub fn copy_blocks(end_slot: Slot, source: &Blockstore, dest: &Blockstore, is_tr
         assert!(source_meta.is_full());
 
         let shreds = source.get_data_shreds_for_slot(slot, 0).unwrap();
-        dest.insert_shreds(shreds, None, is_trusted).unwrap();
+        dest.insert_shreds(shreds, is_trusted).unwrap();
 
         let dest_meta = dest.meta(slot).unwrap().unwrap();
         assert!(dest_meta.is_full());
@@ -221,7 +219,26 @@ pub fn ms_for_n_slots(num_blocks: u64, ticks_per_slot: u64) -> u64 {
     (ticks_per_slot * DEFAULT_MS_PER_SLOT * num_blocks).div_ceil(DEFAULT_TICKS_PER_SLOT)
 }
 
-pub fn run_kill_partition_switch_threshold<C>(
+/// Implements a test scenario that creates a network partition by killing validator nodes.
+///
+/// # Arguments
+/// * `stakes_to_kill` - Validators to remove from the network, where each tuple contains:
+///   * First element (usize): The stake weight/size of the validator
+///   * Second element (usize): The number of slots assigned to the validator
+/// * `alive_stakes` - Validators to keep alive, where each tuple contains:
+///   * First element (usize): The stake weight/size of the validator
+///   * Second element (usize): The number of slots assigned to the validator
+/// * `ticks_per_slot` - Optional override for the default ticks per slot
+/// * `partition_context` - Test-specific context object that will be passed to callbacks
+/// * `on_partition_start` - Callback executed when the partition begins
+/// * `on_before_partition_resolved` - Callback executed right before the partition is resolved
+/// * `on_partition_resolved` - Callback executed after the partition is resolved
+///
+/// This function simulates a network partition by killing specified validator nodes,
+/// waiting for a period, resolving the partition, and then verifying the network
+/// can recover and reach consensus. The IS_ALPENGLOW parameter determines whether
+/// to use Alpenglow-specific cluster initialization.
+fn run_kill_partition_switch_threshold_impl<C, const IS_ALPENGLOW: bool>(
     stakes_to_kill: &[(usize, usize)],
     alive_stakes: &[(usize, usize)],
     ticks_per_slot: Option<u64>,
@@ -235,20 +252,14 @@ pub fn run_kill_partition_switch_threshold<C>(
     static_assertions::const_assert!(SWITCH_FORK_THRESHOLD >= 1f64 / 3f64);
     info!("stakes_to_kill: {stakes_to_kill:?}, alive_stakes: {alive_stakes:?}");
 
-    // This test:
-    // 1) Spins up three partitions
-    // 2) Kills the first partition with the stake `failures_stake`
-    // 5) runs `on_partition_resolved`
-    let partitions: Vec<(usize, usize)> = stakes_to_kill
-        .iter()
-        .cloned()
-        .chain(alive_stakes.iter().cloned())
-        .collect();
-
-    let stake_partitions: Vec<usize> = partitions.iter().map(|(stake, _)| *stake).collect();
-    let num_slots_per_validator: Vec<usize> =
-        partitions.iter().map(|(_, num_slots)| *num_slots).collect();
-
+    // Define validator stake partitions and leader schedule from input
+    // parameters.
+    let mut stake_partitions = Vec::with_capacity(stakes_to_kill.len() + alive_stakes.len());
+    let mut num_slots_per_validator = Vec::with_capacity(stakes_to_kill.len() + alive_stakes.len());
+    for (stake, num_slots) in stakes_to_kill.iter().chain(alive_stakes.iter()) {
+        stake_partitions.push(*stake);
+        num_slots_per_validator.push(*num_slots);
+    }
     let (leader_schedule, validator_keys) =
         create_custom_leader_schedule_with_random_keys(&num_slots_per_validator);
 
@@ -257,6 +268,8 @@ pub fn run_kill_partition_switch_threshold<C>(
         .map(|k| k.node_keypair.pubkey())
         .collect();
     info!("Validator ids: {validator_pubkeys:?}");
+
+    // Append routine to kill the specified validators on partition start.
     let on_partition_start = |cluster: &mut LocalCluster, partition_context: &mut C| {
         let dead_validator_infos: Vec<ClusterValidatorInfo> = validator_pubkeys
             [0..stakes_to_kill.len()]
@@ -273,6 +286,8 @@ pub fn run_kill_partition_switch_threshold<C>(
             partition_context,
         );
     };
+
+    // Spin up cluster and execute partition.
     run_cluster_partition(
         &stake_partitions,
         Some((leader_schedule, validator_keys)),
@@ -283,6 +298,47 @@ pub fn run_kill_partition_switch_threshold<C>(
         ticks_per_slot,
         true,
         vec![],
+        IS_ALPENGLOW,
+    )
+}
+
+pub fn run_kill_partition_switch_threshold_alpenglow<C>(
+    stakes_to_kill: &[(usize, usize)],
+    alive_stakes: &[(usize, usize)],
+    ticks_per_slot: Option<u64>,
+    partition_context: C,
+    on_partition_start: impl Fn(&mut LocalCluster, &[Pubkey], Vec<ClusterValidatorInfo>, &mut C),
+    on_before_partition_resolved: impl Fn(&mut LocalCluster, &mut C),
+    on_partition_resolved: impl Fn(&mut LocalCluster, &mut C),
+) {
+    run_kill_partition_switch_threshold_impl::<C, true>(
+        stakes_to_kill,
+        alive_stakes,
+        ticks_per_slot,
+        partition_context,
+        on_partition_start,
+        on_before_partition_resolved,
+        on_partition_resolved,
+    )
+}
+
+pub fn run_kill_partition_switch_threshold<C>(
+    stakes_to_kill: &[(usize, usize)],
+    alive_stakes: &[(usize, usize)],
+    ticks_per_slot: Option<u64>,
+    partition_context: C,
+    on_partition_start: impl Fn(&mut LocalCluster, &[Pubkey], Vec<ClusterValidatorInfo>, &mut C),
+    on_before_partition_resolved: impl Fn(&mut LocalCluster, &mut C),
+    on_partition_resolved: impl Fn(&mut LocalCluster, &mut C),
+) {
+    run_kill_partition_switch_threshold_impl::<C, false>(
+        stakes_to_kill,
+        alive_stakes,
+        ticks_per_slot,
+        partition_context,
+        on_partition_start,
+        on_before_partition_resolved,
+        on_partition_resolved,
     )
 }
 
@@ -297,7 +353,7 @@ pub fn create_custom_leader_schedule(
     }
 
     info!("leader_schedule: {}", leader_schedule.len());
-    LeaderSchedule::new_from_schedule(leader_schedule)
+    LeaderSchedule::new_from_schedule(leader_schedule, NonZeroUsize::new(1).unwrap())
 }
 
 pub fn create_custom_leader_schedule_with_random_keys(
@@ -315,19 +371,36 @@ pub fn create_custom_leader_schedule_with_random_keys(
     (leader_schedule, validator_keys)
 }
 
-/// This function runs a network, initiates a partition based on a
-/// configuration, resolve the partition, then checks that the network continues
-/// to achieve consensus.
+/// Simulates a network partition test scenario by creating a cluster, triggering a partition,
+/// allowing the partition to heal, and then verifying the network's ability to recover and
+/// achieve consensus after the partition is resolved.
 ///
-/// # Arguments:
-/// * `partitions` - A slice of partition configurations, where each partition
-///   configuration is a usize representing a node's stake
-/// * `leader_schedule` - An option that specifies whether the cluster should
-///   run with a fixed, predetermined leader schedule
-/// * `no_wait_for_vote_to_start_leader` - provide option to only allow the
-///   bootstrap to build blocks at first to minimize forking during cluster
-///   startup.
-#[allow(clippy::cognitive_complexity)]
+/// This function:
+/// 1. Creates a local cluster with nodes configured according to the provided stakes
+/// 2. Induces a network partition by disabling communication between validators
+/// 3. Runs the partition for a predetermined duration
+/// 4. Resolves the partition by re-enabling communication
+/// 5. Verifies the network can recover and continue to make progress
+///
+/// # Arguments
+/// * `partitions` - A slice of partition configurations, where each usize represents a validator's
+///   stake weight. This determines the relative voting power of each node in the network.
+/// * `leader_schedule` - An option that specifies whether the cluster should run with a fixed,
+///   predetermined leader schedule. If provided, the partition will last for one complete
+///   iteration of the leader schedule.
+/// * `context` - A user-defined context object that is passed to the callback functions.
+/// * `on_partition_start` - Callback function that runs when the partition begins. Can be used
+///   to perform custom actions or checks at the start of the partition.
+/// * `on_before_partition_resolved` - Callback function that runs just before the partition
+///   is resolved. Can be used to verify partition state or prepare for resolution.
+/// * `on_partition_resolved` - Callback function that runs after the partition is resolved and
+///   the network has had time to recover. Can be used to verify recovery.
+/// * `ticks_per_slot` - Optional override for the default ticks per slot. Controls the
+///   rate at which slots advance in the cluster.
+/// * `additional_accounts` - Additional accounts to be added to the genesis configuration.
+/// * `is_alpenglow` - Boolean flag indicating whether to initialize the `LocalCluster` in Alpenglow
+///   mode.
+#[allow(clippy::cognitive_complexity, clippy::too_many_arguments)]
 pub fn run_cluster_partition<C>(
     partitions: &[usize],
     leader_schedule: Option<(LeaderSchedule, Vec<ValidatorKeys>)>,
@@ -338,8 +411,13 @@ pub fn run_cluster_partition<C>(
     ticks_per_slot: Option<u64>,
     no_wait_for_vote_to_start_leader: bool,
     additional_accounts: Vec<(Pubkey, AccountSharedData)>,
+    is_alpenglow: bool,
 ) {
-    agave_logger::setup_with_default(RUST_LOG_FILTER);
+    if is_alpenglow {
+        agave_logger::setup_with_default(AG_DEBUG_LOG_FILTER);
+    } else {
+        agave_logger::setup_with_default(RUST_LOG_FILTER);
+    }
     info!("PARTITION_TEST!");
     let num_nodes = partitions.len();
     let node_stakes: Vec<_> = partitions
@@ -347,8 +425,9 @@ pub fn run_cluster_partition<C>(
         .map(|stake_weight| 100 * *stake_weight as u64)
         .collect();
     assert_eq!(node_stakes.len(), num_nodes);
-    let mint_lamports = node_stakes.iter().sum::<u64>() * 2;
-    let turbine_disabled = Arc::new(AtomicBool::new(false));
+    let mint_lamports = crate::local_cluster::DEFAULT_MINT_LAMPORTS
+        + node_stakes.iter().sum::<u64>().saturating_mul(2);
+    let turbine_mode = TurbineMode::new(TurbineModeKind::Enabled);
     let wait_for_supermajority = if no_wait_for_vote_to_start_leader {
         // This helps nodes get a little more in sync by waiting for
         // supermajority to observe slot 0. It still doesn't provide perfect
@@ -363,9 +442,9 @@ pub fn run_cluster_partition<C>(
         None
     };
     let mut validator_config = ValidatorConfig {
-        turbine_disabled: turbine_disabled.clone(),
         wait_for_supermajority,
         no_wait_for_vote_to_start_leader,
+        turbine_mode: turbine_mode.clone(),
         ..ValidatorConfig::default_for_test()
     };
 
@@ -387,6 +466,7 @@ pub fn run_cluster_partition<C>(
                 iter::repeat_with(ValidatorKeys::new)
                     .take(partitions.len())
                     .collect(),
+                // Approximately enough time to run through a leader span for all nodes
                 Duration::from_secs(10),
             )
         }
@@ -399,6 +479,13 @@ pub fn run_cluster_partition<C>(
         .unwrap()
         .no_wait_for_vote_to_start_leader = true;
     let slots_per_epoch = 2048;
+    let alpenglow_port_override = AlpenglowPortOverride::default();
+    for config in &mut validator_configs {
+        config.voting_service_test_override = Some(VotingServiceOverride {
+            additional_listeners: vec![],
+            alpenglow_port_override: alpenglow_port_override.clone(),
+        });
+    }
     let mut config = ClusterConfig {
         mint_lamports,
         node_stakes,
@@ -422,7 +509,12 @@ pub fn run_cluster_partition<C>(
         "PARTITION_TEST starting cluster with {:?} partitions slots_per_epoch: {}",
         partitions, config.slots_per_epoch,
     );
-    let mut cluster = LocalCluster::new(&mut config, SocketAddrSpace::Unspecified);
+
+    let mut cluster = if is_alpenglow {
+        LocalCluster::new_alpenglow(&mut config, SocketAddrSpace::Unspecified)
+    } else {
+        LocalCluster::new(&mut config, SocketAddrSpace::Unspecified)
+    };
 
     info!("PARTITION_TEST spend_and_verify_all_nodes(), ensure all nodes are caught up");
     cluster_tests::spend_and_verify_all_nodes(
@@ -431,7 +523,7 @@ pub fn run_cluster_partition<C>(
         num_nodes,
         HashSet::new(),
         SocketAddrSpace::Unspecified,
-        &cluster.connection_cache,
+        &cluster_tests::TpuSender::new(),
     );
 
     let cluster_nodes = discover_validators(
@@ -442,7 +534,7 @@ pub fn run_cluster_partition<C>(
     )
     .unwrap();
 
-    // Check epochs have correct number of slots
+    // Check each node reports epochs that have correct number of slots
     info!("PARTITION_TEST sleeping until partition starting condition",);
     for node in &cluster_nodes {
         let node_client = RpcClient::new_socket(node.rpc().unwrap());
@@ -452,23 +544,29 @@ pub fn run_cluster_partition<C>(
 
     info!("PARTITION_TEST start partition");
     on_partition_start(&mut cluster, &mut context);
-    turbine_disabled.store(true, Ordering::Relaxed);
+    turbine_mode.set(TurbineModeKind::TurbineAndRepairDisabled);
 
+    // Make all to all votes/certs not able to reach each other by overriding the
+    // alpenglow port override to SocketAddr which no one is listening on.
+    let blackhole_socket = bind_to_localhost_unique().unwrap();
+    let blackhole_addr: SocketAddr = blackhole_socket.local_addr().unwrap();
+    let new_override = HashMap::from_iter(
+        cluster_nodes
+            .iter()
+            .map(|node| (*node.pubkey(), blackhole_addr)),
+    );
+    alpenglow_port_override.update_override(new_override);
     sleep(partition_duration);
 
     on_before_partition_resolved(&mut cluster, &mut context);
     info!("PARTITION_TEST remove partition");
-    turbine_disabled.store(false, Ordering::Relaxed);
+    turbine_mode.set(TurbineModeKind::Enabled);
+    // Restore the alpenglow port override to the default, so that the nodes can communicate again.
+    alpenglow_port_override.clear();
 
     // Give partitions time to propagate their blocks from during the partition
     // after the partition resolves
-    let timeout_duration = Duration::from_secs(10);
-    let propagation_duration = partition_duration;
-    info!(
-        "PARTITION_TEST resolving partition. sleeping {} ms",
-        timeout_duration.as_millis()
-    );
-    sleep(timeout_duration);
+    let propagation_duration = partition_duration + Duration::from_secs(5);
     info!(
         "PARTITION_TEST waiting for blocks to propagate after partition {}ms",
         propagation_duration.as_millis()
@@ -541,7 +639,8 @@ pub fn test_faulty_node(
     }
 
     let mut cluster_config = ClusterConfig {
-        mint_lamports: 10_000,
+        mint_lamports: crate::local_cluster::DEFAULT_MINT_LAMPORTS
+            + node_stakes.iter().sum::<u64>().saturating_mul(2),
         node_stakes,
         validator_configs,
         validator_keys: Some(validator_keys.clone()),

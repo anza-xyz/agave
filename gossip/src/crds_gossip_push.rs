@@ -72,7 +72,7 @@ impl Default for CrdsGossipPush {
         Self {
             active_set: RwLock::default(),
             crds_cursor: Mutex::default(),
-            received_cache: Mutex::new(ReceivedCache::new(2 * CRDS_UNIQUE_PUBKEY_CAPACITY)),
+            received_cache: Mutex::new(ReceivedCache::new(CRDS_UNIQUE_PUBKEY_CAPACITY)),
             push_fanout: CRDS_GOSSIP_PUSH_FANOUT,
             msg_timeout: CRDS_GOSSIP_PUSH_MSG_TIMEOUT_MS,
             prune_timeout: CRDS_GOSSIP_PRUNE_MSG_TIMEOUT_MS,
@@ -147,7 +147,7 @@ impl CrdsGossipPush {
                         received_cache.record(origin, from, usize::from(num_dups));
                         self.num_old.fetch_add(1, Ordering::Relaxed);
                     }
-                    Err(CrdsError::InsertFailed | CrdsError::UnknownStakes) => {
+                    Err(CrdsError::InsertFailed) => {
                         received_cache.record(origin, from, /*num_dups:*/ usize::MAX);
                         self.num_old.fetch_add(1, Ordering::Relaxed);
                     }
@@ -267,11 +267,10 @@ impl CrdsGossipPush {
             ping_cache,
             pings,
         );
-        let nodes = crds_gossip::dedup_gossip_addresses(nodes, stakes)
-            .into_values()
-            .map(|(_stake, node)| *node.pubkey())
-            .collect::<Vec<_>>();
-        if nodes.is_empty() {
+        let nodes = crds_gossip::dedup_gossip_addresses(nodes)
+            .into_iter()
+            .map(|(_gossip, stake, pubkey)| (stake, pubkey));
+        if nodes.len() == 0 {
             return;
         }
         let cluster_size = crds.read().unwrap().num_pubkeys().max(stakes.len());
@@ -280,8 +279,7 @@ impl CrdsGossipPush {
             &mut rng,
             CRDS_GOSSIP_PUSH_ACTIVE_SET_SIZE,
             cluster_size,
-            &nodes,
-            stakes,
+            nodes,
         )
     }
 }
@@ -296,8 +294,6 @@ mod tests {
 
     fn new_ping_cache() -> PingCache {
         PingCache::new(
-            &mut rand::rng(),
-            Instant::now(),
             Duration::from_secs(20 * 60),      // ttl
             Duration::from_secs(20 * 60) / 64, // rate_limit_delay
             128,                               // capacity

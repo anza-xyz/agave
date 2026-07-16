@@ -19,8 +19,10 @@ echo "--- coverage: coverage (part 3)"
 "$git_root"/ci/test-coverage.sh \
   --features frozen-abi \
   --features dev-context-only-utils \
+  --features solana-gossip/small-cluster-gossip \
   --workspace \
   --lib \
+  --bins \
   "${exclude_packages[@]}"
 
 # Clean up
@@ -31,7 +33,7 @@ echo "--- coverage: dev-bins"
   --features dev-context-only-utils \
   --manifest-path "$git_root"/dev-bins/Cargo.toml \
   --workspace \
-  --lib
+  --bins
 
 # Clean up
 cargo clean

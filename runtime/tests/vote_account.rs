@@ -6,117 +6,23 @@ use {
     bincode::Options,
     rand::Rng,
     solana_account::{AccountSharedData, ReadableAccount, WritableAccount},
-    solana_bls_signatures::{
-        keypair::Keypair as BLSKeypair, pubkey::PubkeyCompressed as BLSPubkeyCompressed,
-    },
     solana_pubkey::Pubkey,
-    solana_runtime::bank::{MAX_ALPENGLOW_VOTE_ACCOUNTS, VAT_TO_BURN_PER_EPOCH},
+    solana_runtime::{
+        bank::{DEFAULT_VAT_TO_BURN_PER_EPOCH, MAX_ALPENGLOW_VOTE_ACCOUNTS},
+        test_utils::{
+            new_rand_vote_account, new_rand_vote_accounts, new_staked_vote_accounts, staked_nodes,
+        },
+    },
     solana_vote::vote_account::{VoteAccount, VoteAccounts, VoteAccountsHashMap},
     solana_vote_interface::{
         authorized_voters::AuthorizedVoters,
         state::{VoteInit, VoteStateV4, VoteStateVersions},
     },
-    std::{collections::HashMap, iter::repeat_with, sync::Arc},
+    std::{collections::HashMap, sync::Arc},
 };
 
 const MIN_STAKE_FOR_STAKED_ACCOUNT: u64 = 1;
 const MAX_STAKE_FOR_STAKED_ACCOUNT: u64 = 997;
-
-/// Creates a vote account
-/// `set_bls_pubkey`: controls whether the bls pubkey is None or Some
-fn new_rand_vote_account<R: Rng>(
-    rng: &mut R,
-    node_pubkey: Option<Pubkey>,
-    set_bls_pubkey: bool,
-) -> AccountSharedData {
-    let vote_init = VoteInit {
-        node_pubkey: node_pubkey.unwrap_or_else(Pubkey::new_unique),
-        authorized_voter: Pubkey::new_unique(),
-        authorized_withdrawer: Pubkey::new_unique(),
-        commission: rng.random(),
-    };
-    let bls_pubkey_compressed = if set_bls_pubkey {
-        let bls_pubkey: BLSPubkeyCompressed = BLSKeypair::new().public.into();
-        let bls_pubkey_buffer = bincode::serialize(&bls_pubkey).unwrap();
-        Some(bls_pubkey_buffer.try_into().unwrap())
-    } else {
-        None
-    };
-    let vote_state = VoteStateV4 {
-        node_pubkey: vote_init.node_pubkey,
-        authorized_voters: AuthorizedVoters::new(0, vote_init.authorized_voter),
-        authorized_withdrawer: vote_init.authorized_withdrawer,
-        bls_pubkey_compressed,
-        ..VoteStateV4::default()
-    };
-
-    AccountSharedData::new_data(
-        rng.random(), // lamports
-        &VoteStateVersions::new_v4(vote_state),
-        &solana_sdk_ids::vote::id(), // owner
-    )
-    .unwrap()
-}
-
-fn new_rand_vote_accounts<R: Rng>(
-    rng: &mut R,
-    num_nodes: usize,
-) -> impl Iterator<Item = (Pubkey, (/*stake:*/ u64, VoteAccount))> + '_ {
-    let nodes: Vec<_> = repeat_with(Pubkey::new_unique).take(num_nodes).collect();
-    repeat_with(move || {
-        let node = nodes[rng.random_range(0..nodes.len())];
-        let account = new_rand_vote_account(rng, Some(node), true);
-        let stake = rng.random_range(0..MAX_STAKE_FOR_STAKED_ACCOUNT);
-        let vote_account = VoteAccount::try_from(account).unwrap();
-        (Pubkey::new_unique(), (stake, vote_account))
-    })
-}
-
-/// Creates `num_nodes` random vote accounts with the specified stake.
-/// The first `num_nodes_with_bls_pubkeys` have the bls_pubkeys set while the rest are unset.
-/// If `stake_per_node` is specified, then each node will have that stake, otherwise a random amount
-/// between `MIN_STAKE_FOR_STAKED_ACCOUNT` and `MAX_STAKE_FOR_STAKED_ACCOUNT` is chosen.
-fn new_staked_vote_accounts<R: Rng, F>(
-    rng: &mut R,
-    num_nodes: usize,
-    num_nodes_with_bls_pubkeys: usize,
-    stake_per_node: Option<u64>,
-    lamports_per_node: F,
-) -> VoteAccounts
-where
-    F: Fn(usize) -> u64,
-{
-    let mut vote_accounts = VoteAccounts::default();
-    for index in 0..num_nodes {
-        let pubkey = Pubkey::new_unique();
-        let stake = stake_per_node.unwrap_or_else(|| {
-            rng.random_range(MIN_STAKE_FOR_STAKED_ACCOUNT..MAX_STAKE_FOR_STAKED_ACCOUNT)
-        });
-        let node_pubkey = Pubkey::new_unique();
-        let set_bls_pubkey = index < num_nodes_with_bls_pubkeys;
-        let mut account = new_rand_vote_account(rng, Some(node_pubkey), set_bls_pubkey);
-        account.set_lamports(lamports_per_node(index));
-        vote_accounts.insert(pubkey, VoteAccount::try_from(account).unwrap(), || stake);
-    }
-    vote_accounts
-}
-
-fn staked_nodes<'a, I>(vote_accounts: I) -> HashMap<Pubkey, u64>
-where
-    I: IntoIterator<Item = &'a (Pubkey, (u64, VoteAccount))>,
-{
-    let mut staked_nodes = HashMap::new();
-    for (_, (stake, vote_account)) in vote_accounts
-        .into_iter()
-        .filter(|(_, (stake, _))| *stake != 0)
-    {
-        staked_nodes
-            .entry(*vote_account.node_pubkey())
-            .and_modify(|s: &mut u64| *s = s.saturating_add(*stake))
-            .or_insert(*stake);
-    }
-    staked_nodes
-}
 
 #[test]
 fn test_vote_account_try_from() {
@@ -153,7 +59,9 @@ fn test_vote_account_serialize() {
 fn test_vote_accounts_serialize() {
     let mut rng = rand::rng();
     let vote_accounts_hash_map: VoteAccountsHashMap =
-        new_rand_vote_accounts(&mut rng, 64).take(1024).collect();
+        new_rand_vote_accounts(&mut rng, 64, MAX_STAKE_FOR_STAKED_ACCOUNT)
+            .take(1024)
+            .collect();
     let vote_accounts = VoteAccounts::from(Arc::new(vote_accounts_hash_map.clone()));
     assert!(vote_accounts.staked_nodes().len() > 32);
     assert_eq!(
@@ -172,7 +80,9 @@ fn test_vote_accounts_serialize() {
 fn test_vote_accounts_deserialize() {
     let mut rng = rand::rng();
     let vote_accounts_hash_map: VoteAccountsHashMap =
-        new_rand_vote_accounts(&mut rng, 64).take(1024).collect();
+        new_rand_vote_accounts(&mut rng, 64, MAX_STAKE_FOR_STAKED_ACCOUNT)
+            .take(1024)
+            .collect();
     let data = bincode::serialize(&vote_accounts_hash_map).unwrap();
     let vote_accounts: VoteAccounts = bincode::deserialize(&data).unwrap();
     assert!(vote_accounts.staked_nodes().len() > 32);
@@ -216,7 +126,9 @@ fn test_vote_accounts_deserialize_invalid_account() {
 #[test]
 fn test_staked_nodes() {
     let mut rng = rand::rng();
-    let mut accounts: Vec<_> = new_rand_vote_accounts(&mut rng, 64).take(1024).collect();
+    let mut accounts: Vec<_> = new_rand_vote_accounts(&mut rng, 64, MAX_STAKE_FOR_STAKED_ACCOUNT)
+        .take(1024)
+        .collect();
     let mut vote_accounts = VoteAccounts::default();
     // Add vote accounts.
     for (k, (pubkey, (stake, vote_account))) in accounts.iter().enumerate() {
@@ -347,7 +259,7 @@ fn test_staked_nodes_zero_stake() {
 #[test]
 fn test_staked_nodes_cow() {
     let mut rng = rand::rng();
-    let mut accounts = new_rand_vote_accounts(&mut rng, 64);
+    let mut accounts = new_rand_vote_accounts(&mut rng, 64, MAX_STAKE_FOR_STAKED_ACCOUNT);
     // Add vote accounts.
     let mut vote_accounts = VoteAccounts::default();
     for (pubkey, (stake, vote_account)) in (&mut accounts).take(1024) {
@@ -379,7 +291,7 @@ fn test_staked_nodes_cow() {
 #[test]
 fn test_vote_accounts_cow() {
     let mut rng = rand::rng();
-    let mut accounts = new_rand_vote_accounts(&mut rng, 64);
+    let mut accounts = new_rand_vote_accounts(&mut rng, 64, MAX_STAKE_FOR_STAKED_ACCOUNT);
     // Add vote accounts.
     let mut vote_accounts = VoteAccounts::default();
     for (pubkey, (stake, vote_account)) in (&mut accounts).take(1024) {
@@ -413,10 +325,15 @@ fn test_vote_accounts_cow() {
 fn test_clone_and_filter_for_vat_truncates() {
     let mut rng = rand::rng();
     let current_limit = 3000;
-    let vote_accounts =
-        new_staked_vote_accounts(&mut rng, current_limit, current_limit, None, |_| {
-            10_000_000_000
-        });
+    let vote_accounts = new_staked_vote_accounts(
+        &mut rng,
+        current_limit,
+        current_limit,
+        None,
+        MIN_STAKE_FOR_STAKED_ACCOUNT,
+        MAX_STAKE_FOR_STAKED_ACCOUNT,
+        |_| 10_000_000_000,
+    );
     // All vote accounts should be returned if the limit is high enough.
     let filtered =
         vote_accounts.clone_and_filter_for_vat(current_limit + 500, MIN_STAKE_FOR_STAKED_ACCOUNT);
@@ -456,13 +373,15 @@ fn test_clone_and_filter_for_vat_filters_non_alpenglow() {
         num_nodes,
         MAX_ALPENGLOW_VOTE_ACCOUNTS,
         None,
+        MIN_STAKE_FOR_STAKED_ACCOUNT,
+        MAX_STAKE_FOR_STAKED_ACCOUNT,
         |_| 10_000_000_000,
     );
     let new_limit = MAX_ALPENGLOW_VOTE_ACCOUNTS + 500;
     let filtered = vote_accounts.clone_and_filter_for_vat(new_limit, MIN_STAKE_FOR_STAKED_ACCOUNT);
     assert_eq!(filtered.len(), MAX_ALPENGLOW_VOTE_ACCOUNTS);
     // Check that all filtered accounts have bls pubkey.
-    for (_pubkey, (_stake, vote_account)) in filtered.as_ref().iter() {
+    for (_stake, vote_account) in filtered.as_ref().values() {
         assert!(
             vote_account
                 .vote_state_view()
@@ -474,7 +393,7 @@ fn test_clone_and_filter_for_vat_filters_non_alpenglow() {
     let new_limit = MAX_ALPENGLOW_VOTE_ACCOUNTS - 500;
     let filtered = vote_accounts.clone_and_filter_for_vat(new_limit, MIN_STAKE_FOR_STAKED_ACCOUNT);
     assert!(filtered.len() <= new_limit);
-    for (_pubkey, (_stake, vote_account)) in filtered.as_ref().iter() {
+    for (_stake, vote_account) in filtered.as_ref().values() {
         assert!(
             vote_account
                 .vote_state_view()
@@ -522,16 +441,18 @@ fn test_clone_and_filter_for_vat_not_enough_lamports() {
         MAX_ALPENGLOW_VOTE_ACCOUNTS,
         MAX_ALPENGLOW_VOTE_ACCOUNTS,
         None,
+        MIN_STAKE_FOR_STAKED_ACCOUNT,
+        MAX_STAKE_FOR_STAKED_ACCOUNT,
         |index| {
             if index < entries_to_modify {
-                VAT_TO_BURN_PER_EPOCH - 1
+                DEFAULT_VAT_TO_BURN_PER_EPOCH - 1
             } else {
                 10_000_000_000
             }
         },
     );
-    let filtered =
-        vote_accounts.clone_and_filter_for_vat(MAX_ALPENGLOW_VOTE_ACCOUNTS, VAT_TO_BURN_PER_EPOCH);
+    let filtered = vote_accounts
+        .clone_and_filter_for_vat(MAX_ALPENGLOW_VOTE_ACCOUNTS, DEFAULT_VAT_TO_BURN_PER_EPOCH);
     assert!(filtered.len() <= MAX_ALPENGLOW_VOTE_ACCOUNTS - entries_to_modify);
 }
 
@@ -544,6 +465,8 @@ fn test_clone_and_filter_for_vat_empty_accounts() {
         current_limit,
         current_limit,
         Some(100), // Set all vote accounts to equal stake of 100.
+        MIN_STAKE_FOR_STAKED_ACCOUNT,
+        MAX_STAKE_FOR_STAKED_ACCOUNT,
         |_| 10_000_000_000,
     );
     // Since everyone has the same stake and the limit is 500 less than number of accounts,
@@ -551,4 +474,101 @@ fn test_clone_and_filter_for_vat_empty_accounts() {
     let filtered =
         vote_accounts.clone_and_filter_for_vat(current_limit - 500, MIN_STAKE_FOR_STAKED_ACCOUNT);
     assert_eq!(filtered.len(), 0);
+}
+
+#[test]
+fn test_vote_account_trailing_bytes_ignored() {
+    // Trailing bytes (zero and garbage) must not affect VoteAccount
+    // accessor results.
+    let mut rng = rand::rng();
+    let base_account = new_rand_vote_account(&mut rng, None, true);
+    let base_data = base_account.data().to_vec();
+
+    // With trailing zeros.
+    let mut data_zero = base_data.clone();
+    data_zero.extend_from_slice(&[0x00; 42]);
+    let mut acct_zero = AccountSharedData::new(
+        base_account.lamports(),
+        data_zero.len(),
+        base_account.owner(),
+    );
+    acct_zero.set_data_from_slice(&data_zero);
+    let va_zero = VoteAccount::try_from(acct_zero).unwrap();
+
+    // With trailing garbage.
+    let mut data_garbage = base_data.clone();
+    data_garbage.extend_from_slice(&[0xFF; 42]);
+    let mut acct_garbage = AccountSharedData::new(
+        base_account.lamports(),
+        data_garbage.len(),
+        base_account.owner(),
+    );
+    acct_garbage.set_data_from_slice(&data_garbage);
+    let va_garbage = VoteAccount::try_from(acct_garbage).unwrap();
+
+    // Both should return identical accessor values.
+    assert_eq!(va_zero.node_pubkey(), va_garbage.node_pubkey());
+}
+
+#[test]
+fn test_vote_account_v3_vs_v4_accessor_parity() {
+    // Same logical vote state in V3 and V4 should produce equivalent
+    // VoteAccount accessor results.
+    let node_pubkey = Pubkey::new_unique();
+    let authorized_voter = Pubkey::new_unique();
+    let authorized_withdrawer = Pubkey::new_unique();
+    let commission = 42u8;
+
+    // V3
+    let v3_state = solana_vote_interface::state::VoteStateV3::new(
+        &VoteInit {
+            node_pubkey,
+            authorized_voter,
+            authorized_withdrawer,
+            commission,
+        },
+        &solana_clock::Clock::default(),
+    );
+    let v3_versioned = VoteStateVersions::V3(Box::new(v3_state));
+    let v3_bytes = bincode::serialize(&v3_versioned).unwrap();
+    let mut v3_account = AccountSharedData::new(
+        10_000_000,
+        v3_bytes.len(),
+        &solana_vote_interface::program::id(),
+    );
+    v3_account.set_data_from_slice(&v3_bytes);
+    let va_v3 = VoteAccount::try_from(v3_account).unwrap();
+
+    // V4 (equivalent state via migration defaults).
+    let v4_state = VoteStateV4 {
+        node_pubkey,
+        authorized_voters: AuthorizedVoters::new(0, authorized_voter),
+        authorized_withdrawer,
+        inflation_rewards_commission_bps: commission as u16 * 100,
+        ..VoteStateV4::default()
+    };
+    let v4_versioned = VoteStateVersions::new_v4(v4_state);
+    let v4_bytes = bincode::serialize(&v4_versioned).unwrap();
+    let mut v4_account = AccountSharedData::new(
+        10_000_000,
+        v4_bytes.len(),
+        &solana_vote_interface::program::id(),
+    );
+    v4_account.set_data_from_slice(&v4_bytes);
+    let va_v4 = VoteAccount::try_from(v4_account).unwrap();
+
+    // Accessors should return equivalent values.
+    assert_eq!(va_v3.node_pubkey(), va_v4.node_pubkey());
+
+    let view_v3 = va_v3.vote_state_view();
+    let view_v4 = va_v4.vote_state_view();
+    assert_eq!(view_v3.commission(), view_v4.commission());
+    assert_eq!(view_v3.root_slot(), view_v4.root_slot());
+    assert_eq!(view_v3.last_voted_slot(), view_v4.last_voted_slot());
+    assert_eq!(view_v3.last_timestamp(), view_v4.last_timestamp());
+    assert_eq!(view_v3.num_epoch_credits(), view_v4.num_epoch_credits());
+    assert_eq!(
+        view_v3.get_authorized_voter(0),
+        view_v4.get_authorized_voter(0)
+    );
 }

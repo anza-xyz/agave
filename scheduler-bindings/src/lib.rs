@@ -2,7 +2,7 @@
 #![no_std]
 
 //! Messages passed between agave and an external pack process.
-//! Messages are passed via `shaq::Consumer/Producer`.
+//! Messages are passed via `shaq::spsc::Consumer/Producer`.
 //!
 //! Memory freeing is responsibility of the external pack process,
 //! and is done via `rts-alloc` crate. It is also possible the external
@@ -46,6 +46,16 @@
 //! - [`WorkerToPackMessage`] are sent from worker threads within agave
 //!   back to the external scheduler process. This passes back the results
 //!   of processing the transactions.
+//!
+//! Ownership and pointer lifetime rule:
+//! - Sending a message that contains offsets or pointers to memory transfers
+//!   ownership of that memory to the receiver for the lifetime defined by the
+//!   protocol.
+//! - The sender must treat that memory as not owned until ownership is
+//!   explicitly returned by a later message, if any. In particular, the sender
+//!   must not free or modify that memory while it is not owned.
+//! - If the protocol does not return the memory to the sender, the receiver is
+//!   responsible for freeing it.
 //!
 
 /// Reference to a transaction that can shared safely across processes.
@@ -173,6 +183,11 @@ pub struct ProgressMessage {
     /// - To check if within a leader slot: `leader_state != NOT_LEADER`.
     /// - To check if transactions can be processed: `leader_state == LEADER_READY`.
     pub leader_state: u8,
+    /// Progress through the current slot in percentage.
+    pub current_slot_progress: u8,
+    /// The current epoch of the working bank.
+    /// Only valid if `leader_state == LEADER_READY`, otherwise zeroed.
+    pub epoch: u64,
     /// The current slot.
     pub current_slot: u64,
     /// Next known leader slot or u64::MAX if unknown.
@@ -188,8 +203,9 @@ pub struct ProgressMessage {
     /// i.e. block_limit - current_cost_units_used.
     /// Only valid if currently leader, otherwise the value is undefined.
     pub remaining_cost_units: u64,
-    /// Progress through the current slot in percentage.
-    pub current_slot_progress: u8,
+    /// The latest blockhash of the working bank.
+    /// Only valid if `leader_state == LEADER_READY`, otherwise zeroed.
+    pub latest_blockhash: [u8; 32],
 }
 
 /// Maximum number of transactions allowed in a [`PackToWorkerMessage`].
@@ -452,6 +468,9 @@ pub mod worker_message_types {
         pub const ALREADY_PROCESSED: u8 = 1 << 3;
         /// Flag set if status checks failed due to an invalid nonce state.
         pub const INVALID_NONCE: u8 = 1 << 4;
+        /// Flag set if status checks failed due to unsupported version of
+        /// transaction was received.
+        pub const UNSUPPORTED_VERSION: u8 = 1 << 5;
     }
 
     pub mod fee_payer_balance_flags {

@@ -5,9 +5,7 @@
 // Export tokio for test clients
 pub use tokio;
 use {
-    agave_feature_set::{
-        FEATURE_NAMES, FeatureSet, increase_cpi_account_info_limit, raise_cpi_nesting_limit_to_8,
-    },
+    agave_feature_set::{FEATURE_NAMES, FeatureSet, raise_cpi_nesting_limit_to_8},
     async_trait::async_trait,
     base64::{Engine, prelude::BASE64_STANDARD},
     chrono_humanize::{Accuracy, HumanTime, Tense},
@@ -18,6 +16,7 @@ use {
     },
     solana_account_info::AccountInfo,
     solana_accounts_db::accounts_db::ACCOUNTS_DB_CONFIG_FOR_TESTING,
+    solana_address::Address,
     solana_banks_client::start_client,
     solana_banks_server::banks_server::start_local_server,
     solana_clock::{Clock, Epoch, Slot},
@@ -39,7 +38,7 @@ use {
     solana_program_entrypoint::{SUCCESS, deserialize},
     solana_program_error::{ProgramError, ProgramResult},
     solana_program_runtime::{
-        invoke_context::BuiltinFunctionWithContext, loaded_programs::ProgramCacheEntry,
+        invoke_context::BuiltinFunctionRegisterer, program_cache_entry::ProgramCacheEntry,
         serialization::serialize_parameters, stable_log, sysvar_cache::SysvarCache,
     },
     solana_pubkey::Pubkey,
@@ -53,7 +52,6 @@ use {
     },
     solana_signer::Signer,
     solana_svm_log_collector::ic_msg,
-    solana_svm_timings::ExecuteTimings,
     solana_sysvar::{SysvarSerialize, last_restart_slot::LastRestartSlot},
     solana_sysvar_id::SysvarId,
     solana_vote_program::vote_state::{VoteStateV4, VoteStateVersions},
@@ -82,7 +80,9 @@ pub use {
     solana_program_runtime::invoke_context::InvokeContext,
     solana_sbpf::{
         error::EbpfError,
-        vm::{EbpfVm, get_runtime_environment_key},
+        memory_region::MemoryMapping,
+        program::BuiltinFunctionDefinition,
+        vm::{EbpfVm, EncryptedHostAddressToEbpfVm, get_runtime_environment_key},
     },
     solana_transaction_context::IndexOfAccount,
 };
@@ -122,7 +122,7 @@ pub fn invoke_builtin_function(
     let instruction_account_indices = 0..instruction_context.get_number_of_instruction_accounts();
 
     // mock builtin program must consume units
-    invoke_context.consume_checked(1)?;
+    invoke_context.compute_meter.consume_checked(1)?;
 
     let log_collector = invoke_context.get_log_collector();
     let program_id = instruction_context.get_program_key()?;
@@ -135,12 +135,17 @@ pub fn invoke_builtin_function(
     // Copy indices_in_instruction into a HashSet to ensure there are no duplicates
     let deduplicated_indices: HashSet<IndexOfAccount> = instruction_account_indices.collect();
 
+    let direct_account_pointers_in_program_input = invoke_context
+        .get_feature_set()
+        .direct_account_pointers_in_program_input;
+
     // Serialize entrypoint parameters with SBF ABI
     let (mut parameter_bytes, _regions, _account_lengths, _instruction_data_offset) =
         serialize_parameters(
             &instruction_context,
-            false, // There is no VM so stricter_abi_and_runtime_constraints can not be implemented here
+            false, // There is no VM so virtual_address_space_adjustments can not be implemented here
             false, // There is no VM so account_data_direct_mapping can not be implemented here
+            direct_account_pointers_in_program_input,
         )?;
 
     // Deserialize data back into instruction params
@@ -180,21 +185,21 @@ pub fn invoke_builtin_function(
     // Commit AccountInfo changes back into KeyedAccounts
     for i in deduplicated_indices.into_iter() {
         let mut borrowed_account = instruction_context.try_borrow_instruction_account(i)?;
-        if borrowed_account.is_writable() {
-            if let Some(account_info) = account_info_map.get(borrowed_account.get_key()) {
-                if borrowed_account.get_lamports() != account_info.lamports() {
-                    borrowed_account.set_lamports(account_info.lamports())?;
-                }
+        if borrowed_account.is_writable()
+            && let Some(account_info) = account_info_map.get(borrowed_account.get_key())
+        {
+            if borrowed_account.get_lamports() != account_info.lamports() {
+                borrowed_account.set_lamports(account_info.lamports())?;
+            }
 
-                if borrowed_account
-                    .can_data_be_resized(account_info.data_len())
-                    .is_ok()
-                {
-                    borrowed_account.set_data_from_slice(&account_info.data.borrow())?;
-                }
-                if borrowed_account.get_owner() != account_info.owner {
-                    borrowed_account.set_owner(account_info.owner.as_ref())?;
-                }
+            if borrowed_account
+                .can_data_be_resized(account_info.data_len())
+                .is_ok()
+            {
+                borrowed_account.set_data_from_slice(&account_info.data.borrow())?;
+            }
+            if borrowed_account.get_owner() != account_info.owner {
+                borrowed_account.set_owner(account_info.owner.as_ref())?;
             }
         }
     }
@@ -206,18 +211,40 @@ pub fn invoke_builtin_function(
 /// use with `ProgramTest::add_program`
 #[macro_export]
 macro_rules! processor {
-    ($builtin_function:expr) => {
-        Some(|vm, _arg0, _arg1, _arg2, _arg3, _arg4| {
-            let vm = unsafe {
-                &mut *((vm as *mut u64).offset(-($crate::get_runtime_environment_key() as isize))
-                    as *mut $crate::EbpfVm<$crate::InvokeContext>)
-            };
-            vm.program_result =
-                $crate::invoke_builtin_function($builtin_function, vm.context_object_pointer)
-                    .map_err(|err| $crate::EbpfError::SyscallError(err))
-                    .into();
-        })
-    };
+    ($builtin_function:expr) => {{
+        struct Converter;
+        impl $crate::BuiltinFunctionDefinition<$crate::InvokeContext<'_, '_>> for Converter {
+            type Error = Box<dyn std::error::Error>;
+            fn rust(
+                _: &mut $crate::InvokeContext<'_, '_>,
+                _: u64,
+                _: u64,
+                _: u64,
+                _: u64,
+                _: u64,
+            ) -> Result<u64, Box<dyn std::error::Error>> {
+                unreachable!()
+            }
+            fn vm(
+                mut vm: $crate::EncryptedHostAddressToEbpfVm<$crate::InvokeContext>,
+                _: u64,
+                _: u64,
+                _: u64,
+                _: u64,
+                _: u64,
+            ) {
+                unsafe {
+                    vm.with_vm(|vm| {
+                        vm.program_result =
+                            $crate::invoke_builtin_function($builtin_function, vm.context())
+                                .map_err(|err| $crate::EbpfError::SyscallError(err))
+                                .into();
+                    });
+                }
+            }
+        };
+        Some(<Converter as $crate::BuiltinFunctionDefinition<_>>::register)
+    }};
 }
 
 fn get_sysvar<T: Default + SysvarSerialize + Sized + serde::de::DeserializeOwned + Clone>(
@@ -226,6 +253,7 @@ fn get_sysvar<T: Default + SysvarSerialize + Sized + serde::de::DeserializeOwned
 ) -> u64 {
     let invoke_context = get_invoke_context();
     if invoke_context
+        .compute_meter
         .consume_checked(invoke_context.get_execution_cost().sysvar_base_cost + T::size_of() as u64)
         .is_err()
     {
@@ -239,6 +267,54 @@ fn get_sysvar<T: Default + SysvarSerialize + Sized + serde::de::DeserializeOwned
         },
         Err(_) => UNSUPPORTED_SYSVAR,
     }
+}
+
+/// Calls the native program-test stub for the legacy clock sysvar syscall.
+pub fn sol_get_clock_sysvar(var_addr: *mut u8) -> u64 {
+    <SyscallStubs as solana_sysvar::program_stubs::SyscallStubs>::sol_get_clock_sysvar(
+        &SyscallStubs {},
+        var_addr,
+    )
+}
+
+/// Calls the native program-test stub for the legacy epoch schedule sysvar syscall.
+pub fn sol_get_epoch_schedule_sysvar(var_addr: *mut u8) -> u64 {
+    <SyscallStubs as solana_sysvar::program_stubs::SyscallStubs>::sol_get_epoch_schedule_sysvar(
+        &SyscallStubs {},
+        var_addr,
+    )
+}
+
+/// Calls the native program-test stub for the legacy epoch rewards sysvar syscall.
+pub fn sol_get_epoch_rewards_sysvar(var_addr: *mut u8) -> u64 {
+    <SyscallStubs as solana_sysvar::program_stubs::SyscallStubs>::sol_get_epoch_rewards_sysvar(
+        &SyscallStubs {},
+        var_addr,
+    )
+}
+
+/// Calls the native program-test stub for the legacy fees sysvar syscall.
+pub fn sol_get_fees_sysvar(var_addr: *mut u8) -> u64 {
+    <SyscallStubs as solana_sysvar::program_stubs::SyscallStubs>::sol_get_fees_sysvar(
+        &SyscallStubs {},
+        var_addr,
+    )
+}
+
+/// Calls the native program-test stub for the legacy rent sysvar syscall.
+pub fn sol_get_rent_sysvar(var_addr: *mut u8) -> u64 {
+    <SyscallStubs as solana_sysvar::program_stubs::SyscallStubs>::sol_get_rent_sysvar(
+        &SyscallStubs {},
+        var_addr,
+    )
+}
+
+/// Calls the native program-test stub for the legacy last restart slot syscall.
+pub fn sol_get_last_restart_slot(var_addr: *mut u8) -> u64 {
+    <SyscallStubs as solana_sysvar::program_stubs::SyscallStubs>::sol_get_last_restart_slot(
+        &SyscallStubs {},
+        var_addr,
+    )
 }
 
 struct SyscallStubs {}
@@ -264,6 +340,7 @@ impl SyscallStubs {
         let sysvar_buf_cost = length.checked_div(cpi_bytes_per_unit).unwrap_or(0);
 
         if invoke_context
+            .compute_meter
             .consume_checked(
                 sysvar_base_cost
                     .saturating_add(sysvar_id_cost)
@@ -275,7 +352,7 @@ impl SyscallStubs {
         }
 
         // Fetch the sysvar from the cache.
-        let Ok(sysvar) = fetch(get_invoke_context().get_sysvar_cache()) else {
+        let Ok(sysvar) = fetch(get_invoke_context().environment_config.sysvar_cache()) else {
             return UNSUPPORTED_SYSVAR;
         };
 
@@ -318,11 +395,6 @@ impl solana_sysvar::program_stubs::SyscallStubs for SyscallStubs {
     ) -> ProgramResult {
         let invoke_context = get_invoke_context();
         let log_collector = invoke_context.get_log_collector();
-        let transaction_context = &invoke_context.transaction_context;
-        let instruction_context = transaction_context
-            .get_current_instruction_context()
-            .unwrap();
-        let caller = instruction_context.get_program_key().unwrap();
 
         stable_log::program_invoke(
             &log_collector,
@@ -330,35 +402,28 @@ impl solana_sysvar::program_stubs::SyscallStubs for SyscallStubs {
             invoke_context.get_stack_height(),
         );
 
-        let signers = signers_seeds
-            .iter()
-            .map(|seeds| Pubkey::create_program_address(seeds, caller).unwrap())
-            .collect::<Vec<_>>();
-
-        invoke_context
-            .prepare_next_cpi_instruction(instruction.clone(), &signers)
-            .unwrap();
-
-        // Copy caller's account_info modifications into invoke_context accounts
+        // Copy the caller's account_info modifications into the invoke context's
+        // accounts so the callee can see them. The set of accounts participating
+        // in the CPI is derived from the instruction's metas, mirroring what
+        // `native_invoke_signed` prepares internally.
         let transaction_context = &invoke_context.transaction_context;
         let instruction_context = transaction_context
             .get_current_instruction_context()
             .unwrap();
-        let next_instruction_context = transaction_context.get_next_instruction_context().unwrap();
-        let next_instruction_accounts = next_instruction_context.instruction_accounts();
-        let mut account_indices = Vec::with_capacity(next_instruction_accounts.len());
-        for instruction_account in next_instruction_accounts.iter() {
-            let account_key = transaction_context
-                .get_key_of_account_at_index(instruction_account.index_in_transaction)
+        let mut account_indices = Vec::with_capacity(instruction.accounts.len());
+        for account_meta in instruction.accounts.iter() {
+            let index_in_transaction = transaction_context
+                .find_index_of_account(&account_meta.pubkey)
+                .ok_or(InstructionError::MissingAccount)
                 .unwrap();
             let account_info_index = account_infos
                 .iter()
-                .position(|account_info| account_info.unsigned_key() == account_key)
+                .position(|account_info| account_info.unsigned_key() == &account_meta.pubkey)
                 .ok_or(InstructionError::MissingAccount)
                 .unwrap();
             let account_info = &account_infos[account_info_index];
             let index_in_caller = instruction_context
-                .get_index_of_account_in_instruction(instruction_account.index_in_transaction)
+                .get_index_of_account_in_instruction(index_in_transaction)
                 .unwrap();
             let mut borrowed_account = instruction_context
                 .try_borrow_instruction_account(index_in_caller)
@@ -385,15 +450,13 @@ impl solana_sysvar::program_stubs::SyscallStubs for SyscallStubs {
                     .set_owner(account_info.owner.as_ref())
                     .unwrap();
             }
-            if instruction_account.is_writable() {
-                account_indices
-                    .push((instruction_account.index_in_transaction, account_info_index));
+            if account_meta.is_writable {
+                account_indices.push((index_in_transaction, account_info_index));
             }
         }
 
-        let mut compute_units_consumed = 0;
         invoke_context
-            .process_instruction(&mut compute_units_consumed, &mut ExecuteTimings::default())
+            .native_invoke_signed(instruction.clone(), signers_seeds)
             .map_err(|err| ProgramError::try_from(err).unwrap_or_else(|err| panic!("{}", err)))?;
 
         // Copy invoke_context accounts modifications into caller's account_info
@@ -438,38 +501,60 @@ impl solana_sysvar::program_stubs::SyscallStubs for SyscallStubs {
 
     fn sol_get_clock_sysvar(&self, var_addr: *mut u8) -> u64 {
         get_sysvar(
-            get_invoke_context().get_sysvar_cache().get_clock(),
+            get_invoke_context()
+                .environment_config
+                .sysvar_cache()
+                .get_clock(),
             var_addr,
         )
     }
 
     fn sol_get_epoch_schedule_sysvar(&self, var_addr: *mut u8) -> u64 {
         get_sysvar(
-            get_invoke_context().get_sysvar_cache().get_epoch_schedule(),
+            get_invoke_context()
+                .environment_config
+                .sysvar_cache()
+                .get_epoch_schedule(),
             var_addr,
         )
     }
 
     fn sol_get_epoch_rewards_sysvar(&self, var_addr: *mut u8) -> u64 {
         get_sysvar(
-            get_invoke_context().get_sysvar_cache().get_epoch_rewards(),
+            get_invoke_context()
+                .environment_config
+                .sysvar_cache()
+                .get_epoch_rewards(),
             var_addr,
         )
     }
 
     #[allow(deprecated)]
     fn sol_get_fees_sysvar(&self, var_addr: *mut u8) -> u64 {
-        get_sysvar(get_invoke_context().get_sysvar_cache().get_fees(), var_addr)
+        get_sysvar(
+            get_invoke_context()
+                .environment_config
+                .sysvar_cache()
+                .get_fees(),
+            var_addr,
+        )
     }
 
     fn sol_get_rent_sysvar(&self, var_addr: *mut u8) -> u64 {
-        get_sysvar(get_invoke_context().get_sysvar_cache().get_rent(), var_addr)
+        get_sysvar(
+            get_invoke_context()
+                .environment_config
+                .sysvar_cache()
+                .get_rent(),
+            var_addr,
+        )
     }
 
     fn sol_get_last_restart_slot(&self, var_addr: *mut u8) -> u64 {
         get_sysvar(
             get_invoke_context()
-                .get_sysvar_cache()
+                .environment_config
+                .sysvar_cache()
                 .get_last_restart_slot(),
             var_addr,
         )
@@ -629,10 +714,10 @@ impl ProgramTest {
     pub fn new(
         program_name: &'static str,
         program_id: Pubkey,
-        builtin_function: Option<BuiltinFunctionWithContext>,
+        builtin: Option<BuiltinFunctionRegisterer>,
     ) -> Self {
         let mut me = Self::default();
-        me.add_program(program_name, program_id, builtin_function);
+        me.add_program(program_name, program_id, builtin);
         me
     }
 
@@ -756,7 +841,7 @@ impl ProgramTest {
         &mut self,
         program_name: &'static str,
         program_id: Pubkey,
-        builtin_function: Option<BuiltinFunctionWithContext>,
+        builtin_function: Option<BuiltinFunctionRegisterer>,
     ) {
         let add_bpf = |this: &mut ProgramTest, program_file: PathBuf| {
             let data = read_file(&program_file);
@@ -860,13 +945,13 @@ impl ProgramTest {
         &mut self,
         program_name: &'static str,
         program_id: Pubkey,
-        builtin_function: BuiltinFunctionWithContext,
+        builtin: BuiltinFunctionRegisterer,
     ) {
         info!("\"{program_name}\" builtin program");
         self.builtin_programs.push((
             program_id,
             program_name,
-            ProgramCacheEntry::new_builtin(0, program_name.len(), builtin_function),
+            ProgramCacheEntry::new_builtin(0, program_name.len(), builtin),
         ));
     }
 
@@ -950,9 +1035,6 @@ impl ProgramTest {
                         genesis_config
                             .accounts
                             .contains_key(&raise_cpi_nesting_limit_to_8::id()),
-                        genesis_config
-                            .accounts
-                            .contains_key(&increase_cpi_account_info_limit::id()),
                     )
                 }),
                 transaction_account_lock_limit: self.transaction_account_lock_limit,
@@ -996,17 +1078,21 @@ impl ProgramTest {
             bank.store_account(address, account);
         }
         bank.set_capitalization_for_tests(bank.calculate_capitalization_for_tests());
-        // Advance beyond slot 0 for a slightly more realistic test environment
-        let bank = {
-            let bank = Arc::new(bank);
-            bank.fill_bank_with_ticks_for_tests();
-            let bank = Bank::new_from_parent(bank.clone(), bank.leader_id(), bank.slot() + 1);
-            debug!("Bank slot: {}", bank.slot());
-            bank
-        };
-        let slot = bank.slot();
-        let last_blockhash = bank.last_blockhash();
+        // Advance beyond slot 0 for a slightly more realistic test environment.
+        // Create BankForks from the genesis bank first so fork_graph is set before creating
+        // the child bank (required for ProgramCache::extract in new_from_parent).
+        bank.fill_bank_with_ticks_for_tests();
         let bank_forks = BankForks::new_rw_arc(bank);
+        let bank0 = bank_forks.read().unwrap().root_bank();
+        let bank1 = Bank::new_from_parent(bank0.clone(), *bank0.leader(), bank0.slot() + 1);
+        let bank1 = {
+            let mut bf = bank_forks.write().unwrap();
+            bf.insert(bank1);
+            bf.working_bank()
+        };
+        debug!("Bank slot: {}", bank1.slot());
+        let slot = bank1.slot();
+        let last_blockhash = bank1.last_blockhash();
         let block_commitment_cache = Arc::new(RwLock::new(
             BlockCommitmentCache::new_for_tests_with_slots(slot, slot),
         ));
@@ -1190,6 +1276,15 @@ impl ProgramTestContext {
         &self.genesis_config
     }
 
+    pub fn is_active(&self, feature: &Address) -> bool {
+        self.bank_forks
+            .read()
+            .unwrap()
+            .root_bank()
+            .feature_set
+            .is_active(feature)
+    }
+
     /// Manually increment vote credits for the current epoch in the specified vote account to simulate validator voting activity
     pub fn increment_vote_account_credits(
         &mut self,
@@ -1272,8 +1367,8 @@ impl ProgramTestContext {
 
     /// Force the working bank ahead to a new slot
     pub fn warp_to_slot(&mut self, warp_slot: Slot) -> Result<(), ProgramTestError> {
-        let mut bank_forks = self.bank_forks.write().unwrap();
-        let bank = bank_forks.working_bank();
+        let bank = self.bank_forks.read().unwrap().working_bank();
+        let leader = *bank.leader();
 
         // Fill ticks until a new blockhash is recorded, otherwise retried transactions will have
         // the same signature
@@ -1293,27 +1388,23 @@ impl ProgramTestContext {
             bank.freeze();
             bank
         } else {
-            bank_forks
-                .insert(Bank::warp_from_parent(
-                    bank,
-                    &Pubkey::default(),
-                    pre_warp_slot,
-                ))
+            let warped = Bank::warp_from_parent(bank, leader, pre_warp_slot);
+            self.bank_forks
+                .write()
+                .unwrap()
+                .insert(warped)
                 .clone_without_scheduler()
         };
 
-        bank_forks.set_root(
+        self.bank_forks.write().unwrap().set_root(
             pre_warp_slot,
             None, // snapshots are disabled
             Some(pre_warp_slot),
         );
 
         // warp_bank is frozen so go forward to get unfrozen bank at warp_slot
-        bank_forks.insert(Bank::new_from_parent(
-            warp_bank,
-            &Pubkey::default(),
-            warp_slot,
-        ));
+        let bank_at_warp_slot = Bank::new_from_parent(warp_bank, leader, warp_slot);
+        self.bank_forks.write().unwrap().insert(bank_at_warp_slot);
 
         // Update block commitment cache, otherwise banks server will poll at
         // the wrong slot
@@ -1324,7 +1415,7 @@ impl ProgramTestContext {
         // bank.
         w_block_commitment_cache.set_all_slots(warp_slot, warp_slot);
 
-        let bank = bank_forks.working_bank();
+        let bank = self.bank_forks.read().unwrap().working_bank();
         self.last_blockhash = bank.last_blockhash();
         Ok(())
     }
@@ -1339,15 +1430,15 @@ impl ProgramTestContext {
 
     /// warp forward one more slot and force reward interval end
     pub fn warp_forward_force_reward_interval_end(&mut self) -> Result<(), ProgramTestError> {
-        let mut bank_forks = self.bank_forks.write().unwrap();
-        let bank = bank_forks.working_bank();
+        let bank = self.bank_forks.read().unwrap().working_bank();
+        let leader = *bank.leader();
 
         // Fill ticks until a new blockhash is recorded, otherwise retried transactions will have
         // the same signature
         bank.fill_bank_with_ticks_for_tests();
         let pre_warp_slot = bank.slot();
 
-        bank_forks.set_root(
+        self.bank_forks.write().unwrap().set_root(
             pre_warp_slot,
             None, // snapshot_controller
             Some(pre_warp_slot),
@@ -1355,10 +1446,10 @@ impl ProgramTestContext {
 
         // warp_bank is frozen so go forward to get unfrozen bank at warp_slot
         let warp_slot = pre_warp_slot + 1;
-        let mut warp_bank = Bank::new_from_parent(bank, &Pubkey::default(), warp_slot);
+        let mut warp_bank = Bank::new_from_parent(bank, leader, warp_slot);
 
         warp_bank.force_reward_interval_end_for_tests();
-        bank_forks.insert(warp_bank);
+        self.bank_forks.write().unwrap().insert(warp_bank);
 
         // Update block commitment cache, otherwise banks server will poll at
         // the wrong slot
@@ -1369,7 +1460,7 @@ impl ProgramTestContext {
         // bank.
         w_block_commitment_cache.set_all_slots(warp_slot, warp_slot);
 
-        let bank = bank_forks.working_bank();
+        let bank = self.bank_forks.read().unwrap().working_bank();
         self.last_blockhash = bank.last_blockhash();
         Ok(())
     }

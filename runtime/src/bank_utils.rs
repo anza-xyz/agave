@@ -1,5 +1,5 @@
 use {
-    crate::vote_sender_types::ReplayVoteSender,
+    crate::vote_sender_types::{ReplayVoteMessage, ReplayVoteSendType, ReplayVoteSender},
     solana_runtime_transaction::transaction_with_meta::TransactionWithMeta,
     solana_svm::transaction_commit_result::{
         TransactionCommitResult, TransactionCommitResultExtensions,
@@ -44,18 +44,33 @@ pub fn find_and_send_votes(
     sanitized_txs: &[impl TransactionWithMeta],
     commit_results: &[TransactionCommitResult],
     vote_sender: Option<&ReplayVoteSender>,
+    send_type: ReplayVoteSendType,
 ) {
     if let Some(vote_sender) = vote_sender {
         sanitized_txs
             .iter()
             .zip(commit_results.iter())
             .for_each(|(tx, commit_result)| {
-                if tx.is_simple_vote_transaction() && commit_result.was_executed_successfully() {
-                    if let Some(parsed_vote) = vote_parser::parse_sanitized_vote_transaction(tx) {
-                        if parsed_vote.1.last_voted_slot().is_some() {
-                            let _ = vote_sender.send(parsed_vote);
+                if tx.is_simple_vote_transaction()
+                    && commit_result.was_executed_successfully()
+                    && let Some(parsed_vote) = vote_parser::parse_sanitized_vote_transaction(tx)
+                    && parsed_vote.1.last_voted_slot().is_some()
+                {
+                    let vote = match send_type {
+                        ReplayVoteSendType::VerifiedExecuted => {
+                            ReplayVoteMessage::VerifiedExecuted(parsed_vote)
                         }
-                    }
+                        ReplayVoteSendType::Executed {
+                            replay_bank_id,
+                            replay_slot,
+                        } => ReplayVoteMessage::Executed {
+                            replay_bank_id,
+                            replay_slot,
+                            message_hash: *tx.message_hash(),
+                            parsed_vote,
+                        },
+                    };
+                    let _ = vote_sender.send(vote);
                 }
             });
     }

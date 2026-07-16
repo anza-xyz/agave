@@ -22,6 +22,8 @@ source "$here"/common.sh
 
 _ cargo nextest run \
   --profile ci \
+  --cargo-profile ci \
+  --features solana-gossip/small-cluster-gossip \
   --package solana-local-cluster \
   --test local_cluster \
   --partition hash:"$CURRENT/$TOTAL" \

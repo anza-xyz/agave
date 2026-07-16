@@ -15,7 +15,7 @@ use {
 // In our u16 encoding scheme, 12 would be encoded as a single byte.
 // Rather than using the u16 decoding, we can simply read the byte and
 // verify that the MSB is not set.
-const MAX_SIGNATURES_PER_PACKET: u8 =
+pub(crate) const MAX_SIGNATURES_PER_PACKET: u8 =
     (PACKET_DATA_SIZE / (core::mem::size_of::<Signature>() + core::mem::size_of::<Pubkey>())) as u8;
 
 /// Metadata for accessing transaction-level signatures in a transaction view.

@@ -1,4 +1,4 @@
-name: crate-check
+name: Crate Check
 
 on:
   push:
@@ -15,10 +15,10 @@ on:
 jobs:
   check:
     name: crate check
-    if: github.repository == 'anza-xyz/agave'
+    if: github.repository_owner == 'anza-xyz'
     runs-on: ubuntu-22.04
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0  # v7.0.0
         with:
           fetch-depth: 0
 
@@ -45,11 +45,3 @@ jobs:
 
       - run: |
           ci/check-crates.sh
-
-  error_reporting:
-    needs:
-      - check
-    if: failure() && github.event_name == 'push'
-    uses: ./.github/workflows/error-reporting.yml
-    secrets:
-      WEBHOOK: ${{ secrets.SLACK_ERROR_REPORTING_WEBHOOK }}

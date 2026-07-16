@@ -2,12 +2,9 @@
 #![cfg_attr(feature = "frozen-abi", feature(min_specialization))]
 pub mod data_budget;
 pub mod deduper;
-pub mod discard;
 pub mod packet;
-pub mod perf_libs;
 pub mod recycled_vec;
 pub mod recycler;
-pub mod recycler_cache;
 pub mod sigverify;
 #[cfg(feature = "dev-context-only-utils")]
 pub mod test_tx;
@@ -17,7 +14,6 @@ pub mod thread;
 extern crate log;
 
 #[cfg(test)]
-#[macro_use]
 extern crate assert_matches;
 
 #[macro_use]

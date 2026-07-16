@@ -8,12 +8,16 @@ use {
     rand_chacha::{ChaChaRng, rand_core::SeedableRng},
     solana_clock::Epoch,
     solana_pubkey::Pubkey,
-    std::sync::Arc,
+    std::{iter, num::NonZeroUsize, sync::Arc},
 };
 
 mod vote_keyed;
 /// Stake-weighted leader schedule for one epoch.
 pub use vote_keyed::LeaderSchedule;
+
+/// Number of consecutive slots assigned to the same leader before the schedule
+/// advances to the next validator.
+pub const NUM_CONSECUTIVE_LEADER_SLOTS: NonZeroUsize = NonZeroUsize::new(4).unwrap();
 
 #[derive(Copy, Clone, Default, Debug, PartialEq, Eq)]
 pub struct SlotLeader {
@@ -40,9 +44,10 @@ pub struct FixedSchedule {
 fn stake_weighted_slot_leaders(
     mut slot_leader_stakes: Vec<(SlotLeader, u64)>,
     epoch: Epoch,
-    len: u64,
-    repeat: u64,
+    len: usize,
+    repeat: NonZeroUsize,
 ) -> Vec<SlotLeader> {
+    let repeat = repeat.get();
     debug_assert!(
         len.is_multiple_of(repeat),
         "expected `len` {len} to be divisible by `repeat` {repeat}"
@@ -53,14 +58,8 @@ fn stake_weighted_slot_leaders(
     let mut seed = [0u8; 32];
     seed[0..8].copy_from_slice(&epoch.to_le_bytes());
     let rng = &mut ChaChaRng::from_seed(seed);
-    let mut current_slot_leader = SlotLeader::default();
-    (0..len)
-        .map(|i| {
-            if i % repeat == 0 {
-                current_slot_leader = slot_leaders[weighted_index.sample(rng)];
-            }
-            current_slot_leader
-        })
+    iter::repeat_with(|| slot_leaders[weighted_index.sample(rng)])
+        .take(len / repeat)
         .collect()
 }
 
@@ -87,6 +86,9 @@ fn sort_stakes(stakes: &mut Vec<(SlotLeader, u64)>) {
 mod tests {
     use {super::*, itertools::Itertools, rand::Rng, std::iter::repeat_with, test_case::test_case};
 
+    const NZ_1: NonZeroUsize = NonZeroUsize::new(1).unwrap();
+    const NZ_2: NonZeroUsize = NonZeroUsize::new(2).unwrap();
+
     #[test]
     fn test_get_leader_upcoming_slots() {
         const NUM_SLOTS: usize = 97;
@@ -95,7 +97,7 @@ mod tests {
         let schedule: Vec<_> = repeat_with(|| unique_leaders[rng.random_range(0..3)])
             .take(19)
             .collect();
-        let schedule = LeaderSchedule::new_from_schedule(schedule);
+        let schedule = LeaderSchedule::new_from_schedule(schedule, NZ_1);
         let leaders = (0..NUM_SLOTS)
             .map(|i| (schedule[i as u64].id, i))
             .into_group_map();
@@ -151,32 +153,32 @@ mod tests {
         Pubkey::new_from_array(bytes)
     }
 
-    #[test_case(1, &[10, 20, 30], 12, 1, &[1, 1, 2, 1, 1, 0, 0, 1, 2, 1, 0, 1])]
-    #[test_case(1, &[10, 20, 30], 12, 2, &[1, 1, 1, 1, 2, 2, 1, 1, 1, 1, 0, 0])]
-    #[test_case(1, &[30, 10, 20], 12, 1, &[2, 2, 0, 2, 2, 1, 1, 2, 0, 2, 1, 2])]
-    #[test_case(1, &[30, 10, 20], 12, 2, &[2, 2, 2, 2, 0, 0, 2, 2, 2, 2, 1,1])]
-    #[test_case(1, &[10, 20, 25, 30], 12, 1, &[2, 2, 3, 1, 2, 0, 1, 1, 3, 2, 1, 2])]
-    #[test_case(1, &[10, 20, 25, 30, 35, 40, 100], 15, 1,
+    #[test_case(1, &[10, 20, 30], 12, NZ_1, &[1, 1, 2, 1, 1, 0, 0, 1, 2, 1, 0, 1])]
+    #[test_case(1, &[10, 20, 30], 12, NZ_2, &[1, 1, 2, 1, 1, 0])]
+    #[test_case(1, &[30, 10, 20], 12, NZ_1, &[2, 2, 0, 2, 2, 1, 1, 2, 0, 2, 1, 2])]
+    #[test_case(1, &[30, 10, 20], 12, NZ_2, &[2, 2, 0, 2, 2, 1])]
+    #[test_case(1, &[10, 20, 25, 30], 12, NZ_1, &[2, 2, 3, 1, 2, 0, 1, 1, 3, 2, 1, 2])]
+    #[test_case(1, &[10, 20, 25, 30, 35, 40, 100], 15, NZ_1,
                 &[4, 5, 6, 3, 4, 1, 2, 3, 6, 4, 2, 4, 5, 6, 6])]
-    #[test_case(1, &[10, 20, 25, 30, 35, 40, 100, 1000], 15, 1,
+    #[test_case(1, &[10, 20, 25, 30, 35, 40, 100, 1000], 15, NZ_1,
                 &[7, 7, 7, 7, 7, 4, 6, 7, 7, 7, 6, 7, 7, 7, 7])]
-    #[test_case(1, &[10, 20, 25, 30, 35, 40, 100, 1000, 10_000], 20, 1,
+    #[test_case(1, &[10, 20, 25, 30, 35, 40, 100, 1000, 10_000], 20, NZ_1,
                 &[8, 8, 8, 8, 8, 7, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 7])]
-    #[test_case(1, &[10, 20, 25, 30, 35, 40, 100, 1000, 10_000], 25, 1,
+    #[test_case(1, &[10, 20, 25, 30, 35, 40, 100, 1000, 10_000], 25, NZ_1,
                 &[8, 8, 8, 8, 8, 7, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 7, 8, 8, 8, 8, 8])]
-    #[test_case(457468, &[10, 20, 30], 12, 1, &[2, 2, 0, 1, 0, 2, 1, 2, 1, 2, 2, 2])]
-    #[test_case(457468, &[10, 20, 30], 12, 2, &[2, 2, 2, 2, 0, 0, 1, 1, 0, 0, 2, 2])]
-    #[test_case(457469, &[10, 20, 30], 12, 1, &[1, 2, 2, 2, 2, 2, 2, 1, 0, 2, 2, 0])]
-    #[test_case(457470, &[10, 20, 30], 12, 1, &[2, 1, 1, 1, 1, 1, 1, 1, 1, 2, 0, 2])]
-    #[test_case(3466545, &[10, 20, 30], 12, 1, &[2, 2, 0, 0, 2, 1, 1, 1, 0, 0, 2, 2])]
-    #[test_case(3466545, &[10, 20, 30], 13, 1, &[2, 2, 0, 0, 2, 1, 1, 1, 0, 0, 2, 2, 1])]
-    #[test_case(3466545, &[10, 20, 30], 14, 1, &[2, 2, 0, 0, 2, 1, 1, 1, 0, 0, 2, 2, 1, 2])]
-    #[test_case(3466545, &[10, 20, 30], 14, 2, &[2, 2, 2, 2, 0, 0, 0, 0, 2, 2, 1, 1, 1, 1])]
+    #[test_case(457468, &[10, 20, 30], 12, NZ_1, &[2, 2, 0, 1, 0, 2, 1, 2, 1, 2, 2, 2])]
+    #[test_case(457468, &[10, 20, 30], 12, NZ_2, &[2, 2, 0, 1, 0, 2])]
+    #[test_case(457469, &[10, 20, 30], 12, NZ_1, &[1, 2, 2, 2, 2, 2, 2, 1, 0, 2, 2, 0])]
+    #[test_case(457470, &[10, 20, 30], 12, NZ_1, &[2, 1, 1, 1, 1, 1, 1, 1, 1, 2, 0, 2])]
+    #[test_case(3466545, &[10, 20, 30], 12, NZ_1, &[2, 2, 0, 0, 2, 1, 1, 1, 0, 0, 2, 2])]
+    #[test_case(3466545, &[10, 20, 30], 13, NZ_1, &[2, 2, 0, 0, 2, 1, 1, 1, 0, 0, 2, 2, 1])]
+    #[test_case(3466545, &[10, 20, 30], 14, NZ_1, &[2, 2, 0, 0, 2, 1, 1, 1, 0, 0, 2, 2, 1, 2])]
+    #[test_case(3466545, &[10, 20, 30], 14, NZ_2, &[2, 2, 0, 0, 2, 1, 1])]
     fn test_stake_leader_schedule_exact_order(
         epoch: u64,
         stakes: &[u64],
-        len: u64,
-        repeat: u64,
+        len: usize,
+        repeat: NonZeroUsize,
         expected_order: &[usize],
     ) {
         let slot_leaders: Vec<_> = (0..stakes.len() as u16)
@@ -218,17 +220,20 @@ mod tests {
     #[test_case(454357, 10_000, 3, "E9XL5BLhCJ4Emyfs8jTUsQetfA8QZj78LcnN63dPp7jJ")]
     fn test_long_leader_schedule_hashed(
         epoch: Epoch,
-        len: u64,
+        len: usize,
         stake_pow: u32,
         expected_hash: &str,
     ) {
         fn hash_slot_leader_vote_addresses(v: &[SlotLeader]) -> String {
-            use sha2::{Digest, Sha256};
+            use solana_sha256_hasher::Hasher;
 
-            let hasher = v.iter().fold(Sha256::new(), |hasher, slot_leader| {
-                hasher.chain_update(slot_leader.vote_address.to_bytes())
-            });
-            bs58::encode(hasher.finalize()).into_string()
+            let mut hasher = Hasher::default();
+
+            for slot_leader in v {
+                hasher.hash(&slot_leader.vote_address.to_bytes());
+            }
+
+            hasher.result().to_string()
         }
         let slot_leaders: Vec<_> = (0..=u16::MAX)
             .map(|seed| SlotLeader {
@@ -242,7 +247,7 @@ mod tests {
             .enumerate()
             .map(|(i, slot_leader)| (slot_leader, i.pow(stake_pow) as u64))
             .collect();
-        let schedule = stake_weighted_slot_leaders(stakes, epoch, len, 1);
+        let schedule = stake_weighted_slot_leaders(stakes, epoch, len, NZ_1);
         assert_eq!(hash_slot_leader_vote_addresses(&schedule), expected_hash);
     }
 
@@ -262,7 +267,7 @@ mod tests {
             vec![(SlotLeader::new_unique(), 0), (SlotLeader::new_unique(), 0)],
             0,
             5,
-            1,
+            NZ_1,
         );
     }
 }

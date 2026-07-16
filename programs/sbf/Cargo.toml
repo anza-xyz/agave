@@ -20,7 +20,6 @@ members = [
     "rust/alloc",
     "rust/alt_bn128",
     "rust/alt_bn128_compression",
-    "rust/big_mod_exp",
     "rust/call_args",
     "rust/call_depth",
     "rust/caller_access",
@@ -28,11 +27,11 @@ members = [
     "rust/custom_heap",
     "rust/dep_crate",
     "rust/deprecated_loader",
+    "rust/direct_account_pointers_in_program_input",
     "rust/divide_by_zero",
     "rust/dup_accounts",
     "rust/error_handling",
     "rust/external_spend",
-    "rust/get_minimum_delegation",
     "rust/inner_instruction_alignment_check",
     "rust/instruction_introspection",
     "rust/invoke",
@@ -73,13 +72,13 @@ members = [
     "rust/upgraded",
 ]
 [workspace.package]
-version = "4.1.0-alpha.0"
+version = "4.3.0-alpha.1"
 description = "Solana SBF test program written in Rust"
 authors = ["Anza Maintainers <maintainers@anza.xyz>"]
 repository = "https://github.com/anza-xyz/agave"
 homepage = "https://anza.xyz"
 license = "Apache-2.0"
-edition = "2021"
+edition = "2024"
 
 [workspace.lints.rust.unexpected_cfgs]
 level = "warn"
@@ -89,89 +88,82 @@ check-cfg = [
     'cfg(target_feature, values("dynamic-frames"))',
 ]
 
+# Keep in sync with the root [workspace.lints.clippy].
+[workspace.lints.clippy]
+# Denied lints
+arithmetic_side_effects = "deny"
+default_trait_access = "deny"
+manual_let_else = "deny"
+uninlined_format_args = "deny"
+used_underscore_binding = "deny"
+
+# Allowed lints
+new_without_default = "allow"
+
 [workspace.dependencies]
-agave-feature-set = { path = "../../feature-set", version = "=4.1.0-alpha.0" }
-agave-logger = { path = "../../logger", version = "=4.1.0-alpha.0" }
-agave-reserved-account-keys = { path = "../../reserved-account-keys", version = "=4.1.0-alpha.0" }
-agave-syscalls = { path = "../../syscalls", version = "=4.1.0-alpha.0" }
-agave-validator = { path = "../../validator", version = "=4.1.0-alpha.0" }
+agave-feature-set = { path = "../../feature-set", version = "=4.3.0-alpha.1" }
+agave-logger = { path = "../../logger", version = "=4.3.0-alpha.1" }
+agave-reserved-account-keys = { path = "../../reserved-account-keys", version = "=4.3.0-alpha.1" }
+agave-validator = { path = "../../validator", version = "=4.3.0-alpha.1" }
 array-bytes = "=1.4.1"
 bincode = { version = "1.1.4", default-features = false }
 blake3 = "1.0.0"
 borsh = "1.5.1"
 byteorder = "1.3.2"
-elf = "0.8.0"
-itertools = "0.14.0"
-libsecp256k1 = { version = "0.7.0", default-features = false }
-log = "0.4.11"
-miow = "0.6.1"
-net2 = "0.2.39"
+libsecp256k1 = { version = "0.7.2", default-features = false }
 num-derive = "0.4.2"
 num-traits = "0.2"
 serde = { version = "1.0.112", features = ["derive"] }
-serde_json = "1.0.149"
-sha2 = "0.10.8"
-sha3 = "0.10.8"
-solana-account-decoder = { path = "../../account-decoder", version = "=4.1.0-alpha.0" }
-solana-account-info = "=3.1.0"
-solana-accounts-db = { path = "../../accounts-db", version = "=4.1.0-alpha.0" }
-solana-big-mod-exp = "=3.0.0"
+serde_json = "1.0.150"
+solana-account-info = "=3.1.1"
+solana-account-view = "=2.0.0"
+solana-address = "=2.6.1"
 solana-blake3-hasher = { version = "=3.1.0", features = ["blake3"] }
 solana-bn254 = "=3.2.1"
-solana-bpf-loader-program = { path = "../bpf_loader", version = "=4.1.0-alpha.0" }
-solana-cli-output = { path = "../../cli-output", version = "=4.1.0-alpha.0" }
-solana-clock = { version = "=3.0.1", features = ["serde", "sysvar"] }
-solana-compute-budget = { path = "../../compute-budget", version = "=4.1.0-alpha.0" }
-solana-compute-budget-instruction = { path = "../../compute-budget-instruction", version = "=4.1.0-alpha.0" }
+solana-clock = { version = "=3.1.1", features = ["serde", "sysvar"] }
+solana-compute-budget = { path = "../../compute-budget", version = "=4.3.0-alpha.1" }
+solana-compute-budget-instruction = { path = "../../compute-budget-instruction", version = "=4.3.0-alpha.1" }
 solana-cpi = "=3.1.0"
-solana-curve25519 = "=4.0.0"
+solana-curve25519 = "=4.0.1"
 solana-define-syscall = "=3.0.0"
-solana-fee = { path = "../../fee", version = "=4.1.0-alpha.0" }
-solana-hash = { version = "=4.2.0", features = ["bytemuck", "serde", "std"] }
-solana-instruction = "=3.2.0"
-solana-instructions-sysvar = "=3.0.0"
+solana-fee = { path = "../../fee", version = "=4.3.0-alpha.1" }
+solana-hash = { version = "=4.5.0", features = ["bytemuck", "serde", "std"] }
+solana-instruction = "=3.4.0"
+solana-instructions-sysvar = "=4.0.0"
 solana-keccak-hasher = { version = "=3.1.0", features = ["sha3"] }
-solana-ledger = { path = "../../ledger", version = "=4.1.0-alpha.0" }
-solana-measure = { path = "../../measure", version = "=4.1.0-alpha.0" }
-solana-msg = "=3.0.0"
+solana-msg = "=3.1.0"
 solana-poseidon = "=4.0.0"
-solana-program = "=3.0.0"
+solana-program = "=4.0.0"
 solana-program-entrypoint = "=3.1.1"
-solana-program-error = "=3.0.0"
+solana-program-error = "=3.0.1"
 solana-program-memory = "=3.1.0"
-solana-program-runtime = { path = "../../program-runtime", version = "=4.1.0-alpha.0" }
-solana-pubkey = { version = "=4.1.0", default-features = false }
-solana-runtime = { path = "../../runtime", version = "=4.1.0-alpha.0" }
-solana-runtime-transaction = { path = "../../runtime-transaction", version = "=4.1.0-alpha.0" }
-solana-sbf-rust-128bit-dep = { path = "rust/128bit_dep", version = "=4.1.0-alpha.0" }
-solana-sbf-rust-invoke-dep = { path = "rust/invoke_dep", version = "=4.1.0-alpha.0" }
-solana-sbf-rust-invoked-dep = { path = "rust/invoked_dep", version = "=4.1.0-alpha.0" }
-solana-sbf-rust-many-args-dep = { path = "rust/many_args_dep", version = "=4.1.0-alpha.0" }
-solana-sbf-rust-mem-dep = { path = "rust/mem_dep", version = "=4.1.0-alpha.0" }
-solana-sbf-rust-param-passing-dep = { path = "rust/param_passing_dep", version = "=4.1.0-alpha.0" }
-solana-sbf-rust-r2-instruction-data-pointer = { path = "rust/r2_instruction_data_pointer", version = "=4.1.0-alpha.0" }
-solana-sbf-rust-realloc-dep = { path = "rust/realloc_dep", version = "=4.1.0-alpha.0" }
-solana-sbf-rust-realloc-invoke-dep = { path = "rust/realloc_invoke_dep", version = "=4.1.0-alpha.0" }
-solana-sbpf = "=0.14.4"
+solana-program-runtime = { path = "../../program-runtime", version = "=4.3.0-alpha.1" }
+solana-pubkey = { version = "=4.2.0", default-features = false }
+solana-runtime = { path = "../../runtime", version = "=4.3.0-alpha.1" }
+solana-runtime-transaction = { path = "../../runtime-transaction", version = "=4.3.0-alpha.1" }
+solana-sbf-rust-128bit-dep = { path = "rust/128bit_dep", version = "=4.3.0-alpha.1" }
+solana-sbf-rust-invoke-dep = { path = "rust/invoke_dep", version = "=4.3.0-alpha.1" }
+solana-sbf-rust-invoked-dep = { path = "rust/invoked_dep", version = "=4.3.0-alpha.1" }
+solana-sbf-rust-many-args-dep = { path = "rust/many_args_dep", version = "=4.3.0-alpha.1" }
+solana-sbf-rust-mem-dep = { path = "rust/mem_dep", version = "=4.3.0-alpha.1" }
+solana-sbf-rust-param-passing-dep = { path = "rust/param_passing_dep", version = "=4.3.0-alpha.1" }
+solana-sbf-rust-realloc-dep = { path = "rust/realloc_dep", version = "=4.3.0-alpha.1" }
+solana-sbf-rust-realloc-invoke-dep = { path = "rust/realloc_invoke_dep", version = "=4.3.0-alpha.1" }
 solana-sdk-ids = "=3.1.0"
-solana-secp256k1-recover = "=3.1.1"
+solana-secp256k1-recover = "=3.2.0"
 solana-sha256-hasher = { version = "=3.1.0", features = ["sha2"] }
-solana-stake-interface = { version = "=2.0.2", features = ["bincode"] }
-solana-svm = { path = "../../svm", version = "=4.1.0-alpha.0" }
-solana-svm-callback = { path = "../../svm-callback", version = "=4.1.0-alpha.0" }
-solana-svm-feature-set = { path = "../../svm-feature-set", version = "=4.1.0-alpha.0" }
-solana-svm-log-collector = { path = "../../svm-log-collector", version = "=4.1.0-alpha.0" }
-solana-svm-test-harness-instr = { path = "../../svm-test-harness/instr", version = "=4.1.0-alpha.0" }
-solana-svm-timings = { path = "../../svm-timings", version = "=4.1.0-alpha.0" }
-solana-svm-transaction = { path = "../../svm-transaction", version = "=4.1.0-alpha.0" }
-solana-svm-type-overrides = { path = "../../svm-type-overrides", version = "=4.1.0-alpha.0" }
-solana-system-interface = { version = "=3.0", features = ["bincode"] }
-solana-sysvar = "=3.1.1"
-solana-transaction-context = { path = "../../transaction-context", version = "=4.1.0-alpha.0" }
-solana-transaction-status = { path = "../../transaction-status", version = "=4.1.0-alpha.0" }
-solana-vote = { path = "../../vote", version = "=4.1.0-alpha.0" }
-solana-vote-interface = "5.0.0"
-solana-vote-program = { path = "../../programs/vote", version = "=4.1.0-alpha.0" }
+solana-stake-history = "=1.0.0"
+solana-svm = { path = "../../svm", version = "=4.3.0-alpha.1" }
+solana-svm-feature-set = { path = "../../svm-feature-set", version = "=4.3.0-alpha.1" }
+solana-svm-timings = { path = "../../svm-timings", version = "=4.3.0-alpha.1" }
+solana-svm-transaction = "=4.2.0"
+solana-svm-type-overrides = { path = "../../svm-type-overrides", version = "=4.3.0-alpha.1" }
+solana-system-interface = { version = "=3.2", features = ["bincode"] }
+solana-sysvar = "=4.1.0"
+solana-test-validator = { path = "../../test-validator", version = "=4.3.0-alpha.1" }
+solana-vote = { path = "../../vote", version = "=4.3.0-alpha.1" }
+solana-vote-interface = "6.0.3"
+solana-vote-program = { path = "../../programs/vote", version = "=4.3.0-alpha.1" }
 test-case = "3.3.1"
 thiserror = "2.0"
 
@@ -188,23 +180,12 @@ frozen-abi = []
 agave-feature-set = { workspace = true }
 agave-logger = { workspace = true }
 agave-reserved-account-keys = { workspace = true }
-agave-syscalls = { workspace = true }
 agave-validator = { workspace = true }
 bincode = { workspace = true }
 borsh = { workspace = true }
-byteorder = { workspace = true }
-elf = { workspace = true }
-itertools = { workspace = true }
-log = { workspace = true }
-miow = { workspace = true }
-net2 = { workspace = true }
-solana-account = "3.3.0"
-solana-account-decoder = { workspace = true }
+solana-account = "4.0.0"
 solana-account-info = "3.1.0"
-solana-accounts-db = { workspace = true }
-solana-bpf-loader-program = { workspace = true }
-solana-cli-output = { workspace = true }
-solana-client-traits = "3.0.0"
+solana-client-traits = "4.0.0"
 solana-clock = "3.0.0"
 solana-cluster-type = "3.0.0"
 solana-compute-budget = { workspace = true }
@@ -213,22 +194,17 @@ solana-compute-budget-instruction = { workspace = true, features = [
 ] }
 solana-compute-budget-interface = "3.0.0"
 solana-fee = { workspace = true }
-solana-fee-calculator = "3.0.0"
+solana-fee-calculator = "3.2.0"
 solana-fee-structure = "3.0.0"
-solana-genesis-config = "3.0.0"
-solana-hash = "4.0.1"
+solana-hash = "4.3.0"
 solana-instruction = { workspace = true }
-solana-keypair = "3.0.0"
-solana-ledger = { workspace = true }
-solana-loader-v3-interface = "6.1.0"
-solana-loader-v4-interface = "3.1.0"
-solana-measure = { workspace = true }
-solana-message = "3.0.0"
-solana-program = { workspace = true }
-solana-program-entrypoint = "3.1.1"
-solana-program-runtime = { workspace = true }
-solana-pubkey = "4.0.0"
-solana-rent = "3.0.0"
+solana-keypair = "3.1.2"
+solana-loader-v3-interface = "7.0.0"
+solana-message = "4.1.0"
+solana-program-binaries = { path = "../../program-binaries", version = "=4.3.0-alpha.1", features = ["agave-unstable-api"] }
+solana-program-runtime = { workspace = true, features = ["dev-context-only-utils"] }
+solana-pubkey = "4.2.0"
+solana-rent = "4.1.0"
 solana-runtime = { workspace = true, features = ["dev-context-only-utils"] }
 solana-runtime-transaction = { workspace = true, features = [
     "dev-context-only-utils",
@@ -236,26 +212,19 @@ solana-runtime-transaction = { workspace = true, features = [
 solana-sbf-rust-invoke-dep = { workspace = true }
 solana-sbf-rust-realloc-dep = { workspace = true }
 solana-sbf-rust-realloc-invoke-dep = { workspace = true }
-solana-sbpf = { workspace = true, features = ["jit"] }
 solana-sdk-ids = "3.1.0"
 solana-signer = "3.0.0"
-solana-stake-interface = "2.0.2"
-solana-svm = { workspace = true }
-solana-svm-callback = { workspace = true }
+solana-stake-history = { workspace = true }
+solana-svm = { workspace = true, features = ["dev-context-only-utils"] }
 solana-svm-feature-set = { workspace = true }
-solana-svm-log-collector = { workspace = true }
-solana-svm-test-harness-instr = { workspace = true }
 solana-svm-timings = { workspace = true }
 solana-svm-transaction = { workspace = true }
 solana-svm-type-overrides = { workspace = true }
 solana-system-interface = { workspace = true }
-solana-sysvar = "3.1.1"
-solana-transaction = "3.0.2"
-solana-transaction-context = { workspace = true, features = [
-    "dev-context-only-utils",
-] }
-solana-transaction-error = "3.0.0"
-solana-transaction-status = { workspace = true }
+solana-sysvar = "4.1.0"
+solana-test-validator = { workspace = true, features = ["agave-unstable-api", "dev-context-only-utils"] }
+solana-transaction = "4.1.0"
+solana-transaction-error = "3.3.0"
 solana-vote = { workspace = true }
 solana-vote-interface = { workspace = true }
 solana-vote-program = { workspace = true }
@@ -268,10 +237,15 @@ debug = "line-tables-only"
 inherits = "dev"
 debug = "full"
 
+# Enable basic optimizations for unittests to trigger const propagation and inlining
+[profile.ci]
+inherits = "test"
+opt-level = 1
+
 [profile.release]
 # The test programs are build in release mode
 # Minimize their file size so that they fit into the account size limit
 strip = true
 
-[[bench]]
-name = "bpf_loader"
+[lints]
+workspace = true

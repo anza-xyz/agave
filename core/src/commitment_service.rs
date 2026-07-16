@@ -193,9 +193,9 @@ impl AggregateCommitmentService {
                 // Notarize (our first round vote in favor of a block) satisfies the Processed commitment level
                 w_block_commitment_cache.set_slot(slot);
             }
-            AlpenglowCommitmentType::Finalized => {
+            AlpenglowCommitmentType::Rooted => {
                 // There is no distinction of OC, root, or finalized in Alpengow commitment.
-                // When receiving a finalilzation certificate we set all of these values.
+                // Once votor selects a finalized bank as root, set all of these values.
                 w_block_commitment_cache.set_highest_confirmed_slot(slot);
                 w_block_commitment_cache.set_root(slot);
                 w_block_commitment_cache.set_highest_super_majority_root(slot);
@@ -328,6 +328,7 @@ mod tests {
     use {
         super::*,
         solana_account::{Account, ReadableAccount, state_traits::StateMut},
+        solana_leader_schedule::SlotLeader,
         solana_ledger::genesis_utils::{GenesisConfigInfo, create_genesis_config},
         solana_pubkey::Pubkey,
         solana_runtime::{
@@ -338,7 +339,7 @@ mod tests {
         solana_vote::vote_transaction,
         solana_vote_program::vote_state::{
             self, BLS_PUBLIC_KEY_COMPRESSED_SIZE, MAX_LOCKOUT_HISTORY, TowerSync, VoteStateV4,
-            VoteStateVersions, process_slot_vote_unchecked,
+            VoteStateVersions, handler::VoteStateHandler, process_slot_vote_unchecked,
         },
     };
 
@@ -549,19 +550,22 @@ mod tests {
         // Create bank
         let bank = Arc::new(Bank::new_for_tests(&genesis_config));
 
-        let mut vote_state1 = VoteStateV4::deserialize(vote_account1.data(), &pk1).unwrap();
+        let mut vote_state1 =
+            VoteStateHandler::new_v4(VoteStateV4::deserialize(vote_account1.data(), &pk1).unwrap());
         process_slot_vote_unchecked(&mut vote_state1, 3);
         process_slot_vote_unchecked(&mut vote_state1, 5);
+        let vote_state1 = vote_state1.unwrap_v4();
         if !with_node_vote_state {
             let versioned = VoteStateVersions::new_v4(vote_state1.clone());
             vote_account1.set_state(&versioned).unwrap();
             bank.store_account(&pk1, &vote_account1);
         }
 
-        let mut vote_state2 = VoteStateV4::deserialize(vote_account2.data(), &pk2).unwrap();
+        let mut vote_state2 =
+            VoteStateHandler::new_v4(VoteStateV4::deserialize(vote_account2.data(), &pk2).unwrap());
         process_slot_vote_unchecked(&mut vote_state2, 9);
         process_slot_vote_unchecked(&mut vote_state2, 10);
-        let versioned = VoteStateVersions::new_v4(vote_state2);
+        let versioned = VoteStateVersions::new_v4(vote_state2.unwrap_v4());
         vote_account2.set_state(&versioned).unwrap();
         bank.store_account(&pk2, &vote_account2);
 
@@ -652,7 +656,7 @@ mod tests {
             let bank = Bank::new_from_parent_with_bank_forks(
                 bank_forks.as_ref(),
                 previous_bank.clone(),
-                &Pubkey::default(),
+                SlotLeader::default(),
                 x + 1,
             );
             let tower_sync = TowerSync::new_from_slot(x, previous_bank.hash());
@@ -681,7 +685,7 @@ mod tests {
         let bank34 = Bank::new_from_parent_with_bank_forks(
             bank_forks.as_ref(),
             bank33.clone(),
-            &Pubkey::default(),
+            SlotLeader::default(),
             34,
         );
         let tower_sync = TowerSync::new_from_slot(33, bank33.hash());
@@ -727,7 +731,7 @@ mod tests {
         let _bank35 = Bank::new_from_parent_with_bank_forks(
             bank_forks.as_ref(),
             bank33,
-            &Pubkey::default(),
+            SlotLeader::default(),
             35,
         );
 
@@ -758,7 +762,7 @@ mod tests {
             let bank = Bank::new_from_parent_with_bank_forks(
                 bank_forks.as_ref(),
                 previous_bank.clone(),
-                &Pubkey::default(),
+                SlotLeader::default(),
                 x + 1,
             );
             // Skip 34 as it is not part of this fork.

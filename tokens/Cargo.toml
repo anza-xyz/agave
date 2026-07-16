@@ -9,6 +9,14 @@ homepage = { workspace = true }
 license = { workspace = true }
 edition = { workspace = true }
 
+[package.metadata.docs.rs]
+targets = ["x86_64-unknown-linux-gnu"]
+# `all-features` can't be used: remote-wallet-hidraw and remote-wallet-libusb
+# forward to hidapi's mutually-exclusive linux backends. Document the default
+# (hidraw) backend plus the unstable API.
+features = ["agave-unstable-api"]
+rustdoc-args = ["--cfg=docsrs"]
+
 [features]
 default = ["remote-wallet-hidraw"]
 agave-unstable-api = []
@@ -17,14 +25,16 @@ remote-wallet-libusb = ["solana-remote-wallet/linux-static-libusb"]
 
 [dependencies]
 chrono = { workspace = true, features = ["default", "serde"] }
-clap = "2.33.0"
+clap = { version = "2.33.0", default-features = false, features = ["suggestions"] }
 console = { workspace = true }
 csv = { workspace = true }
 ctrlc = { workspace = true, features = ["termination"] }
 indexmap = { workspace = true }
 indicatif = { workspace = true }
-pickledb = { workspace = true, features = ["yaml"] }
+pickledb = { workspace = true, features = ["json"] }
 serde = { workspace = true }
+serde_json = { workspace = true }
+serde_yaml = { workspace = true }
 solana-account-decoder = { workspace = true }
 solana-clap-utils = { workspace = true }
 solana-cli-config = { workspace = true }
@@ -56,8 +66,11 @@ tempfile = { workspace = true }
 thiserror = { workspace = true }
 
 [dev-dependencies]
-agave-logger = { workspace = true }
+agave-logger = { path = "../logger", features = ["agave-unstable-api"] }
 assert_matches = { workspace = true }
 bincode = { workspace = true }
-solana-test-validator = { workspace = true }
+solana-test-validator = { path = "../test-validator", features = ["agave-unstable-api", "dev-context-only-utils"] }
 solana-transaction-error = { workspace = true }
+
+[lints]
+workspace = true

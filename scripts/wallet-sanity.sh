@@ -40,8 +40,6 @@ fi
   set -x
   $solana_cli "${args[@]}" address
   $solana_cli "${args[@]}" balance
-  $solana_cli "${args[@]}" ping --count 5 --interval 0
-  $solana_cli "${args[@]}" balance
 )
 
 echo PASS

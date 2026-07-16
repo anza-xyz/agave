@@ -1,9 +1,7 @@
 use {
     crate::{
         blockstore::Blockstore,
-        blockstore_processor::{
-            self, BlockstoreProcessorError, ProcessOptions, TransactionStatusSender,
-        },
+        blockstore_processor::{self, BlockstoreProcessorError, ProcessOptions},
         entry_notifier_service::EntryNotifierSender,
         use_snapshot_archives_at_startup::{self, UseSnapshotArchivesAtStartup},
     },
@@ -17,11 +15,17 @@ use {
         snapshot_hash::{FullSnapshotHash, IncrementalSnapshotHash, StartingSnapshotHashes},
     },
     log::*,
-    solana_accounts_db::accounts_update_notifier_interface::AccountsUpdateNotifier,
+    solana_accounts_db::{
+        accounts_update_notifier_interface::AccountsUpdateNotifier,
+        utils::move_and_async_delete_path_contents,
+    },
     solana_genesis_config::GenesisConfig,
-    solana_runtime::{bank_forks::BankForks, snapshot_bank_utils, snapshot_utils},
+    solana_runtime::{
+        bank_forks::BankForks, snapshot_bank_utils, snapshot_utils,
+        transaction_execution::TransactionStatusSender,
+    },
     std::{
-        path::PathBuf,
+        path::{Path, PathBuf},
         sync::{Arc, RwLock, atomic::AtomicBool},
     },
     thiserror::Error,
@@ -59,6 +63,19 @@ pub enum BankForksUtilsError {
 }
 
 pub type BankAndHashes = (Arc<RwLock<BankForks>>, Option<StartingSnapshotHashes>);
+
+/// Tear down state left over from a previous run: purges old bank snapshots, wipes the account
+/// run dirs, and wipes the legacy snapshot sibling trees.
+///
+/// Call from any load path that commits to NOT fastbooting (archive load, genesis boot) —
+/// i.e. anywhere the existing storages must not be loaded.
+pub fn discard_previous_run_state(bank_snapshots_dir: &Path, account_run_paths: &[PathBuf]) {
+    snapshot_utils::purge_all_bank_snapshots(bank_snapshots_dir);
+    for account_run_path in account_run_paths {
+        move_and_async_delete_path_contents(account_run_path);
+    }
+    snapshot_utils::wipe_account_snapshot_dirs(account_run_paths);
+}
 
 /// Load the banks via genesis
 pub fn load_bank_forks_from_genesis(
@@ -197,6 +214,7 @@ pub fn try_load_bank_forks_from_snapshot(
             genesis_config,
             &process_options.runtime_config,
             process_options.debug_keys.clone(),
+            None, // leader_for_tests
             process_options.limit_load_slot_count_from_snapshot,
             process_options.verify_index,
             process_options.accounts_db_config.clone(),
@@ -208,20 +226,20 @@ pub fn try_load_bank_forks_from_snapshot(
             path: fastboot_snapshot.snapshot_path(),
         })?
     } else {
-        // Given that we are going to boot from an archive, the append vecs held in the snapshot dirs for fast-boot should
-        // be released.  They will be released by the account_background_service anyway.  But in the case of the account_paths
-        // using memory-mounted file system, they are not released early enough to give space for the new append-vecs from
-        // the archives, causing the out-of-memory problem.  So, purge the snapshot dirs upfront before loading from the archive.
-        snapshot_utils::purge_all_bank_snapshots(&snapshot_config.bank_snapshots_dir);
+        // Committed to loading from a snapshot archive — the existing storages a previous run
+        // left around (kept for fastboot) are now orphans, and the archive will be extracted
+        // into the (cleared) run dirs.
+        discard_previous_run_state(&snapshot_config.bank_snapshots_dir, account_paths);
 
         snapshot_bank_utils::bank_from_snapshot_archives(
             account_paths,
-            &snapshot_config.bank_snapshots_dir,
             &full_snapshot_archive_info,
             incremental_snapshot_archive_info.as_ref(),
+            snapshot_config,
             genesis_config,
             &process_options.runtime_config,
             process_options.debug_keys.clone(),
+            None, // leader_for_tests
             process_options.limit_load_slot_count_from_snapshot,
             process_options.accounts_db_skip_shrink,
             process_options.accounts_db_force_initial_clean,
@@ -250,6 +268,13 @@ pub fn try_load_bank_forks_from_snapshot(
             .accounts
             .accounts_db
             .set_latest_full_snapshot_slot(full_snapshot_archive_info.slot());
+        // Set the last swept slot so the first full snapshot only triggers
+        // cleaning of zero lamport single ref accounts between the previous
+        // full snapshot and the new full snapshot
+        bank.rc
+            .accounts
+            .accounts_db
+            .set_last_swept_full_snapshot_slot(full_snapshot_archive_info.slot());
     } else {
         assert!(
             bank.rc

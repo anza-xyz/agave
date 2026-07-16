@@ -906,7 +906,7 @@ fn alt_bn128_pairing_le_test() {
     );
 }
 
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub extern "C" fn entrypoint(_input: *mut u8) -> u64 {
     msg!("alt_bn128");
 

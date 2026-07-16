@@ -18,10 +18,10 @@ use {
         hidden_unless_forced,
         input_validators::{
             is_parsable, is_pubkey, is_pubkey_or_keypair, is_slot, is_url_or_moniker,
+            validate_cpu_ranges,
         },
     },
     solana_clock::Slot,
-    solana_core::banking_trace::BANKING_TRACE_DIR_DEFAULT_BYTE_LIMIT,
     solana_epoch_schedule::MINIMUM_SLOTS_PER_EPOCH,
     solana_faucet::faucet::{self, FAUCET_PORT},
     solana_hash::Hash,
@@ -75,7 +75,8 @@ pub fn app<'a>(version: &'a str, default_args: &'a DefaultArgs) -> App<'a, 'a> {
         .subcommand(commands::staked_nodes_overrides::command())
         .subcommand(commands::wait_for_restart_window::command())
         .subcommand(commands::set_public_address::command())
-        .subcommand(commands::manage_block_production::command(default_args));
+        .subcommand(commands::manage_block_production::command(default_args))
+        .subcommand(commands::blockstore::command());
 
     commands::run::add_args(app, default_args)
         .args(&thread_args(&default_args.thread_args))
@@ -128,12 +129,101 @@ fn deprecated_arguments() -> Vec<DeprecatedArg> {
     }
 
     add_arg!(
+        // deprecated in v4.1.0
+        Arg::with_name("account_shrink_path")
+            .long("account-shrink-path")
+            .value_name("PATH")
+            .takes_value(true)
+            .multiple(true)
+            .help("Path to accounts shrink path which can hold a compacted account set."),
+        usage_warning: "Shrink paths are no longer used.",
+    );
+    add_arg!(
+        // deprecated in v4.2.0; the `mmap` value was deprecated in v4.0.0, and now mmap mode has
+        // been removed entirely. The only remaining mode (`file`) is the default and only
+        // behavior, so this flag is now a no-op.
+        Arg::with_name("accounts_db_access_storages_method")
+            .long("accounts-db-access-storages-method")
+            .value_name("METHOD")
+            .takes_value(true)
+            .possible_values(&["mmap", "file"])
+            .help("No-op; account storages are always accessed via file I/O"),
+    );
+    add_arg!(
+        // deprecated in v4.2.0
+        Arg::with_name("accounts_db_cache_limit_mb")
+            .long("accounts-db-cache-limit-mb")
+            .value_name("MEGABYTES")
+            .validator(is_parsable::<u64>)
+            .takes_value(true)
+            .help(
+                "How large the write cache for account data can become. If this is exceeded, the \
+                 cache is flushed more aggressively.",
+            )
+            .conflicts_with("accounts_db_write_cache_limit"),
+        replaced_by: "accounts-db-write-cache-limit",
+    );
+    add_arg!(
+        // deprecated in v4.3.0
+        Arg::with_name("disable_banking_trace")
+            .long("disable-banking-trace")
+            .conflicts_with("banking_trace_dir_byte_limit")
+            .takes_value(false)
+            .help("Disables the banking trace. No-op, banking trace is disabled by default."),
+    );
+    add_arg!(
         // deprecated in v4.0.0
         Arg::with_name("enable_accounts_disk_index")
             .long("enable-accounts-disk-index")
             .help("Enables the disk-based accounts index")
             .conflicts_with("accounts_index_limit"),
         replaced_by: "accounts-index-limit",
+    );
+    add_arg!(
+        // deprecated in v4.2.0
+        Arg::with_name("experimental_poh_pinned_cpu_core")
+            .long("experimental-poh-pinned-cpu-core")
+            .takes_value(true)
+            .value_name("CPU_ID")
+            .conflicts_with("poh_pinned_cpu_core")
+            .validator(is_parsable::<usize>)
+            .help("Specify which CPU core PoH is pinned to. Use --poh-pinned-cpu-core instead"),
+        replaced_by: "poh-pinned-cpu-core",
+    );
+    add_arg!(
+        // deprecated in v4.1.0
+        Arg::with_name("experimental_retransmit_xdp_cpu_cores")
+            .long("experimental-retransmit-xdp-cpu-cores")
+            .takes_value(true)
+            .value_name("CPU_LIST")
+            .conflicts_with("xdp_cpu_cores")
+            .conflicts_with("no_xdp")
+            .validator(|value| {
+                validate_cpu_ranges(value, "--experimental-retransmit-xdp-cpu-cores")
+            })
+            .help("CPU cores to reserve for XDP. Use --xdp-cpu-cores instead"),
+        replaced_by: "xdp-cpu-cores",
+    );
+    add_arg!(
+        // deprecated in v4.1.0
+        Arg::with_name("experimental_retransmit_xdp_interface")
+            .long("experimental-retransmit-xdp-interface")
+            .takes_value(true)
+            .value_name("INTERFACE")
+            .conflicts_with("xdp_interface")
+            .conflicts_with("no_xdp")
+            .help("Network interface to use for XDP. Use --xdp-interface instead"),
+        replaced_by: "xdp-interface",
+    );
+    add_arg!(
+        // deprecated in v4.1.0
+        Arg::with_name("experimental_retransmit_xdp_zero_copy")
+            .long("experimental-retransmit-xdp-zero-copy")
+            .takes_value(false)
+            .conflicts_with("xdp_zero_copy")
+            .conflicts_with("no_xdp")
+            .help("Enable XDP zero copy. Use --xdp-zero-copy instead"),
+        replaced_by: "xdp-zero-copy",
     );
     add_arg!(
         // deprecated in v4.0.0
@@ -273,7 +363,7 @@ impl DefaultArgs {
             tpu_max_fwd_unstaked_connections: 0.to_string(),
             tpu_max_streams_per_ms: DEFAULT_MAX_STREAMS_PER_MS.to_string(),
             num_quic_endpoints: DEFAULT_QUIC_ENDPOINTS.to_string(),
-            banking_trace_dir_byte_limit: BANKING_TRACE_DIR_DEFAULT_BYTE_LIMIT.to_string(),
+            banking_trace_dir_byte_limit: 0.to_string(),
             block_production_pacing_fill_time_millis: BankingStage::default_fill_time_millis()
                 .to_string(),
             thread_args: DefaultThreadArgs::default(),
@@ -295,6 +385,7 @@ pub fn port_validator(port: String) -> Result<(), String> {
 
 pub fn port_range_validator(port_range: String) -> Result<(), String> {
     if let Some((start, end)) = solana_net_utils::parse_port_range(&port_range) {
+        // The port range is half-open: [start, end)
         if end - start < MINIMUM_VALIDATOR_PORT_RANGE_WIDTH {
             Err(format!(
                 "Port range is too small.  Try --dynamic-port-range {}-{}",
@@ -596,8 +687,12 @@ pub fn test_app<'a>(version: &'a str, default_args: &'a DefaultTestArgs) -> App<
                 .long("dynamic-port-range")
                 .value_name("MIN_PORT-MAX_PORT")
                 .takes_value(true)
+                .default_value(&default_args.dynamic_port_range)
                 .validator(port_range_validator)
-                .help("Range to use for dynamically assigned ports [default: 1024-65535]"),
+                .help(
+                    "Range to use for dynamically assigned ports. MIN_PORT-MAX_PORT yields the \
+                     range [MIN_PORT, MAX_PORT)",
+                ),
         )
         .arg(
             Arg::with_name("bind_address")
@@ -607,7 +702,7 @@ pub fn test_app<'a>(version: &'a str, default_args: &'a DefaultTestArgs) -> App<
                 .validator(solana_net_utils::is_host)
                 .default_value("127.0.0.1")
                 .help(
-                    "IP address to bind the validator ports. Can be repeated. The first \
+                    "IPv4 address to bind the validator ports. Can be repeated. The first \
                      --bind-address MUST be your public internet address. ALL protocols (gossip, \
                      repair, IP echo, TVU, TPU, etc.) bind to this address on startup. Additional \
                      --bind-address values enable multihoming for Gossip/TVU/TPU - these \
@@ -769,6 +864,15 @@ pub fn test_app<'a>(version: &'a str, default_args: &'a DefaultTestArgs) -> App<
                 .help("Enables external processes to connect and manage block production"),
         )
         .arg(
+            Arg::with_name("alpenglow")
+                .long("alpenglow")
+                .takes_value(false)
+                .help(
+                    "Activate Alpenglow at genesis. The validator_admission_ticket feature must \
+                     remain active",
+                ),
+        )
+        .arg(
             Arg::with_name("deactivate_feature")
                 .long("deactivate-feature")
                 .takes_value(true)
@@ -819,6 +923,7 @@ pub fn test_app<'a>(version: &'a str, default_args: &'a DefaultTestArgs) -> App<
 pub struct DefaultTestArgs {
     pub rpc_port: String,
     pub faucet_port: String,
+    pub dynamic_port_range: String,
     pub limit_ledger_size: String,
     pub faucet_sol: String,
     pub faucet_time_slice_secs: String,
@@ -829,6 +934,7 @@ impl DefaultTestArgs {
         DefaultTestArgs {
             rpc_port: 8899.to_string(),
             faucet_port: FAUCET_PORT.to_string(),
+            dynamic_port_range: format!("{}-{}", VALIDATOR_PORT_RANGE.0, VALIDATOR_PORT_RANGE.1),
             /* 10,000 was derived empirically by watching the size
              * of the rocksdb/ directory self-limit itself to the
              * 40MB-150MB range when running `solana-test-validator`

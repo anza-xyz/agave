@@ -40,11 +40,10 @@ async fn test_stake_delegation_force() {
     let authorized_withdrawer = Keypair::new().pubkey();
     let faucet_addr = run_local_faucet_with_unique_port_for_tests(mint_keypair.insecure_clone());
     let slots_per_epoch = 32;
-    let test_validator = TestValidatorGenesis::default()
+    let test_validator = TestValidatorGenesis::default_for_tests()
         .fee_rate_governor(FeeRateGovernor::new(0, 0))
         .rent(Rent {
-            lamports_per_byte_year: 1,
-            exemption_threshold: 1.0,
+            lamports_per_byte: 1,
             ..Rent::default()
         })
         .epoch_schedule(EpochSchedule::custom(
@@ -211,7 +210,7 @@ async fn test_seed_stake_delegation_and_deactivation(compute_unit_price: Option<
 
     let mint_keypair = Keypair::new();
     let faucet_addr = run_local_faucet_with_unique_port_for_tests(mint_keypair.insecure_clone());
-    let test_validator = TestValidator::async_with_no_fees(
+    let test_validator = TestValidator::async_start_with_config(
         &mint_keypair,
         Some(faucet_addr),
         SocketAddrSpace::Unspecified,
@@ -310,7 +309,7 @@ async fn test_stake_delegation_and_withdraw_available() {
 
     let mint_keypair = Keypair::new();
     let faucet_addr = run_local_faucet_with_unique_port_for_tests(mint_keypair.insecure_clone());
-    let test_validator = TestValidator::async_with_no_fees(
+    let test_validator = TestValidator::async_start_with_config(
         &mint_keypair,
         Some(faucet_addr),
         SocketAddrSpace::Unspecified,
@@ -484,7 +483,7 @@ async fn test_stake_delegation_and_withdraw_all() {
 
     let mint_keypair = Keypair::new();
     let faucet_addr = run_local_faucet_with_unique_port_for_tests(mint_keypair.insecure_clone());
-    let test_validator = TestValidator::async_with_no_fees(
+    let test_validator = TestValidator::async_start_with_config(
         &mint_keypair,
         Some(faucet_addr),
         SocketAddrSpace::Unspecified,
@@ -655,7 +654,7 @@ async fn test_stake_delegation_and_deactivation(compute_unit_price: Option<u64>)
 
     let mint_keypair = Keypair::new();
     let faucet_addr = run_local_faucet_with_unique_port_for_tests(mint_keypair.insecure_clone());
-    let test_validator = TestValidator::async_with_no_fees(
+    let test_validator = TestValidator::async_start_with_config(
         &mint_keypair,
         Some(faucet_addr),
         SocketAddrSpace::Unspecified,
@@ -752,7 +751,7 @@ async fn test_offline_stake_delegation_and_deactivation(compute_unit_price: Opti
 
     let mint_keypair = Keypair::new();
     let faucet_addr = run_local_faucet_with_unique_port_for_tests(mint_keypair.insecure_clone());
-    let test_validator = TestValidator::async_with_no_fees(
+    let test_validator = TestValidator::async_start_with_config(
         &mint_keypair,
         Some(faucet_addr),
         SocketAddrSpace::Unspecified,
@@ -918,7 +917,7 @@ async fn test_nonced_stake_delegation_and_deactivation(compute_unit_price: Optio
 
     let mint_keypair = Keypair::new();
     let faucet_addr = run_local_faucet_with_unique_port_for_tests(mint_keypair.insecure_clone());
-    let test_validator = TestValidator::async_with_no_fees(
+    let test_validator = TestValidator::async_start_with_config(
         &mint_keypair,
         Some(faucet_addr),
         SocketAddrSpace::Unspecified,
@@ -1055,7 +1054,7 @@ async fn test_stake_authorize(compute_unit_price: Option<u64>) {
 
     let mint_keypair = Keypair::new();
     let faucet_addr = run_local_faucet_with_unique_port_for_tests(mint_keypair.insecure_clone());
-    let test_validator = TestValidator::async_with_no_fees(
+    let test_validator = TestValidator::async_start_with_config(
         &mint_keypair,
         Some(faucet_addr),
         SocketAddrSpace::Unspecified,
@@ -1393,9 +1392,8 @@ async fn test_stake_authorize_with_fee_payer() {
 
     let mint_keypair = Keypair::new();
     let faucet_addr = run_local_faucet_with_unique_port_for_tests(mint_keypair.insecure_clone());
-    let test_validator = TestValidator::async_with_custom_fees(
+    let test_validator = TestValidator::async_start_with_config(
         &mint_keypair,
-        fee_one_sig,
         Some(faucet_addr),
         SocketAddrSpace::Unspecified,
     )
@@ -1578,9 +1576,8 @@ async fn test_stake_split(compute_unit_price: Option<u64>) {
 
     let mint_keypair = Keypair::new();
     let faucet_addr = run_local_faucet_with_unique_port_for_tests(mint_keypair.insecure_clone());
-    let test_validator = TestValidator::async_with_custom_fees(
+    let test_validator = TestValidator::async_start_with_config(
         &mint_keypair,
-        1,
         Some(faucet_addr),
         SocketAddrSpace::Unspecified,
     )
@@ -1745,9 +1742,8 @@ async fn test_stake_set_lockup(compute_unit_price: Option<u64>) {
 
     let mint_keypair = Keypair::new();
     let faucet_addr = run_local_faucet_with_unique_port_for_tests(mint_keypair.insecure_clone());
-    let test_validator = TestValidator::async_with_custom_fees(
+    let test_validator = TestValidator::async_start_with_config(
         &mint_keypair,
-        1,
         Some(faucet_addr),
         SocketAddrSpace::Unspecified,
     )
@@ -2039,7 +2035,7 @@ async fn test_offline_nonced_create_stake_account_and_withdraw(compute_unit_pric
 
     let mint_keypair = Keypair::new();
     let faucet_addr = run_local_faucet_with_unique_port_for_tests(mint_keypair.insecure_clone());
-    let test_validator = TestValidator::async_with_no_fees(
+    let test_validator = TestValidator::async_start_with_config(
         &mint_keypair,
         Some(faucet_addr),
         SocketAddrSpace::Unspecified,
@@ -2291,7 +2287,7 @@ async fn test_stake_checked_instructions() {
 
     let mint_keypair = Keypair::new();
     let faucet_addr = run_local_faucet_with_unique_port_for_tests(mint_keypair.insecure_clone());
-    let test_validator = TestValidator::async_with_no_fees(
+    let test_validator = TestValidator::async_start_with_config(
         &mint_keypair,
         Some(faucet_addr),
         SocketAddrSpace::Unspecified,
@@ -2532,7 +2528,8 @@ async fn test_stake_checked_instructions() {
 async fn test_stake_minimum_delegation() {
     let mint_keypair = Keypair::new();
     let test_validator =
-        TestValidator::async_with_no_fees(&mint_keypair, None, SocketAddrSpace::Unspecified).await;
+        TestValidator::async_start_with_config(&mint_keypair, None, SocketAddrSpace::Unspecified)
+            .await;
     let mut config = CliConfig::recent_for_tests();
     config.json_rpc_url = test_validator.rpc_url();
 

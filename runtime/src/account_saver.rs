@@ -1,3 +1,5 @@
+#[cfg(feature = "dev-context-only-utils")]
+use qualifier_attr::qualifiers;
 use {
     core::borrow::Borrow,
     solana_account::AccountSharedData,
@@ -37,6 +39,7 @@ fn max_number_of_accounts_to_collect(
                 }
             }
             ProcessedTransaction::FeesOnly(fees_only_tx) => fees_only_tx.rollback_accounts.count(),
+            ProcessedTransaction::NoOp(_) => 0,
         })
         .sum()
 }
@@ -78,6 +81,7 @@ pub fn collect_accounts_to_store<'a, T: SVMMessage>(
                         transaction,
                         transaction_ref,
                         &executed_tx.loaded_transaction.accounts,
+                        &executed_tx.loaded_transaction.touched_flags,
                     );
                 } else {
                     collect_accounts_for_failed_tx(
@@ -96,6 +100,7 @@ pub fn collect_accounts_to_store<'a, T: SVMMessage>(
                     &fees_only_tx.rollback_accounts,
                 );
             }
+            ProcessedTransaction::NoOp(_) => (),
         }
     }
     (accounts, transactions)
@@ -107,9 +112,15 @@ fn collect_accounts_for_successful_tx<'a, T: SVMMessage>(
     transaction: &'a T,
     transaction_ref: Option<&'a SanitizedTransaction>,
     transaction_accounts: &'a [KeyedAccountSharedData],
+    touched_flags: &[bool],
 ) {
     for (i, (address, account)) in (0..transaction.account_keys().len()).zip(transaction_accounts) {
         if !transaction.is_writable(i) {
+            continue;
+        }
+
+        // Skip write-locked accounts the transaction left unmodified.
+        if !touched_flags[i] {
             continue;
         }
 
@@ -129,6 +140,7 @@ fn collect_accounts_for_successful_tx<'a, T: SVMMessage>(
     }
 }
 
+#[cfg_attr(feature = "dev-context-only-utils", qualifiers(pub))]
 fn collect_accounts_for_failed_tx<'a>(
     collected_accounts: &mut Vec<(&'a Pubkey, &'a AccountSharedData)>,
     collected_account_transactions: &mut Option<Vec<&'a SanitizedTransaction>>,
@@ -164,13 +176,21 @@ mod tests {
         solana_signer::{Signer, signers::Signers},
         solana_svm::{
             account_loader::{FeesOnlyTransaction, LoadedTransaction},
-            transaction_execution_result::{ExecutedTransaction, TransactionExecutionDetails},
+            transaction_execution_result::{
+                AccountsDeltas, ExecutedTransaction, TransactionExecutionDetails,
+            },
         },
         solana_system_interface::{instruction as system_instruction, program as system_program},
         solana_transaction::{Transaction, sanitized::SanitizedTransaction},
         solana_transaction_error::{TransactionError, TransactionResult as Result},
-        std::collections::HashMap,
+        std::collections::{HashMap, HashSet},
     };
+
+    /// Builds touched flags for `num_total` accounts with the first
+    /// `num_touched` of them marked as touched.
+    fn touched_flags_for_test(num_touched: usize, num_total: usize) -> Box<[bool]> {
+        (0..num_total).map(|index| index < num_touched).collect()
+    }
 
     fn new_sanitized_tx<T: Signers>(
         from_keypairs: &T,
@@ -188,6 +208,10 @@ mod tests {
         status: Result<()>,
         loaded_transaction: LoadedTransaction,
     ) -> TransactionProcessingResult {
+        let accounts_deltas = status.as_ref().is_ok().then_some(AccountsDeltas {
+            accounts_resize_delta: 0,
+            accounts_uninitialized_size: 0,
+        });
         Ok(ProcessedTransaction::Executed(Box::new(
             ExecutedTransaction {
                 execution_details: TransactionExecutionDetails {
@@ -196,7 +220,7 @@ mod tests {
                     inner_instructions: None,
                     return_data: None,
                     executed_units: 0,
-                    accounts_data_len_delta: 0,
+                    accounts_deltas,
                 },
                 loaded_transaction,
                 programs_modified_by_tx: HashMap::new(),
@@ -243,18 +267,22 @@ mod tests {
         ];
         let tx1 = new_sanitized_tx(&[&keypair1], message, Hash::default());
 
+        let touched0 =
+            touched_flags_for_test(transaction_accounts0.len(), transaction_accounts0.len());
         let loaded0 = LoadedTransaction {
             accounts: transaction_accounts0,
-            program_indices: vec![],
+            touched_flags: touched0,
             fee_details: FeeDetails::default(),
             rollback_accounts: RollbackAccounts::default(),
             compute_budget: SVMTransactionExecutionBudget::default(),
             loaded_accounts_data_size: 0,
         };
 
+        let touched1 =
+            touched_flags_for_test(transaction_accounts1.len(), transaction_accounts1.len());
         let loaded1 = LoadedTransaction {
             accounts: transaction_accounts1,
-            program_indices: vec![],
+            touched_flags: touched1,
             fee_details: FeeDetails::default(),
             rollback_accounts: RollbackAccounts::default(),
             compute_budget: SVMTransactionExecutionBudget::default(),
@@ -297,6 +325,65 @@ mod tests {
     }
 
     #[test]
+    fn test_collect_accounts_to_store_skips_untouched_accounts() {
+        let fee_payer = Keypair::new();
+        let (touched_key, untouched_key) = (solana_pubkey::new_rand(), solana_pubkey::new_rand());
+
+        let fee_payer_account = AccountSharedData::new(100, 0, &Pubkey::default());
+        let touched_account = AccountSharedData::new(1, 0, &Pubkey::default());
+        let untouched_account = AccountSharedData::new(2, 0, &Pubkey::default());
+        let program_account = AccountSharedData::new(3, 0, &Pubkey::default());
+
+        // Writable accounts at indices 0, 1, 2, plus a readonly program at index 3.
+        let instructions = vec![CompiledInstruction::new(3, &(), vec![1, 2])];
+        let message = Message::new_with_compiled_instructions(
+            1, // num_required_signatures
+            0, // num_readonly_signed_accounts
+            1, // num_readonly_unsigned_accounts -> only the program is readonly
+            vec![
+                fee_payer.pubkey(),
+                touched_key,
+                untouched_key,
+                native_loader::id(),
+            ],
+            Hash::default(),
+            instructions,
+        );
+        let transaction_accounts = vec![
+            (message.account_keys[0], fee_payer_account),
+            (message.account_keys[1], touched_account),
+            (message.account_keys[2], untouched_account),
+            (message.account_keys[3], program_account),
+        ];
+        let tx = new_sanitized_tx(&[&fee_payer], message, Hash::default());
+
+        // The processor marks the fee payer (index 0) and every account the VM
+        // modified. Here only index 1 was modified; the writable account at
+        // index 2 was left untouched and must not be written back.
+        let loaded = LoadedTransaction {
+            touched_flags: touched_flags_for_test(2, transaction_accounts.len()),
+            accounts: transaction_accounts,
+            ..Default::default()
+        };
+
+        let txs = vec![tx];
+        let processing_results = vec![new_executed_processing_result(Ok(()), loaded)];
+
+        let transaction_refs: Option<Vec<&SanitizedTransaction>> = None;
+        let (collected_accounts, _transactions) =
+            collect_accounts_to_store(&txs, &transaction_refs, &processing_results);
+
+        // Only the fee payer and the touched writable account are stored; the
+        // untouched writable account and the readonly program are skipped.
+        let collected_keys =
+            HashSet::from_iter(collected_accounts.into_iter().map(|(pubkey, _act)| *pubkey));
+        assert_eq!(
+            collected_keys,
+            HashSet::from([fee_payer.pubkey(), touched_key]),
+        );
+    }
+
+    #[test]
     fn test_collect_accounts_for_failed_tx_rollback_fee_payer_only() {
         let from = keypair_from_seed(&[1; 32]).unwrap();
         let from_address = from.pubkey();
@@ -315,9 +402,13 @@ mod tests {
 
         let from_account_pre = AccountSharedData::new(4242, 0, &Pubkey::default());
 
+        let touched_flags =
+            touched_flags_for_test(transaction_accounts.len(), transaction_accounts.len());
         let loaded = LoadedTransaction {
             accounts: transaction_accounts,
-            program_indices: vec![],
+            // Worst case: every writable account appears modified, yet a failed
+            // tx must still persist only its rollback accounts.
+            touched_flags,
             fee_details: FeeDetails::default(),
             rollback_accounts: RollbackAccounts::FeePayerOnly {
                 fee_payer: (from_address, from_account_pre.clone()),
@@ -406,9 +497,13 @@ mod tests {
             AccountSharedData::new_data(42, &nonce_state, &system_program::id()).unwrap();
         let from_account_pre = AccountSharedData::new(4242, 0, &Pubkey::default());
 
+        let touched_flags =
+            touched_flags_for_test(transaction_accounts.len(), transaction_accounts.len());
         let loaded = LoadedTransaction {
             accounts: transaction_accounts,
-            program_indices: vec![],
+            // Worst case: every writable account appears modified, yet a failed
+            // tx must still persist only its rollback accounts.
+            touched_flags,
             fee_details: FeeDetails::default(),
             rollback_accounts: RollbackAccounts::SeparateNonceAndFeePayer {
                 nonce: (nonce_address, nonce_account_pre.clone()),
@@ -514,9 +609,13 @@ mod tests {
         let nonce_account_pre =
             AccountSharedData::new_data(42, &nonce_state, &system_program::id()).unwrap();
 
+        let touched_flags =
+            touched_flags_for_test(transaction_accounts.len(), transaction_accounts.len());
         let loaded = LoadedTransaction {
             accounts: transaction_accounts,
-            program_indices: vec![],
+            // Worst case: every writable account appears modified, yet a failed
+            // tx must still persist only its rollback accounts.
+            touched_flags,
             fee_details: FeeDetails::default(),
             rollback_accounts: RollbackAccounts::SameNonceAndFeePayer {
                 nonce: (nonce_address, nonce_account_pre.clone()),
@@ -589,6 +688,7 @@ mod tests {
                 rollback_accounts: RollbackAccounts::FeePayerOnly {
                     fee_payer: (from_address, from_account_pre.clone()),
                 },
+                loaded_accounts_data_size: 0,
             },
         )))];
         let max_collected_accounts = max_number_of_accounts_to_collect(&txs, &processing_results);

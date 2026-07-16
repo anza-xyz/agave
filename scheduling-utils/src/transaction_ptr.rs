@@ -99,15 +99,18 @@ pub struct TransactionPtrBatch<'a, M = ()> {
 }
 
 impl<'a, M> TransactionPtrBatch<'a, M> {
-    pub const TX_CORE_SIZE: usize = size_of::<SharableTransactionRegion>();
-    pub const TX_CORE_END: usize = Self::TX_CORE_SIZE * MAX_TRANSACTIONS_PER_MESSAGE;
+    pub const TRANSACTION_CORE_SIZE: usize = size_of::<SharableTransactionRegion>();
+    pub const TRANSACTION_CORE_END: usize =
+        Self::TRANSACTION_CORE_SIZE * MAX_TRANSACTIONS_PER_MESSAGE;
 
-    pub const TX_META_START: usize = Self::TX_CORE_END.next_multiple_of(align_of::<M>());
-    pub const TX_META_SIZE: usize = size_of::<M>() * MAX_TRANSACTIONS_PER_MESSAGE;
-    pub const TX_META_END: usize = Self::TX_META_START + Self::TX_META_SIZE;
+    pub const TRANSACTION_META_START: usize =
+        Self::TRANSACTION_CORE_END.next_multiple_of(align_of::<M>());
+    pub const TRANSACTION_META_SIZE: usize = size_of::<M>() * MAX_TRANSACTIONS_PER_MESSAGE;
+    pub const TRANSACTION_META_END: usize =
+        Self::TRANSACTION_META_START + Self::TRANSACTION_META_SIZE;
 
     #[allow(dead_code, reason = "Invariant assertion")]
-    const TX_BATCH_SIZE_ASSERT: () = assert!(Self::TX_META_END <= 4096);
+    const TRANSACTION_BATCH_SIZE_ASSERT: () = assert!(Self::TRANSACTION_META_END <= 4096);
 
     /// # Safety
     /// - [`SharableTransactionBatchRegion`] must reference a valid offset and length
@@ -127,7 +130,7 @@ impl<'a, M> TransactionPtrBatch<'a, M> {
         // SAFETY:
         // - Assuming the batch was originally allocated to support `M`, this call will also be
         //   safe.
-        let meta_ptr = unsafe { base.byte_add(Self::TX_META_START).cast() };
+        let meta_ptr = unsafe { base.byte_add(Self::TRANSACTION_META_START).cast() };
 
         Self {
             tx_ptr,

@@ -1,6 +1,5 @@
 #![allow(clippy::arithmetic_side_effects)]
 use {
-    bincode::serialized_size,
     itertools::Itertools,
     log::*,
     rayon::{ThreadPool, ThreadPoolBuilder, prelude::*},
@@ -14,6 +13,7 @@ use {
         crds_gossip_error::CrdsGossipError,
         crds_gossip_pull::{
             CRDS_GOSSIP_PULL_CRDS_TIMEOUT_MS, CrdsTimeouts, ProcessPullStats, PullRequest,
+            SAMPLE_RATE,
         },
         crds_gossip_push::CRDS_GOSSIP_PUSH_MSG_TIMEOUT_MS,
         crds_value::{CrdsValue, CrdsValueLabel},
@@ -275,7 +275,9 @@ fn network_simulator_pull_only(thread_pool: &ThreadPool, network: &Network) {
         let mut crds = network.nodes[&pubkey].gossip.crds.write().unwrap();
         let _ = crds.insert(entry, timestamp(), GossipRoute::LocalMessage);
     }
-    let (converged, bytes_tx) = network_run_pull(thread_pool, network, 0, num * 2, 0.9);
+    // Star convergence needs O(SAMPLE_RATE * num) rounds.
+    let (converged, bytes_tx) =
+        network_run_pull(thread_pool, network, 0, num * 2 * SAMPLE_RATE, 0.9);
     trace!("network_simulator_pull_{num}: converged: {converged} total_bytes: {bytes_tx}");
     assert!(converged >= 0.9);
 }
@@ -390,10 +392,7 @@ fn network_run_push(
                 let mut pruned: HashSet<(Pubkey, Pubkey)> = HashSet::new();
                 for (to, msgs) in push_messages {
                     // 8 bytes for encoding the length of the vector.
-                    bytes += 8 + msgs
-                        .iter()
-                        .map(CrdsValue::bincode_serialized_size)
-                        .sum::<usize>();
+                    bytes += 8 + msgs.iter().map(CrdsValue::serialized_size).sum::<usize>();
                     num_msgs += 1;
                     let origins: HashSet<_> = network
                         .get(&to)
@@ -417,7 +416,12 @@ fn network_run_push(
                             pruned.insert((from, *prune_key));
                         }
 
-                        bytes += serialized_size(&prune_keys).unwrap() as usize;
+                        let prune_keys_size = wincode::serialized_size(&prune_keys).unwrap();
+                        assert_eq!(
+                            prune_keys_size,
+                            bincode::serialized_size(&prune_keys).unwrap()
+                        );
+                        bytes += prune_keys_size as usize;
                         delivered += 1;
 
                         network
@@ -572,7 +576,7 @@ fn network_run_pull(
                     .iter()
                     .map(|f| f.filter.bits.len() as usize / 8)
                     .sum::<usize>();
-                bytes += caller_info.bincode_serialized_size();
+                bytes += caller_info.serialized_size();
                 let requests: Vec<_> = filters
                     .into_iter()
                     .map(|filter| PullRequest {
@@ -587,12 +591,11 @@ fn network_run_pull(
                     .map(|node| {
                         node.gossip
                             .generate_pull_responses(
-                                thread_pool,
                                 &requests,
                                 usize::MAX, // output_size_limit
                                 now,
-                                |_| true, // should_retain_crds_value
-                                0,        // network shred version
+                                |_| true,    // should_retain_crds_value
+                                |_, _| true, // try_consume_scan_budget
                                 &GossipStats::default(),
                             )
                             .into_iter()
@@ -601,10 +604,7 @@ fn network_run_pull(
                     })
                     .unwrap();
                 // 8 bytes for encoding the length of the vector.
-                bytes += 8 + rsp
-                    .iter()
-                    .map(CrdsValue::bincode_serialized_size)
-                    .sum::<usize>();
+                bytes += 8 + rsp.iter().map(CrdsValue::serialized_size).sum::<usize>();
                 msgs += rsp.len();
                 if let Some(node) = network.get(&from) {
                     let mut stats = ProcessPullStats::default();
@@ -661,8 +661,6 @@ fn build_gossip_thread_pool() -> ThreadPool {
 
 fn new_ping_cache() -> Mutex<PingCache> {
     let ping_cache = PingCache::new(
-        &mut rand::rng(),
-        Instant::now(),
         Duration::from_secs(20 * 60),      // ttl
         Duration::from_secs(20 * 60) / 64, // rate_limit_delay
         2048,                              // capacity

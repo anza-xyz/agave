@@ -2,17 +2,15 @@ use {
     super::leader_slot_timing_metrics::LeaderExecuteAndCommitTimings,
     itertools::Itertools,
     solana_cost_model::cost_model::CostModel,
-    solana_ledger::{
-        blockstore_processor::TransactionStatusSender,
-        transaction_balances::compile_collected_balances,
-    },
     solana_measure::measure_us,
     solana_runtime::{
         bank::{Bank, ProcessedTransactionCounts},
         bank_utils,
         prioritization_fee_cache::PrioritizationFeeCache,
+        transaction_balances::compile_collected_balances,
         transaction_batch::TransactionBatch,
-        vote_sender_types::ReplayVoteSender,
+        transaction_execution::TransactionStatusSender,
+        vote_sender_types::{ReplayVoteSendType, ReplayVoteSender},
     },
     solana_runtime_transaction::transaction_with_meta::TransactionWithMeta,
     solana_svm::{
@@ -100,14 +98,15 @@ impl Committer {
                 batch.sanitized_transactions(),
                 &commit_results,
                 Some(&self.replay_vote_sender),
+                ReplayVoteSendType::VerifiedExecuted,
             );
 
             if let Some(prioritization_fee_cache) = self.prioritization_fee_cache.as_ref() {
-                let committed_transactions = commit_results
+                let fee_paying_transactions = commit_results
                     .iter()
                     .zip(batch.sanitized_transactions())
-                    .filter_map(|(commit_result, tx)| commit_result.was_committed().then_some(tx));
-                prioritization_fee_cache.update(bank, committed_transactions);
+                    .filter_map(|(commit_result, tx)| commit_result.was_fee_paying().then_some(tx));
+                prioritization_fee_cache.update(bank, fee_paying_transactions);
             }
 
             self.collect_balances_and_send_status_batch(
@@ -179,6 +178,7 @@ impl Committer {
 
             transaction_status_sender.send_transaction_status_batch(
                 bank.slot(),
+                bank.bank_id(),
                 txs,
                 commit_results,
                 balances,

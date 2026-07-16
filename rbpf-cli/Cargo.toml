@@ -14,3 +14,6 @@ edition = { workspace = true }
 agave-unstable-api = []
 
 [dependencies]
+
+[lints]
+workspace = true

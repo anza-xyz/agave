@@ -5,14 +5,13 @@ use {
         optimistic_confirmation_verifier::OptimisticConfirmationVerifier,
         replay_stage::DUPLICATE_THRESHOLD,
         result::{Error, Result},
-        sigverify,
+        sigverify_stage::GossipSigVerifyHandle,
     },
     agave_banking_stage_ingress_types::BankingPacketBatch,
-    agave_votor_messages::migration::MigrationStatus,
+    agave_votor_messages::{VerifiedVoterSlotsSender, migration::MigrationStatus},
     crossbeam_channel::{Receiver, RecvTimeoutError, Select, Sender, unbounded},
     log::*,
-    rayon::ThreadPool,
-    solana_clock::{DEFAULT_MS_PER_SLOT, Slot},
+    solana_clock::{BankId, Slot},
     solana_gossip::{
         cluster_info::{ClusterInfo, GOSSIP_SLEEP_MILLIS},
         crds::Cursor,
@@ -20,7 +19,6 @@ use {
     solana_hash::Hash,
     solana_ledger::blockstore::Blockstore,
     solana_measure::measure::Measure,
-    solana_metrics::inc_new_counter_debug,
     solana_perf::packet::{self, PacketBatch},
     solana_pubkey::Pubkey,
     solana_rpc::{
@@ -32,7 +30,7 @@ use {
         bank_forks::{BankForks, SharableBanks},
         commitment::VOTE_THRESHOLD_SIZE,
         epoch_stakes::VersionedEpochStakes,
-        vote_sender_types::ReplayVoteReceiver,
+        vote_sender_types::{ReplayVoteMessage, ReplayVoteReceiver},
     },
     solana_signature::Signature,
     solana_time_utils::AtomicInterval,
@@ -43,7 +41,7 @@ use {
     },
     std::{
         cmp::max,
-        collections::HashMap,
+        collections::{HashMap, hash_map::Entry},
         iter::repeat,
         sync::{
             Arc, RwLock,
@@ -58,11 +56,6 @@ use {
 pub type ThresholdConfirmedSlots = Vec<(Slot, Hash)>;
 pub type VerifiedVoteTransactionsSender = Sender<Vec<Transaction>>;
 pub type VerifiedVoteTransactionsReceiver = Receiver<Vec<Transaction>>;
-// Send side of verified voter channel.
-// Each message contains the Pubkey of the voter and the slots in last verified vote.
-pub type VerifiedVoterSlotsSender = Sender<(Pubkey, Vec<Slot>)>;
-// Receive side of verified voter channel.
-pub type VerifiedVoterSlotsReceiver = Receiver<(Pubkey, Vec<Slot>)>;
 pub type GossipVerifiedVoteHashSender = Sender<(Pubkey, Slot, Hash)>;
 pub type GossipVerifiedVoteHashReceiver = Receiver<(Pubkey, Slot, Hash)>;
 pub type DuplicateConfirmedSlotsSender = Sender<ThresholdConfirmedSlots>;
@@ -197,6 +190,225 @@ impl VoteProcessingTiming {
     }
 }
 
+#[allow(clippy::large_enum_variant)]
+#[derive(Debug)]
+enum BufferedVote {
+    Executed(ParsedVote),
+    Verified,
+}
+
+#[allow(clippy::large_enum_variant)]
+enum ReplayVoteAction {
+    Executed(ParsedVote),
+    Verified,
+}
+
+impl From<ReplayVoteAction> for BufferedVote {
+    fn from(action: ReplayVoteAction) -> Self {
+        match action {
+            ReplayVoteAction::Executed(parsed_vote) => Self::Executed(parsed_vote),
+            ReplayVoteAction::Verified => Self::Verified,
+        }
+    }
+}
+
+impl BufferedVote {
+    fn apply(
+        self,
+        action: ReplayVoteAction,
+        ready_votes: &mut Vec<ParsedVote>,
+        replay_bank_id: BankId,
+        message_hash: Hash,
+    ) -> Option<Self> {
+        match (self, action) {
+            (Self::Executed(parsed_vote), ReplayVoteAction::Verified)
+            | (Self::Verified, ReplayVoteAction::Executed(parsed_vote)) => {
+                ready_votes.push(parsed_vote);
+                None
+            }
+            (Self::Verified, ReplayVoteAction::Verified) => Some(Self::Verified),
+            (Self::Executed(parsed_vote), ReplayVoteAction::Executed(_)) => {
+                debug_assert!(
+                    false,
+                    "duplicate Executed replay vote for same bank {replay_bank_id} message hash \
+                     {message_hash}"
+                );
+                Some(Self::Executed(parsed_vote))
+            }
+        }
+    }
+}
+
+#[derive(Debug)]
+enum BankVoteBuffer {
+    /// The bank is active and we are buffering votes for it.
+    Active {
+        slot: Slot,
+        votes: HashMap<Hash, BufferedVote>,
+    },
+    /// The bank is invalid and we are discarding votes.
+    Invalid { slot: Slot },
+}
+
+impl BankVoteBuffer {
+    fn slot(&self) -> Slot {
+        match self {
+            BankVoteBuffer::Active { slot, .. } => *slot,
+            BankVoteBuffer::Invalid { slot } => *slot,
+        }
+    }
+}
+
+struct VoteBuffer {
+    bank_votes: HashMap<BankId, BankVoteBuffer>,
+}
+
+impl VoteBuffer {
+    fn new() -> Self {
+        Self {
+            bank_votes: HashMap::new(),
+        }
+    }
+
+    fn receive_and_collect_ready_votes(
+        &mut self,
+        replay_votes: impl Iterator<Item = ReplayVoteMessage>,
+    ) -> Vec<ParsedVote> {
+        let mut ready_votes = Vec::new();
+        for replay_vote in replay_votes {
+            match replay_vote {
+                ReplayVoteMessage::VerifiedExecuted(parsed_vote) => ready_votes.push(parsed_vote),
+                ReplayVoteMessage::Executed {
+                    replay_bank_id,
+                    replay_slot,
+                    message_hash,
+                    parsed_vote,
+                } => {
+                    match self.bank_votes.entry(replay_bank_id) {
+                        Entry::Vacant(entry) => {
+                            entry.insert(BankVoteBuffer::Active {
+                                slot: replay_slot,
+                                votes: HashMap::from([(
+                                    message_hash,
+                                    BufferedVote::Executed(parsed_vote),
+                                )]),
+                            });
+                        }
+                        Entry::Occupied(mut entry) => {
+                            let BankVoteBuffer::Active {
+                                slot: stored_replay_slot,
+                                votes,
+                            } = entry.get_mut()
+                            else {
+                                // Skip votes for invalid banks
+                                continue;
+                            };
+                            debug_assert_eq!(*stored_replay_slot, replay_slot);
+                            Self::apply_action_for_message_hash(
+                                votes,
+                                message_hash,
+                                ReplayVoteAction::Executed(parsed_vote),
+                                &mut ready_votes,
+                                replay_bank_id,
+                            );
+                            if votes.is_empty() {
+                                entry.remove();
+                            }
+                        }
+                    }
+                }
+
+                ReplayVoteMessage::Verified {
+                    replay_bank_id,
+                    replay_slot,
+                    message_hashes,
+                } => {
+                    debug_assert!(
+                        !message_hashes.is_empty(),
+                        "empty replay Verified message for bank {replay_bank_id}, slot \
+                         {replay_slot}"
+                    );
+                    match self.bank_votes.entry(replay_bank_id) {
+                        Entry::Vacant(entry) => {
+                            entry.insert(BankVoteBuffer::Active {
+                                slot: replay_slot,
+                                votes: message_hashes
+                                    .into_iter()
+                                    .map(|message_hash| (message_hash, BufferedVote::Verified))
+                                    .collect(),
+                            });
+                        }
+                        Entry::Occupied(mut entry) => {
+                            let BankVoteBuffer::Active {
+                                slot: stored_replay_slot,
+                                votes,
+                            } = entry.get_mut()
+                            else {
+                                // Skip votes for invalid banks
+                                continue;
+                            };
+                            debug_assert_eq!(*stored_replay_slot, replay_slot);
+                            for message_hash in message_hashes.into_iter() {
+                                Self::apply_action_for_message_hash(
+                                    votes,
+                                    message_hash,
+                                    ReplayVoteAction::Verified,
+                                    &mut ready_votes,
+                                    replay_bank_id,
+                                );
+                            }
+                            if votes.is_empty() {
+                                entry.remove();
+                            }
+                        }
+                    }
+                }
+                ReplayVoteMessage::InvalidBank {
+                    replay_bank_id,
+                    replay_slot,
+                } => {
+                    self.bank_votes.insert(
+                        replay_bank_id,
+                        BankVoteBuffer::Invalid { slot: replay_slot },
+                    );
+                }
+                ReplayVoteMessage::BankComplete { replay_bank_id, .. } => {
+                    self.bank_votes.remove(&replay_bank_id);
+                }
+            }
+        }
+
+        ready_votes
+    }
+
+    #[inline]
+    fn apply_action_for_message_hash(
+        votes: &mut HashMap<Hash, BufferedVote>,
+        message_hash: Hash,
+        action: ReplayVoteAction,
+        ready_votes: &mut Vec<ParsedVote>,
+        replay_bank_id: BankId,
+    ) {
+        match votes.entry(message_hash) {
+            Entry::Vacant(entry) => {
+                entry.insert(action.into());
+            }
+            Entry::Occupied(entry) => {
+                let (_message_hash, current_state) = entry.remove_entry();
+                if let Some(next_state) =
+                    current_state.apply(action, ready_votes, replay_bank_id, message_hash)
+                {
+                    votes.insert(message_hash, next_state);
+                }
+            }
+        }
+    }
+
+    fn prune_stale_slots(&mut self, root_slot: Slot) {
+        self.bank_votes.retain(|_, state| state.slot() > root_slot);
+    }
+}
+
 pub struct ClusterInfoVoteListener {
     thread_hdls: Vec<JoinHandle<()>>,
 }
@@ -206,7 +418,7 @@ impl ClusterInfoVoteListener {
     pub fn new(
         exit: Arc<AtomicBool>,
         cluster_info: Arc<ClusterInfo>,
-        sigverify_threadpool: Arc<ThreadPool>,
+        gossip_sigverify_handle: GossipSigVerifyHandle,
         verified_packets_sender: BankingPacketSender,
         vote_tracker: Arc<VoteTracker>,
         bank_forks: Arc<RwLock<BankForks>>,
@@ -228,7 +440,7 @@ impl ClusterInfoVoteListener {
                     let _ = Self::recv_loop(
                         exit,
                         &cluster_info,
-                        sigverify_threadpool,
+                        gossip_sigverify_handle,
                         sharable_banks,
                         verified_packets_sender,
                         verified_vote_transactions_sender,
@@ -274,48 +486,86 @@ impl ClusterInfoVoteListener {
     fn recv_loop(
         exit: Arc<AtomicBool>,
         cluster_info: &ClusterInfo,
-        sigverify_threadpool: Arc<ThreadPool>,
+        mut gossip_sigverify_handle: GossipSigVerifyHandle,
         sharable_banks: SharableBanks,
         verified_packets_sender: BankingPacketSender,
         verified_vote_transactions_sender: VerifiedVoteTransactionsSender,
     ) -> Result<()> {
+        #[derive(Default)]
+        struct Stats {
+            received_count: usize,
+            banking_channel_max_len: usize,
+            banking_channel_eviction_drops: usize,
+        }
+        const STATS_REPORT_INTERVAL: Duration = Duration::from_secs(1);
         let mut cursor = Cursor::default();
+        let mut last_report = Instant::now();
+        let mut stats = Stats::default();
         while !exit.load(Ordering::Relaxed) {
             let votes = cluster_info.get_votes(&mut cursor);
-            inc_new_counter_debug!("cluster_info_vote_listener-recv_count", votes.len());
             if !votes.is_empty() {
+                stats.received_count += votes.len();
                 let (vote_txs, packets) =
-                    Self::verify_votes(votes, &sigverify_threadpool, &sharable_banks);
+                    Self::verify_votes(votes, &mut gossip_sigverify_handle, &sharable_banks)?;
                 verified_vote_transactions_sender.send(vote_txs)?;
-                verified_packets_sender.send(BankingPacketBatch::new(packets))?;
+                for packet_batch in packets {
+                    // Sample backlog before the push.
+                    stats.banking_channel_max_len = stats
+                        .banking_channel_max_len
+                        .max(verified_packets_sender.len());
+                    stats.banking_channel_eviction_drops +=
+                        verified_packets_sender.send(BankingPacketBatch::new(packet_batch))?;
+                }
+            }
+            if last_report.elapsed() >= STATS_REPORT_INTERVAL {
+                datapoint_info!(
+                    "cluster_info_vote_listener",
+                    ("received_count", stats.received_count as i64, i64),
+                    (
+                        "banking_channel_max_len",
+                        stats.banking_channel_max_len as i64,
+                        i64
+                    ),
+                    (
+                        "banking_channel_eviction_drops",
+                        stats.banking_channel_eviction_drops as i64,
+                        i64
+                    ),
+                );
+                stats = Stats::default();
+                last_report = Instant::now();
             }
             sleep(Duration::from_millis(GOSSIP_SLEEP_MILLIS));
         }
         Ok(())
     }
 
-    #[allow(clippy::type_complexity)]
     fn verify_votes(
         votes: Vec<Transaction>,
-        threadpool: &ThreadPool,
+        gossip_sigverify_handle: &mut GossipSigVerifyHandle,
+        sharable_banks: &SharableBanks,
+    ) -> Result<(Vec<Transaction>, Vec<PacketBatch>)> {
+        let packet_batches = packet::to_packet_batches(&votes, 1);
+        let (votes, packet_batches) =
+            gossip_sigverify_handle.verify_and_receive_votes(votes, packet_batches)?;
+        Ok(Self::filter_verified_votes(
+            votes,
+            packet_batches,
+            sharable_banks,
+        ))
+    }
+
+    fn filter_verified_votes(
+        votes: Vec<Transaction>,
+        packet_batches: Vec<PacketBatch>,
         sharable_banks: &SharableBanks,
     ) -> (Vec<Transaction>, Vec<PacketBatch>) {
-        let mut packet_batches = packet::to_packet_batches(&votes, 1);
-
-        // Votes should already be filtered by this point.
-        sigverify::ed25519_verify(
-            threadpool,
-            &mut packet_batches,
-            /*reject_non_vote=*/ false,
-            votes.len(),
-        );
         let root_bank = sharable_banks.root();
         let epoch_schedule = root_bank.epoch_schedule();
         votes
             .into_iter()
             .zip(packet_batches)
             .filter(|(_, packet_batch)| {
-                // to_packet_batches() above splits into 1 packet long batches
                 assert_eq!(packet_batch.len(), 1);
                 !packet_batch.get(0).unwrap().meta().discard()
             })
@@ -350,13 +600,14 @@ impl ClusterInfoVoteListener {
         let mut latest_vote_slot_per_validator = HashMap::new();
         let mut last_process_root = Instant::now();
         let mut vote_processing_time = Some(VoteProcessingTiming::default());
+        let mut replay_vote_buffer = VoteBuffer::new();
         loop {
             if exit.load(Ordering::Relaxed) {
                 return Ok(());
             }
 
             let root_bank = sharable_banks.root();
-            if last_process_root.elapsed().as_millis() > DEFAULT_MS_PER_SLOT as u128 {
+            if last_process_root.elapsed().as_nanos() > root_bank.ns_per_slot {
                 let unrooted_optimistic_slots = confirmation_verifier
                     .verify_for_unrooted_optimistic_slots(&root_bank, &blockstore);
                 // SlotVoteTracker's for all `slots` in `unrooted_optimistic_slots`
@@ -368,6 +619,7 @@ impl ClusterInfoVoteListener {
                     &unrooted_optimistic_slots,
                 );
                 vote_tracker.progress_with_new_root_bank(&root_bank);
+                replay_vote_buffer.prune_stale_slots(root_bank.slot());
                 last_process_root = Instant::now();
             }
             let confirmed_slots = Self::listen_and_confirm_votes(
@@ -375,6 +627,7 @@ impl ClusterInfoVoteListener {
                 &vote_tracker,
                 &root_bank,
                 &replay_votes_receiver,
+                &mut replay_vote_buffer,
                 &notifiers,
                 &mut vote_processing_time,
                 &mut latest_vote_slot_per_validator,
@@ -410,6 +663,7 @@ impl ClusterInfoVoteListener {
         vote_tracker: &VoteTracker,
         root_bank: &Bank,
         replay_votes_receiver: &ReplayVoteReceiver,
+        replay_vote_buffer: &mut VoteBuffer,
         notifiers: &ConfirmationNotifiers,
         vote_processing_time: &mut Option<VoteProcessingTiming>,
         latest_vote_slot_per_validator: &mut HashMap<Pubkey, Slot>,
@@ -429,7 +683,8 @@ impl ClusterInfoVoteListener {
             // Should not early return from this point onwards until `process_votes()`
             // returns below to avoid missing any potential `optimistic_confirmed_slots`
             let gossip_vote_txs: Vec<_> = gossip_vote_txs_receiver.try_iter().flatten().collect();
-            let replay_votes: Vec<_> = replay_votes_receiver.try_iter().collect();
+            let replay_votes = replay_vote_buffer
+                .receive_and_collect_ready_votes(replay_votes_receiver.try_iter());
             if !gossip_vote_txs.is_empty() || !replay_votes.is_empty() {
                 return Ok(Self::filter_and_confirm_with_new_votes(
                     vote_tracker,
@@ -495,31 +750,30 @@ impl ClusterInfoVoteListener {
         let reached_duplicate_confirmed = reached_threshold_results[0];
         let reached_optimistic_confirmed = reached_threshold_results[1];
 
-        if reached_duplicate_confirmed {
-            if let Some(ref sender) = notifiers.duplicate_confirmed_slot_sender {
-                let _ = sender.send(vec![(last_vote_slot, last_vote_hash)]);
-            }
+        if reached_duplicate_confirmed
+            && let Some(ref sender) = notifiers.duplicate_confirmed_slot_sender
+        {
+            let _ = sender.send(vec![(last_vote_slot, last_vote_hash)]);
         }
 
         if reached_optimistic_confirmed {
             new_optimistic_confirmed_slots.push((last_vote_slot, last_vote_hash));
-            if let Some(ref sender) = notifiers.bank_notification_sender {
-                if notifiers
+            if let Some(ref sender) = notifiers.bank_notification_sender
+                && notifiers
                     .migration_status
                     .should_report_commitment_or_root(last_vote_slot)
-                {
-                    let dependency_work = sender
-                        .dependency_tracker
-                        .as_ref()
-                        .map(|s| s.get_current_declared_work());
-                    sender
-                        .sender
-                        .send((
-                            BankNotification::OptimisticallyConfirmed(last_vote_slot),
-                            dependency_work,
-                        ))
-                        .unwrap_or_else(|err| warn!("bank_notification_sender failed: {err:?}"));
-                }
+            {
+                let dependency_work = sender
+                    .dependency_tracker
+                    .as_ref()
+                    .map(|s| s.get_current_declared_work());
+                sender
+                    .sender
+                    .send((
+                        BankNotification::OptimisticallyConfirmed(last_vote_slot, last_vote_hash),
+                        dependency_work,
+                    ))
+                    .unwrap_or_else(|err| warn!("bank_notification_sender failed: {err:?}"));
             }
         }
 
@@ -738,9 +992,12 @@ impl ClusterInfoVoteListener {
 mod tests {
     use {
         super::*,
+        crate::sigverify::GossipVerifiedVoteBatch,
+        crossbeam_channel::bounded,
         itertools::Itertools,
         solana_hash::Hash,
         solana_keypair::Keypair,
+        solana_leader_schedule::SlotLeader,
         solana_perf::{packet, sigverify},
         solana_pubkey::Pubkey,
         solana_rpc::optimistically_confirmed_bank_tracker::OptimisticallyConfirmedBank,
@@ -750,7 +1007,7 @@ mod tests {
             genesis_utils::{
                 self, GenesisConfigInfo, ValidatorVoteKeypairs, create_genesis_config,
             },
-            vote_sender_types::ReplayVoteSender,
+            vote_sender_types::{ReplayVoteMessage, ReplayVoteSender},
         },
         solana_signature::Signature,
         solana_signer::Signer,
@@ -763,13 +1020,44 @@ mod tests {
         },
     };
 
-    // Convenience wrapper for `ClusterInfoVoteListener::verify_votes()`
-    fn verify_votes(
+    fn pre_send_for_tests(
+        verified_vote_sender: &Sender<GossipVerifiedVoteBatch>,
+        votes: &[Transaction],
+    ) {
+        let mut packet_batches = packet::to_packet_batches(votes, 1);
+        // Gossip votes are legacy Transaction values, not tx-v1 packets.
+        packet_batches
+            .iter_mut()
+            .for_each(|packet_batch| sigverify::ed25519_verify_serial(packet_batch, true, false));
+        // There is no worker thread in these tests, so preload the verified
+        // responses that verify_votes() will receive after it sends work.
+        votes
+            .iter()
+            .cloned()
+            .zip(packet_batches)
+            .for_each(|(transaction, packet_batch)| {
+                verified_vote_sender
+                    .send(GossipVerifiedVoteBatch {
+                        transaction,
+                        packet_batch,
+                    })
+                    .unwrap();
+            });
+    }
+
+    // Avoid setting up sigverify stage.
+    fn test_verify_votes(
         votes: Vec<Transaction>,
         sharable_banks: &SharableBanks,
     ) -> (Vec<Transaction>, Vec<PacketBatch>) {
-        let threadpool = sigverify::threadpool_for_tests();
-        ClusterInfoVoteListener::verify_votes(votes, &threadpool, sharable_banks)
+        let (worker_sender, _worker_receiver) = bounded(1024);
+        let (verified_vote_sender, verified_vote_receiver) = bounded(1024);
+        let mut gossip_sigverify_handle =
+            GossipSigVerifyHandle::new_for_tests(worker_sender, verified_vote_receiver);
+
+        pre_send_for_tests(&verified_vote_sender, &votes);
+        ClusterInfoVoteListener::verify_votes(votes, &mut gossip_sigverify_handle, sharable_banks)
+            .unwrap()
     }
 
     #[test]
@@ -798,7 +1086,10 @@ mod tests {
     #[test]
     fn test_update_new_root() {
         let SetupComponents {
-            vote_tracker, bank, ..
+            vote_tracker,
+            bank,
+            bank_forks: _bank_forks,
+            ..
         } = setup();
 
         // Check outdated slots are purged with new root
@@ -814,7 +1105,7 @@ mod tests {
                 .unwrap()
                 .contains_key(&bank.slot())
         );
-        let bank1 = Bank::new_from_parent(bank.clone(), &Pubkey::default(), bank.slot() + 1);
+        let bank1 = Bank::new_from_parent(bank.clone(), SlotLeader::default(), bank.slot() + 1);
         vote_tracker.progress_with_new_root_bank(&bank1);
         assert!(
             !vote_tracker
@@ -830,7 +1121,7 @@ mod tests {
         let new_epoch_slot = bank
             .epoch_schedule()
             .get_first_slot_in_epoch(current_epoch + 1);
-        let new_epoch_bank = Bank::new_from_parent(bank, &Pubkey::default(), new_epoch_slot);
+        let new_epoch_bank = Bank::new_from_parent(bank, SlotLeader::default(), new_epoch_slot);
         vote_tracker.progress_with_new_root_bank(&new_epoch_bank);
     }
 
@@ -866,10 +1157,10 @@ mod tests {
             subscriptions,
             ..
         } = setup();
-        let (votes_sender, votes_receiver) = unbounded();
-        let (verified_voter_slots_sender, _verified_voter_slots_receiver) = unbounded();
-        let (gossip_verified_vote_hash_sender, _gossip_verified_vote_hash_receiver) = unbounded();
-        let (replay_votes_sender, replay_votes_receiver) = unbounded();
+        let (votes_sender, votes_receiver) = bounded(1024);
+        let (verified_voter_slots_sender, _verified_voter_slots_receiver) = bounded(1024);
+        let (gossip_verified_vote_hash_sender, _gossip_verified_vote_hash_receiver) = bounded(1024);
+        let (replay_votes_sender, replay_votes_receiver) = bounded(1024);
         let mut latest_vote_slot_per_validator = HashMap::new();
 
         let GenesisConfigInfo { genesis_config, .. } =
@@ -879,13 +1170,10 @@ mod tests {
                 vec![stake_per_validator; validator_voting_keypairs.len()],
             );
 
-        let bank0 = Bank::new_for_tests(&genesis_config);
+        let (bank0, _bank_forks) =
+            Bank::new_for_tests(&genesis_config).wrap_with_bank_forks_for_tests();
         // Votes for slots less than the provided root bank's slot should not be processed
-        let bank3 = Arc::new(Bank::new_from_parent(
-            Arc::new(bank0),
-            &Pubkey::default(),
-            3,
-        ));
+        let bank3 = Arc::new(Bank::new_from_parent(bank0, SlotLeader::default(), 3));
         let vote_slots = vec![1, 2];
         send_vote_txs(
             vote_slots,
@@ -903,11 +1191,13 @@ mod tests {
             duplicate_confirmed_slot_sender: None,
             migration_status: Arc::new(MigrationStatus::default()),
         };
+        let mut replay_vote_buffer = VoteBuffer::new();
         ClusterInfoVoteListener::listen_and_confirm_votes(
             &votes_receiver,
             &vote_tracker,
             &bank3,
             &replay_votes_receiver,
+            &mut replay_vote_buffer,
             &notifiers,
             &mut None,
             &mut latest_vote_slot_per_validator,
@@ -937,6 +1227,7 @@ mod tests {
             &vote_tracker,
             &bank3,
             &replay_votes_receiver,
+            &mut replay_vote_buffer,
             &notifiers,
             &mut None,
             &mut latest_vote_slot_per_validator,
@@ -972,12 +1263,12 @@ mod tests {
             // Send same vote twice, but should only notify once
             for _ in 0..2 {
                 replay_votes_sender
-                    .send((
+                    .send(ReplayVoteMessage::VerifiedExecuted((
                         vote_keypair.pubkey(),
                         VoteTransaction::from(replay_vote.clone()),
                         switch_proof_hash,
                         Signature::default(),
-                    ))
+                    )))
                     .unwrap();
             }
         });
@@ -985,26 +1276,20 @@ mod tests {
 
     fn run_test_process_votes(hash: Option<Hash>) {
         // Create some voters at genesis
+        // Must match `setup()`'s `vec![100; validator_voting_keypairs.len()]` stake per validator.
         let stake_per_validator = 100;
         let SetupComponents {
             vote_tracker,
             validator_voting_keypairs,
             subscriptions,
+            bank: bank0,
             ..
         } = setup();
-        let (votes_txs_sender, votes_txs_receiver) = unbounded();
-        let (replay_votes_sender, replay_votes_receiver) = unbounded();
-        let (gossip_verified_vote_hash_sender, gossip_verified_vote_hash_receiver) = unbounded();
-        let (verified_voter_slots_sender, verified_voter_slots_receiver) = unbounded();
+        let (votes_txs_sender, votes_txs_receiver) = bounded(1024);
+        let (replay_votes_sender, replay_votes_receiver) = bounded(1024);
+        let (gossip_verified_vote_hash_sender, gossip_verified_vote_hash_receiver) = bounded(1024);
+        let (verified_voter_slots_sender, verified_voter_slots_receiver) = bounded(1024);
         let mut latest_vote_slot_per_validator = HashMap::new();
-
-        let GenesisConfigInfo { genesis_config, .. } =
-            genesis_utils::create_genesis_config_with_vote_accounts(
-                10_000,
-                &validator_voting_keypairs,
-                vec![stake_per_validator; validator_voting_keypairs.len()],
-            );
-        let bank0 = Bank::new_for_tests(&genesis_config);
 
         let gossip_vote_slots = vec![1, 2];
         let replay_vote_slots = vec![3, 4];
@@ -1026,11 +1311,13 @@ mod tests {
             duplicate_confirmed_slot_sender: None,
             migration_status: Arc::new(MigrationStatus::default()),
         };
+        let mut replay_vote_buffer = VoteBuffer::new();
         ClusterInfoVoteListener::listen_and_confirm_votes(
             &votes_txs_receiver,
             &vote_tracker,
             &bank0,
             &replay_votes_receiver,
+            &mut replay_vote_buffer,
             &notifiers,
             &mut None,
             &mut latest_vote_slot_per_validator,
@@ -1137,28 +1424,20 @@ mod tests {
     #[test]
     fn test_process_votes2() {
         // Create some voters at genesis
+        let stake_per_validator = 100;
         let SetupComponents {
             vote_tracker,
             validator_voting_keypairs,
             subscriptions,
+            bank: bank0,
             ..
         } = setup();
 
-        // Create bank with the voters
-        let stake_per_validator = 100;
-        let GenesisConfigInfo { genesis_config, .. } =
-            genesis_utils::create_genesis_config_with_vote_accounts(
-                10_000,
-                &validator_voting_keypairs,
-                vec![stake_per_validator; validator_voting_keypairs.len()],
-            );
-        let bank0 = Bank::new_for_tests(&genesis_config);
-
         // Send some votes to process
-        let (votes_txs_sender, votes_txs_receiver) = unbounded();
-        let (gossip_verified_vote_hash_sender, _gossip_verified_vote_hash_receiver) = unbounded();
-        let (verified_voter_slots_sender, verified_voter_slots_receiver) = unbounded();
-        let (_replay_votes_sender, replay_votes_receiver) = unbounded();
+        let (votes_txs_sender, votes_txs_receiver) = bounded(1024);
+        let (gossip_verified_vote_hash_sender, _gossip_verified_vote_hash_receiver) = bounded(1024);
+        let (verified_voter_slots_sender, verified_voter_slots_receiver) = bounded(1024);
+        let (_replay_votes_sender, replay_votes_receiver) = bounded(1024);
         let mut latest_vote_slot_per_validator = HashMap::new();
 
         let mut expected_voter_slots = vec![];
@@ -1198,11 +1477,13 @@ mod tests {
             duplicate_confirmed_slot_sender: None,
             migration_status: Arc::new(MigrationStatus::default()),
         };
+        let mut replay_vote_buffer = VoteBuffer::new();
         ClusterInfoVoteListener::listen_and_confirm_votes(
             &votes_txs_receiver,
             &vote_tracker,
             &bank0,
             &replay_votes_receiver,
+            &mut replay_vote_buffer,
             &notifiers,
             &mut None,
             &mut latest_vote_slot_per_validator,
@@ -1246,11 +1527,11 @@ mod tests {
     }
 
     fn run_test_process_votes3(switch_proof_hash: Option<Hash>) {
-        let (votes_sender, votes_receiver) = unbounded();
-        let (verified_voter_slots_sender, _verified_voter_slots_receiver) = unbounded();
-        let (gossip_verified_vote_hash_sender, _gossip_verified_vote_hash_receiver) = unbounded();
+        let (votes_sender, votes_receiver) = bounded(1024);
+        let (verified_voter_slots_sender, _verified_voter_slots_receiver) = bounded(1024);
+        let (gossip_verified_vote_hash_sender, _gossip_verified_vote_hash_receiver) = bounded(1024);
         let (replay_votes_sender, replay_votes_receiver): (ReplayVoteSender, ReplayVoteReceiver) =
-            unbounded();
+            bounded(1024);
         let mut latest_vote_slot_per_validator = HashMap::new();
 
         let vote_slot = 1;
@@ -1287,6 +1568,7 @@ mod tests {
                 duplicate_confirmed_slot_sender: None,
                 migration_status: Arc::new(MigrationStatus::default()),
             };
+            let mut replay_vote_buffer = VoteBuffer::new();
             for &e in &events {
                 if e == 0 || e == 2 {
                     // Create vote transaction
@@ -1304,12 +1586,12 @@ mod tests {
                 }
                 if e == 1 || e == 2 {
                     replay_votes_sender
-                        .send((
+                        .send(ReplayVoteMessage::VerifiedExecuted((
                             vote_keypair.pubkey(),
                             VoteTransaction::from(Vote::new(vec![vote_slot], Hash::default())),
                             switch_proof_hash,
                             Signature::default(),
-                        ))
+                        )))
                         .unwrap();
                 }
                 let _ = ClusterInfoVoteListener::listen_and_confirm_votes(
@@ -1317,6 +1599,7 @@ mod tests {
                     &vote_tracker,
                     &bank,
                     &replay_votes_receiver,
+                    &mut replay_vote_buffer,
                     &notifiers,
                     &mut None,
                     &mut latest_vote_slot_per_validator,
@@ -1349,6 +1632,262 @@ mod tests {
         run_test_process_votes3(Some(Hash::default()));
     }
 
+    fn sample_parsed_vote(slot: Slot) -> ParsedVote {
+        (
+            Pubkey::new_unique(),
+            VoteTransaction::from(Vote::new(vec![slot], Hash::default())),
+            None,
+            Signature::default(),
+        )
+    }
+
+    #[test]
+    fn test_replay_vote_buffer_gates_unverified_votes() {
+        let replay_bank_id = 1;
+        let replay_slot = 42;
+        let parsed_vote = sample_parsed_vote(replay_slot);
+        let message_hash = Hash::default();
+        let mut replay_vote_buffer = VoteBuffer::new();
+
+        let ready_votes = replay_vote_buffer.receive_and_collect_ready_votes(
+            vec![ReplayVoteMessage::Executed {
+                replay_bank_id,
+                replay_slot,
+                message_hash,
+                parsed_vote: parsed_vote.clone(),
+            }]
+            .into_iter(),
+        );
+        assert!(ready_votes.is_empty());
+        assert_eq!(replay_vote_buffer.bank_votes.len(), 1);
+        assert!(matches!(
+            replay_vote_buffer.bank_votes.get(&replay_bank_id),
+            Some(BankVoteBuffer::Active { .. })
+        ));
+
+        let ready_votes = replay_vote_buffer.receive_and_collect_ready_votes(
+            vec![ReplayVoteMessage::Verified {
+                replay_bank_id,
+                replay_slot,
+                message_hashes: vec![message_hash],
+            }]
+            .into_iter(),
+        );
+        assert_eq!(ready_votes, vec![parsed_vote]);
+        assert!(replay_vote_buffer.bank_votes.is_empty());
+    }
+
+    #[test]
+    fn test_replay_vote_buffer_gates_unexecuted_votes() {
+        let replay_bank_id = 3;
+        let replay_slot = 77;
+        let parsed_vote = sample_parsed_vote(replay_slot);
+        let message_hash = Hash::default();
+        let mut replay_vote_buffer = VoteBuffer::new();
+
+        let ready_votes = replay_vote_buffer.receive_and_collect_ready_votes(
+            vec![ReplayVoteMessage::Verified {
+                replay_bank_id,
+                replay_slot,
+                message_hashes: vec![message_hash],
+            }]
+            .into_iter(),
+        );
+        assert!(ready_votes.is_empty());
+        assert_eq!(replay_vote_buffer.bank_votes.len(), 1);
+        assert!(matches!(
+            replay_vote_buffer.bank_votes.get(&replay_bank_id),
+            Some(BankVoteBuffer::Active { .. })
+        ));
+
+        let ready_votes = replay_vote_buffer.receive_and_collect_ready_votes(
+            vec![ReplayVoteMessage::Executed {
+                replay_bank_id,
+                replay_slot,
+                message_hash,
+                parsed_vote: parsed_vote.clone(),
+            }]
+            .into_iter(),
+        );
+        assert_eq!(ready_votes, vec![parsed_vote]);
+        assert!(replay_vote_buffer.bank_votes.is_empty());
+    }
+
+    #[test]
+    fn test_replay_vote_buffer_same_signature_different_tx() {
+        let replay_bank_id = 4;
+        let replay_slot = 88;
+        let valid_vote = sample_parsed_vote(replay_slot);
+        let spoofed_vote = sample_parsed_vote(replay_slot + 1);
+        assert_eq!(valid_vote.3, spoofed_vote.3);
+
+        let valid_message_hash = Hash::new_from_array([1; 32]);
+        let spoofed_message_hash = Hash::new_from_array([2; 32]);
+        let mut replay_vote_buffer = VoteBuffer::new();
+
+        let ready_votes = replay_vote_buffer.receive_and_collect_ready_votes(
+            vec![
+                ReplayVoteMessage::Executed {
+                    replay_bank_id,
+                    replay_slot,
+                    message_hash: spoofed_message_hash,
+                    parsed_vote: spoofed_vote,
+                },
+                ReplayVoteMessage::Verified {
+                    replay_bank_id,
+                    replay_slot,
+                    message_hashes: vec![valid_message_hash],
+                },
+            ]
+            .into_iter(),
+        );
+        assert!(ready_votes.is_empty());
+        assert_matches!(
+            replay_vote_buffer.bank_votes.get(&replay_bank_id),
+            Some(BankVoteBuffer::Active { votes, .. }) if votes.len() == 2
+        );
+
+        let ready_votes = replay_vote_buffer.receive_and_collect_ready_votes(
+            vec![ReplayVoteMessage::Executed {
+                replay_bank_id,
+                replay_slot,
+                message_hash: valid_message_hash,
+                parsed_vote: valid_vote.clone(),
+            }]
+            .into_iter(),
+        );
+        assert_eq!(ready_votes, vec![valid_vote]);
+    }
+
+    #[test]
+    fn test_replay_vote_buffer_invalid_bank_drops_late_messages() {
+        let replay_bank_id = 2;
+        let replay_slot = 100;
+        let parsed_vote = sample_parsed_vote(replay_slot);
+        let message_hash = Hash::default();
+        let mut replay_vote_buffer = VoteBuffer::new();
+
+        let ready_votes = replay_vote_buffer.receive_and_collect_ready_votes(
+            vec![ReplayVoteMessage::Verified {
+                replay_bank_id,
+                replay_slot,
+                message_hashes: vec![message_hash],
+            }]
+            .into_iter(),
+        );
+        assert!(ready_votes.is_empty());
+        assert_eq!(replay_vote_buffer.bank_votes.len(), 1);
+        assert!(matches!(
+            replay_vote_buffer.bank_votes.get(&replay_bank_id),
+            Some(BankVoteBuffer::Active { .. })
+        ));
+
+        let ready_votes = replay_vote_buffer.receive_and_collect_ready_votes(
+            vec![ReplayVoteMessage::InvalidBank {
+                replay_bank_id,
+                replay_slot,
+            }]
+            .into_iter(),
+        );
+        assert!(ready_votes.is_empty());
+        assert_eq!(replay_vote_buffer.bank_votes.len(), 1);
+        assert!(matches!(
+            replay_vote_buffer.bank_votes.get(&replay_bank_id),
+            Some(BankVoteBuffer::Invalid {
+                slot: invalid_slot
+            }) if *invalid_slot == replay_slot
+        ));
+
+        let ready_votes = replay_vote_buffer.receive_and_collect_ready_votes(
+            vec![ReplayVoteMessage::Executed {
+                replay_bank_id,
+                replay_slot,
+                message_hash,
+                parsed_vote: parsed_vote.clone(),
+            }]
+            .into_iter(),
+        );
+        assert!(ready_votes.is_empty());
+        assert_eq!(replay_vote_buffer.bank_votes.len(), 1);
+        assert!(matches!(
+            replay_vote_buffer.bank_votes.get(&replay_bank_id),
+            Some(BankVoteBuffer::Invalid {
+                slot: invalid_slot
+            }) if *invalid_slot == replay_slot
+        ));
+    }
+
+    #[test]
+    fn test_replay_vote_buffer_bank_complete_clears_pending_state() {
+        let replay_bank_id = 5;
+        let replay_slot = 123;
+        let parsed_vote = sample_parsed_vote(replay_slot);
+        let message_hash = Hash::default();
+        let mut replay_vote_buffer = VoteBuffer::new();
+
+        let ready_votes = replay_vote_buffer.receive_and_collect_ready_votes(
+            vec![ReplayVoteMessage::Executed {
+                replay_bank_id,
+                replay_slot,
+                message_hash,
+                parsed_vote,
+            }]
+            .into_iter(),
+        );
+        assert!(ready_votes.is_empty());
+        assert_eq!(replay_vote_buffer.bank_votes.len(), 1);
+        assert_matches!(
+            replay_vote_buffer.bank_votes.get(&replay_bank_id),
+            Some(BankVoteBuffer::Active { .. })
+        );
+
+        let ready_votes = replay_vote_buffer.receive_and_collect_ready_votes(
+            vec![ReplayVoteMessage::BankComplete {
+                replay_bank_id,
+                replay_slot,
+            }]
+            .into_iter(),
+        );
+        assert!(ready_votes.is_empty());
+        assert!(replay_vote_buffer.bank_votes.is_empty());
+    }
+
+    #[test]
+    fn test_replay_vote_buffer_processes_verified_message_hash() {
+        let replay_bank_id = 6;
+        let replay_slot = 124;
+        let parsed_vote = sample_parsed_vote(replay_slot);
+        let message_hash = Hash::default();
+        let mut replay_vote_buffer = VoteBuffer::new();
+
+        let ready_votes = replay_vote_buffer.receive_and_collect_ready_votes(
+            vec![ReplayVoteMessage::Executed {
+                replay_bank_id,
+                replay_slot,
+                message_hash,
+                parsed_vote: parsed_vote.clone(),
+            }]
+            .into_iter(),
+        );
+        assert!(ready_votes.is_empty());
+        assert_eq!(replay_vote_buffer.bank_votes.len(), 1);
+        assert_matches!(
+            replay_vote_buffer.bank_votes.get(&replay_bank_id),
+            Some(BankVoteBuffer::Active { .. })
+        );
+
+        let ready_votes = replay_vote_buffer.receive_and_collect_ready_votes(
+            vec![ReplayVoteMessage::Verified {
+                replay_bank_id,
+                replay_slot,
+                message_hashes: vec![message_hash],
+            }]
+            .into_iter(),
+        );
+        assert_eq!(ready_votes, vec![parsed_vote]);
+        assert!(replay_vote_buffer.bank_votes.is_empty());
+    }
+
     #[test]
     fn test_vote_tracker_references() {
         // Create some voters at genesis
@@ -1363,8 +1902,7 @@ mod tests {
             );
         let bank = Bank::new_for_tests(&genesis_config);
         let exit = Arc::new(AtomicBool::new(false));
-        let bank_forks = BankForks::new_rw_arc(bank);
-        let bank = bank_forks.read().unwrap().get(0).unwrap();
+        let (bank, bank_forks) = bank.wrap_with_bank_forks_for_tests();
         let vote_tracker = VoteTracker::default();
         let optimistically_confirmed_bank =
             OptimisticallyConfirmedBank::locked_from_bank_forks_root(&bank_forks);
@@ -1392,8 +1930,8 @@ mod tests {
             None,
         )];
 
-        let (verified_voter_slots_sender, _verified_voter_slots_receiver) = unbounded();
-        let (gossip_verified_vote_hash_sender, _gossip_verified_vote_hash_receiver) = unbounded();
+        let (verified_voter_slots_sender, _verified_voter_slots_receiver) = bounded(1024);
+        let (gossip_verified_vote_hash_sender, _gossip_verified_vote_hash_receiver) = bounded(1024);
         let notifiers = ConfirmationNotifiers {
             gossip_verified_vote_hash_sender: gossip_verified_vote_hash_sender.clone(),
             verified_voter_slots_sender: verified_voter_slots_sender.clone(),
@@ -1445,7 +1983,7 @@ mod tests {
             .collect();
 
         let new_root_bank =
-            Bank::new_from_parent(bank, &Pubkey::default(), first_slot_in_new_epoch - 2);
+            Bank::new_from_parent(bank, SlotLeader::default(), first_slot_in_new_epoch - 2);
         let notifiers = ConfirmationNotifiers {
             gossip_verified_vote_hash_sender: gossip_verified_vote_hash_sender.clone(),
             verified_voter_slots_sender: verified_voter_slots_sender.clone(),
@@ -1473,6 +2011,7 @@ mod tests {
     struct SetupComponents {
         vote_tracker: Arc<VoteTracker>,
         bank: Arc<Bank>,
+        bank_forks: Arc<RwLock<BankForks>>,
         validator_voting_keypairs: Vec<ValidatorVoteKeypairs>,
         subscriptions: Arc<RpcSubscriptions>,
     }
@@ -1489,8 +2028,7 @@ mod tests {
         let bank = Bank::new_for_tests(&genesis_config);
         let vote_tracker = VoteTracker::default();
         let exit = Arc::new(AtomicBool::new(false));
-        let bank_forks = BankForks::new_rw_arc(bank);
-        let bank = bank_forks.read().unwrap().get(0).unwrap();
+        let (bank, bank_forks) = bank.wrap_with_bank_forks_for_tests();
         let optimistically_confirmed_bank =
             OptimisticallyConfirmedBank::locked_from_bank_forks_root(&bank_forks);
         let max_complete_transaction_status_slot = Arc::new(AtomicU64::default());
@@ -1505,6 +2043,7 @@ mod tests {
         SetupComponents {
             vote_tracker: Arc::new(vote_tracker),
             bank,
+            bank_forks,
             validator_voting_keypairs,
             subscriptions,
         }
@@ -1518,14 +2057,9 @@ mod tests {
         let bank_forks = BankForks::new_rw_arc(bank);
         let sharable_banks = bank_forks.read().unwrap().sharable_banks();
         let votes = vec![];
-        let (vote_txs, packets) = verify_votes(votes, &sharable_banks);
+        let (vote_txs, packet_batches) = test_verify_votes(votes, &sharable_banks);
         assert!(vote_txs.is_empty());
-        assert!(packets.is_empty());
-    }
-
-    fn verify_packets_len(packets: &[PacketBatch], ref_value: usize) {
-        let num_packets: usize = packets.iter().map(|pb| pb.len()).sum();
-        assert_eq!(num_packets, ref_value);
+        assert!(packet_batches.is_empty());
     }
 
     fn test_vote_tx(
@@ -1561,9 +2095,9 @@ mod tests {
         let sharable_banks = bank_forks.read().unwrap().sharable_banks();
         let vote_tx = test_vote_tx(voting_keypairs.first(), hash);
         let votes = vec![vote_tx];
-        let (vote_txs, packets) = verify_votes(votes, &sharable_banks);
+        let (vote_txs, packet_batches) = test_verify_votes(votes, &sharable_banks);
         assert_eq!(vote_txs.len(), 1);
-        verify_packets_len(&packets, 1);
+        assert_eq!(packet_batches.len(), 1);
     }
 
     #[test]
@@ -1589,9 +2123,9 @@ mod tests {
         let mut bad_vote = vote_tx.clone();
         bad_vote.signatures[0] = Signature::default();
         let votes = vec![vote_tx.clone(), bad_vote, vote_tx];
-        let (vote_txs, packets) = verify_votes(votes, &sharable_banks);
+        let (vote_txs, packet_batches) = test_verify_votes(votes, &sharable_banks);
         assert_eq!(vote_txs.len(), 2);
-        verify_packets_len(&packets, 2);
+        assert_eq!(packet_batches.len(), 2);
     }
 
     #[test]
@@ -1632,8 +2166,7 @@ mod tests {
             );
         let bank = Bank::new_for_tests(&genesis_config);
         let exit = Arc::new(AtomicBool::new(false));
-        let bank_forks = BankForks::new_rw_arc(bank);
-        let bank = bank_forks.read().unwrap().get(0).unwrap();
+        let (bank, bank_forks) = bank.wrap_with_bank_forks_for_tests();
         let vote_tracker = VoteTracker::default();
         let optimistically_confirmed_bank =
             OptimisticallyConfirmedBank::locked_from_bank_forks_root(&bank_forks);
@@ -1647,8 +2180,8 @@ mod tests {
         ));
         let mut latest_vote_slot_per_validator = HashMap::new();
 
-        let (verified_voter_slots_sender, _verified_voter_slots_receiver) = unbounded();
-        let (gossip_verified_vote_hash_sender, _gossip_verified_vote_hash_receiver) = unbounded();
+        let (verified_voter_slots_sender, _verified_voter_slots_receiver) = bounded(1024);
+        let (gossip_verified_vote_hash_sender, _gossip_verified_vote_hash_receiver) = bounded(1024);
         let mut diff = HashMap::default();
         let mut new_optimistic_confirmed_slots = vec![];
 

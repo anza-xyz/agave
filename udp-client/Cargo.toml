@@ -9,6 +9,11 @@ homepage = { workspace = true }
 license = { workspace = true }
 edition = { workspace = true }
 
+[package.metadata.docs.rs]
+targets = ["x86_64-unknown-linux-gnu"]
+all-features = true
+rustdoc-args = ["--cfg=docsrs"]
+
 [features]
 agave-unstable-api = []
 dev-context-only-utils = []
@@ -20,10 +25,11 @@ solana-keypair = { workspace = true }
 solana-net-utils = { workspace = true }
 solana-streamer = { workspace = true }
 solana-transaction-error = { workspace = true }
-thiserror = { workspace = true }
-tokio = { workspace = true, features = ["full"] }
 
 [dev-dependencies]
-solana-net-utils = { workspace = true, features = ["dev-context-only-utils"] }
+solana-net-utils = { path = "../net-utils", features = ["agave-unstable-api", "dev-context-only-utils"] }
 solana-packet = { workspace = true }
-solana-streamer = { workspace = true, features = ["dev-context-only-utils"] }
+solana-streamer = { path = "../streamer", features = ["agave-unstable-api", "dev-context-only-utils"] }
+
+[lints]
+workspace = true

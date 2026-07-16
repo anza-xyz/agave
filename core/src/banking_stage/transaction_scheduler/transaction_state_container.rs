@@ -1,5 +1,3 @@
-#[cfg(feature = "dev-context-only-utils")]
-use qualifier_attr::qualifiers;
 use {
     super::{transaction_priority_id::TransactionPriorityId, transaction_state::TransactionState},
     crate::banking_stage::scheduler_messages::TransactionId,
@@ -37,7 +35,6 @@ use {
 ///
 /// The container maintains a fixed capacity. If the queue is full when pushing
 /// a new transaction, the lowest priority transaction will be dropped.
-#[cfg_attr(feature = "dev-context-only-utils", qualifiers(pub))]
 pub(crate) struct TransactionStateContainer<Tx: TransactionWithMeta> {
     capacity: usize,
     priority_queue: BTreeSet<TransactionPriorityId>,
@@ -45,7 +42,6 @@ pub(crate) struct TransactionStateContainer<Tx: TransactionWithMeta> {
     held_transactions: Vec<TransactionPriorityId>,
 }
 
-#[cfg_attr(feature = "dev-context-only-utils", qualifiers(pub))]
 pub(crate) trait StateContainer<Tx: TransactionWithMeta> {
     /// Create a new `TransactionStateContainer` with the given capacity.
     fn with_capacity(capacity: usize) -> Self;
@@ -116,9 +112,6 @@ pub(crate) trait StateContainer<Tx: TransactionWithMeta> {
         &self,
         cursor: Option<&TransactionPriorityId>,
     ) -> Rev<std::collections::btree_set::Range<'_, TransactionPriorityId>>;
-
-    #[cfg(feature = "dev-context-only-utils")]
-    fn clear(&mut self);
 }
 
 // Extra capacity is added because some additional space is needed when
@@ -225,12 +218,6 @@ impl<Tx: TransactionWithMeta> StateContainer<Tx> for TransactionStateContainer<T
                 .range((Bound::Unbounded, Bound::Excluded(cursor)))
                 .rev(),
         }
-    }
-
-    #[cfg(feature = "dev-context-only-utils")]
-    fn clear(&mut self) {
-        self.priority_queue.clear();
-        self.id_to_transaction_state.clear();
     }
 }
 
@@ -396,12 +383,6 @@ impl StateContainer<RuntimeTransactionView> for TransactionViewStateContainer {
     ) -> Rev<std::collections::btree_set::Range<'_, TransactionPriorityId>> {
         self.inner.recheck_iter(cursor)
     }
-
-    #[cfg(feature = "dev-context-only-utils")]
-    #[inline]
-    fn clear(&mut self) {
-        self.inner.clear();
-    }
 }
 
 #[cfg(test)]
@@ -415,7 +396,9 @@ mod tests {
         solana_keypair::Keypair,
         solana_message::Message,
         solana_perf::packet::Packet,
-        solana_runtime_transaction::runtime_transaction::RuntimeTransaction,
+        solana_runtime_transaction::{
+            runtime_transaction::RuntimeTransaction, sanitize_config::sanitize_config,
+        },
         solana_signer::Signer,
         solana_system_interface::instruction as system_instruction,
         solana_transaction::{
@@ -503,7 +486,8 @@ mod tests {
 
         let reserved_addresses = HashSet::default();
         let packet_parser = |data, priority, cost| {
-            let view = SanitizedTransactionView::try_new_sanitized(data, true, true).unwrap();
+            let view =
+                SanitizedTransactionView::try_new_sanitized(data, &sanitize_config()).unwrap();
             let view = RuntimeTransaction::<SanitizedTransactionView<_>>::try_new(
                 view,
                 MessageHash::Compute,

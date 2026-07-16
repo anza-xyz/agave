@@ -67,39 +67,47 @@ all eligible deprecated symbols have been removed. Our policy is to deprecate
 for at least one full minor version before removal.
 
 ### Create the new branch
-1. Check out the latest commit on `master` branch:
-    ```
-    git fetch --all
-    git checkout upstream/master
-    ```
+
+#### Cutting a branch without promoting channels
+
+By default, pushing a new `vX.Y` head auto-promotes it to `BETA_CHANNEL` and
+demotes the prior beta to stable, because `ci/channel-info.sh` picks the top-2
+`vX.Y` heads. To cut a branch without that promotion (e.g. to begin backports
+while keeping the current beta in place), set the pins in
+`ci/channel-overrides` on master *before* pushing the new branch:
+
+```
+# current beta, to be held
+PINNED_BETA_CHANNEL=vX.Y
+# current stable, to be held
+PINNED_STABLE_CHANNEL=vX.Y-1
+```
+
+Only the file that lives on master is used; every branch's CI fetches it from there, so no
+backport is needed.
+
+When ready to promote, open a PR on master that clears or updates the pins.
+Then proceed with the usual "Miscellaneous Clean up" steps below.
+
+#### Steps
+
+1. Update master branch to the next release minor version: dispatch [Bump Version](https://github.com/anza-xyz/agave/actions/workflows/bump-version.yml) pipeline against `master` branch to create the version bump PR. `Version bump level` should be either `minor` or `major`.
+1. Review version bump PR, get all required approvals and merge it.
+1. Determine the last commit **right before the version bump commit**.
 1. Determine the new branch name.  The name should be "v" + the first 2 version fields
-   from Cargo.toml.  For example, a Cargo.toml with version = "0.9.0" implies
+   from Cargo.toml **at the commit right before the version bump commit**. For example, a Cargo.toml with version = "0.9.0" implies
    the next branch name is "v0.9".
 1. Create the new branch and push this branch to the `agave` repository:
     ```
-    git checkout -b <branchname>
-    git push -u origin <branchname>
-    ```
-
-Alternatively use the Github UI.
-
-### Update master branch to the next release minor version
-
-1. After the new branch has been created and pushed, update the Cargo.toml files on **master** to the next semantic version (e.g. 0.9.0 -> 0.10.0) with:
-     ```
-     $ scripts/increment-cargo-version.sh minor
-     ```
-1. Push all the changed Cargo.toml and Cargo.lock files to the `master` branch with something like:
-    ```
-    git co -b version_update
-    git ls-files -m | xargs git add
-    git commit -m 'Bump version to X.Y+1.0'
-    git push -u origin version_update
+    git checkout -b <branchname> <the last commit right before the version bump commit>
+    git push -u upstream <branchname>
     ```
 1. Confirm that your freshly cut release branch is shown as `BETA_CHANNEL` and the previous release branch as `STABLE_CHANNEL`:
     ```
     ci/channel-info.sh
     ```
+   Note: if `ci/channel-overrides` on master has `PINNED_BETA_CHANNEL` /
+   `PINNED_STABLE_CHANNEL` set, those values override auto-detect everywhere.
 
 ### Update the Changelog
 
@@ -110,11 +118,16 @@ Create a PR that makes the following updates to [CHANGELOG.md](https://github.co
 
 ### Miscellaneous Clean up
 
+#### Newly Promoted Stable (Former Beta) Branch
+
 1. Pin the spl-token-cli version in the newly promoted stable branch by setting `splTokenCliVersion` in scripts/spl-token-cli-version.sh to the latest release that depends on the stable branch (usually this will be the latest spl-token-cli release).
-1. Pin the cargo-build-sbf and cargo-test-sbf versions in the newly promoted stable branch by setting `cargoBuildSbfVersion` and `cargoTestSbfVersion` in scripts/cargo-build-sbf-version.sh to the latest release that depends on the stable branch (usually this will be the latest releases).
+1. Pin the cargo-build-sbf version in the newly promoted stable branch by setting `cargoBuildSbfVersion` in scripts/cargo-build-sbf-version.sh to the latest release that depends on the stable branch (usually this will be the latest releases).
+
+#### Newly Created Beta Branch
+
 1. Update [CHANGELOG.md](https://github.com/anza-xyz/agave/blob/master/CHANGELOG.md) to remove the channel links on the new branch. Additionally, remove any wording about the new branch being unreleased.
 1. Update [CODEOWNERS](https://github.com/anza-xyz/agave/blob/master/.github/CODEOWNERS) to `* @anza-xyz/backport-reviewers` on the new branch.
-1. Update [mergify.yml](https://github.com/anza-xyz/agave/blob/master/.mergify.yml) to add backport actions for the new branch and remove actions for the obsolete branch.
+1. Update [mergify.yml](https://github.com/anza-xyz/agave/blob/master/.mergify.yml) to add backport actions for the new branch, remove actions for the obsolete branch and update the list of non EoL version branches.
 1. Adjust the [Github backport labels](https://github.com/anza-xyz/agave/labels) to add the new branch label and remove the label for the obsolete branch.
 1. Announce on Discord #development that the release branch exists so people know to use the new backport labels.
 
@@ -122,32 +135,22 @@ Create a PR that makes the following updates to [CHANGELOG.md](https://github.co
 
 ### Create the Release Tag on GitHub
 
-1. Go to [GitHub Releases](https://github.com/anza-xyz/agave/releases) for tagging a release.
-1. Click "Draft new release".  The release tag must exactly match the `version`
-   field in `/Cargo.toml` prefixed by `v`.
-   1.  If the Cargo.toml version field is **0.12.3**, then the release tag must be **v0.12.3**
-1. Make sure the Target Branch field matches the branch you want to make a release on.
-   1.  If you want to release v0.12.0, the target branch must be v0.12
+1. Dispatch [Bump Version](https://github.com/anza-xyz/agave/actions/workflows/bump-version.yml) pipeline to create the version bump PR.
+1. Verify CI checks pass. Verify that the change is correct: it only contains version bump changes and only expected version is changed. Approve it.
+1. Wait for approvals required to merge and merge it.
+1. Check out relevant branch, create release tag pointing to the version bump merge commit from the previous step. The release tag must exactly match the `version` field in `/Cargo.toml` prefixed by `v` from the version bump.
+    ```
+    git checkout v4.0
+    git tag v4.0.1 123abc...
+    git push upstream v4.0.1
+    ```
+1. [The automation](https://github.com/anza-xyz/agave/blob/master/.github/workflows/release.yml) will create the new draft release and start `agave-secondary` Buildkite pipeline.
+1. Go to [GitHub Releases](https://github.com/anza-xyz/agave/releases) and edit the draft release just made by the automation.
 1. Fill the release notes.
    1.  If this is the first release on the branch (e.g. v0.13.**0**), paste in [this
    template](https://raw.githubusercontent.com/anza-xyz/agave/master/.github/RELEASE_TEMPLATE.md).  Engineering Lead can provide summary contents for release notes if needed.
    1. If this is a patch release, review all the commits since the previous release on this branch and add details as needed.
-1. Click "Save Draft", then confirm the release notes look good and the tag name and branch are correct.
-1. Ensure all desired commits (usually backports) are landed on the branch by now.
 1. Ensure the release is marked **"This is a pre-release"**.  This flag will need to be removed manually after confirming the Linux binary artifacts appear at a later step.
-1. Go back into edit the release and click "Publish release" while being marked as a pre-release.
-1. Confirm there is new git tag with intended version number at the intended revision after running `git fetch` locally.
-
-
-### Update release branch with the next patch version
-
-[This action](https://github.com/anza-xyz/agave/blob/master/.github/workflows/increment-cargo-version-on-release.yml) ensures that publishing a release will trigger the creation of a PR to update the Cargo.toml files on **release branch** to the next semantic version (e.g. 0.9.0 -> 0.9.1). Ensure that the created PR makes it through CI and gets submitted.
-
-Note: As of 2024-03-26 the above action is failing so version bumps are done manually. The version bump script is incorrectly updating hashbrown and proc-macro2 versions which should be reverted.
-
-### Prepare for the next release
-1.  Go to [GitHub Releases](https://github.com/anza-xyz/agave/releases) and create a new draft release for `X.Y.Z+1` with empty release notes.  This allows people to incrementally add new release notes until it's time for the next release
-    1. Also, point the branch field to the same branch and mark the release as **"This is a pre-release"**.
 
 ### Verify release automation success
 Go to [Agave Releases](https://github.com/anza-xyz/agave/releases) and click on the latest release that you just published.
@@ -160,6 +163,3 @@ appearing.  To check for progress:
 
 [Crates.io agave-validator](https://crates.io/crates/agave-validator) should have an updated agave-validator version.  This can take 2-3 hours, and sometimes fails in the `agave-secondary` job.
 If this happens and the error is non-fatal, click "Retry" on the "publish crate" job
-
-### Update software on testnet.solana.com
-See the documentation at https://github.com/solana-labs/cluster-ops/. devnet.solana.com and mainnet-beta.solana.com run stable releases that have been tested on testnet. Do not update devnet or mainnet-beta with a beta release.

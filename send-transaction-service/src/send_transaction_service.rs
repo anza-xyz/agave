@@ -158,7 +158,7 @@ pub const MAX_RETRY_SLEEP_MS: u64 = 1000;
 
 impl SendTransactionService {
     pub fn new<Client: TransactionClient + Clone + std::marker::Send + 'static>(
-        bank_forks: &Arc<RwLock<BankForks>>,
+        bank_forks: Arc<RwLock<BankForks>>,
         receiver: Receiver<TransactionInfo>,
         client: Client,
         config: Config,
@@ -178,7 +178,7 @@ impl SendTransactionService {
         );
 
         let retry_thread = Self::retry_thread(
-            bank_forks.clone(),
+            bank_forks,
             client,
             retry_transactions,
             config,
@@ -233,15 +233,14 @@ impl SendTransactionService {
                             stats.received_transactions.fetch_add(1, Ordering::Relaxed);
                             let entry = transactions.entry(transaction_info.signature);
                             let mut new_transaction = false;
-                            if let Entry::Vacant(_) = entry {
-                                if !retry_transactions
+                            if let Entry::Vacant(_) = entry
+                                && !retry_transactions
                                     .lock()
                                     .unwrap()
                                     .contains_key(&transaction_info.signature)
-                                {
-                                    entry.or_insert(transaction_info);
-                                    new_transaction = true;
-                                }
+                            {
+                                entry.or_insert(transaction_info);
+                                new_transaction = true;
                             }
                             if !new_transaction {
                                 stats
@@ -435,15 +434,15 @@ impl SendTransactionService {
             let max_retries =
                 transaction_info.get_max_retries(default_max_retries, service_max_retries);
 
-            if let Some(max_retries) = max_retries {
-                if transaction_info.retries >= max_retries {
-                    info!("Dropping transaction due to max retries: {signature}");
-                    result.max_retries_elapsed += 1;
-                    stats
-                        .transactions_exceeding_max_retries
-                        .fetch_add(1, Ordering::Relaxed);
-                    return false;
-                }
+            if let Some(max_retries) = max_retries
+                && transaction_info.retries >= max_retries
+            {
+                info!("Dropping transaction due to max retries: {signature}");
+                result.max_retries_elapsed += 1;
+                stats
+                    .transactions_exceeding_max_retries
+                    .fetch_add(1, Ordering::Relaxed);
+                return false;
             }
 
             match signature_status {
@@ -469,10 +468,10 @@ impl SendTransactionService {
 
                         let max_retries = transaction_info
                             .get_max_retries(default_max_retries, service_max_retries);
-                        if let Some(max_retries) = max_retries {
-                            if transaction_info.retries >= max_retries {
-                                exceeded_retries_transactions.push(*signature);
-                            }
+                        if let Some(max_retries) = max_retries
+                            && transaction_info.retries >= max_retries
+                        {
+                            exceeded_retries_transactions.push(*signature);
                         }
                     } else if let Some(last) = transaction_info.last_sent_time {
                         result.last_sent_time = Some(
@@ -537,11 +536,11 @@ mod test {
     use {
         super::*,
         crate::test_utils::create_client_for_tests,
-        crossbeam_channel::{bounded, unbounded},
+        crossbeam_channel::bounded,
         solana_account::AccountSharedData,
         solana_genesis_config::create_genesis_config,
         solana_nonce::{self as nonce, state::DurableNonce},
-        solana_pubkey::Pubkey,
+        solana_runtime::bank::SlotLeader,
         solana_signer::Signer,
         solana_system_interface::program as system_program,
         solana_system_transaction as system_transaction,
@@ -555,13 +554,13 @@ mod test {
     async fn service_exit() {
         let bank = Bank::default_for_tests();
         let bank_forks = BankForks::new_rw_arc(bank);
-        let (sender, receiver) = unbounded();
+        let (sender, receiver) = bounded(1024);
 
         let client =
             create_client_for_tests(Handle::current(), "127.0.0.1:0".parse().unwrap(), None, 1);
 
         let send_transaction_service = SendTransactionService::new(
-            &bank_forks,
+            bank_forks,
             receiver,
             client.clone(),
             Config {
@@ -598,7 +597,7 @@ mod test {
         let client =
             create_client_for_tests(Handle::current(), "127.0.0.1:0".parse().unwrap(), None, 1);
         let _send_transaction_service = SendTransactionService::new(
-            &bank_forks,
+            bank_forks,
             receiver,
             client.clone(),
             Config {
@@ -634,7 +633,7 @@ mod test {
 
         let root_bank = Bank::new_from_parent(
             bank_forks.read().unwrap().working_bank(),
-            &Pubkey::default(),
+            SlotLeader::default(),
             1,
         );
         let root_bank = bank_forks
@@ -655,14 +654,11 @@ mod test {
             (transaction, signature)
         };
 
+        let working_child = Bank::new_from_parent(root_bank.clone(), SlotLeader::default(), 2);
         let working_bank = bank_forks
             .write()
             .unwrap()
-            .insert(Bank::new_from_parent(
-                root_bank.clone(),
-                &Pubkey::default(),
-                2,
-            ))
+            .insert(working_child)
             .clone_without_scheduler();
 
         let (non_rooted_transaction, non_rooted_signature) = {
@@ -916,7 +912,7 @@ mod test {
 
         let root_bank = Bank::new_from_parent(
             bank_forks.read().unwrap().working_bank(),
-            &Pubkey::default(),
+            SlotLeader::default(),
             1,
         );
         let root_bank = bank_forks
@@ -946,14 +942,11 @@ mod test {
             AccountSharedData::new_data(43, &nonce_state, &system_program::id()).unwrap();
         root_bank.store_account(&nonce_address, &nonce_account);
 
+        let working_child = Bank::new_from_parent(root_bank.clone(), SlotLeader::default(), 2);
         let working_bank = bank_forks
             .write()
             .unwrap()
-            .insert(Bank::new_from_parent(
-                root_bank.clone(),
-                &Pubkey::default(),
-                2,
-            ))
+            .insert(working_child)
             .clone_without_scheduler();
 
         let (non_rooted_transaction, non_rooted_signature) = {

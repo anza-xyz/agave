@@ -7,7 +7,7 @@ use {
         create_custom_loader, deploy_program_with_upgrade_authority, load_program, program_address,
         program_data_size, register_builtins,
     },
-    solana_account::{AccountSharedData, PROGRAM_OWNERS, ReadableAccount, WritableAccount},
+    solana_account::{AccountSharedData, ReadableAccount, WritableAccount},
     solana_clock::Slot,
     solana_compute_budget::compute_budget_limits::ComputeBudgetLimits,
     solana_compute_budget_interface::ComputeBudgetInstruction,
@@ -22,14 +22,21 @@ use {
     solana_native_token::LAMPORTS_PER_SOL,
     solana_nonce::{self as nonce, state::DurableNonce},
     solana_program_entrypoint::MAX_PERMITTED_DATA_INCREASE,
-    solana_program_runtime::execution_budget::{
-        MAX_LOADED_ACCOUNTS_DATA_SIZE_BYTES, SVMTransactionExecutionAndFeeBudgetLimits,
+    solana_program_runtime::{
+        execution_budget::{
+            MAX_LOADED_ACCOUNTS_DATA_SIZE_BYTES, SVMTransactionExecutionAndFeeBudgetLimits,
+        },
+        loaded_programs::ProgramRuntimeEnvironments,
     },
     solana_pubkey::Pubkey,
-    solana_sdk_ids::{bpf_loader_upgradeable, compute_budget, native_loader},
+    solana_sdk_ids::{
+        bpf_loader, bpf_loader_deprecated, bpf_loader_upgradeable, compute_budget, native_loader,
+    },
     solana_signer::Signer,
     solana_svm::{
-        account_loader::{CheckedTransactionDetails, TransactionCheckResult},
+        account_loader::{
+            CheckedTransactionDetails, TRANSACTION_ACCOUNT_BASE_SIZE, TransactionCheckResult,
+        },
         nonce_info::NonceInfo,
         transaction_execution_result::TransactionExecutionDetails,
         transaction_processing_result::{
@@ -55,7 +62,7 @@ use {
     solana_transaction_context::transaction::TransactionReturnData,
     solana_transaction_error::TransactionError,
     std::{collections::HashMap, num::NonZeroU32, slice, sync::atomic::Ordering},
-    test_case::test_case,
+    test_case::{test_case, test_matrix},
 };
 
 // This module contains the implementation of TransactionProcessingCallback
@@ -138,14 +145,13 @@ impl SvmTestEnvironment<'_> {
             EXECUTION_SLOT,
             EXECUTION_EPOCH,
             Arc::downgrade(&fork_graph),
-            Some(Arc::new(create_custom_loader())),
-            None, // We are not using program runtime v2.
+            Some(create_custom_loader()),
         );
 
         // The sysvars must be put in the cache
         mock_bank.configure_sysvars();
         batch_processor.fill_missing_sysvar_cache_entries(&mock_bank);
-        register_builtins(&mock_bank, &batch_processor, test_entry.with_loader_v4);
+        register_builtins(&mock_bank, &batch_processor);
 
         let processing_config = TransactionProcessingConfig {
             recording_config: ExecutionRecordingConfig {
@@ -156,19 +162,21 @@ impl SvmTestEnvironment<'_> {
             },
             drop_on_failure: test_entry.drop_on_failure,
             all_or_nothing: test_entry.all_or_nothing,
+            drop_noop_transactions: test_entry.drop_noop_transactions,
             ..Default::default()
         };
 
         let processing_environment = TransactionProcessingEnvironment {
             blockhash: LAST_BLOCKHASH,
-            feature_set: test_entry.feature_set,
             blockhash_lamports_per_signature: LAMPORTS_PER_SIGNATURE,
-            program_runtime_environments_for_execution: batch_processor
-                .get_environments_for_epoch(EXECUTION_EPOCH),
-            program_runtime_environments_for_deployment: batch_processor
-                .get_environments_for_epoch(EXECUTION_EPOCH),
+            alpenglow_migration_succeeded: false,
+            epoch_total_stake: 0,
+            feature_set: test_entry.feature_set,
+            program_runtime_environments: ProgramRuntimeEnvironments::new(
+                batch_processor.program_runtime_environment_for_epoch(EXECUTION_EPOCH),
+                batch_processor.program_runtime_environment_for_epoch(EXECUTION_EPOCH),
+            ),
             rent: test_entry.rent.clone(),
-            ..TransactionProcessingEnvironment::default()
         };
 
         Self {
@@ -249,7 +257,7 @@ impl SvmTestEnvironment<'_> {
                         );
                     }
                 }
-                Err(_) => {}
+                Ok(ProcessedTransaction::NoOp(_)) | Err(_) => {}
             }
         }
 
@@ -280,6 +288,9 @@ impl SvmTestEnvironment<'_> {
                     Ok(ProcessedTransaction::FeesOnly(fee_only)) => {
                         format!("{} (fee-only): {:?}", i, fee_only.load_error)
                     }
+                    Ok(ProcessedTransaction::NoOp(e)) => {
+                        format!("{i} (no-op): {e:?}")
+                    }
                     Err(e) => format!("{i} (discarded): {e:?}"),
                 })
                 .collect::<Vec<_>>()
@@ -305,7 +316,7 @@ impl SvmTestEnvironment<'_> {
             match processing_result {
                 Ok(ProcessedTransaction::Executed(executed_transaction)) => test_item_asserts
                     .check_executed_transaction(&executed_transaction.execution_details),
-                Ok(ProcessedTransaction::FeesOnly(_)) => {
+                Ok(ProcessedTransaction::FeesOnly(_)) | Ok(ProcessedTransaction::NoOp(_)) => {
                     assert!(test_item_asserts.processed());
                     assert!(!test_item_asserts.executed());
                 }
@@ -329,7 +340,7 @@ impl SvmTestEnvironment<'_> {
                         .write()
                         .unwrap()
                         .merge(
-                            &self.batch_processor.environments,
+                            &self.batch_processor.program_runtime_environment,
                             self.batch_processor.slot,
                             programs_modified_by_tx,
                         );
@@ -366,14 +377,14 @@ pub struct SvmTestEntry {
     // features configuration for this test
     pub feature_set: SVMFeatureSet,
 
-    // until LoaderV4 is live on mainnet, we default to omitting it, but can also test it
-    pub with_loader_v4: bool,
-
     // enables drop on failure processing (transactions without Ok status have no state effect)
     pub drop_on_failure: bool,
 
     // enables all or nothing processing (if not all transactions can be committed then none are)
     pub all_or_nothing: bool,
+
+    // enables transformation of no-op result into error. false in replay, true in block production
+    pub drop_noop_transactions: bool,
 
     // programs to deploy to the new svm
     pub initial_programs: Vec<(String, Slot, Option<Pubkey>)>,
@@ -395,9 +406,9 @@ impl Default for SvmTestEntry {
     fn default() -> Self {
         Self {
             feature_set: SVMFeatureSet::all_enabled(),
-            with_loader_v4: false,
             all_or_nothing: false,
             drop_on_failure: false,
+            drop_noop_transactions: false,
             initial_programs: Vec::new(),
             initial_accounts: HashMap::new(),
             transaction_batch: Vec::new(),
@@ -408,18 +419,11 @@ impl Default for SvmTestEntry {
 }
 
 impl SvmTestEntry {
-    pub fn with_loader_v4() -> Self {
-        Self {
-            with_loader_v4: true,
-            ..Self::default()
-        }
-    }
-
     pub fn set_rent_params(&mut self, rent: Rent) {
         self.rent = rent;
     }
 
-    // add a new a rent-exempt account that exists before the batch
+    // add a new rent-exempt account that exists before the batch
     // inserts it into both account maps, assuming it lives unchanged (except for svm fixing rent epoch)
     // rent-paying accounts must be added by hand because svm will not set rent epoch to u64::MAX
     pub fn add_initial_account(&mut self, pubkey: Pubkey, account: &AccountSharedData) {
@@ -611,7 +615,7 @@ impl Default for TransactionBatchItem {
 
 // asserts for a given transaction in a batch
 // we can automatically check whether it executed, whether it succeeded
-// log items we expect to see (exect match only), and rodata
+// log items we expect to see (exact match only), and rodata
 #[derive(Clone, Debug, Default)]
 pub struct TransactionBatchItemAsserts {
     pub status: ExecutionStatus,
@@ -666,13 +670,15 @@ impl From<ExecutionStatus> for TransactionBatchItemAsserts {
 }
 
 // states a transaction can end in after a trip through the batch processor:
-// * discarded: no-op. not even processed. a flawed transaction excluded from the entry
-// * processed-failed: aka fee (and nonce) only. charged and added to an entry but not executed, would have failed invariably
-// * executed-failed: failed during execution. as above, fees charged and nonce advanced
-// * succeeded: what we all aspire to be in our transaction processing lifecycles
+// * Discarded: not processed. an invalid transaction excluded from the entry entirely
+// * ProcessedNoOp: an invalid transaction processed and added to the entry with no effect on any account state
+// * ProcessedFailed: passed fee-payer and nonce validation but not executable. fees/nonce handled and added to entry
+// * ExecutedFailed: failed during execution. fees/nonce handled and added to entry
+// * Succeeded: what we all aspire to be in our transaction processing lifecycles
 #[derive(Copy, Clone, Debug, Default, PartialEq, Eq, PartialOrd, Ord)]
 pub enum ExecutionStatus {
     Discarded,
+    ProcessedNoOp,
     ProcessedFailed,
     ExecutedFailed,
     #[default]
@@ -688,11 +694,11 @@ impl ExecutionStatus {
     }
 
     pub fn executed(self) -> bool {
-        self > Self::ProcessedFailed
+        self >= Self::ExecutedFailed
     }
 
     pub fn processed(self) -> bool {
-        self != Self::Discarded
+        self >= Self::ProcessedNoOp
     }
 
     pub fn discarded(self) -> bool {
@@ -711,6 +717,7 @@ impl From<&TransactionProcessingResult> for ExecutionStatus {
                 }
             }
             Ok(ProcessedTransaction::FeesOnly(_)) => ExecutionStatus::ProcessedFailed,
+            Ok(ProcessedTransaction::NoOp(_)) => ExecutionStatus::ProcessedNoOp,
             Err(_) => ExecutionStatus::Discarded,
         }
     }
@@ -937,16 +944,38 @@ fn program_medley(drop_on_failure: bool) -> Vec<SvmTestEntry> {
     vec![test_entry]
 }
 
-fn simple_transfer(drop_on_failure: bool) -> Vec<SvmTestEntry> {
+#[test_matrix([false, true], [false, true], [false, true])]
+fn simple_transfer(
+    relax_fee_payer_constraint: bool,
+    drop_noop_transactions: bool,
+    drop_on_failure: bool,
+) {
     let mut test_entry = SvmTestEntry {
+        drop_noop_transactions,
         drop_on_failure,
         ..Default::default()
     };
+    test_entry.feature_set.relax_fee_payer_constraint = relax_fee_payer_constraint;
+
     let transfer_amount = LAMPORTS_PER_SOL;
-    let drop_on_failure_status = |status: ExecutionStatus| match (drop_on_failure, status) {
-        (true, ExecutionStatus::Succeeded) => ExecutionStatus::Succeeded,
-        (true, _) => ExecutionStatus::Discarded,
-        (false, status) => status,
+
+    let ultimate_status = |status: ExecutionStatus| match (
+        relax_fee_payer_constraint,
+        drop_noop_transactions,
+        drop_on_failure,
+        status,
+    ) {
+        // success is always success
+        (_, _, _, ExecutionStatus::Succeeded) => ExecutionStatus::Succeeded,
+
+        // drop transforms all other statuses into discard
+        (_, _, true, _) => ExecutionStatus::Discarded,
+
+        // relax turns discards into noops as long as skip is false
+        (true, false, false, ExecutionStatus::Discarded) => ExecutionStatus::ProcessedNoOp,
+
+        // otherwise status is left alone
+        _ => status,
     };
 
     // 0: a transfer that succeeds
@@ -997,7 +1026,7 @@ fn simple_transfer(drop_on_failure: bool) -> Vec<SvmTestEntry> {
                 transfer_amount,
                 Hash::default(),
             ),
-            drop_on_failure_status(ExecutionStatus::ExecutedFailed),
+            ultimate_status(ExecutionStatus::ExecutedFailed),
         );
 
         if !drop_on_failure {
@@ -1005,7 +1034,7 @@ fn simple_transfer(drop_on_failure: bool) -> Vec<SvmTestEntry> {
         }
     }
 
-    // 2: a non-processable transfer that fails before loading
+    // 2: a non-processable transfer that fails before reaching svm
     {
         test_entry.transaction_batch.push(TransactionBatchItem {
             transaction: system_transaction::transfer(
@@ -1015,11 +1044,12 @@ fn simple_transfer(drop_on_failure: bool) -> Vec<SvmTestEntry> {
                 Hash::default(),
             ),
             check_result: Err(TransactionError::BlockhashNotFound),
+            // pre-svm errors are never transformed by svm
             asserts: ExecutionStatus::Discarded.into(),
         });
     }
 
-    // 3: a non-processable transfer that fails loading the fee-payer
+    // 3: a non-processable transfer that fails validating the fee-payer
     {
         test_entry.push_transaction_with_status(
             system_transaction::transfer(
@@ -1028,7 +1058,7 @@ fn simple_transfer(drop_on_failure: bool) -> Vec<SvmTestEntry> {
                 transfer_amount,
                 Hash::default(),
             ),
-            ExecutionStatus::Discarded,
+            ultimate_status(ExecutionStatus::Discarded),
         );
     }
 
@@ -1060,11 +1090,12 @@ fn simple_transfer(drop_on_failure: bool) -> Vec<SvmTestEntry> {
                 &[&source_keypair],
                 Hash::default(),
             ),
-            drop_on_failure_status(ExecutionStatus::ProcessedFailed),
+            ultimate_status(ExecutionStatus::ProcessedFailed),
         );
     }
 
-    vec![test_entry]
+    let env = SvmTestEnvironment::create(test_entry);
+    env.execute();
 }
 
 fn simple_nonce(fee_paying_nonce: bool) -> Vec<SvmTestEntry> {
@@ -1263,10 +1294,16 @@ fn simple_nonce(fee_paying_nonce: bool) -> Vec<SvmTestEntry> {
     vec![test_entry]
 }
 
-fn simd83_intrabatch_account_reuse() -> Vec<SvmTestEntry> {
+fn simd83_intrabatch_account_reuse(relax_fee_payer_constraint: bool) -> Vec<SvmTestEntry> {
     let mut test_entries = vec![];
     let transfer_amount = LAMPORTS_PER_SOL;
     let wallet_rent = Rent::default().minimum_balance(0);
+
+    let unprocessable_status = if relax_fee_payer_constraint {
+        ExecutionStatus::ProcessedNoOp
+    } else {
+        ExecutionStatus::Discarded
+    };
 
     // batch 0: two successful transfers from the same source
     {
@@ -1344,7 +1381,7 @@ fn simd83_intrabatch_account_reuse() -> Vec<SvmTestEntry> {
                 transfer_amount,
                 Hash::default(),
             ),
-            ExecutionStatus::Discarded,
+            unprocessable_status,
         );
 
         test_entries.push(test_entry);
@@ -1439,7 +1476,7 @@ fn simd83_intrabatch_account_reuse() -> Vec<SvmTestEntry> {
                 &[&feepayer_keypair, &separate_source_keypair],
                 Hash::default(),
             ),
-            ExecutionStatus::Discarded,
+            unprocessable_status,
         );
 
         test_entry.push_transaction(system_transaction::transfer(
@@ -1502,6 +1539,12 @@ fn simd83_intrabatch_account_reuse() -> Vec<SvmTestEntry> {
             .decrease_expected_lamports(&source, transfer_amount + LAMPORTS_PER_SIGNATURE * 2);
 
         test_entries.push(test_entry);
+    }
+
+    if !relax_fee_payer_constraint {
+        for test_entry in &mut test_entries {
+            test_entry.feature_set.relax_fee_payer_constraint = false;
+        }
     }
 
     test_entries
@@ -2128,9 +2171,8 @@ fn simd83_fee_payer_deallocate() -> Vec<SvmTestEntry> {
 
     // rent minimum needs to be adjusted so fee payer can be deallocated
     let rent = Rent {
-        lamports_per_byte_year: LAMPORTS_PER_SIGNATURE / solana_rent::ACCOUNT_STORAGE_OVERHEAD,
-        exemption_threshold: 1.0,
-        burn_percent: 0,
+        lamports_per_byte: LAMPORTS_PER_SIGNATURE / solana_rent::ACCOUNT_STORAGE_OVERHEAD,
+        ..Rent::default()
     };
     test_entry.set_rent_params(rent);
 
@@ -2375,6 +2417,168 @@ fn simd83_account_reallocate() -> Vec<SvmTestEntry> {
     test_entries
 }
 
+fn simd0392_balance_checks() -> Vec<SvmTestEntry> {
+    let mut test_entries = vec![];
+
+    let program_name = "write-to-account";
+    let program_id = program_address(program_name);
+
+    let base_rent = Rent::default();
+    let bumped_rent = Rent {
+        lamports_per_byte: base_rent.lamports_per_byte.saturating_mul(4),
+        ..base_rent
+    };
+
+    let target_size = 8;
+    let old_min_balance = base_rent.minimum_balance(target_size);
+    let new_min_balance = bumped_rent.minimum_balance(target_size);
+    assert!(new_min_balance > old_min_balance + LAMPORTS_PER_SIGNATURE);
+
+    let mk_program_account = |lamports, size| {
+        AccountSharedData::create_from_existing_shared_data(
+            lamports,
+            Arc::new(vec![0; size]),
+            program_id,
+            false,
+            u64::MAX,
+        )
+    };
+
+    let mk_system_account = |lamports, size| {
+        AccountSharedData::create_from_existing_shared_data(
+            lamports,
+            Arc::new(vec![0; size]),
+            system_program::id(),
+            false,
+            u64::MAX,
+        )
+    };
+
+    // write-only should succeed below updated rent minimum
+    {
+        let mut test_entry = SvmTestEntry::default();
+        test_entry.set_rent_params(bumped_rent.clone());
+        test_entry.add_initial_program(program_name);
+
+        let fee_payer_keypair = Keypair::new();
+        let fee_payer = fee_payer_keypair.pubkey();
+        let mut fee_payer_data = AccountSharedData::default();
+        fee_payer_data.set_lamports(LAMPORTS_PER_SOL);
+        fee_payer_data.set_rent_epoch(u64::MAX);
+        test_entry.add_initial_account(fee_payer, &fee_payer_data);
+
+        let target = Pubkey::new_unique();
+        let target_data = mk_program_account(old_min_balance, target_size);
+        test_entry.add_initial_account(target, &target_data);
+
+        let set_data_transaction = WriteProgramInstruction::Set.create_transaction(
+            program_id,
+            &fee_payer_keypair,
+            target,
+            None,
+        );
+        test_entry.push_transaction(set_data_transaction);
+
+        test_entry.decrease_expected_lamports(&fee_payer, LAMPORTS_PER_SIGNATURE);
+
+        let mut expected_target = target_data;
+        expected_target.data_as_mut_slice()[0] = 100;
+        test_entry.update_expected_account_data(target, &expected_target);
+
+        test_entries.push(test_entry);
+    }
+
+    // realloc to a smaller size should succeed below updated rent minimum
+    {
+        let mut test_entry = SvmTestEntry::default();
+        test_entry.set_rent_params(bumped_rent.clone());
+        test_entry.add_initial_program(program_name);
+
+        let fee_payer_keypair = Keypair::new();
+        let fee_payer = fee_payer_keypair.pubkey();
+        let mut fee_payer_data = AccountSharedData::default();
+        fee_payer_data.set_lamports(LAMPORTS_PER_SOL);
+        fee_payer_data.set_rent_epoch(u64::MAX);
+        test_entry.add_initial_account(fee_payer, &fee_payer_data);
+
+        let target = Pubkey::new_unique();
+        let target_data = mk_program_account(old_min_balance, target_size);
+        test_entry.add_initial_account(target, &target_data);
+
+        let new_target_size = target_size - 1;
+        let realloc_transaction = WriteProgramInstruction::Realloc(new_target_size)
+            .create_transaction(program_id, &fee_payer_keypair, target, None);
+        test_entry.push_transaction(realloc_transaction);
+
+        test_entry.decrease_expected_lamports(&fee_payer, LAMPORTS_PER_SIGNATURE);
+
+        let expected_target = mk_program_account(old_min_balance, new_target_size);
+        test_entry.update_expected_account_data(target, &expected_target);
+
+        test_entries.push(test_entry);
+    }
+
+    // realloc to a larger size should fail below updated rent minimum
+    {
+        let mut test_entry = SvmTestEntry::default();
+        test_entry.set_rent_params(bumped_rent.clone());
+        test_entry.add_initial_program(program_name);
+
+        let fee_payer_keypair = Keypair::new();
+        let fee_payer = fee_payer_keypair.pubkey();
+        let mut fee_payer_data = AccountSharedData::default();
+        fee_payer_data.set_lamports(LAMPORTS_PER_SOL);
+        fee_payer_data.set_rent_epoch(u64::MAX);
+        test_entry.add_initial_account(fee_payer, &fee_payer_data);
+
+        let target = Pubkey::new_unique();
+        let target_data = mk_program_account(old_min_balance, target_size);
+        test_entry.add_initial_account(target, &target_data);
+
+        let new_target_size = target_size + 1;
+        let realloc_transaction = WriteProgramInstruction::Realloc(new_target_size)
+            .create_transaction(program_id, &fee_payer_keypair, target, None);
+        test_entry
+            .push_transaction_with_status(realloc_transaction, ExecutionStatus::ExecutedFailed);
+
+        test_entry.decrease_expected_lamports(&fee_payer, LAMPORTS_PER_SIGNATURE);
+
+        test_entries.push(test_entry);
+    }
+
+    // owner change should fail below updated rent minimum
+    {
+        let mut test_entry = SvmTestEntry::default();
+        test_entry.set_rent_params(bumped_rent.clone());
+
+        let fee_payer_keypair = Keypair::new();
+        let fee_payer = fee_payer_keypair.pubkey();
+        let mut fee_payer_data = AccountSharedData::default();
+        fee_payer_data.set_lamports(LAMPORTS_PER_SOL);
+        fee_payer_data.set_rent_epoch(u64::MAX);
+        test_entry.add_initial_account(fee_payer, &fee_payer_data);
+
+        let target_keypair = Keypair::new();
+        let target = target_keypair.pubkey();
+        let target_data = mk_system_account(old_min_balance, target_size);
+        test_entry.add_initial_account(target, &target_data);
+
+        let new_owner = Pubkey::new_unique();
+        let transaction = Transaction::new_signed_with_payer(
+            &[system_instruction::assign(&target, &new_owner)],
+            Some(&fee_payer),
+            &[&fee_payer_keypair, &target_keypair],
+            Hash::default(),
+        );
+        test_entry.push_transaction_with_status(transaction, ExecutionStatus::ExecutedFailed);
+
+        test_entry.decrease_expected_lamports(&fee_payer, 2 * LAMPORTS_PER_SIGNATURE);
+
+        test_entries.push(test_entry);
+    }
+    test_entries
+}
+
 enum AbortReason {
     None,
     Unprocessable,
@@ -2546,16 +2750,16 @@ fn drop_on_failure_batch(statuses: &[bool]) -> Vec<SvmTestEntry> {
 
 #[test_case(program_medley(false))]
 #[test_case(program_medley(true))]
-#[test_case(simple_transfer(false))]
-#[test_case(simple_transfer(true))]
 #[test_case(simple_nonce(false))]
 #[test_case(simple_nonce(true))]
-#[test_case(simd83_intrabatch_account_reuse())]
+#[test_case(simd83_intrabatch_account_reuse(false))]
+#[test_case(simd83_intrabatch_account_reuse(true))]
 #[test_case(simd83_nonce_reuse(false))]
 #[test_case(simd83_nonce_reuse(true))]
 #[test_case(simd83_account_deallocate())]
 #[test_case(simd83_fee_payer_deallocate())]
 #[test_case(simd83_account_reallocate())]
+#[test_case(simd0392_balance_checks())]
 #[test_case(all_or_nothing(AbortReason::None))]
 #[test_case(all_or_nothing(AbortReason::Unprocessable))]
 #[test_case(all_or_nothing(AbortReason::DropOnFailure))]
@@ -2576,8 +2780,13 @@ fn svm_integration(test_entries: Vec<SvmTestEntry>) {
 
 #[test]
 fn program_cache_create_account() {
-    for loader_id in PROGRAM_OWNERS {
-        let mut test_entry = SvmTestEntry::with_loader_v4();
+    let supported_loaders = [
+        bpf_loader_upgradeable::id(),
+        bpf_loader::id(),
+        bpf_loader_deprecated::id(),
+    ];
+    for loader_id in &supported_loaders {
+        let mut test_entry = SvmTestEntry::default();
 
         let fee_payer_keypair = Keypair::new();
         let fee_payer = fee_payer_keypair.pubkey();
@@ -2929,8 +3138,8 @@ fn program_cache_stats() {
         )
     };
 
-    let succesful_noop_instruction = Instruction::new_with_bytes(noop_program, &[], vec![]);
-    let succesful_transfer_instruction =
+    let successful_noop_instruction = Instruction::new_with_bytes(noop_program, &[], vec![]);
+    let successful_transfer_instruction =
         system_instruction::transfer(&fee_payer, &Pubkey::new_unique(), LAMPORTS_PER_SOL);
     let failing_transfer_instruction =
         system_instruction::transfer(&fee_payer, &Pubkey::new_unique(), LAMPORTS_PER_SOL * 1000);
@@ -2941,12 +3150,12 @@ fn program_cache_stats() {
     let mut successful_transfers = 0;
 
     test_entry.push_transaction(make_transaction(slice::from_ref(
-        &succesful_noop_instruction,
+        &successful_noop_instruction,
     )));
     noop_tx_usage += 1;
 
     test_entry.push_transaction(make_transaction(slice::from_ref(
-        &succesful_transfer_instruction,
+        &successful_transfer_instruction,
     )));
     system_tx_usage += 1;
     successful_transfers += 1;
@@ -2958,11 +3167,11 @@ fn program_cache_stats() {
     system_tx_usage += 1;
 
     test_entry.push_transaction(make_transaction(&[
-        succesful_noop_instruction.clone(),
-        succesful_noop_instruction.clone(),
-        succesful_transfer_instruction.clone(),
-        succesful_transfer_instruction.clone(),
-        succesful_noop_instruction.clone(),
+        successful_noop_instruction.clone(),
+        successful_noop_instruction.clone(),
+        successful_transfer_instruction.clone(),
+        successful_transfer_instruction.clone(),
+        successful_noop_instruction.clone(),
     ]));
     noop_tx_usage += 1;
     system_tx_usage += 1;
@@ -2971,8 +3180,8 @@ fn program_cache_stats() {
     test_entry.push_transaction_with_status(
         make_transaction(&[
             failing_transfer_instruction,
-            succesful_noop_instruction.clone(),
-            succesful_transfer_instruction.clone(),
+            successful_noop_instruction.clone(),
+            successful_transfer_instruction.clone(),
         ]),
         ExecutionStatus::ExecutedFailed,
     );
@@ -2982,7 +3191,7 @@ fn program_cache_stats() {
     // load failure/fee-only does not touch the program cache
     test_entry.push_transaction_with_status(
         make_transaction(&[
-            succesful_noop_instruction.clone(),
+            successful_noop_instruction.clone(),
             fee_only_noop_instruction,
         ]),
         ExecutionStatus::ProcessedFailed,
@@ -2996,7 +3205,7 @@ fn program_cache_stats() {
 
     // nor does discard
     test_entry.transaction_batch.push(TransactionBatchItem {
-        transaction: make_transaction(slice::from_ref(&succesful_transfer_instruction)),
+        transaction: make_transaction(slice::from_ref(&successful_transfer_instruction)),
         check_result: Err(TransactionError::BlockhashNotFound),
         asserts: ExecutionStatus::Discarded.into(),
     });
@@ -3021,7 +3230,7 @@ fn program_cache_stats() {
         .unwrap();
 
     assert_eq!(
-        noop_entry.tx_usage_counter.load(Ordering::Relaxed),
+        noop_entry.stats.uses.load(Ordering::Relaxed),
         noop_tx_usage,
         "noop_tx_usage matches"
     );
@@ -3032,7 +3241,7 @@ fn program_cache_stats() {
         .unwrap();
 
     assert_eq!(
-        system_entry.tx_usage_counter.load(Ordering::Relaxed),
+        system_entry.stats.uses.load(Ordering::Relaxed),
         system_tx_usage,
         "system_tx_usage matches"
     );
@@ -3072,7 +3281,7 @@ fn program_cache_stats() {
     test_entry.drop_expected_account(buffer_address);
 
     test_entry.push_transaction_with_status(
-        make_transaction(slice::from_ref(&succesful_noop_instruction)),
+        make_transaction(slice::from_ref(&successful_noop_instruction)),
         ExecutionStatus::ExecutedFailed,
     );
     noop_tx_usage += 1;
@@ -3094,7 +3303,7 @@ fn program_cache_stats() {
         .unwrap();
 
     assert_eq!(
-        noop_entry.tx_usage_counter.load(Ordering::Relaxed),
+        noop_entry.stats.uses.load(Ordering::Relaxed),
         noop_tx_usage,
         "noop_tx_usage matches"
     );
@@ -3107,7 +3316,7 @@ fn program_cache_stats() {
     };
 
     test_entry.push_transaction_with_status(
-        make_transaction(slice::from_ref(&succesful_noop_instruction)),
+        make_transaction(slice::from_ref(&successful_noop_instruction)),
         ExecutionStatus::ExecutedFailed,
     );
     noop_tx_usage += 1;
@@ -3129,7 +3338,7 @@ fn program_cache_stats() {
         .unwrap();
 
     assert_eq!(
-        noop_entry.tx_usage_counter.load(Ordering::Relaxed),
+        noop_entry.stats.uses.load(Ordering::Relaxed),
         noop_tx_usage,
         "noop_tx_usage matches"
     );
@@ -3412,6 +3621,154 @@ fn svm_inspect_account() {
     );
 }
 
+#[test_case(false; "old_fee_only")]
+#[test_case(true; "simd186_fee_only")]
+fn fee_only_loaded_transaction_data_size(define_ltds_fee_only_semantics: bool) {
+    let mut common_test_entry = SvmTestEntry::default();
+    common_test_entry.feature_set.define_ltds_fee_only_semantics = define_ltds_fee_only_semantics;
+
+    let program_name = "hello-solana";
+    let program_id = program_address(program_name);
+    let loaded_program_size = (UpgradeableLoaderState::size_of_program()
+        + program_data_size(program_name)
+        + TRANSACTION_ACCOUNT_BASE_SIZE * 2) as u32;
+
+    common_test_entry.add_initial_program(program_name);
+
+    let fee_payer_keypair = Keypair::new();
+    let fee_payer = fee_payer_keypair.pubkey();
+    let loaded_fee_payer_size = TRANSACTION_ACCOUNT_BASE_SIZE as u32;
+
+    let fee_payer_data =
+        AccountSharedData::new_rent_epoch(LAMPORTS_PER_SOL, 0, &Pubkey::default(), u64::MAX);
+
+    common_test_entry.add_initial_account(fee_payer, &fee_payer_data);
+
+    let mut loaded_account_sizes = vec![];
+
+    // make accounts of base size 512..=8192
+    for i in 9..=13 {
+        let base_size = 2_usize.pow(i);
+
+        let pubkey = Pubkey::new_unique();
+        let account_data = AccountSharedData::new_rent_epoch(
+            LAMPORTS_PER_SOL,
+            base_size,
+            &Pubkey::default(),
+            u64::MAX,
+        );
+
+        common_test_entry.add_initial_account(pubkey, &account_data);
+        loaded_account_sizes.push((pubkey, base_size + TRANSACTION_ACCOUNT_BASE_SIZE));
+    }
+
+    let common_test_entry = common_test_entry;
+
+    let transaction = |program_id: Pubkey, accounts: &[Pubkey], loaded_data_limit: Option<u32>| {
+        let account_metas = accounts
+            .iter()
+            .map(|pubkey| AccountMeta {
+                pubkey: *pubkey,
+                ..AccountMeta::default()
+            })
+            .collect::<Vec<_>>();
+
+        let mut instructions = vec![];
+
+        if let Some(size) = loaded_data_limit {
+            instructions.push(ComputeBudgetInstruction::set_loaded_accounts_data_size_limit(size));
+        }
+
+        instructions.push(Instruction::new_with_bytes(program_id, &[], account_metas));
+
+        Transaction::new_signed_with_payer(
+            &instructions,
+            Some(&fee_payer),
+            &[&fee_payer_keypair],
+            Hash::default(),
+        )
+    };
+
+    // for increasing sets of accounts, run:
+    // * success: loaded size is total size
+    // * fail due to limit: loaded size is limit with feature, 0 without
+    // * fail due to program id: loaded size is total size with feature, 0 without
+    for count in 0..loaded_account_sizes.len() {
+        let mut test_entry = common_test_entry.clone();
+
+        let (account_keys, other_accounts_size) =
+            &loaded_account_sizes[..count]
+                .iter()
+                .fold((vec![], 0), |mut acc, (pubkey, size)| {
+                    acc.0.push(*pubkey);
+                    acc.1 += *size as u32;
+                    acc
+                });
+
+        let success_transaction = transaction(program_id, account_keys, None);
+        test_entry.push_transaction_with_status(success_transaction, ExecutionStatus::Succeeded);
+
+        let size_limit = (other_accounts_size / 2).max(1);
+        let fail_limit_transaction = transaction(program_id, account_keys, Some(size_limit));
+        test_entry
+            .push_transaction_with_status(fail_limit_transaction, ExecutionStatus::ProcessedFailed);
+
+        let fail_program_id_transaction = transaction(Pubkey::new_unique(), account_keys, None);
+        test_entry.push_transaction_with_status(
+            fail_program_id_transaction,
+            ExecutionStatus::ProcessedFailed,
+        );
+
+        test_entry.decrease_expected_lamports(&fee_payer, LAMPORTS_PER_SIGNATURE * 3);
+
+        let env = SvmTestEnvironment::create(test_entry);
+        let output = env.execute();
+
+        let success_loaded_size = output.processing_results[0]
+            .as_ref()
+            .unwrap()
+            .loaded_accounts_data_size();
+
+        // success is always computed size
+        assert_eq!(
+            loaded_fee_payer_size + loaded_program_size + other_accounts_size,
+            success_loaded_size,
+        );
+
+        let fail_limit_loaded_size = output.processing_results[1]
+            .as_ref()
+            .unwrap()
+            .loaded_accounts_data_size();
+
+        // blowing limit with define_ltds_fee_only_semantics sets the size to the limit
+        // otherwise it is the raw sum of rollback sizes which here is zero
+        assert_eq!(
+            if define_ltds_fee_only_semantics {
+                size_limit
+            } else {
+                0
+            },
+            fail_limit_loaded_size,
+        );
+
+        let fail_program_id_loaded_size = output.processing_results[2]
+            .as_ref()
+            .unwrap()
+            .loaded_accounts_data_size();
+
+        // violating constraints *after* passing size with define_ltds_fee_only_semantics uses the size
+        // otherwise as above it is the raw sum of rollback sizes which here is zero
+        assert_eq!(
+            if define_ltds_fee_only_semantics {
+                loaded_fee_payer_size + other_accounts_size
+            } else {
+                0
+            },
+            fail_program_id_loaded_size,
+        );
+    }
+}
+
 // Tests for proper accumulation of metrics across loaded programs in a batch.
 #[test]
 fn svm_metrics_accumulation() {
@@ -3588,17 +3945,24 @@ mod balance_collector {
             u64::MAX,
         );
 
-        let (_, spl_token) =
-            solana_program_binaries::by_id(&spl_token_interface::id(), &Rent::default())
-                .unwrap()
-                .swap_remove(0);
+        let mut program_accounts =
+            solana_program_binaries::by_id(&spl_token_interface::id(), &Rent::default()).unwrap();
+
+        let (_, spl_token) = program_accounts.swap_remove(0);
+        let (program_data_key, program_data) = program_accounts.swap_remove(0);
 
         for _ in 0..100 {
-            let mut test_entry = SvmTestEntry::default();
+            let mut test_entry = SvmTestEntry {
+                drop_noop_transactions: true,
+                ..Default::default()
+            };
+
             test_entry.add_initial_account(fee_payer, &native_state.clone());
 
             if use_tokens {
                 test_entry.add_initial_account(spl_token_interface::id(), &spl_token);
+                test_entry.add_initial_account(program_data_key, &program_data);
+
                 test_entry.add_initial_account(mint, &mint_state);
                 test_entry.add_initial_account(alice, &token_state);
                 test_entry.add_initial_account(bob, &token_state);
@@ -3679,6 +4043,8 @@ mod balance_collector {
 
                         vec![instruction]
                     }
+                    // we run `drop_noop_transactions` which prevents this from happening
+                    ExecutionStatus::ProcessedNoOp => unreachable!(),
                 };
 
                 let transaction = if expected_status.discarded() {

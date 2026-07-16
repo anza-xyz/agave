@@ -1,10 +1,9 @@
 use {
     crate::cluster_info_metrics::should_report_message_signature,
-    lru::LruCache,
+    lazy_lru::LruCache,
     rand::{CryptoRng, Rng},
     serde::{Deserialize, Serialize},
     serde_big_array::BigArray,
-    siphasher::sip::SipHasher24,
     solana_hash::Hash,
     solana_keypair::{Keypair, signable::Signable},
     solana_pubkey::Pubkey,
@@ -13,21 +12,20 @@ use {
     solana_signer::Signer,
     std::{
         borrow::Cow,
-        hash::{Hash as _, Hasher},
         net::{IpAddr, SocketAddr},
         time::{Duration, Instant},
     },
+    wincode::{SchemaRead, SchemaWrite},
 };
 
-const KEY_REFRESH_CADENCE: Duration = Duration::from_secs(60);
 const PING_PONG_HASH_PREFIX: &[u8] = "SOLANA_PING_PONG".as_bytes();
 const PONG_SIGNATURE_SAMPLE_LEADING_ZEROS: u32 = 5;
 
 // For backward compatibility we are using a const generic parameter here.
 // N should always be >= 8 and only the first 8 bytes are used. So the new code
 // should only use N == 8.
-#[cfg_attr(feature = "frozen-abi", derive(AbiExample))]
-#[derive(Debug, Deserialize, Serialize)]
+#[cfg_attr(feature = "frozen-abi", derive(AbiExample, StableAbi, StableAbiSample))]
+#[derive(Debug, Deserialize, PartialEq, Serialize, SchemaRead, SchemaWrite)]
 pub struct Ping<const N: usize> {
     from: Pubkey,
     #[serde(with = "BigArray")]
@@ -35,8 +33,18 @@ pub struct Ping<const N: usize> {
     signature: Signature,
 }
 
-#[cfg_attr(feature = "frozen-abi", derive(AbiExample))]
-#[derive(Debug, Deserialize, Serialize)]
+#[cfg_attr(
+    feature = "frozen-abi",
+    derive(AbiExample, StableAbi, StableAbiSample),
+    frozen_abi(
+        abi_digest = "Gab1D5ug6ZAB5sRNmBpoM8JyxsixccLLaWxYZwmueVYA",
+        abi_serializer = ["bincode", "wincode"],
+        test_roundtrip = "eq_and_wire",
+    )
+)]
+#[derive(Debug, Deserialize, PartialEq, Serialize, SchemaRead, SchemaWrite)]
+// repr(C) makes this struct zero-copy eligible in wincode.
+#[repr(C)]
 pub struct Pong {
     from: Pubkey,
     hash: Hash, // Hash of received ping token.
@@ -52,15 +60,9 @@ pub struct PingCache<const N: usize> {
     ttl: Duration,
     // Rate limit delay to generate pings for a given address
     rate_limit_delay: Duration,
-    // Hashers initialized with random keys, rotated at KEY_REFRESH_CADENCE.
-    // Because at the moment that the keys are rotated some pings might already
-    // be in the flight, we need to keep the two most recent hashers.
-    hashers: [SipHasher24; 2],
-    // When hashers were last refreshed.
-    key_refresh: Instant,
-    // Timestamp of last ping message sent to a remote node.
-    // Used to rate limit pings to remote nodes.
-    pings: LruCache<(Pubkey, SocketAddr), Instant>,
+    // Timestamp and expected pong hash for each pinged remote node.
+    // Used for rate-limiting and pong validation.
+    pings: LruCache<(Pubkey, SocketAddr), (Instant, Hash)>,
     // Verified pong responses from remote nodes.
     pongs: LruCache<(Pubkey, SocketAddr), Instant>,
     // Timestamp of last ping message sent to a remote IP.
@@ -154,38 +156,27 @@ impl Signable for Pong {
 }
 
 impl<const N: usize> PingCache<N> {
-    pub fn new<R: Rng + CryptoRng>(
-        rng: &mut R,
-        now: Instant,
-        ttl: Duration,
-        rate_limit_delay: Duration,
-        cap: usize,
-    ) -> Self {
+    pub fn new(ttl: Duration, rate_limit_delay: Duration, cap: usize) -> Self {
         // Sanity check ttl/rate_limit_delay
         assert!(rate_limit_delay <= ttl / 2);
         Self {
             ttl,
             rate_limit_delay,
-            hashers: std::array::from_fn(|_| SipHasher24::new_with_key(&rng.random())),
-            key_refresh: now,
             pings: LruCache::new(cap),
             pongs: LruCache::new(cap),
             ping_times: LruCache::new(cap),
         }
     }
 
-    /// Checks if the pong hash, pubkey and socket match a ping message sent
-    /// out previously. If so records current timestamp for the remote node and
-    /// returns true.
+    /// Checks if the pong hash matches a ping message sent out previously.
+    /// If so records current timestamp for the remote node and returns true.
     /// Note: Does not verify the signature.
     pub fn add(&mut self, pong: &Pong, socket: SocketAddr, now: Instant) -> bool {
         let remote_node = (pong.pubkey(), socket);
-        if !self.hashers.iter().copied().any(|hasher| {
-            let token = make_ping_token::<N>(hasher, &remote_node);
-            hash_ping_token(&token) == pong.hash
-        }) {
+        if !matches!(self.pings.peek(&remote_node), Some((_, h)) if *h == pong.hash) {
             return false;
         };
+        self.pings.pop(&remote_node);
         self.pongs.put(remote_node, now);
         if let Some(sent_time) = self.ping_times.pop(&socket.ip())
             && should_report_message_signature(
@@ -215,13 +206,23 @@ impl<const N: usize> PingCache<N> {
     ) -> Option<Ping<N>> {
         // Rate limit consecutive pings sent to a remote node.
         if matches!(self.pings.peek(&remote_node),
-            Some(&t) if now.saturating_duration_since(t) < self.rate_limit_delay)
+            Some((t, _)) if now.saturating_duration_since(*t) < self.rate_limit_delay)
         {
             return None;
         }
-        self.pings.put(remote_node, now);
-        self.maybe_refresh_key(rng, now);
-        let token = make_ping_token::<N>(self.hashers[0], &remote_node);
+        let token = {
+            let mut token = [0u8; N];
+            const FILL: usize = std::mem::size_of::<u64>();
+            const { assert!(N >= FILL, "N must be >= size_of::<u64>()") };
+            let entropy: [u8; FILL] = rng.random();
+            *token
+                .first_chunk_mut::<FILL>()
+                .expect("token is known to fit FILL bytes") = entropy;
+            token
+        };
+        // The hash we expect to see in the Pong message
+        let ping_hash = hash_ping_token(&token);
+        self.pings.put(remote_node, (now, ping_hash));
         self.ping_times.put(remote_node.1.ip(), Instant::now());
         Some(Ping::new(token, keypair))
     }
@@ -262,31 +263,10 @@ impl<const N: usize> PingCache<N> {
         (check, ping)
     }
 
-    fn maybe_refresh_key<R: Rng + CryptoRng>(&mut self, rng: &mut R, now: Instant) {
-        if now.checked_duration_since(self.key_refresh) > Some(KEY_REFRESH_CADENCE) {
-            let hasher = SipHasher24::new_with_key(&rng.random());
-            self.hashers[1] = std::mem::replace(&mut self.hashers[0], hasher);
-            self.key_refresh = now;
-        }
-    }
-
     /// Only for tests and simulations.
     pub fn mock_pong(&mut self, node: Pubkey, socket: SocketAddr, now: Instant) {
         self.pongs.put((node, socket), now);
     }
-}
-
-fn make_ping_token<const N: usize>(
-    mut hasher: SipHasher24,
-    remote_node: &(Pubkey, SocketAddr),
-) -> [u8; N] {
-    // TODO: Consider including local node's (pubkey, socket-addr).
-    remote_node.hash(&mut hasher);
-    let hash = hasher.finish().to_le_bytes();
-    debug_assert!(N >= std::mem::size_of::<u64>());
-    let mut token = [0u8; N];
-    token[..std::mem::size_of::<u64>()].copy_from_slice(&hash);
-    token
 }
 
 fn hash_ping_token<const N: usize>(token: &[u8; N]) -> Hash {
@@ -327,7 +307,7 @@ mod tests {
         let mut rng = rand::rng();
         let ttl = Duration::from_millis(256);
         let delay = ttl / 64;
-        let mut cache = PingCache::new(&mut rng, Instant::now(), ttl, delay, /*cap=*/ 1000);
+        let mut cache = PingCache::new(ttl, delay, /*cap=*/ 1000);
         let this_node = Keypair::new();
         let sockets: Vec<_> = (1u8..=3)
             .map(|i| {
@@ -447,6 +427,45 @@ mod tests {
     }
 
     #[test]
+    fn test_wincode_compatibility_ping() {
+        let mut rng = rand::rng();
+        for _ in 0..1000 {
+            let keypair = Keypair::new();
+            let ping = Ping::<32>::new(rng.random(), &keypair);
+
+            let bincode_bytes = bincode::serialize(&ping).unwrap();
+            let wincode_decoded: Ping<32> = wincode::deserialize(&bincode_bytes).unwrap();
+            assert_eq!(ping, wincode_decoded);
+
+            let wincode_bytes = wincode::serialize(&ping).unwrap();
+            let bincode_decoded: Ping<32> = bincode::deserialize(&wincode_bytes).unwrap();
+            assert_eq!(ping, bincode_decoded);
+
+            assert_eq!(bincode_bytes, wincode_bytes);
+        }
+    }
+
+    #[test]
+    fn test_wincode_compatibility_pong() {
+        let mut rng = rand::rng();
+        for _ in 0..1000 {
+            let keypair = Keypair::new();
+            let ping = Ping::<32>::new(rng.random(), &keypair);
+            let pong = Pong::new(&ping, &keypair);
+
+            let bincode_bytes = bincode::serialize(&pong).unwrap();
+            let wincode_decoded: Pong = wincode::deserialize(&bincode_bytes).unwrap();
+            assert_eq!(pong, wincode_decoded);
+
+            let wincode_bytes = wincode::serialize(&pong).unwrap();
+            let bincode_decoded: Pong = bincode::deserialize(&wincode_bytes).unwrap();
+            assert_eq!(pong, bincode_decoded);
+
+            assert_eq!(bincode_bytes, wincode_bytes);
+        }
+    }
+
+    #[test]
     fn test_expired_pong_returns_check_false() {
         let mut rng = rand::rng();
         let this_node = Keypair::new();
@@ -456,7 +475,7 @@ mod tests {
         let ttl = Duration::from_secs(20 * 60); // 20 minutes
         let delay = ttl / 64;
         let mut now = Instant::now();
-        let mut cache = PingCache::<32>::new(&mut rng, now, ttl, delay, /*cap=*/ 1000);
+        let mut cache = PingCache::<32>::new(ttl, delay, /*cap=*/ 1000);
 
         // Add a pong for the remote node
         cache.mock_pong(remote_node.0, remote_node.1, now);

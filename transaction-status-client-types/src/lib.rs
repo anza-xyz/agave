@@ -20,7 +20,10 @@ use {
     },
     solana_reward_info::RewardType,
     solana_signature::Signature,
-    solana_transaction::versioned::{TransactionVersion, VersionedTransaction},
+    solana_transaction::{
+        SchemaRead, SchemaWrite,
+        versioned::{TransactionVersion, VersionedTransaction},
+    },
     solana_transaction_context::transaction::TransactionReturnData,
     solana_transaction_error::{TransactionError, TransactionResult},
     thiserror::Error,
@@ -131,6 +134,8 @@ pub struct UiParsedMessage {
     pub instructions: Vec<UiInstruction>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub address_table_lookups: Option<Vec<UiAddressTableLookup>>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub transaction_config: Option<UiTransactionConfig>,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
@@ -177,11 +182,11 @@ impl EncodedTransaction {
             TransactionBinaryEncoding::Base58 => bs58::decode(blob)
                 .into_vec()
                 .ok()
-                .and_then(|bytes| bincode::deserialize(&bytes).ok()),
+                .and_then(|bytes| wincode::deserialize(&bytes).ok()),
             TransactionBinaryEncoding::Base64 => BASE64_STANDARD
                 .decode(blob)
                 .ok()
-                .and_then(|bytes| bincode::deserialize(&bytes).ok()),
+                .and_then(|bytes| wincode::deserialize(&bytes).ok()),
         };
 
         transaction.filter(|transaction| transaction.sanitize().is_ok())
@@ -226,6 +231,27 @@ impl From<&MessageAddressTableLookup> for UiAddressTableLookup {
             account_key: lookup.account_key.to_string(),
             writable_indexes: lookup.writable_indexes.clone(),
             readonly_indexes: lookup.readonly_indexes.clone(),
+        }
+    }
+}
+
+/// A duplicate representation of a TransactionConfig, in raw format, for pretty JSON serialization.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct UiTransactionConfig {
+    pub priority_fee: Option<u64>,
+    pub compute_unit_limit: Option<u32>,
+    pub loaded_accounts_data_size_limit: Option<u32>,
+    pub heap_size: Option<u32>,
+}
+
+impl From<&solana_message::v1::TransactionConfig> for UiTransactionConfig {
+    fn from(config: &solana_message::v1::TransactionConfig) -> Self {
+        Self {
+            priority_fee: config.priority_fee,
+            compute_unit_limit: config.compute_unit_limit,
+            loaded_accounts_data_size_limit: config.loaded_accounts_data_size_limit,
+            heap_size: config.heap_size,
         }
     }
 }
@@ -285,35 +311,34 @@ impl<'de> DeserializeTrait<'de> for UiTransactionError {
         D: Deserializer<'de>,
     {
         let value = serde_json::Value::deserialize(deserializer)?;
-        if let Some(obj) = value.as_object() {
-            if let Some(arr) = obj.get("InstructionError").and_then(|v| v.as_array()) {
-                let outer_instruction_index: u8 = arr
-                    .first()
-                    .ok_or_else(|| {
-                        DeserializeError::invalid_length(0, &"Expected the first element to exist")
-                    })?
-                    .as_u64()
-                    .ok_or_else(|| {
-                        DeserializeError::custom("Expected the first element to be a u64")
-                    })? as u8;
-                let instruction_error = arr.get(1).ok_or_else(|| {
-                    DeserializeError::invalid_length(1, &"Expected there to be at least 2 elements")
-                })?;
+        if let Some(obj) = value.as_object()
+            && let Some(arr) = obj.get("InstructionError").and_then(|v| v.as_array())
+        {
+            let outer_instruction_index: u8 = arr
+                .first()
+                .ok_or_else(|| {
+                    DeserializeError::invalid_length(0, &"Expected the first element to exist")
+                })?
+                .as_u64()
+                .ok_or_else(|| DeserializeError::custom("Expected the first element to be a u64"))?
+                as u8;
+            let instruction_error = arr.get(1).ok_or_else(|| {
+                DeserializeError::invalid_length(1, &"Expected there to be at least 2 elements")
+            })?;
 
-                // Handle SDK version compatibility: if it's a v2-style
-                // {"BorshIoError": "Unknown"}, convert it to a v3-style
-                // "BorshIoError"
-                let err: InstructionError = if instruction_error.get("BorshIoError").is_some() {
-                    from_value(serde_json::json!("BorshIoError"))
-                } else {
-                    from_value(instruction_error.clone())
-                }
-                .map_err(|e| DeserializeError::custom(e.to_string()))?;
-                return Ok(UiTransactionError(TransactionError::InstructionError(
-                    outer_instruction_index,
-                    err,
-                )));
+            // Handle SDK version compatibility: if it's a v2-style
+            // {"BorshIoError": "Unknown"}, convert it to a v3-style
+            // "BorshIoError"
+            let err: InstructionError = if instruction_error.get("BorshIoError").is_some() {
+                from_value(serde_json::json!("BorshIoError"))
+            } else {
+                from_value(instruction_error.clone())
             }
+            .map_err(|e| DeserializeError::custom(e.to_string()))?;
+            return Ok(UiTransactionError(TransactionError::InstructionError(
+                outer_instruction_index,
+                err,
+            )));
         }
         let err = TransactionError::deserialize(value).map_err(de::Error::custom)?;
         Ok(UiTransactionError(err))
@@ -531,6 +556,8 @@ pub struct UiRawMessage {
     pub instructions: Vec<UiCompiledInstruction>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub address_table_lookups: Option<Vec<UiAddressTableLookup>>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub transaction_config: Option<UiTransactionConfig>,
 }
 
 /// A duplicate representation of a CompiledInstruction for pretty JSON serialization
@@ -617,7 +644,7 @@ impl From<InnerInstructions> for UiInnerInstructions {
     }
 }
 
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, SchemaRead, SchemaWrite)]
 pub struct InnerInstructions {
     /// Transaction instruction index
     pub index: u8,
@@ -625,7 +652,7 @@ pub struct InnerInstructions {
     pub instructions: Vec<InnerInstruction>,
 }
 
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, SchemaRead, SchemaWrite)]
 pub struct InnerInstruction {
     /// Compiled instruction
     pub instruction: CompiledInstruction,
@@ -776,6 +803,30 @@ mod test {
             TransactionBinaryEncoding::Base58,
         );
         assert!(unsanitary_transaction.decode().is_none());
+    }
+
+    #[test]
+    fn test_decode_v1_wire_transaction() {
+        let transaction = VersionedTransaction {
+            signatures: vec![solana_signature::Signature::default()],
+            message: solana_message::VersionedMessage::V1(solana_message::v1::Message::new(
+                solana_message::MessageHeader {
+                    num_required_signatures: 1,
+                    num_readonly_signed_accounts: 0,
+                    num_readonly_unsigned_accounts: 0,
+                },
+                solana_message::v1::TransactionConfig::empty(),
+                solana_message::Hash::default(),
+                vec![solana_message::Address::default()],
+                vec![],
+            )),
+        };
+        let encoded = EncodedTransaction::Binary(
+            BASE64_STANDARD.encode(wincode::serialize(&transaction).unwrap()),
+            TransactionBinaryEncoding::Base64,
+        );
+
+        assert_eq!(encoded.decode(), Some(transaction));
     }
 
     #[test]

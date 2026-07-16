@@ -5,7 +5,7 @@ use {
     solana_program_entrypoint::SUCCESS,
 };
 
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub extern "C" fn entrypoint(_input: *mut u8) -> u64 {
     let mut buf = [0; 4];
     LittleEndian::write_u32(&mut buf, 1_000_000);

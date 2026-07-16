@@ -11,6 +11,8 @@ edition = { workspace = true }
 
 [package.metadata.docs.rs]
 targets = ["x86_64-unknown-linux-gnu"]
+all-features = true
+rustdoc-args = ["--cfg=docsrs"]
 
 [lib]
 crate-type = ["lib"]
@@ -18,7 +20,7 @@ name = "solana_vote_program"
 
 [features]
 agave-unstable-api = []
-dev-context-only-utils = []
+dev-context-only-utils = ["dep:qualifier_attr"]
 frozen-abi = [
     "dep:solana-frozen-abi",
     "dep:solana-frozen-abi-macro",
@@ -30,9 +32,7 @@ frozen-abi = [
 agave-feature-set = { workspace = true }
 bincode = { workspace = true }
 log = { workspace = true }
-num-derive = { workspace = true }
-num-traits = { workspace = true }
-serde = { workspace = true }
+qualifier_attr = { workspace = true, optional = true }
 solana-account = { workspace = true }
 solana-bincode = { workspace = true }
 solana-bls-signatures = { workspace = true }
@@ -46,35 +46,32 @@ solana-frozen-abi-macro = { workspace = true, optional = true, features = [
 ] }
 solana-hash = { workspace = true }
 solana-instruction = { workspace = true }
-solana-keypair = { workspace = true }
 solana-packet = { workspace = true }
 solana-program-runtime = { workspace = true }
 solana-pubkey = { workspace = true, features = ["curve25519"] }
 solana-rent = { workspace = true }
 solana-sdk-ids = { workspace = true }
-solana-signer = { workspace = true }
 solana-slot-hashes = { workspace = true }
 solana-system-interface = { workspace = true }
-solana-transaction = { workspace = true, features = ["bincode"] }
 solana-transaction-context = { workspace = true, features = ["bincode"] }
 solana-vote-interface = { workspace = true, features = ["bincode"] }
-thiserror = { workspace = true }
 
 [dev-dependencies]
-agave-logger = { workspace = true }
+agave-logger = { path = "../../logger", features = ["agave-unstable-api"] }
 assert_matches = { workspace = true }
 criterion = { workspace = true }
 solana-account = { workspace = true }
 solana-clock = { workspace = true }
 solana-fee-calculator = { workspace = true }
+solana-hash = { workspace = true, features = ["atomic"] }
 solana-instruction = { workspace = true }
-solana-program-runtime = { workspace = true, features = ["dev-context-only-utils"] }
+solana-program-runtime = { path = "../../program-runtime", features = ["agave-unstable-api", "dev-context-only-utils"] }
 solana-pubkey = { workspace = true, features = ["rand"] }
 solana-rent = { workspace = true }
 solana-sdk-ids = { workspace = true }
 solana-sha256-hasher = { workspace = true }
-solana-svm-feature-set = { workspace = true }
-solana-system-program = { workspace = true }
+solana-svm-feature-set = { path = "../../svm-feature-set", features = ["agave-unstable-api"] }
+solana-system-program = { path = "../system", features = ["agave-unstable-api"] }
 solana-vote-program = { path = ".", features = ["agave-unstable-api", "dev-context-only-utils"] }
 test-case = { workspace = true }
 

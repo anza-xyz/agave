@@ -7,11 +7,11 @@ use {
     solana_pubkey::Pubkey,
 };
 
-// The packet has a maximum length of 1232 bytes.
+// A legacy/v0 packet has a maximum length of 1232 bytes.
 // This means the maximum number of 32 byte keys is 38.
 // 38 as an min-sized encoded u16 is 1 byte.
 // We can simply read this byte, if it's >38 we can return None.
-pub const MAX_STATIC_ACCOUNTS_PER_PACKET: u8 =
+const LEGACY_OR_V0_MAX_STATIC_ACCOUNTS_PER_PACKET: u8 =
     (PACKET_DATA_SIZE / core::mem::size_of::<Pubkey>()) as u8;
 
 /// Contains metadata about the static account keys in a transaction packet.
@@ -27,10 +27,12 @@ impl StaticAccountKeysFrame {
     #[inline(always)]
     pub(crate) fn try_new(bytes: &[u8], offset: &mut usize) -> Result<Self> {
         // Max size must not have the MSB set so that it is size 1.
-        const _: () = assert!(MAX_STATIC_ACCOUNTS_PER_PACKET & 0b1000_0000 == 0);
+        const _: () = assert!(LEGACY_OR_V0_MAX_STATIC_ACCOUNTS_PER_PACKET & 0b1000_0000 == 0);
 
         let num_static_accounts = read_byte(bytes, offset)?;
-        if num_static_accounts == 0 || num_static_accounts > MAX_STATIC_ACCOUNTS_PER_PACKET {
+        if num_static_accounts == 0
+            || num_static_accounts > LEGACY_OR_V0_MAX_STATIC_ACCOUNTS_PER_PACKET
+        {
             return Err(TransactionViewError::ParseError);
         }
 
@@ -71,7 +73,8 @@ mod tests {
 
     #[test]
     fn test_max_accounts() {
-        let signatures = vec![Pubkey::default(); usize::from(MAX_STATIC_ACCOUNTS_PER_PACKET)];
+        let signatures =
+            vec![Pubkey::default(); usize::from(LEGACY_OR_V0_MAX_STATIC_ACCOUNTS_PER_PACKET)];
         let bytes = bincode::serialize(&ShortVec(signatures)).unwrap();
         let mut offset = 0;
         let frame = StaticAccountKeysFrame::try_new(&bytes, &mut offset).unwrap();
@@ -82,7 +85,8 @@ mod tests {
 
     #[test]
     fn test_too_many_accounts() {
-        let signatures = vec![Pubkey::default(); usize::from(MAX_STATIC_ACCOUNTS_PER_PACKET) + 1];
+        let signatures =
+            vec![Pubkey::default(); usize::from(LEGACY_OR_V0_MAX_STATIC_ACCOUNTS_PER_PACKET) + 1];
         let bytes = bincode::serialize(&ShortVec(signatures)).unwrap();
         let mut offset = 0;
         assert!(StaticAccountKeysFrame::try_new(&bytes, &mut offset).is_err());

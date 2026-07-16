@@ -1,5 +1,3 @@
-#[cfg(feature = "dev-context-only-utils")]
-use qualifier_attr::qualifiers;
 use {
     super::{
         transaction_priority_id::TransactionPriorityId,
@@ -9,44 +7,45 @@ use {
             TransactionViewStateContainer,
         },
     },
-    crate::banking_stage::{
-        consumer::Consumer, decision_maker::BufferedPacketsDecision, scheduler_messages::MaxAge,
+    crate::{
+        banking_stage::{
+            consumer::Consumer, decision_maker::BufferedPacketsDecision, scheduler_messages::MaxAge,
+        },
+        transaction_priority::calculate_priority_and_cost,
     },
     agave_banking_stage_ingress_types::{BankingPacketBatch, BankingPacketReceiver},
     agave_transaction_view::{
-        resolved_transaction_view::ResolvedTransactionView, transaction_data::TransactionData,
-        transaction_version::TransactionVersion, transaction_view::SanitizedTransactionView,
+        resolved_transaction_view::ResolvedTransactionView, sanitize::SanitizeConfig,
+        transaction_data::TransactionData, transaction_version::TransactionVersion,
+        transaction_view::SanitizedTransactionView,
     },
     arrayvec::ArrayVec,
     core::time::Duration,
     crossbeam_channel::{RecvTimeoutError, TryRecvError},
     solana_accounts_db::account_locks::validate_account_locks,
     solana_address_lookup_table_interface::state::estimate_last_valid_slot,
-    solana_clock::{Epoch, MAX_PROCESSING_AGE, Slot},
-    solana_cost_model::cost_model::CostModel,
-    solana_fee_structure::FeeBudgetLimits,
+    solana_clock::{Epoch, Slot},
     solana_message::v0::LoadedAddresses,
+    solana_pubkey::Pubkey,
     solana_runtime::{
         bank::Bank,
         bank_forks::{BankPair, SharableBanks},
     },
     solana_runtime_transaction::{
-        runtime_transaction::RuntimeTransaction, transaction_meta::StaticMeta,
-        transaction_with_meta::TransactionWithMeta,
+        runtime_transaction::RuntimeTransaction, sanitize_config::sanitize_config,
+        transaction_meta::TransactionMeta, transaction_with_meta::TransactionWithMeta,
     },
     solana_svm::transaction_error_metrics::TransactionErrorMetrics,
     solana_svm_transaction::svm_message::SVMMessage,
     solana_transaction::sanitized::MessageHash,
     solana_transaction_error::TransactionError,
-    std::time::Instant,
+    std::{collections::HashSet, sync::Arc, time::Instant},
 };
 
 #[derive(Debug)]
-#[cfg_attr(feature = "dev-context-only-utils", qualifiers(pub))]
 pub(crate) struct DisconnectedError;
 
 /// Stats/metrics returned by `receive_and_buffer_packets`.
-#[cfg_attr(feature = "dev-context-only-utils", qualifiers(pub))]
 pub(crate) struct ReceivingStats {
     pub num_received: usize,
     /// Count of packets that passed sigverify but were dropped
@@ -60,6 +59,7 @@ pub(crate) struct ReceivingStats {
     pub num_dropped_on_age: usize,
     pub num_dropped_on_already_processed: usize,
     pub num_dropped_on_fee_payer: usize,
+    pub num_dropped_on_filter_key: usize,
     pub num_dropped_on_capacity: usize,
 
     pub num_buffered: usize,
@@ -79,6 +79,7 @@ impl ReceivingStats {
         self.num_dropped_on_age += other.num_dropped_on_age;
         self.num_dropped_on_already_processed += other.num_dropped_on_already_processed;
         self.num_dropped_on_fee_payer += other.num_dropped_on_fee_payer;
+        self.num_dropped_on_filter_key += other.num_dropped_on_filter_key;
         self.num_dropped_on_capacity += other.num_dropped_on_capacity;
         self.num_buffered += other.num_buffered;
 
@@ -87,7 +88,6 @@ impl ReceivingStats {
     }
 }
 
-#[cfg_attr(feature = "dev-context-only-utils", qualifiers(pub))]
 pub(crate) trait ReceiveAndBuffer {
     type Transaction: TransactionWithMeta + Send + Sync;
     type Container: StateContainer<Self::Transaction> + Send + Sync;
@@ -101,10 +101,10 @@ pub(crate) trait ReceiveAndBuffer {
     ) -> Result<ReceivingStats, DisconnectedError>;
 }
 
-#[cfg_attr(feature = "dev-context-only-utils", qualifiers(pub))]
 pub(crate) struct TransactionViewReceiveAndBuffer {
     pub receiver: BankingPacketReceiver,
     pub sharable_banks: SharableBanks,
+    pub filter_keys: Arc<HashSet<Pubkey>>,
 }
 
 impl ReceiveAndBuffer for TransactionViewReceiveAndBuffer {
@@ -122,7 +122,8 @@ impl ReceiveAndBuffer for TransactionViewReceiveAndBuffer {
         } = self.sharable_banks.load();
 
         // Receive packet batches.
-        const TIMEOUT: Duration = Duration::from_millis(10);
+        const RECV_TIMEOUT: Duration = Duration::from_millis(10);
+        const PACKET_BURST_TIMEOUT: Duration = Duration::from_millis(1);
         const PACKET_BURST_LIMIT: usize = 1000;
         let start = Instant::now();
 
@@ -136,6 +137,7 @@ impl ReceiveAndBuffer for TransactionViewReceiveAndBuffer {
             num_dropped_on_age: 0,
             num_dropped_on_already_processed: 0,
             num_dropped_on_fee_payer: 0,
+            num_dropped_on_filter_key: 0,
             num_dropped_on_capacity: 0,
             num_buffered: 0,
             receive_time_us: 0,
@@ -156,7 +158,7 @@ impl ReceiveAndBuffer for TransactionViewReceiveAndBuffer {
             //       overhead for wakers? But then risk not waking up when message
             //       received - as long as sleep is somewhat short, this should be
             //       fine.
-            match self.receiver.recv_timeout(TIMEOUT) {
+            match self.receiver.recv_timeout(RECV_TIMEOUT) {
                 Ok(packet_batch_message) => {
                     received_message = true;
                     stats.accumulate(self.handle_packet_batch_message(
@@ -177,7 +179,8 @@ impl ReceiveAndBuffer for TransactionViewReceiveAndBuffer {
         }
 
         if !timed_out {
-            while start.elapsed() < TIMEOUT && stats.num_received < PACKET_BURST_LIMIT {
+            while start.elapsed() < PACKET_BURST_TIMEOUT && stats.num_received < PACKET_BURST_LIMIT
+            {
                 let receive_start = Instant::now();
                 match self.receiver.try_recv() {
                     Ok(packet_batch_message) => {
@@ -213,6 +216,7 @@ impl ReceiveAndBuffer for TransactionViewReceiveAndBuffer {
             num_dropped_on_age: stats.num_dropped_on_age,
             num_dropped_on_already_processed: stats.num_dropped_on_already_processed,
             num_dropped_on_fee_payer: stats.num_dropped_on_fee_payer,
+            num_dropped_on_filter_key: stats.num_dropped_on_filter_key,
             num_dropped_on_capacity: stats.num_dropped_on_capacity,
             num_buffered: stats.num_buffered,
             receive_time_us: stats.receive_time_us,
@@ -226,6 +230,7 @@ pub(crate) enum PacketHandlingError {
     LockValidation,
     ComputeBudget,
     ALTResolution,
+    FilterKey,
 }
 
 impl TransactionViewReceiveAndBuffer {
@@ -242,12 +247,7 @@ impl TransactionViewReceiveAndBuffer {
         // If outside holding window, do not parse.
         let should_parse = !matches!(decision, BufferedPacketsDecision::Forward);
 
-        let enable_static_instruction_limit = root_bank
-            .feature_set
-            .is_active(&agave_feature_set::static_instruction_limit::ID);
-        let enable_instruction_accounts_limit = root_bank
-            .feature_set
-            .is_active(&agave_feature_set::limit_instruction_accounts::ID);
+        let sanitize_config = sanitize_config();
         let transaction_account_lock_limit = working_bank.get_transaction_account_lock_limit();
 
         // Create temporary batches of transactions to be age-checked.
@@ -257,72 +257,76 @@ impl TransactionViewReceiveAndBuffer {
         let mut num_dropped_on_age = 0;
         let mut num_dropped_on_already_processed = 0;
         let mut num_dropped_on_fee_payer = 0;
+        let mut num_dropped_on_filter_key = 0;
         let mut num_dropped_on_capacity = 0;
         let mut num_buffered = 0;
 
-        let mut check_and_push_to_queue =
-            |container: &mut TransactionViewStateContainer,
-             transaction_priority_ids: &mut ArrayVec<TransactionPriorityId, 64>| {
-                // Temporary scope so that transaction references are immediately
-                // dropped and transactions not passing
-                let mut check_results = {
-                    let mut transactions = ArrayVec::<_, EXTRA_CAPACITY>::new();
-                    transactions.extend(transaction_priority_ids.iter().map(|priority_id| {
-                        container
-                            .get_transaction(priority_id.id)
-                            .expect("transaction must exist")
-                    }));
-                    working_bank.check_transactions::<RuntimeTransaction<_>>(
-                        &transactions,
-                        &lock_results[..transactions.len()],
-                        MAX_PROCESSING_AGE,
-                        &mut error_counters,
-                    )
-                };
-
-                // Remove errored transactions
-                for (result, priority_id) in check_results
-                    .iter_mut()
-                    .zip(transaction_priority_ids.iter())
-                {
-                    if let Err(err) = result {
-                        match err {
-                            TransactionError::BlockhashNotFound => {
-                                num_dropped_on_age += 1;
-                            }
-                            TransactionError::AlreadyProcessed => {
-                                num_dropped_on_already_processed += 1;
-                            }
-                            _ => {}
-                        }
-                        container.remove_by_id(priority_id.id);
-                        continue;
-                    }
-                    let transaction = container
+        let mut check_and_push_to_queue = |container: &mut TransactionViewStateContainer,
+                                           transaction_priority_ids: &mut ArrayVec<
+            TransactionPriorityId,
+            EXTRA_CAPACITY,
+        >| {
+            // Temporary scope so that transaction references are immediately
+            // dropped and transactions not passing
+            let mut check_results = {
+                let mut transactions = ArrayVec::<_, EXTRA_CAPACITY>::new();
+                transactions.extend(transaction_priority_ids.iter().map(|priority_id| {
+                    container
                         .get_transaction(priority_id.id)
-                        .expect("transaction must exist");
-                    if let Err(err) = Consumer::check_fee_payer_unlocked(
-                        working_bank,
-                        transaction,
-                        &mut error_counters,
-                    ) {
-                        *result = Err(err);
-                        num_dropped_on_fee_payer += 1;
-                        container.remove_by_id(priority_id.id);
-                        continue;
-                    }
-
-                    num_buffered += 1;
-                }
-                // Push non-errored transaction into queue.
-                num_dropped_on_capacity += container.push_ids_into_queue(
-                    check_results
-                        .into_iter()
-                        .zip(transaction_priority_ids.drain(..))
-                        .filter(|(r, _)| r.is_ok())
-                        .map(|(_, id)| id),
-                );
+                        .expect("transaction must exist")
+                }));
+                working_bank.check_transactions_without_status_cache::<RuntimeTransaction<_>>(
+                    &transactions,
+                    &lock_results[..transactions.len()],
+                    working_bank.max_processing_age(),
+                    true,
+                    &mut error_counters,
+                )
             };
+
+            // Remove errored transactions
+            for (result, priority_id) in check_results
+                .iter_mut()
+                .zip(transaction_priority_ids.iter())
+            {
+                if let Err(err) = result {
+                    match err {
+                        TransactionError::BlockhashNotFound => {
+                            num_dropped_on_age += 1;
+                        }
+                        TransactionError::AlreadyProcessed => {
+                            num_dropped_on_already_processed += 1;
+                        }
+                        _ => {}
+                    }
+                    container.remove_by_id(priority_id.id);
+                    continue;
+                }
+                let transaction = container
+                    .get_transaction(priority_id.id)
+                    .expect("transaction must exist");
+                if let Err(err) = Consumer::check_fee_payer_unlocked(
+                    working_bank,
+                    transaction,
+                    &mut error_counters,
+                ) {
+                    *result = Err(err);
+                    num_dropped_on_fee_payer += 1;
+                    container.remove_by_id(priority_id.id);
+                    continue;
+                }
+
+                num_buffered += 1;
+            }
+            // Push non-errored transaction into queue.
+            num_dropped_on_capacity += container.push_ids_into_queue(
+                check_results
+                    .into_iter()
+                    .zip(transaction_priority_ids.drain(..))
+                    .filter(|(r, _)| r.is_ok())
+                    .map(|(_, id)| id),
+            );
+        };
 
         let mut num_received = 0;
         let mut num_dropped_without_parsing = 0;
@@ -330,59 +334,59 @@ impl TransactionViewReceiveAndBuffer {
         let mut num_dropped_on_lock_validation = 0;
         let mut num_dropped_on_compute_budget = 0;
 
-        for packet_batch in packet_batch_message.iter() {
-            for packet in packet_batch.iter() {
-                let Some(packet_data) = packet.data(..) else {
-                    continue;
-                };
+        for packet in packet_batch_message.iter() {
+            let Some(packet_data) = packet.data(..) else {
+                continue;
+            };
 
-                num_received += 1;
-                if !should_parse {
-                    num_dropped_without_parsing += 1;
-                    continue;
-                }
+            num_received += 1;
+            if !should_parse {
+                num_dropped_without_parsing += 1;
+                continue;
+            }
 
-                // Reserve free-space to copy packet into, run sanitization checks, and insert.
-                if let Some(transaction_id) =
-                    container.try_insert_map_only_with_data(packet_data, |bytes| {
-                        match Self::try_handle_packet(
-                            bytes,
-                            root_bank,
-                            working_bank,
-                            enable_static_instruction_limit,
-                            transaction_account_lock_limit,
-                            enable_instruction_accounts_limit,
-                        ) {
-                            Ok(state) => Ok(state),
-                            Err(
-                                PacketHandlingError::Sanitization
-                                | PacketHandlingError::ALTResolution,
-                            ) => {
-                                num_dropped_on_parsing_and_sanitization += 1;
-                                Err(())
-                            }
-                            Err(PacketHandlingError::LockValidation) => {
-                                num_dropped_on_lock_validation += 1;
-                                Err(())
-                            }
-                            Err(PacketHandlingError::ComputeBudget) => {
-                                num_dropped_on_compute_budget += 1;
-                                Err(())
-                            }
+            // Reserve free-space to copy packet into, run sanitization checks, and insert.
+            if let Some(transaction_id) =
+                container.try_insert_map_only_with_data(packet_data, |bytes| {
+                    match Self::try_handle_packet(
+                        bytes,
+                        root_bank,
+                        working_bank,
+                        transaction_account_lock_limit,
+                        &sanitize_config,
+                        &self.filter_keys,
+                    ) {
+                        Ok(state) => Ok(state),
+                        Err(
+                            PacketHandlingError::Sanitization | PacketHandlingError::ALTResolution,
+                        ) => {
+                            num_dropped_on_parsing_and_sanitization += 1;
+                            Err(())
                         }
-                    })
-                {
-                    let priority = container
-                        .get_mut_transaction_state(transaction_id)
-                        .expect("transaction must exist")
-                        .priority();
-                    transaction_priority_ids
-                        .push(TransactionPriorityId::new(priority, transaction_id));
-
-                    // If at capacity, run checks and remove invalid transactions.
-                    if transaction_priority_ids.len() == EXTRA_CAPACITY {
-                        check_and_push_to_queue(container, &mut transaction_priority_ids);
+                        Err(PacketHandlingError::LockValidation) => {
+                            num_dropped_on_lock_validation += 1;
+                            Err(())
+                        }
+                        Err(PacketHandlingError::ComputeBudget) => {
+                            num_dropped_on_compute_budget += 1;
+                            Err(())
+                        }
+                        Err(PacketHandlingError::FilterKey) => {
+                            num_dropped_on_filter_key += 1;
+                            Err(())
+                        }
                     }
+                })
+            {
+                let priority = container
+                    .get_mut_transaction_state(transaction_id)
+                    .expect("transaction must exist")
+                    .priority();
+                transaction_priority_ids.push(TransactionPriorityId::new(priority, transaction_id));
+
+                // If at capacity, run checks and remove invalid transactions.
+                if transaction_priority_ids.len() == EXTRA_CAPACITY {
+                    check_and_push_to_queue(container, &mut transaction_priority_ids);
                 }
             }
         }
@@ -399,6 +403,7 @@ impl TransactionViewReceiveAndBuffer {
             num_dropped_on_age,
             num_dropped_on_already_processed,
             num_dropped_on_fee_payer,
+            num_dropped_on_filter_key,
             num_dropped_on_capacity,
             num_buffered,
             receive_time_us: 0, // receive is outside this function
@@ -410,28 +415,35 @@ impl TransactionViewReceiveAndBuffer {
         bytes: SharedBytes,
         root_bank: &Bank,
         working_bank: &Bank,
-        enable_static_instruction_limit: bool,
         transaction_account_lock_limit: usize,
-        enable_instruction_accounts_limit: bool,
+        sanitize_config: &SanitizeConfig,
+        filter_keys: &HashSet<Pubkey>,
     ) -> Result<TransactionViewState, PacketHandlingError> {
         let (view, deactivation_slot) = translate_to_runtime_view(
             bytes,
             root_bank,
-            enable_static_instruction_limit,
             transaction_account_lock_limit,
-            enable_instruction_accounts_limit,
+            sanitize_config,
         )?;
 
-        let Ok(compute_budget_limits) = view
-            .compute_budget_instruction_details()
-            .sanitize_and_convert_to_compute_budget_limits(&working_bank.feature_set)
+        if !filter_keys.is_empty()
+            && view
+                .account_keys()
+                .iter()
+                .any(|key| filter_keys.contains(key))
+        {
+            return Err(PacketHandlingError::FilterKey);
+        }
+
+        let Ok(transaction_configuration) =
+            view.transaction_configuration(&working_bank.feature_set)
         else {
             return Err(PacketHandlingError::ComputeBudget);
         };
 
         let max_age = calculate_max_age(root_bank.epoch(), deactivation_slot, root_bank.slot());
-        let fee_budget_limits = FeeBudgetLimits::from(compute_budget_limits);
-        let (priority, cost) = calculate_priority_and_cost(&view, &fee_budget_limits, working_bank);
+        let (priority, cost) =
+            calculate_priority_and_cost(working_bank, &view, &transaction_configuration);
 
         Ok(TransactionState::new(view, max_age, priority, cost))
     }
@@ -443,16 +455,11 @@ impl TransactionViewReceiveAndBuffer {
 pub(crate) fn translate_to_runtime_view<D: TransactionData>(
     data: D,
     bank: &Bank,
-    enable_static_instruction_limit: bool,
     transaction_account_lock_limit: usize,
-    enable_instruction_accounts_limit: bool,
+    sanitize_config: &SanitizeConfig,
 ) -> Result<(RuntimeTransaction<ResolvedTransactionView<D>>, u64), PacketHandlingError> {
     // Parsing and basic sanitization checks
-    let Ok(view) = SanitizedTransactionView::try_new_sanitized(
-        data,
-        enable_static_instruction_limit,
-        enable_instruction_accounts_limit,
-    ) else {
+    let Ok(view) = SanitizedTransactionView::try_new_sanitized(data, sanitize_config) else {
         return Err(PacketHandlingError::Sanitization);
     };
 
@@ -498,7 +505,7 @@ pub(crate) fn load_addresses_for_view<D: TransactionData>(
     bank: &Bank,
 ) -> Result<(Option<LoadedAddresses>, Slot), PacketHandlingError> {
     match view.version() {
-        TransactionVersion::Legacy => Ok((None, u64::MAX)),
+        TransactionVersion::Legacy | TransactionVersion::V1 => Ok((None, u64::MAX)),
         TransactionVersion::V0 => bank
             .load_addresses_from_ref(view.address_table_lookup_iter())
             .map(|(loaded_addresses, deactivation_slot)| {
@@ -506,46 +513,6 @@ pub(crate) fn load_addresses_for_view<D: TransactionData>(
             })
             .map_err(|_| PacketHandlingError::ALTResolution),
     }
-}
-
-/// Calculate priority and cost for a transaction:
-///
-/// Cost is calculated through the `CostModel`,
-/// and priority is calculated through a formula here that attempts to sell
-/// blockspace to the highest bidder.
-///
-/// The priority is calculated as:
-/// P = R / (1 + C)
-/// where P is the priority, R is the reward,
-/// and C is the cost towards block-limits.
-///
-/// Current minimum costs are on the order of several hundred,
-/// so the denominator is effectively C, and the +1 is simply
-/// to avoid any division by zero due to a bug - these costs
-/// are calculated by the cost-model and are not direct
-/// from user input. They should never be zero.
-/// Any difference in the prioritization is negligible for
-/// the current transaction costs.
-pub(crate) fn calculate_priority_and_cost(
-    transaction: &impl TransactionWithMeta,
-    fee_budget_limits: &FeeBudgetLimits,
-    bank: &Bank,
-) -> (u64, u64) {
-    let cost = CostModel::calculate_cost(transaction, &bank.feature_set).sum();
-    let reward = bank.calculate_reward_for_transaction(transaction, fee_budget_limits);
-
-    // We need a multiplier here to avoid rounding down too aggressively.
-    // For many transactions, the cost will be greater than the fees in terms of raw lamports.
-    // For the purposes of calculating prioritization, we multiply the fees by a large number so that
-    // the cost is a small fraction.
-    // An offset of 1 is used in the denominator to explicitly avoid division by zero.
-    const MULTIPLIER: u64 = 1_000_000;
-    (
-        reward
-            .saturating_mul(MULTIPLIER)
-            .saturating_div(cost.saturating_add(1)),
-        cost,
-    )
 }
 
 /// Given the epoch, the minimum deactivation slot, and the current slot,
@@ -580,7 +547,10 @@ mod tests {
     use {
         super::*,
         crate::banking_stage::tests::create_slow_genesis_config,
-        crossbeam_channel::{Receiver, unbounded},
+        agave_banking_stage_ingress_types::{
+            to_banking_packet_batch, to_single_banking_packet_batch,
+        },
+        crossbeam_channel::{Receiver, bounded},
         solana_hash::Hash,
         solana_keypair::Keypair,
         solana_ledger::genesis_utils::GenesisConfigInfo,
@@ -588,7 +558,7 @@ mod tests {
             AccountMeta, AddressLookupTableAccount, Instruction, VersionedMessage, v0,
         },
         solana_packet::{Meta, PACKET_DATA_SIZE},
-        solana_perf::packet::{Packet, PacketBatch, RecycledPacketBatch, to_packet_batches},
+        solana_perf::packet::{Packet, PacketBatch, RecycledPacketBatch},
         solana_pubkey::Pubkey,
         solana_runtime::bank_forks::BankForks,
         solana_signer::Signer,
@@ -618,9 +588,25 @@ mod tests {
         TransactionViewReceiveAndBuffer,
         TransactionViewStateContainer,
     ) {
+        setup_transaction_view_receive_and_buffer_with_filter_keys(
+            receiver,
+            bank_forks,
+            Arc::default(),
+        )
+    }
+
+    fn setup_transaction_view_receive_and_buffer_with_filter_keys(
+        receiver: Receiver<BankingPacketBatch>,
+        bank_forks: Arc<RwLock<BankForks>>,
+        filter_keys: Arc<HashSet<Pubkey>>,
+    ) -> (
+        TransactionViewReceiveAndBuffer,
+        TransactionViewStateContainer,
+    ) {
         let receive_and_buffer = TransactionViewReceiveAndBuffer {
             receiver,
             sharable_banks: bank_forks.read().unwrap().sharable_banks(),
+            filter_keys,
         };
         let container = TransactionViewStateContainer::with_capacity(TEST_CONTAINER_CAPACITY);
         (receive_and_buffer, container)
@@ -673,7 +659,7 @@ mod tests {
 
     #[test]
     fn test_receive_and_buffer_disconnected_channel() {
-        let (sender, receiver) = unbounded();
+        let (sender, receiver) = bounded(1024);
         let (bank_forks, _mint_keypair) = test_bank_forks();
         let (mut receive_and_buffer, mut container) =
             setup_transaction_view_receive_and_buffer(receiver, bank_forks);
@@ -686,7 +672,7 @@ mod tests {
 
     #[test]
     fn test_receive_and_buffer_no_hold() {
-        let (sender, receiver) = unbounded();
+        let (sender, receiver) = bounded(1024);
         let (bank_forks, mint_keypair) = test_bank_forks();
         let (mut receive_and_buffer, mut container) =
             setup_transaction_view_receive_and_buffer(receiver, bank_forks.clone());
@@ -697,8 +683,8 @@ mod tests {
             1,
             bank_forks.read().unwrap().root_bank().last_blockhash(),
         );
-        let packet_batches = Arc::new(to_packet_batches(&[transaction], 1));
-        sender.send(packet_batches).unwrap();
+        let packet_batch = to_single_banking_packet_batch(&transaction);
+        sender.send(packet_batch).unwrap();
 
         let ReceivingStats {
             num_received,
@@ -709,6 +695,7 @@ mod tests {
             num_dropped_on_age,
             num_dropped_on_already_processed,
             num_dropped_on_fee_payer,
+            num_dropped_on_filter_key: _,
             num_dropped_on_capacity,
             num_buffered,
             receive_time_us: _,
@@ -735,7 +722,7 @@ mod tests {
 
     #[test]
     fn test_receive_and_buffer_discard() {
-        let (sender, receiver) = unbounded();
+        let (sender, receiver) = bounded(1024);
         let (bank_forks, mint_keypair) = test_bank_forks();
         let (mut receive_and_buffer, mut container) =
             setup_transaction_view_receive_and_buffer(receiver, bank_forks.clone());
@@ -746,13 +733,13 @@ mod tests {
             1,
             bank_forks.read().unwrap().root_bank().last_blockhash(),
         );
-        let mut packet_batches = Arc::new(to_packet_batches(&[transaction], 1));
-        Arc::make_mut(&mut packet_batches)[0]
+        let mut packet_batch = to_single_banking_packet_batch(&transaction);
+        Arc::make_mut(&mut packet_batch)
             .first_mut()
             .unwrap()
             .meta_mut()
             .set_discard(true);
-        sender.send(packet_batches).unwrap();
+        sender.send(packet_batch).unwrap();
 
         let ReceivingStats {
             num_received,
@@ -763,6 +750,7 @@ mod tests {
             num_dropped_on_age,
             num_dropped_on_already_processed,
             num_dropped_on_fee_payer,
+            num_dropped_on_filter_key: _,
             num_dropped_on_capacity,
             num_buffered,
             receive_time_us: _,
@@ -787,15 +775,15 @@ mod tests {
 
     #[test]
     fn test_receive_and_buffer_invalid_transaction_format() {
-        let (sender, receiver) = unbounded();
+        let (sender, receiver) = bounded(1024);
         let (bank_forks, _mint_keypair) = test_bank_forks();
         let (mut receive_and_buffer, mut container) =
             setup_transaction_view_receive_and_buffer(receiver, bank_forks);
 
-        let packet_batches = Arc::new(vec![PacketBatch::from(RecycledPacketBatch::new(vec![
+        let packet_batch = Arc::new(PacketBatch::from(RecycledPacketBatch::new(vec![
             Packet::new([1u8; PACKET_DATA_SIZE], Meta::default()),
-        ]))]);
-        sender.send(packet_batches).unwrap();
+        ])));
+        sender.send(packet_batch).unwrap();
 
         let ReceivingStats {
             num_received,
@@ -806,6 +794,7 @@ mod tests {
             num_dropped_on_age,
             num_dropped_on_already_processed,
             num_dropped_on_fee_payer,
+            num_dropped_on_filter_key: _,
             num_dropped_on_capacity,
             num_buffered,
             receive_time_us: _,
@@ -830,14 +819,14 @@ mod tests {
 
     #[test]
     fn test_receive_and_buffer_invalid_blockhash() {
-        let (sender, receiver) = unbounded();
+        let (sender, receiver) = bounded(1024);
         let (bank_forks, mint_keypair) = test_bank_forks();
         let (mut receive_and_buffer, mut container) =
             setup_transaction_view_receive_and_buffer(receiver, bank_forks);
 
         let transaction = transfer(&mint_keypair, &Pubkey::new_unique(), 1, Hash::new_unique());
-        let packet_batches = Arc::new(to_packet_batches(&[transaction], 1));
-        sender.send(packet_batches).unwrap();
+        let packet_batch = to_single_banking_packet_batch(&transaction);
+        sender.send(packet_batch).unwrap();
 
         let ReceivingStats {
             num_received,
@@ -848,6 +837,7 @@ mod tests {
             num_dropped_on_age,
             num_dropped_on_already_processed,
             num_dropped_on_fee_payer,
+            num_dropped_on_filter_key: _,
             num_dropped_on_capacity,
             num_buffered,
             receive_time_us: _,
@@ -872,7 +862,7 @@ mod tests {
 
     #[test]
     fn test_receive_and_buffer_simple_transfer_unfunded_fee_payer() {
-        let (sender, receiver) = unbounded();
+        let (sender, receiver) = bounded(1024);
         let (bank_forks, _mint_keypair) = test_bank_forks();
         let (mut receive_and_buffer, mut container) =
             setup_transaction_view_receive_and_buffer(receiver, bank_forks.clone());
@@ -883,8 +873,8 @@ mod tests {
             1,
             bank_forks.read().unwrap().root_bank().last_blockhash(),
         );
-        let packet_batches = Arc::new(to_packet_batches(&[transaction], 1));
-        sender.send(packet_batches).unwrap();
+        let packet_batch = to_single_banking_packet_batch(&transaction);
+        sender.send(packet_batch).unwrap();
 
         let ReceivingStats {
             num_received,
@@ -895,6 +885,7 @@ mod tests {
             num_dropped_on_age,
             num_dropped_on_already_processed,
             num_dropped_on_fee_payer,
+            num_dropped_on_filter_key: _,
             num_dropped_on_capacity,
             num_buffered,
             receive_time_us: _,
@@ -919,7 +910,7 @@ mod tests {
 
     #[test]
     fn test_receive_and_buffer_failed_alt_resolve() {
-        let (sender, receiver) = unbounded();
+        let (sender, receiver) = bounded(1024);
         let (bank_forks, mint_keypair) = test_bank_forks();
         let (mut receive_and_buffer, mut container) =
             setup_transaction_view_receive_and_buffer(receiver, bank_forks.clone());
@@ -945,8 +936,8 @@ mod tests {
             &[&mint_keypair],
         )
         .unwrap();
-        let packet_batches = Arc::new(to_packet_batches(&[transaction], 1));
-        sender.send(packet_batches).unwrap();
+        let packet_batch = to_single_banking_packet_batch(&transaction);
+        sender.send(packet_batch).unwrap();
 
         let ReceivingStats {
             num_received,
@@ -957,6 +948,7 @@ mod tests {
             num_dropped_on_age,
             num_dropped_on_already_processed,
             num_dropped_on_fee_payer,
+            num_dropped_on_filter_key: _,
             num_dropped_on_capacity,
             num_buffered,
             receive_time_us: _,
@@ -981,7 +973,7 @@ mod tests {
 
     #[test]
     fn test_receive_and_buffer_simple_transfer() {
-        let (sender, receiver) = unbounded();
+        let (sender, receiver) = bounded(1024);
         let (bank_forks, mint_keypair) = test_bank_forks();
         let (mut receive_and_buffer, mut container) =
             setup_transaction_view_receive_and_buffer(receiver, bank_forks.clone());
@@ -992,8 +984,8 @@ mod tests {
             1,
             bank_forks.read().unwrap().root_bank().last_blockhash(),
         );
-        let packet_batches = Arc::new(to_packet_batches(&[transaction], 1));
-        sender.send(packet_batches).unwrap();
+        let packet_batch = to_single_banking_packet_batch(&transaction);
+        sender.send(packet_batch).unwrap();
 
         let ReceivingStats {
             num_received,
@@ -1004,6 +996,7 @@ mod tests {
             num_dropped_on_age,
             num_dropped_on_already_processed,
             num_dropped_on_fee_payer,
+            num_dropped_on_filter_key: _,
             num_dropped_on_capacity,
             num_buffered,
             receive_time_us: _,
@@ -1027,8 +1020,130 @@ mod tests {
     }
 
     #[test]
+    fn test_receive_and_buffer_buffers_already_processed() {
+        let (sender, receiver) = bounded(1024);
+        let (bank_forks, mint_keypair) = test_bank_forks();
+        let (mut receive_and_buffer, mut container) =
+            setup_transaction_view_receive_and_buffer(receiver, bank_forks.clone());
+
+        let bank = bank_forks.read().unwrap().root_bank();
+        let transaction = transfer(
+            &mint_keypair,
+            &Pubkey::new_unique(),
+            1,
+            bank.last_blockhash(),
+        );
+        bank.process_transaction(&transaction).unwrap();
+        drop(bank);
+
+        let packet_batch = to_single_banking_packet_batch(&transaction);
+        sender.send(packet_batch).unwrap();
+
+        let stats = receive_and_buffer
+            .receive_and_buffer_packets(&mut container, &BufferedPacketsDecision::Hold)
+            .unwrap();
+
+        assert_eq!(stats.num_received, 1);
+        assert_eq!(stats.num_dropped_on_age, 0);
+        assert_eq!(stats.num_dropped_on_already_processed, 0);
+        assert_eq!(stats.num_buffered, 1);
+        verify_container(&mut container, 1);
+    }
+
+    #[test]
+    fn test_receive_and_buffer_filters_fee_payer() {
+        let (sender, receiver) = bounded(1024);
+        let (bank_forks, mint_keypair) = test_bank_forks();
+        let (mut receive_and_buffer, mut container) =
+            setup_transaction_view_receive_and_buffer_with_filter_keys(
+                receiver,
+                bank_forks.clone(),
+                Arc::new(HashSet::from([mint_keypair.pubkey()])),
+            );
+
+        let transaction = transfer(
+            &mint_keypair,
+            &Pubkey::new_unique(),
+            1,
+            bank_forks.read().unwrap().root_bank().last_blockhash(),
+        );
+        let packet_batch = to_single_banking_packet_batch(&transaction);
+        sender.send(packet_batch).unwrap();
+
+        let stats = receive_and_buffer
+            .receive_and_buffer_packets(&mut container, &BufferedPacketsDecision::Hold)
+            .unwrap();
+
+        assert_eq!(stats.num_received, 1);
+        assert_eq!(stats.num_dropped_on_filter_key, 1);
+        assert_eq!(stats.num_buffered, 0);
+        verify_container(&mut container, 0);
+    }
+
+    #[test]
+    fn test_receive_and_buffer_filters_account_key() {
+        let (sender, receiver) = bounded(1024);
+        let (bank_forks, mint_keypair) = test_bank_forks();
+        let filtered_key = Pubkey::new_unique();
+        let (mut receive_and_buffer, mut container) =
+            setup_transaction_view_receive_and_buffer_with_filter_keys(
+                receiver,
+                bank_forks.clone(),
+                Arc::new(HashSet::from([filtered_key])),
+            );
+
+        let transaction = transfer(
+            &mint_keypair,
+            &filtered_key,
+            1,
+            bank_forks.read().unwrap().root_bank().last_blockhash(),
+        );
+        let packet_batch = to_single_banking_packet_batch(&transaction);
+        sender.send(packet_batch).unwrap();
+
+        let stats = receive_and_buffer
+            .receive_and_buffer_packets(&mut container, &BufferedPacketsDecision::Hold)
+            .unwrap();
+
+        assert_eq!(stats.num_received, 1);
+        assert_eq!(stats.num_dropped_on_filter_key, 1);
+        assert_eq!(stats.num_buffered, 0);
+        verify_container(&mut container, 0);
+    }
+
+    #[test]
+    fn test_receive_and_buffer_does_not_filter_unmatched_keys() {
+        let (sender, receiver) = bounded(1024);
+        let (bank_forks, mint_keypair) = test_bank_forks();
+        let (mut receive_and_buffer, mut container) =
+            setup_transaction_view_receive_and_buffer_with_filter_keys(
+                receiver,
+                bank_forks.clone(),
+                Arc::new(HashSet::from([Pubkey::new_unique()])),
+            );
+
+        let transaction = transfer(
+            &mint_keypair,
+            &Pubkey::new_unique(),
+            1,
+            bank_forks.read().unwrap().root_bank().last_blockhash(),
+        );
+        let packet_batch = to_single_banking_packet_batch(&transaction);
+        sender.send(packet_batch).unwrap();
+
+        let stats = receive_and_buffer
+            .receive_and_buffer_packets(&mut container, &BufferedPacketsDecision::Hold)
+            .unwrap();
+
+        assert_eq!(stats.num_received, 1);
+        assert_eq!(stats.num_dropped_on_filter_key, 0);
+        assert_eq!(stats.num_buffered, 1);
+        verify_container(&mut container, 1);
+    }
+
+    #[test]
     fn test_receive_and_buffer_overfull() {
-        let (sender, receiver) = unbounded();
+        let (sender, receiver) = bounded(1024);
         let (bank_forks, mint_keypair) = test_bank_forks();
         let (mut receive_and_buffer, mut container) =
             setup_transaction_view_receive_and_buffer(receiver, bank_forks.clone());
@@ -1043,8 +1158,8 @@ mod tests {
             )
         }));
 
-        let packet_batches = Arc::new(to_packet_batches(&transactions, 17));
-        sender.send(packet_batches).unwrap();
+        let packet_batch = to_banking_packet_batch(&transactions);
+        sender.send(packet_batch).unwrap();
 
         let ReceivingStats {
             num_received,
@@ -1055,6 +1170,7 @@ mod tests {
             num_dropped_on_age,
             num_dropped_on_already_processed,
             num_dropped_on_fee_payer,
+            num_dropped_on_filter_key: _,
             num_dropped_on_capacity,
             num_buffered,
             receive_time_us: _,
@@ -1106,7 +1222,7 @@ mod tests {
             .unwrap()
         }
 
-        let (sender, receiver) = unbounded();
+        let (sender, receiver) = bounded(1024);
         let (bank_forks, mint_keypair) = test_bank_forks();
         let (mut receive_and_buffer, mut container) =
             setup_transaction_view_receive_and_buffer(receiver, bank_forks.clone());
@@ -1122,8 +1238,8 @@ mod tests {
         let bad_tx = create_tx_with_n_keys(&mint_keypair, transaction_account_lock_limit + 1);
         let transactions = [bad_tx];
 
-        let packet_batches = Arc::new(to_packet_batches(&transactions, 17));
-        sender.send(packet_batches).unwrap();
+        let packet_batch = to_banking_packet_batch(&transactions);
+        sender.send(packet_batch).unwrap();
 
         let ReceivingStats {
             num_received,
@@ -1134,6 +1250,7 @@ mod tests {
             num_dropped_on_age,
             num_dropped_on_already_processed,
             num_dropped_on_fee_payer,
+            num_dropped_on_filter_key: _,
             num_dropped_on_capacity,
             num_buffered,
             receive_time_us: _,

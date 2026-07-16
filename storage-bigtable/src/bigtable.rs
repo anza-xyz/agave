@@ -4,12 +4,13 @@ use {
     crate::{
         CredentialType,
         access_token::{AccessToken, Scope},
-        compression::{compress_best, decompress},
+        compression::{compress_zstd_or_none, decompress},
         root_ca_certificate,
     },
-    backoff::{Error as BackoffError, ExponentialBackoff, future::retry},
+    hyper_util::client::legacy::connect::{HttpConnector, proxy::Tunnel},
     log::*,
     std::{
+        future::Future,
         str::FromStr,
         time::{Duration, Instant},
     },
@@ -19,6 +20,12 @@ use {
 
 #[allow(clippy::all)]
 mod google {
+    mod r#type {
+        include!(concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            concat!("/proto/google.r#type.rs")
+        ));
+    }
     mod rpc {
         include!(concat!(
             env!("CARGO_MANIFEST_DIR"),
@@ -85,13 +92,40 @@ pub enum Error {
     Timeout,
 }
 
-fn to_backoff_err(err: Error) -> BackoffError<Error> {
-    if let Error::Rpc(ref status) = err {
-        if status.code() == tonic::Code::NotFound && status.message().starts_with("table") {
-            return BackoffError::Permanent(err);
+fn is_retryable_error(err: &Error) -> bool {
+    if let Error::Rpc(status) = err {
+        return !(status.code() == tonic::Code::NotFound && status.message().starts_with("table"));
+    }
+    true
+}
+
+async fn retry_with_exponential_backoff<T, O, F>(mut operation: O) -> Result<T>
+where
+    O: FnMut() -> F,
+    F: Future<Output = Result<T>>,
+{
+    const INITIAL_INTERVAL: Duration = Duration::from_millis(500);
+    const MULTIPLIER: u32 = 2;
+    const MAX_INTERVAL: Duration = Duration::from_secs(60);
+    const MAX_ELAPSED_TIME: Duration = Duration::from_secs(15 * 60);
+
+    let started = Instant::now();
+    let mut delay = INITIAL_INTERVAL;
+
+    loop {
+        match operation().await {
+            Ok(value) => return Ok(value),
+            Err(err) if is_retryable_error(&err) => {
+                if started.elapsed() >= MAX_ELAPSED_TIME {
+                    return Err(err);
+                }
+
+                tokio::time::sleep(delay).await;
+                delay = std::cmp::min(delay.saturating_mul(MULTIPLIER), MAX_INTERVAL);
+            }
+            Err(err) => return Err(err),
         }
     }
-    err.into()
 }
 
 impl std::convert::From<std::io::Error> for Error {
@@ -193,22 +227,16 @@ impl BigTableConnection {
                     }
                 };
 
-                let mut http = hyper::client::HttpConnector::new();
+                let mut http = HttpConnector::new();
                 http.enforce_http(false);
                 http.set_nodelay(true);
                 let channel = match std::env::var("BIGTABLE_PROXY") {
                     Ok(proxy_uri) => {
-                        let proxy = hyper_proxy::Proxy::new(
-                            hyper_proxy::Intercept::All,
-                            proxy_uri
-                                .parse::<http::Uri>()
-                                .map_err(|err| Error::InvalidUri(proxy_uri, err.to_string()))?,
-                        );
-                        let mut proxy_connector =
-                            hyper_proxy::ProxyConnector::from_proxy(http, proxy)?;
-                        // tonic handles TLS as a separate layer
-                        proxy_connector.set_tls(None);
-                        endpoint.connect_with_connector_lazy(proxy_connector)
+                        let proxy_uri = proxy_uri
+                            .parse::<http::Uri>()
+                            .map_err(|err| Error::InvalidUri(proxy_uri.clone(), err.to_string()))?;
+                        let tunnel = Tunnel::new(proxy_uri, http);
+                        endpoint.connect_with_connector_lazy(tunnel)
                     }
                     _ => endpoint.connect_with_connector_lazy(http),
                 };
@@ -286,18 +314,17 @@ impl BigTableConnection {
     where
         T: serde::ser::Serialize,
     {
-        retry(ExponentialBackoff::default(), || async {
+        retry_with_exponential_backoff(|| async {
             let mut client = self.client();
-            let result = client.put_bincode_cells(table, cells).await;
-            result.map_err(to_backoff_err)
+            client.put_bincode_cells(table, cells).await
         })
         .await
     }
 
     pub async fn delete_rows_with_retry(&self, table: &str, row_keys: &[RowKey]) -> Result<()> {
-        retry(ExponentialBackoff::default(), || async {
+        retry_with_exponential_backoff(|| async {
             let mut client = self.client();
-            Ok(client.delete_rows(table, row_keys).await?)
+            client.delete_rows(table, row_keys).await
         })
         .await
     }
@@ -310,9 +337,9 @@ impl BigTableConnection {
     where
         T: serde::de::DeserializeOwned,
     {
-        retry(ExponentialBackoff::default(), || async {
+        retry_with_exponential_backoff(|| async {
             let mut client = self.client();
-            Ok(client.get_bincode_cells(table, row_keys).await?)
+            client.get_bincode_cells(table, row_keys).await
         })
         .await
     }
@@ -325,10 +352,9 @@ impl BigTableConnection {
     where
         T: prost::Message,
     {
-        retry(ExponentialBackoff::default(), || async {
+        retry_with_exponential_backoff(|| async {
             let mut client = self.client();
-            let result = client.put_protobuf_cells(table, cells).await;
-            result.map_err(to_backoff_err)
+            client.put_protobuf_cells(table, cells).await
         })
         .await
     }
@@ -359,10 +385,10 @@ impl<F: FnMut(Request<()>) -> InterceptedRequestResult> BigTable<F> {
         let started = Instant::now();
 
         while let Some(res) = rrr.message().await? {
-            if let Some(timeout) = self.timeout {
-                if Instant::now().duration_since(started) > timeout {
-                    return Err(Error::Timeout);
-                }
+            if let Some(timeout) = self.timeout
+                && Instant::now().duration_since(started) > timeout
+            {
+                return Err(Error::Timeout);
             }
             for (i, mut chunk) in res.chunks.into_iter().enumerate() {
                 // The comments for `read_rows_response::CellChunk` provide essential details for
@@ -487,6 +513,8 @@ impl<F: FnMut(Request<()>) -> InterceptedRequestResult> BigTable<F> {
                     }),
                     request_stats_view: 0,
                     reversed: false,
+                    authorized_view_name: String::new(),
+                    materialized_view_name: String::new(),
                 },
             )
             .await?
@@ -516,6 +544,8 @@ impl<F: FnMut(Request<()>) -> InterceptedRequestResult> BigTable<F> {
                     }),
                     request_stats_view: 0,
                     reversed: false,
+                    authorized_view_name: String::new(),
+                    materialized_view_name: String::new(),
                 },
             )
             .await?
@@ -572,6 +602,8 @@ impl<F: FnMut(Request<()>) -> InterceptedRequestResult> BigTable<F> {
                     }),
                     request_stats_view: 0,
                     reversed: false,
+                    authorized_view_name: String::new(),
+                    materialized_view_name: String::new(),
                 },
             )
             .await?
@@ -608,6 +640,8 @@ impl<F: FnMut(Request<()>) -> InterceptedRequestResult> BigTable<F> {
                     }),
                     request_stats_view: 0,
                     reversed: false,
+                    authorized_view_name: String::new(),
+                    materialized_view_name: String::new(),
                 },
             )
             .await?
@@ -645,6 +679,8 @@ impl<F: FnMut(Request<()>) -> InterceptedRequestResult> BigTable<F> {
                     }),
                     request_stats_view: 0,
                     reversed: false,
+                    authorized_view_name: String::new(),
+                    materialized_view_name: String::new(),
                 },
             )
             .await?
@@ -670,6 +706,7 @@ impl<F: FnMut(Request<()>) -> InterceptedRequestResult> BigTable<F> {
                         mutation::DeleteFromRow {},
                     )),
                 }],
+                idempotency: None,
             });
         }
 
@@ -679,18 +716,19 @@ impl<F: FnMut(Request<()>) -> InterceptedRequestResult> BigTable<F> {
                 table_name: format!("{}{}", self.table_prefix, table_name),
                 app_profile_id: self.app_profile_id.clone(),
                 entries,
+                authorized_view_name: String::new(),
             })
             .await?
             .into_inner();
 
         while let Some(res) = response.message().await? {
             for entry in res.entries {
-                if let Some(status) = entry.status {
-                    if status.code != 0 {
-                        eprintln!("delete_rows error {}: {}", status.code, status.message);
-                        warn!("delete_rows error {}: {}", status.code, status.message);
-                        return Err(Error::RowDeleteFailed);
-                    }
+                if let Some(status) = entry.status
+                    && status.code != 0
+                {
+                    eprintln!("delete_rows error {}: {}", status.code, status.message);
+                    warn!("delete_rows error {}: {}", status.code, status.message);
+                    return Err(Error::RowDeleteFailed);
                 }
             }
         }
@@ -724,6 +762,7 @@ impl<F: FnMut(Request<()>) -> InterceptedRequestResult> BigTable<F> {
             entries.push(mutate_rows_request::Entry {
                 row_key: (*row_key).clone().into_bytes(),
                 mutations,
+                idempotency: None,
             });
         }
 
@@ -733,18 +772,19 @@ impl<F: FnMut(Request<()>) -> InterceptedRequestResult> BigTable<F> {
                 table_name: format!("{}{}", self.table_prefix, table_name),
                 app_profile_id: self.app_profile_id.clone(),
                 entries,
+                authorized_view_name: String::new(),
             })
             .await?
             .into_inner();
 
         while let Some(res) = response.message().await? {
             for entry in res.entries {
-                if let Some(status) = entry.status {
-                    if status.code != 0 {
-                        eprintln!("put_row_data error {}: {}", status.code, status.message);
-                        warn!("put_row_data error {}: {}", status.code, status.message);
-                        return Err(Error::RowWriteFailed);
-                    }
+                if let Some(status) = entry.status
+                    && status.code != 0
+                {
+                    eprintln!("put_row_data error {}: {}", status.code, status.message);
+                    warn!("put_row_data error {}: {}", status.code, status.message);
+                    return Err(Error::RowWriteFailed);
                 }
             }
         }
@@ -840,7 +880,7 @@ impl<F: FnMut(Request<()>) -> InterceptedRequestResult> BigTable<F> {
         let mut bytes_written = 0;
         let mut new_row_data = vec![];
         for (row_key, data) in cells {
-            let data = compress_best(&bincode::serialize(&data).unwrap())?;
+            let data = compress_zstd_or_none(&bincode::serialize(&data).unwrap())?;
             bytes_written += data.len();
             new_row_data.push((row_key, vec![("bin".to_string(), data)]));
         }
@@ -862,7 +902,7 @@ impl<F: FnMut(Request<()>) -> InterceptedRequestResult> BigTable<F> {
         for (row_key, data) in cells {
             let mut buf = Vec::with_capacity(data.encoded_len());
             data.encode(&mut buf).unwrap();
-            let data = compress_best(&buf)?;
+            let data = compress_zstd_or_none(&buf)?;
             bytes_written += data.len();
             new_row_data.push((row_key, vec![("proto".to_string(), data)]));
         }
@@ -1040,7 +1080,7 @@ mod tests {
             block_time: Some(1_234_567_890),
             block_height: Some(1),
         };
-        let bincode_block = compress_best(
+        let bincode_block = compress_zstd_or_none(
             &bincode::serialize::<StoredConfirmedBlock>(&expected_block.clone().into()).unwrap(),
         )
         .unwrap();
@@ -1048,7 +1088,7 @@ mod tests {
         let protobuf_block = confirmed_block_into_protobuf(expected_block.clone());
         let mut buf = Vec::with_capacity(protobuf_block.encoded_len());
         protobuf_block.encode(&mut buf).unwrap();
-        let protobuf_block = compress_best(&buf).unwrap();
+        let protobuf_block = compress_zstd_or_none(&buf).unwrap();
 
         let deserialized = deserialize_protobuf_or_bincode_cell_data::<
             StoredConfirmedBlock,

@@ -82,7 +82,7 @@ impl ClusterSlotsService {
     ) {
         let mut cluster_slots_service_timing = ClusterSlotsServiceTiming::default();
         let mut last_stats = Instant::now();
-        let mut epoch_specs = EpochSpecs::from(bank_forks.clone());
+        let mut epoch_specs = crate::epoch_specs::EpochSpecs::from(bank_forks.clone());
         let migration_status = bank_forks.read().unwrap().migration_status();
 
         // initialize cluster slots with the current root bank
@@ -145,7 +145,8 @@ impl ClusterSlotsService {
                 process_cluster_slots_updates_elapsed.as_us(),
             );
 
-            if last_stats.elapsed().as_secs() > 2 {
+            const REPORT_INTERVAL: Duration = Duration::from_secs(2);
+            if last_stats.elapsed() > REPORT_INTERVAL {
                 datapoint_info!(
                     "cluster_slots_service-timing",
                     (

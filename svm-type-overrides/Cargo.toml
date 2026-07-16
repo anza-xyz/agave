@@ -8,6 +8,11 @@ homepage = { workspace = true }
 license = { workspace = true }
 edition = { workspace = true }
 
+[package.metadata.docs.rs]
+targets = ["x86_64-unknown-linux-gnu"]
+all-features = true
+rustdoc-args = ["--cfg=docsrs"]
+
 [features]
 agave-unstable-api = []
 shuttle-test = ["dep:shuttle"]
@@ -17,3 +22,6 @@ executor = ["dep:futures"]
 futures = { workspace = true, optional = true }
 rand = { workspace = true }
 shuttle = { workspace = true, optional = true }
+
+[lints]
+workspace = true

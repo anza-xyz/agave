@@ -1,4 +1,5 @@
 pub mod authorized_voter;
+pub mod blockstore;
 pub mod contact_info;
 pub mod exit;
 pub mod manage_block_production;

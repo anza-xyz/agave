@@ -8,23 +8,94 @@ This project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
 and follows a [Backwards Compatibility Policy](https://docs.anza.xyz/backwards-compatibility)
 
 Release channels have their own copy of this changelog:
-* [edge - v4.1](#edge-channel)
-* [beta - v4.0](https://github.com/anza-xyz/agave/blob/v4.0/CHANGELOG.md)
-* [stable - v3.1](https://github.com/anza-xyz/agave/blob/v3.1/CHANGELOG.md)
+* [edge - v4.3](#edge-channel)
+* [alpha - v4.2](https://github.com/anza-xyz/agave/blob/v4.2/CHANGELOG.md)
+* [beta - v4.1](https://github.com/anza-xyz/agave/blob/v4.1/CHANGELOG.md)
+* [stable - v4.0](https://github.com/anza-xyz/agave/blob/v4.0/CHANGELOG.md)
 
 <a name="edge-channel"></a>
-## 4.1.0-Unreleased
+## 4.3.0-Unreleased
 ### RPC
 #### Breaking
 #### Changes
 ### Validator
 #### Breaking
+* Banking trace is now disabled by default. To enable, provide `--enable-banking-trace <max bytes>`.
+#### Deprecations
+* `--disable-banking-trace` is now deprecated and a no-op (banking trace is disabled by
+  default). The flag is still accepted for backward compatibility.
+#### Changes
+### SDK
+#### Breaking
+* solana-program-test: syscall getters (e.g. `Rent::get()`, `Clock::get()`) and `solana_sysvar::get_sysvar()` now return
+  `ProgramError::UnsupportedSysvar` in native-mode processors (programs registered with `processor!`). Programs
+  executed as BPF (including the bundled SPL programs), are unaffected, even when invoked via CPI from a native
+  processor. Native-mode processors can use the `solana_program_test::sol_get_*` sysvar helpers directly. See
+  `program-test/tests/sysvar.rs` for examples of what is and is not supported.
+
+## 4.2.0
+### RPC
+#### Breaking
+* The `jsonParsed` output for confidential transfer `Deposit` (`depositConfidentialTransfer`) and `Withdraw` (`withdrawConfidentialTransfer`) instructions has been corrected. These instructions operate on a single token account, so the mislabeled `source` and `destination` fields have been replaced by a single `account` field (the `mint` field is unchanged).
+* Blockstore reward column legacy format support removed.
+  * The `Rewards` column was updated in v1.5 (Solana Labs client) to switch from
+  storing bincode serialized values to protobuf encoded values. The old bincode
+  format will no longer be supported for fallback reads as of v4.2
+#### Changes
+* Added `RpcClient::get_latest_blockhash_with_commitment_and_context`, which returns the
+  `getLatestBlockhash` response together with its context (notably `context.slot`).
+### Validator
+#### Breaking
+* XDP transmit in SKB (copy) mode is now enabled by default on Linux. The validator requires
+  `CAP_NET_ADMIN` and `CAP_NET_RAW` capabilities (plus `CAP_BPF` and `CAP_PERFMON` for
+  `--xdp-zero-copy`). Pass `--no-xdp` to fall back to UDP sockets. The XDP CPU
+  core is auto-selected to avoid overlapping the PoH core; passing `--xdp-cpu-cores`
+  with a core that conflicts with the PoH core is an error.
+#### Deprecations
+* `--accounts-db-access-storages-method` is now deprecated and a no-op (the `mmap` value was
+  deprecated in v4.0.0; mmap mode has now been removed entirely). The flag is still accepted for
+  backward compatibility, but account storages are always accessed via file I/O.
+* `--accounts-db-cache-limit-mb` is now deprecated. Use `--accounts-db-write-cache-limit` instead.
+* `--experimental-poh-pinned-cpu-core` is now deprecated. Use `--poh-pinned-cpu-core` instead.
+#### Changes
+* Turbine shred ingestion now rejects shreds more than half an epoch in the future (previously up to 2 full epochs ahead was accepted).
+* When XDP is enabled, gossip egress does not support private and loopback addresses. Operators running with `--allow-private-addr` must also pass `--no-xdp`.
+### CLI
+#### Breaking
+#### Changes
+* `vote-account` supports Alpenglow and as such `vote-account --output json` breaks compatibility with older versions.
+* Support Keystone hardware wallets using `usb://keystone`
+
+## 4.1.0
+### RPC
+#### Breaking
+#### Changes
+### Validator
+#### Breaking
+* `--block-production-method central-scheduler` is no longer supported. If passed, a warning is emitted and behavior
+  will default to the greedy-scheduler implementation.
+* scheduler-bindings version has been increased to 4. Connecting external schedulers must be updated.
+* Validator now requires 26 ports, `--dynamic-port-range` must be at least 26 wide.
+#### Deprecations
+* Using `minimal` for `--accounts-index-limit` is now deprecated.
+* `--account-shrink-path` is now deprecated.
+* `sbf-sdk.tar.bz2` is not included anymore in the Agave release tarball. The file will be made available in the new
+  [`cargo-build-sbf`](https://github.com/anza-xyz/cargo-build-sbf) repository.
+* XDP support is no longer experimental. The `--experimental-retransmit-xdp-interface`, `--experimental-retransmit-xdp-cpu-cores`, and
+  `--experimental-retransmit-xdp-zero-copy` flags have been deprecated. Use `--xdp-interface`, `--xdp-cpu-cores`, and `--xdp-zero-copy` instead. Behavior is unchanged: pass `--xdp-cpu-cores` to enable XDP on the specified cores.
 #### Changes
 
 ## 4.0.0
 ### RPC
 #### Breaking
 * `--public-tpu-address` and `--public-tpu-forwards-address` CLI arguments and `setPublicTpuForwardsAddress`, `setPublicTpuAddress` RPC methods now specify QUIC ports, not UDP.
+* Blockstore `PerfSamples` column legacy format removed.
+  * The `PerfSamples` column format was updated in agave v1.15 to write `PerfSampleV2`. The old format, `PerfSampleV1`, will no longer be supported for fallback reads as of v4.0.
+* Blockstore transaction metadata column legacy format support removed.
+  * The `TransactionStatus`, `TransactionMemos`, and `AddressSignatures` columns
+  were updated in v1.18 to write a new key format. The old key format will no
+  no longer be supported for fallback reads as of v4.0
+* `getSignaturesForAddress` returns an error with code `-32020` if the `before` or `until` signatures are not found, rather than a successful response with an empty array
 #### Changes
 * Added `--enable-scheduler-bindings` which binds an IPC server at `<ledger-path>/scheduler_bindings.ipc` for external schedulers to connect to.
 * Added `clientId` field to each node in `getClusterNodes` response
@@ -35,10 +106,13 @@ Release channels have their own copy of this changelog:
   * `--accounts-db-hash-threads`
   * `--accounts-db-read-cache-limit-mb`
   * `--accounts-hash-cache-path`
+  * `--cuda`
   * `--disable-accounts-disk-index`
   * `--dev-halt-at-slot`
   * `--monitor` (`exit` subcommand)
+  * `--transaction-struct`
   * `--wait-for-exit` (`exit` subcommand)
+  * `--tpu-coalesce-ms`
   * `--tpu-disable-quic`
   * `--tpu-enable-udp`
 * `--block-verification-method blockstore-processor` is no longer supported. Remove the argument or switch to `--block-verification-method unified-scheduler` instead.
@@ -94,6 +168,10 @@ prerelease version. The new interpretation is as follows:
     * { min: 0x4002, patch: 0x0002 } -> X.2.0-rc.2
     * { min: 0x8003, patch: 0x0001 } -> X.3.0-beta.1
     * { min: 0xC004, patch: 0x0000 } -> X.4.0-alpha.0
+* Blockstore `SlotMeta` and `Index` columns legacy format removed.
+  * The `Index` column was updated in v2.2 to write `IndexV2`.
+  * The `SlotMeta` column format was updated in v3.1 to write `SlotMetaV2`.
+  * The old formats, `SlotMetaV1` and `IndexV1`, will no longer be supported for fallback reads as of v4.0
 
 #### Deprecations
 * Using `mmap` for `--accounts-db-access-storages-method` is now deprecated.
@@ -101,6 +179,8 @@ prerelease version. The new interpretation is as follows:
 #### Changes
 * `agave-validator exit` now saves bank state before exiting. This enables restarts from local state when snapshot generation is disabled.
 * Added `--accounts-index-limit` to specify the memory limit of the accounts index.
+* Snapshot archive unpacking now uses direct I/O by default to improve performance by bypassing the OS page cache. Use `--no-accounts-db-snapshots-direct-io` to opt out if your file system does not support `O_DIRECT`. Direct I/O will be extended to snapshot creation in a future release.
+* `--block-production-method central-scheduler` is now deprecated and will be removed in a future release. Use `central-scheduler-greedy` instead.
 ### CLI
 #### Breaking
 * Removed deprecated arguments

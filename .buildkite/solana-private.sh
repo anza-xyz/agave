@@ -11,7 +11,7 @@ set -e
 cd "$(dirname "$0")"/..
 source ci/_
 
-_ ci/buildkite-solana-private.sh pipeline.yml
+_ cargo xtask generate-pipeline --pipeline private
 echo +++ pipeline
 cat pipeline.yml
 

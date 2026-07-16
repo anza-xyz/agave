@@ -3,12 +3,13 @@
 //! In addition, the dynamic library must export a "C" function _create_plugin which
 //! creates the implementation of the plugin.
 use {
-    solana_clock::{Slot, UnixTimestamp},
+    solana_clock::{BankId, Slot, UnixTimestamp},
     solana_hash::Hash,
+    solana_message::v0::LoadedAddresses,
     solana_signature::Signature,
     solana_transaction::{sanitized::SanitizedTransaction, versioned::VersionedTransaction},
     solana_transaction_status::{Reward, RewardsAndNumPartitions, TransactionStatusMeta},
-    std::{any::Any, error, io},
+    std::{any::Any, error, io, net::SocketAddr},
     thiserror::Error,
 };
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -109,15 +110,59 @@ pub struct ReplicaAccountInfoV3<'a> {
     pub txn: Option<&'a SanitizedTransaction>,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+#[repr(C)]
+/// Information about an account being updated
+/// (extended with reference to transaction doing this update and bank id)
+pub struct ReplicaAccountInfoV4<'a> {
+    /// The Pubkey for the account
+    pub pubkey: &'a [u8],
+
+    /// The lamports for the account
+    pub lamports: u64,
+
+    /// The Pubkey of the owner program account
+    pub owner: &'a [u8],
+
+    /// This account's data contains a loaded program (and is now read-only)
+    pub executable: bool,
+
+    /// The epoch at which this account will next owe rent
+    pub rent_epoch: u64,
+
+    /// The data held in this account.
+    pub data: &'a [u8],
+
+    /// A global monotonically increasing atomic number, which can be used
+    /// to tell the order of the account update. For example, when an
+    /// account is updated in the same slot multiple times, the update
+    /// with higher write_version should supersede the one with lower
+    /// write_version.
+    pub write_version: u64,
+
+    /// Reference to transaction causing this account modification
+    pub txn: Option<&'a SanitizedTransaction>,
+
+    /// The id of the bank that processed the account update.
+    ///
+    /// This is `None` for account updates restored from a snapshot because they
+    /// are not associated with a live bank.
+    pub bank_id: Option<BankId>,
+}
+
 /// A wrapper to future-proof ReplicaAccountInfo handling.
 /// If there were a change to the structure of ReplicaAccountInfo,
 /// there would be new enum entry for the newer version, forcing
 /// plugin implementations to handle the change.
 #[repr(u32)]
 pub enum ReplicaAccountInfoVersions<'a> {
+    #[deprecated]
     V0_0_1(&'a ReplicaAccountInfo<'a>),
+    #[deprecated]
     V0_0_2(&'a ReplicaAccountInfoV2<'a>),
+    #[deprecated]
     V0_0_3(&'a ReplicaAccountInfoV3<'a>),
+    V0_0_4(&'a ReplicaAccountInfoV4<'a>),
 }
 
 /// Information about a transaction
@@ -180,15 +225,106 @@ pub struct ReplicaTransactionInfoV3<'a> {
     pub index: usize,
 }
 
+/// Information about a transaction, including index in block and bank id
+#[derive(Clone, Debug)]
+#[repr(C)]
+pub struct ReplicaTransactionInfoV4<'a> {
+    /// The transaction signature, used for identifying the transaction.
+    pub signature: &'a Signature,
+
+    /// The transaction message hash, used for identifying the transaction.
+    pub message_hash: &'a Hash,
+
+    /// Indicates if the transaction is a simple vote transaction.
+    pub is_vote: bool,
+
+    /// The versioned transaction.
+    pub transaction: &'a VersionedTransaction,
+
+    /// Metadata of the transaction status.
+    pub transaction_status_meta: &'a TransactionStatusMeta,
+
+    /// The transaction's index in the block
+    pub index: usize,
+
+    /// The id of the bank that processed the transaction.
+    pub bank_id: BankId,
+}
+
 /// A wrapper to future-proof ReplicaTransactionInfo handling.
 /// If there were a change to the structure of ReplicaTransactionInfo,
 /// there would be new enum entry for the newer version, forcing
 /// plugin implementations to handle the change.
 #[repr(u32)]
 pub enum ReplicaTransactionInfoVersions<'a> {
+    #[deprecated]
     V0_0_1(&'a ReplicaTransactionInfo<'a>),
+    #[deprecated]
     V0_0_2(&'a ReplicaTransactionInfoV2<'a>),
+    #[deprecated]
     V0_0_3(&'a ReplicaTransactionInfoV3<'a>),
+    V0_0_4(&'a ReplicaTransactionInfoV4<'a>),
+}
+
+/// Information about a transaction after deshredding (when entries are formed from shreds).
+/// This is sent before any execution occurs.
+/// Unlike ReplicaTransactionInfo, this does not include TransactionStatusMeta
+/// since execution has not happened yet.
+#[derive(Clone, Debug)]
+#[repr(C)]
+pub struct ReplicaDeshredTransactionInfo<'a> {
+    /// The transaction signature, used for identifying the transaction.
+    pub signature: &'a Signature,
+
+    /// Indicates if the transaction is a simple vote transaction.
+    pub is_vote: bool,
+
+    /// The versioned transaction.
+    pub transaction: &'a VersionedTransaction,
+
+    /// Addresses loaded from address lookup tables for V0 transactions.
+    /// Resolution uses the rooted bank, so address lookup tables created between
+    /// the root slot and the current slot will not resolve. This field is `None`
+    /// for legacy transactions, when the transaction has no address table lookups,
+    /// when ALT resolution is not enabled by the plugin, or when resolution fails
+    /// (e.g. the lookup table account does not exist at the root slot).
+    pub loaded_addresses: Option<&'a LoadedAddresses>,
+}
+
+/// Extends ReplicaDeshredTransactionInfo with metadata about the completed data set that
+/// produced the transaction.
+///
+/// A completed data set is a contiguous range of data shreds whose combined payload deserializes
+/// to a single `Vec<Entry>`. Multiple transactions can share the same completed-data-set range,
+/// and completed data sets for the same slot may be observed out of order. These fields describe
+/// the data-set container; they are not a block-wide transaction index.
+#[derive(Clone, Debug)]
+#[repr(C)]
+pub struct ReplicaDeshredTransactionInfoV2<'a> {
+    /// The transaction signature, used for identifying the transaction.
+    pub signature: &'a Signature,
+
+    /// Indicates if the transaction is a simple vote transaction.
+    pub is_vote: bool,
+
+    /// The versioned transaction.
+    pub transaction: &'a VersionedTransaction,
+
+    /// Addresses loaded from address lookup tables for V0 transactions.
+    pub loaded_addresses: Option<&'a LoadedAddresses>,
+
+    /// The inclusive starting shred index of the completed data set containing this transaction.
+    pub completed_data_set_starting_shred_index: u32,
+
+    /// The exclusive ending shred index of the completed data set containing this transaction.
+    pub completed_data_set_ending_shred_index_exclusive: u32,
+}
+
+/// A wrapper to future-proof ReplicaDeshredTransactionInfo handling.
+#[repr(u32)]
+pub enum ReplicaDeshredTransactionInfoVersions<'a> {
+    V0_0_1(&'a ReplicaDeshredTransactionInfo<'a>),
+    V0_0_2(&'a ReplicaDeshredTransactionInfoV2<'a>),
 }
 
 #[derive(Clone, Debug)]
@@ -225,13 +361,36 @@ pub struct ReplicaEntryInfoV2<'a> {
     pub starting_transaction_index: usize,
 }
 
+#[derive(Clone, Debug)]
+#[repr(C)]
+pub struct ReplicaEntryInfoV3<'a> {
+    /// The slot number of the block containing this Entry
+    pub slot: Slot,
+    /// The id of the bank that executed this Entry.
+    pub bank_id: BankId,
+    /// The Entry's index in the block
+    pub index: usize,
+    /// The number of hashes since the previous Entry
+    pub num_hashes: u64,
+    /// The Entry's SHA-256 hash, generated from the previous Entry's hash with
+    /// `solana_entry::entry::next_hash()`
+    pub hash: &'a [u8],
+    /// The number of executed transactions in the Entry
+    pub executed_transaction_count: u64,
+    /// The index-in-block of the first executed transaction in this Entry
+    pub starting_transaction_index: usize,
+}
+
 /// A wrapper to future-proof ReplicaEntryInfo handling. To make a change to the structure of
 /// ReplicaEntryInfo, add an new enum variant wrapping a newer version, which will force plugin
 /// implementations to handle the change.
 #[repr(u32)]
 pub enum ReplicaEntryInfoVersions<'a> {
+    #[deprecated]
     V0_0_1(&'a ReplicaEntryInfo<'a>),
+    #[deprecated]
     V0_0_2(&'a ReplicaEntryInfoV2<'a>),
+    V0_0_3(&'a ReplicaEntryInfoV3<'a>),
 }
 
 #[derive(Clone, Debug)]
@@ -288,12 +447,131 @@ pub struct ReplicaBlockInfoV4<'a> {
     pub entry_count: u64,
 }
 
+/// Extending ReplicaBlockInfoV4 by sending bank id.
+#[derive(Clone, Debug)]
+#[repr(C)]
+pub struct ReplicaBlockInfoV5<'a> {
+    pub parent_slot: Slot,
+    pub parent_blockhash: &'a str,
+    pub slot: Slot,
+    pub bank_id: BankId,
+    pub blockhash: &'a str,
+    pub rewards: &'a RewardsAndNumPartitions,
+    pub block_time: Option<UnixTimestamp>,
+    pub block_height: Option<u64>,
+    pub executed_transaction_count: u64,
+    pub entry_count: u64,
+}
+
 #[repr(u32)]
 pub enum ReplicaBlockInfoVersions<'a> {
+    #[deprecated]
     V0_0_1(&'a ReplicaBlockInfo<'a>),
+    #[deprecated]
     V0_0_2(&'a ReplicaBlockInfoV2<'a>),
+    #[deprecated]
     V0_0_3(&'a ReplicaBlockInfoV3<'a>),
+    #[deprecated]
     V0_0_4(&'a ReplicaBlockInfoV4<'a>),
+    V0_0_5(&'a ReplicaBlockInfoV5<'a>),
+}
+
+/// A snapshot of a validator's gossip contact info at a point in time.
+///
+/// Delivered to plugins that opt into contact info notifications. Every
+/// field is an owned/borrowed plain value — no internal Agave types leak
+/// into the plugin ABI.
+///
+/// `pubkey` is the 32-byte validator identity. Socket fields are `None`
+/// when the validator has not advertised that endpoint.
+#[derive(Clone, Debug, PartialEq, Eq)]
+#[repr(C)]
+pub struct ReplicaContactInfoV0_0_1<'a> {
+    /// The 32-byte validator identity pubkey.
+    pub pubkey: &'a [u8],
+
+    /// Logical timestamp (milliseconds since UNIX epoch) advertised by the
+    /// validator. Advances on every contact info republish.
+    pub wallclock: u64,
+
+    /// The time (microseconds since UNIX epoch) at which this validator
+    /// instance was created. Combined with `wallclock`, forms the tuple
+    /// used by gossip to order contact info versions.
+    pub outset: u64,
+
+    /// Cluster shred version the validator is running.
+    pub shred_version: u16,
+
+    /// Major component of the validator's software version (e.g. `1` in
+    /// `1.18.25`). Plain integers are used rather than a formatted string
+    /// so that the dispatch path is allocation-free; consumers can
+    /// `format!("{}.{}.{}", major, minor, patch)` if they want a string.
+    pub version_major: u16,
+
+    /// Minor component of the validator's software version.
+    pub version_minor: u16,
+
+    /// Patch component of the validator's software version.
+    pub version_patch: u16,
+
+    /// First four bytes of the build commit hash advertised by the
+    /// validator (`0` when unset).
+    pub version_commit: u32,
+
+    /// Active feature set (gossip-advertised). Used by consumers to
+    /// determine which protocol features the validator supports without
+    /// querying RPC.
+    pub version_feature_set: u32,
+
+    /// Client identifier as defined by `solana_version::ClientId`'s
+    /// `u16` encoding (0 = SolanaLabs, 3 = Agave, 5 = Firedancer, ...).
+    /// Consumers should treat unknown values as opaque.
+    pub version_client_id: u16,
+
+    /// Gossip endpoint.
+    pub gossip: Option<SocketAddr>,
+
+    /// TPU QUIC endpoint (where clients send transactions).
+    pub tpu_quic: Option<SocketAddr>,
+
+    /// TPU forwards QUIC endpoint.
+    pub tpu_forwards_quic: Option<SocketAddr>,
+
+    /// TPU vote UDP endpoint.
+    pub tpu_vote_udp: Option<SocketAddr>,
+
+    /// TPU vote QUIC endpoint.
+    pub tpu_vote_quic: Option<SocketAddr>,
+
+    /// TVU UDP endpoint.
+    pub tvu_udp: Option<SocketAddr>,
+
+    /// TVU QUIC endpoint.
+    pub tvu_quic: Option<SocketAddr>,
+
+    /// Serve-repair UDP endpoint.
+    pub serve_repair_udp: Option<SocketAddr>,
+
+    /// Serve-repair QUIC endpoint.
+    pub serve_repair_quic: Option<SocketAddr>,
+
+    /// JSON-RPC endpoint, if advertised.
+    pub rpc: Option<SocketAddr>,
+
+    /// JSON-RPC pubsub (websocket) endpoint, if advertised.
+    pub rpc_pubsub: Option<SocketAddr>,
+
+    /// Alpenglow consensus endpoint, if advertised.
+    pub alpenglow: Option<SocketAddr>,
+}
+
+/// A wrapper to future-proof ReplicaContactInfo handling.
+/// If there were a change to the structure of ReplicaContactInfo,
+/// there would be a new enum entry for the newer version, forcing
+/// plugin implementations to handle the change.
+#[repr(u32)]
+pub enum ReplicaContactInfoVersions<'a> {
+    V0_0_1(&'a ReplicaContactInfoV0_0_1<'a>),
 }
 
 /// Errors returned by plugin calls
@@ -439,7 +717,8 @@ pub trait GeyserPlugin: Any + Send + Sync + std::fmt::Debug {
         Ok(())
     }
 
-    /// Called when a slot status is updated
+    /// Called when a slot status is updated.
+    #[deprecated]
     #[allow(unused_variables)]
     fn update_slot_status(
         &self,
@@ -448,6 +727,28 @@ pub trait GeyserPlugin: Any + Send + Sync + std::fmt::Debug {
         status: &SlotStatus,
     ) -> Result<()> {
         Ok(())
+    }
+
+    /// Called when a slot status is updated.
+    ///
+    /// `bank_id` identifies the concrete bank instance associated with the
+    /// status update. It is `Some` for bank-scoped statuses, where the slot
+    /// status is tied to a particular `Bank`: `CreatedBank`, `Processed`,
+    /// `Confirmed`, and `Rooted`.
+    ///
+    /// It is `None` for shred- or slot-level statuses that are not associated
+    /// with a specific bank instance: `FirstShredReceived`, `Completed`, and
+    /// `Dead`.
+    #[allow(deprecated)]
+    #[allow(unused_variables)]
+    fn update_slot_status_v2(
+        &self,
+        slot: Slot,
+        parent: Option<u64>,
+        status: &SlotStatus,
+        bank_id: Option<BankId>,
+    ) -> Result<()> {
+        self.update_slot_status(slot, parent, status)
     }
 
     /// Called when a transaction is processed in a slot.
@@ -469,6 +770,51 @@ pub trait GeyserPlugin: Any + Send + Sync + std::fmt::Debug {
     /// Called when block's metadata is updated.
     #[allow(unused_variables)]
     fn notify_block_metadata(&self, blockinfo: ReplicaBlockInfoVersions) -> Result<()> {
+        Ok(())
+    }
+
+    /// Called when a validator's gossip contact info is learned or updated.
+    ///
+    /// `is_startup` is true when this call is part of the initial state
+    /// dump delivered synchronously after the plugin is loaded (every
+    /// currently-known validator's latest contact info is delivered once
+    /// with `is_startup=true` before any live updates). Subsequent live
+    /// updates driven by gossip activity are delivered with `is_startup=false`.
+    ///
+    /// Delivery is best-effort: under extreme load, updates may be dropped
+    /// to keep the gossip subsystem unaffected. Contact info is rebroadcast
+    /// on a multi-second cadence by validators, so consumers self-heal on
+    /// the next republish.
+    ///
+    /// Only called when `contact_info_notifications_enabled()` returns true.
+    #[allow(unused_variables)]
+    fn notify_contact_info(
+        &self,
+        info: ReplicaContactInfoVersions,
+        is_startup: bool,
+    ) -> Result<()> {
+        Ok(())
+    }
+
+    /// Called when a validator's gossip contact info is removed from CRDS.
+    /// Plugins that maintain a cache keyed on validator identity should
+    /// invalidate the entry for `pubkey` on receipt of this notification.
+    ///
+    /// Fires for both timeout-based purges (the validator stopped
+    /// gossiping; their entry aged out per stake-aware CRDS timeouts) and
+    /// size-based trims (CRDS exceeded its capacity and evicted older
+    /// entries). The pubkey is the 32-byte validator identity that was
+    /// last seen via `notify_contact_info`.
+    ///
+    /// Like `notify_contact_info`, this is best-effort: under extreme
+    /// load a removal event may be dropped (the `gossip_contact_info_dropped`
+    /// counter is bumped when this happens). Consumers that need strict
+    /// liveness guarantees should pair this notification with their own
+    /// wallclock-staleness check on cached entries.
+    ///
+    /// Only called when `contact_info_notifications_enabled()` returns true.
+    #[allow(unused_variables)]
+    fn notify_contact_info_removed(&self, pubkey: &[u8]) -> Result<()> {
         Ok(())
     }
 
@@ -498,6 +844,44 @@ pub trait GeyserPlugin: Any + Send + Sync + std::fmt::Debug {
     /// Default is false -- if the plugin is interested in
     /// entry data, return true.
     fn entry_notifications_enabled(&self) -> bool {
+        false
+    }
+
+    /// Check if the plugin is interested in validator contact info updates
+    /// sourced from gossip. Default is false — if the plugin wants contact
+    /// info notifications, return true. When no loaded plugin returns true,
+    /// the validator bypasses all contact-info notification machinery
+    /// (no dispatch thread, no channel, zero hot-path overhead).
+    fn contact_info_notifications_enabled(&self) -> bool {
+        false
+    }
+
+    /// Called when a transaction is deshredded (entries formed from shreds).
+    /// This is triggered before any execution occurs. Unlike notify_transaction,
+    /// this does not include execution metadata (TransactionStatusMeta).
+    #[allow(unused_variables)]
+    fn notify_deshred_transaction(
+        &self,
+        transaction: ReplicaDeshredTransactionInfoVersions,
+        slot: Slot,
+    ) -> Result<()> {
+        Ok(())
+    }
+
+    /// Check if the plugin is interested in deshred transaction data.
+    /// Default is false -- if the plugin is interested in receiving
+    /// transactions when they are deshredded, return true.
+    fn deshred_transaction_notifications_enabled(&self) -> bool {
+        false
+    }
+
+    /// Check if the plugin wants address lookup table (ALT) resolution for
+    /// deshred transactions. Default is false. When true, the validator will
+    /// resolve V0 transaction address lookups using the rooted bank and
+    /// populate `loaded_addresses` in `ReplicaDeshredTransactionInfo`.
+    /// This adds accounts DB I/O on the shred insertion path, so plugins
+    /// that only need the raw transaction should leave this disabled.
+    fn deshred_transaction_alt_resolution_enabled(&self) -> bool {
         false
     }
 }

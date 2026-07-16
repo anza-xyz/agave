@@ -17,13 +17,14 @@ use {
         replay_stage::{HeaviestForkFailures, ReplayStage, TowerBFTStructures},
         unfrozen_gossip_verified_vote_hashes::UnfrozenGossipVerifiedVoteHashes,
     },
-    crossbeam_channel::unbounded,
+    crossbeam_channel::bounded,
     solana_clock::Slot,
     solana_epoch_schedule::EpochSchedule,
     solana_hash::Hash,
+    solana_leader_schedule::SlotLeader,
     solana_pubkey::Pubkey,
     solana_runtime::{
-        bank::Bank,
+        bank::{Bank, BankTestConfig},
         bank_forks::BankForks,
         genesis_utils::{
             GenesisConfigInfo, ValidatorVoteKeypairs, create_genesis_config_with_vote_accounts,
@@ -51,6 +52,10 @@ pub struct VoteSimulator {
 
 impl VoteSimulator {
     pub fn new(num_keypairs: usize) -> Self {
+        Self::new_with(num_keypairs, BankTestConfig::default())
+    }
+
+    pub fn new_with(num_keypairs: usize, bank_test_config: BankTestConfig) -> Self {
         let (
             validator_keypairs,
             node_pubkeys,
@@ -58,7 +63,7 @@ impl VoteSimulator {
             bank_forks,
             progress,
             heaviest_subtree_fork_choice,
-        ) = Self::init_state(num_keypairs);
+        ) = Self::init_state(num_keypairs, bank_test_config);
         Self {
             validator_keypairs,
             node_pubkeys,
@@ -95,7 +100,7 @@ impl VoteSimulator {
             }
             let parent = *walk.get_parent().unwrap().data();
             let parent_bank = self.bank_forks.read().unwrap().get(parent).unwrap();
-            let new_bank = Bank::new_from_parent(parent_bank.clone(), &Pubkey::default(), slot);
+            let new_bank = Bank::new_from_parent(parent_bank.clone(), SlotLeader::default(), slot);
             let new_bank = self
                 .bank_forks
                 .write()
@@ -104,7 +109,7 @@ impl VoteSimulator {
                 .clone_without_scheduler();
             self.progress
                 .entry(slot)
-                .or_insert_with(|| ForkProgress::new(Hash::default(), None, None, 0, 0));
+                .or_insert_with(|| ForkProgress::new(Hash::default(), None, None, 0, 0, None));
             for (pubkey, vote) in cluster_votes.iter() {
                 if vote.contains(&parent) {
                     let keypairs = self.validator_keypairs.get(pubkey).unwrap();
@@ -242,7 +247,7 @@ impl VoteSimulator {
     }
 
     pub fn set_root(&mut self, new_root: Slot) {
-        let (drop_bank_sender, _drop_bank_receiver) = unbounded();
+        let (drop_bank_sender, _drop_bank_receiver) = bounded(1024);
         ReplayStage::handle_new_root(
             new_root,
             &self.bank_forks,
@@ -287,7 +292,7 @@ impl VoteSimulator {
     ) {
         self.progress
             .entry(slot)
-            .or_insert_with(|| ForkProgress::new(Hash::default(), None, None, 0, 0))
+            .or_insert_with(|| ForkProgress::new(Hash::default(), None, None, 0, 0, None))
             .fork_stats
             .lockout_intervals
             .push(LockoutInterval {
@@ -300,7 +305,7 @@ impl VoteSimulator {
     pub fn clear_lockout_intervals(&mut self, slot: Slot) {
         self.progress
             .entry(slot)
-            .or_insert_with(|| ForkProgress::new(Hash::default(), None, None, 0, 0))
+            .or_insert_with(|| ForkProgress::new(Hash::default(), None, None, 0, 0, None))
             .fork_stats
             .lockout_intervals
             .clear()
@@ -344,6 +349,7 @@ impl VoteSimulator {
     #[allow(clippy::type_complexity)]
     fn init_state(
         num_keypairs: usize,
+        bank_test_config: BankTestConfig,
     ) -> (
         HashMap<Pubkey, ValidatorVoteKeypairs>,
         Vec<Pubkey>,
@@ -368,7 +374,7 @@ impl VoteSimulator {
             .collect();
 
         let (bank_forks, progress, heaviest_subtree_fork_choice) =
-            initialize_state(&keypairs, 10_000);
+            initialize_state_with(&keypairs, 10_000, bank_test_config);
         (
             keypairs,
             node_pubkeys,
@@ -389,6 +395,18 @@ pub fn initialize_state(
     ProgressMap,
     HeaviestSubtreeForkChoice,
 ) {
+    initialize_state_with(validator_keypairs_map, stake, BankTestConfig::default())
+}
+
+pub fn initialize_state_with(
+    validator_keypairs_map: &HashMap<Pubkey, ValidatorVoteKeypairs>,
+    stake: u64,
+    bank_test_config: BankTestConfig,
+) -> (
+    Arc<RwLock<BankForks>>,
+    ProgressMap,
+    HeaviestSubtreeForkChoice,
+) {
     let validator_keypairs: Vec<_> = validator_keypairs_map.values().collect();
     let GenesisConfigInfo {
         mut genesis_config,
@@ -401,8 +419,10 @@ pub fn initialize_state(
     );
 
     genesis_config.epoch_schedule = EpochSchedule::without_warmup();
-    genesis_config.poh_config.hashes_per_tick = Some(2);
-    let (bank0, bank_forks) = Bank::new_with_bank_forks_for_tests(&genesis_config);
+    genesis_config.poh_config.hashes_per_tick = Some(4);
+    let (bank0, bank_forks) =
+        Bank::new_with_paths_for_tests(&genesis_config, Some(bank_test_config), vec![], None)
+            .wrap_with_bank_forks_for_tests();
     bank0.set_block_id(Some(Hash::new_unique()));
 
     for pubkey in validator_keypairs_map.keys() {
@@ -414,7 +434,15 @@ pub fn initialize_state(
     let mut progress = ProgressMap::default();
     progress.insert(
         0,
-        ForkProgress::new_from_bank(&bank0, bank0.leader_id(), &Pubkey::default(), None, 0, 0),
+        ForkProgress::new_from_bank(
+            &bank0,
+            bank0.leader_id(),
+            &Pubkey::default(),
+            None,
+            0,
+            0,
+            None,
+        ),
     );
     let heaviest_subtree_fork_choice =
         HeaviestSubtreeForkChoice::new_from_bank_forks(bank_forks.clone());

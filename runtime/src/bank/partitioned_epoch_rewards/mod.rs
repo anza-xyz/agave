@@ -9,35 +9,46 @@ use {
         inflation_rewards::points::PointValue, reward_info::RewardInfo,
         stake_account::StakeAccount, stake_history::StakeHistory,
     },
-    rayon::iter::{IndexedParallelIterator, IntoParallelRefIterator, ParallelIterator},
     solana_account::{AccountSharedData, ReadableAccount},
     solana_accounts_db::{
-        partitioned_rewards::PartitionedEpochRewardsConfig,
         stake_rewards::StakeReward,
         storable_accounts::{AccountForStorage, StorableAccounts},
     },
     solana_clock::Slot,
-    solana_pubkey::Pubkey,
+    solana_pubkey::{Pubkey, PubkeyHasherBuilder},
     solana_stake_interface::state::{Delegation, Stake},
     solana_vote::vote_account::VoteAccounts,
-    std::{mem::MaybeUninit, sync::Arc},
+    std::{collections::HashMap, mem::MaybeUninit, sync::Arc},
 };
 
 /// Number of blocks for reward calculation and storing vote accounts.
 /// Distributing rewards to stake accounts begins AFTER this many blocks.
 const REWARD_CALCULATION_NUM_BLOCKS: u64 = 1;
 
+/// Total reward for a stake account, comprising inflation and block rewards.
 #[derive(Debug, Clone, PartialEq)]
 pub(crate) struct PartitionedStakeReward {
     /// Stake account address
     pub stake_pubkey: Pubkey,
+    /// Inflation reward information
+    pub inflation: InflationReward,
+    /// Block rewards due during distribution
+    pub block_reward: u64,
+}
+
+/// Just the inflation portion of a partitioned stake reward
+#[derive(Debug, Clone, PartialEq)]
+pub(crate) struct InflationReward {
     /// `Stake` state to be stored in account
     pub stake: Stake,
     /// Stake reward for recording in the Bank on distribution
     pub stake_reward: u64,
     /// Reward commission in basis points (0-10,000 representing 0-100%) for
     /// recording reward info.
-    pub commission_bps: u16,
+    //
+    // Note: This field becomes always `None` once SIMD-0232 is activated.
+    // After full activation, it can be removed on feature cleanup.
+    pub commission_bps: Option<u16>,
 }
 
 /// A vector of stake rewards.
@@ -109,6 +120,18 @@ impl FromIterator<Option<PartitionedStakeReward>> for PartitionedStakeRewards {
     }
 }
 
+#[cfg(test)]
+impl FromIterator<PartitionedStakeReward> for PartitionedStakeRewards {
+    fn from_iter<T: IntoIterator<Item = PartitionedStakeReward>>(iter: T) -> Self {
+        let rewards = Vec::from_iter(iter.into_iter().map(Some));
+        let num_rewards = rewards.len();
+        Self {
+            rewards,
+            num_rewards,
+        }
+    }
+}
+
 #[derive(Debug, Clone, PartialEq)]
 pub(crate) struct StartBlockHeightAndRewards {
     /// the block height of the slot at which rewards distribution began
@@ -150,12 +173,45 @@ pub(crate) enum EpochRewardPhase {
     Distribution(StartBlockHeightAndPartitionedRewards),
 }
 
+#[derive(Debug)]
+#[cfg_attr(test, derive(Clone))]
+pub(super) struct RewardCommission {
+    // Note: This field becomes always `None` once SIMD-0232 is activated.
+    // After full activation, it can be removed on feature cleanup.
+    pub(super) commission_bps: Option<u16>,
+    pub(super) commission_lamports: u64,
+    pub(super) burned_lamports: u64,
+    pub(super) is_vote_account: bool,
+}
+
+pub(super) type RewardCommissions = HashMap<Pubkey, RewardCommission, PubkeyHasherBuilder>;
+
+/// Helper struct to give the amounts distributed to commission accounts or
+/// burned in different manners
+#[derive(Debug, Default)]
+pub(super) struct RewardCommissionLamportAmounts {
+    /// Lamports distributed across all commission collectors, except the
+    /// incinerator.
+    ///
+    /// Also the maximum capitalization increase by the end of the first block
+    /// of the epoch.
+    pub(super) distributed_lamports: u64,
+    /// lamports distributed to the incinerator.
+    ///
+    /// Tracked separately to give a better upper bound for capitalization at
+    /// the end of the first block of an epoch, needed for Alpenglow's
+    /// `EpochInflationAccountState`
+    pub(super) distributed_to_incinerator_lamports: u64,
+    /// lamports burned from undistributed commissions
+    pub(super) burned_lamports: u64,
+}
+
 #[derive(Debug, Default)]
 pub(super) struct RewardCommissionAccounts {
     /// accounts with rewards to be stored
     pub(super) accounts_with_rewards: Vec<(Pubkey, RewardInfo, AccountSharedData)>,
-    /// total lamports across all `accounts_with_rewards`
-    pub(super) total_reward_commission_lamports: u64,
+    /// amounts distributed to those accounts, and burned after calculation
+    pub(super) amounts: RewardCommissionLamportAmounts,
 }
 
 /// Wrapper struct to implement StorableAccounts for RewardCommissionAccounts
@@ -225,7 +281,7 @@ pub(super) struct StakeRewardCalculation {
 
 #[derive(Debug)]
 struct CalculateValidatorRewardsResult {
-    reward_commission_accounts: RewardCommissionAccounts,
+    reward_commissions: RewardCommissions,
     stake_reward_calculation: StakeRewardCalculation,
     point_value: PointValue,
 }
@@ -233,51 +289,13 @@ struct CalculateValidatorRewardsResult {
 impl Default for CalculateValidatorRewardsResult {
     fn default() -> Self {
         Self {
-            reward_commission_accounts: RewardCommissionAccounts::default(),
+            reward_commissions: RewardCommissions::default(),
             stake_reward_calculation: StakeRewardCalculation::default(),
             point_value: PointValue {
                 points: 0,
                 rewards: 0,
             },
         }
-    }
-}
-
-pub(super) struct FilteredStakeDelegations<'a> {
-    stake_delegations: Vec<(&'a Pubkey, &'a StakeAccount<Delegation>)>,
-    min_stake_delegation: Option<u64>,
-}
-
-impl<'a> FilteredStakeDelegations<'a> {
-    pub(super) fn len(&self) -> usize {
-        self.stake_delegations.len()
-    }
-
-    pub(super) fn par_iter(
-        &'a self,
-    ) -> impl IndexedParallelIterator<Item = Option<(&'a Pubkey, &'a StakeAccount<Delegation>)>>
-    {
-        self.stake_delegations
-            .par_iter()
-            // We yield `None` items instead of filtering them out to
-            // keep the number of elements predictable. It's better to
-            // let the callers deal with `None` elements and even store
-            // them in collections (that are allocated once with the
-            // size of `FilteredStakeDelegations::len`) rather than
-            // `collect` yet another time (which would take ~100ms).
-            .map(|(pubkey, stake_account)| {
-                match self.min_stake_delegation {
-                    Some(min_stake_delegation)
-                        if stake_account.delegation().stake < min_stake_delegation =>
-                    {
-                        None
-                    }
-                    _ => {
-                        // Dereference `&&` to `&`.
-                        Some((*pubkey, *stake_account))
-                    }
-                }
-            })
     }
 }
 
@@ -300,7 +318,7 @@ pub(super) struct CachedVoteAccounts<'a> {
 /// hold reward calc info to avoid recalculation across functions
 pub(super) struct EpochRewardCalculateParamInfo<'a> {
     pub(super) stake_history: StakeHistory,
-    pub(super) stake_delegations: FilteredStakeDelegations<'a>,
+    pub(super) stake_delegations: Vec<(&'a Pubkey, &'a StakeAccount<Delegation>)>,
     pub(super) cached_vote_accounts: CachedVoteAccounts<'a>,
 }
 
@@ -309,12 +327,15 @@ pub(super) struct EpochRewardCalculateParamInfo<'a> {
 /// side effects.
 #[derive(Debug)]
 pub(super) struct PartitionedRewardsCalculation {
-    pub(super) reward_commission_accounts: RewardCommissionAccounts,
-    pub(super) stake_rewards: StakeRewardCalculation,
-    pub(super) validator_rate: f64,
-    pub(super) foundation_rate: f64,
-    pub(super) capitalization: u64,
+    reward_commissions: RewardCommissions,
+    stake_rewards: StakeRewardCalculation,
+    capitalization: u64,
     point_value: PointValue,
+    /// Number of vote accounts in the distribution-epoch snapshot after
+    /// SIMD-0357 VAT filtering (or the unfiltered count when VAT is off).
+    /// Surfaced for the `epoch_rewards` datapoint without re-running the
+    /// filter at distribution time.
+    num_filtered_vote_accounts: usize,
 }
 
 pub(crate) type StakeRewards = Vec<StakeReward>;
@@ -376,18 +397,9 @@ impl Bank {
         ));
     }
 
-    pub(super) fn partitioned_epoch_rewards_config(&self) -> &PartitionedEpochRewardsConfig {
-        &self
-            .rc
-            .accounts
-            .accounts_db
-            .partitioned_epoch_rewards_config
-    }
-
     /// # stake accounts to store in one block during partitioned reward interval
     pub(super) fn partitioned_rewards_stake_account_stores_per_block(&self) -> u64 {
-        self.partitioned_epoch_rewards_config()
-            .stake_account_stores_per_block
+        self.partitioned_rewards_stake_account_stores_per_block
     }
 
     /// Calculate the number of blocks required to distribute rewards to all stake accounts.
@@ -423,49 +435,78 @@ mod tests {
     use {
         super::*,
         crate::{
-            bank::tests::create_genesis_config,
+            bank::{SlotLeader, tests::create_genesis_config},
             bank_forks::BankForks,
             genesis_utils::{
                 GenesisConfigInfo, ValidatorVoteKeypairs, create_genesis_config_with_vote_accounts,
+                deactivate_features,
             },
             runtime_config::RuntimeConfig,
             stake_utils,
         },
         assert_matches::assert_matches,
+        rand::Rng,
         solana_account::{Account, state_traits::StateMut},
-        solana_accounts_db::accounts_db::{ACCOUNTS_DB_CONFIG_FOR_TESTING, AccountsDbConfig},
+        solana_accounts_db::{
+            accounts_db::{ACCOUNTS_DB_CONFIG_FOR_TESTING, AccountsDbConfig},
+            partitioned_rewards::PartitionedEpochRewardsConfig,
+        },
         solana_epoch_schedule::EpochSchedule,
         solana_hash::Hash,
         solana_keypair::Keypair,
         solana_native_token::LAMPORTS_PER_SOL,
         solana_reward_info::RewardType,
         solana_signer::Signer,
-        solana_stake_interface::state::StakeStateV2,
         solana_system_transaction as system_transaction,
         solana_vote::vote_transaction,
         solana_vote_interface::state::{MAX_LOCKOUT_HISTORY, VoteStateV4, VoteStateVersions},
-        solana_vote_program::vote_state::{self, TowerSync, handler::VoteStateHandle},
+        solana_vote_program::vote_state::{self, TowerSync, handler::VoteStateHandler},
         std::sync::{Arc, RwLock},
     };
 
     impl PartitionedStakeReward {
-        fn maybe_from(stake_reward: &StakeReward) -> Option<Self> {
-            if let Ok(StakeStateV2::Stake(_meta, stake, _flags)) =
-                stake_reward.stake_account.state()
-            {
-                Some(Self {
-                    stake_pubkey: stake_reward.stake_pubkey,
-                    stake,
-                    stake_reward: stake_reward.stake_reward_info.lamports as u64,
-                    commission_bps: stake_reward.stake_reward_info.commission_bps.unwrap(),
-                })
-            } else {
-                None
+        pub fn new_random() -> Self {
+            let mut rng = rand::rng();
+            let stake_reward = rng.random_range(1..200);
+            Self {
+                stake_pubkey: Pubkey::new_unique(),
+                inflation: InflationReward {
+                    stake: Stake {
+                        delegation: Delegation {
+                            voter_pubkey: Pubkey::new_unique(),
+                            stake: rng.random_range(1..200) + stake_reward,
+                            activation_epoch: 0,
+                            deactivation_epoch: u64::MAX,
+                            ..Default::default()
+                        },
+                        credits_observed: rng.random_range(1..200),
+                    },
+                    stake_reward,
+                    commission_bps: None,
+                },
+                block_reward: rng.random_range(0..10_000_000_000),
             }
         }
 
-        pub fn new_random() -> Self {
-            Self::maybe_from(&StakeReward::new_random()).unwrap()
+        pub fn new_with_lamport_amounts(stake_reward: u64, block_reward: u64, stake: u64) -> Self {
+            Self {
+                stake_pubkey: Pubkey::new_unique(),
+                inflation: InflationReward {
+                    stake: Stake {
+                        delegation: Delegation {
+                            voter_pubkey: Pubkey::new_unique(),
+                            stake: stake + stake_reward,
+                            activation_epoch: 0,
+                            deactivation_epoch: u64::MAX,
+                            ..Default::default()
+                        },
+                        credits_observed: 0,
+                    },
+                    stake_reward,
+                    commission_bps: None,
+                },
+                block_reward,
+            }
         }
     }
 
@@ -484,15 +525,6 @@ mod tests {
                     .collect::<PartitionedStakeRewards>()
             })
             .collect::<Vec<_>>()
-    }
-
-    pub fn convert_rewards(
-        stake_rewards: impl IntoIterator<Item = StakeReward>,
-    ) -> PartitionedStakeRewards {
-        stake_rewards
-            .into_iter()
-            .map(|stake_reward| Some(PartitionedStakeReward::maybe_from(&stake_reward).unwrap()))
-            .collect()
     }
 
     #[derive(Debug, PartialEq, Eq, Copy, Clone)]
@@ -580,6 +612,9 @@ mod tests {
         stake_account_stores_per_block: u64,
         advance_num_slots: u64,
     ) -> (RewardBank, Arc<RwLock<BankForks>>) {
+        // Disable slot time reduction features as they will override the custom
+        // stores per block provided in this test helper.
+        let features_to_deactivate = crate::slot_params::slot_time_feature_ids().to_vec();
         let validator_keypairs = (0..stakes.len())
             .map(|_| ValidatorVoteKeypairs::new_rand())
             .collect::<Vec<_>>();
@@ -588,6 +623,7 @@ mod tests {
             mut genesis_config, ..
         } = create_genesis_config_with_vote_accounts(1_000_000_000, &validator_keypairs, stakes);
         genesis_config.epoch_schedule = EpochSchedule::new(SLOTS_PER_EPOCH);
+        deactivate_features(&mut genesis_config, &features_to_deactivate);
 
         let mut accounts_db_config: AccountsDbConfig = ACCOUNTS_DB_CONFIG_FOR_TESTING;
         accounts_db_config.partitioned_epoch_rewards_config =
@@ -600,7 +636,7 @@ mod tests {
             None,
             accounts_db_config,
             None,
-            Some(Pubkey::new_unique()),
+            None,
             Arc::default(),
             None,
             None,
@@ -620,7 +656,7 @@ mod tests {
         let bank = Bank::new_from_parent_with_bank_forks(
             &bank_forks,
             bank,
-            &Pubkey::default(),
+            SlotLeader::default(),
             advance_num_slots,
         );
 
@@ -649,23 +685,14 @@ mod tests {
             let mut vote_account = bank
                 .get_account(&vote_pubkey)
                 .unwrap_or_else(|| panic!("missing vote account {vote_pubkey:?}"));
-            let mut vote_state =
-                Some(VoteStateV4::deserialize(vote_account.data(), &vote_pubkey).unwrap());
-            if let Some(state) = vote_state.as_mut() {
-                state.set_commission(commission);
-            }
+            let mut vote_state = VoteStateHandler::new_v4(
+                VoteStateV4::deserialize(vote_account.data(), &vote_pubkey).unwrap(),
+            );
+            vote_state.set_commission(commission);
             for i in 0..MAX_LOCKOUT_HISTORY + 42 {
-                if let Some(state) = vote_state.as_mut() {
-                    vote_state::process_slot_vote_unchecked(state, i as u64);
-                }
-                let versioned = VoteStateVersions::V4(Box::new(vote_state.take().unwrap()));
+                vote_state::process_slot_vote_unchecked(&mut vote_state, i as u64);
+                let versioned = VoteStateVersions::V4(Box::new(vote_state.as_ref_v4().clone()));
                 vote_account.set_state(&versioned).unwrap();
-                match versioned {
-                    VoteStateVersions::V4(v) => {
-                        vote_state = Some(*v);
-                    }
-                    _ => panic!("Has to be of type V4"),
-                };
             }
             bank.store_account_and_update_capitalization(&vote_pubkey, &vote_account);
         }
@@ -715,7 +742,7 @@ mod tests {
             None,
             accounts_db_config,
             None,
-            Some(Pubkey::new_unique()),
+            Some(SlotLeader::new_unique()),
             Arc::default(),
             None,
             None,
@@ -724,6 +751,14 @@ mod tests {
         let stake_account_stores_per_block =
             bank.partitioned_rewards_stake_account_stores_per_block();
         assert_eq!(stake_account_stores_per_block, 10);
+
+        let (bank, bank_forks) = bank.wrap_with_bank_forks_for_tests();
+        let bank =
+            Bank::new_from_parent_with_bank_forks(&bank_forks, bank, SlotLeader::default(), 1);
+        assert_eq!(
+            bank.partitioned_rewards_stake_account_stores_per_block(),
+            stake_account_stores_per_block
+        );
 
         let check_num_reward_distribution_blocks =
             |num_stakes: u64, expected_num_reward_distribution_blocks: u64| {
@@ -793,6 +828,10 @@ mod tests {
     fn test_get_reward_distribution_num_blocks_none() {
         let rewards_all = 8192;
         let expected_rewards_some = 6144;
+
+        let (genesis_config, _mint_keypair) = create_genesis_config(1_000_000 * LAMPORTS_PER_SOL);
+        let bank = Bank::new_for_tests(&genesis_config);
+
         let rewards = (0..rewards_all)
             .map(|i| {
                 if i % 4 == 0 {
@@ -805,8 +844,6 @@ mod tests {
         assert_eq!(rewards.rewards.len(), rewards_all);
         assert_eq!(rewards.num_rewards(), expected_rewards_some);
 
-        let (genesis_config, _mint_keypair) = create_genesis_config(1_000_000 * LAMPORTS_PER_SOL);
-        let bank = Bank::new_for_tests(&genesis_config);
         assert_eq!(bank.get_reward_distribution_num_blocks(&rewards), 1);
     }
 
@@ -829,7 +866,7 @@ mod tests {
             let curr_bank = Bank::new_from_parent_with_bank_forks(
                 bank_forks.as_ref(),
                 previous_bank.clone(),
-                &Pubkey::default(),
+                SlotLeader::default(),
                 slot,
             );
             let post_cap = curr_bank.capitalization();
@@ -896,9 +933,10 @@ mod tests {
         }
     }
 
-    /// Test rewards computation and partitioned rewards distribution at the epoch boundary (two reward distribution blocks)
+    /// Test rewards computation and partitioned rewards distribution at the
+    /// epoch boundary (multiple reward distribution blocks)
     #[test]
-    fn test_rewards_computation_and_partitioned_distribution_two_blocks() {
+    fn test_rewards_computation_and_partitioned_distribution_multi_blocks() {
         agave_logger::setup();
 
         let starting_slot = SLOTS_PER_EPOCH - 1;
@@ -910,9 +948,10 @@ mod tests {
             bank_forks,
         ) = create_reward_bank(100, 50, starting_slot - 1);
         let mut starting_hash = None;
+        let mut reward_distribution_completion_slot = None;
 
         // simulate block progress
-        for slot in starting_slot..=SLOTS_PER_EPOCH + 3 {
+        for slot in starting_slot..=SLOTS_PER_EPOCH.saturating_mul(2) {
             let pre_cap = previous_bank.capitalization();
 
             let pre_sysvar_account = previous_bank
@@ -924,12 +963,19 @@ mod tests {
             let curr_bank = Bank::new_from_parent_with_bank_forks(
                 bank_forks.as_ref(),
                 previous_bank.clone(),
-                &Pubkey::default(),
+                SlotLeader::default(),
                 slot,
             );
             let post_cap = curr_bank.capitalization();
 
-            if slot == SLOTS_PER_EPOCH {
+            if slot < SLOTS_PER_EPOCH {
+                // Verify we haven't hit the rewards interval yet.
+                assert_matches!(
+                    curr_bank.get_reward_interval(),
+                    RewardInterval::OutsideInterval
+                );
+                assert_eq!(post_cap, pre_cap);
+            } else if slot == SLOTS_PER_EPOCH {
                 // This is the first block of epoch 1. Reward computation should happen in this block.
                 // assert reward compute status activated at epoch boundary
                 assert_matches!(
@@ -948,25 +994,25 @@ mod tests {
                 );
                 assert_eq!(curr_bank.get_epoch_rewards_cache_len(), 1);
                 starting_hash = Some(curr_bank.parent_hash);
-            } else if slot == SLOTS_PER_EPOCH + 1 {
-                // When curr_slot == SLOTS_PER_EPOCH + 1, the 2nd block of
-                // epoch 1, reward distribution should happen in this block. The
-                // cap should increase accordingly.
+
+                // Grab the number of slots to complete rewards payout from the
+                // epoch rewards sysvar.
+                let account = curr_bank
+                    .get_account(&solana_sysvar::epoch_rewards::id())
+                    .unwrap();
+                let epoch_rewards: solana_sysvar::epoch_rewards::EpochRewards =
+                    solana_account::from_account(&account).unwrap();
+                reward_distribution_completion_slot =
+                    Some(SLOTS_PER_EPOCH + epoch_rewards.num_partitions);
+            } else if slot
+                < reward_distribution_completion_slot
+                    .expect("epoch boundary must set completion slot")
+            {
+                // Reward distribution should be active in this range.
                 assert_matches!(
                     curr_bank.get_reward_interval(),
                     RewardInterval::InsideInterval
                 );
-
-                // The first block of the epoch has not rooted yet, so the cache
-                // should still have the results.
-                assert!(
-                    curr_bank
-                        .get_epoch_rewards_from_cache(&starting_hash.unwrap())
-                        .is_some()
-                );
-                assert_eq!(curr_bank.get_epoch_rewards_cache_len(), 1);
-
-                // 1st reward distribution block, state should be partitioned.
                 assert!(curr_bank.is_partitioned());
 
                 let account = curr_bank
@@ -979,16 +1025,28 @@ mod tests {
                     pre_cap + epoch_rewards.distributed_rewards - pre_distributed_rewards
                 );
 
-                // Now make a root the  first bank in the epoch.
-                // This should clear the cache.
-                let _ = bank_forks.write().unwrap().set_root(slot - 1, None, None);
-                assert_eq!(curr_bank.get_epoch_rewards_cache_len(), 0);
-            } else if slot == SLOTS_PER_EPOCH + 2 {
-                // When curr_slot == SLOTS_PER_EPOCH + 2, the 3rd block of
-                // epoch 1, reward distribution should happen in this block.
-                // however, all stake rewards are paid at the this block
-                // therefore reward_status should have transitioned to inactive.
-                // The cap should increase accordingly.
+                if slot == SLOTS_PER_EPOCH + 1 {
+                    // The first block of the epoch has not rooted yet, so the
+                    // cache should still have the results.
+                    assert!(
+                        curr_bank
+                            .get_epoch_rewards_from_cache(&starting_hash.unwrap())
+                            .is_some()
+                    );
+                    assert_eq!(curr_bank.get_epoch_rewards_cache_len(), 1);
+
+                    // Now make a root the first bank in the epoch.
+                    // This should clear the cache.
+                    let _ = bank_forks.write().unwrap().set_root(slot - 1, None, None);
+                    assert_eq!(curr_bank.get_epoch_rewards_cache_len(), 0);
+                }
+            } else if slot
+                == reward_distribution_completion_slot
+                    .expect("epoch boundary must set completion slot")
+            {
+                // All stake rewards should have been paid by now. Therefore,
+                // reward_status should have transitioned to inactive. The cap
+                // should increase accordingly.
                 assert_matches!(
                     curr_bank.get_reward_interval(),
                     RewardInterval::OutsideInterval
@@ -1004,17 +1062,14 @@ mod tests {
                     pre_cap + epoch_rewards.distributed_rewards - pre_distributed_rewards
                 );
             } else {
-                // When curr_slot == SLOTS_PER_EPOCH + 3, the 4th block of
-                // epoch 1 (or any other slot). reward distribution should have
-                // already completed. Therefore, reward_status should stay
-                // inactive and cap should stay the same.
+                // First slot after rewards payout. Verify we are outside the
+                // interval and capitalization doesn't change this slot.
                 assert_matches!(
                     curr_bank.get_reward_interval(),
                     RewardInterval::OutsideInterval
                 );
-
-                // slot is not in rewards, cap should not change
                 assert_eq!(post_cap, pre_cap);
+                break;
             }
             previous_bank = curr_bank;
         }
@@ -1068,7 +1123,7 @@ mod tests {
             let bank = Bank::new_from_parent_with_bank_forks(
                 bank_forks.as_ref(),
                 previous_bank.clone(),
-                &Pubkey::default(),
+                SlotLeader::default(),
                 slot,
             );
 
@@ -1110,7 +1165,7 @@ mod tests {
         let starting_slot = SLOTS_PER_EPOCH - 1;
         let num_rewards = 100;
         let stake_account_stores_per_block = 50;
-        let (RewardBank { bank, .. }, _) =
+        let (RewardBank { bank, .. }, bank_forks) =
             create_reward_bank(num_rewards, stake_account_stores_per_block, starting_slot);
 
         // Slot before the epoch boundary contains empty rewards (since fees are
@@ -1123,11 +1178,12 @@ mod tests {
             }
         );
 
-        let epoch_boundary_bank = Arc::new(Bank::new_from_parent(
+        let epoch_boundary_bank = Bank::new_from_parent_with_bank_forks(
+            bank_forks.as_ref(),
             bank,
-            &Pubkey::default(),
+            SlotLeader::default(),
             SLOTS_PER_EPOCH,
-        ));
+        );
         // Slot at the epoch boundary contains voting rewards only, as well as partition data
         let KeyedRewardsAndNumPartitions {
             keyed_rewards,
@@ -1137,51 +1193,41 @@ mod tests {
             assert_eq!(reward.reward_type, RewardType::Voting);
         }
         assert_eq!(keyed_rewards.len(), num_rewards);
-        assert_eq!(
-            num_partitions,
-            Some(num_rewards as u64 / stake_account_stores_per_block)
-        );
+        let expected_num_partitions = (num_rewards as u64)
+            .div_ceil(epoch_boundary_bank.partitioned_rewards_stake_account_stores_per_block())
+            .clamp(1, (SLOTS_PER_EPOCH / 10).max(1));
+        assert_eq!(num_partitions, Some(expected_num_partitions));
 
         let mut total_staking_rewards = 0;
-
-        let partition0_bank = Arc::new(Bank::new_from_parent(
-            epoch_boundary_bank,
-            &Pubkey::default(),
-            SLOTS_PER_EPOCH + 1,
-        ));
-        // Slot after the epoch boundary contains first partition of staking
-        // rewards, and no partitions because not at the epoch boundary
-        let KeyedRewardsAndNumPartitions {
-            keyed_rewards,
-            num_partitions,
-        } = partition0_bank.get_rewards_and_num_partitions();
-        for (_pubkey, reward) in keyed_rewards.iter() {
-            assert_eq!(reward.reward_type, RewardType::Staking);
+        let mut previous_bank = epoch_boundary_bank;
+        for partition_index in 0..expected_num_partitions {
+            let partition_bank = Arc::new(Bank::new_from_parent(
+                previous_bank,
+                SlotLeader::default(),
+                SLOTS_PER_EPOCH + partition_index + 1,
+            ));
+            // Slot after the epoch boundary contains partitioned staking
+            // rewards, and no partition metadata because it's not an epoch
+            // boundary bank.
+            let KeyedRewardsAndNumPartitions {
+                keyed_rewards,
+                num_partitions,
+            } = partition_bank.get_rewards_and_num_partitions();
+            for (_pubkey, reward) in keyed_rewards.iter() {
+                assert_eq!(reward.reward_type, RewardType::Staking);
+            }
+            total_staking_rewards += keyed_rewards.len();
+            assert_eq!(num_partitions, None);
+            previous_bank = partition_bank;
         }
-        total_staking_rewards += keyed_rewards.len();
-        assert_eq!(num_partitions, None);
-
-        let partition1_bank = Arc::new(Bank::new_from_parent(
-            partition0_bank,
-            &Pubkey::default(),
-            SLOTS_PER_EPOCH + 2,
-        ));
-        // Slot 2 after the epoch boundary contains second partition of staking
-        // rewards, and no partitions because not at the epoch boundary
-        let KeyedRewardsAndNumPartitions {
-            keyed_rewards,
-            num_partitions,
-        } = partition1_bank.get_rewards_and_num_partitions();
-        for (_pubkey, reward) in keyed_rewards.iter() {
-            assert_eq!(reward.reward_type, RewardType::Staking);
-        }
-        total_staking_rewards += keyed_rewards.len();
-        assert_eq!(num_partitions, None);
 
         // All rewards are recorded
         assert_eq!(total_staking_rewards, num_rewards);
-
-        let bank = Bank::new_from_parent(partition1_bank, &Pubkey::default(), SLOTS_PER_EPOCH + 3);
+        let bank = Bank::new_from_parent(
+            previous_bank,
+            SlotLeader::default(),
+            SLOTS_PER_EPOCH + expected_num_partitions + 1,
+        );
         // Next slot contains empty rewards (since fees are off), and no
         // partitions because not at the epoch boundary
         assert_eq!(

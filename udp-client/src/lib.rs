@@ -100,13 +100,10 @@ impl BaseClientConnection for Udp {
 
     fn new_nonblocking_connection(
         &self,
-        addr: SocketAddr,
+        _addr: SocketAddr,
         _stats: Arc<ConnectionCacheStats>,
     ) -> Arc<Self::NonblockingClientConnection> {
-        Arc::new(NonblockingUdpConnection::new_from_addr(
-            self.0.try_clone().unwrap(),
-            addr,
-        ))
+        unreachable!()
     }
 }
 

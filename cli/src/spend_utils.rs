@@ -33,24 +33,28 @@ impl Default for SpendAmount {
 }
 
 impl SpendAmount {
-    pub fn new(amount: Option<u64>, sign_only: bool) -> Self {
+    pub fn new(amount: Option<u64>, sign_only: bool) -> Result<Self, CliError> {
         match amount {
-            Some(lamports) => Self::Some(lamports),
-            None if !sign_only => Self::All,
-            _ => panic!("ALL amount not supported for sign-only operations"),
+            Some(lamports) => Ok(Self::Some(lamports)),
+            None if !sign_only => Ok(Self::All),
+            _ => Err(CliError::BadParameter(
+                "ALL amount not supported for sign-only operations".to_string(),
+            )),
         }
     }
 
-    pub fn new_from_matches(matches: &ArgMatches<'_>, name: &str) -> Self {
+    pub fn new_from_matches(matches: &ArgMatches<'_>, name: &str) -> Result<Self, CliError> {
         let sign_only = matches.is_present(SIGN_ONLY_ARG.name);
         let amount = lamports_of_sol(matches, name);
         if amount.is_some() {
             return SpendAmount::new(amount, sign_only);
         }
         match matches.value_of(name).unwrap_or("ALL") {
-            "ALL" if !sign_only => SpendAmount::All,
-            "AVAILABLE" if !sign_only => SpendAmount::Available,
-            _ => panic!("Only specific amounts are supported for sign-only operations"),
+            "ALL" if !sign_only => Ok(SpendAmount::All),
+            "AVAILABLE" if !sign_only => Ok(SpendAmount::Available),
+            _ => Err(CliError::BadParameter(
+                "Only specific amounts are supported for sign-only operations".to_string(),
+            )),
         }
     }
 }

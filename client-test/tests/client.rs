@@ -24,7 +24,7 @@ use {
         response::SlotInfo,
     },
     solana_runtime::{
-        bank::Bank,
+        bank::{Bank, SlotLeader},
         bank_forks::BankForks,
         commitment::{BlockCommitmentCache, CommitmentSlots},
         genesis_utils::{GenesisConfigInfo, create_genesis_config},
@@ -38,7 +38,7 @@ use {
     },
     std::{
         collections::HashSet,
-        net::{IpAddr, SocketAddr},
+        net::{IpAddr, Ipv4Addr, SocketAddr},
         sync::{
             Arc, RwLock,
             atomic::{AtomicBool, AtomicU64, Ordering},
@@ -46,7 +46,6 @@ use {
         thread::sleep,
         time::{Duration, Instant},
     },
-    systemstat::Ipv4Addr,
     tungstenite::{client::IntoClientRequest, connect},
 };
 
@@ -61,7 +60,7 @@ fn test_rpc_client() {
 
     let alice = Keypair::new();
     let test_validator =
-        TestValidator::with_no_fees(alice.pubkey(), None, SocketAddrSpace::Unspecified);
+        TestValidator::start_with_config(alice.pubkey(), None, SocketAddrSpace::Unspecified);
 
     let bob_pubkey = solana_pubkey::new_rand();
 
@@ -81,6 +80,7 @@ fn test_rpc_client() {
     let blockhash = client.get_latest_blockhash().unwrap();
 
     let tx = system_transaction::transfer(&alice, &bob_pubkey, 20 * LAMPORTS_PER_SOL, blockhash);
+    let fee = client.get_fee_for_message(tx.message()).unwrap();
     let signature = client.send_transaction(&tx).unwrap();
 
     let mut confirmed_tx = false;
@@ -113,7 +113,7 @@ fn test_rpc_client() {
             .get_balance_with_commitment(&alice.pubkey(), CommitmentConfig::processed())
             .unwrap()
             .value,
-        original_alice_balance - 20 * LAMPORTS_PER_SOL
+        original_alice_balance - 20 * LAMPORTS_PER_SOL - fee
     );
 }
 
@@ -131,7 +131,7 @@ fn test_account_subscription() {
     let blockhash = bank.last_blockhash();
     let bank_forks = BankForks::new_rw_arc(bank);
     let bank0 = bank_forks.read().unwrap().get(0).unwrap();
-    let bank1 = Bank::new_from_parent(bank0, &Pubkey::default(), 1);
+    let bank1 = Bank::new_from_parent(bank0, SlotLeader::default(), 1);
     bank_forks.write().unwrap().insert(bank1);
     let bob = Keypair::new();
     let max_complete_transaction_status_slot = Arc::new(AtomicU64::default());
@@ -142,8 +142,11 @@ fn test_account_subscription() {
         Arc::new(RwLock::new(BlockCommitmentCache::default())),
         OptimisticallyConfirmedBank::locked_from_bank_forks_root(&bank_forks),
     ));
-    let (trigger, pubsub_service) =
-        PubSubService::new(PubSubConfig::default(), &subscriptions, pubsub_addr);
+    let (trigger, pubsub_service) = PubSubService::new(
+        PubSubConfig::default_for_tests(),
+        &subscriptions,
+        pubsub_addr,
+    );
 
     check_server_is_ready_or_panic(&pubsub_addr, 10, Duration::from_millis(300));
 
@@ -263,7 +266,7 @@ fn test_block_subscription() {
     let pubsub_addr = pubsub_addr();
     let pub_cfg = PubSubConfig {
         enable_block_subscription: true,
-        ..PubSubConfig::default()
+        ..PubSubConfig::default_for_tests()
     };
     let (trigger, pubsub_service) = PubSubService::new(pub_cfg, &subscriptions, pubsub_addr);
 
@@ -333,7 +336,7 @@ fn test_program_subscription() {
     let blockhash = bank.last_blockhash();
     let bank_forks = BankForks::new_rw_arc(bank);
     let bank0 = bank_forks.read().unwrap().get(0).unwrap();
-    let bank1 = Bank::new_from_parent(bank0, &Pubkey::default(), 1);
+    let bank1 = Bank::new_from_parent(bank0, SlotLeader::default(), 1);
     bank_forks.write().unwrap().insert(bank1);
     let bob = Keypair::new();
     let max_complete_transaction_status_slot = Arc::new(AtomicU64::default());
@@ -344,8 +347,11 @@ fn test_program_subscription() {
         Arc::new(RwLock::new(BlockCommitmentCache::default())),
         OptimisticallyConfirmedBank::locked_from_bank_forks_root(&bank_forks),
     ));
-    let (trigger, pubsub_service) =
-        PubSubService::new(PubSubConfig::default(), &subscriptions, pubsub_addr);
+    let (trigger, pubsub_service) = PubSubService::new(
+        PubSubConfig::default_for_tests(),
+        &subscriptions,
+        pubsub_addr,
+    );
 
     check_server_is_ready_or_panic(&pubsub_addr, 10, Duration::from_millis(300));
 
@@ -418,7 +424,7 @@ fn test_root_subscription() {
     let bank = Bank::new_for_tests(&genesis_config);
     let bank_forks = BankForks::new_rw_arc(bank);
     let bank0 = bank_forks.read().unwrap().get(0).unwrap();
-    let bank1 = Bank::new_from_parent(bank0, &Pubkey::default(), 1);
+    let bank1 = Bank::new_from_parent(bank0, SlotLeader::default(), 1);
     bank_forks.write().unwrap().insert(bank1);
     let max_complete_transaction_status_slot = Arc::new(AtomicU64::default());
     let subscriptions = Arc::new(RpcSubscriptions::new_for_tests(
@@ -428,8 +434,11 @@ fn test_root_subscription() {
         Arc::new(RwLock::new(BlockCommitmentCache::default())),
         OptimisticallyConfirmedBank::locked_from_bank_forks_root(&bank_forks),
     ));
-    let (trigger, pubsub_service) =
-        PubSubService::new(PubSubConfig::default(), &subscriptions, pubsub_addr);
+    let (trigger, pubsub_service) = PubSubService::new(
+        PubSubConfig::default_for_tests(),
+        &subscriptions,
+        pubsub_addr,
+    );
 
     check_server_is_ready_or_panic(&pubsub_addr, 10, Duration::from_millis(300));
 
@@ -477,8 +486,11 @@ fn test_slot_subscription() {
         Arc::new(RwLock::new(BlockCommitmentCache::default())),
         optimistically_confirmed_bank,
     ));
-    let (trigger, pubsub_service) =
-        PubSubService::new(PubSubConfig::default(), &subscriptions, pubsub_addr);
+    let (trigger, pubsub_service) = PubSubService::new(
+        PubSubConfig::default_for_tests(),
+        &subscriptions,
+        pubsub_addr,
+    );
 
     check_server_is_ready_or_panic(&pubsub_addr, 10, Duration::from_millis(300));
 
@@ -554,8 +566,11 @@ async fn test_slot_subscription_async() {
             Arc::new(RwLock::new(BlockCommitmentCache::default())),
             optimistically_confirmed_bank,
         ));
-        let (trigger, pubsub_service) =
-            PubSubService::new(PubSubConfig::default(), &subscriptions, pubsub_addr);
+        let (trigger, pubsub_service) = PubSubService::new(
+            PubSubConfig::default_for_tests(),
+            &subscriptions,
+            pubsub_addr,
+        );
 
         check_server_is_ready_or_panic(&pubsub_addr, 10, Duration::from_millis(100));
 

@@ -25,6 +25,10 @@ impl Counter {
     pub(crate) fn add_relaxed(&self, x: u64) {
         self.0.fetch_add(x, Ordering::Relaxed);
     }
+    #[cfg(test)]
+    pub(crate) fn load_relaxed(&self) -> u64 {
+        self.0.load(Ordering::Relaxed)
+    }
     fn clear(&self) -> u64 {
         self.0.swap(0, Ordering::Relaxed)
     }
@@ -148,6 +152,7 @@ pub struct GossipStats {
     pub(crate) prune_received_cache: Counter,
     pub(crate) pull_from_entrypoint_count: Counter,
     pub(crate) pull_request_ping_pong_check_failed_count: Counter,
+    pub(crate) pull_request_scan_budget_exhausted: Counter,
     pub(crate) purge: Counter,
     pub(crate) purge_count: Counter,
     pub(crate) push_fanout_num_entries: Counter,
@@ -160,7 +165,6 @@ pub struct GossipStats {
     pub(crate) skip_pull_shred_version: Counter,
     pub(crate) skip_push_message_shred_version: Counter,
     pub(crate) trim_crds_table: Counter,
-    pub(crate) trim_crds_table_failed: Counter,
     pub(crate) trim_crds_table_purged_values_count: Counter,
     pub(crate) tvu_peers: Counter,
     pub(crate) verify_gossip_packets_time: Counter,
@@ -355,6 +359,11 @@ pub(crate) fn submit_gossip_stats(
         (
             "pull_request_ping_pong_check_failed_count",
             stats.pull_request_ping_pong_check_failed_count.clear(),
+            i64
+        ),
+        (
+            "pull_request_scan_budget_exhausted",
+            stats.pull_request_scan_budget_exhausted.clear(),
             i64
         ),
         (
@@ -573,11 +582,6 @@ pub(crate) fn submit_gossip_stats(
             i64
         ),
         ("trim_crds_table", stats.trim_crds_table.clear(), i64),
-        (
-            "trim_crds_table_failed",
-            stats.trim_crds_table_failed.clear(),
-            i64
-        ),
         (
             "trim_crds_table_purged_values_count",
             stats.trim_crds_table_purged_values_count.clear(),

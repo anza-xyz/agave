@@ -1,5 +1,7 @@
 //! The `poh_service` module implements a service that records the passing of
 //! "ticks", a measure of time in the PoH stream
+#[cfg(target_os = "linux")]
+use agave_cpu_utils::{CpuId, set_cpu_affinity};
 use {
     crate::{
         poh_controller::{PohServiceMessage, PohServiceMessageGuard, PohServiceMessageReceiver},
@@ -37,7 +39,10 @@ const TARGET_HASH_BATCH_TIME_US: u64 = 50;
 pub const DEFAULT_HASHES_PER_BATCH: u64 =
     TARGET_HASH_BATCH_TIME_US * DEFAULT_HASHES_PER_SECOND / 1_000_000;
 
-pub const DEFAULT_PINNED_CPU_CORE: usize = 0;
+#[cfg(target_os = "linux")]
+pub const DEFAULT_PINNED_CPU_CORE: Option<usize> = Some(0);
+#[cfg(not(target_os = "linux"))]
+pub const DEFAULT_PINNED_CPU_CORE: Option<usize> = None;
 
 const TARGET_SLOT_ADJUSTMENT_NS: u64 = 50_000_000;
 
@@ -100,14 +105,17 @@ impl PohService {
         poh_config: &PohConfig,
         poh_exit: Arc<AtomicBool>,
         ticks_per_slot: u64,
-        pinned_cpu_core: usize,
+        pinned_cpu_core: Option<usize>,
         hashes_per_batch: u64,
         mut record_receiver: RecordReceiver,
         poh_service_receiver: PohServiceMessageReceiver,
         migration_status: Arc<MigrationStatus>,
         record_receiver_sender: Sender<RecordReceiver>,
     ) -> Self {
+        migration_status.set_poh_service_started();
         let poh_config = poh_config.clone();
+        #[cfg(not(target_os = "linux"))]
+        let _ = pinned_cpu_core;
         let tick_producer = Builder::new()
             .name("solPohTickProd".to_string())
             .spawn(move || {
@@ -143,24 +151,27 @@ impl PohService {
                         )
                     }
                 } else {
-                    // PoH service runs in a tight loop, generating hashes as fast as possible.
-                    // Let's dedicate one of the CPU cores to this thread so that it can gain
-                    // from cache performance.
-                    if let Some(cores) = core_affinity::get_core_ids() {
-                        core_affinity::set_for_current(cores[pinned_cpu_core]);
+                    #[cfg(target_os = "linux")]
+                    if let Some(pinned_cpu_core) = pinned_cpu_core {
+                        // PoH service runs in a tight loop, generating hashes as fast as possible.
+                        // Let's dedicate one of the CPU cores to this thread so that it can gain
+                        // from cache performance.
+                        let pinned_cpu = CpuId::new(pinned_cpu_core).unwrap();
+                        set_cpu_affinity(None, [pinned_cpu]).unwrap_or_else(|e| {
+                            panic!(
+                                "Failed to set CPU affinity for POH service to CPU \
+                                 {pinned_cpu_core}: {e:?}. This is critical for performance."
+                            )
+                        });
                     }
-                    let target_ns_per_tick = Self::target_ns_per_tick(
-                        ticks_per_slot,
-                        poh_config.target_tick_duration.as_nanos() as u64,
-                    );
                     Self::tick_producer(
                         poh_recorder,
+                        &poh_config,
                         &poh_exit,
                         ticks_per_slot,
                         hashes_per_batch,
                         &mut record_receiver,
                         poh_service_receiver,
-                        target_ns_per_tick,
                         &migration_status.shutdown_poh,
                     )
                 }
@@ -195,13 +206,14 @@ impl PohService {
         Self { tick_producer }
     }
 
-    pub fn target_ns_per_tick(ticks_per_slot: u64, target_tick_duration_ns: u64) -> u64 {
-        // Account for some extra time outside of PoH generation to account
-        // for processing time outside PoH.
+    // Adjusts the target nanoseconds per PoH tick to enable hitting slot time
+    // targets by compensating for time spent outside of PoH, such as network
+    // propagation.
+    pub fn target_tick_ns_adjusted(ticks_per_slot: u64, target_tick_ns: u64) -> u64 {
         let adjustment_per_tick = TARGET_SLOT_ADJUSTMENT_NS
             .checked_div(ticks_per_slot)
             .unwrap_or(0);
-        target_tick_duration_ns.saturating_sub(adjustment_per_tick)
+        target_tick_ns.saturating_sub(adjustment_per_tick)
     }
 
     fn low_power_tick_producer(
@@ -220,13 +232,13 @@ impl PohService {
         if should_shutdown_for_test_producers {
             record_receiver.shutdown();
         }
+        let mut target_tick_duration =
+            Duration::from_nanos(Self::target_tick_ns_reconciled(&poh_recorder, poh_config));
         while !poh_exit.load(Ordering::Relaxed) && !shutdown_poh.load(Ordering::Relaxed) {
             let service_message =
                 Self::check_for_service_message(&poh_service_receiver, record_receiver);
             loop {
-                let remaining_tick_time = poh_config
-                    .target_tick_duration
-                    .saturating_sub(last_tick.elapsed());
+                let remaining_tick_time = target_tick_duration.saturating_sub(last_tick.elapsed());
                 Self::read_record_receiver_and_process(
                     &poh_recorder,
                     record_receiver,
@@ -270,6 +282,10 @@ impl PohService {
 
             if let Some(service_message) = service_message {
                 Self::handle_service_message(&poh_recorder, service_message, record_receiver);
+                target_tick_duration = Duration::from_nanos(Self::target_tick_ns_reconciled(
+                    &poh_recorder,
+                    poh_config,
+                ));
                 should_shutdown_for_test_producers =
                     Self::should_shutdown_for_test_producers(&poh_recorder);
                 if should_shutdown_for_test_producers {
@@ -334,15 +350,15 @@ impl PohService {
         if should_shutdown_for_test_producers {
             record_receiver.shutdown();
         }
+        let mut target_tick_duration =
+            Duration::from_nanos(Self::target_tick_ns_reconciled(&poh_recorder, poh_config));
 
         while elapsed_ticks < num_ticks {
             let service_message =
                 Self::check_for_service_message(&poh_service_receiver, record_receiver);
 
             loop {
-                let remaining_tick_time = poh_config
-                    .target_tick_duration
-                    .saturating_sub(last_tick.elapsed());
+                let remaining_tick_time = target_tick_duration.saturating_sub(last_tick.elapsed());
                 Self::read_record_receiver_and_process(
                     &poh_recorder,
                     record_receiver,
@@ -391,6 +407,10 @@ impl PohService {
             }
             if let Some(service_message) = service_message {
                 Self::handle_service_message(&poh_recorder, service_message, record_receiver);
+                target_tick_duration = Duration::from_nanos(Self::target_tick_ns_reconciled(
+                    &poh_recorder,
+                    poh_config,
+                ));
                 should_shutdown_for_test_producers =
                     Self::should_shutdown_for_test_producers(&poh_recorder);
                 if should_shutdown_for_test_producers {
@@ -531,18 +551,22 @@ impl PohService {
 
     fn tick_producer(
         poh_recorder: Arc<RwLock<PohRecorder>>,
+        poh_config: &PohConfig,
         poh_exit: &AtomicBool,
         ticks_per_slot: u64,
         hashes_per_batch: u64,
         record_receiver: &mut RecordReceiver,
         poh_service_receiver: PohServiceMessageReceiver,
-        target_ns_per_tick: u64,
         shutdown_poh: &AtomicBool,
     ) {
         let poh = poh_recorder.read().unwrap().poh.clone();
         let mut timing = PohTiming::new();
         let mut next_record = None;
         let mut should_exit = poh_exit.load(Ordering::Relaxed);
+        let mut target_ns_per_tick = Self::target_tick_ns_adjusted(
+            ticks_per_slot,
+            Self::target_tick_ns_reconciled(&poh_recorder, poh_config),
+        );
 
         loop {
             // If we should exit, close the channel so no more records are accepted,
@@ -593,10 +617,14 @@ impl PohService {
                 }
             }
 
-            if let Some(service_message) = service_message {
-                if !should_exit {
-                    Self::handle_service_message(&poh_recorder, service_message, record_receiver);
-                }
+            if let Some(service_message) = service_message
+                && !should_exit
+            {
+                Self::handle_service_message(&poh_recorder, service_message, record_receiver);
+                target_ns_per_tick = Self::target_tick_ns_adjusted(
+                    ticks_per_slot,
+                    Self::target_tick_ns_reconciled(&poh_recorder, poh_config),
+                );
             }
 
             // If exit signal is set and there are no more records to process, exit.
@@ -620,29 +648,42 @@ impl PohService {
         }
     }
 
+    // Reconcile the banks values versus the optional (test only) poh_config
+    // overrides.
+    fn target_tick_ns_reconciled(
+        poh_recorder: &RwLock<PohRecorder>,
+        poh_config: &PohConfig,
+    ) -> u64 {
+        poh_recorder
+            .read()
+            .unwrap()
+            .target_tick_ns()
+            // Tests can set the bank timing absurdly high. Preserve the config
+            // override so the short-lived producers still make progress.
+            .min(poh_config.target_tick_duration.as_nanos() as u64)
+    }
+
     fn handle_service_message(
         poh_recorder: &RwLock<PohRecorder>,
         mut service_message: PohServiceMessageGuard,
         record_receiver: &mut RecordReceiver,
     ) {
-        {
-            let mut recorder = poh_recorder.write().unwrap();
-            match service_message.take() {
-                PohServiceMessage::Reset {
-                    reset_bank,
-                    next_leader_slot,
-                } => {
-                    recorder.reset(reset_bank, next_leader_slot);
-                }
-                PohServiceMessage::SetBank { bank } => {
-                    let bank_id = bank.bank_id();
-                    let bank_max_tick_height = bank.max_tick_height();
-                    recorder.set_bank(bank);
-                    let should_restart =
-                        recorder.tick_height() < bank_max_tick_height.saturating_sub(1);
-                    if should_restart {
-                        record_receiver.restart(bank_id);
-                    }
+        let mut recorder = poh_recorder.write().unwrap();
+        match service_message.take() {
+            PohServiceMessage::Reset {
+                reset_bank,
+                next_leader_slot,
+            } => {
+                recorder.reset(reset_bank, next_leader_slot);
+            }
+            PohServiceMessage::SetBank { bank } => {
+                let bank_id = bank.bank_id();
+                let bank_max_tick_height = bank.max_tick_height();
+                recorder.set_bank(bank);
+                let should_restart =
+                    recorder.tick_height() < bank_max_tick_height.saturating_sub(1);
+                if should_restart {
+                    record_receiver.restart(bank_id);
                 }
             }
         }
@@ -669,13 +710,9 @@ impl PohService {
 mod tests {
     use {
         super::*,
-        crate::{
-            poh_controller::PohController, poh_recorder::PohRecorderError::MaxHeightReached,
-            record_channels::record_channels,
-        },
+        crate::{poh_controller::PohController, record_channels::record_channels},
         crossbeam_channel::bounded,
-        rand::{Rng, rng},
-        solana_clock::{DEFAULT_HASHES_PER_TICK, DEFAULT_MS_PER_SLOT, DEFAULT_TICKS_PER_SLOT},
+        solana_clock::{DEFAULT_HASHES_PER_TICK, DEFAULT_TICKS_PER_SLOT},
         solana_hash::Hash,
         solana_ledger::{
             blockstore::Blockstore,
@@ -683,214 +720,11 @@ mod tests {
             get_tmp_ledger_path_auto_delete,
             leader_schedule_cache::LeaderScheduleCache,
         },
-        solana_measure::measure::Measure,
         solana_perf::test_tx::test_tx,
         solana_runtime::bank::Bank,
-        solana_sha256_hasher::hash,
         solana_transaction::versioned::VersionedTransaction,
-        std::{thread::sleep, time::Duration},
+        std::time::Duration,
     };
-
-    #[test]
-    #[ignore]
-    fn test_poh_service() {
-        agave_logger::setup();
-        let GenesisConfigInfo {
-            mut genesis_config, ..
-        } = create_genesis_config(2);
-        let hashes_per_tick = Some(DEFAULT_HASHES_PER_TICK);
-        genesis_config.poh_config.hashes_per_tick = hashes_per_tick;
-        let (bank, _bank_forks) = Bank::new_with_bank_forks_for_tests(&genesis_config);
-        let prev_hash = bank.last_blockhash();
-        let ledger_path = get_tmp_ledger_path_auto_delete!();
-        let blockstore = Blockstore::open(ledger_path.path())
-            .expect("Expected to be able to open database ledger");
-
-        let default_target_tick_duration =
-            PohConfig::default().target_tick_duration.as_micros() as u64;
-        let target_tick_duration = Duration::from_micros(default_target_tick_duration);
-        let poh_config = PohConfig {
-            hashes_per_tick,
-            target_tick_duration,
-            target_tick_count: None,
-        };
-        let exit = Arc::new(AtomicBool::new(false));
-
-        let ticks_per_slot = bank.ticks_per_slot();
-        let leader_schedule_cache = Arc::new(LeaderScheduleCache::new_from_bank(&bank));
-        let blockstore = Arc::new(blockstore);
-        // Just set something very far in the future that we won't reach.
-        let next_leader_slot = Some((1_000_000, 1_000_000));
-        let (poh_recorder, entry_receiver) = PohRecorder::new(
-            bank.tick_height(),
-            prev_hash,
-            bank.clone(),
-            next_leader_slot,
-            ticks_per_slot,
-            blockstore,
-            &leader_schedule_cache,
-            &poh_config,
-            exit.clone(),
-        );
-        let poh_recorder = Arc::new(RwLock::new(poh_recorder));
-        let ticks_per_slot = bank.ticks_per_slot();
-
-        // specify RUN_TIME to run in a benchmark-like mode
-        // to calibrate batch size
-        let run_time = std::env::var("RUN_TIME")
-            .map(|x| x.parse().unwrap())
-            .unwrap_or(0);
-        let is_test_run = run_time == 0;
-
-        let entry_producer = {
-            let poh_recorder = poh_recorder.clone();
-            let exit = exit.clone();
-            let mut bank = bank.clone();
-
-            Builder::new()
-                .name("solPohEntryProd".to_string())
-                .spawn(move || {
-                    let now = Instant::now();
-                    let mut total_us = 0;
-                    let mut total_times = 0;
-                    let h1 = hash(b"hello world!");
-                    let tx = VersionedTransaction::from(test_tx());
-                    loop {
-                        // send some data
-                        let mut time = Measure::start("record");
-                        let res = poh_recorder.write().unwrap().record(
-                            bank.slot(),
-                            vec![h1],
-                            vec![vec![tx.clone()]],
-                        );
-                        if let Err(MaxHeightReached) = res {
-                            // Advance to the next slot.
-                            poh_recorder
-                                .write()
-                                .unwrap()
-                                .reset(bank.clone(), next_leader_slot);
-                            bank = Arc::new(Bank::new_from_parent(
-                                bank.clone(),
-                                &solana_pubkey::new_rand(),
-                                bank.slot() + 1,
-                            ));
-                            poh_recorder
-                                .write()
-                                .unwrap()
-                                .set_bank_for_test(bank.clone());
-                        }
-                        time.stop();
-                        total_us += time.as_us();
-                        total_times += 1;
-                        if is_test_run && rng().random_ratio(1, 4) {
-                            sleep(Duration::from_millis(200));
-                        }
-
-                        if exit.load(Ordering::Relaxed) {
-                            info!(
-                                "spent:{}ms record: {}ms entries recorded: {}",
-                                now.elapsed().as_millis(),
-                                total_us / 1000,
-                                total_times,
-                            );
-                            break;
-                        }
-                    }
-                })
-                .unwrap()
-        };
-
-        let hashes_per_batch = std::env::var("HASHES_PER_BATCH")
-            .map(|x| x.parse().unwrap())
-            .unwrap_or(DEFAULT_HASHES_PER_BATCH);
-        let (_record_sender, record_receiver) = record_channels(false);
-        let (_poh_controller, poh_service_message_receiver) = PohController::new();
-        let (record_receiver_sender, _record_receiver_receiver) = bounded(1);
-        let poh_service = PohService::new(
-            poh_recorder.clone(),
-            &poh_config,
-            exit.clone(),
-            0,
-            DEFAULT_PINNED_CPU_CORE,
-            hashes_per_batch,
-            record_receiver,
-            poh_service_message_receiver,
-            Arc::new(MigrationStatus::default()),
-            record_receiver_sender,
-        );
-        poh_recorder.write().unwrap().set_bank_for_test(bank);
-
-        // get some events
-        let mut hashes = 0;
-        let mut need_tick = true;
-        let mut need_entry = true;
-        let mut need_partial = true;
-        let mut num_ticks = 0;
-
-        let time = Instant::now();
-        while run_time != 0 || need_tick || need_entry || need_partial {
-            let (_bank, (entry, _tick_height)) = entry_receiver
-                .recv_timeout(Duration::from_millis(DEFAULT_MS_PER_SLOT))
-                .expect("Expected to receive an entry");
-
-            if entry.is_tick() {
-                num_ticks += 1;
-                assert!(
-                    entry.num_hashes <= poh_config.hashes_per_tick.unwrap(),
-                    "{} <= {}",
-                    entry.num_hashes,
-                    poh_config.hashes_per_tick.unwrap()
-                );
-
-                if entry.num_hashes == poh_config.hashes_per_tick.unwrap() {
-                    need_tick = false;
-                } else {
-                    need_partial = false;
-                }
-
-                hashes += entry.num_hashes;
-
-                assert_eq!(hashes, poh_config.hashes_per_tick.unwrap());
-
-                hashes = 0;
-            } else {
-                assert!(entry.num_hashes >= 1);
-                need_entry = false;
-                hashes += entry.num_hashes;
-            }
-
-            if run_time != 0 {
-                if time.elapsed().as_millis() > run_time {
-                    break;
-                }
-            } else {
-                assert!(
-                    time.elapsed().as_secs() < 60,
-                    "Test should not run for this long! {}s tick {} entry {} partial {}",
-                    time.elapsed().as_secs(),
-                    need_tick,
-                    need_entry,
-                    need_partial,
-                );
-            }
-        }
-        info!(
-            "target_tick_duration: {} ticks_per_slot: {}",
-            poh_config.target_tick_duration.as_nanos(),
-            ticks_per_slot
-        );
-        let elapsed = time.elapsed();
-        info!(
-            "{} ticks in {}ms {}us/tick",
-            num_ticks,
-            elapsed.as_millis(),
-            elapsed.as_micros() / num_ticks
-        );
-
-        exit.store(true, Ordering::Relaxed);
-        poh_service.join().unwrap();
-        entry_producer.join().unwrap();
-    }
 
     #[test]
     fn test_poh_service_record_race() {
@@ -898,8 +732,7 @@ mod tests {
         let GenesisConfigInfo {
             mut genesis_config, ..
         } = create_genesis_config(2);
-        let hashes_per_tick = Some(DEFAULT_HASHES_PER_TICK);
-        genesis_config.poh_config.hashes_per_tick = hashes_per_tick;
+        genesis_config.poh_config.hashes_per_tick = Some(DEFAULT_HASHES_PER_TICK);
         let (bank, _bank_forks) = Bank::new_with_bank_forks_for_tests(&genesis_config);
         let prev_hash = bank.last_blockhash();
         let ledger_path = get_tmp_ledger_path_auto_delete!();
@@ -910,7 +743,7 @@ mod tests {
             PohConfig::default().target_tick_duration.as_micros() as u64;
         let target_tick_duration = Duration::from_micros(default_target_tick_duration);
         let poh_config = PohConfig {
-            hashes_per_tick,
+            hashes_per_tick: bank.hashes_per_tick(),
             target_tick_duration,
             target_tick_count: None,
         };

@@ -172,23 +172,27 @@ impl SnapshotController {
 mod tests {
     use {
         super::*, crate::accounts_background_service::SnapshotRequestKind,
-        agave_snapshots::snapshot_config::SnapshotConfig, crossbeam_channel::unbounded,
-        solana_genesis_config::create_genesis_config, solana_pubkey::Pubkey, std::sync::Arc,
-        test_case::test_case,
+        agave_snapshots::snapshot_config::SnapshotConfig, crossbeam_channel::bounded,
+        solana_genesis_config::create_genesis_config, solana_leader_schedule::SlotLeader,
+        std::sync::Arc, test_case::test_case,
     };
 
     fn create_banks(num_banks: u64) -> Vec<Arc<Bank>> {
         let mut banks = vec![];
         let (genesis_config, _) = create_genesis_config(1_000_000);
-        let mut parent_bank = Arc::new(Bank::new_for_tests(&genesis_config));
+        let (bank0, bank_forks) =
+            Bank::new_for_tests(&genesis_config).wrap_with_bank_forks_for_tests();
+        let mut parent_bank = bank0;
         banks.push(parent_bank.clone());
 
         for _ in 1..=num_banks {
-            let new_bank = Arc::new(Bank::new_from_parent(
+            let slot = parent_bank.slot() + 1;
+            let new_bank = Bank::new_from_parent_with_bank_forks(
+                bank_forks.as_ref(),
                 parent_bank.clone(),
-                &Pubkey::default(),
-                parent_bank.slot() + 1,
-            ));
+                SlotLeader::default(),
+                slot,
+            );
             parent_bank = new_bank;
             banks.push(parent_bank.clone());
         }
@@ -223,7 +227,7 @@ mod tests {
             ..Default::default()
         };
 
-        let (snapshot_request_sender, snapshot_request_receiver) = unbounded();
+        let (snapshot_request_sender, snapshot_request_receiver) = bounded(1024);
         let snapshot_controller =
             SnapshotController::new(snapshot_request_sender, snapshot_config, 0);
 
@@ -283,7 +287,7 @@ mod tests {
             incremental_snapshot_archive_interval,
             ..Default::default()
         };
-        let (snapshot_request_sender, _snapshot_request_receiver) = unbounded();
+        let (snapshot_request_sender, _snapshot_request_receiver) = bounded(1024);
         let snapshot_controller =
             SnapshotController::new(snapshot_request_sender, snapshot_config, 0);
         assert_eq!(snapshot_controller.is_generating_snapshots(), expected);
@@ -314,7 +318,7 @@ mod tests {
             ..Default::default()
         };
 
-        let (snapshot_request_sender, snapshot_request_receiver) = unbounded();
+        let (snapshot_request_sender, snapshot_request_receiver) = bounded(1024);
         let snapshot_controller =
             SnapshotController::new(snapshot_request_sender, snapshot_config, 0);
 

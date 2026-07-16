@@ -36,7 +36,7 @@ fn load_stringified_credentials(credential: String) -> Result<Credentials, Strin
 
 pub struct AccessTokenInner {
     credentials: Credentials,
-    scope: Scope,
+    scopes: Vec<Scope>,
     token: RwLock<(Token, Instant)>,
     refresh_active: AtomicBool,
 }
@@ -64,11 +64,12 @@ impl AccessToken {
         if let Err(err) = credentials.rsa_key() {
             Err(format!("Invalid rsa key: {err}"))
         } else {
-            let token = RwLock::new(Self::get_token(&credentials, &scope).await?);
+            let token =
+                RwLock::new(Self::get_token(&credentials, std::slice::from_ref(&scope)).await?);
             let access_token = Self {
                 inner: Arc::new(AccessTokenInner {
                     credentials,
-                    scope,
+                    scopes: vec![scope],
                     token,
                     refresh_active: AtomicBool::new(false),
                 }),
@@ -84,21 +85,26 @@ impl AccessToken {
 
     async fn get_token(
         credentials: &Credentials,
-        scope: &Scope,
+        scopes: &[Scope],
     ) -> Result<(Token, Instant), String> {
-        info!("Requesting token for {scope:?} scope");
+        info!("Requesting token for {scopes:?} scope");
         let claims = JwtClaims::new(
             credentials.iss(),
-            scope,
+            scopes,
             credentials.token_uri(),
             None,
             None,
         );
-        let jwt = Jwt::new(claims, credentials.rsa_key().unwrap(), None);
+        let jwt = Arc::new(Jwt::new(claims, credentials.rsa_key().unwrap(), None));
 
-        let token = goauth::get_token(&jwt, credentials)
-            .await
-            .map_err(|err| format!("Failed to refresh access token: {err}"))?;
+        let token = tokio::task::spawn_blocking({
+            let jwt = jwt.clone();
+            let credentials = credentials.clone();
+            move || goauth::get_token(&jwt, &credentials)
+        })
+        .await
+        .map_err(|err| format!("Failed to spawn blocking task: {err}"))?
+        .map_err(|err| format!("Failed to get token: {err}"))?;
 
         info!("Token expires in {} seconds", token.expires_in());
         Ok((token, Instant::now()))
@@ -127,7 +133,7 @@ impl AccessToken {
         tokio::spawn(async move {
             match time::timeout(
                 time::Duration::from_secs(5),
-                Self::get_token(&this.credentials, &this.scope),
+                Self::get_token(&this.credentials, &this.scopes),
             )
             .await
             {

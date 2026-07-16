@@ -8,13 +8,13 @@ pub(crate) struct ComputeBudgetProgramIdFilter {
     // array of slots for all possible static and sanitized program_id_index,
     // each slot indicates if a program_id_index has not been checked (eg, None),
     // or already checked with result (eg, Some(result)) that can be reused.
-    flags: [Option<bool>; FILTER_SIZE as usize],
+    flags: [Option<bool>; FILTER_SIZE],
 }
 
 impl ComputeBudgetProgramIdFilter {
     pub(crate) fn new() -> Self {
         ComputeBudgetProgramIdFilter {
-            flags: [None; FILTER_SIZE as usize],
+            flags: [None; FILTER_SIZE],
         }
     }
 

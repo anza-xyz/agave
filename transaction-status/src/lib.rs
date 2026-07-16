@@ -20,7 +20,9 @@ pub use {
 use {
     crate::{
         option_serializer::OptionSerializer,
-        parse_accounts::{parse_legacy_message_accounts, parse_v0_message_accounts},
+        parse_accounts::{
+            parse_legacy_message_accounts, parse_v0_message_accounts, parse_v1_message_accounts,
+        },
         parse_instruction::parse,
     },
     agave_reserved_account_keys::ReservedAccountKeys,
@@ -41,6 +43,7 @@ use {
         versioned::{TransactionVersion, VersionedTransaction},
     },
     solana_transaction_error::TransactionError,
+    solana_transaction_status_client_types::UiTransactionConfig,
     std::collections::HashSet,
     thiserror::Error,
 };
@@ -56,6 +59,10 @@ pub mod parse_system;
 pub mod parse_token;
 pub mod parse_vote;
 pub mod token_balances;
+
+fn serialize_versioned_transaction(transaction: &VersionedTransaction) -> Vec<u8> {
+    wincode::serialize(transaction).expect("serialize versioned transaction")
+}
 
 pub struct BlockEncodingOptions {
     pub transaction_details: TransactionDetails,
@@ -395,6 +402,7 @@ pub struct VersionedConfirmedBlockWithEntries {
 
 // Data needed to reconstruct an Entry, given an ordered list of transactions in
 // a block. Used for uploading to BigTable.
+#[derive(Clone, Copy)]
 pub struct EntrySummary {
     pub num_hashes: u64,
     pub hash: Hash,
@@ -562,6 +570,7 @@ impl VersionedTransactionWithStatusMeta {
                 );
                 parse_v0_message_accounts(&loaded_message)
             }
+            VersionedMessage::V1(message) => parse_v1_message_accounts(message),
         };
 
         Ok(EncodedTransactionWithStatusMeta {
@@ -630,14 +639,14 @@ impl EncodableWithMeta for VersionedTransaction {
     ) -> Self::Encoded {
         match encoding {
             UiTransactionEncoding::Binary => EncodedTransaction::LegacyBinary(
-                bs58::encode(bincode::serialize(self).unwrap()).into_string(),
+                bs58::encode(serialize_versioned_transaction(self)).into_string(),
             ),
             UiTransactionEncoding::Base58 => EncodedTransaction::Binary(
-                bs58::encode(bincode::serialize(self).unwrap()).into_string(),
+                bs58::encode(serialize_versioned_transaction(self)).into_string(),
                 TransactionBinaryEncoding::Base58,
             ),
             UiTransactionEncoding::Base64 => EncodedTransaction::Binary(
-                BASE64_STANDARD.encode(bincode::serialize(self).unwrap()),
+                BASE64_STANDARD.encode(serialize_versioned_transaction(self)),
                 TransactionBinaryEncoding::Base64,
             ),
             UiTransactionEncoding::Json => self.json_encode(),
@@ -650,6 +659,9 @@ impl EncodableWithMeta for VersionedTransaction {
                     VersionedMessage::V0(message) => {
                         message.encode_with_meta(UiTransactionEncoding::JsonParsed, meta)
                     }
+                    VersionedMessage::V1(message) => {
+                        message.encode(UiTransactionEncoding::JsonParsed)
+                    }
                 },
             }),
         }
@@ -660,6 +672,7 @@ impl EncodableWithMeta for VersionedTransaction {
             message: match &self.message {
                 VersionedMessage::Legacy(message) => message.encode(UiTransactionEncoding::Json),
                 VersionedMessage::V0(message) => message.json_encode(),
+                VersionedMessage::V1(message) => message.encode(UiTransactionEncoding::Json),
             },
         })
     }
@@ -670,14 +683,14 @@ impl Encodable for VersionedTransaction {
     fn encode(&self, encoding: UiTransactionEncoding) -> Self::Encoded {
         match encoding {
             UiTransactionEncoding::Binary => EncodedTransaction::LegacyBinary(
-                bs58::encode(bincode::serialize(self).unwrap()).into_string(),
+                bs58::encode(serialize_versioned_transaction(self)).into_string(),
             ),
             UiTransactionEncoding::Base58 => EncodedTransaction::Binary(
-                bs58::encode(bincode::serialize(self).unwrap()).into_string(),
+                bs58::encode(serialize_versioned_transaction(self)).into_string(),
                 TransactionBinaryEncoding::Base58,
             ),
             UiTransactionEncoding::Base64 => EncodedTransaction::Binary(
-                BASE64_STANDARD.encode(bincode::serialize(self).unwrap()),
+                BASE64_STANDARD.encode(serialize_versioned_transaction(self)),
                 TransactionBinaryEncoding::Base64,
             ),
             UiTransactionEncoding::Json | UiTransactionEncoding::JsonParsed => {
@@ -688,6 +701,9 @@ impl Encodable for VersionedTransaction {
                             message.encode(UiTransactionEncoding::JsonParsed)
                         }
                         VersionedMessage::V0(message) => {
+                            message.encode(UiTransactionEncoding::JsonParsed)
+                        }
+                        VersionedMessage::V1(message) => {
                             message.encode(UiTransactionEncoding::JsonParsed)
                         }
                     },
@@ -752,6 +768,7 @@ impl Encodable for Message {
                     })
                     .collect(),
                 address_table_lookups: None,
+                transaction_config: None,
             })
         } else {
             UiMessage::Raw(UiRawMessage {
@@ -766,6 +783,7 @@ impl Encodable for Message {
                     })
                     .collect(),
                 address_table_lookups: None,
+                transaction_config: None,
             })
         }
     }
@@ -794,6 +812,7 @@ impl Encodable for v0::Message {
                     })
                     .collect(),
                 address_table_lookups: None,
+                transaction_config: None,
             })
         } else {
             UiMessage::Raw(UiRawMessage {
@@ -808,6 +827,7 @@ impl Encodable for v0::Message {
                     })
                     .collect(),
                 address_table_lookups: None,
+                transaction_config: None,
             })
         }
     }
@@ -845,6 +865,7 @@ impl EncodableWithMeta for v0::Message {
                 address_table_lookups: Some(
                     self.address_table_lookups.iter().map(Into::into).collect(),
                 ),
+                transaction_config: None,
             })
         } else {
             self.json_encode()
@@ -865,7 +886,49 @@ impl EncodableWithMeta for v0::Message {
             address_table_lookups: Some(
                 self.address_table_lookups.iter().map(Into::into).collect(),
             ),
+            transaction_config: None,
         })
+    }
+}
+
+impl Encodable for solana_message::v1::Message {
+    type Encoded = UiMessage;
+    fn encode(&self, encoding: UiTransactionEncoding) -> Self::Encoded {
+        if encoding == UiTransactionEncoding::JsonParsed {
+            let account_keys = AccountKeys::new(&self.account_keys, None);
+            UiMessage::Parsed(UiParsedMessage {
+                account_keys: parse_v1_message_accounts(self),
+                recent_blockhash: self.lifetime_specifier.to_string(),
+                instructions: self
+                    .instructions
+                    .iter()
+                    .map(|instruction| {
+                        parse_ui_instruction(
+                            instruction,
+                            &account_keys,
+                            Some(TRANSACTION_LEVEL_STACK_HEIGHT as u32),
+                        )
+                    })
+                    .collect(),
+                address_table_lookups: None,
+                transaction_config: Some(UiTransactionConfig::from(&self.config)),
+            })
+        } else {
+            UiMessage::Raw(UiRawMessage {
+                header: self.header,
+                account_keys: self.account_keys.iter().map(ToString::to_string).collect(),
+                recent_blockhash: self.lifetime_specifier.to_string(),
+                instructions: self
+                    .instructions
+                    .iter()
+                    .map(|ix| {
+                        UiCompiledInstruction::from(ix, Some(TRANSACTION_LEVEL_STACK_HEIGHT as u32))
+                    })
+                    .collect(),
+                address_table_lookups: None,
+                transaction_config: Some(UiTransactionConfig::from(&self.config)),
+            })
+        }
     }
 }
 
@@ -1016,5 +1079,41 @@ mod test {
         assert_eq!(encoded.slot, 42);
         assert_eq!(encoded.block_time, Some(1234567890));
         assert_eq!(encoded.transaction_index, Some(7));
+    }
+
+    #[test]
+    fn test_v1_binary_encoding_uses_wire_format() {
+        let message = solana_message::v1::Message::new(
+            solana_message::MessageHeader {
+                num_required_signatures: 1,
+                num_readonly_signed_accounts: 0,
+                num_readonly_unsigned_accounts: 1,
+            },
+            solana_message::v1::TransactionConfig::empty(),
+            solana_hash::Hash::new_from_array([7; solana_hash::HASH_BYTES]),
+            vec![
+                solana_pubkey::Pubkey::new_unique(),
+                solana_pubkey::Pubkey::new_unique(),
+            ],
+            vec![],
+        );
+        let transaction = VersionedTransaction {
+            signatures: vec![solana_signature::Signature::default()],
+            message: solana_message::VersionedMessage::V1(message),
+        };
+
+        let EncodedTransaction::Binary(encoded, TransactionBinaryEncoding::Base64) =
+            transaction.encode(UiTransactionEncoding::Base64)
+        else {
+            panic!("expected binary base64 output");
+        };
+        let bytes = BASE64_STANDARD.decode(&encoded).unwrap();
+
+        assert_eq!(bytes[0], solana_message::v1::V1_PREFIX);
+        assert_eq!(bytes, wincode::serialize(&transaction).unwrap());
+        assert_eq!(
+            EncodedTransaction::Binary(encoded, TransactionBinaryEncoding::Base64).decode(),
+            Some(transaction)
+        );
     }
 }

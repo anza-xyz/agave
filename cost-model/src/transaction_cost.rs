@@ -1,107 +1,58 @@
-#[cfg(feature = "dev-context-only-utils")]
-use solana_compute_budget_instruction::compute_budget_instruction_details::ComputeBudgetInstructionDetails;
 use {
-    crate::block_cost_limits, solana_pubkey::Pubkey,
-    solana_runtime_transaction::transaction_meta::StaticMeta,
+    solana_pubkey::Pubkey, solana_runtime_transaction::transaction_meta::TransactionMeta,
     solana_svm_transaction::svm_message::SVMMessage,
 };
 
-/// `TransactionCost`` is used to represent resources required to process a
-/// transaction, denominated in Compute Units (CUs). Resources required to
-/// process a regular transaction often include an array of variables, such as
-/// execution cost, loaded bytes, write lock and read lock etc.
-///
-/// SimpleVote has a simpler and pre-determined format. It has:
-///  - 1 or 2 signatures
-///  - 2 write locks
-///  - 1 vote instruction
-///  - less than 32k (page size) accounts to load
-///
-/// Its cost therefore can be static #33269.
-const SIMPLE_VOTE_USAGE_COST: u64 = 3428;
-
 #[derive(Debug)]
-pub enum TransactionCost<'a, Tx> {
-    SimpleVote { transaction: &'a Tx },
-    Transaction(UsageCostDetails<'a, Tx>),
+pub struct TransactionCost<'a, Tx> {
+    usage_cost: UsageCostDetails<'a, Tx>,
 }
 
-impl<Tx: StaticMeta> TransactionCost<'_, Tx> {
-    pub fn sum(&self) -> u64 {
-        #![allow(clippy::assertions_on_constants)]
-        match self {
-            Self::SimpleVote { .. } => {
-                const _: () = assert!(
-                    SIMPLE_VOTE_USAGE_COST
-                        == solana_vote_program::vote_processor::DEFAULT_COMPUTE_UNITS
-                            + block_cost_limits::SIGNATURE_COST
-                            + 2 * block_cost_limits::WRITE_LOCK_UNITS
-                            + 8
-                );
+impl<'a, Tx> TransactionCost<'a, Tx> {
+    pub fn new(usage_cost: UsageCostDetails<'a, Tx>) -> Self {
+        Self { usage_cost }
+    }
 
-                SIMPLE_VOTE_USAGE_COST
-            }
-            Self::Transaction(usage_cost) => usage_cost.sum(),
-        }
+    pub fn usage_cost_details(&self) -> &UsageCostDetails<'a, Tx> {
+        &self.usage_cost
+    }
+
+    pub fn usage_cost_details_mut(&mut self) -> &mut UsageCostDetails<'a, Tx> {
+        &mut self.usage_cost
+    }
+
+    pub fn sum(&self) -> u64 {
+        self.usage_cost.sum()
     }
 
     pub fn programs_execution_cost(&self) -> u64 {
-        match self {
-            Self::SimpleVote { .. } => solana_vote_program::vote_processor::DEFAULT_COMPUTE_UNITS,
-            Self::Transaction(usage_cost) => usage_cost.programs_execution_cost,
-        }
-    }
-
-    pub fn should_track_as_simple_vote(&self) -> bool {
-        match self {
-            Self::SimpleVote { .. } => true,
-            Self::Transaction(_) => false,
-        }
+        self.usage_cost.programs_execution_cost
     }
 
     pub fn data_bytes_cost(&self) -> u16 {
-        match self {
-            Self::SimpleVote { .. } => 0,
-            Self::Transaction(usage_cost) => usage_cost.data_bytes_cost,
-        }
+        self.usage_cost.data_bytes_cost
     }
 
     pub fn allocated_accounts_data_size(&self) -> u64 {
-        match self {
-            Self::SimpleVote { .. } => 0,
-            Self::Transaction(usage_cost) => usage_cost.allocated_accounts_data_size,
-        }
+        self.usage_cost.allocated_accounts_data_size
     }
 
     pub fn loaded_accounts_data_size_cost(&self) -> u64 {
-        match self {
-            Self::SimpleVote { .. } => 8, // simple-vote loads less than 32K account data,
-            // the cost round up to be one page (32K) cost: 8CU
-            Self::Transaction(usage_cost) => usage_cost.loaded_accounts_data_size_cost,
-        }
+        self.usage_cost.loaded_accounts_data_size_cost
     }
 
     pub fn signature_cost(&self) -> u64 {
-        match self {
-            Self::SimpleVote { .. } => block_cost_limits::SIGNATURE_COST,
-            Self::Transaction(usage_cost) => usage_cost.signature_cost,
-        }
+        self.usage_cost.signature_cost
     }
 
     pub fn write_lock_cost(&self) -> u64 {
-        match self {
-            Self::SimpleVote { .. } => block_cost_limits::WRITE_LOCK_UNITS.saturating_mul(2),
-            Self::Transaction(usage_cost) => usage_cost.write_lock_cost,
-        }
+        self.usage_cost.write_lock_cost
     }
 }
 
 impl<Tx: SVMMessage> TransactionCost<'_, Tx> {
     pub fn writable_accounts(&self) -> impl Iterator<Item = &Pubkey> {
-        let transaction = match self {
-            Self::SimpleVote { transaction } => transaction,
-            Self::Transaction(usage_cost) => usage_cost.transaction,
-        };
+        let transaction = self.usage_cost.transaction;
         transaction
             .account_keys()
             .iter()
@@ -110,45 +61,33 @@ impl<Tx: SVMMessage> TransactionCost<'_, Tx> {
     }
 }
 
-impl<Tx: StaticMeta> TransactionCost<'_, Tx> {
+impl<Tx: TransactionMeta> TransactionCost<'_, Tx> {
     pub fn num_transaction_signatures(&self) -> u64 {
-        match self {
-            Self::SimpleVote { .. } => 1,
-            Self::Transaction(usage_cost) => usage_cost
-                .transaction
-                .signature_details()
-                .num_transaction_signatures(),
-        }
+        self.usage_cost
+            .transaction
+            .signature_details()
+            .num_transaction_signatures()
     }
 
     pub fn num_secp256k1_instruction_signatures(&self) -> u64 {
-        match self {
-            Self::SimpleVote { .. } => 0,
-            Self::Transaction(usage_cost) => usage_cost
-                .transaction
-                .signature_details()
-                .num_secp256k1_instruction_signatures(),
-        }
+        self.usage_cost
+            .transaction
+            .signature_details()
+            .num_secp256k1_instruction_signatures()
     }
 
     pub fn num_ed25519_instruction_signatures(&self) -> u64 {
-        match self {
-            Self::SimpleVote { .. } => 0,
-            Self::Transaction(usage_cost) => usage_cost
-                .transaction
-                .signature_details()
-                .num_ed25519_instruction_signatures(),
-        }
+        self.usage_cost
+            .transaction
+            .signature_details()
+            .num_ed25519_instruction_signatures()
     }
 
     pub fn num_secp256r1_instruction_signatures(&self) -> u64 {
-        match self {
-            Self::SimpleVote { .. } => 0,
-            Self::Transaction(usage_cost) => usage_cost
-                .transaction
-                .signature_details()
-                .num_secp256r1_instruction_signatures(),
-        }
+        self.usage_cost
+            .transaction
+            .signature_details()
+            .num_secp256r1_instruction_signatures()
     }
 }
 
@@ -193,6 +132,10 @@ impl WritableKeysTransaction {
 
 #[cfg(feature = "dev-context-only-utils")]
 impl solana_svm_transaction::svm_message::SVMStaticMessage for WritableKeysTransaction {
+    fn version(&self) -> solana_transaction::versioned::TransactionVersion {
+        unimplemented!("WritableKeysTransaction::version")
+    }
+
     fn num_transaction_signatures(&self) -> u64 {
         unimplemented!("WritableKeysTransaction::num_transaction_signatures")
     }
@@ -280,7 +223,7 @@ impl solana_svm_transaction::svm_transaction::SVMTransaction for WritableKeysTra
 }
 
 #[cfg(feature = "dev-context-only-utils")]
-impl solana_runtime_transaction::transaction_meta::StaticMeta for WritableKeysTransaction {
+impl solana_runtime_transaction::transaction_meta::TransactionMeta for WritableKeysTransaction {
     fn message_hash(&self) -> &solana_hash::Hash {
         unimplemented!("WritableKeysTransaction::message_hash")
     }
@@ -295,8 +238,14 @@ impl solana_runtime_transaction::transaction_meta::StaticMeta for WritableKeysTr
         &DUMMY
     }
 
-    fn compute_budget_instruction_details(&self) -> &ComputeBudgetInstructionDetails {
-        unimplemented!("WritableKeysTransaction::compute_budget_instruction_details")
+    fn transaction_configuration(
+        &self,
+        _feature_set: &agave_feature_set::FeatureSet,
+    ) -> Result<
+        solana_runtime_transaction::transaction_meta::TransactionConfiguration,
+        solana_transaction::TransactionError,
+    > {
+        unimplemented!("WritableKeysTransaction::transaction_configuration")
     }
 
     fn instruction_data_len(&self) -> u16 {
@@ -318,13 +267,17 @@ impl solana_runtime_transaction::transaction_with_meta::TransactionWithMeta
     fn to_versioned_transaction(&self) -> solana_transaction::versioned::VersionedTransaction {
         unimplemented!("WritableKeysTransaction::to_versioned_transaction")
     }
+
+    fn serialized_size(&self) -> usize {
+        unimplemented!("WritableKeysTransaction::serialized_size")
+    }
 }
 
 #[cfg(test)]
 mod tests {
     use {
         super::*,
-        crate::cost_model::CostModel,
+        crate::{block_cost_limits, cost_model::CostModel},
         agave_feature_set::{FeatureSet, bls_pubkey_management_in_vote_account},
         agave_reserved_account_keys::ReservedAccountKeys,
         solana_hash::Hash,
@@ -334,7 +287,6 @@ mod tests {
         solana_transaction::{sanitized::MessageHash, versioned::VersionedTransaction},
         solana_vote::vote_transaction,
         solana_vote_program::vote_state::TowerSync,
-        test_case::test_matrix,
     };
 
     fn get_example_transaction() -> VersionedTransaction {
@@ -353,19 +305,8 @@ mod tests {
         VersionedTransaction::from(transaction)
     }
 
-    #[test_matrix(
-        [false, true],
-        [false, true]
-    )]
-    fn test_vote_transaction_cost(
-        remove_simple_vote_from_cost_model: bool,
-        simd_0387_enabled: bool,
-    ) {
-        // SIMD-0387 requires `remove_simple_vote_from_cost_model`.
-        if simd_0387_enabled && !remove_simple_vote_from_cost_model {
-            return;
-        }
-
+    #[test]
+    fn test_vote_transaction_cost() {
         agave_logger::setup();
 
         use {
@@ -383,29 +324,16 @@ mod tests {
             Some(true),
             SimpleAddressLoader::Disabled,
             &ReservedAccountKeys::empty_key_set(),
-            true,
-            true,
         )
         .unwrap();
 
-        let mut feature_set = FeatureSet::all_enabled();
-        if !remove_simple_vote_from_cost_model {
-            feature_set.deactivate(&agave_feature_set::remove_simple_vote_from_cost_model::id());
-        }
-        if !simd_0387_enabled {
-            feature_set.deactivate(&bls_pubkey_management_in_vote_account::id());
-        }
+        for simd_0387_enabled in [false, true] {
+            let mut feature_set = FeatureSet::all_enabled();
+            if !simd_0387_enabled {
+                feature_set.deactivate(&bls_pubkey_management_in_vote_account::id());
+            }
 
-        // Verify actual cost matches expected.
-        let expected_cost = if !remove_simple_vote_from_cost_model {
-            SIMPLE_VOTE_USAGE_COST
-        } else {
-            // when feature `stop-use-static-simple-vote-tx-cost` is enabled, vote transaction
-            // cost is calculated based on its UsageCostDetails too:
-            //
-            // sample transaction has 2 signatures
             let signature_cost = 2 * block_cost_limits::SIGNATURE_COST;
-            // sample transaction has 2 write lock
             let write_lock_cost = 2 * block_cost_limits::WRITE_LOCK_UNITS;
             let data_bytes_cost =
                 vote_transaction.instruction_data_len() / (INSTRUCTION_DATA_BYTES_COST as u16);
@@ -420,7 +348,7 @@ mod tests {
             // and it has default loaded_account_data_size
             let loaded_accounts_data_size_cost =
                 CostModel::calculate_loaded_accounts_data_size_cost(
-                    MAX_LOADED_ACCOUNTS_DATA_SIZE_BYTES.into(),
+                    MAX_LOADED_ACCOUNTS_DATA_SIZE_BYTES.get(),
                     &feature_set,
                 );
             let vote_program_usage_details = UsageCostDetails {
@@ -432,11 +360,11 @@ mod tests {
                 loaded_accounts_data_size_cost,
                 allocated_accounts_data_size: 0,
             };
-            vote_program_usage_details.sum()
-        };
+            let expected_cost = vote_program_usage_details.sum();
 
-        let vote_cost = CostModel::calculate_cost(&vote_transaction, &feature_set);
-        assert_eq!(expected_cost, vote_cost.sum());
+            let vote_cost = CostModel::calculate_cost(&vote_transaction, &feature_set);
+            assert_eq!(expected_cost, vote_cost.sum());
+        }
     }
 
     #[test]
@@ -450,8 +378,6 @@ mod tests {
             Some(false),
             SimpleAddressLoader::Disabled,
             &ReservedAccountKeys::empty_key_set(),
-            true,
-            true,
         )
         .unwrap();
 

@@ -3,8 +3,8 @@ use {
     crate::{
         blockstore::{
             column::{
-                Column, ColumnIndexDeprecation, ColumnName, DEPRECATED_PROGRAM_COSTS_COLUMN_NAME,
-                ProtobufColumn, TypedColumn, columns,
+                Column, ColumnName, DEPRECATED_PROGRAM_COSTS_COLUMN_NAME,
+                DEPRECATED_TRANSACTION_STATUS_INDEX_NAME, ProtobufColumn, TypedColumn, columns,
             },
             error::{BlockstoreError, Result},
         },
@@ -16,18 +16,16 @@ use {
         },
         blockstore_options::{AccessType, BlockstoreOptions, LedgerColumnOptions},
     },
-    bincode::deserialize,
     log::*,
     prost::Message,
     rocksdb::{
         self, ColumnFamily, ColumnFamilyDescriptor, CompactionDecision, DB, DBCompressionType,
-        DBIterator, DBPinnableSlice, DBRawIterator, IteratorMode as RocksIteratorMode, LiveFile,
-        Options, WriteBatch as RWriteBatch,
+        DBIterator, DBPinnableSlice, IteratorMode as RocksIteratorMode, LiveFile, Options,
+        WriteBatch as RWriteBatch,
         compaction_filter::CompactionFilter,
         compaction_filter_factory::{CompactionFilterContext, CompactionFilterFactory},
         properties as RocksProperties,
     },
-    serde::de::DeserializeOwned,
     solana_clock::Slot,
     std::{
         collections::HashSet,
@@ -38,8 +36,12 @@ use {
         path::{Path, PathBuf},
         sync::{
             Arc,
-            atomic::{AtomicBool, AtomicU64, Ordering},
+            atomic::{AtomicU64, Ordering},
         },
+    },
+    wincode::{
+        SchemaRead,
+        config::{ConfigCore, DefaultConfig},
     },
 };
 
@@ -64,7 +66,6 @@ pub enum IteratorMode<Index> {
 #[derive(Default, Clone, Debug)]
 struct OldestSlot {
     slot: Arc<AtomicU64>,
-    clean_slot_0: Arc<AtomicBool>,
 }
 
 impl OldestSlot {
@@ -84,20 +85,11 @@ impl OldestSlot {
         // require strictly synchronized semantics in this regard
         self.slot.load(Ordering::Relaxed)
     }
-
-    pub(crate) fn set_clean_slot_0(&self, clean_slot_0: bool) {
-        self.clean_slot_0.store(clean_slot_0, Ordering::Relaxed);
-    }
-
-    pub(crate) fn get_clean_slot_0(&self) -> bool {
-        self.clean_slot_0.load(Ordering::Relaxed)
-    }
 }
 
 #[derive(Debug)]
 pub(crate) struct Rocks {
     db: rocksdb::DB,
-    path: PathBuf,
     access_type: AccessType,
     oldest_slot: OldestSlot,
     column_options: Arc<LedgerColumnOptions>,
@@ -143,10 +135,16 @@ impl Rocks {
         if db.cf_handle(DEPRECATED_PROGRAM_COSTS_COLUMN_NAME).is_some() {
             db.drop_cf(DEPRECATED_PROGRAM_COSTS_COLUMN_NAME)?;
         }
+        // Delete the now unused transaction status index column if it is present
+        if db
+            .cf_handle(DEPRECATED_TRANSACTION_STATUS_INDEX_NAME)
+            .is_some()
+        {
+            db.drop_cf(DEPRECATED_TRANSACTION_STATUS_INDEX_NAME)?;
+        }
 
         let rocks = Rocks {
             db,
-            path,
             access_type: options.access_type,
             oldest_slot,
             column_options,
@@ -186,13 +184,17 @@ impl Rocks {
             new_cf_descriptor::<columns::TransactionStatus>(options, oldest_slot),
             new_cf_descriptor::<columns::AddressSignatures>(options, oldest_slot),
             new_cf_descriptor::<columns::TransactionMemos>(options, oldest_slot),
-            new_cf_descriptor::<columns::TransactionStatusIndex>(options, oldest_slot),
             new_cf_descriptor::<columns::Rewards>(options, oldest_slot),
             new_cf_descriptor::<columns::Blocktime>(options, oldest_slot),
             new_cf_descriptor::<columns::PerfSamples>(options, oldest_slot),
             new_cf_descriptor::<columns::BlockHeight>(options, oldest_slot),
             new_cf_descriptor::<columns::OptimisticSlots>(options, oldest_slot),
             new_cf_descriptor::<columns::MerkleRootMeta>(options, oldest_slot),
+            new_cf_descriptor::<columns::AlternateSlotMeta>(options, oldest_slot),
+            new_cf_descriptor::<columns::AlternateIndex>(options, oldest_slot),
+            new_cf_descriptor::<columns::AlternateShredData>(options, oldest_slot),
+            new_cf_descriptor::<columns::AlternateMerkleRootMeta>(options, oldest_slot),
+            new_cf_descriptor::<columns::DoubleMerkleMeta>(options, oldest_slot),
         ];
 
         // When remaining columns are optional we can just return immediately here.
@@ -237,7 +239,7 @@ impl Rocks {
         cf_descriptors
     }
 
-    const fn columns() -> [&'static str; 20] {
+    const fn columns() -> [&'static str; 24] {
         [
             columns::ErasureMeta::NAME,
             columns::DeadSlots::NAME,
@@ -252,13 +254,17 @@ impl Rocks {
             columns::TransactionStatus::NAME,
             columns::AddressSignatures::NAME,
             columns::TransactionMemos::NAME,
-            columns::TransactionStatusIndex::NAME,
             columns::Rewards::NAME,
             columns::Blocktime::NAME,
             columns::PerfSamples::NAME,
             columns::BlockHeight::NAME,
             columns::OptimisticSlots::NAME,
             columns::MerkleRootMeta::NAME,
+            columns::AlternateSlotMeta::NAME,
+            columns::AlternateIndex::NAME,
+            columns::AlternateShredData::NAME,
+            columns::AlternateMerkleRootMeta::NAME,
+            columns::DoubleMerkleMeta::NAME,
         ]
     }
 
@@ -393,7 +399,8 @@ impl Rocks {
         self.db.iterator_cf(cf, iterator_mode)
     }
 
-    pub(crate) fn raw_iterator_cf(&self, cf: &ColumnFamily) -> Result<DBRawIterator<'_>> {
+    #[cfg(test)]
+    pub(crate) fn raw_iterator_cf(&self, cf: &ColumnFamily) -> Result<rocksdb::DBRawIterator<'_>> {
         Ok(self.db.raw_iterator_cf(cf))
     }
 
@@ -448,16 +455,8 @@ impl Rocks {
         }
     }
 
-    pub(crate) fn storage_size(&self) -> Result<u64> {
-        Ok(fs_extra::dir::get_size(&self.path)?)
-    }
-
     pub(crate) fn set_oldest_slot(&self, oldest_slot: Slot) {
         self.oldest_slot.set(oldest_slot);
-    }
-
-    pub(crate) fn set_clean_slot_0(&self, clean_slot_0: bool) {
-        self.oldest_slot.set_clean_slot_0(clean_slot_0);
     }
 }
 
@@ -558,22 +557,68 @@ impl AsRef<[u8]> for BlockstoreByteReference<'_> {
 }
 
 impl WriteBatch {
-    fn put_cf<K: AsRef<[u8]>>(&mut self, cf: &ColumnFamily, key: K, value: &[u8]) -> Result<()> {
+    fn put_cf<K: AsRef<[u8]>>(&mut self, cf: &ColumnFamily, key: K, value: &[u8]) {
         self.write_batch.put_cf(cf, key, value);
-        Ok(())
     }
 
-    fn delete_cf<K: AsRef<[u8]>>(&mut self, cf: &ColumnFamily, key: K) -> Result<()> {
+    fn delete_cf<K: AsRef<[u8]>>(&mut self, cf: &ColumnFamily, key: K) {
         self.write_batch.delete_cf(cf, key);
-        Ok(())
     }
 
-    fn delete_range_cf<K: AsRef<[u8]>>(&mut self, cf: &ColumnFamily, from: K, to: K) -> Result<()> {
+    fn delete_range_cf<K: AsRef<[u8]>>(&mut self, cf: &ColumnFamily, from: K, to: K) {
         self.write_batch.delete_range_cf(cf, from, to);
-        Ok(())
     }
 }
 
+/// A pinned deserialized value with the ability to hold references into a [`DBPinnableSlice`].
+///
+/// All references in the deserialized payload will be tied to the lifetime of the [`DBPinnableSlice`].
+///
+/// Use this for zero-copy access to a value stored in the blockstore -- no reason to keep
+/// the [`DBPinnableSlice`] alive for owned values.
+pub struct DBPinnedT<'a, C: ConfigCore, T: SchemaRead<'a, C>> {
+    val: T::Dst,
+    _slice: DBPinnableSlice<'a>,
+    _phantom: PhantomData<C>,
+}
+
+impl<'a, C, T> std::ops::Deref for DBPinnedT<'a, C, T>
+where
+    C: ConfigCore,
+    T: SchemaRead<'a, C>,
+{
+    type Target = T::Dst;
+
+    #[inline]
+    fn deref(&self) -> &Self::Target {
+        &self.val
+    }
+}
+
+impl<'de, T, C> DBPinnedT<'de, C, T>
+where
+    C: ConfigCore,
+    T: SchemaRead<'de, C>,
+{
+    fn decode(slice: DBPinnableSlice<'de>) -> Result<Self> {
+        let bytes = slice.as_ref();
+        // SAFETY: `DBPinnableSlice` provides a stable reference into the underlying storage and keeps
+        // the RocksDB value pointer valid until it is dropped.
+        // `DBPinnedT` stores `val` before `_slice`, so `val` is dropped first;
+        // any references decoded into `val` cannot outlive the pinned bytes.
+        let val = T::get(unsafe { std::slice::from_raw_parts(bytes.as_ptr(), bytes.len()) })?;
+        Ok(Self {
+            val,
+            _slice: slice,
+            _phantom: PhantomData,
+        })
+    }
+
+    #[inline]
+    pub fn get(&self) -> &T::Dst {
+        &self.val
+    }
+}
 impl<C> LedgerColumn<C>
 where
     C: Column + ColumnName,
@@ -596,6 +641,37 @@ where
             );
         }
         result
+    }
+
+    pub fn get_slice(&self, index: C::Index) -> Result<Option<DBPinnableSlice<'_>>> {
+        let is_perf_enabled = maybe_enable_rocksdb_perf(
+            self.column_options.rocks_perf_sample_interval,
+            &self.read_perf_status,
+        );
+
+        let key = <C as Column>::key(&index);
+        let result = self.backend.get_pinned_cf(self.handle(), key);
+
+        if let Some(op_start_instant) = is_perf_enabled {
+            report_rocksdb_read_perf(
+                C::NAME,
+                PERF_METRIC_OP_NAME_GET,
+                &op_start_instant.elapsed(),
+                &self.column_options,
+            );
+        }
+        result
+    }
+
+    #[inline]
+    pub fn get_pinned_t<'a, T>(
+        &'a self,
+        index: C::Index,
+    ) -> Result<Option<DBPinnedT<'a, DefaultConfig, T>>>
+    where
+        T: SchemaRead<'a, DefaultConfig>,
+    {
+        self.get_slice(index)?.map(DBPinnedT::decode).transpose()
     }
 
     /// Create a key type suitable for use with multi_get_bytes() and
@@ -709,14 +785,9 @@ where
         result
     }
 
-    pub fn put_bytes_in_batch(
-        &self,
-        batch: &mut WriteBatch,
-        index: C::Index,
-        value: &[u8],
-    ) -> Result<()> {
+    pub fn put_bytes_in_batch(&self, batch: &mut WriteBatch, index: C::Index, value: &[u8]) {
         let key = <C as Column>::key(&index);
-        batch.put_cf(self.handle(), key, value)
+        batch.put_cf(self.handle(), key, value);
     }
 
     /// Retrieves the specified RocksDB integer property of the current
@@ -748,15 +819,15 @@ where
         result
     }
 
-    pub fn delete_in_batch(&self, batch: &mut WriteBatch, index: C::Index) -> Result<()> {
+    pub fn delete_in_batch(&self, batch: &mut WriteBatch, index: C::Index) {
         let key = <C as Column>::key(&index);
-        batch.delete_cf(self.handle(), key)
+        batch.delete_cf(self.handle(), key);
     }
 
     /// Adds a \[`from`, `to`\] range that deletes all entries between the `from` slot
     /// and `to` slot inclusively.  If `from` slot and `to` slot are the same, then all
     /// entries in that slot will be removed.
-    pub fn delete_range_in_batch(&self, batch: &mut WriteBatch, from: Slot, to: Slot) -> Result<()>
+    pub fn delete_range_in_batch(&self, batch: &mut WriteBatch, from: Slot, to: Slot)
     where
         C: Column + ColumnName,
     {
@@ -767,7 +838,7 @@ where
         // adjusting the `to` slot range by 1.
         let from_key = <C as Column>::key(&C::as_index(from));
         let to_key = <C as Column>::key(&C::as_index(to.saturating_add(1)));
-        batch.delete_range_cf(self.handle(), from_key, to_key)
+        batch.delete_range_cf(self.handle(), from_key, to_key);
     }
 
     /// Delete files whose slot range is within \[`from`, `to`\].
@@ -872,7 +943,8 @@ where
     ) -> Result<()> {
         let key = <C as Column>::key(&index);
         let serialized_value = C::serialize(value)?;
-        batch.put_cf(self.handle(), key, &serialized_value)
+        batch.put_cf(self.handle(), key, &serialized_value);
+        Ok(())
     }
 }
 
@@ -880,43 +952,6 @@ impl<C> LedgerColumn<C>
 where
     C: ProtobufColumn + ColumnName,
 {
-    pub fn get_protobuf_or_bincode<T: DeserializeOwned + Into<C::Type>>(
-        &self,
-        index: C::Index,
-    ) -> Result<Option<C::Type>> {
-        let key = <C as Column>::key(&index);
-        self.get_raw_protobuf_or_bincode::<T>(key)
-    }
-
-    pub(crate) fn get_raw_protobuf_or_bincode<T: DeserializeOwned + Into<C::Type>>(
-        &self,
-        key: impl AsRef<[u8]>,
-    ) -> Result<Option<C::Type>> {
-        let is_perf_enabled = maybe_enable_rocksdb_perf(
-            self.column_options.rocks_perf_sample_interval,
-            &self.read_perf_status,
-        );
-        let result = self.backend.get_pinned_cf(self.handle(), key);
-        if let Some(op_start_instant) = is_perf_enabled {
-            report_rocksdb_read_perf(
-                C::NAME,
-                PERF_METRIC_OP_NAME_GET,
-                &op_start_instant.elapsed(),
-                &self.column_options,
-            );
-        }
-
-        if let Some(pinnable_slice) = result? {
-            let value = match C::Type::decode(pinnable_slice.as_ref()) {
-                Ok(value) => value,
-                Err(_) => deserialize::<T>(pinnable_slice.as_ref())?.into(),
-            };
-            Ok(Some(value))
-        } else {
-            Ok(None)
-        }
-    }
-
     pub fn get_protobuf(&self, index: C::Index) -> Result<Option<C::Type>> {
         let is_perf_enabled = maybe_enable_rocksdb_perf(
             self.column_options.rocks_perf_sample_interval,
@@ -967,72 +1002,10 @@ where
     }
 }
 
-impl<C> LedgerColumn<C>
-where
-    C: ColumnIndexDeprecation + ColumnName,
-{
-    pub(crate) fn iter_current_index_filtered(
-        &self,
-        iterator_mode: IteratorMode<C::Index>,
-    ) -> Result<impl Iterator<Item = (C::Index, Box<[u8]>)> + '_> {
-        let start_key: <C as Column>::Key;
-        let iterator_mode = match iterator_mode {
-            IteratorMode::Start => RocksIteratorMode::Start,
-            IteratorMode::End => RocksIteratorMode::End,
-            IteratorMode::From(start, direction) => {
-                start_key = <C as Column>::key(&start);
-                RocksIteratorMode::From(start_key.as_ref(), direction)
-            }
-        };
-
-        let iter = self.backend.iterator_cf(self.handle(), iterator_mode);
-        Ok(iter.filter_map(|pair| {
-            let (key, value) = pair.unwrap();
-            C::try_current_index(&key).ok().map(|index| (index, value))
-        }))
-    }
-
-    pub(crate) fn iter_deprecated_index_filtered(
-        &self,
-        iterator_mode: IteratorMode<C::DeprecatedIndex>,
-    ) -> Result<impl Iterator<Item = (C::DeprecatedIndex, Box<[u8]>)> + '_> {
-        let start_key: <C as ColumnIndexDeprecation>::DeprecatedKey;
-        let iterator_mode = match iterator_mode {
-            IteratorMode::Start => RocksIteratorMode::Start,
-            IteratorMode::End => RocksIteratorMode::End,
-            IteratorMode::From(start_from, direction) => {
-                start_key = C::deprecated_key(start_from);
-                RocksIteratorMode::From(start_key.as_ref(), direction)
-            }
-        };
-
-        let iterator = self.backend.iterator_cf(self.handle(), iterator_mode);
-        Ok(iterator.filter_map(|pair| {
-            let (key, value) = pair.unwrap();
-            C::try_deprecated_index(&key)
-                .ok()
-                .map(|index| (index, value))
-        }))
-    }
-
-    pub(crate) fn delete_deprecated_in_batch(
-        &self,
-        batch: &mut WriteBatch,
-        index: C::DeprecatedIndex,
-    ) -> Result<()> {
-        let key = C::deprecated_key(index);
-        batch.delete_cf(self.handle(), &key)
-    }
-}
-
 /// A CompactionFilter implementation to remove keys older than a given slot.
 struct PurgedSlotFilter<C: Column + ColumnName> {
     /// The oldest slot to keep; any slot < oldest_slot will be removed
     oldest_slot: Slot,
-    /// Whether to preserve keys that return slot 0, even when oldest_slot > 0.
-    // This is used to delete old column data that wasn't keyed with a Slot, and so always returns
-    // `C::slot() == 0`
-    clean_slot_0: bool,
     name: CString,
     _phantom: PhantomData<C>,
 }
@@ -1042,7 +1015,7 @@ impl<C: Column + ColumnName> CompactionFilter for PurgedSlotFilter<C> {
         use rocksdb::CompactionDecision::*;
 
         let slot_in_key = C::slot(C::index(key));
-        if slot_in_key >= self.oldest_slot || (slot_in_key == 0 && !self.clean_slot_0) {
+        if slot_in_key >= self.oldest_slot {
             Keep
         } else {
             Remove
@@ -1065,10 +1038,8 @@ impl<C: Column + ColumnName> CompactionFilterFactory for PurgedSlotFilterFactory
 
     fn create(&mut self, _context: CompactionFilterContext) -> Self::Filter {
         let copied_oldest_slot = self.oldest_slot.get();
-        let copied_clean_slot_0 = self.oldest_slot.get_clean_slot_0();
         PurgedSlotFilter::<C> {
             oldest_slot: copied_oldest_slot,
-            clean_slot_0: copied_clean_slot_0,
             name: CString::new(format!(
                 "purged_slot_filter({}, {:?})",
                 C::NAME,
@@ -1256,7 +1227,6 @@ pub mod tests {
             is_manual_compaction: true,
         };
         let oldest_slot = OldestSlot::default();
-        oldest_slot.set_clean_slot_0(true);
 
         let mut factory = PurgedSlotFilterFactory::<ShredData> {
             oldest_slot: oldest_slot.clone(),
@@ -1418,32 +1388,5 @@ pub mod tests {
 
         // The deprecated column should have been dropped by Rocks::open()
         assert!(!is_program_costs_column_present(db_path));
-    }
-
-    impl<C> LedgerColumn<C>
-    where
-        C: ColumnIndexDeprecation + ProtobufColumn + ColumnName,
-    {
-        pub fn put_deprecated_protobuf(
-            &self,
-            index: C::DeprecatedIndex,
-            value: &C::Type,
-        ) -> Result<()> {
-            let mut buf = Vec::with_capacity(value.encoded_len());
-            value.encode(&mut buf)?;
-            self.backend
-                .put_cf(self.handle(), C::deprecated_key(index), &buf)
-        }
-    }
-
-    impl<C> LedgerColumn<C>
-    where
-        C: ColumnIndexDeprecation + TypedColumn + ColumnName,
-    {
-        pub fn put_deprecated(&self, index: C::DeprecatedIndex, value: &C::Type) -> Result<()> {
-            let serialized_value = C::serialize(value)?;
-            self.backend
-                .put_cf(self.handle(), C::deprecated_key(index), &serialized_value)
-        }
     }
 }

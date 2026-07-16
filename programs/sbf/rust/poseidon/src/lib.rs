@@ -213,7 +213,7 @@ fn test_poseidon_input_one() -> Result<(), PoseidonSyscallError> {
     Ok(())
 }
 
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub extern "C" fn entrypoint(_input: *mut u8) -> u64 {
     msg!("poseidon_hash");
 

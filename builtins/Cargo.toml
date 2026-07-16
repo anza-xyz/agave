@@ -9,16 +9,20 @@ homepage = { workspace = true }
 license = { workspace = true }
 edition = { workspace = true }
 
+[package.metadata.docs.rs]
+targets = ["x86_64-unknown-linux-gnu"]
+all-features = true
+rustdoc-args = ["--cfg=docsrs"]
+
 [features]
 agave-unstable-api = []
 dev-context-only-utils = []
 
 [dependencies]
 agave-feature-set = { workspace = true }
-solana-bpf-loader-program = { workspace = true }
+solana-bpf-loader-program = { workspace = true, features = ["metrics"] }
 solana-compute-budget-program = { workspace = true }
 solana-hash = { workspace = true }
-solana-loader-v4-program = { workspace = true }
 solana-program-runtime = { workspace = true }
 solana-pubkey = { workspace = true }
 solana-sdk-ids = { workspace = true }

@@ -19,7 +19,7 @@ use {
         input_validators::{is_pubkey, is_url},
         keypair::DefaultSigner,
     },
-    solana_cli_output::{CliValidatorInfo, CliValidatorInfoVec},
+    solana_cli_output::{CliValidatorInfo, CliValidatorInfoVec, stdout::writeln_stdout},
     solana_config_interface::{
         instruction::{self as config_instruction},
         state::{ConfigKeys, get_config_data},
@@ -129,20 +129,20 @@ fn parse_args(matches: &ArgMatches<'_>) -> Value {
 }
 
 fn parse_validator_info(
-    pubkey: &Pubkey,
     account: &Account,
-) -> Result<(Pubkey, Map<String, serde_json::value::Value>), Box<dyn error::Error>> {
+) -> Option<(Pubkey, bool, Map<String, serde_json::value::Value>)> {
     if account.owner != solana_config_interface::id() {
-        return Err(format!("{pubkey} is not a validator info account").into());
+        return None;
     }
-    let key_list: ConfigKeys = deserialize(&account.data)?;
-    if !key_list.keys.is_empty() {
-        let (validator_pubkey, _) = key_list.keys[1];
-        let validator_info_string: String = deserialize(get_config_data(&account.data)?)?;
-        let validator_info: Map<_, _> = serde_json::from_str(&validator_info_string)?;
-        Ok((validator_pubkey, validator_info))
+    let key_list: ConfigKeys = deserialize(&account.data).ok()?;
+    if key_list.keys.len() > 1 {
+        let (validator_pubkey, is_signed) = key_list.keys[1];
+        let validator_info_string: String =
+            get_config_data(&account.data).and_then(deserialize).ok()?;
+        let validator_info: Map<_, _> = serde_json::from_str(&validator_info_string).ok()?;
+        Some((validator_pubkey, is_signed, validator_info))
     } else {
-        Err(format!("{pubkey} could not be parsed as a validator info account").into())
+        None
     }
 }
 
@@ -242,7 +242,7 @@ impl ValidatorInfoSubCommands for App<'_, '_> {
     }
 }
 
-pub fn parse_validator_info_command(
+pub fn parse_publish_validator_info_command(
     matches: &ArgMatches<'_>,
     default_signer: &DefaultSigner,
     wallet_manager: &mut Option<Rc<RemoteWalletManager>>,
@@ -252,7 +252,7 @@ pub fn parse_validator_info_command(
     // Prepare validator info
     let validator_info = parse_args(matches);
     Ok(CliCommandInfo {
-        command: CliCommand::SetValidatorInfo {
+        command: CliCommand::PublishValidatorInfo {
             validator_info,
             force_keybase: matches.is_present("force"),
             info_pubkey,
@@ -271,7 +271,7 @@ pub fn parse_get_validator_info_command(
     ))
 }
 
-pub async fn process_set_validator_info(
+pub async fn process_publish_validator_info(
     rpc_client: &RpcClient,
     config: &CliConfig<'_>,
     validator_info: &Value,
@@ -282,7 +282,9 @@ pub async fn process_set_validator_info(
     // Validate keybase username
     if let Some(string) = validator_info.get("keybaseUsername") {
         if force_keybase {
-            println!("--force supplied, skipping Keybase verification");
+            writeln_stdout(format_args!(
+                "--force supplied, skipping Keybase verification"
+            ))?;
         } else {
             let result = verify_keybase(&config.signers[0].pubkey(), string);
             if result.is_err() {
@@ -316,8 +318,10 @@ pub async fn process_set_validator_info(
                 Err(_) => false,
             },
         )
-        .find(|(pubkey, account)| {
-            let (validator_pubkey, _) = parse_validator_info(pubkey, account).unwrap();
+        .find(|(_, account)| {
+            let Some((validator_pubkey, true, _)) = parse_validator_info(account) else {
+                return false;
+            };
             validator_pubkey == config.signers[0].pubkey()
         });
 
@@ -347,7 +351,9 @@ pub async fn process_set_validator_info(
 
     let signers = if balance == 0 {
         if info_pubkey != info_keypair.pubkey() {
-            println!("Account {info_pubkey:?} does not exist. Generating new keypair...");
+            writeln_stdout(format_args!(
+                "Account {info_pubkey:?} does not exist. Generating new keypair..."
+            ))?;
             info_pubkey = info_keypair.pubkey();
         }
         vec![config.signers[0], &info_keypair]
@@ -356,13 +362,21 @@ pub async fn process_set_validator_info(
     };
 
     let compute_unit_limit = ComputeUnitLimit::Simulated;
+    if balance == 0 {
+        writeln_stdout(format_args!(
+            "Publishing info for Validator {:?}",
+            config.signers[0].pubkey()
+        ))?;
+    } else {
+        writeln_stdout(format_args!(
+            "Updating Validator {:?} info at: {:?}",
+            config.signers[0].pubkey(),
+            info_pubkey
+        ))?;
+    }
     let build_message = |lamports| {
         let keys = keys.clone();
         if balance == 0 {
-            println!(
-                "Publishing info for Validator {:?}",
-                config.signers[0].pubkey()
-            );
             let mut instructions =
                 config_instruction::create_account_with_max_config_space::<ValidatorInfo>(
                     &config.signers[0].pubkey(),
@@ -383,11 +397,6 @@ pub async fn process_set_validator_info(
             )]);
             Message::new(&instructions, Some(&config.signers[0].pubkey()))
         } else {
-            println!(
-                "Updating Validator {:?} info at: {:?}",
-                config.signers[0].pubkey(),
-                info_pubkey
-            );
             let instructions = vec![config_instruction::store(
                 &info_pubkey,
                 false,
@@ -425,8 +434,10 @@ pub async fn process_set_validator_info(
         )
         .await?;
 
-    println!("Success! Validator info published at: {info_pubkey:?}");
-    println!("{signature_str}");
+    writeln_stdout(format_args!(
+        "Success! Validator info published at: {info_pubkey:?}"
+    ))?;
+    writeln_stdout(format_args!("{signature_str}"))?;
     Ok("".to_string())
 }
 
@@ -456,18 +467,23 @@ pub async fn process_get_validator_info(
     };
 
     let mut validator_info_list: Vec<CliValidatorInfo> = vec![];
-    if validator_info.is_empty() {
-        println!("No validator info accounts found");
-    }
     for (validator_info_pubkey, validator_info_account) in validator_info.iter() {
-        let (validator_pubkey, validator_info) =
-            parse_validator_info(validator_info_pubkey, validator_info_account)?;
-        validator_info_list.push(CliValidatorInfo {
-            identity_pubkey: validator_pubkey.to_string(),
-            info_pubkey: validator_info_pubkey.to_string(),
-            info: validator_info,
-        });
+        let Some((validator_pubkey, is_signed, validator_info)) =
+            parse_validator_info(validator_info_account)
+        else {
+            continue;
+        };
+
+        if config.verbose || is_signed {
+            validator_info_list.push(CliValidatorInfo {
+                identity_pubkey: validator_pubkey.to_string(),
+                info_pubkey: validator_info_pubkey.to_string(),
+                is_signed,
+                info: validator_info,
+            });
+        }
     }
+
     Ok(config
         .output_format
         .formatted_string(&CliValidatorInfoVec::new(validator_info_list)))
@@ -594,32 +610,24 @@ mod tests {
         let data = serialize(&(config, validator_info)).unwrap();
 
         assert_eq!(
-            parse_validator_info(
-                &Pubkey::default(),
-                &Account {
-                    owner: solana_config_interface::id(),
-                    data,
-                    ..Account::default()
-                }
-            )
+            parse_validator_info(&Account {
+                owner: solana_config_interface::id(),
+                data,
+                ..Account::default()
+            })
             .unwrap(),
-            (pubkey, info)
+            (pubkey, true, info)
         );
     }
 
     #[test]
     fn test_parse_validator_info_not_validator_info_account() {
         assert!(
-            parse_validator_info(
-                &Pubkey::default(),
-                &Account {
-                    owner: solana_pubkey::new_rand(),
-                    ..Account::default()
-                }
-            )
-            .unwrap_err()
-            .to_string()
-            .contains("is not a validator info account")
+            parse_validator_info(&Account {
+                owner: solana_pubkey::new_rand(),
+                ..Account::default()
+            })
+            .is_none()
         );
     }
 
@@ -632,17 +640,12 @@ mod tests {
         let data = serialize(&(config, validator_info)).unwrap();
 
         assert!(
-            parse_validator_info(
-                &Pubkey::default(),
-                &Account {
-                    owner: solana_config_interface::id(),
-                    data,
-                    ..Account::default()
-                },
-            )
-            .unwrap_err()
-            .to_string()
-            .contains("could not be parsed as a validator info account")
+            parse_validator_info(&Account {
+                owner: solana_config_interface::id(),
+                data,
+                ..Account::default()
+            },)
+            .is_none()
         );
     }
 

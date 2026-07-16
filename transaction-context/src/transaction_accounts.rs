@@ -98,12 +98,13 @@ impl TransactionAccountViewMut<'_> {
         Arc::make_mut(&mut self.private_fields.payload)
     }
 
+    pub(crate) fn raw_mut_data_slice(&mut self) -> *mut [u8] {
+        &raw mut self.data_mut()[..]
+    }
+
     pub(crate) fn resize(&mut self, new_len: usize, value: u8) {
         self.data_mut().resize(new_len, value);
-        // SAFETY: We are synchronizing the lengths.
-        unsafe {
-            self.abi_account.payload.set_len(new_len as u64);
-        }
+        self.abi_account.payload.set_len(new_len as u64);
     }
 
     #[cfg_attr(feature = "dev-context-only-utils", qualifiers(pub))]
@@ -113,10 +114,7 @@ impl TransactionAccountViewMut<'_> {
             // If the buffer is shared, the cheapest thing to do is to clone the
             // incoming slice and replace the buffer.
             self.private_fields.payload = Arc::new(new_data.to_vec());
-            // SAFETY: We are synchronizing the lengths.
-            unsafe {
-                self.abi_account.payload.set_len(new_data.len() as u64);
-            }
+            self.abi_account.payload.set_len(new_data.len() as u64);
             return;
         };
 
@@ -142,8 +140,6 @@ impl TransactionAccountViewMut<'_> {
         // We just reserved enough capacity. We set data::len to 0 to avoid
         // possible UB on panic (dropping uninitialized elements), do the copy,
         // finally set the new length once everything is initialized.
-        #[allow(clippy::uninit_vec)]
-        // this is a false positive, the lint doesn't currently special case set_len(0)
         unsafe {
             data.set_len(0);
             ptr::copy_nonoverlapping(new_data.as_ptr(), data.as_mut_ptr(), new_len);
@@ -154,12 +150,9 @@ impl TransactionAccountViewMut<'_> {
 
     pub(crate) fn extend_from_slice(&mut self, data: &[u8]) {
         self.data_mut().extend_from_slice(data);
-        // SAFETY: We are synchronizing the lengths.
-        unsafe {
-            self.abi_account
-                .payload
-                .set_len(self.private_fields.payload_len() as u64);
-        }
+        self.abi_account
+            .payload
+            .set_len(self.private_fields.payload_len() as u64);
     }
 
     pub(crate) fn reserve(&mut self, additional: usize) {
@@ -226,16 +219,6 @@ impl WritableAccount for TransactionAccountViewMut<'_> {
 
     fn set_rent_epoch(&mut self, epoch: u64) {
         self.private_fields.rent_epoch = epoch;
-    }
-
-    fn create(
-        _lamports: u64,
-        _data: Vec<u8>,
-        _owner: Pubkey,
-        _executable: bool,
-        _rent_epoch: u64,
-    ) -> Self {
-        panic!("It is not possible to create a TransactionAccountMutView");
     }
 }
 
@@ -590,13 +573,10 @@ pub struct AccountRefMut<'a> {
 #[cfg(not(any(target_arch = "bpf", target_arch = "sbf")))]
 impl Drop for AccountRefMut<'_> {
     fn drop(&mut self) {
-        // SAFETY: We are synchronizing the lengths.
-        unsafe {
-            self.account
-                .abi_account
-                .payload
-                .set_len(self.account.private_fields.payload_len() as u64);
-        }
+        self.account
+            .abi_account
+            .payload
+            .set_len(self.account.private_fields.payload_len() as u64);
         self.borrow_counter.release_borrow_mut();
     }
 }

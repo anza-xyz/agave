@@ -9,20 +9,18 @@ homepage = { workspace = true }
 license = { workspace = true }
 edition = { workspace = true }
 
+[package.metadata.docs.rs]
+targets = ["x86_64-unknown-linux-gnu"]
+all-features = true
+rustdoc-args = ["--cfg=docsrs"]
+
 [features]
 agave-unstable-api = []
-dev-context-only-utils = [
-    "dep:qualifier_attr",
-    "solana-program-runtime/dev-context-only-utils",
-]
-frozen-abi = ["dep:solana-frozen-abi", "solana-fee-structure/frozen-abi"]
+conf-stack-frame-size = ["solana-program-runtime/conf-stack-frame-size"]
+dev-context-only-utils = []
 
 [dependencies]
-qualifier_attr = { workspace = true, optional = true }
 solana-fee-structure = { workspace = true }
-solana-frozen-abi = { workspace = true, optional = true, features = [
-    "frozen-abi",
-] }
 solana-program-runtime = { workspace = true }
 
 [lints]

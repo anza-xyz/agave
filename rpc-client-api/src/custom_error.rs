@@ -28,6 +28,8 @@ pub const JSON_RPC_SERVER_ERROR_MIN_CONTEXT_SLOT_NOT_REACHED: i64 = -32016;
 pub const JSON_RPC_SERVER_ERROR_EPOCH_REWARDS_PERIOD_ACTIVE: i64 = -32017;
 pub const JSON_RPC_SERVER_ERROR_SLOT_NOT_EPOCH_BOUNDARY: i64 = -32018;
 pub const JSON_RPC_SERVER_ERROR_LONG_TERM_STORAGE_UNREACHABLE: i64 = -32019;
+pub const JSON_RPC_SERVER_ERROR_FILTER_TRANSACTION_NOT_FOUND: i64 = -32020;
+pub const JSON_RPC_SERVER_ERROR_NO_SLOT_HISTORY: i64 = -32021;
 
 #[derive(Error, Debug)]
 #[allow(clippy::large_enum_variant)]
@@ -80,6 +82,10 @@ pub enum RpcCustomError {
     SlotNotEpochBoundary { slot: Slot },
     #[error("LongTermStorageUnreachable")]
     LongTermStorageUnreachable,
+    #[error("FilterTransactionNotFound")]
+    FilterTransactionNotFound { signature: String },
+    #[error("NoSlotHistory")]
+    NoSlotHistory,
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -257,6 +263,16 @@ impl From<RpcCustomError> for Error {
             RpcCustomError::LongTermStorageUnreachable => Self {
                 code: ErrorCode::ServerError(JSON_RPC_SERVER_ERROR_LONG_TERM_STORAGE_UNREACHABLE),
                 message: "Failed to query long-term storage; please try again".to_string(),
+                data: None,
+            },
+            RpcCustomError::FilterTransactionNotFound { signature } => Self {
+                code: ErrorCode::ServerError(JSON_RPC_SERVER_ERROR_FILTER_TRANSACTION_NOT_FOUND),
+                message: format!("Transaction {signature} not found"),
+                data: None,
+            },
+            RpcCustomError::NoSlotHistory => Self {
+                code: ErrorCode::ServerError(JSON_RPC_SERVER_ERROR_NO_SLOT_HISTORY),
+                message: "No slot history".to_string(),
                 data: None,
             },
         }

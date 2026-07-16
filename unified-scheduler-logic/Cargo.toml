@@ -9,12 +9,18 @@ homepage = { workspace = true }
 license = { workspace = true }
 edition = { workspace = true }
 
+[package.metadata.docs.rs]
+targets = ["x86_64-unknown-linux-gnu"]
+all-features = true
+rustdoc-args = ["--cfg=docsrs"]
+
 [features]
 agave-unstable-api = []
 
 [dependencies]
 assert_matches = { workspace = true }
 solana-clock = { workspace = true }
+solana-hash = { workspace = true }
 solana-pubkey = { workspace = true }
 solana-runtime-transaction = { workspace = true }
 solana-transaction = { workspace = true }
@@ -24,7 +30,9 @@ unwrap_none = { workspace = true }
 [dev-dependencies]
 solana-instruction = { workspace = true }
 solana-message = { workspace = true }
-solana-runtime-transaction = { workspace = true, features = [
-    "dev-context-only-utils",
-] }
+solana-pubkey = { workspace = true, features = ["rand"] }
+solana-runtime-transaction = { path = "../runtime-transaction", features = ["agave-unstable-api", "dev-context-only-utils"] }
 test-case = { workspace = true }
+
+[lints]
+workspace = true

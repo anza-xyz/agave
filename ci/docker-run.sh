@@ -43,6 +43,12 @@ ARGS=(
 
 if [[ -n $CI ]]; then
   if [[ -n $BUILDKITE ]]; then
+    ARGS+=(
+      --env BUILDKITE
+      --env BUILDKITE_AGENT_ACCESS_TOKEN
+      --env BUILDKITE_JOB_ID
+    )
+
     # I hate buildkite-esque echo is leaking into this generic shell wrapper.
     # but it's easiest to notify to users, and properly guarded under $BUILDKITE_ env
     # (2 is chosen for third time's the charm).
@@ -112,11 +118,6 @@ fi
 
 # Environment variables to propagate into the container
 ARGS+=(
-  --env BUILDKITE
-  --env BUILDKITE_AGENT_ACCESS_TOKEN
-  --env BUILDKITE_JOB_ID
-  --env BUILDKITE_PARALLEL_JOB
-  --env BUILDKITE_PARALLEL_JOB_COUNT
   --env CI
   --env CI_BRANCH
   --env CI_BASE_BRANCH
@@ -126,15 +127,18 @@ ARGS+=(
   --env CI_JOB_ID
   --env CI_PULL_REQUEST
   --env CI_REPO_SLUG
-  --env CRATES_IO_TOKEN
 )
 
-# Also propagate environment variables needed for codecov
-# https://docs.codecov.io/docs/testing-with-docker#section-codecov-inside-docker
-# We normalize CI to `1`; but codecov expects it to be `true` to detect Buildkite...
-# Unfortunately, codecov.io fails sometimes:
-#   curl: (7) Failed to connect to codecov.io port 443: Connection timed out
-CODECOV_ENVS=$(CI=true bash <(while ! curl -sS --retry 5 --retry-delay 2 --retry-connrefused --fail https://codecov.io/env; do sleep 10; done))
+CODECOV_ENVS=
+if [[ ${FETCH_CODECOV_ENVS:-false} == true ]]; then
+	echo "FETCH_CODECOV_ENVS=true, fetching codecov environment variables"
+	# ref: https://docs.codecov.io/docs/testing-with-docker#section-codecov-inside-docker
+	# Unfortunately, codecov.io fails sometimes:
+	#   curl: (7) Failed to connect to codecov.io port 443: Connection timed out
+	CODECOV_ENVS=$(CI=true bash <(while ! curl -sS --retry 5 --retry-delay 2 --retry-connrefused --fail https://codecov.io/env; do sleep 10; done))
+else
+	echo "skipping fetching codecov environment variables. (set FETCH_CODECOV_ENVS to true to enable)"
+fi
 
 if $INTERACTIVE; then
   if [[ -n $1 ]]; then

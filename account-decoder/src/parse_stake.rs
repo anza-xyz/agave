@@ -46,6 +46,11 @@ pub struct UiStakeAccount {
 #[derive(Debug, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
 pub struct UiMeta {
+    #[deprecated(
+        since = "4.1.0",
+        note = "Stake account rent must be calculated via the `Rent` sysvar. This value will \
+                cease to be correct once lamports-per-byte is adjusted."
+    )]
     pub rent_exempt_reserve: StringAmount,
     pub authorized: UiAuthorized,
     pub lockup: UiLockup,
@@ -54,6 +59,7 @@ pub struct UiMeta {
 impl From<Meta> for UiMeta {
     fn from(meta: Meta) -> Self {
         Self {
+            #[expect(deprecated)]
             rent_exempt_reserve: meta.rent_exempt_reserve.to_string(),
             authorized: meta.authorized.into(),
             lockup: meta.lockup.into(),
@@ -118,11 +124,6 @@ pub struct UiDelegation {
     pub stake: StringAmount,
     pub activation_epoch: StringAmount,
     pub deactivation_epoch: StringAmount,
-    #[deprecated(
-        since = "1.16.7",
-        note = "Please use `solana_stake_interface::state::warmup_cooldown_rate()` instead"
-    )]
-    pub warmup_cooldown_rate: f64,
 }
 
 impl From<Delegation> for UiDelegation {
@@ -133,7 +134,6 @@ impl From<Delegation> for UiDelegation {
             stake: delegation.stake.to_string(),
             activation_epoch: delegation.activation_epoch.to_string(),
             deactivation_epoch: delegation.deactivation_epoch.to_string(),
-            warmup_cooldown_rate: delegation.warmup_cooldown_rate,
         }
     }
 }
@@ -194,7 +194,7 @@ mod test {
                 stake: 20,
                 activation_epoch: 2,
                 deactivation_epoch: u64::MAX,
-                warmup_cooldown_rate: 0.25,
+                _reserved: [0; 8],
             },
             credits_observed: 10,
         };
@@ -222,7 +222,6 @@ mod test {
                         stake: 20.to_string(),
                         activation_epoch: 2.to_string(),
                         deactivation_epoch: u64::MAX.to_string(),
-                        warmup_cooldown_rate: 0.25,
                     },
                     credits_observed: 10,
                 })

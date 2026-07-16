@@ -1,9 +1,9 @@
 use {
-    serde::{Deserialize, Serialize},
+    serde::{Deserialize, Deserializer, Serialize, Serializer},
     std::fmt,
 };
 
-#[derive(Default, Debug, Eq, PartialEq, Ord, PartialOrd, Hash, Clone, Serialize, Deserialize)]
+#[derive(Default, Debug, Eq, PartialEq, Ord, PartialOrd, Hash, Clone)]
 pub struct CliClientId(Option<String>);
 
 impl CliClientId {
@@ -24,5 +24,23 @@ impl fmt::Display for CliClientId {
 impl From<Option<String>> for CliClientId {
     fn from(id: Option<String>) -> Self {
         Self(id)
+    }
+}
+
+impl Serialize for CliClientId {
+    fn serialize<S: Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+        // Serialize as a plain string so it can be a JSON map key
+        serializer.serialize_str(&self.to_string())
+    }
+}
+
+impl<'de> Deserialize<'de> for CliClientId {
+    fn deserialize<D: Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        let s = String::deserialize(deserializer)?;
+        if s == "Unknown" {
+            Ok(Self(None))
+        } else {
+            Ok(Self(Some(s)))
+        }
     }
 }

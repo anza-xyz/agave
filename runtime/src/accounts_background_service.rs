@@ -34,7 +34,12 @@ use {
     },
 };
 
-const INTERVAL_MS: u64 = 100;
+/// Limit the maximum frequency that the ABS main loop can run.
+/// If the loop ran for less than this duration, sleep the remainder.
+/// E.g. with a min interval of 100 millis, the loop will run a maximum
+/// of 10 times per second.  Lower frequency is allowed, and occurs
+/// when longer-running tasks are triggered.
+const MIN_LOOP_INTERVAL: Duration = Duration::from_millis(100);
 // Set the clean interval duration to be approximately how long before the next incremental
 // snapshot request is received, plus some buffer.  The default incremental snapshot interval is
 // 100 slots, which ends up being 40 seconds plus buffer.
@@ -138,7 +143,6 @@ pub struct SnapshotRequestHandler {
 
 impl SnapshotRequestHandler {
     // Returns the latest requested snapshot slot and storages
-    #[allow(clippy::type_complexity)]
     pub fn handle_snapshot_requests(
         &self,
         non_snapshot_time_us: u128,
@@ -259,6 +263,7 @@ impl SnapshotRequestHandler {
                     .accounts_db
                     .accounts_cache
                     .fetch_max_flush_root()
+                    .expect("Roots have been flushed")
         );
         flush_accounts_cache_time.stop();
 
@@ -403,7 +408,6 @@ pub struct AbsRequestHandlers {
 
 impl AbsRequestHandlers {
     // Returns the latest requested snapshot slot, if one exists
-    #[allow(clippy::type_complexity)]
     pub fn handle_snapshot_requests(
         &self,
         non_snapshot_time_us: u128,
@@ -566,8 +570,12 @@ impl AccountsBackgroundService {
                                 previous_shrink_time = Instant::now();
                             }
                         }
-                        stats.record_and_maybe_submit(start_time.elapsed());
-                        sleep(Duration::from_millis(INTERVAL_MS));
+
+                        let loop_dur = start_time.elapsed();
+                        stats.record_and_maybe_submit(loop_dur);
+                        if let Some(sleep_dur) = MIN_LOOP_INTERVAL.checked_sub(loop_dur) {
+                            sleep(sleep_dur);
+                        }
                     }
                     info!("AccountsBackgroundService has stopped");
                     is_running.store(false, Ordering::Relaxed);
@@ -720,16 +728,16 @@ fn cmp_snapshot_request_kinds_by_priority(
 mod test {
     use {
         super::*, crate::genesis_utils::create_genesis_config,
-        agave_snapshots::snapshot_config::SnapshotConfig, crossbeam_channel::unbounded,
+        agave_snapshots::snapshot_config::SnapshotConfig, crossbeam_channel::bounded,
         solana_account::AccountSharedData, solana_epoch_schedule::EpochSchedule,
-        solana_pubkey::Pubkey,
+        solana_leader_schedule::SlotLeader, solana_pubkey::Pubkey,
     };
 
     #[test]
     fn test_accounts_background_service_remove_dead_slots() {
         let genesis = create_genesis_config(10);
         let bank0 = Arc::new(Bank::new_for_tests(&genesis.genesis_config));
-        let (pruned_banks_sender, pruned_banks_receiver) = unbounded();
+        let (pruned_banks_sender, pruned_banks_receiver) = bounded(1024);
         let pruned_banks_request_handler = PrunedBanksRequestHandler {
             pruned_banks_receiver,
         };
@@ -769,7 +777,7 @@ mod test {
         let snapshot_config = SnapshotConfig::default();
 
         let pending_snapshot_packages = Arc::new(Mutex::new(PendingSnapshotPackages::default()));
-        let (snapshot_request_sender, snapshot_request_receiver) = crossbeam_channel::unbounded();
+        let (snapshot_request_sender, snapshot_request_receiver) = bounded(1024);
         let snapshot_controller = Arc::new(SnapshotController::new(
             snapshot_request_sender.clone(),
             snapshot_config,
@@ -794,7 +802,8 @@ mod test {
         let mut genesis_config_info = create_genesis_config(10);
         genesis_config_info.genesis_config.epoch_schedule =
             EpochSchedule::custom(SLOTS_PER_EPOCH, SLOTS_PER_EPOCH, false);
-        let mut bank = Arc::new(Bank::new_for_tests(&genesis_config_info.genesis_config));
+        let (mut bank, _bank_forks) = Bank::new_for_tests(&genesis_config_info.genesis_config)
+            .wrap_with_bank_forks_for_tests();
 
         // We need to get and set accounts-db's latest full snapshot slot to test
         // get_next_snapshot_request().  To workaround potential borrowing issues
@@ -833,7 +842,7 @@ mod test {
                 let slot = bank.slot() + 1;
                 bank = Arc::new(Bank::new_from_parent(
                     bank.clone(),
-                    &Pubkey::new_unique(),
+                    SlotLeader::new_unique(),
                     slot,
                 ));
 
@@ -908,7 +917,7 @@ mod test {
     /// Ensure that we can prune banks with the same slot (if they were on different forks)
     #[test]
     fn test_pruned_banks_request_handler_handle_request() {
-        let (pruned_banks_sender, pruned_banks_receiver) = crossbeam_channel::unbounded();
+        let (pruned_banks_sender, pruned_banks_receiver) = bounded(1024);
         let pruned_banks_request_handler = PrunedBanksRequestHandler {
             pruned_banks_receiver,
         };
@@ -919,40 +928,40 @@ mod test {
             pruned_banks_sender,
         ))));
 
-        let fork0_bank0 = Arc::new(bank);
+        let (fork0_bank0, bank_forks) = bank.wrap_with_bank_forks_for_tests();
         let fork0_bank1 = Arc::new(Bank::new_from_parent(
             fork0_bank0.clone(),
-            &Pubkey::new_unique(),
+            SlotLeader::new_unique(),
             fork0_bank0.slot() + 1,
         ));
         let fork1_bank1 = Arc::new(Bank::new_from_parent(
             fork0_bank0.clone(),
-            &Pubkey::new_unique(),
+            SlotLeader::new_unique(),
             fork0_bank0.slot() + 1,
         ));
         let fork2_bank1 = Arc::new(Bank::new_from_parent(
             fork0_bank0.clone(),
-            &Pubkey::new_unique(),
+            SlotLeader::new_unique(),
             fork0_bank0.slot() + 1,
         ));
         let fork0_bank2 = Arc::new(Bank::new_from_parent(
             fork0_bank1.clone(),
-            &Pubkey::new_unique(),
+            SlotLeader::new_unique(),
             fork0_bank1.slot() + 1,
         ));
         let fork1_bank2 = Arc::new(Bank::new_from_parent(
             fork1_bank1.clone(),
-            &Pubkey::new_unique(),
+            SlotLeader::new_unique(),
             fork1_bank1.slot() + 1,
         ));
         let fork0_bank3 = Arc::new(Bank::new_from_parent(
             fork0_bank2.clone(),
-            &Pubkey::new_unique(),
+            SlotLeader::new_unique(),
             fork0_bank2.slot() + 1,
         ));
         let fork3_bank3 = Arc::new(Bank::new_from_parent(
             fork0_bank2.clone(),
-            &Pubkey::new_unique(),
+            SlotLeader::new_unique(),
             fork0_bank2.slot() + 1,
         ));
         fork0_bank3.squash();
@@ -964,6 +973,7 @@ mod test {
         drop(fork2_bank1);
         drop(fork0_bank1);
         drop(fork0_bank0);
+        drop(bank_forks);
         let num_banks_purged = pruned_banks_request_handler.handle_request(&fork0_bank3);
         assert_eq!(num_banks_purged, 7);
     }

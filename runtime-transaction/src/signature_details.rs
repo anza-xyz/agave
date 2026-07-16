@@ -1,8 +1,6 @@
-// static account keys has max
-use {
-    agave_transaction_view::static_account_keys_frame::MAX_STATIC_ACCOUNTS_PER_PACKET as FILTER_SIZE,
-    solana_pubkey::Pubkey, solana_svm_transaction::instruction::SVMInstruction,
-};
+use {solana_pubkey::Pubkey, solana_svm_transaction::instruction::SVMInstruction};
+
+const FILTER_SIZE: usize = u8::MAX as usize + 1;
 
 pub struct PrecompileSignatureDetails {
     pub num_secp256k1_instruction_signatures: u64,
@@ -84,17 +82,17 @@ enum ProgramIdStatus {
 }
 
 struct SignatureDetailsFilter {
-    // array of slots for all possible static and sanitized program_id_index,
+    // array of slots for all possible u8 program_id_index values,
     // each slot indicates if a program_id_index has not been checked, or is
     // already checked with result that can be reused.
-    flags: [Option<ProgramIdStatus>; FILTER_SIZE as usize],
+    flags: [Option<ProgramIdStatus>; FILTER_SIZE],
 }
 
 impl SignatureDetailsFilter {
     #[inline]
     fn new() -> Self {
         Self {
-            flags: [None; FILTER_SIZE as usize],
+            flags: [None; FILTER_SIZE],
         }
     }
 
@@ -207,5 +205,24 @@ mod tests {
         assert_eq!(signature_details.num_secp256k1_instruction_signatures, 0);
         assert_eq!(signature_details.num_ed25519_instruction_signatures, 0);
         assert_eq!(signature_details.num_secp256r1_instruction_signatures, 0);
+    }
+
+    #[test]
+    fn test_get_signature_details_program_id_index_above_packet_static_account_limit() {
+        let mut program_ids = vec![Pubkey::new_unique(); FILTER_SIZE];
+        program_ids[38] = solana_sdk_ids::secp256k1_program::ID;
+        program_ids[63] = solana_sdk_ids::ed25519_program::ID;
+        program_ids[u8::MAX as usize] = solana_sdk_ids::secp256r1_program::ID;
+
+        let instructions = [
+            make_instruction(&program_ids, 38, &[2]),
+            make_instruction(&program_ids, 63, &[3]),
+            make_instruction(&program_ids, u8::MAX, &[4]),
+        ];
+
+        let signature_details = get_precompile_signature_details(instructions.into_iter());
+        assert_eq!(signature_details.num_secp256k1_instruction_signatures, 2);
+        assert_eq!(signature_details.num_ed25519_instruction_signatures, 3);
+        assert_eq!(signature_details.num_secp256r1_instruction_signatures, 4);
     }
 }

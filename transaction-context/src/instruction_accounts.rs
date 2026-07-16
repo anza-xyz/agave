@@ -279,7 +279,6 @@ impl BorrowedInstructionAccount<'_, '_> {
     #[inline]
     #[deprecated(since = "2.1.0", note = "Use `get_owner` instead")]
     pub fn is_executable(&self) -> bool {
-        #[allow(deprecated)]
         self.account.executable()
     }
 
@@ -302,7 +301,7 @@ impl BorrowedInstructionAccount<'_, '_> {
             return Err(InstructionError::ExecutableModified);
         }
         // don't touch the account if the executable flag does not change
-        #[allow(deprecated)]
+        #[expect(deprecated)]
         if self.is_executable() == is_executable {
             return Ok(());
         }
@@ -351,10 +350,6 @@ impl BorrowedInstructionAccount<'_, '_> {
     /// Returns an error if the account data can not be resized to the given length
     pub fn can_data_be_resized(&self, new_len: usize) -> Result<(), InstructionError> {
         let old_len = self.get_data().len();
-        // Only the owner can change the length of the data
-        if new_len != old_len && !self.is_owned_by_current_program() {
-            return Err(InstructionError::AccountDataSizeChanged);
-        }
         self.transaction_context
             .accounts
             .can_data_be_resized(old_len, new_len)?;
@@ -380,7 +375,7 @@ fn is_zeroed(buf: &[u8]) -> bool {
     const ZEROS: [u8; ZEROS_LEN] = [0; ZEROS_LEN];
     let mut chunks = buf.chunks_exact(ZEROS_LEN);
 
-    #[allow(clippy::indexing_slicing)]
+    #[expect(clippy::indexing_slicing)]
     {
         chunks.all(|chunk| chunk == &ZEROS[..])
             && chunks.remainder() == &ZEROS[..chunks.remainder().len()]

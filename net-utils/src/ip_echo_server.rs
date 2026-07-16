@@ -4,16 +4,18 @@ use {
     serde::{Deserialize, Serialize},
     solana_serde::default_on_eof,
     std::{
+        collections::HashSet,
         io,
         net::{IpAddr, SocketAddr},
         num::NonZeroUsize,
+        sync::{Arc, Mutex},
         time::Duration,
     },
     tokio::{
         io::{AsyncReadExt, AsyncWriteExt},
         net::{TcpListener, TcpStream},
         runtime::{self, Runtime},
-        time::timeout,
+        time::{Instant, timeout_at},
     },
 };
 
@@ -27,6 +29,26 @@ pub const DEFAULT_IP_ECHO_SERVER_THREADS: NonZeroUsize = NonZeroUsize::new(2).un
 pub const MAX_PORT_COUNT_PER_MESSAGE: usize = 4;
 
 const IO_TIMEOUT: Duration = Duration::from_secs(5);
+// Non-loopback peers are limited to one active connection each; loopback is exempt.
+const MAX_CONCURRENT_CONNECTIONS: usize = 2048;
+
+struct ConnectionCleanup {
+    active_ips: Arc<Mutex<HashSet<IpAddr>>>,
+    ip: IpAddr,
+}
+
+impl ConnectionCleanup {
+    fn new(active_ips: Arc<Mutex<HashSet<IpAddr>>>, ip: IpAddr) -> Self {
+        Self { active_ips, ip }
+    }
+}
+
+impl Drop for ConnectionCleanup {
+    fn drop(&mut self) {
+        let mut active_ips = self.active_ips.lock().expect("active_ips lock poisoned");
+        release_active_ip(&mut active_ips, self.ip);
+    }
+}
 
 #[derive(Serialize, Deserialize, Default, Debug)]
 pub(crate) struct IpEchoServerMessage {
@@ -67,12 +89,15 @@ async fn process_connection(
     shred_version: Option<u16>,
 ) -> io::Result<()> {
     info!("connection from {peer_addr:?}");
+    let deadline = Instant::now()
+        .checked_add(IO_TIMEOUT)
+        .ok_or_else(|| io::Error::other("failed to compute request deadline"))?;
 
     let mut data = vec![0u8; ip_echo_server_request_length()];
 
     let mut writer = {
         let (mut reader, writer) = socket.split();
-        let _ = timeout(IO_TIMEOUT, reader.read_exact(&mut data)).await??;
+        let _ = timeout_at(deadline, reader.read_exact(&mut data)).await??;
         writer
     };
 
@@ -83,8 +108,8 @@ async fn process_connection(
         // place of a JSON RPC URL:
         if request_header == "GET " || request_header == "POST" {
             // Send HTTP error response
-            timeout(
-                IO_TIMEOUT,
+            timeout_at(
+                deadline,
                 writer.write_all(b"HTTP/1.1 400 Bad Request\nContent-length: 0\n\n"),
             )
             .await??;
@@ -128,8 +153,8 @@ async fn process_connection(
         if *tcp_port != 0 {
             debug!("Connecting to tcp/{tcp_port}");
 
-            let mut tcp_stream = timeout(
-                IO_TIMEOUT,
+            let mut tcp_stream = timeout_at(
+                deadline,
                 TcpStream::connect(&SocketAddr::new(peer_addr.ip(), *tcp_port)),
             )
             .await??;
@@ -147,22 +172,52 @@ async fn process_connection(
     let mut bytes = vec![0u8; IP_ECHO_SERVER_RESPONSE_LENGTH];
     bincode::serialize_into(&mut bytes[HEADER_LENGTH..], &response).unwrap();
     trace!("response: {bytes:?}");
-    writer.write_all(&bytes).await
+    timeout_at(deadline, writer.write_all(&bytes)).await?
+}
+
+fn release_active_ip(active_ips: &mut HashSet<IpAddr>, ip: IpAddr) {
+    let removed = active_ips.remove(&ip);
+    debug_assert!(removed, "cleanup for unknown IP {ip}");
 }
 
 async fn run_echo_server(tcp_listener: std::net::TcpListener, shred_version: Option<u16>) {
     info!("bound to {:?}", tcp_listener.local_addr().unwrap());
     let tcp_listener =
         TcpListener::from_std(tcp_listener).expect("Failed to convert std::TcpListener");
+    let active_ips = Arc::new(Mutex::new(HashSet::new()));
 
     loop {
         let connection = tcp_listener.accept().await;
         match connection {
             Ok((socket, peer_addr)) => {
+                let tracked_ip = (!peer_addr.ip().is_loopback()).then_some(peer_addr.ip());
+                if let Some(ip) = tracked_ip {
+                    let mut active_ip_set = active_ips
+                        .lock()
+                        .expect("active_ips lock poisoned while admitting");
+                    if active_ip_set.len() >= MAX_CONCURRENT_CONNECTIONS {
+                        debug!(
+                            "dropping connection from {peer_addr:?}: max concurrent connections \
+                             ({MAX_CONCURRENT_CONNECTIONS}) reached",
+                        );
+                        continue;
+                    }
+                    if !active_ip_set.insert(ip) {
+                        debug!(
+                            "dropping connection from {peer_addr:?}: max concurrent connections \
+                             per IP (1) reached"
+                        );
+                        continue;
+                    }
+                }
+                let cleanup =
+                    tracked_ip.map(|ip| ConnectionCleanup::new(Arc::clone(&active_ips), ip));
                 runtime::Handle::current().spawn(async move {
+                    let cleanup = cleanup;
                     if let Err(err) = process_connection(socket, peer_addr, shred_version).await {
                         info!("session failed: {err:?}");
                     }
+                    drop(cleanup);
                 });
             }
             Err(err) => warn!("listener accept failed: {err:?}"),

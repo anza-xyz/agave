@@ -16,6 +16,7 @@ use {
         num::TryFromIntError,
     },
     thiserror::Error,
+    wincode::{ReadError, SchemaRead, SchemaWrite, WriteError},
 };
 
 const DUPLICATE_SHRED_HEADER_SIZE: usize = 63;
@@ -23,8 +24,16 @@ const DUPLICATE_SHRED_HEADER_SIZE: usize = 63;
 pub(crate) type DuplicateShredIndex = u16;
 pub(crate) const MAX_DUPLICATE_SHREDS: DuplicateShredIndex = 512;
 
-#[cfg_attr(feature = "frozen-abi", derive(AbiExample))]
-#[derive(Clone, Debug, PartialEq, Eq, Deserialize, Serialize)]
+#[cfg_attr(
+    feature = "frozen-abi",
+    derive(AbiExample, StableAbi, StableAbiSample),
+    frozen_abi(
+        abi_digest = "9zVjcmgLcLv1YDhBwDFYgMMjtpoZjk77YoL3sLBnABTf",
+        abi_serializer = ["bincode", "wincode"],
+        test_roundtrip = "eq_and_wire",
+    )
+)]
+#[derive(Clone, Debug, PartialEq, Eq, Deserialize, Serialize, SchemaWrite, SchemaRead)]
 pub struct DuplicateShred {
     pub(crate) from: Pubkey,
     pub(crate) wallclock: u64,
@@ -50,6 +59,31 @@ impl DuplicateShred {
     #[inline]
     pub(crate) fn chunk_index(&self) -> u8 {
         self.chunk_index
+    }
+
+    // Conformance-only accessors; unused under DCOU.
+    #[cfg(any(test, feature = "conformance"))]
+    #[inline]
+    pub(crate) fn from(&self) -> &Pubkey {
+        &self.from
+    }
+
+    #[cfg(any(test, feature = "conformance"))]
+    #[inline]
+    pub(crate) fn wallclock(&self) -> u64 {
+        self.wallclock
+    }
+
+    #[cfg(any(test, feature = "conformance"))]
+    #[inline]
+    pub(crate) fn slot(&self) -> Slot {
+        self.slot
+    }
+
+    #[cfg(any(test, feature = "conformance"))]
+    #[inline]
+    pub(crate) fn chunk(&self) -> &[u8] {
+        &self.chunk
     }
 }
 
@@ -83,8 +117,10 @@ pub enum Error {
     NumChunksMismatch,
     #[error("missing data chunk")]
     MissingDataChunk,
-    #[error("(de)serialization error")]
-    SerializationError(#[from] bincode::Error),
+    #[error("wincode deserialization error")]
+    WincodeReadError(#[from] ReadError),
+    #[error("wincode serialization error")]
+    WincodeWriteError(#[from] WriteError),
     #[error("shred type mismatch")]
     ShredTypeMismatch,
     #[error("slot mismatch")]
@@ -115,7 +151,8 @@ impl Error {
             | Self::InvalidShred(_)
             | Self::NumChunksMismatch
             | Self::MissingDataChunk
-            | Self::SerializationError(_)
+            | Self::WincodeReadError(_)
+            | Self::WincodeWriteError(_)
             | Self::TryFromIntError(_)
             | Self::UnknownSlotLeader(_) => false,
         }
@@ -229,7 +266,7 @@ where
         shred1: shred.into_payload(),
         shred2: other_shred.into_payload(),
     };
-    let data = bincode::serialize(&proof)?;
+    let data = wincode::serialize(&proof)?;
     let chunk_size = if DUPLICATE_SHRED_HEADER_SIZE < max_size {
         max_size - DUPLICATE_SHRED_HEADER_SIZE
     } else {
@@ -306,7 +343,7 @@ pub(crate) fn into_shreds(
         return Err(Error::MissingDataChunk);
     }
     let data = (0..num_chunks).map(|k| data.remove(&k).unwrap()).concat();
-    let proof: DuplicateSlotProof = bincode::deserialize(&data)?;
+    let proof: DuplicateSlotProof = wincode::deserialize(&data)?;
     if proof.shred1 == proof.shred2 {
         return Err(Error::InvalidDuplicateSlotProof);
     }
@@ -352,6 +389,33 @@ pub(crate) mod tests {
     };
 
     #[test]
+    fn test_wincode_compatibility_duplicate_shred() {
+        let mut rng = rand::rng();
+        for _ in 0..1000 {
+            let chunk_len = rng.random_range(0..64usize);
+            let dup = DuplicateShred {
+                from: Pubkey::new_unique(),
+                wallclock: rng.random(),
+                slot: rng.random(),
+                _unused: rng.random(),
+                _unused_shred_type: rng.random(),
+                num_chunks: rng.random(),
+                chunk_index: rng.random(),
+                chunk: (0..chunk_len).map(|_| rng.random::<u8>()).collect(),
+            };
+
+            let bincode_bytes = bincode::serialize(&dup).unwrap();
+            let wincode_decoded: DuplicateShred = wincode::deserialize(&bincode_bytes).unwrap();
+            assert_eq!(dup, wincode_decoded);
+
+            let wincode_bytes = wincode::serialize(&dup).unwrap();
+            assert_eq!(wincode_bytes, bincode_bytes);
+            let bincode_decoded: DuplicateShred = bincode::deserialize(&wincode_bytes).unwrap();
+            assert_eq!(dup, bincode_decoded);
+        }
+    }
+
+    #[test]
     fn test_duplicate_shred_header_size() {
         let dup = DuplicateShred {
             from: Pubkey::new_unique(),
@@ -363,14 +427,12 @@ pub(crate) mod tests {
             chunk: Vec::default(),
             _unused: 0,
         };
-        assert_eq!(
-            bincode::serialize(&dup).unwrap().len(),
-            DUPLICATE_SHRED_HEADER_SIZE
-        );
-        assert_eq!(
-            bincode::serialized_size(&dup).unwrap(),
-            DUPLICATE_SHRED_HEADER_SIZE as u64
-        );
+        let dup_bytes = wincode::serialize(&dup).unwrap();
+        assert_eq!(dup_bytes, bincode::serialize(&dup).unwrap());
+        assert_eq!(dup_bytes.len(), DUPLICATE_SHRED_HEADER_SIZE);
+        let dup_size = wincode::serialized_size(&dup).unwrap();
+        assert_eq!(dup_size, bincode::serialized_size(&dup).unwrap());
+        assert_eq!(dup_size, DUPLICATE_SHRED_HEADER_SIZE as u64);
     }
 
     pub(crate) fn new_rand_shred<R: Rng>(
@@ -478,7 +540,7 @@ pub(crate) mod tests {
             shred1: shred.into_payload(),
             shred2: other_shred.into_payload(),
         };
-        let data = bincode::serialize(&proof)?;
+        let data = wincode::serialize(&proof)?;
         let chunk_size = max_size - DUPLICATE_SHRED_HEADER_SIZE;
         let chunks: Vec<_> = data.chunks(chunk_size).map(Vec::from).collect();
         let num_chunks = u8::try_from(chunks.len())?;

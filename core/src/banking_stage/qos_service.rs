@@ -4,65 +4,47 @@
 //!
 
 use {
-    super::{
-        BatchedTransactionCostDetails, BatchedTransactionDetails, BatchedTransactionErrorDetails,
-        committer::CommitTransactionDetails,
-    },
+    super::committer::CommitTransactionDetails,
     agave_feature_set::FeatureSet,
-    solana_clock::Slot,
+    smallvec::SmallVec,
     solana_cost_model::{
         cost_model::CostModel, cost_tracker::UpdatedCosts, transaction_cost::TransactionCost,
     },
-    solana_measure::measure::Measure,
     solana_runtime::bank::Bank,
     solana_runtime_transaction::transaction_with_meta::TransactionWithMeta,
     solana_transaction_error::TransactionError,
-    std::{
-        num::Saturating,
-        sync::atomic::{AtomicU64, Ordering},
-    },
 };
 
 mod transaction {
     pub use solana_transaction_error::TransactionResult as Result;
 }
 
+type TransactionCostResults<'a, Tx> = SmallVec<
+    [transaction::Result<TransactionCost<'a, Tx>>;
+        super::consumer::TARGET_NUM_TRANSACTIONS_PER_BATCH],
+>;
+
 // QosService is local to each banking thread, each instance of QosService provides services to
 // one banking thread.
 // Banking thread calls `report_metrics(slot)` at end of `process_and_record_transaction()`, or any time
 // it wants.
 //
-pub struct QosService {
-    metrics: QosServiceMetrics,
-}
+pub struct QosService;
 
 impl QosService {
-    pub fn new(id: u32) -> Self {
-        Self {
-            metrics: QosServiceMetrics::new(id),
-        }
-    }
-
     /// Calculate cost of transactions, if not already filtered out, determine which ones to
     /// include in the slot, and accumulate costs in the cost tracker.
     /// Returns a vector of results containing selected transaction costs, and the number of
     /// transactions that were *NOT* selected.
     pub fn select_and_accumulate_transaction_costs<'a, Tx: TransactionWithMeta>(
-        &self,
         bank: &Bank,
         transactions: &'a [Tx],
         pre_results: impl Iterator<Item = transaction::Result<()>>,
-    ) -> (Vec<transaction::Result<TransactionCost<'a, Tx>>>, u64) {
+    ) -> (TransactionCostResults<'a, Tx>, u64) {
         let transaction_costs =
-            self.compute_transaction_costs(&bank.feature_set, transactions.iter(), pre_results);
-        let (transactions_qos_cost_results, num_included) = self.select_transactions_per_cost(
-            transactions.iter(),
-            transaction_costs.into_iter(),
-            bank,
-        );
-        self.accumulate_estimated_transaction_costs(&Self::accumulate_batched_transaction_costs(
-            transactions_qos_cost_results.iter(),
-        ));
+            Self::compute_transaction_costs(&bank.feature_set, transactions.iter(), pre_results);
+        let (transactions_qos_cost_results, num_included) =
+            Self::select_transactions_per_cost(transactions.iter(), transaction_costs, bank);
         let cost_model_throttled_transactions_count =
             transactions.len().saturating_sub(num_included) as u64;
 
@@ -75,44 +57,47 @@ impl QosService {
     // invoke cost_model to calculate cost for the given list of transactions that have not
     // been filtered out already.
     fn compute_transaction_costs<'a, Tx: TransactionWithMeta>(
-        &self,
         feature_set: &FeatureSet,
         transactions: impl Iterator<Item = &'a Tx>,
         pre_results: impl Iterator<Item = transaction::Result<()>>,
-    ) -> Vec<transaction::Result<TransactionCost<'a, Tx>>> {
-        let mut compute_cost_time = Measure::start("compute_cost_time");
-        let txs_costs: Vec<_> = transactions
+    ) -> TransactionCostResults<'a, Tx> {
+        transactions
             .zip(pre_results)
-            .map(|(tx, pre_result)| pre_result.map(|()| CostModel::calculate_cost(tx, feature_set)))
-            .collect();
-        compute_cost_time.stop();
-        self.metrics
-            .stats
-            .compute_cost_time
-            .fetch_add(compute_cost_time.as_us(), Ordering::Relaxed);
-        self.metrics
-            .stats
-            .compute_cost_count
-            .fetch_add(txs_costs.len() as u64, Ordering::Relaxed);
-        txs_costs
+            .map(|(tx, pre_result)| {
+                pre_result.map(|()| {
+                    let mut reserving_cost = CostModel::calculate_cost(tx, feature_set);
+
+                    let usage_cost_details = reserving_cost.usage_cost_details_mut();
+                    // To maintain cost tracking consistency, reserve at least one page for
+                    // loading the fee payer account in fee-only fallback scenarios.
+                    usage_cost_details.loaded_accounts_data_size_cost = usage_cost_details
+                        .loaded_accounts_data_size_cost
+                        .max(CostModel::calculate_pages_cost(1));
+
+                    reserving_cost
+                })
+            })
+            .collect()
     }
 
     /// Given a list of transactions and their costs, this function returns a corresponding
     /// list of Results that indicate if a transaction is selected to be included in the current block,
     /// and a count of the number of transactions that would fit in the block
     fn select_transactions_per_cost<'a, Tx: TransactionWithMeta>(
-        &self,
         transactions: impl Iterator<Item = &'a Tx>,
-        transactions_costs: impl Iterator<Item = transaction::Result<TransactionCost<'a, Tx>>>,
+        mut transactions_costs: TransactionCostResults<'a, Tx>,
         bank: &Bank,
-    ) -> (Vec<transaction::Result<TransactionCost<'a, Tx>>>, usize) {
-        let mut cost_tracking_time = Measure::start("cost_tracking_time");
+    ) -> (TransactionCostResults<'a, Tx>, usize) {
         let mut cost_tracker = bank.write_cost_tracker().unwrap();
         let mut num_included = 0;
-        let select_results = transactions
-            .zip(transactions_costs)
-            .map(|(tx, cost)| match cost {
-                Ok(cost) => match cost_tracker.try_add(&cost) {
+        transactions
+            .zip(transactions_costs.iter_mut())
+            .for_each(|(tx, cost_result)| {
+                let Ok(cost) = cost_result else {
+                    return;
+                };
+
+                match cost_tracker.try_add(cost) {
                     Ok(UpdatedCosts {
                         updated_block_cost,
                         updated_costliest_account_cost,
@@ -126,12 +111,7 @@ impl QosService {
                             updated_block_cost,
                             updated_costliest_account_cost
                         );
-                        self.metrics
-                            .stats
-                            .selected_txs_count
-                            .fetch_add(1, Ordering::Relaxed);
                         num_included += 1;
-                        Ok(cost)
                     }
                     Err(e) => {
                         debug!(
@@ -142,20 +122,13 @@ impl QosService {
                             cost,
                             e
                         );
-                        Err(TransactionError::from(e))
+                        *cost_result = Err(TransactionError::from(e));
                     }
-                },
-                Err(e) => Err(e),
-            })
-            .collect();
+                }
+            });
         cost_tracker.add_transactions_in_flight(num_included);
 
-        cost_tracking_time.stop();
-        self.metrics
-            .stats
-            .cost_tracking_time
-            .fetch_add(cost_tracking_time.as_us(), Ordering::Relaxed);
-        (select_results, num_included)
+        (transactions_costs, num_included)
     }
 
     /// Removes transaction costs from the cost tracker if not committed or recorded, or
@@ -235,356 +208,6 @@ impl QosService {
         });
         cost_tracker.sub_transactions_in_flight(num_included);
     }
-
-    // metrics are reported by bank slot
-    pub fn report_metrics(&self, slot: Slot) {
-        self.metrics.report(slot);
-    }
-
-    fn accumulate_estimated_transaction_costs(
-        &self,
-        batched_transaction_details: &BatchedTransactionDetails,
-    ) {
-        let &BatchedTransactionDetails {
-            costs:
-                BatchedTransactionCostDetails {
-                    batched_signature_cost: Saturating(batched_signature_cost),
-                    batched_write_lock_cost: Saturating(batched_write_lock_cost),
-                    batched_data_bytes_cost: Saturating(batched_data_bytes_cost),
-                    batched_loaded_accounts_data_size_cost:
-                        Saturating(batched_loaded_accounts_data_size_cost),
-                    batched_programs_execute_cost: Saturating(batched_programs_execute_cost),
-                },
-            errors:
-                BatchedTransactionErrorDetails {
-                    batched_retried_txs_per_block_limit_count:
-                        Saturating(batched_retried_txs_per_block_limit_count),
-                    batched_retried_txs_per_vote_limit_count:
-                        Saturating(batched_retried_txs_per_vote_limit_count),
-                    batched_retried_txs_per_account_limit_count:
-                        Saturating(batched_retried_txs_per_account_limit_count),
-                    batched_retried_txs_per_account_data_block_limit_count:
-                        Saturating(batched_retried_txs_per_account_data_block_limit_count),
-                    batched_dropped_txs_per_account_data_total_limit_count:
-                        Saturating(batched_dropped_txs_per_account_data_total_limit_count),
-                },
-        } = batched_transaction_details;
-        self.metrics
-            .stats
-            .estimated_signature_cu
-            .fetch_add(batched_signature_cost, Ordering::Relaxed);
-        self.metrics
-            .stats
-            .estimated_write_lock_cu
-            .fetch_add(batched_write_lock_cost, Ordering::Relaxed);
-        self.metrics
-            .stats
-            .estimated_data_bytes_cu
-            .fetch_add(batched_data_bytes_cost, Ordering::Relaxed);
-        self.metrics
-            .stats
-            .estimated_loaded_accounts_data_size_cu
-            .fetch_add(batched_loaded_accounts_data_size_cost, Ordering::Relaxed);
-        self.metrics
-            .stats
-            .estimated_programs_execute_cu
-            .fetch_add(batched_programs_execute_cost, Ordering::Relaxed);
-
-        self.metrics
-            .errors
-            .retried_txs_per_block_limit_count
-            .fetch_add(batched_retried_txs_per_block_limit_count, Ordering::Relaxed);
-        self.metrics
-            .errors
-            .retried_txs_per_vote_limit_count
-            .fetch_add(batched_retried_txs_per_vote_limit_count, Ordering::Relaxed);
-        self.metrics
-            .errors
-            .retried_txs_per_account_limit_count
-            .fetch_add(
-                batched_retried_txs_per_account_limit_count,
-                Ordering::Relaxed,
-            );
-        self.metrics
-            .errors
-            .retried_txs_per_account_data_block_limit_count
-            .fetch_add(
-                batched_retried_txs_per_account_data_block_limit_count,
-                Ordering::Relaxed,
-            );
-        self.metrics
-            .errors
-            .dropped_txs_per_account_data_total_limit_count
-            .fetch_add(
-                batched_dropped_txs_per_account_data_total_limit_count,
-                Ordering::Relaxed,
-            );
-    }
-
-    pub fn accumulate_actual_execute_cu(&self, units: u64) {
-        self.metrics
-            .stats
-            .actual_programs_execute_cu
-            .fetch_add(units, Ordering::Relaxed);
-    }
-
-    pub fn accumulate_actual_execute_time(&self, micro_sec: u64) {
-        self.metrics
-            .stats
-            .actual_execute_time_us
-            .fetch_add(micro_sec, Ordering::Relaxed);
-    }
-
-    // rollup transaction cost details, eg signature_cost, write_lock_cost, data_bytes_cost and
-    // execution_cost from the batch of transactions selected for block.
-    fn accumulate_batched_transaction_costs<'a, Tx: TransactionWithMeta + 'a>(
-        transactions_costs: impl Iterator<Item = &'a transaction::Result<TransactionCost<'a, Tx>>>,
-    ) -> BatchedTransactionDetails {
-        let mut batched_transaction_details = BatchedTransactionDetails::default();
-        transactions_costs.for_each(|cost| match cost {
-            Ok(cost) => {
-                batched_transaction_details.costs.batched_signature_cost += cost.signature_cost();
-                batched_transaction_details.costs.batched_write_lock_cost += cost.write_lock_cost();
-                batched_transaction_details.costs.batched_data_bytes_cost +=
-                    u64::from(cost.data_bytes_cost());
-                batched_transaction_details
-                    .costs
-                    .batched_loaded_accounts_data_size_cost +=
-                    cost.loaded_accounts_data_size_cost();
-                batched_transaction_details
-                    .costs
-                    .batched_programs_execute_cost += cost.programs_execution_cost();
-            }
-            Err(transaction_error) => match transaction_error {
-                TransactionError::WouldExceedMaxBlockCostLimit => {
-                    batched_transaction_details
-                        .errors
-                        .batched_retried_txs_per_block_limit_count += 1;
-                }
-                TransactionError::WouldExceedMaxVoteCostLimit => {
-                    batched_transaction_details
-                        .errors
-                        .batched_retried_txs_per_vote_limit_count += 1;
-                }
-                TransactionError::WouldExceedMaxAccountCostLimit => {
-                    batched_transaction_details
-                        .errors
-                        .batched_retried_txs_per_account_limit_count += 1;
-                }
-                TransactionError::WouldExceedAccountDataBlockLimit => {
-                    batched_transaction_details
-                        .errors
-                        .batched_retried_txs_per_account_data_block_limit_count += 1;
-                }
-                TransactionError::WouldExceedAccountDataTotalLimit => {
-                    batched_transaction_details
-                        .errors
-                        .batched_dropped_txs_per_account_data_total_limit_count += 1;
-                }
-                _ => {}
-            },
-        });
-        batched_transaction_details
-    }
-}
-
-#[derive(Debug, Default)]
-struct QosServiceMetrics {
-    /// banking_stage creates one QosService instance per working threads, that is uniquely
-    /// identified by id. This field allows to categorize metrics for gossip votes, TPU votes
-    /// and other transactions.
-    id: String,
-
-    /// aggregate metrics per slot
-    slot: AtomicU64,
-
-    stats: QosServiceMetricsStats,
-    errors: QosServiceMetricsErrors,
-}
-
-#[derive(Debug, Default)]
-struct QosServiceMetricsStats {
-    /// accumulated time in micro-sec spent in computing transaction cost. It is the main performance
-    /// overhead introduced by cost_model
-    compute_cost_time: AtomicU64,
-
-    /// total number of transactions in the reporting period to be computed for their cost. It is
-    /// usually the number of sanitized transactions leader receives.
-    compute_cost_count: AtomicU64,
-
-    /// accumulated time in micro-sec spent in tracking each bank's cost. It is the second part of
-    /// overhead introduced
-    cost_tracking_time: AtomicU64,
-
-    /// number of transactions to be included in blocks
-    selected_txs_count: AtomicU64,
-
-    /// accumulated estimated signature Compute Unites to be packed into block
-    estimated_signature_cu: AtomicU64,
-
-    /// accumulated estimated write locks Compute Units to be packed into block
-    estimated_write_lock_cu: AtomicU64,
-
-    /// accumulated estimated instruction data Compute Units to be packed into block
-    estimated_data_bytes_cu: AtomicU64,
-
-    /// accumulated estimated loaded accounts data size cost to be packed into block
-    estimated_loaded_accounts_data_size_cu: AtomicU64,
-
-    /// accumulated estimated program Compute Units to be packed into block
-    estimated_programs_execute_cu: AtomicU64,
-
-    /// accumulated actual program Compute Units that have been packed into block
-    actual_programs_execute_cu: AtomicU64,
-
-    /// accumulated actual program execute micro-sec that have been packed into block
-    actual_execute_time_us: AtomicU64,
-}
-
-#[derive(Debug, Default)]
-struct QosServiceMetricsErrors {
-    /// number of transactions to be queued for retry due to their potential to breach block limit
-    retried_txs_per_block_limit_count: AtomicU64,
-
-    /// number of transactions to be queued for retry due to their potential to breach vote limit
-    retried_txs_per_vote_limit_count: AtomicU64,
-
-    /// number of transactions to be queued for retry due to their potential to breach writable
-    /// account limit
-    retried_txs_per_account_limit_count: AtomicU64,
-
-    /// number of transactions to be queued for retry due to their potential to breach account data
-    /// block limits
-    retried_txs_per_account_data_block_limit_count: AtomicU64,
-
-    /// number of transactions to be dropped due to their potential to breach account data total
-    /// limits
-    dropped_txs_per_account_data_total_limit_count: AtomicU64,
-}
-
-impl QosServiceMetrics {
-    pub fn new(id: u32) -> Self {
-        QosServiceMetrics {
-            id: id.to_string(),
-            ..QosServiceMetrics::default()
-        }
-    }
-
-    pub fn report(&self, bank_slot: Slot) {
-        if bank_slot != self.slot.load(Ordering::Relaxed) {
-            datapoint_info!(
-                "qos-service-stats",
-                "id" => self.id,
-                ("bank_slot", bank_slot, i64),
-                (
-                    "compute_cost_time",
-                    self.stats.compute_cost_time.swap(0, Ordering::Relaxed),
-                    i64
-                ),
-                (
-                    "compute_cost_count",
-                    self.stats.compute_cost_count.swap(0, Ordering::Relaxed),
-                    i64
-                ),
-                (
-                    "cost_tracking_time",
-                    self.stats.cost_tracking_time.swap(0, Ordering::Relaxed),
-                    i64
-                ),
-                (
-                    "selected_txs_count",
-                    self.stats.selected_txs_count.swap(0, Ordering::Relaxed),
-                    i64
-                ),
-                (
-                    "estimated_signature_cu",
-                    self.stats.estimated_signature_cu.swap(0, Ordering::Relaxed),
-                    i64
-                ),
-                (
-                    "estimated_write_lock_cu",
-                    self.stats
-                        .estimated_write_lock_cu
-                        .swap(0, Ordering::Relaxed),
-                    i64
-                ),
-                (
-                    "estimated_data_bytes_cu",
-                    self.stats
-                        .estimated_data_bytes_cu
-                        .swap(0, Ordering::Relaxed),
-                    i64
-                ),
-                (
-                    "estimated_loaded_accounts_data_size_cu",
-                    self.stats
-                        .estimated_loaded_accounts_data_size_cu
-                        .swap(0, Ordering::Relaxed),
-                    i64
-                ),
-                (
-                    "estimated_programs_execute_cu",
-                    self.stats
-                        .estimated_programs_execute_cu
-                        .swap(0, Ordering::Relaxed),
-                    i64
-                ),
-                (
-                    "actual_programs_execute_cu",
-                    self.stats
-                        .actual_programs_execute_cu
-                        .swap(0, Ordering::Relaxed),
-                    i64
-                ),
-                (
-                    "actual_execute_time_us",
-                    self.stats.actual_execute_time_us.swap(0, Ordering::Relaxed),
-                    i64
-                ),
-            );
-            datapoint_info!(
-                "qos-service-errors",
-                "id" => self.id,
-                ("bank_slot", bank_slot, i64),
-                (
-                    "retried_txs_per_block_limit_count",
-                    self.errors
-                        .retried_txs_per_block_limit_count
-                        .swap(0, Ordering::Relaxed),
-                    i64
-                ),
-                (
-                    "retried_txs_per_vote_limit_count",
-                    self.errors
-                        .retried_txs_per_vote_limit_count
-                        .swap(0, Ordering::Relaxed),
-                    i64
-                ),
-                (
-                    "retried_txs_per_account_limit_count",
-                    self.errors
-                        .retried_txs_per_account_limit_count
-                        .swap(0, Ordering::Relaxed),
-                    i64
-                ),
-                (
-                    "retried_txs_per_account_data_block_limit_count",
-                    self.errors
-                        .retried_txs_per_account_data_block_limit_count
-                        .swap(0, Ordering::Relaxed),
-                    i64
-                ),
-                (
-                    "dropped_txs_per_account_data_total_limit_count",
-                    self.errors
-                        .dropped_txs_per_account_data_total_limit_count
-                        .swap(0, Ordering::Relaxed),
-                    i64
-                ),
-            );
-            self.slot.store(bank_slot, Ordering::Relaxed);
-        }
-    }
 }
 
 #[cfg(test)]
@@ -592,7 +215,7 @@ mod tests {
     use {
         super::*,
         itertools::Itertools,
-        solana_cost_model::transaction_cost::{UsageCostDetails, WritableKeysTransaction},
+        solana_cost_model::cost_tracker::CostTrackerLimits,
         solana_hash::Hash,
         solana_keypair::Keypair,
         solana_runtime::genesis_utils::{GenesisConfigInfo, create_genesis_config},
@@ -625,8 +248,7 @@ mod tests {
         );
         let txs = [transfer_tx.clone(), vote_tx.clone(), vote_tx, transfer_tx];
 
-        let qos_service = QosService::new(1);
-        let txs_costs = qos_service.compute_transaction_costs(
+        let txs_costs = QosService::compute_transaction_costs(
             &FeatureSet::all_enabled(),
             txs.iter(),
             std::iter::repeat(Ok(())),
@@ -672,20 +294,20 @@ mod tests {
         // make a vec of txs
         let txs = [transfer_tx.clone(), vote_tx.clone(), transfer_tx, vote_tx];
 
-        let qos_service = QosService::new(1);
-        let txs_costs = qos_service.compute_transaction_costs(
+        let txs_costs = QosService::compute_transaction_costs(
             &FeatureSet::all_enabled(),
             txs.iter(),
             std::iter::repeat(Ok(())),
         );
 
-        // set cost tracker limit to fit 1 transfer tx and 1 vote tx
+        // set cost tracker limit to bare minimum that will fit 1 transfer tx
+        // and 1 vote tx
         let cost_limit = transfer_tx_cost + vote_tx_cost;
         bank.write_cost_tracker()
             .unwrap()
-            .set_limits(cost_limit, cost_limit, cost_limit);
+            .set_limits(CostTrackerLimits::new(cost_limit, cost_limit, 0));
         let (results, num_selected) =
-            qos_service.select_transactions_per_cost(txs.iter(), txs_costs.into_iter(), &bank);
+            QosService::select_transactions_per_cost(txs.iter(), txs_costs, &bank);
         assert_eq!(num_selected, 2);
 
         // verify that first transfer tx and first vote are allowed
@@ -728,8 +350,7 @@ mod tests {
 
         // assert all tx_costs should be applied to cost_tracker if all execution_results are all committed
         {
-            let qos_service = QosService::new(1);
-            let txs_costs = qos_service.compute_transaction_costs(
+            let txs_costs = QosService::compute_transaction_costs(
                 &FeatureSet::all_enabled(),
                 txs.iter(),
                 std::iter::repeat(Ok(())),
@@ -739,7 +360,7 @@ mod tests {
                 .map(|cost| cost.as_ref().unwrap().sum())
                 .sum();
             let (qos_cost_results, _num_included) =
-                qos_service.select_transactions_per_cost(txs.iter(), txs_costs.into_iter(), &bank);
+                QosService::select_transactions_per_cost(txs.iter(), txs_costs, &bank);
             assert_eq!(
                 total_txs_cost,
                 bank.read_cost_tracker().unwrap().block_cost()
@@ -799,8 +420,7 @@ mod tests {
 
         // assert all tx_costs should be removed from cost_tracker if all execution_results are all Not Committed
         {
-            let qos_service = QosService::new(1);
-            let txs_costs = qos_service.compute_transaction_costs(
+            let txs_costs = QosService::compute_transaction_costs(
                 &FeatureSet::all_enabled(),
                 txs.iter(),
                 std::iter::repeat(Ok(())),
@@ -810,7 +430,7 @@ mod tests {
                 .map(|cost| cost.as_ref().unwrap().sum())
                 .sum();
             let (qos_cost_results, _num_included) =
-                qos_service.select_transactions_per_cost(txs.iter(), txs_costs.into_iter(), &bank);
+                QosService::select_transactions_per_cost(txs.iter(), txs_costs, &bank);
             assert_eq!(
                 total_txs_cost,
                 bank.read_cost_tracker().unwrap().block_cost()
@@ -853,8 +473,7 @@ mod tests {
 
         // assert only committed tx_costs are applied cost_tracker
         {
-            let qos_service = QosService::new(1);
-            let txs_costs = qos_service.compute_transaction_costs(
+            let txs_costs = QosService::compute_transaction_costs(
                 &FeatureSet::all_enabled(),
                 txs.iter(),
                 std::iter::repeat(Ok(())),
@@ -864,7 +483,7 @@ mod tests {
                 .map(|cost| cost.as_ref().unwrap().sum())
                 .sum();
             let (qos_cost_results, _num_included) =
-                qos_service.select_transactions_per_cost(txs.iter(), txs_costs.into_iter(), &bank);
+                QosService::select_transactions_per_cost(txs.iter(), txs_costs, &bank);
             assert_eq!(
                 total_txs_cost,
                 bank.read_cost_tracker().unwrap().block_cost()
@@ -920,55 +539,139 @@ mod tests {
     }
 
     #[test]
-    fn test_accumulate_batched_transaction_costs() {
-        let signature_cost = 1;
-        let write_lock_cost = 2;
-        let data_bytes_cost = 3;
-        let programs_execution_cost = 10;
-        let num_txs = 4;
+    fn test_min_one_page_cost_reserved() {
+        let payer = Keypair::new();
+        let recipient = solana_pubkey::Pubkey::new_unique();
 
-        let dummy_transaction = WritableKeysTransaction::new(vec![]);
-        let tx_cost_results: Vec<_> = (0..num_txs)
-            .map(|n| {
-                if n % 2 == 0 {
-                    Ok(TransactionCost::Transaction(UsageCostDetails {
-                        transaction: &dummy_transaction,
-                        signature_cost,
-                        write_lock_cost,
-                        data_bytes_cost,
-                        programs_execution_cost,
-                        loaded_accounts_data_size_cost: 0,
-                        allocated_accounts_data_size: 0,
-                    }))
-                } else {
-                    Err(TransactionError::WouldExceedMaxBlockCostLimit)
-                }
-            })
-            .collect();
-        // should only accumulate half of the costs that are OK
-        let expected_signatures = signature_cost * (num_txs / 2);
-        let expected_write_locks = write_lock_cost * (num_txs / 2);
-        let expected_data_bytes = u64::from(data_bytes_cost) * (num_txs / 2);
-        let expected_programs_execution_costs = programs_execution_cost * (num_txs / 2);
-        let batched_transaction_details =
-            QosService::accumulate_batched_transaction_costs(tx_cost_results.iter());
-        assert_eq!(
-            Saturating(expected_signatures),
-            batched_transaction_details.costs.batched_signature_cost
+        let transaction = solana_transaction::Transaction::new_unsigned(solana_message::Message::new(
+        &[
+            solana_compute_budget_interface::ComputeBudgetInstruction::set_loaded_accounts_data_size_limit(0),
+            solana_system_interface::instruction::transfer(&payer.pubkey(), &recipient, 1),
+        ],
+        Some(&payer.pubkey()),
+    ));
+
+        let txs = [RuntimeTransaction::from_transaction_for_tests(transaction)];
+        let tx_costs = QosService::compute_transaction_costs(
+            &FeatureSet::all_enabled(),
+            txs.iter(),
+            std::iter::repeat(Ok(())),
         );
+
+        let tx_cost = tx_costs
+            .into_iter()
+            .next()
+            .expect("one tx cost")
+            .expect("tx cost should be computed");
+
+        let usage_cost_details = tx_cost.usage_cost_details();
+
         assert_eq!(
-            Saturating(expected_write_locks),
-            batched_transaction_details.costs.batched_write_lock_cost
+            usage_cost_details.loaded_accounts_data_size_cost,
+            CostModel::calculate_pages_cost(1),
         );
-        assert_eq!(
-            Saturating(expected_data_bytes),
-            batched_transaction_details.costs.batched_data_bytes_cost
-        );
-        assert_eq!(
-            Saturating(expected_programs_execution_costs),
-            batched_transaction_details
-                .costs
-                .batched_programs_execute_cost
-        );
+    }
+
+    #[test]
+    fn test_requested_zero_loaded_accounts_data_size_refund() {
+        let GenesisConfigInfo { genesis_config, .. } = create_genesis_config(10);
+        let bank = Arc::new(Bank::new_for_tests(&genesis_config));
+
+        let payer = Keypair::new();
+        let recipient = solana_pubkey::Pubkey::new_unique();
+        let transaction = solana_transaction::Transaction::new_unsigned(solana_message::Message::new(
+        &[
+            solana_compute_budget_interface::ComputeBudgetInstruction::set_loaded_accounts_data_size_limit(0),
+            solana_system_interface::instruction::transfer(&payer.pubkey(), &recipient, 1),
+        ],
+        Some(&payer.pubkey()),
+        ));
+        let txs = [RuntimeTransaction::from_transaction_for_tests(transaction)];
+
+        {
+            let txs_costs = QosService::compute_transaction_costs(
+                &FeatureSet::all_enabled(),
+                txs.iter(),
+                std::iter::repeat(Ok(())),
+            );
+            let total_txs_cost: u64 = txs_costs
+                .iter()
+                .map(|cost| cost.as_ref().unwrap().sum())
+                .sum();
+            let (qos_cost_results, _num_included) =
+                QosService::select_transactions_per_cost(txs.iter(), txs_costs, &bank);
+            // transaction is committed with actual loaded account size == 0.
+            let committed_status: Vec<CommitTransactionDetails> = qos_cost_results
+                .iter()
+                .map(|tx_cost| CommitTransactionDetails::Committed {
+                    compute_units: tx_cost.as_ref().unwrap().programs_execution_cost(),
+                    loaded_accounts_data_size: 0,
+                    result: Ok(()),
+                    fee_payer_post_balance: 0,
+                })
+                .collect();
+            QosService::remove_or_update_costs(
+                qos_cost_results.iter(),
+                Some(&committed_status),
+                &bank,
+            );
+            // should refund cost of 1 page it over reserved
+            let final_txs_cost = total_txs_cost - CostModel::calculate_pages_cost(1);
+            assert_eq!(
+                final_txs_cost,
+                bank.read_cost_tracker().unwrap().block_cost()
+            );
+        }
+    }
+
+    #[test]
+    fn test_requested_zero_loaded_accounts_data_size_no_refund() {
+        let GenesisConfigInfo { genesis_config, .. } = create_genesis_config(10);
+        let bank = Arc::new(Bank::new_for_tests(&genesis_config));
+
+        let payer = Keypair::new();
+        let recipient = solana_pubkey::Pubkey::new_unique();
+        let transaction = solana_transaction::Transaction::new_unsigned(solana_message::Message::new(
+        &[
+            solana_compute_budget_interface::ComputeBudgetInstruction::set_loaded_accounts_data_size_limit(0),
+            solana_system_interface::instruction::transfer(&payer.pubkey(), &recipient, 1),
+        ],
+        Some(&payer.pubkey()),
+        ));
+        let txs = [RuntimeTransaction::from_transaction_for_tests(transaction)];
+
+        {
+            let txs_costs = QosService::compute_transaction_costs(
+                &FeatureSet::all_enabled(),
+                txs.iter(),
+                std::iter::repeat(Ok(())),
+            );
+            let total_txs_cost: u64 = txs_costs
+                .iter()
+                .map(|cost| cost.as_ref().unwrap().sum())
+                .sum();
+            let (qos_cost_results, _num_included) =
+                QosService::select_transactions_per_cost(txs.iter(), txs_costs, &bank);
+            // transaction is committed with actual loaded account size == 1.
+            let committed_status: Vec<CommitTransactionDetails> = qos_cost_results
+                .iter()
+                .map(|tx_cost| CommitTransactionDetails::Committed {
+                    compute_units: tx_cost.as_ref().unwrap().programs_execution_cost(),
+                    loaded_accounts_data_size: 1,
+                    result: Ok(()),
+                    fee_payer_post_balance: 0,
+                })
+                .collect();
+            QosService::remove_or_update_costs(
+                qos_cost_results.iter(),
+                Some(&committed_status),
+                &bank,
+            );
+            // should be no refund, since the loaded size is same
+            assert_eq!(
+                total_txs_cost,
+                bank.read_cost_tracker().unwrap().block_cost()
+            );
+        }
     }
 }

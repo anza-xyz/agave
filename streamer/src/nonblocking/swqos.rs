@@ -20,7 +20,6 @@ use {
         },
         streamer::StakedNodes,
     },
-    percentage::Percentage,
     quinn::{Connection, VarInt},
     solana_time_utils as timing,
     std::{
@@ -201,7 +200,7 @@ impl SwQos {
             conn_context.peer_type(),
             conn_context.total_stake,
         ));
-        let remote_addr = connection.remote_address();
+        let remote_addr = conn_context.remote_address;
 
         let max_connections_per_peer = match conn_context.peer_type() {
             ConnectionPeerType::Unstaked => self.config.max_connections_per_unstaked_peer,
@@ -246,10 +245,9 @@ impl SwQos {
         stats: Arc<StreamerStats>,
     ) {
         if unstaked_connection_table.total_size >= max_unstaked_connections {
-            const PRUNE_TABLE_TO_PERCENTAGE: u8 = 90;
-            let max_percentage_full = Percentage::from(PRUNE_TABLE_TO_PERCENTAGE);
-
-            let max_connections = max_percentage_full.apply_to(max_unstaked_connections);
+            // Prune the connection table down to 90% capacity
+            const PRUNE_TABLE_RATIO: f64 = 0.90;
+            let max_connections = (PRUNE_TABLE_RATIO * (max_unstaked_connections as f64)) as usize;
             let num_pruned = unstaked_connection_table.prune_oldest(max_connections);
             stats
                 .num_evictions_unstaked
@@ -302,13 +300,14 @@ impl SwQos {
 
 impl QosController<SwQosConnectionContext> for SwQos {
     fn build_connection_context(&self, connection: &Connection) -> SwQosConnectionContext {
+        let remote_address = connection.remote_address();
         get_connection_stake(connection, &self.staked_nodes).map_or(
             SwQosConnectionContext {
                 peer_type: ConnectionPeerType::Unstaked,
                 total_stake: 0,
                 remote_pubkey: None,
                 in_staked_table: false,
-                remote_address: connection.remote_address(),
+                remote_address,
                 stream_counter: None,
                 last_update: Arc::new(AtomicU64::new(timing::timestamp())),
             },
@@ -334,7 +333,7 @@ impl QosController<SwQosConnectionContext> for SwQos {
                     total_stake,
                     remote_pubkey: Some(pubkey),
                     in_staked_table: false,
-                    remote_address: connection.remote_address(),
+                    remote_address,
                     last_update: Arc::new(AtomicU64::new(timing::timestamp())),
                     stream_counter: None,
                 }
@@ -476,7 +475,7 @@ impl QosController<SwQosConnectionContext> for SwQos {
             };
 
             let stable_id = connection.stable_id();
-            let remote_addr = connection.remote_address();
+            let remote_addr = conn_context.remote_address;
 
             let removed_count = lock.remove_connection(
                 ConnectionTableKey::new(remote_addr.ip(), conn_context.remote_pubkey()),

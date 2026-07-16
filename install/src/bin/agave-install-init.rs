@@ -1,9 +1,12 @@
-use std::process::exit;
+use std::{
+    io::{self, IsTerminal},
+    process::exit,
+};
 
 fn press_enter() {
     // On windows, where installation happens in a console that may have opened just for this
     // purpose, give the user an opportunity to see the error before the window closes.
-    if cfg!(windows) && atty::is(atty::Stream::Stdin) {
+    if cfg!(windows) && io::stdin().is_terminal() {
         println!();
         println!("Press the Enter key to continue.");
 
