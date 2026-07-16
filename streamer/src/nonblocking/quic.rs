@@ -46,7 +46,7 @@ use {
         // introduce any other awaits while holding the RwLock.
         select,
         task::JoinHandle,
-        time::timeout,
+        time::{sleep, timeout},
     },
     tokio_util::{sync::CancellationToken, task::TaskTracker},
 };
@@ -78,6 +78,10 @@ const MAX_CONNECTION_BURST: u64 = 1000;
 /// Timeout for connection handshake. Timer starts once we get Initial from the
 /// peer, and is canceled when we get a Handshake packet from them.
 const QUIC_CONNECTION_HANDSHAKE_TIMEOUT: Duration = Duration::from_secs(2);
+
+// Bounds for the randomized interval between checks for stale cached stake.
+const MIN_STAKE_REVALIDATION_INTERVAL: Duration = Duration::from_secs(60 * 60);
+const MAX_STAKE_REVALIDATION_INTERVAL: Duration = Duration::from_secs(2 * 60 * 60);
 
 /// Absolute max RTT to allow for a legitimate connection.
 /// Enough to cover any non-malicious link on Earth.
@@ -419,11 +423,24 @@ pub fn get_connection_stake(
 ) -> Option<(Pubkey, u64, u64)> {
     let pubkey = get_remote_pubkey(connection)?;
     debug!("Peer public key is {pubkey:?}");
+    let (stake, total_stake) = get_pubkey_stake(&pubkey, staked_nodes)?;
+    Some((pubkey, stake, total_stake))
+}
+
+pub(crate) fn get_pubkey_stake(
+    pubkey: &Pubkey,
+    staked_nodes: &RwLock<StakedNodes>,
+) -> Option<(u64, u64)> {
     let staked_nodes = staked_nodes.read().unwrap();
     Some((
-        pubkey,
-        staked_nodes.get_node_stake(&pubkey)?,
+        staked_nodes.get_node_stake(pubkey)?,
         staked_nodes.total_stake(),
+    ))
+}
+
+fn stake_revalidation_interval() -> Duration {
+    Duration::from_secs(rng().random_range(
+        MIN_STAKE_REVALIDATION_INTERVAL.as_secs()..=MAX_STAKE_REVALIDATION_INTERVAL.as_secs(),
     ))
 }
 
@@ -607,6 +624,8 @@ async fn handle_connection<Q, C>(
     // we only use that for some stats here, so if it gets stale during connection lifetime
     // it is not the end of the world.
     let rtt = connection.rtt();
+    let stake_revalidation_timer = sleep(stake_revalidation_interval());
+    tokio::pin!(stake_revalidation_timer);
     'conn: loop {
         // Wait for new streams. If the peer is disconnected we get a cancellation signal and stop
         // the connection task.
@@ -619,6 +638,16 @@ async fn handle_connection<Q, C>(
                 }
             },
             _ = cancel.cancelled() => break,
+            _ = &mut stake_revalidation_timer, if peer_type.is_staked() => {
+                if !qos.is_stake_current(&context) {
+                    debug!("Closing connection from {remote_address}: stake changed");
+                    break;
+                }
+                stake_revalidation_timer
+                    .as_mut()
+                    .reset(tokio::time::Instant::now() + stake_revalidation_interval());
+                continue;
+            },
         };
 
         qos.on_new_stream(&context).await;

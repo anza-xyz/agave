@@ -1,7 +1,7 @@
 use {
     crate::{
         nonblocking::{
-            qos::{ConnectionContext, QosController},
+            qos::{ConnectionContext, QosController, is_stake_current},
             quic::{
                 CONNECTION_CLOSE_CODE_DISALLOWED, CONNECTION_CLOSE_REASON_DISALLOWED,
                 ClientConnectionTracker, ConnectionHandlerError, ConnectionPeerType,
@@ -339,6 +339,10 @@ impl QosController<SwQosConnectionContext> for SwQos {
                 }
             },
         )
+    }
+
+    fn is_stake_current(&self, context: &SwQosConnectionContext) -> bool {
+        is_stake_current(context, &self.staked_nodes)
     }
 
     #[allow(clippy::manual_async_fn)]
