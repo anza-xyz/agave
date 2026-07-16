@@ -369,6 +369,38 @@ impl<T: IndexValue, U: DiskIndexValue + From<T> + Into<T>> InMemAccountsIndex<T,
         }
     }
 
+    /// Drain the slot list for `pubkey` into `reclaims` and remove the pubkey from the index.
+    /// Does nothing if `pubkey` was never indexed.
+    pub fn delete(&self, pubkey: &Pubkey, reclaims: &mut ReclaimsSlotList<T>) {
+        let mut map = self.map_internal.write().unwrap();
+        match map.entry(*pubkey) {
+            Entry::Occupied(occupied) => {
+                occupied
+                    .get()
+                    .slot_list_write_lock()
+                    .retain_and_count(|(slot, account_info)| {
+                        reclaims.push((*slot, *account_info));
+                        false
+                    });
+                // The slot list is now empty, so this always removes the entry
+                // (and the disk key) via the shared removal path.
+                self.remove_if_slot_list_empty_entry(Entry::Occupied(occupied));
+            }
+            Entry::Vacant(vacant) => {
+                // Disk-only entry: load the slot list from dis and drain it to reclaims, then deliete it from disk.
+                if let Some((slot_list, _ref_count)) = self.load_from_disk(vacant.key()) {
+                    reclaims.extend(
+                        slot_list
+                            .into_iter()
+                            .map(|(slot, account_info)| (slot, account_info.into())),
+                    );
+                    self.delete_disk_key(vacant.key());
+                    self.stats().inc_delete();
+                }
+            }
+        }
+    }
+
     // If the slot list for pubkey exists in the index and is empty, remove the index entry for pubkey and return true.
     // Return false otherwise.
     pub fn remove_if_slot_list_empty(&self, pubkey: Pubkey) -> bool {
@@ -2637,6 +2669,77 @@ mod tests {
             let entry = map.entry(key);
             assert_matches!(entry, Entry::Occupied(_));
         }
+    }
+
+    /// `delete` on an in-mem entry drains every slot-list item into reclaims and removes the
+    /// entry from the index.
+    #[test]
+    fn test_delete_in_mem_entry() {
+        let index = new_for_test::<u64>();
+        let pubkey = Pubkey::new_unique();
+        let mut reclaims = ReclaimsSlotList::new();
+
+        for (slot, info) in [(1, 10), (2, 20)] {
+            let new_value = PreAllocatedAccountMapEntry::new(slot, info, &index.storage, true);
+            index.upsert(
+                &pubkey,
+                new_value,
+                None,
+                &mut ReclaimsSlotList::new(),
+                UpsertReclaim::IgnoreReclaims,
+            );
+        }
+
+        index.delete(&pubkey, &mut reclaims);
+
+        assert_eq!(reclaims, vec![(1, 10), (2, 20)]);
+        assert!(!index.map_internal.read().unwrap().contains_key(&pubkey));
+    }
+
+    /// `delete` on a pubkey that was never indexed reclaims nothing and does not create an
+    /// index entry.
+    #[test]
+    fn test_delete_missing_pubkey() {
+        let index = new_for_test::<u64>();
+        let pubkey = Pubkey::new_unique();
+        let mut reclaims = ReclaimsSlotList::new();
+
+        index.delete(&pubkey, &mut reclaims);
+
+        assert!(reclaims.is_empty());
+        assert!(!index.map_internal.read().unwrap().contains_key(&pubkey));
+    }
+
+    /// `delete` on a disk-only entry (present in the disk bucket, evicted from memory) drains
+    /// the disk slot list into reclaims and deletes the disk key, without re-inserting the
+    /// entry into the in-mem map.
+    #[test]
+    fn test_delete_disk_only_entry() {
+        let index = new_should_write_through_for_test(None);
+        let pubkey = Pubkey::new_unique();
+        let slot = 1;
+        let info = 10;
+        let mut reclaims = ReclaimsSlotList::new();
+
+        let new_value = PreAllocatedAccountMapEntry::new(slot, info, &index.storage, true);
+        index.upsert(
+            &pubkey,
+            new_value,
+            None,
+            &mut ReclaimsSlotList::new(),
+            UpsertReclaim::IgnoreReclaims,
+        );
+        index.try_write_through(&pubkey);
+        assert!(index.load_from_disk(&pubkey).is_some());
+
+        // Evict the entry from memory so only the disk copy remains
+        index.map_internal.write().unwrap().remove(&pubkey);
+
+        index.delete(&pubkey, &mut reclaims);
+
+        assert_eq!(reclaims, vec![(slot, info)]);
+        assert!(index.load_from_disk(&pubkey).is_none());
+        assert!(!index.map_internal.read().unwrap().contains_key(&pubkey));
     }
 
     #[test]

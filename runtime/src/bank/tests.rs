@@ -8711,7 +8711,7 @@ fn do_test_clean_dropped_unrooted_banks(freeze_bank1: FreezeBank1) {
     drop(bank1);
     bank2.clean_accounts_for_tests();
 
-    let expected_ref_count_for_cleaned_up_keys = 0;
+    let expected_ref_count_for_zero_lamport_keys = 0;
     let expected_ref_count_for_keys_in_both_slot1_and_slot2 = 1;
 
     assert_eq!(
@@ -8721,7 +8721,7 @@ fn do_test_clean_dropped_unrooted_banks(freeze_bank1: FreezeBank1) {
             .accounts_db
             .accounts_index
             .ref_count_from_storage(&key1.pubkey()),
-        expected_ref_count_for_cleaned_up_keys,
+        expected_ref_count_for_zero_lamport_keys,
     );
     assert_eq!(
         bank2
@@ -8739,7 +8739,7 @@ fn do_test_clean_dropped_unrooted_banks(freeze_bank1: FreezeBank1) {
             .accounts_db
             .accounts_index
             .ref_count_from_storage(&key4.pubkey()),
-        expected_ref_count_for_cleaned_up_keys,
+        expected_ref_count_for_zero_lamport_keys,
     );
     assert_eq!(
         bank2
@@ -8748,7 +8748,7 @@ fn do_test_clean_dropped_unrooted_banks(freeze_bank1: FreezeBank1) {
             .accounts_db
             .accounts_index
             .ref_count_from_storage(&key5.pubkey()),
-        expected_ref_count_for_keys_in_both_slot1_and_slot2,
+        expected_ref_count_for_zero_lamport_keys,
     );
     assert_eq!(
         bank2.rc.accounts.accounts_db.alive_account_count_in_slot(1),

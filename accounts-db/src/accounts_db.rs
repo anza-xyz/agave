@@ -4535,14 +4535,10 @@ impl AccountsDb {
             ("write_accounts_us", flush_stats.write_accounts_us.0, i64),
             ("update_index_us", flush_stats.update_index_us.0, i64),
             ("handle_reclaims_us", flush_stats.handle_reclaims_us.0, i64),
+            ("mark_tombstones_us", flush_stats.mark_tombstones_us.0, i64),
             (
-                "mark_zero_lamport_single_ref_accounts_us",
-                flush_stats.mark_zero_lamport_single_ref_accounts_us.0,
-                i64
-            ),
-            (
-                "num_zero_lamport_single_ref_accounts_marked",
-                flush_stats.num_zero_lamport_single_ref_accounts_marked.0,
+                "num_tombstones_marked",
+                flush_stats.num_tombstones_marked.0,
                 i64
             ),
             ("num_reclaims", flush_stats.num_reclaims.0, i64),
@@ -4789,18 +4785,26 @@ impl AccountsDb {
         let (_, disk_index_write_through_us) =
             measure_us!(self.accounts_index.write_through_pubkeys(pubkeys_removed));
         flush_stats.disk_index_write_through_us = Saturating(disk_index_write_through_us);
-        // Add `accounts` to uncleaned_pubkeys since they were written to storage
-        // and should be visited by `clean`.
-        // If old slots were reclaimed, accounts were already cleaned,
-        // but zero lamports need to be visited during clean for full removal.
         if reclaim_method == UpsertReclaim::ReclaimOldSlots {
-            self.uncleaned_pubkeys.entry(slot).or_default().extend(
-                accounts
-                    .into_iter()
-                    .filter(|(_pubkey, account)| account.is_zero_lamport())
-                    .map(|(pubkey, _account)| pubkey),
-            );
+            // Zero lamport accounts were deleted from the index by update_index_for_flush, so
+            // their secondary index entries may be purgeable.
+            if !self.account_indexes.is_empty() {
+                self.purge_secondary_indexes_for_dead_keys(
+                    accounts.iter().filter_map(|(pubkey, account)| {
+                        account.is_zero_lamport().then_some(*pubkey)
+                    }),
+                );
+            }
+            // If the flushed store has only tombstones, it should be added to dirty_stores to be
+            // visited by clean
+            if let Some(store) = self.storage.get_slot_storage_entry(slot)
+                && store.has_only_tombstones()
+            {
+                self.dirty_stores.insert(slot, store);
+            }
         } else {
+            // Add `accounts` to uncleaned_pubkeys since they were written to storage
+            // without cleaning and should be visited by `clean`.
             self.uncleaned_pubkeys
                 .entry(slot)
                 .or_default()
@@ -5153,8 +5157,12 @@ impl AccountsDb {
 
             (start..end).for_each(|i| {
                 let info: AccountInfo = infos[i];
-                let old_slot = accounts.slot(i);
                 let pubkey = accounts.pubkey(i);
+                if info.is_zero_lamport() && reclaim == UpsertReclaim::ReclaimOldSlots {
+                    self.accounts_index.delete(pubkey, &mut reclaims);
+                    return;
+                }
+                let old_slot = accounts.slot(i);
                 self.accounts_index.upsert(
                     target_slot,
                     old_slot,
@@ -5163,7 +5171,6 @@ impl AccountsDb {
                     &mut reclaims,
                     reclaim,
                 );
-
                 if !self.account_indexes.is_empty() {
                     // Since StorableAccounts::account() may read the account from disk,
                     // avoid calling it unless secondary indexes are enabled.
@@ -5736,10 +5743,9 @@ impl AccountsDb {
         let infos = self.write_accounts_to_storage(slot, storage, &accounts);
         let write_accounts_us = write_accounts_time.end_as_us();
 
-        let mark_zero_lamport_time = Measure::start("mark_zero_lamport");
-        let num_zero_lamport_single_ref_accounts_marked =
-            self.mark_zero_lamport_single_ref_accounts_for_flush(&infos, storage, reclaim_handling);
-        let mark_zero_lamport_us = mark_zero_lamport_time.end_as_us();
+        let mark_tombstones_time = Measure::start("mark_tombstones");
+        let num_tombstones_marked = self.mark_tombstones(&infos, storage, reclaim_handling);
+        let mark_tombstones_us = mark_tombstones_time.end_as_us();
 
         let update_index_time = Measure::start("update_index");
         let reclaims = self.update_index_for_flush(infos, &accounts, reclaim_handling);
@@ -5776,8 +5782,8 @@ impl AccountsDb {
             write_accounts_us,
             update_index_us,
             handle_reclaims_us,
-            mark_zero_lamport_single_ref_accounts_us: mark_zero_lamport_us,
-            num_zero_lamport_single_ref_accounts_marked,
+            mark_tombstones_us,
+            num_tombstones_marked,
             num_reclaims,
             num_obsolete_slots_removed,
             num_obsolete_bytes_removed,
@@ -5903,31 +5909,31 @@ impl AccountsDb {
         infos
     }
 
-    /// Marks zero lamport single reference accounts in the storage during store_accounts_for_flush
+    /// Marks flushed zero lamport accounts as tombstones in the storage
     ///
     /// Returns the number of accounts marked.
-    fn mark_zero_lamport_single_ref_accounts_for_flush(
+    fn mark_tombstones(
         &self,
         account_infos: &[AccountInfo],
         storage: &AccountStorageEntry,
         reclaim_handling: UpsertReclaim,
     ) -> u64 {
         let mut num_marked = 0;
-        // If the reclaim handling is `ReclaimOldSlots`, then all zero lamport accounts are single
-        // ref accounts and they need to be inserted into the storages zero lamport single ref
-        // accounts list
-        // For other values of reclaim handling, there are no zero lamport single ref accounts
-        // so nothing needs to be done in this function
+        // If the reclaim handling is `ReclaimOldSlots`, then all zero lamport accounts are tombstones
+        // and they need to be inserted into the storage's tombstone list
+        // For other values of reclaim handling, there are no tombstone accounts so nothing needs
+        // to be done in this function
         if reclaim_handling == UpsertReclaim::ReclaimOldSlots {
-            for account_info in account_infos {
-                if account_info.is_zero_lamport() {
-                    storage.insert_zero_lamport_single_ref_account_offset(account_info.offset());
-                    num_marked += 1;
-                }
-            }
+            num_marked = storage.batch_insert_tombstone_offsets(
+                account_infos
+                    .iter()
+                    .filter(|account_info| account_info.is_zero_lamport())
+                    .map(|account_info| account_info.offset()),
+            ) as u64;
 
-            // If any zero lamport accounts were marked, the storage may be valid for shrinking
+            // A store with only tombstones is handed to clean at the end of flush, not shrunk
             if num_marked > 0
+                && !storage.has_only_tombstones()
                 && self.is_candidate_for_shrink(storage)
                 && self.is_shrinking_productive(storage)
             {

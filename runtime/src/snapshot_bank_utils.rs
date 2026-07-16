@@ -1556,23 +1556,6 @@ mod tests {
         let accounts_db = &bank3.rc.accounts.accounts_db;
         // full snapshot is older than slot 2, so shrink keeps the tombstone instead of purging
         accounts_db.set_latest_full_snapshot_slot(full_snapshot_slot);
-        assert_eq!(
-            accounts_db
-                .accounts_index
-                .ref_count_from_storage(&key1.pubkey()),
-            1,
-            "Ensure Account1 is a zero-lamport single-ref in the index before shrink"
-        );
-
-        // shrink converts the zero-lamport single-ref into a tombstone
-        accounts_db.shrink_all_slots(false, None);
-        assert_eq!(
-            accounts_db
-                .accounts_index
-                .ref_count_from_storage(&key1.pubkey()),
-            0,
-            "Ensure shrink removed the tombstoned account from the index"
-        );
         assert!(
             !accounts_db
                 .get_storages(zeroed_slot..zeroed_slot + 1)
