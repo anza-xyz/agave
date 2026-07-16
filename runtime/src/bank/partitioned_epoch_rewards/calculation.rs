@@ -13,6 +13,7 @@ use {
             RewardCalcTracer, RewardCalculationEvent, RewardsMetrics,
             fee_distribution::ExternalCollectorType, null_tracer,
         },
+        block_component_processor::vote_reward::epoch_inflation_account_state::EpochInflationAccountState,
         inflation_rewards::{
             delegation_may_need_adjustment,
             points::{
@@ -417,7 +418,18 @@ impl Bank {
     ) -> PartitionedRewardsCalculation {
         let capitalization = self.capitalization();
         let epoch_inflation_rewards =
-            self.calculate_epoch_inflation_rewards(capitalization, rewarded_epoch);
+            if AlpenglowEpochType::is_alpenglow_or_migration_epoch(self, rewarded_epoch) {
+                EpochInflationAccountState::new_from_bank(self)
+                    .and_then(|state| state.inflation_rewards_for_epoch(rewarded_epoch))
+                    .unwrap_or_else(|| {
+                        panic!(
+                            "Missing epoch inflation state for non-Tower reward epoch \
+                             {rewarded_epoch}"
+                        )
+                    })
+            } else {
+                self.calculate_epoch_inflation_rewards(capitalization, rewarded_epoch)
+            };
         // `distribution_epoch_vote_accounts` is the post-VAT-filter snapshot
         // produced upstream of this call (or unfiltered when VAT is off),
         // so its length is the right value for the `epoch_rewards` metric.
@@ -2581,6 +2593,95 @@ mod tests {
             unpaid_reward.inflation.stake_reward, recalculated_unpaid_reward.inflation.stake_reward,
             "recalculation after partial distribution must use the same AG delegated stake \
              denominator as the original epoch-boundary calculation"
+        );
+    }
+
+    #[test]
+    fn test_alpenglow_partitioned_rewards_use_epoch_start_budget_after_burn() {
+        let validator_keypairs = vec![genesis_utils::ValidatorVoteKeypairs::new_rand()];
+        let GenesisConfigInfo {
+            mut genesis_config, ..
+        } = genesis_utils::create_genesis_config_with_alpenglow_vote_accounts(
+            1_000_000_000 * LAMPORTS_PER_SOL,
+            &validator_keypairs,
+            vec![100 * LAMPORTS_PER_SOL],
+        );
+        genesis_config.epoch_schedule = EpochSchedule::new(SLOTS_PER_EPOCH);
+        let features_to_deactivate = crate::slot_params::slot_time_feature_ids().to_vec();
+        deactivate_features(&mut genesis_config, &features_to_deactivate);
+
+        let (bank, bank_forks) =
+            Bank::new_for_tests(&genesis_config).wrap_with_bank_forks_for_tests();
+        let bank = Bank::new_from_parent_with_bank_forks(
+            bank_forks.as_ref(),
+            bank,
+            SlotLeader::default(),
+            SLOTS_PER_EPOCH,
+        );
+        assert_eq!(bank.epoch(), 1);
+
+        let recorded_budget = EpochInflationAccountState::new_from_bank(&bank)
+            .and_then(|state| state.inflation_rewards_for_epoch(bank.epoch()))
+            .expect("epoch-start inflation budget must be persisted");
+        // Alpenglow rewards are rounded down once per slot, so this is the largest
+        // payout that can actually have been recorded during the epoch.
+        let recorded_payout = recorded_budget / SLOTS_PER_EPOCH * SLOTS_PER_EPOCH;
+
+        let vote_pubkey = validator_keypairs[0].vote_keypair.pubkey();
+        let mut vote_account = bank.get_account(&vote_pubkey).unwrap();
+        let VoteStateVersions::V4(mut vote_state) = vote_account
+            .deserialize_data::<VoteStateVersions>()
+            .unwrap()
+        else {
+            panic!("unexpected vote state version");
+        };
+        let last_credits = vote_state
+            .epoch_credits
+            .last()
+            .map(|(_epoch, final_credits, _initial_credits)| *final_credits)
+            .unwrap_or_default();
+        vote_state
+            .epoch_credits
+            .push((bank.epoch(), last_credits + recorded_payout, last_credits));
+        vote_account
+            .serialize_data(&VoteStateVersions::V4(vote_state))
+            .unwrap();
+        bank.store_account(&vote_pubkey, &vote_account);
+
+        // Freezing burns the VAT transferred to the incinerator at the epoch
+        // boundary, reducing capitalization after the reward budget was fixed.
+        bank.freeze();
+        let recalculated_ceiling =
+            bank.calculate_epoch_inflation_rewards(bank.capitalization(), bank.epoch());
+        assert!(
+            recorded_payout > recalculated_ceiling,
+            "the test must reproduce a payout above the post-burn ceiling: \
+             recorded_payout={recorded_payout}, recalculated_ceiling={recalculated_ceiling}"
+        );
+
+        let bank = Bank::new_from_parent(
+            bank,
+            SlotLeader::default(),
+            SLOTS_PER_EPOCH.saturating_mul(2),
+        );
+        assert_eq!(bank.epoch(), 2);
+
+        let epoch_rewards = bank.get_epoch_rewards_sysvar();
+        let EpochRewardStatus::Active(EpochRewardPhase::Calculation(calculation_status)) =
+            &bank.epoch_reward_status
+        else {
+            panic!("{:?} not active calculation", bank.epoch_reward_status);
+        };
+        let stake_rewards = calculation_status
+            .all_stake_rewards
+            .enumerated_rewards_iter()
+            .map(|(_index, reward)| reward.inflation.stake_reward)
+            .sum::<u64>();
+        assert_eq!(epoch_rewards.total_rewards, recorded_budget);
+        assert_eq!(
+            epoch_rewards.distributed_rewards + stake_rewards,
+            recorded_payout,
+            "every recorded reward lamport must still be paid"
         );
     }
 

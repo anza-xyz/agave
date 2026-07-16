@@ -768,6 +768,7 @@ mod tests {
         super::*,
         crate::{
             bank::test_utils::update_vote_account_timestamp,
+            block_component_processor::vote_reward::epoch_inflation_account_state::EpochInflationAccountState,
             genesis_utils::{
                 GenesisConfigInfo, create_genesis_config, create_genesis_config_with_leader,
             },
@@ -1000,6 +1001,7 @@ mod tests {
             genesis_config
                 .accounts
                 .insert(*GENESIS_CERTIFICATE_ACCOUNT, cert_account);
+            EpochInflationAccountState::insert_into_genesis_config(&mut genesis_config);
         }
 
         let mut feature_set = FeatureSet::default();
