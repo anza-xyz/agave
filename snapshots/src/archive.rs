@@ -12,8 +12,8 @@ use {
         account_storage::AccountStoragesOrderer,
         account_storage_entry::AccountStorageEntry,
         account_storage_reader::{
-            ACCOUNT_STORAGE_MAX_BUFFER_SIZE, AccountStorageReader, open_storage_files,
-            storage_file_buf_reader,
+            ACCOUNT_STORAGE_MAX_BUFFER_SIZE, AccountStorageReader, TombstonesFilter,
+            open_storage_files, storage_file_buf_reader,
         },
         accounts_file::AccountsFile,
     },
@@ -138,9 +138,13 @@ pub fn archive_snapshot(
                 matches!(snapshot_archive_kind, SnapshotArchiveKind::Incremental(_));
             let use_direct_io = io_setup.use_direct_io && !use_page_cache;
 
-            // Full archives do not need to persist tombstones as their older versions are
+            // Full snapshots do not need to persist tombstones as their older versions are
             // guaranteed to be skipped as obsolete accounts
-            let exclude_tombstones = matches!(snapshot_archive_kind, SnapshotArchiveKind::Full);
+            let tombstones_filter = if matches!(snapshot_archive_kind, SnapshotArchiveKind::Full) {
+                TombstonesFilter::Exclude
+            } else {
+                TombstonesFilter::Include
+            };
 
             // Walk storages and their (lazily-opened) file handles in chunks,
             // bounding how many archive-mode fds are simultaneously open.
@@ -183,7 +187,7 @@ pub fn archive_snapshot(
                     let reader = AccountStorageReader::new(
                         storage,
                         Some(snapshot_slot),
-                        exclude_tombstones,
+                        tombstones_filter,
                         &mut chunk_reader,
                     )
                     .map_err(|err| {

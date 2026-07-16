@@ -62,6 +62,15 @@ pub fn open_storage_files<'s>(
         .map(move |storage| storage.accounts.open_file_for_archive(use_direct_io))
 }
 
+/// Should tombstones be included or excluded when reading from storage?
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum TombstonesFilter {
+    /// tombstones are included when reading from storage
+    Include,
+    /// tombstones are excluded when reading from storage
+    Exclude,
+}
+
 /// A wrapper type around `AccountStorageEntry` that implements the `Read` trait.
 /// This type skips over the data in accounts contained in the obsolete accounts
 /// structure, and optionally over tombstone accounts as well.
@@ -85,7 +94,7 @@ impl<'a, 'r, R: FileBufRead<'a>> AccountStorageReader<'r, R> {
     pub fn new(
         storage: &AccountStorageEntry,
         snapshot_slot: Option<Slot>,
-        exclude_tombstones: bool,
+        tombstones_filter: TombstonesFilter,
         file_reader: &'r mut R,
     ) -> io::Result<Self> {
         let num_total_bytes = storage.accounts.len();
@@ -103,7 +112,7 @@ impl<'a, 'r, R: FileBufRead<'a>> AccountStorageReader<'r, R> {
                 *len = storage.accounts.calculate_stored_size(*len);
             });
 
-        if exclude_tombstones {
+        if tombstones_filter == TombstonesFilter::Exclude {
             // Tombstones are zero-lamport accounts, which store no data, so every
             // tombstone record has the fixed stored size of a data-less account.
             let tombstone_stored_size = storage.accounts.calculate_stored_size(0);
@@ -241,28 +250,31 @@ mod tests {
         buf_reader
             .set_file(files[0].as_ref(), storage.accounts.len() as u64)
             .unwrap();
-        let reader = AccountStorageReader::new(&storage, None, false, &mut buf_reader).unwrap();
+        let reader =
+            AccountStorageReader::new(&storage, None, TombstonesFilter::Include, &mut buf_reader)
+                .unwrap();
         assert_eq!(reader.len(), storage.accounts.len());
     }
 
-    #[test_case(0, 0, 0, false)]
-    #[test_case(1, 0, 0, false)]
-    #[test_case(1, 1, 0, false)]
-    #[test_case(1, 1, 0, true)]
-    #[test_case(1, 0, 1, false)]
-    #[test_case(100, 0, 0, false)]
-    #[test_case(100, 0, 10, false)]
-    #[test_case(100, 0, 100, false)]
-    #[test_case(100, 10, 0, false)]
-    #[test_case(100, 10, 0, true)]
-    #[test_case(100, 100, 0, true)]
-    #[test_case(100, 10, 10, false)]
-    #[test_case(100, 10, 10, true)]
+    #[test_case(0, 0, 0, TombstonesFilter::Include)]
+    #[test_case(1, 0, 0, TombstonesFilter::Include)]
+    #[test_case(1, 1, 0, TombstonesFilter::Include)]
+    #[test_case(1, 1, 0, TombstonesFilter::Exclude)]
+    #[test_case(1, 0, 1, TombstonesFilter::Include)]
+    #[test_case(100, 0, 0, TombstonesFilter::Include)]
+    #[test_case(100, 0, 10, TombstonesFilter::Include)]
+    #[test_case(100, 0, 100, TombstonesFilter::Include)]
+    #[test_case(100, 10, 0, TombstonesFilter::Include)]
+    #[test_case(100, 10, 0, TombstonesFilter::Exclude)]
+    #[test_case(100, 100, 0, TombstonesFilter::Include)]
+    #[test_case(100, 100, 0, TombstonesFilter::Exclude)]
+    #[test_case(100, 10, 10, TombstonesFilter::Include)]
+    #[test_case(100, 10, 10, TombstonesFilter::Exclude)]
     fn test_account_storage_reader_with_excluded_accounts(
         total_accounts: usize,
         num_tombstones: usize,
         num_obsolete: usize,
-        exclude_tombstones: bool,
+        tombstones_filter: TombstonesFilter,
     ) {
         let (storage, _temp_dirs) =
             create_storage_for_storage_reader(0, AccountsFileProvider::AppendVec);
@@ -271,7 +283,7 @@ mod tests {
 
         // Generate a seed from entropy and log the original seed
         let seed: u64 = rand::random();
-        info!("Generated seed: {seed}");
+        dbg!("Generated seed: {seed}");
 
         // Use a seedable RNG with the generated seed for reproducibility
         let mut rng = StdRng::seed_from_u64(seed);
@@ -343,11 +355,10 @@ mod tests {
             .set_file(files[0].as_ref(), storage.accounts.len() as u64)
             .unwrap();
         let mut reader =
-            AccountStorageReader::new(&storage, None, exclude_tombstones, &mut file_reader)
-                .unwrap();
+            AccountStorageReader::new(&storage, None, tombstones_filter, &mut file_reader).unwrap();
         let mut number_of_accounts_to_remove = num_obsolete;
         let mut current_len = storage.accounts.len() - storage.get_obsolete_bytes(None);
-        if exclude_tombstones {
+        if tombstones_filter == TombstonesFilter::Exclude {
             number_of_accounts_to_remove += num_tombstones;
             current_len -= num_tombstones * storage.accounts.calculate_stored_size(0);
         }
@@ -474,9 +485,13 @@ mod tests {
             file_reader
                 .set_file(files[0].as_ref(), storage.accounts.len() as u64)
                 .unwrap();
-            let mut reader =
-                AccountStorageReader::new(&storage, Some(snapshot_slot), false, &mut file_reader)
-                    .unwrap();
+            let mut reader = AccountStorageReader::new(
+                &storage,
+                Some(snapshot_slot),
+                TombstonesFilter::Include,
+                &mut file_reader,
+            )
+            .unwrap();
             let current_len =
                 storage.accounts.len() - storage.get_obsolete_bytes(Some(snapshot_slot));
             assert_eq!(reader.len(), current_len);
