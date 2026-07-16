@@ -23,7 +23,9 @@ use {
     solana_send_transaction_service::{
         send_transaction_service::{Config, SendTransactionService, TransactionInfo},
         tpu_info::NullTpuInfo,
-        transaction_client::TpuClientNextClient,
+        transaction_client::{
+            TpuSender, create_client as create_tpu_client, create_leader_updater,
+        },
     },
     solana_signature::Signature,
     solana_transaction::{
@@ -439,7 +441,7 @@ fn create_client(
     maybe_runtime: Option<Handle>,
     my_tpu_address: SocketAddr,
     exit: Arc<AtomicBool>,
-) -> TpuClientNextClient {
+) -> TpuSender {
     let runtime_handle = maybe_runtime.unwrap_or_else(|| {
         Handle::try_current().expect("runtime handle not provided, and not inside Tokio runtime")
     });
@@ -465,16 +467,17 @@ fn create_client(
     });
 
     let leader_forward_count = 0;
-    TpuClientNextClient::new::<NullTpuInfo>(
+    let leader_updater = create_leader_updater::<NullTpuInfo>(None, my_tpu_address, None);
+    let (tpu_sender, _client) = create_tpu_client(
         runtime_handle,
-        my_tpu_address,
-        None,
-        None,
+        leader_updater,
         leader_forward_count,
         None,
         bind_socket,
         cancel,
     )
+    .expect("Should be able to create TPU client.");
+    tpu_sender
 }
 
 pub async fn start_tcp_server(

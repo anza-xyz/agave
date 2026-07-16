@@ -6,12 +6,7 @@ use {
     solana_measure::measure::Measure,
     solana_tls_utils::NotifyKeyUpdate,
     solana_tpu_client_next::{
-        ConnectionWorkersScheduler,
-        connection_workers_scheduler::{
-            BindTarget, ConnectionWorkersSchedulerConfig, Fanout, StakeIdentity,
-        },
-        leader_updater::LeaderUpdater,
-        transaction_batch::TransactionBatch,
+        Client, ClientBuilder, ClientError, TransactionSender, leader_updater::LeaderUpdater,
     },
     std::{
         net::{SocketAddr, UdpSocket},
@@ -19,13 +14,7 @@ use {
         sync::atomic::Ordering,
         time::{Duration, Instant},
     },
-    tokio::{
-        runtime::Handle,
-        sync::{
-            mpsc::{self},
-            watch,
-        },
-    },
+    tokio::runtime::Handle,
     tokio_util::sync::CancellationToken,
 };
 
@@ -37,16 +26,43 @@ const MAX_CONNECTIONS: NonZeroUsize = NonZeroUsize::new(1024).unwrap();
 pub trait TpuInfoWithSendStatic: TpuInfo + std::marker::Send + 'static {}
 impl<T> TpuInfoWithSendStatic for T where T: TpuInfo + std::marker::Send + 'static {}
 
-pub trait TransactionClient {
-    fn send_transactions_in_batch(
+/// The leader info refresh rate.
+pub const LEADER_INFO_REFRESH_RATE_MS: u64 = 1000;
+
+const METRICS_REPORTING_INTERVAL: Duration = Duration::from_secs(3);
+
+/// A synchronous adapter that schedules transaction batches on a Tokio runtime.
+#[derive(Clone)]
+pub struct TpuSender {
+    runtime_handle: Handle,
+    sender: TransactionSender,
+}
+
+impl TpuSender {
+    pub fn send_transactions_in_batch(
         &self,
         wire_transactions: Vec<Vec<u8>>,
         stats: &SendTransactionServiceStats,
-    );
-}
+    ) {
+        let mut measure = Measure::start("send-us");
+        self.runtime_handle.spawn({
+            let sender = self.sender.clone();
+            async move {
+                if sender
+                    .send_transactions_in_batch(wire_transactions)
+                    .await
+                    .is_err()
+                {
+                    warn!("Failed to send transactions to channel: it is closed.");
+                }
+            }
+        });
 
-/// The leader info refresh rate.
-pub const LEADER_INFO_REFRESH_RATE_MS: u64 = 1000;
+        measure.stop();
+        stats.send_us.fetch_add(measure.as_us(), Ordering::Relaxed);
+        stats.send_attempt_count.fetch_add(1, Ordering::Relaxed);
+    }
+}
 
 /// A struct responsible for holding up-to-date leader information
 /// used for sending transactions.
@@ -95,141 +111,77 @@ where
     }
 }
 
-/// `TpuClientNextClient` provides an interface for managing the
-/// [`ConnectionWorkersScheduler`].
-///
-/// It allows:
-/// * Create and initializes the scheduler with runtime configurations,
-/// * Send transactions to the connection scheduler,
-/// * Update the validator identity keypair and propagate the changes to the
-///   scheduler. Most of the complexity of this structure arises from this
-///   functionality.
-#[derive(Clone)]
-pub struct TpuClientNextClient {
+pub struct TpuClient(Client);
+
+impl TpuClient {
+    pub async fn shutdown(self) -> Result<(), ClientError> {
+        self.0.shutdown().await
+    }
+}
+
+impl NotifyKeyUpdate for TpuClient {
+    fn update_key(&self, identity: &Keypair) -> Result<(), Box<dyn core::error::Error>> {
+        self.0
+            .update_identity(identity)
+            .map_err(|e| Box::new(e) as Box<dyn core::error::Error>)
+    }
+}
+
+pub fn create_client(
     runtime_handle: Handle,
-    sender: mpsc::Sender<TransactionBatch>,
-    update_certificate_sender: watch::Sender<Option<StakeIdentity>>,
-    #[cfg(any(test, feature = "dev-context-only-utils"))]
+    leader_updater: Box<dyn LeaderUpdater>,
+    leader_forward_count: u64,
+    identity: Option<&Keypair>,
+    bind_socket: UdpSocket,
     cancel: CancellationToken,
-}
-
-const METRICS_REPORTING_INTERVAL: Duration = Duration::from_secs(3);
-impl TpuClientNextClient {
-    pub fn new<T>(
-        runtime_handle: Handle,
-        my_tpu_address: SocketAddr,
-        tpu_peers: Option<Vec<SocketAddr>>,
-        leader_info: Option<T>,
-        leader_forward_count: u64,
-        identity: Option<&Keypair>,
-        bind_socket: UdpSocket,
-        cancel: CancellationToken,
-    ) -> Self
-    where
-        T: TpuInfoWithSendStatic + Clone,
-    {
-        // The channel size represents 8s worth of transactions at a rate of
-        // 1000 tps, assuming batch size is 64.
-        let (sender, receiver) = mpsc::channel(128);
-
-        let (update_certificate_sender, update_certificate_receiver) = watch::channel(None);
-
-        let leader_info_provider = CurrentLeaderInfo::new(leader_info);
-        let leader_updater: SendTransactionServiceLeaderUpdater<T> =
-            SendTransactionServiceLeaderUpdater {
-                leader_info_provider,
-                my_tpu_address,
-                tpu_peers,
-            };
-        let config = Self::create_config(bind_socket, identity, leader_forward_count as usize);
-
-        let scheduler = ConnectionWorkersScheduler::new(
-            Box::new(leader_updater),
-            receiver,
-            update_certificate_receiver,
-            cancel.clone(),
-        );
-        // leaking handle to this task, as it will run until the cancel signal is received
-        runtime_handle.spawn(scheduler.get_stats().report_to_influxdb(
-            "send-transaction-service-TPU-client",
-            METRICS_REPORTING_INTERVAL,
-            cancel.clone(),
-        ));
-        let _handle = runtime_handle.spawn(scheduler.run(config));
-        Self {
-            runtime_handle,
-            sender,
-            update_certificate_sender,
-            #[cfg(any(test, feature = "dev-context-only-utils"))]
-            cancel,
-        }
-    }
-
-    fn create_config(
-        bind_socket: UdpSocket,
-        stake_identity: Option<&Keypair>,
-        leader_forward_count: usize,
-    ) -> ConnectionWorkersSchedulerConfig {
-        ConnectionWorkersSchedulerConfig {
-            bind: BindTarget::Socket(bind_socket),
-            stake_identity: stake_identity.map(StakeIdentity::new),
-            num_connections: MAX_CONNECTIONS,
-            skip_check_transaction_age: true,
-            // experimentally found parameter values
-            worker_channel_size: 64,
-            max_reconnect_attempts: 4,
-            // We open connection to one more leader in advance, which time-wise means ~1.6s
-            leaders_fanout: Fanout {
-                connect: leader_forward_count + 1,
-                send: leader_forward_count,
-            },
-            override_initial_congestion_window: None,
-        }
-    }
-
-    #[cfg(any(test, feature = "dev-context-only-utils"))]
-    pub fn cancel(&self) {
-        self.cancel.cancel();
-    }
-}
-
-impl NotifyKeyUpdate for TpuClientNextClient {
-    fn update_key(&self, identity: &Keypair) -> Result<(), Box<dyn std::error::Error>> {
-        let stake_identity = StakeIdentity::new(identity);
-        self.update_certificate_sender
-            .send(Some(stake_identity))
-            .map_err(|e| Box::new(e) as Box<dyn std::error::Error>)
-    }
-}
-
-impl TransactionClient for TpuClientNextClient {
-    fn send_transactions_in_batch(
-        &self,
-        wire_transactions: Vec<Vec<u8>>,
-        stats: &SendTransactionServiceStats,
-    ) {
-        let mut measure = Measure::start("send-us");
-        self.runtime_handle.spawn({
-            let sender = self.sender.clone();
-            async move {
-                let res = sender.send(TransactionBatch::new(wire_transactions)).await;
-                if res.is_err() {
-                    warn!("Failed to send transaction to channel: it is closed.");
-                }
-            }
+) -> Result<(TpuSender, TpuClient), String> {
+    let sender_runtime_handle = runtime_handle.clone();
+    let client_builder = ClientBuilder::new(leader_updater)
+        .runtime_handle(runtime_handle)
+        .bind_socket(bind_socket)
+        .leader_send_fanout(leader_forward_count as usize)
+        .identity(identity)
+        .max_cache_size(MAX_CONNECTIONS)
+        .cancel_token(cancel)
+        .worker_channel_size(64)
+        .sender_channel_size(128)
+        .max_reconnect_attempts(4)
+        .metric_reporter(|stats, cancel| async move {
+            stats
+                .report_to_influxdb(
+                    "send-transaction-service-TPU-client",
+                    METRICS_REPORTING_INTERVAL,
+                    cancel,
+                )
+                .await;
         });
 
-        measure.stop();
-        stats.send_us.fetch_add(measure.as_us(), Ordering::Relaxed);
-        stats.send_attempt_count.fetch_add(1, Ordering::Relaxed);
-    }
+    let (sender, client) = client_builder.build().map_err(|e| e.to_string())?;
+    Ok((
+        TpuSender {
+            runtime_handle: sender_runtime_handle,
+            sender,
+        },
+        TpuClient(client),
+    ))
 }
 
-#[derive(Clone)]
-pub struct SendTransactionServiceLeaderUpdater<T: TpuInfoWithSendStatic> {
+struct SendTransactionServiceLeaderUpdater<T: TpuInfoWithSendStatic> {
     leader_info_provider: CurrentLeaderInfo<T>,
     my_tpu_address: SocketAddr,
     tpu_peers: Option<Vec<SocketAddr>>,
+}
+
+pub fn create_leader_updater<T: TpuInfoWithSendStatic>(
+    leader_info: Option<T>,
+    my_tpu_address: SocketAddr,
+    tpu_peers: Option<Vec<SocketAddr>>,
+) -> Box<dyn LeaderUpdater> {
+    Box::new(SendTransactionServiceLeaderUpdater {
+        leader_info_provider: CurrentLeaderInfo::new(leader_info),
+        my_tpu_address,
+        tpu_peers,
+    })
 }
 
 #[async_trait]
