@@ -262,12 +262,21 @@ mod tests {
     #[test]
     fn picks_latest_tag_per_channel() {
         let vs = versions(&[(bv(3, 0), "3.0.5"), (bv(3, 1), "3.1.0-beta.0")]);
-        let tags = vec![v("3.0.1"), v("3.0.5"), v("3.0.2"), v("2.9.9")];
+        let tags = vec![
+            v("3.0.1"),
+            v("3.0.5"),
+            v("3.0.6"),
+            v("3.1.0-alpha.0"),
+            v("3.1.0-alpha.1"),
+            v("3.1.0-beta.0"),
+            v("3.1.0-beta.1"),
+            v("2.9.9"),
+        ];
 
         let info = derive_channels(&vs, &tags, None, None).unwrap();
 
-        assert_eq!(info.beta_channel_latest_tag, "");
-        assert_eq!(info.stable_channel_latest_tag, "v3.0.5");
+        assert_eq!(info.beta_channel_latest_tag, "v3.1.0-beta.1");
+        assert_eq!(info.stable_channel_latest_tag, "v3.0.6");
     }
 
     #[test]

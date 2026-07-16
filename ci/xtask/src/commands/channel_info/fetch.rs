@@ -44,12 +44,14 @@ pub fn release_tags() -> Result<Vec<Version>> {
     Ok(lines
         .iter()
         .filter_map(|l| strip_ref(l, "refs/tags/"))
-        .filter_map(|name| {
-            let stripped = name.strip_prefix('v')?;
-            let v = Version::parse(stripped).ok()?;
-            (v.pre.is_empty() && v.build.is_empty()).then_some(v)
-        })
+        .filter_map(|name| parse_release_tag(&name))
         .collect())
+}
+
+fn parse_release_tag(name: &str) -> Option<Version> {
+    let stripped = name.strip_prefix('v')?;
+    let version = Version::parse(stripped).ok()?;
+    Some(version)
 }
 
 #[derive(Deserialize)]
@@ -83,4 +85,28 @@ pub async fn workspace_version(client: &reqwest::Client, bv: BranchVersion) -> R
     let parsed: CargoToml =
         toml::from_str(&raw).map_err(|e| anyhow!("failed to parse Cargo.toml at {url}: {e}"))?;
     Ok(parsed.workspace.package.version)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn parses_final_and_prerelease_tags() {
+        assert_eq!(parse_release_tag("v4.2.0"), Version::parse("4.2.0").ok());
+        assert_eq!(
+            parse_release_tag("v4.2.0-beta.1"),
+            Version::parse("4.2.0-beta.1").ok()
+        );
+    }
+
+    #[test]
+    fn parses_build_tags_and_rejects_non_release_tags() {
+        assert_eq!(
+            parse_release_tag("v4.2.0+build.1"),
+            Version::parse("4.2.0+build.1").ok()
+        );
+        assert_eq!(parse_release_tag("4.2.0"), None);
+        assert_eq!(parse_release_tag("v4.2.0^{}"), None);
+    }
 }
