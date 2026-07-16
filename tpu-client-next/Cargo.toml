@@ -22,6 +22,7 @@ websocket-node-address-service = ["dep:solana-pubsub-client", "dep:tokio-stream"
 
 [dependencies]
 async-trait = { workspace = true }
+bytes = { workspace = true }
 futures = { workspace = true }
 futures-util = { workspace = true }
 log = { workspace = true }

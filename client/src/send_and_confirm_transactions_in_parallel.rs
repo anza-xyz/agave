@@ -73,12 +73,7 @@ impl WireTransactionSender for TransactionSender {
     // instance is dropped.
     fn send(&self, wire_transaction: Vec<u8>) -> impl Future<Output = bool> + Send {
         let sender = self.clone();
-        async move {
-            sender
-                .send_transactions_in_batch(vec![wire_transaction])
-                .await
-                .is_ok()
-        }
+        async move { sender.send_transaction(wire_transaction).await.is_ok() }
     }
 }
 
