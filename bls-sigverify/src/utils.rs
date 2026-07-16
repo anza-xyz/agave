@@ -5,9 +5,9 @@ use {
     },
     agave_votor_messages::{
         VerifiedVoterSlotsSender,
-        consensus_message::SigVerifiedBatch,
         metric_types::{ConsensusMetricsEvent, ConsensusMetricsEventSender},
         reward_certificate::AddVoteMessage,
+        sig_verified_messages::SigVerifiedBatch,
     },
     crossbeam_channel::{Sender, TrySendError},
     log::{error, info},

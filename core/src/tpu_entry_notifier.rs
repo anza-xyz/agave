@@ -1,5 +1,6 @@
 use {
     crossbeam_channel::{Receiver, RecvTimeoutError, Sender},
+    solana_clock::BankId,
     solana_entry::{entry::EntrySummary, entry_or_marker::EntryOrMarker},
     solana_ledger::entry_notifier_service::{EntryNotification, EntryNotifierSender},
     solana_poh::poh_recorder::WorkingBankEntryOrMarker,
@@ -28,6 +29,7 @@ impl TpuEntryNotifier {
             .name("solTpuEntry".to_string())
             .spawn(move || {
                 let mut current_slot = 0;
+                let mut current_bank_id = BankId::default();
                 let mut current_index = 0;
                 let mut current_transaction_index = 0;
                 loop {
@@ -41,6 +43,7 @@ impl TpuEntryNotifier {
                         &entry_notification_sender,
                         &broadcast_entry_sender,
                         &mut current_slot,
+                        &mut current_bank_id,
                         &mut current_index,
                         &mut current_transaction_index,
                     ) {
@@ -58,21 +61,21 @@ impl TpuEntryNotifier {
         entry_notification_sender: &EntryNotifierSender,
         broadcast_entry_sender: &Sender<WorkingBankEntryOrMarker>,
         current_slot: &mut u64,
+        current_bank_id: &mut BankId,
         current_index: &mut usize,
         current_transaction_index: &mut usize,
     ) -> Result<(), RecvTimeoutError> {
         let (bank, (entry_or_marker, tick_height)) =
             entry_receiver.recv_timeout(Duration::from_secs(1))?;
         let slot = bank.slot();
-        let index = if slot != *current_slot {
+        let bank_id = bank.bank_id();
+        if slot != *current_slot || bank_id != *current_bank_id {
             *current_index = 0;
             *current_transaction_index = 0;
             *current_slot = slot;
-            0
-        } else {
-            *current_index += 1;
-            *current_index
+            *current_bank_id = bank_id;
         };
+        let index = *current_index;
 
         if let EntryOrMarker::Entry(ref entry) = entry_or_marker {
             let entry_summary = EntrySummary {
@@ -82,6 +85,7 @@ impl TpuEntryNotifier {
             };
             if let Err(err) = entry_notification_sender.send(EntryNotification {
                 slot,
+                bank_id,
                 index,
                 entry: entry_summary,
                 starting_transaction_index: *current_transaction_index,
@@ -91,11 +95,11 @@ impl TpuEntryNotifier {
                      EntryNotifierService, error {err:?}",
                 );
             }
+            *current_index += 1;
             *current_transaction_index += entry.transactions.len();
         };
 
         if let Err(err) = broadcast_entry_sender.send((bank, (entry_or_marker, tick_height))) {
-            let index = *current_index;
             warn!(
                 "Failed to send slot {slot:?} entry/marker {index:?} from Tpu to BroadcastStage, \
                  error {err:?}",

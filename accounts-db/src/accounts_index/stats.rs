@@ -23,7 +23,6 @@ pub struct HeldInMemStats {
     pub age: AtomicU64,
     pub ref_count: AtomicU64,
     pub slot_list_len: AtomicU64,
-    pub slot_list_cached: AtomicU64,
 }
 
 #[derive(Debug, Default)]
@@ -266,8 +265,6 @@ impl Stats {
             let held_in_mem_ref_count = self.held_in_mem.ref_count.swap(0, Ordering::Relaxed);
             let held_in_mem_slot_list_len =
                 self.held_in_mem.slot_list_len.swap(0, Ordering::Relaxed);
-            let held_in_mem_slot_list_cached =
-                self.held_in_mem.slot_list_cached.swap(0, Ordering::Relaxed);
             // If an entry is held in-mem due to ref count or slot list length,
             // then assume it has two slot list entries.
             // Since `approx_size_of_one_entry()` assumes 'regular' entries
@@ -318,11 +315,6 @@ impl Stats {
                 (
                     "num_not_flushed_slot_list_len",
                     held_in_mem_slot_list_len,
-                    i64
-                ),
-                (
-                    "num_not_flushed_slot_list_cached",
-                    held_in_mem_slot_list_cached,
                     i64
                 ),
                 ("min_in_bin_disk", disk_stats.0, i64),
@@ -495,12 +487,6 @@ impl Stats {
                     i64
                 ),
                 (
-                    "disk_index_flush_file_us",
-                    disk.map(|disk| disk.stats.index.flush_file_us.swap(0, Ordering::Relaxed))
-                        .unwrap_or_default(),
-                    i64
-                ),
-                (
                     "disk_index_file_size",
                     disk.map(|disk| disk.stats.index.total_file_size.load(Ordering::Relaxed))
                         .unwrap_or_default(),
@@ -565,12 +551,6 @@ impl Stats {
                 (
                     "disk_data_resize_us",
                     disk.map(|disk| disk.stats.data.resize_us.swap(0, Ordering::Relaxed))
-                        .unwrap_or_default(),
-                    i64
-                ),
-                (
-                    "disk_data_flush_file_us",
-                    disk.map(|disk| disk.stats.data.flush_file_us.swap(0, Ordering::Relaxed))
                         .unwrap_or_default(),
                     i64
                 ),

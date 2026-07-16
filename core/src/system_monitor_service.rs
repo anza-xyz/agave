@@ -13,6 +13,7 @@ use {
     },
 };
 use {
+    solana_metrics::datapoint::DataPoint,
     solana_time_utils::AtomicInterval,
     std::{
         collections::HashMap,
@@ -623,12 +624,13 @@ impl SystemMonitorService {
 
     #[cfg_attr(not(target_os = "linux"), allow(dead_code))]
     fn linux_report_network_limits(
+        mut datapoint: DataPoint,
         current_limits: &[(&'static str, &'static InterestingLimit, i64)],
     ) -> bool {
-        current_limits
+        let ret = current_limits
             .iter()
             .all(|(key, interesting_limit, current_value)| {
-                datapoint_warn!("os-config", (key, *current_value, i64));
+                datapoint.add_field_i64(key, *current_value);
                 match interesting_limit {
                     InterestingLimit::Recommend(recommended_value)
                         if current_value < recommended_value =>
@@ -648,7 +650,9 @@ impl SystemMonitorService {
                         true
                     }
                 }
-            })
+            });
+        solana_metrics::submit(datapoint, log::Level::Info);
+        ret
     }
 
     #[cfg(not(target_os = "linux"))]
@@ -659,9 +663,10 @@ impl SystemMonitorService {
 
     #[cfg(target_os = "linux")]
     pub fn check_os_network_limits() -> bool {
-        datapoint_info!("os-config", ("platform", platform_id(), String));
+        let mut datapoint = DataPoint::new("os-config");
+        datapoint.add_field_str("platform", platform_id().as_str());
         let current_limits = Self::linux_get_current_network_limits();
-        Self::linux_report_network_limits(&current_limits)
+        Self::linux_report_network_limits(datapoint, &current_limits)
     }
 
     #[cfg(target_os = "linux")]
@@ -1184,15 +1189,14 @@ impl SystemMonitorService {
                     Self::process_net_stats(&mut udp_stats);
                 }
             }
-            if let Some(xdp_network_config_report) = &config.xdp_network_config_report {
-                if xdp_network_config_timer
+            if let Some(xdp_network_config_report) = &config.xdp_network_config_report
+                && xdp_network_config_timer
                     .should_update_ext(SAMPLE_INTERVAL_XDP_NETWORK_CONFIG_MS, false)
-                {
-                    let metrics = xdp_network_config_metrics.get_or_insert_with(|| {
-                        Self::load_xdp_network_config_metrics(xdp_network_config_report)
-                    });
-                    Self::report_xdp_network_config(xdp_network_config_report, metrics);
-                }
+            {
+                let metrics = xdp_network_config_metrics.get_or_insert_with(|| {
+                    Self::load_xdp_network_config_metrics(xdp_network_config_report)
+                });
+                Self::report_xdp_network_config(xdp_network_config_report, metrics);
             }
             if config.report_os_memory_stats && mem_timer.should_update(SAMPLE_INTERVAL_MEM_MS) {
                 Self::report_mem_stats();

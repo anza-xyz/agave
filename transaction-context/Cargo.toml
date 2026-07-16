@@ -16,8 +16,8 @@ rustdoc-args = ["--cfg=docsrs"]
 
 [features]
 agave-unstable-api = []
-bincode = ["dep:bincode", "serde", "solana-account/bincode"]
-dev-context-only-utils = ["bincode", "solana-account/dev-context-only-utils", "dep:qualifier_attr"]
+bincode = ["dep:bincode", "serde"]
+dev-context-only-utils = ["bincode", "dep:qualifier_attr"]
 serde = ["serde/derive", "solana-pubkey/serde"]
 wincode = ["dep:wincode", "solana-pubkey/wincode"]
 
@@ -40,6 +40,7 @@ solana-signature = { workspace = true, optional = true }
 [dev-dependencies]
 solana-account-info = { workspace = true }
 solana-program-entrypoint = { workspace = true }
+solana-pubkey = { workspace = true, features = ["rand"] }
 solana-system-interface = { workspace = true }
 solana-transaction-context = { path = ".", features = [
     "agave-unstable-api",

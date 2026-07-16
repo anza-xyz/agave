@@ -6,7 +6,6 @@ use {
     crate::program_loader::load_program_with_pubkey,
     solana_account::{Account, AccountSharedData},
     solana_compute_budget::compute_budget::ComputeBudget,
-    solana_instruction::error::InstructionError,
     solana_program_runtime::{
         invoke_context::BuiltinFunctionRegisterer,
         loaded_programs::{ProgramCacheForTxBatch, ProgramRuntimeEnvironment},
@@ -86,6 +85,14 @@ pub fn keyed_account_for_system_program() -> (Pubkey, Account) {
     create_keyed_account_for_builtin_program(&SVM_BUILTINS[0].program_id, SVM_BUILTINS[0].name)
 }
 
+pub fn keyed_account_for_bpf_loader_program() -> (Pubkey, Account) {
+    create_keyed_account_for_builtin_program(&SVM_BUILTINS[2].program_id, SVM_BUILTINS[2].name)
+}
+
+pub fn keyed_account_for_bpf_loader_upgradeable_program() -> (Pubkey, Account) {
+    create_keyed_account_for_builtin_program(&SVM_BUILTINS[3].program_id, SVM_BUILTINS[3].name)
+}
+
 pub fn keyed_account_for_compute_budget_program() -> (Pubkey, Account) {
     create_keyed_account_for_builtin_program(&SVM_BUILTINS[4].program_id, SVM_BUILTINS[4].name)
 }
@@ -146,13 +153,14 @@ pub fn fill_program_cache_from_accounts(
     program_runtime_environment: &ProgramRuntimeEnvironment,
     accounts: &[(Pubkey, Account)],
     slot: u64,
-) -> Result<(), InstructionError> {
+) {
     let mut newly_loaded_programs = HashSet::<Pubkey>::new();
 
     for acc in accounts {
-        if !newly_loaded_programs.insert(acc.0) {
-            return Err(InstructionError::UnsupportedProgramId);
-        }
+        assert!(
+            newly_loaded_programs.insert(acc.0),
+            "invariant violation: duplicate account load",
+        );
 
         if program_cache.find(&acc.0).is_none() {
             if !solana_sdk_ids::bpf_loader_deprecated::check_id(&acc.1.owner)
@@ -172,8 +180,6 @@ pub fn fill_program_cache_from_accounts(
             }
         }
     }
-
-    Ok(())
 }
 
 struct FillFromAccountsCallback<'a>(&'a [(Pubkey, Account)]);

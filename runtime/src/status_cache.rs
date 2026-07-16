@@ -3,14 +3,14 @@ use shuttle::sync::{Arc, Mutex};
 #[cfg(not(feature = "shuttle-test"))]
 use std::sync::{Arc, Mutex};
 use {
-    ahash::{HashMap, HashMapExt as _},
     log::*,
     serde::Serialize,
+    smallvec::SmallVec,
     solana_accounts_db::ancestors::Ancestors,
     solana_clock::{MAX_RECENT_BLOCKHASHES, Slot},
     solana_hash::Hash,
     std::{
-        collections::{HashSet, hash_map::Entry},
+        collections::{HashMap, HashSet, hash_map::Entry},
         num::{NonZero, NonZeroUsize},
     },
 };
@@ -24,7 +24,7 @@ const MAX_ROOT_ENTRIES: usize = MAX_RECENT_BLOCKHASHES;
 const CACHED_KEY_SIZE: usize = 20;
 
 // Store forks in a single chunk of memory to avoid another hash lookup.
-pub type ForkStatus<T> = Vec<(Slot, T)>;
+pub type ForkStatus<T> = SmallVec<[(Slot, T); 1]>;
 
 // The type of the key used in the cache.
 pub(crate) type KeySlice = [u8; CACHED_KEY_SIZE];
@@ -32,11 +32,12 @@ pub(crate) type KeySlice = [u8; CACHED_KEY_SIZE];
 type KeyMap<T> = HashMap<KeySlice, ForkStatus<T>>;
 
 // Map of Hash and status
-pub type Status<T> = Arc<Mutex<HashMap<Hash, (usize, Vec<(KeySlice, T)>)>>>;
+pub type Status<T> =
+    Arc<Mutex<HashMap<Hash, (usize, Vec<(KeySlice, T)>), solana_hash::HashHasherBuilder>>>;
 
 // A Map of hash + the highest fork it's been observed on along with
 // the key offset and a Map of the key slice + Fork status for that key
-type KeyStatusMap<T> = HashMap<Hash, (Slot, usize, KeyMap<T>)>;
+type KeyStatusMap<T> = HashMap<Hash, (Slot, usize, KeyMap<T>), solana_hash::HashHasherBuilder>;
 
 // The type used for StatusCache::slot_deltas. See the field definition for more details.
 type SlotDeltaMap<T> = HashMap<Slot, Status<T>>;
@@ -172,16 +173,10 @@ impl<T: Serialize + Clone> StatusCache<T> {
         key: K,
         ancestors: &Ancestors,
     ) -> Option<(Slot, T)> {
-        let keys: Vec<_> = self.cache.keys().copied().collect();
-
-        for blockhash in keys.iter() {
+        self.cache.keys().find_map(|blockhash| {
             trace!("get_status_any_blockhash: trying {blockhash}");
-            let status = self.get_status(&key, blockhash, ancestors);
-            if status.is_some() {
-                return status;
-            }
-        }
-        None
+            self.get_status(&key, blockhash, ancestors)
+        })
     }
 
     /// Add a known root fork.
@@ -190,6 +185,11 @@ impl<T: Serialize + Clone> StatusCache<T> {
     /// keys are cleared.
     pub fn add_root(&mut self, fork: Slot) {
         self.roots.insert(fork);
+        self.purge_roots();
+    }
+
+    pub fn add_roots<I: IntoIterator<Item = Slot>>(&mut self, forks: I) {
+        self.roots.extend(forks);
         self.purge_roots();
     }
 
@@ -239,12 +239,20 @@ impl<T: Serialize + Clone> StatusCache<T> {
     }
 
     pub fn purge_roots(&mut self) {
-        while self.roots.len() > self.max_root_entries() {
-            if let Some(min) = self.roots.iter().min().cloned() {
-                self.roots.remove(&min);
-                self.cache.retain(|_, (fork, _, _)| *fork > min);
-                self.slot_deltas.retain(|slot, _| *slot > min);
-            }
+        let max_root_entries = self.max_root_entries();
+        if self.roots.len() > max_root_entries {
+            let num_roots_to_purge = self.roots.len() - max_root_entries;
+            let mut roots = self
+                .roots
+                .iter()
+                .copied()
+                .collect::<SmallVec<[Slot; 0x200]>>();
+            let (_, cutoff, _) = roots.select_nth_unstable(num_roots_to_purge - 1);
+            let cutoff = *cutoff;
+
+            self.roots.retain(|root| *root > cutoff);
+            self.cache.retain(|_, (fork, _, _)| *fork > cutoff);
+            self.slot_deltas.retain(|slot, _| *slot > cutoff);
         }
     }
 
@@ -360,17 +368,17 @@ mod tests {
                     .all(|(hash, (slot, key_index, hash_map))| {
                         if let Some((other_slot, other_key_index, other_hash_map)) =
                             other.cache.get(hash)
+                            && slot == other_slot
+                            && key_index == other_key_index
                         {
-                            if slot == other_slot && key_index == other_key_index {
-                                return hash_map.iter().all(|(slice, fork_map)| {
-                                    if let Some(other_fork_map) = other_hash_map.get(slice) {
-                                        // all this work just to compare the highest forks in the fork map
-                                        // per entry
-                                        return fork_map.last() == other_fork_map.last();
-                                    }
-                                    false
-                                });
-                            }
+                            return hash_map.iter().all(|(slice, fork_map)| {
+                                if let Some(other_fork_map) = other_hash_map.get(slice) {
+                                    // all this work just to compare the highest forks in the fork map
+                                    // per entry
+                                    return fork_map.last() == other_fork_map.last();
+                                }
+                                false
+                            });
                         }
                         false
                     })

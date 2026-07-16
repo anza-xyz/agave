@@ -160,16 +160,16 @@ impl ReadOnlyAccountsCache {
     pub(crate) fn load(&self, pubkey: Pubkey, slot: Slot) -> Option<AccountSharedData> {
         let (account, load_us) = measure_us!({
             let mut found = None;
-            if let Some(entry) = self.cache.get(&pubkey) {
-                if entry.slot == slot {
-                    entry
-                        .last_update_time
-                        .store(self.timestamp(), Ordering::Relaxed);
-                    let account = entry.account.clone();
-                    drop(entry);
-                    self.stats.hits.fetch_add(1, Ordering::Relaxed);
-                    found = Some(account);
-                }
+            if let Some(entry) = self.cache.get(&pubkey)
+                && entry.slot == slot
+            {
+                entry
+                    .last_update_time
+                    .store(self.timestamp(), Ordering::Relaxed);
+                let account = entry.account.clone();
+                drop(entry);
+                self.stats.hits.fetch_add(1, Ordering::Relaxed);
+                found = Some(account);
             }
 
             if found.is_none() {

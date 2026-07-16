@@ -5,12 +5,12 @@ mod serde_snapshot_tests {
             bank::BankHashStats,
             serde_snapshot::{
                 SerializableAccountsDb, SnapshotAccountsDbFields, deserialize_accounts_db_fields,
-                reconstruct_accountsdb_from_fields, remap_append_vec_file,
+                reconstruct_accountsdb_from_fields, remap_append_vec_file, serialize_into,
             },
             snapshot_utils::StorageAndNextAccountsFileId,
         },
         agave_fs::{FileInfo, buffered_reader::FileBufRead as _, io_setup::IoSetupState},
-        bincode::{Error, serialize_into},
+        bincode::Error,
         log::info,
         rand::{Rng, rng},
         solana_account::{AccountSharedData, ReadableAccount},
@@ -19,7 +19,7 @@ mod serde_snapshot_tests {
             account_storage::AccountStorageMap,
             account_storage_entry::AccountStorageEntry,
             account_storage_reader::{
-                AccountStorageReader, open_storage_files, storage_file_buf_reader,
+                AccountStorageReader, TombstonesFilter, open_storage_files, storage_file_buf_reader,
             },
             accounts::Accounts,
             accounts_db::{
@@ -99,18 +99,14 @@ mod serde_snapshot_tests {
         stream: &mut W,
         slot: Slot,
         account_storage_entries: &[Arc<AccountStorageEntry>],
-    ) -> Result<(), Error>
+    ) -> wincode::WriteResult<()>
     where
         W: Write,
     {
         let bank_hash_stats = BankHashStats::default();
         serialize_into(
             stream,
-            &SerializableAccountsDb {
-                slot,
-                account_storage_entries,
-                bank_hash_stats,
-            },
+            &SerializableAccountsDb::new(slot, account_storage_entries, bank_hash_stats),
         )
     }
 
@@ -132,8 +128,13 @@ mod serde_snapshot_tests {
             let file_name = AccountsFile::file_name(storage_entry.slot(), storage_entry.id());
             let output_path = output_dir.as_ref().join(file_name);
             buf_reader.set_file(file.as_ref(), storage_entry.accounts.len() as u64)?;
-            let mut reader =
-                AccountStorageReader::new(storage_entry, None, &mut buf_reader).unwrap();
+            let mut reader = AccountStorageReader::new(
+                storage_entry,
+                None,
+                TombstonesFilter::Include,
+                &mut buf_reader,
+            )
+            .unwrap();
             let mut writer = File::create(&output_path)?;
             io::copy(&mut reader, &mut writer)?;
 
@@ -219,7 +220,12 @@ mod serde_snapshot_tests {
 
         for (i, pubkey) in pubkeys.iter().enumerate() {
             let account = AccountSharedData::new(i as u64 + 1, 0, &Pubkey::default());
-            accounts.store_accounts_seq((slot, [(pubkey, &account)].as_slice()), None, &ancestors);
+            accounts.store_accounts_seq(
+                (slot, [(pubkey, &account)].as_slice()),
+                0,
+                None,
+                &ancestors,
+            );
         }
         check_accounts_local(&accounts, &pubkeys, 100);
         accounts.accounts_db.add_root_and_flush_write_cache(slot);
@@ -672,23 +678,6 @@ mod serde_snapshot_tests {
         assert_eq!(accounts.accounts_index.ref_count_from_storage(&pubkey1), 1);
         accounts.store_for_tests((current_slot, [(&pubkey1, &zero_lamport_account)].as_slice()));
         accounts.add_root_and_flush_write_cache(current_slot);
-        // had to be a root to flush, but clean won't work as this test expects if it is a root
-        // so, remove the root from alive_roots, then restore it after clean
-        accounts
-            .accounts_index
-            .roots_tracker
-            .write()
-            .unwrap()
-            .alive_roots
-            .remove(&current_slot);
-        accounts.clean_accounts_for_tests();
-        accounts
-            .accounts_index
-            .roots_tracker
-            .write()
-            .unwrap()
-            .alive_roots
-            .insert(current_slot);
 
         // Ref count is 1 as the older versions were marked obsolete
         assert_eq!(accounts.accounts_index.ref_count_from_storage(&pubkey1), 1);

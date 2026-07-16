@@ -11,6 +11,8 @@ edition = { workspace = true }
 
 [package.metadata.docs.rs]
 targets = ["x86_64-unknown-linux-gnu"]
+all-features = true
+rustdoc-args = ["--cfg=docsrs"]
 
 [lib]
 crate-type = ["lib"]
@@ -25,6 +27,7 @@ conformance = [
     "dep:bincode",
     "dep:prost",
     "dep:protosol",
+    "dep:solana-poseidon",
     "dep:solana-vote-program",
     "dep:solana-zk-elgamal-proof-program",
     "dep:xxhash-rust",
@@ -33,6 +36,7 @@ conformance = [
     "solana-pubkey/default",
 ]
 dev-context-only-utils = [
+    "dep:bincode",
     "dep:qualifier_attr",
     "dep:solana-bpf-loader-program",
     "dep:solana-compute-budget",
@@ -92,6 +96,7 @@ solana-loader-v4-interface = { workspace = true }
 solana-message = { workspace = true }
 solana-nonce = { workspace = true }
 solana-nonce-account = { workspace = true, features = ["wincode"] }
+solana-poseidon = { workspace = true, optional = true }
 solana-precompile-error = { workspace = true, optional = true }
 solana-program-entrypoint = { workspace = true }
 solana-program-pack = { workspace = true }
@@ -126,6 +131,7 @@ libsecp256k1 = { workspace = true }
 openssl = { workspace = true }
 rand = { workspace = true }
 shuttle = { workspace = true }
+solana-account = { workspace = true, features = ["dev-context-only-utils"] }
 solana-bpf-loader-program = { path = "../programs/bpf_loader", default-features = false, features = ["agave-unstable-api"] }
 solana-clock = { workspace = true }
 solana-compute-budget = { path = "../compute-budget", features = ["agave-unstable-api"] }

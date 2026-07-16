@@ -1,6 +1,6 @@
 use {
     crate::{
-        bit_vec::BitVec,
+        bit_vec::{BitVec, BitVecRef},
         blockstore::ParentInfo,
         shred::{
             self, DATA_SHREDS_PER_FEC_BLOCK, MAX_DATA_SHREDS_PER_SLOT, Shred, ShredType,
@@ -94,6 +94,18 @@ impl CompletedDataIndexes {
         let start = bounds.start_bound().map(|&b| b as usize);
         let end = bounds.end_bound().map(|&b| b as usize);
         self.index.range((start, end)).iter_ones().map(|i| i as u32)
+    }
+
+    /// Equivalent to `range(..bound).next_back()`.
+    #[inline]
+    pub(crate) fn previous_completed_index(&self, bound: u32) -> Option<u32> {
+        self.index.prev_set_bit(bound as usize).map(|i| i as u32)
+    }
+
+    /// Equivalent to `range(from..).next()`.
+    #[inline]
+    pub(crate) fn next_completed_index(&self, from: u32) -> Option<u32> {
+        self.index.next_set_bit(from as usize).map(|i| i as u32)
     }
 }
 
@@ -295,6 +307,13 @@ pub struct Index {
     coding: ShredIndex,
 }
 
+#[derive(Debug, SchemaRead, PartialEq, Eq)]
+pub struct IndexRef<'a> {
+    pub slot: Slot,
+    data: ShredIndexRef<'a>,
+    coding: ShredIndexRef<'a>,
+}
+
 #[derive(Clone, Copy, Debug, SchemaRead, SchemaWrite, Eq, PartialEq)]
 /// Erasure coding information
 pub struct ErasureMeta {
@@ -466,6 +485,12 @@ impl Index {
     }
 }
 
+impl IndexRef<'_> {
+    pub fn data(&self) -> &ShredIndexRef<'_> {
+        &self.data
+    }
+}
+
 /// A bitvec (`Box<[u8]>`) of shred indices, where each u8 represents 8 shred indices.
 ///
 /// Bit vec implementation provides:
@@ -512,6 +537,13 @@ impl ShredIndex {
         self.index.range((start, end)).count_ones()
     }
 
+    /// Returns true when every index in `bounds` is present.
+    /// Empty and reversed ranges are vacuously true.
+    pub(crate) fn contains_range(&self, bounds: Range<u64>) -> bool {
+        let width = bounds.end.saturating_sub(bounds.start);
+        width <= self.num_shreds as u64 && self.count_range(bounds) as u64 == width
+    }
+
     pub(crate) fn range<R>(&self, bounds: R) -> impl Iterator<Item = u64> + '_
     where
         R: RangeBounds<u64>,
@@ -532,6 +564,31 @@ impl FromIterator<u64> for ShredIndex {
             index.insert(idx);
         }
         index
+    }
+}
+
+/// A reference to a [`ShredIndex`].
+#[derive(Debug, SchemaRead, PartialEq, Eq)]
+pub struct ShredIndexRef<'a> {
+    index: BitVecRef<'a, MAX_DATA_SHREDS_PER_SLOT>,
+    num_shreds: usize,
+}
+
+impl ShredIndexRef<'_> {
+    pub fn num_shreds(&self) -> usize {
+        self.num_shreds
+    }
+
+    pub(crate) fn range<R>(&self, bounds: R) -> impl Iterator<Item = u64> + '_
+    where
+        R: RangeBounds<u64>,
+    {
+        let start = bounds.start_bound().map(|&b| b as usize);
+        let end = bounds.end_bound().map(|&b| b as usize);
+        self.index
+            .range((start, end))
+            .iter_ones()
+            .map(|idx| idx as u64)
     }
 }
 
@@ -735,11 +792,6 @@ impl ErasureMeta {
         u32::try_from(self.first_received_coding_index).ok()
     }
 
-    pub(crate) fn next_fec_set_index(&self) -> Option<u32> {
-        let num_data = u32::try_from(self.config.num_data).ok()?;
-        self.fec_set_index.checked_add(num_data)
-    }
-
     // Returns true if some data shreds are missing, but there are enough data
     // and coding shreds to recover the erasure batch.
     // TODO: In order to retransmit all shreds from the erasure batch, we need
@@ -919,6 +971,29 @@ mod test {
     };
 
     #[test]
+    #[allow(clippy::reversed_empty_ranges)]
+    fn test_shred_index_contains_range() {
+        let index: ShredIndex = [2u64, 3, 4, 7].into_iter().collect();
+        // Exhaustively cross-check against the iterator definition over every
+        // window, including empty (start == end) and reversed (end < start).
+        for start in 0..10u64 {
+            for end in 0..10u64 {
+                assert_eq!(
+                    index.contains_range(start..end),
+                    index.range(start..end).eq(start..end),
+                    "window {start}..{end}"
+                );
+            }
+        }
+        assert!(index.contains_range(2..5));
+        assert!(!index.contains_range(2..6));
+        assert!(!index.contains_range(1..3));
+        assert!(index.contains_range(7..8));
+        assert!(index.contains_range(5..5));
+        assert!(index.contains_range(5..2));
+    }
+
+    #[test]
     fn test_slot_meta_slot_zero_connected() {
         let meta = SlotMeta::new(0 /* slot */, None /* parent */);
         assert!(meta.is_parent_connected());
@@ -1052,6 +1127,24 @@ mod test {
             )
     }
 
+    fn arb_index() -> impl Strategy<Value = Index> {
+        (
+            any::<Slot>(),
+            proptest::collection::vec(0..MAX_DATA_SHREDS_PER_SLOT as u64, 0..128),
+            proptest::collection::vec(0..MAX_DATA_SHREDS_PER_SLOT as u64, 0..128),
+        )
+            .prop_map(|(slot, data_indexes, coding_indexes)| {
+                let mut index = Index::new(slot);
+                for index_to_insert in data_indexes {
+                    index.data_mut().insert(index_to_insert);
+                }
+                for index_to_insert in coding_indexes {
+                    index.coding_mut().insert(index_to_insert);
+                }
+                index
+            })
+    }
+
     proptest! {
         // Property: `SlotMetaRepair` is always deserializable from serialized `SlotMeta`.
         #[test]
@@ -1071,6 +1164,29 @@ mod test {
             prop_assert_eq!(deserialized.last_index, slot_meta.last_index);
             prop_assert_eq!(deserialized.parent_slot, slot_meta.parent_slot);
             prop_assert_eq!(deserialized.next_slots, slot_meta.next_slots);
+        }
+    }
+
+    proptest! {
+        // Property: `IndexRef` is always deserializable from `Index`.
+        #[test]
+        fn test_index_ref_deserialization(
+            index in arb_index(),
+        ) {
+            let serialized = wincode::serialize(&index).unwrap();
+            let deserialized: IndexRef = wincode::deserialize(&serialized).unwrap();
+
+            prop_assert_eq!(deserialized.slot, index.slot);
+            prop_assert_eq!(
+                deserialized.data().range(..).collect::<Vec<_>>(),
+                index.data().range(..).collect::<Vec<_>>()
+            );
+            prop_assert_eq!(
+                deserialized.coding.range(..).collect::<Vec<_>>(),
+                index.coding().range(..).collect::<Vec<_>>()
+            );
+            prop_assert_eq!(deserialized.data().num_shreds(), index.data().num_shreds());
+            prop_assert_eq!(deserialized.coding.num_shreds(), index.coding().num_shreds());
         }
     }
 

@@ -9,11 +9,17 @@ homepage = { workspace = true }
 license = { workspace = true }
 edition = { workspace = true }
 
+[package.metadata.docs.rs]
+targets = ["x86_64-unknown-linux-gnu"]
+all-features = true
+rustdoc-args = ["--cfg=docsrs"]
+
 [features]
 agave-unstable-api = []
 dev-context-only-utils = [
-    "solana-runtime/dev-context-only-utils",
     "agave-votor-messages/dev-context-only-utils",
+    "solana-perf/dev-context-only-utils",
+    "solana-runtime/dev-context-only-utils",
 ]
 
 [dependencies]
@@ -32,6 +38,8 @@ solana-gossip = { workspace = true }
 solana-ledger = { workspace = true }
 solana-measure = { workspace = true }
 solana-metrics = { workspace = true }
+solana-packet = { workspace = true }
+solana-perf = { workspace = true }
 solana-pubkey = { workspace = true }
 solana-runtime = { workspace = true }
 solana-signer-store = { workspace = true }

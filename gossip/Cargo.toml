@@ -11,6 +11,8 @@ edition = { workspace = true }
 
 [package.metadata.docs.rs]
 targets = ["x86_64-unknown-linux-gnu"]
+all-features = true
+rustdoc-args = ["--cfg=docsrs"]
 
 [lib]
 bench = false
@@ -20,25 +22,35 @@ frozen-abi = [
     "dep:solana-frozen-abi",
     "dep:solana-frozen-abi-macro",
     "solana-bloom/frozen-abi",
+    "solana-hash/frozen-abi",
     "solana-ledger/frozen-abi",
     "solana-perf/frozen-abi",
+    "solana-pubkey/frozen-abi",
     "solana-short-vec/frozen-abi",
+    "solana-signature/frozen-abi",
+    "solana-transaction/frozen-abi",
     "solana-version/frozen-abi",
     "solana-vote/frozen-abi",
     "solana-vote-program/frozen-abi",
 ]
 agave-unstable-api = []
-dev-context-only-utils = ["solana-bloom/dev-context-only-utils"]
+dev-context-only-utils = [
+    "agave-votor-messages/dev-context-only-utils",
+    "solana-bloom/dev-context-only-utils",
+]
 conformance = ["dep:prost", "dep:protosol", "dev-context-only-utils"]
 dummy-for-ci-check = ["conformance"]
 
 [dependencies]
 agave-logger = { workspace = true }
 agave-random = { workspace = true }
+agave-votor-messages = { workspace = true }
 arc-swap = { workspace = true }
 assert_matches = { workspace = true }
 bv = { workspace = true, features = ["serde"] }
+bytes = { workspace = true }
 crossbeam-channel = { workspace = true }
+ed25519-dalek = { workspace = true }
 flate2 = { workspace = true }
 indexmap = { workspace = true, features = ["rayon"] }
 itertools = { workspace = true }
@@ -54,7 +66,6 @@ serde = { workspace = true }
 serde-big-array = { workspace = true }
 serde_bytes = { workspace = true }
 solana-bloom = { workspace = true }
-solana-client = { workspace = true }
 solana-clock = { workspace = true }
 solana-entry = { workspace = true }
 solana-epoch-schedule = { workspace = true }

@@ -100,12 +100,6 @@ impl AccountsFile {
         Ok(())
     }
 
-    pub fn remaining_bytes(&self) -> u64 {
-        match self {
-            Self::AppendVec(av) => av.remaining_bytes(),
-        }
-    }
-
     /// Returns the number of bytes, *not accounts*, used in the AccountsFile
     pub fn len(&self) -> usize {
         match self {
@@ -116,13 +110,6 @@ impl AccountsFile {
     pub fn is_empty(&self) -> bool {
         match self {
             Self::AppendVec(av) => av.is_empty(),
-        }
-    }
-
-    /// Returns the total number of bytes, *not accounts*, the AccountsFile can hold
-    pub fn capacity(&self) -> u64 {
-        match self {
-            Self::AppendVec(av) => av.capacity(),
         }
     }
 
@@ -247,10 +234,9 @@ impl AccountsFile {
     pub fn write_accounts<'a>(
         &self,
         accounts: &impl StorableAccounts<'a>,
-        skip: usize,
     ) -> Option<StoredAccountsInfo> {
         match self {
-            Self::AppendVec(av) => av.append_accounts(accounts, skip),
+            Self::AppendVec(av) => av.append_accounts(accounts),
         }
     }
 
@@ -278,9 +264,7 @@ pub enum AccountsFileProvider {
 impl AccountsFileProvider {
     pub fn new_writable(&self, path: impl Into<PathBuf>, file_size: u64) -> AccountsFile {
         match self {
-            Self::AppendVec => {
-                AccountsFile::AppendVec(AppendVec::new(path, true, file_size as usize))
-            }
+            Self::AppendVec => AccountsFile::AppendVec(AppendVec::new(path, file_size as usize)),
         }
     }
 }

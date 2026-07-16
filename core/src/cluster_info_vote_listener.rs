@@ -508,12 +508,14 @@ impl ClusterInfoVoteListener {
                 let (vote_txs, packets) =
                     Self::verify_votes(votes, &mut gossip_sigverify_handle, &sharable_banks)?;
                 verified_vote_transactions_sender.send(vote_txs)?;
-                // Sample backlog before the push.
-                stats.banking_channel_max_len = stats
-                    .banking_channel_max_len
-                    .max(verified_packets_sender.len());
-                stats.banking_channel_eviction_drops +=
-                    verified_packets_sender.send(BankingPacketBatch::new(packets))?;
+                for packet_batch in packets {
+                    // Sample backlog before the push.
+                    stats.banking_channel_max_len = stats
+                        .banking_channel_max_len
+                        .max(verified_packets_sender.len());
+                    stats.banking_channel_eviction_drops +=
+                        verified_packets_sender.send(BankingPacketBatch::new(packet_batch))?;
+                }
             }
             if last_report.elapsed() >= STATS_REPORT_INTERVAL {
                 datapoint_info!(
@@ -748,31 +750,30 @@ impl ClusterInfoVoteListener {
         let reached_duplicate_confirmed = reached_threshold_results[0];
         let reached_optimistic_confirmed = reached_threshold_results[1];
 
-        if reached_duplicate_confirmed {
-            if let Some(ref sender) = notifiers.duplicate_confirmed_slot_sender {
-                let _ = sender.send(vec![(last_vote_slot, last_vote_hash)]);
-            }
+        if reached_duplicate_confirmed
+            && let Some(ref sender) = notifiers.duplicate_confirmed_slot_sender
+        {
+            let _ = sender.send(vec![(last_vote_slot, last_vote_hash)]);
         }
 
         if reached_optimistic_confirmed {
             new_optimistic_confirmed_slots.push((last_vote_slot, last_vote_hash));
-            if let Some(ref sender) = notifiers.bank_notification_sender {
-                if notifiers
+            if let Some(ref sender) = notifiers.bank_notification_sender
+                && notifiers
                     .migration_status
                     .should_report_commitment_or_root(last_vote_slot)
-                {
-                    let dependency_work = sender
-                        .dependency_tracker
-                        .as_ref()
-                        .map(|s| s.get_current_declared_work());
-                    sender
-                        .sender
-                        .send((
-                            BankNotification::OptimisticallyConfirmed(last_vote_slot),
-                            dependency_work,
-                        ))
-                        .unwrap_or_else(|err| warn!("bank_notification_sender failed: {err:?}"));
-                }
+            {
+                let dependency_work = sender
+                    .dependency_tracker
+                    .as_ref()
+                    .map(|s| s.get_current_declared_work());
+                sender
+                    .sender
+                    .send((
+                        BankNotification::OptimisticallyConfirmed(last_vote_slot, last_vote_hash),
+                        dependency_work,
+                    ))
+                    .unwrap_or_else(|err| warn!("bank_notification_sender failed: {err:?}"));
             }
         }
 

@@ -11,6 +11,8 @@ edition = { workspace = true }
 
 [package.metadata.docs.rs]
 targets = ["x86_64-unknown-linux-gnu"]
+all-features = true
+rustdoc-args = ["--cfg=docsrs"]
 
 [lib]
 crate-type = ["lib"]
@@ -32,7 +34,6 @@ agave-snapshots = { workspace = true }
 agave-votor-messages = { workspace = true }
 anyhow = { workspace = true }
 assert_matches = { workspace = true }
-bincode = { workspace = true }
 bitflags = { workspace = true }
 bytes = { workspace = true }
 bzip2 = { workspace = true }
@@ -50,6 +51,7 @@ lru = { workspace = true }
 mockall = { workspace = true }
 num_cpus = { workspace = true }
 num_enum = { workspace = true }
+parking_lot = { workspace = true }
 prost = { workspace = true }
 qualifier_attr = { workspace = true }
 rand = { workspace = true }
@@ -59,9 +61,8 @@ reed-solomon-erasure = { workspace = true, features = ["simd-accel"] }
 scopeguard = { workspace = true }
 serde = { workspace = true }
 solana-account = { workspace = true }
-solana-account-decoder = { workspace = true }
 solana-accounts-db = { workspace = true }
-solana-address-lookup-table-interface = { workspace = true }
+solana-address-lookup-table-interface = { workspace = true, features = ["wincode"] }
 solana-clock = { workspace = true }
 solana-cost-model = { workspace = true }
 solana-entry = { workspace = true }
@@ -95,7 +96,7 @@ solana-sha256-hasher = { workspace = true }
 solana-shred-version = { workspace = true }
 solana-signature = { workspace = true, features = ["wincode"] }
 solana-signer = { workspace = true }
-solana-stake-interface = { workspace = true }
+solana-stake-interface = { workspace = true, features = ["wincode"] }
 solana-storage-bigtable = { workspace = true }
 solana-storage-proto = { workspace = true }
 solana-streamer = { workspace = true }
@@ -133,7 +134,6 @@ agave-logger = { path = "../logger", features = ["agave-unstable-api"] }
 bs58 = { workspace = true }
 criterion = { workspace = true }
 proptest = { workspace = true }
-solana-account-decoder = { path = "../account-decoder", features = ["agave-unstable-api"] }
 solana-bls-signatures = { workspace = true }
 # See order-crates-for-publishing.py for using this unusual `path = "."`
 solana-ledger = { path = ".", features = ["dev-context-only-utils", "agave-unstable-api"] }

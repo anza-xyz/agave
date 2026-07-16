@@ -10,7 +10,9 @@ cd "$(dirname "$0")/.."
 source ci/_
 source ci/rust-version.sh stable
 source ci/rust-version.sh nightly
-eval "$(ci/channel-info.sh)"
+channel_info="$(cargo xtask channel-info --json)"
+EDGE_CHANNEL="$(jq -r '.EDGE_CHANNEL' <<<"$channel_info")"
+CHANNEL="$(jq -r '.CHANNEL' <<<"$channel_info")"
 
 export RUST_BACKTRACE=1
 export RUSTFLAGS="-D warnings -A incomplete_features"

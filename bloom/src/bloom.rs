@@ -22,10 +22,35 @@ pub trait BloomHashIndex {
     fn hash_at_index(&self, hash_index: u64) -> u64;
 }
 
-#[cfg_attr(feature = "frozen-abi", derive(AbiExample))]
+/// Samples a random, non-empty [`BitVec`] for `StableAbi` abi-digest tests.
+///
+/// `BitVec` implements neither `StableAbi` nor `FromIterator`, so the derive can't
+/// sample it. We build one from a non-empty random block buffer: an empty
+/// `BitVec::from_bits(&[])` has an inner `Some([])` that serde encodes as `[1, 0]`,
+/// whereas wincode normalizes empty to `[0]` (`None`) — an empty sample would make
+/// the bincode and wincode abi digests diverge. Shared via
+/// `#[stable_abi_sample(with = "...")]` by `BitVec` fields here and in gossip.
+#[cfg(feature = "frozen-abi")]
+pub fn sample_bit_vec<Block>(
+    rng: &mut (impl solana_frozen_abi::rand::RngCore + ?Sized),
+) -> BitVec<Block>
+where
+    Block: bv::BlockType + solana_frozen_abi::stable_abi::StableAbi,
+{
+    use solana_frozen_abi::stable_abi::{context::SequenceLenRange, sample_collection_sized};
+    BitVec::from_bits(
+        sample_collection_sized::<Vec<Block>, Block>(rng, SequenceLenRange::new(1..=5)).as_slice(),
+    )
+}
+
+#[cfg_attr(feature = "frozen-abi", derive(AbiExample, StableAbi, StableAbiSample))]
 #[derive(Serialize, Deserialize, Default, Clone, PartialEq, Eq, SchemaWrite, SchemaRead)]
 pub struct Bloom<T: BloomHashIndex> {
     pub keys: Vec<u64>,
+    #[cfg_attr(
+        feature = "frozen-abi",
+        stable_abi_sample(with = "sample_bit_vec(rng)")
+    )]
     pub bits: BitVec<u64>,
     num_bits_set: u64,
     _phantom: PhantomData<T>,

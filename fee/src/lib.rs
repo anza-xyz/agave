@@ -1,8 +1,5 @@
 #![cfg(feature = "agave-unstable-api")]
-use {
-    agave_feature_set::FeatureSet, solana_fee_structure::FeeDetails,
-    solana_svm_transaction::svm_message::SVMStaticMessage,
-};
+use {solana_fee_structure::FeeDetails, solana_svm_transaction::svm_message::SVMStaticMessage};
 
 /// Bools indicating the activation of features relevant
 /// to the fee calculation.
@@ -12,12 +9,6 @@ use {
 // in the future. Keeping this struct will help keep things organized.
 #[derive(Copy, Clone)]
 pub struct FeeFeatures {}
-
-impl From<&FeatureSet> for FeeFeatures {
-    fn from(_feature_set: &FeatureSet) -> Self {
-        Self {}
-    }
-}
 
 /// Calculate fee for `SanitizedMessage`
 pub fn calculate_fee(

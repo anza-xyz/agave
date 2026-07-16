@@ -256,6 +256,7 @@ impl<D: TransactionData> TransactionWithMeta for RuntimeTransaction<ResolvedTran
 mod tests {
     use {
         super::*,
+        crate::sanitize_config::sanitize_config,
         agave_reserved_account_keys::ReservedAccountKeys,
         solana_hash::Hash,
         solana_keypair::Keypair,
@@ -279,8 +280,11 @@ mod tests {
         };
 
         let hash = Hash::new_unique();
-        let transaction =
-            SanitizedTransactionView::try_new_sanitized(&serialized_transaction[..], true).unwrap();
+        let transaction = SanitizedTransactionView::try_new_sanitized(
+            &serialized_transaction[..],
+            &sanitize_config(),
+        )
+        .unwrap();
         let static_runtime_transaction =
             RuntimeTransaction::<SanitizedTransactionView<_>>::try_new(
                 transaction,
@@ -313,7 +317,8 @@ mod tests {
         ) {
             let bytes = wincode::serialize(&original_transaction).unwrap();
             let transaction_view =
-                SanitizedTransactionView::try_new_sanitized(&bytes[..], true).unwrap();
+                SanitizedTransactionView::try_new_sanitized(&bytes[..], &sanitize_config())
+                    .unwrap();
             let runtime_transaction = RuntimeTransaction::<SanitizedTransactionView<_>>::try_new(
                 transaction_view,
                 MessageHash::Compute,
@@ -380,7 +385,8 @@ mod tests {
             let bytes =
                 wincode::serialize(&original_transaction.to_versioned_transaction()).unwrap();
             let transaction_view =
-                SanitizedTransactionView::try_new_sanitized(&bytes[..], true).unwrap();
+                SanitizedTransactionView::try_new_sanitized(&bytes[..], &sanitize_config())
+                    .unwrap();
             let runtime_transaction = RuntimeTransaction::<SanitizedTransactionView<_>>::try_new(
                 transaction_view,
                 MessageHash::Compute,
@@ -467,8 +473,11 @@ mod tests {
                 Hash::new_unique(),
             )))
             .unwrap();
-        let transaction_view =
-            SanitizedTransactionView::try_new_sanitized(&serialized_transaction[..], true).unwrap();
+        let transaction_view = SanitizedTransactionView::try_new_sanitized(
+            &serialized_transaction[..],
+            &sanitize_config(),
+        )
+        .unwrap();
         let runtime_transaction = RuntimeTransaction::<SanitizedTransactionView<_>>::try_new(
             transaction_view,
             MessageHash::Compute,

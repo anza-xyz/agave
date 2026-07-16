@@ -42,12 +42,14 @@
 //! - When in `AlpenglowEnabled` various TowerBFT threads stop processsing alpenglow slots while still processing
 //!   TowerBFT slots pre alpenglow genesis in order to help other cluster participants catchup.
 //! - When in `FullAlpenglowEpoch` we completely shutdown these TowerBFT threads (AncestorHashesService and ClusterSlotsService)
+#[cfg(feature = "dev-context-only-utils")]
 use {
-    crate::{
-        certificate::{Certificate, CertificateType},
-        consensus_message::Block,
-        fraction::Fraction,
-    },
+    crate::certificate::CertSignature,
+    solana_bls_signatures::{BLS_SIGNATURE_AFFINE_SIZE, Signature as BLSSignature},
+    solana_hash::Hash,
+};
+use {
+    crate::{certificate::GenesisCert, consensus_message::Block, fraction::Fraction},
     log::*,
     solana_address::Address,
     solana_clock::{Epoch, Slot},
@@ -60,11 +62,6 @@ use {
         },
         time::Duration,
     },
-};
-#[cfg(feature = "dev-context-only-utils")]
-use {
-    solana_bls_signatures::{BLS_SIGNATURE_AFFINE_SIZE, Signature as BLSSignature},
-    solana_hash::Hash,
 };
 
 /// The slot offset post feature flag activation to begin the migration.
@@ -116,7 +113,7 @@ enum MigrationPhase {
         /// The block we've identified as the genesis block
         genesis_block: Option<Block>,
         /// The genesis certificate we've received
-        genesis_cert: Option<Arc<Certificate>>,
+        genesis_cert: Option<Arc<GenesisCert>>,
     },
 
     /// The alpenglow genesis vote has succeeded, and we have frozen the genesis bank. We are ready to
@@ -125,14 +122,14 @@ enum MigrationPhase {
     /// `AlpenglowEnabled` when it is safe to do so.
     ReadyToEnable {
         /// The genesis certificate produced by the cluster
-        genesis_cert: Arc<Certificate>,
+        genesis_cert: Arc<GenesisCert>,
     },
 
     /// Alpenglow has been enabled, TowerBFT blocks > the alpenglow genesis have been purged,
     /// and all further blocks are alpenglow.
     AlpenglowEnabled {
         /// The genesis certificate produced by the cluster
-        genesis_cert: Arc<Certificate>,
+        genesis_cert: Arc<GenesisCert>,
     },
 
     /// We have completed the mixed migration epoch and now all epochs only contain alpenglow blocks
@@ -141,7 +138,7 @@ enum MigrationPhase {
         #[allow(dead_code)]
         full_alpenglow_epoch: Epoch,
         /// The genesis certificate produced by the cluster
-        genesis_cert: Arc<Certificate>,
+        genesis_cert: Arc<GenesisCert>,
     },
 }
 
@@ -182,9 +179,7 @@ impl MigrationPhase {
             MigrationPhase::PreFeatureActivation
             | MigrationPhase::Migration { .. }
             | MigrationPhase::ReadyToEnable { .. } => false,
-            MigrationPhase::AlpenglowEnabled { genesis_cert } => {
-                slot > genesis_cert.cert_type.slot()
-            }
+            MigrationPhase::AlpenglowEnabled { genesis_cert } => slot > genesis_cert.block.slot,
             MigrationPhase::FullAlpenglowEpoch { .. } => true,
         }
     }
@@ -254,9 +249,7 @@ impl MigrationPhase {
             MigrationPhase::PreFeatureActivation
             | MigrationPhase::Migration { .. }
             | MigrationPhase::ReadyToEnable { .. } => true,
-            MigrationPhase::AlpenglowEnabled { genesis_cert } => {
-                slot <= genesis_cert.cert_type.slot()
-            }
+            MigrationPhase::AlpenglowEnabled { genesis_cert } => slot <= genesis_cert.block.slot,
             MigrationPhase::FullAlpenglowEpoch { .. } => false,
         }
     }
@@ -286,11 +279,6 @@ impl MigrationPhase {
 
     /// Should this block use the double merkle root as the block id (instead of chained merkle root)?
     fn should_use_double_merkle_block_id(&self, slot: Slot) -> bool {
-        self.is_alpenglow_block(slot)
-    }
-
-    /// Should this block allow the UpdateParent marker, i.e., support fast leader handover?
-    fn should_allow_fast_leader_handover(&self, slot: Slot) -> bool {
         self.is_alpenglow_block(slot)
     }
 }
@@ -349,13 +337,15 @@ impl MigrationStatus {
     /// Creates a post migration status for use in tests
     #[cfg(feature = "dev-context-only-utils")]
     pub fn post_migration_status() -> Self {
-        let genesis_certificate = Certificate {
-            cert_type: CertificateType::Genesis(Block {
+        let genesis_certificate = GenesisCert {
+            block: Block {
                 slot: 0,
                 block_id: Hash::default(),
-            }),
-            signature: BLSSignature([0; BLS_SIGNATURE_AFFINE_SIZE]),
-            bitmap: vec![],
+            },
+            signature: CertSignature {
+                signature: BLSSignature([0; BLS_SIGNATURE_AFFINE_SIZE]),
+                bitmap: vec![],
+            },
         };
         Self::new(MigrationPhase::AlpenglowEnabled {
             genesis_cert: Arc::new(genesis_certificate),
@@ -365,25 +355,27 @@ impl MigrationStatus {
     /// Enable alpenglow for testing code
     #[cfg(feature = "dev-context-only-utils")]
     pub fn enable_alpenglow_for_tests(&self) {
-        let genesis_block = Block {
+        let block = Block {
             slot: 0,
             block_id: Hash::new_unique(),
         };
         self.record_feature_activation(0);
-        self.set_genesis_block(genesis_block);
-        self.set_genesis_certificate(Arc::new(Certificate {
-            cert_type: CertificateType::Genesis(genesis_block),
-            signature: BLSSignature([0; BLS_SIGNATURE_AFFINE_SIZE]),
-            bitmap: vec![],
+        self.set_genesis_block(block);
+        self.set_genesis_certificate(Arc::new(GenesisCert {
+            block,
+            signature: CertSignature {
+                signature: BLSSignature([0; BLS_SIGNATURE_AFFINE_SIZE]),
+                bitmap: vec![],
+            },
         }));
-        assert_eq!(self.enable_alpenglow_during_startup(), genesis_block.slot);
+        assert_eq!(self.enable_alpenglow_during_startup(), block.slot);
     }
 
     /// Initialize migration status based on feature flag activation and genesis certificate
     pub fn initialize(
         root_epoch: Epoch,
         ff_activation_slot: Option<Slot>,
-        genesis_cert: Option<Certificate>,
+        genesis_cert: Option<GenesisCert>,
         epoch_schedule: &EpochSchedule,
     ) -> Self {
         let phase = match (genesis_cert, ff_activation_slot) {
@@ -418,7 +410,7 @@ impl MigrationStatus {
             }
         };
 
-        warn!("Pre startup initializing alpenglow migration from root bank: {phase:?}");
+        info!("Pre startup initializing alpenglow migration from root bank: {phase:?}");
         Self::new(phase)
     }
 
@@ -436,7 +428,7 @@ impl MigrationStatus {
     pub fn log_phase(&self) {
         let my_pubkey = self.my_pubkey();
         let phase = self.phase.read().unwrap();
-        warn!("{my_pubkey}: Alpenglow migration phase {phase:?}");
+        info!("{my_pubkey}: Alpenglow migration phase {phase:?}");
     }
 
     /// Record that PohService has started and must be coordinated with when enabling Alpenglow.
@@ -459,7 +451,6 @@ impl MigrationStatus {
     dispatch!(pub fn should_respond_to_ancestor_hashes_requests(&self, slot: Slot) -> bool);
     dispatch!(pub fn should_have_alpenglow_ticks(&self, slot: Slot) -> bool);
     dispatch!(pub fn should_allow_block_markers(&self, slot: Slot) -> bool);
-    dispatch!(pub fn should_allow_fast_leader_handover(&self, slot: Slot) -> bool);
     dispatch!(pub fn should_use_double_merkle_block_id(&self, slot: Slot) -> bool);
 
     /// The alpenglow feature flag has been activated in slot `slot`.
@@ -480,7 +471,7 @@ impl MigrationStatus {
             genesis_cert: None,
         };
 
-        warn!(
+        info!(
             "{}: Alpenglow feature flag was activated in {slot}, migration will start at \
              {migration_slot}",
             self.my_pubkey()
@@ -545,7 +536,7 @@ impl MigrationStatus {
             discovered_genesis_block.slot < *migration_slot,
             "Attempting to set a genesis block that is past the migration start"
         );
-        warn!(
+        info!(
             "{} Setting genesis block {discovered_genesis_block:?}",
             self.my_pubkey()
         );
@@ -554,16 +545,15 @@ impl MigrationStatus {
         let Some(genesis_cert) = genesis_cert else {
             return;
         };
-        let CertificateType::Genesis(block) = genesis_cert.cert_type else {
-            unreachable!("Programmer error invalid genesis certificate");
-        };
-        if genesis_block.as_ref().map(|b| *b != block).unwrap_or(true) {
+
+        if discovered_genesis_block != genesis_cert.block {
             panic!(
                 "{}: We wish to cast a genesis vote on {discovered_genesis_block:?}, however we \
-                 have received a genesis certificate for ({block:?}). This means there is \
-                 significant malicious activity causing two distinct forks to reach the \
+                 have received a genesis certificate for ({:?}). This means there is significant \
+                 malicious activity causing two distinct forks to reach the \
                  {GENESIS_VOTE_THRESHOLD}. We cannot recover without operator intervention.",
-                self.my_pubkey()
+                self.my_pubkey(),
+                genesis_cert.block
             );
         }
 
@@ -577,7 +567,7 @@ impl MigrationStatus {
     /// This should only be called with certificates that have passed signature verification
     ///
     /// Transitions to `ReadyToEnable` if we have already received a genesis block and it matches.
-    pub fn set_genesis_certificate(&self, cert: Arc<Certificate>) {
+    pub fn set_genesis_certificate(&self, cert: Arc<GenesisCert>) {
         let mut phase = self.phase.write().unwrap();
         if phase.is_pre_feature_activation() {
             unreachable!(
@@ -596,27 +586,28 @@ impl MigrationStatus {
             return;
         };
 
-        let CertificateType::Genesis(block) = cert.cert_type else {
-            unreachable!("Programmer error adding invalid genesis certificate");
-        };
-
         assert!(
-            block.slot < *migration_slot,
+            cert.block.slot < *migration_slot,
             "Attempting to set a genesis certificate past the migration start"
         );
-        warn!("{} Setting genesis cert for ({block:?})", self.my_pubkey());
+        info!(
+            "{} Setting genesis cert for ({:?})",
+            self.my_pubkey(),
+            cert.block
+        );
         *genesis_cert = Some(cert.clone());
 
         let Some(genesis_block) = genesis_block else {
             return;
         };
-        if *genesis_block != block {
+        if *genesis_block != cert.block {
             panic!(
                 "{}: We cast a genesis vote on {genesis_block:?}, however we have received a \
-                 genesis certificate for ({block:?}). This means there is significant malicious \
+                 genesis certificate for ({:?}). This means there is significant malicious \
                  activity causing two distinct forks to reach the {GENESIS_VOTE_THRESHOLD}. We \
                  cannot recover without operator intervention.",
-                self.my_pubkey()
+                self.my_pubkey(),
+                cert.block
             );
         }
 
@@ -639,14 +630,14 @@ impl MigrationStatus {
         self.wait_for_migration_or_exit(exit);
 
         if exit.load(Ordering::Relaxed) {
-            warn!(
+            info!(
                 "{}: Validator shutdown before Alpenglow could be enabled",
                 self.my_pubkey()
             );
             return;
         }
 
-        warn!("{}: Alpenglow enabled!", self.my_pubkey());
+        info!("{}: Alpenglow enabled!", self.my_pubkey());
     }
 
     /// PohService is shutting down after being asked to by replay_stage via `enable_alpenglow`.
@@ -672,7 +663,7 @@ impl MigrationStatus {
     ///
     /// Transition the phase from `ReadyToEnable` to `AlpenglowEnabled`
     pub fn enable_alpenglow_during_startup(&self) -> Slot {
-        warn!("{}: Enabling alpenglow during startup", self.my_pubkey());
+        info!("{}: Enabling alpenglow during startup", self.my_pubkey());
         let MigrationPhase::ReadyToEnable { genesis_cert } = self.phase.read().unwrap().clone()
         else {
             unreachable!(
@@ -682,7 +673,7 @@ impl MigrationStatus {
             );
         };
 
-        let genesis_slot = genesis_cert.cert_type.slot();
+        let genesis_slot = genesis_cert.block.slot;
         if self.poh_service_started.load(Ordering::Acquire) {
             // If `PohService` is started, use the full enable pathway
             // We do not respect the exit flag during startup replay
@@ -697,7 +688,7 @@ impl MigrationStatus {
         let (is_alpenglow_enabled, _condvar) = &self.migration_wait;
         *is_alpenglow_enabled.lock().unwrap() = true;
         // No need to condvar as we're in startup and no one is waiting for us.
-        warn!(
+        info!(
             "{}: Alpenglow enabled during startup! Genesis slot {genesis_slot}",
             self.my_pubkey()
         );
@@ -721,7 +712,7 @@ impl MigrationStatus {
             full_alpenglow_epoch,
         };
 
-        warn!(
+        info!(
             "{}: Migration epoch has concluded, entering full alpenglow epoch {}!",
             self.my_pubkey(),
             full_alpenglow_epoch
@@ -730,15 +721,11 @@ impl MigrationStatus {
 
     /// The alpenglow genesis block. This should only be used when we are in `ReadyToEnable` or further
     pub fn genesis_block(&self) -> Option<Block> {
-        self.genesis_certificate().map(|cert| {
-            cert.cert_type
-                .to_block()
-                .expect("Must be a genesis certificate")
-        })
+        self.genesis_certificate().map(|cert| cert.block)
     }
 
     /// The alpenglow genesis certificate. Only relevant when we are in `ReadyToEnable` or further
-    pub fn genesis_certificate(&self) -> Option<Arc<Certificate>> {
+    pub fn genesis_certificate(&self) -> Option<Arc<GenesisCert>> {
         let phase = self.phase.read().unwrap();
         match &*phase {
             MigrationPhase::PreFeatureActivation | MigrationPhase::Migration { .. } => None,

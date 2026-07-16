@@ -31,6 +31,7 @@ mod protocol;
 mod push_active_set;
 mod received_cache;
 pub mod restart_crds_values;
+mod sigverify_cache;
 pub mod weighted_shuffle;
 
 #[macro_use]
@@ -51,6 +52,6 @@ extern crate solana_metrics;
 pub use protocol::gossip_decode_to_effects;
 
 #[cfg(feature = "conformance")]
-mod harness;
+pub mod harness;
 
 mod wire_format_tests;

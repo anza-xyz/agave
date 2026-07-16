@@ -87,7 +87,12 @@ impl CertsBuilder {
 
     /// Returns [`true`] if the rewards container is interested in this vote else [`false`].
     fn wants_vote(&self, root_slot: Slot, vote: &VoteMessage) -> bool {
-        if !rewards_wants_vote(&self.cluster_info, &self.leader_schedule, root_slot, vote) {
+        if !rewards_wants_vote(
+            &self.cluster_info,
+            &self.leader_schedule,
+            root_slot,
+            &vote.vote,
+        ) {
             return false;
         }
         let Some(entry) = self.votes.get(&vote.vote.slot()) else {

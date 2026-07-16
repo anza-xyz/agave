@@ -202,7 +202,7 @@ pub struct EncodedTransactionWithStatusMeta {
     pub version: Option<TransactionVersion>,
 }
 
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, SchemaRead, SchemaWrite)]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct Reward {
     pub pubkey: String,
@@ -311,35 +311,34 @@ impl<'de> DeserializeTrait<'de> for UiTransactionError {
         D: Deserializer<'de>,
     {
         let value = serde_json::Value::deserialize(deserializer)?;
-        if let Some(obj) = value.as_object() {
-            if let Some(arr) = obj.get("InstructionError").and_then(|v| v.as_array()) {
-                let outer_instruction_index: u8 = arr
-                    .first()
-                    .ok_or_else(|| {
-                        DeserializeError::invalid_length(0, &"Expected the first element to exist")
-                    })?
-                    .as_u64()
-                    .ok_or_else(|| {
-                        DeserializeError::custom("Expected the first element to be a u64")
-                    })? as u8;
-                let instruction_error = arr.get(1).ok_or_else(|| {
-                    DeserializeError::invalid_length(1, &"Expected there to be at least 2 elements")
-                })?;
+        if let Some(obj) = value.as_object()
+            && let Some(arr) = obj.get("InstructionError").and_then(|v| v.as_array())
+        {
+            let outer_instruction_index: u8 = arr
+                .first()
+                .ok_or_else(|| {
+                    DeserializeError::invalid_length(0, &"Expected the first element to exist")
+                })?
+                .as_u64()
+                .ok_or_else(|| DeserializeError::custom("Expected the first element to be a u64"))?
+                as u8;
+            let instruction_error = arr.get(1).ok_or_else(|| {
+                DeserializeError::invalid_length(1, &"Expected there to be at least 2 elements")
+            })?;
 
-                // Handle SDK version compatibility: if it's a v2-style
-                // {"BorshIoError": "Unknown"}, convert it to a v3-style
-                // "BorshIoError"
-                let err: InstructionError = if instruction_error.get("BorshIoError").is_some() {
-                    from_value(serde_json::json!("BorshIoError"))
-                } else {
-                    from_value(instruction_error.clone())
-                }
-                .map_err(|e| DeserializeError::custom(e.to_string()))?;
-                return Ok(UiTransactionError(TransactionError::InstructionError(
-                    outer_instruction_index,
-                    err,
-                )));
+            // Handle SDK version compatibility: if it's a v2-style
+            // {"BorshIoError": "Unknown"}, convert it to a v3-style
+            // "BorshIoError"
+            let err: InstructionError = if instruction_error.get("BorshIoError").is_some() {
+                from_value(serde_json::json!("BorshIoError"))
+            } else {
+                from_value(instruction_error.clone())
             }
+            .map_err(|e| DeserializeError::custom(e.to_string()))?;
+            return Ok(UiTransactionError(TransactionError::InstructionError(
+                outer_instruction_index,
+                err,
+            )));
         }
         let err = TransactionError::deserialize(value).map_err(de::Error::custom)?;
         Ok(UiTransactionError(err))

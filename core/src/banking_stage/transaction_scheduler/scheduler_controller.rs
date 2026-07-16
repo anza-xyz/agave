@@ -225,22 +225,21 @@ where
                     // If pacing_fill_time is greater than the bank's slot time,
                     // adjust the pacing_fill_time to be the slot time, and warn.
                     let fill_time = self.config.scheduler_pacing.fill_time();
-                    if let Some(pacing_fill_time) = fill_time.as_ref() {
-                        if pacing_fill_time.as_nanos() > b.ns_per_slot {
-                            warn!(
-                                "scheduler pacing config pacing_fill_time {:?} is greater than \
-                                 the bank's slot time {}, setting to slot time",
-                                pacing_fill_time, b.ns_per_slot,
-                            );
-                            self.config.scheduler_pacing = SchedulerPacing::FillTimeMillis(
-                                NonZeroU64::new(
-                                    (b.ns_per_slot as u64 / 1_000_000).saturating_sub(
-                                        DEFAULT_SCHEDULER_PACING_NON_FILL_TIME_MILLIS,
-                                    ),
-                                )
-                                .unwrap_or(NonZeroU64::new(1).unwrap()),
-                            );
-                        }
+                    if let Some(pacing_fill_time) = fill_time.as_ref()
+                        && pacing_fill_time.as_nanos() > b.ns_per_slot
+                    {
+                        warn!(
+                            "scheduler pacing config pacing_fill_time {:?} is greater than the \
+                             bank's slot time {}, setting to slot time",
+                            pacing_fill_time, b.ns_per_slot,
+                        );
+                        self.config.scheduler_pacing = SchedulerPacing::FillTimeMillis(
+                            NonZeroU64::new(
+                                (b.ns_per_slot as u64 / 1_000_000)
+                                    .saturating_sub(DEFAULT_SCHEDULER_PACING_NON_FILL_TIME_MILLIS),
+                            )
+                            .unwrap_or(NonZeroU64::new(1).unwrap()),
+                        );
                     }
 
                     CostPacer {
@@ -409,12 +408,13 @@ where
 
             txs
         };
-        let lock_results = vec![Ok(()); txs.len()];
+        let lock_results = [const { Ok(()) }; CHECK_CHUNK];
         let mut error_counters = TransactionErrorMetrics::default();
         let results = bank.check_transactions::<R::Transaction>(
             &txs,
-            &lock_results,
+            &lock_results[..txs.len()],
             bank.max_processing_age(),
+            true,
             &mut error_counters,
         );
 
@@ -535,7 +535,9 @@ mod tests {
             tests::create_slow_genesis_config,
             transaction_scheduler::greedy_scheduler::{GreedyScheduler, GreedySchedulerConfig},
         },
-        agave_banking_stage_ingress_types::{BankingPacketBatch, BankingPacketReceiver},
+        agave_banking_stage_ingress_types::{
+            BankingPacketBatch, BankingPacketReceiver, to_banking_packet_batch,
+        },
         crossbeam_channel::{Receiver, Sender, bounded},
         itertools::Itertools,
         solana_compute_budget_interface::ComputeBudgetInstruction,
@@ -544,7 +546,6 @@ mod tests {
         solana_keypair::Keypair,
         solana_ledger::genesis_utils::GenesisConfigInfo,
         solana_message::Message,
-        solana_perf::packet::{NUM_PACKETS, PacketBatch, to_packet_batches},
         solana_poh::poh_recorder::{LeaderState, SharedLeaderState},
         solana_pubkey::Pubkey,
         solana_runtime::{bank::Bank, bank_forks::BankForks},
@@ -566,7 +567,7 @@ mod tests {
         #[allow(dead_code)]
         bank_forks: Arc<RwLock<BankForks>>,
         mint_keypair: Keypair,
-        banking_packet_sender: Sender<Arc<Vec<PacketBatch>>>,
+        banking_packet_sender: Sender<BankingPacketBatch>,
         shared_leader_state: SharedLeaderState,
         consume_work_receivers: Vec<Receiver<ConsumeWork<Tx>>>,
         finished_consume_work_sender: Sender<FinishedConsumeWork<Tx>>,
@@ -664,10 +665,6 @@ mod tests {
         let prioritization = ComputeBudgetInstruction::set_compute_unit_price(compute_unit_price);
         let message = Message::new(&[transfer, prioritization], Some(&from_keypair.pubkey()));
         Transaction::new(&vec![from_keypair], message, recent_blockhash)
-    }
-
-    fn to_banking_packet_batch(txs: &[Transaction]) -> BankingPacketBatch {
-        BankingPacketBatch::new(to_packet_batches(txs, NUM_PACKETS))
     }
 
     // Helper function to let test receive and then schedule packets.

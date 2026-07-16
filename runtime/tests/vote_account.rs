@@ -97,30 +97,29 @@ fn test_vote_accounts_deserialize() {
 #[test]
 fn test_vote_accounts_deserialize_invalid_account() {
     let mut rng = rand::rng();
-    // we'll populate the map with 1 valid and 2 invalid accounts, then ensure that we only get
-    // the valid one after deserialiation
+    // an invalid account in the serialized map must now be a hard deserialization error instead of
+    // being silently dropped (bad data)
     let mut vote_accounts_hash_map = HashMap::<Pubkey, (u64, AccountSharedData)>::new();
 
     let valid_account = new_rand_vote_account(&mut rng, None, true);
     vote_accounts_hash_map.insert(Pubkey::new_unique(), (0xAA, valid_account.clone()));
 
-    // bad data
     let invalid_account_data =
         AccountSharedData::new_data(42, &vec![0xFF; 42], &solana_sdk_ids::vote::id()).unwrap();
     vote_accounts_hash_map.insert(Pubkey::new_unique(), (0xBB, invalid_account_data));
 
-    // wrong owner
+    let data = bincode::serialize(&vote_accounts_hash_map).unwrap();
+    assert!(bincode::deserialize::<VoteAccounts>(&data).is_err());
+
+    // wrong owner is also a hard error
+    let mut vote_accounts_hash_map = HashMap::<Pubkey, (u64, AccountSharedData)>::new();
     let invalid_account_key =
         AccountSharedData::new_data(42, &valid_account.data().to_vec(), &Pubkey::new_unique())
             .unwrap();
     vote_accounts_hash_map.insert(Pubkey::new_unique(), (0xCC, invalid_account_key));
 
     let data = bincode::serialize(&vote_accounts_hash_map).unwrap();
-    let vote_accounts: VoteAccounts = bincode::deserialize(&data).unwrap();
-
-    assert_eq!(vote_accounts.len(), 1);
-    let (stake, _account) = vote_accounts.as_ref().values().next().unwrap();
-    assert_eq!(*stake, 0xAA);
+    assert!(bincode::deserialize::<VoteAccounts>(&data).is_err());
 }
 
 #[test]
@@ -381,7 +380,7 @@ fn test_clone_and_filter_for_vat_filters_non_alpenglow() {
     let filtered = vote_accounts.clone_and_filter_for_vat(new_limit, MIN_STAKE_FOR_STAKED_ACCOUNT);
     assert_eq!(filtered.len(), MAX_ALPENGLOW_VOTE_ACCOUNTS);
     // Check that all filtered accounts have bls pubkey.
-    for (_pubkey, (_stake, vote_account)) in filtered.as_ref().iter() {
+    for (_stake, vote_account) in filtered.as_ref().values() {
         assert!(
             vote_account
                 .vote_state_view()
@@ -393,7 +392,7 @@ fn test_clone_and_filter_for_vat_filters_non_alpenglow() {
     let new_limit = MAX_ALPENGLOW_VOTE_ACCOUNTS - 500;
     let filtered = vote_accounts.clone_and_filter_for_vat(new_limit, MIN_STAKE_FOR_STAKED_ACCOUNT);
     assert!(filtered.len() <= new_limit);
-    for (_pubkey, (_stake, vote_account)) in filtered.as_ref().iter() {
+    for (_stake, vote_account) in filtered.as_ref().values() {
         assert!(
             vote_account
                 .vote_state_view()

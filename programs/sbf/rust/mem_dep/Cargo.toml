@@ -12,3 +12,6 @@ edition = { workspace = true }
 crate-type = ["lib"]
 
 [dependencies]
+
+[lints]
+workspace = true

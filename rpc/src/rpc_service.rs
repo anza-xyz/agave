@@ -21,7 +21,6 @@ use {
     },
     regex::Regex,
     solana_cli_output::display::build_balance_message,
-    solana_client::connection_cache::Protocol,
     solana_genesis_config::DEFAULT_GENESIS_DOWNLOAD_PATH,
     solana_gossip::cluster_info::ClusterInfo,
     solana_hash::Hash,
@@ -32,6 +31,7 @@ use {
         leader_schedule_cache::LeaderScheduleCache,
     },
     solana_metrics::inc_new_counter_info,
+    solana_net_utils::Protocol,
     solana_perf::thread::renice_this_thread,
     solana_poh::poh_recorder::PohRecorder,
     solana_runtime::{
@@ -349,48 +349,46 @@ impl RequestMiddleware for RpcRequestMiddleware {
     fn on_request(&self, request: hyper::Request<hyper::Body>) -> RequestMiddlewareAction {
         trace!("request uri: {}", request.uri());
 
-        if let Some(ref snapshot_config) = self.snapshot_config {
-            if request.uri().path() == FULL_SNAPSHOT_REQUEST_PATH
-                || request.uri().path() == INCREMENTAL_SNAPSHOT_REQUEST_PATH
-            {
-                // Convenience redirect to the latest snapshot
-                let full_snapshot_archive_info =
-                    snapshot_paths::get_highest_full_snapshot_archive_info(
-                        &snapshot_config.full_snapshot_archives_dir,
-                    );
-                let snapshot_archive_info =
-                    if let Some(full_snapshot_archive_info) = full_snapshot_archive_info {
-                        if request.uri().path() == FULL_SNAPSHOT_REQUEST_PATH {
-                            Some(full_snapshot_archive_info.snapshot_archive_info().clone())
-                        } else {
-                            snapshot_paths::get_highest_incremental_snapshot_archive_info(
-                                &snapshot_config.incremental_snapshot_archives_dir,
-                                full_snapshot_archive_info.slot(),
-                            )
-                            .map(|incremental_snapshot_archive_info| {
-                                incremental_snapshot_archive_info
-                                    .snapshot_archive_info()
-                                    .clone()
-                            })
-                        }
+        if let Some(ref snapshot_config) = self.snapshot_config
+            && (request.uri().path() == FULL_SNAPSHOT_REQUEST_PATH
+                || request.uri().path() == INCREMENTAL_SNAPSHOT_REQUEST_PATH)
+        {
+            // Convenience redirect to the latest snapshot
+            let full_snapshot_archive_info = snapshot_paths::get_highest_full_snapshot_archive_info(
+                &snapshot_config.full_snapshot_archives_dir,
+            );
+            let snapshot_archive_info =
+                if let Some(full_snapshot_archive_info) = full_snapshot_archive_info {
+                    if request.uri().path() == FULL_SNAPSHOT_REQUEST_PATH {
+                        Some(full_snapshot_archive_info.snapshot_archive_info().clone())
                     } else {
-                        None
-                    };
-                return if let Some(snapshot_archive_info) = snapshot_archive_info {
-                    RpcRequestMiddleware::redirect(&format!(
-                        "/{}",
-                        snapshot_archive_info
-                            .path
-                            .file_name()
-                            .unwrap_or_else(|| std::ffi::OsStr::new(""))
-                            .to_str()
-                            .unwrap_or("")
-                    ))
+                        snapshot_paths::get_highest_incremental_snapshot_archive_info(
+                            &snapshot_config.incremental_snapshot_archives_dir,
+                            full_snapshot_archive_info.slot(),
+                        )
+                        .map(|incremental_snapshot_archive_info| {
+                            incremental_snapshot_archive_info
+                                .snapshot_archive_info()
+                                .clone()
+                        })
+                    }
                 } else {
-                    RpcRequestMiddleware::not_found()
-                }
-                .into();
+                    None
+                };
+            return if let Some(snapshot_archive_info) = snapshot_archive_info {
+                RpcRequestMiddleware::redirect(&format!(
+                    "/{}",
+                    snapshot_archive_info
+                        .path
+                        .file_name()
+                        .unwrap_or_else(|| std::ffi::OsStr::new(""))
+                        .to_str()
+                        .unwrap_or("")
+                ))
+            } else {
+                RpcRequestMiddleware::not_found()
             }
+            .into();
         }
 
         if let Some(path) = match_supply_path(request.uri().path()) {

@@ -14,7 +14,7 @@ use {
     solana_instruction::error::InstructionError,
     solana_program_entrypoint::{MAX_PERMITTED_DATA_INCREASE, SUCCESS},
     solana_sbpf::{
-        ebpf::{self, MM_HEAP_START, MM_STACK_START},
+        ebpf::{self, MM_HEAP_START, MM_RODATA_START, MM_STACK_START},
         elf::Executable,
         error::{EbpfError, ProgramResult},
         memory_region::{AccessType, MemoryMapping, MemoryRegion},
@@ -150,10 +150,14 @@ unsafe fn set_memory_context<'b>(
     account_data_direct_mapping: bool,
 ) -> Result<(), Box<dyn std::error::Error>> {
     let heap_size = invoke_context.get_compute_budget().heap_size;
-    let regions = vec![MemoryRegion::default(); 3]
-        .into_iter()
-        .chain(additional_initialized_regions)
-        .collect();
+    let regions = [
+        MemoryRegion::new_empty(MM_RODATA_START),
+        MemoryRegion::new_empty(MM_STACK_START),
+        MemoryRegion::new_empty(MM_HEAP_START),
+    ]
+    .into_iter()
+    .chain(additional_initialized_regions)
+    .collect();
     let memory_mapping = unsafe {
         // SAFETY: all memory regions are `default` (and thus implicitly valid) or valid by
         // delegating the safety invariant upon the caller.

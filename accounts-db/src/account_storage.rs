@@ -128,6 +128,20 @@ impl AccountStorage {
         self.map.iter().map(|iter_item| *iter_item.key()).collect()
     }
 
+    /// All slots with a storage entry below `max_slot_exclusive`.
+    pub(crate) fn slots_less_than(&self, max_slot_exclusive: Slot) -> Vec<Slot> {
+        assert!(
+            self.no_shrink_in_progress(),
+            "shrink is in progress! slots: {:?}",
+            self.shrink_in_progress_map.read().unwrap().keys(),
+        );
+        self.map
+            .iter()
+            .map(|iter_item| *iter_item.key())
+            .filter(|slot| *slot < max_slot_exclusive)
+            .collect()
+    }
+
     /// returns true if there is no entry for 'slot'
     #[cfg(test)]
     pub(crate) fn is_empty_entry(&self, slot: Slot) -> bool {
@@ -348,7 +362,7 @@ impl<'a> AccountStoragesOrderer<'a> {
     ) -> Self {
         let len_range = 0..storages.len();
         let mut indices: Vec<_> = len_range.clone().collect();
-        indices.sort_unstable_by_key(|i| storages[*i].capacity());
+        indices.sort_unstable_by_key(|i| storages[*i].written_bytes());
         indices.iter_mut().for_each(|i| {
             *i = select_from_range_with_start_end_rates(len_range.clone(), *i, small_to_large_ratio)
         });
@@ -500,12 +514,7 @@ fn select_from_range_with_start_end_rates(
 
 #[cfg(test)]
 mod tests {
-    use {
-        super::*,
-        crate::accounts_file::AccountsFileProvider,
-        std::{iter, path::Path},
-        tempfile::TempDir,
-    };
+    use {super::*, crate::accounts_file::AccountsFileProvider, std::iter, tempfile::TempDir};
 
     fn new_test_storage() -> (TempDir, Arc<AccountStorageEntry>) {
         new_test_storage_with(0, 0)
@@ -537,32 +546,36 @@ mod tests {
         assert!(storage.get_account_storage_entry(slot, id).is_none());
 
         // add a map store
-        let common_store_path = Path::new("");
-        let store_file_size = 4000;
-        let store_file_size2 = store_file_size * 2;
+        let common_store_path = TempDir::new().unwrap();
+        let alive_bytes: usize = 4000;
+        let alive_bytes2: usize = alive_bytes * 2;
         // 2 append vecs with same id, but different sizes
         let entry = Arc::new(AccountStorageEntry::new(
-            common_store_path,
+            common_store_path.path(),
             slot,
             id,
-            store_file_size,
+            alive_bytes as u64,
             AccountsFileProvider::AppendVec,
         ));
+        entry.num_alive_bytes.store(alive_bytes, Ordering::Release);
         let entry2 = Arc::new(AccountStorageEntry::new(
-            common_store_path,
+            common_store_path.path(),
             slot,
             id,
-            store_file_size2,
+            alive_bytes2 as u64,
             AccountsFileProvider::AppendVec,
         ));
+        entry2
+            .num_alive_bytes
+            .store(alive_bytes2, Ordering::Release);
         storage.map.insert(slot, entry);
 
         // look in map
         assert_eq!(
-            store_file_size,
+            alive_bytes,
             storage
                 .get_account_storage_entry(slot, id)
-                .map(|entry| entry.accounts.capacity())
+                .map(|entry| entry.alive_bytes())
                 .unwrap_or_default()
         );
 
@@ -575,10 +588,10 @@ mod tests {
 
         // look in map
         assert_eq!(
-            store_file_size,
+            alive_bytes,
             storage
                 .get_account_storage_entry(slot, id)
-                .map(|entry| entry.accounts.capacity())
+                .map(|entry| entry.alive_bytes())
                 .unwrap_or_default()
         );
 
@@ -587,10 +600,10 @@ mod tests {
 
         // look in shrink_in_progress_map
         assert_eq!(
-            store_file_size2,
+            alive_bytes2,
             storage
                 .get_account_storage_entry(slot, id)
-                .map(|entry| entry.accounts.capacity())
+                .map(|entry| entry.alive_bytes())
                 .unwrap_or_default()
         );
     }
@@ -796,13 +809,14 @@ mod tests {
     fn test_get_if() {
         let storage = AccountStorage::default();
         assert!(storage.get_if(|_, _| true).is_empty());
+        let common_store_path = TempDir::new().unwrap();
 
         // add some entries
         let ids = [123, 456, 789];
         for id in ids {
             let slot = id as Slot;
             let entry = AccountStorageEntry::new(
-                Path::new(""),
+                common_store_path.path(),
                 slot,
                 id,
                 5000,

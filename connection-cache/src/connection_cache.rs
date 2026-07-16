@@ -25,11 +25,7 @@ pub const DEFAULT_MAX_CONNECTIONS: usize = 1024;
 /// Default connection pool size per remote address
 pub const DEFAULT_CONNECTION_POOL_SIZE: usize = 2;
 
-#[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
-pub enum Protocol {
-    UDP,
-    QUIC,
-}
+pub use solana_net_utils::Protocol;
 
 pub trait ConnectionManager: Send + Sync + 'static {
     type ConnectionPool: ConnectionPool;
@@ -229,10 +225,10 @@ where
         while map.len() >= max_connections {
             let mut rng = rng();
             let n = rng.random_range(0..max_connections);
-            if let Some(index) = existing_index {
-                if n == index {
-                    continue;
-                }
+            if let Some(index) = existing_index
+                && n == index
+            {
+                continue;
             }
             map.swap_remove_index(n);
             num_evictions += 1;

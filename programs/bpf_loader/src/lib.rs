@@ -231,6 +231,14 @@ fn process_loader_upgradeable_instruction(
             // Verify Buffer account
 
             let buffer = instruction_context.try_borrow_instruction_account(3)?;
+            if !buffer.is_writable() {
+                ic_logger_msg!(log_collector, "Buffer account not writeable");
+                return Err(InstructionError::InvalidArgument);
+            }
+            if buffer.get_owner() != program_id {
+                ic_logger_msg!(log_collector, "Buffer account not owned by loader");
+                return Err(InstructionError::IncorrectProgramId);
+            }
             if let UpgradeableLoaderState::Buffer { authority_address } = buffer.get_state()? {
                 if authority_address != authority_key {
                     ic_logger_msg!(log_collector, "Buffer and upgrade authority don't match");
@@ -396,6 +404,14 @@ fn process_loader_upgradeable_instruction(
             // Verify Buffer account
 
             let buffer = instruction_context.try_borrow_instruction_account(2)?;
+            if !buffer.is_writable() {
+                ic_logger_msg!(log_collector, "Buffer account not writeable");
+                return Err(InstructionError::InvalidArgument);
+            }
+            if buffer.get_owner() != program_id {
+                ic_logger_msg!(log_collector, "Buffer account not owned by loader");
+                return Err(InstructionError::IncorrectProgramId);
+            }
             if let UpgradeableLoaderState::Buffer { authority_address } = buffer.get_state()? {
                 if authority_address != authority_key {
                     ic_logger_msg!(log_collector, "Buffer and upgrade authority don't match");
@@ -2081,14 +2097,33 @@ mod tests {
             Err(InstructionError::InvalidArgument),
         );
 
-        // Case: Buffer account not owned by loader
-        // The program actually does not deliberately check for this.
-        // It's only when it attempts to mutate the account that it trips an
-        // error.
+        // Case: Buffer account not writable
+        for buffer_balance in [0, 1_000_000, 15 * 1_000_000_000] {
+            let (mut transaction_accounts, mut instruction_accounts) = get_accounts(
+                &buffer_address,
+                &upgrade_authority_address,
+                &upgrade_authority_address,
+                &elf_orig,
+                &elf_new,
+            );
+            transaction_accounts
+                .get_mut(2)
+                .unwrap()
+                .1
+                .set_lamports(buffer_balance);
+            instruction_accounts.get_mut(2).unwrap().is_writable = false;
+            process_instruction(
+                transaction_accounts,
+                instruction_accounts,
+                Err(InstructionError::InvalidArgument),
+            );
+        }
+
+        // Case: Buffer account not owned by loader: lamports scenario
         //
-        // For `Upgrade`, this occurs when attempting to close the buffer.
-        // The first thing it attempts to do is debit the lamports, which
-        // immediately throws `ExternalAccountLamportSpend`.
+        // In `Upgrade`, the buffer's lamports are used to fund the additional
+        // programdata rent directly, with the rest spilled to the spill
+        // account. Then, the buffer's data is set to `size_of_buffer(0)`.
         let (mut transaction_accounts, instruction_accounts) = get_accounts(
             &buffer_address,
             &upgrade_authority_address,
@@ -2096,15 +2131,72 @@ mod tests {
             &elf_orig,
             &elf_new,
         );
-        transaction_accounts
-            .get_mut(2)
-            .unwrap()
-            .1
-            .set_owner(Pubkey::new_unique());
+        {
+            // Let's make sure the programdata requires a top-up.
+            let required_rent = |elf_len| {
+                Rent::default()
+                    .minimum_balance(UpgradeableLoaderState::size_of_programdata(elf_len))
+            };
+            let rent_orig = required_rent(elf_orig.len());
+            let rent_new = required_rent(elf_new.len());
+            let programdata = &mut transaction_accounts.first_mut().unwrap().1;
+            programdata.set_lamports(rent_orig);
+            let buffer = &mut transaction_accounts.get_mut(2).unwrap().1;
+            buffer.set_owner(Pubkey::new_unique());
+            buffer.set_lamports(rent_new);
+        }
         process_instruction(
             transaction_accounts,
             instruction_accounts,
-            Err(InstructionError::ExternalAccountLamportSpend),
+            Err(InstructionError::IncorrectProgramId),
+        );
+
+        // Case: Buffer account not owned by loader: shrink scenario
+        //
+        // Same as the above case, but give the buffer a lamports balance of
+        // `0`, rendering its balance "unchanged" by the spill operation.
+        let (mut transaction_accounts, instruction_accounts) = get_accounts(
+            &buffer_address,
+            &upgrade_authority_address,
+            &upgrade_authority_address,
+            &elf_orig,
+            &elf_new,
+        );
+        {
+            // Set the buffer's lamports to zero.
+            let buffer = &mut transaction_accounts.get_mut(2).unwrap().1;
+            buffer.set_owner(Pubkey::new_unique());
+            buffer.set_lamports(0);
+        }
+        process_instruction(
+            transaction_accounts,
+            instruction_accounts,
+            Err(InstructionError::IncorrectProgramId),
+        );
+
+        // Case: Buffer account not owned by loader: no-op scenario
+        //
+        // Same as the above case, but also truncate the buffer's data to
+        // `size_of_buffer(0)` - just the buffer metadata, no ELF - rendering
+        // the closing resize "unchanged" as well.
+        let (mut transaction_accounts, instruction_accounts) = get_accounts(
+            &buffer_address,
+            &upgrade_authority_address,
+            &upgrade_authority_address,
+            &elf_orig,
+            &elf_new,
+        );
+        {
+            // Empty the buffer (metadata only) and zero its lamports.
+            let buffer = &mut transaction_accounts.get_mut(2).unwrap().1;
+            buffer.set_owner(Pubkey::new_unique());
+            buffer.set_lamports(0);
+            truncate_data(buffer, UpgradeableLoaderState::size_of_buffer(0));
+        }
+        process_instruction(
+            transaction_accounts,
+            instruction_accounts,
+            Err(InstructionError::IncorrectProgramId),
         );
 
         // Case: Buffer account too big
@@ -2640,14 +2732,34 @@ mod tests {
             Err(InstructionError::InvalidArgument),
         );
 
-        // Case: Buffer account not owned by loader
-        // The program actually does not deliberately check for this.
-        // It's only when it attempts to mutate the account that it trips an
-        // error.
+        // Case: Buffer account not writable
+        for buffer_balance in [0, 1_000_000, 15 * 1_000_000_000] {
+            let (mut transaction_accounts, mut instruction_accounts) = get_accounts(
+                &payer_address,
+                &buffer_address,
+                &upgrade_authority_address,
+                &upgrade_authority_address,
+                &elf,
+            );
+            transaction_accounts
+                .get_mut(3)
+                .unwrap()
+                .1
+                .set_lamports(buffer_balance);
+            instruction_accounts.get_mut(3).unwrap().is_writable = false;
+            process_instruction(
+                elf.len(),
+                transaction_accounts,
+                instruction_accounts,
+                Err(InstructionError::InvalidArgument),
+            );
+        }
+
+        // Case: Buffer account not owned by loader: lamports scenario
         //
-        // For `DeployWithMaxDataLen`, this occurs when attempting to close the
-        // buffer. The first thing it attempts to do is debit the lamports,
-        // which immediately throws `ExternalAccountLamportSpend`.
+        // In `DeployWithMaxDataLen`, the buffer's lamports are drained to the
+        // payer before the payer is debited for the programdata's rent. Then,
+        // the buffer's data is set to `size_of_buffer(0)`.
         let (mut transaction_accounts, instruction_accounts) = get_accounts(
             &payer_address,
             &buffer_address,
@@ -2655,16 +2767,71 @@ mod tests {
             &upgrade_authority_address,
             &elf,
         );
-        transaction_accounts
-            .get_mut(3)
-            .unwrap()
-            .1
-            .set_owner(Pubkey::new_unique());
+        {
+            // Let's make sure the programdata requires a top-up.
+            let required_rent = Rent::default()
+                .minimum_balance(UpgradeableLoaderState::size_of_programdata(elf.len()));
+            let programdata = &transaction_accounts.get(1).unwrap().1;
+            assert!(programdata.lamports() < required_rent);
+            let buffer = &mut transaction_accounts.get_mut(3).unwrap().1;
+            buffer.set_owner(Pubkey::new_unique());
+            buffer.set_lamports(required_rent);
+        }
         process_instruction(
             elf.len(),
             transaction_accounts,
             instruction_accounts,
-            Err(InstructionError::ExternalAccountLamportSpend),
+            Err(InstructionError::IncorrectProgramId),
+        );
+
+        // Case: Buffer account not owned by loader: shrink scenario
+        //
+        // Same as the above case, but give the buffer a lamports balance of
+        // `0`, rendering its balance "unchanged" by the drain operation.
+        let (mut transaction_accounts, instruction_accounts) = get_accounts(
+            &payer_address,
+            &buffer_address,
+            &upgrade_authority_address,
+            &upgrade_authority_address,
+            &elf,
+        );
+        {
+            // Set the buffer's lamports to zero.
+            let buffer = &mut transaction_accounts.get_mut(3).unwrap().1;
+            buffer.set_owner(Pubkey::new_unique());
+            buffer.set_lamports(0);
+        }
+        process_instruction(
+            elf.len(),
+            transaction_accounts,
+            instruction_accounts,
+            Err(InstructionError::IncorrectProgramId),
+        );
+
+        // Case: Buffer account not owned by loader: no-op scenario
+        //
+        // Same as the above case, but also truncate the buffer's data to
+        // `size_of_buffer(0)` - just the buffer metadata, no ELF - rendering
+        // the closing resize "unchanged" as well.
+        let (mut transaction_accounts, instruction_accounts) = get_accounts(
+            &payer_address,
+            &buffer_address,
+            &upgrade_authority_address,
+            &upgrade_authority_address,
+            &elf,
+        );
+        {
+            // Empty the buffer (metadata only) and zero its lamports.
+            let buffer = &mut transaction_accounts.get_mut(3).unwrap().1;
+            buffer.set_owner(Pubkey::new_unique());
+            buffer.set_lamports(0);
+            truncate_data(buffer, UpgradeableLoaderState::size_of_buffer(0));
+        }
+        process_instruction(
+            elf.len(),
+            transaction_accounts,
+            instruction_accounts,
+            Err(InstructionError::IncorrectProgramId),
         );
 
         // Case: Max data length too small for Buffer data

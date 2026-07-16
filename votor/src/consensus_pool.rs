@@ -15,8 +15,12 @@ use {
     },
     agave_bls_sigverify::generated_cert_types::GeneratedCertTypes,
     agave_votor_messages::{
-        certificate::{Certificate, CertificateType},
+        certificate::{
+            CertSignature, Certificate, CertificateType, FastFinalizeCert, FinalizeCert,
+            GenesisCert, NotarCert,
+        },
         consensus_message::{Block, ConsensusMessage, VoteMessage},
+        finalized_slot::FinalizedSlot,
         fraction::Fraction,
         migration::MigrationStatus,
         vote::{Vote, VoteType},
@@ -28,7 +32,7 @@ use {
     solana_hash::Hash,
     solana_pubkey::Pubkey,
     solana_runtime::{bank::Bank, validated_block_finalization::ValidatedBlockFinalizationCert},
-    std::{cmp::Ordering, collections::BTreeMap, num::NonZero, sync::Arc},
+    std::{collections::BTreeMap, num::NonZero, sync::Arc},
     thiserror::Error,
 };
 
@@ -73,13 +77,8 @@ fn get_key_and_stakes(
     };
     Ok((
         entry.vote_account_pubkey,
-        NonZero::new(entry.stake).unwrap_or_else(|| {
-            panic!(
-                "Validator stake is zero for pubkey: {}",
-                entry.vote_account_pubkey,
-            )
-        }),
-        NonZero::new(rank_map.total_stake()).expect("expect rank-map total stake to not be 0"),
+        entry.stake,
+        rank_map.total_stake(),
     ))
 }
 
@@ -149,6 +148,9 @@ impl ConsensusPool {
                 DuplicateBlockVotePool::new(MAX_ENTRIES_PER_PUBKEY_FOR_NOTARIZE_LITE),
             ),
             VoteType::Notarize => VotePool::DuplicateBlockVotePool(DuplicateBlockVotePool::new(
+                MAX_ENTRIES_PER_PUBKEY_FOR_OTHER_TYPES,
+            )),
+            VoteType::Genesis => VotePool::DuplicateBlockVotePool(DuplicateBlockVotePool::new(
                 MAX_ENTRIES_PER_PUBKEY_FOR_OTHER_TYPES,
             )),
             _ => VotePool::SimpleVotePool(SimpleVotePool::default()),
@@ -235,7 +237,7 @@ impl ConsensusPool {
                 }
             });
             let new_cert = Arc::new(cert_builder.build()?);
-            self.insert_certificate(root_bank, cert_type, new_cert.clone(), events);
+            self.insert_certificate(root_bank, new_cert.clone(), events);
             self.generated_cert_types.insert_cert(cert_type);
             self.stats.incr_generated_cert(&new_cert.cert_type);
             new_certificates_to_send.push(new_cert);
@@ -280,17 +282,17 @@ impl ConsensusPool {
     fn insert_certificate(
         &mut self,
         root_bank: &Bank,
-        cert_type: CertificateType,
         cert: Arc<Certificate>,
         events: &mut Vec<VotorEvent>,
     ) {
         trace!(
             "{}: Inserting certificate {:?}",
             self.cluster_info.id(),
-            cert_type
+            cert.cert_type
         );
-        self.completed_certificates.insert(cert_type, cert.clone());
-        match cert_type {
+        self.completed_certificates
+            .insert(cert.cert_type, cert.clone());
+        match cert.cert_type {
             CertificateType::NotarizeFallback(block) => {
                 events.push(VotorEvent::BlockNotarFallback(block));
                 self.parent_ready_tracker
@@ -306,11 +308,21 @@ impl ConsensusPool {
                     // It's fine to set FastFinalization to false here, because
                     // we will report correctly as long as we have FastFinalization cert.
                     events.push(VotorEvent::Finalized(block, false));
-                    if self.highest_finalized_slot().is_none_or(|s| s < block.slot) {
+                    if self
+                        .highest_finalized_slot()
+                        .is_none_or(|s| s < FinalizedSlot::Slow(block.slot))
+                    {
+                        let notarize_cert = NotarCert {
+                            block,
+                            signature: CertSignature {
+                                signature: cert.signature,
+                                bitmap: cert.bitmap.clone(),
+                            },
+                        };
                         self.highest_finalized_slot_cert =
                             Some(ValidatedBlockFinalizationCert::from_validated_slow(
-                                Arc::unwrap_or_clone(finalize_cert.clone()),
-                                Arc::unwrap_or_clone(cert),
+                                finalize_cert,
+                                notarize_cert,
                                 root_bank,
                             ));
                     }
@@ -318,13 +330,23 @@ impl ConsensusPool {
             }
             CertificateType::Finalize(slot) => {
                 if let Some(notarize_cert) = self.get_notarize_cert(slot) {
-                    let block = notarize_cert.cert_type.to_block().unwrap();
+                    let block = notarize_cert.block;
                     events.push(VotorEvent::Finalized(block, false));
-                    if self.highest_finalized_slot().is_none_or(|s| s < slot) {
+                    if self
+                        .highest_finalized_slot()
+                        .is_none_or(|s| s < FinalizedSlot::Slow(slot))
+                    {
+                        let finalize_cert = FinalizeCert {
+                            slot,
+                            signature: CertSignature {
+                                signature: cert.signature,
+                                bitmap: cert.bitmap.clone(),
+                            },
+                        };
                         self.highest_finalized_slot_cert =
                             Some(ValidatedBlockFinalizationCert::from_validated_slow(
-                                Arc::unwrap_or_clone(cert),
-                                Arc::unwrap_or_clone(notarize_cert),
+                                finalize_cert,
+                                notarize_cert,
                                 root_bank,
                             ));
                     }
@@ -334,23 +356,35 @@ impl ConsensusPool {
                 events.push(VotorEvent::Finalized(block, true));
                 self.parent_ready_tracker
                     .add_new_notar_fallback_or_stronger(block, events);
-                // Use <= for FastFinalize since it supersedes standard finalization at the same slot
                 if self
                     .highest_finalized_slot()
-                    .is_none_or(|s| s <= block.slot)
+                    .is_none_or(|s| s < FinalizedSlot::Fast(block.slot))
                 {
+                    let fast_finalize_cert = FastFinalizeCert {
+                        block,
+                        signature: CertSignature {
+                            signature: cert.signature,
+                            bitmap: cert.bitmap.clone(),
+                        },
+                    };
                     self.highest_finalized_slot_cert =
                         Some(ValidatedBlockFinalizationCert::from_validated_fast(
-                            Arc::unwrap_or_clone(cert),
+                            fast_finalize_cert,
                             root_bank,
                         ));
                 }
             }
             CertificateType::Genesis(block) => {
-                self.migration_status.set_genesis_certificate(cert);
+                let genesis_cert = Arc::new(GenesisCert {
+                    block,
+                    signature: CertSignature {
+                        signature: cert.signature,
+                        bitmap: cert.bitmap.clone(),
+                    },
+                });
+                self.migration_status.set_genesis_certificate(genesis_cert);
                 // The genesis block is automatically certified
-                self.parent_ready_tracker
-                    .add_new_notar_fallback_or_stronger(block, events);
+                self.parent_ready_tracker.add_genesis(block, events);
             }
         }
     }
@@ -383,7 +417,10 @@ impl ConsensusPool {
         } else {
             None
         };
-        Ok((new_finalized_slot, new_certficates_to_send))
+        Ok((
+            new_finalized_slot.map(|s| s.slot()),
+            new_certficates_to_send,
+        ))
     }
 
     fn add_vote(
@@ -468,30 +505,43 @@ impl ConsensusPool {
             return Ok(vec![]);
         }
         let cert = Arc::new(cert);
-        self.insert_certificate(root_bank, cert_type, cert.clone(), events);
+        self.insert_certificate(root_bank, cert.clone(), events);
         self.stats.incr_ingested_cert(&cert_type);
 
         Ok(vec![cert])
     }
 
     /// Get the Notarize certificate for a slot
-    fn get_notarize_cert(&self, slot: Slot) -> Option<Arc<Certificate>> {
+    fn get_notarize_cert(&self, slot: Slot) -> Option<NotarCert> {
         self.completed_certificates
             .iter()
             .find_map(|(cert_type, cert)| match cert_type {
-                CertificateType::Notarize(block) if slot == block.slot => Some(cert.clone()),
+                CertificateType::Notarize(block) if slot == block.slot => Some(NotarCert {
+                    block: *block,
+                    signature: CertSignature {
+                        signature: cert.signature,
+                        bitmap: cert.bitmap.clone(),
+                    },
+                }),
                 _ => None,
             })
     }
 
     /// Get the Finalize certificate for a slot
-    fn get_finalize_cert(&self, slot: Slot) -> Option<&Arc<Certificate>> {
+    fn get_finalize_cert(&self, slot: Slot) -> Option<FinalizeCert> {
         self.completed_certificates
             .get(&CertificateType::Finalize(slot))
+            .map(|c| FinalizeCert {
+                slot,
+                signature: CertSignature {
+                    signature: c.signature,
+                    bitmap: c.bitmap.clone(),
+                },
+            })
     }
 
     /// Get the highest finalized slot (slow or fast)
-    pub(crate) fn highest_finalized_slot(&self) -> Option<Slot> {
+    pub(crate) fn highest_finalized_slot(&self) -> Option<FinalizedSlot> {
         self.highest_finalized_slot_cert.as_ref().map(|c| c.slot())
     }
 
@@ -629,33 +679,14 @@ impl ConsensusPool {
     }
 
     pub(crate) fn get_certs_for_standstill(&self) -> Vec<Arc<Certificate>> {
-        let (highest_slot, has_fast_finalize) = self
-            .highest_finalized_slot_cert
-            .as_ref()
-            .map(|certs| (certs.slot(), certs.is_fast()))
-            .unwrap_or((0, false));
+        let highest_slot = match &self.highest_finalized_slot_cert {
+            Some(c) => c.slot().slot(),
+            None => 0,
+        };
         self.completed_certificates
             .iter()
             .filter_map(|(cert_type, cert)| {
-                let cert_to_send = match (
-                    cert_type.slot().cmp(&highest_slot),
-                    cert_type,
-                    has_fast_finalize,
-                ) {
-                    (Ordering::Greater, _, _)
-                    | (
-                        Ordering::Equal,
-                        CertificateType::Finalize(_) | CertificateType::Notarize(_),
-                        false,
-                    )
-                    | (Ordering::Equal, CertificateType::FinalizeFast(_), true) => {
-                        Some(cert.clone())
-                    }
-                    (Ordering::Equal, CertificateType::FinalizeFast(_), false) => {
-                        panic!("Should not happen while certificate pool is single threaded")
-                    }
-                    _ => None,
-                };
+                let cert_to_send = (cert_type.slot() > highest_slot).then(|| cert.clone());
                 if cert_to_send.is_some() {
                     trace!(
                         "{}: Refreshing certificate {:?}",
@@ -678,9 +709,12 @@ impl ConsensusPool {
 #[cfg(test)]
 mod tests {
     use {
-        super::*,
+        super::{parent_ready_tracker::BlockProductionParent, *},
         crate::tests::get_cluster_info,
-        agave_votor_messages::consensus_message::{BLS_KEYPAIR_DERIVE_SEED, VoteMessage},
+        agave_votor_messages::{
+            consensus_message::{BLS_KEYPAIR_DERIVE_SEED, VoteMessage},
+            wire::get_vote_payload_to_sign,
+        },
         bitvec::vec::BitVec,
         solana_bls_signatures::{
             BLS_SIGNATURE_AFFINE_SIZE, Signature as BLSSignature, VerifiableSignature,
@@ -755,7 +789,12 @@ mod tests {
 
         fn add_certificate(&mut self, vote: Vote) {
             for rank in 0..=6 {
-                self.add_message(dummy_vote_message(&self.validators, &vote, rank));
+                self.add_message(dummy_vote_message(
+                    &self.validators,
+                    self.pool.cluster_info.my_shred_version(),
+                    &vote,
+                    rank,
+                ));
             }
             match vote {
                 Vote::Notarize(vote) => {
@@ -767,7 +806,7 @@ mod tests {
                 Vote::Skip(vote) => assert_eq!(self.pool.highest_skip_slot(), vote.slot),
                 Vote::SkipFallback(vote) => assert_eq!(self.pool.highest_skip_slot(), vote.slot),
                 Vote::Finalize(vote) => assert_eq!(
-                    self.pool.highest_finalized_slot().unwrap_or_default(),
+                    self.pool.highest_finalized_slot().unwrap().slot(),
                     vote.slot
                 ),
                 Vote::Genesis(_genesis_vote) => (),
@@ -777,15 +816,15 @@ mod tests {
 
     fn dummy_vote_message(
         keypairs: &[ValidatorVoteKeypairs],
+        shred_version: u16,
         vote: &Vote,
         rank: usize,
     ) -> ConsensusMessage {
         let bls_keypair =
             BLSKeypair::derive_from_signer(&keypairs[rank].vote_keypair, BLS_KEYPAIR_DERIVE_SEED)
                 .unwrap();
-        let signature: BLSSignature = bls_keypair
-            .sign(wincode::serialize(vote).unwrap().as_slice())
-            .into();
+        let payload = get_vote_payload_to_sign(*vote, shred_version);
+        let signature: BLSSignature = bls_keypair.sign(&payload).into();
         ConsensusMessage::new_vote(*vote, signature, rank as u16)
     }
 
@@ -816,7 +855,7 @@ mod tests {
             pool.add_message(
                 root_bank,
                 &Pubkey::new_unique(),
-                dummy_vote_message(keypairs, &vote, rank),
+                dummy_vote_message(keypairs, pool.cluster_info.my_shred_version(), &vote, rank),
                 &mut vec![],
             )
             .unwrap();
@@ -1096,28 +1135,49 @@ mod tests {
         }
 
         let highest_slot_fn = match &vote {
-            Vote::Finalize(_) => {
-                |pool: &ConsensusPool| pool.highest_finalized_slot().unwrap_or_default()
-            }
+            Vote::Finalize(_) => |pool: &ConsensusPool| {
+                pool.highest_finalized_slot()
+                    .map(|s| s.slot())
+                    .unwrap_or_default()
+            },
             Vote::Notarize(_) => |pool: &ConsensusPool| pool.highest_notarized_slot(),
             Vote::NotarizeFallback(_) => |pool: &ConsensusPool| pool.highest_notarized_slot(),
             Vote::Skip(_) => |pool: &ConsensusPool| pool.highest_skip_slot(),
             Vote::SkipFallback(_) => |pool: &ConsensusPool| pool.highest_skip_slot(),
             Vote::Genesis(_genesis_vote) => |_pool: &ConsensusPool| 0,
         };
-        ctx.add_message(dummy_vote_message(&ctx.validators, &vote, my_validator_ix));
+        ctx.add_message(dummy_vote_message(
+            &ctx.validators,
+            ctx.pool.cluster_info.my_shred_version(),
+            &vote,
+            my_validator_ix,
+        ));
         let slot = vote.slot();
         assert!(highest_slot_fn(&ctx.pool) < slot);
         // Same key voting again shouldn't make a certificate
-        ctx.add_message(dummy_vote_message(&ctx.validators, &vote, my_validator_ix));
+        ctx.add_message(dummy_vote_message(
+            &ctx.validators,
+            ctx.pool.cluster_info.my_shred_version(),
+            &vote,
+            my_validator_ix,
+        ));
         assert!(highest_slot_fn(&ctx.pool) < slot);
         for rank in 0..4 {
-            ctx.add_message(dummy_vote_message(&ctx.validators, &vote, rank));
+            ctx.add_message(dummy_vote_message(
+                &ctx.validators,
+                ctx.pool.cluster_info.my_shred_version(),
+                &vote,
+                rank,
+            ));
         }
         assert!(highest_slot_fn(&ctx.pool) < slot);
         let new_validator_ix = 6;
-        let (new_finalized_slot, certs_to_send) =
-            ctx.add_message(dummy_vote_message(&ctx.validators, &vote, new_validator_ix));
+        let (new_finalized_slot, certs_to_send) = ctx.add_message(dummy_vote_message(
+            &ctx.validators,
+            ctx.pool.cluster_info.my_shred_version(),
+            &vote,
+            new_validator_ix,
+        ));
         if vote.is_finalize() {
             assert_eq!(new_finalized_slot, Some(slot));
         } else {
@@ -1214,7 +1274,12 @@ mod tests {
                 .add_message(
                     &root_bank,
                     &Pubkey::new_unique(),
-                    dummy_vote_message(&ctx.validators, &vote, rank),
+                    dummy_vote_message(
+                        &ctx.validators,
+                        ctx.pool.cluster_info.my_shred_version(),
+                        &vote,
+                        rank,
+                    ),
                     &mut vec![],
                 )
                 .unwrap();
@@ -1266,7 +1331,12 @@ mod tests {
             let slot = (i as u64).saturating_add(16);
             let vote = Vote::new_skip_vote(slot);
             // These should not extend the skip range
-            ctx.add_message(dummy_vote_message(&ctx.validators, &vote, i));
+            ctx.add_message(dummy_vote_message(
+                &ctx.validators,
+                ctx.pool.cluster_info.my_shred_version(),
+                &vote,
+                i,
+            ));
         }
 
         assert_single_certificate_range(&ctx.pool, 15, 15);
@@ -1378,20 +1448,35 @@ mod tests {
         }
         // 10% vote for skip 2
         let vote = Vote::new_skip_vote(2);
-        ctx.add_message(dummy_vote_message(&ctx.validators, &vote, 6));
+        ctx.add_message(dummy_vote_message(
+            &ctx.validators,
+            ctx.pool.cluster_info.my_shred_version(),
+            &vote,
+            6,
+        ));
         assert_eq!(ctx.pool.highest_skip_slot(), 2);
 
         assert_single_certificate_range(&ctx.pool, 2, 2);
         // 10% vote for skip 4
         let vote = Vote::new_skip_vote(4);
-        ctx.add_message(dummy_vote_message(&ctx.validators, &vote, 7));
+        ctx.add_message(dummy_vote_message(
+            &ctx.validators,
+            ctx.pool.cluster_info.my_shred_version(),
+            &vote,
+            7,
+        ));
         assert_eq!(ctx.pool.highest_skip_slot(), 4);
 
         assert_single_certificate_range(&ctx.pool, 2, 2);
         assert_single_certificate_range(&ctx.pool, 4, 4);
         // 10% vote for skip 3
         let vote = Vote::new_skip_vote(3);
-        ctx.add_message(dummy_vote_message(&ctx.validators, &vote, 8));
+        ctx.add_message(dummy_vote_message(
+            &ctx.validators,
+            ctx.pool.cluster_info.my_shred_version(),
+            &vote,
+            8,
+        ));
         assert_eq!(ctx.pool.highest_skip_slot(), 4);
         assert_single_certificate_range(&ctx.pool, 2, 4);
         assert!(ctx.pool.skip_certified(3));
@@ -1425,7 +1510,12 @@ mod tests {
         }
         // Range expansion on a singleton vote should be ok
         let vote = Vote::new_skip_vote(1);
-        ctx.add_message(dummy_vote_message(&ctx.validators, &vote, 6));
+        ctx.add_message(dummy_vote_message(
+            &ctx.validators,
+            ctx.pool.cluster_info.my_shred_version(),
+            &vote,
+            6,
+        ));
         assert_eq!(ctx.pool.highest_skip_slot(), 1);
         add_skip_vote_range(
             &mut ctx.pool,
@@ -1454,7 +1544,12 @@ mod tests {
 
         // AlreadyExists, silently fail
         let vote = Vote::new_skip_vote(20);
-        ctx.add_message(dummy_vote_message(&ctx.validators, &vote, 6));
+        ctx.add_message(dummy_vote_message(
+            &ctx.validators,
+            ctx.pool.cluster_info.my_shred_version(),
+            &vote,
+            6,
+        ));
     }
 
     #[test]
@@ -1537,7 +1632,12 @@ mod tests {
             .add_message(
                 &bank,
                 &my_vote_key,
-                dummy_vote_message(&ctx.validators, &vote, 0),
+                dummy_vote_message(
+                    &ctx.validators,
+                    ctx.pool.cluster_info.my_shred_version(),
+                    &vote,
+                    0,
+                ),
                 &mut new_events,
             )
             .unwrap();
@@ -1550,7 +1650,12 @@ mod tests {
                 .add_message(
                     &bank,
                     &Pubkey::new_unique(),
-                    dummy_vote_message(&ctx.validators, &vote, rank),
+                    dummy_vote_message(
+                        &ctx.validators,
+                        ctx.pool.cluster_info.my_shred_version(),
+                        &vote,
+                        rank,
+                    ),
                     &mut new_events,
                 )
                 .unwrap();
@@ -1574,7 +1679,12 @@ mod tests {
                 .add_message(
                     &bank,
                     &Pubkey::new_unique(),
-                    dummy_vote_message(&ctx.validators, &vote, rank),
+                    dummy_vote_message(
+                        &ctx.validators,
+                        ctx.pool.cluster_info.my_shred_version(),
+                        &vote,
+                        rank,
+                    ),
                     &mut new_events,
                 )
                 .unwrap();
@@ -1590,7 +1700,12 @@ mod tests {
             .add_message(
                 &bank,
                 &my_vote_key,
-                dummy_vote_message(&ctx.validators, &vote, 0),
+                dummy_vote_message(
+                    &ctx.validators,
+                    ctx.pool.cluster_info.my_shred_version(),
+                    &vote,
+                    0,
+                ),
                 &mut new_events,
             )
             .unwrap();
@@ -1604,7 +1719,12 @@ mod tests {
                 .add_message(
                     &bank,
                     &Pubkey::new_unique(),
-                    dummy_vote_message(&ctx.validators, &vote, rank),
+                    dummy_vote_message(
+                        &ctx.validators,
+                        ctx.pool.cluster_info.my_shred_version(),
+                        &vote,
+                        rank,
+                    ),
                     &mut new_events,
                 )
                 .unwrap();
@@ -1634,7 +1754,12 @@ mod tests {
                 .add_message(
                     &bank,
                     &Pubkey::new_unique(),
-                    dummy_vote_message(&ctx.validators, &vote, rank),
+                    dummy_vote_message(
+                        &ctx.validators,
+                        ctx.pool.cluster_info.my_shred_version(),
+                        &vote,
+                        rank,
+                    ),
                     &mut new_events,
                 )
                 .unwrap();
@@ -1669,7 +1794,12 @@ mod tests {
             .add_message(
                 &bank,
                 &my_vote_key,
-                dummy_vote_message(&ctx.validators, &vote, 0),
+                dummy_vote_message(
+                    &ctx.validators,
+                    ctx.pool.cluster_info.my_shred_version(),
+                    &vote,
+                    0,
+                ),
                 &mut new_events,
             )
             .unwrap();
@@ -1682,7 +1812,12 @@ mod tests {
                 .add_message(
                     &bank,
                     &Pubkey::new_unique(),
-                    dummy_vote_message(&ctx.validators, &vote, rank),
+                    dummy_vote_message(
+                        &ctx.validators,
+                        ctx.pool.cluster_info.my_shred_version(),
+                        &vote,
+                        rank,
+                    ),
                     &mut new_events,
                 )
                 .unwrap();
@@ -1700,7 +1835,12 @@ mod tests {
             .add_message(
                 &bank,
                 &Pubkey::new_unique(),
-                dummy_vote_message(&ctx.validators, &vote, 6),
+                dummy_vote_message(
+                    &ctx.validators,
+                    ctx.pool.cluster_info.my_shred_version(),
+                    &vote,
+                    6,
+                ),
                 &mut new_events,
             )
             .unwrap();
@@ -1740,14 +1880,14 @@ mod tests {
         pool.add_message(
             bank,
             &Pubkey::new_unique(),
-            dummy_vote_message(validators, &vote_1, 0),
+            dummy_vote_message(validators, pool.cluster_info.my_shred_version(), &vote_1, 0),
             &mut vec![],
         )
         .unwrap();
         pool.add_message(
             bank,
             &Pubkey::new_unique(),
-            dummy_vote_message(validators, &vote_2, 0),
+            dummy_vote_message(validators, pool.cluster_info.my_shred_version(), &vote_2, 0),
             &mut vec![],
         )
         .unwrap_err();
@@ -1834,7 +1974,12 @@ mod tests {
                 .add_message(
                     &new_bank,
                     &Pubkey::new_unique(),
-                    dummy_vote_message(&ctx.validators, &vote, 0),
+                    dummy_vote_message(
+                        &ctx.validators,
+                        ctx.pool.cluster_info.my_shred_version(),
+                        &vote,
+                        0
+                    ),
                     &mut vec![]
                 )
                 .is_err()
@@ -1917,13 +2062,10 @@ mod tests {
             bitmap: dummy_bitmap(),
         };
         ctx.add_message(ConsensusMessage::Certificate(cert_5));
-        // Should return only FinalizeFast cert on 5
+        // Slot 5 is now the highest finalized slot, so standstill cert refresh only returns
+        // certificates for later slots.
         let certs = ctx.pool.get_certs_for_standstill();
-        assert_eq!(certs.len(), 1);
-        assert!(
-            certs[0].cert_type.slot() == 5
-                && matches!(certs[0].cert_type, CertificateType::FinalizeFast(_))
-        );
+        assert!(certs.is_empty());
 
         // Now add Notarize cert on 6
         let cert_6 = Certificate {
@@ -1935,11 +2077,9 @@ mod tests {
             bitmap: dummy_bitmap(),
         };
         ctx.add_message(ConsensusMessage::Certificate(cert_6));
-        // Should return certs on 5 and 6
+        // Should return certs after highest finalized slot 5.
         let certs = ctx.pool.get_certs_for_standstill();
-        assert_eq!(certs.len(), 2);
-        assert!(certs.iter().any(|cert| cert.cert_type.slot() == 5
-            && matches!(cert.cert_type, CertificateType::FinalizeFast(_))));
+        assert_eq!(certs.len(), 1);
         assert!(certs.iter().any(|cert| cert.cert_type.slot() == 6
             && matches!(cert.cert_type, CertificateType::Notarize(_))));
 
@@ -1960,14 +2100,10 @@ mod tests {
             bitmap: dummy_bitmap(),
         };
         ctx.add_message(ConsensusMessage::Certificate(cert_6_notarize_fallback));
-        // This should not be returned because 6 is the current highest finalized slot
-        // only Notarize/Finalze/FinalizeFast should be returned
+        // Slot 6 is now the current highest finalized slot, so no slot-6 certs should
+        // be returned by the queued refresh path.
         let certs = ctx.pool.get_certs_for_standstill();
-        assert_eq!(certs.len(), 2);
-        assert!(certs.iter().any(|cert| cert.cert_type.slot() == 6
-            && matches!(cert.cert_type, CertificateType::Finalize(_))));
-        assert!(certs.iter().any(|cert| cert.cert_type.slot() == 6
-            && matches!(cert.cert_type, CertificateType::Notarize(_))));
+        assert!(certs.is_empty());
 
         // Add another skip on 7
         let cert_7 = Certificate {
@@ -1976,13 +2112,9 @@ mod tests {
             bitmap: dummy_bitmap(),
         };
         ctx.add_message(ConsensusMessage::Certificate(cert_7));
-        // Should return certs on 6 and 7
+        // Should return certs after highest finalized slot 6.
         let certs = ctx.pool.get_certs_for_standstill();
-        assert_eq!(certs.len(), 3);
-        assert!(certs.iter().any(|cert| cert.cert_type.slot() == 6
-            && matches!(cert.cert_type, CertificateType::Finalize(_))));
-        assert!(certs.iter().any(|cert| cert.cert_type.slot() == 6
-            && matches!(cert.cert_type, CertificateType::Notarize(_))));
+        assert_eq!(certs.len(), 1);
         assert!(
             certs.iter().any(|cert| cert.cert_type.slot() == 7
                 && matches!(cert.cert_type, CertificateType::Skip(_)))
@@ -2005,13 +2137,10 @@ mod tests {
         };
         ctx.add_message(ConsensusMessage::Certificate(cert_8_notarize));
 
-        // Should only return certs on 8 now
+        // Slot 8 is now the current highest finalized slot, so latest-finalization
+        // certs are refreshed from highest_finalized instead of this queue.
         let certs = ctx.pool.get_certs_for_standstill();
-        assert_eq!(certs.len(), 2);
-        assert!(certs.iter().any(|cert| cert.cert_type.slot() == 8
-            && matches!(cert.cert_type, CertificateType::Finalize(_))));
-        assert!(certs.iter().any(|cert| cert.cert_type.slot() == 8
-            && matches!(cert.cert_type, CertificateType::Notarize(_))));
+        assert!(certs.is_empty());
     }
 
     #[test]
@@ -2125,6 +2254,49 @@ mod tests {
     }
 
     #[test]
+    fn test_genesis_certificate_at_root_seeds_parent_ready() {
+        let mut ctx = TestContext::new();
+        let parent_bank = ctx.bank_forks.read().unwrap().root_bank();
+        let root_bank = create_bank(63, parent_bank, SlotLeader::new_unique());
+        let root_block_id = Hash::new_unique();
+        root_bank.set_block_id(Some(root_block_id));
+        root_bank.freeze();
+        let root_block = Block {
+            slot: root_bank.slot(),
+            block_id: root_block_id,
+        };
+        let mut events = vec![];
+
+        ctx.pool.maybe_prune(root_block.slot);
+        assert_eq!(
+            ctx.pool
+                .parent_ready_tracker
+                .block_production_parent(root_block.slot + 1),
+            BlockProductionParent::ParentNotReady
+        );
+
+        ctx.pool
+            .add_message(
+                &root_bank,
+                &Pubkey::new_unique(),
+                ConsensusMessage::Certificate(Certificate {
+                    cert_type: CertificateType::Genesis(root_block),
+                    signature: BLSSignature([0; BLS_SIGNATURE_AFFINE_SIZE]),
+                    bitmap: dummy_bitmap(),
+                }),
+                &mut events,
+            )
+            .unwrap();
+
+        assert_eq!(
+            ctx.pool
+                .parent_ready_tracker
+                .block_production_parent(root_block.slot + 1),
+            BlockProductionParent::Parent(root_block)
+        );
+    }
+
+    #[test]
     fn test_vote_message_signature_verification() {
         let ctx = TestContext::new();
         let rank_to_test = 3;
@@ -2133,7 +2305,12 @@ mod tests {
             block_id: Hash::new_unique(),
         });
 
-        let consensus_message = dummy_vote_message(&ctx.validators, &vote, rank_to_test);
+        let consensus_message = dummy_vote_message(
+            &ctx.validators,
+            ctx.pool.cluster_info.my_shred_version(),
+            &vote,
+            rank_to_test,
+        );
         let ConsensusMessage::Vote(vote_message) = consensus_message else {
             panic!("Expected Vote message")
         };
@@ -2143,10 +2320,10 @@ mod tests {
             BLSKeypair::derive_from_signer(validator_vote_keypair, BLS_KEYPAIR_DERIVE_SEED)
                 .unwrap();
 
-        let signed_message = wincode::serialize(&vote).unwrap();
+        let payload = get_vote_payload_to_sign(vote, ctx.pool.cluster_info.my_shred_version());
         vote_message
             .signature
-            .verify(&bls_keypair.public, &signed_message)
+            .verify(&bls_keypair.public, &payload)
             .expect("vote message signature should verify");
     }
 

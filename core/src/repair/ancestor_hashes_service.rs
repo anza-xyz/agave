@@ -16,14 +16,14 @@ use {
         },
         replay_stage::DUPLICATE_THRESHOLD,
     },
-    crossbeam_channel::{Receiver, RecvTimeoutError, Sender, bounded, unbounded},
+    crossbeam_channel::{Receiver, RecvTimeoutError, Sender, TrySendError, bounded},
     dashmap::{DashMap, mapref::entry::Entry::Occupied},
     solana_clock::Slot,
     solana_gossip::{contact_info::Protocol, ping_pong::Pong},
     solana_keypair::{Keypair, Signer, signable::Signable},
     solana_ledger::blockstore::Blockstore,
     solana_perf::{
-        packet::{PacketBatch, PacketRef, deserialize_from_with_limit},
+        packet::{PacketBatch, PacketRef, packet_config},
         recycler::Recycler,
     },
     solana_pubkey::Pubkey,
@@ -189,7 +189,8 @@ impl AncestorHashesService {
 
         let ancestor_hashes_request_statuses: Arc<DashMap<Slot, AncestorRequestStatus>> =
             Arc::new(DashMap::new());
-        let (retryable_slots_sender, retryable_slots_receiver) = unbounded();
+        // MAX_ANCESTOR_HASHES_SLOT_REQUESTS_PER_SECOND = 2, so we can buffer for > minute here.
+        let (retryable_slots_sender, retryable_slots_receiver) = bounded(128);
 
         // Listen for responses to our ancestor requests
         let t_ancestor_hashes_responses = Self::run_responses_listener(
@@ -375,7 +376,7 @@ impl AncestorHashesService {
             return None;
         };
         let mut cursor = Cursor::new(packet_data);
-        let Ok(response) = deserialize_from_with_limit(&mut cursor) else {
+        let Ok(response) = wincode::config::deserialize_from(&mut cursor, packet_config()) else {
             stats.invalid_packets += 1;
             return None;
         };
@@ -383,7 +384,8 @@ impl AncestorHashesService {
         match response {
             AncestorHashesResponse::Hashes(ref hashes) => {
                 // deserialize trailing nonce
-                let Ok(nonce) = deserialize_from_with_limit(&mut cursor) else {
+                let Ok(nonce) = wincode::config::deserialize_from(&mut cursor, packet_config())
+                else {
                     stats.invalid_packets += 1;
                     return None;
                 };
@@ -453,7 +455,7 @@ impl AncestorHashesService {
                 }
                 stats.ping_count += 1;
                 let pong = RepairProtocol::Pong(Pong::new(&ping, keypair));
-                if let Ok(pong) = bincode::serialize(&pong) {
+                if let Ok(pong) = wincode::serialize(&pong) {
                     let _ = ancestor_socket.send_to(&pong, from_addr);
                 }
                 None
@@ -466,11 +468,13 @@ impl AncestorHashesService {
         ancestor_duplicate_slots_sender: &AncestorDuplicateSlotsSender,
         retryable_slots_sender: &RetryableSlotsSender,
     ) {
-        if ancestor_request_decision.is_retryable() {
-            let _ = retryable_slots_sender.send((
+        if ancestor_request_decision.is_retryable()
+            && let Err(TrySendError::Full(_)) = retryable_slots_sender.try_send((
                 ancestor_request_decision.slot,
                 ancestor_request_decision.request_type,
-            ));
+            ))
+        {
+            warn!("Dropping ancestor request decision - retryable_slots channel is full");
         }
 
         // TODO: In the case of DuplicateAncestorDecision::ContinueSearch
@@ -1269,7 +1273,7 @@ mod test {
                 5,
             );
             blockstore
-                .insert_shreds(shreds, None, false)
+                .insert_shreds(shreds, false)
                 .expect("Expect successful ledger write");
             let mut correct_bank_hashes = HashMap::new();
             for duplicate_confirmed_slot in
@@ -1422,7 +1426,7 @@ mod test {
         // Create slots [slot, slot + num_ancestors) with 5 shreds apiece
         let (shreds, _) = make_many_slot_entries(dead_slot, dead_slot, 5);
         blockstore
-            .insert_shreds(shreds, None, false)
+            .insert_shreds(shreds, false)
             .expect("Expect successful ledger write");
         for duplicate_confirmed_slot in 0..(dead_slot - 1) {
             let bank_hash = correct_bank_hashes

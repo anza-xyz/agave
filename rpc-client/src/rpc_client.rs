@@ -17,7 +17,7 @@ use {
         nonblocking::{self, rpc_client::get_rpc_request_str},
         rpc_sender::*,
     },
-    agave_votor_messages::certificate::Certificate,
+    agave_votor_messages::wire::WireBlockCertMessage,
     serde_json::Value,
     solana_account::{Account, ReadableAccount},
     solana_account_decoder::UiAccount,
@@ -1846,7 +1846,7 @@ impl RpcClient {
     /// let cert = rpc_client.get_ag_genesis_cert()?;
     /// # Ok::<(), Error>(())
     /// ```
-    pub fn get_ag_genesis_cert(&self) -> ClientResult<Option<Certificate>> {
+    pub fn get_ag_genesis_cert(&self) -> ClientResult<Option<WireBlockCertMessage>> {
         self.invoke((self.rpc_client.as_ref()).get_ag_genesis_cert())
     }
 
@@ -4363,7 +4363,7 @@ mod tests {
         crate::mock_sender::PUBKEY,
         assert_matches::assert_matches,
         base64::{Engine, prelude::BASE64_STANDARD},
-        crossbeam_channel::unbounded,
+        crossbeam_channel::bounded,
         jsonrpc_core::{Error, IoHandler, Params, futures::prelude::*},
         jsonrpc_http_server::{AccessControlAllowOrigin, DomainsValidation, ServerBuilder},
         serde_json::{Number, json},
@@ -4401,7 +4401,7 @@ mod tests {
     }
 
     fn _test_send() {
-        let (sender, receiver) = unbounded();
+        let (sender, receiver) = bounded(1024);
         thread::spawn(move || {
             let rpc_addr = "0.0.0.0:0".parse().unwrap();
             let mut io = IoHandler::default();
@@ -5124,7 +5124,7 @@ mod tests {
         let serialized_message = message.serialize();
         let serialized_message_base64 = BASE64_STANDARD.encode(serialized_message);
 
-        let (sender, receiver) = unbounded();
+        let (sender, receiver) = bounded(1024);
         thread::spawn(move || {
             let rpc_addr = "0.0.0.0:0".parse().unwrap();
             let mut io = IoHandler::default();

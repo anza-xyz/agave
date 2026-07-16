@@ -2,34 +2,33 @@
 
 use {
     super::{context::InstrContext, effects::InstrEffects},
-    crate::{
-        conformance::{
-            callback::DefaultCallback,
-            setup::{compile_transaction_context, program_runtime_environments, recent_blockhash},
+    crate::conformance::{
+        callback::DefaultCallback,
+        setup::{
+            InvokeContextFields, compute_budget, prepare_invoke_context_fields, program_loader_key,
+            program_runtime_environments,
         },
-        message_processor::process_message,
     },
-    solana_compute_budget::compute_budget::ComputeBudget,
+    solana_account::AccountSharedData,
     solana_instruction::error::InstructionError,
     solana_program_runtime::{
-        invoke_context::{EnvironmentConfig, InvokeContext},
-        loaded_programs::ProgramCacheForTxBatch,
+        invoke_context::InvokeContext, loaded_programs::ProgramCacheForTxBatch,
         sysvar_cache::SysvarCache,
     },
     solana_pubkey::Pubkey,
     solana_svm_callback::InvokeContextCallback,
-    solana_svm_log_collector::LogCollector,
     solana_svm_timings::ExecuteTimings,
-    solana_transaction_error::TransactionError,
-    std::rc::Rc,
+    std::{collections::HashMap, rc::Rc},
 };
 #[cfg(feature = "conformance")]
 use {
     crate::conformance::{
         callback::ConformanceCallback,
+        direct_mapping::direct_mapping_handle_cu_exhaustion,
         programs::{fill_program_cache_from_accounts, new_program_cache_with_builtins},
         setup::sysvar_cache_from_accounts,
     },
+    agave_precompiles::is_precompile,
     prost::Message,
     protosol::protos::{InstrContext as ProtoInstrContext, InstrEffects as ProtoInstrEffects},
     std::ffi::c_int,
@@ -55,63 +54,47 @@ pub fn execute_instr_with_callback<C: InvokeContextCallback>(
     let mut compute_units_consumed = 0;
     let mut timings = ExecuteTimings::default();
 
-    let log_collector = LogCollector::new_ref();
-    let feature_set = input.feature_set;
-    let simd_0268_active = feature_set.raise_cpi_nesting_limit_to_8;
-
-    let mut compute_budget = ComputeBudget::new_with_defaults(simd_0268_active);
+    let mut compute_budget = compute_budget(&input.feature_set);
     compute_budget.compute_unit_limit = input.cu_avail; // Clamp budget for execution by cu_avail
 
-    let rent = sysvar_cache.get_rent().unwrap();
-    let program_id = &input.instruction.program_id;
-    let loader_key = program_cache
-        .find(program_id)
-        .expect("program not loaded in cache")
-        .account_owner();
+    let loader_key = program_loader_key(&input.accounts, &input.instruction.program_id);
 
-    let (sanitized_message, mut transaction_context) = compile_transaction_context(
-        &input.instruction,
-        &input.accounts,
-        program_id,
+    let program_runtime_environments =
+        program_runtime_environments(&input.feature_set, &compute_budget);
+
+    let InvokeContextFields {
+        sanitized_message,
+        mut transaction_context,
+        environment_config,
+        log_collector,
+        execution_budget,
+        execution_cost,
+    } = prepare_invoke_context_fields(
+        input,
+        callback,
         &loader_key,
+        sysvar_cache,
         &compute_budget,
-        (*rent).clone(),
+        &program_runtime_environments,
     );
 
-    let runtime_environments = program_runtime_environments(&input.feature_set, &compute_budget);
-
     let result = {
-        let (blockhash, blockhash_lamports_per_signature) = recent_blockhash(sysvar_cache);
-
-        let environment_config = EnvironmentConfig::new(
-            blockhash,
-            blockhash_lamports_per_signature,
-            false,
-            callback,
-            &feature_set,
-            &runtime_environments,
-            sysvar_cache,
-        );
-
         let mut invoke_context = InvokeContext::new(
             &mut transaction_context,
             program_cache,
             environment_config,
             Some(log_collector.clone()),
-            compute_budget.to_budget(),
-            compute_budget.to_cost(),
+            execution_budget,
+            execution_cost,
         );
-        match process_message(
+
+        match invoke_context.process_message(
             &sanitized_message,
-            &mut invoke_context,
             &mut timings,
             &mut compute_units_consumed,
         ) {
             Ok(()) => Ok(()),
-            Err(TransactionError::InstructionError(_, err)) => Err(err),
-            // `process_message` only ever returns `InstructionError`-shaped
-            // failures.
-            Err(_) => unreachable!(),
+            Err((_, err)) => Err(err),
         }
     };
 
@@ -129,10 +112,31 @@ pub fn execute_instr_with_callback<C: InvokeContextCallback>(
         .map(|index| {
             *transaction_context
                 .get_key_of_account_at_index(index)
-                .clone()
                 .unwrap()
         })
-        .collect::<Vec<_>>();
+        .collect();
+
+    // Post-execution state of the accounts in the compiled message.
+    let mut executed: HashMap<Pubkey, AccountSharedData> = account_keys
+        .into_iter()
+        .zip(transaction_context.deconstruct_without_keys().unwrap())
+        .collect();
+
+    // Preserve input account order, overlaying executed state for accounts
+    // present in the compiled message.
+    let resulting_accounts = input
+        .accounts
+        .iter()
+        .map(|(pubkey, account)| {
+            (
+                *pubkey,
+                executed
+                    .remove(pubkey)
+                    .map(Into::into)
+                    .unwrap_or_else(|| account.clone()),
+            )
+        })
+        .collect();
 
     InstrEffects {
         custom_err: if let Err(InstructionError::Custom(code)) = result {
@@ -141,13 +145,7 @@ pub fn execute_instr_with_callback<C: InvokeContextCallback>(
             None
         },
         result: result.err(),
-        resulting_accounts: transaction_context
-            .deconstruct_without_keys()
-            .unwrap()
-            .into_iter()
-            .zip(account_keys)
-            .map(|(account, key)| (key, account.into()))
-            .collect(),
+        resulting_accounts,
         cu_avail,
         return_data,
         logs,
@@ -165,8 +163,7 @@ pub fn execute_instr_proto(input: ProtoInstrContext) -> ProtoInstrEffects {
     let mut program_cache = {
         let slot = sysvar_cache.get_clock().unwrap().slot;
         let feature_set = &instr_context.feature_set;
-        let simd_0268_active = feature_set.raise_cpi_nesting_limit_to_8;
-        let compute_budget = ComputeBudget::new_with_defaults(simd_0268_active);
+        let compute_budget = compute_budget(feature_set);
         let environments = program_runtime_environments(feature_set, &compute_budget);
 
         let mut cache = new_program_cache_with_builtins(slot);
@@ -175,19 +172,44 @@ pub fn execute_instr_proto(input: ProtoInstrContext) -> ProtoInstrEffects {
             environments.get_env_for_deployment(),
             &instr_context.accounts,
             slot,
-        )
-        .unwrap();
+        );
 
         cache
     };
 
-    execute_instr_with_callback(
+    let mut effects = execute_instr_with_callback(
         &instr_context,
         &ConformanceCallback,
         &mut program_cache,
         &sysvar_cache,
-    )
-    .into()
+    );
+
+    // Precompile verification failures surface as `Custom`, but Firedancer
+    // reports a custom error code of 0 for precompiles.
+    if effects.custom_err.is_some()
+        && is_precompile(&instr_context.instruction.program_id, |_| true)
+    {
+        effects.custom_err = Some(0);
+    }
+
+    // TODO: Firedancer's tooling compares resulting account contents even
+    // when execution fails, so the harness must report them. Account
+    // contents are not meaningful on error (partial writes can diverge based
+    // on timing, e.g. with direct mapping or builtins), so once the tooling
+    // supports it, the harness should skip the account comparison on error
+    // entirely, which would also make the CU-exhaustion workaround below
+    // unnecessary.
+    direct_mapping_handle_cu_exhaustion(
+        instr_context.feature_set.virtual_address_space_adjustments,
+        effects.cu_avail,
+        effects.result.is_some(),
+        effects
+            .resulting_accounts
+            .iter_mut()
+            .map(|(_, account)| &mut account.data),
+    );
+
+    effects.into()
 }
 
 /// # Safety
@@ -277,6 +299,31 @@ mod tests {
         sysvar_cache
     }
 
+    #[cfg(feature = "conformance")]
+    fn proto_account(pubkey: Pubkey, account: Account) -> protosol::protos::AcctState {
+        protosol::protos::AcctState {
+            address: pubkey.to_bytes().to_vec(),
+            owner: account.owner.to_bytes().to_vec(),
+            lamports: account.lamports,
+            data: account.data,
+            executable: account.executable,
+        }
+    }
+
+    #[cfg(feature = "conformance")]
+    fn proto_sysvar_account<T: serde::Serialize>(
+        pubkey: Pubkey,
+        sysvar: &T,
+    ) -> protosol::protos::AcctState {
+        protosol::protos::AcctState {
+            address: pubkey.to_bytes().to_vec(),
+            owner: solana_sdk_ids::sysvar::id().to_bytes().to_vec(),
+            lamports: 1,
+            data: bincode::serialize(sysvar).unwrap(),
+            executable: false,
+        }
+    }
+
     fn build_system_transfer_context(from: &Pubkey, to: &Pubkey, amount: u64) -> InstrContext {
         let feature_set = SVMFeatureSet::default();
         let accounts = vec![
@@ -352,9 +399,16 @@ mod tests {
     #[test_case(solana_sdk_ids::bpf_loader_upgradeable::id(); "loader_v3")]
     fn test_bpf_noop_program_exec(loader_key: Pubkey) {
         let program_id = Pubkey::new_unique();
+        let program_account = Account {
+            lamports: 1,
+            data: vec![],
+            owner: loader_key,
+            executable: true,
+            rent_epoch: u64::MAX,
+        };
         let context = InstrContext::new_with_default_budget(
             SVMFeatureSet::default(),
-            vec![],
+            vec![(program_id, program_account)],
             Instruction::new_with_bytes(program_id, &[], vec![]),
         );
         let sysvar_cache = sysvar_cache_with_rent();
@@ -371,5 +425,48 @@ mod tests {
         let effects = execute_instr(&context, &mut program_cache, &sysvar_cache);
         assert_eq!(effects.result, None);
         assert_eq!(effects.custom_err, None);
+    }
+
+    #[cfg(feature = "conformance")]
+    #[test]
+    #[should_panic(expected = "invariant violation: duplicate account load")]
+    fn test_duplicate_accounts_panic_with_invariant_violation() {
+        let from = Pubkey::new_unique();
+        let to = Pubkey::new_unique();
+        let duplicate = Pubkey::new_unique();
+        let instruction = solana_system_interface::instruction::transfer(&from, &to, 1);
+
+        execute_instr_proto(ProtoInstrContext {
+            program_id: solana_sdk_ids::system_program::id().to_bytes().to_vec(),
+            accounts: vec![
+                proto_account(from, system_account_with_lamports(FROM_BASE_LAMPORTS)),
+                proto_account(to, system_account_with_lamports(TO_BASE_LAMPORTS)),
+                proto_account(duplicate, system_account_with_lamports(1)),
+                proto_account(duplicate, system_account_with_lamports(1)),
+                proto_account(
+                    keyed_account_for_system_program().0,
+                    keyed_account_for_system_program().1,
+                ),
+                proto_sysvar_account(
+                    solana_sdk_ids::sysvar::clock::id(),
+                    &solana_clock::Clock::default(),
+                ),
+            ],
+            instr_accounts: vec![
+                protosol::protos::InstrAcct {
+                    index: 0,
+                    is_signer: true,
+                    is_writable: true,
+                },
+                protosol::protos::InstrAcct {
+                    index: 1,
+                    is_signer: false,
+                    is_writable: true,
+                },
+            ],
+            data: instruction.data,
+            cu_avail: SYSTEM_TRANSFER_CUS,
+            features: None,
+        });
     }
 }

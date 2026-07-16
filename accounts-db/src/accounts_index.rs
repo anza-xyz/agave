@@ -3,7 +3,6 @@ mod accounts_index_storage;
 mod bucket_map_holder;
 pub(crate) mod in_mem_accounts_index;
 mod iter;
-mod roots_tracker;
 mod secondary;
 mod stats;
 use {
@@ -13,7 +12,6 @@ use {
         contains::Contains,
         is_zero_lamport::IsZeroLamport,
         pubkey_bins::{PubkeyBinCalculator, PubkeyBinCalculatorBuilder},
-        rolling_bit_field::RollingBitField,
     },
     account_map_entry::{AccountMapEntry, PreAllocatedAccountMapEntry, SlotListWriteGuard},
     accounts_index_storage::AccountsIndexStorage,
@@ -25,12 +23,10 @@ use {
     log::*,
     rand::{Rng, rng},
     rayon::iter::{IntoParallelIterator, ParallelIterator},
-    roots_tracker::RootsTracker,
     secondary::{RwLockSecondaryIndexEntry, SecondaryIndex, SecondaryIndexEntry},
     smallvec::SmallVec,
     solana_account::ReadableAccount,
     solana_clock::Slot,
-    solana_measure::measure::Measure,
     solana_pubkey::Pubkey,
     stats::Stats,
     std::{
@@ -39,7 +35,7 @@ use {
         num::NonZeroUsize,
         path::PathBuf,
         sync::{
-            Arc, RwLock,
+            Arc,
             atomic::{AtomicBool, AtomicU32, AtomicUsize, Ordering},
         },
     },
@@ -125,23 +121,13 @@ pub enum ScanFilter {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 /// how accounts index 'upsert' should handle reclaims
 pub enum UpsertReclaim {
-    /// previous entry for this slot in the index is expected to be cached, so irrelevant to reclaims
-    PreviousSlotEntryWasCached,
-    /// previous entry for this slot in the index may need to be reclaimed, so return it.
-    /// reclaims is the only output of upsert, requiring a synchronous execution
-    PopulateReclaims,
     /// overwrite existing data in the same slot and do not return in 'reclaims'
     IgnoreReclaims,
-    // Reclaim all older versions of the account from the index and return
-    // in the 'reclaims'
+    /// Reclaim all older versions of the account from the index and return
+    /// in the 'reclaims'
     ReclaimOldSlots,
 }
-
-pub trait IsCached {
-    fn is_cached(&self) -> bool;
-}
-
-pub trait IndexValue: 'static + IsCached + IsZeroLamport + DiskIndexValue {}
+pub trait IndexValue: 'static + IsZeroLamport + DiskIndexValue {}
 
 pub trait DiskIndexValue:
     'static + Clone + Debug + PartialEq + Copy + Default + Sync + Send
@@ -199,17 +185,6 @@ pub fn default_num_flush_threads() -> NonZeroUsize {
     NonZeroUsize::new(std::cmp::max(2, num_cpus::get() / 4)).expect("non-zero system threads")
 }
 
-#[derive(Debug, Default)]
-pub struct AccountsIndexRootsStats {
-    pub roots_len: Option<usize>,
-    pub uncleaned_roots_len: Option<usize>,
-    pub roots_range: Option<u64>,
-    pub rooted_cleaned_count: usize,
-    pub unrooted_cleaned_count: usize,
-    pub clean_unref_from_storage_us: u64,
-    pub clean_dead_slot_us: u64,
-}
-
 #[derive(Copy, Clone)]
 pub enum AccountsIndexScanResult {
     /// if the entry is not in the in-memory index, do not add it unless the entry becomes dirty
@@ -233,16 +208,10 @@ pub struct AccountsIndex<T: IndexValue, U: DiskIndexValue + From<T> + Into<T>> {
     program_id_index: SecondaryIndex<RwLockSecondaryIndexEntry>,
     spl_token_mint_index: SecondaryIndex<RwLockSecondaryIndexEntry>,
     spl_token_owner_index: SecondaryIndex<RwLockSecondaryIndexEntry>,
-    pub roots_tracker: RwLock<RootsTracker>,
 
     storage: AccountsIndexStorage<T, U>,
 
     pub purge_older_root_entries_one_slot_list: AtomicUsize,
-
-    /// # roots added since last check
-    pub roots_added: AtomicUsize,
-    /// # roots removed since last check
-    pub roots_removed: AtomicUsize,
 }
 
 impl<T: IndexValue, U: DiskIndexValue + From<T> + Into<T>> AccountsIndex<T, U> {
@@ -266,10 +235,7 @@ impl<T: IndexValue, U: DiskIndexValue + From<T> + Into<T>> AccountsIndex<T, U> {
             spl_token_owner_index: SecondaryIndex::<RwLockSecondaryIndexEntry>::new(
                 "spl_token_owner_index_stats",
             ),
-            roots_tracker: RwLock::<RootsTracker>::default(),
             storage,
-            roots_added: AtomicUsize::default(),
-            roots_removed: AtomicUsize::default(),
         }
     }
 
@@ -348,7 +314,6 @@ impl<T: IndexValue, U: DiskIndexValue + From<T> + Into<T>> AccountsIndex<T, U> {
     }
 
     /// Is `pubkey` in the index?
-    #[cfg(feature = "dev-context-only-utils")]
     pub(crate) fn contains(&self, pubkey: &Pubkey) -> bool {
         self.get_and_then(pubkey, |entry| (false, entry.is_some()))
     }
@@ -370,23 +335,20 @@ impl<T: IndexValue, U: DiskIndexValue + From<T> + Into<T>> AccountsIndex<T, U> {
     }
 
     /// Remove keys from the account index if the key's slot list is empty.
-    /// Returns the keys that were removed from the index. These keys should not be accessed again in the current code path.
+    /// Returns the keys that were removed from the index. These keys should not be accessed again
+    /// in the current code path.
+    ///
+    /// When secondary indexes are enabled, callers must pass the returned keys to
+    /// `AccountsDb::purge_secondary_indexes_for_dead_keys`, otherwise their secondary index
+    /// entries leak.
     #[must_use]
-    pub fn handle_dead_keys(
-        &self,
-        dead_keys: &[Pubkey],
-        account_indexes: &AccountSecondaryIndexes,
-    ) -> HashSet<Pubkey> {
+    pub fn handle_dead_keys(&self, dead_keys: &[Pubkey]) -> HashSet<Pubkey> {
         let mut pubkeys_removed_from_accounts_index = HashSet::default();
         if !dead_keys.is_empty() {
             for key in dead_keys.iter() {
                 let w_index = self.get_bin(key);
                 if w_index.remove_if_slot_list_empty(*key) {
                     pubkeys_removed_from_accounts_index.insert(*key);
-                    // Note it's only safe to remove all the entries for this key
-                    // because we have the lock for this key's entry in the AccountsIndex,
-                    // so no other thread is also updating the index
-                    self.purge_secondary_indexes_by_inner_key(key, account_indexes);
                 }
             }
         }
@@ -433,16 +395,15 @@ impl<T: IndexValue, U: DiskIndexValue + From<T> + Into<T>> AccountsIndex<T, U> {
         }
     }
 
-    pub fn get_rooted_entries(
+    pub fn get_entries_up_to_inclusive(
         &self,
         slot_list: &[SlotListItem<T>],
         max_inclusive: Option<Slot>,
     ) -> SlotList<T> {
         let max_inclusive = max_inclusive.unwrap_or(Slot::MAX);
-        let lock = &self.roots_tracker.read().unwrap().alive_roots;
         slot_list
             .iter()
-            .filter(|(slot, _)| *slot <= max_inclusive && lock.contains(slot))
+            .filter(|(slot, _)| *slot <= max_inclusive)
             .cloned()
             .collect()
     }
@@ -480,13 +441,13 @@ impl<T: IndexValue, U: DiskIndexValue + From<T> + Into<T>> AccountsIndex<T, U> {
     ) -> Option<usize> {
         let mut current_max = 0;
         let mut rv = None;
-        if let Some(ancestors) = ancestors {
-            if !ancestors.is_empty() {
-                for (i, (slot, _t)) in slot_list.iter().rev().enumerate() {
-                    if (rv.is_none() || *slot > current_max) && ancestors.contains_key(slot) {
-                        rv = Some(i);
-                        current_max = *slot;
-                    }
+        if let Some(ancestors) = ancestors
+            && !ancestors.is_empty()
+        {
+            for (i, (slot, _t)) in slot_list.iter().rev().enumerate() {
+                if (rv.is_none() || *slot > current_max) && ancestors.contains_key(slot) {
+                    rv = Some(i);
+                    current_max = *slot;
                 }
             }
         }
@@ -499,23 +460,13 @@ impl<T: IndexValue, U: DiskIndexValue + From<T> + Into<T>> AccountsIndex<T, U> {
         }
 
         let max_root_inclusive = max_root_inclusive.unwrap_or(Slot::MAX);
-        let mut tracker = None;
 
-        for (i, (slot, _t)) in slot_list.iter().rev().enumerate() {
-            if (rv.is_none() || *slot > current_max) && *slot <= max_root_inclusive {
-                let lock = match tracker {
-                    Some(inner) => inner,
-                    None => self.roots_tracker.read().unwrap(),
-                };
-                if lock.alive_roots.contains(slot) {
-                    rv = Some(i);
-                    current_max = *slot;
-                }
-                tracker = Some(lock);
-            }
-        }
-
-        rv.map(|index| slot_list.len() - 1 - index)
+        slot_list
+            .iter()
+            .enumerate()
+            .filter(|(_, (slot, _t))| *slot <= max_root_inclusive)
+            .max_by_key(|(_, (slot, _t))| *slot)
+            .map(|(index, _)| index)
     }
 
     pub(crate) fn stats(&self) -> &Stats {
@@ -666,22 +617,6 @@ impl<T: IndexValue, U: DiskIndexValue + From<T> + Into<T>> AccountsIndex<T, U> {
         });
     }
 
-    // Get the maximum root <= `max_allowed_root` from the given `slot_list`
-    fn get_newest_root_in_slot_list(
-        alive_roots: &RollingBitField,
-        slot_list: &[SlotListItem<T>],
-        max_allowed_root_inclusive: Option<Slot>,
-    ) -> Slot {
-        slot_list
-            .iter()
-            .map(|(slot, _)| slot)
-            .filter(|slot| max_allowed_root_inclusive.is_none_or(|max_root| **slot <= max_root))
-            .filter(|slot| alive_roots.contains(slot))
-            .max()
-            .copied()
-            .unwrap_or(0)
-    }
-
     fn update_spl_token_secondary_indexes<G: spl_generic_token::token::GenericTokenAccount>(
         &self,
         token_id: &Pubkey,
@@ -691,20 +626,18 @@ impl<T: IndexValue, U: DiskIndexValue + From<T> + Into<T>> AccountsIndex<T, U> {
         account_indexes: &AccountSecondaryIndexes,
     ) {
         if *account_owner == *token_id {
-            if account_indexes.contains(&AccountIndex::SplTokenOwner) {
-                if let Some(owner_key) = G::unpack_account_owner(account_data) {
-                    if account_indexes.include_key(owner_key) {
-                        self.spl_token_owner_index.insert(owner_key, pubkey);
-                    }
-                }
+            if account_indexes.contains(&AccountIndex::SplTokenOwner)
+                && let Some(owner_key) = G::unpack_account_owner(account_data)
+                && account_indexes.include_key(owner_key)
+            {
+                self.spl_token_owner_index.insert(owner_key, pubkey);
             }
 
-            if account_indexes.contains(&AccountIndex::SplTokenMint) {
-                if let Some(mint_key) = G::unpack_account_mint(account_data) {
-                    if account_indexes.include_key(mint_key) {
-                        self.spl_token_mint_index.insert(mint_key, pubkey);
-                    }
-                }
+            if account_indexes.contains(&AccountIndex::SplTokenMint)
+                && let Some(mint_key) = G::unpack_account_mint(account_data)
+                && account_indexes.include_key(mint_key)
+            {
+                self.spl_token_mint_index.insert(mint_key, pubkey);
             }
         }
     }
@@ -795,6 +728,18 @@ impl<T: IndexValue, U: DiskIndexValue + From<T> + Into<T>> AccountsIndex<T, U> {
 
     pub fn bins(&self) -> usize {
         self.account_maps.len()
+    }
+
+    /// Write through to disk the in-mem entries for `pubkeys`. Each entry is only persisted if it
+    /// is dirty, `slot_list.len() == 1`, and `ref_count == 1`. Persisting an entry clears its
+    /// dirty flag so it becomes eligible for eviction. No-op when disk index is disabled.
+    pub fn write_through_pubkeys(&self, pubkeys: Vec<Pubkey>) {
+        if !self.storage.storage.should_write_through() {
+            return;
+        }
+        for pubkey in pubkeys {
+            self.get_bin(&pubkey).try_write_through(&pubkey);
+        }
     }
 
     /// Same functionally to upsert, but:
@@ -971,21 +916,26 @@ impl<T: IndexValue, U: DiskIndexValue + From<T> + Into<T>> AccountsIndex<T, U> {
         })
     }
 
-    fn purge_secondary_indexes_by_inner_key(
+    /// Purges `inner_key` from each enabled secondary index
+    pub(crate) fn purge_secondary_indexes_by_inner_key_if(
         &self,
         inner_key: &Pubkey,
         account_indexes: &AccountSecondaryIndexes,
+        should_remove: impl Fn() -> bool,
     ) {
         if account_indexes.contains(&AccountIndex::ProgramId) {
-            self.program_id_index.remove_by_inner_key(inner_key);
+            self.program_id_index
+                .remove_by_inner_key_if(inner_key, &should_remove);
         }
 
         if account_indexes.contains(&AccountIndex::SplTokenOwner) {
-            self.spl_token_owner_index.remove_by_inner_key(inner_key);
+            self.spl_token_owner_index
+                .remove_by_inner_key_if(inner_key, &should_remove);
         }
 
         if account_indexes.contains(&AccountIndex::SplTokenMint) {
-            self.spl_token_mint_index.remove_by_inner_key(inner_key);
+            self.spl_token_mint_index
+                .remove_by_inner_key_if(inner_key, &should_remove);
         }
     }
 
@@ -1000,26 +950,16 @@ impl<T: IndexValue, U: DiskIndexValue + From<T> + Into<T>> AccountsIndex<T, U> {
             self.purge_older_root_entries_one_slot_list
                 .fetch_add(1, Ordering::Relaxed);
         }
-        let newest_root_in_slot_list;
-        let max_clean_root_inclusive = {
-            let roots_tracker = &self.roots_tracker.read().unwrap();
-            newest_root_in_slot_list = Self::get_newest_root_in_slot_list(
-                &roots_tracker.alive_roots,
-                slot_list,
-                max_clean_root_inclusive,
-            );
-            max_clean_root_inclusive.unwrap_or_else(|| roots_tracker.alive_roots.max_inclusive())
-        };
+        // Find the newest slot at or below the clean root, then reclaim every slot older than it.
+        let newest_slot = slot_list
+            .iter()
+            .map(|(slot, _)| *slot)
+            .filter(|slot| slot <= &max_clean_root_inclusive.unwrap_or(Slot::MAX))
+            .max()
+            .unwrap_or_default();
 
         slot_list.retain_and_count(|(slot, value)| {
-            let should_purge = Self::can_purge_older_entries(
-                // Note that we have a root that is inclusive here.
-                // Calling a function that expects 'exclusive'
-                // This is expected behavior for this call.
-                max_clean_root_inclusive,
-                newest_root_in_slot_list,
-                *slot,
-            ) && !value.is_cached();
+            let should_purge = *slot < newest_slot;
             if should_purge {
                 reclaims.push((*slot, *value));
             }
@@ -1027,8 +967,7 @@ impl<T: IndexValue, U: DiskIndexValue + From<T> + Into<T>> AccountsIndex<T, U> {
         }) == 0
     }
 
-    /// return true if pubkey was removed from the accounts index
-    ///  or does not exist in the accounts index
+    /// return true if pubkey does not exist in the accounts index.
     /// This means it should NOT be unref'd later.
     #[must_use]
     pub fn clean_rooted_entries(
@@ -1037,27 +976,10 @@ impl<T: IndexValue, U: DiskIndexValue + From<T> + Into<T>> AccountsIndex<T, U> {
         reclaims: &mut ReclaimsSlotList<T>,
         max_clean_root_inclusive: Option<Slot>,
     ) -> bool {
-        let mut is_slot_list_empty = false;
-        let missing_in_accounts_index = self
-            .slot_list_mut(pubkey, |mut slot_list| {
-                is_slot_list_empty = self.purge_older_root_entries(
-                    &mut slot_list,
-                    reclaims,
-                    max_clean_root_inclusive,
-                );
-            })
-            .is_none();
-
-        let mut removed = false;
-        // If the slot list is empty, remove the pubkey from `account_maps`. Make sure to grab the
-        // lock and double check the slot list is still empty, because another writer could have
-        // locked and inserted the pubkey in-between when `is_slot_list_empty=true` and the call to
-        // remove() below.
-        if is_slot_list_empty {
-            let w_maps = self.get_bin(pubkey);
-            removed = w_maps.remove_if_slot_list_empty(*pubkey);
-        }
-        removed || missing_in_accounts_index
+        self.slot_list_mut(pubkey, |mut slot_list| {
+            self.purge_older_root_entries(&mut slot_list, reclaims, max_clean_root_inclusive);
+        })
+        .is_none()
     }
 
     /// Cleans and unrefs all older rooted entries for each pubkey in the accounts index.
@@ -1078,133 +1000,6 @@ impl<T: IndexValue, U: DiskIndexValue + From<T> + Into<T>> AccountsIndex<T, U> {
         }
         reclaims
     }
-
-    /// When can an entry be purged?
-    ///
-    /// If we get a slot update where slot != newest_root_in_slot_list for an account where slot <
-    /// max_clean_root_exclusive, then we know it's safe to delete because:
-    ///
-    /// a) If slot < newest_root_in_slot_list, then we know the update is outdated by a later rooted
-    /// update, namely the one in newest_root_in_slot_list
-    ///
-    /// b) If slot > newest_root_in_slot_list, then because slot < max_clean_root_exclusive and we know there are
-    /// no roots in the slot list between newest_root_in_slot_list and max_clean_root_exclusive, (otherwise there
-    /// would be a bigger newest_root_in_slot_list, which is a contradiction), then we know slot must be
-    /// an unrooted slot less than max_clean_root_exclusive and thus safe to clean as well.
-    fn can_purge_older_entries(
-        max_clean_root_exclusive: Slot,
-        newest_root_in_slot_list: Slot,
-        slot: Slot,
-    ) -> bool {
-        slot < max_clean_root_exclusive && slot != newest_root_in_slot_list
-    }
-
-    /// Given a list of slots, return a new list of only the slots that are rooted
-    pub fn get_rooted_from_list<'a>(&self, slots: impl Iterator<Item = &'a Slot>) -> Vec<Slot> {
-        let roots_tracker = self.roots_tracker.read().unwrap();
-        slots
-            .filter_map(|s| {
-                if roots_tracker.alive_roots.contains(s) {
-                    Some(*s)
-                } else {
-                    None
-                }
-            })
-            .collect()
-    }
-
-    pub fn is_alive_root(&self, slot: Slot) -> bool {
-        self.roots_tracker
-            .read()
-            .unwrap()
-            .alive_roots
-            .contains(&slot)
-    }
-
-    pub fn add_root(&self, slot: Slot) {
-        self.roots_added.fetch_add(1, Ordering::Relaxed);
-        let mut w_roots_tracker = self.roots_tracker.write().unwrap();
-        // `AccountsDb::flush_accounts_cache()` relies on roots being added in order
-        assert!(
-            slot >= w_roots_tracker.alive_roots.max_inclusive(),
-            "Roots must be added in order: {} < {}",
-            slot,
-            w_roots_tracker.alive_roots.max_inclusive()
-        );
-        // 'slot' is a root, so it is both 'root' and 'original'
-        w_roots_tracker.alive_roots.insert(slot);
-    }
-
-    pub fn max_root_inclusive(&self) -> Slot {
-        self.roots_tracker
-            .read()
-            .unwrap()
-            .alive_roots
-            .max_inclusive()
-    }
-
-    pub(crate) fn clean_dead_slots<'a>(
-        &'a self,
-        dead_slots_iter: impl Iterator<Item = &'a Slot>,
-    ) -> AccountsIndexRootsStats {
-        let mut accounts_index_root_stats = AccountsIndexRootsStats::default();
-        let mut measure = Measure::start("clean_dead_slot");
-        let mut rooted_cleaned_count = 0;
-        let mut unrooted_cleaned_count = 0;
-        dead_slots_iter.for_each(|slot| {
-            if self.clean_dead_slot(*slot) {
-                rooted_cleaned_count += 1;
-            } else {
-                unrooted_cleaned_count += 1;
-            }
-        });
-        measure.stop();
-        accounts_index_root_stats.clean_dead_slot_us += measure.as_us();
-        self.update_roots_stats(&mut accounts_index_root_stats);
-        accounts_index_root_stats.rooted_cleaned_count += rooted_cleaned_count;
-        accounts_index_root_stats.unrooted_cleaned_count += unrooted_cleaned_count;
-
-        accounts_index_root_stats
-    }
-
-    /// Remove the slot when the storage for the slot is freed
-    /// Accounts no longer reference this slot.
-    /// return true if slot was a root
-    pub fn clean_dead_slot(&self, slot: Slot) -> bool {
-        let mut w_roots_tracker = self.roots_tracker.write().unwrap();
-        if !w_roots_tracker.alive_roots.remove(&slot) {
-            false
-        } else {
-            drop(w_roots_tracker);
-            self.roots_removed.fetch_add(1, Ordering::Relaxed);
-            true
-        }
-    }
-
-    pub(crate) fn update_roots_stats(&self, stats: &mut AccountsIndexRootsStats) {
-        let roots_tracker = self.roots_tracker.read().unwrap();
-        stats.roots_len = Some(roots_tracker.alive_roots.len());
-        stats.roots_range = Some(roots_tracker.alive_roots.range_width());
-    }
-
-    pub fn all_alive_roots(&self) -> Vec<Slot> {
-        let tracker = self.roots_tracker.read().unwrap();
-        tracker.alive_roots.get_all()
-    }
-
-    // These functions/fields are only usable from a dev context (i.e. tests and benches)
-    #[cfg(feature = "dev-context-only-utils")]
-    // filter any rooted entries and return them along with a bool that indicates
-    // if this account has no more entries. Note this does not update the secondary
-    // indexes!
-    pub fn purge_roots(&self, pubkey: &Pubkey) -> (SlotList<T>, bool) {
-        self.slot_list_mut(pubkey, |mut slot_list| {
-            let reclaims = self.get_rooted_entries(&slot_list, None);
-            let is_empty = slot_list.retain_and_count(|(slot, _)| !self.is_alive_root(*slot)) == 0;
-            (reclaims, is_empty)
-        })
-        .unwrap()
-    }
 }
 
 /// modes the system can be in
@@ -1224,6 +1019,14 @@ pub(crate) mod test_utils {
         super::{AccountIndex, secondary::AccountSecondaryIndexes},
         std::collections::HashSet,
     };
+    pub fn program_id_index_enabled() -> AccountSecondaryIndexes {
+        let mut account_indexes = HashSet::new();
+        account_indexes.insert(AccountIndex::ProgramId);
+        AccountSecondaryIndexes {
+            indexes: account_indexes,
+            keys: None,
+        }
+    }
     pub fn spl_token_mint_index_enabled() -> AccountSecondaryIndexes {
         let mut account_indexes = HashSet::new();
         account_indexes.insert(AccountIndex::SplTokenMint);
@@ -1294,7 +1097,7 @@ mod tests {
         let mut num = 0;
         index.scan_accounts(
             &ancestors,
-            index.max_root_inclusive(),
+            0,
             |_pubkey, _index| num += 1,
             &ScanConfig::default(),
         );
@@ -1346,7 +1149,7 @@ mod tests {
         assert!(index.include_key(&pk2));
     }
 
-    const UPSERT_RECLAIM_TEST_DEFAULT: UpsertReclaim = UpsertReclaim::PopulateReclaims;
+    const UPSERT_RECLAIM_TEST_DEFAULT: UpsertReclaim = UpsertReclaim::ReclaimOldSlots;
 
     #[test]
     fn test_insert_no_ancestors() {
@@ -1357,27 +1160,22 @@ mod tests {
         assert!(gc.is_empty());
 
         let ancestors = Ancestors::default();
-        assert!(!index.contains_with(&key, &ancestors));
+        assert!(index.contains_with(&key, &ancestors));
 
         let mut num = 0;
         index.scan_accounts(
             &ancestors,
-            index.max_root_inclusive(),
+            0,
             |_pubkey, _index| num += 1,
             &ScanConfig::default(),
         );
-        assert_eq!(num, 0);
+        assert_eq!(num, 1);
     }
 
     type AccountInfoTest = f64;
 
     impl IndexValue for AccountInfoTest {}
     impl DiskIndexValue for AccountInfoTest {}
-    impl IsCached for AccountInfoTest {
-        fn is_cached(&self) -> bool {
-            true
-        }
-    }
 
     impl IsZeroLamport for AccountInfoTest {
         fn is_zero_lamport(&self) -> bool {
@@ -1417,23 +1215,14 @@ mod tests {
         assert_eq!(result.count, expected_len);
         index.set_startup(Startup::Normal);
 
-        let mut ancestors = Ancestors::default();
-        assert!(!index.contains_with(pubkey, &ancestors));
+        let ancestors = Ancestors::default();
+        assert!(index.contains_with(pubkey, &ancestors));
+        assert_eq!(index.ref_count_from_storage(pubkey), 1);
 
         let mut num = 0;
         index.scan_accounts(
             &ancestors,
-            index.max_root_inclusive(),
-            |_pubkey, _index| num += 1,
-            &ScanConfig::default(),
-        );
-        assert_eq!(num, 0);
-        ancestors.insert(slot);
-        assert!(index.contains_with(pubkey, &ancestors));
-        assert_eq!(index.ref_count_from_storage(pubkey), 1);
-        index.scan_accounts(
-            &ancestors,
-            index.max_root_inclusive(),
+            0,
             |_pubkey, _index| num += 1,
             &ScanConfig::default(),
         );
@@ -1449,23 +1238,14 @@ mod tests {
         assert_eq!(result.count, expected_len);
         index.set_startup(Startup::Normal);
 
-        let mut ancestors = Ancestors::default();
-        assert!(!index.contains_with(pubkey, &ancestors));
+        let ancestors = Ancestors::default();
+        assert!(index.contains_with(pubkey, &ancestors));
+        assert_eq!(index.ref_count_from_storage(pubkey), 1);
 
         let mut num = 0;
         index.scan_accounts(
             &ancestors,
-            index.max_root_inclusive(),
-            |_pubkey, _index| num += 1,
-            &ScanConfig::default(),
-        );
-        assert_eq!(num, 0);
-        ancestors.insert(slot);
-        assert!(index.contains_with(pubkey, &ancestors));
-        assert_eq!(index.ref_count_from_storage(pubkey), 1);
-        index.scan_accounts(
-            &ancestors,
-            index.max_root_inclusive(),
+            0,
             |_pubkey, _index| num += 1,
             &ScanConfig::default(),
         );
@@ -1602,25 +1382,6 @@ mod tests {
         for store_raw in [false, true] {
             for to_raw_first in [false, true] {
                 let slot = 0;
-                // account_info type that IS cached
-                let account_info = AccountInfoTest::default();
-                let index = AccountsIndex::default_for_tests();
-
-                let new_entry = get_pre_allocated(
-                    slot,
-                    account_info,
-                    &index.storage.storage,
-                    store_raw,
-                    to_raw_first,
-                )
-                .into_account_map_entry(&index.storage.storage);
-                assert_eq!(new_entry.ref_count(), 0);
-                assert_eq!(new_entry.slot_list_lock_read_len(), 1);
-                assert_eq!(
-                    new_entry.slot_list_read_lock().to_vec(),
-                    vec![(slot, account_info)]
-                );
-
                 // account_info type that is NOT cached
                 let account_info = true;
                 let index = AccountsIndex::default_for_tests();
@@ -1673,17 +1434,9 @@ mod tests {
 
     fn test_new_entry_code_paths_helper<T: IndexValue>(
         account_infos: [T; 2],
-        is_cached: bool,
         upsert_method: Option<UpsertReclaim>,
         use_disk: bool,
     ) {
-        if is_cached && upsert_method.is_none() {
-            // This is an illegal combination when we are using queued lazy inserts.
-            // Cached items don't ever leave the in-mem cache.
-            // But the queued lazy insert code relies on there being nothing in the in-mem cache.
-            return;
-        }
-
         let slot0 = 0;
         let slot1 = 1;
         let key = solana_pubkey::new_rand();
@@ -1717,7 +1470,7 @@ mod tests {
         index.get_and_then(&key, |entry| {
             let entry = entry.unwrap();
             let slot_list = entry.slot_list_read_lock();
-            assert_eq!(entry.ref_count(), RefCount::from(!is_cached));
+            assert_eq!(entry.ref_count(), 1);
             assert_eq!(slot_list.as_ref(), &[(slot0, account_infos[0])]);
             let new_entry = PreAllocatedAccountMapEntry::new(
                 slot0,
@@ -1752,8 +1505,7 @@ mod tests {
         }
 
         // There should be reclaims if entries are uncached and old slots are being reclaimed
-        let should_have_reclaims =
-            upsert_method == Some(UpsertReclaim::ReclaimOldSlots) && !is_cached;
+        let should_have_reclaims = upsert_method == Some(UpsertReclaim::ReclaimOldSlots);
 
         if should_have_reclaims {
             assert!(!gc.is_empty());
@@ -1773,7 +1525,7 @@ mod tests {
                 assert_eq!(entry.ref_count(), 1);
                 assert_eq!(slot_list.as_ref(), &[(slot1, account_infos[1])],);
             } else {
-                assert_eq!(entry.ref_count(), if is_cached { 0 } else { 2 });
+                assert_eq!(entry.ref_count(), 2);
                 assert_eq!(
                     slot_list.as_ref(),
                     &[(slot0, account_infos[0]), (slot1, account_infos[1])],
@@ -1794,93 +1546,12 @@ mod tests {
 
     #[test_matrix(
         [false, true],
-        [None, Some(UpsertReclaim::PopulateReclaims), Some(UpsertReclaim::ReclaimOldSlots)],
-        [true, false]
+        [None, Some(UpsertReclaim::ReclaimOldSlots)]
     )]
-    fn test_new_entry_and_update_code_paths(
-        use_disk: bool,
-        upsert_method: Option<UpsertReclaim>,
-        is_cached: bool,
-    ) {
-        if is_cached {
-            // account_info type that IS cached
-            test_new_entry_code_paths_helper([1.0, 2.0], true, upsert_method, use_disk);
-        } else {
-            // account_info type that is NOT cached
-            test_new_entry_code_paths_helper([1, 2], false, upsert_method, use_disk);
-        }
+    fn test_new_entry_and_update_code_paths(use_disk: bool, upsert_method: Option<UpsertReclaim>) {
+        test_new_entry_code_paths_helper([1, 2], upsert_method, use_disk);
     }
 
-    #[test]
-    fn test_insert_with_lock_no_ancestors() {
-        let key = solana_pubkey::new_rand();
-        let index = AccountsIndex::<bool, bool>::default_for_tests();
-        let slot = 0;
-        let account_info = true;
-
-        let new_entry =
-            PreAllocatedAccountMapEntry::new(slot, account_info, &index.storage.storage, false);
-        assert_eq!(0, account_maps_stats_len(&index));
-
-        assert_eq!(0, account_maps_stats_len(&index));
-        let r_account_maps = index.get_bin(&key);
-        r_account_maps.upsert(
-            &key,
-            new_entry,
-            None,
-            &mut ReclaimsSlotList::default(),
-            UPSERT_RECLAIM_TEST_DEFAULT,
-        );
-        assert_eq!(1, account_maps_stats_len(&index));
-
-        let mut ancestors = Ancestors::default();
-        assert!(!index.contains_with(&key, &ancestors));
-        index.get_and_then(&key, |entry| {
-            let (stored_slot, value) = entry.unwrap().slot_list_read_lock()[0];
-            assert_eq!(stored_slot, slot);
-            assert_eq!(value, account_info);
-            (false, ())
-        });
-
-        let mut num = 0;
-        index.scan_accounts(
-            &ancestors,
-            index.max_root_inclusive(),
-            |_pubkey, _index| num += 1,
-            &ScanConfig::default(),
-        );
-        assert_eq!(num, 0);
-        ancestors.insert(slot);
-        assert!(index.contains_with(&key, &ancestors));
-        index.scan_accounts(
-            &ancestors,
-            index.max_root_inclusive(),
-            |_pubkey, _index| num += 1,
-            &ScanConfig::default(),
-        );
-        assert_eq!(num, 1);
-    }
-
-    #[test]
-    fn test_insert_wrong_ancestors() {
-        let key = solana_pubkey::new_rand();
-        let index = AccountsIndex::<bool, bool>::default_for_tests();
-        let mut gc = ReclaimsSlotList::new();
-        index.upsert(0, 0, &key, true, &mut gc, UPSERT_RECLAIM_TEST_DEFAULT);
-        assert!(gc.is_empty());
-
-        let ancestors = Ancestors::from(vec![1]);
-        assert!(!index.contains_with(&key, &ancestors));
-
-        let mut num = 0;
-        index.scan_accounts(
-            &ancestors,
-            index.max_root_inclusive(),
-            |_pubkey, _index| num += 1,
-            &ScanConfig::default(),
-        );
-        assert_eq!(num, 0);
-    }
     #[test]
     fn test_insert_ignore_reclaims() {
         {
@@ -1890,14 +1561,13 @@ mod tests {
             let mut reclaims = ReclaimsSlotList::new();
             let slot = 0;
             let value = 1;
-            assert!(!value.is_cached());
             index.upsert(
                 slot,
                 slot,
                 &key,
                 value,
                 &mut reclaims,
-                UpsertReclaim::PopulateReclaims,
+                UpsertReclaim::ReclaimOldSlots,
             );
             assert!(reclaims.is_empty());
             index.upsert(
@@ -1906,50 +1576,11 @@ mod tests {
                 &key,
                 value,
                 &mut reclaims,
-                UpsertReclaim::PopulateReclaims,
+                UpsertReclaim::ReclaimOldSlots,
             );
             // reclaimed
             assert!(!reclaims.is_empty());
             reclaims.clear();
-            index.upsert(
-                slot,
-                slot,
-                &key,
-                value,
-                &mut reclaims,
-                // since IgnoreReclaims, we should expect reclaims to be empty
-                UpsertReclaim::IgnoreReclaims,
-            );
-            // reclaims is ignored
-            assert!(reclaims.is_empty());
-        }
-        {
-            // cached
-            let key = solana_pubkey::new_rand();
-            let index = AccountsIndex::<AccountInfoTest, AccountInfoTest>::default_for_tests();
-            let mut reclaims = ReclaimsSlotList::new();
-            let slot = 0;
-            let value = 1.0;
-            assert!(value.is_cached());
-            index.upsert(
-                slot,
-                slot,
-                &key,
-                value,
-                &mut reclaims,
-                UpsertReclaim::PopulateReclaims,
-            );
-            assert!(reclaims.is_empty());
-            index.upsert(
-                slot,
-                slot,
-                &key,
-                value,
-                &mut reclaims,
-                UpsertReclaim::PopulateReclaims,
-            );
-            // No reclaims, since the entry replaced was cached
-            assert!(reclaims.is_empty());
             index.upsert(
                 slot,
                 slot,
@@ -1984,7 +1615,7 @@ mod tests {
         let mut found_key = false;
         index.scan_accounts(
             &ancestors,
-            index.max_root_inclusive(),
+            0,
             |pubkey, _index| {
                 if pubkey == &key {
                     found_key = true
@@ -2029,8 +1660,6 @@ mod tests {
             );
         }
 
-        index.add_root(root_slot);
-
         (index, pubkeys)
     }
 
@@ -2040,7 +1669,7 @@ mod tests {
         let mut scanned_keys = HashSet::new();
         index.scan_accounts(
             &Ancestors::default(),
-            index.max_root_inclusive(),
+            0,
             |pubkey, _index| {
                 scanned_keys.insert(*pubkey);
             },
@@ -2059,14 +1688,6 @@ mod tests {
     }
 
     #[test]
-    fn test_is_alive_root() {
-        let index = AccountsIndex::<bool, bool>::default_for_tests();
-        assert!(!index.is_alive_root(0));
-        index.add_root(0);
-        assert!(index.is_alive_root(0));
-    }
-
-    #[test]
     fn test_insert_with_root() {
         let key = solana_pubkey::new_rand();
         let index = AccountsIndex::<bool, bool>::default_for_tests();
@@ -2074,35 +1695,13 @@ mod tests {
         index.upsert(0, 0, &key, true, &mut gc, UPSERT_RECLAIM_TEST_DEFAULT);
         assert!(gc.is_empty());
 
-        index.add_root(0);
-        let ancestors = Ancestors::from(vec![index.max_root_inclusive()]);
+        let ancestors = Ancestors::from(vec![0]);
         index
             .get_with_and_then(&key, &ancestors, false, |(slot, account_info)| {
                 assert_eq!(slot, 0);
                 assert!(account_info);
             })
             .unwrap();
-    }
-
-    #[test]
-    fn test_clean_first() {
-        let index = AccountsIndex::<bool, bool>::default_for_tests();
-        index.add_root(0);
-        index.add_root(1);
-        index.clean_dead_slot(0);
-        assert!(index.is_alive_root(1));
-        assert!(!index.is_alive_root(0));
-    }
-
-    #[test]
-    fn test_clean_last() {
-        //this behavior might be undefined, clean up should only occur on older slots
-        let index = AccountsIndex::<bool, bool>::default_for_tests();
-        index.add_root(0);
-        index.add_root(1);
-        index.clean_dead_slot(1);
-        assert!(!index.is_alive_root(1));
-        assert!(index.is_alive_root(0));
     }
 
     #[test]
@@ -2133,14 +1732,13 @@ mod tests {
 
     #[test]
     fn test_update_new_slot() {
-        agave_logger::setup();
         let key = solana_pubkey::new_rand();
         let index = AccountsIndex::<bool, bool>::default_for_tests();
         let ancestors = Ancestors::from(vec![0]);
         let mut gc = ReclaimsSlotList::new();
-        index.upsert(0, 0, &key, true, &mut gc, UpsertReclaim::PopulateReclaims);
+        index.upsert(0, 0, &key, true, &mut gc, UpsertReclaim::IgnoreReclaims);
         assert!(gc.is_empty());
-        index.upsert(1, 1, &key, false, &mut gc, UpsertReclaim::PopulateReclaims);
+        index.upsert(1, 1, &key, false, &mut gc, UpsertReclaim::IgnoreReclaims);
         assert!(gc.is_empty());
         index
             .get_with_and_then(&key, &ancestors, false, |(slot, account_info)| {
@@ -2162,20 +1760,18 @@ mod tests {
         let key = solana_pubkey::new_rand();
         let index = AccountsIndex::<bool, bool>::default_for_tests();
         let mut gc = ReclaimsSlotList::new();
-        index.upsert(0, 0, &key, true, &mut gc, UpsertReclaim::PopulateReclaims);
+        let max_root = 3;
+        index.upsert(0, 0, &key, true, &mut gc, UpsertReclaim::IgnoreReclaims);
         assert!(gc.is_empty());
-        index.upsert(1, 1, &key, false, &mut gc, UpsertReclaim::PopulateReclaims);
-        index.upsert(2, 2, &key, true, &mut gc, UpsertReclaim::PopulateReclaims);
-        index.upsert(3, 3, &key, true, &mut gc, UpsertReclaim::PopulateReclaims);
-        index.add_root(0);
-        index.add_root(1);
-        index.add_root(3);
-        index.upsert(4, 4, &key, true, &mut gc, UpsertReclaim::PopulateReclaims);
+        index.upsert(1, 1, &key, false, &mut gc, UpsertReclaim::IgnoreReclaims);
+        index.upsert(2, 2, &key, true, &mut gc, UpsertReclaim::IgnoreReclaims);
+        index.upsert(3, 3, &key, true, &mut gc, UpsertReclaim::IgnoreReclaims);
+        index.upsert(4, 4, &key, true, &mut gc, UpsertReclaim::IgnoreReclaims);
 
         // Updating index should not purge older roots, only purges
         // previous updates within the same slot
         assert_eq!(gc, ReclaimsSlotList::new());
-        let ancestors = Ancestors::from(vec![index.max_root_inclusive()]);
+        let ancestors = Ancestors::from(vec![max_root]);
         index
             .get_with_and_then(&key, &ancestors, false, |(slot, account_info)| {
                 assert_eq!(slot, 3);
@@ -2187,7 +1783,7 @@ mod tests {
         let mut found_key = false;
         index.scan_accounts(
             &Ancestors::default(),
-            index.max_root_inclusive(),
+            max_root,
             |pubkey, index| {
                 if pubkey == &key {
                     found_key = true;
@@ -2204,28 +1800,10 @@ mod tests {
     #[test]
     fn test_upsert_reclaims() {
         let key = solana_pubkey::new_rand();
-        let index =
-            AccountsIndex::<CacheableIndexValueTest, CacheableIndexValueTest>::default_for_tests();
+        let index = AccountsIndex::<u64, u64>::default_for_tests();
         let mut reclaims = ReclaimsSlotList::new();
-        index.upsert(
-            0,
-            0,
-            &key,
-            CacheableIndexValueTest(true),
-            &mut reclaims,
-            UPSERT_RECLAIM_TEST_DEFAULT,
-        );
-        // No reclaims should be returned on the first item
-        assert!(reclaims.is_empty());
 
-        index.upsert(
-            0,
-            0,
-            &key,
-            CacheableIndexValueTest(false),
-            &mut reclaims,
-            UPSERT_RECLAIM_TEST_DEFAULT,
-        );
+        index.upsert(0, 0, &key, 0, &mut reclaims, UPSERT_RECLAIM_TEST_DEFAULT);
         // Cached item should not be reclaimed
         assert!(reclaims.is_empty());
 
@@ -2235,14 +1813,7 @@ mod tests {
         });
         assert_eq!(slot_list_len, 1);
 
-        index.upsert(
-            0,
-            0,
-            &key,
-            CacheableIndexValueTest(false),
-            &mut reclaims,
-            UPSERT_RECLAIM_TEST_DEFAULT,
-        );
+        index.upsert(0, 0, &key, 0, &mut reclaims, UPSERT_RECLAIM_TEST_DEFAULT);
 
         // Uncached item should be returned as reclaim
         assert!(!reclaims.is_empty());
@@ -2328,71 +1899,18 @@ mod tests {
     }
 
     #[test]
-    #[should_panic(expected = "Replace should only be used for uncached accounts")]
-    fn test_replace_cached_account_info_panics() {
-        // Shrink only ever rewrites uncached accounts; passing a cached AccountInfo to replace
-        // is a programming error and must trip the assertion.
-        let key = solana_pubkey::new_rand();
-        let index =
-            AccountsIndex::<CacheableIndexValueTest, CacheableIndexValueTest>::default_for_tests();
-        let mut gc = ReclaimsSlotList::new();
-
-        index.upsert(
-            5,
-            5,
-            &key,
-            CacheableIndexValueTest(false),
-            &mut gc,
-            UpsertReclaim::IgnoreReclaims,
-        );
-        index.replace(10, 5, &key, CacheableIndexValueTest(true));
-    }
-
-    fn account_maps_stats_len<T: IndexValue>(index: &AccountsIndex<T, T>) -> usize {
-        index.storage.storage.stats.total_count()
-    }
-
-    #[test]
-    fn test_purge() {
-        let key = solana_pubkey::new_rand();
-        let index = AccountsIndex::<u64, u64>::default_for_tests();
-        let mut gc = ReclaimsSlotList::new();
-        assert_eq!(0, account_maps_stats_len(&index));
-        index.upsert(1, 1, &key, 12, &mut gc, UPSERT_RECLAIM_TEST_DEFAULT);
-        assert_eq!(1, account_maps_stats_len(&index));
-
-        index.upsert(1, 1, &key, 10, &mut gc, UPSERT_RECLAIM_TEST_DEFAULT);
-        assert_eq!(1, account_maps_stats_len(&index));
-
-        let purges = index.purge_roots(&key);
-        assert_eq!(purges, (SlotList::new(), false));
-        index.add_root(1);
-
-        let purges = index.purge_roots(&key);
-        assert_eq!(purges, (SlotList::from([(1, 10)]), true));
-
-        assert_eq!(1, account_maps_stats_len(&index));
-        index.upsert(1, 1, &key, 9, &mut gc, UPSERT_RECLAIM_TEST_DEFAULT);
-        assert_eq!(1, account_maps_stats_len(&index));
-    }
-
-    #[test]
     fn test_latest_slot() {
         let slot_slice = vec![(0, true), (5, true), (3, true), (7, true)];
         let index = AccountsIndex::<bool, bool>::default_for_tests();
 
-        // No ancestors, no root, should return None
-        assert!(index.latest_slot(None, &slot_slice, None).is_none());
+        // No ancestors: every slot is a root, so return the newest slot (7)
+        assert_eq!(index.latest_slot(None, &slot_slice, None).unwrap(), 3);
 
-        // Given a root, should return the root
-        index.add_root(5);
-        assert_eq!(index.latest_slot(None, &slot_slice, None).unwrap(), 1);
-
-        // Given a max_root == root, should still return the root
+        // Given a max_root, should return the newest slot <= max_root (5)
         assert_eq!(index.latest_slot(None, &slot_slice, Some(5)).unwrap(), 1);
 
-        // Given a max_root < root, should filter out the root
-        assert!(index.latest_slot(None, &slot_slice, Some(4)).is_none());
+        // Given a max_root between slots, should return the newest slot <= max_root (3)
+        assert_eq!(index.latest_slot(None, &slot_slice, Some(4)).unwrap(), 2);
 
         // Given a max_root, should filter out roots < max_root, but specified
         // ancestors should not be affected
@@ -2499,14 +2017,16 @@ mod tests {
             &mut ReclaimsSlotList::new(),
         );
 
-        let _ = index.handle_dead_keys(&[account_key], secondary_indexes);
+        let pubkeys = index.handle_dead_keys(&[account_key]);
+        for pubkey in pubkeys {
+            index.purge_secondary_indexes_by_inner_key_if(&pubkey, secondary_indexes, || true);
+        }
         assert!(secondary_index.index.is_empty());
         assert!(secondary_index.reverse_index.is_empty());
     }
 
     #[test]
     fn test_reclaim_older_items_in_slot_list() {
-        agave_logger::setup();
         let key = solana_pubkey::new_rand();
         let index = AccountsIndex::<u64, u64>::default_for_tests();
         let mut gc = ReclaimsSlotList::new();
@@ -2580,85 +2100,6 @@ mod tests {
     }
 
     #[test]
-    fn test_reclaim_do_not_reclaim_cached_other_slot() {
-        agave_logger::setup();
-        let key = solana_pubkey::new_rand();
-        let index =
-            AccountsIndex::<CacheableIndexValueTest, CacheableIndexValueTest>::default_for_tests();
-        let mut gc = ReclaimsSlotList::new();
-
-        // Insert an uncached account at slot 0 and an cached account at slot 1
-        index.upsert(
-            0,
-            0,
-            &key,
-            CacheableIndexValueTest(false),
-            &mut gc,
-            UpsertReclaim::IgnoreReclaims,
-        );
-
-        index.upsert(
-            1,
-            1,
-            &key,
-            CacheableIndexValueTest(true),
-            &mut gc,
-            UpsertReclaim::IgnoreReclaims,
-        );
-
-        // Now insert a cached account at slot 2
-        index.upsert(
-            2,
-            2,
-            &key,
-            CacheableIndexValueTest(true),
-            &mut gc,
-            UpsertReclaim::IgnoreReclaims,
-        );
-
-        // Replace the cached account at slot 2 with a uncached account
-        index.upsert(
-            2,
-            2,
-            &key,
-            CacheableIndexValueTest(false),
-            &mut gc,
-            UpsertReclaim::ReclaimOldSlots,
-        );
-
-        // Verify that the slot list is length two and consists of the cached account at slot 1
-        // and the uncached account at slot 2
-        index.get_and_then(&key, |entry| {
-            let entry = entry.unwrap();
-            assert_eq!(entry.slot_list_lock_read_len(), 2);
-            assert_eq!(
-                entry.slot_list_read_lock()[0],
-                PreAllocatedAccountMapEntry::new(
-                    1,
-                    CacheableIndexValueTest(true),
-                    &index.storage.storage,
-                    false
-                )
-                .into()
-            );
-            assert_eq!(
-                entry.slot_list_read_lock()[1],
-                PreAllocatedAccountMapEntry::new(
-                    2,
-                    CacheableIndexValueTest(false),
-                    &index.storage.storage,
-                    false
-                )
-                .into()
-            );
-            // Verify that the uncached account at slot 0 was reclaimed
-            assert_eq!(gc.len(), 1);
-            assert_eq!(gc[0], (0, CacheableIndexValueTest(false)));
-            (false, ())
-        });
-    }
-
-    #[test]
     fn test_purge_exact_spl_token_mint_secondary_index() {
         let (key_start, key_end, secondary_indexes) = create_spl_token_mint_secondary_index_state();
         let index = AccountsIndex::<bool, bool>::default_for_tests();
@@ -2687,7 +2128,6 @@ mod tests {
 
     #[test]
     fn test_purge_older_root_entries() {
-        // No roots, should be no reclaims
         let index = AccountsIndex::<bool, bool>::default_for_tests();
         let entry = AccountMapEntry::new(
             SlotList::from_iter([(1, true), (2, true), (5, true), (9, true)]),
@@ -2696,35 +2136,14 @@ mod tests {
         );
         let mut slot_list = entry.slot_list_write_lock();
         let mut reclaims = ReclaimsSlotList::new();
-        assert!(!index.purge_older_root_entries(&mut slot_list, &mut reclaims, None));
-        assert!(reclaims.is_empty());
-        assert_eq!(
-            slot_list.clone_list(),
-            SlotList::from_iter([(1, true), (2, true), (5, true), (9, true)])
-        );
 
-        // Add a later root, earlier slots should be reclaimed
-        slot_list.assign([(1, true), (2, true), (5, true), (9, true)]);
-        index.add_root(1);
-        // Note 2 is not a root
-        index.add_root(5);
-        reclaims = ReclaimsSlotList::new();
+        // No max clean root: keep the newest slot (9), reclaim everything older.
         assert!(!index.purge_older_root_entries(&mut slot_list, &mut reclaims, None));
-        assert_eq!(reclaims, ReclaimsSlotList::from([(1, true), (2, true)]));
         assert_eq!(
-            slot_list.clone_list(),
-            SlotList::from_iter([(5, true), (9, true)])
+            reclaims,
+            ReclaimsSlotList::from([(1, true), (2, true), (5, true)])
         );
-        // Add a later root that is not in the list, should not affect the outcome
-        slot_list.assign([(1 as Slot, true), (2, true), (5, true), (9, true)]);
-        index.add_root(6);
-        reclaims = ReclaimsSlotList::new();
-        assert!(!index.purge_older_root_entries(&mut slot_list, &mut reclaims, None));
-        assert_eq!(reclaims, ReclaimsSlotList::from([(1, true), (2, true)]));
-        assert_eq!(
-            slot_list.clone_list(),
-            SlotList::from_iter([(5, true), (9, true)])
-        );
+        assert_eq!(slot_list.clone_list(), SlotList::from_iter([(9, true)]));
 
         // Pass a max root >= than any root in the slot list, should not affect
         // outcome
@@ -2747,19 +2166,18 @@ mod tests {
             SlotList::from_iter([(5, true), (9, true)])
         );
 
-        // Pass a max root 2. This means the latest root < 2 is 1 because 2 is not a root
-        // so nothing will be purged
+        // Max clean root 2: newest slot <= 2 is 2, so only slot 1 is older and reclaimed.
         slot_list.assign([(1, true), (2, true), (5, true), (9, true)]);
         reclaims = ReclaimsSlotList::new();
         assert!(!index.purge_older_root_entries(&mut slot_list, &mut reclaims, Some(2)));
-        assert!(reclaims.is_empty());
+        assert_eq!(reclaims, ReclaimsSlotList::from([(1, true)]));
         assert_eq!(
             slot_list.clone_list(),
-            SlotList::from_iter([(1, true), (2, true), (5, true), (9, true)])
+            SlotList::from_iter([(2, true), (5, true), (9, true)])
         );
 
-        // Pass a max root 1. This means the latest root < 3 is 1 because 2 is not a root
-        // so nothing will be purged
+        // Max clean root 1: newest slot <= 1 is 1 and nothing is older, so nothing
+        // is reclaimed.
         slot_list.assign([(1, true), (2, true), (5, true), (9, true)]);
         reclaims = ReclaimsSlotList::new();
         assert!(!index.purge_older_root_entries(&mut slot_list, &mut reclaims, Some(1)));
@@ -2936,7 +2354,10 @@ mod tests {
         index.slot_list_mut(&account_key, |mut slot_list| slot_list.clear());
 
         // Everything should be deleted
-        let _ = index.handle_dead_keys(&[account_key], &secondary_indexes);
+        let pubkeys = index.handle_dead_keys(&[account_key]);
+        for pubkey in pubkeys {
+            index.purge_secondary_indexes_by_inner_key_if(&pubkey, &secondary_indexes, || true);
+        }
         assert!(secondary_index.index.is_empty());
         assert!(secondary_index.reverse_index.is_empty());
     }
@@ -3070,7 +2491,6 @@ mod tests {
         // If we set a root at `later_slot`, and clean, then even though the account with secondary_key1
         // was outdated by the update in the later slot, the primary account key is still alive,
         // so both secondary keys will still be kept alive.
-        index.add_root(later_slot);
         index.slot_list_mut(&account_key, |mut slot_list| {
             index.purge_older_root_entries(&mut slot_list, &mut ReclaimsSlotList::new(), None)
         });
@@ -3085,7 +2505,10 @@ mod tests {
         // pubkey as dead and finally remove all the secondary indexes
         let mut reclaims = ReclaimsSlotList::new();
         index.purge_exact(&account_key, later_slot, &mut reclaims);
-        let _ = index.handle_dead_keys(&[account_key], secondary_indexes);
+        let pubkeys = index.handle_dead_keys(&[account_key]);
+        for pubkey in pubkeys {
+            index.purge_secondary_indexes_by_inner_key_if(&pubkey, secondary_indexes, || true);
+        }
         assert!(secondary_index.index.is_empty());
         assert!(secondary_index.reverse_index.is_empty());
     }
@@ -3126,16 +2549,7 @@ mod tests {
     impl IndexValue for u64 {}
     impl DiskIndexValue for bool {}
     impl DiskIndexValue for u64 {}
-    impl IsCached for bool {
-        fn is_cached(&self) -> bool {
-            false
-        }
-    }
-    impl IsCached for u64 {
-        fn is_cached(&self) -> bool {
-            false
-        }
-    }
+
     impl IsZeroLamport for bool {
         fn is_zero_lamport(&self) -> bool {
             false
@@ -3148,106 +2562,13 @@ mod tests {
         }
     }
 
-    /// Type that supports caching for tests. Used to test upsert behaviour
-    /// when the slot list has mixed cached and uncached items.
-    #[derive(Default, Debug, Clone, Copy, PartialEq, Eq)]
-    struct CacheableIndexValueTest(bool);
-    impl IndexValue for CacheableIndexValueTest {}
-    impl DiskIndexValue for CacheableIndexValueTest {}
-    impl IsCached for CacheableIndexValueTest {
-        fn is_cached(&self) -> bool {
-            // Return self value as whether the item is cached or not
-            self.0
-        }
-    }
-    impl IsZeroLamport for CacheableIndexValueTest {
-        fn is_zero_lamport(&self) -> bool {
-            false
-        }
-    }
-
-    #[test]
-    fn test_get_newest_root_in_slot_list() {
-        let index = AccountsIndex::<bool, bool>::default_for_tests();
-        let return_0 = 0;
-        let slot1 = 1;
-        let slot2 = 2;
-        let slot99 = 99;
-
-        // no roots, so always 0
-        {
-            let roots_tracker = &index.roots_tracker.read().unwrap();
-            let slot_list = Vec::<(Slot, bool)>::default();
-            assert_eq!(
-                return_0,
-                AccountsIndex::<bool, bool>::get_newest_root_in_slot_list(
-                    &roots_tracker.alive_roots,
-                    &slot_list,
-                    Some(slot1),
-                )
-            );
-            assert_eq!(
-                return_0,
-                AccountsIndex::<bool, bool>::get_newest_root_in_slot_list(
-                    &roots_tracker.alive_roots,
-                    &slot_list,
-                    Some(slot2),
-                )
-            );
-            assert_eq!(
-                return_0,
-                AccountsIndex::<bool, bool>::get_newest_root_in_slot_list(
-                    &roots_tracker.alive_roots,
-                    &slot_list,
-                    Some(slot99),
-                )
-            );
-        }
-
-        index.add_root(slot2);
-
-        {
-            let roots_tracker = &index.roots_tracker.read().unwrap();
-            let slot_list = vec![(slot2, true)];
-            assert_eq!(
-                slot2,
-                AccountsIndex::<bool, bool>::get_newest_root_in_slot_list(
-                    &roots_tracker.alive_roots,
-                    &slot_list,
-                    Some(slot2),
-                )
-            );
-            // no newest root
-            assert_eq!(
-                return_0,
-                AccountsIndex::<bool, bool>::get_newest_root_in_slot_list(
-                    &roots_tracker.alive_roots,
-                    &slot_list,
-                    Some(slot1),
-                )
-            );
-            assert_eq!(
-                slot2,
-                AccountsIndex::<bool, bool>::get_newest_root_in_slot_list(
-                    &roots_tracker.alive_roots,
-                    &slot_list,
-                    Some(slot99),
-                )
-            );
-        }
-    }
-
     impl<T: IndexValue> AccountsIndex<T, T> {
         fn upsert_simple_test(&self, key: &Pubkey, slot: Slot, value: T) {
             let mut gc = ReclaimsSlotList::new();
 
             // It is invalid to reclaim older slots if the slot being upserted
             // is unrooted
-            let reclaim_method = if self.is_alive_root(slot) {
-                UPSERT_RECLAIM_TEST_DEFAULT
-            } else {
-                UpsertReclaim::IgnoreReclaims
-            };
+            let reclaim_method = UpsertReclaim::IgnoreReclaims;
 
             self.upsert(slot, slot, key, value, &mut gc, reclaim_method);
             assert!(gc.is_empty());
@@ -3299,12 +2620,12 @@ mod tests {
 
     #[test]
     fn test_clean_rooted_entries_return() {
-        agave_logger::setup();
         let value = true;
         let key = solana_pubkey::new_rand();
         let key_unknown = solana_pubkey::new_rand();
         let index = AccountsIndex::<bool, bool>::default_for_tests();
         let slot1 = 1;
+        let slot2 = 2;
 
         let mut gc = ReclaimsSlotList::new();
         // return true if we don't know anything about 'key_unknown'
@@ -3313,23 +2634,6 @@ mod tests {
 
         index.upsert_simple_test(&key, slot1, value);
 
-        let slot2 = 2;
-        // none for max root because we don't want to delete the entry yet
-        assert!(!index.clean_rooted_entries(&key, &mut gc, None));
-        // this is because of inclusive vs exclusive in the call to can_purge_older_entries
-        assert!(!index.clean_rooted_entries(&key, &mut gc, Some(slot1)));
-        // this will delete the entry because it is <= max_root_inclusive and NOT a root
-        // note this has to be slot2 because of inclusive vs exclusive in the call to can_purge_older_entries
-        {
-            let mut gc = ReclaimsSlotList::new();
-            assert!(index.clean_rooted_entries(&key, &mut gc, Some(slot2)));
-            assert_eq!(gc, ReclaimsSlotList::from([(slot1, value)]));
-        }
-
-        // re-add it
-        index.upsert_simple_test(&key, slot1, value);
-
-        index.add_root(slot1);
         assert!(!index.clean_rooted_entries(&key, &mut gc, Some(slot2)));
         index.upsert_simple_test(&key, slot2, value);
 
@@ -3340,7 +2644,7 @@ mod tests {
             assert_eq!(&[(slot1, value), (slot2, value)], slot_list.as_ref());
             (false, ())
         });
-        assert!(!index.clean_rooted_entries(&key, &mut gc, Some(slot2)));
+        assert!(!index.clean_rooted_entries(&key, &mut gc, Some(slot1)));
         assert_eq!(
             2,
             index.get_and_then(&key, |entry| (
@@ -3348,51 +2652,10 @@ mod tests {
                 entry.unwrap().slot_list_lock_read_len()
             ))
         );
-        assert!(gc.is_empty());
-        {
-            {
-                let roots_tracker = &index.roots_tracker.read().unwrap();
-                let slot_list = SlotList::from([(slot2, value)]);
-                assert_eq!(
-                    0,
-                    AccountsIndex::<bool, bool>::get_newest_root_in_slot_list(
-                        &roots_tracker.alive_roots,
-                        &slot_list,
-                        None,
-                    )
-                );
-            }
-            index.add_root(slot2);
-            {
-                let roots_tracker = &index.roots_tracker.read().unwrap();
-                let slot_list = SlotList::from([(slot2, value)]);
-                assert_eq!(
-                    slot2,
-                    AccountsIndex::<bool, bool>::get_newest_root_in_slot_list(
-                        &roots_tracker.alive_roots,
-                        &slot_list,
-                        None,
-                    )
-                );
-                assert_eq!(
-                    0,
-                    AccountsIndex::<bool, bool>::get_newest_root_in_slot_list(
-                        &roots_tracker.alive_roots,
-                        &slot_list,
-                        Some(0),
-                    )
-                );
-            }
-        }
 
         assert!(gc.is_empty());
         assert!(!index.clean_rooted_entries(&key, &mut gc, Some(slot2)));
         assert_eq!(gc, ReclaimsSlotList::from([(slot1, value)]));
-        gc.clear();
-        index.clean_dead_slot(slot2);
-        let slot3 = 3;
-        assert!(index.clean_rooted_entries(&key, &mut gc, Some(slot3)));
-        assert_eq!(gc, ReclaimsSlotList::from([(slot2, value)]));
     }
 
     #[test]
@@ -3401,7 +2664,7 @@ mod tests {
         let index = AccountsIndex::<bool, bool>::default_for_tests();
 
         assert_eq!(
-            index.handle_dead_keys(&[key], &AccountSecondaryIndexes::default()),
+            index.handle_dead_keys(&[key]),
             vec![key].into_iter().collect::<HashSet<_>>()
         );
     }

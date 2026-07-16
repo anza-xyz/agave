@@ -2,8 +2,8 @@
 use qualifier_attr::qualifiers;
 use {
     agave_votor_messages::{
-        certificate::{Certificate, CertificateType},
-        vote::Vote,
+        certificate::Certificate, fraction::Fraction,
+        unverified_vote_message::UnverifiedCertificate,
     },
     bitvec::vec::BitVec,
     rayon::iter::IntoParallelRefIterator,
@@ -14,6 +14,7 @@ use {
         signature::AsSignatureAffine,
     },
     solana_signer_store::{DecodeError, Decoded, decode},
+    std::num::NonZero,
     thiserror::Error,
 };
 
@@ -35,20 +36,24 @@ pub enum Error {
     WrongEncoding,
     #[error("overlapping primary and fallback bitmaps")]
     BitmapOverlap,
+    #[error("Not enough stake {aggregate_stake}: {cert_fraction} < {required_fraction}")]
+    NotEnoughStake {
+        aggregate_stake: u64,
+        cert_fraction: Fraction,
+        required_fraction: Fraction,
+    },
 }
 
-/// Verifies an Alpenglow `Certificate` and calculates the total signing stake.
+/// Verifies an Alpenglow `UnverifiedCertificate`.
 ///
 /// This function verifies that the aggregate signature matches the vote payload(s)
-/// derived from the certificate type. It concurrently accumulates the stake of
-/// the signers using the provided `rank_map`.
+/// derived from the certificate type.
 ///
 /// # Core Functionality
 /// - **Signature Verification**: Validates aggregate BLS signatures for `votor-messages`.
 /// - **Bitmap Processing**: Supports verification using bitmaps that conform to the
 ///   `solana-signer-store` format.
-/// - **Stake Accumulation**: Calculates the total signing stake during the verification
-///   process.
+/// - **Stake verification**: Verifies that sufficient stake signed the certificate.
 ///
 /// # Ledger State and Rank Map
 ///
@@ -60,31 +65,27 @@ pub enum Error {
 ///
 /// * `cert` - The certificate to verify.
 /// * `max_validators` - The maximum number of validators (used for decoding the bitmap).
+/// * `total_stake` - The total stake for the network for the epoch in which this certificate was produced.
 /// * `rank_map` - A closure that maps a validator's rank (index) to their stake and public key.
-///
-/// # Returns
-///
-/// On success, returns the total stake of validators present in the certificate.
 pub fn verify_certificate(
-    cert: &Certificate,
+    cert: UnverifiedCertificate,
     max_validators: usize,
-    mut rank_map: impl FnMut(usize) -> Option<(u64, PopVerified<BlsPubkeyAffine>)>,
-) -> Result<u64, Error> {
-    let mut total_stake = 0u64;
+    total_stake: NonZero<u64>,
+    mut rank_map: impl FnMut(usize) -> Option<(NonZero<u64>, PopVerified<BlsPubkeyAffine>)>,
+) -> Result<Certificate, Error> {
+    let mut aggregate_stake = 0u64;
 
     // Wrap the `rank_map` to accumulate stake as a side-effect
     let accumulating_rank_map = |ind: usize| {
         rank_map(ind).map(|(stake, pubkey)| {
-            total_stake = total_stake.saturating_add(stake);
+            aggregate_stake = aggregate_stake.saturating_add(stake.get());
             pubkey
         })
     };
 
-    let (primary_vote, fallback_vote) = get_vote_payloads(cert.cert_type);
-    let primary_payload = serialize_vote(&primary_vote);
+    let (primary_payload, fallback_payload) = cert.cert_type.get_vote_payload(cert.shred_version);
 
-    if let Some(fallback_vote) = fallback_vote {
-        let fallback_payload = serialize_vote(&fallback_vote);
+    if let Some(fallback_payload) = fallback_payload {
         verify_base3(
             &primary_payload,
             &fallback_payload,
@@ -102,33 +103,30 @@ pub fn verify_certificate(
             accumulating_rank_map,
         )
     }?;
-
-    Ok(total_stake)
+    verify_stake(&cert, aggregate_stake, total_stake)?;
+    Ok(Certificate {
+        cert_type: cert.cert_type,
+        signature: cert.signature,
+        bitmap: cert.bitmap,
+    })
 }
 
-fn get_vote_payloads(cert_type: CertificateType) -> (Vote, Option<Vote>) {
-    match cert_type {
-        CertificateType::Notarize(block) | CertificateType::FinalizeFast(block) => {
-            (Vote::new_notarization_vote(block), None)
-        }
-        CertificateType::Finalize(slot) => (Vote::new_finalization_vote(slot), None),
-        CertificateType::Genesis(block) => (Vote::new_genesis_vote(block), None),
-        CertificateType::NotarizeFallback(block) => (
-            Vote::new_notarization_vote(block),
-            Some(Vote::new_notarization_fallback_vote(block)),
-        ),
-        CertificateType::Skip(slot) => (
-            Vote::new_skip_vote(slot),
-            Some(Vote::new_skip_fallback_vote(slot)),
-        ),
+fn verify_stake(
+    cert: &UnverifiedCertificate,
+    aggregate_stake: u64,
+    total_stake: NonZero<u64>,
+) -> Result<(), Error> {
+    let (required_fraction, _) = cert.cert_type.limits_and_vote_types();
+    let cert_fraction = Fraction::new(aggregate_stake, total_stake);
+    if cert_fraction >= required_fraction {
+        Ok(())
+    } else {
+        Err(Error::NotEnoughStake {
+            aggregate_stake,
+            cert_fraction,
+            required_fraction,
+        })
     }
-}
-
-fn serialize_vote(vote: &Vote) -> Vec<u8> {
-    // `expect` is safe because the `Vote` struct is composed entirely of primitive
-    // types (u64, Hash, enums) that are inherently serializable and it is constructed
-    // locally within this module.
-    wincode::serialize(vote).expect("Vote serialization should never fail for valid Vote structs")
 }
 
 /// Verifies a signature for a single payload signed by a set of validators.
@@ -273,9 +271,12 @@ mod test {
         super::*,
         agave_votor::consensus_pool::certificate_builder::CertificateBuilder,
         agave_votor_messages::{
+            certificate::CertificateType,
             consensus_message::{Block, VoteMessage},
             vote::Vote,
+            wire::get_vote_payload_to_sign,
         },
+        rand::Rng,
         solana_bls_signatures::{
             keypair::Keypair as BLSKeypair, signature::Signature as BLSSignature,
         },
@@ -291,11 +292,12 @@ mod test {
 
     fn create_signed_vote_message(
         bls_keypairs: &[BLSKeypair],
+        shred_version: u16,
         vote: Vote,
         rank: usize,
     ) -> VoteMessage {
         let bls_keypair = &bls_keypairs[rank];
-        let payload = wincode::serialize(&vote).expect("Failed to serialize vote");
+        let payload = get_vote_payload_to_sign(vote, shred_version);
         let signature: BLSSignature = bls_keypair.sign(&payload).into();
         VoteMessage {
             vote,
@@ -306,47 +308,109 @@ mod test {
 
     fn create_signed_certificate_message(
         bls_keypairs: &[BLSKeypair],
+        shred_version: u16,
         cert_type: CertificateType,
         ranks: &[usize],
-    ) -> Certificate {
+    ) -> UnverifiedCertificate {
         let mut builder = CertificateBuilder::new(cert_type);
         // Assumes Base2 encoding (single vote type) for simplicity in this helper.
         let vote = cert_type.to_source_vote();
         let vote_messages: Vec<VoteMessage> = ranks
             .iter()
-            .map(|&rank| create_signed_vote_message(bls_keypairs, vote, rank))
+            .map(|&rank| create_signed_vote_message(bls_keypairs, shred_version, vote, rank))
             .collect();
 
         builder
             .aggregate(&vote_messages)
             .expect("Failed to aggregate votes");
-        builder.build().expect("Failed to build certificate")
+        let cert = builder.build().expect("Failed to build certificate");
+        UnverifiedCertificate {
+            cert_type: cert.cert_type,
+            signature: cert.signature,
+            bitmap: cert.bitmap,
+            shred_version,
+        }
     }
 
     #[test]
     fn test_verify_certificate_base2_valid() {
         let bls_keypairs = create_bls_keypairs(10);
+        let shred_version = rand::rng().random();
         let cert_type = CertificateType::Notarize(Block {
             slot: 10,
             block_id: Hash::new_unique(),
         });
         let cert = create_signed_certificate_message(
             &bls_keypairs,
+            shred_version,
             cert_type,
             &(0..6).collect::<Vec<_>>(),
         );
-        assert_eq!(
-            verify_certificate(&cert, 10, |rank| {
-                bls_keypairs.get(rank).map(|kp| (100, kp.public))
-            })
-            .unwrap(),
-            600
-        );
+        verify_certificate(cert, 10, NonZero::new(600).unwrap(), |rank| {
+            bls_keypairs
+                .get(rank)
+                .map(|kp| (NonZero::new(100).unwrap(), kp.public))
+        })
+        .unwrap();
     }
 
     #[test]
+    fn test_stake_verification() {
+        let bls_keypairs = create_bls_keypairs(10);
+        let shred_version = rand::rng().random();
+        let cert_type = CertificateType::Notarize(Block {
+            slot: 10,
+            block_id: Hash::new_unique(),
+        });
+        let per_validator_stake = 100;
+        let num_validators = 10;
+        let total_stake = NonZero::new(per_validator_stake * num_validators as u64).unwrap();
+
+        // with enough stake should succeed.
+        let cert = create_signed_certificate_message(
+            &bls_keypairs,
+            shred_version,
+            cert_type,
+            &(0..6).collect::<Vec<_>>(),
+        );
+        verify_certificate(cert, 10, total_stake, |rank| {
+            bls_keypairs
+                .get(rank)
+                .map(|kp| (NonZero::new(100).unwrap(), kp.public))
+        })
+        .unwrap();
+
+        // not enough stake, should fail.
+        let cert = create_signed_certificate_message(
+            &bls_keypairs,
+            shred_version,
+            cert_type,
+            &(0..5).collect::<Vec<_>>(),
+        );
+        let Err(err) = verify_certificate(cert, 10, total_stake, |rank| {
+            bls_keypairs
+                .get(rank)
+                .map(|kp| (NonZero::new(100).unwrap(), kp.public))
+        }) else {
+            panic!("should fail");
+        };
+        match err {
+            Error::NotEnoughStake {
+                aggregate_stake,
+                cert_fraction,
+                required_fraction,
+            } => {
+                assert_eq!(aggregate_stake, 500);
+                assert_eq!(required_fraction, cert_type.limits_and_vote_types().0);
+                assert_eq!(cert_fraction, Fraction::new(500, total_stake));
+            }
+            rest => panic!("wrong variant {rest:?}"),
+        }
+    }
+    #[test]
     fn test_verify_certificate_base3_valid() {
         let bls_keypairs = create_bls_keypairs(10);
+        let shred_version = rand::rng().random();
         let block = Block {
             slot: 20,
             block_id: Hash::new_unique(),
@@ -355,11 +419,17 @@ mod test {
         let notarize_fallback_vote = Vote::new_notarization_fallback_vote(block);
         let mut all_vote_messages = Vec::new();
         (0..4).for_each(|i| {
-            all_vote_messages.push(create_signed_vote_message(&bls_keypairs, notarize_vote, i))
+            all_vote_messages.push(create_signed_vote_message(
+                &bls_keypairs,
+                shred_version,
+                notarize_vote,
+                i,
+            ))
         });
         (4..7).for_each(|i| {
             all_vote_messages.push(create_signed_vote_message(
                 &bls_keypairs,
+                shred_version,
                 notarize_fallback_vote,
                 i,
             ))
@@ -370,18 +440,25 @@ mod test {
             .aggregate(&all_vote_messages)
             .expect("Failed to aggregate votes");
         let cert = builder.build().expect("Failed to build certificate");
-        assert_eq!(
-            verify_certificate(&cert, 10, |rank| {
-                bls_keypairs.get(rank).map(|kp| (100, kp.public))
-            })
-            .unwrap(),
-            700
-        );
+        let cert = UnverifiedCertificate {
+            cert_type: cert.cert_type,
+            signature: cert.signature,
+            bitmap: cert.bitmap,
+            shred_version,
+        };
+
+        verify_certificate(cert, 10, NonZero::new(700).unwrap(), |rank| {
+            bls_keypairs
+                .get(rank)
+                .map(|kp| (NonZero::new(100).unwrap(), kp.public))
+        })
+        .unwrap();
     }
 
     #[test]
     fn test_verify_certificate_invalid_signature() {
         let bls_keypairs = create_bls_keypairs(10);
+        let shred_version = rand::rng().random();
 
         let num_signers = 7;
         let block = Block {
@@ -396,14 +473,17 @@ mod test {
         }
         let encoded_bitmap = encode_base2(&bitmap).unwrap();
 
-        let cert = Certificate {
+        let cert = UnverifiedCertificate {
             cert_type,
             signature: BLSSignature([0; 192]), // Use a default/wrong signature
             bitmap: encoded_bitmap,
+            shred_version,
         };
         assert_eq!(
-            verify_certificate(&cert, 10, |rank| {
-                bls_keypairs.get(rank).map(|kp| (100, kp.public))
+            verify_certificate(cert, 10, NonZero::new(1000).unwrap(), |rank| {
+                bls_keypairs
+                    .get(rank)
+                    .map(|kp| (NonZero::new(100).unwrap(), kp.public))
             })
             .unwrap_err(),
             Error::VerifySig(BlsError::PointConversion)
@@ -414,6 +494,7 @@ mod test {
     fn base3_cert_with_no_primary_verifies() {
         let max_validators = 10;
         let bls_keypairs = create_bls_keypairs(max_validators);
+        let shred_version = rand::rng().random();
         let block = Block {
             slot: 20,
             block_id: Hash::new_unique(),
@@ -422,20 +503,28 @@ mod test {
         let mut builder = CertificateBuilder::new(cert_type);
         let vote = Vote::new_notarization_fallback_vote(block);
         let vote_msgs = (0..max_validators)
-            .map(|i| create_signed_vote_message(&bls_keypairs, vote, i))
+            .map(|i| create_signed_vote_message(&bls_keypairs, shred_version, vote, i))
             .collect::<Vec<_>>();
         builder.aggregate(&vote_msgs).unwrap();
         let cert = builder.build().unwrap();
+        let cert = UnverifiedCertificate {
+            cert_type: cert.cert_type,
+            signature: cert.signature,
+            bitmap: cert.bitmap,
+            shred_version,
+        };
         let per_validator_stake = 100;
-        assert_eq!(
-            verify_certificate(&cert, 10, |rank| {
+        verify_certificate(
+            cert,
+            10,
+            NonZero::new(per_validator_stake * max_validators as u64).unwrap(),
+            |rank| {
                 bls_keypairs
                     .get(rank)
-                    .map(|kp| (per_validator_stake, kp.public))
-            })
-            .unwrap(),
-            per_validator_stake * max_validators as u64
-        );
+                    .map(|kp| (NonZero::new(per_validator_stake).unwrap(), kp.public))
+            },
+        )
+        .unwrap();
     }
 
     #[test]
@@ -476,7 +565,7 @@ mod test {
     // verification contract.
     // ----------------------------------------------------------------------------
 
-    const STAKE_PER_VALIDATOR: u64 = 100;
+    const STAKE_PER_VALIDATOR: NonZero<u64> = NonZero::new(100).unwrap();
 
     /// A `Block` for `slot` with a fresh, unique block id.
     fn fresh_block(slot: u64) -> Block {
@@ -515,7 +604,7 @@ mod test {
     /// Uniform `rank_map` over `keypairs`, each with `STAKE_PER_VALIDATOR` stake.
     fn rank_map(
         keypairs: &[BLSKeypair],
-    ) -> impl FnMut(usize) -> Option<(u64, PopVerified<BlsPubkeyAffine>)> + '_ {
+    ) -> impl FnMut(usize) -> Option<(NonZero<u64>, PopVerified<BlsPubkeyAffine>)> + '_ {
         move |rank| {
             keypairs
                 .get(rank)
@@ -525,11 +614,16 @@ mod test {
 
     /// A certificate with the given bitmap and a placeholder (all-zero) signature,
     /// for tests whose rejection is independent of the signature contents.
-    fn unsigned_cert(cert_type: CertificateType, bitmap: Vec<u8>) -> Certificate {
-        Certificate {
+    fn unsigned_cert(
+        cert_type: CertificateType,
+        bitmap: Vec<u8>,
+        shred_version: u16,
+    ) -> UnverifiedCertificate {
+        UnverifiedCertificate {
             cert_type,
             signature: BLSSignature([0; 192]),
             bitmap,
+            shred_version,
         }
     }
 
@@ -537,6 +631,7 @@ mod test {
     /// the notarization vote and `fallback_ranks` signed the notarization fallback vote.
     fn signed_notarize_fallback_cert(
         keypairs: &[BLSKeypair],
+        shred_version: u16,
         block: Block,
         primary_ranks: &[usize],
         fallback_ranks: &[usize],
@@ -545,10 +640,20 @@ mod test {
         let fallback = Vote::new_notarization_fallback_vote(block);
         let mut messages = Vec::new();
         for &rank in primary_ranks {
-            messages.push(create_signed_vote_message(keypairs, notarize, rank));
+            messages.push(create_signed_vote_message(
+                keypairs,
+                shred_version,
+                notarize,
+                rank,
+            ));
         }
         for &rank in fallback_ranks {
-            messages.push(create_signed_vote_message(keypairs, fallback, rank));
+            messages.push(create_signed_vote_message(
+                keypairs,
+                shred_version,
+                fallback,
+                rank,
+            ));
         }
         let mut builder = CertificateBuilder::new(CertificateType::NotarizeFallback(block));
         builder.aggregate(&messages).unwrap();
@@ -561,8 +666,14 @@ mod test {
     #[test]
     fn tampered_bitmap_adding_unsigned_validator_fails() {
         let keypairs = create_bls_keypairs(10);
+        let shred_version = rand::rng().random();
         let cert_type = CertificateType::Notarize(fresh_block(10));
-        let mut cert = create_signed_certificate_message(&keypairs, cert_type, &[0, 1, 2, 3, 4, 5]);
+        let mut cert = create_signed_certificate_message(
+            &keypairs,
+            shred_version,
+            cert_type,
+            &[0, 1, 2, 3, 4, 5],
+        );
 
         // Claim rank 6 also signed, even though it never did.
         cert.bitmap = encoded_base2_bitmap(&[0, 1, 2, 3, 4, 5, 6], 7);
@@ -570,7 +681,8 @@ mod test {
         // Must fail at the signature stage (not via a decode / missing-rank path),
         // proving the extra validator cannot be smuggled in.
         assert_eq!(
-            verify_certificate(&cert, 10, rank_map(&keypairs)).unwrap_err(),
+            verify_certificate(cert, 10, NonZero::new(10).unwrap(), rank_map(&keypairs))
+                .unwrap_err(),
             Error::VerifySig(BlsError::VerificationFailed)
         );
     }
@@ -581,14 +693,21 @@ mod test {
     #[test]
     fn tampered_bitmap_removing_signer_fails() {
         let keypairs = create_bls_keypairs(10);
+        let shred_version = rand::rng().random();
         let cert_type = CertificateType::Notarize(fresh_block(10));
-        let mut cert = create_signed_certificate_message(&keypairs, cert_type, &[0, 1, 2, 3, 4, 5]);
+        let mut cert = create_signed_certificate_message(
+            &keypairs,
+            shred_version,
+            cert_type,
+            &[0, 1, 2, 3, 4, 5],
+        );
 
         // Drop rank 5 from the bitmap while keeping its signature in the aggregate.
         cert.bitmap = encoded_base2_bitmap(&[0, 1, 2, 3, 4], 6);
 
         assert_eq!(
-            verify_certificate(&cert, 10, rank_map(&keypairs)).unwrap_err(),
+            verify_certificate(cert, 10, NonZero::new(10).unwrap(), rank_map(&keypairs))
+                .unwrap_err(),
             Error::VerifySig(BlsError::VerificationFailed)
         );
     }
@@ -599,20 +718,24 @@ mod test {
     #[test]
     fn tampered_cert_type_payload_fails() {
         let keypairs = create_bls_keypairs(10);
+        let shred_version = rand::rng().random();
         let cert = create_signed_certificate_message(
             &keypairs,
+            shred_version,
             CertificateType::Notarize(fresh_block(10)),
             &[0, 1, 2, 3, 4, 5],
         );
 
-        let forged = Certificate {
+        let forged = UnverifiedCertificate {
             cert_type: CertificateType::Notarize(fresh_block(10)),
             signature: cert.signature,
             bitmap: cert.bitmap.clone(),
+            shred_version,
         };
 
         assert_eq!(
-            verify_certificate(&forged, 10, rank_map(&keypairs)).unwrap_err(),
+            verify_certificate(forged, 10, NonZero::new(10).unwrap(), rank_map(&keypairs))
+                .unwrap_err(),
             Error::VerifySig(BlsError::VerificationFailed)
         );
     }
@@ -622,14 +745,17 @@ mod test {
     #[test]
     fn empty_bitmap_certificate_does_not_verify() {
         let keypairs = create_bls_keypairs(10);
+        let shred_version = rand::rng().random();
         let cert = unsigned_cert(
             CertificateType::Notarize(fresh_block(10)),
             encoded_base2_bitmap(&[], 0),
+            shred_version,
         );
 
         // An empty signer set cannot produce a valid aggregate signature.
         assert_eq!(
-            verify_certificate(&cert, 10, rank_map(&keypairs)).unwrap_err(),
+            verify_certificate(cert, 10, NonZero::new(10).unwrap(), rank_map(&keypairs))
+                .unwrap_err(),
             Error::VerifySig(BlsError::EmptyAggregation)
         );
     }
@@ -640,11 +766,17 @@ mod test {
     #[test]
     fn base3_bitmap_rejected_for_base2_certificate() {
         let keypairs = create_bls_keypairs(10);
+        let shred_version = rand::rng().random();
         let bitmap = encoded_base3_bitmap(&[0, 1], &[2], 6);
-        let cert = unsigned_cert(CertificateType::Notarize(fresh_block(10)), bitmap);
+        let cert = unsigned_cert(
+            CertificateType::Notarize(fresh_block(10)),
+            bitmap,
+            shred_version,
+        );
 
         assert_eq!(
-            verify_certificate(&cert, 10, rank_map(&keypairs)).unwrap_err(),
+            verify_certificate(cert, 10, NonZero::new(10).unwrap(), rank_map(&keypairs))
+                .unwrap_err(),
             Error::WrongEncoding
         );
     }
@@ -655,11 +787,17 @@ mod test {
     #[test]
     fn unknown_rank_in_bitmap_fails() {
         let keypairs = create_bls_keypairs(10);
+        let shred_version = rand::rng().random();
         let cert_type = CertificateType::Notarize(fresh_block(10));
-        let cert = create_signed_certificate_message(&keypairs, cert_type, &[0, 1, 2, 3, 4, 5]);
+        let cert = create_signed_certificate_message(
+            &keypairs,
+            shred_version,
+            cert_type,
+            &[0, 1, 2, 3, 4, 5],
+        );
 
         // rank_map returns None for rank 3, simulating an unknown/unstaked validator.
-        let result = verify_certificate(&cert, 10, |rank| {
+        let result = verify_certificate(cert, 10, NonZero::new(10).unwrap(), |rank| {
             if rank == 3 {
                 None
             } else {
@@ -677,14 +815,17 @@ mod test {
     #[test]
     fn oversized_bitmap_is_rejected() {
         let keypairs = create_bls_keypairs(10);
+        let shred_version = rand::rng().random();
         // 20 bits declared, but only 10 validators allowed.
         let cert = unsigned_cert(
             CertificateType::Notarize(fresh_block(10)),
             encoded_base2_bitmap(&[0, 1], 20),
+            shred_version,
         );
 
         assert_eq!(
-            verify_certificate(&cert, 10, rank_map(&keypairs)).unwrap_err(),
+            verify_certificate(cert, 10, NonZero::new(10).unwrap(), rank_map(&keypairs))
+                .unwrap_err(),
             Error::Decode(DecodeError::CorruptDataPayload)
         );
     }
@@ -694,15 +835,21 @@ mod test {
     #[test]
     fn garbage_bitmap_never_panics_and_never_verifies() {
         let keypairs = create_bls_keypairs(10);
+        let shred_version = rand::rng().random();
         for seed in 0u64..512 {
             let len = (seed % 40) as usize;
             let bitmap: Vec<u8> = (0..len)
                 .map(|i| seed.wrapping_mul(2_654_435_761).wrapping_add(i as u64 * 7) as u8)
                 .collect();
-            let cert = unsigned_cert(CertificateType::Notarize(fresh_block(10)), bitmap);
+            let cert = unsigned_cert(
+                CertificateType::Notarize(fresh_block(10)),
+                bitmap,
+                shred_version,
+            );
             // Must return (Ok/Err) without panicking; a zero signature can never
             // produce a valid certificate, so the result must be an error.
-            assert!(verify_certificate(&cert, 10, rank_map(&keypairs)).is_err());
+            verify_certificate(cert, 10, NonZero::new(10).unwrap(), rank_map(&keypairs))
+                .unwrap_err();
         }
     }
 
@@ -712,19 +859,22 @@ mod test {
     #[test]
     fn base3_tampered_swapping_vote_types_fails() {
         let keypairs = create_bls_keypairs(10);
+        let shred_version = rand::rng().random();
         let block = fresh_block(20);
         // 0,1 signed the primary (notarize) vote; 2,3 signed the fallback vote.
-        let cert = signed_notarize_fallback_cert(&keypairs, block, &[0, 1], &[2, 3]);
+        let cert = signed_notarize_fallback_cert(&keypairs, shred_version, block, &[0, 1], &[2, 3]);
 
         // Forge a bitmap claiming the opposite: 2,3 as primary and 0,1 as fallback.
-        let forged = Certificate {
+        let forged = UnverifiedCertificate {
             cert_type: cert.cert_type,
             signature: cert.signature,
             bitmap: encoded_base3_bitmap(&[2, 3], &[0, 1], 4),
+            shred_version,
         };
 
         assert_eq!(
-            verify_certificate(&forged, 10, rank_map(&keypairs)).unwrap_err(),
+            verify_certificate(forged, 10, NonZero::new(10).unwrap(), rank_map(&keypairs))
+                .unwrap_err(),
             Error::VerifySig(BlsError::VerificationFailed)
         );
     }
@@ -734,18 +884,21 @@ mod test {
     #[test]
     fn base3_tampered_adding_unsigned_validator_fails() {
         let keypairs = create_bls_keypairs(10);
+        let shred_version = rand::rng().random();
         let block = fresh_block(20);
-        let cert = signed_notarize_fallback_cert(&keypairs, block, &[0, 1], &[2, 3]);
+        let cert = signed_notarize_fallback_cert(&keypairs, shred_version, block, &[0, 1], &[2, 3]);
 
         // Claim rank 4 also cast a fallback vote, though it never signed.
-        let forged = Certificate {
+        let forged = UnverifiedCertificate {
             cert_type: cert.cert_type,
             signature: cert.signature,
             bitmap: encoded_base3_bitmap(&[0, 1], &[2, 3, 4], 5),
+            shred_version,
         };
 
         assert_eq!(
-            verify_certificate(&forged, 10, rank_map(&keypairs)).unwrap_err(),
+            verify_certificate(forged, 10, NonZero::new(10).unwrap(), rank_map(&keypairs))
+                .unwrap_err(),
             Error::VerifySig(BlsError::VerificationFailed)
         );
     }

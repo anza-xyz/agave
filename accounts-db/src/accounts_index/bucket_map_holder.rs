@@ -93,6 +93,10 @@ pub struct BucketMapHolder<T: IndexValue, U: DiskIndexValue + From<T> + Into<T>>
     /// Precomputed thresholds per bin for flushing and eviction
     /// None for Minimal/InMemOnly, Some(threshold_entries_per_bin) for Threshold
     pub(super) threshold_entries_per_bin: Option<ThresholdEntriesPerBin>,
+
+    /// If true, flush dirty entries to disk once `slot_list.len() == 1` and
+    /// `ref_count == 1`, making it evictable
+    should_write_through: bool,
 }
 
 impl<T: IndexValue, U: DiskIndexValue + From<T> + Into<T>> Debug for BucketMapHolder<T, U> {
@@ -106,6 +110,12 @@ impl<T: IndexValue, U: DiskIndexValue + From<T> + Into<T>> BucketMapHolder<T, U>
     /// is the accounts index using disk as a backing store
     pub fn is_disk_index_enabled(&self) -> bool {
         self.disk.is_some()
+    }
+
+    /// If true, flush dirty entries to disk once `slot_list.len() == 1` and
+    /// `ref_count == 1`, making it evictable
+    pub(crate) fn should_write_through(&self) -> bool {
+        self.should_write_through
     }
 
     /// Returns true when a bin's entry count is high enough that eviction should begin.
@@ -315,6 +325,13 @@ impl<T: IndexValue, U: DiskIndexValue + From<T> + Into<T>> BucketMapHolder<T, U>
             }
         };
 
+        // Write through is currently only used with a memory threshold, to ensure
+        // the memory threshold is not exceeded
+        let should_write_through = match config.index_limit {
+            IndexLimit::InMemOnly | IndexLimit::Minimal => false,
+            IndexLimit::Threshold(_) => true,
+        };
+
         // The age interval, `age_ms`, varies depending on `config.index_limit`
         let age_ms = match config.index_limit {
             IndexLimit::Minimal => {
@@ -359,6 +376,7 @@ impl<T: IndexValue, U: DiskIndexValue + From<T> + Into<T>> BucketMapHolder<T, U>
             _phantom: PhantomData,
             startup_stats: Arc::default(),
             threshold_entries_per_bin,
+            should_write_through,
         }
     }
 
@@ -536,7 +554,6 @@ mod tests {
 
     #[test]
     fn test_next_bucket_to_flush() {
-        agave_logger::setup();
         let bins = 4;
         let test = BucketMapHolder::<u64, u64>::new(bins, &AccountsIndexConfig::default(), 1);
         let visited = (0..bins)
@@ -559,7 +576,6 @@ mod tests {
 
     #[test]
     fn test_ages() {
-        agave_logger::setup();
         let bins = 4;
         let test = BucketMapHolder::<u64, u64>::new(bins, &AccountsIndexConfig::default(), 1);
         assert_eq!(0, test.current_age());
@@ -579,7 +595,6 @@ mod tests {
 
     #[test]
     fn test_age_increment() {
-        agave_logger::setup();
         let bins = 4;
         let test = BucketMapHolder::<u64, u64>::new(bins, &AccountsIndexConfig::default(), 1);
         for age in 0..513 {
@@ -600,7 +615,6 @@ mod tests {
 
     #[test]
     fn test_throttle() {
-        agave_logger::setup();
         let bins = 128;
         let test = BucketMapHolder::<u64, u64>::new(bins, &AccountsIndexConfig::default(), 1);
         let bins = test.bins as u64;
@@ -811,7 +825,6 @@ mod tests {
 
     #[test]
     fn test_age_time() {
-        agave_logger::setup();
         let bins = 1;
         let test = BucketMapHolder::<u64, u64>::new(bins, &AccountsIndexConfig::default(), 1);
         let threads = 2;
@@ -844,7 +857,6 @@ mod tests {
 
     #[test]
     fn test_age_broad() {
-        agave_logger::setup();
         let bins = 4;
         let test = BucketMapHolder::<u64, u64>::new(bins, &AccountsIndexConfig::default(), 1);
         assert_eq!(test.current_age(), 0);

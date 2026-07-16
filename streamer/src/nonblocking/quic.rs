@@ -1140,7 +1140,7 @@ pub mod test {
             },
         },
         assert_matches::assert_matches,
-        crossbeam_channel::{Receiver, unbounded},
+        crossbeam_channel::{Receiver, bounded},
         quinn::{ApplicationClose, ConnectionError},
         solana_keypair::Keypair,
         solana_net_utils::sockets::bind_to_localhost_unique,
@@ -1177,24 +1177,34 @@ pub mod test {
     pub async fn check_block_multiple_connections(server_address: SocketAddr) {
         let conn1 = make_client_endpoint(&server_address, None).await;
         let conn2 = make_client_endpoint(&server_address, None).await;
-        let mut s1 = conn1.open_uni().await.unwrap();
-        let s2 = conn2.open_uni().await;
-        if let Ok(mut s2) = s2 {
-            s1.write_all(&[0u8]).await.unwrap();
-            s1.finish().unwrap();
-            // Send enough data to create more than 1 chunks.
-            // The first will try to open the connection (which should fail).
-            // The following chunks will enable the detection of connection failure.
-            let data = vec![1u8; PACKET_DATA_SIZE * 2];
-            s2.write_all(&data)
-                .await
-                .expect_err("shouldn't be able to open 2 connections");
-        } else {
-            // It has been noticed if there is already connection open against the server, this open_uni can fail
-            // with ApplicationClosed(ApplicationClose) error due to CONNECTION_CLOSE_CODE_TOO_MANY before writing to
-            // the stream -- expect it.
-            assert_matches!(s2, Err(quinn::ConnectionError::ApplicationClosed(_)));
+
+        async fn open_and_write(conn: &Connection) -> Result<(), ConnectionError> {
+            for _ in 0..3 {
+                let mut stream = conn.open_uni().await?;
+                stream
+                    .write_all(&[0u8; PACKET_DATA_SIZE])
+                    .await
+                    .map_err(|err| match err {
+                        quinn::WriteError::ConnectionLost(err) => err,
+                        err => panic!("unexpected write error on an admitted connection: {err:?}"),
+                    })?;
+                stream.finish().unwrap();
+            }
+            Ok(())
         }
+
+        let (res1, res2) = tokio::join!(open_and_write(&conn1), open_and_write(&conn2));
+        let rejected = match (res1, res2) {
+            (Ok(()), Err(err)) | (Err(err), Ok(())) => err,
+            other => {
+                panic!("expected exactly one of the two connections to be admitted, got {other:?}")
+            }
+        };
+        assert_matches!(
+            rejected,
+            ConnectionError::ApplicationClosed(_),
+            "rejected connection should be closed due to exceeding the per-peer connection limit"
+        );
     }
 
     pub async fn check_multiple_writes(
@@ -1587,7 +1597,7 @@ pub mod test {
     async fn test_quic_server_unstaked_node_connect_failure() {
         agave_logger::setup();
         let s = bind_to_localhost_unique().expect("should bind");
-        let (sender, _) = unbounded();
+        let (sender, _) = bounded(1024);
         let keypair = Keypair::new();
         let server_address = s.local_addr().unwrap();
         let staked_nodes = Arc::new(RwLock::new(StakedNodes::default()));
@@ -1623,7 +1633,7 @@ pub mod test {
     async fn test_quic_server_multiple_streams() {
         agave_logger::setup();
         let s = bind_to_localhost_unique().expect("should bind");
-        let (sender, receiver) = unbounded();
+        let (sender, receiver) = bounded(1024);
         let keypair = Keypair::new();
         let server_address = s.local_addr().unwrap();
         let staked_nodes = Arc::new(RwLock::new(StakedNodes::default()));

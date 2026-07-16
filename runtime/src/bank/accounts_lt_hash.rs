@@ -1,8 +1,10 @@
 use {
     super::Bank,
-    crossbeam_queue::ArrayQueue,
     crossbeam_utils::CachePadded,
-    rayon::{ThreadPool, ThreadPoolBuilder},
+    rayon::{
+        ThreadPool, ThreadPoolBuilder,
+        iter::{IntoParallelIterator, ParallelIterator},
+    },
     solana_account::{AccountSharedData, ReadableAccount},
     solana_accounts_db::{accounts_db::AccountsDb, storable_accounts::StorableAccounts},
     solana_lattice_hash::lt_hash::LtHash,
@@ -26,7 +28,17 @@ const MAX_BYTES_SEEN_ACCOUNTS_FREELIST: usize = 10_000_000;
 
 impl Bank {
     /// Enqueues the accounts lt hash updates for `accounts` to the accounts hasher thread pool.
-    pub fn enqueue_accounts_lt_hash_updates<'a>(&self, accounts: &impl StorableAccounts<'a>) {
+    ///
+    /// This fn is meant to be called by on-chain events, e.g. transaction processing.
+    /// This fn deduplicates from `accounts`, keeping only the latest version of each account.
+    /// It also loads the previous version of each account inline, because we assume the previous
+    /// version of each account is still in the accounts write cache, and thus fast to load.
+    ///
+    /// For non-transaction processing callers, consider `enqueue_off_chain_accounts_lt_hash_updates()`.
+    pub fn enqueue_on_chain_accounts_lt_hash_updates<'a>(
+        &self,
+        accounts: &impl StorableAccounts<'a>,
+    ) {
         if accounts.is_empty() {
             return;
         }
@@ -68,6 +80,93 @@ impl Bank {
 
         // reclaim the seen accounts hashset
         seen_accounts_freelist.try_push(seen_accounts);
+    }
+
+    /// Enqueues the accounts lt hash updates for `accounts` to the accounts hasher thread pool.
+    ///
+    /// This fn is meant to be called by off-chain events, meaning we know/control `accounts`.
+    /// Contrasting with `enqueue_on_chain_accounts_lt_hash_updates()`, this fn:
+    /// - Does not deduplicate accounts, requiring the caller to ensure there are no duplicates.
+    /// - Does not assume loading the previous version of accounts is fast,
+    ///   e.g. when storing stake accounts as part of partitioned epoch rewards.
+    ///
+    /// If Some, `thread_pool_for_hashing_accounts` will be used
+    /// to load the previous version of accounts in parallel.
+    pub fn enqueue_off_chain_accounts_lt_hash_updates<'a>(
+        &self,
+        accounts: &impl StorableAccounts<'a>,
+        thread_pool_for_loading_accounts: Option<&ThreadPool>,
+    ) {
+        if cfg!(debug_assertions) {
+            // if debug assertions are on, we will check for duplicates
+            use ahash::HashSetExt as _;
+            let mut seen_accounts = ahash::HashSet::with_capacity(accounts.len());
+            let mut duplicate_pubkeys = ahash::HashSet::with_capacity(0); // assume no duplicates
+            for index in 0..accounts.len() {
+                let pubkey = accounts.pubkey(index);
+                if !seen_accounts.insert(pubkey) {
+                    // we've already seen this account, so add it to the duplicates list
+                    duplicate_pubkeys.insert(pubkey);
+                }
+            }
+            if !duplicate_pubkeys.is_empty() {
+                let mut duplicate_accounts = ahash::HashMap::<_, Vec<_>>::default();
+                for duplicate_pubkey in duplicate_pubkeys {
+                    for index in 0..accounts.len() {
+                        let pubkey = accounts.pubkey(index);
+                        if pubkey == duplicate_pubkey {
+                            duplicate_accounts
+                                .entry(pubkey)
+                                .or_default()
+                                .push(accounts.account(index, |account| account.take_account()));
+                        }
+                    }
+                }
+                panic!("duplicate accounts were enqueued for hashing: {duplicate_accounts:?}");
+            }
+        }
+
+        let async_progress = &self.accounts_lt_hash_async_progress;
+        let thread_pool_for_hashing_accounts = accounts_hasher_thread_pool();
+
+        // A closure that does the loading and enqueueing, so code is shared
+        // whether using the thread_pool_for_loading_accounts or not.
+        let load_then_enqueue = |index| {
+            let address = accounts.pubkey(index);
+            let prev_account = self
+                .rc
+                .accounts
+                .load_with_fixed_root_do_not_populate_read_cache(&self.ancestors, address)
+                .map(|(account, _slot)| account);
+            let curr_account = accounts.account(index, |account| {
+                (account.lamports() != 0).then(|| account.take_account())
+            });
+            if prev_account.is_none() && curr_account.is_none() {
+                // the account was ephemeral; skip it
+            } else {
+                // the account was modified; enqueue this update
+                async_progress.spawn(
+                    thread_pool_for_hashing_accounts,
+                    AccountsLtHashUpdate {
+                        address: *address,
+                        prev_account,
+                        curr_account,
+                    },
+                );
+            }
+        };
+
+        if let Some(thread_pool_for_loading_accounts) = thread_pool_for_loading_accounts {
+            // The previous version of accounts must be loaded before subsequent account
+            // modifications occur, so ThreadPool::spawn() canot be used here.
+            thread_pool_for_loading_accounts.install(|| {
+                (0..accounts.len())
+                    .into_par_iter()
+                    .for_each(load_then_enqueue);
+            });
+        } else {
+            (0..accounts.len()).for_each(load_then_enqueue);
+        }
     }
 
     /// Updates the accounts lt hash.
@@ -245,14 +344,13 @@ fn seen_accounts_freelist() -> &'static HashSetFreelist<Pubkey> {
 /// Freelist of containers, to avoid repeat allocations/deallocations.
 #[derive(Debug)]
 struct HashSetFreelist<T> {
-    list: ArrayQueue<ahash::HashSet<T>>,
+    /// the maximum number of containers this freelist will hold
+    max_containers: usize,
 
     /// the maximum capacity, in elements, this freelist will hold
     max_capacity: Option<usize>,
 
-    // stats
-    num_containers: AtomicUsize,
-    total_capacity: AtomicUsize,
+    inner: Mutex<HashSetFreelistInner<T>>,
 }
 
 impl<T> HashSetFreelist<T> {
@@ -268,10 +366,12 @@ impl<T> HashSetFreelist<T> {
     fn new(max_containers: usize, max_bytes: Option<usize>) -> Self {
         let max_capacity = max_bytes.map(|max_bytes| max_bytes / size_of::<T>());
         Self {
-            list: ArrayQueue::new(max_containers),
+            max_containers,
             max_capacity,
-            num_containers: AtomicUsize::new(0),
-            total_capacity: AtomicUsize::new(0),
+            inner: Mutex::new(HashSetFreelistInner {
+                list: Vec::with_capacity(max_containers),
+                total_capacity: 0,
+            }),
         }
     }
 
@@ -284,53 +384,67 @@ impl<T> HashSetFreelist<T> {
         // Else, check if pushing the container would exceed the max capacity of the freelist.
         // If so, also do not put it back into the freelist.
         let capacity = container.capacity();
-        if capacity != 0
-            && self.max_capacity.is_none_or(|max_capacity| {
-                // only check the `total_capacity` atomic if a max capacity is set
-                if let Some(new_total_capacity) = self
-                    .total_capacity
-                    .load(Ordering::Relaxed)
-                    .checked_add(capacity)
-                {
-                    new_total_capacity <= max_capacity
-                } else {
-                    // if the total capacity would overflow, do not push
-                    false
-                }
-            })
-        {
-            container.clear();
-            let result = self.list.push(container);
-            if result.is_ok() {
-                // pushing the container may fail if the freelist is full,
-                // so only update the stats once we know push succeeded
-                self.num_containers.fetch_add(1, Ordering::Relaxed);
-                self.total_capacity.fetch_add(capacity, Ordering::Relaxed);
-            }
+        if capacity == 0 {
+            return;
         }
+
+        // container must be empty to be reused, so do it here outside of the lock
+        container.clear();
+
+        let mut inner = self.inner.lock().unwrap();
+
+        if inner.list.len() >= self.max_containers {
+            // the num containers would exceed the max, do not push
+            return;
+        }
+
+        let Some(new_total_capacity) = inner.total_capacity.checked_add(capacity) else {
+            // the new total capacity would overflow, do not push
+            return;
+        };
+
+        let max_capacity = self.max_capacity.unwrap_or(usize::MAX);
+        if new_total_capacity > max_capacity {
+            // the new total capacity would exceed the max, do not push
+            return;
+        }
+
+        inner.list.push(container);
+        inner.total_capacity = new_total_capacity;
     }
 
     /// Pops a container off the freelist and returns it.
     ///
     /// The returned container will always be empty.
     fn try_pop(&self) -> Option<ahash::HashSet<T>> {
-        let container = self.list.pop()?;
+        let mut inner = self.inner.lock().unwrap();
+        let container = inner.list.pop()?;
         assert!(container.is_empty());
-        self.num_containers.fetch_sub(1, Ordering::Relaxed);
-        self.total_capacity
-            .fetch_sub(container.capacity(), Ordering::Relaxed);
+        inner.total_capacity -= container.capacity();
         Some(container)
     }
 
     /// Returns a snapshot of the freelist's stats.
     fn stats(&self) -> FreelistStats {
-        let capacity_elems = self.total_capacity.load(Ordering::Relaxed);
+        let inner = self.inner.lock().unwrap();
+        let num_containers = inner.list.len();
+        let capacity_elems = inner.total_capacity;
+        drop(inner);
         FreelistStats {
-            num_containers: self.num_containers.load(Ordering::Relaxed),
+            num_containers,
             capacity_elems,
-            capacity_bytes: capacity_elems * size_of::<T>(),
+            capacity_bytes: capacity_elems.saturating_mul(size_of::<T>()),
         }
     }
+}
+
+/// The mutable state of a [`HashSetFreelist`], guarded by a single lock.
+#[derive(Debug)]
+struct HashSetFreelistInner<T> {
+    /// the containers available for reuse
+    list: Vec<ahash::HashSet<T>>,
+    /// the capacity, in elements, across all the containers in the freelist
+    total_capacity: usize,
 }
 
 /// A snapshot of a freelist's stats.
@@ -368,6 +482,7 @@ mod tests {
         },
         agave_feature_set::FeatureSet,
         agave_snapshots::snapshot_config::SnapshotConfig,
+        ahash::HashSetExt as _,
         solana_accounts_db::{
             accounts_db::{ACCOUNTS_DB_CONFIG_FOR_TESTING, AccountsDbConfig},
             accounts_index::{ACCOUNTS_INDEX_CONFIG_FOR_TESTING, AccountsIndexConfig, IndexLimit},
@@ -382,7 +497,12 @@ mod tests {
         solana_pubkey::{self as pubkey, Pubkey},
         solana_rent::Rent,
         solana_signer::Signer as _,
-        std::{cmp, iter, str::FromStr as _, sync::Arc},
+        std::{
+            cmp, iter,
+            str::FromStr as _,
+            sync::{Arc, Barrier},
+            thread,
+        },
         tempfile::TempDir,
         test_case::{test_case, test_matrix},
     };
@@ -845,10 +965,38 @@ mod tests {
         assert_eq!(roundtrip_bank, *bank);
     }
 
+    /// Ensure enqueue_off_chain_accounts_lt_hash_updates() catches duplicates in debug mode.
+    #[should_panic(expected = "duplicate accounts were enqueued for hashing")]
+    #[test_case(Features::None; "no features")]
+    #[test_case(Features::All; "all features")]
+    fn test_enqueue_off_chain_accounts_lt_hash_updates_catches_duplicates(features: Features) {
+        use rand::seq::SliceRandom as _;
+        let (genesis_config, _) = genesis_config_with(features);
+        let bank = Bank::new_for_tests(&genesis_config);
+
+        let pubkey1 = pubkey::new_rand();
+        let pubkey2 = pubkey::new_rand();
+        let pubkey3 = pubkey::new_rand();
+
+        let mut accounts = [
+            // one version of pubkey1
+            (&pubkey1, &AccountSharedData::new(11, 0, &Pubkey::default())),
+            // two versions of pubkey2
+            (&pubkey2, &AccountSharedData::new(21, 0, &Pubkey::default())),
+            (&pubkey2, &AccountSharedData::new(22, 0, &Pubkey::default())),
+            // three versions of pubkey3
+            (&pubkey3, &AccountSharedData::new(31, 0, &Pubkey::default())),
+            (&pubkey3, &AccountSharedData::new(32, 0, &Pubkey::default())),
+            (&pubkey3, &AccountSharedData::new(33, 0, &Pubkey::default())),
+        ];
+        accounts.shuffle(&mut rand::rng());
+
+        bank.store_accounts((bank.slot(), accounts.as_slice()), None);
+    }
+
     /// Ensure freelist respects max size.
     #[test]
     fn test_freelist_max_capacity() {
-        use ahash::HashSetExt as _;
         type Container = ahash::HashSet<u64>;
 
         // This test uses a hashbrown container, which has some special power-of-two sizing plus
@@ -889,5 +1037,40 @@ mod tests {
             stats2.capacity_bytes,
             max_bytes + container_capacity * size_of::<u64>(),
         );
+    }
+
+    /// Ensure concurrent pushes do not exceed the freelist's max capacity.
+    #[test]
+    fn test_freelist_concurrent_push() {
+        // This test uses a hashbrown container, which has some special power-of-two sizing plus
+        // a buffer.  So create the container first, and use that to derive the max capacity.
+        let container = ahash::HashSet::<u64>::with_capacity(77);
+
+        let num_threads = 16;
+        let barrier = Arc::new(Barrier::new(num_threads));
+        let max_capacity = container.capacity();
+        let max_bytes = max_capacity * size_of::<u64>();
+        let freelist = Arc::new(HashSetFreelist::new(num_threads, Some(max_bytes)));
+
+        let threads: Vec<_> = iter::repeat_with(|| {
+            let container = container.clone();
+            let freelist = Arc::clone(&freelist);
+            let barrier = Arc::clone(&barrier);
+            thread::spawn(move || {
+                barrier.wait();
+                freelist.try_push(container);
+            })
+        })
+        .take(num_threads)
+        .collect();
+
+        for thread in threads {
+            thread.join().unwrap();
+        }
+
+        let stats = freelist.stats();
+        assert_eq!(stats.num_containers, 1);
+        assert_eq!(stats.capacity_elems, max_capacity);
+        assert_eq!(stats.capacity_bytes, max_bytes);
     }
 }

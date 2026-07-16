@@ -59,7 +59,7 @@ use std::{
 };
 pub use {
     config::{CONFIG_FILE, Config},
-    config_input::{ConfigInput, SettingType},
+    config_input::{ConfigInput, SettingType, normalize_to_url_if_moniker},
 };
 
 /// Load a value from a file in YAML format.

@@ -11,10 +11,13 @@ edition = { workspace = true }
 
 [package.metadata.docs.rs]
 targets = ["x86_64-unknown-linux-gnu"]
+all-features = true
+rustdoc-args = ["--cfg=docsrs"]
 
 [features]
 agave-unstable-api = []
 dev-context-only-utils = [
+    "agave-banking-stage-ingress-types/dev-context-only-utils",
     "solana-entry/dev-context-only-utils",
     "solana-ledger/dev-context-only-utils",
     "solana-perf/dev-context-only-utils",
@@ -30,9 +33,11 @@ frozen-abi = [
     "solana-cost-model/frozen-abi",
     "solana-frozen-abi/frozen-abi",
     "solana-gossip/frozen-abi",
+    "solana-hash/frozen-abi",
     "solana-ledger/frozen-abi",
     "solana-packet/frozen-abi",
     "solana-perf/frozen-abi",
+    "solana-pubkey/frozen-abi",
     "solana-runtime/frozen-abi",
     "solana-signature/frozen-abi",
     "solana-svm/frozen-abi",
@@ -88,6 +93,7 @@ serde_bytes = { workspace = true }
 shaq = { workspace = true }
 signal-hook = { workspace = true }
 slab = { workspace = true }
+smallvec = { workspace = true }
 solana-account = { workspace = true }
 solana-accounts-db = { workspace = true }
 solana-address-lookup-table-interface = { workspace = true }

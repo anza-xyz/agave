@@ -1,3 +1,5 @@
+#[cfg(feature = "frozen-abi")]
+use serde::{Deserialize, Serialize};
 #[cfg(test)]
 use {
     crate::repair::standard_repair_handler::StandardRepairHandler,
@@ -11,13 +13,12 @@ use {
             duplicate_repair_status::get_ancestor_hash_repair_sample_size,
             outstanding_requests::OutstandingRequests,
             repair_handler::RepairHandler,
-            repair_service::{OutstandingShredRepairs, REPAIR_MS, RepairInfo, RepairStats},
+            repair_service::{OutstandingShredRepairs, RepairInfo, RepairStats},
             request_response::RequestResponse,
             result::{Error, RepairVerifyError, Result},
         },
     },
     agave_votor_messages::{consensus_message::Block, migration::MigrationStatus},
-    bincode::{Options, serialize},
     crossbeam_channel::{Receiver, RecvTimeoutError},
     lazy_lru::LruCache,
     rand::{
@@ -27,7 +28,6 @@ use {
             weighted::{Error as WeightedError, WeightedIndex},
         },
     },
-    serde::{Deserialize, Serialize},
     solana_clock::Slot,
     solana_gossip::{
         cluster_info::{ClusterInfo, ClusterInfoError},
@@ -47,7 +47,8 @@ use {
     solana_net_utils::{SocketAddrSpace, token_bucket::TokenBucket},
     solana_packet::PACKET_DATA_SIZE,
     solana_perf::packet::{
-        BytesPacket, Packet, PacketBatch, PacketBatchRecycler, PacketRef, RecycledPacketBatch,
+        BytesPacket, Packet, PacketBatch, PacketBatchRecycler, PacketConfig, PacketRef,
+        RecycledPacketBatch, packet_from_data,
     },
     solana_poh::poh_recorder::SharedLeaderState,
     solana_pubkey::{PUBKEY_BYTES, Pubkey},
@@ -64,6 +65,7 @@ use {
         cmp::Reverse,
         collections::{HashMap, HashSet},
         net::{SocketAddr, UdpSocket},
+        ops::Range,
         sync::{
             Arc, RwLock,
             atomic::{AtomicBool, Ordering},
@@ -71,6 +73,7 @@ use {
         thread::{Builder, JoinHandle},
         time::{Duration, Instant},
     },
+    wincode::{SchemaRead, SchemaWrite, serialize},
 };
 
 /// the number of slots to respond with when responding to `Orphan` requests
@@ -94,7 +97,7 @@ pub const MAX_ANCESTOR_RESPONSES: usize =
 const REPAIR_PING_TOKEN_SIZE: usize = HASH_BYTES;
 pub const REPAIR_PING_CACHE_CAPACITY: usize = 65536;
 pub const REPAIR_PING_CACHE_TTL: Duration = Duration::from_secs(1280);
-const REPAIR_PING_CACHE_RATE_LIMIT_DELAY: Duration = Duration::from_secs(2);
+const REPAIR_PING_CACHE_OUTSTANDING_PING_TIMEOUT_MS: Range<u64> = 1000..2000;
 pub(crate) const REPAIR_RESPONSE_SERIALIZED_PING_BYTES: usize =
     4 /*enum discriminator*/ + PUBKEY_BYTES + REPAIR_PING_TOKEN_SIZE + SIGNATURE_BYTES;
 const SIGNED_REPAIR_TIME_WINDOW: Duration = Duration::from_secs(60 * 10); // 10 min
@@ -102,7 +105,7 @@ const SIGNED_REPAIR_TIME_WINDOW: Duration = Duration::from_secs(60 * 10); // 10 
 #[cfg(test)]
 static_assertions::const_assert_eq!(MAX_ANCESTOR_RESPONSES, 30);
 
-#[derive(Serialize, Deserialize, Debug, Clone, Copy, Hash, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, Hash, PartialEq, Eq)]
 pub enum ShredRepairType {
     /// Requesting `MAX_ORPHAN_REPAIR_RESPONSES ` parent shreds
     Orphan(Slot),
@@ -189,7 +192,16 @@ impl AncestorHashesRepairType {
     }
 }
 
-#[derive(Debug, Deserialize, Serialize)]
+#[cfg_attr(
+    feature = "frozen-abi",
+    derive(StableAbi, StableAbiSample, Deserialize, Serialize, PartialEq),
+    frozen_abi(
+        abi_digest = "DhEfFPRMwZSyPVCX3wqoK3u7LvrWaK6SE7q6uLXSJ5ph",
+        abi_serializer = ["bincode", "wincode"],
+        test_roundtrip = "eq_and_wire",
+    )
+)]
+#[derive(Debug, SchemaRead, SchemaWrite)]
 pub enum AncestorHashesResponse {
     Hashes(Vec<(Slot, Hash)>),
     Ping(Ping),
@@ -235,7 +247,16 @@ impl BlockIdRepairType {
     }
 }
 
-#[derive(Debug, Deserialize, Serialize)]
+#[cfg_attr(
+    feature = "frozen-abi",
+    derive(StableAbi, StableAbiSample, Deserialize, Serialize, PartialEq),
+    frozen_abi(
+        abi_digest = "4UwjM1HevzQRxGkh6L9vXhf1db7y2ioQYTXRUaKZ4iNo",
+        abi_serializer = ["bincode", "wincode"],
+        test_roundtrip = "eq_and_wire",
+    )
+)]
+#[derive(Debug, SchemaRead, SchemaWrite)]
 pub enum BlockIdRepairResponse {
     ParentFecSetCount {
         fec_set_count: u32,
@@ -370,8 +391,11 @@ struct ServeRepairStats {
     err_id_mismatch: usize,
 }
 
-#[cfg_attr(feature = "frozen-abi", derive(AbiExample, StableAbi))]
-#[derive(Debug, Deserialize, Serialize)]
+#[cfg_attr(
+    feature = "frozen-abi",
+    derive(AbiExample, StableAbi, Deserialize, Serialize, PartialEq)
+)]
+#[derive(Debug, SchemaRead, SchemaWrite)]
 pub struct RepairRequestHeader {
     signature: Signature,
     sender: Pubkey,
@@ -422,13 +446,17 @@ type PingCache = ping_pong::PingCache<REPAIR_PING_TOKEN_SIZE>;
 /// The message can then be removed once the feature gate is active and there are no responders.
 #[cfg_attr(
     feature = "frozen-abi",
-    derive(AbiEnumVisitor, AbiExample, StableAbi),
+    derive(
+        AbiEnumVisitor, AbiExample, StableAbi, Deserialize, Serialize, PartialEq,
+    ),
     frozen_abi(
         api_digest = "2j14Ywc3jWmohnXsEuMUQRPLf7JmxAVKvXKeKpYuzg7S",
-        abi_digest = "D5RRQygn3D6ux1TYxeyXdksWD2KGA8PYi315hXP3JJ7c"
+        abi_digest = "D5RRQygn3D6ux1TYxeyXdksWD2KGA8PYi315hXP3JJ7c",
+        abi_serializer = ["bincode", "wincode"],
+        test_roundtrip = "eq_and_wire",
     )
 )]
-#[derive(Debug, Deserialize, Serialize)]
+#[derive(Debug, SchemaRead, SchemaWrite)]
 pub enum RepairProtocol {
     LegacyWindowIndex,
     LegacyHighestWindowIndex,
@@ -545,7 +573,19 @@ fn is_well_formed_repair_request(packet: &PacketRef, stats: &mut ServeRepairStat
     well_formed
 }
 
-#[derive(Debug, Deserialize, Serialize)]
+#[cfg_attr(
+    feature = "frozen-abi",
+    derive(
+        AbiEnumVisitor, AbiExample, StableAbi, StableAbiSample, Deserialize, Serialize, PartialEq,
+    ),
+    frozen_abi(
+        api_digest = "2atc1j4n5MjGtmAYoL157stGow5ajeDtqAyMhwcniy5b",
+        abi_digest = "5qmbs9MjvFrMQ2DYmre88SLLjLLDx3pdEW37cKUEQKMK",
+        abi_serializer = ["bincode", "wincode"],
+        test_roundtrip = "eq_and_wire",
+    )
+)]
+#[derive(Debug, SchemaRead, SchemaWrite)]
 pub(crate) enum RepairResponse {
     Ping(Ping),
 }
@@ -1338,12 +1378,9 @@ impl ServeRepair {
     ) -> JoinHandle<()> {
         const MAX_BYTES_PER_SECOND: u64 = 12_000_000;
 
-        // rate limit delay should be greater than the repair request iteration delay
-        assert!(REPAIR_PING_CACHE_RATE_LIMIT_DELAY > Duration::from_millis(REPAIR_MS));
-
         let mut ping_cache = PingCache::new(
             REPAIR_PING_CACHE_TTL,
-            REPAIR_PING_CACHE_RATE_LIMIT_DELAY,
+            REPAIR_PING_CACHE_OUTSTANDING_PING_TIMEOUT_MS,
             REPAIR_PING_CACHE_CAPACITY,
         );
 
@@ -1466,15 +1503,15 @@ impl ServeRepair {
                 | RepairProtocol::Orphan { .. }
                 | RepairProtocol::WindowIndexForBlockId { .. } => {
                     let ping = RepairResponse::Ping(ping);
-                    Packet::from_data(Some(from_addr), ping).ok()
+                    packet_from_data(Some(from_addr), ping).ok()
                 }
                 RepairProtocol::ParentAndFecSetCount { .. } | RepairProtocol::FecSetRoot { .. } => {
                     let ping = BlockIdRepairResponse::Ping { ping };
-                    Packet::from_data(Some(from_addr), ping).ok()
+                    packet_from_data(Some(from_addr), ping).ok()
                 }
                 RepairProtocol::AncestorHashes { .. } => {
                     let ping = AncestorHashesResponse::Ping(ping);
-                    Packet::from_data(Some(from_addr), ping).ok()
+                    packet_from_data(Some(from_addr), ping).ok()
                 }
                 RepairProtocol::Pong(_) => None,
                 RepairProtocol::LegacyWindowIndex
@@ -1854,7 +1891,9 @@ impl ServeRepair {
             if packet.meta().size != REPAIR_RESPONSE_SERIALIZED_PING_BYTES {
                 continue;
             }
-            if let Ok(RepairResponse::Ping(ping)) = packet.deserialize_slice(..) {
+            if let Some(data) = packet.data(..)
+                && let Ok(RepairResponse::Ping(ping)) = wincode::deserialize(data)
+            {
                 if !ping.verify() {
                     // Do _not_ set `discard` to allow shred processing to attempt to
                     // handle the packet.
@@ -1868,7 +1907,7 @@ impl ServeRepair {
                 packet.meta_mut().set_discard(true);
                 stats.ping_count += 1;
                 let pong = RepairProtocol::Pong(Pong::new(&ping, keypair));
-                if let Ok(pong) = bincode::serialize(&pong) {
+                if let Ok(pong) = wincode::serialize(&pong) {
                     let from_addr = packet.meta().socket_addr();
                     pending_pongs.push((pong, from_addr));
                 }
@@ -1923,15 +1962,11 @@ impl ServeRepair {
 
 pub(crate) fn deserialize_request<T>(
     request: &BytesPacket,
-) -> std::result::Result<T, bincode::Error>
+) -> std::result::Result<T, wincode::ReadError>
 where
-    T: serde::de::DeserializeOwned,
+    T: for<'de> SchemaRead<'de, PacketConfig, Dst = T>,
 {
-    bincode::options()
-        .with_limit(request.buffer().len() as u64)
-        .with_fixint_encoding()
-        .reject_trailing_bytes()
-        .deserialize(request.buffer())
+    wincode::config::deserialize_exact(request.buffer(), PacketConfig::new())
 }
 
 #[cfg(test)]
@@ -1954,7 +1989,9 @@ mod tests {
             },
         },
         solana_net_utils::SocketAddrSpace,
-        solana_perf::packet::{Packet, PacketFlags, PacketRef, deserialize_from_with_limit},
+        solana_perf::packet::{
+            Packet, PacketFlags, PacketRef, RecycledPacketBatch, deserialize_slice_from_packet,
+        },
         solana_pubkey::Pubkey,
         solana_runtime::bank::Bank,
         solana_time_utils::timestamp,
@@ -1978,7 +2015,7 @@ mod tests {
         let keypair = Keypair::new();
         let ping = Ping::new(rng.random(), &keypair);
         let ping = RepairResponse::Ping(ping);
-        let pkt = Packet::from_data(None, ping).unwrap();
+        let pkt = packet_from_data(None, ping).unwrap();
         assert_eq!(pkt.meta().size, REPAIR_RESPONSE_SERIALIZED_PING_BYTES);
     }
 
@@ -1989,7 +2026,7 @@ mod tests {
         let mut pkt = Packet::default();
         shred.copy_to_packet(&mut pkt);
         pkt.meta_mut().size = REPAIR_RESPONSE_SERIALIZED_PING_BYTES;
-        let res = pkt.deserialize_slice::<RepairResponse, _>(..);
+        let res = deserialize_slice_from_packet::<RepairResponse, _>(&pkt, ..);
         if let Ok(RepairResponse::Ping(ping)) = res {
             assert!(!ping.verify());
         } else {
@@ -2004,7 +2041,7 @@ mod tests {
         let from_addr = socketaddr!(Ipv4Addr::LOCALHOST, 1234);
         let mut ping_cache = PingCache::new(
             REPAIR_PING_CACHE_TTL,
-            REPAIR_PING_CACHE_RATE_LIMIT_DELAY,
+            REPAIR_PING_CACHE_OUTSTANDING_PING_TIMEOUT_MS,
             REPAIR_PING_CACHE_CAPACITY,
         );
         let slot = 42;
@@ -2026,7 +2063,8 @@ mod tests {
         let (check, ping_pkt) =
             ServeRepair::check_ping_cache(&mut ping_cache, &request, &from_addr, &identity_keypair);
         assert!(!check);
-        let response: BlockIdRepairResponse = ping_pkt.unwrap().deserialize_slice(..).unwrap();
+        let response: BlockIdRepairResponse =
+            deserialize_slice_from_packet(&ping_pkt.unwrap(), ..).unwrap();
         match response {
             BlockIdRepairResponse::Ping { ping } => assert!(ping.verify()),
             response => panic!("Expected Ping challenge, got {response:?}"),
@@ -2065,7 +2103,7 @@ mod tests {
         let ping = Ping::new(rng.random(), &keypair);
         let pong = Pong::new(&ping, &keypair);
         let request = RepairProtocol::Pong(pong);
-        let mut pkt = Packet::from_data(None, request).unwrap();
+        let mut pkt = packet_from_data(None, request).unwrap();
         let mut batch = vec![make_remote_request(&pkt)];
         let mut stats = ServeRepairStats::default();
         let num_well_formed = discard_malformed_repair_requests(&mut batch, &mut stats);
@@ -2082,7 +2120,7 @@ mod tests {
             slot: 123,
             shred_index: 456,
         };
-        let mut pkt = Packet::from_data(None, request).unwrap();
+        let mut pkt = packet_from_data(None, request).unwrap();
         let mut batch = vec![make_remote_request(&pkt)];
         let mut stats = ServeRepairStats::default();
         let num_well_formed = discard_malformed_repair_requests(&mut batch, &mut stats);
@@ -2098,7 +2136,7 @@ mod tests {
             header: repair_request_header_for_tests(),
             slot: 123,
         };
-        let mut pkt = Packet::from_data(None, request).unwrap();
+        let mut pkt = packet_from_data(None, request).unwrap();
         let mut batch = vec![make_remote_request(&pkt)];
         let mut stats = ServeRepairStats::default();
         let num_well_formed = discard_malformed_repair_requests(&mut batch, &mut stats);
@@ -2114,7 +2152,7 @@ mod tests {
             header: repair_request_header_for_tests(),
             slot: 262_547_696,
         };
-        let mut pkt = Packet::from_data(None, request).unwrap();
+        let mut pkt = packet_from_data(None, request).unwrap();
         let mut batch = vec![make_remote_request(&pkt)];
         let mut stats = ServeRepairStats::default();
         let num_well_formed = discard_malformed_repair_requests(&mut batch, &mut stats);
@@ -2153,8 +2191,7 @@ mod tests {
             .unwrap();
 
         let mut cursor = Cursor::new(&rsp[..]);
-        let deserialized_request: RepairProtocol =
-            deserialize_from_with_limit(&mut cursor).unwrap();
+        let deserialized_request: RepairProtocol = wincode::deserialize_from(&mut cursor).unwrap();
         assert_eq!(cursor.position(), rsp.len() as u64);
         if let RepairProtocol::Orphan { header, slot } = deserialized_request {
             assert_eq!(slot, 123);
@@ -2168,7 +2205,7 @@ mod tests {
                     .verify(keypair.pubkey().as_ref(), &signed_data)
             );
         } else {
-            panic!("unexpected request type {:?}", &deserialized_request);
+            panic!("unexpected request type {deserialized_request:?}");
         }
     }
 
@@ -2194,8 +2231,7 @@ mod tests {
             .ancestor_repair_request_bytes(&keypair, &repair_peer_id, slot, nonce)
             .unwrap();
         let mut cursor = Cursor::new(&request_bytes[..]);
-        let deserialized_request: RepairProtocol =
-            deserialize_from_with_limit(&mut cursor).unwrap();
+        let deserialized_request: RepairProtocol = wincode::deserialize_from(&mut cursor).unwrap();
         assert_eq!(cursor.position(), request_bytes.len() as u64);
         if let RepairProtocol::AncestorHashes {
             header,
@@ -2213,7 +2249,7 @@ mod tests {
                     .verify(keypair.pubkey().as_ref(), &signed_data)
             );
         } else {
-            panic!("unexpected request type {:?}", &deserialized_request);
+            panic!("unexpected request type {deserialized_request:?}");
         }
     }
 
@@ -2247,8 +2283,7 @@ mod tests {
             .unwrap();
 
         let mut cursor = Cursor::new(&request_bytes[..]);
-        let deserialized_request: RepairProtocol =
-            deserialize_from_with_limit(&mut cursor).unwrap();
+        let deserialized_request: RepairProtocol = wincode::deserialize_from(&mut cursor).unwrap();
         assert_eq!(cursor.position(), request_bytes.len() as u64);
         if let RepairProtocol::WindowIndex {
             header,
@@ -2268,7 +2303,7 @@ mod tests {
                     .verify(keypair.pubkey().as_ref(), &signed_data)
             );
         } else {
-            panic!("unexpected request type {:?}", &deserialized_request);
+            panic!("unexpected request type {deserialized_request:?}");
         }
 
         let request = ShredRepairType::HighestShred(slot, shred_index);
@@ -2283,8 +2318,7 @@ mod tests {
             .unwrap();
 
         let mut cursor = Cursor::new(&request_bytes[..]);
-        let deserialized_request: RepairProtocol =
-            deserialize_from_with_limit(&mut cursor).unwrap();
+        let deserialized_request: RepairProtocol = wincode::deserialize_from(&mut cursor).unwrap();
         assert_eq!(cursor.position(), request_bytes.len() as u64);
         if let RepairProtocol::HighestWindowIndex {
             header,
@@ -2304,7 +2338,7 @@ mod tests {
                     .verify(keypair.pubkey().as_ref(), &signed_data)
             );
         } else {
-            panic!("unexpected request type {:?}", &deserialized_request);
+            panic!("unexpected request type {deserialized_request:?}");
         }
     }
 
@@ -2333,11 +2367,11 @@ mod tests {
             );
             let slot = 239847;
             let request = RepairProtocol::Orphan { header, slot };
-            let mut packet = Packet::from_data(None, request).unwrap();
+            let mut packet = packet_from_data(None, request).unwrap();
             sign_packet(&mut packet, &my_keypair);
             packet
         };
-        let request: RepairProtocol = packet.deserialize_slice(..).unwrap();
+        let request: RepairProtocol = deserialize_slice_from_packet(&packet, ..).unwrap();
         assert_matches!(
             ServeRepair::verify_signed_packet(
                 &other_keypair.pubkey(),
@@ -2357,11 +2391,11 @@ mod tests {
             );
             let slot = 239847;
             let request = RepairProtocol::Orphan { header, slot };
-            let mut packet = Packet::from_data(None, request).unwrap();
+            let mut packet = packet_from_data(None, request).unwrap();
             sign_packet(&mut packet, &my_keypair);
             packet
         };
-        let request: RepairProtocol = packet.deserialize_slice(..).unwrap();
+        let request: RepairProtocol = deserialize_slice_from_packet(&packet, ..).unwrap();
         assert_matches!(
             ServeRepair::verify_signed_packet(
                 &my_keypair.pubkey(),
@@ -2383,11 +2417,11 @@ mod tests {
             );
             let slot = 239847;
             let request = RepairProtocol::Orphan { header, slot };
-            let mut packet = Packet::from_data(None, request).unwrap();
+            let mut packet = packet_from_data(None, request).unwrap();
             sign_packet(&mut packet, &my_keypair);
             packet
         };
-        let request: RepairProtocol = packet.deserialize_slice(..).unwrap();
+        let request: RepairProtocol = deserialize_slice_from_packet(&packet, ..).unwrap();
         assert_matches!(
             ServeRepair::verify_signed_packet(
                 &other_keypair.pubkey(),
@@ -2407,11 +2441,11 @@ mod tests {
             );
             let slot = 239847;
             let request = RepairProtocol::Orphan { header, slot };
-            let mut packet = Packet::from_data(None, request).unwrap();
+            let mut packet = packet_from_data(None, request).unwrap();
             sign_packet(&mut packet, &other_keypair);
             packet
         };
-        let request: RepairProtocol = packet.deserialize_slice(..).unwrap();
+        let request: RepairProtocol = deserialize_slice_from_packet(&packet, ..).unwrap();
         assert_matches!(
             ServeRepair::verify_signed_packet(
                 &other_keypair.pubkey(),
@@ -2506,7 +2540,7 @@ mod tests {
         shreds.truncate(1);
 
         blockstore
-            .insert_shreds(shreds, None, false)
+            .insert_shreds(shreds, false)
             .expect("Expect successful ledger write");
 
         let mut rv = handler
@@ -2669,7 +2703,7 @@ mod tests {
         let (shreds, _) = make_many_slot_entries(slot, num_slots, 5);
 
         blockstore
-            .insert_shreds(shreds, None, false)
+            .insert_shreds(shreds, false)
             .expect("Expect successful ledger write");
 
         // We don't have slot `slot + num_slots`, so we don't know how to service this request
@@ -2725,7 +2759,7 @@ mod tests {
         // covers packet size check in repair_response_packet_from_bytes.
         shreds.retain(|shred| shred.slot() != 1);
         blockstore
-            .insert_shreds(shreds, None, false)
+            .insert_shreds(shreds, false)
             .expect("Expect successful ledger write");
         let nonce = 42;
         // Make sure repair response is corrupted
@@ -2760,9 +2794,12 @@ mod tests {
     #[test]
     fn test_run_ancestor_hashes() {
         fn deserialize_ancestor_hashes_response(packet: PacketRef) -> AncestorHashesResponse {
-            packet
-                .deserialize_slice(..packet.meta().size - SIZE_OF_NONCE)
-                .unwrap()
+            wincode::deserialize(
+                packet
+                    .data(..(packet.meta().size - SIZE_OF_NONCE))
+                    .unwrap_or_default(),
+            )
+            .unwrap()
         }
 
         agave_logger::setup();
@@ -2779,7 +2816,7 @@ mod tests {
         let (shreds, _) = make_many_slot_entries(slot, num_slots, 5);
 
         blockstore
-            .insert_shreds(shreds, None, false)
+            .insert_shreds(shreds, false)
             .expect("Expect successful ledger write");
 
         // We don't have slot `slot + num_slots`, so we return empty
@@ -2795,7 +2832,7 @@ mod tests {
                 assert!(hashes.is_empty());
             }
             _ => {
-                panic!("unexpected response: {:?}", &ancestor_hashes_response);
+                panic!("unexpected response: {ancestor_hashes_response:?}");
             }
         }
 
@@ -2812,7 +2849,7 @@ mod tests {
                 assert!(hashes.is_empty());
             }
             _ => {
-                panic!("unexpected response: {:?}", &ancestor_hashes_response);
+                panic!("unexpected response: {ancestor_hashes_response:?}");
             }
         }
 
@@ -2836,7 +2873,7 @@ mod tests {
                 assert_eq!(hashes, expected_ancestors);
             }
             _ => {
-                panic!("unexpected response: {:?}", &ancestor_hashes_response);
+                panic!("unexpected response: {ancestor_hashes_response:?}");
             }
         }
     }
@@ -3176,11 +3213,11 @@ mod tests {
         assert!(!repair.verify_response(&AncestorHashesResponse::Hashes(response)));
     }
 
-    // A second check() within REPAIR_PING_CACHE_RATE_LIMIT_DELAY must not generate
+    // A second check() within REPAIR_PING_CACHE_OUTSTANDING_PING_TIMEOUT must not generate
     // a new ping. If it did, it would overwrite the stored token and invalidate the Pong,
     // making Ping fail for no reason.
     #[test]
-    fn test_repair_no_ping_overwrite_within_rate_limit_delay() {
+    fn test_repair_no_ping_overwrite_while_already_probing() {
         let mut rng = rand::rng();
         let this_node = Keypair::new();
         let remote_socket = SocketAddr::V4(SocketAddrV4::new(Ipv4Addr::LOCALHOST, 8001));
@@ -3188,7 +3225,7 @@ mod tests {
         let remote_node = (remote_keypair.pubkey(), remote_socket);
         let mut cache = PingCache::new(
             REPAIR_PING_CACHE_TTL,
-            REPAIR_PING_CACHE_RATE_LIMIT_DELAY,
+            REPAIR_PING_CACHE_OUTSTANDING_PING_TIMEOUT_MS,
             REPAIR_PING_CACHE_CAPACITY,
         );
         let now = Instant::now();
@@ -3196,13 +3233,13 @@ mod tests {
         let (_, ping1) = cache.check(&mut rng, &this_node, now, remote_node);
         let ping1 = ping1.expect("should generate ping for unknown node");
 
-        // Second check within REPAIR_PING_CACHE_RATE_LIMIT_DELAY must not generate
-        // a new ping — that would overwrite the stored hash and invalidate the in-flight pong.
-        let within_delay = now + REPAIR_PING_CACHE_RATE_LIMIT_DELAY - Duration::from_millis(1);
+        // Use the minimum possible expiry minus 1ms — guaranteed to be before any expiry.
+        let within_delay =
+            now + Duration::from_millis(REPAIR_PING_CACHE_OUTSTANDING_PING_TIMEOUT_MS.start - 1);
         let (_, ping2) = cache.check(&mut rng, &this_node, within_delay, remote_node);
         assert!(
             ping2.is_none(),
-            "must not generate a second ping within REPAIR_PING_CACHE_RATE_LIMIT_DELAY"
+            "must not generate a second ping within REPAIR_PING_CACHE_OUTSTANDING_PING_TIMEOUT"
         );
 
         // Pong for ping1 must still be valid — token was not overwritten.
