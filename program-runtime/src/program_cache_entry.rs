@@ -91,8 +91,9 @@ impl From<ProgramCacheEntryOwner> for Pubkey {
     - Loaded => FailedVerification in Bank::_new_from_parent
     - FailedVerification => Loaded in Bank::_new_from_parent
 
-    Through pruning (when on orphan fork or overshadowed on the rooted fork):
-    - Closed / Unloaded / Loaded / Builtin => Empty in ProgramCache::prune
+    Through pruning:
+    - Closed / Unloaded / Loaded / Builtin => Empty in ProgramCache::prune (when on orphan fork or overshadowed on the rooted fork)
+    - FailedVerification / Unloaded / Loaded => Unloaded in ProgramCache::prune (when on outdated program runtime environment)
 */
 
 /// Actual payload of [ProgramCacheEntry].

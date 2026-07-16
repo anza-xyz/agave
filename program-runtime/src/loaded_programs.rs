@@ -541,21 +541,47 @@ impl<FG: ForkGraph> ProgramCache<FG> {
                                 false
                             }
                         })
-                        .filter(|entry| {
-                            // Remove outdated environment of previous feature set
-                            if let Some(new_environment) = new_environment.as_ref()
-                                && !Self::matches_environment(entry, new_environment)
-                            {
-                                self.stats
-                                    .prunes_environment
-                                    .fetch_add(1, Ordering::Relaxed);
-                                return false;
-                            }
-                            true
-                        })
                         .cloned()
                         .collect();
                     second_level.reverse();
+                    // Remove or adjust entries with outdated environment of previous feature set
+                    if let Some(new_environment) = new_environment.as_ref() {
+                        let mut index_in_second_level = 0;
+                        while let Some(entry) = second_level.get(index_in_second_level) {
+                            if !Self::matches_environment(entry, new_environment) {
+                                // second_level is sorted by deployment_slot first,
+                                // thus if the neighbors have a different deployment_slot
+                                // then no other entry with the same deployment_slot exists.
+                                let other_entry_with_same_deployment_slot_exists =
+                                    (index_in_second_level > 0
+                                        && second_level
+                                            .get(index_in_second_level.saturating_sub(1))
+                                            .map(|other_entry| {
+                                                other_entry.deployment_slot == entry.deployment_slot
+                                            })
+                                            .unwrap_or(false))
+                                        || second_level
+                                            .get(index_in_second_level.saturating_add(1))
+                                            .map(|other_entry| {
+                                                other_entry.deployment_slot == entry.deployment_slot
+                                            })
+                                            .unwrap_or(false);
+                                if other_entry_with_same_deployment_slot_exists {
+                                    self.stats
+                                        .prunes_environment
+                                        .fetch_add(1, Ordering::Relaxed);
+                                    second_level.remove(index_in_second_level);
+                                    continue; // Don't increment index_in_second_level
+                                } else if let Some(unloaded_entry) = entry
+                                    .to_unloaded(ProgramRuntimeEnvironment::clone(new_environment))
+                                    && let Some(entry) = second_level.get_mut(index_in_second_level)
+                                {
+                                    *entry = Arc::new(unloaded_entry);
+                                }
+                            }
+                            index_in_second_level = index_in_second_level.saturating_add(1);
+                        }
+                    }
                 }
             }
         }
@@ -1734,32 +1760,24 @@ pub(crate) mod tests {
     }
 
     #[test]
-    fn test_prune_different_env() {
+    fn test_prune_with_two_environments_before_epoch_boundary() {
         let mut cache = ProgramCache::<TestForkGraph>::new(0);
         let env = get_mock_program_runtime_environment();
-
+        let new_env = ProgramRuntimeEnvironment::from(BuiltinProgram::new_mock());
         let fork_graph = Arc::new(RwLock::new(TestForkGraph {
             relation: BlockRelation::Ancestor,
         }));
-
         cache.set_fork_graph(Arc::downgrade(&fork_graph));
 
         let program1 = Pubkey::new_unique();
         cache.assign_program(&env, program1, 10, new_test_entry(10, 10));
-        let new_env = ProgramRuntimeEnvironment::from(BuiltinProgram::new_mock());
-        let upcoming_environment = Some(new_env.clone());
         let updated_program = Arc::new(ProgramCacheEntry {
             program: new_loaded_entry(new_env.clone()),
             deployment_slot: 20,
             effective_slot: 20,
             ..Default::default()
         });
-        cache.assign_program(
-            &env,
-            program1,
-            updated_program.deployment_slot,
-            updated_program.clone(),
-        );
+        cache.assign_program(&env, program1, 20, updated_program.clone());
 
         // Test that there are 2 entries for the program
         assert_eq!(cache.get_slot_versions_for_tests(&program1).len(), 2);
@@ -1768,19 +1786,70 @@ pub(crate) mod tests {
 
         // Test that prune didn't remove the entry, since environments are different.
         assert_eq!(cache.get_slot_versions_for_tests(&program1).len(), 2);
+    }
 
-        cache.prune(22, upcoming_environment, &fork_graph.read().unwrap());
+    #[test]
+    fn test_prune_with_two_environments_after_epoch_boundary() {
+        let mut cache = ProgramCache::<TestForkGraph>::new(0);
+        let env = get_mock_program_runtime_environment();
+        let new_env = ProgramRuntimeEnvironment::from(BuiltinProgram::new_mock());
+        let fork_graph = Arc::new(RwLock::new(TestForkGraph {
+            relation: BlockRelation::Ancestor,
+        }));
+        cache.set_fork_graph(Arc::downgrade(&fork_graph));
+        let program1 = Pubkey::new_unique();
 
-        // Test that prune removed 1 entry, since epoch changed
-        assert_eq!(cache.get_slot_versions_for_tests(&program1).len(), 1);
+        let old_program_old_env = Arc::new(ProgramCacheEntry {
+            program: new_loaded_entry(env.clone()),
+            deployment_slot: 10,
+            effective_slot: 11,
+            ..Default::default()
+        });
+        let old_program_new_env = Arc::new(ProgramCacheEntry {
+            program: new_loaded_entry(new_env.clone()),
+            deployment_slot: 10,
+            effective_slot: 11,
+            ..Default::default()
+        });
+        let new_program_old_env = Arc::new(ProgramCacheEntry {
+            program: new_loaded_entry(env.clone()),
+            deployment_slot: 20,
+            effective_slot: 21,
+            ..Default::default()
+        });
+        let new_program_new_env = Arc::new(ProgramCacheEntry {
+            program: new_loaded_entry(new_env.clone()),
+            deployment_slot: 20,
+            effective_slot: 21,
+            ..Default::default()
+        });
+        cache.assign_program(&env, program1, 10, old_program_old_env.clone());
+        cache.assign_program(&env, program1, 10, old_program_new_env.clone());
+        cache.assign_program(&env, program1, 20, new_program_old_env.clone());
+        let slot_versions = cache.get_slot_versions_for_tests(&program1);
+        assert_eq!(
+            &slot_versions,
+            &[
+                old_program_new_env.clone(),
+                old_program_old_env.clone(),
+                new_program_old_env.clone(),
+            ]
+        );
 
-        let entry = cache
-            .get_slot_versions_for_tests(&program1)
-            .first()
-            .expect("Failed to get the program")
-            .clone();
-        // Test that the correct entry remains in the cache
-        assert_eq!(entry, updated_program);
+        cache.prune(21, Some(new_env.clone()), &fork_graph.read().unwrap());
+        let slot_versions = cache.get_slot_versions_for_tests(&program1);
+        assert_eq!(
+            &slot_versions,
+            &[old_program_new_env.clone(), new_program_new_env.clone()],
+        );
+        assert!(matches!(
+            &slot_versions.first().unwrap().program,
+            ProgramCacheEntryType::Loaded(_)
+        ));
+        assert!(matches!(
+            &slot_versions.get(1).unwrap().program,
+            ProgramCacheEntryType::Unloaded(_)
+        ));
     }
 
     #[derive(Default)]
