@@ -49,6 +49,12 @@ if [[ -n $CI ]]; then
       --env BUILDKITE_JOB_ID
     )
 
+    # Tag by agent/job so post-checkout cleanup only kills its own containers.
+    ARGS+=(
+      --label "buildkite_agent=${BUILDKITE_AGENT_NAME:-unknown}"
+      --label "buildkite_job=${BUILDKITE_JOB_ID:-unknown}"
+    )
+
     # I hate buildkite-esque echo is leaking into this generic shell wrapper.
     # but it's easiest to notify to users, and properly guarded under $BUILDKITE_ env
     # (2 is chosen for third time's the charm).
