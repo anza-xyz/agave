@@ -55,7 +55,9 @@ pub struct BLSPubkeyToRankMap {
     node_pubkey_map: HashMap<Pubkey, BLSPubkeyStakeEntry>,
     /// a mapping from rank to [`BLSPubkeyStakeEntry`].
     sorted_pubkeys: Vec<BLSPubkeyStakeEntry>,
-    /// Total stake delegated to this validator.
+    /// Total stake represented by the rank map. This excludes zero-stake vote accounts,
+    /// accounts with missing or invalid BLS keys, and accounts with duplicate BLS or validator
+    /// identity keys.
     total_stake: NonZero<u64>,
 }
 

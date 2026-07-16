@@ -8,8 +8,10 @@
 //! - We stop rooting or reporting OC/Finalizations
 //!
 //! During the migration starting at slot `s`:
-//! 1) We track blocks which have `GENESIS_VOTE_THRESHOLD`% of stake's vote txs for the parent block.
-//!    The parent block is referred to as reaching super OC.
+//! 1) We track blocks which have `GENESIS_VOTE_THRESHOLD`% of BLS-eligible stake's vote txs for
+//!    the parent block. BLS eligibility is defined by the candidate genesis block `G`'s epoch BLS
+//!    rank map, matching genesis certificate verification. The parent block is referred to as
+//!    reaching super OC.
 //! 2) Notice that all super OC blocks that must be a part of the same fork in presence of
 //!    less than `MIGRATION_MALICIOUS_THRESHOLD` double voters
 //! 3) We find the latest ancestor of the super OC block < `s`, `G` and cast a BLS vote (the genesis vote) via all to all

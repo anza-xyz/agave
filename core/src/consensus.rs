@@ -31,7 +31,10 @@ use {
         blockstore::{self, Blockstore},
     },
     solana_pubkey::Pubkey,
-    solana_runtime::{bank::Bank, bank_forks::BankForks, commitment::VOTE_THRESHOLD_SIZE},
+    solana_runtime::{
+        bank::Bank, bank_forks::BankForks, commitment::VOTE_THRESHOLD_SIZE,
+        epoch_stakes::BLSPubkeyToRankMap,
+    },
     solana_slot_history::{Check, SlotHistory},
     solana_vote::{vote_account::VoteAccountsHashMap, vote_transaction::VoteTransaction},
     solana_vote_program::{
@@ -42,7 +45,6 @@ use {
     std::{
         cmp::Ordering,
         collections::{HashMap, HashSet},
-        num::NonZeroU64,
         ops::Deref,
     },
     thiserror::Error,
@@ -169,7 +171,7 @@ pub(crate) struct ComputedBankState {
     pub fork_stake: Stake,
 
     /// For Alpenglow migration - a block in `N` is super OC when there is at least
-    /// 82% of stake voting for `N` in `N + 1`
+    /// 82% of BLS-eligible stake voting for `N` in `N + 1`.
     pub parent_is_super_oc: bool,
 
     /// Flat list of intervals of lockouts of the form {voter, start, end}
@@ -407,9 +409,9 @@ impl Tower {
     pub(crate) fn collect_vote_lockouts(
         vote_account_pubkey: &Pubkey,
         bank_slot: Slot,
-        parent_slot: Slot,
         root_slot: Slot,
         vote_accounts: &VoteAccountsHashMap,
+        super_oc_context: Option<(Slot, &BLSPubkeyToRankMap)>,
         ancestors: &HashMap<Slot, HashSet<Slot>>,
         get_frozen_hash: impl Fn(Slot) -> Option<Hash>,
         latest_validator_votes_for_frozen_banks: &mut LatestValidatorVotesForFrozenBanks,
@@ -419,7 +421,7 @@ impl Tower {
         vote_slots.reserve(total_slots);
         let mut voted_stakes =
             HashMap::with_capacity_and_hasher(total_slots, ahash::RandomState::default());
-        let mut super_oc_stake = 0;
+        let mut super_oc_stake: Stake = 0;
         let mut total_stake = 0;
 
         let total_votes = vote_accounts
@@ -478,9 +480,17 @@ impl Tower {
                     true,
                 );
 
-                // For migration - a block is super OC there are 82% of votes for slot N in N + 1
-                if last_landed_voted_slot == parent_slot {
-                    super_oc_stake += voted_stake;
+                // For migration - a block is super OC if there are 82% of votes for
+                // slot N in N + 1. Note that we only count BLS eligble stake here,
+                // as that is what's used in the subsequent Genesis vote & certificate.
+                if let Some((parent_slot, rank_map)) = super_oc_context
+                    && last_landed_voted_slot == parent_slot
+                    && let Some(rank) = rank_map.get_rank_for_vote_pubkey(&key)
+                {
+                    let entry = rank_map
+                        .get_pubkey_stake_entry(usize::from(*rank))
+                        .expect("vote pubkey rank must reference a BLS stake entry");
+                    super_oc_stake = super_oc_stake.saturating_add(entry.stake.get());
                 }
             }
 
@@ -542,9 +552,10 @@ impl Tower {
         }
 
         debug_assert!(total_stake > 0);
-        let parent_is_super_oc = bank_slot == parent_slot + 1
-            && Fraction::new(super_oc_stake, NonZeroU64::new(total_stake).unwrap())
-                >= GENESIS_VOTE_THRESHOLD;
+        let parent_is_super_oc = super_oc_context.is_some_and(|(parent_slot, rank_map)| {
+            bank_slot == parent_slot + 1
+                && Fraction::new(super_oc_stake, rank_map.total_stake()) >= GENESIS_VOTE_THRESHOLD
+        });
 
         // TODO: populate_ancestor_voted_stakes only adds zeros. Comment why
         // that is necessary (if so).
@@ -1824,6 +1835,7 @@ pub mod test {
         },
         itertools::Itertools,
         solana_account::{Account, AccountSharedData, ReadableAccount, WritableAccount},
+        solana_bls_signatures::{Keypair as BlsKeypair, PubkeyCompressed as BlsPubkeyCompressed},
         solana_clock::Slot,
         solana_hash::Hash,
         solana_ledger::{blockstore::make_slot_entries, get_tmp_ledger_path_auto_delete},
@@ -1868,6 +1880,45 @@ pub mod test {
                 .expect("serialize state");
                 (
                     solana_pubkey::new_rand(),
+                    (*lamports, VoteAccount::try_from(account).unwrap()),
+                )
+            })
+            .collect()
+    }
+
+    fn gen_stakes_with_bls_eligibility(stake_votes: &[(u64, &[u64], bool)]) -> VoteAccountsHashMap {
+        stake_votes
+            .iter()
+            .map(|(lamports, votes, is_bls_eligible)| {
+                let mut account = AccountSharedData::from(Account {
+                    data: vec![0; VoteStateV4::size_of()],
+                    lamports: *lamports,
+                    owner: solana_vote_program::id(),
+                    ..Account::default()
+                });
+                let bls_pubkey_compressed = is_bls_eligible.then(|| {
+                    let bls_pubkey_compressed: BlsPubkeyCompressed =
+                        (*BlsKeypair::new().public).into();
+                    wincode::serialize(&bls_pubkey_compressed)
+                        .unwrap()
+                        .try_into()
+                        .unwrap()
+                });
+                let mut vote_state = VoteStateHandler::new_v4(VoteStateV4 {
+                    node_pubkey: Pubkey::new_unique(),
+                    bls_pubkey_compressed,
+                    ..VoteStateV4::default()
+                });
+                for slot in *votes {
+                    process_slot_vote_unchecked(&mut vote_state, *slot);
+                }
+                VoteStateV4::serialize(
+                    &VoteStateVersions::new_v4(vote_state.unwrap_v4()),
+                    account.data_as_mut_slice(),
+                )
+                .expect("serialize state");
+                (
+                    Pubkey::new_unique(),
                     (*lamports, VoteAccount::try_from(account).unwrap()),
                 )
             })
@@ -2538,8 +2589,8 @@ pub mod test {
             &Pubkey::default(),
             1,
             0,
-            0,
             &accounts,
+            None,
             &ancestors,
             |_| Some(Hash::default()),
             &mut latest_validator_votes_for_frozen_banks,
@@ -2552,6 +2603,93 @@ pub mod test {
             .collect();
         new_votes.sort();
         assert_eq!(new_votes, account_latest_votes);
+    }
+
+    #[test]
+    fn test_collect_vote_lockouts_super_oc_uses_bls_stake() {
+        let ancestors = HashMap::from([(1, HashSet::from([0])), (0, HashSet::new())]);
+        let check_super_oc = |stake_votes: &[(u64, &[u64], bool)], expected_parent_is_super_oc| {
+            let accounts = gen_stakes_with_bls_eligibility(stake_votes);
+            let rank_map = BLSPubkeyToRankMap::new(&accounts);
+            assert_eq!(rank_map.total_stake().get(), 80);
+
+            let ComputedBankState {
+                total_stake,
+                parent_is_super_oc,
+                ..
+            } = Tower::collect_vote_lockouts(
+                &Pubkey::default(),
+                1,
+                0,
+                &accounts,
+                Some((0, &rank_map)),
+                &ancestors,
+                |_| None,
+                &mut LatestValidatorVotesForFrozenBanks::default(),
+                &mut HashSet::default(),
+            );
+            assert_eq!(total_stake, 100);
+            assert_eq!(parent_is_super_oc, expected_parent_is_super_oc);
+        };
+
+        // 66% of Tower stake is 82.5% of the BLS-eligible stake.
+        check_super_oc(&[(66, &[0], true), (14, &[], true), (20, &[], false)], true);
+        // The keyless 20% must not make 65 / 80 eligible stake reach the threshold.
+        check_super_oc(
+            &[(65, &[0], true), (15, &[], true), (20, &[0], false)],
+            false,
+        );
+    }
+
+    #[test]
+    fn test_collect_vote_lockouts_super_oc_uses_rank_map_weights() {
+        let rank_map_accounts =
+            gen_stakes_with_bls_eligibility(&[(66, &[0], true), (14, &[], true), (20, &[], false)]);
+        let rank_map = BLSPubkeyToRankMap::new(&rank_map_accounts);
+        let eligible_voter = rank_map_accounts
+            .iter()
+            .find_map(|(pubkey, (_, account))| {
+                (rank_map.get_rank_for_vote_pubkey(pubkey).is_some()
+                    && account.vote_state_view().last_voted_slot() == Some(0))
+                .then_some(*pubkey)
+            })
+            .unwrap();
+        let excluded_voter = rank_map_accounts
+            .keys()
+            .find(|pubkey| rank_map.get_rank_for_vote_pubkey(pubkey).is_none())
+            .copied()
+            .unwrap();
+
+        // Model a different Tower stake view while preserving its total stake. The
+        // super-OC numerator must still use the candidate genesis epoch's 66-stake entry.
+        let mut tower_accounts = rank_map_accounts.clone();
+        let reassigned_stake = {
+            let (stake, _) = tower_accounts.get_mut(&eligible_voter).unwrap();
+            let reassigned_stake = stake.saturating_sub(1);
+            *stake = 1;
+            reassigned_stake
+        };
+        let (stake, _) = tower_accounts.get_mut(&excluded_voter).unwrap();
+        *stake = stake.saturating_add(reassigned_stake);
+
+        let ancestors = HashMap::from([(1, HashSet::from([0])), (0, HashSet::new())]);
+        let ComputedBankState {
+            total_stake,
+            parent_is_super_oc,
+            ..
+        } = Tower::collect_vote_lockouts(
+            &Pubkey::default(),
+            1,
+            0,
+            &tower_accounts,
+            Some((0, &rank_map)),
+            &ancestors,
+            |_| None,
+            &mut LatestValidatorVotesForFrozenBanks::default(),
+            &mut HashSet::default(),
+        );
+        assert_eq!(total_stake, 100);
+        assert!(parent_is_super_oc);
     }
 
     #[test]
@@ -2589,9 +2727,9 @@ pub mod test {
         } = Tower::collect_vote_lockouts(
             &Pubkey::default(),
             MAX_LOCKOUT_HISTORY as u64,
-            (MAX_LOCKOUT_HISTORY - 1) as Slot,
             0,
             &accounts,
+            None,
             &ancestors,
             |_| Some(Hash::default()),
             &mut latest_validator_votes_for_frozen_banks,
@@ -2913,9 +3051,9 @@ pub mod test {
         } = Tower::collect_vote_lockouts(
             &Pubkey::default(),
             vote_to_evaluate,
-            vote_to_evaluate - 1,
             0,
             &accounts,
+            None,
             &ancestors,
             |_| None,
             &mut LatestValidatorVotesForFrozenBanks::default(),
@@ -2938,9 +3076,9 @@ pub mod test {
         } = Tower::collect_vote_lockouts(
             &Pubkey::default(),
             vote_to_evaluate,
-            vote_to_evaluate - 1,
             0,
             &accounts,
+            None,
             &ancestors,
             |_| None,
             &mut LatestValidatorVotesForFrozenBanks::default(),

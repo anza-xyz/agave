@@ -4490,12 +4490,34 @@ impl ReplayStage {
                     );
 
                     let root_slot = bank_forks.read().unwrap().root();
+                    let candidate_genesis_slot = migration_status
+                        .qualifies_for_genesis_discovery(bank_slot)
+                        .then(|| {
+                            let migration_slot =
+                                migration_status.migration_slot().expect("In migration");
+                            ancestors
+                                .get(&bank_slot)
+                                .expect(
+                                    "Ancestors must exist, as this cannot be slot 0, and no roots \
+                                     are made during migration",
+                                )
+                                .iter()
+                                .filter(|slot| **slot < migration_slot)
+                                .max()
+                                .copied()
+                                .expect("Genesis slot must exist, no rooting past migration slot")
+                        });
+                    let super_oc_rank_map = candidate_genesis_slot.map(|genesis_slot| {
+                        bank.get_rank_map(genesis_slot)
+                            .expect("BLS rank map must exist during genesis discovery")
+                            .as_ref()
+                    });
                     let computed_bank_state = Tower::collect_vote_lockouts(
                         my_vote_pubkey,
                         bank_slot,
-                        bank.parent_slot(),
                         root_slot,
                         &bank.vote_accounts(),
+                        super_oc_rank_map.map(|rank_map| (bank.parent_slot(), rank_map)),
                         ancestors,
                         |slot| progress.get_hash(slot),
                         latest_validator_votes_for_frozen_banks,
@@ -4518,23 +4540,7 @@ impl ReplayStage {
                         ..
                     } = computed_bank_state;
 
-                    if parent_is_super_oc
-                        && migration_status.qualifies_for_genesis_discovery(bank_slot)
-                    {
-                        let migration_slot =
-                            migration_status.migration_slot().expect("In migration");
-                        // We have a block whose ancestor qualifies to be the genesis block.
-                        let genesis_slot = ancestors
-                            .get(&bank_slot)
-                            .expect(
-                                "Ancestors must exist, as this cannot be slot 0, and no roots are \
-                                 made during migration",
-                            )
-                            .iter()
-                            .filter(|slot| **slot < migration_slot)
-                            .max()
-                            .copied()
-                            .expect("Genesis slot must exist, no rooting past migration slot");
+                    if parent_is_super_oc && let Some(genesis_slot) = candidate_genesis_slot {
                         let genesis_bank = bank_forks
                             .read()
                             .unwrap()

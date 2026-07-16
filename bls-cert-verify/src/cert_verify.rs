@@ -65,7 +65,8 @@ pub enum Error {
 ///
 /// * `cert` - The certificate to verify.
 /// * `max_validators` - The maximum number of validators (used for decoding the bitmap).
-/// * `total_stake` - The total stake for the network for the epoch in which this certificate was produced.
+/// * `total_stake` - The total BLS-eligible stake represented by `rank_map` for the epoch in
+///   which this certificate was produced.
 /// * `rank_map` - A closure that maps a validator's rank (index) to their stake and public key.
 pub fn verify_certificate(
     cert: UnverifiedCertificate,
