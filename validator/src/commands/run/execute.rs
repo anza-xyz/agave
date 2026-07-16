@@ -758,6 +758,15 @@ pub fn execute(
         UseSnapshotArchivesAtStartup
     );
 
+    let skip_transaction_signatures_in_status_cache =
+        !run_args.json_rpc_config.full_api && !snapshot_config.should_generate_snapshots();
+    if skip_transaction_signatures_in_status_cache {
+        info!(
+            "Transaction signatures will not be stored in the status cache because full RPC and \
+             snapshot generation are disabled"
+        );
+    }
+
     let mut validator_config = ValidatorConfig {
         log_config,
         require_tower: matches.is_present("require_tower"),
@@ -774,6 +783,11 @@ pub fn execute(
             .map(|s| Hash::from_str(s).unwrap()),
         expected_shred_version,
         new_hard_forks: hardforks_of(matches, "hard_forks"),
+        runtime_config: RuntimeConfig {
+            log_messages_bytes_limit: value_of(matches, "log_messages_bytes_limit"),
+            skip_transaction_signatures_in_status_cache,
+            ..RuntimeConfig::default()
+        },
         rpc_config: run_args.json_rpc_config,
         on_start_geyser_plugin_config_files,
         geyser_plugin_always_enabled: matches.is_present("geyser_plugin_always_enabled"),
@@ -826,10 +840,6 @@ pub fn execute(
         snapshot_config,
         no_wait_for_vote_to_start_leader: matches.is_present("no_wait_for_vote_to_start_leader"),
         wait_to_vote_slot: None,
-        runtime_config: RuntimeConfig {
-            log_messages_bytes_limit: value_of(matches, "log_messages_bytes_limit"),
-            ..RuntimeConfig::default()
-        },
         staked_nodes_overrides: staked_nodes_overrides.clone(),
         use_snapshot_archives_at_startup,
         ip_echo_server_threads,
