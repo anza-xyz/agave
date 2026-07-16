@@ -7,7 +7,6 @@ use {
         errors::SigVerifyError,
         generated_cert_types::GeneratedCertTypes,
         rewards::rewards_wants_vote,
-        sig_verified_messages::SigVerifiedBatch,
         stats::SigVerifierStats,
     },
     agave_votor_messages::{
@@ -16,6 +15,7 @@ use {
         metric_types::ConsensusMetricsEventSender,
         migration::MigrationStatus,
         reward_certificate::AddVoteMessage,
+        sig_verified_messages::SigVerifiedBatch,
         unverified_vote_message::{DecodedWireConsensusMessage, UnverifiedVoteMessage},
         vote::Vote,
         wire::{VersionedWireConsensusMessage, VotePayloadToSign},

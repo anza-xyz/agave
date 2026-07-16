@@ -2,13 +2,13 @@ use {
     crate::{
         bls_sigverifier::{BAN_TIMEOUT, NUM_SLOTS_FOR_VERIFY},
         errors::SigVerifyCertError,
-        sig_verified_messages::SigVerifiedBatch,
         stats::SigVerifyCertStats,
         utils::send_certs_to_pool,
     },
     agave_bls_cert_verify::cert_verify::Error as BlsCertVerifyError,
     agave_votor_messages::{
         certificate::{Certificate, CertificateType},
+        sig_verified_messages::SigVerifiedBatch,
         unverified_vote_message::UnverifiedCertificate,
     },
     crossbeam_channel::Sender,

@@ -6,9 +6,10 @@ use {
         voting_service::BLSOp,
     },
     agave_votor_messages::{
-        consensus_message::{BLS_KEYPAIR_DERIVE_SEED, ConsensusMessage, VoteMessage},
+        consensus_message::{BLS_KEYPAIR_DERIVE_SEED, VoteMessage},
         metric_types::ConsensusMetricsEventSender,
         reward_certificate::AddVoteMessage,
+        sig_verified_messages::SigVerifiedBatch,
         vote::Vote,
         wire::get_vote_payload_to_sign,
     },
@@ -125,7 +126,7 @@ pub struct VotingContext {
     pub vote_history_storage: Arc<dyn VoteHistoryStorage>,
     // The BLS keypair should always change with authorized_voter_keypairs.
     pub derived_bls_keypairs: HashMap<Pubkey, Arc<BLSKeypair>>,
-    pub own_vote_sender: Sender<ConsensusMessage>,
+    pub own_vote_sender: Sender<SigVerifiedBatch>,
     pub reward_votes_sender: Sender<AddVoteMessage>,
     pub bls_sender: Sender<BLSOp>,
     pub commitment_sender: Sender<CommitmentAggregationData>,
@@ -327,7 +328,7 @@ pub(crate) fn create_and_send_own_vote_message(
 
     context
         .own_vote_sender
-        .send(ConsensusMessage::Vote(vote_msg.clone()))
+        .send(SigVerifiedBatch::Votes(vec![vote_msg.clone()]))
         .map_err(|_| SendError(()))?;
 
     match context.reward_votes_sender.try_send(AddVoteMessage {
@@ -394,7 +395,7 @@ mod tests {
     }
 
     fn setup_voting_context_and_bank_forks(
-        own_vote_sender: Sender<ConsensusMessage>,
+        own_vote_sender: Sender<SigVerifiedBatch>,
         validator_keypairs: &[ValidatorVoteKeypairs],
         my_index: usize,
     ) -> (VotingContext, Receiver<AddVoteMessage>) {
@@ -408,7 +409,7 @@ mod tests {
     }
 
     fn setup_voting_context_and_bank_forks_with_forks(
-        own_vote_sender: Sender<ConsensusMessage>,
+        own_vote_sender: Sender<SigVerifiedBatch>,
         validator_keypairs: &[ValidatorVoteKeypairs],
         my_index: usize,
     ) -> (
@@ -499,7 +500,7 @@ mod tests {
         let received_message = own_vote_receiver.recv().unwrap();
         assert_eq!(
             received_message,
-            ConsensusMessage::Vote(expected_message.clone())
+            SigVerifiedBatch::Votes(vec![expected_message.clone()])
         );
 
         // Check that the reward service receives the vote.

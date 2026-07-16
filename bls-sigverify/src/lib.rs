@@ -6,6 +6,5 @@ pub mod bls_vote_sigverify;
 mod errors;
 pub mod generated_cert_types;
 pub mod rewards;
-pub mod sig_verified_messages;
 pub mod stats;
 mod utils;

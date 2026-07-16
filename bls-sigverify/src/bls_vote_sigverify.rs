@@ -5,7 +5,6 @@ use {
         bls_sigverifier::{BAN_TIMEOUT, NUM_SLOTS_FOR_VERIFY, SigVerifierChannels},
         errors::SigVerifyVoteError,
         rewards::rewards_wants_vote,
-        sig_verified_messages::SigVerifiedBatch,
         stats::SigVerifyVoteStats,
         utils::{
             send_votes_to_metrics, send_votes_to_pool, send_votes_to_repair, send_votes_to_rewards,
@@ -15,6 +14,7 @@ use {
         consensus_message::VoteMessage,
         metric_types::ConsensusMetricsEvent,
         reward_certificate::AddVoteMessage,
+        sig_verified_messages::SigVerifiedBatch,
         unverified_vote_message::UnverifiedVoteMessage,
         vote::Vote,
         wire::{VotePayloadToSign, get_vote_payload_to_sign},
