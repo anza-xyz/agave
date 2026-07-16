@@ -732,6 +732,8 @@ mod tests {
         // that make the storage worth shrinking; no other account keeps it alive
         slot += 1;
         let tombstone_slot = slot;
+        // Keep the latest full snapshot behind tombstone_slot so its tombstone is retained
+        accounts.set_latest_full_snapshot_slot(tombstone_slot - 1);
         accounts.store_for_tests((
             tombstone_slot,
             [
@@ -747,11 +749,9 @@ mod tests {
         accounts.store_for_tests((slot, [(&rewritten_pubkey, &open_account)].as_slice()));
         accounts.add_root_and_flush_write_cache(slot);
 
-        // With the latest full snapshot behind the tombstone's slot, clean reclaims
-        // rewritten_pubkey's tombstone_slot copy and shrink carries the zero-lamport
-        // single-ref account forward as a tombstone: the storage enters minimize holding
-        // nothing else
-        accounts.set_latest_full_snapshot_slot(tombstone_slot - 1);
+        // The flushes above left tombstone_slot's storage holding only the uncovered
+        // tombstone; clean and shrink leave it untouched, so it enters minimize as a
+        // tombstone-only storage
         accounts.clean_accounts_for_tests();
         accounts.shrink_all_slots(false, None);
         assert!(!accounts.contains(&zero_lamport_pubkey));
