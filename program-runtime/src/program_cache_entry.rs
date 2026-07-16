@@ -285,7 +285,7 @@ impl ProgramCacheEntry {
         })
     }
 
-    pub fn to_unloaded(&self) -> Option<Self> {
+    pub fn to_unloaded(&self, environment: ProgramRuntimeEnvironment) -> Option<Self> {
         match &self.program {
             ProgramCacheEntryType::Loaded(_) => {}
             ProgramCacheEntryType::FailedVerification(_)
@@ -297,7 +297,7 @@ impl ProgramCacheEntry {
             }
         }
         Some(Self {
-            program: ProgramCacheEntryType::Unloaded(self.program.get_environment()?.clone()),
+            program: ProgramCacheEntryType::Unloaded(environment),
             account_owner: self.account_owner,
             account_size: self.account_size,
             deployment_slot: self.deployment_slot,

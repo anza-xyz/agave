@@ -908,7 +908,11 @@ impl<FG: ForkGraph> ProgramCache<FG> {
                 // Certain entry types cannot be unloaded, such as tombstones, or already unloaded entries.
                 // For such entries, `to_unloaded()` will return None.
                 // These entry types do not occupy much memory.
-                if let Some(unloaded) = candidate.to_unloaded() {
+                if let Some(unloaded) = candidate
+                    .program
+                    .get_environment()
+                    .and_then(|env| candidate.to_unloaded(ProgramRuntimeEnvironment::clone(env)))
+                {
                     if candidate.stats.uses.load(Ordering::Relaxed) == 1 {
                         self.stats.one_hit_wonders.fetch_add(1, Ordering::Relaxed);
                     }
@@ -1059,7 +1063,11 @@ pub(crate) mod tests {
             current_slot.saturating_add(1),
             ProgramStatistics::default(),
         );
-        let unloaded = Arc::new(loaded.to_unloaded().expect("Failed to unload the program"));
+        let unloaded = Arc::new(
+            loaded
+                .to_unloaded(ProgramRuntimeEnvironment::clone(&env))
+                .expect("Failed to unload the program"),
+        );
         cache.assign_program(&env, key, current_slot, unloaded.clone());
         unloaded
     }
@@ -2164,7 +2172,7 @@ pub(crate) mod tests {
             20,
             Arc::new(
                 new_test_entry(20, 21)
-                    .to_unloaded()
+                    .to_unloaded(ProgramRuntimeEnvironment::clone(&env))
                     .expect("Failed to create unloaded program"),
             ),
         );
@@ -2282,7 +2290,11 @@ pub(crate) mod tests {
                 stats: Arc::default(),
                 latest_access_slot: AtomicU64::default(),
             });
-            assert!(entry.to_unloaded().is_none());
+            assert!(
+                entry
+                    .to_unloaded(ProgramRuntimeEnvironment::clone(&env))
+                    .is_none()
+            );
 
             // Check that unload_program_entry() does nothing for this entry
             let program_id = Pubkey::new_unique();
@@ -2297,7 +2309,9 @@ pub(crate) mod tests {
             ..Default::default()
         };
         let entry = new_test_entry_with_usage(1, 2, stats);
-        let unloaded_entry = entry.to_unloaded().unwrap();
+        let unloaded_entry = entry
+            .to_unloaded(ProgramRuntimeEnvironment::clone(&env))
+            .unwrap();
         assert_eq!(unloaded_entry.deployment_slot, 1);
         assert_eq!(unloaded_entry.effective_slot, 2);
         assert_eq!(unloaded_entry.latest_access_slot.load(Ordering::Relaxed), 1);
