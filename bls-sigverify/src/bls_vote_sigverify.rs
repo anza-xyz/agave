@@ -208,12 +208,9 @@ fn verify_votes(
     banlist: &SimpleQosBanlist,
     thread_pool: &ThreadPool,
 ) -> Vec<VerifiedVotePayload> {
-    // Filter votes too far in the future.
-    if vote_payload_to_sign.slot() > root_bank.slot().saturating_add(NUM_SLOTS_FOR_VERIFY) {
-        stats.too_far_in_future += unverified_votes.len() as u64;
-        return vec![];
-    }
-
+    debug_assert!(
+        vote_payload_to_sign.slot() <= root_bank.slot().saturating_add(NUM_SLOTS_FOR_VERIFY)
+    );
     // Fallback to individual verification
     let ((verified_votes, invalid_remote_pubkeys), time_us) =
         measure_us!(verify_individual_votes(unverified_votes, thread_pool));
