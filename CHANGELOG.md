@@ -27,6 +27,9 @@ Release channels have their own copy of this changelog:
 * `--disable-banking-trace` is now deprecated and a no-op (banking trace is disabled by
   default). The flag is still accepted for backward compatibility.
 #### Changes
+* Validators running without `--full-rpc-api` and with snapshot generation disabled no longer
+  store transaction signature keys in the status cache. Message hashes remain cached for duplicate
+  transaction detection.
 ### SDK
 #### Breaking
 * solana-program-test: syscall getters (e.g. `Rent::get()`, `Clock::get()`) and `solana_sysvar::get_sysvar()` now return
