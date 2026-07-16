@@ -3862,9 +3862,9 @@ dependencies = [
 
 [[package]]
 name = "lru"
-version = "0.18.0"
+version = "0.18.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "8a860605968fce16869fd239cf4237a82f3ac470723415db603b0e8b6c8d4fb9"
+checksum = "0b6180140927ee907000b0aa540091f6ea512ead4447c92b8fc35bc72788a5a6"
 dependencies = [
  "hashbrown 0.17.0",
 ]
@@ -7351,7 +7351,7 @@ dependencies = [
  "itertools 0.14.0",
  "lazy-lru",
  "log",
- "lru 0.18.0",
+ "lru 0.18.1",
  "mockall",
  "num_cpus",
  "num_enum",
@@ -9894,7 +9894,7 @@ dependencies = [
  "futures 0.3.32",
  "futures-util",
  "log",
- "lru 0.18.0",
+ "lru 0.18.1",
  "quinn",
  "rustls",
  "solana-clock",
@@ -10042,7 +10042,7 @@ dependencies = [
  "itertools 0.14.0",
  "lazy-lru",
  "log",
- "lru 0.18.0",
+ "lru 0.18.1",
  "rand 0.9.4",
  "rand_chacha 0.9.0",
  "rayon",
