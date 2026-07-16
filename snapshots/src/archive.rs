@@ -1,7 +1,8 @@
 use {
     crate::{
-        ArchiveFormat, Result, SnapshotArchiveKind, error::ArchiveSnapshotPackageError, paths,
-        snapshot_archive_info::SnapshotArchiveInfo, snapshot_hash::SnapshotHash,
+        ArchiveFormat, Result, SnapshotArchiveKind, error::ArchiveSnapshotPackageError,
+        multiframe::MultiFrameZstdWriter, paths, snapshot_archive_info::SnapshotArchiveInfo,
+        snapshot_hash::SnapshotHash,
     },
     agave_fs::{
         FileSize, buffered_reader::FileBufRead as _, buffered_writer::large_file_buf_writer,
@@ -34,6 +35,10 @@ const INTERLEAVE_TAR_ENTRIES_SMALL_TO_LARGE_RATIO: (usize, usize) = (4, 1);
 const STORAGE_FILE_OPEN_CHUNK_SIZE: usize = 25
     * (INTERLEAVE_TAR_ENTRIES_SMALL_TO_LARGE_RATIO.0
         + INTERLEAVE_TAR_ENTRIES_SMALL_TO_LARGE_RATIO.1);
+
+// Uncompressed bytes per zstd frame. 32 MiB keeps compression loss below ~0.02
+// while giving parallel decompressors enough chunk size.
+const ZSTD_FRAME_SIZE: u32 = 32 * 1024 * 1024;
 
 /// Archives a snapshot into `archive_path`
 pub fn archive_snapshot(
@@ -215,11 +220,15 @@ pub fn archive_snapshot(
 
         match archive_format {
             ArchiveFormat::TarZstd { config } => {
-                let mut encoder =
-                    zstd::stream::Encoder::new(archive_writer, config.compression_level)
-                        .map_err(E::CreateEncoder)?;
+                let mut encoder = MultiFrameZstdWriter::new(
+                    archive_writer,
+                    config.compression_level,
+                    ZSTD_FRAME_SIZE,
+                )
+                .map_err(E::CreateEncoder)?;
                 do_archive_files(&mut encoder)?;
-                encoder.finish().map_err(E::FinishEncoder)?;
+                let mut writer = encoder.finish().map_err(E::FinishEncoder)?;
+                writer.flush().map_err(E::FinishEncoder)?;
             }
             ArchiveFormat::TarLz4 => {
                 let mut encoder = lz4::EncoderBuilder::new()
@@ -227,8 +236,9 @@ pub fn archive_snapshot(
                     .build(archive_writer)
                     .map_err(E::CreateEncoder)?;
                 do_archive_files(&mut encoder)?;
-                let (_output, result) = encoder.finish();
+                let (mut writer, result) = encoder.finish();
                 result.map_err(E::FinishEncoder)?;
+                writer.flush().map_err(E::FinishEncoder)?;
             }
         };
     }

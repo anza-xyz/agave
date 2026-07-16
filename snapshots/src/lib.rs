@@ -5,6 +5,7 @@ mod archive_format;
 pub mod error;
 pub mod hardened_unpack;
 mod kind;
+mod multiframe;
 pub mod paths;
 pub mod snapshot_archive_info;
 pub mod snapshot_config;
