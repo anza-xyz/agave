@@ -313,25 +313,22 @@ impl TransactionViewReceiveAndBuffer {
                     .expect("transaction must exist");
                 let priority_id = TransactionPriorityId::new(priority, transaction_id);
 
-                // When we first receive a transaction, we drop it if a) it looks nonce-like, and
-                // b) there is a higher-priority nonce transaction using the same nonce in the queue,
+                // When we first receive a transaction, we drop it if a) it looks nonce-like, AND
+                // b) there is a higher-priority nonce transaction using the same nonce in the queue
                 // or any in-flight nonce transaction using the same nonce. This means we discard
                 // blockhash transactions structured like nonce transactions; this is acceptable because
                 // they would fail after the earlier nonce transaction is processed, and it allows us to
                 // prefilter without loading from accounts-db.
-                if let Some(nonce_address) = raw_nonce_address
-                    && let Some(existing_nonce_priority_id) =
-                        container.get_nonce_transaction_priority_id(&nonce_address)
-                {
-                    // There is a queued transaction with higher priority, or any in-flight transaction,
-                    // using this nonce account. Drop the new transaction.
-                    if existing_nonce_priority_id.priority >= priority
-                        || !container.is_queued(existing_nonce_priority_id)
-                    {
-                        receiving_stats.num_dropped_on_nonce_dedup += 1;
-                        container.remove_by_id(transaction_id);
-                        continue;
-                    }
+                let drop_incoming_nonce_tx = raw_nonce_address
+                    .and_then(|address| container.get_nonce_transaction_priority_id(&address))
+                    .is_some_and(|existing| {
+                        existing.priority >= priority || !container.is_queued(existing)
+                    });
+
+                if drop_incoming_nonce_tx {
+                    receiving_stats.num_dropped_on_nonce_dedup += 1;
+                    container.remove_by_id(transaction_id);
+                    continue;
                 }
 
                 let transaction = container
@@ -339,14 +336,20 @@ impl TransactionViewReceiveAndBuffer {
                     .expect("transaction must exist");
 
                 // Check blockhash transaction age is ok, or nonce transaction has a valid nonce.
-                // This nonce, not the nonce we got from the raw transaction bytes, will be used for eviction.
-                let verified_nonce_address = match working_bank
+                // Only a fully validated nonce address can be used for priority queue eviction.
+                let validated_nonce_address = match working_bank
                     .check_transaction_without_status_cache(
                         transaction,
                         working_bank.max_processing_age(),
                         &mut error_counters,
                     ) {
-                    Ok(opt) => opt,
+                    // Valid nonce transaction
+                    Ok(Some(nonce_address)) => Some(nonce_address),
+
+                    // Valid blockhash transaction
+                    Ok(None) => None,
+
+                    // Invalid
                     Err(ref err) => {
                         receiving_stats.record_err(err);
                         container.remove_by_id(transaction_id);
@@ -365,10 +368,10 @@ impl TransactionViewReceiveAndBuffer {
                     continue;
                 };
 
-                // Now we know we have a verified, higher-priority nonce transaction than any which
-                // may exist in the priority queue. If there is one, evict it. Regardless, record this
-                // transaction's nonce as in use, if it is a nonce transaction.
-                if let Some(nonce_address) = verified_nonce_address {
+                // Now, if this is a nonce transaction, we know it is validated and higher-priority than any
+                // which may exist in the priority queue. If one is queued, evict it. Regardless, record the
+                // incoming nonce transaction's nonce as in-use.
+                if let Some(nonce_address) = validated_nonce_address {
                     if let Some(existing_nonce_priority_id) =
                         container.get_nonce_transaction_priority_id(&nonce_address)
                     {
@@ -425,7 +428,7 @@ impl TransactionViewReceiveAndBuffer {
         let (priority, cost) =
             calculate_priority_and_cost(working_bank, &view, &transaction_configuration);
 
-        Ok(TransactionState::new(view, max_age, priority, cost, None))
+        Ok(TransactionState::new(view, max_age, priority, cost))
     }
 }
 
@@ -1329,38 +1332,30 @@ mod tests {
     const LOW_FEE: u64 = 1;
     const HIGH_FEE: u64 = 1_000_000;
 
-    // sets up a nonce account in the bank for a true nonce transaction, or returns a recent
-    // blockhash for a pseudo-nonce transaction
+    // sets up a nonce account in the bank for a true nonce transaction
     fn create_nonce_identity(
         bank_forks: &RwLock<BankForks>,
         nonce_authority: &Pubkey,
-        true_nonce: bool,
     ) -> (Pubkey, Hash) {
         let nonce_pubkey = Pubkey::new_unique();
-        if true_nonce {
-            let bank = bank_forks.read().unwrap().root_bank();
-            let nonce_data = nonce::state::Data::new(
-                *nonce_authority,
-                DurableNonce::from_blockhash(&Hash::new_unique()),
-                5_000,
-            );
-            let nonce_account = AccountSharedData::new_data(
-                bank.get_minimum_balance_for_rent_exemption(nonce::state::State::size()),
-                &nonce::versions::Versions::new(nonce::state::State::Initialized(
-                    nonce_data.clone(),
-                )),
-                &system_program::id(),
-            )
-            .unwrap();
-            bank.store_account(&nonce_pubkey, &nonce_account);
-            (nonce_pubkey, nonce_data.blockhash())
-        } else {
-            let blockhash = bank_forks.read().unwrap().root_bank().last_blockhash();
-            (nonce_pubkey, blockhash)
-        }
+        let bank = bank_forks.read().unwrap().root_bank();
+        let nonce_data = nonce::state::Data::new(
+            *nonce_authority,
+            DurableNonce::from_blockhash(&Hash::new_unique()),
+            5_000,
+        );
+        let nonce_account = AccountSharedData::new_data(
+            bank.get_minimum_balance_for_rent_exemption(nonce::state::State::size()),
+            &nonce::versions::Versions::new(nonce::state::State::Initialized(nonce_data.clone())),
+            &system_program::id(),
+        )
+        .unwrap();
+        bank.store_account(&nonce_pubkey, &nonce_account);
+        (nonce_pubkey, nonce_data.blockhash())
     }
 
-    // build a nonce transaction
+    // build a nonce-like transaction, which may be nonce- or blockhash-based, depending
+    // on the value of `lifetime`
     fn create_nonce_transaction(
         fee_payer: &Keypair,
         nonce_pubkey: &Pubkey,
@@ -1376,23 +1371,22 @@ mod tests {
         Transaction::new(&[fee_payer], message, lifetime)
     }
 
-    // adding nonce transactions works normally. different nonces dont conflict
+    // adding nonce transactions works normally. different nonces dont conflict,
+    // removing a nonce transaction removes its nonces-in-use entry
     #[test]
     fn test_receive_and_buffer_nonce_tracked() {
         let (sender, receiver) = bounded(1024);
         let (bank_forks, mint_keypair) = test_bank_forks_with_fee();
         let (mut receive_and_buffer, mut container) =
             setup_transaction_view_receive_and_buffer(receiver, bank_forks.clone());
-        let (nonce_pubkey1, lifetime1) =
-            create_nonce_identity(&bank_forks, &mint_keypair.pubkey(), true);
-        let (nonce_pubkey2, lifetime2) =
-            create_nonce_identity(&bank_forks, &mint_keypair.pubkey(), true);
+        let (nonce_pubkey1, durable1) = create_nonce_identity(&bank_forks, &mint_keypair.pubkey());
+        let (nonce_pubkey2, durable2) = create_nonce_identity(&bank_forks, &mint_keypair.pubkey());
 
         send_transactions(
             &sender,
             &[
-                create_nonce_transaction(&mint_keypair, &nonce_pubkey1, LOW_FEE, lifetime1),
-                create_nonce_transaction(&mint_keypair, &nonce_pubkey2, HIGH_FEE, lifetime2),
+                create_nonce_transaction(&mint_keypair, &nonce_pubkey1, LOW_FEE, durable1),
+                create_nonce_transaction(&mint_keypair, &nonce_pubkey2, HIGH_FEE, durable2),
             ],
         );
 
@@ -1432,20 +1426,17 @@ mod tests {
         verify_container(&mut container, 0);
     }
 
-    // a higher priority incoming nonce transaction evicts the existing
+    // a higher priority incoming nonce transaction evicts the existing transaction,
     // a lower or equal priority incoming nonce transaction is dropped
-    #[test_case((HIGH_FEE, LOW_FEE); "hilo_drop")]
-    #[test_case((HIGH_FEE, HIGH_FEE); "hihi_drop")]
-    #[test_case((LOW_FEE, HIGH_FEE); "lohi_evict")]
-    fn test_receive_and_buffer_nonce_dedup_drop_evict(fees: (u64, u64)) {
+    #[test_case(HIGH_FEE, LOW_FEE; "hilo_drop")]
+    #[test_case(HIGH_FEE, HIGH_FEE; "hihi_drop")]
+    #[test_case(LOW_FEE, HIGH_FEE; "lohi_evict")]
+    fn test_receive_and_buffer_nonce_dedup_drop_evict(old_fee: u64, new_fee: u64) {
         let (sender, receiver) = bounded(1024);
         let (bank_forks, mint_keypair) = test_bank_forks_with_fee();
         let (mut receive_and_buffer, mut container) =
             setup_transaction_view_receive_and_buffer(receiver, bank_forks.clone());
-        let (nonce_pubkey, lifetime) =
-            create_nonce_identity(&bank_forks, &mint_keypair.pubkey(), true);
-
-        let (old_fee, new_fee) = fees;
+        let (nonce_pubkey, durable) = create_nonce_identity(&bank_forks, &mint_keypair.pubkey());
         let new_has_priority = new_fee > old_fee;
 
         send_transactions(
@@ -1454,7 +1445,7 @@ mod tests {
                 &mint_keypair,
                 &nonce_pubkey,
                 old_fee,
-                lifetime,
+                durable,
             )],
         );
         assert_eq!(
@@ -1471,7 +1462,7 @@ mod tests {
                 &mint_keypair,
                 &nonce_pubkey,
                 new_fee,
-                lifetime,
+                durable,
             )],
         );
 
@@ -1512,8 +1503,7 @@ mod tests {
         let (bank_forks, mint_keypair) = test_bank_forks_with_fee();
         let (mut receive_and_buffer, mut container) =
             setup_transaction_view_receive_and_buffer(receiver, bank_forks.clone());
-        let (nonce_pubkey, lifetime) =
-            create_nonce_identity(&bank_forks, &mint_keypair.pubkey(), true);
+        let (nonce_pubkey, durable) = create_nonce_identity(&bank_forks, &mint_keypair.pubkey());
 
         send_transactions(
             &sender,
@@ -1521,7 +1511,7 @@ mod tests {
                 &mint_keypair,
                 &nonce_pubkey,
                 LOW_FEE,
-                lifetime,
+                durable,
             )],
         );
         assert_eq!(
@@ -1545,7 +1535,7 @@ mod tests {
                 &mint_keypair,
                 &nonce_pubkey,
                 HIGH_FEE,
-                lifetime,
+                durable,
             )],
         );
         let stats = receive(&mut receive_and_buffer, &mut container);
@@ -1564,15 +1554,15 @@ mod tests {
         );
     }
 
-    // a higher priority nonce transaction that fails validation does not harm the existing one
+    // a higher priority nonce transaction that fails validation does not evict the existing one,
+    // and does not affect its nonces-in-use entry
     #[test]
     fn test_receive_and_buffer_nonce_dedup_validation_failure() {
         let (sender, receiver) = bounded(1024);
         let (bank_forks, mint_keypair) = test_bank_forks_with_fee();
         let (mut receive_and_buffer, mut container) =
             setup_transaction_view_receive_and_buffer(receiver, bank_forks.clone());
-        let (nonce_pubkey, lifetime) =
-            create_nonce_identity(&bank_forks, &mint_keypair.pubkey(), true);
+        let (nonce_pubkey, durable) = create_nonce_identity(&bank_forks, &mint_keypair.pubkey());
 
         send_transactions(
             &sender,
@@ -1580,7 +1570,7 @@ mod tests {
                 &mint_keypair,
                 &nonce_pubkey,
                 LOW_FEE,
-                lifetime,
+                durable,
             )],
         );
         assert_eq!(
@@ -1607,6 +1597,36 @@ mod tests {
         assert_eq!(stats.num_dropped_on_nonce_dedup, 0);
         assert_eq!(stats.num_buffered, 0);
 
+        let current_nonce_entry = *container
+            .get_nonce_transaction_priority_id(&nonce_pubkey)
+            .unwrap();
+        assert_eq!(prior_nonce_entry, current_nonce_entry);
+        assert!(container.is_queued(&current_nonce_entry));
+
+        // bad authority
+        let bad_authority = Keypair::new();
+        let message = Message::new(
+            &[
+                system_instruction::advance_nonce_account(&nonce_pubkey, &bad_authority.pubkey()),
+                ComputeBudgetInstruction::set_compute_unit_price(HIGH_FEE),
+                system_instruction::transfer(&mint_keypair.pubkey(), &Pubkey::new_unique(), 1),
+            ],
+            Some(&mint_keypair.pubkey()),
+        );
+        let transaction = Transaction::new(&[&mint_keypair, &bad_authority], message, durable);
+        send_transactions(&sender, &[transaction]);
+        let stats = receive(&mut receive_and_buffer, &mut container);
+        assert_eq!(stats.num_dropped_on_age, 1);
+        assert_eq!(stats.num_evicted_on_nonce_dedup, 0);
+        assert_eq!(stats.num_dropped_on_nonce_dedup, 0);
+        assert_eq!(stats.num_buffered, 0);
+
+        let current_nonce_entry = *container
+            .get_nonce_transaction_priority_id(&nonce_pubkey)
+            .unwrap();
+        assert_eq!(prior_nonce_entry, current_nonce_entry);
+        assert!(container.is_queued(&current_nonce_entry));
+
         // bad feepayer
         let bad_payer = Keypair::new();
         let message = Message::new(
@@ -1617,8 +1637,7 @@ mod tests {
             ],
             Some(&bad_payer.pubkey()),
         );
-        let transaction = Transaction::new(&[&bad_payer, &mint_keypair], message, lifetime);
-
+        let transaction = Transaction::new(&[&bad_payer, &mint_keypair], message, durable);
         send_transactions(&sender, &[transaction]);
         let stats = receive(&mut receive_and_buffer, &mut container);
         assert_eq!(stats.num_dropped_on_fee_payer, 1);
@@ -1643,8 +1662,7 @@ mod tests {
         let (mut receive_and_buffer, _container) =
             setup_transaction_view_receive_and_buffer(receiver, bank_forks.clone());
         let mut container = TransactionViewStateContainer::with_capacity(1);
-        let (nonce_pubkey, lifetime) =
-            create_nonce_identity(&bank_forks, &mint_keypair.pubkey(), true);
+        let (nonce_pubkey, durable) = create_nonce_identity(&bank_forks, &mint_keypair.pubkey());
 
         send_transactions(
             &sender,
@@ -1652,7 +1670,7 @@ mod tests {
                 &mint_keypair,
                 &nonce_pubkey,
                 0,
-                lifetime,
+                durable,
             )],
         );
         assert_eq!(
@@ -1665,6 +1683,7 @@ mod tests {
             .cloned()
             .unwrap();
 
+        // the previous txn is 0 priority, so this evicts it, even with 0 priority
         let transaction = transfer(
             &mint_keypair,
             &Pubkey::new_unique(),
@@ -1695,8 +1714,7 @@ mod tests {
         let (bank_forks, mint_keypair) = test_bank_forks_with_fee();
         let (mut receive_and_buffer, mut container) =
             setup_transaction_view_receive_and_buffer(receiver, bank_forks.clone());
-        let (nonce_pubkey, lifetime) =
-            create_nonce_identity(&bank_forks, &mint_keypair.pubkey(), true);
+        let (nonce_pubkey, durable) = create_nonce_identity(&bank_forks, &mint_keypair.pubkey());
         let blockhash = bank_forks.read().unwrap().root_bank().last_blockhash();
 
         send_transactions(
@@ -1725,7 +1743,7 @@ mod tests {
                 &mint_keypair,
                 &nonce_pubkey,
                 LOW_FEE,
-                lifetime,
+                durable,
             )],
         );
         let stats = receive(&mut receive_and_buffer, &mut container);
@@ -1740,47 +1758,16 @@ mod tests {
         verify_container(&mut container, 2);
     }
 
-    // nonce transactions are dropped on invalid authority
-    #[test]
-    fn test_receive_and_buffer_nonce_invalid_authority() {
-        let (sender, receiver) = bounded(1024);
-        let (bank_forks, mint_keypair) = test_bank_forks_with_fee();
-        let (mut receive_and_buffer, mut container) =
-            setup_transaction_view_receive_and_buffer(receiver, bank_forks.clone());
-        let (nonce_pubkey, lifetime) =
-            create_nonce_identity(&bank_forks, &mint_keypair.pubkey(), true);
-
-        send_transactions(
-            &sender,
-            &[create_nonce_transaction(
-                &Keypair::new(),
-                &nonce_pubkey,
-                HIGH_FEE,
-                lifetime,
-            )],
-        );
-        let stats = receive(&mut receive_and_buffer, &mut container);
-        assert_eq!(stats.num_dropped_on_age, 1);
-        assert_eq!(stats.num_buffered, 0);
-        assert!(
-            container
-                .get_nonce_transaction_priority_id(&nonce_pubkey)
-                .is_none()
-        );
-
-        verify_container(&mut container, 0);
-    }
-
-    // pseudo-nonce blockhash transactions never evict real nonce transactions
+    // nonce-like blockhash transactions never evict real nonce transactions
     #[test_case(LOW_FEE, HIGH_FEE; "lohi_coexist")]
     #[test_case(HIGH_FEE, LOW_FEE; "hilo_drop")]
+    #[test_case(HIGH_FEE, HIGH_FEE; "hihi_drop")]
     fn test_receive_and_buffer_pseudo_nonce_never_evicts(real_fee: u64, pseudo_fee: u64) {
         let (sender, receiver) = bounded(1024);
         let (bank_forks, mint_keypair) = test_bank_forks_with_fee();
         let (mut receive_and_buffer, mut container) =
             setup_transaction_view_receive_and_buffer(receiver, bank_forks.clone());
-        let (nonce_pubkey, lifetime) =
-            create_nonce_identity(&bank_forks, &mint_keypair.pubkey(), true);
+        let (nonce_pubkey, durable) = create_nonce_identity(&bank_forks, &mint_keypair.pubkey());
         let blockhash = bank_forks.read().unwrap().root_bank().last_blockhash();
         let pseudo_has_priority = pseudo_fee > real_fee;
 
@@ -1790,7 +1777,7 @@ mod tests {
                 &mint_keypair,
                 &nonce_pubkey,
                 real_fee,
-                lifetime,
+                durable,
             )],
         );
         assert_eq!(

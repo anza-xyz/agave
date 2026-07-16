@@ -20,25 +20,19 @@ pub(crate) struct TransactionState<Tx> {
     priority: u64,
     /// Estimated cost of the transaction.
     cost: u64,
-    /// Nonce address, if this is a nonce transaction.
+    /// Nonce address, if this is a validated nonce transaction.
     nonce_address: Option<Pubkey>,
 }
 
 impl<Tx> TransactionState<Tx> {
     /// Creates a new `TransactionState` in the `Unprocessed` state.
-    pub(crate) fn new(
-        transaction: Tx,
-        max_age: MaxAge,
-        priority: u64,
-        cost: u64,
-        nonce_address: Option<Pubkey>,
-    ) -> Self {
+    pub(crate) fn new(transaction: Tx, max_age: MaxAge, priority: u64, cost: u64) -> Self {
         Self {
             transaction: Some(transaction),
             max_age,
             priority,
             cost,
-            nonce_address,
+            nonce_address: None,
         }
     }
 
@@ -94,6 +88,8 @@ impl<Tx> TransactionState<Tx> {
             .expect("transaction is not pending")
     }
 
+    /// Set the nonce address, used in `set_nonce_transaction_priority_id()` after
+    /// the nonce transaction is fully validated.
     pub(crate) fn set_nonce_address(&mut self, nonce_address: Option<Pubkey>) {
         self.nonce_address = nonce_address;
     }
@@ -130,7 +126,6 @@ mod tests {
             MaxAge::MAX,
             compute_unit_price,
             TEST_TRANSACTION_COST,
-            None,
         )
     }
 

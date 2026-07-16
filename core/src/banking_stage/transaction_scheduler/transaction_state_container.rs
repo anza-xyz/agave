@@ -259,6 +259,8 @@ impl<Tx: TransactionWithMeta> StateContainer<Tx> for TransactionStateContainer<T
         self.nonces_in_use.insert(*nonce_address, priority_id);
         if let Some(state) = self.id_to_transaction_state.get_mut(priority_id.id) {
             state.set_nonce_address(Some(*nonce_address))
+        } else {
+            debug_assert!(false, "transaction must exist");
         }
     }
 }
@@ -277,13 +279,7 @@ impl<Tx: TransactionWithMeta> TransactionStateContainer<Tx> {
         let priority_id = {
             let entry = self.get_vacant_map_entry();
             let transaction_id = entry.key();
-            entry.insert(TransactionState::new(
-                transaction,
-                max_age,
-                priority,
-                cost,
-                None,
-            ));
+            entry.insert(TransactionState::new(transaction, max_age, priority, cost));
             TransactionPriorityId::new(priority, transaction_id)
         };
 
@@ -586,13 +582,7 @@ mod tests {
             )
             .unwrap();
 
-            Ok(TransactionState::new(
-                view,
-                MaxAge::MAX,
-                priority,
-                cost,
-                None,
-            ))
+            Ok(TransactionState::new(view, MaxAge::MAX, priority, cost))
         };
 
         // Push 2 transactions into the queue so buffer is full.
