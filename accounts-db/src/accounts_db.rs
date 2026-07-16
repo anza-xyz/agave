@@ -1146,7 +1146,7 @@ impl AccountsDb {
             dirty_stores: DashMap::default(),
             zero_lamport_accounts_to_purge_after_full_snapshot: DashSet::default(),
             latest_full_snapshot_slot_advanced_since_clean: AtomicBool::default(),
-            accounts_file_provider: AccountsFileProvider::default(),
+            accounts_file_provider: accounts_db_config.accounts_file_provider,
             latest_full_snapshot_slot: SeqLock::new(None),
             last_swept_full_snapshot_slot: AtomicU64::new(0),
             best_ancient_slots_to_shrink: RwLock::default(),
