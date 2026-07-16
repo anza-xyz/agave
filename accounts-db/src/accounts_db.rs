@@ -4516,6 +4516,11 @@ impl AccountsDb {
             ("account_bytes_saved", flush_stats.num_bytes_purged.0, i64),
             ("num_accounts_saved", flush_stats.num_accounts_purged.0, i64),
             (
+                "num_zero_lamport_accounts_purged",
+                flush_stats.num_zero_lamport_accounts_purged.0,
+                i64
+            ),
+            (
                 "store_accounts_total_us",
                 flush_stats.store_accounts_total_us.0,
                 i64
@@ -4684,6 +4689,7 @@ impl AccountsDb {
     ) -> FlushStats {
         debug_assert!(self.accounts_cache.contains_unflushed_root(slot));
         let mut flush_stats = FlushStats::default();
+        let mut purged_zero_lamport_pubkeys = Vec::new();
         let iter_items: Vec<_> = slot_cache.iter().collect();
 
         let accounts: Vec<(&Pubkey, &AccountSharedData)> = iter_items
@@ -4691,17 +4697,30 @@ impl AccountsDb {
             .filter_map(|iter_item| {
                 let key = iter_item.key();
                 let account = &iter_item.value().account;
-                let should_flush = match pubkeys_to_flush {
+                let mut should_flush = match pubkeys_to_flush {
                     PubkeysToFlush::All => true,
                     PubkeysToFlush::Only(flush_keys) => flush_keys.contains(key),
                 };
+                // `true` keeps a disk-loaded entry in-mem for the index upsert below
+                if should_flush
+                    && account.is_zero_lamport()
+                    && !self
+                        .accounts_index
+                        .get_and_then(key, |entry| (true, entry.is_some()))
+                {
+                    // A zero-lamport account with no index entry has no older rooted version
+                    // in storage to shadow, so it can just be purged
+                    flush_stats.num_zero_lamport_accounts_purged += 1;
+                    purged_zero_lamport_pubkeys.push(*key);
+                    should_flush = false;
+                }
                 if should_flush {
                     flush_stats.num_bytes_flushed +=
                         AppendVec::calculate_stored_size(account.data().len()) as u64;
                     flush_stats.num_accounts_flushed += 1;
                     Some((key, account))
                 } else {
-                    // A newer version wins, so this one isn't written
+                    // No need to write this account. Either superseded or zero lamport
                     flush_stats.num_bytes_purged +=
                         AppendVec::calculate_stored_size(account.data().len()) as u64;
                     flush_stats.num_accounts_purged += 1;
@@ -4751,6 +4770,10 @@ impl AccountsDb {
             .accounts_cache
             .remove_slot(slot)
             .expect("slot must be in the cache when flushing");
+
+        // Zero-lamport accounts that were purged above were never added to the primary
+        // index, so their secondary index entries may be purgeable.
+        self.purge_secondary_indexes_for_dead_keys(&purged_zero_lamport_pubkeys);
 
         // Now that this slot has left the cache, any pubkey that no longer appears
         // in any cached slot is eligible to be written through so its in-mem entry

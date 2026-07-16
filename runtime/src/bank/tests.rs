@@ -8656,10 +8656,13 @@ fn do_test_clean_dropped_unrooted_banks(freeze_bank1: FreezeBank1) {
     let key2 = Keypair::new(); // only touched in bank2
     let key3 = Keypair::new(); // touched in both bank1 and bank2
     let key4 = Keypair::new(); // in only bank1, and has zero lamports
-    let key5 = Keypair::new(); // in both bank1 and bank2, and has zero lamports
+    let key5 = Keypair::new(); // rooted non-zero in bank0, zero lamports in bank1 and bank2
     bank0
         .transfer(amount, &mint_keypair, &key2.pubkey())
         .unwrap();
+    // key5's rooted non-zero version makes bank2's zero-lamport update reach storage as a
+    // kill at flush, so clean has a ref count to decrement in scenario 4
+    bank0.store_account(&key5.pubkey(), &AccountSharedData::new(1, 0, &owner));
     bank0.freeze();
 
     let slot = 1;
@@ -11154,6 +11157,11 @@ where
     let bank = Bank::new_from_parent_with_bank_forks(bank_forks.as_ref(), bank, leader, slot);
     let account = AccountSharedData::new(1, len1, &program);
     bank.store_account(&bob_pubkey, &account);
+
+    // Root and flush so bob's non-zero version is in storage and the index. The zero-lamport
+    // store below then reaches storage as a kill of this version, rather than being purged
+    // at flush for having no older version to shadow
+    add_root_and_flush_write_cache(&bank);
 
     // create the next bank where we will store a zero-lamport account to be cleaned
     let slot = bank.slot() + 1;

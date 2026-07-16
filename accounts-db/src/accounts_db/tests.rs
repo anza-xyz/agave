@@ -87,6 +87,25 @@ where
     }
 }
 
+/// Stores a rooted non-zero version of each pubkey in `pubkeys` at `slot` and flushes it to
+/// storage.
+fn store_rooted_nonzero_accounts<'a>(
+    accounts_db: &AccountsDb,
+    slot: Slot,
+    pubkeys: impl IntoIterator<Item = &'a Pubkey>,
+) {
+    let predecessor_account = AccountSharedData::new(1, 0, &Pubkey::default());
+    let accounts = pubkeys
+        .into_iter()
+        .map(|pubkey| (pubkey, &predecessor_account))
+        .collect::<Vec<_>>();
+    if accounts.is_empty() {
+        return;
+    }
+    accounts_db.store_for_tests((slot, accounts.as_slice()));
+    accounts_db.add_root_and_flush_write_cache(slot);
+}
+
 fn create_loadable_account_with_fields(
     name: &str,
     (lamports, rent_epoch): InheritableAccountFields,
@@ -1177,6 +1196,8 @@ fn test_remove_zero_lamport_single_ref_accounts_after_shrink() {
         let zero_lamport_account =
             AccountSharedData::new(0, 0, AccountSharedData::default().owner());
         let slot = 1;
+        store_rooted_nonzero_accounts(&accounts, slot, [&pubkey_zero]);
+        let slot = slot + 1;
 
         accounts.store_for_tests((
             slot,
@@ -1284,6 +1305,9 @@ fn test_shrink_zero_lamport_single_ref_account() {
         let zero_lamport_account =
             AccountSharedData::new(0, 0, AccountSharedData::default().owner());
         let slot = 1;
+        store_rooted_nonzero_accounts(&accounts, slot, [&pubkey_zero]);
+        let slot = slot + 1;
+
         // Store a zero-lamport account and a non-zero lamport account
         accounts.store_for_tests((
             slot,
@@ -1317,7 +1341,7 @@ fn test_shrink_zero_lamport_single_ref_account() {
         accounts.shrink_slot_forced(slot);
 
         assert!(
-            accounts.storage.get_slot_storage_entry(1).is_some(),
+            accounts.storage.get_slot_storage_entry(slot).is_some(),
             "{latest_full_snapshot_slot:?}"
         );
 
@@ -1747,6 +1771,9 @@ fn test_alive_bytes_after_shrink_with_zero_lamport_single_ref_accounts() {
     let alive_account = AccountSharedData::new(11, 17, &Pubkey::default());
     let alive_pubkey = Pubkey::new_unique();
 
+    store_rooted_nonzero_accounts(&accounts_db, slot, &dead_pubkeys);
+    let slot = slot + 1;
+
     accounts_db.store_for_tests((
         slot,
         [
@@ -1798,46 +1825,60 @@ fn test_clean_multiple_zero_lamport_decrements_index_ref_count() {
     let accounts = AccountsDb::new_single_for_tests();
     let pubkey1 = solana_pubkey::new_rand();
     let pubkey2 = solana_pubkey::new_rand();
+    let one_lamport_account = AccountSharedData::new(1, 0, AccountSharedData::default().owner());
     let zero_lamport_account = AccountSharedData::new(0, 0, AccountSharedData::default().owner());
 
     // If there is no latest full snapshot, zero lamport accounts can be cleaned and removed
     // immediately. Set latest full snapshot slot to zero to avoid cleaning zero lamport accounts
     accounts.set_latest_full_snapshot_slot(0);
 
-    // Store 2 accounts in slot 0, then update account 1 in two more slots
-    accounts.store_for_tests((0, [(&pubkey1, &zero_lamport_account)].as_slice()));
-    accounts.store_for_tests((0, [(&pubkey2, &zero_lamport_account)].as_slice()));
-    accounts.store_for_tests((1, [(&pubkey1, &zero_lamport_account)].as_slice()));
-    accounts.store_for_tests((2, [(&pubkey1, &zero_lamport_account)].as_slice()));
-    // Root all slots
+    // Store non-zero versions of both accounts in slot 0, then kill pubkey1 twice (slots 1
+    // and 2) and pubkey2 once (slot 2). Each zero-lamport update is written to storage because
+    // the older version is in the index at flush, and reclaims the version it supersedes
+    accounts.store_for_tests((
+        0,
+        [
+            (&pubkey1, &one_lamport_account),
+            (&pubkey2, &one_lamport_account),
+        ]
+        .as_slice(),
+    ));
     accounts.add_root_and_flush_write_cache(0);
+    accounts.store_for_tests((1, [(&pubkey1, &zero_lamport_account)].as_slice()));
     accounts.add_root_and_flush_write_cache(1);
+    accounts.store_for_tests((
+        2,
+        [
+            (&pubkey1, &zero_lamport_account),
+            (&pubkey2, &zero_lamport_account),
+        ]
+        .as_slice(),
+    ));
     accounts.add_root_and_flush_write_cache(2);
 
-    // Ref counts are 1 as the older versions were marked obsolete during flush
+    // Ref counts are 1 as the older versions (including pubkey1's slot 1 tombstone) were
+    // reclaimed and marked obsolete during flush
     assert_eq!(accounts.accounts_index.ref_count_from_storage(&pubkey1), 1);
     assert_eq!(accounts.accounts_index.ref_count_from_storage(&pubkey2), 1);
 
     accounts.clean_accounts_for_tests();
-    // Slots 0 and 1 should each have been cleaned because all of their
-    // accounts are zero lamports
+    // Slots 0 and 1 are cleared because all of their accounts were reclaimed by the
+    // zero-lamport flushes
     assert!(accounts.storage.get_slot_storage_entry(0).is_none());
     assert!(accounts.storage.get_slot_storage_entry(1).is_none());
-    // Slot 2 only has a zero lamport account as well. But, calc_delete_dependencies()
-    // should exclude slot 2 from the clean due to changes in other slots
+    // The zero-lamport accounts in slot 2 are newer than the latest full snapshot, so
+    // their storage is retained and the ref counts are unchanged
     assert!(accounts.storage.get_slot_storage_entry(2).is_some());
-    // Index ref counts should be consistent with the slot stores. Account 1 ref count
-    // should be 1 since slot 2 is the only alive slot; account 2 should have a ref
-    // count of 0 due to slot 0 being dead
     assert_eq!(accounts.accounts_index.ref_count_from_storage(&pubkey1), 1);
-    assert_eq!(accounts.accounts_index.ref_count_from_storage(&pubkey2), 0);
+    assert_eq!(accounts.accounts_index.ref_count_from_storage(&pubkey2), 1);
 
     // Allow clean to clean any zero lamports up to and including slot 2
     accounts.set_latest_full_snapshot_slot(2);
     accounts.clean_accounts_for_tests();
-    // Slot 2 will now be cleaned, which will leave account 1 with a ref count of 0
+    // Slot 2 is now cleaned, decrementing both ref counts to 0
     assert!(accounts.storage.get_slot_storage_entry(2).is_none());
     assert_eq!(accounts.accounts_index.ref_count_from_storage(&pubkey1), 0);
+    assert_eq!(accounts.accounts_index.ref_count_from_storage(&pubkey2), 0);
 }
 
 #[test]
@@ -2043,6 +2084,9 @@ fn test_clean_retains_secondary_index_for_still_cached_key() {
     token_account.set_data(account_data_with_mint);
 
     let zero_account = AccountSharedData::new(0, 0, &Pubkey::default());
+
+    // Slot 0: a rooted non-zero version so the tombstone below reaches storage and the index
+    store_rooted_nonzero_accounts(&accounts, 0, [&pubkey]);
 
     // Slot 1: a rooted zero-lamport tombstone. Flush with `PubkeysToFlush::All` so it is not
     // reclaimed
@@ -3423,20 +3467,87 @@ fn test_zero_lamport_new_root_not_cleaned() {
     let account_key = Pubkey::new_unique();
     let zero_lamport_account = AccountSharedData::new(0, 0, AccountSharedData::default().owner());
 
-    // Store zero lamport account into slots 0 and 1, root both slots
-    db.store_for_tests((0, [(&account_key, &zero_lamport_account)].as_slice()));
+    // Store a rooted non-zero version so the zero-lamport stores below reach storage
+    store_rooted_nonzero_accounts(&db, 0, [&account_key]);
+
+    // Store zero lamport account into slots 1 and 2, root both slots
     db.store_for_tests((1, [(&account_key, &zero_lamport_account)].as_slice()));
-    db.add_root_and_flush_write_cache(0);
+    db.store_for_tests((2, [(&account_key, &zero_lamport_account)].as_slice()));
     db.add_root_and_flush_write_cache(1);
+    db.add_root_and_flush_write_cache(2);
 
-    // Only clean zero lamport accounts up to slot 0
-    db.clean_accounts(Some(0), false);
+    // Only clean zero lamport accounts up to slot 1
+    db.clean_accounts(Some(1), false);
 
-    // Should still be able to find zero lamport account in slot 1
+    // Should still be able to find zero lamport account in slot 2
     assert_eq!(
         db.do_load_for_tests(&Ancestors::default(), &account_key),
-        Some((zero_lamport_account, 1))
+        Some((zero_lamport_account, 2))
     );
+}
+
+/// A zero-lamport account that is not in the accounts index is purged at flush rather than
+/// written to storage. The secondary index entries created when it was stored into the write
+/// cache must be purged at flush, unless the key is still alive in another cached slot.
+#[test]
+fn test_flush_purged_zero_lamport_account_purges_secondary_index() {
+    let accounts = AccountsDb {
+        account_indexes: spl_token_mint_index_enabled(),
+        ..AccountsDb::new_with_config(
+            Vec::new(),
+            ACCOUNTS_DB_CONFIG_FOR_TESTING,
+            None,
+            Arc::default(),
+        )
+    };
+    let pubkey_purged = Pubkey::new_unique();
+    let pubkey_cached = Pubkey::new_unique();
+    let pubkey_live = Pubkey::new_unique();
+
+    // Set up token accounts to be added to the secondary index.
+    const SPL_TOKEN_INITIALIZED_OFFSET: usize = 108;
+    let mint_key = Pubkey::new_unique();
+    let mut account_data_with_mint = vec![0; spl_generic_token::token::Account::get_packed_len()];
+    account_data_with_mint[..PUBKEY_BYTES].clone_from_slice(&(mint_key.to_bytes()));
+    account_data_with_mint[SPL_TOKEN_INITIALIZED_OFFSET] = 1;
+
+    let mut live_account = AccountSharedData::new(1, 0, &spl_generic_token::token::id());
+    live_account.set_data(account_data_with_mint.clone());
+    let mut zero_account = AccountSharedData::new(0, 0, &spl_generic_token::token::id());
+    zero_account.set_data(account_data_with_mint);
+
+    // Storing into the cache adds the secondary index entries for all three accounts
+    accounts.store_for_tests((
+        0,
+        [
+            (&pubkey_purged, &zero_account),
+            (&pubkey_cached, &zero_account),
+            (&pubkey_live, &live_account),
+        ]
+        .as_slice(),
+    ));
+    // pubkey_cached is also stored in unrooted slot 1, so it stays in the cache when slot 0
+    // is flushed
+    accounts.store_for_tests((1, [(&pubkey_cached, &zero_account)].as_slice()));
+
+    accounts.add_root_and_flush_write_cache(0);
+
+    // The zero-lamport accounts were not in the accounts index, so neither was written to
+    // storage. Only the live account was flushed
+    let storage = accounts.storage.get_slot_storage_entry(0).unwrap();
+    assert_eq!(storage.count(), 1);
+    assert!(!accounts.contains(&pubkey_purged));
+    assert!(accounts.accounts_cache.contains_pubkey(&pubkey_cached));
+    assert!(accounts.accounts_index.contains(&pubkey_live));
+
+    // The purged key left the cache, so its secondary index entries were purged. The other
+    // keys are still alive (cached and flushed respectively) and must be retained
+    let mint_index_pubkeys = accounts
+        .accounts_index
+        .get_index_key_pubkeys(&IndexKey::SplTokenMint(mint_key));
+    assert!(!mint_index_pubkeys.contains(&pubkey_purged));
+    assert!(mint_index_pubkeys.contains(&pubkey_cached));
+    assert!(mint_index_pubkeys.contains(&pubkey_live));
 }
 
 #[test]
@@ -4148,15 +4259,17 @@ define_accounts_db_test!(
     |accounts_db| {
         let slot: Slot = 0;
         let num_keys = 10;
-        let mut pubkeys = vec![];
+        let pubkeys: Vec<_> = std::iter::repeat_with(Pubkey::new_unique)
+            .take(num_keys)
+            .collect();
+        store_rooted_nonzero_accounts(&accounts_db, slot, &pubkeys);
+
+        let slot = slot + 1;
 
         // populate storage with zero lamport single ref (zlsr) accounts
-        for _i in 0..num_keys {
+        for key in &pubkeys {
             let zero_account = AccountSharedData::new(0, 0, AccountSharedData::default().owner());
-
-            let key = Pubkey::new_unique();
-            accounts_db.store_for_tests((slot, &[(&key, &zero_account)][..]));
-            pubkeys.push(key);
+            accounts_db.store_for_tests((slot, &[(key, &zero_account)][..]));
         }
 
         accounts_db.add_root(slot);
@@ -5478,21 +5591,25 @@ define_accounts_db_test!(test_purge_alive_unrooted_slots_after_clean, |accounts|
     let unrooted_key = solana_pubkey::new_rand();
     let slot0 = 0;
     let slot1 = 1;
+    let slot2 = 2;
+
+    // Rooted non-zero version of shared_key so the zero-lamport update below reaches storage
+    store_rooted_nonzero_accounts(&accounts, slot0, [&shared_key]);
 
     // Store accounts with greater than 0 lamports
     let account = AccountSharedData::new(1, 1, AccountSharedData::default().owner());
-    accounts.store_for_tests((slot0, [(&shared_key, &account)].as_slice()));
-    accounts.store_for_tests((slot0, [(&unrooted_key, &account)].as_slice()));
+    accounts.store_for_tests((slot1, [(&shared_key, &account)].as_slice()));
+    accounts.store_for_tests((slot1, [(&unrooted_key, &account)].as_slice()));
 
     // Simulate adding dirty pubkeys on bank freeze. Note this is
     // not a rooted slot
 
     // On the next *rooted* slot, update the `shared_key` account to zero lamports
     let zero_lamport_account = AccountSharedData::new(0, 0, AccountSharedData::default().owner());
-    accounts.store_for_tests((slot1, [(&shared_key, &zero_lamport_account)].as_slice()));
+    accounts.store_for_tests((slot2, [(&shared_key, &zero_lamport_account)].as_slice()));
 
     // Simulate adding dirty pubkeys on bank freeze, set root
-    accounts.add_root_and_flush_write_cache(slot1);
+    accounts.add_root_and_flush_write_cache(slot2);
 
     // Account is referenced in the zero lamport slot. Since the other copy is in an unflushed slot,
     // it does not count as a reference.
@@ -5514,11 +5631,11 @@ define_accounts_db_test!(test_purge_alive_unrooted_slots_after_clean, |accounts|
     );
 
     // Simulate purge_slot() all from AccountsBackgroundService
-    accounts.purge_slot(slot0, 0, true);
+    accounts.purge_slot(slot1, 0, true);
 
     // Now the key and slot are purged from the database
     assert!(!accounts.contains(&shared_key));
-    assert_no_storages_at_slot(&accounts, slot0);
+    assert_no_storages_at_slot(&accounts, slot1);
 });
 
 /// asserts that not only are there 0 append vecs, but there is not even an entry in the storage map for 'slot'
@@ -6194,6 +6311,7 @@ fn test_shrink_collect_simple() {
                                  {normal_account_count}"
                             );
                             let db = AccountsDb::new_single_for_tests();
+                            let slot4 = 4;
                             let slot5 = 5;
                             // don't do special zero lamport account handling
                             db.set_latest_full_snapshot_slot(0);
@@ -6202,6 +6320,24 @@ fn test_shrink_collect_simple() {
                                 space,
                                 AccountSharedData::default().owner(),
                             );
+
+                            let is_zero_lamport = |pubkey: &Pubkey| {
+                                if Some(pubkey) == pubkey_opposite_zero_lamports {
+                                    lamports == 1
+                                } else {
+                                    lamports == 0
+                                }
+                            };
+
+                            store_rooted_nonzero_accounts(
+                                &db,
+                                slot4,
+                                pubkeys
+                                    .iter()
+                                    .take(account_count)
+                                    .filter(|pubkey| is_zero_lamport(pubkey)),
+                            );
+
                             let mut to_purge = Vec::default();
                             for pubkey in pubkeys.iter().take(account_count) {
                                 // store in append vec and index
@@ -6254,13 +6390,6 @@ fn test_shrink_collect_simple() {
 
                             // a zero-lamport single-ref account is removed from the index by shrink
                             // and carried forward as a tombstone, so it is not rewritten as alive
-                            let is_zero_lamport = |pubkey: &Pubkey| {
-                                if Some(pubkey) == pubkey_opposite_zero_lamports {
-                                    lamports == 1
-                                } else {
-                                    lamports == 0
-                                }
-                            };
                             let expected_alive_accounts = if alive {
                                 pubkeys[..normal_account_count]
                                     .iter()
@@ -6396,15 +6525,13 @@ fn test_shrink_collect_with_obsolete_accounts() {
 
     let mut regular_pubkeys = Vec::new();
     let mut obsolete_pubkeys = Vec::new();
-    let mut zero_lamport_pubkeys = Vec::new();
     let mut unref_pubkeys = Vec::new();
 
     for (i, pubkey) in pubkeys.iter().enumerate() {
         if i % 3 == 0 {
             // Mark third account as zero lamport
-            // These will be removed during shrink
+            // These are purged at flush since they are not in the index
             account.set_lamports(0);
-            zero_lamport_pubkeys.push(*pubkey);
         } else {
             // Regular accounts that should be kept
             account.set_lamports(200);
@@ -6420,7 +6547,12 @@ fn test_shrink_collect_with_obsolete_accounts() {
     let ancestors = Ancestors::from(vec![db.max_root()]);
 
     for (i, pubkey) in pubkeys.iter().enumerate() {
-        // Mark Some accounts obsolete. These will include zero lamport and non zero lamport accounts
+        // Zero-lamport accounts (every third) are not in the index after flush, so only regular
+        // accounts can be marked obsolete here.
+        if i % 3 == 0 {
+            continue;
+        }
+        // Mark Some accounts obsolete.
         if i % 5 == 0 {
             // Lookup the pubkey in the database and find the AccountInfo
             db.accounts_index
@@ -6984,18 +7116,12 @@ fn test_new_zero_lamport_accounts_skipped() {
         0
     );
 
-    // 4. Flush the slot (write cache -> storage). pubkey1 (only ever written as zero) is
-    //    absent; pubkey2 and pubkey3 are now in the index.
+    // 4. Flush the slot (write cache -> storage). pubkey1 (only ever written as zero) and pubkey2
+    //    (last written as zero in step 3) are absent; only pubkey3 is in the index.
     accounts_db.add_root_and_flush_write_cache(slot);
     assert!(!accounts_db.contains(&pubkey1));
-    assert!(accounts_db.contains(&pubkey2));
+    assert!(!accounts_db.contains(&pubkey2));
     assert!(accounts_db.contains(&pubkey3));
-
-    // Verify pubkey2 is present in slot in the index with a zero-lamport AccountInfo.
-    assert!(accounts_db.accounts_index.get_and_then(&pubkey2, |entry| {
-        let account_info = *entry.unwrap().slot_list_read_lock().first().unwrap();
-        (false, account_info.1.is_zero_lamport())
-    }));
 
     // 5. Add a non-zero lamport account for a pubkey that was previously only written as zero
     //    (pubkey1) and verify the pubkey is added to the write cache.
@@ -7209,6 +7335,9 @@ fn test_is_ancestor_zero_lamport_index_only() {
     let db = AccountsDb::new_single_for_tests();
     let pubkey = Pubkey::new_unique();
     let slot = 5;
+
+    store_rooted_nonzero_accounts(&db, slot, [&pubkey]);
+    let slot = slot + 1;
 
     let zero_account = AccountSharedData::new(0, 0, &Pubkey::default());
     db.store_for_tests((slot, [(&pubkey, &zero_account)].as_slice()));

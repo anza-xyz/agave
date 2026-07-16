@@ -236,6 +236,7 @@ pub struct FlushStats {
     pub num_bytes_flushed: Saturating<u64>,
     pub num_accounts_purged: Saturating<usize>,
     pub num_bytes_purged: Saturating<u64>,
+    pub num_zero_lamport_accounts_purged: Saturating<usize>,
     pub store_accounts_total_us: Saturating<u64>,
     pub write_accounts_us: Saturating<u64>,
     pub update_index_us: Saturating<u64>,
@@ -273,6 +274,7 @@ impl FlushStats {
         self.num_bytes_flushed += other.num_bytes_flushed;
         self.num_accounts_purged += other.num_accounts_purged;
         self.num_bytes_purged += other.num_bytes_purged;
+        self.num_zero_lamport_accounts_purged += other.num_zero_lamport_accounts_purged;
         self.store_accounts_total_us += other.store_accounts_total_us;
         self.write_accounts_us += other.write_accounts_us;
         self.update_index_us += other.update_index_us;

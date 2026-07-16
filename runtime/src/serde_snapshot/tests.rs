@@ -422,7 +422,7 @@ mod serde_snapshot_tests {
 
         let mut current_slot = 1;
         accounts.store_for_tests((current_slot, [(&pubkey, &account)].as_slice()));
-        accounts.add_root(current_slot);
+        accounts.add_root_and_flush_write_cache(current_slot);
 
         current_slot += 1;
         accounts.store_for_tests((current_slot, [(&pubkey, &zero_lamport_account)].as_slice()));
