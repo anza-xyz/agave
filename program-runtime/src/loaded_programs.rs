@@ -438,6 +438,10 @@ impl<FG: ForkGraph> ProgramCache<FG> {
                             | (
                                 ProgramCacheEntryType::Unloaded(_),
                                 ProgramCacheEntryType::Loaded(_),
+                            )
+                            | (
+                                ProgramCacheEntryType::Unloaded(_),
+                                ProgramCacheEntryType::FailedVerification(_),
                             ) => {}
                             _ => {
                                 // Something is wrong, I can feel it ...
@@ -1449,7 +1453,6 @@ pub(crate) mod tests {
             ProgramCacheEntryType::Unloaded(get_mock_program_runtime_environment()),
         ),
         (
-            ProgramCacheEntryType::FailedVerification(get_mock_program_runtime_environment()),
             ProgramCacheEntryType::Closed,
             ProgramCacheEntryType::Unloaded(get_mock_program_runtime_environment()),
             ProgramCacheEntryType::Builtin(BuiltinProgram::new_mock()),
@@ -1504,6 +1507,12 @@ pub(crate) mod tests {
             BuiltinProgram::new_mock()
         )),
         new_loaded_entry(get_mock_program_runtime_environment())
+    )]
+    #[test_case(
+        ProgramCacheEntryType::Unloaded(ProgramRuntimeEnvironment::from(
+            BuiltinProgram::new_mock()
+        )),
+        ProgramCacheEntryType::FailedVerification(get_mock_program_runtime_environment())
     )]
     #[test_case(
         ProgramCacheEntryType::Builtin(BuiltinProgram::new_mock()),

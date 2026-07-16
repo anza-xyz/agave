@@ -84,7 +84,7 @@ impl From<ProgramCacheEntryOwner> for Pubkey {
     - Loaded => Loaded (with different account_owner)
 
     Eviction and unloading (in the same slot):
-    - Unloaded => Loaded in ProgramCache::assign_program
+    - Unloaded => Loaded / FailedVerification in ProgramCache::assign_program
     - Loaded => Unloaded in ProgramCache::unload_program_entry
 
     At epoch boundary (when feature set and environment changes):
