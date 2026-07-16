@@ -4,13 +4,12 @@
 use {
     super::leader_updater::LeaderUpdater,
     crate::{
-        SendTransactionStats,
+        SendTransactionStats, WireTransaction,
         connection_worker::DEFAULT_MAX_CONNECTION_HANDSHAKE_TIMEOUT,
         logging::debug,
         quic_networking::{
             QuicClientCertificate, QuicError, create_client_config, create_client_endpoint,
         },
-        transaction_batch::TransactionBatch,
         workers_cache::{WorkersCache, WorkersCacheError, shutdown_worker},
     },
     async_trait::async_trait,
@@ -25,7 +24,6 @@ use {
     tokio::sync::{mpsc, watch},
     tokio_util::sync::CancellationToken,
 };
-pub type TransactionReceiver = mpsc::Receiver<TransactionBatch>;
 
 /// The [`ConnectionWorkersScheduler`] sends transactions from the provided
 /// receiver channel to upcoming leaders. It obtains information about future
@@ -35,7 +33,7 @@ pub type TransactionReceiver = mpsc::Receiver<TransactionBatch>;
 /// connections, schedules and oversees connection workers.
 pub struct ConnectionWorkersScheduler {
     leader_updater: Box<dyn LeaderUpdater>,
-    transaction_receiver: TransactionReceiver,
+    transaction_receiver: mpsc::Receiver<WireTransaction>,
     update_identity_receiver: watch::Receiver<Option<StakeIdentity>>,
     cancel: CancellationToken,
     stats: Arc<SendTransactionStats>,
@@ -88,8 +86,7 @@ pub struct ConnectionWorkersSchedulerConfig {
     /// The number of connections to be maintained by the scheduler.
     pub num_connections: NonZeroUsize,
 
-    /// The size of the channel used to transmit transaction batches to the
-    /// worker tasks.
+    /// The size of the channel used to transmit transactions to worker tasks.
     pub worker_channel_size: usize,
 
     /// The maximum number of reconnection attempts allowed in case of
@@ -136,14 +133,13 @@ impl From<StakeIdentity> for QuicClientCertificate {
 }
 
 /// The [`WorkersBroadcaster`] trait defines a customizable mechanism for
-/// sending transaction batches to workers corresponding to the provided list of
+/// sending transactions to workers corresponding to the provided list of
 /// addresses. Implementations of this trait are used by the
 /// [`ConnectionWorkersScheduler`] to distribute transactions to workers
 /// accordingly.
 #[async_trait]
 pub trait WorkersBroadcaster: Send + Sync {
-    /// Sends a `transaction_batch` to workers associated with the given
-    /// `leaders` addresses.
+    /// Sends a `transaction` to workers associated with the given `leaders` addresses.
     ///
     /// Returns error if a critical issue occurs, e.g. the implementation
     /// encounters an unrecoverable error. In this case, it will trigger
@@ -152,7 +148,7 @@ pub trait WorkersBroadcaster: Send + Sync {
         &self,
         workers: &mut WorkersCache,
         leaders: &[SocketAddr],
-        transaction_batch: TransactionBatch,
+        transaction: WireTransaction,
     ) -> Result<(), ConnectionWorkersSchedulerError>;
 }
 
@@ -161,7 +157,7 @@ impl ConnectionWorkersScheduler {
     /// the network's upcoming leaders.
     pub fn new(
         leader_updater: Box<dyn LeaderUpdater>,
-        transaction_receiver: mpsc::Receiver<TransactionBatch>,
+        transaction_receiver: mpsc::Receiver<WireTransaction>,
         update_identity_receiver: watch::Receiver<Option<StakeIdentity>>,
         cancel: CancellationToken,
     ) -> Self {
@@ -198,7 +194,7 @@ impl ConnectionWorkersScheduler {
     }
 
     /// Starts the scheduler, which manages the distribution of transactions to the network's
-    /// upcoming leaders. `broadcaster` allows to customize the way transactions are send to the
+    /// upcoming leaders. `broadcaster` allows customizing how transactions are sent to the
     /// leaders, see [`WorkersBroadcaster`].
     ///
     /// Runs the main loop that handles worker scheduling and management for connections. Returns
@@ -238,9 +234,9 @@ impl ConnectionWorkersScheduler {
         let mut identity_updater_is_active = true;
 
         loop {
-            let transaction_batch: TransactionBatch = tokio::select! {
+            let transaction: WireTransaction = tokio::select! {
                 recv_res = transaction_receiver.recv() => match recv_res {
-                    Some(txs) => txs,
+                    Some(transaction) => transaction,
                     None => {
                         debug!("End of `transaction_receiver`: shutting down.");
                         break;
@@ -249,12 +245,18 @@ impl ConnectionWorkersScheduler {
                 res = update_identity_receiver.changed(), if identity_updater_is_active => {
                     let Ok(()) = res else {
                         // Sender has been dropped; log and continue
-                        debug!("Certificate update channel closed; continuing without further updates.");
+                        debug!(
+                            "Certificate update channel closed; continuing without further \
+                             updates."
+                        );
                         identity_updater_is_active = false;
                         continue;
                     };
 
-                    let client_config = build_client_config(update_identity_receiver.borrow_and_update().as_ref(), initial_congestion_window);
+                    let client_config = build_client_config(
+                        update_identity_receiver.borrow_and_update().as_ref(),
+                        initial_congestion_window,
+                    );
                     endpoint.set_default_client_config(client_config);
                     // Flush workers since they are handling connections created
                     // with outdated certificate.
@@ -287,7 +289,7 @@ impl ConnectionWorkersScheduler {
             }
 
             if let Err(error) = broadcaster
-                .send_to_workers(&mut workers, &send_leaders, transaction_batch)
+                .send_to_workers(&mut workers, &send_leaders, transaction)
                 .await
             {
                 last_error = Some(error);
@@ -328,9 +330,9 @@ fn build_client_config(
     create_client_config(client_certificate, initial_congestion_window)
 }
 
-/// [`NonblockingBroadcaster`] attempts to immediately send transactions to all
-/// the workers. If worker cannot accept transactions because it's channel is
-/// full, the transactions will not be sent to this worker.
+/// [`NonblockingBroadcaster`] attempts to immediately send transactions to all the workers. If a
+/// worker cannot accept a transaction because its channel is full, the transaction will not be sent
+/// to that worker.
 pub struct NonblockingBroadcaster;
 
 #[async_trait]
@@ -339,13 +341,12 @@ impl WorkersBroadcaster for NonblockingBroadcaster {
         &self,
         workers: &mut WorkersCache,
         leaders: &[SocketAddr],
-        transaction_batch: TransactionBatch,
+        transaction: WireTransaction,
     ) -> Result<(), ConnectionWorkersSchedulerError> {
         for new_leader in leaders {
-            let send_res =
-                workers.try_send_transactions_to_address(new_leader, transaction_batch.clone());
+            let send_res = workers.try_send_transaction_to_address(new_leader, transaction.clone());
             if let Err(err) = send_res {
-                debug!("Failed to send transactions to {new_leader:?}, worker send error: {err}.");
+                debug!("Failed to send transaction to {new_leader:?}, worker send error: {err}.");
                 if err == WorkersCacheError::ReceiverDropped {
                     // Remove the worker from the cache if the peer has disconnected.
                     if let Some(pop_worker) = workers.pop(*new_leader) {

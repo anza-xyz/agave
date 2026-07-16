@@ -23,10 +23,10 @@ use {
     solana_system_interface::instruction as system_instruction,
     solana_test_validator::TestValidator,
     solana_tpu_client_next::{
+        WireTransaction,
         client_builder::ClientBuilder,
         connection_workers_scheduler::{ConnectionWorkersSchedulerError, WorkersBroadcaster},
         leader_updater::create_pinned_leader_updater,
-        transaction_batch::TransactionBatch,
         workers_cache::WorkersCache,
     },
     spl_memo_interface::{instruction::build_memo, v3 as memo_program},
@@ -214,14 +214,14 @@ impl WorkersBroadcaster for BackpressuredBroadcaster {
         &self,
         workers: &mut WorkersCache,
         leaders: &[SocketAddr],
-        transaction_batch: TransactionBatch,
+        transaction: WireTransaction,
     ) -> Result<(), ConnectionWorkersSchedulerError> {
         for leader in leaders {
             // Unlike `try_send_transactions_to_address`, this awaits until the
             // worker channel has room, so a full channel never surfaces as an
             // error and the batch is not dropped.
             let send_res = workers
-                .send_transactions_to_address(leader, transaction_batch.clone())
+                .send_transaction_to_address(leader, transaction.clone())
                 .await;
             if let Err(err) = send_res {
                 log::debug!("Failed to send transactions to {leader:?}, worker send error: {err}.");

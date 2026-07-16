@@ -8706,6 +8706,7 @@ name = "solana-tpu-client-next"
 version = "4.3.0-alpha.2"
 dependencies = [
  "async-trait",
+ "bytes",
  "futures 0.3.33",
  "futures-util",
  "log",

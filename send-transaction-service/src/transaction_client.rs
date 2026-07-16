@@ -45,15 +45,16 @@ impl TpuSender {
         stats: &SendTransactionServiceStats,
     ) {
         let mut measure = Measure::start("send-us");
-        self.runtime_handle.spawn({
-            let sender = self.sender.clone();
-            async move {
-                if sender
-                    .send_transactions_in_batch(wire_transactions)
+        let transaction_sender = self.sender.clone();
+        self.runtime_handle.spawn(async move {
+            for transaction in wire_transactions {
+                if transaction_sender
+                    .send_transaction(transaction)
                     .await
                     .is_err()
                 {
-                    warn!("Failed to send transactions to channel: it is closed.");
+                    warn!("Failed to send transaction to channel: it is closed.");
+                    break;
                 }
             }
         });
@@ -143,7 +144,7 @@ pub fn create_client(
         .identity(identity)
         .max_cache_size(MAX_CONNECTIONS)
         .cancel_token(cancel)
-        .worker_channel_size(64)
+        .worker_channel_size(128)
         .sender_channel_size(128)
         .max_reconnect_attempts(4)
         .metric_reporter(|stats, cancel| async move {
