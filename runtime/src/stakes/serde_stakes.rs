@@ -223,7 +223,7 @@ fn stable_abi_sample_stake_delegations(
 mod tests {
     use {
         super::*,
-        crate::{stake_utils, stakes::StakesCache},
+        crate::{serde_snapshot::deserialize_wincode_from, stake_utils, stakes::StakesCache},
         rand::Rng,
         serde::Deserialize,
         solana_rent::Rent,
@@ -241,7 +241,7 @@ mod tests {
             tail: String,
         }
 
-        #[derive(Debug, Deserialize)]
+        #[derive(Debug, Deserialize, SchemaRead)]
         struct DeserializableDummy {
             head: String,
             stakes: DeserializableDelegationStakes,
@@ -294,7 +294,8 @@ mod tests {
         };
         assert!(dummy.stakes.vote_accounts().as_ref().len() >= 5);
         let data = bincode::serialize(&dummy).unwrap();
-        let other: DeserializableDummy = bincode::deserialize(&data).unwrap();
+        let other: DeserializableDummy =
+            deserialize_wincode_from(std::io::Cursor::new(&data)).unwrap();
         assert_eq!(other.head, dummy.head);
         assert_eq!(other.tail, dummy.tail);
 

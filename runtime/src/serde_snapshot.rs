@@ -20,7 +20,7 @@ use {
     agave_snapshots::error::SnapshotError,
     bincode::{self, Error, config::Options},
     log::*,
-    serde::{Deserialize, Serialize, de::DeserializeOwned},
+    serde::{Deserialize, Serialize},
     smallvec::{SmallVec, smallvec},
     solana_accounts_db::{
         ObsoleteAccounts,
@@ -467,26 +467,6 @@ where
     wincode::config::deserialize_from(reader, MaxStreamSizeConfig::new())
 }
 
-pub(crate) fn deserialize_from<R, T>(reader: R) -> bincode::Result<T>
-where
-    R: Read,
-    T: DeserializeOwned,
-{
-    bincode::options()
-        .with_limit(MAX_STREAM_SIZE as u64)
-        .with_fixint_encoding()
-        .allow_trailing_bytes()
-        .deserialize_from::<R, T>(reader)
-}
-
-#[cfg(test)]
-fn deserialize_accounts_db_fields<R>(stream: &mut BufReader<R>) -> Result<AccountsDbFields, Error>
-where
-    R: Read,
-{
-    deserialize_from::<_, _>(stream)
-}
-
 /// Extra fields that are deserialized from the end of snapshots.
 ///
 /// Note that this struct's fields should stay synced with the fields in
@@ -557,21 +537,21 @@ pub struct ExtraFieldsToSerialize {
     pub block_id: Option<Hash>,
 }
 
-/// Deserializable counterpart of [`SerializableBankSnapshot`], read as one struct (bincode reads
+/// Deserializable counterpart of [`SerializableBankSnapshot`], read as one struct (wincode reads
 /// the parts sequentially, matching separate reads).
 ///
 /// Its frozen-abi digest must equal [`SerializableBankSnapshotForAbi`]'s, so the read and write
 /// wire formats can't diverge.
 #[cfg_attr(
     feature = "frozen-abi",
-    derive(Serialize, SchemaWrite, StableAbi, StableAbiSample),
+    derive(Deserialize, Serialize, SchemaWrite, StableAbi, StableAbiSample),
     frozen_abi(
         abi_digest = "2TVKjhahaEGqUZAJtMmaaagcxWzhMPUsNrVHsSoNboK7",
         abi_serializer = ["bincode", "wincode"],
         test_roundtrip = "wire_only"
     )
 )]
-#[derive(Deserialize, SchemaRead)]
+#[derive(SchemaRead)]
 struct DeserializableBankSnapshot {
     bank: DeserializableVersionedBank,
     accounts_db: AccountsDbFields,
@@ -580,16 +560,16 @@ struct DeserializableBankSnapshot {
 
 impl DeserializableBankSnapshot {
     /// Folds the extra fields into the bank fields; errors if `unused_epoch_stakes` is non-empty.
-    fn into_fields(self) -> Result<(BankFieldsToDeserialize, AccountsDbFields), Error> {
+    fn into_fields(self) -> wincode::ReadResult<(BankFieldsToDeserialize, AccountsDbFields)> {
         let Self {
             bank,
             accounts_db,
             extra_fields,
         } = self;
         if !bank.unused_epoch_stakes.is_empty() {
-            return Err(Box::new(bincode::ErrorKind::Custom(
-                "Expected deserialized bank's unused_epoch_stakes field to be empty".to_string(),
-            )));
+            return Err(wincode::ReadError::InvalidValue(
+                "Expected deserialized bank's unused_epoch_stakes field to be empty",
+            ));
         }
         let mut bank_fields = BankFieldsToDeserialize::from(bank);
         let ExtraFieldsToDeserialize {
@@ -614,25 +594,16 @@ impl DeserializableBankSnapshot {
     }
 }
 
-fn deserialize_bank_fields<R>(
-    stream: &mut BufReader<R>,
-) -> Result<(BankFieldsToDeserialize, AccountsDbFields), Error>
-where
-    R: Read,
-{
-    deserialize_from::<_, DeserializableBankSnapshot>(stream)?.into_fields()
-}
-
 pub(crate) fn fields_from_stream<R: Read>(
     snapshot_stream: &mut BufReader<R>,
-) -> std::result::Result<(BankFieldsToDeserialize, AccountsDbFields), Error> {
-    deserialize_bank_fields(snapshot_stream)
+) -> wincode::ReadResult<(BankFieldsToDeserialize, AccountsDbFields)> {
+    deserialize_wincode_from::<_, DeserializableBankSnapshot>(snapshot_stream)?.into_fields()
 }
 
 #[cfg(feature = "dev-context-only-utils")]
 pub(crate) fn fields_from_streams(
     snapshot_streams: &mut SnapshotStreams<impl Read>,
-) -> std::result::Result<(SnapshotBankFields, SnapshotAccountsDbFields), Error> {
+) -> wincode::ReadResult<(SnapshotBankFields, SnapshotAccountsDbFields)> {
     let (full_snapshot_bank_fields, full_snapshot_accounts_db_fields) =
         fields_from_stream(snapshot_streams.full_snapshot_stream)?;
     let (incremental_snapshot_bank_fields, incremental_snapshot_accounts_db_fields) =
@@ -676,7 +647,7 @@ pub(crate) fn bank_from_streams<R>(
     accounts_db_config: AccountsDbConfig,
     accounts_update_notifier: Option<AccountsUpdateNotifier>,
     exit: Arc<AtomicBool>,
-) -> std::result::Result<(Bank, BankFromStreamsInfo), Error>
+) -> std::result::Result<(Bank, BankFromStreamsInfo), SnapshotError>
 where
     R: Read,
 {
@@ -972,7 +943,7 @@ pub(crate) fn reconstruct_bank_from_fields(
     accounts_db_config: AccountsDbConfig,
     accounts_update_notifier: Option<AccountsUpdateNotifier>,
     exit: Arc<AtomicBool>,
-) -> Result<(Bank, ReconstructedBankInfo), Error> {
+) -> Result<(Bank, ReconstructedBankInfo), SnapshotError> {
     let mut bank_fields = bank_fields.collapse_into();
     // Epoch stakes take several seconds to reconstruct, do it in parallel with loading accountsdb
     let deserializable_epoch_stakes = std::mem::take(&mut bank_fields.versioned_epoch_stakes);
@@ -1182,7 +1153,7 @@ fn reconstruct_accountsdb_from_fields(
     accounts_db_config: AccountsDbConfig,
     accounts_update_notifier: Option<AccountsUpdateNotifier>,
     exit: Arc<AtomicBool>,
-) -> Result<(AccountsDb, ReconstructedAccountsDbInfo), Error> {
+) -> Result<(AccountsDb, ReconstructedAccountsDbInfo), SnapshotError> {
     let mut accounts_db = AccountsDb::new_with_config(
         account_paths.to_vec(),
         accounts_db_config,

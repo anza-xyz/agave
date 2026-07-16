@@ -4,13 +4,13 @@ mod serde_snapshot_tests {
         crate::{
             bank::BankHashStats,
             serde_snapshot::{
-                SerializableAccountsDb, SnapshotAccountsDbFields, deserialize_accounts_db_fields,
-                reconstruct_accountsdb_from_fields, remap_append_vec_file, serialize_into,
+                AccountsDbFields, SerializableAccountsDb, SnapshotAccountsDbFields,
+                deserialize_wincode_from, reconstruct_accountsdb_from_fields,
+                remap_append_vec_file, serialize_into,
             },
             snapshot_utils::StorageAndNextAccountsFileId,
         },
         agave_fs::{FileInfo, buffered_reader::FileBufRead as _, io_setup::IoSetupState},
-        bincode::Error,
         log::info,
         rand::{Rng, rng},
         solana_account::{AccountSharedData, ReadableAccount},
@@ -55,17 +55,17 @@ mod serde_snapshot_tests {
         account_paths: &[PathBuf],
         storage_and_next_append_vec_id: StorageAndNextAccountsFileId,
         accounts_db_config: AccountsDbConfig,
-    ) -> Result<AccountsDb, Error>
+    ) -> agave_snapshots::Result<AccountsDb>
     where
         R: Read,
     {
         // read and deserialise the accounts database directly from the stream
-        let accounts_db_fields = deserialize_accounts_db_fields(stream)?;
+        let accounts_db_fields: AccountsDbFields = deserialize_wincode_from(&mut *stream)?;
         let snapshot_accounts_db_fields = SnapshotAccountsDbFields {
             full_snapshot_accounts_db_fields: accounts_db_fields,
             incremental_snapshot_accounts_db_fields: None,
         };
-        reconstruct_accountsdb_from_fields(
+        let (accounts_db, _) = reconstruct_accountsdb_from_fields(
             snapshot_accounts_db_fields,
             account_paths,
             storage_and_next_append_vec_id,
@@ -74,8 +74,8 @@ mod serde_snapshot_tests {
             accounts_db_config,
             None,
             Arc::default(),
-        )
-        .map(|(accounts_db, _)| accounts_db)
+        )?;
+        Ok(accounts_db)
     }
 
     fn accountsdb_from_stream<R>(
@@ -83,7 +83,7 @@ mod serde_snapshot_tests {
         account_paths: &[PathBuf],
         storage_and_next_append_vec_id: StorageAndNextAccountsFileId,
         accounts_db_config: AccountsDbConfig,
-    ) -> Result<AccountsDb, Error>
+    ) -> agave_snapshots::Result<AccountsDb>
     where
         R: Read,
     {
