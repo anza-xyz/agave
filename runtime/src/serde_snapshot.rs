@@ -85,10 +85,65 @@ pub(crate) use {
 const MAX_STREAM_SIZE: usize = 32 * 1024 * 1024 * 1024;
 type MaxStreamSizeConfig = wincode::config::Configuration<true, MAX_STREAM_SIZE>;
 
+/// wincode read helpers mirroring serde's `default_on_eof` for the snapshot read-path structs.
+mod wincode_compat {
+    use {
+        std::{marker::PhantomData, mem::MaybeUninit},
+        wincode::{
+            ReadError, ReadResult, SchemaRead, SchemaWrite, WriteResult,
+            config::Config,
+            io::{ReadError as IoReadError, Reader, Writer},
+        },
+    };
+
+    /// Deserializes using `T` normally, but returns `T::Dst::default()` if the reader is
+    /// exhausted (EOF), for backward compatibility when new fields are appended to a struct.
+    /// Equivalent to `#[serde(deserialize_with = "default_on_eof")]`.
+    pub(super) struct DefaultOnEmptyRead<T>(PhantomData<T>);
+
+    // Note: TYPE_META is left dynamic, since during reading both 0-size or non-0-size reads are
+    // allowed, so trusted readers can't rely on encoding to be static sized.
+    unsafe impl<'de, C: Config, T> SchemaRead<'de, C> for DefaultOnEmptyRead<T>
+    where
+        T: SchemaRead<'de, C>,
+        T::Dst: Default,
+    {
+        type Dst = T::Dst;
+
+        fn read(reader: impl Reader<'de>, dst: &mut MaybeUninit<Self::Dst>) -> ReadResult<()> {
+            match <T as SchemaRead<'de, C>>::read(reader, dst) {
+                Ok(()) => Ok(()),
+                Err(ReadError::Io(IoReadError::ReadSizeLimit(_))) => {
+                    dst.write(Self::Dst::default());
+                    Ok(())
+                }
+                Err(e) => Err(e),
+            }
+        }
+    }
+
+    unsafe impl<C: Config, T> SchemaWrite<C> for DefaultOnEmptyRead<T>
+    where
+        T: SchemaWrite<C>,
+    {
+        type Src = T::Src;
+
+        const TYPE_META: wincode::TypeMeta = T::TYPE_META;
+
+        fn size_of(src: &Self::Src) -> WriteResult<usize> {
+            <T as SchemaWrite<C>>::size_of(src)
+        }
+
+        fn write(writer: impl Writer, src: &Self::Src) -> WriteResult<()> {
+            <T as SchemaWrite<C>>::write(writer, src)
+        }
+    }
+}
+
 /// A slot paired with its account storage entries, used as the `slot -> [entry]` map item on both
 /// the read path ([`AccountsDbFields`]) and the write ABI type [`SerializableAccountsDbForAbi`].
 #[cfg_attr(feature = "frozen-abi", derive(AbiExample, StableAbi, StableAbiSample))]
-#[derive(Debug, Serialize, Deserialize, SchemaWrite)]
+#[derive(Debug, Serialize, Deserialize, SchemaRead, SchemaWrite)]
 pub(crate) struct SlotAccountStorageEntries {
     slot: Slot,
     /// In a real snapshot this always holds exactly one entry; it is sampled as an arbitrary
@@ -104,9 +159,9 @@ pub(crate) struct SlotAccountStorageEntries {
 
 #[cfg_attr(
     feature = "frozen-abi",
-    derive(AbiExample, Serialize, StableAbi, StableAbiSample)
+    derive(AbiExample, Serialize, SchemaWrite, StableAbi, StableAbiSample)
 )]
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, SchemaRead)]
 pub(crate) struct AccountsDbFields(
     Vec<SlotAccountStorageEntries>,
     u64, // unused, formerly write_version
@@ -114,9 +169,11 @@ pub(crate) struct AccountsDbFields(
     BankHashInfo,
     /// all slots that were roots within the last epoch
     #[serde(deserialize_with = "default_on_eof")]
+    #[wincode(with = "wincode_compat::DefaultOnEmptyRead<Vec<Slot>>")]
     Vec<Slot>,
     /// slots that were roots within the last epoch for which we care about the hash value
     #[serde(deserialize_with = "default_on_eof")]
+    #[wincode(with = "wincode_compat::DefaultOnEmptyRead<Vec<(Slot, Hash)>>")]
     Vec<(Slot, Hash)>,
 );
 
@@ -158,9 +215,13 @@ struct UnusedAccounts {
 }
 
 // Deserializable version of Bank; keep fields synced with SerializableVersionedBank.
-// frozen-abi Serialize exists only to pin the read-path abi digest (see DeserializableBankSnapshot).
-#[cfg_attr(feature = "frozen-abi", derive(Serialize, StableAbi, StableAbiSample))]
-#[derive(Clone, Deserialize)]
+// frozen-abi Serialize/SchemaWrite exist only to pin the read-path abi digest (see
+// DeserializableBankSnapshot).
+#[cfg_attr(
+    feature = "frozen-abi",
+    derive(Serialize, SchemaWrite, StableAbi, StableAbiSample)
+)]
+#[derive(Clone, Deserialize, SchemaRead)]
 struct DeserializableVersionedBank {
     blockhash_queue: BlockhashQueue,
     _unused_ancestors: HashMap<Slot, usize>,
@@ -434,17 +495,25 @@ where
 /// struct.
 #[cfg_attr(
     feature = "frozen-abi",
-    derive(AbiExample, Serialize, StableAbi, StableAbiSample)
+    derive(AbiExample, Serialize, SchemaWrite, StableAbi, StableAbiSample)
 )]
-#[derive(Clone, Debug, Deserialize)]
+#[derive(Clone, Debug, Deserialize, SchemaRead)]
 struct ExtraFieldsToDeserialize {
     #[serde(deserialize_with = "default_on_eof")]
+    #[wincode(with = "wincode_compat::DefaultOnEmptyRead<u64>")]
     lamports_per_signature: u64,
     #[serde(deserialize_with = "default_on_eof")]
+    #[wincode(
+        with = "wincode_compat::DefaultOnEmptyRead<Option<UnusedIncrementalSnapshotPersistence>>"
+    )]
     _unused_incremental_snapshot_persistence: Option<UnusedIncrementalSnapshotPersistence>,
     #[serde(deserialize_with = "default_on_eof")]
+    #[wincode(with = "wincode_compat::DefaultOnEmptyRead<Option<Hash>>")]
     _unused_epoch_accounts_hash: Option<Hash>,
     #[serde(deserialize_with = "default_on_eof")]
+    #[wincode(
+        with = "wincode_compat::DefaultOnEmptyRead<Vec<(u64, DeserializableVersionedEpochStakes)>>"
+    )]
     // Match the serialize side's `HashMap<u64, VersionedEpochStakes>`, which samples `0..=1` entries.
     #[cfg_attr(
         feature = "frozen-abi",
@@ -453,8 +522,10 @@ struct ExtraFieldsToDeserialize {
     )]
     versioned_epoch_stakes: Vec<(u64, DeserializableVersionedEpochStakes)>,
     #[serde(deserialize_with = "default_on_eof")]
+    #[wincode(with = "wincode_compat::DefaultOnEmptyRead<Option<SerdeAccountsLtHash>>")]
     accounts_lt_hash: Option<SerdeAccountsLtHash>,
     #[serde(deserialize_with = "default_on_eof")]
+    #[wincode(with = "wincode_compat::DefaultOnEmptyRead<Option<Hash>>")]
     block_id: Option<Hash>,
 }
 
@@ -493,14 +564,14 @@ pub struct ExtraFieldsToSerialize {
 /// wire formats can't diverge.
 #[cfg_attr(
     feature = "frozen-abi",
-    derive(Serialize, StableAbi, StableAbiSample),
+    derive(Serialize, SchemaWrite, StableAbi, StableAbiSample),
     frozen_abi(
         abi_digest = "2TVKjhahaEGqUZAJtMmaaagcxWzhMPUsNrVHsSoNboK7",
-        abi_serializer = "bincode",
+        abi_serializer = ["bincode", "wincode"],
         test_roundtrip = "wire_only"
     )
 )]
-#[derive(Deserialize)]
+#[derive(Deserialize, SchemaRead)]
 struct DeserializableBankSnapshot {
     bank: DeserializableVersionedBank,
     accounts_db: AccountsDbFields,

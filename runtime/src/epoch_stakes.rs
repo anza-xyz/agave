@@ -17,10 +17,11 @@ use {
     std::{
         collections::HashMap,
         fmt,
+        mem::MaybeUninit,
         num::NonZero,
         sync::{Arc, OnceLock},
     },
-    wincode::{SchemaRead, SchemaWrite, WriteResult},
+    wincode::{ReadResult, SchemaRead, SchemaWrite, WriteResult, config::Config, io::Reader},
 };
 
 pub type NodeIdToVoteAccounts = HashMap<Pubkey, NodeVoteAccounts>;
@@ -202,9 +203,9 @@ pub struct NodeVoteAccounts {
 /// deserialization by ignoring serialized stake delegations entirely.
 #[cfg_attr(
     feature = "frozen-abi",
-    derive(Serialize, AbiEnumVisitor, StableAbi, StableAbiSample)
+    derive(Serialize, SchemaWrite, AbiEnumVisitor, StableAbi, StableAbiSample)
 )]
-#[derive(Clone, Debug, Deserialize)]
+#[derive(Clone, Debug, Deserialize, SchemaRead)]
 #[cfg_attr(feature = "dev-context-only-utils", qualifiers(pub))]
 pub(crate) enum DeserializableVersionedEpochStakes {
     Current {
@@ -499,18 +500,49 @@ impl From<SerdeStakesToStakeFormat> for EpochStakes {
 ///
 /// Needed because snapshots contain additional fields no longer present in EpochStakes.
 // Sampling is overridden at the parent (`DeserializableVersionedEpochStakes::Current.stakes`), so
-// only `Serialize` is needed here.
-#[cfg_attr(feature = "frozen-abi", derive(Serialize))]
-#[derive(Clone, Debug, Deserialize)]
+// no StableAbi/StableAbiSample is needed here.
+#[cfg_attr(feature = "frozen-abi", derive(Serialize, SchemaWrite))]
+#[derive(Clone, Debug, Deserialize, SchemaRead)]
 #[cfg_attr(feature = "dev-context-only-utils", qualifiers(pub))]
 pub(crate) struct DeserializableEpochStakes {
     vote_accounts: VoteAccounts,
     // Read-and-discarded (always empty); the serialize side writes it empty too.
     #[serde(deserialize_with = "deserialize_and_ignore_stake_delegations")]
+    #[wincode(with = "IgnoredStakeDelegations")]
     _stake_delegations: Vec<(Pubkey, Stake)>,
     _unused: u64,
     epoch: Epoch,
     stake_history: StakeHistory,
+}
+
+/// wincode `with` schema for the ignored stake delegations: reads and discards the wire's
+/// length-prefixed `Vec<(Pubkey, Stake)>`, yielding an empty `Vec`; writes it back through `Vec`
+/// (always empty, matching the serialize side).
+struct IgnoredStakeDelegations;
+
+unsafe impl<'de, C: Config> SchemaRead<'de, C> for IgnoredStakeDelegations {
+    type Dst = Vec<(Pubkey, Stake)>;
+
+    fn read(reader: impl Reader<'de>, dst: &mut MaybeUninit<Self::Dst>) -> ReadResult<()> {
+        <Vec<(Pubkey, Stake)> as SchemaRead<'de, C>>::get(reader)?;
+        dst.write(Vec::new());
+        Ok(())
+    }
+}
+
+#[cfg(feature = "frozen-abi")]
+unsafe impl<C: Config> SchemaWrite<C> for IgnoredStakeDelegations {
+    type Src = Vec<(Pubkey, Stake)>;
+
+    const TYPE_META: wincode::TypeMeta = <Vec<(Pubkey, Stake)> as SchemaWrite<C>>::TYPE_META;
+
+    fn size_of(src: &Self::Src) -> WriteResult<usize> {
+        <Vec<(Pubkey, Stake)> as SchemaWrite<C>>::size_of(src)
+    }
+
+    fn write(writer: impl wincode::io::Writer, src: &Self::Src) -> WriteResult<()> {
+        <Vec<(Pubkey, Stake)> as SchemaWrite<C>>::write(writer, src)
+    }
 }
 
 impl From<DeserializableEpochStakes> for EpochStakes {

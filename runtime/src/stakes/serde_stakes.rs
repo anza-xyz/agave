@@ -1,5 +1,7 @@
 #[cfg(feature = "dev-context-only-utils")]
 use qualifier_attr::qualifiers;
+#[cfg(feature = "frozen-abi")]
+use wincode::SchemaWrite;
 use {
     super::{StakeAccount, Stakes},
     crate::stake_history::StakeHistory,
@@ -10,6 +12,7 @@ use {
     solana_stake_interface::state::{Delegation, Stake},
     solana_vote::vote_account::VoteAccounts,
     std::{collections::HashMap, sync::Arc},
+    wincode::SchemaRead,
 };
 
 /// Wrapper struct with custom serialization to support serializing
@@ -184,8 +187,11 @@ impl Serialize for SerdeStakeAccountMapToStakeFormat {
 /// Its bincode serializaiton format is identical as Stakes<T>, but allows faster
 /// deserialization without creating imbl::HashMap (such conversion is deferred until
 /// data is actually needed).
-#[cfg_attr(feature = "frozen-abi", derive(Serialize, StableAbi, StableAbiSample))]
-#[derive(Clone, Debug, Deserialize)]
+#[cfg_attr(
+    feature = "frozen-abi",
+    derive(Serialize, SchemaWrite, StableAbi, StableAbiSample)
+)]
+#[derive(Clone, Debug, Deserialize, SchemaRead)]
 #[cfg_attr(feature = "dev-context-only-utils", qualifiers(pub))]
 pub(crate) struct DeserializableDelegationStakes {
     pub vote_accounts: VoteAccounts,
