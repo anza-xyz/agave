@@ -1393,7 +1393,7 @@ checksum = "90dbd31c98227229239363921e60fcf5e558e43ec69094d46fc4996f08d1d5bc"
 dependencies = [
  "bitcoin_hashes 0.14.100",
  "rand 0.8.6",
- "rand_core 0.5.1",
+ "rand_core 0.6.4",
  "serde",
  "unicode-normalization",
 ]
@@ -4618,9 +4618,9 @@ dependencies = [
 
 [[package]]
 name = "lru"
-version = "0.18.0"
+version = "0.18.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "8a860605968fce16869fd239cf4237a82f3ac470723415db603b0e8b6c8d4fb9"
+checksum = "0b6180140927ee907000b0aa540091f6ea512ead4447c92b8fc35bc72788a5a6"
 dependencies = [
  "hashbrown 0.17.0",
 ]
@@ -9127,7 +9127,7 @@ dependencies = [
  "itertools 0.14.0",
  "lazy-lru",
  "log",
- "lru 0.18.0",
+ "lru 0.18.1",
  "mockall",
  "num_cpus",
  "num_enum",
@@ -11433,7 +11433,7 @@ dependencies = [
  "futures 0.3.32",
  "futures-util",
  "log",
- "lru 0.18.0",
+ "lru 0.18.1",
  "quinn",
  "rustls",
  "serde_json",
@@ -11609,7 +11609,7 @@ dependencies = [
  "itertools 0.14.0",
  "lazy-lru",
  "log",
- "lru 0.18.0",
+ "lru 0.18.1",
  "rand 0.9.4",
  "rand_chacha 0.9.0",
  "rayon",
