@@ -78,14 +78,12 @@ pub(crate) struct WireVoteSignature {
     )]
     #[wincode(with = "PodBLSSignature")]
     pub(crate) signature: BLSSignature,
-    pub(crate) rank: u16,
 }
 
 impl From<VoteMessage> for WireVoteSignature {
     fn from(msg: VoteMessage) -> Self {
         Self {
             signature: msg.signature,
-            rank: msg.rank,
         }
     }
 }
@@ -306,8 +304,8 @@ impl WireConsensusMessageV1 {
     feature = "frozen-abi",
     derive(AbiExample, AbiEnumVisitor, StableAbi, StableAbiSample, Serialize),
     frozen_abi(
-        digest = "Gf8GEMXaXezQnGsqwDdpZN3WtNkMZw5wfp3nwep9j55V",
-        abi_digest = "AHPJsANgE3T8wfzkFZwao1PAWwd6LtS5GAhGrN9X4Xhy",
+        digest = "DjdpNzNd3eQ569wuRQq7cKAsj791nkjbbhcqWa7TQeKj",
+        abi_digest = "ErGjoTr18hn3dvPVA7jFgK5WLwb4jgx7a39Yn8dSzB2K",
         abi_serializer = "wincode",
         test_roundtrip = "eq_and_wire",
     )

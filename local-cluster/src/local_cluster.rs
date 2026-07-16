@@ -896,10 +896,20 @@ impl LocalCluster {
         test_name: &str,
         socket_addr_space: SocketAddrSpace,
         vote_listener_addr: std::net::UdpSocket,
-        validator_keys: &[Arc<Keypair>],
+        validator_node_keypairs: &[Arc<Keypair>],
         node_stakes: &[u64],
     ) {
         let alive_node_contact_infos = self.discover_nodes(socket_addr_space, test_name);
+        let bank_forks = self
+            .validators
+            .values()
+            .find_map(|validator_info| {
+                validator_info
+                    .validator
+                    .as_ref()
+                    .map(|validator| Arc::clone(&validator.bank_forks))
+            })
+            .expect("cluster must contain a running validator");
         info!("{test_name} looking for new notarized votes on all nodes");
         cluster_tests::check_for_new_notarized_votes(
             compute_shred_version(&self.genesis_config.hash(), None),
@@ -907,8 +917,9 @@ impl LocalCluster {
             &alive_node_contact_infos,
             test_name,
             vote_listener_addr,
-            validator_keys,
+            validator_node_keypairs,
             node_stakes,
+            bank_forks,
         );
         info!("{test_name} done waiting for notarized votes");
     }

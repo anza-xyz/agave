@@ -38,11 +38,11 @@ use {
     std::collections::HashMap,
 };
 
-fn into_vote_msg(msg: UnverifiedVoteMessage) -> VoteMessage {
+fn into_vote_msg(msg: UnverifiedVoteMessage, rank: u16) -> VoteMessage {
     VoteMessage {
         vote: msg.vote,
         signature: msg.signature,
-        rank: msg.rank,
+        rank,
     }
 }
 
@@ -60,6 +60,7 @@ pub(super) struct UnverifiedVotePayload {
     pub sender_bls_pubkey: PopVerified<BlsPubkeyAffine>,
     pub sender_vote_account_pubkey: Pubkey,
     pub sender_identity_pubkey: Pubkey,
+    pub rank: u16,
 }
 
 impl UnverifiedVotePayload {
@@ -69,7 +70,7 @@ impl UnverifiedVotePayload {
         self.sender_bls_pubkey
             .verify_signature(&self.vote_message.signature, &payload)
             .map(|()| VerifiedVotePayload {
-                vote_message: into_vote_msg(self.vote_message),
+                vote_message: into_vote_msg(self.vote_message, self.rank),
                 sender_vote_account_pubkey: self.sender_vote_account_pubkey,
             })
     }

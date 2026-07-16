@@ -407,15 +407,13 @@ impl SigVerifier {
                 self.stats.discard_vote_invalid_rank += 1;
                 None
             })?;
-        let rank = rank_map.get_rank_for_vote_pubkey(&entry.vote_account_pubkey)?;
-        if *rank != msg.rank {
-            return None;
-        }
+        let rank = rank_map.get_rank_for_vote_pubkey(&sender_identity_pubkey)?;
         Some(UnverifiedVotePayload {
             vote_message: msg,
             sender_bls_pubkey: entry.bls_pubkey,
             sender_vote_account_pubkey: entry.vote_account_pubkey,
             sender_identity_pubkey,
+            rank: *rank,
         })
     }
 }

@@ -50,7 +50,6 @@ fn generate_test_data(
                 let vote_message = UnverifiedVoteMessage {
                     vote,
                     signature: signature.into(),
-                    rank: 0,
                     shred_version,
                 };
                 UnverifiedVotePayload {
@@ -58,6 +57,7 @@ fn generate_test_data(
                     sender_bls_pubkey: bls_keypair.public,
                     sender_vote_account_pubkey: Keypair::new().pubkey(),
                     sender_identity_pubkey: Keypair::new().pubkey(),
+                    rank: 0,
                 }
             })
             .collect(),
