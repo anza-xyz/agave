@@ -24,7 +24,7 @@ const MAX_ROOT_ENTRIES: usize = MAX_RECENT_BLOCKHASHES;
 const CACHED_KEY_SIZE: usize = 20;
 
 // Store forks in a single chunk of memory to avoid another hash lookup.
-pub type ForkStatus<T> = Vec<(Slot, T)>;
+pub type ForkStatus<T> = SmallVec<[(Slot, T); 1]>;
 
 // The type of the key used in the cache.
 pub(crate) type KeySlice = [u8; CACHED_KEY_SIZE];

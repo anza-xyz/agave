@@ -2834,7 +2834,7 @@ fn test_shrink_candidate_slots_with_dead_ancient_account() {
     // accounts it holds.  This is the data lengths of the
     // accounts plus the length of their metadata.
     assert_eq!(
-        created_accounts.capacity as usize,
+        created_accounts.written_bytes as usize,
         AppendVec::calculate_stored_size(1000) + AppendVec::calculate_stored_size(2000),
     );
     // The above check works only when the AppendVec storage is
@@ -6353,15 +6353,15 @@ fn test_shrink_collect_simple() {
                                 shrink_collect.tombstones_total_bytes,
                                 expected_tombstones.len() * AppendVec::calculate_stored_size(0)
                             );
-                            // expected_capacity is determined by what size append vec gets created when the write cache is flushed to an append vec.
-                            let mut expected_capacity =
+                            // expected_written_bytes is determined by what size append vec gets created when the write cache is flushed to an append vec.
+                            let mut expected_written_bytes =
                                 (account_count * AppendVec::calculate_stored_size(space)) as u64;
                             if append_opposite_zero_lamport_account && space != 0 {
                                 // zero lamport accounts always write space = 0
-                                expected_capacity -= space as u64;
+                                expected_written_bytes -= space as u64;
                             }
 
-                            assert_eq!(shrink_collect.capacity, expected_capacity);
+                            assert_eq!(shrink_collect.written_bytes, expected_written_bytes);
                             assert_eq!(shrink_collect.total_starting_accounts, account_count);
                             assert_eq!(
                                 shrink_collect.all_are_zero_lamports,
@@ -6697,10 +6697,10 @@ fn get_one_ancient_append_vec_and_others_with_account_size(
     let after_store = db.get_storage_for_slot(slot1).unwrap();
     let GetUniqueAccountsResult {
         stored_accounts: after_stored_accounts,
-        capacity: after_capacity,
+        written_bytes: after_written_bytes,
         ..
     } = db.get_unique_accounts_from_storage(&after_store);
-    assert!(created_accounts.capacity <= after_capacity);
+    assert!(created_accounts.written_bytes <= after_written_bytes);
     assert_eq!(created_accounts.stored_accounts.len(), 1);
     // always 1 account: either we leave the append vec alone if it is all dead
     // or we create a new one and copy into it if account is alive

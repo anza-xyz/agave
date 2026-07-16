@@ -20,6 +20,8 @@ Release channels have their own copy of this changelog:
 #### Changes
 ### Validator
 #### Breaking
+* Loading a snapshot that contains an invalid vote account is now a hard error. Previously such
+  accounts were silently dropped for compatibility with snapshots created before v2.1.0.
 * Banking trace is now disabled by default. To enable, provide `--enable-banking-trace <max bytes>`.
 #### Deprecations
 * `--disable-banking-trace` is now deprecated and a no-op (banking trace is disabled by

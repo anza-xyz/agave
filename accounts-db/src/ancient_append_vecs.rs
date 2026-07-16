@@ -59,8 +59,8 @@ struct SlotInfo {
     storage: Arc<AccountStorageEntry>,
     /// slot of storage
     slot: Slot,
-    /// total capacity of storage
-    capacity: u64,
+    /// total bytes written in storage, before shrinking
+    written_bytes: u64,
     /// # alive bytes in storage *after* shrinking
     alive_bytes: u64,
     /// true if this should be shrunk due to ratio
@@ -103,8 +103,8 @@ impl AncientSlotInfos {
     ) -> bool {
         let mut was_randomly_shrunk = false;
         if alive_bytes_after_shrink > 0 {
-            let capacity = storage.accounts.capacity();
-            let should_shrink = if capacity > 0 {
+            let written_bytes = storage.written_bytes();
+            let should_shrink = if written_bytes > 0 {
                 if is_candidate_for_shrink {
                     true
                 } else if can_randomly_shrink && rng().random_range(0..10000) == 0 {
@@ -134,7 +134,7 @@ impl AncientSlotInfos {
             }
             self.all_infos.push(SlotInfo {
                 slot,
-                capacity,
+                written_bytes,
                 storage,
                 alive_bytes: alive_bytes_after_shrink,
                 should_shrink,
@@ -164,19 +164,19 @@ impl AncientSlotInfos {
         self.shrink_indexes.sort_unstable_by(|l, r| {
             let amount_shrunk = |index: &usize| {
                 let item = &self.all_infos[*index];
-                // alive_bytes assumes the accounts are aligned. `capacity` may
+                // alive_bytes assumes the accounts are aligned. `written_bytes` may
                 // not be aligned for the last account. Therefore, we need to
                 // align it.
-                let aligned_capacity = u64_align!(item.capacity as usize) as u64;
-                if aligned_capacity < item.alive_bytes {
+                let aligned_written_bytes = u64_align!(item.written_bytes as usize) as u64;
+                if aligned_written_bytes < item.alive_bytes {
                     // should not happen, but if it does, submit warn log it and continue
                     datapoint_warn!(
-                        "aligned_capacity_less_than_alive_bytes",
-                        ("aligned_capacity", aligned_capacity, i64),
+                        "aligned_written_bytes_less_than_alive_bytes",
+                        ("aligned_written_bytes", aligned_written_bytes, i64),
                         ("alive_bytes", item.alive_bytes, i64)
                     );
                 }
-                item.capacity.saturating_sub(item.alive_bytes)
+                item.written_bytes.saturating_sub(item.alive_bytes)
             };
             amount_shrunk(r).cmp(&amount_shrunk(l))
         });
@@ -204,7 +204,7 @@ impl AncientSlotInfos {
         for info_index in &self.shrink_indexes {
             let info = &mut self.all_infos[*info_index];
             self.best_slots_to_shrink
-                .push_back((info.slot, info.capacity));
+                .push_back((info.slot, info.written_bytes));
             if bytes_to_shrink_due_to_ratio.0 >= threshold_bytes {
                 // we exceeded the amount to shrink due to alive ratio, so don't shrink this one just due to 'should_shrink'
                 // It MAY be shrunk based on total capacity still.
@@ -315,7 +315,7 @@ impl AncientSlotInfos {
             r.is_high_slot
                 .cmp(&l.is_high_slot)
                 .then_with(|| r.should_shrink.cmp(&l.should_shrink))
-                .then_with(|| l.capacity.cmp(&r.capacity))
+                .then_with(|| l.written_bytes.cmp(&r.written_bytes))
         });
 
         // remove any storages we don't need to combine this pass to achieve
@@ -489,7 +489,7 @@ impl AccountsDb {
         // be re-packed together with other older/colder accounts.
         accounts_to_combine
             .accounts_to_combine
-            .sort_unstable_by_key(|a| a.capacity);
+            .sort_unstable_by_key(|a| a.written_bytes);
 
         // pack the accounts with 1 ref or refs > 1 but the slot we're packing is the highest alive slot for the pubkey.
         // Note the `chain` below combining the 2 types of refs.
@@ -629,7 +629,7 @@ impl AccountsDb {
             .iter()
             .filter(|info| info.should_shrink)
             .map(|info| {
-                total_dead_bytes += info.capacity.saturating_sub(info.alive_bytes);
+                total_dead_bytes += info.written_bytes.saturating_sub(info.alive_bytes);
                 total_alive_bytes += info.alive_bytes;
             })
             .count()
@@ -1178,7 +1178,7 @@ mod tests {
             .map(|storage| SlotInfo {
                 storage: Arc::clone(storage),
                 slot: storage.slot(),
-                capacity: 0,
+                written_bytes: 0,
                 alive_bytes: 0,
                 should_shrink: false,
                 is_high_slot,
@@ -2333,7 +2333,7 @@ mod tests {
                     (
                         info.storage.id(),
                         info.slot,
-                        info.capacity,
+                        info.written_bytes,
                         info.alive_bytes,
                         info.should_shrink,
                     )
@@ -2362,10 +2362,10 @@ mod tests {
         let after_store = db.storage.get_slot_storage_entry(slot1).unwrap();
         let GetUniqueAccountsResult {
             stored_accounts: after_stored_accounts,
-            capacity: after_capacity,
+            written_bytes: after_written_bytes,
             ..
         } = db.get_unique_accounts_from_storage(&after_store);
-        assert_eq!(created_accounts.capacity, after_capacity);
+        assert_eq!(created_accounts.written_bytes, after_written_bytes);
         assert_eq!(created_accounts.stored_accounts.len(), 1);
         // always 1 account: either we leave the append vec alone if it is all dead
         // or we create a new one and copy into it if account is alive
@@ -2376,7 +2376,7 @@ mod tests {
     fn assert_storage_info(info: &SlotInfo, storage: &AccountStorageEntry, should_shrink: bool) {
         assert_eq!(storage.id(), info.storage.id());
         assert_eq!(storage.slot(), info.slot);
-        assert_eq!(storage.capacity(), info.capacity);
+        assert_eq!(storage.written_bytes(), info.written_bytes);
         assert_eq!(storage.alive_bytes(), info.alive_bytes as usize);
         assert_eq!(should_shrink, info.should_shrink);
     }
@@ -2661,7 +2661,7 @@ mod tests {
                 .map(|index| SlotInfo {
                     storage: Arc::clone(&storage),
                     slot: index as Slot,
-                    capacity: 1,
+                    written_bytes: 1,
                     alive_bytes: 1,
                     should_shrink: false,
                     is_high_slot: false,
@@ -2722,9 +2722,9 @@ mod tests {
                     .all_infos
                     .iter_mut()
                     .enumerate()
-                    .for_each(|(i, info)| info.capacity = 1 + i as u64);
+                    .for_each(|(i, info)| info.written_bytes = 1 + i as u64);
                 if reorder {
-                    infos.all_infos.last_mut().unwrap().capacity = 0; // sort to beginning
+                    infos.all_infos.last_mut().unwrap().written_bytes = 0; // sort to beginning
                 }
                 infos.all_infos.last_mut().unwrap().alive_bytes = ideal_storage_size_large;
                 // if we use max_storages = 3 or 4, then the low limit is 1 or 2. To get below 2 requires a result of 1, which packs everyone.
@@ -3279,7 +3279,7 @@ mod tests {
                         .enumerate()
                         .for_each(|(i, info)| {
                             info.should_shrink = true;
-                            info.capacity = ((i + 1) * 1000) as u64;
+                            info.written_bytes = ((i + 1) * 1000) as u64;
                         });
                     infos.all_infos[0].alive_bytes = 100;
                     infos.all_infos[1].alive_bytes = 900;
@@ -3342,7 +3342,7 @@ mod tests {
                         infos
                             .all_infos
                             .iter()
-                            .map(|info| (info.slot, info.capacity, info.alive_bytes))
+                            .map(|info| (info.slot, info.written_bytes, info.alive_bytes))
                             .collect::<Vec<_>>()
                     );
                 }
@@ -3358,11 +3358,11 @@ mod tests {
         let slot = 0;
 
         // info1 is first, equal, last
-        for info1_capacity in [0, 1, 2] {
+        for info1_written_bytes in [0, 1, 2] {
             let info1 = SlotInfo {
                 storage: storage.clone(),
                 slot,
-                capacity: info1_capacity,
+                written_bytes: info1_written_bytes,
                 alive_bytes: 0,
                 should_shrink: false,
                 is_high_slot: false,
@@ -3370,7 +3370,7 @@ mod tests {
             let info2 = SlotInfo {
                 storage: storage.clone(),
                 slot,
-                capacity: 2,
+                written_bytes: 2,
                 alive_bytes: 1,
                 should_shrink: false,
                 is_high_slot: false,
@@ -3383,8 +3383,8 @@ mod tests {
             infos.sort_shrink_indexes_by_bytes_saved();
             let first = &infos.all_infos[infos.shrink_indexes[0]];
             let second = &infos.all_infos[infos.shrink_indexes[1]];
-            let first_capacity = first.capacity - first.alive_bytes;
-            let second_capacity = second.capacity - second.alive_bytes;
+            let first_capacity = first.written_bytes - first.alive_bytes;
+            let second_capacity = second.written_bytes - second.alive_bytes;
             assert!(first_capacity >= second_capacity);
         }
     }
@@ -3803,7 +3803,7 @@ mod tests {
                 // irrelevant fields
                 zero_lamport_single_ref_pubkeys: Vec::default(),
                 slot: 0,
-                capacity: 0,
+                written_bytes: 0,
                 alive_accounts: ShrinkCollectAliveSeparatedByRefs {
                     one_ref: AliveAccounts::default(),
                     many_refs_this_is_newest_alive: AliveAccounts::default(),

@@ -14,7 +14,6 @@ done
 echo "--- coverage: root (part 2)"
 "$git_root"/ci/test-coverage.sh \
   --features dev-context-only-utils \
-  --features solana-gossip/small-cluster-gossip \
   --lib \
   --bins \
   "${packages[@]}"

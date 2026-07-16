@@ -113,13 +113,6 @@ impl AccountsFile {
         }
     }
 
-    /// Returns the total number of bytes, *not accounts*, the AccountsFile can hold
-    pub fn capacity(&self) -> u64 {
-        match self {
-            Self::AppendVec(av) => av.capacity(),
-        }
-    }
-
     pub fn file_name(slot: Slot, id: AccountsFileId) -> String {
         format!("{slot}.{id}")
     }
