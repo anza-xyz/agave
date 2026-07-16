@@ -20,7 +20,6 @@
 /svm/ @anza-xyz/svm
 /tls-utils/ @anza-xyz/networking
 /transaction-context/ @anza-xyz/svm
-/transaction-view/ @anza-xyz/tx-metadata
 /turbine/ @anza-xyz/networking
 /votor/ @anza-xyz/consensus
 /votor-messages/ @anza-xyz/consensus
