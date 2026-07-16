@@ -149,9 +149,12 @@ macro_rules! define_accounts_db_test {
         fn run_test($accounts_db: AccountsDb) {
             $inner
         }
-        let accounts_db = AccountsDb::new_single_for_tests_with_provider_and_config(
-            $accounts_file_provider,
-            ACCOUNTS_DB_CONFIG_FOR_TESTING,
+        let accounts_db = AccountsDb::new_for_tests_with_config(
+            Vec::new(),
+            AccountsDbConfig {
+                accounts_file_provider: $accounts_file_provider,
+                ..ACCOUNTS_DB_CONFIG_FOR_TESTING
+            },
         );
         run_test(accounts_db);
     };
@@ -640,8 +643,8 @@ fn test_flush_slots_with_reclaim_old_slots() {
 #[test]
 fn test_flush_defers_write_through_until_all_cached_slots_drop() {
     // Build an AccountsDb whose index has IndexLimit::Threshold so write-through is enabled.
-    let db = AccountsDb::new_single_for_tests_with_provider_and_config(
-        AccountsFileProvider::AppendVec,
+    let db = AccountsDb::new_for_tests_with_config(
+        Vec::new(),
         AccountsDbConfig {
             index: Some(AccountsIndexConfig {
                 index_limit: IndexLimit::Threshold(IndexLimitThreshold {
@@ -728,8 +731,8 @@ fn test_flush_does_not_write_through_when_write_through_disabled() {
 /// drops its last cached slot.
 #[test]
 fn test_purge_unrooted_slot_writes_through_surviving_entry() {
-    let db = AccountsDb::new_single_for_tests_with_provider_and_config(
-        AccountsFileProvider::AppendVec,
+    let db = AccountsDb::new_for_tests_with_config(
+        Vec::new(),
         AccountsDbConfig {
             index: Some(AccountsIndexConfig {
                 index_limit: IndexLimit::Threshold(IndexLimitThreshold {
