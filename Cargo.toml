@@ -288,7 +288,7 @@ libsecp256k1 = { version = "0.7.2", default-features = false, features = [
     "static-context",
 ] }
 log = "0.4.33"
-lru = "0.18.0"
+lru = "0.18.1"
 lz4 = "1.28.1"
 memmap2 = "0.9.11"
 memoffset = "0.9.1"
