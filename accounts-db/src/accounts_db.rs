@@ -4732,7 +4732,6 @@ impl AccountsDb {
                     (slot, &accounts[..]),
                     &flushed_store,
                     reclaim_method,
-                    UpdateIndexThreadSelection::PoolWithThreshold,
                 ));
             flush_stats.accumulate_store_accounts_for_flush(store_accounts_for_flush_stats);
             flush_stats.store_accounts_total_us += Saturating(store_accounts_for_flush_us);
@@ -5113,8 +5112,6 @@ impl AccountsDb {
         infos: Vec<AccountInfo>,
         accounts: &impl StorableAccounts<'a>,
         reclaim: UpsertReclaim,
-        update_index_thread_selection: UpdateIndexThreadSelection,
-        thread_pool: &ThreadPool,
     ) -> Vec<ReclaimsSlotList<AccountInfo>> {
         let target_slot = accounts.target_slot();
         let len = std::cmp::min(accounts.len(), infos.len());
@@ -5151,11 +5148,8 @@ impl AccountsDb {
         };
 
         let threshold = 1;
-        if matches!(
-            update_index_thread_selection,
-            UpdateIndexThreadSelection::PoolWithThreshold,
-        ) && len > threshold
-        {
+        if len > threshold {
+            let thread_pool = &self.thread_pool_background;
             let chunk_size = len.div_ceil(thread_pool.current_num_threads());
             let batches = 1 + len / chunk_size;
             thread_pool.install(|| {
@@ -5700,7 +5694,6 @@ impl AccountsDb {
         accounts: impl StorableAccounts<'a>,
         storage: &AccountStorageEntry,
         reclaim_handling: UpsertReclaim,
-        update_index_thread_selection: UpdateIndexThreadSelection,
     ) -> StoreAccountsForFlushStats {
         let slot = accounts.target_slot();
 
@@ -5717,13 +5710,7 @@ impl AccountsDb {
         let mark_zero_lamport_us = mark_zero_lamport_time.end_as_us();
 
         let update_index_time = Measure::start("update_index");
-        let reclaims = self.update_index_for_flush(
-            infos,
-            &accounts,
-            reclaim_handling,
-            update_index_thread_selection,
-            &self.thread_pool_background,
-        );
+        let reclaims = self.update_index_for_flush(infos, &accounts, reclaim_handling);
         let update_index_us = update_index_time.end_as_us();
 
         // If there are any reclaims then they should be handled. Reclaims affect

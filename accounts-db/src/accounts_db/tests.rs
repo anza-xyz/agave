@@ -613,7 +613,6 @@ fn test_flush_slots_with_reclaim_old_slots() {
         (new_slot, &accounts_list[..]),
         &storage,
         UpsertReclaim::ReclaimOldSlots,
-        UpdateIndexThreadSelection::Inline,
     );
 
     // Remove the flushed slot from the cache
