@@ -4605,9 +4605,9 @@ impl AccountsDb {
         let num_new_roots = flushed_roots.len();
 
         // For each root being flushed, which of its cached accounts to write to storage.
-        let (pubkeys_to_flush, select_pubkeys_us) = match should_clean {
+        let (pubkeys_to_store, select_pubkeys_us) = match should_clean {
             FlushShouldClean::Yes { max_clean_root } => {
-                measure_us!(self.select_pubkeys_to_flush(&flushed_roots, max_clean_root))
+                measure_us!(self.select_pubkeys_to_store(&flushed_roots, max_clean_root))
             }
             // Not cleaning: every root writes all of its accounts.
             FlushShouldClean::No => (
@@ -4625,7 +4625,7 @@ impl AccountsDb {
             ..FlushStats::default()
         };
         for root in flushed_roots {
-            if let Some(stats) = self.flush_slot_cache(root, &pubkeys_to_flush[&root]) {
+            if let Some(stats) = self.flush_slot_cache(root, &pubkeys_to_store[&root]) {
                 num_roots_flushed += 1;
                 flush_stats.accumulate(&stats);
             } else {
@@ -4646,12 +4646,12 @@ impl AccountsDb {
     /// root keeps `Only` the newest version of each account, deduped newest-first. A root above
     /// `max_clean_root` instead flushes `All`, since an in-flight scan may still need those
     /// versions; `None` means there is no bound and every flushed root is cleaned.
-    fn select_pubkeys_to_flush(
+    fn select_pubkeys_to_store(
         &self,
         flushed_roots: &BTreeSet<Slot>,
         max_clean_root: Option<Slot>,
     ) -> IntMap<Slot, PubkeysToStore> {
-        let mut pubkeys_to_flush = IntMap::with_capacity(flushed_roots.len());
+        let mut pubkeys_to_store = IntMap::with_capacity(flushed_roots.len());
 
         // Presize the dedup set from the newest root (flushed first), doubled to leave room
         // for unique accounts contributed by older roots.
@@ -4680,9 +4680,9 @@ impl AccountsDb {
                 }
                 PubkeysToStore::Only(flush_keys)
             };
-            pubkeys_to_flush.insert(root, to_flush);
+            pubkeys_to_store.insert(root, to_flush);
         }
-        pubkeys_to_flush
+        pubkeys_to_store
     }
 
     fn do_flush_slot_cache(
@@ -4807,8 +4807,8 @@ impl AccountsDb {
         flush_stats
     }
 
-    /// `pubkeys_to_flush` selects which accounts are written to storage: `Only(set)` flushes
-    /// just the pubkeys in the set, dropping the rest with the cache, while `All` flushes every
+    /// `pubkeys_to_store` selects which accounts are written to storage: `Only(set)` stores
+    /// just the pubkeys in the set, dropping the rest with the cache, while `All` stores every
     /// account in the slot.
     fn flush_slot_cache(
         &self,
@@ -6795,7 +6795,7 @@ enum PubkeysToStore {
     /// `max_clean_root` and when not cleaning, since an in-flight scan may still need
     /// those versions.
     All,
-    /// Store only these pubkeys (the newest version of each, per `select_pubkeys_to_flush`),
+    /// Store only these pubkeys (the newest version of each, per `select_pubkeys_to_store`),
     /// purging the rest from the index and reclaiming older versions.
     Only(HashSet<Pubkey, PubkeyHasherBuilder>),
 }

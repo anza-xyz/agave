@@ -3786,10 +3786,10 @@ fn test_load_with_read_only_accounts_cache() {
     assert_eq!(slot, 2);
 }
 
-/// `select_pubkeys_to_flush` keeps only the newest version of each account across the
-/// cleaned roots and flushes roots above `max_clean_root` in full.
+/// `select_pubkeys_to_store` stores only the newest version of each account across the
+/// cleaned roots and stores roots above `max_clean_root` in full.
 #[test]
-fn test_select_pubkeys_to_flush() {
+fn test_select_pubkeys_to_store() {
     let db = AccountsDb::new_for_tests_with_config(Vec::new(), DEFAULT_ACCOUNTS_DB_CONFIG);
     let account = AccountSharedData::new(1, 0, &Pubkey::default());
 
@@ -3805,20 +3805,20 @@ fn test_select_pubkeys_to_flush() {
 
     // No bound: every flushed root is cleaned, so `shared` is written only at its newest root
     // (15), deduped from 5 and 10.
-    let plans = db.select_pubkeys_to_flush(&roots, None);
+    let plans = db.select_pubkeys_to_store(&roots, None);
     assert_eq!(plans[&15], shared_only);
     assert_eq!(plans[&10], deduped);
     assert_eq!(plans[&5], deduped);
 
     // max_clean_root = 15 (== newest root): same result, every root is at or below the bound.
-    let plans = db.select_pubkeys_to_flush(&roots, Some(15));
+    let plans = db.select_pubkeys_to_store(&roots, Some(15));
     assert_eq!(plans[&15], shared_only);
     assert_eq!(plans[&10], deduped);
     assert_eq!(plans[&5], deduped);
 
     // max_clean_root = 10: root 15 is above the boundary and flushes `All` (no dedup), so
     // `shared` is not dropped from root 10 — a scan at root 10 may still need that version.
-    let plans = db.select_pubkeys_to_flush(&roots, Some(10));
+    let plans = db.select_pubkeys_to_store(&roots, Some(10));
     assert_eq!(plans[&15], PubkeysToStore::All);
     assert_eq!(plans[&10], shared_only);
     assert_eq!(plans[&5], deduped);
