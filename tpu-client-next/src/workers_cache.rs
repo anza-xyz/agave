@@ -11,7 +11,7 @@ use {
     },
     lru::LruCache,
     quinn::Endpoint,
-    std::{net::SocketAddr, num::NonZeroUsize, sync::Arc, time::Duration},
+    std::{net::SocketAddr, sync::Arc, time::Duration},
     thiserror::Error,
     tokio::{
         sync::mpsc::{self, error::TrySendError},
@@ -19,6 +19,36 @@ use {
     },
     tokio_util::sync::CancellationToken,
 };
+
+pub trait ConnectionWorkerCache: Send {
+    fn contains(&self, key: &SocketAddr) -> bool;
+    fn get(&mut self, key: &SocketAddr) -> Option<&WorkerInfo>;
+    fn push(&mut self, key: SocketAddr, value: WorkerInfo) -> Option<(SocketAddr, WorkerInfo)>;
+    fn pop(&mut self, key: &SocketAddr) -> Option<WorkerInfo>;
+    fn pop_next(&mut self) -> Option<(SocketAddr, WorkerInfo)>;
+}
+
+impl ConnectionWorkerCache for LruCache<SocketAddr, WorkerInfo> {
+    fn contains(&self, key: &SocketAddr) -> bool {
+        LruCache::contains(self, key)
+    }
+
+    fn get(&mut self, key: &SocketAddr) -> Option<&WorkerInfo> {
+        LruCache::get(self, key)
+    }
+
+    fn push(&mut self, key: SocketAddr, value: WorkerInfo) -> Option<(SocketAddr, WorkerInfo)> {
+        LruCache::push(self, key, value)
+    }
+
+    fn pop(&mut self, key: &SocketAddr) -> Option<WorkerInfo> {
+        LruCache::pop(self, key)
+    }
+
+    fn pop_next(&mut self) -> Option<(SocketAddr, WorkerInfo)> {
+        LruCache::pop_lru(self)
+    }
+}
 
 /// [`WorkerInfo`] holds information about a worker responsible for sending
 /// transaction batches.
@@ -108,10 +138,9 @@ pub fn spawn_worker(
     WorkerInfo::new(txs_sender, handle, cancel)
 }
 
-/// [`WorkersCache`] manages and caches workers. It uses an LRU cache to store and
-/// manage workers. It also tracks transaction statistics for each peer.
+/// [`WorkersCache`] manages and caches workers using the provided cache implementation.
 pub struct WorkersCache {
-    workers: LruCache<SocketAddr, WorkerInfo>,
+    workers: Box<dyn ConnectionWorkerCache>,
 
     /// Indicates that the `WorkersCache` is been `shutdown()`, interrupting any outstanding
     /// `send_transactions_to_address()` invocations.
@@ -138,11 +167,8 @@ pub enum WorkersCacheError {
 }
 
 impl WorkersCache {
-    pub fn new(capacity: NonZeroUsize, cancel: CancellationToken) -> Self {
-        Self {
-            workers: LruCache::new(capacity),
-            cancel,
-        }
+    pub fn new(workers: Box<dyn ConnectionWorkerCache>, cancel: CancellationToken) -> Self {
+        Self { workers, cancel }
     }
 
     /// Checks if the worker for a given peer exists and it hasn't been
@@ -293,7 +319,7 @@ impl WorkersCache {
     /// Flushes the cache and asynchronously shuts down all workers. This method
     /// doesn't wait for the completion of all the shutdown tasks.
     pub(crate) fn flush(&mut self) {
-        while let Some((peer, current_worker)) = self.workers.pop_lru() {
+        while let Some((peer, current_worker)) = self.workers.pop_next() {
             shutdown_worker(ShutdownWorker {
                 leader: peer,
                 worker: current_worker,
@@ -311,7 +337,7 @@ impl WorkersCache {
         self.cancel.cancel();
 
         let mut tasks = JoinSet::new();
-        while let Some((peer, current_worker)) = self.workers.pop_lru() {
+        while let Some((peer, current_worker)) = self.workers.pop_next() {
             let shutdown_worker = ShutdownWorker {
                 leader: peer,
                 worker: current_worker,
@@ -366,6 +392,7 @@ mod tests {
             transaction_batch::TransactionBatch,
             workers_cache::{WorkersCache, WorkersCacheError, spawn_worker},
         },
+        lru::LruCache,
         quinn::Endpoint,
         solana_net_utils::sockets::{bind_to_localhost_unique, unique_port_range_for_tests},
         solana_tls_utils::QuicClientCertificate,
@@ -457,7 +484,10 @@ mod tests {
         let endpoint = create_test_endpoint();
 
         let cancel = CancellationToken::new();
-        let mut cache = WorkersCache::new(NonZeroUsize::new(10).unwrap(), cancel.clone());
+        let mut cache = WorkersCache::new(
+            Box::new(LruCache::new(NonZeroUsize::new(10).unwrap())),
+            cancel.clone(),
+        );
 
         let port_range = unique_port_range_for_tests(2);
         let peer: SocketAddr = SocketAddr::new(Ipv4Addr::LOCALHOST.into(), port_range.start);
@@ -476,17 +506,25 @@ mod tests {
         );
         assert!(cache.push(peer, worker).is_none());
 
-        let worker_info = cache.workers.peek(&peer).unwrap();
         // wait until sender is closed which happens when task has finished.
         let start = Instant::now();
-        while !worker_info.sender.is_closed() {
+        while !cache
+            .workers
+            .get(&peer)
+            .expect("Worker should remain in cache")
+            .sender
+            .is_closed()
+        {
             if start.elapsed() > TEST_MAX_TIME {
                 panic!("Sender did not close in {TEST_MAX_TIME:?}");
             }
             sleep(Duration::from_millis(500)).await;
         }
 
-        assert!(!worker_info.is_active(), "Worker should be inactive");
+        assert!(
+            !cache.workers.get(&peer).unwrap().is_active(),
+            "Worker should be inactive"
+        );
 
         // try to send to this worker — should fail and remove the worker
         let result = cache
