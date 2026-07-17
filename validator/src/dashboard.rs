@@ -316,32 +316,35 @@ async fn wait_for_validator_startup(
         }
 
         let admin_client = admin_client.take().unwrap();
-        match async move {
-            let Some(rpc_addr) = admin_client.rpc_addr().await? else {
-                return Ok(None);
-            };
-            let start_time = admin_client.start_time().await?;
-            let contact_info = Some(admin_client.contact_info().await?);
-            let vat_status = admin_client.vat_status().await.ok();
-            Ok::<_, jsonrpc_core_client::RpcError>(Some((
-                rpc_addr,
-                start_time,
-                contact_info,
-                vat_status,
-            )))
-        }
-        .await
-        {
+        match get_validator_startup_info(admin_client).await {
             Ok(None) => progress_bar.set_message("RPC service not available"),
-            Ok(Some((rpc_addr, start_time, contact_info, vat_status))) => {
-                return Some((rpc_addr, start_time, contact_info, vat_status));
-            }
+            Ok(Some(validator_startup_info)) => return Some(validator_startup_info),
             Err(err) => {
                 progress_bar.set_message(format!("Failed to get validator info: {err}"));
             }
         }
         thread::sleep(refresh_interval);
     }
+}
+
+async fn get_validator_startup_info(
+    admin_client: admin_rpc_service::gen_client::Client,
+) -> Result<
+    Option<(
+        SocketAddr,
+        SystemTime,
+        Option<admin_rpc_service::AdminRpcContactInfo>,
+        Option<admin_rpc_service::AdminRpcValidatorAdmissionTicketStatus>,
+    )>,
+    jsonrpc_core_client::RpcError,
+> {
+    let Some(rpc_addr) = admin_client.rpc_addr().await? else {
+        return Ok(None);
+    };
+    let start_time = admin_client.start_time().await?;
+    let contact_info = Some(admin_client.contact_info().await?);
+    let vat_status = admin_client.vat_status().await.ok();
+    Ok(Some((rpc_addr, start_time, contact_info, vat_status)))
 }
 
 fn get_validator_stats(
