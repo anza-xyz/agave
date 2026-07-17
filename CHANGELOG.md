@@ -62,6 +62,9 @@ Release channels have their own copy of this changelog:
   backward compatibility, but account storages are always accessed via file I/O.
 * `--accounts-db-cache-limit-mb` is now deprecated. Use `--accounts-db-write-cache-limit` instead.
 * `--experimental-poh-pinned-cpu-core` is now deprecated. Use `--poh-pinned-cpu-core` instead.
+* TPU-forward is now deprecated and will be removed in v4.3. The related validator arguments are
+  `--public-tpu-forwards-address`, `--tpu-max-fwd-staked-connections`,
+  `--tpu-max-fwd-unstaked-connections`, and `--tpu-transaction-forward-receive-threads`.
 #### Changes
 * Turbine shred ingestion now rejects shreds more than half an epoch in the future (previously up to 2 full epochs ahead was accepted).
 * When XDP is enabled, gossip egress does not support private and loopback addresses. Operators running with `--allow-private-addr` must also pass `--no-xdp`.
