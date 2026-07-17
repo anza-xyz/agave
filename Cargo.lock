@@ -7764,7 +7764,6 @@ dependencies = [
  "arc-swap",
  "arrayvec",
  "assert_matches",
- "async-trait",
  "bencher",
  "bincode",
  "bitvec",
@@ -9937,7 +9936,6 @@ name = "solana-rpc-test"
 version = "4.4.0-alpha.0"
 dependencies = [
  "agave-logger",
- "async-trait",
  "bincode",
  "bs58",
  "crossbeam-channel",
@@ -10256,7 +10254,6 @@ name = "solana-send-transaction-service"
 version = "4.4.0-alpha.0"
 dependencies = [
  "agave-logger",
- "async-trait",
  "crossbeam-channel",
  "itertools 0.14.0",
  "log",
@@ -11099,6 +11096,7 @@ dependencies = [
  "crossbeam-channel",
  "futures 0.3.33",
  "futures-util",
+ "itertools 0.14.0",
  "log",
  "lru 0.18.2",
  "quinn",

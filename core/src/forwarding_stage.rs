@@ -2,19 +2,21 @@
 //! packets to a node that is or will be leader soon.
 
 use {
-    crate::next_leader::next_leaders,
     agave_banking_stage_ingress_types::BankingPacketBatch,
     agave_transaction_view::transaction_view::SanitizedTransactionView,
-    async_trait::async_trait,
     crossbeam_channel::{Receiver, RecvTimeoutError},
     packet_container::PacketContainer,
+    smallvec::SmallVec,
+    solana_clock::FORWARD_TRANSACTIONS_TO_LEADER_AT_SLOT_OFFSET,
     solana_cost_model::cost_model::CostModel,
     solana_fee_structure::FeeDetails,
     solana_gossip::{cluster_info::ClusterInfo, contact_info::Protocol, node::NodeMultihoming},
     solana_keypair::Keypair,
+    solana_leader_schedule::NUM_CONSECUTIVE_LEADER_SLOTS,
     solana_net_utils::{multihomed_sockets::BindIpAddrs, token_bucket::TokenBucket},
     solana_packet as packet,
     solana_poh::poh_recorder::PohRecorder,
+    solana_pubkey::Pubkey,
     solana_runtime::{
         bank::{Bank, CollectorFeeDetails},
         bank_forks::SharableBanks,
@@ -102,22 +104,38 @@ impl ForwardAddressGetter {
         }
     }
 
-    /// Returns a list of forwarding addresses for non-vote transactions.
-    fn get_non_vote_forwarding_addresses(
-        &self,
-        max_count: u64,
-        protocol: Protocol,
-    ) -> Vec<SocketAddr> {
-        next_leaders(&self.cluster_info, &self.poh_recorder, max_count, |node| {
-            node.tpu_forwards(protocol)
-        })
+    /// Appends forwarding addresses for non-vote transactions to `leaders`.
+    fn non_vote_forwarding_addresses(&self, max_count: u64, leaders: &mut Vec<SocketAddr>) {
+        let mut leader_pubkeys = Vec::with_capacity(max_count as usize);
+        let recorder = self.poh_recorder.read().unwrap();
+        leader_pubkeys.extend((0..max_count).filter_map(|i| {
+            recorder.leader_after_n_slots(
+                FORWARD_TRANSACTIONS_TO_LEADER_AT_SLOT_OFFSET
+                    + i * NUM_CONSECUTIVE_LEADER_SLOTS.get() as u64,
+            )
+        }));
+        drop(recorder);
+
+        leaders.extend(leader_pubkeys.iter().filter_map(|leader_pubkey| {
+            self.cluster_info
+                .lookup_contact_info(leader_pubkey, |node| node.tpu_forwards(Protocol::QUIC))?
+        }));
     }
 
-    /// Returns the TPU vote forwarding address of the next leader, if
-    /// available.
-    fn get_vote_forwarding_addresses(&self, max_count: u64) -> Vec<SocketAddr> {
-        next_leaders(&self.cluster_info, &self.poh_recorder, max_count, |node| {
-            node.tpu_vote(Protocol::UDP)
+    /// Returns the TPU vote forwarding address of the next leader, if available.
+    fn next_vote_forwarding_address(&self) -> Option<SocketAddr> {
+        let mut leader_pubkeys = SmallVec::<[Pubkey; NUM_LOOKAHEAD_LEADERS as usize]>::new();
+        let recorder = self.poh_recorder.read().unwrap();
+        leader_pubkeys.extend((0..NUM_LOOKAHEAD_LEADERS).filter_map(|i| {
+            recorder.leader_after_n_slots(
+                FORWARD_TRANSACTIONS_TO_LEADER_AT_SLOT_OFFSET
+                    + i * NUM_CONSECUTIVE_LEADER_SLOTS.get() as u64,
+            )
+        }));
+        drop(recorder);
+        leader_pubkeys.into_iter().find_map(|leader_pubkey| {
+            self.cluster_info
+                .lookup_contact_info(&leader_pubkey, |node| node.tpu_vote(Protocol::UDP))?
         })
     }
 }
@@ -462,11 +480,8 @@ impl VoteClient {
         }
     }
 
-    fn get_next_valid_leader(&self) -> Option<SocketAddr> {
-        let node_addresses = self
-            .forward_address_getter
-            .get_vote_forwarding_addresses(NUM_LOOKAHEAD_LEADERS);
-        node_addresses.first().copied()
+    fn next_valid_leader(&self) -> Option<SocketAddr> {
+        self.forward_address_getter.next_vote_forwarding_address()
     }
 }
 
@@ -475,7 +490,7 @@ impl ForwardingClient for VoteClient {
         &self,
         wire_transactions: Vec<Vec<u8>>,
     ) -> Result<(), ForwardingClientError> {
-        let Some(current_address) = self.get_next_valid_leader() else {
+        let Some(current_address) = self.next_valid_leader() else {
             return Err(ForwardingClientError::LeaderContactMissing);
         };
         let batch_with_addresses = wire_transactions
@@ -486,13 +501,10 @@ impl ForwardingClient for VoteClient {
     }
 }
 
-#[async_trait]
 impl LeaderUpdater for ForwardAddressGetter {
-    fn next_leaders(&mut self, lookahead_slots: usize) -> Vec<SocketAddr> {
-        self.get_non_vote_forwarding_addresses(lookahead_slots as u64, Protocol::QUIC)
+    fn next_leaders(&mut self, lookahead_slots: usize, leaders: &mut Vec<SocketAddr>) {
+        self.non_vote_forwarding_addresses(lookahead_slots as u64, leaders);
     }
-
-    async fn stop(&mut self) {}
 }
 
 #[derive(Clone)]

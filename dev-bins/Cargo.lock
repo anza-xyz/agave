@@ -6165,7 +6165,6 @@ dependencies = [
  "arc-swap",
  "arrayvec",
  "assert_matches",
- "async-trait",
  "bincode",
  "bitvec",
  "bytes",
@@ -7958,7 +7957,6 @@ dependencies = [
 name = "solana-send-transaction-service"
 version = "4.4.0-alpha.0"
 dependencies = [
- "async-trait",
  "crossbeam-channel",
  "itertools 0.14.0",
  "log",
@@ -8607,6 +8605,7 @@ dependencies = [
  "bytes",
  "futures 0.3.33",
  "futures-util",
+ "itertools 0.14.0",
  "log",
  "lru 0.18.2",
  "quinn",
