@@ -1,6 +1,5 @@
 pub use solana_tpu_client::nonblocking::tpu_client::{LeaderTpuService, TpuSenderError};
 use {
-    crate::{connection_cache::ConnectionCache, tpu_client::TpuClientConfig},
     solana_connection_cache::connection_cache::{
         ConnectionCache as BackendConnectionCache, ConnectionManager, ConnectionPool,
         NewConnectionConfig,
@@ -9,7 +8,10 @@ use {
     solana_quic_client::{QuicConfig, QuicConnectionManager, QuicPool},
     solana_rpc_client::nonblocking::rpc_client::RpcClient,
     solana_signer::signers::Signers,
-    solana_tpu_client::nonblocking::tpu_client::{Result, TpuClient as BackendTpuClient},
+    solana_tpu_client::{
+        nonblocking::tpu_client::{Result, TpuClient as BackendTpuClient},
+        tpu_client::TpuClientConfig,
+    },
     solana_transaction::{Transaction, versioned::VersionedTransaction},
     solana_transaction_error::{TransactionError, TransportResult},
     std::sync::Arc,
@@ -86,15 +88,19 @@ impl TpuClient<QuicPool, QuicConnectionManager, QuicConfig> {
         websocket_url: &str,
         config: TpuClientConfig,
     ) -> Result<Self> {
-        let connection_cache = match ConnectionCache::new(name) {
-            ConnectionCache::Quic(cache) => cache,
-            ConnectionCache::Udp(_) => {
-                return Err(TpuSenderError::Custom(String::from(
-                    "Invalid default connection cache",
-                )));
-            }
-        };
-        Self::new_with_connection_cache(rpc_client, websocket_url, config, connection_cache).await
+        let connection_manager = QuicConnectionManager::new_with_connection_config(
+            QuicConfig::new().expect("QUIC client config must be constructible"),
+        );
+        Ok(Self {
+            tpu_client: BackendTpuClient::new(
+                name,
+                rpc_client,
+                websocket_url,
+                config,
+                connection_manager,
+            )
+            .await?,
+        })
     }
 }
 
@@ -122,11 +128,16 @@ where
         })
     }
 
+    #[deprecated(
+        since = "4.3.0",
+        note = "prefer send_and_confirm_transactions_in_parallel_v3"
+    )]
     pub async fn send_and_confirm_messages_with_spinner<T: Signers + ?Sized>(
         &self,
         messages: &[Message],
         signers: &T,
     ) -> Result<Vec<Option<TransactionError>>> {
+        #[allow(deprecated)]
         self.tpu_client
             .send_and_confirm_messages_with_spinner(messages, signers)
             .await

@@ -68,8 +68,10 @@ pub(super) struct SigVerifierStats {
     pub(super) num_verified_certs_received: Saturating<u64>,
     /// Number of certs received that the node has already generated.
     pub(super) num_generated_certs_received: Saturating<u64>,
+    /// Number of times a vote was too far in the future and discarded.
+    pub(super) vote_too_far_in_future: Saturating<u64>,
     /// Last time the stats were reported.
-    pub(super) last_report: Reporting,
+    last_report: Reporting,
 }
 
 impl SigVerifierStats {
@@ -88,6 +90,7 @@ impl SigVerifierStats {
             num_verified_certs_received: Saturating(0),
             num_generated_certs_received: Saturating(0),
             verify_and_send_batch_us: WelfordStats::default(),
+            vote_too_far_in_future: Saturating(0),
             last_report: Reporting::new(root_slot),
         }
     }
@@ -118,6 +121,7 @@ impl SigVerifierStats {
             discard_vote_invalid_rank,
             discard_vote_no_epoch_stakes,
             verify_and_send_batch_us,
+            vote_too_far_in_future,
             last_report: _,
         } = self;
 
@@ -175,6 +179,7 @@ impl SigVerifierStats {
                 verify_and_send_batch_us.count(),
                 i64
             ),
+            ("vote_too_far_in_future", vote_too_far_in_future.0, i64),
             ("num_pkts_max", num_pkts.maximum().unwrap_or(0), i64),
             ("num_pkts_mean", num_pkts.mean().unwrap_or(0), i64),
             ("num_pkts_count", num_pkts.count(), i64),
@@ -307,8 +312,6 @@ pub(super) struct SigVerifyVoteStats {
     /// Number of votes [`verify_and_send_votes`] successfully verified the signature of.
     pub(super) sig_verified_votes: Saturating<u64>,
 
-    /// Number of times the cert was too far in the future and discarded.
-    pub(super) too_far_in_future: Saturating<u64>,
     /// Number of times we are banning a validator that was already banned.
     pub(super) already_banned: Saturating<u64>,
     /// Number of times we are banning a validator.
@@ -347,7 +350,6 @@ impl SigVerifyVoteStats {
         let Self {
             votes_to_sig_verify,
             sig_verified_votes,
-            too_far_in_future,
             already_banned,
             banning_validator,
             metrics_sent,
@@ -365,7 +367,6 @@ impl SigVerifyVoteStats {
         } = other;
         self.votes_to_sig_verify += votes_to_sig_verify;
         self.sig_verified_votes += sig_verified_votes;
-        self.too_far_in_future += too_far_in_future;
         self.already_banned += already_banned;
         self.banning_validator += banning_validator;
         self.metrics_sent += metrics_sent;
@@ -388,7 +389,6 @@ impl SigVerifyVoteStats {
         let Self {
             votes_to_sig_verify,
             sig_verified_votes,
-            too_far_in_future,
             already_banned,
             banning_validator,
             metrics_sent,
@@ -408,7 +408,6 @@ impl SigVerifyVoteStats {
             "bls_vote_sigverify_stats",
             ("votes_to_sig_verify", votes_to_sig_verify.0, i64),
             ("sig_verified_votes", sig_verified_votes.0, i64),
-            ("too_far_in_future", too_far_in_future.0, i64),
             ("already_banned", already_banned.0, i64),
             ("banning_validator", banning_validator.0, i64),
             ("metrics_sent", metrics_sent.0, i64),

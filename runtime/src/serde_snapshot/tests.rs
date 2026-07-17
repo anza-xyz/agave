@@ -19,7 +19,7 @@ mod serde_snapshot_tests {
             account_storage::AccountStorageMap,
             account_storage_entry::AccountStorageEntry,
             account_storage_reader::{
-                AccountStorageReader, open_storage_files, storage_file_buf_reader,
+                AccountStorageReader, TombstonesFilter, open_storage_files, storage_file_buf_reader,
             },
             accounts::Accounts,
             accounts_db::{
@@ -128,8 +128,13 @@ mod serde_snapshot_tests {
             let file_name = AccountsFile::file_name(storage_entry.slot(), storage_entry.id());
             let output_path = output_dir.as_ref().join(file_name);
             buf_reader.set_file(file.as_ref(), storage_entry.accounts.len() as u64)?;
-            let mut reader =
-                AccountStorageReader::new(storage_entry, None, &mut buf_reader).unwrap();
+            let mut reader = AccountStorageReader::new(
+                storage_entry,
+                None,
+                TombstonesFilter::Include,
+                &mut buf_reader,
+            )
+            .unwrap();
             let mut writer = File::create(&output_path)?;
             io::copy(&mut reader, &mut writer)?;
 

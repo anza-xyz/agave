@@ -8,9 +8,7 @@ use {
         transaction_error_metrics::TransactionErrorMetrics,
     },
     ahash::{AHashMap, AHashSet},
-    solana_account::{
-        Account, AccountSharedData, ReadableAccount, WritableAccount, state_traits::StateMut,
-    },
+    solana_account::{Account, AccountSharedData, ReadableAccount, WritableAccount},
     solana_clock::Slot,
     solana_fee_structure::FeeDetails,
     solana_instruction::{BorrowedAccountMeta, BorrowedInstruction},
@@ -564,7 +562,7 @@ fn load_transaction_accounts<CB: TransactionProcessingCallback>(
             if bpf_loader_upgradeable::check_id(account.owner())
                 && let Ok(UpgradeableLoaderState::Program {
                     programdata_address,
-                }) = account.state()
+                }) = bincode::deserialize(account.data())
             {
                 // ...its programdata was not already counted and will not later be counted...
                 if !account_keys.iter().any(|key| programdata_address == *key)
@@ -2663,11 +2661,13 @@ mod tests {
                     }
 
                     if has_programdata || rng.random() {
-                        account
-                            .set_state(&UpgradeableLoaderState::Program {
+                        bincode::serialize_into(
+                            account.data_as_mut_slice(),
+                            &UpgradeableLoaderState::Program {
                                 programdata_address,
-                            })
-                            .unwrap();
+                            },
+                        )
+                        .unwrap();
                     }
                 }
 

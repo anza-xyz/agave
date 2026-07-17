@@ -210,7 +210,6 @@ pub(crate) mod external {
         solana_account::ReadableAccount,
         solana_clock::Slot,
         solana_cost_model::cost_model::CostModel,
-        solana_message::v0::LoadedAddresses,
         solana_pubkey::Pubkey,
         solana_runtime::{
             bank::Bank,
@@ -219,6 +218,7 @@ pub(crate) mod external {
         solana_runtime_transaction::{
             runtime_transaction::RuntimeTransaction, sanitize_config::sanitize_config,
         },
+        solana_svm_transaction::svm_message::SVMMessage,
         solana_transaction::TransactionError,
         std::ptr::NonNull,
     };
@@ -698,42 +698,43 @@ pub(crate) mod external {
                     "max_age_iter iterator must contain element for each sent parsed transaction",
                 );
 
-                // There are 3 cases here:
-                // 1. None - Tx format does not support ATL
-                // 2. Some(empty) - V0 Tx with no ATL
-                // 3. Some(keys) - V0 Tx with ATL
-                // Only in case 3 will we create a shared allocation and copy keys.
-                let (sharable_keys, alt_invalidation_slot) = match transaction.loaded_addresses() {
-                    Some(loaded_addresses) if !loaded_addresses.is_empty() => {
-                        let num_pubkeys = loaded_addresses.len();
-                        let pubkeys_allocation = self
-                            .allocator
-                            .allocate(
-                                num_pubkeys.wrapping_mul(core::mem::size_of::<Pubkey>()) as u32
-                            )
-                            .ok_or(ExternalConsumeWorkerError::AllocationFailure)?
-                            .cast();
-                        // SAFETY: non-overlapping and appropriately sized.
-                        unsafe {
-                            Self::copy_loaded_addresses(loaded_addresses, pubkeys_allocation)
-                        };
-                        // SAFETY: pubkeys_allocation was allocated by allocator
-                        let offset = unsafe { self.allocator.offset(pubkeys_allocation.cast()) };
-                        (
-                            SharablePubkeys {
-                                offset,
-                                num_pubkeys: num_pubkeys as u32,
-                            },
-                            max_age.alt_invalidation_slot,
+                // Address table lookups are sanitized to contain at least one account, so there
+                // are loaded keys exactly when account keys outnumber static account keys.
+                let account_keys = transaction.account_keys();
+                let num_static_account_keys = transaction.static_account_keys().len();
+                let (sharable_keys, alt_invalidation_slot) = if account_keys.len()
+                    > num_static_account_keys
+                {
+                    let num_pubkeys = account_keys.len().wrapping_sub(num_static_account_keys);
+                    let pubkeys_allocation = self
+                        .allocator
+                        .allocate(num_pubkeys.wrapping_mul(core::mem::size_of::<Pubkey>()) as u32)
+                        .ok_or(ExternalConsumeWorkerError::AllocationFailure)?
+                        .cast();
+                    // SAFETY: non-overlapping and appropriately sized.
+                    unsafe {
+                        Self::copy_loaded_addresses(
+                            account_keys.iter().skip(num_static_account_keys),
+                            pubkeys_allocation,
                         )
-                    }
-                    _ => (
+                    };
+                    // SAFETY: pubkeys_allocation was allocated by allocator
+                    let offset = unsafe { self.allocator.offset(pubkeys_allocation.cast()) };
+                    (
+                        SharablePubkeys {
+                            offset,
+                            num_pubkeys: num_pubkeys as u32,
+                        },
+                        max_age.alt_invalidation_slot,
+                    )
+                } else {
+                    (
                         SharablePubkeys {
                             offset: 0,
                             num_pubkeys: 0,
                         },
                         u64::MAX,
-                    ),
+                    )
                 };
 
                 response.resolution_slot = resolution_slot;
@@ -1025,18 +1026,12 @@ pub(crate) mod external {
         /// # Safety
         /// - destination is appropriately sized
         /// - destination does not overlap with loaded_addresses allocation
-        unsafe fn copy_loaded_addresses(loaded_addresses: &LoadedAddresses, dest: NonNull<Pubkey>) {
-            unsafe {
-                core::ptr::copy_nonoverlapping(
-                    loaded_addresses.writable.as_ptr(),
-                    dest.as_ptr(),
-                    loaded_addresses.writable.len(),
-                );
-                core::ptr::copy_nonoverlapping(
-                    loaded_addresses.readonly.as_ptr(),
-                    dest.add(loaded_addresses.writable.len()).as_ptr(),
-                    loaded_addresses.readonly.len(),
-                );
+        unsafe fn copy_loaded_addresses<'a>(
+            loaded_addresses: impl Iterator<Item = &'a Pubkey>,
+            dest: NonNull<Pubkey>,
+        ) {
+            for (index, pubkey) in loaded_addresses.enumerate() {
+                unsafe { dest.add(index).write(*pubkey) };
             }
         }
 
@@ -1124,6 +1119,7 @@ pub(crate) mod external {
             solana_keypair::Keypair,
             solana_leader_schedule::SlotLeader,
             solana_ledger::genesis_utils::GenesisConfigInfo,
+            solana_message::v0::LoadedAddresses,
             solana_poh::{
                 record_channels::{RecordReceiver, record_channels},
                 transaction_recorder::TransactionRecorder,
@@ -1789,7 +1785,10 @@ pub(crate) mod external {
             let mut buffer = vec![Pubkey::default(); 7];
             unsafe {
                 ExternalWorker::copy_loaded_addresses(
-                    &loaded_addresses,
+                    loaded_addresses
+                        .writable
+                        .iter()
+                        .chain(&loaded_addresses.readonly),
                     NonNull::new(buffer.as_mut_ptr()).unwrap(),
                 )
             };

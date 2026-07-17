@@ -163,6 +163,7 @@ impl ConnectionCache {
         }
     }
 
+    #[deprecated(since = "4.3.0", note = "ConnectionCache is deprecated")]
     pub fn get_nonblocking_connection(&self, addr: &SocketAddr) -> NonblockingClientConnection {
         match self {
             Self::Quic(cache) => {
