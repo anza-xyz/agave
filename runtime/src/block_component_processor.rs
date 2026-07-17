@@ -12,8 +12,9 @@ use {
     },
     agave_votor_messages::{
         certificate::{CertSignature, CertificateType, GenesisCert},
-        consensus_message::{Block, ConsensusMessage},
+        consensus_message::Block,
         migration::MigrationStatus,
+        sig_verified_messages::SigVerifiedBatch,
         unverified_vote_message::UnverifiedCertificate,
     },
     crossbeam_channel::Sender,
@@ -388,7 +389,7 @@ impl BlockComponentProcessor {
         shred_version: u16,
         marker: VersionedBlockMarker,
         allow_initial_update_parent: bool,
-        finalization_cert_sender: Option<&Sender<ConsensusMessage>>,
+        finalization_cert_sender: Option<&Sender<SigVerifiedBatch>>,
         migration_status: &MigrationStatus,
     ) -> Result<(), BlockComponentProcessorError> {
         let slot = bank.slot();
@@ -569,7 +570,7 @@ impl BlockComponentProcessor {
         parent_bank: Arc<Bank>,
         shred_version: u16,
         footer: VersionedBlockFooter,
-        finalization_cert_sender: Option<&Sender<ConsensusMessage>>,
+        finalization_cert_sender: Option<&Sender<SigVerifiedBatch>>,
     ) -> Result<(), BlockComponentProcessorError> {
         self.stage.on_footer()?;
 
@@ -628,13 +629,13 @@ impl BlockComponentProcessor {
             && let Some(sender) = finalization_cert_sender
         {
             if let Some(notarize_cert) = notarize_cert {
-                let cert = ConsensusMessage::Certificate(notarize_cert);
+                let cert = SigVerifiedBatch::Certificates(vec![notarize_cert]);
                 // TODO blocking send.
                 let _ = sender
                     .send(cert)
                     .inspect_err(|_| info!("ConsensusMessage sender disconnected"));
             }
-            let cert = ConsensusMessage::Certificate(finalize_cert);
+            let cert = SigVerifiedBatch::Certificates(vec![finalize_cert]);
             // TODO blocking send.
             let _ = sender
                 .send(cert)

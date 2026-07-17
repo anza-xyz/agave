@@ -4,9 +4,7 @@ use {
     log::*,
     serde::{Deserialize, Serialize},
     serde_json::Result,
-    solana_account::{
-        AccountSharedData, create_account_shared_data_for_test, state_traits::StateMut,
-    },
+    solana_account::{AccountSharedData, create_account_shared_data_for_test},
     solana_cli_output::{OutputFormat, QuietDisplay, VerboseDisplay},
     solana_clock::Slot,
     solana_ledger::blockstore_options::AccessType,
@@ -415,7 +413,7 @@ pub fn program(ledger_path: &Path, matches: &ArgMatches<'_>) {
                         if bpf_loader_upgradeable::check_id(&owner)
                             && let Ok(UpgradeableLoaderState::Program {
                                 programdata_address,
-                            }) = account.state()
+                            }) = bincode::deserialize(account.data())
                         {
                             debug!("Program data address {programdata_address}");
                             if bank

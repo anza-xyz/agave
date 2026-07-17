@@ -970,9 +970,10 @@ mod tests {
             voting_service::BLSOp,
         },
         agave_votor_messages::{
-            consensus_message::{BLS_KEYPAIR_DERIVE_SEED, ConsensusMessage, VoteMessage},
+            consensus_message::{BLS_KEYPAIR_DERIVE_SEED, VoteMessage},
             metric_types::ConsensusMetricsEventReceiver,
             reward_certificate::AddVoteMessage,
+            sig_verified_messages::SigVerifiedBatch,
             vote::Vote,
             wire::get_vote_payload_to_sign,
         },
@@ -1010,7 +1011,7 @@ mod tests {
     struct EventHandlerTestContext {
         bls_receiver: Receiver<BLSOp>,
         commitment_receiver: Receiver<CommitmentAggregationData>,
-        own_vote_receiver: Receiver<ConsensusMessage>,
+        own_vote_receiver: Receiver<SigVerifiedBatch>,
         #[allow(dead_code)] // Keep receiver alive to prevent SenderDisconnected errors
         reward_votes_receiver: Receiver<AddVoteMessage>,
         bank_forks: Arc<RwLock<BankForks>>,
@@ -1452,23 +1453,24 @@ mod tests {
             assert!(found, "Did not find expected vote: {expected_message:?}");
             // Also check own_vote_receiver
             let own_vote = self.own_vote_receiver.try_recv().unwrap();
-            assert_eq!(own_vote, ConsensusMessage::Vote(expected_message));
+            assert_eq!(own_vote, SigVerifiedBatch::Votes(vec![expected_message]));
         }
 
         fn check_for_own_vote(&self, expected_vote: &Vote) {
             let expected_message = self.expected_vote_message(expected_vote);
             let own_vote = self.own_vote_receiver.try_recv().unwrap();
-            assert_eq!(own_vote, ConsensusMessage::Vote(expected_message));
+            assert_eq!(own_vote, SigVerifiedBatch::Votes(vec![expected_message]));
         }
 
         fn check_for_own_votes(&self, expected_votes: &[Vote]) {
             let mut received_messages = Vec::with_capacity(expected_votes.len());
             for _ in expected_votes {
-                let ConsensusMessage::Vote(vote) = self.own_vote_receiver.try_recv().unwrap()
+                let SigVerifiedBatch::Votes(votes) = self.own_vote_receiver.try_recv().unwrap()
                 else {
                     panic!("expected own vote");
                 };
-                received_messages.push(vote);
+                assert_eq!(votes.len(), 1);
+                received_messages.push(votes[0].clone());
             }
 
             for expected_vote in expected_votes {

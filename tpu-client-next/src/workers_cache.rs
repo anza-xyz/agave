@@ -258,11 +258,6 @@ impl WorkersCache {
     /// If the worker for the peer is disconnected or fails, it
     /// is removed from the cache. If no worker exists for the peer,
     /// it returns [`WorkersCacheError::WorkerNotFound`].
-    #[allow(
-        dead_code,
-        reason = "This method will be used in the upcoming changes to implement optional \
-                  backpressure on the sender."
-    )]
     pub async fn send_transactions_to_address(
         &mut self,
         peer: &SocketAddr,

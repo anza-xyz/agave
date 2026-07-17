@@ -2231,6 +2231,58 @@ fn test_tx_already_processed() {
     );
 }
 
+#[test]
+fn test_status_cache_signature_storage_config() {
+    let (genesis_config, mint_keypair) = create_genesis_config(LAMPORTS_PER_SOL);
+    let amount = genesis_config.rent.minimum_balance(0);
+
+    let (bank, _bank_forks) = Bank::new_with_bank_forks_for_tests(&genesis_config);
+    let tx = system_transaction::transfer(
+        &mint_keypair,
+        &Keypair::new().pubkey(),
+        amount,
+        genesis_config.hash(),
+    );
+    assert_eq!(bank.process_transaction(&tx), Ok(()));
+    assert_eq!(bank.get_signature_status(&tx.signatures[0]), Some(Ok(())));
+
+    let mut signature_skipping_bank = Bank::new_from_genesis(
+        &genesis_config,
+        Arc::new(RuntimeConfig {
+            skip_transaction_signatures_in_status_cache: true,
+            ..RuntimeConfig::default()
+        }),
+        vec![],
+        None,
+        BankTestConfig::default().accounts_db_config,
+        None,
+        None,
+        Arc::default(),
+        None,
+        None,
+    );
+    signature_skipping_bank.set_fee_structure(&FeeStructure {
+        lamports_per_signature: genesis_config.fee_rate_governor.lamports_per_signature,
+        ..FeeStructure::default()
+    });
+    let (bank, _bank_forks) = signature_skipping_bank.wrap_with_bank_forks_for_tests();
+
+    let mut tx = system_transaction::transfer(
+        &mint_keypair,
+        &Keypair::new().pubkey(),
+        amount,
+        genesis_config.hash(),
+    );
+    assert_eq!(bank.process_transaction(&tx), Ok(()));
+    assert_eq!(bank.get_signature_status(&tx.signatures[0]), None);
+
+    tx.signatures[0] = Signature::default();
+    assert_eq!(
+        bank.process_transaction(&tx),
+        Err(TransactionError::AlreadyProcessed)
+    );
+}
+
 /// Verifies that last ids and status cache are correctly referenced from parent
 #[test]
 fn test_bank_parent_already_processed() {
@@ -5862,12 +5914,14 @@ fn test_bank_load_program() {
         programdata_data_offset + elf.len(),
         &bpf_loader_upgradeable::id(),
     );
-    programdata_account
-        .set_state(&UpgradeableLoaderState::ProgramData {
+    bincode::serialize_into(
+        programdata_account.data_as_mut_slice(),
+        &UpgradeableLoaderState::ProgramData {
             slot: 42,
             upgrade_authority_address: None,
-        })
-        .unwrap();
+        },
+    )
+    .unwrap();
     programdata_account.data_as_mut_slice()[programdata_data_offset..].copy_from_slice(&elf);
     programdata_account.set_rent_epoch(1);
     bank.store_account_and_update_capitalization(&program_key, &program_account);
@@ -5973,11 +6027,13 @@ fn test_bpf_loader_upgradeable_deploy_with_max_len() {
             UpgradeableLoaderState::size_of_buffer(elf.len()),
             &bpf_loader_upgradeable::id(),
         );
-        account
-            .set_state(&UpgradeableLoaderState::Buffer {
+        bincode::serialize_into(
+            account.data_as_mut_slice(),
+            &UpgradeableLoaderState::Buffer {
                 authority_address: Some(upgrade_authority_keypair.pubkey()),
-            })
-            .unwrap();
+            },
+        )
+        .unwrap();
         account
             .data_as_mut_slice()
             .get_mut(UpgradeableLoaderState::size_of_buffer_metadata()..)
@@ -6101,7 +6157,7 @@ fn test_bpf_loader_upgradeable_deploy_with_max_len() {
         post_program_account.data().len(),
         UpgradeableLoaderState::size_of_program()
     );
-    let state: UpgradeableLoaderState = post_program_account.state().unwrap();
+    let state: UpgradeableLoaderState = bincode::deserialize(post_program_account.data()).unwrap();
     assert_eq!(
         state,
         UpgradeableLoaderState::Program {
@@ -6114,7 +6170,8 @@ fn test_bpf_loader_upgradeable_deploy_with_max_len() {
         post_programdata_account.owner(),
         &bpf_loader_upgradeable::id()
     );
-    let state: UpgradeableLoaderState = post_programdata_account.state().unwrap();
+    let state: UpgradeableLoaderState =
+        bincode::deserialize(post_programdata_account.data()).unwrap();
     assert_eq!(
         state,
         UpgradeableLoaderState::ProgramData {
@@ -11517,11 +11574,13 @@ fn test_deploy_last_epoch_slot() {
             UpgradeableLoaderState::size_of_buffer(program_len),
             &bpf_loader_upgradeable::id(),
         );
-        account
-            .set_state(&UpgradeableLoaderState::Buffer {
+        bincode::serialize_into(
+            account.data_as_mut_slice(),
+            &UpgradeableLoaderState::Buffer {
                 authority_address: Some(upgrade_authority_keypair.pubkey()),
-            })
-            .unwrap();
+            },
+        )
+        .unwrap();
         account
             .data_as_mut_slice()
             .get_mut(UpgradeableLoaderState::size_of_buffer_metadata()..)
@@ -11972,11 +12031,13 @@ fn test_bpf_loader_upgradeable_deploy_with_more_than_255_accounts() {
             UpgradeableLoaderState::size_of_buffer(elf.len()),
             &bpf_loader_upgradeable::id(),
         );
-        account
-            .set_state(&UpgradeableLoaderState::Buffer {
+        bincode::serialize_into(
+            account.data_as_mut_slice(),
+            &UpgradeableLoaderState::Buffer {
                 authority_address: Some(upgrade_authority_keypair.pubkey()),
-            })
-            .unwrap();
+            },
+        )
+        .unwrap();
         account
             .data_as_mut_slice()
             .get_mut(UpgradeableLoaderState::size_of_buffer_metadata()..)

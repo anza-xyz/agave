@@ -62,15 +62,24 @@ pub fn open_storage_files<'s>(
         .map(move |storage| storage.accounts.open_file_for_archive(use_direct_io))
 }
 
+/// Should tombstones be included or excluded when reading from storage?
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum TombstonesFilter {
+    /// tombstones are included when reading from storage
+    Include,
+    /// tombstones are excluded when reading from storage
+    Exclude,
+}
+
 /// A wrapper type around `AccountStorageEntry` that implements the `Read` trait.
 /// This type skips over the data in accounts contained in the obsolete accounts
-/// structure.
+/// structure, and optionally over tombstone accounts as well.
 ///
 /// The caller is responsible for activating the storage's file on `file_reader`
 /// via `set_file` (typically using a file opened with [`open_storage_files`])
 /// before constructing the reader.
 pub struct AccountStorageReader<'r, R> {
-    sorted_obsolete_accounts: Vec<(Offset, usize)>,
+    sorted_excluded_accounts: Vec<(Offset, usize)>,
     reader: &'r mut R,
     num_alive_bytes: usize,
     num_total_bytes: usize,
@@ -78,35 +87,49 @@ pub struct AccountStorageReader<'r, R> {
 
 impl<'a, 'r, R: FileBufRead<'a>> AccountStorageReader<'r, R> {
     /// Creates a new `AccountStorageReader` from an `AccountStorageEntry`.
-    /// The obsolete accounts structure is sorted during initialization.
+    /// The excluded accounts list is sorted during initialization.
     ///
     /// Expects that the caller has already attached the storage's file to
     /// `file_reader` via `set_file`.
     pub fn new(
         storage: &AccountStorageEntry,
         snapshot_slot: Option<Slot>,
+        tombstones_filter: TombstonesFilter,
         file_reader: &'r mut R,
     ) -> io::Result<Self> {
         let num_total_bytes = storage.accounts.len();
-        let num_alive_bytes = num_total_bytes - storage.get_obsolete_bytes(snapshot_slot);
+        let mut num_alive_bytes = num_total_bytes - storage.get_obsolete_bytes(snapshot_slot);
 
-        let mut sorted_obsolete_accounts: Vec<_> = storage
+        let mut sorted_excluded_accounts: Vec<_> = storage
             .obsolete_accounts_read_lock()
             .filter_obsolete_accounts(snapshot_slot)
             .collect();
 
         // Convert the length to the size
-        sorted_obsolete_accounts
+        sorted_excluded_accounts
             .iter_mut()
             .for_each(|(_offset, len)| {
                 *len = storage.accounts.calculate_stored_size(*len);
             });
 
-        sorted_obsolete_accounts
+        if tombstones_filter == TombstonesFilter::Exclude {
+            // Tombstones are zero-lamport accounts, which store no data, so every
+            // tombstone record has the fixed stored size of a data-less account.
+            let tombstone_stored_size = storage.accounts.calculate_stored_size(0);
+            let tombstone_offsets = storage.tombstone_offsets_read_lock();
+            num_alive_bytes -= tombstone_offsets.len() * tombstone_stored_size;
+            sorted_excluded_accounts.extend(
+                tombstone_offsets
+                    .iter()
+                    .map(|offset| (*offset, tombstone_stored_size)),
+            );
+        }
+
+        sorted_excluded_accounts
             .sort_unstable_by(|(a_offset, _), (b_offset, _)| b_offset.cmp(a_offset));
 
         Ok(Self {
-            sorted_obsolete_accounts,
+            sorted_excluded_accounts,
             reader: file_reader,
             num_alive_bytes,
             num_total_bytes,
@@ -128,23 +151,23 @@ impl<'a, R: FileBufRead<'a>> Read for AccountStorageReader<'_, R> {
         let buf_len = buf.len();
 
         while total_read < buf_len {
-            let next_obsolete_account = self.sorted_obsolete_accounts.last();
+            let next_excluded_account = self.sorted_excluded_accounts.last();
             let file_offset = self.reader.get_file_offset() as usize;
-            if let Some(&(obsolete_start, obsolete_size)) = next_obsolete_account
-                && file_offset == obsolete_start
+            if let Some(&(excluded_start, excluded_size)) = next_excluded_account
+                && file_offset == excluded_start
             {
-                let skip_len = obsolete_size.min(self.num_total_bytes - obsolete_start);
+                let skip_len = excluded_size.min(self.num_total_bytes - excluded_start);
                 self.reader.consume_or_skip(skip_len);
-                self.sorted_obsolete_accounts.pop();
+                self.sorted_excluded_accounts.pop();
                 continue;
             }
 
             // Cannot read beyond the end of the buffer
             let bytes_left_in_buffer = buf_len.saturating_sub(total_read);
 
-            // Cannot read beyond the next obsolete account or the end of the file
-            let bytes_to_read_from_file = if let Some((obsolete_start, _)) = next_obsolete_account {
-                obsolete_start.saturating_sub(file_offset)
+            // Cannot read beyond the next excluded account or the end of the file
+            let bytes_to_read_from_file = if let Some((excluded_start, _)) = next_excluded_account {
+                excluded_start.saturating_sub(file_offset)
             } else {
                 self.num_total_bytes.saturating_sub(file_offset)
             };
@@ -227,30 +250,64 @@ mod tests {
         buf_reader
             .set_file(files[0].as_ref(), storage.accounts.len() as u64)
             .unwrap();
-        let reader = AccountStorageReader::new(&storage, None, &mut buf_reader).unwrap();
+        let reader =
+            AccountStorageReader::new(&storage, None, TombstonesFilter::Include, &mut buf_reader)
+                .unwrap();
         assert_eq!(reader.len(), storage.accounts.len());
     }
 
-    #[test_case(0, 0)]
-    #[test_case(1, 0)]
-    #[test_case(1, 1)]
-    #[test_case(100, 0)]
-    #[test_case(100, 10)]
-    #[test_case(100, 100)]
-    fn test_account_storage_reader_with_obsolete_accounts(
+    #[test_case(0, 0, 0, TombstonesFilter::Include)]
+    #[test_case(1, 0, 0, TombstonesFilter::Include)]
+    #[test_case(1, 1, 0, TombstonesFilter::Include)]
+    #[test_case(1, 1, 0, TombstonesFilter::Exclude)]
+    #[test_case(1, 0, 1, TombstonesFilter::Include)]
+    #[test_case(100, 0, 0, TombstonesFilter::Include)]
+    #[test_case(100, 0, 10, TombstonesFilter::Include)]
+    #[test_case(100, 0, 100, TombstonesFilter::Include)]
+    #[test_case(100, 10, 0, TombstonesFilter::Include)]
+    #[test_case(100, 10, 0, TombstonesFilter::Exclude)]
+    #[test_case(100, 100, 0, TombstonesFilter::Include)]
+    #[test_case(100, 100, 0, TombstonesFilter::Exclude)]
+    #[test_case(100, 10, 10, TombstonesFilter::Include)]
+    #[test_case(100, 10, 10, TombstonesFilter::Exclude)]
+    fn test_account_storage_reader_with_excluded_accounts(
         total_accounts: usize,
-        number_of_accounts_to_remove: usize,
+        num_tombstones: usize,
+        num_obsolete: usize,
+        tombstones_filter: TombstonesFilter,
     ) {
         let (storage, _temp_dirs) =
             create_storage_for_storage_reader(0, AccountsFileProvider::AppendVec);
 
         let slot = 0;
 
+        // Generate a seed from entropy and log the original seed
+        let seed: u64 = rand::random();
+        dbg!("Generated seed: {seed}");
+
+        // Use a seedable RNG with the generated seed for reproducibility
+        let mut rng = StdRng::seed_from_u64(seed);
+
+        // Choose disjoint random index sets for the tombstone and obsolete accounts.
+        // Tombstones must be chosen before writing because they are written as
+        // zero-lamport, data-less accounts.
+        let chosen_indexes = (0..total_accounts)
+            .collect::<Vec<_>>()
+            .choose_multiple(&mut rng, num_tombstones + num_obsolete)
+            .cloned()
+            .collect::<Vec<_>>();
+        let (tombstone_indexes, obsolete_indexes) = chosen_indexes.split_at(num_tombstones);
+
         // Create a bunch of accounts and add them to the storage
-        let accounts: Vec<_> =
-            iter::repeat_with(|| AccountSharedData::new(1, 10, &Pubkey::default()))
-                .take(total_accounts)
-                .collect();
+        let accounts: Vec<_> = (0..total_accounts)
+            .map(|index| {
+                if tombstone_indexes.contains(&index) {
+                    AccountSharedData::new(0, 0, &Pubkey::default())
+                } else {
+                    AccountSharedData::new(1, 10, &Pubkey::default())
+                }
+            })
+            .collect();
 
         let accounts_to_append: Vec<_> = accounts
             .into_iter()
@@ -259,36 +316,28 @@ mod tests {
 
         let offsets = storage
             .accounts
-            .write_accounts(&(slot, &accounts_to_append[..]));
-
-        // Generate a seed from entropy and log the original seed
-        let seed: u64 = rand::random();
-        info!("Generated seed: {seed}");
-
-        // Use a seedable RNG with the generated seed for reproducibility
-        let mut rng = StdRng::seed_from_u64(seed);
-
-        let obsolete_account_offset = offsets
-            .map(|offsets| {
-                offsets
-                    .offsets
-                    .choose_multiple(&mut rng, number_of_accounts_to_remove)
-                    .cloned()
-                    .collect::<Vec<_>>()
-            })
+            .write_accounts(&(slot, &accounts_to_append[..]))
+            .map(|stored_accounts_info| stored_accounts_info.offsets)
             .unwrap_or_default();
 
-        assert_eq!(obsolete_account_offset.len(), number_of_accounts_to_remove);
+        let tombstone_offsets: Vec<_> = tombstone_indexes
+            .iter()
+            .map(|index| offsets[*index])
+            .collect();
+        let obsolete_offsets: Vec<_> = obsolete_indexes
+            .iter()
+            .map(|index| offsets[*index])
+            .collect();
+
+        storage.batch_insert_tombstone_offsets(tombstone_offsets);
 
         // Mark the obsolete accounts in storage
-        let data_lens = storage
-            .accounts
-            .get_account_data_lens(&obsolete_account_offset);
+        let data_lens = storage.accounts.get_account_data_lens(&obsolete_offsets);
         storage
             .obsolete_accounts()
             .write()
             .unwrap()
-            .mark_accounts_obsolete(obsolete_account_offset.into_iter().zip(data_lens), 0);
+            .mark_accounts_obsolete(obsolete_offsets.iter().copied().zip(data_lens), 0);
 
         let storage = storage.reopen_as_readonly().unwrap_or(storage);
 
@@ -305,8 +354,14 @@ mod tests {
         file_reader
             .set_file(files[0].as_ref(), storage.accounts.len() as u64)
             .unwrap();
-        let mut reader = AccountStorageReader::new(&storage, None, &mut file_reader).unwrap();
-        let current_len = storage.accounts.len() - storage.get_obsolete_bytes(None);
+        let mut reader =
+            AccountStorageReader::new(&storage, None, tombstones_filter, &mut file_reader).unwrap();
+        let mut number_of_accounts_to_remove = num_obsolete;
+        let mut current_len = storage.accounts.len() - storage.get_obsolete_bytes(None);
+        if tombstones_filter == TombstonesFilter::Exclude {
+            number_of_accounts_to_remove += num_tombstones;
+            current_len -= num_tombstones * storage.accounts.calculate_stored_size(0);
+        }
         assert_eq!(reader.len(), current_len);
 
         // Create a temporary directory and a file within it
@@ -430,8 +485,13 @@ mod tests {
             file_reader
                 .set_file(files[0].as_ref(), storage.accounts.len() as u64)
                 .unwrap();
-            let mut reader =
-                AccountStorageReader::new(&storage, Some(snapshot_slot), &mut file_reader).unwrap();
+            let mut reader = AccountStorageReader::new(
+                &storage,
+                Some(snapshot_slot),
+                TombstonesFilter::Include,
+                &mut file_reader,
+            )
+            .unwrap();
             let current_len =
                 storage.accounts.len() - storage.get_obsolete_bytes(Some(snapshot_slot));
             assert_eq!(reader.len(), current_len);

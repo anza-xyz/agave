@@ -82,7 +82,7 @@ use {
         iter::repeat,
         net::{IpAddr, Ipv4Addr, SocketAddr, TcpListener, UdpSocket},
         num::NonZeroUsize,
-        ops::Div,
+        ops::{Div, Range},
         path::{Path, PathBuf},
         rc::Rc,
         result::Result,
@@ -122,8 +122,9 @@ const CHANNEL_CONSUME_CAPACITY: usize = 1024;
 /// of `MAX_GOSSIP_TRAFFIC` (103,896).
 pub(crate) const GOSSIP_CHANNEL_CAPACITY: usize = 4096; // 2^12
 const GOSSIP_PING_CACHE_CAPACITY: usize = 126976;
-const GOSSIP_PING_CACHE_TTL: Duration = Duration::from_secs(1280);
-const GOSSIP_PING_CACHE_RATE_LIMIT_DELAY: Duration = Duration::from_secs(1280 / 64);
+pub(crate) const GOSSIP_PING_CACHE_TTL: Duration = Duration::from_secs(1280);
+/// Per-entry Pong wait timeout is drawn uniformly from this range (in milliseconds).
+pub(crate) const GOSSIP_PING_CACHE_OUTSTANDING_PING_TIMEOUT_MS: Range<u64> = 1000..2000;
 // Per-IP scan budget for incoming pull requests; validators are assumed not
 // to share IPs. Mirrors the ping-pong cache capacity.
 const GOSSIP_PULL_SCAN_BUDGET_CACHE_CAPACITY: usize = GOSSIP_PING_CACHE_CAPACITY;
@@ -216,7 +217,7 @@ impl ClusterInfo {
             my_contact_info: RwLock::new(contact_info),
             ping_cache: Mutex::new(PingCache::new(
                 GOSSIP_PING_CACHE_TTL,
-                GOSSIP_PING_CACHE_RATE_LIMIT_DELAY,
+                GOSSIP_PING_CACHE_OUTSTANDING_PING_TIMEOUT_MS,
                 GOSSIP_PING_CACHE_CAPACITY,
             )),
             pull_request_budget: KeyedRateLimiter::new(

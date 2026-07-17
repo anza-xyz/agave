@@ -5,7 +5,6 @@ use {
         bls_sigverifier::{BAN_TIMEOUT, NUM_SLOTS_FOR_VERIFY, SigVerifierChannels},
         errors::SigVerifyVoteError,
         rewards::rewards_wants_vote,
-        sig_verified_messages::SigVerifiedBatch,
         stats::SigVerifyVoteStats,
         utils::{
             send_votes_to_metrics, send_votes_to_pool, send_votes_to_repair, send_votes_to_rewards,
@@ -15,6 +14,7 @@ use {
         consensus_message::VoteMessage,
         metric_types::ConsensusMetricsEvent,
         reward_certificate::AddVoteMessage,
+        sig_verified_messages::SigVerifiedBatch,
         unverified_vote_message::UnverifiedVoteMessage,
         vote::Vote,
         wire::{VotePayloadToSign, get_vote_payload_to_sign},
@@ -208,12 +208,9 @@ fn verify_votes(
     banlist: &SimpleQosBanlist,
     thread_pool: &ThreadPool,
 ) -> Vec<VerifiedVotePayload> {
-    // Filter votes too far in the future.
-    if vote_payload_to_sign.slot() > root_bank.slot().saturating_add(NUM_SLOTS_FOR_VERIFY) {
-        stats.too_far_in_future += unverified_votes.len() as u64;
-        return vec![];
-    }
-
+    debug_assert!(
+        vote_payload_to_sign.slot() <= root_bank.slot().saturating_add(NUM_SLOTS_FOR_VERIFY)
+    );
     // Fallback to individual verification
     let ((verified_votes, invalid_remote_pubkeys), time_us) =
         measure_us!(verify_individual_votes(unverified_votes, thread_pool));

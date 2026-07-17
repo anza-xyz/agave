@@ -675,7 +675,11 @@ pub(crate) fn get_max_bloom_filter_bytes(caller: &CrdsValue) -> usize {
 pub(crate) mod tests {
     use {
         super::*,
-        crate::{crds_data::CrdsData, protocol::Protocol},
+        crate::{
+            cluster_info::{GOSSIP_PING_CACHE_OUTSTANDING_PING_TIMEOUT_MS, GOSSIP_PING_CACHE_TTL},
+            crds_data::CrdsData,
+            protocol::Protocol,
+        },
         itertools::Itertools,
         rand::{SeedableRng, prelude::IndexedRandom as _},
         rand_chacha::ChaChaRng,
@@ -739,9 +743,9 @@ pub(crate) mod tests {
 
     fn new_ping_cache() -> PingCache {
         PingCache::new(
-            Duration::from_secs(20 * 60),      // ttl
-            Duration::from_secs(20 * 60) / 64, // rate_limit_delay
-            128,                               // capacity
+            GOSSIP_PING_CACHE_TTL,
+            GOSSIP_PING_CACHE_OUTSTANDING_PING_TIMEOUT_MS,
+            128, // capacity (small for tests)
         )
     }
 

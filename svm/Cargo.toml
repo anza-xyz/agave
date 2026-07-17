@@ -24,7 +24,6 @@ agave-unstable-api = []
 conformance = [
     "dep:agave-feature-set",
     "dep:agave-precompiles",
-    "dep:bincode",
     "dep:prost",
     "dep:protosol",
     "dep:solana-poseidon",
@@ -36,7 +35,6 @@ conformance = [
     "solana-pubkey/default",
 ]
 dev-context-only-utils = [
-    "dep:bincode",
     "dep:qualifier_attr",
     "dep:solana-bpf-loader-program",
     "dep:solana-compute-budget",
@@ -68,7 +66,7 @@ svm-internal = ["dep:qualifier_attr"]
 agave-feature-set = { workspace = true, optional = true }
 agave-precompiles = { workspace = true, optional = true }
 ahash = { workspace = true }
-bincode = { workspace = true, optional = true }
+bincode = { workspace = true }
 log = { workspace = true }
 percentage = { workspace = true }
 prost = { version = "0.11", optional = true }
@@ -125,7 +123,6 @@ xxhash-rust = { workspace = true, optional = true, features = ["xxh64"] }
 
 [dev-dependencies]
 assert_matches = { workspace = true }
-bincode = { workspace = true }
 env_logger = { workspace = true }
 libsecp256k1 = { workspace = true }
 openssl = { workspace = true }

@@ -113,7 +113,6 @@ members = [
     "transaction-context",
     "transaction-status",
     "transaction-status-client-types",
-    "transaction-view",
     "turbine",
     "udp-client",
     "unified-scheduler-logic",
@@ -184,7 +183,7 @@ agave-reserved-account-keys = { path = "reserved-account-keys", version = "=4.3.
 agave-scheduler-bindings = { path = "scheduler-bindings", version = "=4.3.0-alpha.1", features = ["agave-unstable-api"] }
 agave-scheduling-utils = { path = "scheduling-utils", version = "=4.3.0-alpha.1", features = ["agave-unstable-api"] }
 agave-snapshots = { path = "snapshots", version = "=4.3.0-alpha.1", features = ["agave-unstable-api"] }
-agave-transaction-view = { path = "transaction-view", version = "=4.3.0-alpha.1", features = ["agave-unstable-api"] }
+agave-transaction-view = "5.0.0"
 agave-votor = { path = "votor", version = "=4.3.0-alpha.1", features = ["agave-unstable-api"] }
 agave-votor-messages = { path = "votor-messages", version = "=4.3.0-alpha.1", features = ["agave-unstable-api"] }
 agave-xdp = { path = "xdp", version = "=4.3.0-alpha.1", features = ["agave-unstable-api"] }
