@@ -1996,7 +1996,7 @@ fn test_clean_retains_secondary_index_for_still_cached_key() {
     // Slot 0: a rooted non-zero version so the tombstone below reaches storage and the index
     store_rooted_nonzero_accounts(&accounts, 0, [&pubkey]);
 
-    // Slot 1: a rooted zero-lamport tombstone. Flush with `PubkeysToFlush::All` so it is not
+    // Slot 1: a rooted zero-lamport tombstone. Store with `PubkeysToStore::All` so it is not
     // reclaimed
     accounts.store_for_tests((index_slot, [(&pubkey, &zero_account)].as_slice()));
     accounts.add_root(index_slot);
@@ -3800,8 +3800,8 @@ fn test_select_pubkeys_to_flush() {
         db.accounts_cache.store(slot, &shared, account.clone());
     }
 
-    let shared_only = PubkeysToFlush::Only([shared].into_iter().collect());
-    let deduped = PubkeysToFlush::Only(HashSet::default());
+    let shared_only = PubkeysToStore::Only([shared].into_iter().collect());
+    let deduped = PubkeysToStore::Only(HashSet::default());
 
     // No bound: every flushed root is cleaned, so `shared` is written only at its newest root
     // (15), deduped from 5 and 10.
@@ -3819,7 +3819,7 @@ fn test_select_pubkeys_to_flush() {
     // max_clean_root = 10: root 15 is above the boundary and flushes `All` (no dedup), so
     // `shared` is not dropped from root 10 — a scan at root 10 may still need that version.
     let plans = db.select_pubkeys_to_flush(&roots, Some(10));
-    assert_eq!(plans[&15], PubkeysToFlush::All);
+    assert_eq!(plans[&15], PubkeysToStore::All);
     assert_eq!(plans[&10], shared_only);
     assert_eq!(plans[&5], deduped);
 }

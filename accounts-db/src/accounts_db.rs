@@ -4613,7 +4613,7 @@ impl AccountsDb {
             FlushShouldClean::No => (
                 flushed_roots
                     .iter()
-                    .map(|&root| (root, PubkeysToFlush::All))
+                    .map(|&root| (root, PubkeysToStore::All))
                     .collect(),
                 0,
             ),
@@ -4650,7 +4650,7 @@ impl AccountsDb {
         &self,
         flushed_roots: &BTreeSet<Slot>,
         max_clean_root: Option<Slot>,
-    ) -> IntMap<Slot, PubkeysToFlush> {
+    ) -> IntMap<Slot, PubkeysToStore> {
         let mut pubkeys_to_flush = IntMap::with_capacity(flushed_roots.len());
 
         // Presize the dedup set from the newest root (flushed first), doubled to leave room
@@ -4666,7 +4666,7 @@ impl AccountsDb {
         for &root in flushed_roots.iter().rev() {
             let cleaned = max_clean_root.is_none_or(|max_clean_root| root <= max_clean_root);
             let to_flush = if !cleaned {
-                PubkeysToFlush::All
+                PubkeysToStore::All
             } else {
                 let mut flush_keys = HashSet::default();
                 if let Some(slot_cache) = self.accounts_cache.slot_cache(root) {
@@ -4678,7 +4678,7 @@ impl AccountsDb {
                         }
                     }
                 }
-                PubkeysToFlush::Only(flush_keys)
+                PubkeysToStore::Only(flush_keys)
             };
             pubkeys_to_flush.insert(root, to_flush);
         }
@@ -4689,7 +4689,7 @@ impl AccountsDb {
         &self,
         slot: Slot,
         slot_cache: &SlotCache,
-        pubkeys_to_store: &PubkeysToFlush,
+        pubkeys_to_store: &PubkeysToStore,
     ) -> FlushStats {
         debug_assert!(self.accounts_cache.contains_unflushed_root(slot));
         let mut flush_stats = FlushStats::default();
@@ -4702,8 +4702,8 @@ impl AccountsDb {
                 let key = iter_item.key();
                 let account = &iter_item.value().account;
                 let mut should_store = match pubkeys_to_store {
-                    PubkeysToFlush::All => true,
-                    PubkeysToFlush::Only(flush_keys) => flush_keys.contains(key),
+                    PubkeysToStore::All => true,
+                    PubkeysToStore::Only(store_keys) => store_keys.contains(key),
                 };
                 // `true` keeps a disk-loaded entry in-mem for the index upsert below
                 if should_store
@@ -4736,13 +4736,13 @@ impl AccountsDb {
             .collect();
 
         // Use ReclaimOldSlots to reclaim old slots if marking obsolete accounts and cleaning.
-        // Cleaning is enabled if pubkeys_to_store is PubkeysToFlush::Only
-        // pubkeys_to_store is PubkeysToFlush::All when
+        // Cleaning is enabled if pubkeys_to_store is PubkeysToStore::Only
+        // pubkeys_to_store is PubkeysToStore::All when
         // 1) There's an ongoing scan to avoid reclaiming accounts being scanned.
         // 2) The slot is > max_clean_root to prevent unrooted slots from reclaiming rooted versions.
         let reclaim_method = match pubkeys_to_store {
-            PubkeysToFlush::Only(_) => UpsertReclaim::ReclaimOldSlots,
-            PubkeysToFlush::All => UpsertReclaim::IgnoreReclaims,
+            PubkeysToStore::Only(_) => UpsertReclaim::ReclaimOldSlots,
+            PubkeysToStore::All => UpsertReclaim::IgnoreReclaims,
         };
 
         if !accounts.is_empty() {
@@ -4813,12 +4813,12 @@ impl AccountsDb {
     fn flush_slot_cache(
         &self,
         slot: Slot,
-        pubkeys_to_flush: &PubkeysToFlush,
+        pubkeys_to_store: &PubkeysToStore,
     ) -> Option<FlushStats> {
         // If a slot cache exists for this slot, flush it.
         self.accounts_cache
             .slot_cache(slot)
-            .map(|slot_cache| self.do_flush_slot_cache(slot, &slot_cache, pubkeys_to_flush))
+            .map(|slot_cache| self.do_flush_slot_cache(slot, &slot_cache, pubkeys_to_store))
     }
 
     fn report_store_stats(&self) {
@@ -6790,12 +6790,12 @@ enum FlushShouldClean {
 
 /// Which of a slot's cached accounts to write to storage when flushing it.
 #[derive(Debug, PartialEq, Eq)]
-enum PubkeysToFlush {
-    /// Flush every account in the slot, reclaiming nothing. Used for roots above
+enum PubkeysToStore {
+    /// Store every account in the slot, reclaiming nothing. Used for roots above
     /// `max_clean_root` and when not cleaning, since an in-flight scan may still need
     /// those versions.
     All,
-    /// Flush only these pubkeys (the newest version of each, per `select_pubkeys_to_flush`),
+    /// Store only these pubkeys (the newest version of each, per `select_pubkeys_to_flush`),
     /// purging the rest from the index and reclaiming older versions.
     Only(HashSet<Pubkey, PubkeyHasherBuilder>),
 }
@@ -6857,7 +6857,7 @@ impl AccountsDb {
 
     pub fn flush_accounts_cache_slot_for_tests(&self, slot: Slot) {
         assert!(self.accounts_cache.contains_unflushed_root(slot));
-        self.flush_slot_cache(slot, &PubkeysToFlush::All);
+        self.flush_slot_cache(slot, &PubkeysToStore::All);
     }
 
     /// useful to adapt tests written prior to introduction of the write cache
