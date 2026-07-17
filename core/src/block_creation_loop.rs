@@ -704,19 +704,16 @@ fn record_and_complete_block(
             },
             recv(ctx.record_receiver.inner()) -> msg => {
                 let record = msg.map_err(|_| PohRecorderError::ChannelDisconnected)?;
-                ctx.record_receiver
-                    .on_received_record(record.transaction_batches.len() as u64);
+                ctx.record_receiver.on_received_record();
 
                 if optimistic_parent.is_some() {
-                    record.transaction_batches.iter().for_each(|batch| {
-                        accumulated_txs.extend(batch.iter().cloned());
-                    });
+                    accumulated_txs.extend(record.transactions.iter().cloned());
                 }
 
                 ctx.poh_recorder.write().unwrap().record(
                     record.bank_id,
-                    record.mixins,
-                    record.transaction_batches,
+                    record.mixin,
+                    record.transactions,
                 )?;
             },
             default(select_timeout) => {},
@@ -1002,7 +999,7 @@ fn handle_parent_ready(
     Ok(Some(new_bank))
 }
 
-/// Shut down record intake and synchronously record all already-reserved batches.
+/// Shut down record intake and synchronously process all already-reserved records.
 ///
 /// When `accumulated_txs` is provided, the drained transactions are retained so
 /// sad handover can reschedule them against the recreated bank.
@@ -1015,16 +1012,13 @@ fn shutdown_and_drain_record_receiver(
 
     for record in record_receiver.drain_after_shutdown() {
         if let Some(accumulated_txs) = accumulated_txs.as_deref_mut() {
-            record.transaction_batches.iter().for_each(|batch| {
-                accumulated_txs.extend(batch.iter().cloned());
-            });
+            accumulated_txs.extend(record.transactions.iter().cloned());
         }
 
-        poh_recorder.write().unwrap().record(
-            record.bank_id,
-            record.mixins,
-            record.transaction_batches,
-        )?;
+        poh_recorder
+            .write()
+            .unwrap()
+            .record(record.bank_id, record.mixin, record.transactions)?;
     }
 
     Ok(())
@@ -1778,8 +1772,8 @@ mod tests {
         let bank_id = ctx.poh_recorder.read().unwrap().bank().unwrap().bank_id();
         record_sender
             .try_send(Record::new(
-                vec![Hash::new_unique()],
-                vec![vec![versioned_transfer(1)]],
+                Hash::new_unique(),
+                vec![versioned_transfer(1)],
                 bank_id,
             ))
             .unwrap();
@@ -1891,8 +1885,8 @@ mod tests {
         let drained_tx = versioned_transfer(2);
         record_sender
             .try_send(Record::new(
-                vec![Hash::new_unique()],
-                vec![vec![drained_tx.clone()]],
+                Hash::new_unique(),
+                vec![drained_tx.clone()],
                 optimistic_bank_id,
             ))
             .unwrap();

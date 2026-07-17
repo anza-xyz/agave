@@ -94,41 +94,6 @@ impl Poh {
         })
     }
 
-    /// Returns `true` if the batches were recorded successfully and `false` if the batches
-    /// were not recorded because there were not enough hashes remaining to record all `mixins`.
-    /// If `true` is returned, the `entries` vector will be populated with the `PohEntry`s for each
-    /// batch. If `false` is returned, the `entries` vector will not be modified.
-    pub fn record_batches(&mut self, mixins: &[Hash], entries: &mut Vec<PohEntry>) -> bool {
-        let num_mixins = mixins.len() as u64;
-        debug_assert_ne!(num_mixins, 0, "mixins.len() == 0");
-
-        if self.remaining_hashes_until_tick < num_mixins + 1 {
-            return false; // Not enough hashes remaining to record all mixins
-        }
-
-        entries.clear();
-        entries.reserve(mixins.len());
-
-        // The first entry will have the current number of hashes plus one.
-        // All subsequent entries will have 1.
-        let mut num_hashes = self.num_hashes + 1;
-        entries.extend(mixins.iter().map(|mixin| {
-            self.hash = hashv(&[self.hash.as_ref(), mixin.as_ref()]);
-            let entry = PohEntry {
-                num_hashes,
-                hash: self.hash,
-            };
-
-            num_hashes = 1;
-            entry
-        }));
-
-        self.num_hashes = 0;
-        self.remaining_hashes_until_tick -= num_mixins;
-
-        true
-    }
-
     pub fn tick(&mut self) -> Option<PohEntry> {
         self.hash = hash(self.hash.as_ref());
         self.num_hashes += 1;
@@ -384,35 +349,5 @@ mod tests {
         );
         assert_eq!(poh.remaining_hashes_until_tick, 9);
         assert_eq!(poh.remaining_hashes_in_slot(2), 9);
-    }
-
-    #[test]
-    fn test_poh_record_batches() {
-        let mut poh = Poh::new(Hash::default(), Some(10));
-        assert!(!poh.hash(4));
-
-        let mut entries = Vec::with_capacity(3);
-        let dummy_hashes = [Hash::default(); 4];
-        assert!(poh.record_batches(&dummy_hashes[..3], &mut entries,));
-        assert_eq!(entries.len(), 3);
-        assert_eq!(entries[0].num_hashes, 5);
-        assert_eq!(entries[1].num_hashes, 1);
-        assert_eq!(entries[2].num_hashes, 1);
-        assert_eq!(poh.remaining_hashes_until_tick, 3);
-        assert_eq!(poh.remaining_hashes_in_slot(2), 13);
-
-        // Cannot record more than number of remaining hashes
-        assert!(!poh.record_batches(&dummy_hashes[..4], &mut entries,));
-
-        // Cannot record more than number of remaining hashes
-        assert!(!poh.record_batches(&dummy_hashes[..3], &mut entries,));
-
-        // Can record less than number of remaining hashes
-        assert!(poh.record_batches(&dummy_hashes[..2], &mut entries,));
-        assert_eq!(entries.len(), 2);
-        assert_eq!(entries[0].num_hashes, 1);
-        assert_eq!(entries[1].num_hashes, 1);
-        assert_eq!(poh.remaining_hashes_until_tick, 1);
-        assert_eq!(poh.remaining_hashes_in_slot(2), 11);
     }
 }
