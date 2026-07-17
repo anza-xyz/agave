@@ -232,8 +232,8 @@ impl PurgeStats {
 
 #[derive(Debug, Default)]
 pub struct FlushStats {
-    pub num_accounts_flushed: Saturating<usize>,
-    pub num_bytes_flushed: Saturating<u64>,
+    pub num_accounts_stored: Saturating<usize>,
+    pub num_bytes_stored: Saturating<u64>,
     pub num_accounts_skipped: Saturating<usize>,
     pub num_bytes_skipped: Saturating<u64>,
     pub num_zero_lamport_accounts_skipped: Saturating<usize>,
@@ -270,8 +270,8 @@ impl FlushStats {
     }
 
     pub fn accumulate(&mut self, other: &Self) {
-        self.num_accounts_flushed += other.num_accounts_flushed;
-        self.num_bytes_flushed += other.num_bytes_flushed;
+        self.num_accounts_stored += other.num_accounts_stored;
+        self.num_bytes_stored += other.num_bytes_stored;
         self.num_accounts_skipped += other.num_accounts_skipped;
         self.num_bytes_skipped += other.num_bytes_skipped;
         self.num_zero_lamport_accounts_skipped += other.num_zero_lamport_accounts_skipped;

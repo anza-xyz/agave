@@ -4503,18 +4503,22 @@ impl AccountsDb {
             ("total_new_excess_roots", total_new_excess_roots, i64),
             ("num_excess_roots_flushed", num_excess_roots_flushed, i64),
             ("flush_roots_elapsed", flush_roots_elapsed.as_us(), i64),
+            ("account_bytes_stored", flush_stats.num_bytes_stored.0, i64),
             (
-                "account_bytes_flushed",
-                flush_stats.num_bytes_flushed.0,
+                "num_accounts_stored",
+                flush_stats.num_accounts_stored.0,
                 i64
             ),
             (
-                "num_accounts_flushed",
-                flush_stats.num_accounts_flushed.0,
+                "account_bytes_skipped",
+                flush_stats.num_bytes_skipped.0,
                 i64
             ),
-            ("account_bytes_skipped", flush_stats.num_bytes_skipped.0, i64),
-            ("num_accounts_skipped", flush_stats.num_accounts_skipped.0, i64),
+            (
+                "num_accounts_skipped",
+                flush_stats.num_accounts_skipped.0,
+                i64
+            ),
             (
                 "num_zero_lamport_accounts_skipped",
                 flush_stats.num_zero_lamport_accounts_skipped.0,
@@ -4717,9 +4721,9 @@ impl AccountsDb {
                     should_flush = false;
                 }
                 if should_flush {
-                    flush_stats.num_bytes_flushed +=
+                    flush_stats.num_bytes_stored +=
                         AppendVec::calculate_stored_size(account.data().len()) as u64;
-                    flush_stats.num_accounts_flushed += 1;
+                    flush_stats.num_accounts_stored += 1;
                     Some((key, account))
                 } else {
                     // Skip writing this account. Either superseded or zero lamport
@@ -4745,7 +4749,7 @@ impl AccountsDb {
             // This ensures that all updates are written to an AppendVec, before any
             // updates to the index happen, so anybody that sees a real entry in the index,
             // will be able to find the account in storage
-            let flushed_store = Arc::new(self.create_store(slot, flush_stats.num_bytes_flushed.0));
+            let flushed_store = Arc::new(self.create_store(slot, flush_stats.num_bytes_stored.0));
             self.storage.insert(Arc::clone(&flushed_store));
 
             let (store_accounts_for_flush_stats, store_accounts_for_flush_us) =
