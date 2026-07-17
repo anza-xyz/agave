@@ -4701,12 +4701,12 @@ impl AccountsDb {
             .filter_map(|iter_item| {
                 let key = iter_item.key();
                 let account = &iter_item.value().account;
-                let mut should_flush = match pubkeys_to_flush {
+                let mut should_store = match pubkeys_to_flush {
                     PubkeysToFlush::All => true,
                     PubkeysToFlush::Only(flush_keys) => flush_keys.contains(key),
                 };
                 // `true` keeps a disk-loaded entry in-mem for the index upsert below
-                if should_flush
+                if should_store
                     && account.is_zero_lamport()
                     && !self
                         .accounts_index
@@ -4718,9 +4718,9 @@ impl AccountsDb {
                     if !self.account_indexes.is_empty() {
                         skipped_zero_lamport_pubkeys.push(*key);
                     }
-                    should_flush = false;
+                    should_store = false;
                 }
-                if should_flush {
+                if should_store {
                     flush_stats.num_bytes_stored +=
                         AppendVec::calculate_stored_size(account.data().len()) as u64;
                     flush_stats.num_accounts_stored += 1;
