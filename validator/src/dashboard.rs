@@ -110,7 +110,7 @@ impl Dashboard {
             {
                 println_name_value("Shred Version:", &shred_version.to_string());
                 println_name_value("Gossip Address:", &gossip.to_string());
-                if tpu_quic.port() != 0 {
+                if let Some(tpu_quic) = tpu_quic {
                     println_name_value("TPU QUIC Address:", &tpu_quic.to_string());
                 }
                 if rpc.port() != 0 {
@@ -321,7 +321,7 @@ async fn wait_for_validator_startup(
                 return Ok(None);
             };
             let start_time = admin_client.start_time().await?;
-            let contact_info = admin_client.contact_info().await.ok();
+            let contact_info = Some(admin_client.contact_info().await?);
             let vat_status = admin_client.vat_status().await.ok();
             Ok::<_, jsonrpc_core_client::RpcError>(Some((
                 rpc_addr,
@@ -384,4 +384,72 @@ fn get_validator_stats(
         Sol(identity_balance),
         health,
     ))
+}
+
+#[cfg(all(test, not(target_family = "windows")))]
+mod tests {
+    use {
+        super::*,
+        jsonrpc_core::{Error, IoHandler},
+        jsonrpc_ipc_server::ServerBuilder,
+        solana_gossip::contact_info::ContactInfo,
+        solana_keypair::Keypair,
+        solana_signer::Signer,
+        std::sync::atomic::AtomicUsize,
+    };
+
+    #[test]
+    fn test_wait_for_validator_startup_retries_legacy_contact_info() {
+        let ledger_path = tempfile::tempdir().unwrap();
+        let rpc_addr = "127.0.0.1:8899".parse::<SocketAddr>().unwrap();
+        let start_time = SystemTime::now();
+        let keypair = Keypair::new();
+        let mut contact_info = serde_json::to_value(admin_rpc_service::AdminRpcContactInfo::from(
+            ContactInfo::new(keypair.pubkey(), 0, 0),
+        ))
+        .unwrap();
+        contact_info
+            .as_object_mut()
+            .unwrap()
+            .remove("tpu_quic")
+            .unwrap();
+        let contact_info_attempts = Arc::new(AtomicUsize::new(0));
+
+        let mut io = IoHandler::default();
+        io.add_sync_method("startProgress", |_| {
+            Ok(serde_json::to_value(ValidatorStartProgress::Running).unwrap())
+        });
+        io.add_sync_method("rpcAddress", move |_| {
+            Ok(serde_json::to_value(Some(rpc_addr)).unwrap())
+        });
+        io.add_sync_method("startTime", move |_| {
+            Ok(serde_json::to_value(start_time).unwrap())
+        });
+        let attempts = contact_info_attempts.clone();
+        io.add_sync_method("contactInfo", move |_| {
+            if attempts.fetch_add(1, Ordering::Relaxed) == 0 {
+                Err(Error::invalid_params(
+                    "Retry once validator start up is complete",
+                ))
+            } else {
+                Ok(contact_info.clone())
+            }
+        });
+        let server = ServerBuilder::new(io)
+            .start(&ledger_path.path().join("admin.rpc").display().to_string())
+            .unwrap();
+        let exit = AtomicBool::new(false);
+        let (_, _, contact_info, _) = admin_rpc_service::runtime()
+            .block_on(wait_for_validator_startup(
+                ledger_path.path(),
+                &exit,
+                new_spinner_progress_bar(),
+                Duration::from_millis(1),
+            ))
+            .unwrap();
+
+        assert!(contact_info.unwrap().tpu_quic.is_none());
+        assert_eq!(contact_info_attempts.load(Ordering::Relaxed), 2);
+        server.close();
+    }
 }
