@@ -5980,6 +5980,7 @@ dependencies = [
  "solana-message",
  "solana-metrics",
  "solana-nohash-hasher",
+ "solana-nonce",
  "solana-pubkey 4.2.0",
  "solana-rayon-threadlimit",
  "solana-rent",
