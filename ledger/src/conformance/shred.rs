@@ -47,7 +47,7 @@ use {
         bank::{Bank, BankFieldsToDeserialize, BankHashStats, BankRc},
         epoch_stakes::VersionedEpochStakes,
         stake_history::StakeHistory,
-        stakes::{DeserializableStakes, SerdeStakesToStakeFormat, Stakes},
+        stakes::{DeserializableDelegationStakes, SerdeStakesToStakeFormat, Stakes},
     },
     solana_sdk_ids::sysvar,
     solana_stake_interface::state::Stake,
@@ -409,7 +409,7 @@ fn build_root_bank(root_slot: Slot, feature_set: FeatureSet) -> Arc<Bank> {
     accounts.accounts_db.add_root(parent_slot);
     let bank_rc = BankRc::new(accounts);
 
-    let stakes = DeserializableStakes {
+    let stakes = DeserializableDelegationStakes {
         vote_accounts: VoteAccounts::default(),
         stake_delegations: vec![],
         unused: 0,
