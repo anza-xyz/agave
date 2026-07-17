@@ -234,6 +234,47 @@ fn deprecated_arguments() -> Vec<DeprecatedArg> {
             .help("Controls the TPU connection pool size per remote address"),
          usage_warning:"This parameter is misleading, avoid setting it",
     );
+    add_arg!(
+        // deprecated in v4.2.0
+        Arg::with_name("tpu_max_fwd_staked_connections")
+            .long("tpu-max-fwd-staked-connections")
+            .takes_value(true)
+            .validator(is_parsable::<u32>)
+            .help("Controls the max concurrent connections for TPU-forward from staked nodes."),
+        usage_warning: "TPU Forwards will be deprecated as of v4.2.0 and removed in v4.3.0",
+    );
+    add_arg!(
+        // deprecated in v4.2.0
+        Arg::with_name("tpu_max_fwd_unstaked_connections")
+            .long("tpu-max-fwd-unstaked-connections")
+            .takes_value(true)
+            .validator(is_parsable::<u32>)
+            .help("Controls the max concurrent connections for TPU-forward from unstaked nodes."),
+        usage_warning: "TPU Forwards will be deprecated as of v4.2.0 and removed in v4.3.0",
+    );
+    add_arg!(
+        // deprecated in v4.2.0
+        Arg::with_name("tpu_transaction_forward_receive_threads")
+            .long("tpu-transaction-forward-receive-threads")
+            .takes_value(true)
+            .value_name("NUMBER")
+            .validator(|num| is_within_range(num, 1..=num_cpus::get()))
+            .help("Number of threads to use for receiving transactions on the TPU forwards port"),
+        usage_warning: "TPU Forwards will be deprecated as of v4.2.0 and removed in v4.3.0",
+    );
+    add_arg!(
+        // deprecated in v4.2.0
+        Arg::with_name("public_tpu_forwards_addr")
+            .long("public-tpu-forwards-address")
+            .value_name("HOST:PORT")
+            .takes_value(true)
+            .validator(solana_net_utils::is_host_port)
+            .help(
+                "Specify TPU Forwards QUIC address to advertise in gossip [default: ask \
+                 --entrypoint or localhostwhen --entrypoint is not provided]",
+            ),
+        usage_warning: "TPU Forwards will be deprecated as of v4.2.0 and removed in v4.3.0",
+    );
     res
 }
 
