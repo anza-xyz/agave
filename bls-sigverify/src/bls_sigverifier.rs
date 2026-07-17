@@ -47,7 +47,10 @@ use {
 /// invalid and discarded.
 ///
 /// This also sets an upper bound on how much storage the various structs in this module require.
-pub(super) const NUM_SLOTS_FOR_VERIFY: Slot = 90_000;
+///
+/// At 200ms slot times, 30K slots is 100mins.  We do not expect a node to catch up if it has
+/// fallen so far behind.
+pub(super) const NUM_SLOTS_FOR_VERIFY: Slot = 30_000;
 
 /// If we receive an invalid certificate or vote, we ban its attributed sender. For certificates
 /// received from blockstore, that sender is the scheduled leader for the carrier slot. We ban the
