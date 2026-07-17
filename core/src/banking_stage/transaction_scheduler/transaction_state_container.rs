@@ -95,8 +95,6 @@ pub(crate) trait StateContainer<Tx: TransactionWithMeta> {
     /// Pushes transaction ids into the priority queue. If the queue if full,
     /// the lowest priority transactions will be dropped (removed from the
     /// queue and map) **after** all ids have been pushed.
-    /// To avoid allocating, the caller should not push more than
-    /// [`EXTRA_CAPACITY`] ids in a call.
     /// Returns the number of dropped transactions.
     fn push_ids_into_queue(
         &mut self,
@@ -134,9 +132,9 @@ pub(crate) trait StateContainer<Tx: TransactionWithMeta> {
     );
 }
 
-// Extra capacity is added because some additional space is needed when
-// pushing a new transaction into the container to avoid reallocation.
-pub(crate) const EXTRA_CAPACITY: usize = 64;
+// Extra capacity is added to avoid reallocation because each new transaction
+// is added to the slab before anything can be evicted from a full queue.
+pub(crate) const EXTRA_CAPACITY: usize = 1;
 
 impl<Tx: TransactionWithMeta> StateContainer<Tx> for TransactionStateContainer<Tx> {
     fn with_capacity(capacity: usize) -> Self {
