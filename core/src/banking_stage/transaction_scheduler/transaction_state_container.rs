@@ -600,7 +600,6 @@ mod tests {
         }
 
         // Push 5 additional packets in. 5 should be dropped.
-        let mut priority_ids = Vec::with_capacity(5);
         for priority in [10, 11, 12, 1, 2] {
             let (transaction, _max_age, priority, cost) = test_transaction(priority);
             let packet = Packet::from_data(None, transaction.to_versioned_transaction()).unwrap();
@@ -610,9 +609,11 @@ mod tests {
                 })
                 .unwrap();
             let priority_id = TransactionPriorityId::new(priority, id);
-            priority_ids.push(priority_id);
+            assert_eq!(
+                container.push_ids_into_queue(std::iter::once(priority_id)),
+                1,
+            );
         }
-        assert_eq!(container.push_ids_into_queue(priority_ids.into_iter()), 5);
         assert_eq!(container.pop().unwrap().priority, 12);
         assert_eq!(container.pop().unwrap().priority, 11);
         assert!(container.pop().is_none());
