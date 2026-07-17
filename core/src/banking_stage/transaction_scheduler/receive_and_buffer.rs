@@ -69,46 +69,34 @@ pub(crate) struct ReceivingStats {
     pub buffer_time_us: u64,
 }
 
-trait RecordReceiveError {
-    fn record_err(&self, receiving_stats: &mut ReceivingStats);
-}
-
-impl RecordReceiveError for PacketHandlingError {
-    fn record_err(&self, receiving_stats: &mut ReceivingStats) {
-        match self {
+impl ReceivingStats {
+    fn add_packet_handling_error(&mut self, err: &PacketHandlingError) {
+        match err {
             PacketHandlingError::Sanitization | PacketHandlingError::ALTResolution => {
-                receiving_stats.num_dropped_on_parsing_and_sanitization += 1;
+                self.num_dropped_on_parsing_and_sanitization += 1;
             }
             PacketHandlingError::LockValidation => {
-                receiving_stats.num_dropped_on_lock_validation += 1;
+                self.num_dropped_on_lock_validation += 1;
             }
             PacketHandlingError::ComputeBudget => {
-                receiving_stats.num_dropped_on_compute_budget += 1;
+                self.num_dropped_on_compute_budget += 1;
             }
             PacketHandlingError::FilterKey => {
-                receiving_stats.num_dropped_on_filter_key += 1;
+                self.num_dropped_on_filter_key += 1;
             }
         }
     }
-}
 
-impl RecordReceiveError for TransactionError {
-    fn record_err(&self, receiving_stats: &mut ReceivingStats) {
-        match self {
+    fn add_transaction_error(&mut self, err: &TransactionError) {
+        match err {
             TransactionError::BlockhashNotFound => {
-                receiving_stats.num_dropped_on_age += 1;
+                self.num_dropped_on_age += 1;
             }
             TransactionError::AlreadyProcessed => {
-                receiving_stats.num_dropped_on_already_processed += 1;
+                self.num_dropped_on_already_processed += 1;
             }
             _ => {}
         }
-    }
-}
-
-impl ReceivingStats {
-    fn record_err<E: RecordReceiveError>(&mut self, err: &E) {
-        err.record_err(self);
     }
 
     fn accumulate(&mut self, other: ReceivingStats) {
@@ -296,7 +284,7 @@ impl TransactionViewReceiveAndBuffer {
 
                         // Parsing or some other static checks failed.
                         Err(ref err) => {
-                            receiving_stats.record_err(err);
+                            receiving_stats.add_packet_handling_error(err);
                             Err(())
                         }
                     }
@@ -351,7 +339,7 @@ impl TransactionViewReceiveAndBuffer {
 
                     // Invalid
                     Err(ref err) => {
-                        receiving_stats.record_err(err);
+                        receiving_stats.add_transaction_error(err);
                         container.remove_by_id(transaction_id);
                         continue;
                     }
