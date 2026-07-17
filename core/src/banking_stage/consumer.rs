@@ -550,7 +550,6 @@ impl Consumer {
                 Ok(_) => {}
                 Err(err) => {
                     let transaction_error = TransactionError::from(err);
-                    Self::accumulate_cost_limit_error(&transaction_error, error_counters);
                     *transaction_cost = None;
                     if all_or_nothing {
                         all_or_nothing_error = Some((index, transaction_error));
@@ -574,6 +573,7 @@ impl Consumer {
                 transactions,
                 processing_results,
                 processed_counts,
+                error_counters,
                 &mut retryable_transaction_indexes,
                 failed_index,
                 &transaction_error,
@@ -588,6 +588,7 @@ impl Consumer {
                 transactions,
                 processing_results,
                 processed_counts,
+                error_counters,
                 &mut retryable_transaction_indexes,
                 failed_index,
                 &transaction_error,
@@ -602,6 +603,7 @@ impl Consumer {
         transactions: &[Tx],
         processing_results: &mut [TransactionProcessingResult],
         processed_counts: &mut ProcessedTransactionCounts,
+        error_counters: &mut TransactionErrorMetrics,
         retryable_transaction_indexes: &mut Vec<RetryableIndex>,
         failed_index: usize,
         transaction_error: &TransactionError,
@@ -615,11 +617,17 @@ impl Consumer {
         {
             if processing_result.was_processed() {
                 Self::decrement_processed_counts(tx, processing_result, processed_counts);
-                *processing_result = Err(if index == failed_index {
+                let retry_error = if index == failed_index {
                     transaction_error.clone()
                 } else {
                     TransactionError::CommitCancelled
-                });
+                };
+                Self::accumulate_post_execution_transaction_error(
+                    processing_result,
+                    &retry_error,
+                    error_counters,
+                );
+                *processing_result = Err(retry_error);
                 retryable_transaction_indexes.push(RetryableIndex {
                     index,
                     // The cost-limit failure should be held until a later retry opportunity.
@@ -628,6 +636,19 @@ impl Consumer {
                 });
             }
         }
+    }
+
+    fn accumulate_post_execution_transaction_error(
+        previous_processing_result: &TransactionProcessingResult,
+        transaction_error: &TransactionError,
+        error_counters: &mut TransactionErrorMetrics,
+    ) {
+        // To avoid double counting, only increment `total` by 1 if a successful transaction
+        // is turned into error (eg cost limit error, or CommitCancelled).
+        if previous_processing_result.flattened_result().is_ok() {
+            error_counters.total += 1;
+        }
+        Self::accumulate_cost_limit_error(transaction_error, error_counters);
     }
 
     fn remove_added_transaction_costs<Tx: TransactionWithMeta>(
@@ -1362,6 +1383,7 @@ mod tests {
             transaction_counts,
             retryable_transaction_indexes,
             commit_transactions_result,
+            error_counters,
             ..
         } = execute_and_commit_transactions_output;
         let commit_transaction_details = commit_transactions_result.unwrap();
@@ -1400,6 +1422,11 @@ mod tests {
         assert_eq!(
             commit_cancelled_count,
             TRANSACTION_COUNT - committed_count - late_cost_rejected_indexes.len()
+        );
+        assert_eq!(error_counters.total.0, TRANSACTION_COUNT - committed_count);
+        assert_eq!(
+            error_counters.would_exceed_max_block_cost_limit.0,
+            late_cost_rejected_indexes.len()
         );
         assert_eq!(
             cost_model_throttled_transactions_count,
@@ -1483,6 +1510,7 @@ mod tests {
             transaction_counts,
             retryable_transaction_indexes,
             commit_transactions_result,
+            error_counters,
             ..
         } = process_transactions_batch_output.execute_and_commit_transactions_output;
         let commit_transaction_details = commit_transactions_result.unwrap();
@@ -1521,6 +1549,8 @@ mod tests {
             .count();
         assert_eq!(cost_limit_failure_indexes.len(), 1);
         assert_eq!(commit_cancelled_count, TRANSACTION_COUNT - 1);
+        assert_eq!(error_counters.total.0, TRANSACTION_COUNT);
+        assert_eq!(error_counters.would_exceed_max_block_cost_limit.0, 1);
         let failed_index = cost_limit_failure_indexes[0];
         assert_eq!(
             retryable_transaction_indexes,
