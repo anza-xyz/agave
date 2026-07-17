@@ -2,7 +2,7 @@
 use {
     crate::geyser_plugin_manager::GeyserPluginManager,
     agave_geyser_plugin_interface::geyser_plugin_interface::{
-        ReplicaTransactionInfoV4, ReplicaTransactionInfoVersions,
+        ReplicaTransactionInfoV3, ReplicaTransactionInfoVersions,
     },
     arc_swap::ArcSwap,
     log::*,
@@ -36,7 +36,6 @@ impl TransactionNotifier for TransactionNotifierImpl {
         transaction: &VersionedTransaction,
     ) {
         let transaction_log_info = Self::build_replica_transaction_info(
-            bank_id,
             index,
             signature,
             message_hash,
@@ -55,9 +54,10 @@ impl TransactionNotifier for TransactionNotifierImpl {
             if !plugin.transaction_notifications_enabled() {
                 continue;
             }
-            match plugin.notify_transaction(
-                ReplicaTransactionInfoVersions::V0_0_4(&transaction_log_info),
+            match plugin.notify_transaction_v4(
+                ReplicaTransactionInfoVersions::V0_0_3(&transaction_log_info),
                 slot,
+                Some(bank_id),
             ) {
                 Err(err) => {
                     error!(
@@ -83,16 +83,14 @@ impl TransactionNotifierImpl {
     }
 
     fn build_replica_transaction_info<'a>(
-        bank_id: BankId,
         index: usize,
         signature: &'a Signature,
         message_hash: &'a Hash,
         is_vote: bool,
         transaction_status_meta: &'a TransactionStatusMeta,
         transaction: &'a VersionedTransaction,
-    ) -> ReplicaTransactionInfoV4<'a> {
-        ReplicaTransactionInfoV4 {
-            bank_id,
+    ) -> ReplicaTransactionInfoV3<'a> {
+        ReplicaTransactionInfoV3 {
             index,
             message_hash,
             signature,
