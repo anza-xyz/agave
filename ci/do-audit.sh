@@ -66,6 +66,16 @@ default_cargo_audit_extra_args=(
   # Solution:  Upgrade to >=0.11.15
   # AGAVE OK:  we read 1 stream at a time, bounded to tx size, for up to 2s
   --ignore RUSTSEC-2026-0185
+
+  # Crate:     crossbeam-epoch
+  # Version:   0.9.5
+  # Title:     Invalid pointer dereference in fmt::Pointer impl for Atomic and Shared
+  # Date:      2026-07-06
+  # ID:        RUSTSEC-2026-0204
+  # URL:       https://rustsec.org/advisories/RUSTSEC-2026-0204
+  # Solution:  Upgrade to >=0.9.20
+  # AGAVE OK:  patched via vendored anza-xyz/crossbeam fork (rev 153b4261), which reports 0.9.5
+  --ignore RUSTSEC-2026-0204
 )
 
 xtask_cargo_audit_extra_args=(
