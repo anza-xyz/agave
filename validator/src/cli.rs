@@ -258,7 +258,7 @@ fn deprecated_arguments() -> Vec<DeprecatedArg> {
             .long("tpu-transaction-forward-receive-threads")
             .takes_value(true)
             .value_name("NUMBER")
-            .validator(|num| is_within_range(num, 1..=num_cpus::get()))
+            .validator(|num| solana_clap_utils::input_validators::is_within_range(num, 1..=num_cpus::get()))
             .help("Number of threads to use for receiving transactions on the TPU forwards port"),
         usage_warning: "TPU Forwards will be deprecated as of v4.2.0 and removed in v4.3.0",
     );
