@@ -5,7 +5,6 @@ use {
     crate::next_leader::next_leaders,
     agave_banking_stage_ingress_types::BankingPacketBatch,
     agave_transaction_view::transaction_view::SanitizedTransactionView,
-    async_trait::async_trait,
     crossbeam_channel::{Receiver, RecvTimeoutError},
     packet_container::PacketContainer,
     solana_cost_model::cost_model::CostModel,
@@ -486,13 +485,12 @@ impl ForwardingClient for VoteClient {
     }
 }
 
-#[async_trait]
 impl LeaderUpdater for ForwardAddressGetter {
-    fn next_leaders(&mut self, lookahead_slots: usize) -> Vec<SocketAddr> {
-        self.get_non_vote_forwarding_addresses(lookahead_slots as u64, Protocol::QUIC)
+    fn next_leaders(&mut self, lookahead_slots: usize, leaders: &mut Vec<SocketAddr>) {
+        leaders.clear();
+        leaders
+            .extend(self.get_non_vote_forwarding_addresses(lookahead_slots as u64, Protocol::QUIC));
     }
-
-    async fn stop(&mut self) {}
 }
 
 #[derive(Clone)]

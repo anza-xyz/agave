@@ -20,7 +20,6 @@ agave-unstable-api = []
 dev-context-only-utils = ["solana-net-utils"]
 
 [dependencies]
-async-trait = { workspace = true }
 crossbeam-channel = { workspace = true }
 itertools = { workspace = true }
 log = { workspace = true }

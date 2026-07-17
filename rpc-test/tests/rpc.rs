@@ -1,5 +1,4 @@
 use {
-    async_trait::async_trait,
     bincode::serialize,
     crossbeam_channel::bounded,
     futures_util::StreamExt,
@@ -26,7 +25,7 @@ use {
     solana_system_transaction as system_transaction,
     solana_test_validator::TestValidator,
     solana_tpu_client_next::{
-        client_builder::ClientBuilder, leader_updater::LeaderUpdater,
+        client_builder::ClientBuilder, leader_updater::create_pinned_leader_updater,
         node_address_service::LeaderTpuCacheServiceConfig,
         websocket_node_address_service::WebsocketNodeAddressService,
     },
@@ -34,7 +33,6 @@ use {
     solana_transaction_status::TransactionStatus,
     std::{
         collections::HashSet,
-        net::SocketAddr,
         sync::{
             Arc,
             atomic::{AtomicUsize, Ordering},
@@ -288,20 +286,6 @@ fn test_rpc_slot_updates() {
     }
 }
 
-/// LeaderUpdater for testing - returns a fixed TPU address
-struct TestLeaderUpdater {
-    address: SocketAddr,
-}
-
-#[async_trait]
-impl LeaderUpdater for TestLeaderUpdater {
-    fn next_leaders(&mut self, _lookahead_leaders: usize) -> Vec<SocketAddr> {
-        vec![self.address]
-    }
-
-    async fn stop(&mut self) {}
-}
-
 #[test]
 fn test_rpc_subscriptions() {
     agave_logger::setup();
@@ -443,9 +427,7 @@ fn test_rpc_subscriptions() {
     let bind_socket = sockets::bind_to_localhost_unique().unwrap();
     let tpu_address = *test_validator.tpu_quic();
 
-    let leader_updater = Box::new(TestLeaderUpdater {
-        address: tpu_address,
-    });
+    let leader_updater = create_pinned_leader_updater(tpu_address);
 
     let (transaction_sender, _client) = rt.block_on(async {
         ClientBuilder::new(leader_updater)
@@ -539,9 +521,7 @@ fn test_run_tpu_send_transaction() {
     let bind_socket = sockets::bind_to_localhost_unique().unwrap();
     let tpu_address = *test_validator.tpu_quic();
 
-    let leader_updater = Box::new(TestLeaderUpdater {
-        address: tpu_address,
-    });
+    let leader_updater = create_pinned_leader_updater(tpu_address);
 
     let (transaction_sender, _client) = rt.block_on(async {
         ClientBuilder::new(leader_updater)
@@ -583,7 +563,7 @@ fn test_node_address_service_slot_updates() {
     rt.block_on(async {
         let rpc_client = Arc::new(test_validator.get_async_rpc_client());
         let cancel = CancellationToken::new();
-        let mut service = WebsocketNodeAddressService::run(
+        let (provider, service) = WebsocketNodeAddressService::run(
             rpc_client,
             test_validator.rpc_pubsub_url(),
             LeaderTpuCacheServiceConfig::default(),
@@ -592,7 +572,7 @@ fn test_node_address_service_slot_updates() {
         .await
         .expect("WebsocketNodeAddressService should start");
 
-        let start_slot = service.current_slot();
+        let start_slot = provider.estimated_current_slot();
         let timeout = Duration::from_secs(5);
         let now = Instant::now();
         loop {
@@ -600,7 +580,7 @@ fn test_node_address_service_slot_updates() {
                 now.elapsed() < timeout,
                 "estimated slot did not advance within {timeout:?}"
             );
-            if service.current_slot() != start_slot {
+            if provider.estimated_current_slot() != start_slot {
                 break;
             }
             tokio::time::sleep(Duration::from_millis(solana_clock::DEFAULT_MS_PER_SLOT)).await;
