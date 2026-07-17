@@ -59,7 +59,8 @@ impl Poh {
     pub fn target_poh_time(&self, target_ns_per_tick: u64) -> Instant {
         assert!(self.hashes_per_tick > 0);
         let offset_tick_ns = target_ns_per_tick * self.tick_number;
-        let offset_ns = target_ns_per_tick * self.num_hashes / self.hashes_per_tick;
+        let hashes_since_tick = self.hashes_per_tick - self.remaining_hashes_until_tick;
+        let offset_ns = target_ns_per_tick * hashes_since_tick / self.hashes_per_tick;
         self.slot_start_time + Duration::from_nanos(offset_ns + offset_tick_ns)
     }
 
@@ -189,13 +190,30 @@ mod tests {
                 poh.target_poh_time(target_ns_per_tick),
                 poh.slot_start_time + Duration::from_nanos(target_ns_per_tick * 2)
             );
-            poh.num_hashes = 3;
+            assert!(!poh.hash(3));
             assert_eq!(
                 poh.target_poh_time(target_ns_per_tick),
                 poh.slot_start_time
                     + Duration::from_nanos(target_ns_per_tick * 2 + target_ns_per_tick * 3 / 5)
             );
         }
+    }
+
+    #[test]
+    fn test_target_poh_time_after_record() {
+        let target_ns_per_tick = 100;
+        let mut poh = Poh::new(Hash::default(), Some(10));
+        assert!(!poh.hash(3));
+
+        assert_matches!(
+            poh.record(Hash::default()),
+            Some(PohEntry { num_hashes: 4, .. })
+        );
+        assert_eq!(poh.num_hashes, 0);
+        assert_eq!(
+            poh.target_poh_time(target_ns_per_tick),
+            poh.slot_start_time + Duration::from_nanos(40)
+        );
     }
 
     #[test]
