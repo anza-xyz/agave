@@ -499,11 +499,13 @@ impl Accounts {
     pub fn store_accounts_seq<'a>(
         &self,
         accounts: impl StorableAccounts<'a>,
+        bank_id: BankId,
         transactions: Option<&'a [&'a SanitizedTransaction]>,
         ancestors: &Ancestors,
     ) {
         self._store_accounts(
             accounts,
+            bank_id,
             transactions,
             UpdateIndexThreadSelection::Inline,
             ancestors,
@@ -517,11 +519,13 @@ impl Accounts {
     pub fn store_accounts_par<'a>(
         &self,
         accounts: impl StorableAccounts<'a>,
+        bank_id: BankId,
         transactions: Option<&'a [&'a SanitizedTransaction]>,
         ancestors: &Ancestors,
     ) {
         self._store_accounts(
             accounts,
+            bank_id,
             transactions,
             UpdateIndexThreadSelection::PoolWithThreshold,
             ancestors,
@@ -536,6 +540,7 @@ impl Accounts {
     fn _store_accounts<'a>(
         &self,
         accounts: impl StorableAccounts<'a>,
+        bank_id: BankId,
         transactions: Option<&'a [&'a SanitizedTransaction]>,
         update_index_thread_selection: UpdateIndexThreadSelection,
         ancestors: &Ancestors,
@@ -552,6 +557,7 @@ impl Accounts {
                 accounts.account_for_geyser(index, |pubkey, account_shared_data| {
                     accounts_db.notify_account_at_accounts_update(
                         slot,
+                        bank_id,
                         account_shared_data,
                         &transaction,
                         pubkey,

@@ -33,6 +33,17 @@ Release channels have their own copy of this changelog:
 * External scheduler execution responses now report `PARTIAL_BATCH_CANCELLED` for
   `CommitCancelled` errors in non-all-or-nothing batches. All-or-nothing batches continue to use
   `ALL_OR_NOTHING_BATCH_FAILURE`.
+### Geyser
+#### Deprecations
+* The legacy `GeyserPlugin` methods `update_account`, `notify_transaction`, `notify_entry`, and
+  `notify_block_metadata` are slated for removal in the next major release.
+#### Changes
+* Added `GeyserPlugin` methods to replace deprecated methods: `update_account_from_snapshot` and
+  `update_account_for_bank` replace `update_account`, `notify_transaction_for_bank` replaces
+  `notify_transaction`, `notify_entry_for_bank` replaces `notify_entry`, and
+  `notify_block_metadata_for_bank` replaces `notify_block_metadata`.
+* Added `update_bank_status` for bank-scoped slot status updates with `bank_id`;
+  `update_slot_status` remains for non-bank slot statuses.
 ### SDK
 #### Breaking
 * solana-program-test: syscall getters (e.g. `Rent::get()`, `Clock::get()`) and `solana_sysvar::get_sysvar()` now return
