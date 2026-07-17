@@ -1,13 +1,16 @@
 use {
-    super::{transaction_priority_id::TransactionPriorityId, transaction_state::TransactionState},
+    super::transaction_state::TransactionState,
     crate::banking_stage::scheduler_messages::TransactionId,
+    agave_scheduling_utils::transaction_priority_queue::{
+        TransactionPriorityId, TransactionPriorityQueue,
+    },
     agave_transaction_view::resolved_transaction_view::ResolvedTransactionView,
     slab::{Slab, VacantEntry},
     solana_packet::PACKET_DATA_SIZE,
     solana_runtime_transaction::{
         runtime_transaction::RuntimeTransaction, transaction_with_meta::TransactionWithMeta,
     },
-    std::{collections::BTreeSet, iter::Rev, ops::Bound, sync::Arc},
+    std::{iter::Rev, sync::Arc},
 };
 
 /// This structure will hold `TransactionState` for the entirety of a
@@ -36,10 +39,8 @@ use {
 /// The container maintains a fixed capacity. If the queue is full when pushing
 /// a new transaction, the lowest priority transaction will be dropped.
 pub(crate) struct TransactionStateContainer<Tx: TransactionWithMeta> {
-    capacity: usize,
-    priority_queue: BTreeSet<TransactionPriorityId>,
+    priority_queue: TransactionPriorityQueue,
     id_to_transaction_state: Slab<TransactionState<Tx>>,
-    held_transactions: Vec<TransactionPriorityId>,
 }
 
 pub(crate) trait StateContainer<Tx: TransactionWithMeta> {
@@ -121,10 +122,8 @@ pub(crate) const EXTRA_CAPACITY: usize = 64;
 impl<Tx: TransactionWithMeta> StateContainer<Tx> for TransactionStateContainer<Tx> {
     fn with_capacity(capacity: usize) -> Self {
         Self {
-            capacity,
-            priority_queue: BTreeSet::new(),
+            priority_queue: TransactionPriorityQueue::with_capacity(capacity),
             id_to_transaction_state: Slab::with_capacity(capacity + EXTRA_CAPACITY),
-            held_transactions: Vec::with_capacity(capacity),
         }
     }
 
@@ -141,7 +140,7 @@ impl<Tx: TransactionWithMeta> StateContainer<Tx> for TransactionStateContainer<T
     }
 
     fn pop(&mut self) -> Option<TransactionPriorityId> {
-        self.priority_queue.pop_last()
+        self.priority_queue.pop_highest()
     }
 
     fn get_mut_transaction_state(
@@ -161,29 +160,24 @@ impl<Tx: TransactionWithMeta> StateContainer<Tx> for TransactionStateContainer<T
         &mut self,
         priority_ids: impl Iterator<Item = TransactionPriorityId>,
     ) -> usize {
-        for id in priority_ids {
-            self.priority_queue.insert(id);
-        }
-
-        // The number of items in the `id_to_transaction_state` map is
-        // greater than or equal to the number of elements in the queue.
-        // To avoid the map going over capacity, we use the length of the
-        // map here instead of the queue.
-        let num_dropped = self
+        // Capacity applies to all transaction states, including held and in-flight transactions.
+        // New states are inserted before their priority IDs reach this method, so the state-store
+        // length already includes them. Requeued IDs already have state and do not increase the
+        // overage. Removing one state per evicted ID restores the state store to capacity.
+        let num_to_evict = self
             .id_to_transaction_state
             .len()
-            .saturating_sub(self.capacity);
-
-        for _ in 0..num_dropped {
-            let priority_id = self.priority_queue.pop_first().expect("queue is not empty");
-            self.id_to_transaction_state.remove(priority_id.id);
-        }
-
-        num_dropped
+            .saturating_sub(self.priority_queue.capacity());
+        let (priority_queue, id_to_transaction_state) =
+            (&mut self.priority_queue, &mut self.id_to_transaction_state);
+        priority_queue.push(priority_ids, num_to_evict, |id| {
+            id_to_transaction_state.remove(id.id);
+        });
+        num_to_evict
     }
 
     fn hold_transaction(&mut self, priority_id: TransactionPriorityId) {
-        self.held_transactions.push(priority_id);
+        self.priority_queue.hold(priority_id);
     }
 
     fn remove_by_id(&mut self, id: TransactionId) {
@@ -195,29 +189,22 @@ impl<Tx: TransactionWithMeta> StateContainer<Tx> for TransactionStateContainer<T
     }
 
     fn flush_held_transactions(&mut self) {
-        let mut held_transactions = core::mem::take(&mut self.held_transactions);
-        self.push_ids_into_queue(held_transactions.drain(..));
-        core::mem::swap(&mut self.held_transactions, &mut held_transactions);
+        // Held transactions already have state and count toward capacity, so returning them to the
+        // queue does not change the state-store occupancy and requires no eviction.
+        debug_assert!(self.id_to_transaction_state.len() <= self.priority_queue.capacity());
+        self.priority_queue
+            .flush_held(0, |_| unreachable!("zero evictions requested"));
     }
 
     fn get_min_max_priority(&self) -> Option<(u64, u64)> {
-        let min = self.priority_queue.first()?.priority;
-        let max = self.priority_queue.last().unwrap().priority;
-
-        Some((min, max))
+        self.priority_queue.min_max_priority()
     }
 
     fn recheck_iter(
         &self,
         cursor: Option<&TransactionPriorityId>,
     ) -> Rev<std::collections::btree_set::Range<'_, TransactionPriorityId>> {
-        match cursor {
-            None => self.priority_queue.range(..).rev(),
-            Some(cursor) => self
-                .priority_queue
-                .range((Bound::Unbounded, Bound::Excluded(cursor)))
-                .rev(),
-        }
+        self.priority_queue.descending_from(cursor)
     }
 }
 
@@ -611,14 +598,13 @@ mod tests {
             container.insert_new_transaction(transaction, max_age, priority, cost);
         }
 
-        let (highest, lowest) = (
-            *container.priority_queue.last().unwrap(),
-            *container.priority_queue.first().unwrap(),
-        );
+        let priority_ids = container.recheck_iter(None).copied().collect::<Vec<_>>();
+        let highest = priority_ids[0];
+        let lowest = *priority_ids.last().unwrap();
 
         // Removing an in-queue transaction drops it from both structures.
         container.remove_by_id(highest.id);
-        assert!(!container.priority_queue.contains(&highest));
+        assert!(!container.recheck_iter(None).any(|id| *id == highest));
         assert_eq!(container.queue_size(), 1);
         assert!(container.get_transaction(highest.id).is_none());
 

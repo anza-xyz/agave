@@ -1,6 +1,5 @@
 use {
     super::{
-        transaction_priority_id::TransactionPriorityId,
         transaction_state::TransactionState,
         transaction_state_container::{
             EXTRA_CAPACITY, SharedBytes, StateContainer, TransactionViewState,
@@ -14,6 +13,7 @@ use {
         transaction_priority::calculate_priority_and_cost,
     },
     agave_banking_stage_ingress_types::{BankingPacketBatch, BankingPacketReceiver},
+    agave_scheduling_utils::transaction_priority_queue::TransactionPriorityId,
     agave_transaction_view::{
         resolved_transaction_view::ResolvedTransactionView, sanitize::SanitizeConfig,
         transaction_data::TransactionData, transaction_version::TransactionVersion,

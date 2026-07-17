@@ -9,4 +9,5 @@ pub mod bridge;
 pub mod handshake;
 pub mod pubkeys_ptr;
 pub mod responses_region;
+pub mod transaction_priority_queue;
 pub mod transaction_ptr;
