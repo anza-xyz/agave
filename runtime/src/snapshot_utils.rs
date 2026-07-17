@@ -1873,6 +1873,7 @@ pub fn create_tmp_accounts_dir_for_tests() -> (TempDir, PathBuf) {
 mod tests {
     use {
         super::*,
+        crate::serde_snapshot::{deserialize_wincode_from, serialize_into},
         agave_snapshots::{
             paths::{
                 full_snapshot_archives_iter, get_highest_full_snapshot_archive_slot,
@@ -1884,7 +1885,6 @@ mod tests {
             },
         },
         assert_matches::assert_matches,
-        bincode::{deserialize_from, serialize_into},
         solana_accounts_db::accounts_file::{AccountsFile, AccountsFileProvider},
         solana_hash::Hash,
         std::{convert::TryFrom, mem::size_of},
@@ -1951,8 +1951,8 @@ mod tests {
             &snapshot_root_paths,
             expected_consumed_size,
             |stream| {
-                Ok(deserialize_from::<_, u32>(
-                    &mut stream.full_snapshot_stream,
+                Ok(deserialize_wincode_from::<_, u32>(
+                    &mut *stream.full_snapshot_stream,
                 )?)
             },
         )
@@ -1986,8 +1986,8 @@ mod tests {
             &snapshot_root_paths,
             expected_consumed_size - 1,
             |stream| {
-                Ok(deserialize_from::<_, u32>(
-                    &mut stream.full_snapshot_stream,
+                Ok(deserialize_wincode_from::<_, u32>(
+                    &mut *stream.full_snapshot_stream,
                 )?)
             },
         );
@@ -2005,8 +2005,9 @@ mod tests {
             expected_consumed_size * 2,
             &IoSetupState::default(),
             |stream| {
-                serialize_into(&mut *stream, &expected_data)?;
-                serialize_into(&mut *stream, &expected_data)?;
+                // Write two u32s (in one call, since the wincode writer finalizes on finish) so
+                // the file has trailing bytes left over after a single-u32 deserialize.
+                serialize_into(&mut *stream, &(expected_data, expected_data))?;
                 Ok(())
             },
         )
@@ -2021,8 +2022,8 @@ mod tests {
             &snapshot_root_paths,
             expected_consumed_size * 2,
             |stream| {
-                Ok(deserialize_from::<_, u32>(
-                    &mut stream.full_snapshot_stream,
+                Ok(deserialize_wincode_from::<_, u32>(
+                    &mut *stream.full_snapshot_stream,
                 )?)
             },
         );
