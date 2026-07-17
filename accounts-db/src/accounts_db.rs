@@ -4689,7 +4689,7 @@ impl AccountsDb {
         &self,
         slot: Slot,
         slot_cache: &SlotCache,
-        pubkeys_to_flush: &PubkeysToFlush,
+        pubkeys_to_store: &PubkeysToFlush,
     ) -> FlushStats {
         debug_assert!(self.accounts_cache.contains_unflushed_root(slot));
         let mut flush_stats = FlushStats::default();
@@ -4701,7 +4701,7 @@ impl AccountsDb {
             .filter_map(|iter_item| {
                 let key = iter_item.key();
                 let account = &iter_item.value().account;
-                let mut should_store = match pubkeys_to_flush {
+                let mut should_store = match pubkeys_to_store {
                     PubkeysToFlush::All => true,
                     PubkeysToFlush::Only(flush_keys) => flush_keys.contains(key),
                 };
@@ -4736,11 +4736,11 @@ impl AccountsDb {
             .collect();
 
         // Use ReclaimOldSlots to reclaim old slots if marking obsolete accounts and cleaning.
-        // Cleaning is enabled if pubkeys_to_flush is PubkeysToFlush::Only
-        // pubkeys_to_flush is PubkeysToFlush::All when
+        // Cleaning is enabled if pubkeys_to_store is PubkeysToFlush::Only
+        // pubkeys_to_store is PubkeysToFlush::All when
         // 1) There's an ongoing scan to avoid reclaiming accounts being scanned.
         // 2) The slot is > max_clean_root to prevent unrooted slots from reclaiming rooted versions.
-        let reclaim_method = match pubkeys_to_flush {
+        let reclaim_method = match pubkeys_to_store {
             PubkeysToFlush::Only(_) => UpsertReclaim::ReclaimOldSlots,
             PubkeysToFlush::All => UpsertReclaim::IgnoreReclaims,
         };
