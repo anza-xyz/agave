@@ -32,7 +32,7 @@ use {
         ancestors::Ancestors,
         blockhash_queue::BlockhashQueue,
     },
-    solana_clock::{Epoch, Slot},
+    solana_clock::{DEFAULT_HASHES_PER_TICK, DEFAULT_TICKS_PER_SLOT, Epoch, Slot},
     solana_epoch_schedule::EpochSchedule,
     solana_fee_calculator::FeeRateGovernor,
     solana_hard_forks::HardForks,
@@ -108,10 +108,6 @@ pub unsafe extern "C" fn sol_compat_shred_parse_v1(
     }
     1
 }
-
-/// Bank ticks-per-slot, so verify_ticks' tick-count check matches mainnet.
-const TICKS_PER_SLOT: u64 = 64;
-const HASHES_PER_TICK: u64 = 62_500;
 
 thread_local! {
     // Reused across inputs; opening RocksDB per input was ~20% of harness runtime.
@@ -438,12 +434,12 @@ fn build_root_bank(root_slot: Slot, feature_set: FeatureSet) -> Arc<Bank> {
         parent_slot,
         hard_forks: HardForks::default(),
         transaction_count: 0,
-        tick_height: TICKS_PER_SLOT.saturating_mul(root_slot),
+        tick_height: DEFAULT_TICKS_PER_SLOT.saturating_mul(root_slot),
         signature_count: 0,
         capitalization: 0,
-        max_tick_height: TICKS_PER_SLOT.saturating_mul(root_slot.saturating_add(1)),
-        hashes_per_tick: Some(HASHES_PER_TICK),
-        ticks_per_slot: TICKS_PER_SLOT,
+        max_tick_height: DEFAULT_TICKS_PER_SLOT.saturating_mul(root_slot.saturating_add(1)),
+        hashes_per_tick: Some(DEFAULT_HASHES_PER_TICK),
+        ticks_per_slot: DEFAULT_TICKS_PER_SLOT,
         ns_per_slot: 0,
         genesis_creation_time: 0,
         slots_per_year: 0.0,
