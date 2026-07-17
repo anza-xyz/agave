@@ -425,6 +425,7 @@ pub(crate) mod external {
 
                 return Ok(false);
             }
+            let all_or_nothing = execution_flags.all_or_nothing;
 
             let output = self.consumer.process_and_record_aged_transactions(
                 bank,
@@ -458,6 +459,7 @@ pub(crate) mod external {
                     &transactions,
                     &commit_results,
                     bank,
+                    all_or_nothing,
                 ),
             )?;
 
@@ -598,6 +600,7 @@ pub(crate) mod external {
             transactions: &'a [impl TransactionWithMeta],
             commit_results: &'a [CommitTransactionDetails],
             bank: &'a Bank,
+            all_or_nothing: bool,
         ) -> impl ExactSizeIterator<Item = ExecutionResponse> + 'a {
             assert_eq!(transactions.len(), commit_results.len());
             let mut transactions_iterator = transactions.iter();
@@ -614,7 +617,7 @@ pub(crate) mod external {
                         let commit_details = commit_result_iterator.next().expect(
                             "commit result iterator must contain element for each sent transaction",
                         );
-                        Self::response_from_commit_details(tx, commit_details, bank)
+                        Self::response_from_commit_details(tx, commit_details, bank, all_or_nothing)
                     }
                     Err(err) => ExecutionResponse {
                         execution_slot: bank.slot(),
@@ -1063,6 +1066,7 @@ pub(crate) mod external {
             tx: &impl TransactionWithMeta,
             commit_details: &CommitTransactionDetails,
             bank: &Bank,
+            all_or_nothing: bool,
         ) -> ExecutionResponse {
             match commit_details {
                 CommitTransactionDetails::Committed {
@@ -1086,6 +1090,7 @@ pub(crate) mod external {
                     execution_slot: bank.slot(),
                     not_included_reason: transaction_error_to_not_included_reason(
                         transaction_error,
+                        all_or_nothing,
                     ),
                     cost_units: 0,
                     fee_payer_balance: 0,
@@ -1484,6 +1489,7 @@ pub(crate) mod external {
                     ),
                 ],
                 &bank,
+                false,
             )
             .collect::<Vec<_>>();
 
@@ -1516,6 +1522,40 @@ pub(crate) mod external {
                     }
                 ]
             )
+        }
+
+        #[test]
+        fn test_commit_cancelled_response_reason_uses_batch_mode() {
+            let simple_tx = wincode::serialize(&transfer(
+                &solana_keypair::Keypair::new(),
+                &solana_pubkey::Pubkey::new_unique(),
+                1,
+                solana_hash::Hash::default(),
+            ))
+            .unwrap();
+            let bank = Bank::default_for_tests();
+            let tx = translate_to_runtime_view(
+                &simple_tx[..],
+                &bank,
+                bank.get_transaction_account_lock_limit(),
+                &sanitize_config(),
+            )
+            .ok()
+            .unwrap()
+            .0;
+            let commit_details =
+                CommitTransactionDetails::NotCommitted(TransactionError::CommitCancelled);
+
+            assert_eq!(
+                ExternalWorker::response_from_commit_details(&tx, &commit_details, &bank, true)
+                    .not_included_reason,
+                not_included_reasons::ALL_OR_NOTHING_BATCH_FAILURE
+            );
+            assert_eq!(
+                ExternalWorker::response_from_commit_details(&tx, &commit_details, &bank, false)
+                    .not_included_reason,
+                not_included_reasons::PARTIAL_BATCH_CANCELLED
+            );
         }
 
         #[test]

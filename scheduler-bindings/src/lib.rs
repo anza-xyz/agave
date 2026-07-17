@@ -352,9 +352,11 @@ pub mod worker_message_types {
         /// The transaction could not attempt processing because the
         /// working bank was unavailable.
         pub const BANK_NOT_AVAILABLE: u8 = 1;
+        /// Transaction was cancelled by a partial batch failure.
+        pub const PARTIAL_BATCH_CANCELLED: u8 = 2;
 
         /// Transaction dropped because the batch was marked as
-        /// all_or_nothing and a different transacation failed.
+        /// all_or_nothing and a different transaction failed.
         pub const ALL_OR_NOTHING_BATCH_FAILURE: u8 = 3;
 
         // Remaining errors are translations from SDK.
@@ -441,7 +443,7 @@ pub mod worker_message_types {
         pub const PROGRAM_CACHE_HIT_MAX_LIMIT: u8 = 101;
 
         // This error in agave is only internal, and to avoid updating the sdk
-        // it is reused for mapping into `ALL_OR_NOTHING_BATCH_FAILURE`.
+        // it is mapped into a scheduler-specific reason above.
         // /// Commit cancelled internally.
         // pub const COMMIT_CANCELLED: u8 = 102;
     }
