@@ -4513,8 +4513,8 @@ impl AccountsDb {
                 flush_stats.num_accounts_flushed.0,
                 i64
             ),
-            ("account_bytes_saved", flush_stats.num_bytes_purged.0, i64),
-            ("num_accounts_saved", flush_stats.num_accounts_purged.0, i64),
+            ("account_bytes_skipped", flush_stats.num_bytes_skipped.0, i64),
+            ("num_accounts_skipped", flush_stats.num_accounts_skipped.0, i64),
             (
                 "num_zero_lamport_accounts_skipped",
                 flush_stats.num_zero_lamport_accounts_skipped.0,
@@ -4722,10 +4722,10 @@ impl AccountsDb {
                     flush_stats.num_accounts_flushed += 1;
                     Some((key, account))
                 } else {
-                    // No need to write this account. Either superseded or zero lamport
-                    flush_stats.num_bytes_purged +=
+                    // Skip writing this account. Either superseded or zero lamport
+                    flush_stats.num_bytes_skipped +=
                         AppendVec::calculate_stored_size(account.data().len()) as u64;
-                    flush_stats.num_accounts_purged += 1;
+                    flush_stats.num_accounts_skipped += 1;
                     None
                 }
             })
