@@ -35,6 +35,7 @@ remote-wallet-libusb = ["solana-remote-wallet/linux-static-libusb"]
 agave-feature-set = { workspace = true }
 agave-logger = { workspace = true }
 agave-votor-messages = { workspace = true }
+async-trait = { workspace = true }
 bincode = { workspace = true }
 bip39 = { workspace = true }
 bs58 = { workspace = true }
@@ -71,6 +72,7 @@ solana-keypair = { workspace = true }
 solana-loader-v3-interface = { workspace = true, features = ["bincode"] }
 solana-message = { workspace = true }
 solana-native-token = { workspace = true }
+solana-net-utils = { workspace = true }
 solana-nonce = { workspace = true }
 solana-offchain-message = { workspace = true, features = ["verify"] }
 solana-packet = { workspace = true }
@@ -93,6 +95,7 @@ solana-stake-interface = { workspace = true, features = ["wincode"] }
 solana-syscalls = { workspace = true }
 solana-system-interface = { workspace = true, features = ["bincode"] }
 solana-tpu-client = { workspace = true, features = ["default"] }
+solana-tpu-client-next = { workspace = true, features = ["websocket-node-address-service"] }
 solana-transaction = { workspace = true }
 solana-transaction-error = { workspace = true }
 solana-transaction-status = { workspace = true }
@@ -101,6 +104,7 @@ solana-vote-program = { workspace = true }
 spl-memo-interface = { workspace = true }
 thiserror = { workspace = true }
 tokio = { workspace = true }
+tokio-util = { workspace = true }
 wincode = { workspace = true }
 
 [dev-dependencies]

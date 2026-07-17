@@ -32,11 +32,8 @@ use {
         CliUpgradeableProgramClosed, CliUpgradeableProgramExtended, CliUpgradeablePrograms,
         ReturnSignersConfig, return_signers_with_config,
     },
-    solana_client::{
-        connection_cache::ConnectionCache,
-        send_and_confirm_transactions_in_parallel::{
-            SendAndConfirmConfigV2, send_and_confirm_transactions_in_parallel_v2,
-        },
+    solana_client::send_and_confirm_transactions_in_parallel::{
+        SendAndConfirmConfigV3, SendTransport, send_and_confirm_transactions_in_parallel_v3,
     },
     solana_commitment_config::CommitmentConfig,
     solana_instruction::{Instruction, error::InstructionError},
@@ -46,7 +43,8 @@ use {
         instruction::{self as loader_v3_instruction, MINIMUM_EXTEND_PROGRAM_BYTES},
         state::UpgradeableLoaderState,
     },
-    solana_message::Message,
+    solana_message::{Message, VersionedMessage},
+    solana_net_utils::bind_to_unspecified,
     solana_packet::PACKET_DATA_SIZE,
     solana_program_runtime::{
         execution_budget::SVMTransactionExecutionBudget, invoke_context::InvokeContext,
@@ -67,25 +65,38 @@ use {
     solana_signer::Signer,
     solana_syscalls::create_program_runtime_environment,
     solana_system_interface::{MAX_PERMITTED_DATA_LENGTH, error::SystemError},
-    solana_tpu_client::tpu_client::TpuClientConfig,
+    solana_tpu_client_next::{
+        ClientBuilder, connection_workers_scheduler::NonblockingBroadcaster,
+        node_address_service::LeaderTpuCacheServiceConfig,
+        websocket_node_address_service::WebsocketNodeAddressService,
+    },
     solana_transaction::Transaction,
     solana_transaction_error::TransactionError,
     std::{
         fs::File,
         io::{Read, Write},
         mem::size_of,
-        num::Saturating,
+        num::{NonZeroUsize, Saturating},
         path::PathBuf,
         rc::Rc,
         str::FromStr,
         sync::Arc,
+        time::Duration,
     },
+    tokio_util::sync::CancellationToken,
 };
 
 pub const CLOSE_PROGRAM_WARNING: &str = "WARNING! Closed programs cannot be recreated at the same \
                                          program id. Once a program is closed, it can never be \
                                          invoked again. To proceed with closing, rerun the \
                                          `close` command with the `--bypass-warning` flag";
+
+/// Time taken by confirmation engine between checks. See
+/// [SendAndConfirmConfigV3::check_interval]
+const CHECK_INTERVAL: Duration = Duration::from_secs(1);
+/// Time buffer between consequent transaction being sent . See
+/// [SendAndConfirmConfigV3::send_interval]
+const SEND_INTERVAL: Duration = Duration::from_millis(5);
 
 #[derive(Debug, PartialEq, Eq)]
 pub enum ProgramCliCommand {
@@ -1380,7 +1391,6 @@ async fn process_program_deploy(
             let program_data = read_and_verify_elf(program_location, feature_set)?;
             let program_len = program_data.len();
 
-            // If a buffer was provided, check if it has already been created and set up properly
             let buffer_program_data = if buffer_provided {
                 fetch_buffer_program_data(
                     &rpc_client,
@@ -1427,12 +1437,15 @@ async fn process_program_deploy(
         ))
         .await?;
 
+    if do_initial_deploy && program_signer.is_none() {
+        return Err("Initial deployments require a keypair be provided for the program id".into());
+    }
+    if !buffer_provided {
+        // always report ephemeral mnemonic, so that users always have a way to resume in case of
+        // process crash
+        report_ephemeral_mnemonic(buffer_words, buffer_mnemonic, &buffer_pubkey);
+    }
     let result = if do_initial_deploy {
-        if program_signer.is_none() {
-            return Err(
-                "Initial deployments require a keypair be provided for the program id".into(),
-            );
-        }
         do_process_program_deploy(
             rpc_client.clone(),
             config,
@@ -1486,11 +1499,6 @@ async fn process_program_deploy(
             &BlockhashQuery::default(),
         )
         .await?;
-    }
-    if result.is_err() && !buffer_provided {
-        // We might have deployed "temporary" buffer but failed to deploy our program from this
-        // buffer, reporting this to the user - so he can retry deploying re-using same buffer.
-        report_ephemeral_mnemonic(buffer_words, buffer_mnemonic, &buffer_pubkey);
     }
     result
 }
@@ -3082,6 +3090,22 @@ async fn check_payer(
     Ok(())
 }
 
+fn dedup_signers<'a>(signers: &[&'a dyn Signer]) -> Vec<&'a dyn Signer> {
+    let mut seen = Vec::with_capacity(signers.len());
+    signers
+        .iter()
+        .filter(|signer| {
+            let pubkey = signer.pubkey();
+            let is_new = !seen.contains(&pubkey);
+            if is_new {
+                seen.push(pubkey);
+            }
+            is_new
+        })
+        .copied()
+        .collect()
+}
+
 #[allow(clippy::too_many_arguments)]
 async fn send_deploy_messages(
     rpc_client: Arc<RpcClient>,
@@ -3163,59 +3187,63 @@ async fn send_deploy_messages(
                         .clone_from(&message.instructions[ix_index].data);
                 }
             }
-        }
 
-        let connection_cache = {
-            #[cfg(feature = "dev-context-only-utils")]
-            let cache = ConnectionCache::new_quic_for_tests("connection_cache_cli_program_quic", 1);
-            #[cfg(not(feature = "dev-context-only-utils"))]
-            let cache = ConnectionCache::new_quic("connection_cache_cli_program_quic", 1);
-            let ConnectionCache::Quic(cache) = cache else {
-                unreachable!("by construction")
-            };
-            cache
-        };
-        let transaction_errors = {
-            // `solana_client` type currently required by `send_and_confirm_transactions_in_parallel_v2`
-            let tpu_client_fut =
-                solana_client::nonblocking::tpu_client::TpuClient::new_with_connection_cache(
-                    rpc_client.clone(),
-                    config.websocket_url.as_str(),
-                    TpuClientConfig::default(),
-                    connection_cache,
-                );
-            let tpu_client = if use_rpc {
-                None
+            // Holds the scheduler alive for the duration of the send.
+            let _tpu_client;
+            let cancel_token = CancellationToken::new();
+            let transport = if use_rpc {
+                SendTransport::Rpc(config.send_transaction_config)
             } else {
-                Some(
-                    tpu_client_fut
-                        .await
-                        .expect("Should return a valid tpu client"),
+                let node_address_service = WebsocketNodeAddressService::run(
+                    rpc_client.clone(),
+                    config.websocket_url.clone(),
+                    LeaderTpuCacheServiceConfig::default(),
+                    cancel_token.child_token(),
                 )
+                .await?;
+
+                let bind_socket = bind_to_unspecified()?;
+
+                let (transaction_sender, client) =
+                    ClientBuilder::new(Box::new(node_address_service))
+                        .cancel_token(cancel_token.clone())
+                        .bind_socket(bind_socket)
+                        .broadcaster(NonblockingBroadcaster)
+                        .build()
+                        .expect("Failed to build TPU client");
+                _tpu_client = client;
+                SendTransport::Tpu(transaction_sender)
             };
-            send_and_confirm_transactions_in_parallel_v2(
+
+            let versioned_write_messages = write_messages.into_iter().map(VersionedMessage::Legacy);
+
+            let transaction_errors = send_and_confirm_transactions_in_parallel_v3(
                 rpc_client.clone(),
-                tpu_client,
-                &write_messages,
-                &[fee_payer_signer, write_signer],
-                SendAndConfirmConfigV2 {
-                    resign_txs_count: Some(max_sign_attempts),
+                transport,
+                versioned_write_messages,
+                &dedup_signers(&[fee_payer_signer, write_signer]),
+                SendAndConfirmConfigV3 {
                     with_spinner: true,
-                    rpc_send_transaction_config: config.send_transaction_config,
+                    max_sign_attempts: NonZeroUsize::new(max_sign_attempts)
+                        .ok_or("--max-sign-attempts must be at least 1")?,
+                    check_interval: CHECK_INTERVAL,
+                    send_interval: SEND_INTERVAL,
                 },
             )
             .await
-        }
-        .map_err(|err| format!("Data writes to account failed: {err}"))?
-        .into_iter()
-        .flatten()
-        .collect::<Vec<_>>();
+            .map_err(|err| format!("Data writes to account failed: {err}"))?
+            .into_iter()
+            .flatten()
+            .collect::<Vec<_>>();
 
-        if !transaction_errors.is_empty() {
-            for transaction_error in &transaction_errors {
-                error!("{transaction_error:?}");
+            if !transaction_errors.is_empty() {
+                for transaction_error in &transaction_errors {
+                    error!("{transaction_error:?}");
+                }
+                return Err(
+                    format!("{} write transactions failed", transaction_errors.len()).into(),
+                );
             }
-            return Err(format!("{} write transactions failed", transaction_errors.len()).into());
         }
     }
 
@@ -3231,16 +3259,15 @@ async fn send_deploy_messages(
         let mut signers = final_signers.to_vec();
         signers.push(fee_payer_signer);
         final_tx.try_sign(&signers, blockhash)?;
-        return Ok(Some(
-            rpc_client
-                .send_and_confirm_transaction_with_spinner_and_config(
-                    &final_tx,
-                    config.commitment,
-                    config.send_transaction_config,
-                )
-                .await
-                .map_err(|e| format!("Deploying program failed: {e}"))?,
-        ));
+        let result = rpc_client
+            .send_and_confirm_transaction_with_spinner_and_config(
+                &final_tx,
+                config.commitment,
+                config.send_transaction_config,
+            )
+            .await
+            .map_err(|e| format!("Deploying program failed: {e}"))?;
+        return Ok(Some(result));
     }
 
     Ok(None)
