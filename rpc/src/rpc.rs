@@ -9018,10 +9018,6 @@ pub mod tests {
         let bank2 = bank_forks.read().unwrap().get(2).unwrap();
         let bank3 = Bank::new_from_parent(bank2, SlotLeader::default(), 3);
         bank_forks.write().unwrap().insert(bank3);
-        let bank3_pending_hash = Hash::new_unique();
-        let bank1_hash = bank_forks.read().unwrap().get(1).unwrap().hash();
-        let bank2 = bank_forks.read().unwrap().get(2).unwrap();
-        let bank2_hash = bank2.hash();
 
         let prioritization_fee_cache_inner = None;
         let prioritization_fee_cache = prioritization_fee_cache_inner.as_deref();
@@ -9080,7 +9076,7 @@ pub mod tests {
 
         OptimisticallyConfirmedBankTracker::process_notification(
             (
-                BankNotification::OptimisticallyConfirmed(2, bank2_hash),
+                BankNotification::OptimisticallyConfirmed(2),
                 None, /* no dependency work */
             ),
             &bank_forks,
@@ -9104,7 +9100,7 @@ pub mod tests {
         // Test rollback does not appear to happen, even if slots are notified out of order
         OptimisticallyConfirmedBankTracker::process_notification(
             (
-                BankNotification::OptimisticallyConfirmed(1, bank1_hash),
+                BankNotification::OptimisticallyConfirmed(1),
                 None, /* no dependency work */
             ),
             &bank_forks,
@@ -9128,7 +9124,7 @@ pub mod tests {
         // Test bank will only be cached when frozen
         OptimisticallyConfirmedBankTracker::process_notification(
             (
-                BankNotification::OptimisticallyConfirmed(3, bank3_pending_hash),
+                BankNotification::OptimisticallyConfirmed(3),
                 None, /* no dependency work */
             ),
             &bank_forks,
@@ -9151,9 +9147,6 @@ pub mod tests {
 
         // Test freezing an optimistically confirmed bank will update cache
         let bank3 = bank_forks.read().unwrap().get(3).unwrap();
-        bank3.freeze();
-        assert!(pending_optimistically_confirmed_banks.remove(&(3, bank3_pending_hash)));
-        pending_optimistically_confirmed_banks.insert((3, bank3.hash()));
         OptimisticallyConfirmedBankTracker::process_notification(
             (
                 BankNotification::Frozen(bank3),

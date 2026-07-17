@@ -56,7 +56,7 @@ use {
         accounts::Accounts, accounts_db::AccountsDb, ancestors::Ancestors,
         blockhash_queue::BlockhashQueue,
     },
-    solana_clock::{BankId, Clock, Epoch, MAX_PROCESSING_AGE},
+    solana_clock::{Clock, Epoch, MAX_PROCESSING_AGE},
     solana_epoch_schedule::EpochSchedule,
     solana_fee_calculator::FeeRateGovernor,
     solana_pubkey::Pubkey,
@@ -120,7 +120,7 @@ pub fn execute_txn(
     // Populate the accounts DB with the input accounts at the parent slot.
     let bank_accounts = Accounts::new(Arc::new(AccountsDb::default_for_tests()));
     let ancestors = Ancestors::from(vec![parent_slot]);
-    bank_accounts.store_accounts_seq((parent_slot, accounts), BankId::default(), None, &ancestors);
+    bank_accounts.store_accounts_seq((parent_slot, accounts), None, &ancestors);
     bank_accounts.accounts_db.add_root(parent_slot);
     let bank_rc = BankRc::new(bank_accounts);
 

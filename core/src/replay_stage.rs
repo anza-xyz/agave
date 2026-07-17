@@ -4253,7 +4253,6 @@ impl ReplayStage {
                         bank.parent_slot(),
                         &parent_blockhash.to_string(),
                         bank.slot(),
-                        bank.bank_id(),
                         &bank.last_blockhash().to_string(),
                         &bank.get_rewards_and_num_partitions(),
                         Some(bank.clock().unix_timestamp),
@@ -5438,16 +5437,13 @@ impl ReplayStage {
         if let Some(rpc_subscriptions) = rpc_subscriptions {
             rpc_subscriptions.notify_slot(slot, parent.slot(), root_slot);
         }
-        let parent_slot = parent.slot();
-        let bank = Bank::new_from_parent_with_options(parent, leader, slot, new_bank_options);
         if let Some(slot_status_notifier) = slot_status_notifier {
-            slot_status_notifier.read().unwrap().notify_created_bank(
-                slot,
-                parent_slot,
-                bank.bank_id(),
-            );
+            slot_status_notifier
+                .read()
+                .unwrap()
+                .notify_created_bank(slot, parent.slot());
         }
-        bank
+        Bank::new_from_parent_with_options(parent, leader, slot, new_bank_options)
     }
 
     fn log_heaviest_fork_failures(

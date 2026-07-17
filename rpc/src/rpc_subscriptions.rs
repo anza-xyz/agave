@@ -1217,7 +1217,6 @@ pub(crate) mod tests {
         },
         serial_test::serial,
         solana_commitment_config::CommitmentConfig,
-        solana_hash::Hash,
         solana_keypair::Keypair,
         solana_ledger::get_tmp_ledger_path_auto_delete,
         solana_message::Message,
@@ -1938,7 +1937,6 @@ pub(crate) mod tests {
         let bank3 = bank_forks.read().unwrap().get(3).unwrap();
 
         bank3.process_transaction(&tx).unwrap();
-        let bank3_pending_hash = Hash::new_unique();
 
         // now add programSubscribe at the "confirmed" commitment level
         let exit = Arc::new(AtomicBool::new(false));
@@ -1991,7 +1989,7 @@ pub(crate) mod tests {
         // to see transaction for alice and bob to be notified in order.
         OptimisticallyConfirmedBankTracker::process_notification(
             (
-                BankNotification::OptimisticallyConfirmed(3, bank3_pending_hash),
+                BankNotification::OptimisticallyConfirmed(3),
                 None, /* no dependency work */
             ),
             &bank_forks,
@@ -2046,8 +2044,6 @@ pub(crate) mod tests {
         );
 
         bank3.freeze();
-        assert!(pending_optimistically_confirmed_banks.remove(&(3, bank3_pending_hash)));
-        pending_optimistically_confirmed_banks.insert((3, bank3.hash()));
         OptimisticallyConfirmedBankTracker::process_notification(
             (
                 BankNotification::Frozen(bank3),
@@ -2175,7 +2171,7 @@ pub(crate) mod tests {
         // expect to see any RPC notifications.
         OptimisticallyConfirmedBankTracker::process_notification(
             (
-                BankNotification::OptimisticallyConfirmed(3, Hash::new_unique()),
+                BankNotification::OptimisticallyConfirmed(3),
                 None, /* no dependency work */
             ),
             &bank_forks,
@@ -2246,22 +2242,6 @@ pub(crate) mod tests {
 
         bank2.process_transaction(&tx).unwrap();
 
-        // Prepare bank3 and its final hash, but do not insert it into BankForks until after
-        // the optimistic confirmation notification.
-        let joe = Keypair::new();
-        let tx = system_transaction::create_account(
-            &mint_keypair,
-            &joe,
-            blockhash,
-            3,
-            16,
-            &stake::program::id(),
-        );
-        let bank3 = Bank::new_from_parent(bank2, SlotLeader::default(), 3);
-        bank3.process_transaction(&tx).unwrap();
-        bank3.freeze();
-        let bank3_hash = bank3.hash();
-
         // now add programSubscribe at the "confirmed" commitment level
         let exit = Arc::new(AtomicBool::new(false));
         let optimistically_confirmed_bank =
@@ -2313,7 +2293,7 @@ pub(crate) mod tests {
         // frozen. The notifications should be in the increasing order of the slot.
         OptimisticallyConfirmedBankTracker::process_notification(
             (
-                BankNotification::OptimisticallyConfirmed(3, bank3_hash),
+                BankNotification::OptimisticallyConfirmed(3),
                 None, /* no dependency work */
             ),
             &bank_forks,
@@ -2353,8 +2333,23 @@ pub(crate) mod tests {
             })
         };
 
+        let bank3 = Bank::new_from_parent(bank2, SlotLeader::default(), 3);
         bank_forks.write().unwrap().insert(bank3);
+
+        // add account for joe and process the transaction at bank3
+        let joe = Keypair::new();
+        let tx = system_transaction::create_account(
+            &mint_keypair,
+            &joe,
+            blockhash,
+            3,
+            16,
+            &stake::program::id(),
+        );
         let bank3 = bank_forks.read().unwrap().get(3).unwrap();
+
+        bank3.process_transaction(&tx).unwrap();
+        bank3.freeze();
         OptimisticallyConfirmedBankTracker::process_notification(
             (
                 BankNotification::Frozen(bank3),
@@ -2787,7 +2782,6 @@ pub(crate) mod tests {
         let bank1 = bank_forks.write().unwrap().get(1).unwrap();
         bank1.process_transaction(&tx).unwrap();
         bank1.freeze();
-        let bank1_hash = bank1.hash();
 
         // Add the same transaction to the unfrozen 2nd bank
         bank_forks
@@ -2797,7 +2791,6 @@ pub(crate) mod tests {
             .unwrap()
             .process_transaction(&tx)
             .unwrap();
-        let bank2_pending_hash = Hash::new_unique();
 
         // First, notify the unfrozen bank first to queue pending notification
         let mut highest_confirmed_slot: Slot = 0;
@@ -2807,10 +2800,7 @@ pub(crate) mod tests {
         let prioritization_fee_cache = prioritization_fee_cache_inner.as_deref();
 
         OptimisticallyConfirmedBankTracker::process_notification(
-            (
-                BankNotification::OptimisticallyConfirmed(2, bank2_pending_hash),
-                None,
-            ),
+            (BankNotification::OptimisticallyConfirmed(2), None),
             &bank_forks,
             &optimistically_confirmed_bank,
             &subscriptions,
@@ -2827,7 +2817,7 @@ pub(crate) mod tests {
         highest_confirmed_slot = 0;
         OptimisticallyConfirmedBankTracker::process_notification(
             (
-                BankNotification::OptimisticallyConfirmed(1, bank1_hash),
+                BankNotification::OptimisticallyConfirmed(1),
                 None, /* no dependency work */
             ),
             &bank_forks,
@@ -2883,8 +2873,6 @@ pub(crate) mod tests {
 
         let bank2 = bank_forks.read().unwrap().get(2).unwrap();
         bank2.freeze();
-        assert!(pending_optimistically_confirmed_banks.remove(&(2, bank2_pending_hash)));
-        pending_optimistically_confirmed_banks.insert((2, bank2.hash()));
         highest_confirmed_slot = 0;
         OptimisticallyConfirmedBankTracker::process_notification(
             (

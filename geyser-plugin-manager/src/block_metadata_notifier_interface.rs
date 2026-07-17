@@ -1,7 +1,5 @@
 use {
-    solana_clock::{BankId, UnixTimestamp},
-    solana_runtime::bank::KeyedRewardsAndNumPartitions,
-    std::sync::Arc,
+    solana_clock::UnixTimestamp, solana_runtime::bank::KeyedRewardsAndNumPartitions, std::sync::Arc,
 };
 
 /// Interface for notifying block metadata changes
@@ -13,7 +11,6 @@ pub trait BlockMetadataNotifier {
         parent_slot: u64,
         parent_blockhash: &str,
         slot: u64,
-        bank_id: BankId,
         blockhash: &str,
         rewards: &KeyedRewardsAndNumPartitions,
         block_time: Option<UnixTimestamp>,

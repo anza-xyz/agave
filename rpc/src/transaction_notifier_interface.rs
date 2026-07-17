@@ -1,17 +1,13 @@
 use {
-    solana_clock::{BankId, Slot},
-    solana_hash::Hash,
-    solana_signature::Signature,
+    solana_clock::Slot, solana_hash::Hash, solana_signature::Signature,
     solana_transaction::versioned::VersionedTransaction,
-    solana_transaction_status::TransactionStatusMeta,
-    std::sync::Arc,
+    solana_transaction_status::TransactionStatusMeta, std::sync::Arc,
 };
 
 pub trait TransactionNotifier {
     fn notify_transaction(
         &self,
         slot: Slot,
-        bank_id: BankId,
         transaction_slot_index: usize,
         signature: &Signature,
         message_hash: &Hash,

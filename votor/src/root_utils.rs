@@ -83,7 +83,7 @@ pub(crate) fn set_root(
             .map(|s| s.get_current_declared_work());
         // TODO: propagate error
         let _ = config.sender.send((
-            BankNotification::OptimisticallyConfirmed(new_root, hash),
+            BankNotification::OptimisticallyConfirmed(new_root),
             dependency_work,
         ));
     }
@@ -126,15 +126,14 @@ pub fn check_and_handle_new_root<CB>(
     let oldest_parent = rooted_banks.last().map(|last| last.parent_slot());
     rooted_banks.push(root_bank.clone());
     let rooted_slots: Vec<_> = rooted_banks.iter().map(|bank| bank.slot()).collect();
-    let rooted_slot_notifications = bank_notification_sender
+    // The following differs from rooted_slots by including the parent slot of the oldest parent bank.
+    let rooted_slots_with_parents = bank_notification_sender
         .as_ref()
         .is_some_and(|sender| sender.should_send_parents)
         .then(|| {
-            let new_chain = rooted_banks
-                .iter()
-                .map(|bank| (bank.slot(), bank.bank_id()))
-                .collect();
-            (new_chain, oldest_parent.unwrap_or(parent_slot))
+            let mut new_chain = rooted_slots.clone();
+            new_chain.push(oldest_parent.unwrap_or(parent_slot));
+            new_chain
         });
 
     // Call leader schedule_cache.set_root() before blockstore.set_root() because
@@ -167,17 +166,14 @@ pub fn check_and_handle_new_root<CB>(
             .send((BankNotification::NewRootBank(root_bank), dependency_work))
             .unwrap_or_else(|err| warn!("bank_notification_sender failed: {err:?}"));
 
-        if let Some((new_chain, oldest_parent)) = rooted_slot_notifications {
+        if let Some(new_chain) = rooted_slots_with_parents {
             let dependency_work = sender
                 .dependency_tracker
                 .as_ref()
                 .map(|s| s.get_current_declared_work());
             sender
                 .sender
-                .send((
-                    BankNotification::NewRootedChain(new_chain, oldest_parent),
-                    dependency_work,
-                ))
+                .send((BankNotification::NewRootedChain(new_chain), dependency_work))
                 .unwrap_or_else(|err| warn!("bank_notification_sender failed: {err:?}"));
         }
     }

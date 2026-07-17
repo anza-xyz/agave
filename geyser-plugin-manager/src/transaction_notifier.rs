@@ -2,11 +2,11 @@
 use {
     crate::geyser_plugin_manager::GeyserPluginManager,
     agave_geyser_plugin_interface::geyser_plugin_interface::{
-        ReplicaTransactionInfoV4, ReplicaTransactionInfoVersions,
+        ReplicaTransactionInfoV3, ReplicaTransactionInfoVersions,
     },
     arc_swap::ArcSwap,
     log::*,
-    solana_clock::{BankId, Slot},
+    solana_clock::Slot,
     solana_hash::Hash,
     solana_rpc::transaction_notifier_interface::TransactionNotifier,
     solana_signature::Signature,
@@ -27,7 +27,6 @@ impl TransactionNotifier for TransactionNotifierImpl {
     fn notify_transaction(
         &self,
         slot: Slot,
-        bank_id: BankId,
         index: usize,
         signature: &Signature,
         message_hash: &Hash,
@@ -36,7 +35,6 @@ impl TransactionNotifier for TransactionNotifierImpl {
         transaction: &VersionedTransaction,
     ) {
         let transaction_log_info = Self::build_replica_transaction_info(
-            bank_id,
             index,
             signature,
             message_hash,
@@ -56,7 +54,7 @@ impl TransactionNotifier for TransactionNotifierImpl {
                 continue;
             }
             match plugin.notify_transaction(
-                ReplicaTransactionInfoVersions::V0_0_4(&transaction_log_info),
+                ReplicaTransactionInfoVersions::V0_0_3(&transaction_log_info),
                 slot,
             ) {
                 Err(err) => {
@@ -83,16 +81,14 @@ impl TransactionNotifierImpl {
     }
 
     fn build_replica_transaction_info<'a>(
-        bank_id: BankId,
         index: usize,
         signature: &'a Signature,
         message_hash: &'a Hash,
         is_vote: bool,
         transaction_status_meta: &'a TransactionStatusMeta,
         transaction: &'a VersionedTransaction,
-    ) -> ReplicaTransactionInfoV4<'a> {
-        ReplicaTransactionInfoV4 {
-            bank_id,
+    ) -> ReplicaTransactionInfoV3<'a> {
+        ReplicaTransactionInfoV3 {
             index,
             message_hash,
             signature,
