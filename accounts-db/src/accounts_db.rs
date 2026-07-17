@@ -6814,6 +6814,16 @@ impl AccountStorageEntry {
 // These functions/fields are only usable from a dev context (i.e. tests and benches)
 #[cfg(feature = "dev-context-only-utils")]
 impl AccountsDb {
+    /// Create an AccountsDb tuned for short-lived, single-threaded test invocations.
+    pub fn new_for_tests_single_threaded() -> Self {
+        Self::new_with_config(
+            Vec::new(),
+            AccountsDbConfig::new_for_tests_single_threaded(),
+            None,
+            Arc::default(),
+        )
+    }
+
     pub fn default_for_tests() -> Self {
         Self::new_for_tests_with_config(Vec::new(), ACCOUNTS_DB_CONFIG_FOR_TESTING)
     }

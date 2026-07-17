@@ -101,6 +101,15 @@ fn create_store_for_shrink_tests(
     (temp_dir, store)
 }
 
+#[test]
+fn test_new_for_tests_single_threaded_uses_single_thread_pools() {
+    let accounts_db = AccountsDb::new_for_tests_single_threaded();
+
+    assert!(accounts_db.skip_initial_hash_calc);
+    assert_eq!(accounts_db.thread_pool_foreground.current_num_threads(), 1);
+    assert_eq!(accounts_db.thread_pool_background.current_num_threads(), 1);
+}
+
 fn run_generate_index_duplicates_within_slot_test(db: AccountsDb, reverse: bool) {
     let slot0 = 0;
 
