@@ -439,6 +439,11 @@ impl PohService {
             .unwrap_or(false)
     }
 
+    fn poh_wait_target(poh: &Poh, target_ns_per_tick: u64, now: Instant) -> Option<Instant> {
+        let target = poh.target_poh_time(target_ns_per_tick);
+        (target > now).then_some(target)
+    }
+
     // returns true if we need to tick
     fn record_or_hash(
         next_record: &mut Option<Record>,
@@ -497,10 +502,31 @@ impl PohService {
                 lock_time.stop();
                 timing.total_lock_time_ns += lock_time.as_ns();
                 loop {
+                    // Records take priority over pacing. Processing them may move PoH ahead of
+                    // wall clock, so re-evaluate the current progress before every hash batch.
+                    if let Ok(record) = record_receiver.try_recv() {
+                        *next_record = Some(record);
+                        break;
+                    }
+
+                    let wait_start = Instant::now();
+                    if let Some(ideal_time) =
+                        Self::poh_wait_target(&poh_l, target_ns_per_tick, wait_start)
+                    {
+                        drop(poh_l);
+                        while ideal_time > Instant::now() {
+                            if let Ok(record) = record_receiver.try_recv() {
+                                *next_record = Some(record);
+                                break;
+                            }
+                        }
+                        timing.total_sleep_us += wait_start.elapsed().as_micros() as u64;
+                        break;
+                    }
+
                     timing.num_hashes += hashes_per_batch;
                     let mut hash_time = Measure::start("hash");
                     let should_tick = poh_l.hash(hashes_per_batch);
-                    let ideal_time = poh_l.target_poh_time(target_ns_per_tick);
                     hash_time.stop();
 
                     // shutdown if another batch would push us over the shutdown threshold.
@@ -518,31 +544,6 @@ impl PohService {
                         // nothing else can be done. tick required.
                         return true;
                     }
-                    // check to see if a record request has been sent
-                    if let Ok(record) = record_receiver.try_recv() {
-                        // remember the record we just received as the next record to occur
-                        *next_record = Some(record);
-                        break;
-                    }
-                    // check to see if we need to wait to catch up to ideal
-                    let wait_start = Instant::now();
-                    if ideal_time <= wait_start {
-                        // no, keep hashing. We still hold the lock.
-                        continue;
-                    }
-
-                    // busy wait, polling for new records and after dropping poh lock (reset can occur, for example)
-                    drop(poh_l);
-                    while ideal_time > Instant::now() {
-                        // check to see if a record request has been sent
-                        if let Ok(record) = record_receiver.try_recv() {
-                            // remember the record we just received as the next record to occur
-                            *next_record = Some(record);
-                            break;
-                        }
-                    }
-                    timing.total_sleep_us += wait_start.elapsed().as_micros() as u64;
-                    break;
                 }
             }
         };
@@ -725,6 +726,41 @@ mod tests {
         solana_transaction::versioned::VersionedTransaction,
         std::time::Duration,
     };
+
+    #[test]
+    fn test_poh_progress_pacing_after_records() {
+        let target_ns_per_tick = 80;
+        let mut poh = Poh::new(Hash::default(), Some(8));
+        let wall_clock = poh.target_poh_time(target_ns_per_tick);
+
+        // Records are accepted even though each one advances PoH ahead of this fixed wall clock.
+        for _ in 0..3 {
+            assert!(poh.record(Hash::new_unique()).is_some());
+            assert_eq!(
+                PohService::poh_wait_target(&poh, target_ns_per_tick, wall_clock),
+                Some(poh.target_poh_time(target_ns_per_tick)),
+            );
+        }
+
+        // Hashing resumes only once wall clock justifies the progress made by the records.
+        let recorded_progress_time = poh.target_poh_time(target_ns_per_tick);
+        assert_eq!(
+            PohService::poh_wait_target(&poh, target_ns_per_tick, recorded_progress_time),
+            None,
+        );
+
+        // After one bounded hash batch, the service re-evaluates the new progress target.
+        assert!(!poh.hash(1));
+        let hashed_progress_time = poh.target_poh_time(target_ns_per_tick);
+        assert_eq!(
+            PohService::poh_wait_target(&poh, target_ns_per_tick, recorded_progress_time),
+            Some(hashed_progress_time),
+        );
+        assert_eq!(
+            PohService::poh_wait_target(&poh, target_ns_per_tick, hashed_progress_time),
+            None,
+        );
+    }
 
     #[test]
     fn test_poh_service_record_race() {
