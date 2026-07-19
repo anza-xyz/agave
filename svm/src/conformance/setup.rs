@@ -164,6 +164,8 @@ pub(crate) fn compile_transaction_context(
     (sanitized_message, transaction_context)
 }
 
+/// Sanitize a versioned message, resolving address table lookups from the
+/// supplied accounts and their sysvar state.
 #[cfg(any(feature = "conformance", test))]
 pub fn sanitized_message_from_versioned_message(
     message: VersionedMessage,
