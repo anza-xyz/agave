@@ -2,7 +2,7 @@
 
 use {
     crate::conformance::nonce_fields::NonceFields, agave_feature_set::FeatureSet,
-    solana_account::Account, solana_hash::Hash, solana_message::SanitizedMessage,
+    solana_account::Account, solana_message::SanitizedMessage,
     solana_program_runtime::execution_budget::DEFAULT_INSTRUCTION_COMPUTE_UNIT_LIMIT,
     solana_pubkey::Pubkey,
 };
@@ -14,6 +14,7 @@ use {
         versioned_message::versioned_message_from_proto,
     },
     protosol::protos::TxnContext as ProtoTxnContext,
+    solana_hash::Hash,
 };
 
 pub struct TxnContext {
