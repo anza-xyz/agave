@@ -124,7 +124,56 @@ struct RetransmitState {
     stats: RetransmitStats,
     addr_cache: AddrCache,
     shred_buf: Vec<Vec<shred::Payload>>,
+    slot_cache: SortedSlotCache<(Pubkey, Arc<ClusterNodes<RetransmitStage>>)>,
     pending_first_shred_event: Option<VotorEvent>,
+}
+
+/// Reusable sorted lookup for the small number of slots in one retransmit batch.
+struct SortedSlotCache<T> {
+    slots: Vec<Slot>,
+    entries: Vec<(Slot, T)>,
+}
+
+impl<T> Default for SortedSlotCache<T> {
+    fn default() -> Self {
+        Self {
+            slots: Vec::new(),
+            entries: Vec::new(),
+        }
+    }
+}
+
+impl<T> SortedSlotCache<T> {
+    fn populate(
+        &mut self,
+        slots: impl IntoIterator<Item = Slot>,
+        mut make_entry: impl FnMut(Slot) -> Option<T>,
+    ) {
+        self.entries.clear();
+        self.slots.clear();
+        self.slots.extend(slots);
+        self.slots.sort_unstable();
+        self.slots.dedup();
+        self.entries.extend(
+            self.slots
+                .iter()
+                .filter_map(|&slot| make_entry(slot).map(|entry| (slot, entry))),
+        );
+    }
+
+    #[inline]
+    fn get(&self, slot: Slot) -> Option<&T> {
+        let index = self
+            .entries
+            .binary_search_by_key(&slot, |&(slot, _)| slot)
+            .ok()?;
+        Some(&self.entries[index].1)
+    }
+
+    fn clear(&mut self) {
+        self.entries.clear();
+        self.slots.clear();
+    }
 }
 
 struct RetransmitNotifiers {
@@ -154,6 +203,7 @@ impl RetransmitState {
             stats: RetransmitStats::new(now),
             addr_cache: AddrCache::with_capacity(/*capacity:*/ 4),
             shred_buf: Vec::with_capacity(RETRANSMIT_BATCH_SIZE),
+            slot_cache: SortedSlotCache::default(),
             pending_first_shred_event: None,
         }
     }
@@ -334,6 +384,7 @@ fn retransmit(context: &RetransmitContext, state: &mut RetransmitState) -> Resul
         stats,
         addr_cache,
         shred_buf,
+        slot_cache,
         pending_first_shred_event,
     } = state;
 
@@ -400,13 +451,12 @@ fn retransmit(context: &RetransmitContext, state: &mut RetransmitState) -> Resul
     epoch_cache_update.stop();
     stats.epoch_cache_update += epoch_cache_update.as_us();
     // Lookup slot leader and cluster nodes for each slot.
-    let cache: HashMap<Slot, _> = shred_buf
-        .iter()
-        .flatten()
-        .filter_map(|shred| shred::layout::get_slot(shred))
-        .collect::<HashSet<Slot>>()
-        .into_iter()
-        .filter_map(|slot: Slot| {
+    slot_cache.populate(
+        shred_buf
+            .iter()
+            .flatten()
+            .filter_map(|shred| shred::layout::get_slot(shred)),
+        |slot| {
             max_slots.retransmit.fetch_max(slot, Ordering::Relaxed);
             // TODO: consider using root-bank here for leader lookup!
             // Shreds' signatures should be verified before they reach here,
@@ -420,9 +470,9 @@ fn retransmit(context: &RetransmitContext, state: &mut RetransmitState) -> Resul
             };
             let cluster_nodes =
                 cluster_nodes_cache.get(slot, &root_bank, &working_bank, cluster_info);
-            Some((slot, (slot_leader.id, cluster_nodes)))
-        })
-        .collect();
+            Some((slot_leader.id, cluster_nodes))
+        },
+    );
     let socket_addr_space = cluster_info.socket_addr_space();
     let record = |mut stats: HashMap<Slot, RetransmitSlotStats>, out: RetransmitShredOutput| {
         let now = timestamp();
@@ -435,7 +485,7 @@ fn retransmit(context: &RetransmitContext, state: &mut RetransmitState) -> Resul
             shred,
             &root_bank,
             shred_deduper,
-            &cache,
+            slot_cache,
             addr_cache,
             socket_addr_space,
             socket,
@@ -478,6 +528,8 @@ fn retransmit(context: &RetransmitContext, state: &mut RetransmitState) -> Resul
         &context.notifiers,
         pending_first_shred_event,
     );
+    // Retain only vector allocations between batches, not ClusterNodes Arcs.
+    slot_cache.clear();
     timer_start.stop();
     stats.total_time += timer_start.as_us();
     stats.maybe_submit(
@@ -495,7 +547,7 @@ fn retransmit_shred(
     shred: shred::Payload,
     root_bank: &Bank,
     shred_deduper: &ShredDeduper,
-    cache: &HashMap<Slot, (/*leader:*/ Pubkey, Arc<ClusterNodes<RetransmitStage>>)>,
+    cache: &SortedSlotCache<(/*leader:*/ Pubkey, Arc<ClusterNodes<RetransmitStage>>)>,
     addr_cache: &AddrCache,
     socket_addr_space: &SocketAddrSpace,
     socket: RetransmitSocket<'_>,
@@ -570,7 +622,7 @@ fn retransmit_shred(
 
 fn get_retransmit_addrs<'a>(
     shred: &ShredId,
-    cache: &HashMap<Slot, (/*leader:*/ Pubkey, Arc<ClusterNodes<RetransmitStage>>)>,
+    cache: &SortedSlotCache<(/*leader:*/ Pubkey, Arc<ClusterNodes<RetransmitStage>>)>,
     addr_cache: &'a AddrCache,
     socket_addr_space: &SocketAddrSpace,
     stats: &RetransmitStats,
@@ -579,7 +631,7 @@ fn get_retransmit_addrs<'a>(
         stats.addr_cache_hit.fetch_add(1, Ordering::Relaxed);
         return Some((root_distance, Cow::Borrowed(addrs)));
     }
-    let (slot_leader, cluster_nodes) = cache.get(&shred.slot())?;
+    let (slot_leader, cluster_nodes) = cache.get(shred.slot())?;
     let (root_distance, addrs) = cluster_nodes
         .get_retransmit_addrs(slot_leader, shred, DATA_PLANE_FANOUT, socket_addr_space)
         .inspect_err(|err| match err {
@@ -966,6 +1018,31 @@ mod tests {
             .map(Keypair::try_from)
             .unwrap()
             .unwrap()
+    }
+
+    #[test]
+    fn test_sorted_slot_cache() {
+        let mut visited = Vec::new();
+        let mut cache = SortedSlotCache::default();
+        cache.populate([3, 1, 2, 3, 1], |slot| {
+            visited.push(slot);
+            (slot != 2).then_some(slot * 10)
+        });
+
+        assert_eq!(visited, [1, 2, 3]);
+        assert_eq!(cache.get(1), Some(&10));
+        assert_eq!(cache.get(2), None);
+        assert_eq!(cache.get(3), Some(&30));
+        assert_eq!(cache.get(4), None);
+
+        let slots_capacity = cache.slots.capacity();
+        let entries_capacity = cache.entries.capacity();
+        cache.clear();
+        cache.populate([4, 4], |slot| Some(slot * 10));
+        assert_eq!(cache.get(1), None);
+        assert_eq!(cache.get(4), Some(&40));
+        assert_eq!(cache.slots.capacity(), slots_capacity);
+        assert_eq!(cache.entries.capacity(), entries_capacity);
     }
 
     #[test]
