@@ -553,45 +553,41 @@ pub fn broadcast_shreds(
         next_broadcast_leader_pubkey(leader_schedule_cache, &working_bank, &my_pubkey, slot)
     };
 
-    let packets: Vec<_> = shreds
-        .iter()
-        .chunk_by(|shred| shred.slot())
-        .into_iter()
-        .flat_map(|(slot, shreds)| {
-            let cluster_nodes =
-                cluster_nodes_cache.get(slot, &root_bank, &working_bank, cluster_info);
-            update_peer_stats(&cluster_nodes, last_datapoint_submit);
-            let maybe_next_leader_udp = find_next_leader(slot).and_then(|leader| {
-                cluster_info
-                    .lookup_contact_info(&leader, |node| {
-                        node.tvu(Protocol::UDP)
-                            .filter(|addr| !addr.is_ipv6() && socket_addr_space.check(addr))
-                    })
-                    .flatten()
-            });
-            shreds.flat_map(move |shred| {
-                let key = shred.id();
-                let maybe_standard_broadcast_peer = cluster_nodes
-                    .get_broadcast_peer(&key)
-                    .and_then(|ci| ci.tvu(Protocol::UDP))
-                    .filter(|addr| !addr.is_ipv6() && socket_addr_space.check(addr));
-                // only send to next leader if not standard broadcast peer
-                let maybe_next_leader = maybe_next_leader_udp
-                    .filter(|addr| Some(*addr) != maybe_standard_broadcast_peer);
-                [maybe_next_leader, maybe_standard_broadcast_peer]
-                    .into_iter()
-                    .filter_map(move |tvu_addr: Option<SocketAddr>| {
-                        tvu_addr.map(|addr| (shred.payload(), addr))
-                    })
-            })
+    let grouped_shreds = shreds.iter().chunk_by(|shred| shred.slot());
+    let packets = grouped_shreds.into_iter().flat_map(|(slot, shreds)| {
+        let cluster_nodes = cluster_nodes_cache.get(slot, &root_bank, &working_bank, cluster_info);
+        update_peer_stats(&cluster_nodes, last_datapoint_submit);
+        let maybe_next_leader_udp = find_next_leader(slot).and_then(|leader| {
+            cluster_info
+                .lookup_contact_info(&leader, |node| {
+                    node.tvu(Protocol::UDP)
+                        .filter(|addr| !addr.is_ipv6() && socket_addr_space.check(addr))
+                })
+                .flatten()
+        });
+        shreds.flat_map(move |shred| {
+            let key = shred.id();
+            let maybe_standard_broadcast_peer = cluster_nodes
+                .get_broadcast_peer(&key)
+                .and_then(|ci| ci.tvu(Protocol::UDP))
+                .filter(|addr| !addr.is_ipv6() && socket_addr_space.check(addr));
+            // only send to next leader if not standard broadcast peer
+            let maybe_next_leader =
+                maybe_next_leader_udp.filter(|addr| Some(*addr) != maybe_standard_broadcast_peer);
+            [maybe_next_leader, maybe_standard_broadcast_peer]
+                .into_iter()
+                .filter_map(move |tvu_addr: Option<SocketAddr>| {
+                    tvu_addr.map(|addr| (shred.payload(), addr))
+                })
         })
-        .collect();
-
-    shred_select.stop();
-    transmit_stats.shred_select += shred_select.as_us();
-    let num_udp_packets = packets.len();
+    });
+    let mut num_packets = 0;
     match socket {
         BroadcastSocket::Udp(s) => {
+            let packets: Vec<_> = packets.collect();
+            shred_select.stop();
+            transmit_stats.shred_select += shred_select.as_us();
+            num_packets += packets.len();
             let mut send_mmsg_time = Measure::start("send_mmsg");
             match batch_send(s, packets) {
                 Ok(()) => (),
@@ -604,8 +600,11 @@ pub fn broadcast_shreds(
             transmit_stats.send_mmsg_elapsed += send_mmsg_time.as_us();
         }
         BroadcastSocket::Xdp(s) => {
+            shred_select.stop();
+            transmit_stats.shred_select += shred_select.as_us();
             let mut send_xdp_time = Measure::start("send_xdp");
-            for (idx, (payload, addr)) in packets.into_iter().enumerate() {
+            for (idx, (payload, addr)) in packets.enumerate() {
+                num_packets += 1;
                 if let Err(e) = s.try_send(idx, addr, payload.bytes.clone()) {
                     log::warn!("xdp channel full: {e:?}");
                     transmit_stats.dropped_packets_xdp += 1;
@@ -617,7 +616,7 @@ pub fn broadcast_shreds(
         }
     }
 
-    transmit_stats.total_packets += num_udp_packets;
+    transmit_stats.total_packets += num_packets;
     result
 }
 
