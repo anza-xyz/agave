@@ -12,7 +12,8 @@ use {
 use {
     agave_feature_set::FeatureSet, solana_account::Account, solana_hash::Hash,
     solana_message::SanitizedMessage,
-    solana_program_runtime::execution_budget::MAX_COMPUTE_UNIT_LIMIT, solana_pubkey::Pubkey,
+    solana_program_runtime::execution_budget::DEFAULT_INSTRUCTION_COMPUTE_UNIT_LIMIT,
+    solana_pubkey::Pubkey,
 };
 
 pub struct NonceFields {
@@ -29,8 +30,8 @@ pub struct TxnContext {
 }
 
 impl TxnContext {
-    /// Create a new [`TxnContext`] with the default transaction compute unit
-    /// budget (1,400,000 CUs).
+    /// Create a new [`TxnContext`] with the default compute unit budget
+    /// (200,000 CUs).
     pub fn new_with_default_budget(
         feature_set: FeatureSet,
         accounts: Vec<(Pubkey, Account)>,
@@ -42,7 +43,7 @@ impl TxnContext {
             accounts,
             message,
             nonce_fields,
-            cu_avail: u64::from(MAX_COMPUTE_UNIT_LIMIT),
+            cu_avail: DEFAULT_INSTRUCTION_COMPUTE_UNIT_LIMIT as u64,
         }
     }
 }
