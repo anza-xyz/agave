@@ -9,16 +9,14 @@ use {
         account_loader::construct_instructions_account,
         conformance::{
             callback::DefaultCallback,
-            programs::keyed_account_for_builtin_pubkey,
             setup::{
                 InvokeContextFields, compute_budget as default_compute_budget,
                 prepare_transaction_invoke_context_fields, program_runtime_environments,
             },
             transaction_meta::TransactionConfiguration,
         },
-        rent_calculator::RENT_EXEMPT_RENT_EPOCH,
     },
-    solana_account::{Account, AccountSharedData, ReadableAccount},
+    solana_account::{Account, AccountSharedData},
     solana_fee_structure::FeeDetails,
     solana_instructions_sysvar::check_id as check_instructions_sysvar_id,
     solana_program_runtime::{
@@ -84,31 +82,19 @@ pub fn execute_txn_with_callback<C: InvokeContextCallback>(
     let transaction_accounts = match sanitized_message
         .account_keys()
         .iter()
-        .enumerate()
-        .map(
-            |(_index, pubkey)| -> TransactionResult<(Pubkey, AccountSharedData)> {
-                if check_instructions_sysvar_id(pubkey) {
-                    return Ok((*pubkey, construct_instructions_account(sanitized_message)?));
-                }
+        .map(|pubkey| -> TransactionResult<(Pubkey, AccountSharedData)> {
+            if check_instructions_sysvar_id(pubkey) {
+                return Ok((*pubkey, construct_instructions_account(sanitized_message)?));
+            }
 
-                let account = input
-                    .accounts
-                    .iter()
-                    .find(|(key, account)| key == pubkey && account.lamports() > 0)
-                    .map(|(_, account)| AccountSharedData::from(account.clone()))
-                    .or_else(|| {
-                        keyed_account_for_builtin_pubkey(pubkey)
-                            .map(|(_, account)| AccountSharedData::from(account))
-                    })
-                    .unwrap_or_else(|| {
-                        AccountSharedData::from(Account {
-                            rent_epoch: RENT_EXEMPT_RENT_EPOCH,
-                            ..Account::default()
-                        })
-                    });
-                Ok((*pubkey, account))
-            },
-        )
+            let account = input
+                .accounts
+                .iter()
+                .find(|(key, _)| key == pubkey)
+                .map(|(_, account)| AccountSharedData::from(account.clone()))
+                .expect("transaction account must be provided");
+            Ok((*pubkey, account))
+        })
         .collect()
     {
         Ok(accounts) => accounts,
@@ -345,10 +331,11 @@ mod tests {
     use {
         super::*,
         crate::conformance::{
-            programs::new_program_cache_with_builtins,
+            programs::{keyed_account_for_system_program, new_program_cache_with_builtins},
             setup::{sanitized_message_from_versioned_message, sysvar_cache_from_accounts},
         },
         agave_feature_set::FeatureSet,
+        solana_account::ReadableAccount,
         solana_address_lookup_table_interface::state::{AddressLookupTable, LookupTableMeta},
         solana_clock::Clock,
         solana_instruction::error::InstructionError,
@@ -361,6 +348,11 @@ mod tests {
         std::borrow::Cow,
         test_case::test_case,
     };
+
+    fn with_system_program(mut accounts: Vec<(Pubkey, Account)>) -> Vec<(Pubkey, Account)> {
+        accounts.push(keyed_account_for_system_program());
+        accounts
+    }
 
     #[test_case(false; "legacy")]
     #[test_case(true; "v0")]
@@ -391,7 +383,7 @@ mod tests {
             VersionedMessage::Legacy(message)
         };
 
-        let accounts = vec![
+        let accounts = with_system_program(vec![
             (from, Account::new(FROM_LAMPORTS, 0, &system_program::id())),
             (
                 to_one,
@@ -402,7 +394,7 @@ mod tests {
                 Account::new(TO_TWO_LAMPORTS, 0, &system_program::id()),
             ),
             (unused, Account::new(1, 0, &system_program::id())),
-        ];
+        ]);
         let message = sanitized_message_from_versioned_message(message, &accounts);
         let context =
             TxnContext::new_with_default_budget(FeatureSet::default(), accounts, message, None);
@@ -420,7 +412,7 @@ mod tests {
                 .iter()
                 .map(|(pubkey, _)| *pubkey)
                 .collect::<Vec<_>>(),
-            vec![from, to_one, to_two, unused]
+            vec![from, to_one, to_two, unused, system_program::id()]
         );
         assert_eq!(
             effects.get_account(&from).unwrap().lamports(),
@@ -457,11 +449,11 @@ mod tests {
             ))
         };
 
-        let accounts = vec![
+        let accounts = with_system_program(vec![
             (c, Account::new(1, 0, &system_program::id())),
             (b, Account::new(1, 0, &system_program::id())),
             (a, Account::new(1, 0, &system_program::id())),
-        ];
+        ]);
         let message = sanitized_message_from_versioned_message(message, &accounts);
         let context =
             TxnContext::new_with_default_budget(FeatureSet::default(), accounts, message, None);
@@ -477,7 +469,7 @@ mod tests {
                 .iter()
                 .map(|(pubkey, _)| *pubkey)
                 .collect::<Vec<_>>(),
-            vec![c, b, a]
+            vec![c, b, a, system_program::id()]
         );
     }
 
@@ -506,7 +498,7 @@ mod tests {
         let message =
             v0::Message::try_compile(&payer, &instructions, &[lookup_table], blockhash).unwrap();
 
-        let accounts = vec![
+        let accounts = with_system_program(vec![
             (to, Account::new(1, 0, &system_program::id())),
             (
                 lookup_table_key,
@@ -533,7 +525,7 @@ mod tests {
                     rent_epoch: 0,
                 },
             ),
-        ];
+        ]);
         let message =
             sanitized_message_from_versioned_message(VersionedMessage::V0(message), &accounts);
         let context =
@@ -551,7 +543,13 @@ mod tests {
                 .iter()
                 .map(|(pubkey, _)| *pubkey)
                 .collect::<Vec<_>>(),
-            vec![to, lookup_table_key, payer, clock_pubkey]
+            vec![
+                to,
+                lookup_table_key,
+                payer,
+                clock_pubkey,
+                system_program::id()
+            ]
         );
     }
 
@@ -565,6 +563,7 @@ mod tests {
         let clock_pubkey = sysvar::clock::id();
         let blockhash = [0u8; 32];
         let instruction = transfer(&a, &b, 1);
+        let (system_program_id, system_program_account) = keyed_account_for_system_program();
 
         let result = execute_txn_proto(ProtoTxnContext {
             tx: Some(ProtoSanitizedTransaction {
@@ -624,6 +623,13 @@ mod tests {
                     executable: false,
                     owner: sysvar::id().to_bytes().to_vec(),
                 },
+                ProtoAcctState {
+                    address: system_program_id.to_bytes().to_vec(),
+                    lamports: system_program_account.lamports,
+                    data: system_program_account.data,
+                    executable: system_program_account.executable,
+                    owner: system_program_account.owner.to_bytes().to_vec(),
+                },
             ],
             bank: None,
         });
@@ -635,7 +641,7 @@ mod tests {
                 .iter()
                 .map(|account| Pubkey::try_from(account.address.as_slice()).unwrap())
                 .collect::<Vec<_>>(),
-            vec![c, b, a, clock_pubkey]
+            vec![c, b, a, clock_pubkey, system_program_id]
         );
     }
 
@@ -652,10 +658,10 @@ mod tests {
             &blockhash,
         ));
 
-        let accounts = vec![
+        let accounts = with_system_program(vec![
             (from, Account::new(5_000_000, 0, &system_program::id())),
             (to, Account::new(1, 0, &system_program::id())),
-        ];
+        ]);
         let message = sanitized_message_from_versioned_message(message, &accounts);
         let context = TxnContext {
             feature_set: FeatureSet::default(),
