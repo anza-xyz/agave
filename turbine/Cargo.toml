@@ -82,5 +82,9 @@ harness = false
 name = "cluster_nodes"
 harness = false
 
+[[bench]]
+name = "broadcast_descriptors"
+harness = false
+
 [lints]
 workspace = true
