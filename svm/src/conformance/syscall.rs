@@ -83,6 +83,7 @@ pub fn execute_vm_syscall(input: ProtoSyscallContext) -> ProtoSyscallEffects {
         ProgramCacheForTxBatch::default()
     };
 
+    let callback = ConformanceCallback::default();
     let InvokeContextFields {
         sanitized_message,
         mut transaction_context,
@@ -92,7 +93,7 @@ pub fn execute_vm_syscall(input: ProtoSyscallContext) -> ProtoSyscallEffects {
         ..
     } = prepare_invoke_context_fields(
         &instr_context,
-        &ConformanceCallback,
+        &callback,
         &loader_key,
         &sysvar_cache,
         &compute_budget,

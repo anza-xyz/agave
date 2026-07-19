@@ -262,7 +262,7 @@ pub fn execute_txn_proto(input: ProtoTxnContext) -> ProtoTxnResult {
 
     let callback = ProtoTxnCallback {
         epoch_total_stake,
-        invoke_callback: &ConformanceCallback,
+        invoke_callback: &ConformanceCallback::default(),
     };
     let mut effects =
         execute_txn_with_callback(&context, &callback, &mut program_cache, &sysvar_cache);
