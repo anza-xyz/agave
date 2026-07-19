@@ -15,7 +15,6 @@ use {
             ExternalRootSource, Tower, reconcile_blockstore_roots_with_external_source,
             tower_storage::{NullTowerStorage, TowerStorage},
         },
-        forwarding_stage::ForwardingClientConfig,
         repair::{
             self, repair_handler::RepairHandlerType, serve_repair_service::ServeRepairService,
         },
@@ -1171,9 +1170,6 @@ impl Validator {
 
         let staked_nodes = Arc::new(RwLock::new(StakedNodes::default()));
 
-        let mut tpu_transactions_forwards_client_sockets =
-            Some(node.sockets.tpu_transaction_forwarding_clients);
-
         let vote_connection_cache = if vote_use_quic {
             let vote_connection_cache = ConnectionCache::new_with_client_options(
                 "connection_cache_vote_quic",
@@ -1704,19 +1700,6 @@ impl Validator {
         )
         .map_err(ValidatorError::Other)?;
 
-        let tpu_forwarding_client_config = {
-            let runtime_handle = tpu_client_next_runtime
-                .as_ref()
-                .map(TokioRuntime::handle)
-                .unwrap_or_else(|| current_runtime_handle.as_ref().unwrap());
-            ForwardingClientConfig {
-                stake_identity: Arc::as_ref(&identity_keypair),
-                tpu_client_sockets: tpu_transactions_forwards_client_sockets.take().unwrap(),
-                runtime_handle: runtime_handle.clone(),
-                cancel: cancel.clone(),
-                node_multihoming: node_multihoming.clone(),
-            }
-        };
         let (banking_control_sender, banking_control_receiver) = mpsc::channel(1);
         let tpu = Tpu::new_with_client(
             &cluster_info,
@@ -1750,7 +1733,6 @@ impl Validator {
             replay_vote_sender,
             bank_notification_sender,
             duplicate_confirmed_slot_sender,
-            tpu_forwarding_client_config,
             &identity_keypair,
             config.runtime_config.log_messages_bytes_limit,
             &staked_nodes,

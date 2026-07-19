@@ -14,10 +14,6 @@ use {
             VoteTracker,
         },
         fetch_stage::FetchStage,
-        forwarding_stage::{
-            ForwardAddressGetter, ForwardingClientConfig, SpawnForwardingStageResult,
-            spawn_forwarding_stage,
-        },
         sigverify_stage::SigVerifyStage,
         staked_nodes_updater_service::StakedNodesUpdaterService,
         tpu_entry_notifier::TpuEntryNotifier,
@@ -103,7 +99,6 @@ pub struct Tpu {
     cluster_info_vote_listener: ClusterInfoVoteListener,
     sigverify_stage: SigVerifyStage,
     banking_stage: BankingStageHandle,
-    forwarding_stage: JoinHandle<()>,
     broadcast_stage: BroadcastStage,
     tpu_quic_t: thread::JoinHandle<()>,
     tpu_forwards_quic_t: thread::JoinHandle<()>,
@@ -140,7 +135,6 @@ impl Tpu {
         replay_vote_sender: ReplayVoteSender,
         bank_notification_sender: Option<BankNotificationSenderConfig>,
         duplicate_confirmed_slot_sender: DuplicateConfirmedSlotsSender,
-        tpu_forwarding_client_config: ForwardingClientConfig,
         keypair: &Keypair,
         log_messages_bytes_limit: Option<usize>,
         staked_nodes: &Arc<RwLock<StakedNodes>>,
@@ -333,17 +327,6 @@ impl Tpu {
         #[cfg(not(unix))]
         assert!(scheduler_bindings.is_none());
 
-        let SpawnForwardingStageResult {
-            join_handle: forwarding_stage,
-            client_updater,
-        } = spawn_forwarding_stage(
-            forward_stage_receiver,
-            tpu_forwarding_client_config,
-            vote_forwarding_client_socket,
-            bank_forks.read().unwrap().sharable_banks(),
-            ForwardAddressGetter::new(cluster_info.clone(), poh_recorder.clone()),
-        );
-
         let (entry_receiver, tpu_entry_notifier) =
             if let Some(entry_notification_sender) = entry_notification_sender {
                 let (broadcast_entry_sender, broadcast_entry_receiver) = unbounded();
@@ -376,14 +359,12 @@ impl Tpu {
         key_notifiers.add(KeyUpdaterType::Tpu, key_updater);
         key_notifiers.add(KeyUpdaterType::TpuForwards, forwards_key_updater);
         key_notifiers.add(KeyUpdaterType::TpuVote, vote_streamer_key_updater);
-        key_notifiers.add(KeyUpdaterType::Forward, client_updater);
 
         Self {
             fetch_stage,
             cluster_info_vote_listener,
             sigverify_stage,
             banking_stage,
-            forwarding_stage,
             broadcast_stage,
             tpu_quic_t,
             tpu_forwards_quic_t,
@@ -400,7 +381,6 @@ impl Tpu {
             self.cluster_info_vote_listener.join(),
             self.sigverify_stage.join(),
             self.banking_stage.join(),
-            self.forwarding_stage.join(),
             self.staked_nodes_updater_service.join(),
             self.tpu_quic_t.join(),
             self.tpu_forwards_quic_t.join(),
