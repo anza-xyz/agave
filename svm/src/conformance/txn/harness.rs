@@ -46,7 +46,6 @@ use {
     prost::Message,
     protosol::protos::{TxnContext as ProtoTxnContext, TxnResult as ProtoTxnResult},
     solana_instruction::error::InstructionError,
-    solana_precompile_error::PrecompileError,
     std::ffi::c_int,
 };
 
@@ -260,10 +259,7 @@ pub fn execute_txn_proto(input: ProtoTxnContext) -> ProtoTxnResult {
         cache
     };
 
-    let callback = ProtoTxnCallback {
-        epoch_total_stake,
-        invoke_callback: &ConformanceCallback::default(),
-    };
+    let callback = ConformanceCallback { epoch_total_stake };
     let mut effects =
         execute_txn_with_callback(&context, &callback, &mut program_cache, &sysvar_cache);
 
@@ -340,38 +336,6 @@ pub unsafe extern "C" fn sol_compat_svm_txn_execute_v1(
         *out_psz = out_vec.len() as u64;
     }
     1
-}
-
-#[cfg(feature = "conformance")]
-struct ProtoTxnCallback<'a, C> {
-    epoch_total_stake: u64,
-    invoke_callback: &'a C,
-}
-
-#[cfg(feature = "conformance")]
-impl<C: InvokeContextCallback> InvokeContextCallback for ProtoTxnCallback<'_, C> {
-    fn get_epoch_stake(&self) -> u64 {
-        self.epoch_total_stake
-    }
-
-    fn get_epoch_stake_for_vote_account(&self, vote_address: &Pubkey) -> u64 {
-        self.invoke_callback
-            .get_epoch_stake_for_vote_account(vote_address)
-    }
-
-    fn is_precompile(&self, program_id: &Pubkey) -> bool {
-        self.invoke_callback.is_precompile(program_id)
-    }
-
-    fn process_precompile(
-        &self,
-        program_id: &Pubkey,
-        data: &[u8],
-        instruction_datas: Vec<&[u8]>,
-    ) -> Result<(), PrecompileError> {
-        self.invoke_callback
-            .process_precompile(program_id, data, instruction_datas)
-    }
 }
 
 #[cfg(test)]
