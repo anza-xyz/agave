@@ -194,6 +194,7 @@ pub struct XdpSender {
 pub enum XdpAddrs {
     Single(SocketAddr),
     Multi(Vec<SocketAddr>),
+    Shared(Arc<[SocketAddr]>),
 }
 
 impl From<SocketAddr> for XdpAddrs {
@@ -210,12 +211,20 @@ impl From<Vec<SocketAddr>> for XdpAddrs {
     }
 }
 
+impl From<Arc<[SocketAddr]>> for XdpAddrs {
+    #[inline]
+    fn from(addrs: Arc<[SocketAddr]>) -> Self {
+        XdpAddrs::Shared(addrs)
+    }
+}
+
 impl AsRef<[SocketAddr]> for XdpAddrs {
     #[inline]
     fn as_ref(&self) -> &[SocketAddr] {
         match self {
             XdpAddrs::Single(addr) => std::slice::from_ref(addr),
             XdpAddrs::Multi(addrs) => addrs,
+            XdpAddrs::Shared(addrs) => addrs,
         }
     }
 }
@@ -537,5 +546,33 @@ impl Drop for CapGuard {
             caps::drop(None, caps::CapSet::Effective, *capability)
                 .unwrap_or_else(|err| panic!("drop {capability:?} capability: {err}"));
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_xdp_addrs_as_ref() {
+        let addrs = [
+            SocketAddr::from(([10, 0, 0, 1], 8_000)),
+            SocketAddr::from(([10, 0, 0, 2], 8_001)),
+            SocketAddr::from(([10, 0, 0, 3], 8_002)),
+        ];
+
+        let single = XdpAddrs::from(addrs[0]);
+        assert_eq!(single.as_ref(), &addrs[..1]);
+
+        let multi = XdpAddrs::from(addrs.to_vec());
+        assert_eq!(multi.as_ref(), &addrs);
+
+        let shared_addrs = Arc::<[SocketAddr]>::from(addrs);
+        let shared = XdpAddrs::from(Arc::clone(&shared_addrs));
+        assert_eq!(shared.as_ref(), &addrs);
+        let XdpAddrs::Shared(shared) = shared else {
+            panic!("Arc<[SocketAddr]> should construct XdpAddrs::Shared");
+        };
+        assert!(Arc::ptr_eq(&shared, &shared_addrs));
     }
 }

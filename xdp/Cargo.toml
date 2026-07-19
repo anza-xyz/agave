@@ -35,6 +35,14 @@ crossbeam-queue = { workspace = true }
 aya = { workspace = true, features = ["test-helpers"] }
 nix = { workspace = true, features = ["net", "poll", "socket"] }
 
+[dev-dependencies]
+bencher = { workspace = true }
+
+[[bench]]
+name = "address_ownership"
+harness = false
+required-features = ["agave-unstable-api"]
+
 [[test]]
 name = "netlink_snapshot"
 path = "tests/netlink_snapshot.rs"

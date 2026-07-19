@@ -571,6 +571,7 @@ dependencies = [
  "arc-swap",
  "arrayvec",
  "aya",
+ "bencher",
  "bytes",
  "caps",
  "crossbeam-queue",

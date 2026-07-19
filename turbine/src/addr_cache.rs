@@ -9,6 +9,7 @@ use {
         cmp::Reverse,
         collections::{HashMap, VecDeque, hash_map::Entry},
         net::SocketAddr,
+        sync::Arc,
     },
 };
 
@@ -51,8 +52,8 @@ pub(crate) struct AddrCache {
 struct CacheEntry {
     // Root distance and socket addresses cached either speculatively or when
     // retransmitting incoming shreds.
-    code: Vec<Option<(/*root_distance:*/ u8, Box<[SocketAddr]>)>>,
-    data: Vec<Option<(/*root_distance:*/ u8, Box<[SocketAddr]>)>>,
+    code: Vec<Option<(/*root_distance:*/ u8, Arc<[SocketAddr]>)>>,
+    data: Vec<Option<(/*root_distance:*/ u8, Arc<[SocketAddr]>)>>,
     // Code and data indices where [..index] are fully populated.
     index_code: usize,
     index_data: usize,
@@ -81,7 +82,10 @@ impl AddrCache {
 
     // Returns (root-distance, socket-addresses) cached for the given shred-id.
     #[inline]
-    pub(crate) fn get(&self, shred: &ShredId) -> Option<(/*root_distance:*/ u8, &[SocketAddr])> {
+    pub(crate) fn get(
+        &self,
+        shred: &ShredId,
+    ) -> Option<(/*root_distance:*/ u8, &Arc<[SocketAddr]>)> {
         self.cache
             .get(&shred.slot())?
             .get(shred.shred_type(), shred.index())
@@ -92,7 +96,7 @@ impl AddrCache {
     pub(crate) fn put(
         &mut self,
         shred: &ShredId,
-        entry: (/*root_distance:*/ u8, Box<[SocketAddr]>),
+        entry: (/*root_distance:*/ u8, Arc<[SocketAddr]>),
     ) {
         self.get_cache_entry_mut(shred.slot())
             .put(shred.shred_type(), shred.index(), entry);
@@ -266,14 +270,14 @@ impl CacheEntry {
         &self,
         shred_type: ShredType,
         shred_index: u32,
-    ) -> Option<(/*root_distance:*/ u8, &[SocketAddr])> {
+    ) -> Option<(/*root_distance:*/ u8, &Arc<[SocketAddr]>)> {
         match shred_type {
             ShredType::Code => &self.code,
             ShredType::Data => &self.data,
         }
         .get(shred_index as usize)?
         .as_ref()
-        .map(|(root_distance, addrs)| (*root_distance, addrs.as_ref()))
+        .map(|(root_distance, addrs)| (*root_distance, addrs))
     }
 
     // Stores (root-distance, socket-addresses) for the given shred type and
@@ -283,7 +287,7 @@ impl CacheEntry {
         &mut self,
         shred_type: ShredType,
         shred_index: u32,
-        entry: (/*root_distance:*/ u8, Box<[SocketAddr]>),
+        entry: (/*root_distance:*/ u8, Arc<[SocketAddr]>),
     ) {
         let cache = match shred_type {
             ShredType::Code => &mut self.code,
@@ -341,6 +345,80 @@ mod tests {
     use super::*;
 
     #[test]
+    fn test_cache_entry_shares_addresses() {
+        let addrs = Arc::<[SocketAddr]>::from([
+            SocketAddr::from(([10, 0, 0, 1], 8_000)),
+            SocketAddr::from(([10, 0, 0, 2], 8_001)),
+        ]);
+        let mut entry = CacheEntry::new(/*capacity:*/ 1);
+        entry.put(ShredType::Data, 0, (2, Arc::clone(&addrs)));
+
+        let (root_distance, cached) = entry.get(ShredType::Data, 0).unwrap();
+        assert_eq!(root_distance, 2);
+        assert_eq!(cached.as_ref(), addrs.as_ref());
+        assert!(Arc::ptr_eq(cached, &addrs));
+    }
+
+    #[test]
+    fn test_shared_addresses_survive_overwrite_and_eviction() {
+        let shred = ShredId::new(1, 0, ShredType::Data);
+        let original = Arc::<[SocketAddr]>::from([
+            SocketAddr::from(([10, 0, 0, 1], 8_000)),
+            SocketAddr::from(([10, 0, 0, 2], 8_001)),
+        ]);
+        let original_weak = Arc::downgrade(&original);
+        let mut cache = AddrCache::with_capacity(1);
+        cache.put(&shred, (2, Arc::clone(&original)));
+        drop(original);
+
+        // Models an XDP queue owning XdpAddrs::Shared while the cache entry is
+        // overwritten by a newly computed topology.
+        let queued_before_overwrite = Arc::clone(cache.get(&shred).unwrap().1);
+        let replacement = Arc::<[SocketAddr]>::from([
+            SocketAddr::from(([10, 1, 0, 1], 9_000)),
+            SocketAddr::from(([10, 1, 0, 2], 9_001)),
+        ]);
+        cache.put(&shred, (3, Arc::clone(&replacement)));
+        assert_eq!(
+            queued_before_overwrite.as_ref(),
+            &[
+                SocketAddr::from(([10, 0, 0, 1], 8_000)),
+                SocketAddr::from(([10, 0, 0, 2], 8_001)),
+            ]
+        );
+        assert!(original_weak.upgrade().is_some());
+        drop(queued_before_overwrite);
+        assert!(original_weak.upgrade().is_none());
+
+        // AddrCache trims lazily when it grows beyond 2x capacity. The queued
+        // clone must outlive eviction of the slot that supplied it.
+        let replacement_weak = Arc::downgrade(&replacement);
+        let queued_before_eviction = Arc::clone(cache.get(&shred).unwrap().1);
+        drop(replacement);
+        for slot in [2, 3] {
+            let other = ShredId::new(slot, 0, ShredType::Data);
+            cache.put(
+                &other,
+                (
+                    0,
+                    Arc::from([SocketAddr::from(([10, 2, 0, slot as u8], 10_000))]),
+                ),
+            );
+        }
+        assert!(cache.get(&shred).is_none());
+        assert_eq!(
+            queued_before_eviction.as_ref(),
+            &[
+                SocketAddr::from(([10, 1, 0, 1], 9_000)),
+                SocketAddr::from(([10, 1, 0, 2], 9_001)),
+            ]
+        );
+        assert!(replacement_weak.upgrade().is_some());
+        drop(queued_before_eviction);
+        assert!(replacement_weak.upgrade().is_none());
+    }
+
+    #[test]
     fn test_cache_entry_get_shreds() {
         let mut entry = CacheEntry::new(/*capacity:*/ 100);
         assert!(entry.get_shreds(3).eq([
@@ -354,9 +432,9 @@ mod tests {
         assert_eq!(entry.index_code, 0);
         assert_eq!(entry.index_data, 0);
 
-        entry.put(ShredType::Code, 0, (0, Box::new([])));
-        entry.put(ShredType::Code, 2, (0, Box::new([])));
-        entry.put(ShredType::Data, 1, (0, Box::new([])));
+        entry.put(ShredType::Code, 0, (0, Arc::from([])));
+        entry.put(ShredType::Code, 2, (0, Arc::from([])));
+        entry.put(ShredType::Data, 1, (0, Arc::from([])));
         assert!(entry.get_shreds(5).eq([
             (ShredType::Code, 1),
             (ShredType::Data, 0),
@@ -369,10 +447,10 @@ mod tests {
         assert_eq!(entry.index_code, 1);
         assert_eq!(entry.index_data, 0);
 
-        entry.put(ShredType::Code, 1, (0, Box::new([])));
-        entry.put(ShredType::Code, 4, (0, Box::new([])));
-        entry.put(ShredType::Data, 0, (0, Box::new([])));
-        entry.put(ShredType::Data, 3, (0, Box::new([])));
+        entry.put(ShredType::Code, 1, (0, Arc::from([])));
+        entry.put(ShredType::Code, 4, (0, Arc::from([])));
+        entry.put(ShredType::Data, 0, (0, Arc::from([])));
+        entry.put(ShredType::Data, 3, (0, Arc::from([])));
         assert!(entry.get_shreds(5).eq([
             (ShredType::Code, 3),
             (ShredType::Data, 2),
@@ -405,8 +483,8 @@ mod tests {
         assert_eq!(entry.index_code, 3);
         assert_eq!(entry.index_data, 2);
 
-        entry.put(ShredType::Code, 3, (0, Box::new([])));
-        entry.put(ShredType::Data, 2, (0, Box::new([])));
+        entry.put(ShredType::Code, 3, (0, Arc::from([])));
+        entry.put(ShredType::Data, 2, (0, Arc::from([])));
         assert!(entry.get_shreds(7).eq([]));
         assert_eq!(entry.index_code, 5);
         assert_eq!(entry.index_data, 4);
