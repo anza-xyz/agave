@@ -1,5 +1,11 @@
 //! Transaction context (input).
 
+use {
+    crate::conformance::nonce_fields::NonceFields, agave_feature_set::FeatureSet,
+    solana_account::Account, solana_hash::Hash, solana_message::SanitizedMessage,
+    solana_program_runtime::execution_budget::DEFAULT_INSTRUCTION_COMPUTE_UNIT_LIMIT,
+    solana_pubkey::Pubkey,
+};
 #[cfg(feature = "conformance")]
 use {
     crate::conformance::{
@@ -9,17 +15,6 @@ use {
     },
     protosol::protos::TxnContext as ProtoTxnContext,
 };
-use {
-    agave_feature_set::FeatureSet, solana_account::Account, solana_hash::Hash,
-    solana_message::SanitizedMessage,
-    solana_program_runtime::execution_budget::DEFAULT_INSTRUCTION_COMPUTE_UNIT_LIMIT,
-    solana_pubkey::Pubkey,
-};
-
-pub struct NonceFields {
-    pub blockhash: Hash,
-    pub blockhash_lamports_per_signature: u64,
-}
 
 pub struct TxnContext {
     pub feature_set: FeatureSet,

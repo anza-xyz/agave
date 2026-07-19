@@ -1,14 +1,12 @@
 //! Transaction conformance harness.
 
 use {
-    super::{
-        context::{NonceFields, TxnContext},
-        effects::TxnEffects,
-    },
+    super::{context::TxnContext, effects::TxnEffects},
     crate::{
         account_loader::construct_instructions_account,
         conformance::{
             callback::DefaultCallback,
+            nonce_fields::NonceFields,
             setup::{
                 InvokeContextFields, compute_budget as default_compute_budget,
                 prepare_transaction_invoke_context_fields, program_runtime_environments,

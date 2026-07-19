@@ -10,7 +10,7 @@ use {
     std::collections::HashSet,
 };
 use {
-    crate::conformance::{instr::context::InstrContext, txn::context::NonceFields},
+    crate::conformance::{instr::context::InstrContext, nonce_fields::NonceFields},
     solana_account::Account,
     solana_compute_budget::compute_budget::ComputeBudget,
     solana_hash::Hash,
