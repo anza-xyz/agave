@@ -42,6 +42,7 @@ thread_local! {
     static THREAD_LOCAL_WEIGHTED_SHUFFLE: RefCell<WeightedShuffle> = RefCell::new(
         WeightedShuffle::new::<[u64; 0]>("get_retransmit_addrs", []),
     );
+    static THREAD_LOCAL_PARENT_INDICES: RefCell<Vec<usize>> = const { RefCell::new(Vec::new()) };
 }
 
 pub(crate) const DATA_PLANE_FANOUT: usize = 200;
@@ -328,14 +329,16 @@ impl ClusterNodes<RetransmitStage> {
         }
 
         let mut rng = TurbineRng::new_seeded(leader, shred, self.use_cha_cha_8);
-        // Only need shuffled nodes until this node itself.
-        let nodes: Vec<_> = weighted_shuffle
-            .shuffle(&mut rng)
-            .map(|index| &self.nodes[index])
-            .take_while(|node| node.pubkey() != &self.pubkey)
-            .collect();
-        let parent = get_retransmit_parent(fanout, nodes.len(), &nodes);
-        Ok(parent.map(Node::pubkey).copied())
+        THREAD_LOCAL_PARENT_INDICES.with_borrow_mut(|indices| {
+            indices.clear();
+            indices.extend(
+                weighted_shuffle
+                    .shuffle(&mut rng)
+                    .take_while(|&index| self.nodes[index].pubkey() != &self.pubkey),
+            );
+            let parent = get_retransmit_parent(fanout, indices.len(), indices);
+            Ok(parent.map(|index| *self.nodes[index].pubkey()))
+        })
     }
 }
 
@@ -724,10 +727,68 @@ mod tests {
         itertools::Itertools,
         rand::prelude::IndexedRandom as _,
         solana_hash::Hash as SolanaHash,
-        solana_ledger::shred::{ProcessShredsStats, ReedSolomonCache, Shredder},
+        solana_ledger::shred::{
+            ProcessShredsStats, ReedSolomonCache, ShredId, ShredType, Shredder,
+        },
         std::{collections::VecDeque, fmt::Debug, hash::Hash},
         test_case::test_case,
     };
+
+    fn legacy_get_retransmit_parent(
+        cluster_nodes: &ClusterNodes<RetransmitStage>,
+        leader: &Pubkey,
+        shred: &ShredId,
+        fanout: usize,
+    ) -> Option<Pubkey> {
+        let mut weighted_shuffle = cluster_nodes.weighted_shuffle.clone();
+        if let Some(index) = cluster_nodes.index.get(leader).copied() {
+            weighted_shuffle.remove_index(index);
+        }
+        let mut rng = TurbineRng::new_seeded(leader, shred, cluster_nodes.use_cha_cha_8);
+        let nodes: Vec<_> = weighted_shuffle
+            .shuffle(&mut rng)
+            .map(|index| &cluster_nodes.nodes[index])
+            .take_while(|node| node.pubkey() != &cluster_nodes.pubkey)
+            .collect();
+        get_retransmit_parent(fanout, nodes.len(), &nodes)
+            .map(Node::pubkey)
+            .copied()
+    }
+
+    #[test_case(true /* chacha8 */)]
+    #[test_case(false /* chacha20 */)]
+    fn test_retransmit_parent_scratch_matches_legacy(use_cha_cha_8: bool) {
+        let mut rng = ChaCha8Rng::seed_from_u64(0x5eed_cafe);
+        let (nodes, mut stakes, cluster_info) = make_test_cluster(&mut rng, 500, Some((4, 5)));
+        stakes.insert(cluster_info.id(), 1_000);
+        let cluster_nodes = new_cluster_nodes::<RetransmitStage>(
+            &cluster_info,
+            ClusterType::Development,
+            &stakes,
+            use_cha_cha_8,
+        );
+        for leader in nodes.iter().skip(1).take(4).map(GossipContactInfo::pubkey) {
+            for index in 0..256u32 {
+                let shred_type = if index % 2 == 0 {
+                    ShredType::Data
+                } else {
+                    ShredType::Code
+                };
+                let shred = ShredId::new(50_000 + u64::from(index), index, shred_type);
+                for fanout in [2, 32, DATA_PLANE_FANOUT] {
+                    let expected =
+                        legacy_get_retransmit_parent(&cluster_nodes, leader, &shred, fanout);
+                    let actual = cluster_nodes
+                        .get_retransmit_parent(leader, &shred, fanout)
+                        .unwrap();
+                    assert_eq!(
+                        actual, expected,
+                        "leader {leader}, shred {shred:?}, fanout {fanout}"
+                    );
+                }
+            }
+        }
+    }
 
     #[test_case(true /* chacha8 */)]
     #[test_case(false /* chacha20 */)]
