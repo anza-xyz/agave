@@ -8520,6 +8520,7 @@ dependencies = [
 name = "solana-svm"
 version = "4.3.0-alpha.1"
 dependencies = [
+ "agave-feature-set",
  "ahash 0.8.12",
  "bincode",
  "log",
@@ -8527,9 +8528,11 @@ dependencies = [
  "qualifier_attr",
  "serde",
  "solana-account 4.3.1",
+ "solana-address-lookup-table-interface",
  "solana-bpf-loader-program",
  "solana-clock",
  "solana-compute-budget",
+ "solana-compute-budget-instruction",
  "solana-compute-budget-program",
  "solana-fee-structure",
  "solana-hash 4.5.0",
@@ -8548,6 +8551,7 @@ dependencies = [
  "solana-pubkey 4.2.0",
  "solana-rent",
  "solana-sdk-ids",
+ "solana-slot-hashes",
  "solana-svm-callback",
  "solana-svm-feature-set",
  "solana-svm-log-collector",
