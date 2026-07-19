@@ -11,6 +11,7 @@ use {
         cluster_nodes::{ClusterNodes, ClusterNodesCache},
     },
     agave_votor::event::VotorEventSender,
+    bytes::Bytes,
     crossbeam_channel::{
         Receiver, RecvError, RecvTimeoutError, SendError, Sender, TrySendError, bounded,
     },
@@ -25,7 +26,7 @@ use {
     solana_ledger::{
         blockstore::Blockstore,
         leader_schedule_cache::LeaderScheduleCache,
-        shred::{MAX_FEC_SETS_PER_SLOT, Shred},
+        shred::{MAX_FEC_SETS_PER_SLOT, Payload, Shred},
     },
     solana_measure::measure::Measure,
     solana_metrics::inc_new_counter_error,
@@ -513,6 +514,31 @@ pub enum BroadcastSocket<'a> {
     Xdp(&'a XdpSender),
 }
 
+type XdpBroadcastPacket = (Bytes, SocketAddr);
+
+fn populate_xdp_broadcast_packets<'a>(
+    packets: &mut Vec<XdpBroadcastPacket>,
+    destinations: impl IntoIterator<Item = (&'a Payload, [Option<SocketAddr>; 2])>,
+) {
+    packets.clear();
+    let destinations = destinations.into_iter().flat_map(|(payload, addrs)| {
+        addrs
+            .into_iter()
+            .flatten()
+            .map(move |addr| (payload.bytes.clone(), addr))
+    });
+    packets.extend(destinations);
+}
+
+fn drain_xdp_broadcast_packets(
+    packets: &mut Vec<XdpBroadcastPacket>,
+    mut send: impl FnMut(usize, SocketAddr, Bytes),
+) {
+    for (index, (payload, addr)) in packets.drain(..).enumerate() {
+        send(index, addr, payload);
+    }
+}
+
 /// Returns the pubkey of the next leader after `slot`, or None if it is us.
 fn next_broadcast_leader_pubkey(
     leader_schedule_cache: &LeaderScheduleCache,
@@ -540,6 +566,34 @@ pub fn broadcast_shreds(
     leader_schedule_cache: &LeaderScheduleCache,
     socket_addr_space: &SocketAddrSpace,
 ) -> Result<()> {
+    let mut xdp_packets = Vec::new();
+    broadcast_shreds_with_xdp_packets(
+        socket,
+        shreds,
+        cluster_nodes_cache,
+        last_datapoint_submit,
+        transmit_stats,
+        cluster_info,
+        bank_forks,
+        leader_schedule_cache,
+        socket_addr_space,
+        &mut xdp_packets,
+    )
+}
+
+#[allow(clippy::too_many_arguments)]
+pub(crate) fn broadcast_shreds_with_xdp_packets(
+    socket: BroadcastSocket,
+    shreds: &[Shred],
+    cluster_nodes_cache: &ClusterNodesCache<BroadcastStage>,
+    last_datapoint_submit: &AtomicInterval,
+    transmit_stats: &mut TransmitShredsStats,
+    cluster_info: &ClusterInfo,
+    bank_forks: &RwLock<BankForks>,
+    leader_schedule_cache: &LeaderScheduleCache,
+    socket_addr_space: &SocketAddrSpace,
+    xdp_packets: &mut Vec<XdpBroadcastPacket>,
+) -> Result<()> {
     let mut result = Ok(());
     // Compute destinations for each of the shreds to be sent
     let mut shred_select = Measure::start("shred_select");
@@ -553,45 +607,46 @@ pub fn broadcast_shreds(
         next_broadcast_leader_pubkey(leader_schedule_cache, &working_bank, &my_pubkey, slot)
     };
 
-    let packets: Vec<_> = shreds
-        .iter()
-        .chunk_by(|shred| shred.slot())
-        .into_iter()
-        .flat_map(|(slot, shreds)| {
-            let cluster_nodes =
-                cluster_nodes_cache.get(slot, &root_bank, &working_bank, cluster_info);
-            update_peer_stats(&cluster_nodes, last_datapoint_submit);
-            let maybe_next_leader_udp = find_next_leader(slot).and_then(|leader| {
-                cluster_info
-                    .lookup_contact_info(&leader, |node| {
-                        node.tvu(Protocol::UDP)
-                            .filter(|addr| !addr.is_ipv6() && socket_addr_space.check(addr))
-                    })
-                    .flatten()
-            });
-            shreds.flat_map(move |shred| {
-                let key = shred.id();
-                let maybe_standard_broadcast_peer = cluster_nodes
-                    .get_broadcast_peer(&key)
-                    .and_then(|ci| ci.tvu(Protocol::UDP))
-                    .filter(|addr| !addr.is_ipv6() && socket_addr_space.check(addr));
-                // only send to next leader if not standard broadcast peer
-                let maybe_next_leader = maybe_next_leader_udp
-                    .filter(|addr| Some(*addr) != maybe_standard_broadcast_peer);
-                [maybe_next_leader, maybe_standard_broadcast_peer]
-                    .into_iter()
-                    .filter_map(move |tvu_addr: Option<SocketAddr>| {
-                        tvu_addr.map(|addr| (shred.payload(), addr))
-                    })
-            })
+    let grouped_shreds = shreds.iter().chunk_by(|shred| shred.slot());
+    let destinations = grouped_shreds.into_iter().flat_map(|(slot, shreds)| {
+        let cluster_nodes = cluster_nodes_cache.get(slot, &root_bank, &working_bank, cluster_info);
+        update_peer_stats(&cluster_nodes, last_datapoint_submit);
+        let maybe_next_leader_udp = find_next_leader(slot).and_then(|leader| {
+            cluster_info
+                .lookup_contact_info(&leader, |node| {
+                    node.tvu(Protocol::UDP)
+                        .filter(|addr| !addr.is_ipv6() && socket_addr_space.check(addr))
+                })
+                .flatten()
+        });
+        shreds.map(move |shred| {
+            let key = shred.id();
+            let maybe_standard_broadcast_peer = cluster_nodes
+                .get_broadcast_peer(&key)
+                .and_then(|ci| ci.tvu(Protocol::UDP))
+                .filter(|addr| !addr.is_ipv6() && socket_addr_space.check(addr));
+            // only send to next leader if not standard broadcast peer
+            let maybe_next_leader =
+                maybe_next_leader_udp.filter(|addr| Some(*addr) != maybe_standard_broadcast_peer);
+            (
+                shred.payload(),
+                [maybe_next_leader, maybe_standard_broadcast_peer],
+            )
         })
-        .collect();
-
-    shred_select.stop();
-    transmit_stats.shred_select += shred_select.as_us();
-    let num_udp_packets = packets.len();
-    match socket {
+    });
+    let num_packets = match socket {
         BroadcastSocket::Udp(s) => {
+            // UDP borrows payloads synchronously. Keep its direct-reference
+            // descriptor path; index-backed reuse regresses common small
+            // leader batches.
+            let packets: Vec<_> = destinations
+                .flat_map(|(payload, addrs)| {
+                    addrs.into_iter().flatten().map(move |addr| (payload, addr))
+                })
+                .collect();
+            shred_select.stop();
+            transmit_stats.shred_select += shred_select.as_us();
+            let num_packets = packets.len();
             let mut send_mmsg_time = Measure::start("send_mmsg");
             match batch_send(s, packets) {
                 Ok(()) => (),
@@ -602,22 +657,30 @@ pub fn broadcast_shreds(
             }
             send_mmsg_time.stop();
             transmit_stats.send_mmsg_elapsed += send_mmsg_time.as_us();
+            num_packets
         }
         BroadcastSocket::Xdp(s) => {
+            // XDP needs owned shallow Bytes handles for its asynchronous
+            // channel, so they can live safely in reusable runner state.
+            populate_xdp_broadcast_packets(xdp_packets, destinations);
+            shred_select.stop();
+            transmit_stats.shred_select += shred_select.as_us();
+            let num_packets = xdp_packets.len();
             let mut send_xdp_time = Measure::start("send_xdp");
-            for (idx, (payload, addr)) in packets.into_iter().enumerate() {
-                if let Err(e) = s.try_send(idx, addr, payload.bytes.clone()) {
+            drain_xdp_broadcast_packets(xdp_packets, |idx, addr, payload| {
+                if let Err(e) = s.try_send(idx, addr, payload) {
                     log::warn!("xdp channel full: {e:?}");
                     transmit_stats.dropped_packets_xdp += 1;
                     result = Err(Error::XdpChannelFull);
                 }
-            }
+            });
             send_xdp_time.stop();
             transmit_stats.send_xdp_elapsed += send_xdp_time.as_us();
+            num_packets
         }
-    }
+    };
 
-    transmit_stats.total_packets += num_udp_packets;
+    transmit_stats.total_packets += num_packets;
     result
 }
 
@@ -737,6 +800,77 @@ pub mod test {
             )),
         }));
         leader_schedule_cache
+    }
+
+    #[test]
+    fn test_populate_xdp_broadcast_packets_preserves_order_and_reuses_allocation() {
+        let addrs = [
+            SocketAddr::from(([10, 0, 0, 1], 8_001)),
+            SocketAddr::from(([10, 0, 0, 2], 8_002)),
+            SocketAddr::from(([10, 0, 0, 3], 8_003)),
+        ];
+        let payloads = [4u8, 7, 9, 11, 13].map(|byte| Payload::from(vec![byte]));
+        let destinations = vec![
+            (&payloads[0], [Some(addrs[0]), Some(addrs[1])]),
+            (&payloads[1], [None, Some(addrs[2])]),
+            (&payloads[2], [Some(addrs[1]), None]),
+            (&payloads[3], [None, None]),
+        ];
+        // This is the pre-change flat-map/collect ordering.
+        let expected: Vec<_> = destinations
+            .iter()
+            .flat_map(|(payload, addrs)| {
+                addrs
+                    .iter()
+                    .copied()
+                    .flatten()
+                    .map(|addr| (payload.bytes.clone(), addr))
+            })
+            .collect();
+
+        let mut packets = Vec::new();
+        populate_xdp_broadcast_packets(&mut packets, destinations);
+        assert_eq!(packets, expected);
+        let capacity = packets.capacity();
+
+        populate_xdp_broadcast_packets(&mut packets, [(&payloads[4], [Some(addrs[0]), None])]);
+        assert_eq!(packets, [(Bytes::from_static(&[13]), addrs[0])]);
+        assert_eq!(packets.capacity(), capacity);
+    }
+
+    #[test]
+    fn test_drain_xdp_broadcast_packets_continues_after_error() {
+        let addrs = [
+            SocketAddr::from(([10, 0, 0, 1], 8_001)),
+            SocketAddr::from(([10, 0, 0, 2], 8_002)),
+            SocketAddr::from(([10, 0, 0, 3], 8_003)),
+        ];
+        let mut packets = vec![
+            (Bytes::from_static(&[1]), addrs[0]),
+            (Bytes::from_static(&[2]), addrs[1]),
+            (Bytes::from_static(&[3]), addrs[2]),
+        ];
+        let capacity = packets.capacity();
+        let mut attempted = Vec::new();
+        let mut errors = 0;
+        drain_xdp_broadcast_packets(&mut packets, |index, addr, payload| {
+            attempted.push((index, addr, payload));
+            // Model one full-channel error. The production closure records the
+            // error and returns so the drain continues with later packets.
+            errors += usize::from(index == 1);
+        });
+
+        assert_eq!(errors, 1);
+        assert_eq!(
+            attempted,
+            [
+                (0, addrs[0], Bytes::from_static(&[1])),
+                (1, addrs[1], Bytes::from_static(&[2])),
+                (2, addrs[2], Bytes::from_static(&[3])),
+            ]
+        );
+        assert!(packets.is_empty());
+        assert_eq!(packets.capacity(), capacity);
     }
 
     #[test]

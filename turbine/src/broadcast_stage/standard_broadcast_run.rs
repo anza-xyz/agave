@@ -65,6 +65,7 @@ pub struct StandardBroadcastRun {
     max_data_shreds_per_slot: u32,
     max_code_shreds_per_slot: u32,
     broadcast_blacklist: VecDeque<Slot>,
+    broadcast_xdp_packets: Vec<XdpBroadcastPacket>,
 }
 
 #[derive(Debug)]
@@ -112,6 +113,7 @@ impl StandardBroadcastRun {
             max_data_shreds_per_slot: DEFAULT_MAX_DATA_SHREDS_PER_SLOT,
             max_code_shreds_per_slot: DEFAULT_MAX_CODE_SHREDS_PER_SLOT,
             broadcast_blacklist: VecDeque::new(),
+            broadcast_xdp_packets: Vec::new(),
         }
     }
 
@@ -572,7 +574,7 @@ impl StandardBroadcastRun {
 
         transmit_stats.num_shreds = shreds.len();
 
-        broadcast_shreds(
+        broadcast_shreds_with_xdp_packets(
             sock,
             &shreds,
             &self.cluster_nodes_cache,
@@ -582,6 +584,7 @@ impl StandardBroadcastRun {
             bank_forks,
             &self.leader_schedule_cache,
             cluster_info.socket_addr_space(),
+            &mut self.broadcast_xdp_packets,
         )?;
         transmit_time.stop();
 
