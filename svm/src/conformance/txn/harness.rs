@@ -6,7 +6,7 @@ use {
         effects::TxnEffects,
     },
     crate::{
-        account_loader::{construct_instructions_account, update_rent_exempt_status_for_account},
+        account_loader::construct_instructions_account,
         conformance::{
             callback::DefaultCallback,
             programs::keyed_account_for_builtin_pubkey,
@@ -86,12 +86,12 @@ pub fn execute_txn_with_callback<C: InvokeContextCallback>(
         .iter()
         .enumerate()
         .map(
-            |(index, pubkey)| -> TransactionResult<(Pubkey, AccountSharedData)> {
+            |(_index, pubkey)| -> TransactionResult<(Pubkey, AccountSharedData)> {
                 if check_instructions_sysvar_id(pubkey) {
                     return Ok((*pubkey, construct_instructions_account(sanitized_message)?));
                 }
 
-                let mut account = input
+                let account = input
                     .accounts
                     .iter()
                     .find(|(key, account)| key == pubkey && account.lamports() > 0)
@@ -106,10 +106,6 @@ pub fn execute_txn_with_callback<C: InvokeContextCallback>(
                             ..Account::default()
                         })
                     });
-
-                if sanitized_message.is_writable(index) && account.lamports() > 0 {
-                    update_rent_exempt_status_for_account(&rent, &mut account);
-                }
                 Ok((*pubkey, account))
             },
         )
