@@ -64,9 +64,6 @@ impl From<ProtoTxnContext> for TxnContext {
         let message =
             sanitized_message_from_versioned_message(versioned_message.clone(), &accounts);
 
-        // TODO: Read the value from ProtoTxnContext once protosol adds it.
-        let cu_avail = u64::MAX;
-
         let feature_set = bank
             .and_then(|bank| bank.features.as_ref())
             .map(feature_set_from_proto)
@@ -91,12 +88,6 @@ impl From<ProtoTxnContext> for TxnContext {
             }
         });
 
-        TxnContext {
-            feature_set,
-            accounts,
-            message,
-            nonce_fields,
-            cu_avail,
-        }
+        TxnContext::new_with_default_budget(feature_set, accounts, message, nonce_fields)
     }
 }
