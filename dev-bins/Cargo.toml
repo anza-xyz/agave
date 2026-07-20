@@ -108,7 +108,7 @@ solana-message = "4.1.0"
 solana-metrics = { path = "../metrics", version = "=4.3.0-alpha.1", features = ["agave-unstable-api"] }
 solana-native-token = "3.0.0"
 solana-net-utils = { path = "../net-utils", version = "=4.3.0-alpha.1", features = ["agave-unstable-api"] }
-solana-nonce = "3.2.0"
+solana-nonce = "3.2.1"
 solana-precompile-error = "3.0.0"
 solana-program-runtime = { path = "../program-runtime", version = "=4.3.0-alpha.1", features = ["agave-unstable-api"] }
 solana-pubkey = { version = "4.2.0", default-features = false }
