@@ -2024,7 +2024,7 @@ pub static FEATURE_NAMES: LazyLock<AHashMap<Pubkey, &'static str>> = LazyLock::n
         ),
         (
             enable_big_mod_exp_syscall::id(),
-            "add big_mod_exp syscall #28503",
+            "SIMD-0529: big_integer mod_exp syscall",
         ),
         (
             disable_builtin_loader_ownership_chains::id(),
