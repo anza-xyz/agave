@@ -31,6 +31,7 @@ use {
             DeserializableDelegationStakes, InvalidCacheEntryReason, SerdeStakesToStakeFormat,
             Stakes,
         },
+        sysvar_account::{create_account, from_account},
     },
     agave_feature_set::{self as feature_set, FeatureSet},
     agave_reserved_account_keys::ReservedAccount,
@@ -43,9 +44,7 @@ use {
     rayon::{ThreadPool, ThreadPoolBuilder, iter::IntoParallelIterator},
     serde::{Deserialize, Serialize},
     solana_account::{
-        Account, AccountSharedData, ReadableAccount, WritableAccount,
-        create_account_shared_data_with_fields as create_account, from_account,
-        state_traits::StateMut,
+        Account, AccountSharedData, ReadableAccount, WritableAccount, state_traits::StateMut,
     },
     solana_account_info::MAX_PERMITTED_DATA_INCREASE,
     solana_accounts_db::{
@@ -330,7 +329,7 @@ fn test_bank_new() {
     );
 
     let rent_account = bank.get_account(&sysvar::rent::id()).unwrap();
-    let rent = from_account::<sysvar::rent::Rent, _>(&rent_account).unwrap();
+    let rent = from_account::<sysvar::rent::Rent>(&rent_account).unwrap();
 
     assert_eq!(rent.burn_percent, Rent::default().burn_percent);
     assert_eq!(rent.exemption_threshold, 1.0f64.to_le_bytes());
@@ -2824,7 +2823,7 @@ fn test_bank_update_sysvar_account() {
                 let current_account = bank1.get_account(&dummy_clock_id).unwrap();
                 assert_eq!(
                     expected_previous_slot,
-                    from_account::<Clock, _>(&current_account).unwrap().slot
+                    from_account::<Clock>(&current_account).unwrap().slot
                 );
                 assert_eq!(dummy_rent_epoch, current_account.rent_epoch());
             },
@@ -2877,7 +2876,7 @@ fn test_bank_update_sysvar_account() {
             &bank2,
             || {
                 bank2.update_sysvar_account(&dummy_clock_id, |optional_account| {
-                    let slot = from_account::<Clock, _>(optional_account.as_ref().unwrap())
+                    let slot = from_account::<Clock>(optional_account.as_ref().unwrap())
                         .unwrap()
                         .slot
                         + 1;
@@ -2893,7 +2892,7 @@ fn test_bank_update_sysvar_account() {
                 let current_account = bank2.get_account(&dummy_clock_id).unwrap();
                 assert_eq!(
                     expected_next_slot,
-                    from_account::<Clock, _>(&current_account).unwrap().slot
+                    from_account::<Clock>(&current_account).unwrap().slot
                 );
                 assert_eq!(dummy_rent_epoch, current_account.rent_epoch());
             },
@@ -2914,7 +2913,7 @@ fn test_bank_update_sysvar_account() {
             &bank2,
             || {
                 bank2.update_sysvar_account(&dummy_clock_id, |optional_account| {
-                    let slot = from_account::<Clock, _>(optional_account.as_ref().unwrap())
+                    let slot = from_account::<Clock>(optional_account.as_ref().unwrap())
                         .unwrap()
                         .slot
                         + 1;
@@ -2930,7 +2929,7 @@ fn test_bank_update_sysvar_account() {
                 let current_account = bank2.get_account(&dummy_clock_id).unwrap();
                 assert_eq!(
                     expected_next_slot,
-                    from_account::<Clock, _>(&current_account).unwrap().slot
+                    from_account::<Clock>(&current_account).unwrap().slot
                 );
             },
             |old, new| {
@@ -3808,7 +3807,7 @@ fn test_recent_blockhashes_sysvar() {
     for i in 1..5 {
         let bhq_account = bank.get_account(&sysvar::recent_blockhashes::id()).unwrap();
         let recent_blockhashes =
-            from_account::<sysvar::recent_blockhashes::RecentBlockhashes, _>(&bhq_account).unwrap();
+            from_account::<sysvar::recent_blockhashes::RecentBlockhashes>(&bhq_account).unwrap();
         // Check length
         assert_eq!(recent_blockhashes.len(), i);
         let most_recent_hash = recent_blockhashes.iter().next().unwrap().blockhash;
@@ -3827,7 +3826,7 @@ fn test_blockhash_queue_sysvar_consistency() {
 
     let bhq_account = bank.get_account(&sysvar::recent_blockhashes::id()).unwrap();
     let recent_blockhashes =
-        from_account::<sysvar::recent_blockhashes::RecentBlockhashes, _>(&bhq_account).unwrap();
+        from_account::<sysvar::recent_blockhashes::RecentBlockhashes>(&bhq_account).unwrap();
 
     let sysvar_recent_blockhash = recent_blockhashes[0].blockhash;
     let bank_last_blockhash = bank.last_blockhash();
@@ -6770,7 +6769,7 @@ fn test_rent_feature_gates_epoch_transition() {
         );
 
         let rent_account = bank.get_account(&sysvar::rent::id()).unwrap();
-        let rent = from_account::<sysvar::rent::Rent, _>(&rent_account).unwrap();
+        let rent = from_account::<sysvar::rent::Rent>(&rent_account).unwrap();
         assert_eq!(
             rent.lamports_per_byte, expected_lamports_per_byte,
             "rent sysvar should be updated after activation"

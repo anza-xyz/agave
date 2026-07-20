@@ -176,7 +176,7 @@ solana-svm-transaction = { workspace = true }
 solana-syscalls = { workspace = true }
 solana-system-interface = { workspace = true }
 solana-system-transaction = { workspace = true }
-solana-sysvar = { workspace = true }
+solana-sysvar = { workspace = true, features = ["wincode"] }
 solana-sysvar-id = { workspace = true }
 solana-time-utils = { workspace = true }
 solana-transaction = { workspace = true, features = ["verify"] }

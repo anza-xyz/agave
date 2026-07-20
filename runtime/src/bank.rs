@@ -74,6 +74,7 @@ use {
             StakesCache,
         },
         status_cache::{SlotDelta, StatusCache},
+        sysvar_account::{create_account, create_account_with_bincode, from_account},
         transaction_batch::{OwnedOrBorrowed, TransactionBatch},
     },
     accounts_lt_hash::AccountsLtHashAsyncProgress,
@@ -95,7 +96,6 @@ use {
     serde::{Deserialize, Serialize},
     solana_account::{
         Account, AccountSharedData, InheritableAccountFields, ReadableAccount, WritableAccount,
-        create_account_shared_data_with_fields as create_account, from_account,
     },
     solana_accounts_db::{
         account_locks::validate_account_locks,
@@ -148,16 +148,12 @@ use {
         runtime_transaction::RuntimeTransaction, transaction_meta::TransactionConfiguration,
         transaction_with_meta::TransactionWithMeta,
     },
-    solana_sdk_ids::{
-        bpf_loader_upgradeable, incinerator, native_loader, system_program, sysvar as sysvar_id,
-    },
+    solana_sdk_ids::{bpf_loader_upgradeable, incinerator, native_loader, system_program},
     solana_sha256_hasher::hashv,
     solana_signature::Signature,
     solana_slot_hashes::SlotHashes,
     solana_slot_history::{Check, SlotHistory},
-    solana_stake_history::{
-        SIZE as STAKE_HISTORY_ACCOUNT_SIZE, StakeHistory, sysvar as stake_history,
-    },
+    solana_stake_history::{StakeHistory, sysvar as stake_history},
     solana_stake_interface::state::Delegation,
     solana_svm::{
         account_loader::LoadedTransaction,
@@ -182,7 +178,7 @@ use {
     solana_svm_transaction::svm_message::SVMMessage,
     solana_syscalls::create_program_runtime_environment,
     solana_system_transaction as system_transaction,
-    solana_sysvar::{self as sysvar, SysvarSerialize, last_restart_slot::LastRestartSlot},
+    solana_sysvar::{self as sysvar, last_restart_slot::LastRestartSlot},
     solana_sysvar_id::SysvarId,
     solana_transaction::{
         Transaction, TransactionVerificationMode,
@@ -1199,18 +1195,6 @@ struct NewEpochBundle {
     update_rewards_with_thread_pool_time_us: u64,
 }
 
-fn create_stake_history_account(
-    stake_history: &StakeHistory,
-    (lamports, rent_epoch): InheritableAccountFields,
-) -> AccountSharedData {
-    let data_len =
-        STAKE_HISTORY_ACCOUNT_SIZE.max(bincode::serialized_size(stake_history).unwrap() as usize);
-    let mut account = AccountSharedData::new(lamports, data_len, &sysvar_id::id());
-    account.serialize_data(stake_history).unwrap();
-    account.set_rent_epoch(rent_epoch);
-    account
-}
-
 impl Bank {
     fn default_with_accounts(accounts: Accounts) -> Self {
         let partitioned_rewards_stake_account_stores_per_block = accounts
@@ -1984,7 +1968,7 @@ impl Bank {
             .load_with_fixed_root_do_not_populate_read_cache(ancestors, &sysvar::rent::id())
             .expect("snapshot must contain rent sysvar account")
             .0;
-        from_account::<sysvar::rent::Rent, _>(&rent_sysvar)
+        from_account::<sysvar::rent::Rent>(&rent_sysvar)
             .expect("snapshot must contain well-formed rent sysvar account")
     }
 
@@ -2569,10 +2553,10 @@ impl Bank {
 
     pub fn set_sysvar_for_tests<T>(&self, sysvar: &T)
     where
-        T: SysvarSerialize + SysvarId,
+        T: Serialize + SysvarId,
     {
         self.update_sysvar_account(&T::id(), |account| {
-            create_account(
+            create_account_with_bincode(
                 sysvar,
                 self.inherit_specially_retained_account_fields(account),
             )
@@ -2749,7 +2733,7 @@ impl Bank {
         }
         // if I'm the first Bank in an epoch, ensure stake_history is updated
         self.update_sysvar_account(&stake_history::id(), |account| {
-            create_stake_history_account(
+            create_account::<StakeHistory>(
                 self.stakes_cache.stakes().history(),
                 self.inherit_specially_retained_account_fields(account),
             )
