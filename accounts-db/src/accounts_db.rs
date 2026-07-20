@@ -6830,11 +6830,7 @@ impl AccountStorageEntry {
 #[cfg(feature = "dev-context-only-utils")]
 impl AccountsDb {
     pub fn default_for_tests() -> Self {
-        Self::new_for_tests(Vec::new())
-    }
-
-    pub fn new_for_tests(paths: Vec<PathBuf>) -> Self {
-        Self::new_for_tests_with_config(paths, ACCOUNTS_DB_CONFIG_FOR_TESTING)
+        Self::new_for_tests_with_config(Vec::new(), ACCOUNTS_DB_CONFIG_FOR_TESTING)
     }
 
     pub fn new_for_tests_with_config(
