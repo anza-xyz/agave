@@ -73,7 +73,7 @@ members = [
     "rust/upgraded",
 ]
 [workspace.package]
-version = "4.3.0-alpha.1"
+version = "4.3.0-alpha.2"
 description = "Solana SBF test program written in Rust"
 authors = ["Anza Maintainers <maintainers@anza.xyz>"]
 repository = "https://github.com/anza-xyz/agave"
@@ -102,10 +102,10 @@ used_underscore_binding = "deny"
 new_without_default = "allow"
 
 [workspace.dependencies]
-agave-feature-set = { path = "../../feature-set", version = "=4.3.0-alpha.1" }
-agave-logger = { path = "../../logger", version = "=4.3.0-alpha.1" }
-agave-reserved-account-keys = { path = "../../reserved-account-keys", version = "=4.3.0-alpha.1" }
-agave-validator = { path = "../../validator", version = "=4.3.0-alpha.1" }
+agave-feature-set = { path = "../../feature-set", version = "=4.3.0-alpha.2" }
+agave-logger = { path = "../../logger", version = "=4.3.0-alpha.2" }
+agave-reserved-account-keys = { path = "../../reserved-account-keys", version = "=4.3.0-alpha.2" }
+agave-validator = { path = "../../validator", version = "=4.3.0-alpha.2" }
 array-bytes = "=1.4.1"
 bincode = { version = "1.1.4", default-features = false }
 blake3 = "1.0.0"
@@ -123,12 +123,12 @@ solana-big-mod-exp = "4.0.0"
 solana-blake3-hasher = { version = "=3.1.0", features = ["blake3"] }
 solana-bn254 = "=3.2.1"
 solana-clock = { version = "=3.1.1", features = ["serde", "sysvar"] }
-solana-compute-budget = { path = "../../compute-budget", version = "=4.3.0-alpha.1" }
-solana-compute-budget-instruction = { path = "../../compute-budget-instruction", version = "=4.3.0-alpha.1" }
+solana-compute-budget = { path = "../../compute-budget", version = "=4.3.0-alpha.2" }
+solana-compute-budget-instruction = { path = "../../compute-budget-instruction", version = "=4.3.0-alpha.2" }
 solana-cpi = "=3.1.0"
 solana-curve25519 = "=4.0.1"
 solana-define-syscall = "=3.0.0"
-solana-fee = { path = "../../fee", version = "=4.3.0-alpha.1" }
+solana-fee = { path = "../../fee", version = "=4.3.0-alpha.2" }
 solana-hash = { version = "=4.5.0", features = ["bytemuck", "serde", "std"] }
 solana-instruction = "=3.4.0"
 solana-instructions-sysvar = "=4.0.0"
@@ -136,37 +136,37 @@ solana-keccak-hasher = { version = "=3.1.0", features = ["sha3"] }
 solana-msg = "=3.1.0"
 solana-poseidon = "=4.0.0"
 solana-program = "=4.0.0"
-solana-program-binaries = { path = "../../program-binaries", version = "=4.3.0-alpha.1" }
+solana-program-binaries = { path = "../../program-binaries", version = "=4.3.0-alpha.2" }
 solana-program-entrypoint = "=3.1.1"
 solana-program-error = "=3.0.1"
 solana-program-memory = "=3.1.0"
-solana-program-runtime = { path = "../../program-runtime", version = "=4.3.0-alpha.1" }
+solana-program-runtime = { path = "../../program-runtime", version = "=4.3.0-alpha.2" }
 solana-pubkey = { version = "=4.2.0", default-features = false }
-solana-runtime = { path = "../../runtime", version = "=4.3.0-alpha.1" }
-solana-runtime-transaction = { path = "../../runtime-transaction", version = "=4.3.0-alpha.1" }
-solana-sbf-rust-128bit-dep = { path = "rust/128bit_dep", version = "=4.3.0-alpha.1" }
-solana-sbf-rust-invoke-dep = { path = "rust/invoke_dep", version = "=4.3.0-alpha.1" }
-solana-sbf-rust-invoked-dep = { path = "rust/invoked_dep", version = "=4.3.0-alpha.1" }
-solana-sbf-rust-many-args-dep = { path = "rust/many_args_dep", version = "=4.3.0-alpha.1" }
-solana-sbf-rust-mem-dep = { path = "rust/mem_dep", version = "=4.3.0-alpha.1" }
-solana-sbf-rust-param-passing-dep = { path = "rust/param_passing_dep", version = "=4.3.0-alpha.1" }
-solana-sbf-rust-realloc-dep = { path = "rust/realloc_dep", version = "=4.3.0-alpha.1" }
-solana-sbf-rust-realloc-invoke-dep = { path = "rust/realloc_invoke_dep", version = "=4.3.0-alpha.1" }
+solana-runtime = { path = "../../runtime", version = "=4.3.0-alpha.2" }
+solana-runtime-transaction = { path = "../../runtime-transaction", version = "=4.3.0-alpha.2" }
+solana-sbf-rust-128bit-dep = { path = "rust/128bit_dep", version = "=4.3.0-alpha.2" }
+solana-sbf-rust-invoke-dep = { path = "rust/invoke_dep", version = "=4.3.0-alpha.2" }
+solana-sbf-rust-invoked-dep = { path = "rust/invoked_dep", version = "=4.3.0-alpha.2" }
+solana-sbf-rust-many-args-dep = { path = "rust/many_args_dep", version = "=4.3.0-alpha.2" }
+solana-sbf-rust-mem-dep = { path = "rust/mem_dep", version = "=4.3.0-alpha.2" }
+solana-sbf-rust-param-passing-dep = { path = "rust/param_passing_dep", version = "=4.3.0-alpha.2" }
+solana-sbf-rust-realloc-dep = { path = "rust/realloc_dep", version = "=4.3.0-alpha.2" }
+solana-sbf-rust-realloc-invoke-dep = { path = "rust/realloc_invoke_dep", version = "=4.3.0-alpha.2" }
 solana-sdk-ids = "=3.1.0"
 solana-secp256k1-recover = "=3.2.0"
 solana-sha256-hasher = { version = "=3.1.0", features = ["sha2"] }
 solana-stake-history = "=1.0.0"
-solana-svm = { path = "../../svm", version = "=4.3.0-alpha.1" }
-solana-svm-feature-set = { path = "../../svm-feature-set", version = "=4.3.0-alpha.1" }
-solana-svm-timings = { path = "../../svm-timings", version = "=4.3.0-alpha.1" }
+solana-svm = { path = "../../svm", version = "=4.3.0-alpha.2" }
+solana-svm-feature-set = { path = "../../svm-feature-set", version = "=4.3.0-alpha.2" }
+solana-svm-timings = { path = "../../svm-timings", version = "=4.3.0-alpha.2" }
 solana-svm-transaction = "=4.2.0"
-solana-svm-type-overrides = { path = "../../svm-type-overrides", version = "=4.3.0-alpha.1" }
+solana-svm-type-overrides = { path = "../../svm-type-overrides", version = "=4.3.0-alpha.2" }
 solana-system-interface = { version = "=3.2", features = ["bincode"] }
 solana-sysvar = "=4.1.0"
-solana-test-validator = { path = "../../test-validator", version = "=4.3.0-alpha.1" }
-solana-vote = { path = "../../vote", version = "=4.3.0-alpha.1" }
+solana-test-validator = { path = "../../test-validator", version = "=4.3.0-alpha.2" }
+solana-vote = { path = "../../vote", version = "=4.3.0-alpha.2" }
 solana-vote-interface = "6.0.3"
-solana-vote-program = { path = "../../programs/vote", version = "=4.3.0-alpha.1" }
+solana-vote-program = { path = "../../programs/vote", version = "=4.3.0-alpha.2" }
 test-case = "3.3.1"
 thiserror = "2.0"
 
