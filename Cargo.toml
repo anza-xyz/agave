@@ -22,6 +22,7 @@ members = [
     "cli-output",
     "client",
     "client-test",
+    "clock-sync",
     "compute-budget",
     "compute-budget-instruction",
     "connection-cache",
@@ -171,6 +172,7 @@ Inflector = "0.11.4"
 agave-banking-stage-ingress-types = { path = "banking-stage-ingress-types", version = "=4.3.0-alpha.1", features = ["agave-unstable-api"] }
 agave-bls-cert-verify = { path = "bls-cert-verify", version = "=4.3.0-alpha.1", features = ["agave-unstable-api"] }
 agave-bls-sigverify = { path = "bls-sigverify", version = "=4.3.0-alpha.1", features = ["agave-unstable-api"] }
+agave-clock-sync = { path = "clock-sync", version = "=4.3.0-alpha.1", features = ["agave-unstable-api"] }
 agave-cpu-utils = { path = "cpu-utils", version = "=4.3.0-alpha.1", features = ["agave-unstable-api"] }
 agave-feature-set = { path = "feature-set", version = "=4.3.0-alpha.1", features = ["agave-unstable-api"] }
 agave-fs = { path = "fs", version = "=4.3.0-alpha.1", features = ["agave-unstable-api"] }

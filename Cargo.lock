@@ -129,6 +129,24 @@ dependencies = [
 ]
 
 [[package]]
+name = "agave-clock-sync"
+version = "4.3.0-alpha.1"
+dependencies = [
+ "agave-votor-transport",
+ "arc-swap",
+ "bytes",
+ "crossbeam-channel",
+ "log",
+ "solana-keypair",
+ "solana-metrics",
+ "solana-net-utils",
+ "solana-pubkey 4.2.0",
+ "thiserror 2.0.18",
+ "tokio",
+ "tokio-util 0.7.18",
+]
+
+[[package]]
 name = "agave-cpu-utils"
 version = "4.3.0-alpha.1"
 dependencies = [

@@ -1,0 +1,36 @@
+[package]
+name = "agave-clock-sync"
+description = "Byzantine fault-tolerant clock synchronization for Solana validators"
+documentation = "https://docs.rs/agave-clock-sync"
+version = { workspace = true }
+authors = { workspace = true }
+repository = { workspace = true }
+homepage = { workspace = true }
+license = { workspace = true }
+edition = { workspace = true }
+
+[lib]
+
+[features]
+dev-context-only-utils = []
+agave-unstable-api = []
+
+[dependencies]
+agave-votor-transport = { workspace = true }
+arc-swap = { workspace = true }
+bytes = { workspace = true }
+crossbeam-channel = { workspace = true }
+log = { workspace = true }
+solana-metrics = { workspace = true }
+solana-pubkey = { workspace = true }
+thiserror = { workspace = true }
+tokio = { workspace = true, features = ["sync"] }
+
+[dev-dependencies]
+solana-keypair = { workspace = true }
+solana-net-utils = { workspace = true, features = ["dev-context-only-utils"] }
+tokio = { workspace = true, features = ["full"] }
+tokio-util = { workspace = true }
+
+[lints]
+workspace = true
