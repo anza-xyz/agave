@@ -1,27 +1,23 @@
-#![cfg(test)]
 use {
-    super::*,
     crate::{
-        accounts_file::AccountsFileProvider,
         accounts_index::{
             ACCOUNTS_INDEX_CONFIG_FOR_TESTING, AccountIndex, AccountSecondaryIndexesIncludeExclude,
             AccountsIndexConfig, IndexLimit, IndexLimitThreshold, test_utils::*,
         },
         append_vec::{AppendVec, STORE_META_OVERHEAD, test_utils::TempFile},
-        storable_accounts::AccountForStorage,
     },
     itertools::Itertools,
-    rand::{Rng, prelude::SliceRandom, rng},
+    rand::{prelude::SliceRandom as _, rng},
     solana_account::{
-        Account, AccountSharedData, DUMMY_INHERITABLE_ACCOUNT_FIELDS, InheritableAccountFields,
-        ReadableAccount, WritableAccount, accounts_equal,
+        Account, DUMMY_INHERITABLE_ACCOUNT_FIELDS, InheritableAccountFields, WritableAccount as _,
+        accounts_equal,
     },
     solana_lattice_hash::lt_hash::Checksum as LtHashChecksum,
     solana_pubkey::PUBKEY_BYTES,
     std::{
-        iter::{self, FromIterator},
+        iter::{self, FromIterator as _},
         ops::Range,
-        str::FromStr,
+        str::FromStr as _,
         sync::{
             RwLock,
             atomic::{AtomicBool, Ordering},
@@ -31,8 +27,6 @@ use {
     test_case::test_case,
 };
 
-const DEFAULT_ACCOUNTS_DB_CONFIG: AccountsDbConfig = ACCOUNTS_DB_CONFIG_FOR_TESTING;
-
 const DEFAULT_FILE_SIZE: u64 = 4 * 1024 * 1024;
 
 fn linear_ancestors(end_slot: u64) -> Ancestors {
@@ -41,52 +35,6 @@ fn linear_ancestors(end_slot: u64) -> Ancestors {
         ancestors.insert(i);
     }
     ancestors
-}
-
-impl AccountsDb {
-    fn get_storage_for_slot(&self, slot: Slot) -> Option<Arc<AccountStorageEntry>> {
-        self.storage.get_slot_storage_entry(slot)
-    }
-}
-
-/// this tuple contains slot info PER account
-impl<'a, T: ReadableAccount + Sync> StorableAccounts<'a> for (Slot, &'a [(&'a Pubkey, &'a T, Slot)])
-where
-    AccountForStorage<'a>: From<&'a T>,
-{
-    fn is_zero_lamport(&self, index: usize) -> bool {
-        self.1[index].1.lamports() == 0
-    }
-    fn data_len(&self, index: usize) -> usize {
-        self.1[index].1.data().len()
-    }
-    fn account<Ret>(
-        &self,
-        index: usize,
-        mut callback: impl for<'local> FnMut(AccountForStorage<'local>) -> Ret,
-    ) -> Ret {
-        callback(self.1[index].1.into())
-    }
-    fn account_for_geyser<Ret>(
-        &self,
-        _index: usize,
-        _callback: impl for<'local> FnMut(&'local Pubkey, &'local AccountSharedData) -> Ret,
-    ) -> Ret {
-        unimplemented!();
-    }
-    fn pubkey(&self, index: usize) -> &Pubkey {
-        self.1[index].0
-    }
-    fn slot(&self, index: usize) -> Slot {
-        // note that this could be different than 'target_slot()' PER account
-        self.1[index].2
-    }
-    fn target_slot(&self) -> Slot {
-        self.0
-    }
-    fn len(&self) -> usize {
-        self.1.len()
-    }
 }
 
 /// Stores a rooted non-zero version of each pubkey in `pubkeys` at `slot` and flushes it to
@@ -123,12 +71,6 @@ fn create_loadable_account_with_fields(
 
 fn create_loadable_account_for_test(name: &str) -> AccountSharedData {
     create_loadable_account_with_fields(name, DUMMY_INHERITABLE_ACCOUNT_FIELDS)
-}
-
-impl AccountStorageEntry {
-    fn add_account(&self, num_bytes: usize) {
-        self.add_accounts(1, num_bytes)
-    }
 }
 
 fn create_store_for_shrink_tests(
@@ -186,7 +128,7 @@ fn run_generate_index_duplicates_within_slot_test(db: AccountsDb, reverse: bool)
 
     assert!(!db.accounts_index.contains(&pubkey));
     let storage = db.get_storage_for_slot(slot0).unwrap();
-    let mut reader = append_vec::new_scan_accounts_reader();
+    let mut reader = crate::append_vec::new_scan_accounts_reader();
     let mut accum = IndexGenerationAccumulator::with_slots_capacity(1);
     db.generate_index_for_slot(&mut reader, &mut accum, 0, &storage);
 }
@@ -4141,38 +4083,6 @@ fn test_scan_flush_accounts_cache_then_clean_drop() {
     assert!(db.get_account_at_slot(&account_key, 1).is_none());
 }
 
-impl AccountsDb {
-    fn get_and_assert_single_storage(&self, slot: Slot) -> Arc<AccountStorageEntry> {
-        self.storage.get_slot_storage_entry(slot).unwrap()
-    }
-
-    fn get_account_at_slot(&self, pubkey: &Pubkey, slot: Slot) -> Option<AccountSharedData> {
-        // Check the cache for the pubkey first
-        if let Some(cached) = self.accounts_cache.load(slot, pubkey) {
-            return Some(cached.account.clone());
-        }
-
-        // Add the slot to ancestors so unrooted slots will be selected
-        let mut ancestors = Ancestors::default();
-        ancestors.insert(slot);
-
-        self.accounts_index.get_with_and_then(
-            pubkey,
-            &ancestors,
-            false,
-            |(slot_found, account_info)| {
-                // If a slot was found, ensure it was the requested slot
-                assert_eq!(slot_found, slot);
-
-                let storage_location = account_info.storage_location();
-                let mut accessor = self.get_account_accessor(slot, &storage_location);
-
-                accessor.check_and_get_loaded_account_shared_data()
-            },
-        )
-    }
-}
-
 #[test]
 fn test_alive_bytes() {
     let accounts_db = AccountsDb::new_for_tests_with_config(Vec::new(), DEFAULT_ACCOUNTS_DB_CONFIG);
@@ -5380,7 +5290,7 @@ fn test_calculate_storage_count_and_alive_bytes() {
     accounts.storage.insert(Arc::new(storage));
 
     let storage = accounts.storage.get_slot_storage_entry(slot0).unwrap();
-    let mut reader = append_vec::new_scan_accounts_reader();
+    let mut reader = crate::append_vec::new_scan_accounts_reader();
     let mut accum = IndexGenerationAccumulator::with_slots_capacity(1);
     accounts.generate_index_for_slot(&mut reader, &mut accum, 0, &storage);
     assert_eq!(accum.storage_info.len(), 1);
@@ -5399,7 +5309,7 @@ fn test_calculate_storage_count_and_alive_bytes_0_accounts() {
     let accounts = AccountsDb::new_for_tests_with_config(Vec::new(), DEFAULT_ACCOUNTS_DB_CONFIG);
     // empty store
     let storage = accounts.create_store(0, 1);
-    let mut reader = append_vec::new_scan_accounts_reader();
+    let mut reader = crate::append_vec::new_scan_accounts_reader();
     let mut accum = IndexGenerationAccumulator::with_slots_capacity(1);
     accounts.generate_index_for_slot(&mut reader, &mut accum, 0, &storage);
     assert!(accum.storage_info.is_empty());
@@ -5434,7 +5344,7 @@ fn test_calculate_storage_count_and_alive_bytes_2_accounts() {
         .accounts
         .write_accounts(&(slot0, &[(&keys[0], &account), (&keys[1], &account_big)][..]));
 
-    let mut reader = append_vec::new_scan_accounts_reader();
+    let mut reader = crate::append_vec::new_scan_accounts_reader();
     let mut accum = IndexGenerationAccumulator::with_slots_capacity(1);
     accounts.generate_index_for_slot(&mut reader, &mut accum, 0, &storage);
     assert_eq!(accum.storage_info.len(), 1);
@@ -5494,7 +5404,7 @@ fn test_calculate_storage_count_and_alive_bytes_obsolete_account(
         .unwrap()
         .mark_accounts_obsolete(accounts_to_mark_obsolete.iter().cloned(), slot0 + 1);
 
-    let mut reader = append_vec::new_scan_accounts_reader();
+    let mut reader = crate::append_vec::new_scan_accounts_reader();
     let mut accum = IndexGenerationAccumulator::with_slots_capacity(1);
     accounts.generate_index_for_slot(&mut reader, &mut accum, 0, &storage);
     assert_eq!(
@@ -6621,7 +6531,7 @@ fn test_combine_ancient_slots_simple() {
 fn get_all_accounts_from_storages<'a>(
     storages: impl Iterator<Item = &'a Arc<AccountStorageEntry>>,
 ) -> Vec<(Pubkey, AccountSharedData)> {
-    let mut reader = append_vec::new_scan_accounts_reader();
+    let mut reader = crate::append_vec::new_scan_accounts_reader();
     storages
         .flat_map(|storage| {
             let mut vec = Vec::default();
@@ -6718,7 +6628,7 @@ pub fn get_account_from_account_from_storage(
 fn populate_index(db: &AccountsDb, slots: Range<Slot>) {
     slots.into_iter().for_each(|slot| {
         if let Some(storage) = db.get_storage_for_slot(slot) {
-            let mut reader = append_vec::new_scan_accounts_reader();
+            let mut reader = crate::append_vec::new_scan_accounts_reader();
             storage
                 .accounts
                 .scan_accounts(&mut reader, |offset, account| {
