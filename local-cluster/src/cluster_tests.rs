@@ -10,7 +10,10 @@ use {
         consensus_message::VoteMessage, unverified_vote_message::DecodedWireConsensusMessage,
         wire::VersionedWireConsensusMessage,
     },
-    agave_votor_transport::endpoint::{Datagram, ExitSignals, QuicDatagramEndpoint},
+    agave_votor_transport::{
+        ALPENGLOW_ALPN,
+        endpoint::{Datagram, ExitSignals, QuicDatagramEndpoint},
+    },
     crossbeam_channel::{Receiver, bounded},
     rand::{Rng, rng},
     rayon::{ThreadPool, prelude::*},
@@ -655,6 +658,7 @@ pub fn start_datagram_listener_for_alpenglow_votor(
     let endpoint = QuicDatagramEndpoint::spawn(
         rt.handle(),
         &listener_keypair,
+        ALPENGLOW_ALPN,
         vec![vote_listener_socket],
         client_socket,
         sender,
