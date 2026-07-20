@@ -1449,8 +1449,7 @@ mod tests {
         drop(cost_tracker);
 
         let record = record_receiver.drain().next().unwrap();
-        assert_eq!(record.transaction_batches.len(), 1);
-        assert_eq!(record.transaction_batches[0].len(), committed_count);
+        assert_eq!(record.transactions.len(), committed_count);
     }
 
     #[test]
