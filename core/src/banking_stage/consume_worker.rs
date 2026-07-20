@@ -1528,8 +1528,20 @@ pub(crate) mod external {
             )
         }
 
-        #[test]
-        fn test_commit_cancelled_response_reason_uses_batch_mode() {
+        #[test_case(
+            true,
+            not_included_reasons::ALL_OR_NOTHING_BATCH_FAILURE;
+            "all_or_nothing"
+        )]
+        #[test_case(
+            false,
+            not_included_reasons::PARTIAL_BATCH_CANCELLED;
+            "partial_batch"
+        )]
+        fn test_commit_cancelled_response_reason_uses_batch_mode(
+            all_or_nothing: bool,
+            expected_not_included_reason: u8,
+        ) {
             let simple_tx = wincode::serialize(&transfer(
                 &solana_keypair::Keypair::new(),
                 &solana_pubkey::Pubkey::new_unique(),
@@ -1549,13 +1561,9 @@ pub(crate) mod external {
             .0;
             let commit_details =
                 CommitTransactionDetails::NotCommitted(TransactionError::CommitCancelled);
-            let all_or_nothing_flags = ExecutionFlags {
+            let execution_flags = ExecutionFlags {
                 drop_on_failure: false,
-                all_or_nothing: true,
-            };
-            let partial_batch_flags = ExecutionFlags {
-                drop_on_failure: false,
-                all_or_nothing: false,
+                all_or_nothing,
             };
 
             assert_eq!(
@@ -1563,20 +1571,10 @@ pub(crate) mod external {
                     &tx,
                     &commit_details,
                     &bank,
-                    &all_or_nothing_flags,
+                    &execution_flags,
                 )
                 .not_included_reason,
-                not_included_reasons::ALL_OR_NOTHING_BATCH_FAILURE
-            );
-            assert_eq!(
-                ExternalWorker::response_from_commit_details(
-                    &tx,
-                    &commit_details,
-                    &bank,
-                    &partial_batch_flags,
-                )
-                .not_included_reason,
-                not_included_reasons::PARTIAL_BATCH_CANCELLED
+                expected_not_included_reason
             );
         }
 
