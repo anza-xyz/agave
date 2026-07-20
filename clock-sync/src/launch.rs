@@ -1,8 +1,5 @@
-//! Brings up the whole clock-sync stack: the QUIC datagram endpoint, the
-//! service thread, and a peer-list updater that publishes the current-epoch
-//! staked set (addresses for the transport, stakes for the fault-tolerant
-//! midpoint). The validator calls [`start_clock_sync`] and holds the returned
-//! [`ClockSyncHandles`] until shutdown.
+//! Brings up the clock-sync stack: the QUIC datagram endpoint, the service
+//! thread, and a peer-list updater publishing the current-epoch staked set.
 
 use {
     crate::{
@@ -36,12 +33,9 @@ use {
     tokio_util::sync::CancellationToken,
 };
 
-/// How often the peer list and stakes are refreshed from the root bank and
-/// gossip. Matches the votor peer-list cadence.
 const PEER_LIST_REFRESH_INTERVAL: Duration = Duration::from_secs(1);
 
-/// Inbound datagram channel capacity: at 1 pulse/second/peer this holds
-/// several rounds from the whole cluster.
+/// Several rounds of pulses from the whole cluster.
 const INGRESS_CHANNEL_CAP: usize = 8192;
 
 pub struct ClockSyncHandles {
@@ -50,8 +44,7 @@ pub struct ClockSyncHandles {
     runtime: Option<TokioRuntime>,
     service: ClockSyncService,
     updater: JoinHandle<()>,
-    /// The synchronized virtual clock. Shadow mode: exposed for metrics and
-    /// future consumers, read by nothing consensus-facing.
+    /// The synchronized virtual clock; read by nothing consensus-facing yet.
     pub clock: Arc<SyncedClock>,
     /// The endpoint exits if the ban channel closes; hold the (unused)
     /// sender for the endpoint's lifetime.
@@ -59,8 +52,7 @@ pub struct ClockSyncHandles {
 }
 
 impl ClockSyncHandles {
-    /// For identity rotation: the caller registers this with its key-update
-    /// notifier registry.
+    /// For the caller's identity-rotation registry.
     pub fn key_updater(&self) -> Arc<KeyUpdater> {
         self.endpoint.key_updater.clone()
     }
@@ -89,8 +81,6 @@ pub fn start_clock_sync(
         Err(_) => {
             let rt = tokio::runtime::Builder::new_multi_thread()
                 .enable_all()
-                // 1 core for TLS/handshake work, 1 for connections and egress:
-                // clock-sync traffic is 1 datagram/second/peer.
                 .worker_threads(2)
                 .thread_name("solClkSyncRt")
                 .build()
@@ -154,10 +144,8 @@ pub fn start_clock_sync(
 }
 
 /// Publish the current-epoch staked set: pubkey -> clock-sync socket for the
-/// transport's admission/connection control, pubkey -> stake for the
-/// fault-tolerant midpoint. An unstaked node publishes empty maps and
-/// free-runs (votor semantics; no epoch-boundary merging, the protocol
-/// tolerates brief churn).
+/// transport, pubkey -> stake for the state machine. An unstaked node
+/// publishes empty maps and free-runs.
 fn refresh_peer_list(
     cluster_info: &ClusterInfo,
     bank_forks: &RwLock<BankForks>,

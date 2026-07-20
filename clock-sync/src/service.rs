@@ -1,12 +1,7 @@
 //! The clock-sync service thread: drives the Welch-Lynch state machine
-//! against real time and the QUIC datagram transport.
-//!
-//! One thread owns the whole protocol. Each round it (1) broadcasts our
-//! pulse when the virtual schedule says so, (2) drains inbound pulses,
-//! calibrating link delay from the RTT stamped on each datagram, and (3)
-//! closes the round at `next + W`, applying the correction to the shared
-//! [`SyncedClock`]. Shadow mode: the only outputs are the clock (which
-//! nothing consensus-facing reads yet) and metrics.
+//! against real time and the QUIC datagram transport. Per round: broadcast
+//! our pulse at `next`, drain inbound pulses, close at `next + W` and apply
+//! the correction to the shared [`SyncedClock`].
 
 use {
     crate::{
@@ -106,10 +101,9 @@ fn run(
         absorption_half_width_ns: timing.absorption_half_width.as_nanos() as i64,
     };
 
-    // Bootstrap from the wall clock: the pulse scheduled at unix time k*T
-    // belongs to round k, which is globally consistent across validators
-    // whose system clocks agree to within ~W (Phase 2's coarse loop replaces
-    // this with a consensus-agreed beat).
+    // Bootstrap from the wall clock: the pulse at unix time k*T belongs to
+    // round k, consistent across validators whose system clocks agree to
+    // within ~W. Phase 2's coarse loop replaces this.
     let start_round = clock.local_now_ns().div_euclid(period_ns).saturating_add(1);
     let first_next_ns = start_round.saturating_mul(period_ns);
     let mut machine = WelchLynch::new(config, identity, start_round as u64, first_next_ns);
@@ -169,10 +163,8 @@ fn handle_datagram(
         message,
         ..
     } = datagram;
-    // Arrival is stamped here, at dequeue, not at the socket read: the
-    // ingress channel hop and thread scheduling land in the u term. A
-    // receive-time stamp on `Datagram` would tighten this if metrics show
-    // it matters.
+    // Arrival is stamped at dequeue, not at the socket read; the ingress
+    // channel hop lands in the delay-uncertainty term.
     let arrival_ns = clock.local_now_ns();
     let Ok(Message::Pulse { round, lateness_ns }) = protocol::decode(&message) else {
         stats.decode_errors = stats.decode_errors.saturating_add(1);
@@ -207,7 +199,6 @@ fn send_pulse(
     stats.send_lateness_ns = lateness_ns;
     let pulse = protocol::encode_pulse(machine.round(), lateness_ns);
     if egress.try_send(pulse).is_err() {
-        // Full or closed; closed also trips the ingress disconnect path.
         stats.egress_full = stats.egress_full.saturating_add(1);
     }
 }

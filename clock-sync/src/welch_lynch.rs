@@ -1,29 +1,11 @@
-//! The Welch-Lynch fine loop as a pure state machine.
-//!
-//! No I/O and no clocks: the caller feeds pulse arrivals stamped in its own
-//! local timebase (nanoseconds) and drives round closes; the machine returns
-//! the correction to apply. This file owns the two protocol decisions:
-//!
-//! - **Fault-tolerant midpoint** (stake-weighted): sort the in-window clock
-//!   offset estimates, discard the lightest prefix and suffix whose stake
-//!   just exceeds Σ/3, and shift by the average of the surviving extremes.
-//!   Any prefix or suffix carrying more than Σ/3 of stake must contain an
-//!   honest validator, so both survivors are bounded by honest estimates.
-//! - **Absorption**: when the in-window quorum fails, look for a cluster of
-//!   width 2S carrying more than 2Σ/3 of stake among *all* arrivals for the
-//!   round (in-window or not). If one exists the cluster is fine and we are
-//!   the outlier, so we snap to its midpoint without disturbing anyone.
+//! The Welch-Lynch fine loop as a pure state machine: no I/O and no clocks.
+//! The caller feeds pulse arrivals stamped in its own local timebase
+//! (nanoseconds) and drives round closes.
 //!
 //! Arrivals are buffered raw, keyed by the sender's round tag, and evaluated
 //! lazily at [`WelchLynch::close_round`]: pulses for round r+1 legitimately
 //! arrive while round r is still open, and `next` for a round is only final
 //! once the previous round's correction has been applied.
-//!
-//! A sender reports how late after its scheduled pulse time it actually
-//! broadcast (`lateness_ns`), which we subtract from its offset estimate. The
-//! value is clamped to `[0, W]`: a Byzantine sender lying about lateness can
-//! only move its own estimate within (or out of) the window, which is exactly
-//! the power it already has by timing the send itself.
 
 use {
     solana_pubkey::Pubkey,
@@ -74,8 +56,7 @@ pub enum RoundOutcome {
         in_window_stake: u64,
         total_stake: u64,
     },
-    /// No in-window quorum, but a 2S-wide cluster with >2Σ/3 stake exists:
-    /// we are the outlier and snap to it.
+    /// No in-window quorum; snapped to a 2S-wide cluster with quorum stake.
     Absorption {
         correction_ns: i64,
         cluster_size: usize,
@@ -110,14 +91,12 @@ pub struct WelchLynch {
     round: u64,
     /// Local time of this round's pulse (ours), ns.
     next_ns: i64,
-    /// The synchronized virtual clock minus the local clock. The pulse of
-    /// round k marks synchronized time k*T and fires at local time
-    /// `next_k = k*T + Σ corrections`, so this is `-Σ corrections`: a
-    /// positive correction means our clock runs ahead of the group (we
-    /// delay our pulse), so synchronized time reads *behind* local time.
+    /// The synchronized virtual clock minus the local clock. Round k's pulse
+    /// marks synchronized time k*T and fires at local time
+    /// `next_k = k*T + Σ corrections`, so this is `-Σ corrections`.
     cumulative_offset_ns: i64,
-    /// Raw arrivals keyed by the sender's round tag. Only tags in
-    /// `{round, round + 1}` are admitted, so this holds at most two buckets.
+    /// Raw arrivals keyed by the sender's round tag; only tags in
+    /// `{round, round + 1}` are admitted.
     buckets: BTreeMap<u64, HashMap<Pubkey, Arrival>>,
 }
 
@@ -202,10 +181,10 @@ impl WelchLynch {
     }
 
     /// How far off schedule the sender's pulse arrived, after removing link
-    /// delay and reported send lateness. Equivalently, our clock minus the
-    /// sender's: if our clock runs ahead, everyone's pulses arrive late in
-    /// our timebase and the estimate is positive.
+    /// delay and reported send lateness. Positive when our clock runs ahead.
     fn offset_estimate(&self, arrival: &Arrival) -> i64 {
+        // Clamp so a lying sender can only move its own estimate, which it
+        // could equally do by timing the send.
         let lateness = arrival.lateness_ns.clamp(0, self.config.window_ns);
         arrival
             .arrival_ns
@@ -235,9 +214,8 @@ impl WelchLynch {
             .collect();
         estimates.sort_unstable();
 
-        // The window test runs on the corrected estimate rather than the raw
-        // arrival time: what must be near zero for a synchronized peer is its
-        // estimated offset, after accounting for link delay and send lateness.
+        // The window test runs on the corrected estimate, not the raw
+        // arrival time.
         let in_window: Vec<(i64, u64)> = estimates
             .iter()
             .copied()
@@ -275,9 +253,8 @@ impl WelchLynch {
             }
         };
 
-        // Defensive bound: the honest-majority math already keeps the
-        // midpoint within the honest estimate range, but never let a single
-        // round move the clock further than the acceptance window.
+        // Defensive bound: never let a single round move the clock further
+        // than the acceptance window.
         let correction = outcome.correction_ns().clamp(
             self.config.window_ns.saturating_neg(),
             self.config.window_ns,

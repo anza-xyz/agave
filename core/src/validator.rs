@@ -983,8 +983,7 @@ impl Validator {
         node.info.set_shred_version(shred_version);
         node.info.set_wallclock(timestamp());
         if !config.enable_experimental_clock_sync {
-            // Don't advertise a port nothing is listening on; peers running
-            // the protocol would dial it on every reconcile.
+            // Don't advertise a port nothing is listening on.
             node.info.remove_clock_sync();
         }
         Self::print_node_info(&node);

@@ -1,11 +1,6 @@
-//! Per-peer one-way link delay calibration.
-//!
-//! QUIC measures path RTT continuously (handshake, ACK timing, keep-alives);
-//! the transport stamps the connection's current RTT estimate onto every
-//! inbound datagram. Congestion only ever adds delay, so the propagation
-//! delay is the *minimum* observed RTT — but a route change can lengthen the
-//! path, so a lifetime minimum would go stale. We therefore keep the minimum
-//! per time bucket over a sliding window and take `delay[j] = min / 2`.
+//! Per-peer one-way link delay calibration from the QUIC path RTT stamped
+//! on each inbound datagram: `delay[j] = min RTT / 2`, with the minimum
+//! taken over a sliding bucket window so a route change can expire it.
 
 use {
     solana_pubkey::Pubkey,

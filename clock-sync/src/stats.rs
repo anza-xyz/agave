@@ -1,6 +1,4 @@
-//! Per-round metrics for the clock-sync service (shadow mode's entire
-//! output: these datapoints are how we judge the protocol before anything
-//! consumes the synchronized clock).
+//! Per-round metrics for the clock-sync service.
 
 use {
     crate::{delay::DelayTracker, welch_lynch::RoundOutcome},

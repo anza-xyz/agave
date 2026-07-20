@@ -1,13 +1,7 @@
-//! Wire format for clock-sync datagrams.
-//!
-//! Fixed 18-byte layout, little-endian:
-//!
-//! ```text
-//! [version: u8][msg_type: u8][round: u64 LE][lateness_ns: i64 LE]
-//! ```
-//!
+//! Wire format for clock-sync datagrams: fixed 18-byte layout,
+//! `[version: u8][msg_type: u8][round: u64 LE][lateness_ns: i64 LE]`.
 //! Sender identity comes from the authenticated QUIC connection, not the
-//! payload, so pulses carry no pubkey or signature.
+//! payload.
 
 use bytes::Bytes;
 
@@ -25,13 +19,10 @@ const MSG_TYPE_PANIC: u8 = 1;
 pub enum Message {
     /// Broadcast once per period at the sender's scheduled pulse time.
     Pulse {
-        /// The sender's pulse round counter.
         round: u64,
         /// How long after its scheduled pulse time the sender actually
-        /// enqueued the broadcast. Receivers subtract this so that the
-        /// pseudocode's "sent exactly at `next`" assumption holds up to
-        /// enqueue precision. See the module docs of [`crate::welch_lynch`]
-        /// for how adversarial values are bounded.
+        /// enqueued the broadcast; receivers subtract it from the offset
+        /// estimate.
         lateness_ns: i64,
     },
 }

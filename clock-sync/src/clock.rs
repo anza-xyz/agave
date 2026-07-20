@@ -1,11 +1,6 @@
-//! The synchronized virtual clock.
-//!
-//! [`SyncedClock`] anchors a monotonic [`Instant`] to the system wall clock
-//! once at startup and thereafter advances at the local oscillator's rate.
-//! The clock-sync service steers it by publishing the cumulative Welch-Lynch
-//! correction as an atomic offset; readers get a cheap, lock-free timestamp
-//! that agrees with the rest of the cluster (Phase 1: shadow consumers and
-//! metrics only).
+//! The synchronized virtual clock: a monotonic [`Instant`] anchored to the
+//! system wall clock once at startup, plus an atomic offset published by the
+//! sync service.
 
 use std::{
     sync::atomic::{AtomicI64, Ordering},
@@ -19,9 +14,8 @@ pub struct SyncedClock {
     base_unix_ns: i64,
     /// Cumulative correction published by the sync service.
     offset_ns: AtomicI64,
-    /// Test-only artificial skew, folded uniformly into the local timebase
-    /// so an injected skew behaves exactly like a miscalibrated oscillator
-    /// phase: it shifts arrival stamps and pulse scheduling alike.
+    /// Test-only artificial skew, folded into the local timebase so it
+    /// shifts arrival stamps and pulse scheduling alike.
     skew_ns: i64,
 }
 
@@ -73,8 +67,7 @@ impl SyncedClock {
     }
 
     /// How far the synchronized clock has diverged from the system's wall
-    /// clock. Watches both cluster-vs-UTC drift and NTP steering of the
-    /// system clock (the virtual clock deliberately follows neither).
+    /// clock.
     pub fn offset_vs_system_ns(&self) -> i64 {
         let system_now_ns = SystemTime::now()
             .duration_since(UNIX_EPOCH)
