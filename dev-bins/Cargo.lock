@@ -84,6 +84,7 @@ dependencies = [
  "agave-bls-cert-verify",
  "agave-math-utils",
  "agave-votor-messages",
+ "agave-votor-transport",
  "bitvec",
  "crossbeam-channel",
  "log",
@@ -96,14 +97,33 @@ dependencies = [
  "solana-ledger",
  "solana-measure",
  "solana-metrics",
+ "solana-net-utils",
  "solana-packet 4.2.0",
  "solana-perf",
  "solana-pubkey 4.2.0",
  "solana-runtime",
  "solana-signer-store",
- "solana-streamer",
  "thiserror 2.0.18",
+ "tokio",
  "wincode",
+]
+
+[[package]]
+name = "agave-clock-sync"
+version = "4.3.0-alpha.1"
+dependencies = [
+ "agave-votor-transport",
+ "arc-swap",
+ "bytes",
+ "crossbeam-channel",
+ "log",
+ "solana-gossip",
+ "solana-metrics",
+ "solana-pubkey 4.2.0",
+ "solana-runtime",
+ "thiserror 2.0.18",
+ "tokio",
+ "tokio-util 0.7.18",
 ]
 
 [[package]]
@@ -391,16 +411,16 @@ dependencies = [
  "agave-logger",
  "agave-math-utils",
  "agave-votor-messages",
+ "agave-votor-transport",
+ "arc-swap",
  "bitvec",
+ "bytes",
  "crossbeam-channel",
  "itertools 0.14.0",
- "lazy-lru",
  "log",
  "parking_lot 0.12.5",
  "solana-bls-signatures",
- "solana-client",
  "solana-clock",
- "solana-connection-cache",
  "solana-epoch-schedule",
  "solana-gossip",
  "solana-hash 4.5.0",
@@ -415,11 +435,10 @@ dependencies = [
  "solana-signature",
  "solana-signer",
  "solana-signer-store",
- "solana-streamer",
  "solana-time-utils",
  "solana-transaction",
- "solana-transaction-error",
  "thiserror 2.0.18",
+ "tokio",
  "wincode",
 ]
 
@@ -441,6 +460,26 @@ dependencies = [
  "solana-signer-store",
  "thiserror 2.0.18",
  "wincode",
+]
+
+[[package]]
+name = "agave-votor-transport"
+version = "4.3.0-alpha.1"
+dependencies = [
+ "arrayvec",
+ "bytes",
+ "crossbeam-channel",
+ "log",
+ "quinn",
+ "rustls",
+ "solana-keypair",
+ "solana-metrics",
+ "solana-net-utils",
+ "solana-pubkey 4.2.0",
+ "solana-tls-utils",
+ "thiserror 2.0.18",
+ "tokio",
+ "tokio-util 0.7.18",
 ]
 
 [[package]]
@@ -6434,6 +6473,7 @@ dependencies = [
  "agave-banking-stage-ingress-types",
  "agave-bls-cert-verify",
  "agave-bls-sigverify",
+ "agave-clock-sync",
  "agave-feature-set",
  "agave-fs",
  "agave-logger",
@@ -6444,6 +6484,7 @@ dependencies = [
  "agave-transaction-view",
  "agave-votor",
  "agave-votor-messages",
+ "agave-votor-transport",
  "agave-xdp",
  "ahash 0.8.12",
  "anyhow",

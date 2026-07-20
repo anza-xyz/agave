@@ -5,11 +5,16 @@
 use log::*;
 use {
     crate::local_cluster::LocalCluster,
+    agave_votor::voting_service::VOTOR_RATE_LIMIT_PPS,
     agave_votor_messages::{
         consensus_message::VoteMessage, unverified_vote_message::DecodedWireConsensusMessage,
         wire::VersionedWireConsensusMessage,
     },
-    crossbeam_channel::bounded,
+    agave_votor_transport::{
+        ALPENGLOW_ALPN,
+        endpoint::{Datagram, ExitSignals, QuicDatagramEndpoint},
+    },
+    crossbeam_channel::{Receiver, bounded},
     rand::{Rng, rng},
     rayon::{ThreadPool, prelude::*},
     solana_clock::{self as clock, Slot},
@@ -32,16 +37,11 @@ use {
     solana_keypair::Keypair,
     solana_ledger::blockstore::Blockstore,
     solana_net_utils::{SocketAddrSpace, sockets::bind_to_localhost_unique},
-    solana_perf::packet::{PacketRef, packet_config},
+    solana_perf::packet::packet_config,
     solana_poh_config::PohConfig,
     solana_pubkey::Pubkey,
     solana_rpc_client::rpc_client::RpcClient,
     solana_signer::{Signer, signers::Signers},
-    solana_streamer::{
-        nonblocking::simple_qos::SimpleQosConfig,
-        quic::{QuicStreamerConfig, spawn_simple_qos_server},
-        streamer::StakedNodes,
-    },
     solana_system_transaction as system_transaction,
     solana_time_utils::timestamp,
     solana_tpu_client_next::{
@@ -64,6 +64,7 @@ use {
         thread::{JoinHandle, sleep},
         time::{Duration, Instant},
     },
+    tokio::runtime::{Builder as TokioBuilder, Runtime},
     tokio_util::sync::CancellationToken,
     wincode,
 };
@@ -80,7 +81,7 @@ impl TpuSender {
     pub fn new() -> Self {
         Self {
             runtime: Arc::new(
-                tokio::runtime::Builder::new_multi_thread()
+                TokioBuilder::new_multi_thread()
                     .worker_threads(4)
                     .enable_all()
                     .build()
@@ -623,46 +624,56 @@ pub fn check_for_new_processed(
     );
 }
 
-/// Start a QUIC streamer to listen for votes and certificates.
-/// Returns a cancellation token, the server thread handle, and a receiver for packet batches.
-pub fn start_quic_streamer_to_listen_for_votes_and_certs(
+/// Spawn a votor endpoint to sniff vote / cert traffic.
+/// This function is for tests only.
+///
+/// Returns the endpoint, the ingress receiver, and a tokio runtime
+/// handle which must outlive the endpoint.
+pub fn start_datagram_listener_for_alpenglow_votor(
     vote_listener_socket: UdpSocket,
-    validator_keys: &[Arc<Keypair>],
-    node_stakes: &[u64],
-) -> (
-    CancellationToken,
-    JoinHandle<()>,
-    crossbeam_channel::Receiver<solana_streamer::packet::PacketBatch>,
-) {
+    listener_keypair: Keypair,
+    admitted_peers: &[Pubkey],
+) -> (QuicDatagramEndpoint, Receiver<Datagram>, Runtime) {
+    let rt = TokioBuilder::new_multi_thread()
+        .enable_all()
+        .worker_threads(2)
+        .thread_name("solAlpenglowListen")
+        .build()
+        .expect("tokio runtime");
     let (sender, receiver) = bounded(1024);
-    let cancel = CancellationToken::new();
-    let stakes = validator_keys
+    // Listener never bans, so ban sender unused. Leak it so the channel stays
+    // open: dropping it would trip the InboundLoop's out-of-order-teardown assert.
+    let (ban_tx, ban_receiver) = tokio::sync::mpsc::channel(1);
+    Box::leak(Box::new(ban_tx));
+    // Admit every peer from `admitted_peers`. the None address keeps the listener's
+    // outbound loop from connecting to them. Leak the sender so the channel stays open.
+    let peer_list = admitted_peers
         .iter()
-        .zip(node_stakes)
-        .map(|(keypair, stake)| (keypair.pubkey(), *stake))
-        .collect();
-    let staked_nodes: Arc<RwLock<StakedNodes>> = Arc::new(RwLock::new(StakedNodes::new(
-        Arc::new(stakes),
-        HashMap::<Pubkey, u64>::default(), // overrides
-    )));
-    let (result, _banlist) = spawn_simple_qos_server(
-        "solAlpenglowTest",
-        "alpenglow_local_cluster_test",
-        [vote_listener_socket.into()],
-        &Keypair::new(),
+        .map(|pubkey| (*pubkey, None))
+        .collect::<HashMap<_, _>>();
+    let (peer_list_sender, peer_list_receiver) = tokio::sync::watch::channel(Arc::new(peer_list));
+    // We want the sender to stay alive so the endpoint does not exit prematurely.
+    Box::leak(Box::new(peer_list_sender));
+    let client_socket = bind_to_localhost_unique().expect("bind alpenglow client socket");
+    let endpoint = QuicDatagramEndpoint::spawn(
+        rt.handle(),
+        &listener_keypair,
+        ALPENGLOW_ALPN,
+        vec![vote_listener_socket],
+        client_socket,
         sender,
-        staked_nodes,
-        QuicStreamerConfig::default(),
-        SimpleQosConfig::default(),
-        cancel.clone(),
+        peer_list_receiver,
+        ban_receiver,
+        VOTOR_RATE_LIMIT_PPS,
+        ExitSignals::new(Arc::new(AtomicBool::new(false)), CancellationToken::new()),
     )
-    .unwrap();
-    (cancel, result.thread, receiver)
+    .expect("alpenglow datagram listener");
+    (endpoint, receiver, rt)
 }
 
-fn convert_packet_to_vote_message(packet: PacketRef, my_shred_version: u16) -> Option<VoteMessage> {
+fn convert_datagram_to_vote_message(message: &[u8], my_shred_version: u16) -> Option<VoteMessage> {
     let Ok(msg) = VersionedWireConsensusMessage::deserialize_with_expected_shred_version(
-        packet.data(..).unwrap_or_default(),
+        message,
         packet_config(),
         my_shred_version,
     ) else {
@@ -685,8 +696,7 @@ pub fn check_for_new_notarized_votes(
     contact_infos: &[ContactInfo],
     test_name: &str,
     vote_listener_socket: UdpSocket,
-    validator_keys: &[Arc<Keypair>],
-    node_stakes: &[u64],
+    listener_keypair: Keypair,
 ) {
     let loop_start = Instant::now();
     let loop_timeout = Duration::from_secs(180);
@@ -707,10 +717,11 @@ pub fn check_for_new_notarized_votes(
     let contact_infos_owned: Vec<ContactInfo> = contact_infos.to_vec();
     let test_name_owned = test_name.to_string();
 
-    let (cancel, quic_server_thread, receiver) = start_quic_streamer_to_listen_for_votes_and_certs(
+    let admitted_peers: Vec<Pubkey> = contact_infos.iter().map(|node| *node.pubkey()).collect();
+    let (_endpoint, receiver, _rt) = start_datagram_listener_for_alpenglow_votor(
         vote_listener_socket,
-        validator_keys,
-        node_stakes,
+        listener_keypair,
+        &admitted_peers,
     );
 
     // Now start vote listener and wait for new notarized votes.
@@ -726,53 +737,45 @@ pub fn check_for_new_notarized_votes(
         move || {
             while !done {
                 assert!(loop_start.elapsed() < loop_timeout);
-                let Ok(packet_batch) = receiver.recv_timeout(Duration::from_millis(100)) else {
+                let Ok(datagram) = receiver.recv_timeout(Duration::from_millis(100)) else {
                     continue;
                 };
-                for packet in packet_batch.iter() {
-                    let Some(vote_message) =
-                        convert_packet_to_vote_message(packet, my_shred_version)
-                    else {
-                        continue;
-                    };
-                    let vote = vote_message.vote;
-                    if !vote.is_notarization() {
-                        continue;
-                    }
-                    let rank = vote_message.rank;
-                    if rank >= contact_infos_owned.len() as u16 {
-                        warn!(
-                            "Received vote with rank {} which is greater than number of nodes {}",
-                            rank,
-                            contact_infos_owned.len()
-                        );
-                        continue;
-                    }
-                    let slot = vote.slot();
-                    if slot <= last_notarized[rank as usize] {
-                        continue;
-                    }
-                    last_notarized[rank as usize] = slot;
-                    num_new_notarized_votes[rank as usize] += 1;
-                    done = num_new_notarized_votes.iter().all(|&x| x > num_new_votes);
-                    if done || last_print.elapsed().as_secs() > 3 {
-                        info!(
-                            "{test_name_owned} waiting for {num_new_votes} new notarized votes.. \
-                             observed: {num_new_notarized_votes:?}"
-                        );
-                        last_print = Instant::now();
-                    }
+                let Some(vote_message) =
+                    convert_datagram_to_vote_message(&datagram.message, my_shred_version)
+                else {
+                    continue;
+                };
+                let vote = vote_message.vote;
+                if !vote.is_notarization() {
+                    continue;
                 }
-                if done {
-                    cancel.cancel();
+                let rank = vote_message.rank;
+                if rank >= contact_infos_owned.len() as u16 {
+                    warn!(
+                        "Received vote with rank {} which is greater than number of nodes {}",
+                        rank,
+                        contact_infos_owned.len()
+                    );
+                    continue;
+                }
+                let slot = vote.slot();
+                if slot <= last_notarized[rank as usize] {
+                    continue;
+                }
+                last_notarized[rank as usize] = slot;
+                num_new_notarized_votes[rank as usize] += 1;
+                done = num_new_notarized_votes.iter().all(|&x| x > num_new_votes);
+                if done || last_print.elapsed().as_secs() > 3 {
+                    info!(
+                        "{test_name_owned} waiting for {num_new_votes} new notarized votes.. \
+                         observed: {num_new_notarized_votes:?}"
+                    );
+                    last_print = Instant::now();
                 }
             }
         }
     });
     vote_listener.join().expect("Vote listener thread panicked");
-    quic_server_thread
-        .join()
-        .expect("QUIC server thread panicked");
 }
 
 pub fn check_no_new_roots(

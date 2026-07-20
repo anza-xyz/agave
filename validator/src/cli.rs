@@ -24,6 +24,7 @@ use {
     solana_clock::Slot,
     solana_epoch_schedule::MINIMUM_SLOTS_PER_EPOCH,
     solana_faucet::faucet::{self, FAUCET_PORT},
+    solana_gossip::cluster_info::DEFAULT_NUM_VOTOR_QUIC_ENDPOINTS,
     solana_hash::Hash,
     solana_net_utils::{MINIMUM_VALIDATOR_PORT_RANGE_WIDTH, VALIDATOR_PORT_RANGE},
     solana_send_transaction_service::send_transaction_service::{self},
@@ -310,6 +311,7 @@ pub struct DefaultArgs {
     pub tpu_max_streams_per_ms: String,
 
     pub num_quic_endpoints: String,
+    pub num_votor_endpoints: String,
     pub vote_use_quic: String,
 
     pub banking_trace_dir_byte_limit: String,
@@ -363,6 +365,7 @@ impl DefaultArgs {
             tpu_max_fwd_unstaked_connections: 0.to_string(),
             tpu_max_streams_per_ms: DEFAULT_MAX_STREAMS_PER_MS.to_string(),
             num_quic_endpoints: DEFAULT_QUIC_ENDPOINTS.to_string(),
+            num_votor_endpoints: DEFAULT_NUM_VOTOR_QUIC_ENDPOINTS.to_string(),
             banking_trace_dir_byte_limit: 0.to_string(),
             block_production_pacing_fill_time_millis: BankingStage::default_fill_time_millis()
                 .to_string(),
@@ -870,6 +873,15 @@ pub fn test_app<'a>(version: &'a str, default_args: &'a DefaultTestArgs) -> App<
                 .help(
                     "Activate Alpenglow at genesis. The validator_admission_ticket feature must \
                      remain active",
+                ),
+        )
+        .arg(
+            Arg::with_name("experimental_clock_sync")
+                .long("experimental-clock-sync")
+                .takes_value(false)
+                .help(
+                    "EXPERIMENTAL: run the Byzantine fault-tolerant clock synchronization \
+                     protocol in shadow mode. Only metrics are produced; consensus is unaffected",
                 ),
         )
         .arg(

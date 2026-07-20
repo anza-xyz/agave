@@ -123,7 +123,7 @@ use {
             AbsRequestHandlers, AccountsBackgroundService, DroppedSlotsReceiver,
             PendingSnapshotPackages, PrunedBanksRequestHandler, SnapshotRequestHandler,
         },
-        bank::{Bank, MAX_ALPENGLOW_VOTE_ACCOUNTS},
+        bank::Bank,
         bank_forks::BankForks,
         bank_forks_controller::BankForksControllerHandle,
         commitment::BlockCommitmentCache,
@@ -385,6 +385,7 @@ pub struct ValidatorConfig {
     pub block_production_scheduler_config: SchedulerConfig,
     pub enable_block_production_forwarding: bool,
     pub enable_scheduler_bindings: bool,
+    pub enable_experimental_clock_sync: bool,
     pub generator_config: Option<GeneratorConfig>,
     pub use_snapshot_archives_at_startup: UseSnapshotArchivesAtStartup,
     pub unified_scheduler_handler_threads: Option<usize>,
@@ -469,6 +470,7 @@ impl ValidatorConfig {
             // enable forwarding by default for tests
             enable_block_production_forwarding: true,
             enable_scheduler_bindings: false,
+            enable_experimental_clock_sync: false,
             generator_config: None,
             use_snapshot_archives_at_startup: UseSnapshotArchivesAtStartup::default(),
             unified_scheduler_handler_threads: None,
@@ -666,6 +668,7 @@ pub struct Validator {
     block_creation_loop: BlockCreationLoop,
     tpu: Tpu,
     tvu: Tvu,
+    clock_sync: Option<agave_clock_sync::launch::ClockSyncHandles>,
     ip_echo_server: Option<solana_net_utils::IpEchoServer>,
     pub cluster_info: Arc<ClusterInfo>,
     pub bank_forks: Arc<RwLock<BankForks>>,
@@ -979,6 +982,10 @@ impl Validator {
 
         node.info.set_shred_version(shred_version);
         node.info.set_wallclock(timestamp());
+        if !config.enable_experimental_clock_sync {
+            // Don't advertise a port nothing is listening on.
+            node.info.remove_clock_sync();
+        }
         Self::print_node_info(&node);
 
         let mut cluster_info = ClusterInfo::new(
@@ -1198,32 +1205,7 @@ impl Validator {
             ))
         };
 
-        let bls_connection_cache = Arc::new(ConnectionCache::new_with_max_connections(
-            "connection_cache_bls_quic",
-            // BLS consensus messaging is extremely low throughput (5 PPS). Even during standstill operations
-            // we wouldn't expect more than a 100 PPS. 1 connection is enough.
-            1, /* connection_pool_size */
-            // Overprovision to account for epoch boundary validator set rotations
-            MAX_ALPENGLOW_VOTE_ACCOUNTS * 2, /* max_connections */
-            Some(node.sockets.quic_alpenglow_client),
-            Some((
-                &identity_keypair,
-                node.info
-                    .alpenglow()
-                    .ok_or_else(|| {
-                        ValidatorError::Other(String::from(
-                            "Invalid QUIC address for Alpenglow BLS",
-                        ))
-                    })?
-                    .ip(),
-            )),
-            Some((&staked_nodes, &identity_keypair.pubkey())),
-        ));
         let key_notifiers = Arc::new(RwLock::new(KeyUpdaters::default()));
-        key_notifiers.write().unwrap().add(
-            KeyUpdaterType::BlsConnectionCache,
-            bls_connection_cache.clone(),
-        );
 
         // test-validator crate may start the validator in a tokio runtime
         // context which forces us to use the same runtime because a nested
@@ -1631,7 +1613,6 @@ impl Validator {
                 retransmit: node.sockets.retransmit_sockets,
                 fetch: node.sockets.tvu,
                 ancestor_hashes_requests: node.sockets.ancestor_hashes_requests,
-                alpenglow: node.sockets.alpenglow,
                 block_id_repair: node.sockets.block_id_repair,
             },
             blockstore.clone(),
@@ -1691,16 +1672,38 @@ impl Validator {
                 bank_forks_controller_receiver,
                 votor_event_sender: votor_event_sender.clone(),
                 votor_event_receiver,
-                cancel: cancel.clone(),
-                staked_nodes: staked_nodes.clone(),
+                cancel: cancel.child_token(),
                 key_notifiers: key_notifiers.clone(),
-                bls_connection_cache,
+                alpenglow_sockets: node.sockets.alpenglow,
+                alpenglow_client_socket: node.sockets.quic_alpenglow_client,
+                #[cfg(feature = "dev-context-only-utils")]
                 voting_service_test_override: config.voting_service_test_override.clone(),
                 highest_finalized,
             },
             reward_votes_sender,
         )
         .map_err(ValidatorError::Other)?;
+
+        let clock_sync = config
+            .enable_experimental_clock_sync
+            .then(|| {
+                agave_clock_sync::launch::start_clock_sync(
+                    cluster_info.clone(),
+                    bank_forks.clone(),
+                    node.sockets.clock_sync,
+                    node.sockets.quic_clock_sync_client,
+                    exit.clone(),
+                    cancel.child_token(),
+                )
+            })
+            .transpose()
+            .map_err(ValidatorError::Other)?;
+        if let Some(clock_sync) = &clock_sync {
+            key_notifiers
+                .write()
+                .unwrap()
+                .add(KeyUpdaterType::ClockSync, clock_sync.key_updater());
+        }
 
         let tpu_forwarding_client_config = {
             let runtime_handle = tpu_client_next_runtime
@@ -1830,6 +1833,7 @@ impl Validator {
             completed_data_sets_service,
             tpu,
             tvu,
+            clock_sync,
             poh_service,
             block_creation_loop,
             poh_recorder,
@@ -1929,7 +1933,7 @@ impl Validator {
         );
         info!(
             "local alpenglow address: {}",
-            node.sockets.alpenglow.local_addr().unwrap()
+            node.sockets.alpenglow[0].local_addr().unwrap()
         );
     }
 
@@ -2011,6 +2015,9 @@ impl Validator {
         }
         self.tpu.join().expect("tpu");
         self.tvu.join().expect("tvu");
+        if let Some(clock_sync) = self.clock_sync {
+            clock_sync.join().expect("clock_sync");
+        }
         if let Some(completed_data_sets_service) = self.completed_data_sets_service {
             completed_data_sets_service
                 .join()

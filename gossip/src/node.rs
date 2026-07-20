@@ -1,6 +1,6 @@
 use {
     crate::{
-        cluster_info::{NodeConfig, Sockets},
+        cluster_info::{DEFAULT_NUM_VOTOR_QUIC_ENDPOINTS, NodeConfig, Sockets},
         contact_info::{
             ContactInfo,
             Protocol::{QUIC, UDP},
@@ -108,6 +108,7 @@ impl Node {
             num_tvu_retransmit_sockets: NonZero::new(1).unwrap(),
             num_quic_endpoints: NonZero::new(DEFAULT_QUIC_ENDPOINTS)
                 .expect("Number of QUIC endpoints can not be zero"),
+            num_votor_quic_endpoints: DEFAULT_NUM_VOTOR_QUIC_ENDPOINTS,
         };
         let mut node = Self::new_with_external_ip(pubkey, config);
         let rpc_ports: [u16; 2] = find_available_ports_in_range(bind_ip_addr, port_range).unwrap();
@@ -130,6 +131,7 @@ impl Node {
             num_tvu_receive_sockets,
             num_tvu_retransmit_sockets,
             num_quic_endpoints,
+            num_votor_quic_endpoints: num_votor_endpoints,
         } = config;
         let bind_ip_addr = bind_ip_addrs.active();
 
@@ -296,9 +298,15 @@ impl Node {
             bind_in_range_with_config(bind_ip_addr, port_range, socket_configs.read_write)
                 .expect("ancestor_hashes_requests bind");
 
-        let (alpenglow_port, alpenglow) =
-            bind_in_range_with_config(bind_ip_addr, port_range, socket_configs.read_write)
+        let (alpenglow_port, alpenglow_primary) =
+            bind_in_range_with_config(bind_ip_addr, port_range, socket_configs.primarily_read_quic)
                 .expect("Alpenglow port bind should succeed");
+        let alpenglow = bind_more_with_config(
+            alpenglow_primary,
+            num_votor_endpoints.get(),
+            socket_configs.primarily_read_quic,
+        )
+        .expect("Alpenglow SO_REUSEPORT bind should succeed");
 
         let (_, block_id_repair) =
             bind_in_range_with_config(bind_ip_addr, port_range, socket_configs.read_write)
@@ -340,8 +348,23 @@ impl Node {
         )
         .unwrap();
 
-        let (_, quic_alpenglow_client) =
-            bind_in_range_with_config(bind_ip_addr, port_range, socket_configs.read_write).unwrap();
+        let (_, quic_alpenglow_client) = bind_in_range_with_config(
+            bind_ip_addr,
+            port_range,
+            socket_configs.primarily_write_quic,
+        )
+        .expect("Alpenglow votor client socket bind should succeed");
+
+        let (clock_sync_port, clock_sync) =
+            bind_in_range_with_config(bind_ip_addr, port_range, socket_configs.primarily_read_quic)
+                .expect("Clock-sync port bind should succeed");
+
+        let (_, quic_clock_sync_client) = bind_in_range_with_config(
+            bind_ip_addr,
+            port_range,
+            socket_configs.primarily_write_quic,
+        )
+        .expect("Clock-sync client socket bind should succeed");
 
         let (_, rpc_sts_client) = bind_in_range_with_config(
             bind_ip_addr,
@@ -398,10 +421,13 @@ impl Node {
         // cleanup timing.
         info.set_serve_repair(QUIC, (advertised_ip, 1)).unwrap();
         info.set_alpenglow((advertised_ip, alpenglow_port)).unwrap();
+        info.set_clock_sync((advertised_ip, clock_sync_port))
+            .unwrap();
 
         trace!("new ContactInfo: {info:?}");
         let sockets = Sockets {
             alpenglow,
+            clock_sync,
             gossip: gossip_sockets.into_iter().collect(),
             tvu: tvu_sockets,
             tpu_vote: tpu_vote_sockets,
@@ -418,6 +444,7 @@ impl Node {
             tpu_vote_forwarding_client,
             quic_vote_client,
             quic_alpenglow_client,
+            quic_clock_sync_client,
             tpu_transaction_forwarding_clients,
             rpc_sts_client,
         };

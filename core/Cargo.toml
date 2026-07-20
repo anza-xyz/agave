@@ -49,6 +49,7 @@ frozen-abi = [
 agave-banking-stage-ingress-types = { workspace = true }
 agave-bls-cert-verify = { workspace = true }
 agave-bls-sigverify = { workspace = true }
+agave-clock-sync = { workspace = true }
 agave-feature-set = { workspace = true }
 agave-fs = { workspace = true }
 agave-logger = { workspace = true }
@@ -59,6 +60,7 @@ agave-snapshots = { workspace = true }
 agave-transaction-view = { workspace = true }
 agave-votor = { workspace = true }
 agave-votor-messages = { workspace = true }
+agave-votor-transport = { workspace = true }
 agave-xdp = { workspace = true }
 ahash = { workspace = true }
 anyhow = { workspace = true }

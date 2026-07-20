@@ -253,6 +253,7 @@ pub fn execute(
     }
 
     let num_quic_endpoints = value_t_or_exit!(matches, "num_quic_endpoints", NonZeroUsize);
+    let num_votor_quic_endpoints = value_t_or_exit!(matches, "num_votor_endpoints", NonZeroUsize);
 
     let node_config = NodeConfig {
         advertised_ip,
@@ -265,6 +266,7 @@ pub fn execute(
         num_tvu_receive_sockets: tvu_receive_threads,
         num_tvu_retransmit_sockets: tvu_retransmit_threads,
         num_quic_endpoints,
+        num_votor_quic_endpoints,
     };
 
     let mut node = Node::new_with_external_ip(&identity_keypair.pubkey(), node_config);
@@ -880,6 +882,7 @@ pub fn execute(
         },
         enable_block_production_forwarding: staked_nodes_overrides_path.is_some(),
         enable_scheduler_bindings: matches.is_present("enable_scheduler_bindings"),
+        enable_experimental_clock_sync: matches.is_present("experimental_clock_sync"),
         banking_trace_dir_byte_limit: value_t_or_exit!(
             matches,
             "banking_trace_dir_byte_limit",
@@ -997,6 +1000,7 @@ pub fn execute(
         node.info.remove_tvu();
         node.info.remove_serve_repair();
         node.info.remove_alpenglow();
+        node.info.remove_clock_sync();
 
         // A node in this configuration shouldn't be an entrypoint to other nodes
         node.sockets.ip_echo = None;
