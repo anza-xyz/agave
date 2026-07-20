@@ -6518,13 +6518,11 @@ fn test_shrink_collect_with_obsolete_accounts() {
     );
 }
 
-pub(crate) const CAN_RANDOMLY_SHRINK_FALSE: bool = false;
-
 #[test]
 fn test_combine_ancient_slots_empty() {
     let db = AccountsDb::new_for_tests_with_config(Vec::new(), DEFAULT_ACCOUNTS_DB_CONFIG);
     // empty slots
-    db.combine_ancient_slots_packed(Vec::default(), CAN_RANDOMLY_SHRINK_FALSE);
+    db.combine_ancient_slots_packed(Vec::default(), false);
 }
 
 #[test]
@@ -6734,7 +6732,7 @@ fn get_one_ancient_append_vec_and_others_with_account_size(
     let storage = db.get_storage_for_slot(slot1).unwrap();
     let created_accounts = db.get_unique_accounts_from_storage(&storage);
 
-    db.combine_ancient_slots_packed(vec![slot1], CAN_RANDOMLY_SHRINK_FALSE);
+    db.combine_ancient_slots_packed(vec![slot1], false);
     let after_store = db.get_storage_for_slot(slot1).unwrap();
     let GetUniqueAccountsResult {
         stored_accounts: after_stored_accounts,

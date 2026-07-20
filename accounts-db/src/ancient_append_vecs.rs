@@ -1137,10 +1137,10 @@ mod tests {
             accounts_db::{
                 ShrinkCollectRefs,
                 tests::{
-                    CAN_RANDOMLY_SHRINK_FALSE, append_single_account_with_default_hash,
-                    compare_all_accounts, create_db_with_storages_and_index,
-                    create_storages_and_update_index, get_account_from_account_from_storage,
-                    get_all_accounts, remove_account_for_tests,
+                    append_single_account_with_default_hash, compare_all_accounts,
+                    create_db_with_storages_and_index, create_storages_and_update_index,
+                    get_account_from_account_from_storage, get_all_accounts,
+                    remove_account_for_tests,
                 },
             },
             accounts_index::{
@@ -2357,7 +2357,7 @@ mod tests {
         let storage = db.storage.get_slot_storage_entry(slot1).unwrap();
         let created_accounts = db.get_unique_accounts_from_storage(&storage);
 
-        db.combine_ancient_slots_packed(vec![slot1], CAN_RANDOMLY_SHRINK_FALSE);
+        db.combine_ancient_slots_packed(vec![slot1], false);
         assert!(db.storage.get_slot_storage_entry(slot1).is_some());
         let after_store = db.storage.get_slot_storage_entry(slot1).unwrap();
         let GetUniqueAccountsResult {
@@ -3489,7 +3489,7 @@ mod tests {
             max_ancient_slots: 0,
             percent_of_alive_shrunk_data: 0,
             ideal_storage_size: NonZeroU64::new(get_ancient_append_vec_capacity()).unwrap(),
-            can_randomly_shrink: CAN_RANDOMLY_SHRINK_FALSE,
+            can_randomly_shrink: false,
             ..default_tuning()
         };
 
