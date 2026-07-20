@@ -106,7 +106,7 @@ fn verify_certs(
             .into_par_iter()
             .map(|(_, certs)| {
                 let num_certs = certs.len();
-                (num_certs, verify_cert_group(certs, root_bank))
+                (num_certs, verify_cert_group(certs, root_bank, banlist))
             })
             .collect::<Vec<_>>()
     });
@@ -137,10 +137,17 @@ fn verify_certs(
     SigVerifiedBatch::Certificates(certs)
 }
 
-fn verify_cert_group(certs: Vec<CertPayload>, root_bank: &Bank) -> CertVerifyOutcome {
+fn verify_cert_group(
+    certs: Vec<CertPayload>,
+    root_bank: &Bank,
+    banlist: &SimpleQosBanlist,
+) -> CertVerifyOutcome {
     let mut failures = Vec::new();
 
     for cert_payload in certs {
+        if banlist.is_banned(&cert_payload.sender_identity_pubkey) {
+            continue;
+        }
         match verify_cert(cert_payload.cert, root_bank) {
             Ok(cert) => {
                 return CertVerifyOutcome {
@@ -148,7 +155,10 @@ fn verify_cert_group(certs: Vec<CertPayload>, root_bank: &Bank) -> CertVerifyOut
                     failures,
                 };
             }
-            Err(err) => failures.push((err, cert_payload.sender_identity_pubkey)),
+            Err(err) => {
+                banlist.ban(cert_payload.sender_identity_pubkey, BAN_TIMEOUT);
+                failures.push((err, cert_payload.sender_identity_pubkey));
+            }
         }
     }
 
