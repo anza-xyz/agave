@@ -45,8 +45,6 @@ pub struct BanCommand {
 pub struct Datagram {
     pub peer_pubkey: Pubkey,
     pub peer_address: SocketAddr,
-    /// When the datagram was read off the connection.
-    pub received_at: std::time::Instant,
     /// The connection's smoothed path RTT sampled at receive time.
     pub path_rtt: Duration,
     pub message: Bytes,

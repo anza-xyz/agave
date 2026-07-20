@@ -226,7 +226,6 @@ impl ConnectionReader {
         loop {
             match connection.read_datagram().await {
                 Ok(bytes) => {
-                    let received_at = std::time::Instant::now();
                     match rate_limiter.consume_tokens(1) {
                         // normal operation
                         Ok(remaining) if remaining >= rate_limit_watermark => {}
@@ -247,7 +246,6 @@ impl ConnectionReader {
                     match ingress.try_send(Datagram {
                         peer_pubkey: peer,
                         peer_address: remote_addr,
-                        received_at,
                         path_rtt: connection.rtt(),
                         message: bytes,
                     }) {

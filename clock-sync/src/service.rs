@@ -164,16 +164,19 @@ fn handle_datagram(
 ) {
     let Datagram {
         peer_pubkey,
-        received_at,
         path_rtt,
         message,
         ..
     } = datagram;
+    // Arrival is stamped here, at dequeue, not at the socket read: the
+    // ingress channel hop and thread scheduling land in the u term. A
+    // receive-time stamp on `Datagram` would tighten this if metrics show
+    // it matters.
+    let arrival_ns = clock.local_now_ns();
     let Ok(Message::Pulse { round, lateness_ns }) = protocol::decode(&message) else {
         stats.decode_errors = stats.decode_errors.saturating_add(1);
         return;
     };
-    let arrival_ns = clock.local_ns(received_at);
     delays.observe(peer_pubkey, path_rtt, arrival_ns);
     let delay_ns = delays
         .delay_ns(&peer_pubkey, arrival_ns)
