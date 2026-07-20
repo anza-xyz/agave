@@ -198,7 +198,7 @@ pub(crate) fn append_single_account_with_default_hash(
     let stored_accounts_info = storage.accounts.write_accounts(&storable_accounts).unwrap();
     if mark_alive {
         // updates 'alive_bytes' on the storage
-        storage.add_account(stored_accounts_info.size);
+        storage.add_accounts(1, stored_accounts_info.size);
     }
 
     if let Some(index) = add_to_index {

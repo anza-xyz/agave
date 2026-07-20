@@ -43,12 +43,6 @@ impl AccountsDb {
     }
 }
 
-impl AccountStorageEntry {
-    fn add_account(&self, num_bytes: usize) {
-        self.add_accounts(1, num_bytes)
-    }
-}
-
 /// this tuple contains slot info PER account
 impl<'a, T: ReadableAccount + Sync> StorableAccounts<'a> for (Slot, &'a [(&'a Pubkey, &'a T, Slot)])
 where
