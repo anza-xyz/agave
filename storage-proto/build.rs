@@ -2,7 +2,7 @@ fn main() -> Result<(), std::io::Error> {
     const PROTOC_ENVAR: &str = "PROTOC";
     // Safety: env is checked and updated before any threads might exist
     if std::env::var(PROTOC_ENVAR).is_err() {
-        #[cfg(not(windows))]
+        #[cfg(all(not(windows), feature = "protobuf-src"))]
         unsafe {
             std::env::set_var(PROTOC_ENVAR, protobuf_src::protoc())
         }
@@ -24,6 +24,8 @@ fn main() -> Result<(), std::io::Error> {
     tonic_prost_build::configure()
         .build_client(true)
         .build_server(false)
+        // proto3 optional fields need this on older system protoc (protobuf-src off)
+        .protoc_arg("--experimental_allow_proto3_optional")
         .type_attribute(
             "TransactionErrorType",
             "#[cfg_attr(test, derive(enum_iterator::Sequence))]",

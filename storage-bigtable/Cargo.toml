@@ -55,7 +55,7 @@ solana-metrics = { workspace = true }
 solana-pubkey = { workspace = true }
 solana-serde = { workspace = true }
 solana-signature = { workspace = true }
-solana-storage-proto = { workspace = true }
+solana-storage-proto = { workspace = true, features = ["protobuf-src"] }
 solana-time-utils = { workspace = true }
 solana-transaction = { workspace = true }
 solana-transaction-error = { workspace = true }
