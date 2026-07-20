@@ -22,7 +22,7 @@ use {
     },
     agave_votor_transport::endpoint::{BanCommand, Datagram},
     crossbeam_channel::{Receiver, Sender, TryRecvError, select},
-    log::{error, info, warn},
+    log::{error, warn},
     rayon::{ThreadPool, ThreadPoolBuilder},
     solana_clock::{Epoch, Slot},
     solana_gossip::cluster_info::ClusterInfo,
@@ -49,7 +49,7 @@ pub(super) fn send_ban_request(ban_sender: &mpsc::Sender<BanCommand>, peer: Pubk
         peer,
         duration: BAN_TIMEOUT,
     }) {
-        Ok(()) => info!("Requested ban for {peer}"),
+        Ok(()) => {}
         Err(mpsc::error::TrySendError::Full(_)) => {
             warn!("Ban channel full, dropping ban request for sender={peer}")
         }
