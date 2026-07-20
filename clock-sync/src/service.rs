@@ -133,7 +133,8 @@ fn run(
         if now_ns >= due_ns {
             if pulse_sent {
                 close_round(&mut machine, clock, stakes, &delays, &mut stats);
-                delays.retain(|peer| stakes.load().contains_key(peer));
+                let stakes = stakes.load();
+                delays.retain(|peer| stakes.contains_key(peer));
                 pulse_sent = false;
             } else {
                 send_pulse(&machine, clock, egress, &mut stats);

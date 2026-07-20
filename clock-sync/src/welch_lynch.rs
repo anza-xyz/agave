@@ -306,26 +306,27 @@ fn is_quorum(stake: u64, total_stake: u64) -> bool {
     total_stake > 0 && (stake as u128).saturating_mul(3) > (total_stake as u128).saturating_mul(2)
 }
 
-/// True once `cumulative` has crossed the Σ/3 trim threshold.
-fn crossed_trim_threshold(cumulative: u64, total_stake: u64) -> bool {
-    (cumulative as u128).saturating_mul(3) > total_stake as u128
+/// Walking the estimates in the given order, the first value at which the
+/// cumulative stake exceeds the Σ/3 trim threshold. `None` if it never does.
+fn trim_survivor<'a>(
+    estimates: impl Iterator<Item = &'a (i64, u64)>,
+    total_stake: u64,
+) -> Option<i64> {
+    let mut cumulative = 0u64;
+    estimates.into_iter().find_map(|(offset, stake)| {
+        cumulative = cumulative.saturating_add(*stake);
+        ((cumulative as u128).saturating_mul(3) > total_stake as u128).then_some(*offset)
+    })
 }
 
 /// The surviving extremes of the stake-weighted trim: walking in from each
 /// end of the sorted estimates, the first value at which the cumulative
 /// stake exceeds Σ/3. `None` if an end never crosses the threshold.
 fn trimmed_extremes(sorted: &[(i64, u64)], total_stake: u64) -> Option<(i64, i64)> {
-    let mut cumulative = 0u64;
-    let x_lo = sorted.iter().find_map(|(offset, stake)| {
-        cumulative = cumulative.saturating_add(*stake);
-        crossed_trim_threshold(cumulative, total_stake).then_some(*offset)
-    })?;
-    let mut cumulative = 0u64;
-    let x_hi = sorted.iter().rev().find_map(|(offset, stake)| {
-        cumulative = cumulative.saturating_add(*stake);
-        crossed_trim_threshold(cumulative, total_stake).then_some(*offset)
-    })?;
-    Some((x_lo, x_hi))
+    Some((
+        trim_survivor(sorted.iter(), total_stake)?,
+        trim_survivor(sorted.iter().rev(), total_stake)?,
+    ))
 }
 
 fn midpoint(a: i64, b: i64) -> i64 {
