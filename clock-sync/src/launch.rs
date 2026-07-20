@@ -1,20 +1,18 @@
-//! Wires the clock-sync protocol (`agave-clock-sync`) into the validator:
-//! spawns its QUIC datagram endpoint, the service thread, and a peer-list
-//! updater that publishes the current-epoch staked set (addresses for the
-//! transport, stakes for the fault-tolerant midpoint).
-//!
-//! Experimental and opt-in (`--experimental-clock-sync`); shadow mode only.
+//! Brings up the whole clock-sync stack: the QUIC datagram endpoint, the
+//! service thread, and a peer-list updater that publishes the current-epoch
+//! staked set (addresses for the transport, stakes for the fault-tolerant
+//! midpoint). The validator calls [`start_clock_sync`] and holds the returned
+//! [`ClockSyncHandles`] until shutdown.
 
 use {
-    crate::admin_rpc_post_init::{KeyUpdaterType, KeyUpdaters},
-    agave_clock_sync::{
+    crate::{
         CLOCK_SYNC_ALPN, CLOCK_SYNC_RATE_LIMIT_PPS,
         clock::SyncedClock,
         service::{ClockSyncService, ServiceTiming, SharedStakes},
     },
     agave_votor_transport::{
         PeerListSender,
-        endpoint::{BanCommand, ExitSignals, QuicDatagramEndpoint},
+        endpoint::{BanCommand, ExitSignals, KeyUpdater, QuicDatagramEndpoint},
     },
     arc_swap::ArcSwap,
     log::error,
@@ -61,6 +59,12 @@ pub struct ClockSyncHandles {
 }
 
 impl ClockSyncHandles {
+    /// For identity rotation: the caller registers this with its key-update
+    /// notifier registry.
+    pub fn key_updater(&self) -> Arc<KeyUpdater> {
+        self.endpoint.key_updater.clone()
+    }
+
     pub fn join(mut self) -> std::thread::Result<()> {
         if let Some(rt) = self.runtime.take() {
             rt.block_on(self.endpoint.shutdown())
@@ -77,7 +81,6 @@ pub fn start_clock_sync(
     bank_forks: Arc<RwLock<BankForks>>,
     clock_sync_socket: UdpSocket,
     clock_sync_client_socket: UdpSocket,
-    key_notifiers: &Arc<RwLock<KeyUpdaters>>,
     exit: Arc<AtomicBool>,
     cancel: CancellationToken,
 ) -> Result<ClockSyncHandles, String> {
@@ -118,10 +121,6 @@ pub fn start_clock_sync(
         ExitSignals::new(exit.clone(), cancel),
     )
     .map_err(|err| format!("clock-sync endpoint: {err:?}"))?;
-    key_notifiers
-        .write()
-        .unwrap()
-        .add(KeyUpdaterType::ClockSync, endpoint.key_updater.clone());
 
     let clock = Arc::new(SyncedClock::new());
     let service = ClockSyncService::new(

@@ -9,7 +9,6 @@ use {
         },
         banking_trace::{self, BankingTracer, TraceError},
         block_creation_loop::{BlockCreationLoop, BlockCreationLoopConfig, ReplayHighestFrozen},
-        clock_sync::{ClockSyncHandles, start_clock_sync},
         cluster_info_vote_listener::VoteTracker,
         completed_data_sets_service::CompletedDataSetsService,
         consensus::{
@@ -669,7 +668,7 @@ pub struct Validator {
     block_creation_loop: BlockCreationLoop,
     tpu: Tpu,
     tvu: Tvu,
-    clock_sync: Option<ClockSyncHandles>,
+    clock_sync: Option<agave_clock_sync::launch::ClockSyncHandles>,
     ip_echo_server: Option<solana_net_utils::IpEchoServer>,
     pub cluster_info: Arc<ClusterInfo>,
     pub bank_forks: Arc<RwLock<BankForks>>,
@@ -1689,18 +1688,23 @@ impl Validator {
         let clock_sync = config
             .enable_experimental_clock_sync
             .then(|| {
-                start_clock_sync(
+                agave_clock_sync::launch::start_clock_sync(
                     cluster_info.clone(),
                     bank_forks.clone(),
                     node.sockets.clock_sync,
                     node.sockets.quic_clock_sync_client,
-                    &key_notifiers,
                     exit.clone(),
                     cancel.child_token(),
                 )
             })
             .transpose()
             .map_err(ValidatorError::Other)?;
+        if let Some(clock_sync) = &clock_sync {
+            key_notifiers
+                .write()
+                .unwrap()
+                .add(KeyUpdaterType::ClockSync, clock_sync.key_updater());
+        }
 
         let tpu_forwarding_client_config = {
             let runtime_handle = tpu_client_next_runtime

@@ -15,6 +15,7 @@
 
 pub mod clock;
 pub mod delay;
+pub mod launch;
 pub mod protocol;
 pub mod service;
 pub(crate) mod stats;
