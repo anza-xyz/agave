@@ -121,7 +121,7 @@ impl<Tx: TransactionWithMeta> ConsumeWorker<Tx> {
             bank,
             &work.transactions,
             &work.max_ages,
-            ExecutionFlags {
+            &ExecutionFlags {
                 drop_on_failure: false,
                 all_or_nothing: false,
             },
@@ -425,13 +425,11 @@ pub(crate) mod external {
 
                 return Ok(false);
             }
-            let all_or_nothing = execution_flags.all_or_nothing;
-
             let output = self.consumer.process_and_record_aged_transactions(
                 bank,
                 &transactions,
                 &max_ages,
-                execution_flags,
+                &execution_flags,
             );
 
             self.metrics.update_for_consume(&output);
@@ -459,7 +457,7 @@ pub(crate) mod external {
                     &transactions,
                     &commit_results,
                     bank,
-                    all_or_nothing,
+                    &execution_flags,
                 ),
             )?;
 
@@ -600,7 +598,7 @@ pub(crate) mod external {
             transactions: &'a [impl TransactionWithMeta],
             commit_results: &'a [CommitTransactionDetails],
             bank: &'a Bank,
-            all_or_nothing: bool,
+            execution_flags: &'a ExecutionFlags,
         ) -> impl ExactSizeIterator<Item = ExecutionResponse> + 'a {
             assert_eq!(transactions.len(), commit_results.len());
             let mut transactions_iterator = transactions.iter();
@@ -617,7 +615,12 @@ pub(crate) mod external {
                         let commit_details = commit_result_iterator.next().expect(
                             "commit result iterator must contain element for each sent transaction",
                         );
-                        Self::response_from_commit_details(tx, commit_details, bank, all_or_nothing)
+                        Self::response_from_commit_details(
+                            tx,
+                            commit_details,
+                            bank,
+                            execution_flags,
+                        )
                     }
                     Err(err) => ExecutionResponse {
                         execution_slot: bank.slot(),
@@ -1066,7 +1069,7 @@ pub(crate) mod external {
             tx: &impl TransactionWithMeta,
             commit_details: &CommitTransactionDetails,
             bank: &Bank,
-            all_or_nothing: bool,
+            execution_flags: &ExecutionFlags,
         ) -> ExecutionResponse {
             match commit_details {
                 CommitTransactionDetails::Committed {
@@ -1090,7 +1093,7 @@ pub(crate) mod external {
                     execution_slot: bank.slot(),
                     not_included_reason: transaction_error_to_not_included_reason(
                         transaction_error,
-                        all_or_nothing,
+                        execution_flags.all_or_nothing,
                     ),
                     cost_units: 0,
                     fee_payer_balance: 0,
@@ -1459,6 +1462,7 @@ pub(crate) mod external {
                     .0
                 })
                 .collect::<Vec<_>>();
+            let execution_flags = ExecutionFlags::default();
 
             let responses = ExternalWorker::consume_response_iterator(
                 &[
@@ -1489,7 +1493,7 @@ pub(crate) mod external {
                     ),
                 ],
                 &bank,
-                false,
+                &execution_flags,
             )
             .collect::<Vec<_>>();
 
@@ -1545,15 +1549,33 @@ pub(crate) mod external {
             .0;
             let commit_details =
                 CommitTransactionDetails::NotCommitted(TransactionError::CommitCancelled);
+            let all_or_nothing_flags = ExecutionFlags {
+                drop_on_failure: false,
+                all_or_nothing: true,
+            };
+            let partial_batch_flags = ExecutionFlags {
+                drop_on_failure: false,
+                all_or_nothing: false,
+            };
 
             assert_eq!(
-                ExternalWorker::response_from_commit_details(&tx, &commit_details, &bank, true)
-                    .not_included_reason,
+                ExternalWorker::response_from_commit_details(
+                    &tx,
+                    &commit_details,
+                    &bank,
+                    &all_or_nothing_flags,
+                )
+                .not_included_reason,
                 not_included_reasons::ALL_OR_NOTHING_BATCH_FAILURE
             );
             assert_eq!(
-                ExternalWorker::response_from_commit_details(&tx, &commit_details, &bank, false)
-                    .not_included_reason,
+                ExternalWorker::response_from_commit_details(
+                    &tx,
+                    &commit_details,
+                    &bank,
+                    &partial_batch_flags,
+                )
+                .not_included_reason,
                 not_included_reasons::PARTIAL_BATCH_CANCELLED
             );
         }
