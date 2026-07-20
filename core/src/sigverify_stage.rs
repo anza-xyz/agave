@@ -1,8 +1,7 @@
 //! The `sigverify_stage` implements the signature verification stage of the TPU. It
-//! receives a list of lists of packets and outputs the same list, but tags each
-//! top-level list with a list of booleans, telling the next stage whether the
-//! signature in that packet is valid. It assumes each packet contains one
-//! transaction. All processing is done on the CPU by default.
+//! receives packet batches, marks rejected packets as discarded, and forwards
+//! only batches containing at least one valid packet. It assumes each packet
+//! contains one transaction. All processing is done on the CPU by default.
 
 use {
     crate::{
@@ -472,7 +471,7 @@ mod tests {
 
     #[test_case(false, false; "tx_v1_disabled")]
     #[test_case(true, true; "tx_v1_enabled")]
-    fn test_sigverify_stage_tx_v1_feature_gate(enable_tx_v1: bool, expected_valid: bool) {
+    fn test_sigverify_stage_tx_v1_feature_gate(enable_tx_v1: bool, expect_v1_output: bool) {
         let genesis_config = create_genesis_config(1).genesis_config;
         let mut bank = Bank::new_for_tests(&genesis_config);
         if enable_tx_v1 {
@@ -499,18 +498,30 @@ mod tests {
             None,
         );
 
+        let tx_v1_bytes = wincode::serialize(&test_tx_v1()).unwrap();
         let mut bytes_batch = BytesPacketBatch::with_capacity(1);
-        bytes_batch.push(BytesPacket::from_bytes(
-            None,
-            wincode::serialize(&test_tx_v1()).unwrap(),
-        ));
+        bytes_batch.push(BytesPacket::from_bytes(None, tx_v1_bytes.clone()));
         packet_s.send(PacketBatch::from(bytes_batch)).unwrap();
+        let sentinel_batch = to_packet_batches(&[test_tx()], 1).pop().unwrap();
+        let sentinel_bytes = sentinel_batch.get(0).unwrap().data(..).unwrap().to_vec();
+        packet_s.send(sentinel_batch).unwrap();
 
+        if expect_v1_output {
+            let verified_batch = verified_r.recv_timeout(Duration::from_secs(30)).unwrap();
+            assert_eq!(verified_batch.len(), 1);
+            assert!(!verified_batch.get(0).unwrap().meta().discard());
+            assert_eq!(
+                verified_batch.get(0).unwrap().data(..).unwrap(),
+                tx_v1_bytes
+            );
+        }
+        // Receiving the sentinel proves that the preceding v1 packet was processed.
         let verified_batch = verified_r.recv_timeout(Duration::from_secs(30)).unwrap();
         assert_eq!(verified_batch.len(), 1);
+        assert!(!verified_batch.get(0).unwrap().meta().discard());
         assert_eq!(
-            !verified_batch.get(0).unwrap().meta().discard(),
-            expected_valid
+            verified_batch.get(0).unwrap().data(..).unwrap(),
+            sentinel_bytes
         );
 
         drop(packet_s);
