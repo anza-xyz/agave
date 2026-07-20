@@ -52,7 +52,7 @@ pub(super) struct SigVerifierStats {
     pub(super) extract_filter_msgs_us: WelfordStats,
     /// Number of packets received.
     pub(super) num_pkts: WelfordStats,
-    /// Number of discarded packets received from the streamer.
+    /// Number of discarded packets received from the network.
     pub(super) num_discarded_pkts: Saturating<u64>,
     /// Number of times we failed to deserialize a packet.
     pub(super) num_malformed_pkts: Saturating<u64>,
@@ -200,8 +200,6 @@ pub(super) struct SigVerifyCertStats {
     /// Number of certs skipped because another cert of the same `CertificateType` was verified in
     /// the same batch.
     pub(super) redundant_certs_skipped: Saturating<u64>,
-    /// Number of times we are banning a validator that was already banned.
-    pub(super) already_banned: Saturating<u64>,
     /// Number of times we are banning a validator.
     pub(super) banning_validator: Saturating<u64>,
 
@@ -228,7 +226,6 @@ impl SigVerifyCertStats {
             sig_verified_certs,
             unnecessary_certs_verified,
             redundant_certs_skipped,
-            already_banned,
             banning_validator,
             certificate_verification_failed,
             too_far_in_future,
@@ -241,7 +238,6 @@ impl SigVerifyCertStats {
         self.sig_verified_certs += sig_verified_certs;
         self.unnecessary_certs_verified += unnecessary_certs_verified;
         self.redundant_certs_skipped += redundant_certs_skipped;
-        self.already_banned += already_banned;
         self.banning_validator += banning_validator;
         self.certificate_verification_failed += certificate_verification_failed;
         self.too_far_in_future += too_far_in_future;
@@ -258,7 +254,6 @@ impl SigVerifyCertStats {
             sig_verified_certs,
             unnecessary_certs_verified,
             redundant_certs_skipped,
-            already_banned,
             banning_validator,
             certificate_verification_failed,
             too_far_in_future,
@@ -278,7 +273,6 @@ impl SigVerifyCertStats {
                 i64
             ),
             ("redundant_certs_skipped", redundant_certs_skipped.0, i64),
-            ("already_banned", already_banned.0, i64),
             ("banning_validator", banning_validator.0, i64),
             (
                 "certificate_verification_failed",
@@ -312,8 +306,8 @@ pub(super) struct SigVerifyVoteStats {
     /// Number of votes [`verify_and_send_votes`] successfully verified the signature of.
     pub(super) sig_verified_votes: Saturating<u64>,
 
-    /// Number of times we are banning a validator that was already banned.
-    pub(super) already_banned: Saturating<u64>,
+    /// Number of times the cert was too far in the future and discarded.
+    pub(super) too_far_in_future: Saturating<u64>,
     /// Number of times we are banning a validator.
     pub(super) banning_validator: Saturating<u64>,
 
@@ -350,7 +344,7 @@ impl SigVerifyVoteStats {
         let Self {
             votes_to_sig_verify,
             sig_verified_votes,
-            already_banned,
+            too_far_in_future,
             banning_validator,
             metrics_sent,
             metrics_channel_full,
@@ -367,7 +361,7 @@ impl SigVerifyVoteStats {
         } = other;
         self.votes_to_sig_verify += votes_to_sig_verify;
         self.sig_verified_votes += sig_verified_votes;
-        self.already_banned += already_banned;
+        self.too_far_in_future += too_far_in_future;
         self.banning_validator += banning_validator;
         self.metrics_sent += metrics_sent;
         self.metrics_channel_full += metrics_channel_full;
@@ -389,7 +383,7 @@ impl SigVerifyVoteStats {
         let Self {
             votes_to_sig_verify,
             sig_verified_votes,
-            already_banned,
+            too_far_in_future,
             banning_validator,
             metrics_sent,
             metrics_channel_full,
@@ -408,7 +402,7 @@ impl SigVerifyVoteStats {
             "bls_vote_sigverify_stats",
             ("votes_to_sig_verify", votes_to_sig_verify.0, i64),
             ("sig_verified_votes", sig_verified_votes.0, i64),
-            ("already_banned", already_banned.0, i64),
+            ("too_far_in_future", too_far_in_future.0, i64),
             ("banning_validator", banning_validator.0, i64),
             ("metrics_sent", metrics_sent.0, i64),
             ("metrics_channel_full", metrics_channel_full.0, i64),

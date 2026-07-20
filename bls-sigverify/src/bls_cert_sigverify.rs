@@ -1,6 +1,6 @@
 use {
     crate::{
-        bls_sigverifier::{BAN_TIMEOUT, NUM_SLOTS_FOR_VERIFY},
+        bls_sigverifier::{NUM_SLOTS_FOR_VERIFY, send_ban_request},
         errors::SigVerifyCertError,
         stats::SigVerifyCertStats,
         utils::send_certs_to_pool,
@@ -11,6 +11,7 @@ use {
         sig_verified_messages::SigVerifiedBatch,
         unverified_vote_message::UnverifiedCertificate,
     },
+    agave_votor_transport::endpoint::BanCommand,
     crossbeam_channel::Sender,
     log::info,
     rayon::{
@@ -21,9 +22,9 @@ use {
     solana_measure::measure::Measure,
     solana_pubkey::Pubkey,
     solana_runtime::bank::Bank,
-    solana_streamer::nonblocking::simple_qos::SimpleQosBanlist,
     std::collections::{HashMap, HashSet},
     thiserror::Error,
+    tokio::sync::mpsc,
 };
 
 pub(super) struct CertPayload {
@@ -57,7 +58,7 @@ pub(super) fn verify_and_send_certificates(
     cert_groups: HashMap<CertificateType, Vec<CertPayload>>,
     root_bank: &Bank,
     channel_to_pool: &Sender<SigVerifiedBatch>,
-    banlist: &SimpleQosBanlist,
+    ban_sender: &mpsc::Sender<BanCommand>,
     thread_pool: &ThreadPool,
 ) -> Result<SigVerifyCertStats, SigVerifyCertError> {
     for cert_type in cert_groups.keys() {
@@ -75,7 +76,7 @@ pub(super) fn verify_and_send_certificates(
         root_bank,
         verified_certs_set,
         &mut stats,
-        banlist,
+        ban_sender,
         thread_pool,
     );
     stats.sig_verified_certs += messages.len() as u64;
@@ -98,7 +99,7 @@ fn verify_certs(
     root_bank: &Bank,
     verified_certs_set: &mut HashSet<CertificateType>,
     stats: &mut SigVerifyCertStats,
-    banlist: &SimpleQosBanlist,
+    ban_sender: &mpsc::Sender<BanCommand>,
     thread_pool: &ThreadPool,
 ) -> SigVerifiedBatch {
     let verified = thread_pool.install(|| {
@@ -122,7 +123,7 @@ fn verify_certs(
         stats.redundant_certs_skipped += num_certs.saturating_sub(num_certs_attempted) as u64;
 
         for (err, sender_identity_pubkey) in outcome.failures {
-            handle_cert_verify_error(err, sender_identity_pubkey, stats, banlist);
+            handle_cert_verify_error(err, sender_identity_pubkey, stats, ban_sender);
         }
 
         if let Some(cert) = outcome.verified_cert {
@@ -162,18 +163,13 @@ fn handle_cert_verify_error(
     err: CertVerifyError,
     sender_identity_pubkey: Pubkey,
     stats: &mut SigVerifyCertStats,
-    banlist: &SimpleQosBanlist,
+    ban_sender: &mpsc::Sender<BanCommand>,
 ) {
     match &err {
         CertVerifyError::CertVerifyFailed(_) => {
             stats.banning_validator += 1;
-            if banlist.ban(sender_identity_pubkey, BAN_TIMEOUT) {
-                stats.already_banned += 1;
-            } else {
-                info!(
-                    "bls_cert_sigverify: banned sender={sender_identity_pubkey} due to error {err}"
-                );
-            }
+            send_ban_request(ban_sender, sender_identity_pubkey);
+            info!("bls_cert_sigverify: banned sender={sender_identity_pubkey} due to error {err}");
             stats.certificate_verification_failed += 1;
         }
         CertVerifyError::TooFarInFuture { .. } => {

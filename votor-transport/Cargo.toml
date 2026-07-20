@@ -1,0 +1,41 @@
+[package]
+name = "agave-votor-transport"
+description = "QUIC datagram transport for Solana consensus traffic"
+documentation = "https://docs.rs/agave-votor-transport"
+version = { workspace = true }
+authors = { workspace = true }
+repository = { workspace = true }
+homepage = { workspace = true }
+license = { workspace = true }
+edition = { workspace = true }
+
+[lib]
+
+[features]
+dev-context-only-utils = []
+agave-unstable-api = []
+
+[dependencies]
+arrayvec = { workspace = true }
+bytes = { workspace = true }
+crossbeam-channel = { workspace = true }
+log = { workspace = true }
+quinn = { workspace = true }
+rustls = { workspace = true }
+solana-keypair = { workspace = true }
+solana-metrics = { workspace = true }
+solana-net-utils = { workspace = true }
+solana-pubkey = { workspace = true, features = ["rand"] }
+solana-tls-utils = { workspace = true, features = ["agave-unstable-api"] }
+thiserror = { workspace = true }
+tokio = { workspace = true, features = ["rt-multi-thread", "macros", "sync", "time"] }
+tokio-util = { workspace = true }
+
+[dev-dependencies]
+quinn-proto = "0.11"
+solana-keypair = { workspace = true }
+solana-net-utils = { workspace = true, features = ["dev-context-only-utils"] }
+tokio = { workspace = true, features = ["full"] }
+
+[lints]
+workspace = true
