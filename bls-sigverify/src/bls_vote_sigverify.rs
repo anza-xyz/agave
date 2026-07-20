@@ -4,7 +4,7 @@ use {
     crate::{
         bls_sigverifier::{BAN_TIMEOUT, NUM_SLOTS_FOR_VERIFY, SigVerifierChannels},
         errors::SigVerifyVoteError,
-        rewards::rewards_wants_vote,
+        rewards::RewardVoteMessage,
         stats::SigVerifyVoteStats,
         utils::{
             send_votes_to_metrics, send_votes_to_pool, send_votes_to_repair, send_votes_to_rewards,
@@ -13,7 +13,6 @@ use {
     agave_votor_messages::{
         consensus_message::VoteMessage,
         metric_types::ConsensusMetricsEvent,
-        reward_certificate::AddVoteMessage,
         sig_verified_messages::SigVerifiedBatch,
         unverified_vote_message::UnverifiedVoteMessage,
         vote::Vote,
@@ -35,7 +34,7 @@ use {
     solana_pubkey::Pubkey,
     solana_runtime::bank::Bank,
     solana_streamer::nonblocking::simple_qos::SimpleQosBanlist,
-    std::collections::HashMap,
+    std::{collections::HashMap, num::NonZero},
 };
 
 fn into_vote_msg(msg: UnverifiedVoteMessage) -> VoteMessage {
@@ -50,6 +49,7 @@ fn into_vote_msg(msg: UnverifiedVoteMessage) -> VoteMessage {
 struct VerifiedVotePayload {
     vote_message: VoteMessage,
     sender_vote_account_pubkey: Pubkey,
+    stake: NonZero<u64>,
 }
 
 /// [`VoteMessage`] along with other information needed to sig verify it.
@@ -60,6 +60,7 @@ pub(super) struct UnverifiedVotePayload {
     pub sender_bls_pubkey: PopVerified<BlsPubkeyAffine>,
     pub sender_vote_account_pubkey: Pubkey,
     pub sender_identity_pubkey: Pubkey,
+    pub stake: NonZero<u64>,
 }
 
 impl UnverifiedVotePayload {
@@ -71,6 +72,7 @@ impl UnverifiedVotePayload {
             .map(|()| VerifiedVotePayload {
                 vote_message: into_vote_msg(self.vote_message),
                 sender_vote_account_pubkey: self.sender_vote_account_pubkey,
+                stake: self.stake,
             })
     }
 }
@@ -155,7 +157,7 @@ fn process_verified_votes(
 ) -> (
     SigVerifiedBatch,
     HashMap<Pubkey, Vec<Slot>>,
-    AddVoteMessage,
+    Vec<RewardVoteMessage>,
     Vec<ConsensusMetricsEvent>,
 ) {
     let mut votes_for_reward = Vec::with_capacity(verified_votes.len());
@@ -163,13 +165,15 @@ fn process_verified_votes(
     let mut votes_for_pool = Vec::with_capacity(verified_votes.len());
     let mut votes_for_metrics = Vec::with_capacity(verified_votes.len());
     for payload in verified_votes {
-        if rewards_wants_vote(
+        if let Some(reward_vote_msg) = RewardVoteMessage::try_new(
             cluster_info,
             leader_schedule,
             root_bank.slot(),
-            &payload.vote_message.vote,
+            &payload.vote_message,
+            payload.stake,
+            payload.sender_vote_account_pubkey,
         ) {
-            votes_for_reward.push(payload.vote_message.clone());
+            votes_for_reward.push(reward_vote_msg);
         }
 
         inspect_for_repair(&payload, &mut msgs_for_repair);
@@ -192,9 +196,7 @@ fn process_verified_votes(
     (
         votes_for_pool,
         msgs_for_repair,
-        AddVoteMessage {
-            votes: votes_for_reward,
-        },
+        votes_for_reward,
         votes_for_metrics,
     )
 }

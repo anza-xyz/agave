@@ -13,10 +13,11 @@ use {
         },
         replay_stage::{Finalizer, ReplayStage},
     },
+    agave_bls_sigverify::rewards::RewardVoteMessage,
     agave_votor::event::LeaderWindowInfo,
     agave_votor_messages::{
         consensus_message::Block,
-        reward_certificate::{AddVoteMessage, NotarRewardCertificate, SkipRewardCertificate},
+        reward_certificate::{NotarRewardCertificate, SkipRewardCertificate},
     },
     crossbeam_channel::{Receiver, Sender, select_biased},
     solana_clock::Slot,
@@ -85,10 +86,9 @@ pub struct BlockCreationLoop {
 }
 
 impl BlockCreationLoop {
-    pub fn new(config: BlockCreationLoopConfig) -> (Self, Sender<AddVoteMessage>) {
+    pub fn new(config: BlockCreationLoopConfig) -> (Self, Sender<Vec<RewardVoteMessage>>) {
         let (reward_certs_service, certs_requestor, votes_sender) = RewardCertsService::new(
             config.cluster_info.clone(),
-            config.leader_schedule_cache.clone(),
             config.sharable_banks.clone(),
             config.exit.clone(),
         );

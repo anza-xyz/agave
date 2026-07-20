@@ -5,10 +5,10 @@ use {
         vote_history_storage::{SavedVoteHistory, SavedVoteHistoryVersions, VoteHistoryStorage},
         voting_service::BLSOp,
     },
+    agave_bls_sigverify::rewards::RewardVoteMessage,
     agave_votor_messages::{
         consensus_message::{BLS_KEYPAIR_DERIVE_SEED, VoteMessage},
         metric_types::ConsensusMetricsEventSender,
-        reward_certificate::AddVoteMessage,
         sig_verified_messages::SigVerifiedBatch,
         vote::Vote,
         wire::get_vote_payload_to_sign,
@@ -18,12 +18,14 @@ use {
     solana_clock::{Epoch, Slot},
     solana_gossip::cluster_info::ClusterInfo,
     solana_keypair::Keypair,
+    solana_ledger::leader_schedule_cache::LeaderScheduleCache,
     solana_pubkey::Pubkey,
     solana_runtime::{bank::Bank, bank_forks::SharableBanks, epoch_stakes::BLSPubkeyStakeEntry},
     solana_signer::Signer,
     solana_transaction::Transaction,
     std::{
         collections::{HashMap, hash_map::Entry},
+        num::NonZero,
         sync::{Arc, RwLock},
     },
     thiserror::Error,
@@ -58,7 +60,7 @@ pub enum GenerateVoteTxResult {
     // Generated a vote transaction
     Tx(Transaction),
     // Generated a VoteMessage
-    Vote(VoteMessage),
+    Vote(VoteMessage, NonZero<u64>, Pubkey),
 }
 
 impl GenerateVoteTxResult {
@@ -78,7 +80,7 @@ impl GenerateVoteTxResult {
             | Self::WaitForStartupVerification
             | Self::WaitToVoteSlot(_)
             | Self::NoRankFound => false,
-            Self::Tx(_) | Self::Vote(_) => false,
+            Self::Tx(_) | Self::Vote(_, _, _) => false,
         }
     }
 
@@ -90,7 +92,7 @@ impl GenerateVoteTxResult {
             | Self::WaitForStartupVerification
             | Self::WaitToVoteSlot(_)
             | Self::NoRankFound => true,
-            Self::Tx(_) | Self::Vote(_) => false,
+            Self::Tx(_) | Self::Vote(_, _, _) => false,
         }
     }
 }
@@ -119,6 +121,7 @@ pub enum VoteError {
 /// Context required to construct vote transactions
 pub struct VotingContext {
     pub cluster_info: Arc<ClusterInfo>,
+    pub leader_schedule: Arc<LeaderScheduleCache>,
     pub vote_history: VoteHistory,
     pub vote_account_pubkey: Pubkey,
     pub identity_keypair: Arc<Keypair>,
@@ -127,7 +130,7 @@ pub struct VotingContext {
     // The BLS keypair should always change with authorized_voter_keypairs.
     pub derived_bls_keypairs: HashMap<Pubkey, Arc<BLSKeypair>>,
     pub own_vote_sender: Sender<SigVerifiedBatch>,
-    pub reward_votes_sender: Sender<AddVoteMessage>,
+    pub reward_votes_sender: Sender<Vec<RewardVoteMessage>>,
     pub bls_sender: Sender<BLSOp>,
     pub commitment_sender: Sender<CommitmentAggregationData>,
     pub wait_to_vote_slot: Option<u64>,
@@ -186,7 +189,7 @@ pub fn generate_vote_tx(
         vote_account_pubkey: expected_vote_pubkey,
         node_pubkey: expected_node_pubkey,
         bls_pubkey: expected_bls_pubkey,
-        stake: _,
+        stake,
     } = rank_map
         .get_pubkey_stake_entry(my_rank as usize)
         .expect("rank-map index should be valid");
@@ -227,11 +230,15 @@ pub fn generate_vote_tx(
     };
 
     let vote_payload_to_sign = get_vote_payload_to_sign(vote, shred_version);
-    GenerateVoteTxResult::Vote(VoteMessage {
-        vote,
-        signature: bls_keypair.sign(&vote_payload_to_sign).into(),
-        rank: my_rank,
-    })
+    GenerateVoteTxResult::Vote(
+        VoteMessage {
+            vote,
+            signature: bls_keypair.sign(&vote_payload_to_sign).into(),
+            rank: my_rank,
+        },
+        *stake,
+        *expected_vote_pubkey,
+    )
 }
 
 /// Creates a vote message from `vote`, respecting `context.wait_to_vote_slot` only if `respect_wait_to_vote` is true
@@ -239,7 +246,7 @@ fn create_vote_message(
     vote: Vote,
     context: &mut VotingContext,
     respect_wait_to_vote: bool,
-) -> Result<VoteMessage, VoteError> {
+) -> Result<(VoteMessage, NonZero<u64>, Pubkey), VoteError> {
     let bank = context.sharable_banks.root();
     let wait_to_vote_slot = if respect_wait_to_vote {
         context.wait_to_vote_slot
@@ -256,7 +263,9 @@ fn create_vote_message(
         wait_to_vote_slot,
         &mut context.derived_bls_keypairs,
     ) {
-        GenerateVoteTxResult::Vote(vote) => Ok(vote),
+        GenerateVoteTxResult::Vote(vote, stake, vote_account_pubkey) => {
+            Ok((vote, stake, vote_account_pubkey))
+        }
         e => {
             if e.is_transient_error() {
                 Err(VoteError::TransientError(Box::new(e)))
@@ -318,28 +327,37 @@ pub(crate) fn create_and_send_own_vote_message(
     context: &mut VotingContext,
     respect_wait_to_vote: bool,
 ) -> Result<Option<VoteMessage>, VoteError> {
-    let vote_msg = match create_vote_message(vote, context, respect_wait_to_vote) {
-        Ok(vote_msg) => vote_msg,
-        Err(e) => {
-            handle_skippable_vote_error(e, "generate vote message")?;
-            return Ok(None);
-        }
-    };
+    let (vote_msg, stake, vote_account_pubkey) =
+        match create_vote_message(vote, context, respect_wait_to_vote) {
+            Ok(vote_msg) => vote_msg,
+            Err(e) => {
+                handle_skippable_vote_error(e, "generate vote message")?;
+                return Ok(None);
+            }
+        };
 
     context
         .own_vote_sender
         .send(SigVerifiedBatch::Votes(vec![vote_msg.clone()]))
         .map_err(|_| SendError(()))?;
 
-    match context.reward_votes_sender.try_send(AddVoteMessage {
-        votes: vec![vote_msg.clone()],
-    }) {
-        Ok(()) => (),
-        Err(TrySendError::Full(_)) => {
-            warn!("Reward votes channel is full, dropping own vote {vote:?}");
-        }
-        Err(TrySendError::Disconnected(_)) => {
-            return Err(VoteError::RewardsChannelDisconnected);
+    let root_slot = context.sharable_banks.root().slot();
+    if let Some(reward_vote_msg) = RewardVoteMessage::try_new(
+        &context.cluster_info,
+        &context.leader_schedule,
+        root_slot,
+        &vote_msg,
+        stake,
+        vote_account_pubkey,
+    ) {
+        match context.reward_votes_sender.try_send(vec![reward_vote_msg]) {
+            Ok(()) => (),
+            Err(TrySendError::Full(_)) => {
+                warn!("Reward votes channel is full, dropping own vote {vote:?}");
+            }
+            Err(TrySendError::Disconnected(_)) => {
+                return Err(VoteError::RewardsChannelDisconnected);
+            }
         }
     }
 
@@ -351,7 +369,7 @@ pub fn generate_refresh_vote_message(
     vctx: &mut VotingContext,
 ) -> Result<Option<VoteMessage>, VoteError> {
     match create_vote_message(vote, vctx, /* respect_wait_to_vote */ true) {
-        Ok(vote_msg) => Ok(Some(vote_msg)),
+        Ok((vote_msg, _, _)) => Ok(Some(vote_msg)),
         Err(e) => {
             handle_skippable_vote_error(e, "generate refresh vote message")?;
             Ok(None)
@@ -398,7 +416,7 @@ mod tests {
         own_vote_sender: Sender<SigVerifiedBatch>,
         validator_keypairs: &[ValidatorVoteKeypairs],
         my_index: usize,
-    ) -> (VotingContext, Receiver<AddVoteMessage>) {
+    ) -> (VotingContext, Receiver<Vec<RewardVoteMessage>>) {
         let (voting_context, _, reward_votes_receiver) =
             setup_voting_context_and_bank_forks_with_forks(
                 own_vote_sender,
@@ -415,7 +433,7 @@ mod tests {
     ) -> (
         VotingContext,
         Arc<RwLock<BankForks>>,
-        Receiver<AddVoteMessage>,
+        Receiver<Vec<RewardVoteMessage>>,
     ) {
         // Can't have stake of 0, so start at 1 and go to 10. In descending order, so 0 has largest stake.
         let stakes: Vec<u64> = (1u64..=10).rev().map(|x| x.saturating_mul(100)).collect();
@@ -435,6 +453,7 @@ mod tests {
             SocketAddrSpace::Unspecified,
         ));
         let sharable_banks = bank_forks.read().unwrap().sharable_banks();
+        let leader_schedule = Arc::new(LeaderScheduleCache::new_from_bank(&sharable_banks.root()));
         let bls_sender = bounded(1024).0;
         let commitment_sender = bounded(1024).0;
         let consensus_metrics_sender = bounded(1024).0;
@@ -456,6 +475,7 @@ mod tests {
             wait_to_vote_slot: None,
             sharable_banks,
             consensus_metrics_sender,
+            leader_schedule,
         };
         (voting_context, bank_forks, reward_votes_receiver)
     }
@@ -504,10 +524,10 @@ mod tests {
         );
 
         // Check that the reward service receives the vote.
-        assert_eq!(
-            reward_votes_receiver.recv().unwrap().votes,
-            vec![expected_message.clone()]
-        );
+        let reward_votes = reward_votes_receiver.recv().unwrap();
+        assert_eq!(reward_votes.len(), 1);
+        let received_vote_msg = VoteMessage::from(reward_votes[0].clone());
+        assert_eq!(received_vote_msg, expected_message);
 
         let refresh_vote = Vote::new_notarization_vote(Block {
             slot: vote_slot,

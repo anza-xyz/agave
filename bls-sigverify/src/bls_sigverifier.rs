@@ -6,7 +6,7 @@ use {
         bls_vote_sigverify::{UnverifiedVotePayload, verify_and_send_votes},
         errors::SigVerifyError,
         generated_cert_types::GeneratedCertTypes,
-        rewards::rewards_wants_vote,
+        rewards::{RewardVoteMessage, rewards_wants_unverified_vote_msg},
         stats::SigVerifierStats,
     },
     agave_votor_messages::{
@@ -14,7 +14,6 @@ use {
         certificate::CertificateType,
         metric_types::ConsensusMetricsEventSender,
         migration::MigrationStatus,
-        reward_certificate::AddVoteMessage,
         sig_verified_messages::SigVerifiedBatch,
         unverified_vote_message::{
             DecodedWireConsensusMessage, UnverifiedCertificate, UnverifiedVoteMessage,
@@ -73,7 +72,7 @@ pub struct SigVerifierChannels {
     pub packet_receiver: Receiver<PacketBatch>,
     pub certificate_receiver: Receiver<(Slot, UnverifiedCertificate)>,
     pub channel_to_repair: VerifiedVoterSlotsSender,
-    pub channel_to_reward: Sender<AddVoteMessage>,
+    pub channel_to_reward: Sender<Vec<RewardVoteMessage>>,
     pub channel_to_pool: Sender<SigVerifiedBatch>,
     pub channel_to_metrics: ConsensusMetricsEventSender,
 }
@@ -378,11 +377,11 @@ impl SigVerifier {
             return None;
         }
         if vote_slot <= root_slot
-            && !rewards_wants_vote(
+            && !rewards_wants_unverified_vote_msg(
                 &self.cluster_info,
                 &self.leader_schedule,
                 root_slot,
-                &msg.vote,
+                &msg,
             )
         {
             self.stats.num_old_votes_received += 1;
@@ -419,6 +418,7 @@ impl SigVerifier {
             sender_bls_pubkey: entry.bls_pubkey,
             sender_vote_account_pubkey: entry.vote_account_pubkey,
             sender_identity_pubkey,
+            stake: entry.stake,
         })
     }
 }
@@ -500,7 +500,7 @@ mod tests {
 
         _packet_sender: Sender<PacketBatch>,
         repair_receiver: VerifiedVoterSlotsReceiver,
-        _reward_receiver: Receiver<AddVoteMessage>,
+        _reward_receiver: Receiver<Vec<RewardVoteMessage>>,
         pool_receiver: Receiver<SigVerifiedBatch>,
         _metrics_receiver: ConsensusMetricsEventReceiver,
         generated_cert_types: Arc<GeneratedCertTypes>,

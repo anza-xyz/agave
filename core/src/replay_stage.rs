@@ -1782,7 +1782,7 @@ impl ReplayStage {
             None,
             &mut HashMap::new(),
         ) {
-            GenerateVoteTxResult::Vote(vote_msg) => {
+            GenerateVoteTxResult::Vote(vote_msg, _, _) => {
                 // Send vote to ConsensusPool and rest of cluster
                 warn!(
                     "{} Alpenglow migration: Casting genesis vote for ({block:?})",

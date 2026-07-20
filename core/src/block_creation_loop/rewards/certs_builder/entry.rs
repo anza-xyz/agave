@@ -1,14 +1,12 @@
 use {
     super::BuildRewardCertsRespError,
     crate::block_creation_loop::rewards::msg_types::RewardRespSucc,
-    agave_votor_messages::{
-        consensus_message::VoteMessage, reward_certificate::SkipRewardCertificate, vote::Vote,
-    },
+    agave_bls_sigverify::rewards::{RewardVote, RewardVoteMessage},
+    agave_votor_messages::reward_certificate::SkipRewardCertificate,
     notar_entry::NotarEntry,
     partial_cert::{BuildSigBitmapError, PartialCert},
     solana_bls_signatures::BlsError,
     solana_clock::Slot,
-    solana_runtime::epoch_stakes::BLSPubkeyToRankMap,
     thiserror::Error,
 };
 
@@ -48,33 +46,21 @@ impl Entry {
     }
 
     /// Returns true if the [`Entry`] needs the vote else false.
-    pub(super) fn wants_vote(&self, vote: &VoteMessage) -> bool {
-        match vote.vote {
-            Vote::Skip(_) => self.skip.wants_vote(vote.rank),
-            Vote::Notarize(_) => self.notar.wants_vote(vote.rank),
-            Vote::Finalize(_)
-            | Vote::NotarizeFallback(_)
-            | Vote::SkipFallback(_)
-            | Vote::Genesis(_) => false,
+    pub(super) fn wants_vote(&self, msg: &RewardVoteMessage) -> bool {
+        match msg.vote {
+            RewardVote::Skip(_) => self.skip.wants_vote(msg.rank),
+            RewardVote::Notar(_) => self.notar.wants_vote(msg.rank),
         }
     }
 
     /// Adds the given [`VoteMessage`] to the aggregate.
-    pub(super) fn add_vote(
-        &mut self,
-        rank_map: &BLSPubkeyToRankMap,
-        vote: &VoteMessage,
-    ) -> Result<(), AddVoteError> {
-        match vote.vote {
-            Vote::Notarize(notar) => self.notar.add_vote(
-                rank_map,
-                vote.rank,
-                &vote.signature,
-                notar.block.block_id,
-                self.max_validators,
-            ),
-            Vote::Skip(_) => self.skip.add_vote(rank_map, vote.rank, &vote.signature),
-            _ => Ok(()),
+    pub(super) fn add_vote(&mut self, msg: &RewardVoteMessage) -> Result<(), AddVoteError> {
+        match &msg.vote {
+            RewardVote::Notar(notar) => {
+                self.notar
+                    .add_vote(msg, notar.block.block_id, self.max_validators)
+            }
+            RewardVote::Skip(_) => self.skip.add_vote(msg),
         }
     }
 
@@ -120,11 +106,14 @@ impl Entry {
 mod tests {
     use {
         super::*,
-        agave_votor_messages::{consensus_message::Block, wire::get_vote_payload_to_sign},
+        agave_votor_messages::{
+            consensus_message::Block, vote::Vote, wire::get_vote_payload_to_sign,
+        },
         rand::Rng,
         solana_bls_signatures::{Keypair as BlsKeypair, PubkeyCompressed as BlsPubkeyCompressed},
         solana_epoch_schedule::EpochSchedule,
         solana_hash::Hash,
+        solana_pubkey::Pubkey,
         solana_runtime::{
             bank::{Bank, SlotLeader},
             genesis_utils::{
@@ -132,7 +121,7 @@ mod tests {
             },
         },
         solana_signer_store::{Decoded, decode},
-        std::{collections::HashMap, sync::Arc},
+        std::{collections::HashMap, num::NonZero},
     };
 
     pub(crate) fn validate_bitmap(bitmap: &[u8], num_set: usize, max_len: usize) {
@@ -143,32 +132,38 @@ mod tests {
         }
     }
 
-    pub(crate) fn new_vote(
+    pub(crate) fn new_reward_vote_msg(
         vote: Vote,
         rank: usize,
         keypairs: &[BlsKeypair],
+        stakes: Option<&[u64]>,
         shred_version: u16,
-    ) -> VoteMessage {
+    ) -> RewardVoteMessage {
         let serialized = get_vote_payload_to_sign(vote, shred_version);
         let signature = keypairs[rank].sign(&serialized).into();
-        VoteMessage {
+        let vote = match vote {
+            Vote::Notarize(notar) => RewardVote::Notar(notar),
+            Vote::Skip(skip) => RewardVote::Skip(skip),
+            rest => panic!("unexpect vote: {rest:?}"),
+        };
+        let stake = match stakes {
+            None => NonZero::new(123).unwrap(),
+            Some(stakes) => NonZero::new(stakes[rank]).unwrap(),
+        };
+        RewardVoteMessage {
             vote,
             signature,
             rank: rank.try_into().unwrap(),
+            stake,
+            vote_account_pubkey: Pubkey::new_unique(),
         }
     }
 
-    pub(crate) fn get_rank_map_keypairs(
-        max_validators: usize,
-        slot: Slot,
-    ) -> (Arc<BLSPubkeyToRankMap>, Vec<BlsKeypair>) {
-        get_rank_map_keypairs_with_stakes(vec![100; max_validators], slot)
+    pub(crate) fn get_keypairs(max_validators: usize, slot: Slot) -> Vec<BlsKeypair> {
+        get_keypair_with_stakes(vec![100; max_validators], slot)
     }
 
-    pub(crate) fn get_rank_map_keypairs_with_stakes(
-        stakes: Vec<u64>,
-        slot: Slot,
-    ) -> (Arc<BLSPubkeyToRankMap>, Vec<BlsKeypair>) {
+    pub(crate) fn get_keypair_with_stakes(stakes: Vec<u64>, slot: Slot) -> Vec<BlsKeypair> {
         let max_validators = stakes.len();
         let validator_keypairs = (0..max_validators)
             .map(|_| ValidatorVoteKeypairs::new_rand())
@@ -198,7 +193,7 @@ mod tests {
             slot,
         );
         let rank_map = bank.get_rank_map(slot).unwrap().clone();
-        let signing_keys = (0..max_validators)
+        (0..max_validators)
             .map(|index| {
                 let pubkey_affine = rank_map.get_pubkey_stake_entry(index).unwrap().bls_pubkey;
                 keypair_map
@@ -206,15 +201,14 @@ mod tests {
                     .unwrap()
                     .clone()
             })
-            .collect::<Vec<_>>();
-        (rank_map, signing_keys)
+            .collect()
     }
 
     #[test]
     fn validate_build_skip_cert() {
         let slot = 123;
         let max_validators = 5;
-        let (rank_map, keypairs) = get_rank_map_keypairs(max_validators, slot);
+        let keypairs = get_keypairs(max_validators, slot);
         let shred_version = rand::rng().random();
         let mut entry = Entry::new(max_validators);
         let resp = entry.clone().build_certs(slot).unwrap();
@@ -222,8 +216,8 @@ mod tests {
         assert_eq!(resp.notar, None);
 
         let skip = Vote::new_skip_vote(7);
-        let vote = new_vote(skip, 0, &keypairs, shred_version);
-        entry.add_vote(&rank_map, &vote).unwrap();
+        let vote = new_reward_vote_msg(skip, 0, &keypairs, None, shred_version);
+        entry.add_vote(&vote).unwrap();
         let resp = entry.build_certs(slot).unwrap();
         assert_eq!(resp.notar, None);
         let skip = resp.skip.unwrap();
@@ -236,7 +230,7 @@ mod tests {
         let slot = 123;
         let max_validators = 5;
         let shred_version = rand::rng().random();
-        let (rank_map, keypairs) = get_rank_map_keypairs(max_validators, slot);
+        let keypairs = get_keypairs(max_validators, slot);
 
         let mut entry = Entry::new(max_validators);
         let resp = entry.clone().build_certs(slot).unwrap();
@@ -251,16 +245,16 @@ mod tests {
                 slot,
                 block_id: blockid0,
             });
-            let vote = new_vote(notar, rank, &keypairs, shred_version);
-            entry.add_vote(&rank_map, &vote).unwrap();
+            let vote = new_reward_vote_msg(notar, rank, &keypairs, None, shred_version);
+            entry.add_vote(&vote).unwrap();
         }
         for rank in 2..5 {
             let notar = Vote::new_notarization_vote(Block {
                 slot,
                 block_id: blockid1,
             });
-            let vote = new_vote(notar, rank, &keypairs, shred_version);
-            entry.add_vote(&rank_map, &vote).unwrap();
+            let vote = new_reward_vote_msg(notar, rank, &keypairs, None, shred_version);
+            entry.add_vote(&vote).unwrap();
         }
         let resp = entry.build_certs(slot).unwrap();
         assert_eq!(resp.skip, None);

@@ -17,7 +17,7 @@ use {
     solana_hash::Hash,
     solana_keypair::Keypair,
     solana_signer::Signer,
-    std::hint::black_box,
+    std::{hint::black_box, num::NonZero},
 };
 
 static BATCH_SIZES: &[usize] = &[8, 16, 32, 64, 128];
@@ -58,6 +58,7 @@ fn generate_test_data(
                     sender_bls_pubkey: bls_keypair.public,
                     sender_vote_account_pubkey: Keypair::new().pubkey(),
                     sender_identity_pubkey: Keypair::new().pubkey(),
+                    stake: NonZero::new(123).unwrap(),
                 }
             })
             .collect(),

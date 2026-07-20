@@ -969,10 +969,10 @@ mod tests {
             },
             voting_service::BLSOp,
         },
+        agave_bls_sigverify::rewards::RewardVoteMessage,
         agave_votor_messages::{
             consensus_message::{BLS_KEYPAIR_DERIVE_SEED, VoteMessage},
             metric_types::ConsensusMetricsEventReceiver,
-            reward_certificate::AddVoteMessage,
             sig_verified_messages::SigVerifiedBatch,
             vote::Vote,
             wire::get_vote_payload_to_sign,
@@ -1013,7 +1013,7 @@ mod tests {
         commitment_receiver: Receiver<CommitmentAggregationData>,
         own_vote_receiver: Receiver<SigVerifiedBatch>,
         #[allow(dead_code)] // Keep receiver alive to prevent SenderDisconnected errors
-        reward_votes_receiver: Receiver<AddVoteMessage>,
+        reward_votes_receiver: Receiver<Vec<RewardVoteMessage>>,
         bank_forks: Arc<RwLock<BankForks>>,
         my_bls_keypair: BLSKeypair,
         timer_manager: Arc<PlRwLock<TimerManager>>,
@@ -1138,7 +1138,7 @@ mod tests {
             my_pubkey: my_node_keypair.pubkey(),
             bank_forks: bank_forks.clone(),
             blockstore: blockstore.clone(),
-            leader_schedule_cache,
+            leader_schedule_cache: leader_schedule_cache.clone(),
             drop_bank_sender: drop_bank_sender.clone(),
         });
         let highest_parent_ready = Arc::new(RwLock::default());
@@ -1174,6 +1174,7 @@ mod tests {
             own_vote_sender,
             reward_votes_sender,
             consensus_metrics_sender,
+            leader_schedule: leader_schedule_cache,
         };
 
         let root_context = RootContext {
