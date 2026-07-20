@@ -355,6 +355,17 @@ impl Node {
         )
         .expect("Alpenglow votor client socket bind should succeed");
 
+        let (clock_sync_port, clock_sync) =
+            bind_in_range_with_config(bind_ip_addr, port_range, socket_configs.primarily_read_quic)
+                .expect("Clock-sync port bind should succeed");
+
+        let (_, quic_clock_sync_client) = bind_in_range_with_config(
+            bind_ip_addr,
+            port_range,
+            socket_configs.primarily_write_quic,
+        )
+        .expect("Clock-sync client socket bind should succeed");
+
         let (_, rpc_sts_client) = bind_in_range_with_config(
             bind_ip_addr,
             port_range,
@@ -410,10 +421,13 @@ impl Node {
         // cleanup timing.
         info.set_serve_repair(QUIC, (advertised_ip, 1)).unwrap();
         info.set_alpenglow((advertised_ip, alpenglow_port)).unwrap();
+        info.set_clock_sync((advertised_ip, clock_sync_port))
+            .unwrap();
 
         trace!("new ContactInfo: {info:?}");
         let sockets = Sockets {
             alpenglow,
+            clock_sync,
             gossip: gossip_sockets.into_iter().collect(),
             tvu: tvu_sockets,
             tpu_vote: tpu_vote_sockets,
@@ -430,6 +444,7 @@ impl Node {
             tpu_vote_forwarding_client,
             quic_vote_client,
             quic_alpenglow_client,
+            quic_clock_sync_client,
             tpu_transaction_forwarding_clients,
             rpc_sts_client,
         };

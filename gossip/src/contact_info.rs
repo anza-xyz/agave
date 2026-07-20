@@ -45,8 +45,9 @@ const SOCKET_TAG_TPU_VOTE_QUIC: u8 = 12;
 const SOCKET_TAG_TVU: u8 = 10;
 const SOCKET_TAG_TVU_QUIC: u8 = 11;
 const SOCKET_TAG_ALPENGLOW: u8 = 13;
-const_assert_eq!(SOCKET_CACHE_SIZE, 14);
-const SOCKET_CACHE_SIZE: usize = SOCKET_TAG_ALPENGLOW as usize + 1usize;
+const SOCKET_TAG_CLOCK_SYNC: u8 = 14;
+const_assert_eq!(SOCKET_CACHE_SIZE, 15);
+const SOCKET_CACHE_SIZE: usize = SOCKET_TAG_CLOCK_SYNC as usize + 1usize;
 
 // An alias for a function that reads data from a ContactInfo entry stored in
 // the gossip CRDS table.
@@ -314,6 +315,7 @@ impl ContactInfo {
     get_socket!(tpu_vote, SOCKET_TAG_TPU_VOTE, SOCKET_TAG_TPU_VOTE_QUIC);
     get_socket!(tvu, SOCKET_TAG_TVU, SOCKET_TAG_TVU_QUIC);
     get_socket!(alpenglow, SOCKET_TAG_ALPENGLOW);
+    get_socket!(clock_sync, SOCKET_TAG_CLOCK_SYNC);
 
     set_socket!(set_gossip, SOCKET_TAG_GOSSIP);
     set_socket!(set_rpc, SOCKET_TAG_RPC);
@@ -332,6 +334,7 @@ impl ContactInfo {
     set_socket!(set_tpu_vote, SOCKET_TAG_TPU_VOTE, SOCKET_TAG_TPU_VOTE_QUIC);
     set_socket!(set_tvu, SOCKET_TAG_TVU, SOCKET_TAG_TVU_QUIC);
     set_socket!(set_alpenglow, SOCKET_TAG_ALPENGLOW);
+    set_socket!(set_clock_sync, SOCKET_TAG_CLOCK_SYNC);
 
     remove_socket!(
         remove_serve_repair,
@@ -346,6 +349,7 @@ impl ContactInfo {
     );
     remove_socket!(remove_tvu, SOCKET_TAG_TVU, SOCKET_TAG_TVU_QUIC);
     remove_socket!(remove_alpenglow, SOCKET_TAG_ALPENGLOW);
+    remove_socket!(remove_clock_sync, SOCKET_TAG_CLOCK_SYNC);
 
     #[cfg(test)]
     fn get_socket(&self, key: u8) -> Result<SocketAddr, Error> {
@@ -1081,6 +1085,21 @@ mod tests {
         assert_eq!(node.alpenglow().unwrap(), socket);
         node.remove_alpenglow();
         assert_matches!(node.alpenglow(), None);
+    }
+
+    #[test]
+    fn test_set_and_remove_clock_sync() {
+        let mut rng = rand::rng();
+        let mut node = ContactInfo::new(
+            Keypair::new().pubkey(),
+            rng.random(), // wallclock
+            rng.random(), // shred_version
+        );
+        let socket = SocketAddr::from((Ipv4Addr::new(10, 1, 0, 1), 12_346));
+        node.set_clock_sync(socket).unwrap();
+        assert_eq!(node.clock_sync().unwrap(), socket);
+        node.remove_clock_sync();
+        assert_matches!(node.clock_sync(), None);
     }
 
     #[test]

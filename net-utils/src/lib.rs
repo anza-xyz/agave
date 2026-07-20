@@ -59,7 +59,7 @@ pub const VALIDATOR_PORT_RANGE: PortRange = (
     crate::sockets::UNIQUE_ALLOC_BASE_PORT,
 );
 
-pub const MINIMUM_VALIDATOR_PORT_RANGE_WIDTH: u16 = 26; // VALIDATOR_PORT_RANGE must be at least this wide
+pub const MINIMUM_VALIDATOR_PORT_RANGE_WIDTH: u16 = 28; // VALIDATOR_PORT_RANGE must be at least this wide
 
 /// Transport protocol used to reach a peer socket.
 #[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]

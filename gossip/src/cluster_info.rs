@@ -2455,6 +2455,10 @@ pub struct Sockets {
     pub quic_vote_client: UdpSocket, // quic write only
     /// Client-side socket for the alpenglow votor QUIC endpoint.
     pub quic_alpenglow_client: UdpSocket, // quic write only
+    /// UDP socket for the clock-sync QUIC server endpoint.
+    pub clock_sync: UdpSocket, // quic read only
+    /// Client-side socket for the clock-sync QUIC endpoint.
+    pub quic_clock_sync_client: UdpSocket, // quic write only
     /// Client-side socket for RPC/SendTransactionService.
     pub rpc_sts_client: UdpSocket, // quic write only
 }
