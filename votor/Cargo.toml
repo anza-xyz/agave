@@ -36,18 +36,18 @@ agave-bls-sigverify = { workspace = true }
 agave-logger = { workspace = true }
 agave-math-utils = { workspace = true }
 agave-votor-messages = { workspace = true }
+agave-votor-transport = { workspace = true }
+arc-swap = { workspace = true }
 bitvec = { workspace = true }
+bytes = { workspace = true }
 crossbeam-channel = { workspace = true }
 itertools = { workspace = true }
-lazy-lru = { workspace = true }
 log = { workspace = true }
 parking_lot = { workspace = true }
 serde = { workspace = true, optional = true }
 serde_bytes = { workspace = true, optional = true }
 solana-bls-signatures = { workspace = true, features = ["solana-signer-derive"] }
-solana-client = { workspace = true }
 solana-clock = { workspace = true }
-solana-connection-cache = { workspace = true }
 solana-epoch-schedule = { workspace = true }
 solana-frozen-abi = { workspace = true, optional = true, features = [
     "frozen-abi",
@@ -68,19 +68,19 @@ solana-runtime = { workspace = true }
 solana-signature = { workspace = true }
 solana-signer = { workspace = true }
 solana-signer-store = { workspace = true }
-solana-streamer = { workspace = true }
 solana-time-utils = { workspace = true }
 solana-transaction = { workspace = true }
-solana-transaction-error = { workspace = true }
 thiserror = { workspace = true }
+tokio = { workspace = true, features = ["sync", "rt"] }
 wincode = { workspace = true, features = ["alloc"] }
 
 [dev-dependencies]
+agave-votor = { path = ".", features = ["dev-context-only-utils"] }
+agave-votor-transport = { workspace = true, features = ["dev-context-only-utils"] }
 rand = { workspace = true }
 solana-net-utils = { path = "../net-utils", features = ["agave-unstable-api"] }
-solana-perf = { path = "../perf", features = ["agave-unstable-api", "dev-context-only-utils"] }
+solana-perf = { workspace = true }
 solana-runtime = { path = "../runtime", features = ["agave-unstable-api", "dev-context-only-utils"] }
-solana-streamer = { path = "../streamer", features = ["agave-unstable-api", "dev-context-only-utils"] }
 tempfile = { workspace = true }
 test-case = { workspace = true }
 tokio-util = { workspace = true }

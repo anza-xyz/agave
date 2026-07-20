@@ -98,6 +98,7 @@ dependencies = [
  "agave-math-utils",
  "agave-votor",
  "agave-votor-messages",
+ "agave-votor-transport",
  "bincode",
  "bitvec",
  "criterion",
@@ -122,8 +123,8 @@ dependencies = [
  "solana-runtime",
  "solana-signer",
  "solana-signer-store",
- "solana-streamer",
  "thiserror 2.0.18",
+ "tokio",
  "wincode",
 ]
 
@@ -472,20 +473,21 @@ dependencies = [
  "agave-bls-sigverify",
  "agave-logger",
  "agave-math-utils",
+ "agave-votor",
  "agave-votor-messages",
+ "agave-votor-transport",
+ "arc-swap",
  "bitvec",
+ "bytes",
  "crossbeam-channel",
  "itertools 0.14.0",
- "lazy-lru",
  "log",
  "parking_lot 0.12.3",
  "rand 0.9.4",
  "serde",
  "serde_bytes",
  "solana-bls-signatures",
- "solana-client",
  "solana-clock",
- "solana-connection-cache",
  "solana-epoch-schedule",
  "solana-frozen-abi",
  "solana-frozen-abi-macro",
@@ -504,13 +506,12 @@ dependencies = [
  "solana-signature",
  "solana-signer",
  "solana-signer-store",
- "solana-streamer",
  "solana-time-utils",
  "solana-transaction",
- "solana-transaction-error",
  "tempfile",
  "test-case",
  "thiserror 2.0.18",
+ "tokio",
  "tokio-util 0.7.18",
  "wincode",
 ]
@@ -537,6 +538,27 @@ dependencies = [
  "tempfile",
  "thiserror 2.0.18",
  "wincode",
+]
+
+[[package]]
+name = "agave-votor-transport"
+version = "4.3.0-alpha.1"
+dependencies = [
+ "arrayvec",
+ "bytes",
+ "crossbeam-channel",
+ "log",
+ "quinn",
+ "quinn-proto",
+ "rustls",
+ "solana-keypair",
+ "solana-metrics",
+ "solana-net-utils",
+ "solana-pubkey 4.2.0",
+ "solana-tls-utils",
+ "thiserror 2.0.18",
+ "tokio",
+ "tokio-util 0.7.18",
 ]
 
 [[package]]
@@ -677,12 +699,12 @@ checksum = "4b46cbb362ab8752921c97e041f5e366ee6297bd428a31275b9fcf1e380f7299"
 
 [[package]]
 name = "anstream"
-version = "0.6.18"
+version = "0.6.21"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "8acc5369981196006228e28809f761875c0327210a891e941f4c683b3a99529b"
+checksum = "43d5b281e737544384e969a5ccad3f1cdd24b48086a0fc1b2a5262a26b8f4f4a"
 dependencies = [
  "anstyle",
- "anstyle-parse 0.2.6",
+ "anstyle-parse 0.2.7",
  "anstyle-query",
  "anstyle-wincon",
  "colorchoice",
@@ -713,9 +735,9 @@ checksum = "940b3a0ca603d1eade50a4846a2afffd5ef57a9feac2c0e2ec2e14f9ead76000"
 
 [[package]]
 name = "anstyle-parse"
-version = "0.2.6"
+version = "0.2.7"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "3b2d16507662817a6a20a9ea92df6652ee4f94f914589377d69f3b21bc5798a9"
+checksum = "4e7644824f0aa2c7b9384579234ef10eb7efb6a0deb83f9630a49594dd9c15c2"
 dependencies = [
  "utf8parse",
 ]
@@ -1943,9 +1965,9 @@ version = "4.5.31"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "5589e0cba072e0f3d23791efac0fd8627b49c829c196a492e88168e6a669d863"
 dependencies = [
- "anstream 0.6.18",
+ "anstream 0.6.21",
  "anstyle",
- "clap_lex 0.7.4",
+ "clap_lex 0.7.7",
  "strsim 0.11.1",
 ]
 
@@ -1972,9 +1994,9 @@ dependencies = [
 
 [[package]]
 name = "clap_lex"
-version = "0.7.4"
+version = "0.7.7"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "f46ad14479a25103f283c0f10005961cf086d8dc42205bb44c46ac563475dca6"
+checksum = "c3e64b0cc0439b12df2fa678eae89a1c56a529fd067a9115f7827f1fffd22b32"
 
 [[package]]
 name = "cmov"
@@ -8108,6 +8130,7 @@ dependencies = [
  "agave-transaction-view",
  "agave-votor",
  "agave-votor-messages",
+ "agave-votor-transport",
  "agave-xdp",
  "ahash 0.8.12",
  "anyhow",
@@ -9256,6 +9279,8 @@ dependencies = [
  "agave-snapshots",
  "agave-votor",
  "agave-votor-messages",
+ "agave-votor-transport",
+ "arc-swap",
  "assert_matches",
  "crossbeam-channel",
  "fs_extra",
