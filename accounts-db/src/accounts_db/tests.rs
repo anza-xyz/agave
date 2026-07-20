@@ -3,8 +3,17 @@
 
 use {
     super::*,
-    crate::{accounts_file::AccountsFileProvider, storable_accounts::AccountForStorage},
+    crate::storable_accounts::AccountForStorage,
     solana_account::{AccountSharedData, ReadableAccount},
+};
+
+mod append_vec;
+
+// re-export these fns that live in impl.rs because ancient append vec tests use them...
+pub(crate) use append_vec::r#impl::{
+    append_single_account_with_default_hash, compare_all_accounts,
+    create_db_with_storages_and_index, create_storages_and_update_index,
+    get_account_from_account_from_storage, get_all_accounts, remove_account_for_tests,
 };
 
 impl AccountsDb {
@@ -33,7 +42,6 @@ impl AccountsDb {
             |(slot_found, account_info)| {
                 // If a slot was found, ensure it was the requested slot
                 assert_eq!(slot_found, slot);
-
                 let storage_location = account_info.storage_location();
                 let mut accessor = self.get_account_accessor(slot, &storage_location);
 
@@ -82,20 +90,3 @@ where
         self.1.len()
     }
 }
-
-mod append_vec {
-    use super::*;
-    const DEFAULT_ACCOUNTS_DB_CONFIG: AccountsDbConfig = {
-        let mut config = ACCOUNTS_DB_CONFIG_FOR_TESTING;
-        config.accounts_file_provider = AccountsFileProvider::AppendVec;
-        config
-    };
-    include!("tests/impl.rs");
-}
-
-// re-export these fns that live in impl.rs because ancient append vec tests use them...
-pub(crate) use append_vec::{
-    append_single_account_with_default_hash, compare_all_accounts,
-    create_db_with_storages_and_index, create_storages_and_update_index,
-    get_account_from_account_from_storage, get_all_accounts, remove_account_for_tests,
-};
