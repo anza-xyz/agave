@@ -326,29 +326,34 @@ impl ProgramCacheEntry {
         }
     }
 
-    pub fn new_tombstone(
+    pub fn new_tombstone_or_unloaded(
         slot: Slot,
         account_owner: ProgramCacheEntryOwner,
         reason: ProgramCacheEntryType,
     ) -> Self {
-        Self::new_tombstone_with_stats(slot, account_owner, reason, Arc::default())
+        Self::new_tombstone_or_unloaded_with_stats(slot, account_owner, reason, Arc::default())
     }
 
-    pub fn new_tombstone_with_stats(
+    pub fn new_tombstone_or_unloaded_with_stats(
         slot: Slot,
         account_owner: ProgramCacheEntryOwner,
         reason: ProgramCacheEntryType,
         stats: Arc<ProgramStatistics>,
     ) -> Self {
-        let tombstone = Self {
+        debug_assert!(matches!(
+            reason,
+            ProgramCacheEntryType::FailedVerification(_)
+                | ProgramCacheEntryType::Closed
+                | ProgramCacheEntryType::DelayVisibility
+                | ProgramCacheEntryType::Unloaded(_)
+        ));
+        Self {
             program: reason,
             account_owner,
             deployment_slot: slot,
             stats,
             latest_access_slot: AtomicU64::new(0),
-        };
-        debug_assert!(tombstone.is_tombstone());
-        tombstone
+        }
     }
 
     pub fn is_tombstone(&self) -> bool {

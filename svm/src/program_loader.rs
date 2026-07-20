@@ -113,9 +113,13 @@ pub fn load_program_with_pubkey<CB: TransactionProcessingCallback>(
 
     let (load_result, last_modification_slot) = load_program_accounts(callbacks, pubkey)?;
     let loaded_program = match load_result {
-        ProgramAccountLoadResult::InvalidAccountData(owner) => Ok(
-            ProgramCacheEntry::new_tombstone(current_slot, owner, ProgramCacheEntryType::Closed),
-        ),
+        ProgramAccountLoadResult::InvalidAccountData(owner) => {
+            Ok(ProgramCacheEntry::new_tombstone_or_unloaded(
+                current_slot,
+                owner,
+                ProgramCacheEntryType::Closed,
+            ))
+        }
 
         ProgramAccountLoadResult::ProgramOfLoaderV1(program_account) => ProgramCacheEntry::new(
             program_account.owner(),
@@ -179,7 +183,7 @@ pub fn load_program_with_pubkey<CB: TransactionProcessingCallback>(
     }
     .unwrap_or_else(|(deployment_slot, owner)| {
         let env = ProgramRuntimeEnvironment::clone(program_runtime_environment);
-        ProgramCacheEntry::new_tombstone(
+        ProgramCacheEntry::new_tombstone_or_unloaded(
             deployment_slot,
             owner,
             ProgramCacheEntryType::FailedVerification(env),
@@ -517,7 +521,7 @@ mod tests {
             &mut ExecuteTimings::default(),
         );
 
-        let loaded_program = ProgramCacheEntry::new_tombstone(
+        let loaded_program = ProgramCacheEntry::new_tombstone_or_unloaded(
             0, // Slot 0
             ProgramCacheEntryOwner::LoaderV3,
             ProgramCacheEntryType::FailedVerification(
@@ -547,7 +551,7 @@ mod tests {
             200,
             &mut ExecuteTimings::default(),
         );
-        let loaded_program = ProgramCacheEntry::new_tombstone(
+        let loaded_program = ProgramCacheEntry::new_tombstone_or_unloaded(
             0,
             ProgramCacheEntryOwner::LoaderV2,
             ProgramCacheEntryType::FailedVerification(
@@ -623,7 +627,7 @@ mod tests {
             0,
             &mut ExecuteTimings::default(),
         );
-        let loaded_program = ProgramCacheEntry::new_tombstone(
+        let loaded_program = ProgramCacheEntry::new_tombstone_or_unloaded(
             0,
             ProgramCacheEntryOwner::LoaderV3,
             ProgramCacheEntryType::FailedVerification(

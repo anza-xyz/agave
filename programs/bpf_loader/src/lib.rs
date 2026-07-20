@@ -766,7 +766,7 @@ fn process_loader_upgradeable_instruction(
                                 .program_cache_for_tx_batch
                                 .store_modified_entry(
                                     program_key,
-                                    Arc::new(ProgramCacheEntry::new_tombstone(
+                                    Arc::new(ProgramCacheEntry::new_tombstone_or_unloaded(
                                         clock.slot,
                                         ProgramCacheEntryOwner::LoaderV3,
                                         ProgramCacheEntryType::Closed,

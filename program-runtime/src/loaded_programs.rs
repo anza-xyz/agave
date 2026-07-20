@@ -335,7 +335,7 @@ impl ProgramCacheForTxBatch {
                     // Found a program entry on the current fork, but it's not effective
                     // yet. It indicates that the program has delayed visibility. Return
                     // the tombstone to reflect that.
-                    Arc::new(ProgramCacheEntry::new_tombstone_with_stats(
+                    Arc::new(ProgramCacheEntry::new_tombstone_or_unloaded_with_stats(
                         entry.deployment_slot,
                         entry.account_owner,
                         ProgramCacheEntryType::DelayVisibility,
@@ -711,12 +711,14 @@ impl<FG: ForkGraph> ProgramCache<FG> {
                                     // Found a program entry on the current fork, but it's not effective
                                     // yet. It indicates that the program has delayed visibility. Return
                                     // the tombstone to reflect that.
-                                    Arc::new(ProgramCacheEntry::new_tombstone_with_stats(
-                                        entry.deployment_slot,
-                                        entry.account_owner,
-                                        ProgramCacheEntryType::DelayVisibility,
-                                        Arc::clone(&entry.stats),
-                                    ))
+                                    Arc::new(
+                                        ProgramCacheEntry::new_tombstone_or_unloaded_with_stats(
+                                            entry.deployment_slot,
+                                            entry.account_owner,
+                                            ProgramCacheEntryType::DelayVisibility,
+                                            Arc::clone(&entry.stats),
+                                        ),
+                                    )
                                 } else {
                                     continue;
                                 };
@@ -1076,7 +1078,7 @@ pub(crate) mod tests {
         reason: ProgramCacheEntryType,
     ) -> Arc<ProgramCacheEntry> {
         let env = get_mock_program_runtime_environment();
-        let program = Arc::new(ProgramCacheEntry::new_tombstone(
+        let program = Arc::new(ProgramCacheEntry::new_tombstone_or_unloaded(
             current_slot,
             ProgramCacheEntryOwner::LoaderV2,
             reason,
@@ -1437,7 +1439,7 @@ pub(crate) mod tests {
                         latest_access_slot: AtomicU64::new(deployment_slot),
                     }
                 } else {
-                    ProgramCacheEntry::new_tombstone(
+                    ProgramCacheEntry::new_tombstone_or_unloaded(
                         deployment_slot,
                         ProgramCacheEntryOwner::LoaderV2,
                         ProgramCacheEntryType::FailedVerification(ProgramRuntimeEnvironment::from(
@@ -1621,7 +1623,7 @@ pub(crate) mod tests {
     #[test]
     fn test_tombstone() {
         let env = get_mock_program_runtime_environment();
-        let tombstone = ProgramCacheEntry::new_tombstone(
+        let tombstone = ProgramCacheEntry::new_tombstone_or_unloaded(
             0,
             ProgramCacheEntryOwner::LoaderV2,
             ProgramCacheEntryType::FailedVerification(env.clone()),
@@ -1634,7 +1636,7 @@ pub(crate) mod tests {
         assert_eq!(tombstone.deployment_slot, 0);
         assert_eq!(tombstone.effective_slot(), 0);
 
-        let tombstone = ProgramCacheEntry::new_tombstone(
+        let tombstone = ProgramCacheEntry::new_tombstone_or_unloaded(
             100,
             ProgramCacheEntryOwner::LoaderV2,
             ProgramCacheEntryType::Closed,
@@ -2274,7 +2276,7 @@ pub(crate) mod tests {
             &env,
             program1,
             10,
-            Arc::new(ProgramCacheEntry::new_tombstone(
+            Arc::new(ProgramCacheEntry::new_tombstone_or_unloaded(
                 10,
                 ProgramCacheEntryOwner::LoaderV3,
                 ProgramCacheEntryType::Closed,
@@ -2472,7 +2474,7 @@ pub(crate) mod tests {
     #[test]
     fn test_usable_entries_for_slot() {
         ProgramCache::<TestForkGraph>::new(0);
-        let tombstone = Arc::new(ProgramCacheEntry::new_tombstone(
+        let tombstone = Arc::new(ProgramCacheEntry::new_tombstone_or_unloaded(
             0,
             ProgramCacheEntryOwner::LoaderV2,
             ProgramCacheEntryType::Closed,
