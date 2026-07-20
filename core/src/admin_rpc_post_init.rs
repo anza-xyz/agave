@@ -32,6 +32,8 @@ pub enum KeyUpdaterType {
     RpcService,
     /// Votor QUIC endpoint
     Votor,
+    /// Clock-sync QUIC endpoint
+    ClockSync,
 }
 
 /// Responsible for managing the updaters for identity key change

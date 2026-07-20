@@ -8,6 +8,7 @@ use {
             BankingStage, transaction_scheduler::scheduler_controller::SchedulerConfig,
         },
         banking_trace::{self, BankingTracer, TraceError},
+        clock_sync::{ClockSyncHandles, start_clock_sync},
         block_creation_loop::{BlockCreationLoop, BlockCreationLoopConfig, ReplayHighestFrozen},
         cluster_info_vote_listener::VoteTracker,
         completed_data_sets_service::CompletedDataSetsService,
@@ -385,6 +386,7 @@ pub struct ValidatorConfig {
     pub block_production_scheduler_config: SchedulerConfig,
     pub enable_block_production_forwarding: bool,
     pub enable_scheduler_bindings: bool,
+    pub enable_experimental_clock_sync: bool,
     pub generator_config: Option<GeneratorConfig>,
     pub use_snapshot_archives_at_startup: UseSnapshotArchivesAtStartup,
     pub unified_scheduler_handler_threads: Option<usize>,
@@ -469,6 +471,7 @@ impl ValidatorConfig {
             // enable forwarding by default for tests
             enable_block_production_forwarding: true,
             enable_scheduler_bindings: false,
+            enable_experimental_clock_sync: false,
             generator_config: None,
             use_snapshot_archives_at_startup: UseSnapshotArchivesAtStartup::default(),
             unified_scheduler_handler_threads: None,
@@ -666,6 +669,7 @@ pub struct Validator {
     block_creation_loop: BlockCreationLoop,
     tpu: Tpu,
     tvu: Tvu,
+    clock_sync: Option<ClockSyncHandles>,
     ip_echo_server: Option<solana_net_utils::IpEchoServer>,
     pub cluster_info: Arc<ClusterInfo>,
     pub bank_forks: Arc<RwLock<BankForks>>,
@@ -979,6 +983,11 @@ impl Validator {
 
         node.info.set_shred_version(shred_version);
         node.info.set_wallclock(timestamp());
+        if !config.enable_experimental_clock_sync {
+            // Don't advertise a port nothing is listening on; peers running
+            // the protocol would dial it on every reconcile.
+            node.info.remove_clock_sync();
+        }
         Self::print_node_info(&node);
 
         let mut cluster_info = ClusterInfo::new(
@@ -1677,6 +1686,22 @@ impl Validator {
         )
         .map_err(ValidatorError::Other)?;
 
+        let clock_sync = config
+            .enable_experimental_clock_sync
+            .then(|| {
+                start_clock_sync(
+                    cluster_info.clone(),
+                    bank_forks.clone(),
+                    node.sockets.clock_sync,
+                    node.sockets.quic_clock_sync_client,
+                    &key_notifiers,
+                    exit.clone(),
+                    cancel.child_token(),
+                )
+            })
+            .transpose()
+            .map_err(ValidatorError::Other)?;
+
         let tpu_forwarding_client_config = {
             let runtime_handle = tpu_client_next_runtime
                 .as_ref()
@@ -1805,6 +1830,7 @@ impl Validator {
             completed_data_sets_service,
             tpu,
             tvu,
+            clock_sync,
             poh_service,
             block_creation_loop,
             poh_recorder,
@@ -1986,6 +2012,9 @@ impl Validator {
         }
         self.tpu.join().expect("tpu");
         self.tvu.join().expect("tvu");
+        if let Some(clock_sync) = self.clock_sync {
+            clock_sync.join().expect("clock_sync");
+        }
         if let Some(completed_data_sets_service) = self.completed_data_sets_service {
             completed_data_sets_service
                 .join()

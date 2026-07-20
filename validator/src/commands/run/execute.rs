@@ -882,6 +882,7 @@ pub fn execute(
         },
         enable_block_production_forwarding: staked_nodes_overrides_path.is_some(),
         enable_scheduler_bindings: matches.is_present("enable_scheduler_bindings"),
+        enable_experimental_clock_sync: matches.is_present("experimental_clock_sync"),
         banking_trace_dir_byte_limit: value_t_or_exit!(
             matches,
             "banking_trace_dir_byte_limit",
@@ -999,6 +1000,7 @@ pub fn execute(
         node.info.remove_tvu();
         node.info.remove_serve_repair();
         node.info.remove_alpenglow();
+        node.info.remove_clock_sync();
 
         // A node in this configuration shouldn't be an entrypoint to other nodes
         node.sockets.ip_echo = None;

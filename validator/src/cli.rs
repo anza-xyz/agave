@@ -876,6 +876,15 @@ pub fn test_app<'a>(version: &'a str, default_args: &'a DefaultTestArgs) -> App<
                 ),
         )
         .arg(
+            Arg::with_name("experimental_clock_sync")
+                .long("experimental-clock-sync")
+                .takes_value(false)
+                .help(
+                    "EXPERIMENTAL: run the Byzantine fault-tolerant clock synchronization \
+                     protocol in shadow mode. Only metrics are produced; consensus is unaffected",
+                ),
+        )
+        .arg(
             Arg::with_name("deactivate_feature")
                 .long("deactivate-feature")
                 .takes_value(true)
