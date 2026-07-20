@@ -96,9 +96,12 @@ impl PartitionedStakeRewards {
         self.rewards.spare_capacity_mut()
     }
 
-    unsafe fn assume_init(&mut self, num_stake_rewards: usize) {
+    /// Safety: all `total_len` elements must be initialized in `self.rewards`.
+    /// `num_stake_rewards` is the number of those elements that are `Some`.
+    unsafe fn assume_init(&mut self, num_stake_rewards: usize, total_len: usize) {
+        debug_assert!(num_stake_rewards <= total_len);
         unsafe {
-            self.rewards.set_len(self.rewards.capacity());
+            self.rewards.set_len(total_len);
         }
         self.num_rewards = num_stake_rewards;
     }
