@@ -1462,7 +1462,10 @@ pub(crate) mod external {
                     .0
                 })
                 .collect::<Vec<_>>();
-            let execution_flags = ExecutionFlags::default();
+            let execution_flags = ExecutionFlags {
+                drop_on_failure: false,
+                all_or_nothing: false,
+            };
 
             let responses = ExternalWorker::consume_response_iterator(
                 &[

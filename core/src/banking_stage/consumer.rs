@@ -40,7 +40,7 @@ pub(crate) const ENTRY_OVERHEAD_BYTES: u64 = 48;
 
 const SERIALIZED_ENTRIES_OVERHEAD: u64 = ENTRY_OVERHEAD_BYTES + 8; // Vec<Entry> length
 
-#[derive(Debug, Default)]
+#[derive(Debug)]
 pub struct ExecutionFlags {
     /// Should failing transactions within the batch be dropped (no fee charged
     /// & not committed).
