@@ -208,7 +208,6 @@ impl ProgramCacheEntry {
             elf_bytes,
             #[cfg(feature = "metrics")]
             metrics,
-            false, /* reloading */
         )
     }
 
@@ -218,7 +217,6 @@ impl ProgramCacheEntry {
         deployment_slot: Slot,
         elf_bytes: &[u8],
         #[cfg(feature = "metrics")] metrics: &mut LoadProgramMetrics,
-        reloading: bool,
     ) -> Result<Self, Box<dyn std::error::Error>> {
         let entry_stats = ProgramStatistics::default();
         #[cfg(feature = "metrics")]
@@ -230,14 +228,12 @@ impl ProgramCacheEntry {
             metrics.load_elf_us = load_elf_time.end_as_us();
         }
 
-        if !reloading {
-            #[cfg(feature = "metrics")]
-            let verify_code_time = solana_svm_measure::measure::Measure::start("verify_code_time");
-            executable.verify::<RequisiteVerifier>()?;
-            #[cfg(feature = "metrics")]
-            {
-                metrics.verify_code_us = verify_code_time.end_as_us();
-            }
+        #[cfg(feature = "metrics")]
+        let verify_code_time = solana_svm_measure::measure::Measure::start("verify_code_time");
+        executable.verify::<RequisiteVerifier>()?;
+        #[cfg(feature = "metrics")]
+        {
+            metrics.verify_code_us = verify_code_time.end_as_us();
         }
 
         #[cfg(all(not(target_os = "windows"), target_arch = "x86_64"))]
