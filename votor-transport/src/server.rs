@@ -1,7 +1,7 @@
 //! Inbound (server) direction: we-accept, receive-only.
 use {
     crate::{
-        ALPENGLOW_ALPN, HANDSHAKE_TIMEOUT, MAX_INBOUND_CONNECTIONS_PER_PEER, METRICS_INTERVAL,
+        HANDSHAKE_TIMEOUT, MAX_INBOUND_CONNECTIONS_PER_PEER, METRICS_INTERVAL,
         PEER_RATE_LIMIT_BURST_WINDOW, PEER_RATE_LIMIT_DOS_WINDOW, PeerListReceiver, close_codes,
         endpoint::{BanCommand, Datagram, ExitSignals},
         error::Error,
@@ -226,6 +226,7 @@ impl ConnectionReader {
         loop {
             match connection.read_datagram().await {
                 Ok(bytes) => {
+                    let received_at = std::time::Instant::now();
                     match rate_limiter.consume_tokens(1) {
                         // normal operation
                         Ok(remaining) if remaining >= rate_limit_watermark => {}
@@ -246,6 +247,8 @@ impl ConnectionReader {
                     match ingress.try_send(Datagram {
                         peer_pubkey: peer,
                         peer_address: remote_addr,
+                        received_at,
+                        path_rtt: connection.rtt(),
                         message: bytes,
                     }) {
                         Ok(()) => {
@@ -288,6 +291,8 @@ pub(crate) struct InboundLoop {
     pub(crate) peer_list_receiver: PeerListReceiver,
     /// Identity-rotation notification channel.
     pub(crate) identity_receiver: watch::Receiver<Option<Arc<Identity>>>,
+    /// ALPN protocol identifier used when rebuilding the server TLS config.
+    pub(crate) alpn: &'static [u8],
     /// Endpoints that handle connections. On identity rotation we need to
     /// configure them with the updated TLS config.
     pub(crate) endpoints: Vec<Endpoint>,
@@ -317,6 +322,7 @@ impl InboundLoop {
         inbound_events_sender: mpsc::Sender<InboundConnectionEvent>,
         inbound_events_receiver: mpsc::Receiver<InboundConnectionEvent>,
         identity_receiver: watch::Receiver<Option<Arc<Identity>>>,
+        alpn: &'static [u8],
         stats: Arc<ServerStats>,
         exit_signals: ExitSignals,
         max_datagrams_per_second_per_peer: usize,
@@ -333,6 +339,7 @@ impl InboundLoop {
             ban_receiver,
             peer_list_receiver,
             identity_receiver,
+            alpn,
             endpoints,
             peer_state: HashMap::with_hasher(PubkeyHasherBuilder::default()),
             events_sender: inbound_events_sender,
@@ -390,7 +397,7 @@ impl InboundLoop {
                         let server_config = new_server_config(
                             identity.cert.clone(),
                             identity.key.clone_key(),
-                            ALPENGLOW_ALPN,
+                            self.alpn,
                         );
                         for endpoint in &self.endpoints {
                             endpoint.set_server_config(Some(server_config.clone()));
@@ -595,7 +602,7 @@ mod tests {
     use {
         super::*,
         crate::{
-            HANDSHAKE_BURST, HANDSHAKE_GLOBAL_RATE, MAX_INFLIGHT_HANDSHAKES,
+            ALPENGLOW_ALPN, HANDSHAKE_BURST, HANDSHAKE_GLOBAL_RATE, MAX_INFLIGHT_HANDSHAKES,
             transport::new_client_config,
         },
         solana_keypair::Keypair,

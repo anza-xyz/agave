@@ -444,6 +444,7 @@ fn datagram_to_batch(datagram: Datagram) -> PacketBatch {
         peer_pubkey,
         peer_address,
         message,
+        ..
     } = datagram;
     let mut meta = Meta::default();
     meta.size = message.len();

@@ -42,7 +42,10 @@ use {
         VerifiedVoterSlotsReceiver, VerifiedVoterSlotsSender, consensus_message::Block,
         metric_types::MAX_IN_FLIGHT_CONSENSUS_EVENTS,
     },
-    agave_votor_transport::endpoint::{ExitSignals, QuicDatagramEndpoint},
+    agave_votor_transport::{
+        ALPENGLOW_ALPN,
+        endpoint::{ExitSignals, QuicDatagramEndpoint},
+    },
     crossbeam_channel::{Receiver, Sender, bounded, unbounded},
     solana_client::connection_cache::ConnectionCache,
     solana_clock::Slot,
@@ -330,6 +333,7 @@ impl Tvu {
         let endpoint = QuicDatagramEndpoint::spawn(
             &votor_rt_handle,
             &cluster_info.keypair(),
+            ALPENGLOW_ALPN,
             alpenglow_sockets,
             alpenglow_client_socket,
             votor_ingress_sender,

@@ -1,7 +1,7 @@
 //! Outbound (client) direction: we initiate, send-only.
 use {
     crate::{
-        ALPENGLOW_ALPN, METRICS_INTERVAL, PeerListReceiver, close_codes,
+        METRICS_INTERVAL, PeerListReceiver, close_codes,
         endpoint::ExitSignals,
         error::Error,
         stats::{self, ClientStats, record_client_error},
@@ -79,6 +79,8 @@ async fn connect(
 pub(crate) struct OutboundLoop {
     pub(crate) endpoint: Endpoint,
     pub(crate) local_pubkey: Pubkey,
+    /// ALPN protocol identifier used when rebuilding the client TLS config.
+    pub(crate) alpn: &'static [u8],
     /// Channel for outbound messages to be broadcast
     pub(crate) egress_receiver: mpsc::Receiver<Bytes>,
     pub(crate) identity_receiver: watch::Receiver<Option<Arc<Identity>>>,
@@ -95,6 +97,7 @@ impl OutboundLoop {
     pub(crate) fn new(
         endpoint: Endpoint,
         local_pubkey: Pubkey,
+        alpn: &'static [u8],
         egress_receiver: mpsc::Receiver<Bytes>,
         identity_receiver: watch::Receiver<Option<Arc<Identity>>>,
         peer_list_receiver: PeerListReceiver,
@@ -103,6 +106,7 @@ impl OutboundLoop {
         Self {
             endpoint,
             local_pubkey,
+            alpn,
             egress_receiver,
             identity_receiver,
             peer_list_receiver,
@@ -182,7 +186,7 @@ impl OutboundLoop {
         let client_config = new_client_config(
             new_identity.cert.clone(),
             new_identity.key.clone_key(),
-            ALPENGLOW_ALPN,
+            self.alpn,
         );
         self.local_pubkey = new_identity.pubkey;
         self.endpoint.set_default_client_config(client_config);

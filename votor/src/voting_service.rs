@@ -531,6 +531,7 @@ mod tests {
         let endpoint = QuicDatagramEndpoint::spawn(
             rt.handle(),
             &keypair,
+            agave_votor_transport::ALPENGLOW_ALPN,
             vec![socket],
             client_socket,
             ingress_tx,

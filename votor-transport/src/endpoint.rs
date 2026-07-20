@@ -1,7 +1,7 @@
 //! QUIC datagram endpoint
 use {
     crate::{
-        ALPENGLOW_ALPN, CONN_EVENT_CHANNEL_CAP, HANDSHAKE_BURST, HANDSHAKE_GLOBAL_RATE,
+        CONN_EVENT_CHANNEL_CAP, HANDSHAKE_BURST, HANDSHAKE_GLOBAL_RATE,
         HANDSHAKE_WORKERS_PER_ENDPOINT, MAX_INFLIGHT_HANDSHAKES, PeerListReceiver,
         client::OutboundLoop,
         error::Error,
@@ -45,6 +45,10 @@ pub struct BanCommand {
 pub struct Datagram {
     pub peer_pubkey: Pubkey,
     pub peer_address: SocketAddr,
+    /// When the datagram was read off the connection.
+    pub received_at: std::time::Instant,
+    /// The connection's smoothed path RTT sampled at receive time.
+    pub path_rtt: Duration,
     pub message: Bytes,
 }
 
@@ -80,9 +84,13 @@ impl QuicDatagramEndpoint {
     /// `ban_commands` carries temporary ban commands (banning also closes
     /// the peer's connections).
     /// `exit_signals` controls when the endpoint should terminate.
+    /// `alpn` is the ALPN protocol identifier this endpoint speaks (e.g.
+    /// [`crate::ALPENGLOW_ALPN`]); connections with a different ALPN are
+    /// rejected during the TLS handshake.
     pub fn spawn(
         runtime: &Handle,
         keypair: &Keypair,
+        alpn: &'static [u8],
         inbound_sockets: Vec<UdpSocket>,
         outbound_socket: UdpSocket,
         inbound_datagrams: Sender<Datagram>,
@@ -105,8 +113,8 @@ impl QuicDatagramEndpoint {
         let local_pubkey = keypair.pubkey();
 
         let (cert, key) = new_dummy_x509_certificate(keypair);
-        let server_config = new_server_config(cert.clone(), key.clone_key(), ALPENGLOW_ALPN);
-        let client_config = new_client_config(cert, key, ALPENGLOW_ALPN);
+        let server_config = new_server_config(cert.clone(), key.clone_key(), alpn);
+        let client_config = new_client_config(cert, key, alpn);
 
         // Spawn a quinn endpoint for each socket.
         let (inbound_endpoints, mut outbound_endpoint) = {
@@ -139,6 +147,7 @@ impl QuicDatagramEndpoint {
         let outbound = OutboundLoop::new(
             outbound_endpoint,
             local_pubkey,
+            alpn,
             egress_receiver,
             identity_receiver.clone(),
             peer_list.clone(),
@@ -187,6 +196,7 @@ impl QuicDatagramEndpoint {
             inbound_events_sender,
             inbound_events_receiver,
             identity_receiver,
+            alpn,
             server_stats,
             exit_signals.clone(),
             max_datagrams_per_second_per_peer,
@@ -384,6 +394,7 @@ mod tests {
             let endpoint = QuicDatagramEndpoint::spawn(
                 rt.handle(),
                 &keypair,
+                crate::ALPENGLOW_ALPN,
                 inbound_sockets,
                 client_socket,
                 ingress_sender,
