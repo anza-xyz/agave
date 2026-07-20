@@ -132,6 +132,7 @@ dependencies = [
 name = "agave-clock-sync"
 version = "4.3.0-alpha.1"
 dependencies = [
+ "agave-logger",
  "agave-votor-transport",
  "arc-swap",
  "bytes",
@@ -141,6 +142,7 @@ dependencies = [
  "solana-metrics",
  "solana-net-utils",
  "solana-pubkey 4.2.0",
+ "solana-signer",
  "thiserror 2.0.18",
  "tokio",
  "tokio-util 0.7.18",

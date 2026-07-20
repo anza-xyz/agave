@@ -27,7 +27,9 @@ thiserror = { workspace = true }
 tokio = { workspace = true, features = ["sync"] }
 
 [dev-dependencies]
+agave-logger = { workspace = true }
 solana-keypair = { workspace = true }
+solana-signer = { workspace = true }
 solana-net-utils = { workspace = true, features = ["dev-context-only-utils"] }
 tokio = { workspace = true, features = ["full"] }
 tokio-util = { workspace = true }

@@ -87,6 +87,7 @@ impl QuicDatagramEndpoint {
     /// `alpn` is the ALPN protocol identifier this endpoint speaks (e.g.
     /// [`crate::ALPENGLOW_ALPN`]); connections with a different ALPN are
     /// rejected during the TLS handshake.
+    #[allow(clippy::too_many_arguments)]
     pub fn spawn(
         runtime: &Handle,
         keypair: &Keypair,

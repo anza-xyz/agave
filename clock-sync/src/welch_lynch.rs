@@ -110,8 +110,11 @@ pub struct WelchLynch {
     round: u64,
     /// Local time of this round's pulse (ours), ns.
     next_ns: i64,
-    /// Sum of every correction applied so far; the virtual clock's offset
-    /// from the uncorrected local clock.
+    /// The synchronized virtual clock minus the local clock. The pulse of
+    /// round k marks synchronized time k*T and fires at local time
+    /// `next_k = k*T + Σ corrections`, so this is `-Σ corrections`: a
+    /// positive correction means our clock runs ahead of the group (we
+    /// delay our pulse), so synchronized time reads *behind* local time.
     cumulative_offset_ns: i64,
     /// Raw arrivals keyed by the sender's round tag. Only tags in
     /// `{round, round + 1}` are admitted, so this holds at most two buckets.
@@ -198,7 +201,10 @@ impl WelchLynch {
         Ok(())
     }
 
-    /// The sender's clock minus ours, as estimated from one arrival.
+    /// How far off schedule the sender's pulse arrived, after removing link
+    /// delay and reported send lateness. Equivalently, our clock minus the
+    /// sender's: if our clock runs ahead, everyone's pulses arrive late in
+    /// our timebase and the estimate is positive.
     fn offset_estimate(&self, arrival: &Arrival) -> i64 {
         let lateness = arrival.lateness_ns.clamp(0, self.config.window_ns);
         arrival
@@ -272,15 +278,16 @@ impl WelchLynch {
         // Defensive bound: the honest-majority math already keeps the
         // midpoint within the honest estimate range, but never let a single
         // round move the clock further than the acceptance window.
-        let correction = outcome
-            .correction_ns()
-            .clamp(self.config.window_ns.saturating_neg(), self.config.window_ns);
+        let correction = outcome.correction_ns().clamp(
+            self.config.window_ns.saturating_neg(),
+            self.config.window_ns,
+        );
 
         self.next_ns = self
             .next_ns
             .saturating_add(self.config.period_ns)
             .saturating_add(correction);
-        self.cumulative_offset_ns = self.cumulative_offset_ns.saturating_add(correction);
+        self.cumulative_offset_ns = self.cumulative_offset_ns.saturating_sub(correction);
         self.round = self.round.saturating_add(1);
         self.buckets.retain(|round, _| *round >= self.round);
 
@@ -344,9 +351,7 @@ fn find_absorption_cluster(
     let mut window_stake = 0u64;
     for lo in 0..sorted.len() {
         // Grow the window to cover everything within `width` of sorted[lo].
-        while hi < sorted.len()
-            && sorted[hi].0.saturating_sub(sorted[lo].0) <= width
-        {
+        while hi < sorted.len() && sorted[hi].0.saturating_sub(sorted[lo].0) <= width {
             window_stake = window_stake.saturating_add(sorted[hi].1);
             hi = hi.saturating_add(1);
         }
@@ -413,7 +418,9 @@ mod tests {
         // n = 7, f = 2: trim the two smallest and two largest.
         let (mut sm, peers, stakes) = cluster(&[1; 7]);
         sm.record_own_pulse();
-        let offsets = [-9_000_000, -6_000_000, -3_000_000, 3_000_000, 6_000_000, 9_000_000];
+        let offsets = [
+            -9_000_000, -6_000_000, -3_000_000, 3_000_000, 6_000_000, 9_000_000,
+        ];
         for (peer, offset) in peers[1..].iter().zip(offsets) {
             pulse_with_offset(&mut sm, *peer, offset);
         }
@@ -485,9 +492,10 @@ mod tests {
             }
             other => panic!("expected absorption, got {other:?}"),
         }
-        // Applied correction is clamped to the window.
+        // Applied correction is clamped to the window; we delay our pulse by
+        // W, so the synchronized clock reads W behind our (fast) local clock.
         assert_eq!(sm.pulse_due_at_ns(), T + T + W);
-        assert_eq!(sm.cumulative_offset_ns(), W);
+        assert_eq!(sm.cumulative_offset_ns(), -W);
     }
 
     #[test]
@@ -531,7 +539,11 @@ mod tests {
         // Next round's pulse is buffered now and still there after close.
         assert_eq!(sm.on_pulse(peers[2], r + 1, t + T, 0, 0), Ok(()));
         sm.record_own_pulse();
-        sm.close_round(&HashMap::from([(peers[0], 1), (peers[1], 1), (peers[2], 1)]));
+        sm.close_round(&HashMap::from([
+            (peers[0], 1),
+            (peers[1], 1),
+            (peers[2], 1),
+        ]));
         assert_eq!(
             sm.on_pulse(peers[2], r + 1, t + T, 0, 0),
             Err(PulseReject::DuplicatePeer),

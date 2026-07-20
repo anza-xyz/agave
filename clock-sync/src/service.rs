@@ -42,6 +42,28 @@ const MAX_WAIT: Duration = Duration::from_millis(100);
 /// updater in `core` and read at every round close.
 pub type SharedStakes = Arc<ArcSwap<HashMap<Pubkey, u64>>>;
 
+/// The protocol's timing constants. Defaults are the production values;
+/// tests shrink them to run many rounds quickly.
+#[derive(Debug, Clone, Copy)]
+pub struct ServiceTiming {
+    /// T: pulse period.
+    pub period: Duration,
+    /// W: acceptance window; must be strictly less than `period`.
+    pub window: Duration,
+    /// S: absorption cluster half-width.
+    pub absorption_half_width: Duration,
+}
+
+impl Default for ServiceTiming {
+    fn default() -> Self {
+        Self {
+            period: PULSE_PERIOD,
+            window: ACCEPTANCE_WINDOW,
+            absorption_half_width: ABSORPTION_HALF_WIDTH,
+        }
+    }
+}
+
 pub struct ClockSyncService {
     thread: JoinHandle<()>,
 }
@@ -49,6 +71,7 @@ pub struct ClockSyncService {
 impl ClockSyncService {
     pub fn new(
         identity: Pubkey,
+        timing: ServiceTiming,
         clock: Arc<SyncedClock>,
         egress: mpsc::Sender<Bytes>,
         ingress: Receiver<Datagram>,
@@ -57,7 +80,7 @@ impl ClockSyncService {
     ) -> Self {
         let thread = Builder::new()
             .name("solClockSync".to_string())
-            .spawn(move || run(identity, &clock, &egress, &ingress, &stakes, &exit))
+            .spawn(move || run(identity, timing, &clock, &egress, &ingress, &stakes, &exit))
             .expect("spawn solClockSync");
         Self { thread }
     }
@@ -69,30 +92,31 @@ impl ClockSyncService {
 
 fn run(
     identity: Pubkey,
+    timing: ServiceTiming,
     clock: &SyncedClock,
     egress: &mpsc::Sender<Bytes>,
     ingress: &Receiver<Datagram>,
     stakes: &SharedStakes,
     exit: &AtomicBool,
 ) {
-    let period_ns = PULSE_PERIOD.as_nanos() as i64;
+    let period_ns = timing.period.as_nanos() as i64;
     let config = Config {
         period_ns,
-        window_ns: ACCEPTANCE_WINDOW.as_nanos() as i64,
-        absorption_half_width_ns: ABSORPTION_HALF_WIDTH.as_nanos() as i64,
+        window_ns: timing.window.as_nanos() as i64,
+        absorption_half_width_ns: timing.absorption_half_width.as_nanos() as i64,
     };
 
     // Bootstrap from the wall clock: the pulse scheduled at unix time k*T
     // belongs to round k, which is globally consistent across validators
     // whose system clocks agree to within ~W (Phase 2's coarse loop replaces
     // this with a consensus-agreed beat).
-    let start_round = clock
-        .local_now_ns()
-        .div_euclid(period_ns)
-        .saturating_add(1);
+    let start_round = clock.local_now_ns().div_euclid(period_ns).saturating_add(1);
     let first_next_ns = start_round.saturating_mul(period_ns);
     let mut machine = WelchLynch::new(config, identity, start_round as u64, first_next_ns);
-    info!("clock-sync started: round {start_round}, T {PULSE_PERIOD:?}, W {ACCEPTANCE_WINDOW:?}");
+    info!(
+        "clock-sync started: round {start_round}, T {:?}, W {:?}",
+        timing.period, timing.window
+    );
 
     let mut delays = DelayTracker::new();
     let mut stats = RoundStats::default();

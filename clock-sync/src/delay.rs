@@ -148,7 +148,11 @@ mod tests {
         // A short route that later lengthens (e.g. a route change).
         tracker.observe(peer, Duration::from_millis(40), start);
         for i in 1..=(NUM_BUCKETS as i64) {
-            tracker.observe(peer, Duration::from_millis(100), start + i * BUCKET_WIDTH_NS);
+            tracker.observe(
+                peer,
+                Duration::from_millis(100),
+                start + i * BUCKET_WIDTH_NS,
+            );
         }
         // The 40ms sample fell out of the window; min is now 100ms.
         assert_eq!(

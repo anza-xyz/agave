@@ -8,8 +8,8 @@ use {
             BankingStage, transaction_scheduler::scheduler_controller::SchedulerConfig,
         },
         banking_trace::{self, BankingTracer, TraceError},
-        clock_sync::{ClockSyncHandles, start_clock_sync},
         block_creation_loop::{BlockCreationLoop, BlockCreationLoopConfig, ReplayHighestFrozen},
+        clock_sync::{ClockSyncHandles, start_clock_sync},
         cluster_info_vote_listener::VoteTracker,
         completed_data_sets_service::CompletedDataSetsService,
         consensus::{

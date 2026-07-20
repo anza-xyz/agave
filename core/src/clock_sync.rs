@@ -10,7 +10,7 @@ use {
     agave_clock_sync::{
         CLOCK_SYNC_ALPN, CLOCK_SYNC_RATE_LIMIT_PPS,
         clock::SyncedClock,
-        service::{ClockSyncService, SharedStakes},
+        service::{ClockSyncService, ServiceTiming, SharedStakes},
     },
     agave_votor_transport::{
         PeerListSender,
@@ -126,6 +126,7 @@ pub fn start_clock_sync(
     let clock = Arc::new(SyncedClock::new());
     let service = ClockSyncService::new(
         cluster_info.id(),
+        ServiceTiming::default(),
         clock.clone(),
         endpoint.egress.clone(),
         ingress_receiver,
