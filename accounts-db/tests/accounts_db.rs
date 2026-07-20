@@ -39,7 +39,7 @@ fn test_load_after_remove_unrooted_and_restore_to_same_slot() {
     let pubkey = Pubkey::new_unique();
     let account = AccountSharedData::new(42, 0, AccountSharedData::default().owner());
 
-    let db = Arc::new(AccountsDb::new_single_for_tests());
+    let db = Arc::new(AccountsDb::default_for_tests());
     let ancestors = Ancestors::from(vec![slot]);
 
     let exit = Arc::new(AtomicBool::new(false));

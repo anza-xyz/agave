@@ -98,7 +98,7 @@ mod tests {
 
     #[test]
     fn test_notify_account_restore_from_snapshot() {
-        let mut accounts_db = AccountsDb::new_single_for_tests();
+        let mut accounts_db = AccountsDb::default_for_tests();
         let key1 = Pubkey::new_unique();
         let key2 = Pubkey::new_unique();
         let account = AccountSharedData::new(1, 0, &Pubkey::default());
@@ -170,7 +170,7 @@ mod tests {
     #[test]
     fn test_notify_account_at_accounts_update() {
         let notifier = Arc::new(GeyserTestPlugin::default());
-        let mut accounts_db = AccountsDb::new_single_for_tests();
+        let mut accounts_db = AccountsDb::default_for_tests();
         accounts_db.set_geyser_plugin_notifier(Some(notifier.clone()));
         let accounts = Accounts::new(Arc::new(accounts_db));
 
@@ -242,7 +242,7 @@ mod tests {
     #[test]
     fn test_notify_closed_account() {
         let notifier = Arc::new(GeyserTestPlugin::default());
-        let mut accounts_db = AccountsDb::new_single_for_tests();
+        let mut accounts_db = AccountsDb::default_for_tests();
         accounts_db.set_geyser_plugin_notifier(Some(notifier.clone()));
         let accounts = Accounts::new(Arc::new(accounts_db));
 
