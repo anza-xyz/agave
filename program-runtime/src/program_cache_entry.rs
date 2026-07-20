@@ -108,9 +108,9 @@ pub enum ProgramCacheEntryType {
     Closed,
     /// Tombstone for programs which have recently been modified but the new version is not visible yet.
     DelayVisibility,
-    /// Successfully verified but not currently compiled.
+    /// Valid program account, but not relocated, verified or compiled.
     ///
-    /// It continues to track usage statistics even when the compiled executable of the program is evicted from memory.
+    /// It continues to track usage statistics even when the executable of the program is evicted from memory.
     Unloaded(ProgramRuntimeEnvironment),
     /// Verified program.
     ///
@@ -209,32 +209,6 @@ impl ProgramCacheEntry {
             #[cfg(feature = "metrics")]
             metrics,
             false, /* reloading */
-        )
-    }
-
-    /// Reloads a user program, *without* running the verifier.
-    ///
-    /// # Safety
-    ///
-    /// This method is unsafe since it assumes that the program has already been verified. Should
-    /// only be called when the program was previously verified and loaded in the cache, but was
-    /// unloaded due to inactivity. It should also be checked that the `program_runtime_environment`
-    /// hasn't changed since it was unloaded.
-    pub unsafe fn reload(
-        loader_key: &Pubkey,
-        program_runtime_environment: ProgramRuntimeEnvironment,
-        deployment_slot: Slot,
-        elf_bytes: &[u8],
-        #[cfg(feature = "metrics")] metrics: &mut LoadProgramMetrics,
-    ) -> Result<Self, Box<dyn std::error::Error>> {
-        Self::new_internal(
-            loader_key,
-            program_runtime_environment,
-            deployment_slot,
-            elf_bytes,
-            #[cfg(feature = "metrics")]
-            metrics,
-            true, /* reloading */
         )
     }
 
