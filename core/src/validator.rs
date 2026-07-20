@@ -49,6 +49,7 @@ use {
         accounts_update_notifier_interface::AccountsUpdateNotifier,
         utils::validate_account_paths_for_direct_io,
     },
+    solana_bls_signatures::keypair::Keypair as BLSKeypair,
     solana_client::connection_cache::{ConnectionCache, Protocol},
     solana_clock::Slot,
     solana_entry::poh::compute_hash_time,
@@ -324,6 +325,9 @@ pub struct ValidatorConfig {
     pub expected_bank_hash: Option<Hash>,
     pub expected_shred_version: Option<u16>,
     pub voting_disabled: bool,
+    /// Advanced override for the BLS signing keypair. Normally unset, in which case BLS keypairs
+    /// are derived from the authorized voter keypairs.
+    pub bls_keypair: Option<Arc<BLSKeypair>>,
     pub account_paths: Vec<PathBuf>,
     pub account_snapshot_paths: Vec<PathBuf>,
     pub rpc_config: JsonRpcConfig,
@@ -409,6 +413,7 @@ impl ValidatorConfig {
             expected_bank_hash: None,
             expected_shred_version: None,
             voting_disabled: false,
+            bls_keypair: None,
             max_ledger_shreds: None,
             blockstore_options: BlockstoreOptions::default_for_tests(),
             account_paths: Vec::new(),
@@ -1624,6 +1629,7 @@ impl Validator {
         let tvu = Tvu::new(
             vote_account,
             authorized_voter_keypairs,
+            config.bls_keypair.clone(),
             bank_forks.clone(),
             &cluster_info,
             TvuSockets {

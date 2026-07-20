@@ -30,7 +30,9 @@ use {
             create_and_canonicalize_directory,
         },
     },
-    solana_clap_utils::input_parsers::{keypair_of, keypairs_of, pubkey_of, value_of, values_of},
+    solana_clap_utils::input_parsers::{
+        bls_keypair_of, keypair_of, keypairs_of, pubkey_of, value_of, values_of,
+    },
     solana_clock::{DEFAULT_SLOTS_PER_EPOCH, Slot},
     solana_core::{
         banking_stage::transaction_scheduler::scheduler_controller::SchedulerConfig,
@@ -768,9 +770,18 @@ pub fn execute(
              snapshot generation are disabled"
         );
     }
+    let bls_keypair = matches
+        .value_of("bls_keypair")
+        .map(|path| {
+            bls_keypair_of(matches, "bls_keypair")
+                .ok_or_else(|| format!("failed to read BLS keypair file: {path}"))
+        })
+        .transpose()?
+        .map(Arc::new);
 
     let mut validator_config = ValidatorConfig {
         log_config,
+        bls_keypair,
         require_tower: matches.is_present("require_tower"),
         require_vote_history: !matches.is_present("do_not_require_vote_history"),
         tower_storage,

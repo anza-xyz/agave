@@ -127,6 +127,8 @@ pub struct VotingContext {
     pub identity_keypair: Arc<Keypair>,
     pub authorized_voter_keypairs: Arc<RwLock<Vec<Arc<Keypair>>>>,
     pub vote_history_storage: Arc<dyn VoteHistoryStorage>,
+    /// Explicit BLS signing keypair. When unset, keypairs are derived from the authorized voters.
+    pub bls_keypair: Option<Arc<BLSKeypair>>,
     // The BLS keypair should always change with authorized_voter_keypairs.
     pub derived_bls_keypairs: HashMap<Pubkey, Arc<BLSKeypair>>,
     pub own_vote_sender: Sender<SigVerifiedBatch>,
@@ -163,6 +165,7 @@ pub fn generate_vote_tx(
     shred_version: u16,
     identity_keypair: &Keypair,
     authorized_voter_keypairs: &RwLock<Vec<Arc<Keypair>>>,
+    supplied_bls_keypair: Option<&Arc<BLSKeypair>>,
     wait_to_vote_slot: Option<u64>,
     derived_bls_keypairs: &mut HashMap<Pubkey, Arc<BLSKeypair>>,
 ) -> GenerateVoteTxResult {
@@ -210,7 +213,9 @@ pub fn generate_vote_tx(
         return GenerateVoteTxResult::HotSpare;
     }
 
-    let Some(bls_keypair) =
+    let selected_bls_keypair = if let Some(bls_keypair) = supplied_bls_keypair {
+        (&bls_keypair.public == expected_bls_pubkey).then(|| bls_keypair.clone())
+    } else {
         authorized_voter_keypairs
             .read()
             .unwrap()
@@ -221,11 +226,19 @@ pub fn generate_vote_tx(
                         .unwrap_or_else(|e| panic!("Failed to derive my own BLS keypair: {e}"));
                 (&bls_keypair.public == expected_bls_pubkey).then_some(bls_keypair)
             })
-    else {
-        warn!(
-            "No authorized voter keypair matches rank-map BLS key for vote account \
-             {vote_account_pubkey}. Unable to vote"
-        );
+    };
+    let Some(bls_keypair) = selected_bls_keypair else {
+        if supplied_bls_keypair.is_some() {
+            warn!(
+                "Supplied BLS keypair does not match rank-map BLS key for vote account \
+                 {vote_account_pubkey}. Unable to vote"
+            );
+        } else {
+            warn!(
+                "No authorized voter keypair matches rank-map BLS key for vote account \
+                 {vote_account_pubkey}. Unable to vote"
+            );
+        }
         return GenerateVoteTxResult::NonVoting;
     };
 
@@ -260,6 +273,7 @@ fn create_vote_message(
         context.cluster_info.my_shred_version(),
         &context.identity_keypair,
         &context.authorized_voter_keypairs,
+        context.bls_keypair.as_ref(),
         wait_to_vote_slot,
         &mut context.derived_bls_keypairs,
     ) {
@@ -467,6 +481,7 @@ mod tests {
                 my_keys.vote_keypair.insecure_clone(),
             )])),
             vote_history_storage: Arc::new(NullVoteHistoryStorage::default()),
+            bls_keypair: None,
             derived_bls_keypairs: HashMap::new(),
             own_vote_sender,
             reward_votes_sender,
@@ -594,6 +609,7 @@ mod tests {
                 voting_context.cluster_info.my_shred_version(),
                 &voting_context.identity_keypair,
                 &voting_context.authorized_voter_keypairs,
+                voting_context.bls_keypair.as_ref(),
                 voting_context.wait_to_vote_slot,
                 &mut voting_context.derived_bls_keypairs,
             ),
@@ -636,6 +652,7 @@ mod tests {
                 voting_context.cluster_info.my_shred_version(),
                 &wrong_identity_keypair,
                 &voting_context.authorized_voter_keypairs,
+                voting_context.bls_keypair.as_ref(),
                 voting_context.wait_to_vote_slot,
                 &mut voting_context.derived_bls_keypairs,
             ),

@@ -51,6 +51,7 @@ use {
     itertools::Itertools,
     rayon::{ThreadPool, prelude::*},
     solana_accounts_db::contains::Contains,
+    solana_bls_signatures::keypair::Keypair as BLSKeypair,
     solana_clock::{BankId, Slot},
     solana_geyser_plugin_manager::block_metadata_notifier_interface::BlockMetadataNotifierArc,
     solana_gossip::cluster_info::ClusterInfo,
@@ -418,6 +419,7 @@ impl PartitionInfo {
 pub struct ReplayStageConfig {
     pub vote_account: Pubkey,
     pub authorized_voter_keypairs: Arc<RwLock<Vec<Arc<Keypair>>>>,
+    pub bls_keypair: Option<Arc<BLSKeypair>>,
     pub exit: Arc<AtomicBool>,
     pub leader_schedule_cache: Arc<LeaderScheduleCache>,
     pub block_commitment_cache: Arc<RwLock<BlockCommitmentCache>>,
@@ -739,6 +741,7 @@ impl ReplayStage {
         let ReplayStageConfig {
             vote_account,
             authorized_voter_keypairs,
+            bls_keypair,
             exit,
             leader_schedule_cache,
             block_commitment_cache,
@@ -1227,6 +1230,7 @@ impl ReplayStage {
                             vote_account,
                             &identity_keypair,
                             &authorized_voter_keypairs,
+                            bls_keypair.as_ref(),
                             &own_message_sender,
                             &bls_sender,
                         )
@@ -1754,6 +1758,7 @@ impl ReplayStage {
         vote_account: Pubkey,
         identity_keypair: &Arc<Keypair>,
         authorized_voter_keypairs: &Arc<std::sync::RwLock<Vec<Arc<Keypair>>>>,
+        bls_keypair: Option<&Arc<BLSKeypair>>,
         own_message_sender: &Sender<SigVerifiedBatch>,
         bls_sender: &Sender<BLSOp>,
     ) -> bool {
@@ -1770,6 +1775,7 @@ impl ReplayStage {
             my_shred_version,
             identity_keypair,
             authorized_voter_keypairs,
+            bls_keypair,
             None,
             &mut HashMap::new(),
         ) {

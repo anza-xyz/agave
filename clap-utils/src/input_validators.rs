@@ -4,6 +4,7 @@ use {
         keypair::{ASK_KEYWORD, SignerSourceKind, parse_signer_source},
     },
     chrono::DateTime,
+    solana_bls_signatures::keypair::Keypair as BLSKeypair,
     solana_clock::{Epoch, Slot},
     solana_hash::Hash,
     solana_keypair::read_keypair_file,
@@ -77,6 +78,16 @@ where
     T: AsRef<str> + Display,
 {
     read_keypair_file(string.as_ref())
+        .map(|_| ())
+        .map_err(|err| format!("{err}"))
+}
+
+/// Return an error if a BLS keypair file cannot be parsed.
+pub fn is_bls_keypair<T>(string: T) -> Result<(), String>
+where
+    T: AsRef<str> + Display,
+{
+    BLSKeypair::read_json_file(string.as_ref())
         .map(|_| ())
         .map_err(|err| format!("{err}"))
 }
@@ -478,7 +489,7 @@ pub fn is_non_zero(value: impl AsRef<str>) -> Result<(), String> {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
+    use {super::*, tempfile::NamedTempFile};
 
     #[test]
     fn test_is_derivation() {
@@ -491,6 +502,20 @@ mod tests {
         assert!(is_derivation("4294967296").is_err());
         assert!(is_derivation("a/b").is_err());
         assert!(is_derivation("0/4294967296").is_err());
+    }
+
+    #[test]
+    fn test_is_bls_keypair() {
+        assert!(is_bls_keypair("nonexistent_file.json").is_err());
+
+        let invalid_file = NamedTempFile::new().unwrap();
+        std::fs::write(invalid_file.path(), "invalid content").unwrap();
+        assert!(is_bls_keypair(invalid_file.path().to_str().unwrap()).is_err());
+
+        let bls_keypair = BLSKeypair::new();
+        let valid_file = NamedTempFile::new().unwrap();
+        bls_keypair.write_json_file(valid_file.path()).unwrap();
+        assert!(is_bls_keypair(valid_file.path().to_str().unwrap()).is_ok());
     }
 
     #[test]

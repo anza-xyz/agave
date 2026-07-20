@@ -68,6 +68,7 @@ use {
     },
     crossbeam_channel::{Receiver, Sender},
     parking_lot::RwLock as PlRwLock,
+    solana_bls_signatures::keypair::Keypair as BLSKeypair,
     solana_clock::Slot,
     solana_gossip::cluster_info::ClusterInfo,
     solana_keypair::Keypair,
@@ -98,6 +99,7 @@ pub struct VotorConfig {
 
     // Shared state
     pub authorized_voter_keypairs: Arc<RwLock<Vec<Arc<Keypair>>>>,
+    pub bls_keypair: Option<Arc<BLSKeypair>>,
     pub blockstore: Arc<Blockstore>,
     pub bank_forks: Arc<RwLock<BankForks>>,
     pub cluster_info: Arc<ClusterInfo>,
@@ -153,6 +155,7 @@ impl Votor {
             vote_history,
             vote_history_storage,
             authorized_voter_keypairs,
+            bls_keypair,
             blockstore,
             bank_forks,
             cluster_info,
@@ -203,6 +206,7 @@ impl Votor {
             identity_keypair,
             authorized_voter_keypairs,
             vote_history_storage,
+            bls_keypair,
             derived_bls_keypairs: HashMap::new(),
             own_vote_sender,
             reward_votes_sender,
