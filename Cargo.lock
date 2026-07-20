@@ -7594,7 +7594,6 @@ dependencies = [
  "bv",
  "bytemuck",
  "bytemuck_derive",
- "fs_extra",
  "memmap2 0.9.11",
  "modular-bitfield",
  "num_enum",
