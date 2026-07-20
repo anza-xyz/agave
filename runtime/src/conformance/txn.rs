@@ -16,33 +16,6 @@
 //! path (rather than driving the SVM directly), which keeps it at parity with
 //! SolFuzz-Agave.
 
-#[cfg(feature = "conformance")]
-use {
-    super::versioned_message_from_proto,
-    agave_feature_set::virtual_address_space_adjustments,
-    agave_precompiles::is_precompile,
-    ahash::AHashSet,
-    protosol::protos::{
-        self, AcctState, FeeDetails as ProtoFeeDetails, TxnContext as ProtoTxnContext,
-        TxnResult as ProtoTxnResult,
-    },
-    solana_hash::Hash,
-    solana_instruction::error::InstructionError,
-    solana_message::SanitizedMessage,
-    solana_signature::Signature,
-    solana_svm::conformance::{
-        account_state::{account_from_proto, account_to_proto},
-        direct_mapping::direct_mapping_handle_cu_exhaustion,
-        err::serialized_error_code,
-        feature_set::feature_set_from_proto,
-    },
-    solana_svm::transaction_processing_result::{
-        ProcessedTransaction, TransactionProcessingResultExtensions,
-    },
-    solana_svm::{
-        account_loader::FeesOnlyTransaction, transaction_execution_result::ExecutedTransaction,
-    },
-};
 use {
     crate::{
         bank::{Bank, BankFieldsToDeserialize, BankRc},
@@ -77,6 +50,33 @@ use {
     solana_transaction_error::TransactionError,
     solana_vote::vote_account::VoteAccounts,
     std::{collections::HashMap, sync::Arc},
+};
+#[cfg(feature = "conformance")]
+use {
+    agave_feature_set::virtual_address_space_adjustments,
+    agave_precompiles::is_precompile,
+    ahash::AHashSet,
+    protosol::protos::{
+        self, AcctState, FeeDetails as ProtoFeeDetails, TxnContext as ProtoTxnContext,
+        TxnResult as ProtoTxnResult,
+    },
+    solana_hash::Hash,
+    solana_instruction::error::InstructionError,
+    solana_message::SanitizedMessage,
+    solana_signature::Signature,
+    solana_svm::conformance::{
+        account_state::{account_from_proto, account_to_proto},
+        direct_mapping::direct_mapping_handle_cu_exhaustion,
+        err::serialized_error_code,
+        feature_set::feature_set_from_proto,
+        versioned_message::versioned_message_from_proto,
+    },
+    solana_svm::transaction_processing_result::{
+        ProcessedTransaction, TransactionProcessingResultExtensions,
+    },
+    solana_svm::{
+        account_loader::FeesOnlyTransaction, transaction_execution_result::ExecutedTransaction,
+    },
 };
 // Imports used only by the FFI entry point, which is excluded from `test` builds.
 #[cfg(all(feature = "conformance", not(test)))]
