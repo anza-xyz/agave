@@ -37,7 +37,6 @@ solana-pubkey = { workspace = true }
 tempfile = { workspace = true }
 
 [dev-dependencies]
-agave-logger = { path = "../logger", features = ["agave-unstable-api"] }
 fs_extra = { workspace = true }
 rayon = { workspace = true }
 solana-bucket-map = { path = ".", features = ["agave-unstable-api", "dev-context-only-utils"] }
