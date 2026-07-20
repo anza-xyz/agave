@@ -193,25 +193,8 @@ impl PartialEq for ProgramCacheEntry {
 }
 
 impl ProgramCacheEntry {
-    /// Creates a new user program
+    /// Creates a loaded user program
     pub fn new(
-        loader_key: &Pubkey,
-        program_runtime_environment: ProgramRuntimeEnvironment,
-        deployment_slot: Slot,
-        elf_bytes: &[u8],
-        #[cfg(feature = "metrics")] metrics: &mut LoadProgramMetrics,
-    ) -> Result<Self, Box<dyn std::error::Error>> {
-        Self::new_internal(
-            loader_key,
-            program_runtime_environment,
-            deployment_slot,
-            elf_bytes,
-            #[cfg(feature = "metrics")]
-            metrics,
-        )
-    }
-
-    fn new_internal(
         loader_key: &Pubkey,
         program_runtime_environment: ProgramRuntimeEnvironment,
         deployment_slot: Slot,
