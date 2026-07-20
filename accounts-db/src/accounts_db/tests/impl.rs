@@ -1209,6 +1209,64 @@ fn test_remove_zero_lamport_single_ref_accounts_after_shrink() {
     }
 }
 
+/// A pubkey whose account has died must stay dead when a storage holding a clean-reclaimed
+/// older version of it is later shrunk.
+#[test]
+fn test_shrink_does_not_resurrect_dead_account() {
+    let accounts = AccountsDb::default_for_tests();
+    let pubkey = Pubkey::new_unique();
+    let pubkey2 = Pubkey::new_unique();
+    let pubkey3 = Pubkey::new_unique();
+    let account = AccountSharedData::new(1, 0, &Pubkey::default());
+    let zero_lamport_account = AccountSharedData::new(0, 0, &Pubkey::default());
+
+    // Slot 1: pubkey's original version, pubkey2 to keep the storage alive later, and
+    // pubkey3 as dead weight so shrink always sees the storage as worth rewriting
+    accounts.store_for_tests((
+        1,
+        [
+            (&pubkey, &account),
+            (&pubkey2, &account),
+            (&pubkey3, &account),
+        ]
+        .as_slice(),
+    ));
+    accounts.add_root(1);
+    accounts.flush_rooted_accounts_cache_without_clean();
+
+    // Slot 2: newer versions, flushed without clean so the slot 1 entries stay in the slot lists
+    accounts.store_for_tests((2, [(&pubkey, &account), (&pubkey3, &account)].as_slice()));
+    accounts.add_root(2);
+    accounts.flush_rooted_accounts_cache_without_clean();
+
+    // Clean reclaims the superseded slot 1 versions, leaving only the slot 2 entries
+    accounts.clean_accounts_for_tests();
+    accounts.accounts_index.get_and_then(&pubkey, |entry| {
+        assert_eq!(entry.unwrap().slot_list_lock_read_len(), 1);
+        (false, ())
+    });
+
+    // Slot 3: the account dies
+    accounts.store_for_tests((3, [(&pubkey, &zero_lamport_account)].as_slice()));
+    accounts.add_root_and_flush_write_cache(3);
+
+    // Shrink slot 1's storage, which still physically holds pubkey's reclaimed version
+    accounts.shrink_slot_forced(1);
+
+    // The account should stay dead
+    let loaded = accounts.do_load_for_tests(&Ancestors::default(), &pubkey);
+    assert!(loaded.is_none_or(|(account, _slot)| account.lamports() == 0));
+    // Only pubkey2 survives the rewrite of slot 1's storage
+    assert!(accounts.contains(&pubkey2));
+    assert_eq!(accounts.alive_account_count_in_slot(1), 1);
+
+    // Shrink's dead-account unref above released the stale slot 1 ref, leaving the zero-lamport
+    // version single-ref. With no full snapshot retaining it, a final clean fully purges the
+    // pubkey.
+    accounts.clean_accounts_for_tests();
+    assert!(!accounts.contains(&pubkey));
+}
+
 #[test]
 fn test_shrink_zero_lamport_single_ref_account() {
     // note that 'None' checks the case based on the default value of `latest_full_snapshot_slot` in `AccountsDb`
