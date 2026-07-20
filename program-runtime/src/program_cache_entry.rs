@@ -286,7 +286,7 @@ impl ProgramCacheEntry {
         })
     }
 
-    pub fn to_unloaded(&self, environment: ProgramRuntimeEnvironment) -> Option<Self> {
+    pub fn to_unloaded_in_env(&self, environment: ProgramRuntimeEnvironment) -> Option<Self> {
         match &self.program {
             ProgramCacheEntryType::Loaded(_)
             | ProgramCacheEntryType::FailedVerification(_)
@@ -306,6 +306,12 @@ impl ProgramCacheEntry {
             stats: Arc::clone(&self.stats),
             latest_access_slot: AtomicU64::new(self.latest_access_slot.load(Ordering::Relaxed)),
         })
+    }
+
+    pub fn to_unloaded(&self) -> Option<Self> {
+        self.to_unloaded_in_env(ProgramRuntimeEnvironment::clone(
+            self.program.get_environment()?,
+        ))
     }
 
     /// Creates a new built-in program

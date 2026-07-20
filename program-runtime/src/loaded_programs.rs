@@ -552,29 +552,27 @@ impl<FG: ForkGraph> ProgramCache<FG> {
                                 // second_level is sorted by deployment_slot first,
                                 // thus if the neighbors have a different deployment_slot
                                 // then no other entry with the same deployment_slot exists.
-                                let other_entry_with_same_deployment_slot_exists =
-                                    (index_in_second_level > 0
-                                        && second_level
-                                            .get(index_in_second_level.saturating_sub(1))
-                                            .map(|other_entry| {
-                                                other_entry.deployment_slot == entry.deployment_slot
-                                            })
-                                            .unwrap_or(false))
-                                        || second_level
-                                            .get(index_in_second_level.saturating_add(1))
-                                            .map(|other_entry| {
-                                                other_entry.deployment_slot == entry.deployment_slot
-                                            })
-                                            .unwrap_or(false);
+                                let prev_entry = index_in_second_level
+                                    .checked_sub(1)
+                                    .and_then(|idx| second_level.get(idx));
+                                let next_entry = index_in_second_level
+                                    .checked_add(1)
+                                    .and_then(|idx| second_level.get(idx));
+                                let other_entry_with_same_deployment_slot_exists = prev_entry
+                                    .map(|e| e.deployment_slot)
+                                    == Some(entry.deployment_slot)
+                                    || next_entry.map(|e| e.deployment_slot)
+                                        == Some(entry.deployment_slot);
                                 if other_entry_with_same_deployment_slot_exists {
                                     self.stats
                                         .prunes_environment
                                         .fetch_add(1, Ordering::Relaxed);
                                     second_level.remove(index_in_second_level);
                                     continue; // Don't increment index_in_second_level
-                                } else if let Some(unloaded_entry) = entry
-                                    .to_unloaded(ProgramRuntimeEnvironment::clone(new_environment))
-                                    && let Some(entry) = second_level.get_mut(index_in_second_level)
+                                } else if let Some(unloaded_entry) = entry.to_unloaded_in_env(
+                                    ProgramRuntimeEnvironment::clone(new_environment),
+                                ) && let Some(entry) =
+                                    second_level.get_mut(index_in_second_level)
                                 {
                                     *entry = Arc::new(unloaded_entry);
                                 }
@@ -937,9 +935,7 @@ impl<FG: ForkGraph> ProgramCache<FG> {
 
                 // Only loaded entries shall be unloaded by eviction.
                 if let ProgramCacheEntryType::Loaded(_) = candidate.program
-                    && let Some(unloaded) = candidate.program.get_environment().and_then(|env| {
-                        candidate.to_unloaded(ProgramRuntimeEnvironment::clone(env))
-                    })
+                    && let Some(unloaded) = candidate.to_unloaded()
                 {
                     if candidate.stats.uses.load(Ordering::Relaxed) == 1 {
                         self.stats.one_hit_wonders.fetch_add(1, Ordering::Relaxed);
@@ -1091,11 +1087,7 @@ pub(crate) mod tests {
             current_slot.saturating_add(1),
             ProgramStatistics::default(),
         );
-        let unloaded = Arc::new(
-            loaded
-                .to_unloaded(ProgramRuntimeEnvironment::clone(&env))
-                .expect("Failed to unload the program"),
-        );
+        let unloaded = Arc::new(loaded.to_unloaded().expect("Failed to unload the program"));
         cache.assign_program(&env, key, current_slot, unloaded.clone());
         unloaded
     }
@@ -2248,7 +2240,7 @@ pub(crate) mod tests {
             20,
             Arc::new(
                 new_test_entry(20, 21)
-                    .to_unloaded(ProgramRuntimeEnvironment::clone(&env))
+                    .to_unloaded()
                     .expect("Failed to create unloaded program"),
             ),
         );
@@ -2364,11 +2356,7 @@ pub(crate) mod tests {
                 stats: Arc::default(),
                 latest_access_slot: AtomicU64::default(),
             });
-            assert!(
-                entry
-                    .to_unloaded(ProgramRuntimeEnvironment::clone(&env))
-                    .is_none()
-            );
+            assert!(entry.to_unloaded().is_none());
 
             // Check that unload_program_entry() does nothing for this entry
             let program_id = Pubkey::new_unique();
@@ -2383,9 +2371,7 @@ pub(crate) mod tests {
             ..Default::default()
         };
         let entry = new_test_entry_with_usage(1, 2, stats);
-        let unloaded_entry = entry
-            .to_unloaded(ProgramRuntimeEnvironment::clone(&env))
-            .unwrap();
+        let unloaded_entry = entry.to_unloaded().unwrap();
         assert_eq!(unloaded_entry.deployment_slot, 1);
         assert_eq!(unloaded_entry.effective_slot, 2);
         assert_eq!(unloaded_entry.latest_access_slot.load(Ordering::Relaxed), 1);
