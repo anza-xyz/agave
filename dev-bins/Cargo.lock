@@ -8438,7 +8438,6 @@ version = "4.3.0-alpha.2"
 dependencies = [
  "agave-reserved-account-keys",
  "base64 0.22.1",
- "bincode",
  "bzip2",
  "flate2",
  "futures 0.3.32",
@@ -8448,13 +8447,11 @@ dependencies = [
  "log",
  "prost",
  "prost-types",
- "serde",
  "smpl_jwt",
  "solana-clock",
  "solana-message",
  "solana-metrics",
  "solana-pubkey 4.2.0",
- "solana-serde",
  "solana-signature",
  "solana-storage-proto",
  "solana-time-utils",
@@ -8465,6 +8462,7 @@ dependencies = [
  "tokio",
  "tonic",
  "tonic-prost",
+ "wincode",
  "zstd",
 ]
 
