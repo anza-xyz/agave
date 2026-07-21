@@ -4,10 +4,7 @@
 //! - add_transaction_cost(&tx_cost), mutable function to accumulate tx_cost to tracker.
 //!
 use {
-    crate::{
-        block_cost_limits::*, cost_tracker_post_analysis::CostTrackerPostAnalysis,
-        transaction_cost::TransactionCost,
-    },
+    crate::{block_cost_limits::*, transaction_cost::TransactionCost},
     solana_metrics::datapoint_info,
     solana_pubkey::Pubkey,
     solana_runtime_transaction::transaction_with_meta::TransactionWithMeta,
@@ -150,11 +147,6 @@ impl CostTracker {
         self.limits.block_cost
     }
 
-    /// Get the overall allocated account data size limit.
-    pub fn get_allocated_data_size_limit(&self) -> u64 {
-        self.limits.allocated_data_size
-    }
-
     /// allows to adjust limits initiated during construction
     pub fn set_limits(&mut self, limits: CostTrackerLimits) {
         self.limits = limits;
@@ -174,34 +166,6 @@ impl CostTracker {
             updated_block_cost: self.block_cost(),
             updated_costliest_account_cost,
         })
-    }
-
-    pub fn update_execution_cost(
-        &mut self,
-        estimated_tx_cost: &TransactionCost<impl TransactionWithMeta>,
-        actual_execution_units: u64,
-        actual_loaded_accounts_data_size_cost: u64,
-    ) {
-        let actual_load_and_execution_units =
-            actual_execution_units.saturating_add(actual_loaded_accounts_data_size_cost);
-        let estimated_load_and_execution_units = estimated_tx_cost
-            .programs_execution_cost()
-            .saturating_add(estimated_tx_cost.loaded_accounts_data_size_cost());
-        match actual_load_and_execution_units.cmp(&estimated_load_and_execution_units) {
-            std::cmp::Ordering::Equal => (),
-            std::cmp::Ordering::Greater => {
-                self.add_transaction_execution_cost(
-                    estimated_tx_cost,
-                    actual_load_and_execution_units - estimated_load_and_execution_units,
-                );
-            }
-            std::cmp::Ordering::Less => {
-                self.sub_transaction_execution_cost(
-                    estimated_tx_cost,
-                    estimated_load_and_execution_units - actual_load_and_execution_units,
-                );
-            }
-        }
     }
 
     pub fn remove(&mut self, tx_cost: &TransactionCost<impl TransactionWithMeta>) {
@@ -406,15 +370,6 @@ impl CostTracker {
             .values()
             .filter(|units| **units > 0)
             .count()
-    }
-}
-
-/// Implement the trait for the cost tracker
-/// This is only used for post-analysis to avoid lock contention
-/// Do not use in the hot path
-impl CostTrackerPostAnalysis for CostTracker {
-    fn get_cost_by_writable_accounts(&self) -> &HashMap<Pubkey, u64, ahash::RandomState> {
-        &self.cost_by_writable_accounts
     }
 }
 
@@ -905,72 +860,6 @@ mod tests {
     }
 
     #[test]
-    fn test_update_execution_cost() {
-        let estimated_programs_execution_cost = 100;
-        let estimated_loaded_accounts_data_size_cost = 200;
-        let number_writeble_accounts = 3;
-        let transaction = WritableKeysTransaction::new(
-            std::iter::repeat_with(Pubkey::new_unique)
-                .take(number_writeble_accounts)
-                .collect(),
-        );
-
-        let mut usage_cost =
-            simple_usage_cost_details(&transaction, estimated_programs_execution_cost);
-        usage_cost.loaded_accounts_data_size_cost = estimated_loaded_accounts_data_size_cost;
-        let tx_cost = TransactionCost::new(usage_cost);
-        // confirm tx_cost is only made up by programs_execution_cost and
-        // loaded_accounts_data_size_cost
-        let estimated_tx_cost = tx_cost.sum();
-        assert_eq!(
-            estimated_tx_cost,
-            estimated_programs_execution_cost + estimated_loaded_accounts_data_size_cost
-        );
-
-        let test_update_cost_tracker =
-            |execution_cost_adjust: i64, loaded_accounts_data_size_cost_adjust: i64| {
-                let mut cost_tracker = CostTracker::default();
-                assert!(cost_tracker.try_add(&tx_cost).is_ok());
-
-                let actual_programs_execution_cost =
-                    (estimated_programs_execution_cost as i64 + execution_cost_adjust) as u64;
-                let actual_loaded_accounts_data_size_cost =
-                    (estimated_loaded_accounts_data_size_cost as i64
-                        + loaded_accounts_data_size_cost_adjust) as u64;
-                let expected_cost = (estimated_tx_cost as i64
-                    + execution_cost_adjust
-                    + loaded_accounts_data_size_cost_adjust)
-                    as u64;
-
-                cost_tracker.update_execution_cost(
-                    &tx_cost,
-                    actual_programs_execution_cost,
-                    actual_loaded_accounts_data_size_cost,
-                );
-
-                assert_eq!(expected_cost, cost_tracker.block_cost());
-                assert_eq!(
-                    number_writeble_accounts,
-                    cost_tracker.cost_by_writable_accounts.len()
-                );
-                for writable_account_cost in cost_tracker.cost_by_writable_accounts.values() {
-                    assert_eq!(expected_cost, *writable_account_cost);
-                }
-                assert_eq!(1, cost_tracker.transaction_count.0);
-            };
-
-        test_update_cost_tracker(0, 0);
-        test_update_cost_tracker(0, 9);
-        test_update_cost_tracker(0, -9);
-        test_update_cost_tracker(9, 0);
-        test_update_cost_tracker(9, 9);
-        test_update_cost_tracker(9, -9);
-        test_update_cost_tracker(-9, 0);
-        test_update_cost_tracker(-9, 9);
-        test_update_cost_tracker(-9, -9);
-    }
-
-    #[test]
     fn test_remove_transaction_cost() {
         let mut cost_tracker = CostTracker::default();
 
@@ -990,21 +879,5 @@ mod tests {
         assert_eq!(0, cost_tracker.number_of_accounts());
         assert_eq!(0, cost_tracker.block_cost());
         assert_eq!(0, cost_tracker.allocated_accounts_data_size.0);
-    }
-
-    #[test]
-    fn test_get_cost_by_writable_accounts_post_analysis() {
-        let mut cost_tracker = CostTracker::default();
-        let cost = 100u64;
-        let transaction = WritableKeysTransaction::new(vec![Pubkey::new_unique()]);
-        let tx_cost = simple_transaction_cost(&transaction, cost);
-        cost_tracker.add_transaction_cost(&tx_cost);
-        let cost_by_writable_accounts = cost_tracker.get_cost_by_writable_accounts();
-        assert_eq!(1, cost_by_writable_accounts.len());
-        assert_eq!(cost, *cost_by_writable_accounts.values().next().unwrap());
-        assert_eq!(
-            *cost_by_writable_accounts,
-            cost_tracker.cost_by_writable_accounts
-        );
     }
 }

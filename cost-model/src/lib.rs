@@ -5,7 +5,6 @@
 pub mod block_cost_limits;
 pub mod cost_model;
 pub mod cost_tracker;
-pub mod cost_tracker_post_analysis;
 pub mod shred_limit;
 pub mod transaction_cost;
 
