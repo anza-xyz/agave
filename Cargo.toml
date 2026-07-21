@@ -345,7 +345,7 @@ slab = "0.4.12"
 slotmap = "1.0.7"
 smallvec = { version = "1.15.2", default-features = false, features = ["union"] }
 smpl_jwt = "0.9.0"
-socket2 = "0.6.3"
+socket2 = "0.6.5"
 soketto = "0.8"
 solana-account = "4.3.1"
 solana-account-decoder = { path = "account-decoder", version = "=4.3.0-alpha.2", features = ["agave-unstable-api"] }
