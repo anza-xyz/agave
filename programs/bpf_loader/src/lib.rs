@@ -199,7 +199,10 @@ fn process_loader_upgradeable_instruction(
                 invoke_context,
             )?;
         }
-        UpgradeableLoaderInstruction::DeployWithMaxDataLen { max_data_len } => {
+        UpgradeableLoaderInstruction::DeployWithMaxDataLen {
+            max_data_len,
+            close_buffer: _,
+        } => {
             instruction_context.check_number_of_instruction_accounts(4)?;
             let payer_key = *instruction_context.get_key_of_instruction_account(0)?;
             let programdata_key = *instruction_context.get_key_of_instruction_account(1)?;
@@ -364,7 +367,7 @@ fn process_loader_upgradeable_instruction(
 
             ic_logger_msg!(log_collector, "Deployed program {:?}", new_program_id);
         }
-        UpgradeableLoaderInstruction::Upgrade => {
+        UpgradeableLoaderInstruction::Upgrade { close_buffer: _ } => {
             instruction_context.check_number_of_instruction_accounts(3)?;
             let programdata_key = *instruction_context.get_key_of_instruction_account(0)?;
             let rent =
@@ -683,7 +686,7 @@ fn process_loader_upgradeable_instruction(
 
             ic_logger_msg!(log_collector, "New authority {:?}", new_authority_key);
         }
-        UpgradeableLoaderInstruction::Close => {
+        UpgradeableLoaderInstruction::Close { tombstone: _ } => {
             instruction_context.check_number_of_instruction_accounts(2)?;
             if instruction_context.get_index_of_instruction_account_in_transaction(0)?
                 == instruction_context.get_index_of_instruction_account_in_transaction(1)?
@@ -1845,7 +1848,8 @@ mod tests {
             expected_result: Result<(), InstructionError>,
         ) -> Vec<AccountSharedData> {
             let instruction_data =
-                bincode::serialize(&UpgradeableLoaderInstruction::Upgrade).unwrap();
+                bincode::serialize(&UpgradeableLoaderInstruction::Upgrade { close_buffer: true })
+                    .unwrap();
             process_instruction_with_setup(
                 &bpf_loader_upgradeable::id(),
                 &instruction_data,
@@ -1995,7 +1999,9 @@ mod tests {
             &elf_new,
         );
         *instruction_accounts.get_mut(1).unwrap() = instruction_accounts.get(2).unwrap().clone();
-        let instruction_data = bincode::serialize(&UpgradeableLoaderInstruction::Upgrade).unwrap();
+        let instruction_data =
+            bincode::serialize(&UpgradeableLoaderInstruction::Upgrade { close_buffer: true })
+                .unwrap();
 
         process_instruction_with_setup(
             &bpf_loader_upgradeable::id(),
@@ -2470,6 +2476,7 @@ mod tests {
             let instruction_data =
                 bincode::serialize(&UpgradeableLoaderInstruction::DeployWithMaxDataLen {
                     max_data_len,
+                    close_buffer: true,
                 })
                 .unwrap();
             process_instruction_with_setup(
@@ -3711,7 +3718,8 @@ mod tests {
 
     #[test]
     fn test_bpf_loader_upgradeable_close() {
-        let instruction = bincode::serialize(&UpgradeableLoaderInstruction::Close).unwrap();
+        let instruction =
+            bincode::serialize(&UpgradeableLoaderInstruction::Close { tombstone: false }).unwrap();
         let loader_id = bpf_loader_upgradeable::id();
         let invalid_authority_address = Pubkey::new_unique();
         let authority_address = Pubkey::new_unique();
@@ -3935,6 +3943,7 @@ mod tests {
             &loader_id,
             &bincode::serialize(&UpgradeableLoaderInstruction::DeployWithMaxDataLen {
                 max_data_len: 0,
+                close_buffer: true,
             })
             .unwrap(),
             vec![
