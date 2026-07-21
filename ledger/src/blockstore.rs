@@ -3686,7 +3686,7 @@ impl Blockstore {
         entries: Vec<Entry>,
         version: u16,
     ) -> Result<usize /*num of data shreds*/> {
-        let mut parent_slot = parent.map_or(start_slot.saturating_sub(1), |v| v);
+        let mut parent_slot = parent.unwrap_or(start_slot.saturating_sub(1));
         let num_slots = (start_slot - parent_slot).max(1); // Note: slot 0 has parent slot 0
         assert!(num_ticks_in_start_slot < num_slots * ticks_per_slot);
         let mut remaining_ticks_in_slot = num_slots * ticks_per_slot - num_ticks_in_start_slot;

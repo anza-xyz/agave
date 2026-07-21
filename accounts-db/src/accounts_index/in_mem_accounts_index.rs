@@ -269,7 +269,7 @@ impl<T: IndexValue, U: DiskIndexValue + From<T> + Into<T>> InMemAccountsIndex<T,
         &self,
         pubkey: &Pubkey,
         // return true if item should be added to in_mem cache
-        callback: impl for<'a> FnOnce(Option<&AccountMapEntry<T>>) -> (bool, RT),
+        callback: impl FnOnce(Option<&AccountMapEntry<T>>) -> (bool, RT),
     ) -> RT {
         // SAFETY: The entry Arc is not passed to `callback`, so
         // it cannot live beyond this function call.

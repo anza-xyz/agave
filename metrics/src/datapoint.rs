@@ -164,42 +164,42 @@ macro_rules! create_datapoint {
 macro_rules! datapoint {
     ($level:expr, $name:expr, $($fields:tt)+) => {
         if log::log_enabled!($level) {
-            $crate::submit($crate::create_datapoint!(@point $name, $($fields)+), $level);
+            $crate::submit($crate::create_datapoint!(@point $name, $($fields)+), $level)
         }
     };
 }
 #[macro_export]
 macro_rules! datapoint_error {
     ($name:expr, $($fields:tt)+) => {
-        $crate::datapoint!(log::Level::Error, $name, $($fields)+);
+        $crate::datapoint!(log::Level::Error, $name, $($fields)+)
     };
 }
 
 #[macro_export]
 macro_rules! datapoint_warn {
     ($name:expr, $($fields:tt)+) => {
-        $crate::datapoint!(log::Level::Warn, $name, $($fields)+);
+        $crate::datapoint!(log::Level::Warn, $name, $($fields)+)
     };
 }
 
 #[macro_export]
 macro_rules! datapoint_info {
     ($name:expr, $($fields:tt)+) => {
-        $crate::datapoint!(log::Level::Info, $name, $($fields)+);
+        $crate::datapoint!(log::Level::Info, $name, $($fields)+)
     };
 }
 
 #[macro_export]
 macro_rules! datapoint_debug {
     ($name:expr, $($fields:tt)+) => {
-        $crate::datapoint!(log::Level::Debug, $name, $($fields)+);
+        $crate::datapoint!(log::Level::Debug, $name, $($fields)+)
     };
 }
 
 #[macro_export]
 macro_rules! datapoint_trace {
     ($name:expr, $($fields:tt)+) => {
-        $crate::datapoint!(log::Level::Trace, $name, $($fields)+);
+        $crate::datapoint!(log::Level::Trace, $name, $($fields)+)
     };
 }
 

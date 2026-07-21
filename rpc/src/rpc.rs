@@ -1062,6 +1062,7 @@ impl JsonRpcRequestProcessor {
         largest_accounts_cache.set_largest_accounts(filter, slot, accounts)
     }
 
+    #[allow(clippy::result_large_err)]
     async fn get_largest_accounts(
         &self,
         config: Option<RpcLargestAccountsConfig>,
@@ -1116,6 +1117,7 @@ impl JsonRpcRequestProcessor {
         }
     }
 
+    #[allow(clippy::result_large_err)]
     async fn get_supply(
         &self,
         config: Option<RpcSupplyConfig>,
@@ -2306,6 +2308,7 @@ impl JsonRpcRequestProcessor {
     }
 
     /// Get an iterator of spl-token accounts by owner address
+    #[allow(clippy::result_large_err)]
     async fn get_filtered_spl_token_accounts_by_owner(
         &self,
         bank: Arc<Bank>,
@@ -2355,6 +2358,7 @@ impl JsonRpcRequestProcessor {
     }
 
     /// Get an iterator of spl-token accounts by mint address
+    #[allow(clippy::result_large_err)]
     async fn get_filtered_spl_token_accounts_by_mint(
         &self,
         bank: Arc<Bank>,
@@ -5240,8 +5244,8 @@ pub mod tests {
             "tpuForwardsQuic": "127.0.0.1:8010",
             "tpuVote": "127.0.0.1:8005",
             "serveRepair": "127.0.0.1:8008",
-            "rpc": format!("127.0.0.1:8899"),
-            "pubsub": format!("127.0.0.1:8900"),
+            "rpc": "127.0.0.1:8899".to_string(),
+            "pubsub": "127.0.0.1:8900".to_string(),
             "version": format!("{version}"),
             "featureSet": version.feature_set(),
             "clientId": "Agave",
@@ -5256,8 +5260,8 @@ pub mod tests {
             "tpuForwardsQuic": "127.0.0.1:1245",
             "tpuVote": "127.0.0.1:1241",
             "serveRepair": "127.0.0.1:1242",
-            "rpc": format!("127.0.0.1:8899"),
-            "pubsub": format!("127.0.0.1:8900"),
+            "rpc": "127.0.0.1:8899".to_string(),
+            "pubsub": "127.0.0.1:8900".to_string(),
             "version": format!("{version}"),
             "featureSet": version.feature_set(),
             "clientId": "Agave",
