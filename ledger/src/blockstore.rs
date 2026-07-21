@@ -1391,11 +1391,11 @@ impl Blockstore {
             return true;
         }
 
-        let mut next_slots: VecDeque<_> = match self.meta(starting_slot) {
-            Ok(Some(starting_slot_meta)) => starting_slot_meta.next_slots.into(),
+        let mut next_slots = match self.meta(starting_slot) {
+            Ok(Some(starting_slot_meta)) => starting_slot_meta.next_slots,
             _ => return false,
         };
-        while let Some(slot) = next_slots.pop_front() {
+        while let Some(slot) = next_slots.pop() {
             if let Ok(Some(slot_meta)) = self.meta(slot)
                 && slot_meta.is_full()
             {
@@ -5155,11 +5155,11 @@ impl Blockstore {
 
     /// Returns a mapping from each elements of `slots` to a list of the
     /// element's children slots.
-    pub fn get_slots_since(&self, slots: &[Slot]) -> Result<HashMap<Slot, Vec<Slot>>> {
+    pub fn get_slots_since(&self, slots: &[Slot]) -> Result<HashMap<Slot, NextSlots>> {
         let keys = self.meta_cf.multi_get_keys(slots.iter().copied());
         let slot_metas = self.meta_cf.multi_get(&keys);
 
-        let mut slots_since: HashMap<Slot, Vec<Slot>> = HashMap::with_capacity(slots.len());
+        let mut slots_since: HashMap<Slot, _> = HashMap::with_capacity(slots.len());
         for meta in slot_metas.into_iter() {
             let meta = meta?;
             if let Some(meta) = meta {
@@ -5550,15 +5550,14 @@ impl Blockstore {
         self.meta_cf
             .put_in_batch(&mut write_batch, root_meta.slot, &root_meta)?;
 
-        let mut next_slots = VecDeque::from(root_meta.next_slots);
-        while !next_slots.is_empty() {
-            let slot = next_slots.pop_front().unwrap();
+        let mut next_slots = root_meta.next_slots;
+        while let Some(slot) = next_slots.pop() {
             let mut meta = self.meta(slot)?.unwrap_or_else(|| {
                 panic!("Slot {slot} is a child but has no SlotMeta in blockstore")
             });
 
             if meta.set_parent_connected() {
-                next_slots.extend(meta.next_slots.iter());
+                next_slots.extend(meta.next_slots.iter().copied());
             }
             self.meta_cf
                 .put_in_batch(&mut write_batch, meta.slot, &meta)?;
@@ -5792,7 +5791,7 @@ impl Blockstore {
             self.find_slot_meta_else_create(working_set, new_chained_slots, old_parent_slot)?
                 .borrow_mut()
                 .next_slots
-                .retain(|&s| s != slot);
+                .retain(|s| *s != slot);
 
             // Add slot to new parent's next_slots.
             let new_parent_meta =

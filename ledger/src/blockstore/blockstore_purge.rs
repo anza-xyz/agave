@@ -153,7 +153,7 @@ impl Blockstore {
                 // only contain several elements so this isn't so bad
                 parent_slot_meta
                     .next_slots
-                    .retain(|&next_slot| next_slot != slot);
+                    .retain(|next_slot| *next_slot != slot);
                 self.meta_cf
                     .put_in_batch(&mut write_batch, parent_slot, &parent_slot_meta)?;
             } else {
@@ -409,7 +409,7 @@ impl Blockstore {
                 }
             }
 
-            meta.next_slots.retain(|&next_slot| next_slot > to_slot);
+            meta.next_slots.retain(|next_slot| *next_slot > to_slot);
             if !meta.next_slots.is_empty() {
                 let mut new_meta = SlotMeta::new_orphan(slot);
                 new_meta.next_slots = meta.next_slots;
@@ -1206,13 +1206,13 @@ pub mod tests {
         let expected_slot_meta = SlotMeta {
             slot: 5,
             // Only the next_slots should be preserved
-            next_slots: vec![6, 12],
+            next_slots: smallvec::smallvec![6, 12],
             ..SlotMeta::default()
         };
         assert_eq!(slot_meta, expected_slot_meta);
 
         let parent_slot_meta = blockstore.meta(4).unwrap().unwrap();
-        assert_eq!(parent_slot_meta.next_slots, vec![11]);
+        assert_eq!(parent_slot_meta.next_slots.as_slice(), &[11]);
 
         let child_slot_meta = blockstore.meta(6).unwrap().unwrap();
         assert_eq!(child_slot_meta.parent_slot.unwrap(), 5);

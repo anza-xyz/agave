@@ -7194,6 +7194,7 @@ dependencies = [
  "rocksdb",
  "scopeguard",
  "serde",
+ "smallvec",
  "solana-account 4.3.1",
  "solana-accounts-db",
  "solana-address-lookup-table-interface",

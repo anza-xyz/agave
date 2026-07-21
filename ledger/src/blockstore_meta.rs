@@ -8,6 +8,7 @@ use {
         },
     },
     bitflags::bitflags,
+    smallvec::SmallVec,
     solana_clock::{Slot, UnixTimestamp},
     solana_hash::{HASH_BYTES, Hash},
     std::{
@@ -123,6 +124,17 @@ impl Debug for CompletedDataIndexes {
     }
 }
 
+/// Inline storage for [`SlotMeta::next_slots`].
+///
+/// On a chain with little forking, [`SlotMeta::next_slots`] usually contains
+/// one child (occasionally two), but its size is not strictly bounded.
+///
+/// On 64-bit targets, inline capacities 1 and 2 produce the same `SmallVec` size,
+/// so consume that space with an extra inline `Slot` which would otherwise be
+/// padding bytes. This also avoids a heap spill for intermittent cases where
+/// [`SlotMeta::next_slots`] contains two children.
+pub type NextSlots = SmallVec<[Slot; 2]>;
+
 #[derive(Clone, Debug, Default, SchemaRead, SchemaWrite, Eq, PartialEq)]
 /// The Meta column family
 pub struct SlotMetaBase<T> {
@@ -149,7 +161,7 @@ pub struct SlotMetaBase<T> {
     pub parent_slot: Option<Slot>,
     /// The list of slots, each of which contains a block that derives
     /// from this one.
-    pub next_slots: Vec<Slot>,
+    pub next_slots: NextSlots,
     /// Connected status flags of this slot
     #[wincode(with = "PodConnectedFlags")]
     pub connected_flags: ConnectedFlags,
@@ -176,7 +188,7 @@ pub struct SlotMetaV3 {
     pub last_index: Option<u64>,
     #[wincode(with = "wincode_compat::OptionCompat")]
     pub parent_slot: Option<Slot>,
-    pub next_slots: Vec<Slot>,
+    pub next_slots: NextSlots,
     #[wincode(with = "PodConnectedFlags")]
     pub connected_flags: ConnectedFlags,
     pub completed_data_indexes: CompletedDataIndexes,
@@ -212,7 +224,7 @@ pub struct SlotMetaRepair {
     pub last_index: Option<u64>,
     #[wincode(with = "wincode_compat::OptionCompat")]
     pub parent_slot: Option<Slot>,
-    pub next_slots: Vec<Slot>,
+    pub next_slots: NextSlots,
 }
 
 // Wincode implementation of serialize and deserialize for Option<u64>
@@ -1118,7 +1130,7 @@ mod test {
                     first_shred_timestamp,
                     last_index,
                     parent_slot,
-                    next_slots,
+                    next_slots: next_slots.into(),
                     connected_flags: ConnectedFlags::from_bits_truncate(connected_flags),
                     completed_data_indexes: completed_data_indexes.into_iter().collect(),
                     parent_block_id: Hash::new_from_array(parent_block_id),
@@ -1361,11 +1373,11 @@ mod test {
         let mut slot_meta = SlotMeta::new_orphan(5);
         slot_meta.consumed = 5;
         slot_meta.received = 5;
-        slot_meta.next_slots = vec![6, 7];
+        slot_meta.next_slots = smallvec::smallvec![6, 7];
         slot_meta.clear_unconfirmed_slot();
 
         let mut expected = SlotMeta::new_orphan(5);
-        expected.next_slots = vec![6, 7];
+        expected.next_slots = smallvec::smallvec![6, 7];
         assert_eq!(slot_meta, expected);
     }
 
