@@ -83,7 +83,6 @@ pub fn spawn_worker(
     endpoint: &Endpoint,
     peer: &SocketAddr,
     worker_channel_size: usize,
-    skip_check_transaction_age: bool,
     max_reconnect_attempts: usize,
     handshake_timeout: Duration,
     stats: Arc<SendTransactionStats>,
@@ -96,7 +95,6 @@ pub fn spawn_worker(
         endpoint,
         peer,
         txs_receiver,
-        skip_check_transaction_age,
         max_reconnect_attempts,
         stats,
         handshake_timeout,
@@ -179,7 +177,6 @@ impl WorkersCache {
         peer: SocketAddr,
         endpoint: &Endpoint,
         worker_channel_size: usize,
-        skip_check_transaction_age: bool,
         max_reconnect_attempts: usize,
         handshake_timeout: Duration,
         stats: Arc<SendTransactionStats>,
@@ -197,7 +194,6 @@ impl WorkersCache {
             endpoint,
             &peer,
             worker_channel_size,
-            skip_check_transaction_age,
             max_reconnect_attempts,
             handshake_timeout,
             stats,
@@ -396,14 +392,12 @@ mod tests {
         let peer: SocketAddr = SocketAddr::new(Ipv4Addr::LOCALHOST.into(), port_range.start);
 
         let worker_channel_size = 1;
-        let skip_check_transaction_age = true;
         let max_reconnect_attempts = 0;
         let stats = Arc::new(SendTransactionStats::default());
         let worker_info = spawn_worker(
             &endpoint,
             &peer,
             worker_channel_size,
-            skip_check_transaction_age,
             max_reconnect_attempts,
             DEFAULT_MAX_CONNECTION_HANDSHAKE_TIMEOUT,
             stats.clone(),
@@ -430,14 +424,12 @@ mod tests {
         let peer: SocketAddr = SocketAddr::new(Ipv4Addr::LOCALHOST.into(), port_range.start);
 
         let worker_channel_size = 1;
-        let skip_check_transaction_age = true;
         let max_reconnect_attempts = 0;
         let stats = Arc::new(SendTransactionStats::default());
         let worker_info = spawn_worker(
             &endpoint,
             &peer,
             worker_channel_size,
-            skip_check_transaction_age,
             max_reconnect_attempts,
             DEFAULT_MAX_CONNECTION_HANDSHAKE_TIMEOUT,
             stats.clone(),
@@ -462,14 +454,12 @@ mod tests {
         let port_range = unique_port_range_for_tests(2);
         let peer: SocketAddr = SocketAddr::new(Ipv4Addr::LOCALHOST.into(), port_range.start);
         let worker_channel_size = 1;
-        let skip_check_transaction_age = true;
         let max_reconnect_attempts = 0;
         let stats = Arc::new(SendTransactionStats::default());
         let worker = spawn_worker(
             &endpoint,
             &peer,
             worker_channel_size,
-            skip_check_transaction_age,
             max_reconnect_attempts,
             DEFAULT_MAX_CONNECTION_HANDSHAKE_TIMEOUT,
             stats.clone(),

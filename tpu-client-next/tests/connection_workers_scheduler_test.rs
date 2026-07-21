@@ -56,7 +56,6 @@ fn test_config(stake_identity: Option<Keypair>) -> ConnectionWorkersSchedulerCon
         bind: BindTarget::Address(address),
         stake_identity: stake_identity.map(|identity| StakeIdentity::new(&identity)),
         num_connections: NonZeroUsize::new(1).unwrap(),
-        skip_check_transaction_age: false,
         // At the moment we have only one strategy to send transactions: we try
         // to put to worker channel transaction batch and in case of failure
         // just drop it. This requires to use large channels here. In the

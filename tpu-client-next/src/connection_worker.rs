@@ -11,10 +11,9 @@ use {
         transaction_batch::TransactionBatch,
     },
     quinn::{ConnectError, Connection, ConnectionError, Endpoint},
-    solana_clock::{DEFAULT_MS_PER_SLOT, MAX_PROCESSING_AGE},
+    solana_clock::DEFAULT_MS_PER_SLOT,
     solana_leader_schedule::NUM_CONSECUTIVE_LEADER_SLOTS,
     solana_measure::measure::Measure,
-    solana_time_utils::timestamp,
     solana_tls_utils::socket_addr_to_quic_server_name,
     std::{
         net::SocketAddr,
@@ -36,10 +35,6 @@ pub(crate) const DEFAULT_MAX_CONNECTION_HANDSHAKE_TIMEOUT: Duration = Duration::
 /// a best-effort estimate, based on current network conditions.
 const RETRY_SLEEP_INTERVAL: Duration =
     Duration::from_millis(NUM_CONSECUTIVE_LEADER_SLOTS.get() as u64 * DEFAULT_MS_PER_SLOT);
-
-/// Maximum age (in milliseconds) of a blockhash, beyond which transaction
-/// batches are dropped.
-const MAX_PROCESSING_AGE_MS: u64 = MAX_PROCESSING_AGE as u64 * DEFAULT_MS_PER_SLOT;
 
 /// [`ConnectionState`] represents the current state of a quic connection.
 ///
@@ -84,7 +79,6 @@ pub(crate) struct ConnectionWorker {
     transactions_receiver: mpsc::Receiver<TransactionBatch>,
     connection: ConnectionState,
     last_congestion_events: u64,
-    skip_check_transaction_age: bool,
     max_reconnect_attempts: usize,
     send_txs_stats: Arc<SendTransactionStats>,
     cancel: CancellationToken,
@@ -95,9 +89,7 @@ impl ConnectionWorker {
     /// Constructs a [`ConnectionWorker`].
     ///
     /// [`ConnectionWorker`] maintains a connection to a `peer` and processes
-    /// transactions from `transactions_receiver`. If
-    /// `skip_check_transaction_age` is set to `true`, the worker skips checking
-    /// for transaction blockhash expiration. The `max_reconnect_attempts`
+    /// transactions from `transactions_receiver`. The `max_reconnect_attempts`
     /// parameter controls how many times the worker will attempt to reconnect
     /// in case of connection failure. Returns the created `ConnectionWorker`
     /// along with a cancellation token that can be used by the caller to stop
@@ -106,7 +98,6 @@ impl ConnectionWorker {
         endpoint: Endpoint,
         peer: SocketAddr,
         transactions_receiver: mpsc::Receiver<TransactionBatch>,
-        skip_check_transaction_age: bool,
         max_reconnect_attempts: usize,
         send_txs_stats: Arc<SendTransactionStats>,
         handshake_timeout: Duration,
@@ -117,7 +108,6 @@ impl ConnectionWorker {
             peer,
             transactions_receiver,
             connection: ConnectionState::NotSetup,
-            skip_check_transaction_age,
             max_reconnect_attempts,
             send_txs_stats,
             cancel: cancel.clone(),
@@ -262,22 +252,12 @@ impl ConnectionWorker {
     ///
     /// Each transaction in the batch is sent over the QUIC streams one at the
     /// time, which prevents traffic fragmentation and shows better TPS in
-    /// comparison with multistream send. If the batch is determined to be
-    /// outdated and flag `skip_check_transaction_age` is unset, it will be
-    /// dropped without being sent.
+    /// comparison with multistream send.
     ///
     /// The method checks connection health before sending each transaction to
     /// avoid operations on a closed connection. In case of error, it doesn't
     /// retry to send the same transactions again but transitions to retry state.
     async fn send_transactions(&mut self, connection: Connection, transactions: TransactionBatch) {
-        let now = timestamp();
-        if !self.skip_check_transaction_age
-            && now.saturating_sub(transactions.timestamp()) > MAX_PROCESSING_AGE_MS
-        {
-            debug!("Drop outdated transaction batch for peer: {}", self.peer);
-            return;
-        }
-
         let mut measure_send = Measure::start("send transaction batch");
         for data in transactions.into_iter() {
             // Check connection health before each send

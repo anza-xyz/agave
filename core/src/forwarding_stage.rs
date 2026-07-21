@@ -539,7 +539,6 @@ impl TpuClientNextClient {
             // Cache size of 128 covers all nodes above the P90 slot count threshold,
             // which together account for ~75% of total slots in the epoch.
             num_connections: NonZeroUsize::new(128).unwrap(),
-            skip_check_transaction_age: true,
             worker_channel_size: 2,
             max_reconnect_attempts: 4,
             // Send to the next leader only, but verify that connections exist
