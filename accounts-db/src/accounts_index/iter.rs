@@ -43,12 +43,8 @@ impl<T: IndexValue, U: DiskIndexValue + From<T> + Into<T>> Iterator
 #[cfg(test)]
 mod tests {
     use {
-        super::{
-            super::{UpsertReclaim, secondary::AccountSecondaryIndexes},
-            *,
-        },
+        super::{super::UpsertReclaim, *},
         crate::accounts_index::ReclaimsSlotList,
-        solana_account::AccountSharedData,
         std::iter,
     };
 
@@ -77,11 +73,9 @@ mod tests {
             0,
             0,
             &solana_pubkey::new_rand(),
-            &AccountSharedData::default(),
-            &AccountSecondaryIndexes::default(),
             true,
             &mut gc,
-            UpsertReclaim::PopulateReclaims,
+            UpsertReclaim::ReclaimOldSlots,
         );
 
         // ensure the iterator remains exhausted
@@ -111,11 +105,9 @@ mod tests {
                 slot,
                 slot,
                 pubkey,
-                &AccountSharedData::default(),
-                &AccountSecondaryIndexes::default(),
                 value,
                 &mut gc,
-                UpsertReclaim::PopulateReclaims,
+                UpsertReclaim::ReclaimOldSlots,
             );
         }
 
@@ -154,11 +146,9 @@ mod tests {
                 slot,
                 slot,
                 pubkey,
-                &AccountSharedData::default(),
-                &AccountSecondaryIndexes::default(),
                 value,
                 &mut gc,
-                UpsertReclaim::PopulateReclaims,
+                UpsertReclaim::ReclaimOldSlots,
             );
         }
 

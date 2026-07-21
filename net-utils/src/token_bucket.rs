@@ -2,6 +2,8 @@
 //! rate of certain events, while allowing bursts through.
 //! [`KeyedRateLimiter`] allows to rate-limit multiple keyed items, such
 //! as connections.
+#[cfg(feature = "shuttle-test")]
+use std::sync::Arc;
 use {
     cfg_if::cfg_if,
     dashmap::{DashMap, mapref::entry::Entry},
@@ -24,10 +26,11 @@ pub struct TokenBucket {
     last_update: AtomicU64,
     /// time unused in last token creation round
     credit_time_us: AtomicU64,
+    /// Per-bucket time source for shuttle tests, replacing Instant::now().
+    /// Shared via Arc so cloned buckets (e.g. in KeyedRateLimiter) use the same clock.
+    #[cfg(feature = "shuttle-test")]
+    pub time_us_override: Arc<AtomicU64>,
 }
-
-#[cfg(feature = "shuttle-test")]
-static TIME_US: AtomicU64 = AtomicU64::new(0); //used to override Instant::now()
 
 // If changing this impl, make sure to run benches and ensure they do not panic.
 // much of the testing is impossible outside of real multithreading in release mode.
@@ -51,6 +54,8 @@ impl TokenBucket {
             last_update: AtomicU64::new(0),
             base_time,
             credit_time_us: AtomicU64::new(0),
+            #[cfg(feature = "shuttle-test")]
+            time_us_override: Arc::new(AtomicU64::new(0)),
         }
     }
 
@@ -88,6 +93,29 @@ impl TokenBucket {
         }
     }
 
+    /// Consumes up to `request_size` tokens from the bucket, draining whatever
+    /// is available without requiring the full amount.
+    ///
+    /// Returns the number of tokens actually consumed (0..=request_size).
+    /// Unlike [`consume_tokens`](Self::consume_tokens) this never fails — if
+    /// fewer tokens are available than requested, all available tokens are
+    /// taken and the consumed count reflects that.
+    #[inline]
+    pub fn consume_tokens_saturating(&self, request_size: u64) -> u64 {
+        let now = self.time_us();
+        self.update_state(now);
+        let mut consumed = 0u64;
+        let _ = self.tokens.fetch_update(
+            Ordering::AcqRel,  // winner publishes new amount
+            Ordering::Acquire, // everyone observed correct number
+            |tokens| {
+                consumed = tokens.min(request_size);
+                Some(tokens.saturating_sub(consumed))
+            },
+        );
+        consumed
+    }
+
     /// Adds given amount of tokens, up to a maximum of self.max_tokens.
     #[inline]
     pub fn add_tokens(&self, new_tokens: u64) {
@@ -120,7 +148,7 @@ impl TokenBucket {
     fn time_us(&self) -> u64 {
         cfg_if! {
             if #[cfg(feature="shuttle-test")] {
-                TIME_US.load(Ordering::Relaxed)
+                self.time_us_override.load(Ordering::Relaxed)
             } else {
                 let now = Instant::now();
                 let elapsed = now.saturating_duration_since(self.base_time);
@@ -198,6 +226,9 @@ impl Clone for TokenBucket {
             tokens: AtomicU64::new(self.tokens.load(Ordering::Relaxed)),
             last_update: AtomicU64::new(self.last_update.load(Ordering::Relaxed)),
             credit_time_us: AtomicU64::new(self.credit_time_us.load(Ordering::Relaxed)),
+            // Cloned buckets share the same time source so they see the same clock
+            #[cfg(feature = "shuttle-test")]
+            time_us_override: Arc::clone(&self.time_us_override),
         }
     }
 }
@@ -408,6 +439,41 @@ pub mod test {
     }
 
     #[test]
+    fn test_consume_tokens_saturating_consume() {
+        // new bucket with very slow refill (so it never actually refills);
+        let tb = TokenBucket::new(100, 100, 0.00001);
+
+        let consumed = tb.consume_tokens_saturating(42);
+        assert_eq!(consumed, 42, "Should have consumed exactly 42 tokens");
+        assert_eq!(
+            tb.current_tokens(),
+            58,
+            "Bucket should have 58 tokens after consuming 42"
+        );
+
+        let consumed = tb.consume_tokens_saturating(100);
+        assert_eq!(consumed, 58, "Should have consumed all available tokens");
+        assert_eq!(
+            tb.current_tokens(),
+            0,
+            "Bucket should be empty after full consume"
+        );
+
+        let consumed = tb.consume_tokens_saturating(10);
+        assert_eq!(
+            consumed, 0,
+            "Should have consumed 0 tokens as bucket is empty"
+        );
+        let consumed = tb.consume_tokens_saturating(0);
+        assert_eq!(consumed, 0);
+        assert_eq!(
+            tb.current_tokens(),
+            0,
+            "Bucket should be empty after full consume"
+        );
+    }
+
+    #[test]
     fn test_token_bucket_us_to_have_tokens() {
         let tb = TokenBucket::new(1000, 1000, 1000.0);
         assert_eq!(tb.current_tokens(), 1000);
@@ -493,29 +559,95 @@ pub mod test {
 
     #[cfg(feature = "shuttle-test")]
     #[test]
-    fn shuttle_test_token_bucket_race() {
-        use shuttle::sync::atomic::AtomicBool;
+    fn shuttle_test_consume_tokens_saturating_race() {
+        use {shuttle::sync::atomic::AtomicBool, std::sync::Arc};
         shuttle::check_random(
             || {
-                TIME_US.store(0, Ordering::SeqCst);
                 let test_duration_us = 2500;
-                let run: &AtomicBool = Box::leak(Box::new(AtomicBool::new(true)));
-                let tb: &TokenBucket = Box::leak(Box::new(TokenBucket::new(10, 20, 5000.0)));
+                let run = Arc::new(AtomicBool::new(true));
+                let tb = Arc::new(TokenBucket::new(10, 20, 5000.0));
+                let time = Arc::clone(&tb.time_us_override);
 
                 // time advancement thread
-                let time_advancer = thread::spawn(move || {
-                    let mut current_time = 0;
-                    while current_time < test_duration_us && run.load(Ordering::SeqCst) {
-                        let increment = 100; // microseconds
-                        current_time += increment;
-                        TIME_US.store(current_time, Ordering::SeqCst);
-                        shuttle::thread::yield_now();
-                    }
-                    run.store(false, Ordering::SeqCst);
-                });
+                let time_advancer = {
+                    let run = Arc::clone(&run);
+                    thread::spawn(move || {
+                        let mut current_time = 0;
+                        while current_time < test_duration_us && run.load(Ordering::SeqCst) {
+                            let increment = 100; // microseconds
+                            current_time += increment;
+                            time.store(current_time, Ordering::SeqCst);
+                            shuttle::thread::yield_now();
+                        }
+                        run.store(false, Ordering::SeqCst);
+                    })
+                };
 
                 let threads: Vec<_> = (0..2)
                     .map(|_| {
+                        let run = Arc::clone(&run);
+                        let tb = Arc::clone(&tb);
+                        thread::spawn(move || {
+                            let mut total = 0u64;
+                            while run.load(Ordering::SeqCst) {
+                                total += tb.consume_tokens_saturating(5);
+                                shuttle::thread::yield_now();
+                            }
+                            total
+                        })
+                    })
+                    .collect();
+
+                time_advancer.join().unwrap();
+                let received: u64 = threads.into_iter().map(|t| t.join().unwrap()).sum();
+
+                // Initial tokens: 10, refill rate: 5000 tokens/sec (5 tokens/ms)
+                // In 2.5ms: initial 10 + refill 12.5 = 22.5 lifetime tokens
+                // (max_tokens caps instantaneous level, not cumulative throughput)
+                // Saturating consume drains aggressively so should capture most of them.
+                assert!(
+                    received <= 23,
+                    "Should not consume more tokens than were minted: {received}"
+                );
+                assert!(
+                    received >= 10,
+                    "Should consume at least the initial tokens: {received}"
+                );
+            },
+            100,
+        );
+    }
+
+    #[cfg(feature = "shuttle-test")]
+    #[test]
+    fn shuttle_test_token_bucket_race() {
+        use {shuttle::sync::atomic::AtomicBool, std::sync::Arc};
+        shuttle::check_random(
+            || {
+                let test_duration_us = 2500;
+                let run = Arc::new(AtomicBool::new(true));
+                let tb = Arc::new(TokenBucket::new(10, 20, 5000.0));
+                let time = Arc::clone(&tb.time_us_override);
+
+                // time advancement thread
+                let time_advancer = {
+                    let run = Arc::clone(&run);
+                    thread::spawn(move || {
+                        let mut current_time = 0;
+                        while current_time < test_duration_us && run.load(Ordering::SeqCst) {
+                            let increment = 100; // microseconds
+                            current_time += increment;
+                            time.store(current_time, Ordering::SeqCst);
+                            shuttle::thread::yield_now();
+                        }
+                        run.store(false, Ordering::SeqCst);
+                    })
+                };
+
+                let threads: Vec<_> = (0..2)
+                    .map(|_| {
+                        let run = Arc::clone(&run);
+                        let tb = Arc::clone(&tb);
                         thread::spawn(move || {
                             let mut total = 0;
                             while run.load(Ordering::SeqCst) {

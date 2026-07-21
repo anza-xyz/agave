@@ -9,6 +9,11 @@ homepage = { workspace = true }
 license = { workspace = true }
 edition = { workspace = true }
 
+[package.metadata.docs.rs]
+targets = ["x86_64-unknown-linux-gnu"]
+all-features = true
+rustdoc-args = ["--cfg=docsrs"]
+
 [features]
 agave-unstable-api = []
 
@@ -41,3 +46,6 @@ solana-perf = { path = "../perf", features = ["agave-unstable-api"] }
 solana-quic-client = { path = ".", features = ["agave-unstable-api"] }
 solana-streamer = { path = "../streamer", features = ["agave-unstable-api", "dev-context-only-utils"] }
 tokio-util = { workspace = true }
+
+[lints]
+workspace = true

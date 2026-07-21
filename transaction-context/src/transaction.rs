@@ -1,22 +1,25 @@
+#[cfg(not(any(target_arch = "bpf", target_arch = "sbf")))]
 use {
     crate::{
         IndexOfAccount, MAX_ACCOUNT_DATA_GROWTH_PER_TRANSACTION, MAX_ACCOUNT_DATA_LEN,
         MAX_ACCOUNTS_PER_TRANSACTION,
         instruction::{InstructionContext, InstructionFrame},
-        instruction_accounts::InstructionAccount,
         transaction_accounts::{KeyedAccountSharedData, TransactionAccounts},
         vm_addresses::{
-            GUEST_INSTRUCTION_DATA_BASE_ADDRESS, GUEST_REGION_SIZE, RETURN_DATA_SCRATCHPAD,
+            GUEST_INSTRUCTION_ACCOUNT_BASE_ADDRESS, GUEST_INSTRUCTION_DATA_BASE_ADDRESS,
+            GUEST_REGION_SIZE, RETURN_DATA_SCRATCHPAD,
         },
-        vm_slice::VmSlice,
     },
     solana_account::{AccountSharedData, ReadableAccount, WritableAccount},
     solana_instruction::error::InstructionError,
     solana_instructions_sysvar as instructions,
-    solana_pubkey::Pubkey,
     solana_rent::Rent,
     solana_sbpf::memory_region::{AccessType, AccessViolationHandler, MemoryRegion},
     std::{borrow::Cow, cell::Cell, rc::Rc},
+};
+use {
+    crate::{instruction_accounts::InstructionAccount, vm_slice::VmSlice},
+    solana_pubkey::Pubkey,
 };
 
 /// Used only in fn `take_instruction_trace` for deconstructing TransactionContext
@@ -37,7 +40,9 @@ struct TransactionFrame {
     return_data_pubkey: Pubkey,
     return_data_scratchpad: VmSlice<u8>,
     /// Scratchpad for programs to write CPI instruction data
-    cpi_scratchpad: VmSlice<u8>,
+    pub cpi_data_scratchpad: VmSlice<u8>,
+    /// Scratchpad for programs to write CPI accounts
+    pub cpi_accounts_scratchpad: VmSlice<InstructionAccount>,
     /// Index of current executing instruction
     current_executing_instruction: u16,
     /// Number of instructions in the instruction trace (including top level and CPIs)
@@ -88,8 +93,14 @@ impl<'ix_data> TransactionContext<'ix_data> {
         let transaction_frame = TransactionFrame {
             return_data_pubkey: Pubkey::default(),
             return_data_scratchpad: VmSlice::new(RETURN_DATA_SCRATCHPAD, 0),
-            cpi_scratchpad: VmSlice::new(
+            cpi_data_scratchpad: VmSlice::new(
                 GUEST_INSTRUCTION_DATA_BASE_ADDRESS.saturating_add(
+                    GUEST_REGION_SIZE.saturating_mul(number_of_top_level_instructions as u64),
+                ),
+                0,
+            ),
+            cpi_accounts_scratchpad: VmSlice::new(
+                GUEST_INSTRUCTION_ACCOUNT_BASE_ADDRESS.saturating_add(
                     GUEST_REGION_SIZE.saturating_mul(number_of_top_level_instructions as u64),
                 ),
                 0,
@@ -297,12 +308,18 @@ impl<'ix_data> TransactionContext<'ix_data> {
                 .total_number_of_instructions_in_trace
                 .saturating_add(1);
             instruction.index_of_caller_instruction = caller_index;
-            let next_ptr = self
+            let next_data_ptr = self
                 .transaction_frame
-                .cpi_scratchpad
+                .cpi_data_scratchpad
                 .ptr()
                 .saturating_add(GUEST_REGION_SIZE);
-            self.transaction_frame.cpi_scratchpad = VmSlice::new(next_ptr, 0);
+            self.transaction_frame.cpi_data_scratchpad = VmSlice::new(next_data_ptr, 0);
+            let next_accounts_ptr = self
+                .transaction_frame
+                .cpi_accounts_scratchpad
+                .ptr()
+                .saturating_add(GUEST_REGION_SIZE);
+            self.transaction_frame.cpi_accounts_scratchpad = VmSlice::new(next_accounts_ptr, 0);
         }
 
         instruction.program_account_index_in_tx = program_index;
@@ -480,14 +497,9 @@ impl<'ix_data> TransactionContext<'ix_data> {
         data: Vec<u8>,
     ) -> Result<(), InstructionError> {
         self.transaction_frame.return_data_pubkey = program_id;
-        // SAFETY: `return_data_scratchpad` is backed by `self.return_data_bytes`
-        // and `return_data_bytes` is being reset to `data`
-        // in the next statement.
-        unsafe {
-            self.transaction_frame
-                .return_data_scratchpad
-                .set_len(data.len() as u64);
-        }
+        self.transaction_frame
+            .return_data_scratchpad
+            .set_len(data.len() as u64);
         self.return_data_bytes = data;
         Ok(())
     }
@@ -512,8 +524,11 @@ impl<'ix_data> TransactionContext<'ix_data> {
                     // This region is not a writable account.
                     return;
                 };
-                let requested_length =
-                    vm_addr.saturating_add(len).saturating_sub(region.vm_addr) as usize;
+                let region_vm_addr_start = region.vm_addr_range().start;
+                let requested_length = vm_addr
+                    .saturating_add(len)
+                    .saturating_sub(region_vm_addr_start)
+                    as usize;
                 if requested_length > address_space_reserved_for_account as usize {
                     // Requested access goes further than the account region.
                     return;
@@ -535,7 +550,7 @@ impl<'ix_data> TransactionContext<'ix_data> {
                     .saturating_sub(accounts.resize_delta())
                     .max(0) as usize;
 
-                if requested_length > region.len as usize {
+                if requested_length > region.len() {
                     // Realloc immediately here to fit the requested access,
                     // then later in CPI or deserialization realloc again to the
                     // account length the program stored in AccountInfo.
@@ -551,14 +566,46 @@ impl<'ix_data> TransactionContext<'ix_data> {
                     {
                         return;
                     }
-                    account.resize(new_len, 0);
-                    region.len = new_len as u64;
+                    unsafe {
+                        account.resize(new_len, 0);
+                        // SAFETY:
+                        //
+                        // Contract from `MemoryRegion::redirect`: MemoryRegion must point to a
+                        // valid object live for the duration of this `MemoryMapping`.
+                        //
+                        // Evidence: There are two distinct cases, when the account buffer is
+                        // serialized and when the account buffer is directly mapped.
+                        // * In the serialization case we continue pointing at the same buffer as
+                        // before, and the original buffer must have satisfied the liveness
+                        // condition before.
+                        // * In the direct mapping case `account.resize` invalidates the buffer this
+                        // region has been pointing at, but this is fixed up later in the "unshare"
+                        // branch later.
+                        //
+                        // Contract from `MemoryRegion::redirect`: For `MemoryRegion`s marked
+                        // writable, the host buffer must accept arbitrary bytes being overwritten
+                        // without it resulting in unsoundness.
+                        //
+                        // Evidence: The account payloads dont have any internal soundness
+                        // invariants. The buffer in the serialization case starts off and remains
+                        // writable (even though the HostBuffer might have been initially created as
+                        // immutable.) In the direct mapping case we redirect the region to the
+                        // buffer stored in the account later on.
+                        //
+                        // Contract from `HostBuffer::mutable`: This host buffer must have been
+                        // initially constructed with a mutable pointer.
+                        // Evidence: See `create_memory_region_of_account`. Direct mapping case
+                        // later reconstructs this buffer from scratch. See below.
+                        region.redirect(region.host_buffer().mutable());
+                    }
                 }
 
                 // Potentially unshare / make the account shared data unique (CoW logic).
                 if virtual_address_space_adjustments && account_data_direct_mapping {
-                    region.host_addr = account.data_as_mut_slice().as_mut_ptr() as u64;
-                    region.writable = true;
+                    unsafe {
+                        // SAFETY: refer to the comment above.
+                        region.redirect(account.raw_mut_data_slice());
+                    }
                 }
             },
         )
@@ -600,6 +647,7 @@ impl<'ix_data> TransactionContext<'ix_data> {
 /// Return data at the end of a transaction
 #[cfg(not(any(target_arch = "bpf", target_arch = "sbf")))]
 #[cfg_attr(feature = "serde", derive(serde::Deserialize, serde::Serialize))]
+#[cfg_attr(feature = "wincode", derive(wincode::SchemaRead, wincode::SchemaWrite))]
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct TransactionReturnData {
     pub program_id: Pubkey,
@@ -611,7 +659,8 @@ pub struct TransactionReturnData {
 pub struct ExecutionRecord {
     pub accounts: Vec<KeyedAccountSharedData>,
     pub return_data: TransactionReturnData,
-    pub touched_account_count: u64,
+    /// Parallel to `accounts`: whether each account was modified by the VM.
+    pub touched_flags: Box<[bool]>,
     pub accounts_resize_delta: i64,
 }
 
@@ -622,11 +671,16 @@ impl From<TransactionContext<'_>> for ExecutionRecord {
         let (accounts, touched_flags, resize_delta) = Rc::try_unwrap(context.accounts)
             .expect("transaction_context.accounts has unexpected outstanding refs")
             .take();
-        let touched_account_count = touched_flags
-            .iter()
-            .fold(0usize, |accumulator, was_touched| {
-                accumulator.saturating_add(was_touched.get() as usize)
-            }) as u64;
+
+        // The flags only needed interior mutability while the VM was running.
+        // Now that we own them, unwrap the per-element `Cell`s into a plain
+        // `Box<[bool]>`. `Vec::from` reuses the box's allocation and the mapped
+        // collect reuses that same buffer in place (`Cell<bool>` and `bool` have
+        // identical layout), so no reallocation occurs.
+        let touched_flags: Box<[bool]> = Vec::from(touched_flags)
+            .into_iter()
+            .map(|flag| flag.into_inner())
+            .collect();
 
         let return_data = TransactionReturnData {
             program_id: context.transaction_frame.return_data_pubkey,
@@ -636,7 +690,7 @@ impl From<TransactionContext<'_>> for ExecutionRecord {
         Self {
             accounts,
             return_data,
-            touched_account_count,
+            touched_flags,
             accounts_resize_delta: Cell::into_inner(resize_delta),
         }
     }
@@ -908,13 +962,35 @@ mod tests {
         );
 
         assert_eq!(
-            transaction_context.transaction_frame.cpi_scratchpad.ptr(),
+            transaction_context
+                .transaction_frame
+                .cpi_data_scratchpad
+                .ptr(),
             GUEST_INSTRUCTION_DATA_BASE_ADDRESS.saturating_add(GUEST_REGION_SIZE.saturating_mul(2))
         );
         assert_eq!(
-            transaction_context.transaction_frame.cpi_scratchpad.len(),
+            transaction_context
+                .transaction_frame
+                .cpi_data_scratchpad
+                .len(),
             0,
         );
+        assert_eq!(
+            transaction_context
+                .transaction_frame
+                .cpi_accounts_scratchpad
+                .ptr(),
+            GUEST_INSTRUCTION_ACCOUNT_BASE_ADDRESS
+                .saturating_add(GUEST_REGION_SIZE.saturating_mul(2))
+        );
+        assert_eq!(
+            transaction_context
+                .transaction_frame
+                .cpi_data_scratchpad
+                .len(),
+            0,
+        );
+
         assert_eq!(
             transaction_context.number_of_called_instructions_in_trace(),
             1
@@ -955,8 +1031,19 @@ mod tests {
         );
 
         assert_eq!(
-            transaction_context.transaction_frame.cpi_scratchpad.ptr(),
+            transaction_context
+                .transaction_frame
+                .cpi_data_scratchpad
+                .ptr(),
             GUEST_INSTRUCTION_DATA_BASE_ADDRESS.saturating_add(GUEST_REGION_SIZE.saturating_mul(3))
+        );
+        assert_eq!(
+            transaction_context
+                .transaction_frame
+                .cpi_accounts_scratchpad
+                .ptr(),
+            GUEST_INSTRUCTION_ACCOUNT_BASE_ADDRESS
+                .saturating_add(GUEST_REGION_SIZE.saturating_mul(3))
         );
 
         // A nested CPI
@@ -984,8 +1071,19 @@ mod tests {
         );
 
         assert_eq!(
-            transaction_context.transaction_frame.cpi_scratchpad.ptr(),
+            transaction_context
+                .transaction_frame
+                .cpi_data_scratchpad
+                .ptr(),
             GUEST_INSTRUCTION_DATA_BASE_ADDRESS.saturating_add(GUEST_REGION_SIZE.saturating_mul(4))
+        );
+        assert_eq!(
+            transaction_context
+                .transaction_frame
+                .cpi_accounts_scratchpad
+                .ptr(),
+            GUEST_INSTRUCTION_ACCOUNT_BASE_ADDRESS
+                .saturating_add(GUEST_REGION_SIZE.saturating_mul(4))
         );
 
         assert_eq!(
@@ -1050,9 +1148,21 @@ mod tests {
         );
 
         assert_eq!(
-            transaction_context.transaction_frame.cpi_scratchpad.ptr(),
+            transaction_context
+                .transaction_frame
+                .cpi_data_scratchpad
+                .ptr(),
             GUEST_INSTRUCTION_DATA_BASE_ADDRESS.saturating_add(GUEST_REGION_SIZE.saturating_mul(5))
         );
+        assert_eq!(
+            transaction_context
+                .transaction_frame
+                .cpi_accounts_scratchpad
+                .ptr(),
+            GUEST_INSTRUCTION_ACCOUNT_BASE_ADDRESS
+                .saturating_add(GUEST_REGION_SIZE.saturating_mul(5))
+        );
+
         assert_eq!(
             transaction_context
                 .transaction_frame
@@ -1082,8 +1192,19 @@ mod tests {
         );
 
         assert_eq!(
-            transaction_context.transaction_frame.cpi_scratchpad.ptr(),
+            transaction_context
+                .transaction_frame
+                .cpi_data_scratchpad
+                .ptr(),
             GUEST_INSTRUCTION_DATA_BASE_ADDRESS.saturating_add(GUEST_REGION_SIZE.saturating_mul(5))
+        );
+        assert_eq!(
+            transaction_context
+                .transaction_frame
+                .cpi_accounts_scratchpad
+                .ptr(),
+            GUEST_INSTRUCTION_ACCOUNT_BASE_ADDRESS
+                .saturating_add(GUEST_REGION_SIZE.saturating_mul(5))
         );
 
         assert_eq!(
@@ -1115,8 +1236,19 @@ mod tests {
         );
 
         assert_eq!(
-            transaction_context.transaction_frame.cpi_scratchpad.ptr(),
+            transaction_context
+                .transaction_frame
+                .cpi_data_scratchpad
+                .ptr(),
             GUEST_INSTRUCTION_DATA_BASE_ADDRESS.saturating_add(GUEST_REGION_SIZE.saturating_mul(5))
+        );
+        assert_eq!(
+            transaction_context
+                .transaction_frame
+                .cpi_accounts_scratchpad
+                .ptr(),
+            GUEST_INSTRUCTION_ACCOUNT_BASE_ADDRESS
+                .saturating_add(GUEST_REGION_SIZE.saturating_mul(5))
         );
 
         assert_eq!(
@@ -1168,9 +1300,21 @@ mod tests {
         );
 
         assert_eq!(
-            transaction_context.transaction_frame.cpi_scratchpad.ptr(),
+            transaction_context
+                .transaction_frame
+                .cpi_data_scratchpad
+                .ptr(),
             GUEST_INSTRUCTION_DATA_BASE_ADDRESS.saturating_add(GUEST_REGION_SIZE.saturating_mul(6))
         );
+        assert_eq!(
+            transaction_context
+                .transaction_frame
+                .cpi_accounts_scratchpad
+                .ptr(),
+            GUEST_INSTRUCTION_ACCOUNT_BASE_ADDRESS
+                .saturating_add(GUEST_REGION_SIZE.saturating_mul(6))
+        );
+
         assert_eq!(
             transaction_context
                 .transaction_frame

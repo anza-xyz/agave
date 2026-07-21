@@ -2,14 +2,21 @@
 #![cfg_attr(feature = "frozen-abi", feature(min_specialization))]
 #![allow(clippy::arithmetic_side_effects)]
 
+#[cfg(not(feature = "dev-context-only-utils"))]
 mod account_saver;
+#[cfg(feature = "dev-context-only-utils")]
+pub mod account_saver;
 pub mod accounts_background_service;
+mod alpenglow_epoch_type;
 pub mod bank;
 pub mod bank_client;
 pub mod bank_forks;
+pub mod bank_forks_controller;
 pub mod bank_utils;
 pub mod block_component_processor;
 pub mod commitment;
+#[cfg(any(feature = "conformance", feature = "dev-context-only-utils"))]
+pub mod conformance;
 pub mod dependency_tracker;
 pub mod epoch_stakes;
 pub mod genesis_utils;
@@ -25,12 +32,17 @@ pub mod rent_collector;
 mod reward_info;
 pub mod runtime_config;
 pub mod serde_snapshot;
+pub mod slot_params;
 pub mod snapshot_bank_utils;
 pub mod snapshot_controller;
 pub mod snapshot_minimizer;
 pub mod snapshot_package;
 pub mod snapshot_utils;
+#[cfg(not(feature = "dev-context-only-utils"))]
 mod stake_account;
+#[cfg(feature = "dev-context-only-utils")]
+pub mod stake_account;
+mod stake_delegation;
 pub mod stake_history;
 pub mod stake_utils;
 pub mod stake_weighted_timestamp;
@@ -38,7 +50,9 @@ pub mod stakes;
 pub mod static_ids;
 pub mod status_cache;
 pub mod test_utils;
+pub mod transaction_balances;
 pub mod transaction_batch;
+pub mod transaction_execution;
 pub mod validated_block_finalization;
 pub mod validated_reward_certificate;
 pub mod vote_sender_types;

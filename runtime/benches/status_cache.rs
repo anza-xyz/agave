@@ -1,17 +1,18 @@
 #![feature(test)]
 extern crate test;
 
+#[cfg(not(feature = "shuttle-test"))]
+use {bincode::serialize, solana_hash::HASH_BYTES, solana_sha256_hasher::hash};
 use {
-    bincode::serialize,
     rand::{Rng, SeedableRng, rngs::SmallRng},
     solana_accounts_db::ancestors::Ancestors,
-    solana_hash::{HASH_BYTES, Hash},
+    solana_hash::Hash,
     solana_runtime::bank::BankStatusCache,
-    solana_sha256_hasher::hash,
     solana_signature::{SIGNATURE_BYTES, Signature},
     test::Bencher,
 };
 
+#[cfg(not(feature = "shuttle-test"))]
 #[bench]
 fn bench_status_cache_serialize(bencher: &mut Bencher) {
     let mut status_cache = BankStatusCache::default();
@@ -35,6 +36,7 @@ fn bench_status_cache_serialize(bencher: &mut Bencher) {
     });
 }
 
+#[cfg(not(feature = "shuttle-test"))]
 #[bench]
 fn bench_status_cache_serialize_max(bencher: &mut Bencher) {
     // Fill up the status cache to better match what intense runtime usage would

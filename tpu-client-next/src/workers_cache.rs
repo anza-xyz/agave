@@ -11,7 +11,7 @@ use {
     },
     lru::LruCache,
     quinn::Endpoint,
-    std::{net::SocketAddr, sync::Arc, time::Duration},
+    std::{net::SocketAddr, num::NonZeroUsize, sync::Arc, time::Duration},
     thiserror::Error,
     tokio::{
         sync::mpsc::{self, error::TrySendError},
@@ -138,7 +138,7 @@ pub enum WorkersCacheError {
 }
 
 impl WorkersCache {
-    pub fn new(capacity: usize, cancel: CancellationToken) -> Self {
+    pub fn new(capacity: NonZeroUsize, cancel: CancellationToken) -> Self {
         Self {
             workers: LruCache::new(capacity),
             cancel,
@@ -258,11 +258,6 @@ impl WorkersCache {
     /// If the worker for the peer is disconnected or fails, it
     /// is removed from the cache. If no worker exists for the peer,
     /// it returns [`WorkersCacheError::WorkerNotFound`].
-    #[allow(
-        dead_code,
-        reason = "This method will be used in the upcoming changes to implement optional \
-                  backpressure on the sender."
-    )]
     pub async fn send_transactions_to_address(
         &mut self,
         peer: &SocketAddr,
@@ -376,6 +371,7 @@ mod tests {
         solana_tls_utils::QuicClientCertificate,
         std::{
             net::{Ipv4Addr, SocketAddr},
+            num::NonZeroUsize,
             sync::Arc,
             time::Duration,
         },
@@ -461,7 +457,7 @@ mod tests {
         let endpoint = create_test_endpoint();
 
         let cancel = CancellationToken::new();
-        let mut cache = WorkersCache::new(10, cancel.clone());
+        let mut cache = WorkersCache::new(NonZeroUsize::new(10).unwrap(), cancel.clone());
 
         let port_range = unique_port_range_for_tests(2);
         let peer: SocketAddr = SocketAddr::new(Ipv4Addr::LOCALHOST.into(), port_range.start);

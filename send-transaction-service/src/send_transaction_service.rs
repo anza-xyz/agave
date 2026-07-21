@@ -3,7 +3,7 @@ use {
         send_transaction_service_stats::{
             SendTransactionServiceStats, SendTransactionServiceStatsReport,
         },
-        transaction_client::TransactionClient,
+        transaction_client::TpuSender,
     },
     crossbeam_channel::{Receiver, RecvTimeoutError},
     itertools::Itertools,
@@ -157,10 +157,10 @@ impl Default for Config {
 pub const MAX_RETRY_SLEEP_MS: u64 = 1000;
 
 impl SendTransactionService {
-    pub fn new<Client: TransactionClient + Clone + std::marker::Send + 'static>(
-        bank_forks: &Arc<RwLock<BankForks>>,
+    pub fn new(
+        bank_forks: Arc<RwLock<BankForks>>,
         receiver: Receiver<TransactionInfo>,
-        client: Client,
+        tpu_sender: TpuSender,
         config: Config,
         exit: Arc<AtomicBool>,
     ) -> Self {
@@ -170,7 +170,7 @@ impl SendTransactionService {
 
         let receive_txn_thread = Self::receive_txn_thread(
             receiver,
-            client.clone(),
+            tpu_sender.clone(),
             retry_transactions.clone(),
             config.clone(),
             stats_report.clone(),
@@ -178,8 +178,8 @@ impl SendTransactionService {
         );
 
         let retry_thread = Self::retry_thread(
-            bank_forks.clone(),
-            client,
+            bank_forks,
+            tpu_sender,
             retry_transactions,
             config,
             stats_report,
@@ -193,9 +193,9 @@ impl SendTransactionService {
     }
 
     /// Thread responsible for receiving transactions from RPC clients.
-    fn receive_txn_thread<Client: TransactionClient + std::marker::Send + 'static>(
+    fn receive_txn_thread(
         receiver: Receiver<TransactionInfo>,
-        client: Client,
+        tpu_sender: TpuSender,
         retry_transactions: Arc<Mutex<HashMap<Signature, TransactionInfo>>>,
         Config {
             batch_send_rate_ms,
@@ -233,15 +233,14 @@ impl SendTransactionService {
                             stats.received_transactions.fetch_add(1, Ordering::Relaxed);
                             let entry = transactions.entry(transaction_info.signature);
                             let mut new_transaction = false;
-                            if let Entry::Vacant(_) = entry {
-                                if !retry_transactions
+                            if let Entry::Vacant(_) = entry
+                                && !retry_transactions
                                     .lock()
                                     .unwrap()
                                     .contains_key(&transaction_info.signature)
-                                {
-                                    entry.or_insert(transaction_info);
-                                    new_transaction = true;
-                                }
+                            {
+                                entry.or_insert(transaction_info);
+                                new_transaction = true;
                             }
                             if !new_transaction {
                                 stats
@@ -261,8 +260,8 @@ impl SendTransactionService {
                         let wire_transactions = transactions
                             .values()
                             .map(|transaction_info| transaction_info.wire_transaction.clone())
-                            .collect::<Vec<Vec<u8>>>();
-                        client.send_transactions_in_batch(wire_transactions, stats);
+                            .collect();
+                        tpu_sender.send_transactions_in_batch(wire_transactions, stats);
                         let last_sent_time = Instant::now();
                         {
                             // take a lock of retry_transactions and move the batch to the retry set.
@@ -308,9 +307,9 @@ impl SendTransactionService {
     }
 
     /// Thread responsible for retrying transactions
-    fn retry_thread<Client: TransactionClient + std::marker::Send + 'static>(
+    fn retry_thread(
         bank_forks: Arc<RwLock<BankForks>>,
-        client: Client,
+        tpu_sender: TpuSender,
         retry_transactions: Arc<Mutex<HashMap<Signature, TransactionInfo>>>,
         config: Config,
         stats_report: Arc<SendTransactionServiceStatsReport>,
@@ -345,7 +344,7 @@ impl SendTransactionService {
                             &working_bank,
                             &root_bank,
                             &mut transactions,
-                            &client,
+                            &tpu_sender,
                             &config,
                             stats,
                         );
@@ -368,11 +367,11 @@ impl SendTransactionService {
     }
 
     /// Retry transactions sent before.
-    fn process_transactions<Client: TransactionClient + std::marker::Send + 'static>(
+    fn process_transactions(
         working_bank: &Bank,
         root_bank: &Bank,
         transactions: &mut HashMap<Signature, TransactionInfo>,
-        client: &Client,
+        tpu_sender: &TpuSender,
         &Config {
             retry_rate_ms,
             service_max_retries,
@@ -435,15 +434,15 @@ impl SendTransactionService {
             let max_retries =
                 transaction_info.get_max_retries(default_max_retries, service_max_retries);
 
-            if let Some(max_retries) = max_retries {
-                if transaction_info.retries >= max_retries {
-                    info!("Dropping transaction due to max retries: {signature}");
-                    result.max_retries_elapsed += 1;
-                    stats
-                        .transactions_exceeding_max_retries
-                        .fetch_add(1, Ordering::Relaxed);
-                    return false;
-                }
+            if let Some(max_retries) = max_retries
+                && transaction_info.retries >= max_retries
+            {
+                info!("Dropping transaction due to max retries: {signature}");
+                result.max_retries_elapsed += 1;
+                stats
+                    .transactions_exceeding_max_retries
+                    .fetch_add(1, Ordering::Relaxed);
+                return false;
             }
 
             match signature_status {
@@ -469,10 +468,10 @@ impl SendTransactionService {
 
                         let max_retries = transaction_info
                             .get_max_retries(default_max_retries, service_max_retries);
-                        if let Some(max_retries) = max_retries {
-                            if transaction_info.retries >= max_retries {
-                                exceeded_retries_transactions.push(*signature);
-                            }
+                        if let Some(max_retries) = max_retries
+                            && transaction_info.retries >= max_retries
+                        {
+                            exceeded_retries_transactions.push(*signature);
                         }
                     } else if let Some(last) = transaction_info.last_sent_time {
                         result.last_sent_time = Some(
@@ -510,7 +509,7 @@ impl SendTransactionService {
             let iter = wire_transactions.chunks(batch_size);
             for chunk in &iter {
                 let chunk = chunk.collect();
-                client.send_transactions_in_batch(chunk, stats);
+                tpu_sender.send_transactions_in_batch(chunk, stats);
             }
         }
 
@@ -537,7 +536,7 @@ mod test {
     use {
         super::*,
         crate::test_utils::create_client_for_tests,
-        crossbeam_channel::{bounded, unbounded},
+        crossbeam_channel::bounded,
         solana_account::AccountSharedData,
         solana_genesis_config::create_genesis_config,
         solana_nonce::{self as nonce, state::DurableNonce},
@@ -555,15 +554,15 @@ mod test {
     async fn service_exit() {
         let bank = Bank::default_for_tests();
         let bank_forks = BankForks::new_rw_arc(bank);
-        let (sender, receiver) = unbounded();
+        let (sender, receiver) = bounded(1024);
 
-        let client =
+        let (tpu_sender, client) =
             create_client_for_tests(Handle::current(), "127.0.0.1:0".parse().unwrap(), None, 1);
 
         let send_transaction_service = SendTransactionService::new(
-            &bank_forks,
+            bank_forks,
             receiver,
-            client.clone(),
+            tpu_sender.clone(),
             Config {
                 retry_rate_ms: 1000,
                 ..Config::default()
@@ -573,7 +572,7 @@ mod test {
 
         drop(sender);
         send_transaction_service.join().unwrap();
-        client.cancel();
+        client.shutdown().await.unwrap();
     }
 
     #[tokio::test(flavor = "multi_thread")]
@@ -595,12 +594,12 @@ mod test {
         };
 
         let exit = Arc::new(AtomicBool::new(false));
-        let client =
+        let (tpu_sender, client) =
             create_client_for_tests(Handle::current(), "127.0.0.1:0".parse().unwrap(), None, 1);
         let _send_transaction_service = SendTransactionService::new(
-            &bank_forks,
+            bank_forks,
             receiver,
-            client.clone(),
+            tpu_sender.clone(),
             Config {
                 retry_rate_ms: 1000,
                 ..Config::default()
@@ -610,9 +609,12 @@ mod test {
 
         sender.send(dummy_tx_info()).unwrap();
 
+        let runtime_handle = Handle::current();
         thread::spawn(move || {
             exit.store(true, Ordering::Relaxed);
-            client.cancel();
+            runtime_handle.spawn(async move {
+                let _ = client.shutdown().await;
+            });
         });
 
         let mut option = Ok(());
@@ -704,7 +706,7 @@ mod test {
             ),
         );
 
-        let client = create_client_for_tests(
+        let (tpu_sender, client) = create_client_for_tests(
             Handle::current(),
             "127.0.0.1:0".parse().unwrap(),
             config.tpu_peers.clone(),
@@ -714,7 +716,7 @@ mod test {
             &working_bank,
             &root_bank,
             &mut transactions,
-            &client,
+            &tpu_sender,
             &config,
             &stats,
         );
@@ -745,7 +747,7 @@ mod test {
             &working_bank,
             &root_bank,
             &mut transactions,
-            &client,
+            &tpu_sender,
             &config,
             &stats,
         );
@@ -776,7 +778,7 @@ mod test {
             &working_bank,
             &root_bank,
             &mut transactions,
-            &client,
+            &tpu_sender,
             &config,
             &stats,
         );
@@ -807,7 +809,7 @@ mod test {
             &working_bank,
             &root_bank,
             &mut transactions,
-            &client,
+            &tpu_sender,
             &config,
             &stats,
         );
@@ -840,7 +842,7 @@ mod test {
             &working_bank,
             &root_bank,
             &mut transactions,
-            &client,
+            &tpu_sender,
             &config,
             &stats,
         );
@@ -885,7 +887,7 @@ mod test {
             &working_bank,
             &root_bank,
             &mut transactions,
-            &client,
+            &tpu_sender,
             &config,
             &stats,
         );
@@ -898,7 +900,7 @@ mod test {
                 ..ProcessTransactionsResult::default()
             }
         );
-        client.cancel();
+        client.shutdown().await.unwrap();
     }
 
     #[tokio::test(flavor = "multi_thread")]
@@ -990,7 +992,7 @@ mod test {
             ),
         );
         let stats = SendTransactionServiceStats::default();
-        let client = create_client_for_tests(
+        let (tpu_sender, client) = create_client_for_tests(
             Handle::current(),
             "127.0.0.1:0".parse().unwrap(),
             config.tpu_peers.clone(),
@@ -1000,7 +1002,7 @@ mod test {
             &working_bank,
             &root_bank,
             &mut transactions,
-            &client,
+            &tpu_sender,
             &config,
             &stats,
         );
@@ -1030,7 +1032,7 @@ mod test {
             &working_bank,
             &root_bank,
             &mut transactions,
-            &client,
+            &tpu_sender,
             &config,
             &stats,
         );
@@ -1062,7 +1064,7 @@ mod test {
             &working_bank,
             &root_bank,
             &mut transactions,
-            &client,
+            &tpu_sender,
             &config,
             &stats,
         );
@@ -1092,7 +1094,7 @@ mod test {
             &working_bank,
             &root_bank,
             &mut transactions,
-            &client,
+            &tpu_sender,
             &config,
             &stats,
         );
@@ -1123,7 +1125,7 @@ mod test {
             &working_bank,
             &root_bank,
             &mut transactions,
-            &client,
+            &tpu_sender,
             &config,
             &stats,
         );
@@ -1154,7 +1156,7 @@ mod test {
             &working_bank,
             &root_bank,
             &mut transactions,
-            &client,
+            &tpu_sender,
             &config,
             &stats,
         );
@@ -1187,7 +1189,7 @@ mod test {
             &working_bank,
             &root_bank,
             &mut transactions,
-            &client,
+            &tpu_sender,
             &config,
             &stats,
         );
@@ -1215,7 +1217,7 @@ mod test {
             &working_bank,
             &root_bank,
             &mut transactions,
-            &client,
+            &tpu_sender,
             &config,
             &stats,
         );
@@ -1227,6 +1229,6 @@ mod test {
                 ..ProcessTransactionsResult::default()
             }
         );
-        client.cancel();
+        client.shutdown().await.unwrap();
     }
 }

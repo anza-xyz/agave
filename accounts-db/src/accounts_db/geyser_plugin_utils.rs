@@ -33,6 +33,7 @@ mod tests {
             accounts_update_notifier_interface::{
                 AccountForGeyser, AccountsUpdateNotifier, AccountsUpdateNotifierInterface,
             },
+            ancestors::Ancestors,
             utils::create_account_shared_data,
         },
         dashmap::DashMap,
@@ -97,7 +98,7 @@ mod tests {
 
     #[test]
     fn test_notify_account_restore_from_snapshot() {
-        let mut accounts_db = AccountsDb::new_single_for_tests();
+        let mut accounts_db = AccountsDb::default_for_tests();
         let key1 = Pubkey::new_unique();
         let key2 = Pubkey::new_unique();
         let account = AccountSharedData::new(1, 0, &Pubkey::default());
@@ -107,23 +108,26 @@ mod tests {
         // to correct slots. Cache flush can skip writes if accounts have already been written to
         // a newer slot
         let slot0 = 0;
-        let storage0 = accounts_db.create_and_insert_store(slot0, /*size*/ 4_096, "");
+        let storage0 = accounts_db.create_store(slot0, /*size*/ 4_096);
         storage0
             .accounts
-            .write_accounts(&(slot0, [(&key1, &account)].as_slice()), /*skip*/ 0);
+            .write_accounts(&(slot0, [(&key1, &account)].as_slice()));
+        accounts_db.storage.insert(Arc::new(storage0));
 
         let slot1 = 1;
-        let storage1 = accounts_db.create_and_insert_store(slot1, /*size*/ 4_096, "");
+        let storage1 = accounts_db.create_store(slot1, /*size*/ 4_096);
         storage1
             .accounts
-            .write_accounts(&(slot1, [(&key1, &account)].as_slice()), /*skip*/ 0);
+            .write_accounts(&(slot1, [(&key1, &account)].as_slice()));
+        accounts_db.storage.insert(Arc::new(storage1));
 
         // Account with key2 is updated in a single slot, should get notified once
         let slot2 = 2;
-        let storage2 = accounts_db.create_and_insert_store(slot2, /*size*/ 4_096, "");
+        let storage2 = accounts_db.create_store(slot2, /*size*/ 4_096);
         storage2
             .accounts
-            .write_accounts(&(slot2, [(&key2, &account)].as_slice()), /*skip*/ 0);
+            .write_accounts(&(slot2, [(&key2, &account)].as_slice()));
+        accounts_db.storage.insert(Arc::new(storage2));
 
         // Do the notification
         let notifier = GeyserTestPlugin::default();
@@ -166,7 +170,7 @@ mod tests {
     #[test]
     fn test_notify_account_at_accounts_update() {
         let notifier = Arc::new(GeyserTestPlugin::default());
-        let mut accounts_db = AccountsDb::new_single_for_tests();
+        let mut accounts_db = AccountsDb::default_for_tests();
         accounts_db.set_geyser_plugin_notifier(Some(notifier.clone()));
         let accounts = Accounts::new(Arc::new(accounts_db));
 
@@ -178,24 +182,26 @@ mod tests {
         let account1 =
             AccountSharedData::new(account1_lamports1, 1, AccountSharedData::default().owner());
         let slot0 = 0;
-        accounts.store_accounts_seq((slot0, &[(&key1, &account1)][..]), None, None);
+        let mut ancestors = Ancestors::from(vec![slot0]);
+        accounts.store_accounts_seq((slot0, &[(&key1, &account1)][..]), None, &ancestors);
 
         let key2 = solana_pubkey::new_rand();
         let account2_lamports: u64 = 200;
         let account2 =
             AccountSharedData::new(account2_lamports, 1, AccountSharedData::default().owner());
-        accounts.store_accounts_seq((slot0, &[(&key2, &account2)][..]), None, None);
+        accounts.store_accounts_seq((slot0, &[(&key2, &account2)][..]), None, &ancestors);
 
         let account1_lamports2 = 2;
         let slot1 = 1;
+        ancestors.insert(slot1);
         let account1 = AccountSharedData::new(account1_lamports2, 1, account1.owner());
-        accounts.store_accounts_seq((slot1, &[(&key1, &account1)][..]), None, None);
+        accounts.store_accounts_seq((slot1, &[(&key1, &account1)][..]), None, &ancestors);
 
         let key3 = solana_pubkey::new_rand();
         let account3_lamports: u64 = 300;
         let account3 =
             AccountSharedData::new(account3_lamports, 1, AccountSharedData::default().owner());
-        accounts.store_accounts_seq((slot1, &[(&key3, &account3)][..]), None, None);
+        accounts.store_accounts_seq((slot1, &[(&key3, &account3)][..]), None, &ancestors);
 
         assert_eq!(notifier.accounts_notified.get(&key1).unwrap().len(), 2);
         assert_eq!(
@@ -236,7 +242,7 @@ mod tests {
     #[test]
     fn test_notify_closed_account() {
         let notifier = Arc::new(GeyserTestPlugin::default());
-        let mut accounts_db = AccountsDb::new_single_for_tests();
+        let mut accounts_db = AccountsDb::default_for_tests();
         accounts_db.set_geyser_plugin_notifier(Some(notifier.clone()));
         let accounts = Accounts::new(Arc::new(accounts_db));
 
@@ -250,12 +256,12 @@ mod tests {
         accounts.store_accounts_seq(
             (slot_open, [(&address, &account_open)].as_slice()),
             None,
-            None,
+            &Ancestors::from(vec![slot_open]),
         );
         accounts.store_accounts_seq(
             (slot_close, [(&address, &account_close)].as_slice()),
             None,
-            None,
+            &Ancestors::from(vec![slot_open, slot_close]),
         );
 
         let notifications = notifier.accounts_notified.get(&address).unwrap().clone();

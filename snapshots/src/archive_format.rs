@@ -173,7 +173,7 @@ mod tests {
             Some(ArchiveFormat::TarLz4),
         ];
 
-        for (arg, expected) in zip(SUPPORTED_ARCHIVE_COMPRESSION.iter(), golden.into_iter()) {
+        for (arg, expected) in zip(SUPPORTED_ARCHIVE_COMPRESSION.iter(), golden) {
             assert_eq!(ArchiveFormat::from_cli_arg(arg), expected);
         }
 

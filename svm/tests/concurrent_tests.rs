@@ -10,13 +10,15 @@ use {
         thread,
     },
     solana_account::{AccountSharedData, ReadableAccount, WritableAccount},
-    solana_clock::Slot,
     solana_instruction::{AccountMeta, Instruction},
     solana_program_runtime::{
         execution_budget::SVMTransactionExecutionAndFeeBudgetLimits,
         loaded_programs::{
-            ProgramCacheEntryType, ProgramCacheForTxBatch, ProgramRuntimeEnvironments,
+            ProgramCacheForTxBatch, ProgramCacheMatchCriteria, ProgramRuntimeEnvironments,
+            ProgramToLoad,
         },
+        program_cache_entry::{ProgramCacheEntryOwner, ProgramCacheEntryType},
+        program_metrics::ProgramStatistics,
     },
     solana_pubkey::Pubkey,
     solana_svm::{
@@ -32,7 +34,7 @@ use {
     solana_svm_feature_set::SVMFeatureSet,
     solana_svm_timings::ExecuteTimings,
     solana_transaction::{Transaction, sanitized::SanitizedTransaction},
-    std::collections::{HashMap, HashSet},
+    std::collections::HashSet,
 };
 
 mod mock_bank;
@@ -43,14 +45,11 @@ fn program_cache_execution(threads: usize) {
     let mut mock_bank = MockBankCallback::default();
     let fork_graph = Arc::new(RwLock::new(MockForkGraph {}));
     let batch_processor = TransactionBatchProcessor::new(5, 5, Arc::downgrade(&fork_graph), None);
-
-    let programs = vec![
+    let programs = [
         deploy_program("hello-solana".to_string(), 0, &mut mock_bank),
         deploy_program("simple-transfer".to_string(), 0, &mut mock_bank),
         deploy_program("clock-sysvar".to_string(), 0, &mut mock_bank),
     ];
-
-    let account_maps: HashMap<Pubkey, Slot> = programs.iter().map(|key| (*key, 0)).collect();
 
     let ths: Vec<_> = (0..threads)
         .map(|_| {
@@ -60,9 +59,16 @@ fn program_cache_execution(threads: usize) {
                 batch_processor.slot,
                 batch_processor.epoch,
             );
-            let maps = account_maps.clone();
-            let programs = programs.clone();
             thread::spawn(move || {
+                let missing_programs: Vec<ProgramToLoad> = programs
+                    .iter()
+                    .map(|program_id| ProgramToLoad {
+                        program_id,
+                        loader: ProgramCacheEntryOwner::LoaderV3,
+                        match_criteria: ProgramCacheMatchCriteria::NoCriteria,
+                        last_modification_slot: 0,
+                    })
+                    .collect();
                 let feature_set = SVMFeatureSet::all_enabled();
                 let account_loader = AccountLoader::new_with_loaded_accounts_capacity(
                     None,
@@ -75,15 +81,14 @@ fn program_cache_execution(threads: usize) {
                     processor.program_runtime_environment_for_epoch(processor.epoch);
                 processor.replenish_program_cache(
                     &account_loader,
-                    &maps,
+                    missing_programs,
                     &program_runtime_environment_for_execution,
                     &mut result,
                     &mut ExecuteTimings::default(),
-                    false,
                     true,
                     true,
                 );
-                for key in &programs {
+                for key in programs.iter() {
                     let cache_entry = result.find(key);
                     assert!(matches!(
                         cache_entry.unwrap().program,
@@ -92,6 +97,33 @@ fn program_cache_execution(threads: usize) {
                 }
             })
         })
+        .chain(programs.iter().map(|program| {
+            let program = *program;
+            let local_bank = mock_bank.clone();
+            let processor = TransactionBatchProcessor::new_from(
+                &batch_processor,
+                batch_processor.slot,
+                batch_processor.epoch,
+            );
+            thread::spawn(move || {
+                let feature_set = SVMFeatureSet::all_enabled();
+                let account_loader = AccountLoader::new_with_loaded_accounts_capacity(
+                    None,
+                    &local_bank,
+                    &feature_set,
+                    0,
+                );
+                let upcoming_environment =
+                    processor.program_runtime_environment_for_epoch(processor.epoch + 1);
+                processor.prepare_one_program_for_upcoming_feature_set(
+                    &account_loader,
+                    false,
+                    &upcoming_environment,
+                    &program,
+                    &ProgramStatistics::default(),
+                );
+            })
+        }))
         .collect();
 
     for th in ths {
@@ -151,7 +183,7 @@ fn svm_concurrent() {
 
     mock_bank.configure_sysvars();
     batch_processor.fill_missing_sysvar_cache_entries(&*mock_bank);
-    register_builtins(&mock_bank, &batch_processor, false);
+    register_builtins(&mock_bank, &batch_processor);
 
     let program_id = deploy_program("transfer-from-account".to_string(), 0, &mock_bank);
 

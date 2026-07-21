@@ -4,15 +4,15 @@ use {
     crate::result::{Error, Result},
     crossbeam_channel::{RecvTimeoutError, TrySendError, unbounded},
     solana_clock::{DEFAULT_TICKS_PER_SLOT, HOLD_TRANSACTIONS_SLOT_OFFSET},
-    solana_metrics::{inc_new_counter_debug, inc_new_counter_info},
     solana_packet::PacketFlags,
     solana_perf::{
-        packet::{PacketBatchRecycler, PacketRefMut},
+        packet::{PacketBatch, PacketBatchRecycler, PacketRefMut},
         recycler::Recycler,
     },
     solana_poh::poh_recorder::PohRecorder,
-    solana_streamer::streamer::{
-        self, PacketBatchReceiver, PacketBatchSender, StreamerReceiveStats,
+    solana_streamer::{
+        evicting_sender::EvictingSender,
+        streamer::{self, PacketBatchReceiver, PacketBatchSender, StreamerReceiveStats},
     },
     std::{
         net::UdpSocket,
@@ -21,9 +21,53 @@ use {
             atomic::{AtomicBool, Ordering},
         },
         thread::{self, Builder, JoinHandle, sleep},
-        time::Duration,
+        time::{Duration, Instant},
     },
 };
+
+struct ForwardingStats {
+    last_report: Instant,
+    /// The number of packets sent along to the next stage
+    num_packets_sent: usize,
+    /// The number of packets discarded because we are not leader soon
+    num_packets_discarded: usize,
+    /// The number of packets dropped because the channel is already full
+    num_packets_dropped: usize,
+}
+
+impl ForwardingStats {
+    const REPORT_INTERVAL: Duration = Duration::from_secs(2);
+
+    fn new() -> Self {
+        Self {
+            last_report: Instant::now(),
+            num_packets_sent: 0,
+            num_packets_discarded: 0,
+            num_packets_dropped: 0,
+        }
+    }
+
+    fn maybe_report_and_reset(&mut self) {
+        if self.last_report.elapsed() < Self::REPORT_INTERVAL {
+            return;
+        }
+
+        if !self.is_empty() {
+            datapoint_info!(
+                "fetch_stage-forwards",
+                ("num_packets_sent", self.num_packets_sent, i64),
+                ("num_packets_discarded", self.num_packets_discarded, i64),
+                ("num_packets_dropped", self.num_packets_dropped, i64)
+            );
+        }
+
+        *self = Self::new();
+    }
+
+    fn is_empty(&self) -> bool {
+        (self.num_packets_sent + self.num_packets_discarded + self.num_packets_dropped) == 0
+    }
+}
 
 pub struct FetchStage {
     thread_hdls: Vec<JoinHandle<()>>,
@@ -37,7 +81,8 @@ impl FetchStage {
         coalesce: Option<Duration>,
     ) -> (Self, PacketBatchReceiver, PacketBatchReceiver) {
         let (sender, receiver) = unbounded();
-        let (vote_sender, vote_receiver) = unbounded();
+        let (vote_sender, vote_receiver) =
+            EvictingSender::new_bounded(crate::tpu::TPU_VOTE_CHANNEL_SIZE);
         let (_forward_sender, forward_receiver) = unbounded();
         (
             Self::new_with_sender(
@@ -58,7 +103,7 @@ impl FetchStage {
         tpu_vote_sockets: Vec<UdpSocket>,
         exit: Arc<AtomicBool>,
         sender: &PacketBatchSender,
-        vote_sender: &PacketBatchSender,
+        vote_sender: &EvictingSender<PacketBatch>,
         forward_receiver: PacketBatchReceiver,
         poh_recorder: &Arc<RwLock<PohRecorder>>,
         coalesce: Option<Duration>,
@@ -79,6 +124,7 @@ impl FetchStage {
         recvr: &PacketBatchReceiver,
         sendr: &PacketBatchSender,
         poh_recorder: &Arc<RwLock<PohRecorder>>,
+        stats: &mut ForwardingStats,
     ) -> Result<()> {
         let mark_forwarded = |mut packet: PacketRefMut| {
             packet.meta_mut().flags |= PacketFlags::FORWARDED;
@@ -103,26 +149,20 @@ impl FetchStage {
             .unwrap()
             .would_be_leader(HOLD_TRANSACTIONS_SLOT_OFFSET.saturating_mul(DEFAULT_TICKS_PER_SLOT))
         {
-            let mut packets_sent = 0usize;
-            let mut packets_dropped = 0usize;
             for packet_batch in packet_batches {
                 let packets_in_batch = packet_batch.len();
                 match sendr.try_send(packet_batch) {
                     Ok(()) => {
-                        packets_sent += packets_in_batch;
+                        stats.num_packets_sent += packets_in_batch;
                     }
                     Err(TrySendError::Full(_)) => {
-                        packets_dropped += packets_in_batch;
+                        stats.num_packets_dropped += packets_in_batch;
                     }
                     Err(TrySendError::Disconnected(_)) => return Err(Error::Send),
                 };
             }
-            inc_new_counter_debug!("fetch_stage-honor_forwards", packets_sent);
-            if packets_dropped > 0 {
-                inc_new_counter_error!("fetch_stage-dropped_forwards", packets_dropped);
-            }
         } else {
-            inc_new_counter_info!("fetch_stage-discard_forwards", num_packets);
+            stats.num_packets_discarded += num_packets;
         }
 
         Ok(())
@@ -132,12 +172,12 @@ impl FetchStage {
         tpu_vote_sockets: Vec<Arc<UdpSocket>>,
         exit: Arc<AtomicBool>,
         sender: &PacketBatchSender,
-        vote_sender: &PacketBatchSender,
+        vote_sender: &EvictingSender<PacketBatch>,
         forward_receiver: PacketBatchReceiver,
         poh_recorder: &Arc<RwLock<PohRecorder>>,
         coalesce: Option<Duration>,
     ) -> Self {
-        let recycler: PacketBatchRecycler = Recycler::warmed(1000, 1024);
+        let recycler: PacketBatchRecycler = Recycler::new();
 
         let tpu_vote_stats = Arc::new(StreamerReceiveStats::new("tpu_vote_receiver"));
         let tpu_vote_threads: Vec<_> = tpu_vote_sockets
@@ -164,10 +204,15 @@ impl FetchStage {
         let fwd_thread_hdl = Builder::new()
             .name("solFetchStgFwRx".to_string())
             .spawn(move || {
+                let mut stats = ForwardingStats::new();
+
                 loop {
-                    if let Err(e) =
-                        Self::handle_forwarded_packets(&forward_receiver, &sender, &poh_recorder)
-                    {
+                    if let Err(e) = Self::handle_forwarded_packets(
+                        &forward_receiver,
+                        &sender,
+                        &poh_recorder,
+                        &mut stats,
+                    ) {
                         match e {
                             Error::RecvTimeout(RecvTimeoutError::Disconnected) => break,
                             Error::RecvTimeout(RecvTimeoutError::Timeout) => (),
@@ -176,6 +221,7 @@ impl FetchStage {
                             _ => error!("{e:?}"),
                         }
                     }
+                    stats.maybe_report_and_reset();
                 }
             })
             .unwrap();

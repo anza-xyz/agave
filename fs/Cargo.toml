@@ -11,6 +11,8 @@ edition = { workspace = true }
 
 [package.metadata.docs.rs]
 targets = ["x86_64-unknown-linux-gnu"]
+all-features = true
+rustdoc-args = ["--cfg=docsrs"]
 
 [lib]
 crate-type = ["lib"]
@@ -29,8 +31,12 @@ thiserror = { workspace = true }
 [target.'cfg(target_os = "linux")'.dependencies]
 agave-io-uring = { workspace = true }
 io-uring = { workspace = true }
+tempfile = { workspace = true }
 
 [dev-dependencies]
 rand = { workspace = true }
 tempfile = { workspace = true }
 test-case = { workspace = true }
+
+[lints]
+workspace = true

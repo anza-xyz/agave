@@ -14,13 +14,17 @@ pub struct Banlist<T> {
 
 impl<T: Eq + Hash> Banlist<T> {
     /// Ban the `id` for the specified `timeout`
-    pub fn ban(&self, id: T, timeout: Duration) {
+    ///
+    /// Returns `true` if the `id` was already banned else `false`.
+    pub fn ban(&self, id: T, timeout: Duration) -> bool {
         debug_assert!(!timeout.is_zero());
+        debug_assert!(Instant::now().checked_add(timeout).is_some());
         let Some(expires_at) = Instant::now().checked_add(timeout) else {
-            return;
+            return false;
         };
         let prev = self.banned.write().unwrap().insert(id, expires_at);
         debug_assert!(prev < Some(expires_at));
+        prev.is_some()
     }
 
     /// Check if `id` is banned using the current time.

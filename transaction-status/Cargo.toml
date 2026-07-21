@@ -11,6 +11,8 @@ edition = { workspace = true }
 
 [package.metadata.docs.rs]
 targets = ["x86_64-unknown-linux-gnu"]
+all-features = true
+rustdoc-args = ["--cfg=docsrs"]
 
 [features]
 agave-unstable-api = []
@@ -34,7 +36,7 @@ solana-loader-v3-interface = { workspace = true, features = ["bincode"] }
 solana-message = { workspace = true }
 solana-program-option = { workspace = true }
 solana-pubkey = { workspace = true }
-solana-reward-info = { workspace = true }
+solana-reward-info = { workspace = true, features = ["wincode"] }
 solana-sdk-ids = { workspace = true }
 solana-signature = { workspace = true }
 solana-stake-interface = { workspace = true }
@@ -43,6 +45,7 @@ solana-transaction = { workspace = true }
 solana-transaction-error = { workspace = true }
 solana-transaction-status-client-types = { workspace = true }
 solana-vote-interface = { workspace = true }
+solana-zk-sdk-pod = { workspace = true }
 spl-associated-token-account-interface = { workspace = true, features = ["borsh"] }
 spl-memo-interface = { workspace = true }
 spl-token-2022-interface = { workspace = true }
@@ -50,6 +53,7 @@ spl-token-group-interface = { workspace = true }
 spl-token-interface = { workspace = true }
 spl-token-metadata-interface = { workspace = true }
 thiserror = { workspace = true }
+wincode = { workspace = true }
 
 [dev-dependencies]
 bencher = { workspace = true }
@@ -61,3 +65,6 @@ spl-token-confidential-transfer-proof-extraction = { workspace = true }
 [[bench]]
 name = "extract_memos"
 harness = false
+
+[lints]
+workspace = true

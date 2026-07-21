@@ -32,7 +32,7 @@ use {
         borrow::Cow,
         collections::{BTreeMap, BTreeSet, HashMap},
         fs::File,
-        io::{BufRead, BufReader, Write, stdout},
+        io::{BufRead, BufReader},
         path::{Path, PathBuf},
         sync::atomic::AtomicBool,
         time::{Duration, UNIX_EPOCH},
@@ -168,12 +168,12 @@ fn slot_contains_nonvote_tx(blockstore: &Blockstore, slot: Slot) -> bool {
     let (entries, _, _) = blockstore
         .get_slot_entries_with_shred_info(slot, 0, false)
         .expect("Failed to get slot entries");
-    let contains_nonvote = entries
+
+    entries
         .iter()
         .flat_map(|entry| entry.transactions.iter())
         .flat_map(get_program_ids)
-        .any(|program_id| *program_id != solana_vote_program::id());
-    contains_nonvote
+        .any(|program_id| *program_id != solana_vote_program::id())
 }
 
 type OptimisticSlotInfo = (Slot, Option<(Hash, UnixTimestamp)>, bool);
@@ -380,17 +380,6 @@ pub fn blockstore_subcommands<'a, 'b>(hidden: bool) -> Vec<App<'a, 'b>> {
                     .value_name("NUM")
                     .takes_value(true)
                     .help("First root to start searching from"),
-            )
-            .arg(
-                Arg::with_name("slot_list")
-                    .long("slot-list")
-                    .value_name("FILENAME")
-                    .required(false)
-                    .takes_value(true)
-                    .help(
-                        "The location of the output YAML file. A list of rollback slot heights \
-                         and hashes will be written to the file",
-                    ),
             )
             .arg(
                 Arg::with_name("num_roots")
@@ -653,7 +642,7 @@ fn do_blockstore_process_command(ledger_path: &Path, matches: &ArgMatches<'_>) -
                 }
                 let shreds = source.get_data_shreds_for_slot(slot, 0)?;
                 let shreds = shreds.into_iter().map(Cow::Owned);
-                if target.insert_cow_shreds(shreds, None, true).is_err() {
+                if target.insert_cow_shreds(shreds, true).is_err() {
                     warn!("error inserting shreds for slot {slot}");
                 }
             }
@@ -707,7 +696,7 @@ fn do_blockstore_process_command(ledger_path: &Path, matches: &ArgMatches<'_>) -
                 };
                 println!(
                     "{:>20} {:>44} {:>32} {:>13}",
-                    slot, &hash_str, &time_str, !contains_nonvote
+                    slot, hash_str, time_str, !contains_nonvote
                 );
             }
         }
@@ -721,15 +710,6 @@ fn do_blockstore_process_command(ledger_path: &Path, matches: &ArgMatches<'_>) -
 
             let iter = blockstore.rooted_slot_iterator(start_root)?;
 
-            let mut output: Box<dyn Write> = if let Some(path) = arg_matches.value_of("slot_list") {
-                match File::create(path) {
-                    Ok(file) => Box::new(file),
-                    _ => Box::new(stdout()),
-                }
-            } else {
-                Box::new(stdout())
-            };
-
             for slot in iter
                 .take(num_roots)
                 .take_while(|slot| *slot <= max_height as u64)
@@ -738,7 +718,7 @@ fn do_blockstore_process_command(ledger_path: &Path, matches: &ArgMatches<'_>) -
                 .rev()
             {
                 let blockhash = blockstore.get_slot_entries(slot, 0)?.last().unwrap().hash;
-                writeln!(output, "{slot}: {blockhash:?}").expect("failed to write");
+                println!("{slot}: {blockhash:?}");
             }
         }
         ("parse_full_frozen", Some(arg_matches)) => {
@@ -1029,7 +1009,7 @@ pub mod tests {
         let num_slots = 5;
         let entries_per_shred = 5;
         let (shreds, _) = make_many_slot_entries(start_slot, num_slots, entries_per_shred);
-        blockstore.insert_shreds(shreds, None, false).unwrap();
+        blockstore.insert_shreds(shreds, false).unwrap();
 
         // Mark even shreds as optimistically confirmed
         (0..num_slots).step_by(2).for_each(|slot| {

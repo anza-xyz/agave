@@ -21,11 +21,11 @@ jobs:
     # Forks do not need to run this, especially on cron schedule.
     if: >
       github.event_name != 'schedule'
-      || github.repository == 'anza-xyz/agave'
+      || github.repository_owner == 'anza-xyz'
 
     runs-on: ubuntu-24.04
     steps:
-      - uses: actions/stale@b5d41d4e1d5dceea10e7104786b73624c18a190f  # v10.2.0
+      - uses: actions/stale@1e223db275d687790206a7acac4d1a11bd6fe629  # v10.4.0
         with:
           ascending: true # Spend API operations budget on older, more-likely-to-get-closed issues first
           close-issue-message: 'This issue was closed because it has been stale for 7 days with no activity.'

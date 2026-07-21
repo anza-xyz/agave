@@ -3,10 +3,10 @@ use {
         cli::{CliCommand, CliCommandInfo, CliConfig, CliError, ProcessResult},
         feature::get_feature_activation_epoch,
     },
+    agave_votor_messages::wire::WireBlockCertMessage,
     clap::{App, AppSettings, Arg, ArgMatches, SubCommand, value_t, value_t_or_exit},
     console::style,
     serde::{Deserialize, Serialize},
-    solana_account::{from_account, state_traits::StateMut},
     solana_clap_utils::{input_parsers::*, input_validators::*},
     solana_cli_output::{
         cli_clientid::CliClientId,
@@ -15,6 +15,7 @@ use {
             build_balance_message, format_labeled_address, new_spinner_progress_bar,
             writeln_name_value,
         },
+        stdout::writeln_stdout,
         *,
     },
     solana_clock::{self as clock, Clock, Epoch, Slot},
@@ -40,7 +41,9 @@ use {
     },
     solana_sdk_ids::sysvar::{self, stake_history},
     solana_signature::Signature,
+    solana_signer_store::{Decoded, decode},
     solana_slot_history::{self as slot_history, SlotHistory},
+    solana_stake_history::StakeHistory,
     solana_stake_interface::{self as stake, state::StakeStateV2},
     solana_system_interface::MAX_PERMITTED_DATA_LENGTH,
     solana_transaction_status::{
@@ -188,6 +191,11 @@ impl ClusterQuerySubCommands for App<'_, '_> {
             SubCommand::with_name("epoch-info")
                 .about("Get information about the current epoch")
                 .alias("get-epoch-info"),
+        )
+        .subcommand(
+            SubCommand::with_name("alpenglow-genesis-info")
+                .about("Get info about the Alpenglow genesis cert")
+                .alias("get-alpenglow-genesis-info"),
         )
         .subcommand(
             SubCommand::with_name("genesis-hash")
@@ -505,6 +513,12 @@ pub fn parse_get_epoch(_matches: &ArgMatches<'_>) -> Result<CliCommandInfo, CliE
     Ok(CliCommandInfo::without_signers(CliCommand::GetEpoch))
 }
 
+pub fn parse_get_ag_genesis_info(_matches: &ArgMatches<'_>) -> Result<CliCommandInfo, CliError> {
+    Ok(CliCommandInfo::without_signers(
+        CliCommand::GetAgGenesisInfo,
+    ))
+}
+
 pub fn parse_get_epoch_info(_matches: &ArgMatches<'_>) -> Result<CliCommandInfo, CliError> {
     Ok(CliCommandInfo::without_signers(CliCommand::GetEpochInfo))
 }
@@ -651,10 +665,10 @@ pub async fn process_catchup(
         match node_json_rpc_url.as_ref() {
             Some(node_json_rpc_url) if node_json_rpc_url != &gussed_default => {
                 // go to new line to leave this message on console
-                println!(
+                writeln_stdout(format_args!(
                     "Preferring explicitly given rpc ({node_json_rpc_url}) as us, although \
                      --our-localhost is given\n"
-                )
+                ))?;
             }
             _ => {
                 node_json_rpc_url = Some(gussed_default);
@@ -670,10 +684,10 @@ pub async fn process_catchup(
             (match node_pubkey {
                 Some(node_pubkey) if node_pubkey != guessed_default => {
                     // go to new line to leave this message on console
-                    println!(
+                    writeln_stdout(format_args!(
                         "Preferring explicitly given node pubkey ({node_pubkey}) as us, although \
                          --our-localhost is given\n"
-                    );
+                    ))?;
                     node_pubkey
                 }
                 _ => guessed_default,
@@ -756,7 +770,10 @@ pub async fn process_catchup(
                     *retry_count = retry_count.saturating_add(1);
                     if log {
                         // go to new line to leave this message on console
-                        println!("Retrying({}/{max_retry_count}): {e}\n", *retry_count);
+                        writeln_stdout(format_args!(
+                            "Retrying({}/{max_retry_count}): {e}\n",
+                            *retry_count
+                        ))?;
                     }
                     sleep(Duration::from_secs(1));
                 }
@@ -877,7 +894,7 @@ pub async fn process_catchup(
             },
         ));
         if log {
-            println!();
+            writeln_stdout(format_args!(""))?;
         }
 
         sleep(sleep_interval);
@@ -892,7 +909,7 @@ pub async fn process_cluster_date(rpc_client: &RpcClient, config: &CliConfig<'_>
         .get_account_with_commitment(&sysvar::clock::id(), config.commitment)
         .await?;
     if let Some(clock_account) = result.value {
-        let clock: Clock = from_account(&clock_account).ok_or_else(|| {
+        let clock: Clock = wincode::deserialize(&clock_account.data).map_err(|_| {
             CliError::RpcRequestError("Failed to deserialize clock sysvar".to_string())
         })?;
         let block_time = CliBlockTime {
@@ -1072,6 +1089,34 @@ pub async fn process_get_epoch(rpc_client: &RpcClient, _config: &CliConfig<'_>) 
     Ok(epoch_info.epoch.to_string())
 }
 
+pub async fn process_get_ag_genesis_info(
+    rpc_client: &RpcClient,
+    config: &CliConfig<'_>,
+) -> ProcessResult {
+    let cert = rpc_client.get_ag_genesis_cert().await?;
+    let ag_genesis_info = match cert {
+        None => CliAgGenesisInfo::Tower,
+        Some(WireBlockCertMessage { block, signature }) => {
+            let epoch_schedule = rpc_client.get_epoch_schedule().await?;
+            let epoch = epoch_schedule.get_epoch(block.slot);
+            const MAX_VALIDATORS: usize = 4096;
+            let Decoded::Base2(bitvec) = decode(&signature.bitmap, MAX_VALIDATORS)
+                .map_err(|_| Box::new(CliError::InvalidAgGenesisCert))?
+            else {
+                return Err(Box::new(CliError::InvalidAgGenesisCert));
+            };
+            CliAgGenesisInfo::Ag(CliAgGenesisInfoPayload {
+                epoch,
+                slot: block.slot,
+                block_id: block.block_id,
+                bitvec,
+                signature: signature.signature,
+            })
+        }
+    };
+    Ok(config.output_format.formatted_string(&ag_genesis_info))
+}
+
 pub async fn process_get_epoch_info(
     rpc_client: &RpcClient,
     config: &CliConfig<'_>,
@@ -1212,9 +1257,8 @@ pub async fn process_show_block_production(
         .value
         .unwrap();
 
-    let slot_history: SlotHistory = from_account(&slot_history_account).ok_or_else(|| {
-        CliError::RpcRequestError("Failed to deserialize slot history".to_string())
-    })?;
+    let slot_history: SlotHistory = wincode::deserialize(&slot_history_account.data)
+        .map_err(|_| CliError::RpcRequestError("Failed to deserialize slot history".to_string()))?;
 
     let (confirmed_blocks, start_slot) =
         if start_slot >= slot_history.oldest() && end_slot <= slot_history.newest() {
@@ -1426,7 +1470,7 @@ pub fn parse_logs(
 }
 
 pub fn process_logs(config: &CliConfig, filter: &RpcTransactionLogsFilter) -> ProcessResult {
-    println!(
+    writeln_stdout(format_args!(
         "Streaming transaction logs{}. {:?} commitment",
         match filter {
             RpcTransactionLogsFilter::All => "".into(),
@@ -1435,7 +1479,7 @@ pub fn process_logs(config: &CliConfig, filter: &RpcTransactionLogsFilter) -> Pr
                 format!(" mentioning {}", addresses.join(",")),
         },
         config.commitment.commitment
-    );
+    ))?;
 
     let (_client, receiver) = PubsubClient::logs_subscribe(
         &config.websocket_url,
@@ -1448,18 +1492,21 @@ pub fn process_logs(config: &CliConfig, filter: &RpcTransactionLogsFilter) -> Pr
     loop {
         match receiver.recv() {
             Ok(logs) => {
-                println!("Transaction executed in slot {}:", logs.context.slot);
-                println!("  Signature: {}", logs.value.signature);
-                println!(
+                writeln_stdout(format_args!(
+                    "Transaction executed in slot {}:",
+                    logs.context.slot
+                ))?;
+                writeln_stdout(format_args!("  Signature: {}", logs.value.signature))?;
+                writeln_stdout(format_args!(
                     "  Status: {}",
                     logs.value
                         .err
                         .map(|err| err.to_string())
                         .unwrap_or_else(|| "Ok".to_string())
-                );
-                println!("  Log Messages:");
+                ))?;
+                writeln_stdout(format_args!("  Log Messages:"))?;
                 for log in logs.value.logs {
-                    println!("    {log}");
+                    writeln_stdout(format_args!("    {log}"))?;
                 }
             }
             Err(err) => {
@@ -1603,8 +1650,11 @@ pub async fn process_show_stakes(
                 .collect();
 
             if !pubkeys.is_empty() {
+                let mut pubkeys: Vec<String> = pubkeys.into_iter().collect();
+                pubkeys.sort();
                 return Err(CliError::RpcRequestError(format!(
-                    "Failed to retrieve matching vote account for {pubkeys:?}."
+                    "Failed to retrieve matching vote account for {}.",
+                    pubkeys.join(", ")
                 ))
                 .into());
             }
@@ -1651,17 +1701,26 @@ pub async fn process_show_stakes(
         .await?;
     let stake_history_account = rpc_client.get_account(&stake_history::id()).await?;
     let clock_account = rpc_client.get_account(&sysvar::clock::id()).await?;
-    let clock: Clock = from_account(&clock_account).ok_or_else(|| {
-        CliError::RpcRequestError("Failed to deserialize clock sysvar".to_string())
-    })?;
-    let stake_history = from_account(&stake_history_account).ok_or_else(|| {
-        CliError::RpcRequestError("Failed to deserialize stake history".to_string())
-    })?;
+    let rent_account = rpc_client.get_account(&sysvar::rent::id()).await?;
+    let clock: Clock = wincode::deserialize(&clock_account.data)
+        .map_err(|_| CliError::RpcRequestError("Failed to deserialize clock sysvar".to_string()))?;
+    let rent: Rent = wincode::deserialize(&rent_account.data)?;
+    let stake_history: StakeHistory =
+        wincode::deserialize(&stake_history_account.data).map_err(|_| {
+            CliError::RpcRequestError("Failed to deserialize stake history".to_string())
+        })?;
     let new_rate_activation_epoch = get_feature_activation_epoch(
         rpc_client,
         &agave_feature_set::reduce_stake_warmup_cooldown::id(),
     )
     .await?;
+    let fixed_point_activation_epoch = get_feature_activation_epoch(
+        rpc_client,
+        &agave_feature_set::upgrade_bpf_stake_program_to_v5_1::id(),
+    )
+    .await?;
+    let use_fixed_point_stake_math = fixed_point_activation_epoch
+        .is_some_and(|activation_epoch| clock.epoch >= activation_epoch);
     stake_account_progress_bar.finish_and_clear();
 
     let mut stake_accounts: Vec<CliKeyedStakeState> = vec![];
@@ -1670,41 +1729,44 @@ pub async fn process_show_stakes(
             "It should be impossible at this point for the account data not to be decodable. \
              Ensure that the account was fetched using a binary encoding.",
         );
-        if let Ok(stake_state) = stake_account.state() {
+        if let Ok(stake_state) = wincode::deserialize::<StakeStateV2>(&stake_account.data) {
+            let rent_exempt_balance = rent.minimum_balance(stake_account.data.len()).max(1);
+
             match stake_state {
-                StakeStateV2::Initialized(_) => {
-                    if vote_account_pubkeys.is_empty() {
-                        stake_accounts.push(CliKeyedStakeState {
-                            stake_pubkey: stake_pubkey.to_string(),
-                            stake_state: build_stake_state(
-                                stake_account.lamports,
-                                &stake_state,
-                                use_lamports_unit,
-                                &stake_history,
-                                &clock,
-                                new_rate_activation_epoch,
-                                false,
-                            ),
-                        });
-                    }
+                StakeStateV2::Initialized(_) if vote_account_pubkeys.is_empty() => {
+                    stake_accounts.push(CliKeyedStakeState {
+                        stake_pubkey: stake_pubkey.to_string(),
+                        stake_state: build_stake_state(
+                            stake_account.lamports,
+                            &stake_state,
+                            use_lamports_unit,
+                            &stake_history,
+                            &clock,
+                            new_rate_activation_epoch,
+                            rent_exempt_balance,
+                            false,
+                            use_fixed_point_stake_math,
+                        ),
+                    });
                 }
-                StakeStateV2::Stake(_, stake, _) => {
+                StakeStateV2::Stake(_, stake, _)
                     if vote_account_pubkeys.is_empty()
-                        || vote_account_pubkeys.contains(&stake.delegation.voter_pubkey)
-                    {
-                        stake_accounts.push(CliKeyedStakeState {
-                            stake_pubkey: stake_pubkey.to_string(),
-                            stake_state: build_stake_state(
-                                stake_account.lamports,
-                                &stake_state,
-                                use_lamports_unit,
-                                &stake_history,
-                                &clock,
-                                new_rate_activation_epoch,
-                                false,
-                            ),
-                        });
-                    }
+                        || vote_account_pubkeys.contains(&stake.delegation.voter_pubkey) =>
+                {
+                    stake_accounts.push(CliKeyedStakeState {
+                        stake_pubkey: stake_pubkey.to_string(),
+                        stake_state: build_stake_state(
+                            stake_account.lamports,
+                            &stake_state,
+                            use_lamports_unit,
+                            &stake_history,
+                            &clock,
+                            new_rate_activation_epoch,
+                            rent_exempt_balance,
+                            false,
+                            use_fixed_point_stake_math,
+                        ),
+                    });
                 }
                 _ => {}
             }
@@ -2104,7 +2166,7 @@ pub async fn process_calculate_rent(
         );
     }
     let rent_account = rpc_client.get_account(&sysvar::rent::id()).await?;
-    let rent: Rent = rent_account.deserialize_data()?;
+    let rent: Rent = wincode::deserialize(&rent_account.data)?;
     let rent_exempt_minimum_lamports = rent.minimum_balance(data_length);
     let cli_rent_calculation = CliRentCalculation {
         lamports_per_byte_year: 0,

@@ -1,15 +1,21 @@
 use {
-    serde::{Deserialize, Serialize},
     std::{
         iter::Enumerate,
+        mem::MaybeUninit,
         ops::{Bound, RangeBounds},
         slice::Iter,
     },
     thiserror::Error,
+    wincode::{ReadResult, SchemaRead, SchemaWrite, config::Config, io::Reader},
 };
 
 type Word = u8;
 const BITS_PER_WORD: usize = std::mem::size_of::<Word>() * 8;
+const WORDS_PER_U64: usize = std::mem::size_of::<u64>() / std::mem::size_of::<Word>();
+
+const fn num_words<const NUM_BITS: usize>() -> usize {
+    NUM_BITS.div_ceil(BITS_PER_WORD)
+}
 
 /// A bit vector implementation optimized for efficient bidirectional range
 /// scanning and iteration.
@@ -24,10 +30,8 @@ const BITS_PER_WORD: usize = std::mem::size_of::<Word>() * 8;
 /// assert_eq!(bit_vec.range(..2).iter_ones().collect::<Vec<_>>(), [0, 1]);
 /// assert_eq!(bit_vec.range(1..).count_ones(), 1);
 /// ```
-#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
-#[serde(transparent)]
+#[derive(Debug, Clone, PartialEq, Eq, SchemaWrite)]
 pub struct BitVec<const NUM_BITS: usize> {
-    #[serde(with = "serde_bytes")]
     words: Box<[Word]>,
 }
 
@@ -39,28 +43,52 @@ impl<const NUM_BITS: usize> Default for BitVec<NUM_BITS> {
     }
 }
 
-// Note: serde_bytes' default `Deserialize` would construct a variable-length buffer,
+#[inline]
+fn location_of(idx: usize) -> (usize, usize) {
+    let word_idx = idx / BITS_PER_WORD;
+    let bit_idx = idx & (BITS_PER_WORD - 1);
+    (word_idx, bit_idx)
+}
+
+#[inline]
+fn check_bounds<const NUM_BITS: usize>(idx: usize) -> Result<(), BitVecError> {
+    if idx >= NUM_BITS {
+        return Err(BitVecError::OutOfBounds {
+            index: idx,
+            num_bits: NUM_BITS,
+        });
+    }
+    Ok(())
+}
+
+#[inline]
+fn contains<const NUM_BITS: usize>(words: &[Word], idx: usize) -> bool {
+    if check_bounds::<NUM_BITS>(idx).is_err() {
+        return false;
+    }
+
+    let (word_idx, bit_idx) = location_of(idx);
+    (words[word_idx] & (1 << bit_idx)) != 0
+}
+
+// Note: bincode/wincode would construct a variable-length buffer,
 // which violates `BitVec`'s invariant that its backing vector length (in words)
 // is exactly `NUM_WORDS`. Bounds checks and performance rely on this fixed size.
 //
 // `BitVec` is normally constructed via `Default`, which initializes with
-// `vec![0; Self::NUM_WORDS]`. This custom `Deserialize` preserves the invariant by
-// allocating exactly `NUM_WORDS` and populating from the serialized data, zero-filling
-// any missing words. This is required for the `SlotMetaV1` -> `SlotMetaV2` migration,
-// where `completed_data_indexes` was encoded as a variable-length `BTreeSet<u32>`.
-impl<'de, const NUM_BITS: usize> Deserialize<'de> for BitVec<NUM_BITS> {
-    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
-    where
-        D: serde::Deserializer<'de>,
-    {
-        let bytes = <&serde_bytes::Bytes as Deserialize>::deserialize(deserializer)?;
-        let mut words = Vec::with_capacity(Self::NUM_WORDS);
-        words.extend_from_slice(bytes);
-        words.resize(Self::NUM_WORDS, 0);
+// `vec![0; Self::NUM_WORDS]`. This custom `SchemaRead` preserves the invariant by
+// forcing returned instance to have exactly `NUM_WORDS` - populating from the serialized data
+// and zero-filling any missing words or truncating any excess words.
+unsafe impl<'de, const NUM_BITS: usize, C: Config> SchemaRead<'de, C> for BitVec<NUM_BITS> {
+    type Dst = Self;
 
-        Ok(Self {
-            words: words.into_boxed_slice(),
-        })
+    fn read(mut reader: impl Reader<'de>, dst: &mut MaybeUninit<Self::Dst>) -> ReadResult<()> {
+        let mut vec = <Vec<u8> as SchemaRead<C>>::get(reader.by_ref())?;
+        vec.resize(Self::NUM_WORDS, 0);
+        dst.write(Self {
+            words: vec.into_boxed_slice(),
+        });
+        Ok(())
     }
 }
 
@@ -71,7 +99,7 @@ pub enum BitVecError {
 }
 
 impl<const NUM_BITS: usize> BitVec<NUM_BITS> {
-    const NUM_WORDS: usize = NUM_BITS.div_ceil(BITS_PER_WORD);
+    const NUM_WORDS: usize = num_words::<NUM_BITS>();
 
     /// Get the word and bit offset for the given index.
     ///
@@ -83,20 +111,14 @@ impl<const NUM_BITS: usize> BitVec<NUM_BITS> {
     /// assert_eq!(word_idx, 7);
     /// assert_eq!(bit_idx, 7);
     /// ```
+    #[inline]
     pub fn location_of(idx: usize) -> (usize, usize) {
-        let word_idx = idx / BITS_PER_WORD;
-        let bit_idx = idx & (BITS_PER_WORD - 1);
-        (word_idx, bit_idx)
+        location_of(idx)
     }
 
+    #[inline]
     fn check_bounds(&self, idx: usize) -> Result<(), BitVecError> {
-        if idx >= NUM_BITS {
-            return Err(BitVecError::OutOfBounds {
-                index: idx,
-                num_bits: NUM_BITS,
-            });
-        }
-        Ok(())
+        check_bounds::<NUM_BITS>(idx)
     }
 
     /// Remove a bit at the given index.
@@ -233,13 +255,9 @@ impl<const NUM_BITS: usize> BitVec<NUM_BITS> {
     /// bit_vec.insert(63);
     /// assert!(bit_vec.contains(63));
     /// ```
+    #[inline]
     pub fn contains(&self, idx: usize) -> bool {
-        if self.check_bounds(idx).is_err() {
-            return false;
-        }
-
-        let (word_idx, bit_idx) = Self::location_of(idx);
-        (self.words[word_idx] & (1 << bit_idx)) != 0
+        contains::<NUM_BITS>(&self.words, idx)
     }
 
     /// Get an iterator over the bits in the array within the given range.
@@ -258,7 +276,101 @@ impl<const NUM_BITS: usize> BitVec<NUM_BITS> {
     /// assert_eq!(bit_vec.range(1..).count_ones(), 1);
     /// ```
     pub fn range(&self, bounds: impl RangeBounds<usize>) -> BitVecSlice<'_, NUM_BITS> {
-        BitVecSlice::from_range_bounds(self, bounds)
+        BitVecSlice::from_range_bounds(&self.words, bounds)
+    }
+
+    /// Returns the highest set bit strictly below `bound`.
+    ///
+    /// Equivalent to `range(..bound).iter_ones().next_back()`.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// # use solana_ledger::bit_vec::BitVec;
+    /// let mut bit_vec = BitVec::<64>::default();
+    /// bit_vec.insert(5);
+    /// assert_eq!(bit_vec.prev_set_bit(5), None);
+    /// assert_eq!(bit_vec.prev_set_bit(6), Some(5));
+    /// assert_eq!(bit_vec.prev_set_bit(64), Some(5));
+    /// ```
+    pub fn prev_set_bit(&self, bound: usize) -> Option<usize> {
+        let bound = bound.min(NUM_BITS);
+        let (last_word_idx, bit_in_word) = location_of(bound.checked_sub(1)?);
+        let last_word =
+            self.words[last_word_idx] & (Word::MAX >> (BITS_PER_WORD - 1 - bit_in_word));
+        if last_word != 0 {
+            let msb = BITS_PER_WORD - 1 - last_word.leading_zeros() as usize;
+            return Some(last_word_idx * BITS_PER_WORD + msb);
+        }
+        // Scan full 8-byte groups before falling back to single bytes.
+        let (remainder, chunks) = self.words[..last_word_idx].as_rchunks::<WORDS_PER_U64>();
+        let mut chunk_end_word_idx = last_word_idx;
+        for &chunk in chunks.iter().rev() {
+            let chunk_word = u64::from_le_bytes(chunk);
+            if chunk_word != 0 {
+                let msb = 63 - chunk_word.leading_zeros() as usize;
+                return Some((chunk_end_word_idx - WORDS_PER_U64) * BITS_PER_WORD + msb);
+            }
+            chunk_end_word_idx -= WORDS_PER_U64;
+        }
+        for (word_idx, &word) in remainder.iter().enumerate().rev() {
+            if word != 0 {
+                let msb = BITS_PER_WORD - 1 - word.leading_zeros() as usize;
+                return Some(word_idx * BITS_PER_WORD + msb);
+            }
+        }
+        None
+    }
+
+    /// Returns the lowest set bit at or above `from`.
+    ///
+    /// Equivalent to `range(from..).iter_ones().next()`.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// # use solana_ledger::bit_vec::BitVec;
+    /// let mut bit_vec = BitVec::<64>::default();
+    /// bit_vec.insert(5);
+    /// assert_eq!(bit_vec.next_set_bit(0), Some(5));
+    /// assert_eq!(bit_vec.next_set_bit(5), Some(5));
+    /// assert_eq!(bit_vec.next_set_bit(6), None);
+    /// ```
+    pub fn next_set_bit(&self, from: usize) -> Option<usize> {
+        if from >= NUM_BITS {
+            return None;
+        }
+        // Serialized data may contain non-zero tail bits past NUM_BITS. Match
+        // the range iterator by ignoring any hit outside the logical bit length.
+        let in_bounds = |pos: usize| (pos < NUM_BITS).then_some(pos);
+        let (first_word_idx, first_bit) = location_of(from);
+        let first_word = self.words[first_word_idx] & (Word::MAX << first_bit);
+        if first_word != 0 {
+            return in_bounds(
+                first_word_idx * BITS_PER_WORD + first_word.trailing_zeros() as usize,
+            );
+        }
+        // Scan full 8-byte groups before falling back to single bytes.
+        let (chunks, remainder) = self.words[first_word_idx + 1..].as_chunks::<WORDS_PER_U64>();
+        let mut chunk_start_word_idx = first_word_idx + 1;
+        for &chunk in chunks {
+            let chunk_word = u64::from_le_bytes(chunk);
+            if chunk_word != 0 {
+                return in_bounds(
+                    chunk_start_word_idx * BITS_PER_WORD + chunk_word.trailing_zeros() as usize,
+                );
+            }
+            chunk_start_word_idx += WORDS_PER_U64;
+        }
+        for (offset, &word) in remainder.iter().enumerate() {
+            if word != 0 {
+                return in_bounds(
+                    (chunk_start_word_idx + offset) * BITS_PER_WORD
+                        + word.trailing_zeros() as usize,
+                );
+            }
+        }
+        None
     }
 
     /// Get an iterator over the positions of the set bits in the array.
@@ -315,6 +427,47 @@ impl<const NUM_BITS: usize> FromIterator<usize> for BitVec<NUM_BITS> {
     }
 }
 
+/// A reference to a [`BitVec`] that does not own the underlying data.
+#[derive(Debug, PartialEq, Eq)]
+pub struct BitVecRef<'a, const NUM_BITS: usize> {
+    words: &'a [Word],
+}
+
+impl<const NUM_BITS: usize> BitVecRef<'_, NUM_BITS> {
+    const NUM_WORDS: usize = num_words::<NUM_BITS>();
+
+    /// Check if a bit is set at the given index.
+    ///
+    /// See [`BitVec::contains`].
+    #[inline]
+    pub fn contains(&self, idx: usize) -> bool {
+        contains::<NUM_BITS>(self.words, idx)
+    }
+
+    /// Get an iterator over the bits in the array within the given range.
+    ///
+    /// See [`BitVec::range`].
+    pub fn range(&self, bounds: impl RangeBounds<usize>) -> BitVecSlice<'_, NUM_BITS> {
+        BitVecSlice::from_range_bounds(self.words, bounds)
+    }
+}
+
+unsafe impl<'de, const NUM_BITS: usize, C: Config> SchemaRead<'de, C> for BitVecRef<'de, NUM_BITS> {
+    type Dst = Self;
+
+    #[inline]
+    fn read(reader: impl Reader<'de>, dst: &mut MaybeUninit<Self::Dst>) -> ReadResult<()> {
+        use wincode::ReadError;
+
+        let words = <&'de [Word] as SchemaRead<C>>::get(reader)?;
+        if words.len() != Self::NUM_WORDS {
+            return Err(ReadError::Custom("Invalid BitVec length"));
+        }
+        dst.write(Self { words });
+        Ok(())
+    }
+}
+
 /// A slice of a [`BitVec`] that provides efficient bit-level iteration.
 pub struct BitVecSlice<'a, const NUM_BITS: usize> {
     mask_iter: BitVecMaskIter<'a, NUM_BITS>,
@@ -324,7 +477,7 @@ impl<'a, const NUM_BITS: usize> BitVecSlice<'a, NUM_BITS> {
     /// Construct a new [`BitVecSlice`] from a [`BitVec`] and a range.
     ///
     /// Internal function -- use [`BitVec::range`].
-    fn from_range_bounds(bit_vec: &'a BitVec<NUM_BITS>, bounds: impl RangeBounds<usize>) -> Self {
+    fn from_range_bounds(bit_vec: &'a [u8], bounds: impl RangeBounds<usize>) -> Self {
         let start = match bounds.start_bound() {
             Bound::Included(&n) => n,
             Bound::Excluded(&n) => n + 1,
@@ -345,7 +498,7 @@ impl<'a, const NUM_BITS: usize> BitVecSlice<'a, NUM_BITS> {
                 start,
                 end,
                 start_word,
-                iter: bit_vec.words[start_word..end_word].iter().enumerate(),
+                iter: bit_vec[start_word..end_word].iter().enumerate(),
             },
         }
     }
@@ -521,6 +674,50 @@ mod tests {
         )
     }
 
+    #[test]
+    fn test_prev_next_set_bit_edges() {
+        let empty = BitVec::<1024>::default();
+        assert_eq!(empty.prev_set_bit(0), None);
+        assert_eq!(empty.prev_set_bit(1024), None);
+        assert_eq!(empty.next_set_bit(0), None);
+        assert_eq!(empty.next_set_bit(1024), None);
+        // Single bits at byte, chunk, and array boundaries.
+        for idx in [0, 1, 7, 8, 63, 64, 65, 511, 512, 1022, 1023] {
+            let mut bv = BitVec::<1024>::default();
+            bv.insert_unchecked(idx);
+            assert_eq!(bv.prev_set_bit(idx), None, "idx={idx}");
+            assert_eq!(bv.prev_set_bit(idx + 1), Some(idx), "idx={idx}");
+            assert_eq!(bv.prev_set_bit(1024), Some(idx), "idx={idx}");
+            assert_eq!(bv.prev_set_bit(usize::MAX), Some(idx), "idx={idx}");
+            assert_eq!(bv.next_set_bit(0), Some(idx), "idx={idx}");
+            assert_eq!(bv.next_set_bit(idx), Some(idx), "idx={idx}");
+            assert_eq!(bv.next_set_bit(idx + 1), None, "idx={idx}");
+            assert_eq!(bv.next_set_bit(usize::MAX), None, "idx={idx}");
+        }
+        // Nearest hit on each side across a gap.
+        let mut bv = BitVec::<1024>::default();
+        bv.insert_unchecked(100);
+        bv.insert_unchecked(700);
+        assert_eq!(bv.prev_set_bit(700), Some(100));
+        assert_eq!(bv.prev_set_bit(701), Some(700));
+        assert_eq!(bv.next_set_bit(100), Some(100));
+        assert_eq!(bv.next_set_bit(101), Some(700));
+    }
+
+    #[test]
+    fn test_next_set_bit_ignores_final_word_tail_bits() {
+        // NUM_BITS=12 leaves a 4-bit tail in the final word. Deserialization does not
+        // mask tail bits, so the scan must ignore them like the iterator path does.
+        let mut bv = BitVec::<12>::default();
+        bv.words[1] = 0xF0;
+        assert_eq!(bv.iter_ones().next(), None);
+        assert_eq!(bv.next_set_bit(0), None);
+        assert_eq!(bv.next_set_bit(11), None);
+        bv.insert_unchecked(11);
+        assert_eq!(bv.next_set_bit(0), Some(11));
+        assert_eq!(bv.prev_set_bit(12), Some(11));
+    }
+
     proptest! {
         // Property: insert followed by contains should return true
         #[test]
@@ -538,6 +735,27 @@ mod tests {
             prop_assert!(!bits.remove_unchecked(idx));
             bits.insert_unchecked(idx);
             prop_assert!(bits.remove_unchecked(idx));
+        }
+
+        // Property: the fast scans match their iterator equivalents across
+        // empty sets, chunk boundaries, and the NUM_BITS edge.
+        #[test]
+        fn prev_next_set_bit_correctness(
+            bits in proptest::collection::btree_set(0..1024_usize, 0..64),
+            query in 0..=1024_usize,
+        ) {
+            let mut bit_vec = BitVec::<1024>::default();
+            for &idx in &bits {
+                bit_vec.insert_unchecked(idx);
+            }
+            prop_assert_eq!(
+                bit_vec.prev_set_bit(query),
+                bit_vec.range(..query).iter_ones().next_back()
+            );
+            prop_assert_eq!(
+                bit_vec.next_set_bit(query),
+                bit_vec.range(query..).iter_ones().next()
+            );
         }
 
         // Property: range queries should return correct indices and counts
@@ -601,16 +819,14 @@ mod tests {
             let mut expected = BitVec::<NUM_BITS>::default();
             expected.words[..data.len()].copy_from_slice(&data);
 
-            #[derive(Serialize)]
-            #[serde(transparent)]
+            #[derive(SchemaWrite)]
             struct Source {
-                #[serde(with = "serde_bytes")]
                 data: Vec<u8>,
             }
-            let serialized = bincode::serialize(&Source { data }).unwrap();
+            let serialized = wincode::serialize(&Source { data }).unwrap();
             // Deserializing should always result in a BitVec with exactly NUM_WORDS words,
             // adding zeroed bits that are not present in the serialized data.
-            let deserialized: BitVec<NUM_BITS> = bincode::deserialize(&serialized).unwrap();
+            let deserialized: BitVec<NUM_BITS> = wincode::deserialize(&serialized).unwrap();
             prop_assert_eq!(deserialized, expected);
         }
 
@@ -618,8 +834,8 @@ mod tests {
         fn serialize_roundtrip(range in rand_range(0..1024_usize)) {
             const NUM_BITS: usize = 1024;
             let bit_vec = range.into_iter().collect::<BitVec<NUM_BITS>>();
-            let serialized = bincode::serialize(&bit_vec).unwrap();
-            let deserialized: BitVec<NUM_BITS> = bincode::deserialize(&serialized).unwrap();
+            let serialized = wincode::serialize(&bit_vec).unwrap();
+            let deserialized: BitVec<NUM_BITS> = wincode::deserialize(&serialized).unwrap();
             prop_assert_eq!(deserialized, bit_vec);
         }
     }

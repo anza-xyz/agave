@@ -7,10 +7,12 @@ authors = { workspace = true }
 repository = { workspace = true }
 homepage = { workspace = true }
 license = { workspace = true }
-edition = "2024"
+edition = { workspace = true }
 
 [package.metadata.docs.rs]
 targets = ["x86_64-unknown-linux-gnu"]
+all-features = true
+rustdoc-args = ["--cfg=docsrs"]
 
 [lib]
 crate-type = ["lib"]
@@ -22,6 +24,7 @@ agave-unstable-api = []
 metrics = ["solana-syscalls/metrics", "solana-program-runtime/metrics"]
 sbpf-debugger = ["solana-program-runtime/sbpf-debugger", "solana-sbpf/debugger"]
 shuttle-test = [
+    "dep:shuttle",
     "solana-program-runtime/shuttle-test",
     "solana-sbpf/shuttle-test",
     "solana-svm-type-overrides/shuttle-test",
@@ -31,12 +34,12 @@ svm-internal = []
 [dependencies]
 bincode = { workspace = true }
 qualifier_attr = { workspace = true }
+shuttle = { workspace = true, optional = true }
 solana-account = { workspace = true }
 solana-bincode = { workspace = true }
 solana-clock = { workspace = true }
 solana-instruction = { workspace = true }
 solana-loader-v3-interface = { workspace = true, features = ["serde"] }
-solana-loader-v4-interface = { workspace = true, features = ["bincode"] }
 solana-packet = { workspace = true }
 solana-program-runtime = { workspace = true }
 solana-pubkey = { workspace = true }
@@ -54,6 +57,7 @@ solana-transaction-context = { workspace = true, features = ["bincode"] }
 assert_matches = { workspace = true }
 criterion = { workspace = true }
 rand = { workspace = true }
+solana-account = { workspace = true, features = ["dev-context-only-utils"] }
 solana-bpf-loader-program = { path = ".", features = ["agave-unstable-api", "svm-internal"] }
 solana-epoch-rewards = { workspace = true }
 solana-epoch-schedule = { workspace = true }
@@ -65,6 +69,7 @@ solana-pubkey = { workspace = true, features = ["rand"] }
 solana-rent = { workspace = true }
 solana-slot-hashes = { workspace = true }
 solana-svm-callback = { path = "../../svm-callback", features = ["agave-unstable-api"] }
+solana-system-program = { workspace = true }
 solana-transaction-context = { path = "../../transaction-context", features = ["agave-unstable-api", "bincode", "dev-context-only-utils"] }
 static_assertions = { workspace = true }
 test-case = { workspace = true }
@@ -76,3 +81,6 @@ harness = false
 [[bench]]
 name = "bpf_loader_upgradeable"
 harness = false
+
+[lints]
+workspace = true

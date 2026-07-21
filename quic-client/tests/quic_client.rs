@@ -1,7 +1,7 @@
 #[cfg(test)]
 mod tests {
     use {
-        crossbeam_channel::{Receiver, unbounded},
+        crossbeam_channel::{Receiver, bounded},
         log::*,
         solana_connection_cache::{
             client_connection::ClientStats, connection_cache_stats::ConnectionCacheStats,
@@ -60,6 +60,30 @@ mod tests {
         )
     }
 
+    #[tokio::test]
+    async fn test_quic_connection_cache_update_key_from_tokio_runtime() {
+        use {
+            solana_connection_cache::connection_cache::{ConnectionCache, NewConnectionConfig},
+            solana_quic_client::{QuicConfig, QuicConnectionManager},
+        };
+
+        let keypair = Keypair::new();
+        let mut config = QuicConfig::new().unwrap();
+        config.update_client_certificate(&keypair, IpAddr::V4(Ipv4Addr::LOCALHOST));
+        let connection_manager = QuicConnectionManager::new_with_connection_config(config);
+        let connection_cache = ConnectionCache::new(
+            "quic_connection_cache_update_key_test",
+            connection_manager,
+            1,
+        )
+        .unwrap();
+
+        let server_addr = SocketAddr::new(IpAddr::V4(Ipv4Addr::LOCALHOST), 12345);
+        let _connection = connection_cache.get_nonblocking_connection(&server_addr);
+
+        connection_cache.update_key(&Keypair::new()).unwrap();
+    }
+
     #[test]
     fn test_quic_client_multiple_writes() {
         use {
@@ -67,7 +91,7 @@ mod tests {
             solana_quic_client::quic_client::QuicClientConnection,
         };
         agave_logger::setup();
-        let (sender, receiver) = unbounded();
+        let (sender, receiver) = bounded(1024);
         let staked_nodes = Arc::new(RwLock::new(StakedNodes::default()));
         let (s, cancel, keypair) = server_args();
         let SpawnServerResult {
@@ -148,7 +172,7 @@ mod tests {
             solana_quic_client::nonblocking::quic_client::QuicClientConnection,
         };
         agave_logger::setup();
-        let (sender, receiver) = unbounded();
+        let (sender, receiver) = bounded(1024);
         let staked_nodes = Arc::new(RwLock::new(StakedNodes::default()));
         let (s, cancel, keypair) = server_args();
         let SpawnNonBlockingServerResult {
@@ -207,7 +231,7 @@ mod tests {
         agave_logger::setup();
 
         // Request Receiver
-        let (sender, receiver) = unbounded();
+        let (sender, receiver) = bounded(1024);
         let staked_nodes = Arc::new(RwLock::new(StakedNodes::default()));
         let (request_recv_socket, request_recv_cancel, keypair) = server_args();
         let SpawnServerResult {
@@ -230,7 +254,7 @@ mod tests {
         drop(request_recv_endpoints);
         // Response Receiver:
         let (response_recv_socket, response_recv_cancel, keypair2) = server_args();
-        let (sender2, receiver2) = unbounded();
+        let (sender2, receiver2) = bounded(1024);
 
         let addr = response_recv_socket.local_addr().unwrap().ip();
         let port = response_recv_socket.local_addr().unwrap().port();
@@ -319,7 +343,7 @@ mod tests {
     #[tokio::test]
     async fn test_connection_close() {
         agave_logger::setup();
-        let (sender, receiver) = unbounded();
+        let (sender, receiver) = bounded(1024);
         let staked_nodes = Arc::new(RwLock::new(StakedNodes::default()));
         let (s, cancel, keypair) = server_args();
         let solana_streamer::nonblocking::quic::SpawnNonBlockingServerResult {

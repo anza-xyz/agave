@@ -11,6 +11,8 @@ edition = { workspace = true }
 
 [package.metadata.docs.rs]
 targets = ["x86_64-unknown-linux-gnu"]
+all-features = true
+rustdoc-args = ["--cfg=docsrs"]
 
 [features]
 agave-unstable-api = []
@@ -37,3 +39,6 @@ url = { workspace = true }
 anyhow = { workspace = true }
 solana-commitment-config = { workspace = true }
 solana-pubkey = { workspace = true, features = ["rand"] }
+
+[lints]
+workspace = true

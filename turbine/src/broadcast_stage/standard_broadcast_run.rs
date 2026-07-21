@@ -7,24 +7,44 @@ use {
     },
     crate::cluster_nodes::ClusterNodesCache,
     agave_votor::event::VotorEventSender,
-    agave_votor_messages::migration::MigrationStatus,
-    solana_entry::entry::Entry,
+    agave_votor_messages::{consensus_message::Block, migration::MigrationStatus},
+    solana_cost_model::shred_limit::{
+        DEFAULT_MAX_CODE_SHREDS_PER_SLOT, DEFAULT_MAX_DATA_SHREDS_PER_SLOT,
+    },
+    solana_entry::block_component::{BlockComponent, VersionedBlockMarker, VersionedUpdateParent},
     solana_hash::Hash,
     solana_keypair::Keypair,
-    solana_ledger::shred::{
-        MAX_CODE_SHREDS_PER_SLOT, MAX_DATA_SHREDS_PER_SLOT, ProcessShredsStats, ReedSolomonCache,
-        Shred, ShredType, Shredder,
+    solana_ledger::{
+        leader_schedule_cache::LeaderScheduleCache,
+        shred::{
+            ProcessShredsStats, ReedSolomonCache, Shred, ShredType, Shredder,
+            merkle_tree::MerkleTree,
+        },
     },
+    solana_runtime::bank::Bank,
+    solana_sha256_hasher::hashv,
     solana_time_utils::AtomicInterval,
-    std::{borrow::Cow, sync::RwLock},
+    std::{borrow::Cow, collections::VecDeque, sync::RwLock},
 };
+
+// Expect blacklist events to be extremely rare, so we can tightly bound the
+// data structure. Need to be able to hold a full leader span, and we'll go
+// ahead and overprovision a bit just in case.
+const MAX_BROADCAST_BLACKLIST_SIZE: usize = 16;
 
 #[derive(Clone)]
 pub struct StandardBroadcastRun {
     slot: Slot,
+    // Parent encoded in shred headers. This must remain stable for the slot
+    // because it is used to derive PARENT_OFFSET.
     parent: Slot,
+    parent_block_id: Hash,
+    // Parent slot and block id committed into the double-merkle block id. This
+    // can change after an UpdateParent marker.
+    parent_for_double_merkle: Block,
     chained_merkle_root: Hash,
-    carryover_entry: Option<WorkingBankEntry>,
+    carryover_entry: Option<WorkingBankEntryOrMarker>,
+    double_merkle_leaves: Vec<Hash>,
     next_shred_index: u32,
     next_code_index: u32,
     // If last_tick_height has reached bank.max_tick_height() for this slot
@@ -38,9 +58,13 @@ pub struct StandardBroadcastRun {
     last_datapoint_submit: Arc<AtomicInterval>,
     num_batches: usize,
     cluster_nodes_cache: Arc<ClusterNodesCache<BroadcastStage>>,
+    leader_schedule_cache: Arc<LeaderScheduleCache>,
     reed_solomon_cache: Arc<ReedSolomonCache>,
     migration_status: Arc<MigrationStatus>,
     votor_event_sender: VotorEventSender,
+    max_data_shreds_per_slot: u32,
+    max_code_shreds_per_slot: u32,
+    broadcast_blacklist: VecDeque<Slot>,
 }
 
 #[derive(Debug)]
@@ -53,6 +77,7 @@ impl StandardBroadcastRun {
         shred_version: u16,
         migration_status: Arc<MigrationStatus>,
         votor_event_sender: VotorEventSender,
+        leader_schedule_cache: Arc<LeaderScheduleCache>,
     ) -> Self {
         let cluster_nodes_cache = Arc::new(ClusterNodesCache::<BroadcastStage>::new(
             CLUSTER_NODES_CACHE_NUM_EPOCH_CAP,
@@ -61,7 +86,13 @@ impl StandardBroadcastRun {
         Self {
             slot: Slot::MAX,
             parent: Slot::MAX,
+            parent_block_id: Hash::default(),
+            parent_for_double_merkle: Block {
+                slot: Slot::MAX,
+                block_id: Hash::default(),
+            },
             chained_merkle_root: Hash::default(),
+            double_merkle_leaves: vec![],
             carryover_entry: None,
             next_shred_index: 0,
             next_code_index: 0,
@@ -74,10 +105,80 @@ impl StandardBroadcastRun {
             last_datapoint_submit: Arc::default(),
             num_batches: 0,
             cluster_nodes_cache,
+            leader_schedule_cache,
             reed_solomon_cache: Arc::<ReedSolomonCache>::default(),
             migration_status,
             votor_event_sender,
+            max_data_shreds_per_slot: DEFAULT_MAX_DATA_SHREDS_PER_SLOT,
+            max_code_shreds_per_slot: DEFAULT_MAX_CODE_SHREDS_PER_SLOT,
+            broadcast_blacklist: VecDeque::new(),
         }
+    }
+
+    fn is_broadcast_blacklisted(&self, slot: Slot) -> bool {
+        self.broadcast_blacklist.contains(&slot)
+    }
+
+    fn blacklist_broadcast_slot(&mut self, slot: Slot) {
+        if self.is_broadcast_blacklisted(slot) {
+            return;
+        }
+
+        self.broadcast_blacklist.push_back(slot);
+        while self.broadcast_blacklist.len() > MAX_BROADCAST_BLACKLIST_SIZE {
+            self.broadcast_blacklist.pop_front();
+        }
+    }
+
+    /// Upon receipt of shreds from a new bank (bank.slot() != self.slot)
+    /// reinitialize any necessary state and stats.
+    fn reinitialize_state(
+        &mut self,
+        blockstore: &Blockstore,
+        bank: &Bank,
+        process_stats: &mut ProcessShredsStats,
+    ) {
+        debug_assert_ne!(bank.slot(), self.slot);
+
+        let parent_block_id = bank
+            .parent_block_id()
+            .expect("All banks frozen (including snapshot banks) must have a block id");
+
+        let chained_merkle_root = if self.slot == bank.parent_slot() {
+            self.chained_merkle_root
+        } else {
+            match broadcast_utils::get_chained_merkle_root_from_parent(
+                bank.slot(),
+                bank.parent_slot(),
+                blockstore,
+            ) {
+                Ok(chained_merkle_root) => chained_merkle_root,
+                // This is a snapshot slot that we don't have the shreds for. Use the block id from the snapshot
+                Err(Error::UnknownLastIndex(_)) | Err(Error::UnknownSlotMeta(_)) => parent_block_id,
+                Err(e) => panic!(
+                    "Unexpected error while producing leader block for {}: {e:?}",
+                    bank.slot()
+                ),
+            }
+        };
+
+        self.slot = bank.slot();
+        self.parent = bank.parent_slot();
+        self.parent_block_id = parent_block_id;
+        self.parent_for_double_merkle = Block {
+            slot: bank.parent_slot(),
+            block_id: parent_block_id,
+        };
+        self.chained_merkle_root = chained_merkle_root;
+        self.double_merkle_leaves.clear();
+        self.next_shred_index = 0u32;
+        self.next_code_index = 0u32;
+        self.completed = false;
+        self.slot_broadcast_start = Instant::now();
+        self.num_batches = 0;
+
+        process_stats.receive_elapsed = 0;
+        process_stats.coalesce_elapsed = 0;
     }
 
     // If the current slot has changed, generates an empty shred indicating
@@ -106,7 +207,7 @@ impl StandardBroadcastRun {
                 // self.next_shred_index and self.next_code_index
                 .inspect(|shred| self.process_shreds_stats.record_shred(shred))
                 .collect();
-        if let Some(shred) = shreds.iter().max_by_key(|shred| shred.fec_set_index()) {
+        if let Some(shred) = shreds.last() {
             self.chained_merkle_root = shred.merkle_root().unwrap();
         }
         self.report_and_reset_stats(/*was_interrupted:*/ true);
@@ -114,23 +215,20 @@ impl StandardBroadcastRun {
         shreds
     }
 
-    #[allow(clippy::too_many_arguments)]
-    fn entries_to_shreds(
+    fn component_to_shreds(
         &mut self,
         keypair: &Keypair,
-        entries: &[Entry],
+        component: &BlockComponent,
         reference_tick: u8,
         is_slot_end: bool,
         process_stats: &mut ProcessShredsStats,
-        max_data_shreds_per_slot: u32,
-        max_code_shreds_per_slot: u32,
     ) -> std::result::Result<Vec<Shred>, BroadcastError> {
         let shreds: Vec<_> =
             Shredder::new(self.slot, self.parent, reference_tick, self.shred_version)
                 .unwrap()
-                .make_merkle_shreds_from_entries(
+                .make_merkle_shreds_from_component(
                     keypair,
-                    entries,
+                    component,
                     is_slot_end,
                     self.chained_merkle_root,
                     self.next_shred_index,
@@ -147,16 +245,61 @@ impl StandardBroadcastRun {
                     *next_index = (*next_index).max(shred.index() + 1);
                 })
                 .collect();
-        if let Some(shred) = shreds.iter().max_by_key(|shred| shred.fec_set_index()) {
-            self.chained_merkle_root = shred.merkle_root().unwrap();
+
+        if self
+            .migration_status
+            .should_use_double_merkle_block_id(self.slot)
+        {
+            let fec_set_roots = shreds
+                .iter()
+                .unique_by(|shred| shred.fec_set_index())
+                .sorted_unstable_by_key(|shred| shred.fec_set_index())
+                .map(|shred| shred.merkle_root().expect("no more legacy shreds"));
+            // If necessary for perf, these leaves could start being joined in the background
+            self.double_merkle_leaves.extend(fec_set_roots);
+
+            if let Some(fec_set_root) = self.double_merkle_leaves.last() {
+                self.chained_merkle_root = *fec_set_root;
+            }
+        } else if let Some(shred) = shreds.last() {
+            self.chained_merkle_root = shred.merkle_root().expect("no more legacy shreds");
         }
-        if self.next_shred_index > max_data_shreds_per_slot {
+        if self.next_shred_index > self.max_data_shreds_per_slot {
             return Err(BroadcastError::TooManyShreds);
         }
-        if self.next_code_index > max_code_shreds_per_slot {
+        if self.next_code_index > self.max_code_shreds_per_slot {
             return Err(BroadcastError::TooManyShreds);
         }
         Ok(shreds)
+    }
+
+    /// Update only the double-merkle parent commitment after an UpdateParent marker.
+    ///
+    /// The shred-header parent remains `self.parent` for the whole slot so
+    /// PARENT_OFFSET stays stable and receivers do not see parent mismatches.
+    fn maybe_update_parent_from_component(&mut self, component: &BlockComponent) {
+        let Some(VersionedBlockMarker::V1(marker)) = component.as_marker() else {
+            return;
+        };
+        let Some(update_parent) = marker.as_update_parent() else {
+            return;
+        };
+        let parent_for_double_merkle = match update_parent {
+            VersionedUpdateParent::V1(update_parent) => Block {
+                slot: update_parent.new_parent_slot,
+                block_id: update_parent.new_parent_block_id,
+            },
+        };
+        self.parent_for_double_merkle = parent_for_double_merkle;
+    }
+
+    /// Leaf that binds the current replay parent into the double-merkle block id.
+    fn parent_info_leaf(&self, fec_set_count: u32) -> Hash {
+        hashv(&[
+            &self.parent_for_double_merkle.slot.to_le_bytes(),
+            self.parent_for_double_merkle.block_id.as_bytes(),
+            &fec_set_count.to_le_bytes(),
+        ])
     }
 
     #[cfg(test)]
@@ -169,8 +312,8 @@ impl StandardBroadcastRun {
         receive_results: ReceiveResults,
         bank_forks: &RwLock<BankForks>,
     ) -> Result<()> {
-        let (bsend, brecv) = unbounded();
-        let (ssend, srecv) = unbounded();
+        let (bsend, brecv) = bounded(BROADCAST_CHANNEL_CAPACITY);
+        let (ssend, srecv) = bounded(BROADCAST_CHANNEL_CAPACITY);
         self.process_receive_results(
             keypair,
             blockstore,
@@ -195,14 +338,25 @@ impl StandardBroadcastRun {
         process_stats: &mut ProcessShredsStats,
     ) -> Result<()> {
         let ReceiveResults {
-            entries,
+            component,
             bank,
             last_tick_height,
         } = receive_results;
 
-        let mut to_shreds_time = Measure::start("broadcast_to_shreds");
+        if self.is_broadcast_blacklisted(bank.slot()) {
+            return Ok(());
+        }
 
-        if self.slot != bank.slot() {
+        if self.is_broadcast_blacklisted(bank.parent_slot()) {
+            self.blacklist_broadcast_slot(bank.slot());
+            return Err(Error::DuplicateSlotBroadcast(bank.slot()));
+        }
+
+        let mut to_shreds_time = Measure::start("broadcast_to_shreds");
+        self.max_data_shreds_per_slot = bank.max_data_shreds_per_slot();
+        self.max_code_shreds_per_slot = bank.max_code_shreds_per_slot();
+
+        let maybe_send_header = if self.slot != bank.slot() {
             // Finish previous slot if it was interrupted.
             if !self.completed {
                 let shreds = self.finish_prev_slot(keypair, bank.ticks_per_slot() as u8);
@@ -215,8 +369,7 @@ impl StandardBroadcastRun {
                     was_interrupted: true,
                 });
                 let shreds = Arc::new(shreds);
-                socket_sender.send((shreds.clone(), batch_info.clone()))?;
-                blockstore_sender.send((shreds, batch_info))?;
+                dispatch_shreds(blockstore_sender, socket_sender, shreds, batch_info)?;
             }
             // If blockstore already has shreds for this slot,
             // it should not recreate the slot:
@@ -230,34 +383,16 @@ impl StandardBroadcastRun {
                 process_stats.num_extant_slots += 1;
                 // This is a faulty situation that should not happen.
                 // Refrain from generating shreds for the slot.
+                self.blacklist_broadcast_slot(bank.slot());
                 return Err(Error::DuplicateSlotBroadcast(bank.slot()));
             }
+
             // Reinitialize state for this slot.
-            let chained_merkle_root = if self.slot == bank.parent_slot() {
-                self.chained_merkle_root
-            } else {
-                broadcast_utils::get_chained_merkle_root_from_parent(
-                    bank.slot(),
-                    bank.parent_slot(),
-                    blockstore,
-                )
-                .unwrap_or_else(|err: Error| {
-                    error!("Unknown chained Merkle root: {err:?}");
-                    process_stats.err_unknown_chained_merkle_root += 1;
-                    Hash::default()
-                })
-            };
-            self.slot = bank.slot();
-            self.parent = bank.parent_slot();
-            self.chained_merkle_root = chained_merkle_root;
-            self.next_shred_index = 0u32;
-            self.next_code_index = 0u32;
-            self.completed = false;
-            self.slot_broadcast_start = Instant::now();
-            self.num_batches = 0;
-            process_stats.receive_elapsed = 0;
-            process_stats.coalesce_elapsed = 0;
-        }
+            self.reinitialize_state(blockstore, &bank, process_stats);
+            true
+        } else {
+            false
+        };
 
         // 2) Convert entries to shreds and coding shreds
         let is_last_in_slot = last_tick_height == bank.max_tick_height();
@@ -266,17 +401,36 @@ impl StandardBroadcastRun {
         let reference_tick = last_tick_height
             .saturating_add(bank.ticks_per_slot())
             .saturating_sub(bank.max_tick_height());
+
+        let mut header_shreds = if maybe_send_header
+            && self
+                .migration_status
+                .should_allow_block_markers(bank.slot())
+        {
+            let header = BlockComponent::new_block_header(self.parent, self.parent_block_id);
+            self.component_to_shreds(keypair, &header, reference_tick as u8, false, process_stats)
+                .unwrap()
+        } else {
+            vec![]
+        };
+
         let shreds = self
-            .entries_to_shreds(
+            .component_to_shreds(
                 keypair,
-                &entries,
+                &component,
                 reference_tick as u8,
                 is_last_in_slot,
                 process_stats,
-                MAX_DATA_SHREDS_PER_SLOT as u32,
-                MAX_CODE_SHREDS_PER_SLOT as u32,
             )
             .unwrap();
+        self.maybe_update_parent_from_component(&component);
+
+        let shreds = if maybe_send_header {
+            header_shreds.extend(shreds);
+            header_shreds
+        } else {
+            shreds
+        };
         // Insert the first data shred synchronously so that blockstore stores
         // that the leader started this block. This must be done before the
         // blocks are sent out over the wire, so that the slots we have already
@@ -292,7 +446,6 @@ impl StandardBroadcastRun {
             blockstore
                 .insert_cow_shreds(
                     [Cow::Borrowed(shred)],
-                    None, // leader_schedule
                     true, // is_trusted
                 )
                 .expect("Failed to insert shreds in blockstore");
@@ -315,8 +468,7 @@ impl StandardBroadcastRun {
 
         let shreds = Arc::new(shreds);
         debug_assert!(shreds.iter().all(|shred| shred.slot() == bank.slot()));
-        socket_sender.send((shreds.clone(), batch_info.clone()))?;
-        blockstore_sender.send((shreds, batch_info))?;
+        dispatch_shreds(blockstore_sender, socket_sender, shreds, batch_info)?;
 
         coding_send_time.stop();
 
@@ -331,12 +483,34 @@ impl StandardBroadcastRun {
             self.completed = true;
 
             // Populate the block id and send for voting
-            // The block id is the merkle root of the last FEC set which is now the chained merkle root
+            let block_id = if self
+                .migration_status
+                .should_use_double_merkle_block_id(bank.slot())
+            {
+                // Block id is the double merkle root
+                let fec_set_count = u32::try_from(self.double_merkle_leaves.len()).unwrap();
+                // Add the final leaf (parent info)
+                self.double_merkle_leaves
+                    .push(self.parent_info_leaf(fec_set_count));
+
+                // Compute the double merkle root
+                // Blockstore population of the DoubleMerkleMeta happens asynchronously when shreds are inserted
+                let merkle_tree = MerkleTree::try_new_with_len(
+                    self.double_merkle_leaves.drain(..).map(Ok),
+                    fec_set_count as usize + 1,
+                )
+                .expect("Double merkle tree construction cannot fail");
+                *merkle_tree.root()
+            } else {
+                // The block id is the merkle root of the last FEC set which is now the chained merkle root
+                self.chained_merkle_root
+            };
+
             broadcast_utils::set_block_id_and_send(
                 &self.migration_status,
                 &self.votor_event_sender,
                 bank,
-                self.chained_merkle_root,
+                block_id,
             )?;
         }
 
@@ -361,9 +535,7 @@ impl StandardBroadcastRun {
         let num_shreds = shreds.len();
         let shreds = shreds.iter().skip(offset).map(Cow::Borrowed);
         blockstore
-            .insert_cow_shreds(
-                shreds, /*leader_schedule:*/ None, /*is_trusted:*/ true,
-            )
+            .insert_cow_shreds(shreds, /*is_trusted:*/ true)
             .expect("Failed to insert shreds in blockstore");
         let insert_shreds_elapsed = insert_shreds_start.elapsed();
         let new_insert_shreds_stats = InsertShredsStats {
@@ -408,6 +580,7 @@ impl StandardBroadcastRun {
             &mut transmit_stats,
             cluster_info,
             bank_forks,
+            &self.leader_schedule_cache,
             cluster_info.socket_addr_space(),
         )?;
         transmit_time.stop();
@@ -448,12 +621,12 @@ impl BroadcastRun for StandardBroadcastRun {
         &mut self,
         keypair: &Keypair,
         blockstore: &Blockstore,
-        receiver: &Receiver<WorkingBankEntry>,
+        receiver: &Receiver<WorkingBankEntryOrMarker>,
         socket_sender: &Sender<(Arc<Vec<Shred>>, Option<BroadcastShredBatchInfo>)>,
         blockstore_sender: &Sender<(Arc<Vec<Shred>>, Option<BroadcastShredBatchInfo>)>,
     ) -> Result<()> {
         let mut process_stats = ProcessShredsStats::default();
-        let receive_results = broadcast_utils::recv_slot_entries(
+        let receive_results = broadcast_utils::recv_slot_components(
             receiver,
             &mut self.carryover_entry,
             &mut process_stats,
@@ -490,7 +663,7 @@ impl BroadcastRun for StandardBroadcastRun {
 mod test {
     use {
         super::*,
-        crossbeam_channel::unbounded,
+        assert_matches::assert_matches,
         rand::Rng,
         solana_entry::entry::create_ticks,
         solana_genesis_config::GenesisConfig,
@@ -499,14 +672,21 @@ mod test {
         solana_keypair::Keypair,
         solana_ledger::{
             blockstore::Blockstore,
+            blockstore_meta::SlotMeta,
             genesis_utils::create_genesis_config,
             get_tmp_ledger_path,
             shred::{DATA_SHREDS_PER_FEC_BLOCK, max_ticks_per_n_shreds},
         },
         solana_net_utils::{SocketAddrSpace, sockets::bind_to_localhost_unique},
-        solana_runtime::bank::Bank,
+        solana_pubkey::Pubkey,
+        solana_runtime::{
+            bank::{Bank, SlotLeader},
+            genesis_utils::{activate_feature, deactivate_features},
+            slot_params::{slot_time_feature_gates, slot_time_feature_ids},
+        },
         solana_signer::Signer,
         std::{ops::Deref, sync::Arc, time::Duration},
+        test_case::test_case,
     };
 
     #[allow(clippy::type_complexity)]
@@ -539,6 +719,8 @@ mod test {
         genesis_config.ticks_per_slot = max_ticks_per_n_shreds(num_shreds_per_slot, None) + 1;
 
         let bank = Bank::new_for_tests(&genesis_config);
+        bank.set_tick_height(bank.max_tick_height());
+        Bank::calculate_and_set_block_id_for_dcou(&bank);
         let bank_forks = BankForks::new_rw_arc(bank);
         let bank0 = bank_forks.read().unwrap().root_bank();
         (
@@ -552,12 +734,89 @@ mod test {
         )
     }
 
+    fn new_child_bank(parent: &Arc<Bank>, slot: Slot) -> Arc<Bank> {
+        assert!(parent.block_id().is_some());
+        Arc::new(Bank::new_from_parent(
+            parent.clone(),
+            *parent.leader(),
+            slot,
+        ))
+    }
+
+    fn test_leader_schedule_cache(bank: &Bank) -> Arc<LeaderScheduleCache> {
+        Arc::new(LeaderScheduleCache::new_from_bank(bank))
+    }
+
+    fn broadcast_shred_limits_for_slot_time_features(
+        feature_ids: impl IntoIterator<Item = Pubkey>,
+    ) -> (u32, u32) {
+        let ledger_path = get_tmp_ledger_path!();
+        let blockstore = Arc::new(
+            Blockstore::open(&ledger_path).expect("Expected to be able to open database ledger"),
+        );
+        let mut genesis_config = create_genesis_config(10_000).genesis_config;
+        let slot_time_features = slot_time_feature_ids().to_vec();
+        deactivate_features(&mut genesis_config, &slot_time_features);
+        for feature_id in feature_ids {
+            activate_feature(&mut genesis_config, feature_id);
+        }
+
+        let (parent_bank, bank_forks) =
+            Bank::new_for_tests(&genesis_config).wrap_with_bank_forks_for_tests();
+        parent_bank.set_tick_height(parent_bank.max_tick_height());
+        Bank::calculate_and_set_block_id_for_dcou(&parent_bank);
+
+        let effective_slot = parent_bank.epoch_schedule().get_first_slot_in_epoch(1);
+        let bank = Bank::new_from_parent_with_bank_forks(
+            &bank_forks,
+            parent_bank,
+            SlotLeader::default(),
+            effective_slot,
+        );
+        let ticks = create_ticks(1, 0, genesis_config.hash());
+        let receive_results = ReceiveResults {
+            component: BlockComponent::EntryBatch(ticks.clone()),
+            bank: bank.clone(),
+            last_tick_height: bank.tick_height() + ticks.len() as u64,
+        };
+        let (socket_sender, _socket_receiver) = bounded(1024);
+        let (blockstore_sender, _blockstore_receiver) = bounded(1024);
+        let (votor_event_sender, _votor_event_receiver) = bounded(1024);
+        let mut standard_broadcast_run = StandardBroadcastRun::new(
+            0,
+            Arc::new(MigrationStatus::default()),
+            votor_event_sender,
+            test_leader_schedule_cache(&bank),
+        );
+
+        standard_broadcast_run
+            .process_receive_results(
+                &Keypair::new(),
+                &blockstore,
+                &socket_sender,
+                &blockstore_sender,
+                receive_results,
+                &mut ProcessShredsStats::default(),
+            )
+            .unwrap();
+
+        (
+            standard_broadcast_run.max_data_shreds_per_slot,
+            standard_broadcast_run.max_code_shreds_per_slot,
+        )
+    }
+
     #[test]
     fn test_interrupted_slot_last_shred() {
         let keypair = Arc::new(Keypair::new());
-        let (votor_event_sender, _votor_event_receiver) = unbounded();
-        let mut run =
-            StandardBroadcastRun::new(0, Arc::new(MigrationStatus::default()), votor_event_sender);
+        let (votor_event_sender, _votor_event_receiver) = bounded(1024);
+        let bank = Bank::new_for_tests(&create_genesis_config(10_000).genesis_config);
+        let mut run = StandardBroadcastRun::new(
+            0,
+            Arc::new(MigrationStatus::default()),
+            votor_event_sender,
+            test_leader_schedule_cache(&bank),
+        );
         assert!(run.completed);
 
         // Set up the slot to be interrupted
@@ -588,25 +847,32 @@ mod test {
         assert!(shred.verify(&keypair.pubkey()));
     }
 
-    #[test]
-    fn test_slot_interrupt() {
+    #[test_case(MigrationStatus::default(), 1 ; "pre_migration")]
+    #[test_case(MigrationStatus::post_migration_status(), 2 ; "alpenglow_enabled")]
+    fn test_slot_interrupt(migration_status: MigrationStatus, shred_multiplier: u64) {
         // Setup
         let num_shreds_per_slot = DATA_SHREDS_PER_FEC_BLOCK as u64;
         let (blockstore, genesis_config, cluster_info, bank0, leader_keypair, socket, bank_forks) =
             setup(num_shreds_per_slot);
 
+        let bank1 = new_child_bank(&bank0, 1);
+
         // Insert 1 less than the number of ticks needed to finish the slot
         let ticks0 = create_ticks(genesis_config.ticks_per_slot - 1, 0, genesis_config.hash());
         let receive_results = ReceiveResults {
-            entries: ticks0.clone(),
-            bank: bank0.clone(),
-            last_tick_height: (ticks0.len() - 1) as u64,
+            component: BlockComponent::EntryBatch(ticks0.clone()),
+            bank: bank1.clone(),
+            last_tick_height: bank1.tick_height() + ticks0.len() as u64,
         };
 
-        // Step 1: Make an incomplete transmission for slot 0
-        let (votor_event_sender, _votor_event_receiver) = unbounded();
-        let mut standard_broadcast_run =
-            StandardBroadcastRun::new(0, Arc::new(MigrationStatus::default()), votor_event_sender);
+        // Step 1: Make an incomplete transmission for slot 1
+        let (votor_event_sender, _votor_event_receiver) = bounded(1024);
+        let mut standard_broadcast_run = StandardBroadcastRun::new(
+            0,
+            Arc::new(migration_status),
+            votor_event_sender,
+            test_leader_schedule_cache(&bank0),
+        );
         standard_broadcast_run
             .test_process_receive_results(
                 &leader_keypair,
@@ -617,14 +883,15 @@ mod test {
                 &bank_forks,
             )
             .unwrap();
+        // When alpenglow is enabled, new slots include both header and component shreds
         assert_eq!(
             standard_broadcast_run.next_shred_index as u64,
-            num_shreds_per_slot
+            shred_multiplier * num_shreds_per_slot
         );
-        assert_eq!(standard_broadcast_run.slot, 0);
+        assert_eq!(standard_broadcast_run.slot, 1);
         assert_eq!(standard_broadcast_run.parent, 0);
         // Make sure the slot is not complete
-        assert!(!blockstore.is_full(0));
+        assert!(!blockstore.is_full(1));
         // Modify the stats, should reset later
         standard_broadcast_run.process_shreds_stats.receive_elapsed = 10;
         // Broadcast stats should exist, and 1 batch should have been sent,
@@ -649,16 +916,25 @@ mod test {
                 .num_batches(),
             1
         );
-        // Try to fetch ticks from blockstore, nothing should break
-        assert_eq!(blockstore.get_slot_entries(0, 0).unwrap(), ticks0);
+        // Try to fetch ticks from blockstore, nothing should break.
+        // When headers are enabled, header shreds occupy the first num_shreds_per_slot indices,
+        // so entry data starts at that offset.
+        let header_shred_offset = (shred_multiplier - 1) * num_shreds_per_slot;
         assert_eq!(
-            blockstore.get_slot_entries(0, num_shreds_per_slot).unwrap(),
+            blockstore.get_slot_entries(1, header_shred_offset).unwrap(),
+            ticks0
+        );
+        assert_eq!(
+            blockstore
+                .get_slot_entries(1, shred_multiplier * num_shreds_per_slot)
+                .unwrap(),
             vec![],
         );
 
         // Step 2: Make a transmission for another bank that interrupts the transmission for
-        // slot 0
-        let bank2 = Arc::new(Bank::new_from_parent(bank0.clone(), *bank0.leader(), 2));
+        // slot 1
+        bank1.set_block_id(Some(Hash::new_unique()));
+        let bank2 = new_child_bank(&bank1, 2);
         let interrupted_slot = standard_broadcast_run.slot;
         // Interrupting the slot should cause the unfinished_slot and stats to reset
         let num_shreds = 1;
@@ -669,9 +945,9 @@ mod test {
             genesis_config.hash(),
         );
         let receive_results = ReceiveResults {
-            entries: ticks1.clone(),
-            bank: bank2,
-            last_tick_height: (ticks1.len() - 1) as u64,
+            component: BlockComponent::EntryBatch(ticks1.clone()),
+            bank: bank2.clone(),
+            last_tick_height: bank2.tick_height() + ticks1.len() as u64,
         };
         standard_broadcast_run
             .test_process_receive_results(
@@ -685,13 +961,14 @@ mod test {
             .unwrap();
 
         // The shred index should have reset to 0, which makes it possible for the
-        // index < the previous shred index for slot 0
+        // index < the previous shred index for slot 1
+        // When alpenglow is enabled, new slots include both header and component shreds
         assert_eq!(
             standard_broadcast_run.next_shred_index as usize,
-            DATA_SHREDS_PER_FEC_BLOCK
+            shred_multiplier as usize * DATA_SHREDS_PER_FEC_BLOCK
         );
         assert_eq!(standard_broadcast_run.slot, 2);
-        assert_eq!(standard_broadcast_run.parent, 0);
+        assert_eq!(standard_broadcast_run.parent, 1);
 
         // Check that the stats were reset as well
         assert_eq!(
@@ -717,30 +994,41 @@ mod test {
                 .is_none()
         );
 
-        // Try to fetch the incomplete ticks from blockstore, should succeed
-        assert_eq!(blockstore.get_slot_entries(0, 0).unwrap(), ticks0);
-        assert_eq!(
-            blockstore.get_slot_entries(0, num_shreds_per_slot).unwrap(),
-            vec![],
-        );
+        // Try to fetch the incomplete ticks from blockstore, will fail because
+        // broadcast interruption serializes an empty entry batch into shreds
+        // which is an invalid block
+        assert!(blockstore.get_slot_entries(1, header_shred_offset).is_err());
+        assert!(blockstore.get_slot_entries(1, 0).is_err());
     }
 
     #[test]
     fn test_buffer_data_shreds() {
         let num_shreds_per_slot = 2;
-        let (blockstore, genesis_config, _cluster_info, bank, leader_keypair, _socket, _bank_forks) =
-            setup(num_shreds_per_slot);
-        let (bsend, brecv) = unbounded();
-        let (ssend, _srecv) = unbounded();
-        let (votor_event_sender, _votor_event_receiver) = unbounded();
-        let mut last_tick_height = 0;
-        let mut standard_broadcast_run =
-            StandardBroadcastRun::new(0, Arc::new(MigrationStatus::default()), votor_event_sender);
+        let (
+            blockstore,
+            genesis_config,
+            _cluster_info,
+            parent_bank,
+            leader_keypair,
+            _socket,
+            _bank_forks,
+        ) = setup(num_shreds_per_slot);
+        let bank = new_child_bank(&parent_bank, 1);
+        let (bsend, brecv) = bounded(1024);
+        let (ssend, _srecv) = bounded(1024);
+        let (votor_event_sender, _votor_event_receiver) = bounded(1024);
+        let mut last_tick_height = bank.tick_height();
+        let mut standard_broadcast_run = StandardBroadcastRun::new(
+            0,
+            Arc::new(MigrationStatus::default()),
+            votor_event_sender,
+            test_leader_schedule_cache(&bank),
+        );
         let mut process_ticks = |num_ticks| {
             let ticks = create_ticks(num_ticks, 0, genesis_config.hash());
-            last_tick_height += (ticks.len() - 1) as u64;
+            last_tick_height += ticks.len() as u64;
             let receive_results = ReceiveResults {
-                entries: ticks,
+                component: BlockComponent::EntryBatch(ticks),
                 bank: bank.clone(),
                 last_tick_height,
             };
@@ -783,20 +1071,32 @@ mod test {
     fn test_slot_finish() {
         // Setup
         let num_shreds_per_slot = 2;
-        let (blockstore, genesis_config, cluster_info, bank0, leader_keypair, socket, bank_forks) =
-            setup(num_shreds_per_slot);
+        let (
+            blockstore,
+            genesis_config,
+            cluster_info,
+            parent_bank,
+            leader_keypair,
+            socket,
+            bank_forks,
+        ) = setup(num_shreds_per_slot);
+        let bank = new_child_bank(&parent_bank, 1);
 
         // Insert complete slot of ticks needed to finish the slot
         let ticks = create_ticks(genesis_config.ticks_per_slot, 0, genesis_config.hash());
         let receive_results = ReceiveResults {
-            entries: ticks.clone(),
-            bank: bank0,
-            last_tick_height: ticks.len() as u64,
+            component: BlockComponent::EntryBatch(ticks.clone()),
+            bank: bank.clone(),
+            last_tick_height: bank.tick_height() + ticks.len() as u64,
         };
 
-        let (votor_event_sender, _votor_event_receiver) = unbounded();
-        let mut standard_broadcast_run =
-            StandardBroadcastRun::new(0, Arc::new(MigrationStatus::default()), votor_event_sender);
+        let (votor_event_sender, _votor_event_receiver) = bounded(1024);
+        let mut standard_broadcast_run = StandardBroadcastRun::new(
+            0,
+            Arc::new(MigrationStatus::default()),
+            votor_event_sender,
+            test_leader_schedule_cache(&bank),
+        );
         standard_broadcast_run
             .test_process_receive_results(
                 &leader_keypair,
@@ -811,28 +1111,162 @@ mod test {
     }
 
     #[test]
-    fn entries_to_shreds_max() {
+    fn test_broadcast_blacklist() {
+        let num_shreds_per_slot = 2;
+        let (
+            blockstore,
+            genesis_config,
+            _cluster_info,
+            parent_bank,
+            leader_keypair,
+            _socket,
+            _bank_forks,
+        ) = setup(num_shreds_per_slot);
+        let bank1 = new_child_bank(&parent_bank, 1);
+
+        blockstore
+            .put_meta(
+                bank1.slot(),
+                &SlotMeta {
+                    slot: bank1.slot(),
+                    parent_slot: Some(bank1.parent_slot()),
+                    received: 1,
+                    ..SlotMeta::default()
+                },
+            )
+            .unwrap();
+
+        let (votor_event_sender, _votor_event_receiver) = bounded(1024);
+        let mut standard_broadcast_run = StandardBroadcastRun::new(
+            0,
+            Arc::new(MigrationStatus::default()),
+            votor_event_sender,
+            test_leader_schedule_cache(&bank1),
+        );
+        let (bsend, brecv) = bounded(1024);
+        let (ssend, srecv) = bounded(1024);
+
+        let ticks = create_ticks(1, 0, genesis_config.hash());
+        let err = standard_broadcast_run
+            .process_receive_results(
+                &leader_keypair,
+                &blockstore,
+                &ssend,
+                &bsend,
+                ReceiveResults {
+                    component: BlockComponent::EntryBatch(ticks.clone()),
+                    bank: bank1.clone(),
+                    last_tick_height: bank1.tick_height() + ticks.len() as u64,
+                },
+                &mut ProcessShredsStats::default(),
+            )
+            .unwrap_err();
+        assert_matches!(err, Error::DuplicateSlotBroadcast(1));
+        assert!(standard_broadcast_run.is_broadcast_blacklisted(1));
+
+        standard_broadcast_run
+            .process_receive_results(
+                &leader_keypair,
+                &blockstore,
+                &ssend,
+                &bsend,
+                ReceiveResults {
+                    component: BlockComponent::EntryBatch(ticks.clone()),
+                    bank: bank1.clone(),
+                    last_tick_height: bank1.tick_height() + ticks.len() as u64,
+                },
+                &mut ProcessShredsStats::default(),
+            )
+            .unwrap();
+        assert!(brecv.try_recv().is_err());
+        assert!(srecv.try_recv().is_err());
+
+        let bank2 = Arc::new(Bank::new_from_parent(
+            bank1.clone(),
+            *bank1.leader(),
+            bank1.slot() + 1,
+        ));
+        let err = standard_broadcast_run
+            .process_receive_results(
+                &leader_keypair,
+                &blockstore,
+                &ssend,
+                &bsend,
+                ReceiveResults {
+                    component: BlockComponent::EntryBatch(ticks.clone()),
+                    bank: bank2,
+                    last_tick_height: bank1.tick_height() + ticks.len() as u64,
+                },
+                &mut ProcessShredsStats::default(),
+            )
+            .unwrap_err();
+        assert_matches!(err, Error::DuplicateSlotBroadcast(2));
+        assert!(standard_broadcast_run.is_broadcast_blacklisted(2));
+
+        for slot in 3..=18 {
+            standard_broadcast_run.blacklist_broadcast_slot(slot);
+        }
+        assert_eq!(
+            standard_broadcast_run.broadcast_blacklist.len(),
+            MAX_BROADCAST_BLACKLIST_SIZE
+        );
+        assert!(!standard_broadcast_run.is_broadcast_blacklisted(1));
+        assert!(!standard_broadcast_run.is_broadcast_blacklisted(2));
+        assert!(standard_broadcast_run.is_broadcast_blacklisted(3));
+        assert!(standard_broadcast_run.is_broadcast_blacklisted(18));
+    }
+
+    #[test]
+    fn test_update_shred_limits_from_bank() {
+        assert_eq!(
+            broadcast_shred_limits_for_slot_time_features(std::iter::empty()),
+            (
+                DEFAULT_MAX_DATA_SHREDS_PER_SLOT,
+                DEFAULT_MAX_CODE_SHREDS_PER_SLOT
+            )
+        );
+
+        for ((feature_id, _), expected_shreds_per_slot) in slot_time_feature_gates()
+            .into_iter()
+            .zip([28_672, 24_576, 20_480, 16_384])
+        {
+            assert_eq!(
+                broadcast_shred_limits_for_slot_time_features([feature_id]),
+                (expected_shreds_per_slot, expected_shreds_per_slot)
+            );
+        }
+
+        let [reduce_to_350ms, _, _, reduce_to_200ms] = slot_time_feature_ids();
+        assert_eq!(
+            broadcast_shred_limits_for_slot_time_features([reduce_to_350ms, reduce_to_200ms]),
+            (16_384, 16_384)
+        );
+    }
+
+    #[test]
+    fn test_component_to_shreds_max() {
         agave_logger::setup();
         let keypair = Keypair::new();
-        let (votor_event_sender, _votor_event_receiver) = unbounded();
-        let mut bs =
-            StandardBroadcastRun::new(0, Arc::new(MigrationStatus::default()), votor_event_sender);
+        let (votor_event_sender, _votor_event_receiver) = bounded(1024);
+        let bank = Bank::new_for_tests(&create_genesis_config(10_000).genesis_config);
+        let mut bs = StandardBroadcastRun::new(
+            0,
+            Arc::new(MigrationStatus::default()),
+            votor_event_sender,
+            test_leader_schedule_cache(&bank),
+        );
         bs.slot = 1;
         bs.parent = 0;
+        bs.max_data_shreds_per_slot = 1000;
+        bs.max_code_shreds_per_slot = 1000;
         let entries = create_ticks(10_000, 1, solana_hash::Hash::default());
 
         let mut stats = ProcessShredsStats::default();
 
+        let component =
+            BlockComponent::new_entry_batch(entries[0..entries.len() - 2].to_vec()).unwrap();
         let (data, coding) = bs
-            .entries_to_shreds(
-                &keypair,
-                &entries[0..entries.len() - 2],
-                0,
-                false,
-                &mut stats,
-                1000,
-                1000,
-            )
+            .component_to_shreds(&keypair, &component, 0, false, &mut stats)
             .unwrap()
             .into_iter()
             .partition::<Vec<_>, _>(Shred::is_data);
@@ -840,8 +1274,82 @@ mod test {
         assert!(!data.is_empty());
         assert!(!coding.is_empty());
 
-        let r = bs.entries_to_shreds(&keypair, &entries, 0, false, &mut stats, 10, 10);
-        info!("{r:?}");
+        bs.max_data_shreds_per_slot = 10;
+        bs.max_code_shreds_per_slot = 10;
+        let component = BlockComponent::new_entry_batch(entries).unwrap();
+        let r = bs.component_to_shreds(&keypair, &component, 0, false, &mut stats);
         assert_matches!(r, Err(BroadcastError::TooManyShreds));
+    }
+
+    #[test]
+    fn test_update_parent() {
+        let keypair = Keypair::new();
+        let (votor_event_sender, _votor_event_receiver) = bounded(1024);
+        let bank = Bank::new_for_tests(&create_genesis_config(10_000).genesis_config);
+        let mut bs = StandardBroadcastRun::new(
+            0,
+            Arc::new(MigrationStatus::post_migration_status()),
+            votor_event_sender,
+            test_leader_schedule_cache(&bank),
+        );
+        bs.slot = 12;
+        bs.parent = 10;
+        let original_parent_block_id = Hash::new_unique();
+        bs.parent_block_id = original_parent_block_id;
+        bs.parent_for_double_merkle = Block {
+            slot: bs.parent,
+            block_id: bs.parent_block_id,
+        };
+
+        let new_parent_slot = 7;
+        let new_parent_block_id = Hash::new_unique();
+        let component = BlockComponent::new_block_marker(VersionedBlockMarker::from_update_parent(
+            solana_entry::block_component::UpdateParentV1 {
+                new_parent_slot,
+                new_parent_block_id,
+            },
+        ));
+        let mut stats = ProcessShredsStats::default();
+        let shreds = bs
+            .component_to_shreds(&keypair, &component, 0, false, &mut stats)
+            .unwrap();
+        assert!(
+            shreds
+                .iter()
+                .filter(|shred| shred.is_data())
+                .all(|shred| shred.parent().unwrap() == 10)
+        );
+
+        bs.maybe_update_parent_from_component(&component);
+        assert_eq!(bs.parent, 10);
+        assert_eq!(bs.parent_block_id, original_parent_block_id);
+        assert_eq!(
+            bs.parent_for_double_merkle,
+            Block {
+                slot: new_parent_slot,
+                block_id: new_parent_block_id
+            }
+        );
+        let fec_set_count = 3u32;
+        assert_eq!(
+            bs.parent_info_leaf(fec_set_count),
+            hashv(&[
+                &new_parent_slot.to_le_bytes(),
+                new_parent_block_id.as_bytes(),
+                &fec_set_count.to_le_bytes(),
+            ])
+        );
+
+        let entries = create_ticks(1, 0, Hash::default());
+        let component = BlockComponent::new_entry_batch(entries).unwrap();
+        let shreds = bs
+            .component_to_shreds(&keypair, &component, 0, false, &mut stats)
+            .unwrap();
+        assert!(
+            shreds
+                .iter()
+                .filter(|shred| shred.is_data())
+                .all(|shred| shred.parent().unwrap() == 10)
+        );
     }
 }

@@ -166,6 +166,7 @@ fn start_gossip_node(
         &cluster_info,
         None,
         gossip_sockets,
+        None,
         gossip_validators,
         should_check_duplicate_instance,
         None,
@@ -339,10 +340,10 @@ pub fn fail_rpc_node(
     blacklisted_rpc_nodes: &mut HashSet<Pubkey, RandomState>,
 ) {
     warn!("{err}");
-    if let Some(known_validators) = known_validators {
-        if known_validators.contains(rpc_id) {
-            return;
-        }
+    if let Some(known_validators) = known_validators
+        && known_validators.contains(rpc_id)
+    {
+        return;
     }
 
     info!("Excluding {rpc_id} as a future RPC candidate");
@@ -560,7 +561,6 @@ pub fn rpc_bootstrap(
     do_port_check: bool,
     use_progress_bar: bool,
     maximum_local_snapshot_age: Slot,
-    should_check_duplicate_instance: bool,
     start_progress: &Arc<RwLock<ValidatorStartProgress>>,
     minimal_snapshot_download_speed: f32,
     maximum_snapshot_download_abort: u64,
@@ -610,7 +610,7 @@ pub fn rpc_bootstrap(
                     .expected_shred_version
                     .expect("expected_shred_version should not be None"),
                 validator_config.gossip_validators.clone(),
-                should_check_duplicate_instance,
+                validator_config.should_check_duplicate_instance,
                 socket_addr_space,
             ));
         }
@@ -623,7 +623,9 @@ pub fn rpc_bootstrap(
             &mut blacklisted_rpc_nodes,
             &bootstrap_config,
         );
-        let (rpc_contact_info, snapshot_hash, rpc_client) = vetted_rpc_nodes.pop().unwrap();
+        // `vetted_rpc_nodes` is sorted by ping ascending, so take the first
+        // entry. `pop()` would take the highest-ping peer.
+        let (rpc_contact_info, snapshot_hash, rpc_client) = vetted_rpc_nodes.remove(0);
         get_rpc_nodes_time += get_rpc_nodes_start.elapsed();
 
         let snapshot_download_start = Instant::now();
@@ -1130,13 +1132,12 @@ fn download_snapshots(
     }
 
     // Check and see if we've already got the full snapshot; if not, download it
-    if snapshot_paths::get_full_snapshot_archives(full_snapshot_archives_dir)
-        .into_iter()
-        .any(|snapshot_archive| {
+    if snapshot_paths::full_snapshot_archives_iter(full_snapshot_archives_dir).any(
+        |snapshot_archive| {
             snapshot_archive.slot() == full_snapshot_hash.0
                 && snapshot_archive.hash().0 == full_snapshot_hash.1
-        })
-    {
+        },
+    ) {
         info!(
             "Full snapshot archive already exists locally. Skipping download. slot: {}, hash: {}",
             full_snapshot_hash.0, full_snapshot_hash.1
@@ -1159,8 +1160,7 @@ fn download_snapshots(
     if bootstrap_config.incremental_snapshot_fetch {
         // Check and see if we've already got the incremental snapshot; if not, download it
         if let Some(incremental_snapshot_hash) = incremental_snapshot_hash {
-            if snapshot_paths::get_incremental_snapshot_archives(incremental_snapshot_archives_dir)
-                .into_iter()
+            if snapshot_paths::incremental_snapshot_archives_iter(incremental_snapshot_archives_dir)
                 .any(|snapshot_archive| {
                     snapshot_archive.slot() == incremental_snapshot_hash.0
                         && snapshot_archive.hash().0 == incremental_snapshot_hash.1
@@ -1246,23 +1246,22 @@ fn download_snapshot(
                 && download_progress.estimated_remaining_time > 60_f32
                 && *download_abort_count < maximum_snapshot_download_abort
             {
-                if let Some(ref known_validators) = validator_config.known_validators {
-                    if known_validators.contains(rpc_contact_info.pubkey())
-                        && known_validators.len() == 1
-                        && bootstrap_config.only_known_rpc
-                    {
-                        warn!(
-                            "The snapshot download is too slow, throughput: {} < min speed {} \
-                             bytes/sec, but will NOT abort and try a different node as it is the \
-                             only known validator and the --only-known-rpc flag is set. Abort \
-                             count: {}, Progress detail: {:?}",
-                            download_progress.last_throughput,
-                            minimal_snapshot_download_speed,
-                            download_abort_count,
-                            download_progress,
-                        );
-                        return true; // Do not abort download from the one-and-only known validator
-                    }
+                if let Some(ref known_validators) = validator_config.known_validators
+                    && known_validators.contains(rpc_contact_info.pubkey())
+                    && known_validators.len() == 1
+                    && bootstrap_config.only_known_rpc
+                {
+                    warn!(
+                        "The snapshot download is too slow, throughput: {} < min speed {} \
+                         bytes/sec, but will NOT abort and try a different node as it is the only \
+                         known validator and the --only-known-rpc flag is set. Abort count: {}, \
+                         Progress detail: {:?}",
+                        download_progress.last_throughput,
+                        minimal_snapshot_download_speed,
+                        download_abort_count,
+                        download_progress,
+                    );
+                    return true; // Do not abort download from the one-and-only known validator
                 }
                 warn!(
                     "The snapshot download is too slow, throughput: {} < min speed {} bytes/sec, \

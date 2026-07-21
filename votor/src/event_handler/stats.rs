@@ -1,6 +1,6 @@
 use {
     crate::{event::VotorEvent, voting_service::BLSOp},
-    agave_votor_messages::{consensus_message::ConsensusMessage, vote::VoteType},
+    agave_votor_messages::vote::VoteType,
     solana_clock::Slot,
     solana_metrics::datapoint_info,
     std::{
@@ -94,6 +94,7 @@ impl Default for EventHandlerStats {
 pub enum StatsEvent {
     Block,
     BlockNotarized,
+    BlockNotarFallback,
     FirstShred,
     ParentReady,
     TimeoutCrashedLeader,
@@ -111,6 +112,7 @@ impl StatsEvent {
         match event {
             VotorEvent::Block(_) => StatsEvent::Block,
             VotorEvent::BlockNotarized(_) => StatsEvent::BlockNotarized,
+            VotorEvent::BlockNotarFallback(_) => StatsEvent::BlockNotarFallback,
             VotorEvent::FirstShred(_) => StatsEvent::FirstShred,
             VotorEvent::ParentReady { .. } => StatsEvent::ParentReady,
             VotorEvent::TimeoutCrashedLeader(_) => StatsEvent::TimeoutCrashedLeader,
@@ -152,8 +154,8 @@ impl EventHandlerStats {
                 let entry = self.slot_tracking_map.entry(*slot).or_default();
                 entry.parent_ready = Some(Instant::now());
             }
-            VotorEvent::Finalized((slot, _), is_fast_finalization) => {
-                let entry = self.slot_tracking_map.entry(*slot).or_default();
+            VotorEvent::Finalized(block, is_fast_finalization) => {
+                let entry = self.slot_tracking_map.entry(block.slot).or_default();
                 if entry.finalized.is_none() {
                     entry.finalized = Some((Instant::now(), *is_fast_finalization));
                 } else if *is_fast_finalization {
@@ -183,23 +185,23 @@ impl EventHandlerStats {
     }
 
     pub fn incr_vote(&mut self, bls_op: &BLSOp) {
-        if let BLSOp::PushVote { message, .. } = bls_op {
-            let ConsensusMessage::Vote(vote) = **message else {
-                warn!("Unexpected BLS message type: {message:?}");
-                return;
-            };
-            let vote_type = vote.vote.get_type();
-            let entry = self.sent_votes.entry(vote_type).or_insert(0);
-            *entry = entry.saturating_add(1);
-            if vote_type == VoteType::Notarize {
-                let entry = self.slot_tracking_map.entry(vote.vote.slot()).or_default();
-                entry.vote_notarize = Some(Instant::now());
-            } else if vote_type == VoteType::Skip {
-                let entry = self.slot_tracking_map.entry(vote.vote.slot()).or_default();
-                entry.vote_skip = Some(Instant::now());
+        match bls_op {
+            BLSOp::PushVote { vote, .. } => {
+                let vote_type = vote.vote.get_type();
+                let entry = self.sent_votes.entry(vote_type).or_insert(0);
+                *entry = entry.saturating_add(1);
+                if vote_type == VoteType::Notarize {
+                    let entry = self.slot_tracking_map.entry(vote.vote.slot()).or_default();
+                    entry.vote_notarize = Some(Instant::now());
+                } else if vote_type == VoteType::Skip {
+                    let entry = self.slot_tracking_map.entry(vote.vote.slot()).or_default();
+                    entry.vote_skip = Some(Instant::now());
+                }
             }
-        } else {
-            warn!("Unexpected BLS operation: {bls_op:?}");
+            BLSOp::RefreshVotes { .. } => (),
+            _ => {
+                warn!("Unexpected BLS operation: {bls_op:?}");
+            }
         }
     }
 

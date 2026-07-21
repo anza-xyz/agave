@@ -16,7 +16,7 @@ use {
     agave_reserved_account_keys::ReservedAccountKeys,
     agave_snapshots::{
         ArchiveFormat, DEFAULT_ARCHIVE_COMPRESSION, SUPPORTED_ARCHIVE_COMPRESSION, SnapshotVersion,
-        snapshot_archive_info::SnapshotArchiveInfoGetter as _,
+        snapshot_archive_info::SnapshotArchiveInfoGetter as _, snapshot_config::SnapshotConfig,
     },
     clap::{
         App, AppSettings, Arg, ArgMatches, SubCommand, crate_description, crate_name, value_t,
@@ -47,12 +47,12 @@ use {
     solana_feature_gate_interface::{self as feature, Feature},
     solana_inflation::Inflation,
     solana_instruction::TRANSACTION_LEVEL_STACK_HEIGHT,
+    solana_keypair::{Keypair, keypair_from_seed},
     solana_ledger::{
-        blockstore::{Blockstore, banking_trace_path, create_new_ledger},
-        blockstore_options::{AccessType, LedgerColumnOptions},
-        blockstore_processor::{
-            ProcessSlotCallback, TransactionStatusMessage, TransactionStatusSender,
-        },
+        blockstore::{Blockstore, PurgeType, banking_trace_path, create_new_ledger},
+        blockstore_options::{AccessType, BLOCKSTORE_DIRECTORY_ROCKS_LEVEL, LedgerColumnOptions},
+        blockstore_processor::ProcessSlotCallback,
+        shred::{ProcessShredsStats, ReedSolomonCache, Shred, Shredder},
     },
     solana_measure::{measure::Measure, measure_time},
     solana_message::SimpleAddressLoader,
@@ -70,6 +70,7 @@ use {
         snapshot_bank_utils,
         snapshot_minimizer::SnapshotMinimizer,
         stake_utils,
+        transaction_execution::{TransactionStatusMessage, TransactionStatusSender},
     },
     solana_runtime_transaction::runtime_transaction::RuntimeTransaction,
     solana_shred_version::compute_shred_version,
@@ -81,9 +82,10 @@ use {
     solana_vote::vote_state_view::VoteStateView,
     solana_vote_program::{
         self,
-        vote_state::{self, BLS_PUBLIC_KEY_COMPRESSED_SIZE, VoteStateV3, VoteStateV4},
+        vote_state::{self, BLS_PUBLIC_KEY_COMPRESSED_SIZE, VoteStateV4},
     },
     std::{
+        borrow::Cow,
         collections::{HashMap, HashSet},
         ffi::{OsStr, OsString},
         fs::{File, read_dir},
@@ -466,7 +468,6 @@ fn compute_slot_cost(
                     None,
                     SimpleAddressLoader::Disabled,
                     &reserved_account_keys.active,
-                    feature_set.snapshot().limit_instruction_accounts,
                 )
                 .map_err(|err| {
                     warn!("Failed to compute cost of transaction: {err:?}");
@@ -1018,6 +1019,13 @@ fn main() {
                 .help(BlockVerificationMethod::cli_message()),
         )
         .arg(
+            Arg::with_name("skip_inter_slot_verification")
+                .long("skip-inter-slot-verification")
+                .takes_value(false)
+                .global(true)
+                .help("Skip inter-slot parent block ID verification while processing the ledger"),
+        )
+        .arg(
             Arg::with_name("unified_scheduler_handler_threads")
                 .long("unified-scheduler-handler-threads")
                 .value_name("COUNT")
@@ -1516,14 +1524,6 @@ fn main() {
                         .long("enable-capitalization-change")
                         .takes_value(false)
                         .help("If snapshot creation should succeed with a capitalization delta."),
-                )
-                .arg(
-                    Arg::with_name("fix_testnet_ed25519_precompile_account")
-                        .long("fix-testnet-ed25519-precompile-account")
-                        .help(
-                            "correct misassigned owner and data on testnet ed25519 precompile \
-                             account deployment",
-                        ),
                 ),
         )
         .subcommand(
@@ -1852,6 +1852,7 @@ fn main() {
                         SystemMonitorStatsReportConfig {
                             report_os_memory_stats,
                             report_os_network_stats: false,
+                            xdp_network_config_report: None,
                             report_os_cpu_stats: false,
                             report_os_disk_stats: false,
                         },
@@ -1990,6 +1991,7 @@ fn main() {
                                 SystemMonitorStatsReportConfig {
                                     report_os_memory_stats: true,
                                     report_os_network_stats: false,
+                                    xdp_network_config_report: None,
                                     report_os_cpu_stats: false,
                                     report_os_disk_stats: false,
                                 },
@@ -2082,9 +2084,6 @@ fn main() {
                         }
                         archive_format
                     };
-
-                    let fix_testnet_ed25519_precompile_account =
-                        arg_matches.is_present("fix_testnet_ed25519_precompile_account");
 
                     let genesis_config = open_genesis_config_by(&ledger_path, arg_matches);
                     let mut process_options = parse_process_options(&ledger_path, arg_matches);
@@ -2197,8 +2196,7 @@ fn main() {
                         || !feature_gates_to_deactivate.is_empty()
                         || !vote_accounts_to_destake.is_empty()
                         || faucet_pubkey.is_some()
-                        || bootstrap_validator_pubkeys.is_some()
-                        || fix_testnet_ed25519_precompile_account;
+                        || bootstrap_validator_pubkeys.is_some();
 
                     if child_bank_required {
                         let mut child_bank =
@@ -2285,62 +2283,19 @@ fn main() {
                             .unwrap()
                             .into_iter()
                         {
-                            if let Ok(StakeStateV2::Stake(meta, stake, _)) = account.state() {
-                                if vote_accounts_to_destake.contains(&stake.delegation.voter_pubkey)
-                                {
-                                    if verbose_level > 0 {
-                                        warn!(
-                                            "Undelegating stake account {} from {}",
-                                            address, stake.delegation.voter_pubkey,
-                                        );
-                                    }
-                                    account.set_state(&StakeStateV2::Initialized(meta)).unwrap();
-                                    bank.store_account(&address, &account);
+                            if let Ok(StakeStateV2::Stake(meta, stake, _)) = account.state()
+                                && vote_accounts_to_destake.contains(&stake.delegation.voter_pubkey)
+                            {
+                                if verbose_level > 0 {
+                                    warn!(
+                                        "Undelegating stake account {} from {}",
+                                        address, stake.delegation.voter_pubkey,
+                                    );
                                 }
+                                account.set_state(&StakeStateV2::Initialized(meta)).unwrap();
+                                bank.store_account(&address, &account);
                             }
                         }
-                    }
-
-                    if fix_testnet_ed25519_precompile_account {
-                        use solana_sdk_ids::{ed25519_program, native_loader, system_program};
-
-                        if bank.cluster_type() != ClusterType::Testnet {
-                            eprintln!(
-                                "--fix-testnet-ed25519-precompile-account is incompatible with \
-                                 the supplied base snapshot"
-                            );
-                            std::process::exit(1);
-                        }
-
-                        let mut ed25519_program_account =
-                            bank.get_account(&ed25519_program::id()).unwrap_or_else(|| {
-                                eprintln!("Error: `{}` is not deployed", ed25519_program::id());
-                                exit(1);
-                            });
-
-                        if ed25519_program_account.owner() != &system_program::id() {
-                            eprintln!(
-                                "Error: expected `{}` to be owned by `{}`, found `{}`",
-                                ed25519_program::id(),
-                                system_program::id(),
-                                ed25519_program_account.owner(),
-                            );
-                            exit(1);
-                        }
-
-                        if !ed25519_program_account.data().is_empty() {
-                            eprintln!(
-                                "Error: expected `{}` account data to be empty, found {} bytes",
-                                ed25519_program::id(),
-                                ed25519_program_account.data().len(),
-                            );
-                            exit(1);
-                        }
-
-                        ed25519_program_account.set_owner(native_loader::id());
-                        ed25519_program_account.set_data_from_slice(b"ed25519_program");
-
-                        bank.store_account(&ed25519_program::id(), &ed25519_program_account);
                     }
 
                     if let Some(bootstrap_validator_pubkeys) = bootstrap_validator_pubkeys {
@@ -2386,27 +2341,17 @@ fn main() {
                                 ),
                             );
 
-                            let vote_account = if bank.feature_set.snapshot().vote_state_v4 {
-                                vote_state::create_v4_account_with_authorized(
-                                    identity_pubkey,
-                                    identity_pubkey,
-                                    [0u8; BLS_PUBLIC_KEY_COMPRESSED_SIZE],
-                                    identity_pubkey,
-                                    10000,
-                                    identity_pubkey,
-                                    0,
-                                    identity_pubkey,
-                                    rent.minimum_balance(VoteStateV4::size_of()).max(1),
-                                )
-                            } else {
-                                vote_state::create_v3_account_with_authorized(
-                                    identity_pubkey,
-                                    identity_pubkey,
-                                    identity_pubkey,
-                                    100,
-                                    rent.minimum_balance(VoteStateV3::size_of()).max(1),
-                                )
-                            };
+                            let vote_account = vote_state::create_v4_account_with_authorized(
+                                identity_pubkey,
+                                identity_pubkey,
+                                [0u8; BLS_PUBLIC_KEY_COMPRESSED_SIZE],
+                                identity_pubkey,
+                                10000,
+                                vote_pubkey,
+                                0,
+                                identity_pubkey,
+                                rent.minimum_balance(VoteStateV4::size_of()).max(1),
+                            );
 
                             bank.store_account(
                                 stake_pubkey,
@@ -2443,6 +2388,8 @@ fn main() {
                         }
                     }
 
+                    let new_shred_verison =
+                        compute_shred_version(&genesis_config.hash(), Some(&bank.hard_forks()));
                     if child_bank_required {
                         let num_ticks_per_slot = bank.ticks_per_slot();
                         let num_hashes_per_tick = bank.hashes_per_tick().unwrap_or(0);
@@ -2454,6 +2401,88 @@ fn main() {
                         tick_entries.iter().for_each(|tick_entry| {
                             bank.register_tick(&tick_entry.hash, &scheduler);
                         });
+
+                        // Calculate and set the block ID so we can read it to
+                        // properly chain shreds for the child bank
+                        Bank::calculate_and_set_block_id_for_dcou(&bank);
+
+                        // Next steps will need write access to the Blockstore
+                        // so ensure we have R/W access
+                        let rw_blockstore = if blockstore.is_primary_access() {
+                            blockstore.clone()
+                        } else {
+                            Arc::new(open_blockstore(
+                                &ledger_path,
+                                arg_matches,
+                                AccessType::PrimaryForMaintenance,
+                            ))
+                        };
+
+                        // If slot exists, back it up in another Blockstore
+                        // just in case and purge from the Blockstore
+                        let slot = bank.slot();
+                        if blockstore.has_existing_shreds_for_slot(slot) {
+                            let shreds = blockstore
+                                .get_data_shreds_for_slot(slot, 0)
+                                .expect("Blockstore operation must succeed");
+
+                            let old_shred_version =
+                                shreds.first().expect("Slot must have a shred").version();
+                            let backup_directory = format!(
+                                "{BLOCKSTORE_DIRECTORY_ROCKS_LEVEL}_backup_{old_shred_version}_{slot}"
+                            );
+                            let backup_ledger_path = ledger_path.join(backup_directory);
+                            info!("Backing up {slot} at {}", backup_ledger_path.display(),);
+                            let backup_blockstore = Arc::new(open_blockstore(
+                                &backup_ledger_path,
+                                arg_matches,
+                                AccessType::PrimaryForMaintenance,
+                            ));
+                            let _ = backup_blockstore
+                                .insert_cow_shreds(shreds.into_iter().map(Cow::Owned), true)
+                                .expect("Blockstore operation must succeed");
+
+                            // Purge modifies state so use rw_blockstore
+                            info!("Purging slot {slot} from Blockstore");
+                            rw_blockstore.purge_from_next_slots(slot, slot);
+                            rw_blockstore
+                                .purge_slots(slot, slot, PurgeType::Exact)
+                                .expect("Blockstore operation must succeed");
+                        }
+
+                        // Use a "dummy" but deterministic keyapir to sign
+                        let keypair = keypair_from_seed(&[0; Keypair::SECRET_KEY_LENGTH])
+                            .expect("Keypair creation must succeed");
+                        let chained_merkle_root = bank
+                            .parent()
+                            .expect("Child bank must have parent bank available")
+                            .block_id()
+                            .expect("Parent bank must have block ID set");
+
+                        let shredder = Shredder::new(
+                            slot,
+                            bank.parent_slot(),
+                            /*reference_tick:*/ 0,
+                            new_shred_verison,
+                        )
+                        .expect("Shredder creation must succeed");
+                        let shreds: Vec<_> = shredder
+                            .make_merkle_shreds_from_entries(
+                                &keypair,
+                                &tick_entries,
+                                /*is_last_in_slot:*/ true,
+                                chained_merkle_root,
+                                /*next_shred_index:*/ 0,
+                                /*next_code_index:*/ 0,
+                                &ReedSolomonCache::default(),
+                                &mut ProcessShredsStats::default(),
+                            )
+                            .filter(Shred::is_data)
+                            .map(Cow::Owned)
+                            .collect();
+                        rw_blockstore
+                            .insert_cow_shreds(shreds, true)
+                            .expect("Blockstore operation must succeed");
                     }
 
                     let pre_capitalization = bank.capitalization();
@@ -2519,6 +2548,15 @@ fn main() {
                     // The bank must have a block id set to take a snapshot.
                     Bank::calculate_and_set_block_id_for_dcou(&bank);
 
+                    let snapshot_config = SnapshotConfig {
+                        bank_snapshots_dir: ledger_path.clone(),
+                        full_snapshot_archives_dir: output_directory.clone(),
+                        incremental_snapshot_archives_dir: output_directory.clone(),
+                        archive_format: snapshot_archive_format,
+                        snapshot_version,
+                        ..SnapshotConfig::default()
+                    };
+
                     if is_incremental {
                         if starting_snapshot_hashes.is_none() {
                             eprintln!(
@@ -2540,13 +2578,9 @@ fn main() {
 
                         let incremental_snapshot_archive_info =
                             snapshot_bank_utils::bank_to_incremental_snapshot_archive(
-                                ledger_path,
+                                &snapshot_config,
                                 &bank,
                                 full_snapshot_slot,
-                                Some(snapshot_version),
-                                output_directory.clone(),
-                                output_directory,
-                                snapshot_archive_format,
                             )
                             .unwrap_or_else(|err| {
                                 eprintln!("Unable to create incremental snapshot: {err}");
@@ -2564,12 +2598,8 @@ fn main() {
                     } else {
                         let full_snapshot_archive_info =
                             snapshot_bank_utils::bank_to_full_snapshot_archive(
-                                ledger_path,
+                                &snapshot_config,
                                 &bank,
-                                Some(snapshot_version),
-                                output_directory.clone(),
-                                output_directory,
-                                snapshot_archive_format,
                             )
                             .unwrap_or_else(|err| {
                                 eprintln!("Unable to create snapshot: {err}");
@@ -2611,10 +2641,7 @@ fn main() {
                     if let Some(msg) = capitalization_message {
                         println!("{msg}");
                     }
-                    println!(
-                        "Shred version: {}",
-                        compute_shred_version(&genesis_config.hash(), Some(&bank.hard_forks()))
-                    );
+                    println!("Shred version: {new_shred_verison}",);
 
                     if let Some(system_monitor_service) = system_monitor_service {
                         exit_signal.store(true, Ordering::Relaxed);
@@ -2647,17 +2674,14 @@ fn main() {
                         AccessType::PrimaryForMaintenance,
                     ));
                     let genesis_config = open_genesis_config_by(&ledger_path, arg_matches);
-                    let LoadAndProcessLedgerOutput {
-                        bank_forks,
-                        unified_scheduler_pool,
-                        ..
-                    } = load_and_process_ledger_or_exit(
-                        arg_matches,
-                        &genesis_config,
-                        blockstore.clone(),
-                        process_options,
-                        None, // transaction status sender
-                    );
+                    let LoadAndProcessLedgerOutput { bank_forks, .. } =
+                        load_and_process_ledger_or_exit(
+                            arg_matches,
+                            &genesis_config,
+                            blockstore.clone(),
+                            process_options,
+                            None, // transaction status sender
+                        );
 
                     let block_production_method = value_t_or_exit!(
                         arg_matches,
@@ -2672,7 +2696,6 @@ fn main() {
                         bank_forks,
                         blockstore,
                         block_production_method,
-                        unified_scheduler_pool,
                     ) {
                         Ok(()) => println!("Ok"),
                         Err(error) => {

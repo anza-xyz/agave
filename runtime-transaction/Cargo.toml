@@ -7,10 +7,12 @@ authors = { workspace = true }
 repository = { workspace = true }
 homepage = { workspace = true }
 license = { workspace = true }
-edition = "2024"
+edition = { workspace = true }
 
 [package.metadata.docs.rs]
 targets = ["x86_64-unknown-linux-gnu"]
+all-features = true
+rustdoc-args = ["--cfg=docsrs"]
 
 [lib]
 crate-type = ["lib"]
@@ -21,35 +23,38 @@ agave-unstable-api = []
 dev-context-only-utils = ["solana-compute-budget-instruction/dev-context-only-utils"]
 
 [dependencies]
+agave-feature-set = { workspace = true }
 agave-transaction-view = { workspace = true }
+solana-compute-budget = { workspace = true }
 solana-compute-budget-instruction = { workspace = true }
 solana-hash = { workspace = true }
 solana-message = { workspace = true, features = ["blake3", "wincode"] }
+solana-program-entrypoint = { workspace = true }
 solana-pubkey = { workspace = true }
 solana-sdk-ids = { workspace = true }
 solana-signature = { workspace = true }
 solana-svm-transaction = { workspace = true }
-solana-transaction = { workspace = true }
+solana-transaction = { workspace = true, features = ["wincode"] }
 solana-transaction-context = { workspace = true }
 solana-transaction-error = { workspace = true }
+wincode = { workspace = true }
 
 [dev-dependencies]
 agave-feature-set = { workspace = true }
 agave-reserved-account-keys = { workspace = true }
-bincode = { workspace = true }
 criterion = { workspace = true }
 rand = { workspace = true }
 solana-compute-budget-instruction = { path = "../compute-budget-instruction", features = ["agave-unstable-api", "dev-context-only-utils"] }
 solana-compute-budget-interface = { workspace = true }
+solana-hash = { workspace = true, features = ["atomic"] }
 solana-instruction = { workspace = true }
 solana-keypair = { workspace = true }
 solana-pubkey = { workspace = true, features = ["rand"] }
 solana-runtime-transaction = { path = ".", features = ["agave-unstable-api"] }
 solana-signer = { workspace = true }
-solana-system-interface = { workspace = true, features = ["bincode"] }
+solana-system-interface = { workspace = true, features = ["wincode"] }
 solana-system-transaction = { workspace = true }
 solana-transaction = { workspace = true, features = ["blake3"] }
-solana-vote-interface = { workspace = true }
 
 [[bench]]
 name = "get_signature_details"

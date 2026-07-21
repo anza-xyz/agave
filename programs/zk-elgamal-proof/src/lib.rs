@@ -7,12 +7,13 @@ use {
     solana_program_runtime::{declare_process_instruction, invoke_context::InvokeContext},
     solana_sdk_ids::system_program,
     solana_svm_log_collector::ic_msg,
-    solana_zk_sdk::zk_elgamal_proof_program::{
+    solana_zk_elgamal_proof_interface::{
         id,
         instruction::ProofInstruction,
         proof_data::*,
         state::{ProofContextState, ProofContextStateMeta},
     },
+    solana_zk_sdk::zk_elgamal_proof_program::VerifyZkProof,
     std::result::Result,
 };
 
@@ -34,7 +35,7 @@ const INSTRUCTION_DATA_LENGTH_WITH_PROOF_ACCOUNT: usize = 5;
 
 fn process_verify_proof<T, U>(invoke_context: &mut InvokeContext) -> Result<(), InstructionError>
 where
-    T: Pod + ZkProofData<U>,
+    T: Pod + ZkProofData<U> + VerifyZkProof,
     U: Pod,
 {
     let transaction_context = &invoke_context.transaction_context;
@@ -195,6 +196,7 @@ declare_process_instruction!(Entrypoint, 0, |invoke_context| {
     match instruction {
         ProofInstruction::CloseContextState => {
             invoke_context
+                .compute_meter
                 .consume_checked(CLOSE_CONTEXT_STATE_COMPUTE_UNITS)
                 .map_err(|_| InstructionError::ComputationalBudgetExceeded)?;
             ic_msg!(invoke_context, "CloseContextState");
@@ -202,6 +204,7 @@ declare_process_instruction!(Entrypoint, 0, |invoke_context| {
         }
         ProofInstruction::VerifyZeroCiphertext => {
             invoke_context
+                .compute_meter
                 .consume_checked(VERIFY_ZERO_CIPHERTEXT_COMPUTE_UNITS)
                 .map_err(|_| InstructionError::ComputationalBudgetExceeded)?;
             ic_msg!(invoke_context, "VerifyZeroCiphertext");
@@ -211,6 +214,7 @@ declare_process_instruction!(Entrypoint, 0, |invoke_context| {
         }
         ProofInstruction::VerifyCiphertextCiphertextEquality => {
             invoke_context
+                .compute_meter
                 .consume_checked(VERIFY_CIPHERTEXT_CIPHERTEXT_EQUALITY_COMPUTE_UNITS)
                 .map_err(|_| InstructionError::ComputationalBudgetExceeded)?;
             ic_msg!(invoke_context, "VerifyCiphertextCiphertextEquality");
@@ -221,6 +225,7 @@ declare_process_instruction!(Entrypoint, 0, |invoke_context| {
         }
         ProofInstruction::VerifyCiphertextCommitmentEquality => {
             invoke_context
+                .compute_meter
                 .consume_checked(VERIFY_CIPHERTEXT_COMMITMENT_EQUALITY_COMPUTE_UNITS)
                 .map_err(|_| InstructionError::ComputationalBudgetExceeded)?;
             ic_msg!(invoke_context, "VerifyCiphertextCommitmentEquality");
@@ -231,6 +236,7 @@ declare_process_instruction!(Entrypoint, 0, |invoke_context| {
         }
         ProofInstruction::VerifyPubkeyValidity => {
             invoke_context
+                .compute_meter
                 .consume_checked(VERIFY_PUBKEY_VALIDITY_COMPUTE_UNITS)
                 .map_err(|_| InstructionError::ComputationalBudgetExceeded)?;
             ic_msg!(invoke_context, "VerifyPubkeyValidity");
@@ -240,6 +246,7 @@ declare_process_instruction!(Entrypoint, 0, |invoke_context| {
         }
         ProofInstruction::VerifyPercentageWithCap => {
             invoke_context
+                .compute_meter
                 .consume_checked(VERIFY_PERCENTAGE_WITH_CAP_COMPUTE_UNITS)
                 .map_err(|_| InstructionError::ComputationalBudgetExceeded)?;
             ic_msg!(invoke_context, "VerifyPercentageWithCap");
@@ -249,6 +256,7 @@ declare_process_instruction!(Entrypoint, 0, |invoke_context| {
         }
         ProofInstruction::VerifyBatchedRangeProofU64 => {
             invoke_context
+                .compute_meter
                 .consume_checked(VERIFY_BATCHED_RANGE_PROOF_U64_COMPUTE_UNITS)
                 .map_err(|_| InstructionError::ComputationalBudgetExceeded)?;
             ic_msg!(invoke_context, "VerifyBatchedRangeProofU64");
@@ -258,6 +266,7 @@ declare_process_instruction!(Entrypoint, 0, |invoke_context| {
         }
         ProofInstruction::VerifyBatchedRangeProofU128 => {
             invoke_context
+                .compute_meter
                 .consume_checked(VERIFY_BATCHED_RANGE_PROOF_U128_COMPUTE_UNITS)
                 .map_err(|_| InstructionError::ComputationalBudgetExceeded)?;
             ic_msg!(invoke_context, "VerifyBatchedRangeProofU128");
@@ -267,6 +276,7 @@ declare_process_instruction!(Entrypoint, 0, |invoke_context| {
         }
         ProofInstruction::VerifyBatchedRangeProofU256 => {
             invoke_context
+                .compute_meter
                 .consume_checked(VERIFY_BATCHED_RANGE_PROOF_U256_COMPUTE_UNITS)
                 .map_err(|_| InstructionError::ComputationalBudgetExceeded)?;
             ic_msg!(invoke_context, "VerifyBatchedRangeProofU256");
@@ -276,6 +286,7 @@ declare_process_instruction!(Entrypoint, 0, |invoke_context| {
         }
         ProofInstruction::VerifyGroupedCiphertext2HandlesValidity => {
             invoke_context
+                .compute_meter
                 .consume_checked(VERIFY_GROUPED_CIPHERTEXT_2_HANDLES_VALIDITY_COMPUTE_UNITS)
                 .map_err(|_| InstructionError::ComputationalBudgetExceeded)?;
             ic_msg!(invoke_context, "VerifyGroupedCiphertext2HandlesValidity");
@@ -286,6 +297,7 @@ declare_process_instruction!(Entrypoint, 0, |invoke_context| {
         }
         ProofInstruction::VerifyBatchedGroupedCiphertext2HandlesValidity => {
             invoke_context
+                .compute_meter
                 .consume_checked(VERIFY_BATCHED_GROUPED_CIPHERTEXT_2_HANDLES_VALIDITY_COMPUTE_UNITS)
                 .map_err(|_| InstructionError::ComputationalBudgetExceeded)?;
             ic_msg!(
@@ -299,6 +311,7 @@ declare_process_instruction!(Entrypoint, 0, |invoke_context| {
         }
         ProofInstruction::VerifyGroupedCiphertext3HandlesValidity => {
             invoke_context
+                .compute_meter
                 .consume_checked(VERIFY_GROUPED_CIPHERTEXT_3_HANDLES_VALIDITY_COMPUTE_UNITS)
                 .map_err(|_| InstructionError::ComputationalBudgetExceeded)?;
             ic_msg!(invoke_context, "VerifyGroupedCiphertext3HandlesValidity");
@@ -309,6 +322,7 @@ declare_process_instruction!(Entrypoint, 0, |invoke_context| {
         }
         ProofInstruction::VerifyBatchedGroupedCiphertext3HandlesValidity => {
             invoke_context
+                .compute_meter
                 .consume_checked(VERIFY_BATCHED_GROUPED_CIPHERTEXT_3_HANDLES_VALIDITY_COMPUTE_UNITS)
                 .map_err(|_| InstructionError::ComputationalBudgetExceeded)?;
             ic_msg!(

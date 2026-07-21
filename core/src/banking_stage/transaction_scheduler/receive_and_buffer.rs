@@ -1,52 +1,50 @@
-#[cfg(feature = "dev-context-only-utils")]
-use qualifier_attr::qualifiers;
 use {
     super::{
         transaction_priority_id::TransactionPriorityId,
         transaction_state::TransactionState,
         transaction_state_container::{
-            EXTRA_CAPACITY, SharedBytes, StateContainer, TransactionViewState,
-            TransactionViewStateContainer,
+            SharedBytes, StateContainer, TransactionViewState, TransactionViewStateContainer,
         },
     },
-    crate::banking_stage::{
-        consumer::Consumer, decision_maker::BufferedPacketsDecision, scheduler_messages::MaxAge,
+    crate::{
+        banking_stage::{
+            consumer::Consumer, decision_maker::BufferedPacketsDecision, scheduler_messages::MaxAge,
+        },
+        transaction_priority::calculate_priority_and_cost,
     },
     agave_banking_stage_ingress_types::{BankingPacketBatch, BankingPacketReceiver},
     agave_transaction_view::{
-        resolved_transaction_view::ResolvedTransactionView, transaction_data::TransactionData,
-        transaction_version::TransactionVersion, transaction_view::SanitizedTransactionView,
+        resolved_transaction_view::ResolvedTransactionView, sanitize::SanitizeConfig,
+        transaction_data::TransactionData, transaction_version::TransactionVersion,
+        transaction_view::SanitizedTransactionView,
     },
-    arrayvec::ArrayVec,
     core::time::Duration,
     crossbeam_channel::{RecvTimeoutError, TryRecvError},
     solana_accounts_db::account_locks::validate_account_locks,
     solana_address_lookup_table_interface::state::estimate_last_valid_slot,
     solana_clock::{Epoch, Slot},
-    solana_cost_model::cost_model::CostModel,
-    solana_fee_structure::FeeBudgetLimits,
     solana_message::v0::LoadedAddresses,
+    solana_pubkey::Pubkey,
     solana_runtime::{
         bank::Bank,
         bank_forks::{BankPair, SharableBanks},
     },
     solana_runtime_transaction::{
-        runtime_transaction::RuntimeTransaction, transaction_meta::StaticMeta,
-        transaction_with_meta::TransactionWithMeta,
+        runtime_transaction::RuntimeTransaction, sanitize_config::sanitize_config,
+        transaction_meta::TransactionMeta, transaction_with_meta::TransactionWithMeta,
     },
     solana_svm::transaction_error_metrics::TransactionErrorMetrics,
     solana_svm_transaction::svm_message::SVMMessage,
     solana_transaction::sanitized::MessageHash,
     solana_transaction_error::TransactionError,
-    std::time::Instant,
+    std::{collections::HashSet, sync::Arc, time::Instant},
 };
 
 #[derive(Debug)]
-#[cfg_attr(feature = "dev-context-only-utils", qualifiers(pub))]
 pub(crate) struct DisconnectedError;
 
 /// Stats/metrics returned by `receive_and_buffer_packets`.
-#[cfg_attr(feature = "dev-context-only-utils", qualifiers(pub))]
+#[derive(Debug, Default)]
 pub(crate) struct ReceivingStats {
     pub num_received: usize,
     /// Count of packets that passed sigverify but were dropped
@@ -60,15 +58,47 @@ pub(crate) struct ReceivingStats {
     pub num_dropped_on_age: usize,
     pub num_dropped_on_already_processed: usize,
     pub num_dropped_on_fee_payer: usize,
+    pub num_dropped_on_filter_key: usize,
     pub num_dropped_on_capacity: usize,
+    pub num_dropped_on_nonce_dedup: usize,
 
     pub num_buffered: usize,
+    pub num_evicted_on_nonce_dedup: usize,
 
     pub receive_time_us: u64,
     pub buffer_time_us: u64,
 }
 
 impl ReceivingStats {
+    fn add_packet_handling_error(&mut self, err: &PacketHandlingError) {
+        match err {
+            PacketHandlingError::Sanitization | PacketHandlingError::ALTResolution => {
+                self.num_dropped_on_parsing_and_sanitization += 1;
+            }
+            PacketHandlingError::LockValidation => {
+                self.num_dropped_on_lock_validation += 1;
+            }
+            PacketHandlingError::ComputeBudget => {
+                self.num_dropped_on_compute_budget += 1;
+            }
+            PacketHandlingError::FilterKey => {
+                self.num_dropped_on_filter_key += 1;
+            }
+        }
+    }
+
+    fn add_transaction_error(&mut self, err: &TransactionError) {
+        match err {
+            TransactionError::BlockhashNotFound => {
+                self.num_dropped_on_age += 1;
+            }
+            TransactionError::AlreadyProcessed => {
+                self.num_dropped_on_already_processed += 1;
+            }
+            _ => {}
+        }
+    }
+
     fn accumulate(&mut self, other: ReceivingStats) {
         self.num_received += other.num_received;
         self.num_dropped_without_parsing += other.num_dropped_without_parsing;
@@ -79,15 +109,17 @@ impl ReceivingStats {
         self.num_dropped_on_age += other.num_dropped_on_age;
         self.num_dropped_on_already_processed += other.num_dropped_on_already_processed;
         self.num_dropped_on_fee_payer += other.num_dropped_on_fee_payer;
+        self.num_dropped_on_filter_key += other.num_dropped_on_filter_key;
         self.num_dropped_on_capacity += other.num_dropped_on_capacity;
+        self.num_dropped_on_nonce_dedup += other.num_dropped_on_nonce_dedup;
         self.num_buffered += other.num_buffered;
+        self.num_evicted_on_nonce_dedup += other.num_evicted_on_nonce_dedup;
 
         self.receive_time_us += other.receive_time_us;
         self.buffer_time_us += other.buffer_time_us;
     }
 }
 
-#[cfg_attr(feature = "dev-context-only-utils", qualifiers(pub))]
 pub(crate) trait ReceiveAndBuffer {
     type Transaction: TransactionWithMeta + Send + Sync;
     type Container: StateContainer<Self::Transaction> + Send + Sync;
@@ -101,10 +133,10 @@ pub(crate) trait ReceiveAndBuffer {
     ) -> Result<ReceivingStats, DisconnectedError>;
 }
 
-#[cfg_attr(feature = "dev-context-only-utils", qualifiers(pub))]
 pub(crate) struct TransactionViewReceiveAndBuffer {
     pub receiver: BankingPacketReceiver,
     pub sharable_banks: SharableBanks,
+    pub filter_keys: Arc<HashSet<Pubkey>>,
 }
 
 impl ReceiveAndBuffer for TransactionViewReceiveAndBuffer {
@@ -122,25 +154,13 @@ impl ReceiveAndBuffer for TransactionViewReceiveAndBuffer {
         } = self.sharable_banks.load();
 
         // Receive packet batches.
-        const TIMEOUT: Duration = Duration::from_millis(10);
+        const RECV_TIMEOUT: Duration = Duration::from_millis(10);
+        const PACKET_BURST_TIMEOUT: Duration = Duration::from_millis(1);
         const PACKET_BURST_LIMIT: usize = 1000;
         let start = Instant::now();
 
         let mut received_message = false;
-        let mut stats = ReceivingStats {
-            num_received: 0,
-            num_dropped_without_parsing: 0,
-            num_dropped_on_parsing_and_sanitization: 0,
-            num_dropped_on_lock_validation: 0,
-            num_dropped_on_compute_budget: 0,
-            num_dropped_on_age: 0,
-            num_dropped_on_already_processed: 0,
-            num_dropped_on_fee_payer: 0,
-            num_dropped_on_capacity: 0,
-            num_buffered: 0,
-            receive_time_us: 0,
-            buffer_time_us: 0,
-        };
+        let mut stats = ReceivingStats::default();
 
         // If not leader/unknown, do a blocking-receive initially. This lets
         // the thread sleep until a message is received, or until the timeout.
@@ -156,7 +176,7 @@ impl ReceiveAndBuffer for TransactionViewReceiveAndBuffer {
             //       overhead for wakers? But then risk not waking up when message
             //       received - as long as sleep is somewhat short, this should be
             //       fine.
-            match self.receiver.recv_timeout(TIMEOUT) {
+            match self.receiver.recv_timeout(RECV_TIMEOUT) {
                 Ok(packet_batch_message) => {
                     received_message = true;
                     stats.accumulate(self.handle_packet_batch_message(
@@ -177,7 +197,8 @@ impl ReceiveAndBuffer for TransactionViewReceiveAndBuffer {
         }
 
         if !timed_out {
-            while start.elapsed() < TIMEOUT && stats.num_received < PACKET_BURST_LIMIT {
+            while start.elapsed() < PACKET_BURST_TIMEOUT && stats.num_received < PACKET_BURST_LIMIT
+            {
                 let receive_start = Instant::now();
                 match self.receiver.try_recv() {
                     Ok(packet_batch_message) => {
@@ -204,20 +225,7 @@ impl ReceiveAndBuffer for TransactionViewReceiveAndBuffer {
             }
         }
 
-        Ok(ReceivingStats {
-            num_received: stats.num_received,
-            num_dropped_without_parsing: stats.num_dropped_without_parsing,
-            num_dropped_on_parsing_and_sanitization: stats.num_dropped_on_parsing_and_sanitization,
-            num_dropped_on_lock_validation: stats.num_dropped_on_lock_validation,
-            num_dropped_on_compute_budget: stats.num_dropped_on_compute_budget,
-            num_dropped_on_age: stats.num_dropped_on_age,
-            num_dropped_on_already_processed: stats.num_dropped_on_already_processed,
-            num_dropped_on_fee_payer: stats.num_dropped_on_fee_payer,
-            num_dropped_on_capacity: stats.num_dropped_on_capacity,
-            num_buffered: stats.num_buffered,
-            receive_time_us: stats.receive_time_us,
-            buffer_time_us: stats.buffer_time_us,
-        })
+        Ok(stats)
     }
 }
 
@@ -226,6 +234,7 @@ pub(crate) enum PacketHandlingError {
     LockValidation,
     ComputeBudget,
     ALTResolution,
+    FilterKey,
 }
 
 impl TransactionViewReceiveAndBuffer {
@@ -242,163 +251,135 @@ impl TransactionViewReceiveAndBuffer {
         // If outside holding window, do not parse.
         let should_parse = !matches!(decision, BufferedPacketsDecision::Forward);
 
-        let enable_instruction_accounts_limit =
-            root_bank.feature_set.snapshot().limit_instruction_accounts;
+        let sanitize_config = sanitize_config();
         let transaction_account_lock_limit = working_bank.get_transaction_account_lock_limit();
 
-        // Create temporary batches of transactions to be age-checked.
-        let mut transaction_priority_ids = ArrayVec::<_, EXTRA_CAPACITY>::new();
-        let lock_results: [_; EXTRA_CAPACITY] = core::array::from_fn(|_| Ok(()));
         let mut error_counters = TransactionErrorMetrics::default();
-        let mut num_dropped_on_age = 0;
-        let mut num_dropped_on_already_processed = 0;
-        let mut num_dropped_on_fee_payer = 0;
-        let mut num_dropped_on_capacity = 0;
-        let mut num_buffered = 0;
+        let mut receiving_stats = ReceivingStats::default();
 
-        let mut check_and_push_to_queue =
-            |container: &mut TransactionViewStateContainer,
-             transaction_priority_ids: &mut ArrayVec<TransactionPriorityId, 64>| {
-                // Temporary scope so that transaction references are immediately
-                // dropped and transactions not passing
-                let mut check_results = {
-                    let mut transactions = ArrayVec::<_, EXTRA_CAPACITY>::new();
-                    transactions.extend(transaction_priority_ids.iter().map(|priority_id| {
-                        container
-                            .get_transaction(priority_id.id)
-                            .expect("transaction must exist")
-                    }));
-                    working_bank.check_transactions::<RuntimeTransaction<_>>(
-                        &transactions,
-                        &lock_results[..transactions.len()],
-                        working_bank.max_processing_age(),
-                        &mut error_counters,
-                    )
-                };
-
-                // Remove errored transactions
-                for (result, priority_id) in check_results
-                    .iter_mut()
-                    .zip(transaction_priority_ids.iter())
-                {
-                    if let Err(err) = result {
-                        match err {
-                            TransactionError::BlockhashNotFound => {
-                                num_dropped_on_age += 1;
-                            }
-                            TransactionError::AlreadyProcessed => {
-                                num_dropped_on_already_processed += 1;
-                            }
-                            _ => {}
-                        }
-                        container.remove_by_id(priority_id.id);
-                        continue;
-                    }
-                    let transaction = container
-                        .get_transaction(priority_id.id)
-                        .expect("transaction must exist");
-                    if let Err(err) = Consumer::check_fee_payer_unlocked(
-                        working_bank,
-                        transaction,
-                        &mut error_counters,
-                    ) {
-                        *result = Err(err);
-                        num_dropped_on_fee_payer += 1;
-                        container.remove_by_id(priority_id.id);
-                        continue;
-                    }
-
-                    num_buffered += 1;
-                }
-                // Push non-errored transaction into queue.
-                num_dropped_on_capacity += container.push_ids_into_queue(
-                    check_results
-                        .into_iter()
-                        .zip(transaction_priority_ids.drain(..))
-                        .filter(|(r, _)| r.is_ok())
-                        .map(|(_, id)| id),
-                );
+        for packet in packet_batch_message.iter() {
+            let Some(packet_data) = packet.data(..) else {
+                continue;
             };
 
-        let mut num_received = 0;
-        let mut num_dropped_without_parsing = 0;
-        let mut num_dropped_on_parsing_and_sanitization = 0;
-        let mut num_dropped_on_lock_validation = 0;
-        let mut num_dropped_on_compute_budget = 0;
+            receiving_stats.num_received += 1;
+            if !should_parse {
+                receiving_stats.num_dropped_without_parsing += 1;
+                continue;
+            }
 
-        for packet_batch in packet_batch_message.iter() {
-            for packet in packet_batch.iter() {
-                let Some(packet_data) = packet.data(..) else {
+            // Reserve free-space to copy packet into, run sanitization checks, and insert.
+            if let Some(transaction_id) =
+                container.try_insert_map_only_with_data(packet_data, |bytes| {
+                    match Self::try_handle_packet(
+                        bytes,
+                        root_bank,
+                        working_bank,
+                        transaction_account_lock_limit,
+                        &sanitize_config,
+                        &self.filter_keys,
+                    ) {
+                        // Parent giving us state means successful parse, ALTs resolved, no obvious static issues.
+                        Ok(state) => Ok(state),
+
+                        // Parsing or some other static checks failed.
+                        Err(ref err) => {
+                            receiving_stats.add_packet_handling_error(err);
+                            Err(())
+                        }
+                    }
+                })
+            {
+                let (priority, raw_nonce_address) = container
+                    .get_mut_transaction_state(transaction_id)
+                    .map(|state| {
+                        (
+                            state.priority(),
+                            state.transaction().get_durable_nonce().cloned(),
+                        )
+                    })
+                    .expect("transaction must exist");
+                let priority_id = TransactionPriorityId::new(priority, transaction_id);
+
+                // When we first receive a transaction, we drop it if a) it looks nonce-like, AND
+                // b) there is a higher-priority nonce transaction using the same nonce in the queue
+                // or any in-flight nonce transaction using the same nonce. This means we discard
+                // blockhash transactions structured like nonce transactions; this is acceptable because
+                // they would fail after the earlier nonce transaction is processed, and it allows us to
+                // prefilter without loading from accounts-db.
+                let drop_incoming_nonce_tx = raw_nonce_address
+                    .and_then(|address| container.get_nonce_transaction_priority_id(&address))
+                    .is_some_and(|existing| {
+                        existing.priority >= priority || !container.is_queued(existing)
+                    });
+
+                if drop_incoming_nonce_tx {
+                    receiving_stats.num_dropped_on_nonce_dedup += 1;
+                    container.remove_by_id(transaction_id);
+                    continue;
+                }
+
+                let transaction = container
+                    .get_transaction(transaction_id)
+                    .expect("transaction must exist");
+
+                // Check blockhash transaction age is ok, or nonce transaction has a valid nonce.
+                // Only a fully validated nonce address can be used for priority queue eviction.
+                let validated_nonce_address = match working_bank
+                    .check_transaction_without_status_cache(
+                        transaction,
+                        working_bank.max_processing_age(),
+                        &mut error_counters,
+                    ) {
+                    // Valid nonce transaction
+                    Ok(Some(nonce_address)) => Some(nonce_address),
+
+                    // Valid blockhash transaction
+                    Ok(None) => None,
+
+                    // Invalid
+                    Err(ref err) => {
+                        receiving_stats.add_transaction_error(err);
+                        container.remove_by_id(transaction_id);
+                        continue;
+                    }
+                };
+
+                // Check the transaction's fee-payer validates.
+                if let Err(_err) = Consumer::check_fee_payer_unlocked(
+                    working_bank,
+                    transaction,
+                    &mut error_counters,
+                ) {
+                    receiving_stats.num_dropped_on_fee_payer += 1;
+                    container.remove_by_id(transaction_id);
                     continue;
                 };
 
-                num_received += 1;
-                if !should_parse {
-                    num_dropped_without_parsing += 1;
-                    continue;
-                }
-
-                // Reserve free-space to copy packet into, run sanitization checks, and insert.
-                if let Some(transaction_id) =
-                    container.try_insert_map_only_with_data(packet_data, |bytes| {
-                        match Self::try_handle_packet(
-                            bytes,
-                            root_bank,
-                            working_bank,
-                            transaction_account_lock_limit,
-                            enable_instruction_accounts_limit,
-                        ) {
-                            Ok(state) => Ok(state),
-                            Err(
-                                PacketHandlingError::Sanitization
-                                | PacketHandlingError::ALTResolution,
-                            ) => {
-                                num_dropped_on_parsing_and_sanitization += 1;
-                                Err(())
-                            }
-                            Err(PacketHandlingError::LockValidation) => {
-                                num_dropped_on_lock_validation += 1;
-                                Err(())
-                            }
-                            Err(PacketHandlingError::ComputeBudget) => {
-                                num_dropped_on_compute_budget += 1;
-                                Err(())
-                            }
-                        }
-                    })
-                {
-                    let priority = container
-                        .get_mut_transaction_state(transaction_id)
-                        .expect("transaction must exist")
-                        .priority();
-                    transaction_priority_ids
-                        .push(TransactionPriorityId::new(priority, transaction_id));
-
-                    // If at capacity, run checks and remove invalid transactions.
-                    if transaction_priority_ids.len() == EXTRA_CAPACITY {
-                        check_and_push_to_queue(container, &mut transaction_priority_ids);
+                // Now, if this is a nonce transaction, we know it is validated and higher-priority than any
+                // which may exist in the priority queue. If one is queued, evict it. Regardless, record the
+                // incoming nonce transaction's nonce as in-use.
+                if let Some(nonce_address) = validated_nonce_address {
+                    if let Some(existing_nonce_priority_id) =
+                        container.get_nonce_transaction_priority_id(&nonce_address)
+                    {
+                        receiving_stats.num_evicted_on_nonce_dedup += 1;
+                        container.remove_by_id(existing_nonce_priority_id.id);
                     }
+                    container.set_nonce_transaction_priority_id(&nonce_address, priority_id);
                 }
+
+                // Transaction is already fully validated and can be inserted into priority queue.
+                receiving_stats.num_dropped_on_capacity +=
+                    container.push_ids_into_queue(std::iter::once(priority_id));
+
+                receiving_stats.num_buffered += 1;
             }
         }
 
-        // Any remaining packets undergo status/age checks
-        check_and_push_to_queue(container, &mut transaction_priority_ids);
-
-        ReceivingStats {
-            num_received,
-            num_dropped_without_parsing,
-            num_dropped_on_parsing_and_sanitization,
-            num_dropped_on_lock_validation,
-            num_dropped_on_compute_budget,
-            num_dropped_on_age,
-            num_dropped_on_already_processed,
-            num_dropped_on_fee_payer,
-            num_dropped_on_capacity,
-            num_buffered,
-            receive_time_us: 0, // receive is outside this function
-            buffer_time_us: start.elapsed().as_micros() as u64,
-        }
+        // `receive_time_us` is set outside this function
+        receiving_stats.buffer_time_us = start.elapsed().as_micros() as u64;
+        receiving_stats
     }
 
     fn try_handle_packet(
@@ -406,25 +387,34 @@ impl TransactionViewReceiveAndBuffer {
         root_bank: &Bank,
         working_bank: &Bank,
         transaction_account_lock_limit: usize,
-        enable_instruction_accounts_limit: bool,
+        sanitize_config: &SanitizeConfig,
+        filter_keys: &HashSet<Pubkey>,
     ) -> Result<TransactionViewState, PacketHandlingError> {
         let (view, deactivation_slot) = translate_to_runtime_view(
             bytes,
             root_bank,
             transaction_account_lock_limit,
-            enable_instruction_accounts_limit,
+            sanitize_config,
         )?;
 
-        let Ok(compute_budget_limits) = view
-            .compute_budget_instruction_details()
-            .sanitize_and_convert_to_compute_budget_limits(&working_bank.feature_set)
+        if !filter_keys.is_empty()
+            && view
+                .account_keys()
+                .iter()
+                .any(|key| filter_keys.contains(key))
+        {
+            return Err(PacketHandlingError::FilterKey);
+        }
+
+        let Ok(transaction_configuration) =
+            view.transaction_configuration(&working_bank.feature_set)
         else {
             return Err(PacketHandlingError::ComputeBudget);
         };
 
         let max_age = calculate_max_age(root_bank.epoch(), deactivation_slot, root_bank.slot());
-        let fee_budget_limits = FeeBudgetLimits::from(compute_budget_limits);
-        let (priority, cost) = calculate_priority_and_cost(&view, &fee_budget_limits, working_bank);
+        let (priority, cost) =
+            calculate_priority_and_cost(working_bank, &view, &transaction_configuration);
 
         Ok(TransactionState::new(view, max_age, priority, cost))
     }
@@ -437,12 +427,10 @@ pub(crate) fn translate_to_runtime_view<D: TransactionData>(
     data: D,
     bank: &Bank,
     transaction_account_lock_limit: usize,
-    enable_instruction_accounts_limit: bool,
+    sanitize_config: &SanitizeConfig,
 ) -> Result<(RuntimeTransaction<ResolvedTransactionView<D>>, u64), PacketHandlingError> {
     // Parsing and basic sanitization checks
-    let Ok(view) =
-        SanitizedTransactionView::try_new_sanitized(data, enable_instruction_accounts_limit)
-    else {
+    let Ok(view) = SanitizedTransactionView::try_new_sanitized(data, sanitize_config) else {
         return Err(PacketHandlingError::Sanitization);
     };
 
@@ -488,7 +476,7 @@ pub(crate) fn load_addresses_for_view<D: TransactionData>(
     bank: &Bank,
 ) -> Result<(Option<LoadedAddresses>, Slot), PacketHandlingError> {
     match view.version() {
-        TransactionVersion::Legacy => Ok((None, u64::MAX)),
+        TransactionVersion::Legacy | TransactionVersion::V1 => Ok((None, u64::MAX)),
         TransactionVersion::V0 => bank
             .load_addresses_from_ref(view.address_table_lookup_iter())
             .map(|(loaded_addresses, deactivation_slot)| {
@@ -496,46 +484,6 @@ pub(crate) fn load_addresses_for_view<D: TransactionData>(
             })
             .map_err(|_| PacketHandlingError::ALTResolution),
     }
-}
-
-/// Calculate priority and cost for a transaction:
-///
-/// Cost is calculated through the `CostModel`,
-/// and priority is calculated through a formula here that attempts to sell
-/// blockspace to the highest bidder.
-///
-/// The priority is calculated as:
-/// P = R / (1 + C)
-/// where P is the priority, R is the reward,
-/// and C is the cost towards block-limits.
-///
-/// Current minimum costs are on the order of several hundred,
-/// so the denominator is effectively C, and the +1 is simply
-/// to avoid any division by zero due to a bug - these costs
-/// are calculated by the cost-model and are not direct
-/// from user input. They should never be zero.
-/// Any difference in the prioritization is negligible for
-/// the current transaction costs.
-pub(crate) fn calculate_priority_and_cost(
-    transaction: &impl TransactionWithMeta,
-    fee_budget_limits: &FeeBudgetLimits,
-    bank: &Bank,
-) -> (u64, u64) {
-    let cost = CostModel::calculate_cost(transaction, &bank.feature_set).sum();
-    let reward = bank.calculate_reward_for_transaction(transaction, fee_budget_limits);
-
-    // We need a multiplier here to avoid rounding down too aggressively.
-    // For many transactions, the cost will be greater than the fees in terms of raw lamports.
-    // For the purposes of calculating prioritization, we multiply the fees by a large number so that
-    // the cost is a small fraction.
-    // An offset of 1 is used in the denominator to explicitly avoid division by zero.
-    const MULTIPLIER: u64 = 1_000_000;
-    (
-        reward
-            .saturating_mul(MULTIPLIER)
-            .saturating_div(cost.saturating_add(1)),
-        cost,
-    )
 }
 
 /// Given the epoch, the minimum deactivation slot, and the current slot,
@@ -570,30 +518,48 @@ mod tests {
     use {
         super::*,
         crate::banking_stage::tests::create_slow_genesis_config,
-        crossbeam_channel::{Receiver, unbounded},
+        agave_banking_stage_ingress_types::{
+            BankingPacketBatch, to_banking_packet_batch, to_single_banking_packet_batch,
+        },
+        crossbeam_channel::{Receiver, Sender, bounded},
+        solana_account::AccountSharedData,
+        solana_compute_budget_interface::ComputeBudgetInstruction,
+        solana_fee_calculator::FeeRateGovernor,
         solana_hash::Hash,
         solana_keypair::Keypair,
         solana_ledger::genesis_utils::GenesisConfigInfo,
         solana_message::{
-            AccountMeta, AddressLookupTableAccount, Instruction, VersionedMessage, v0,
+            AccountMeta, AddressLookupTableAccount, Instruction, Message, VersionedMessage, v0,
         },
+        solana_nonce::{self as nonce, state::DurableNonce},
         solana_packet::{Meta, PACKET_DATA_SIZE},
-        solana_perf::packet::{Packet, PacketBatch, RecycledPacketBatch, to_packet_batches},
+        solana_perf::packet::{Packet, PacketBatch, RecycledPacketBatch},
         solana_pubkey::Pubkey,
         solana_runtime::bank_forks::BankForks,
+        solana_sdk_ids::system_program,
         solana_signer::Signer,
         solana_system_interface::instruction as system_instruction,
         solana_system_transaction::transfer,
-        solana_transaction::versioned::VersionedTransaction,
+        solana_transaction::{Transaction, versioned::VersionedTransaction},
         std::sync::{Arc, RwLock},
+        test_case::test_case,
     };
 
     fn test_bank_forks() -> (Arc<RwLock<BankForks>>, Keypair) {
+        _test_bank_forks(0)
+    }
+
+    fn test_bank_forks_with_fee() -> (Arc<RwLock<BankForks>>, Keypair) {
+        _test_bank_forks(5_000)
+    }
+
+    fn _test_bank_forks(fee: u64) -> (Arc<RwLock<BankForks>>, Keypair) {
         let GenesisConfigInfo {
-            genesis_config,
+            mut genesis_config,
             mint_keypair,
             ..
         } = create_slow_genesis_config(u64::MAX);
+        genesis_config.fee_rate_governor = FeeRateGovernor::new(fee, 0);
 
         let (_bank, bank_forks) = Bank::new_with_bank_forks_for_tests(&genesis_config);
         (bank_forks, mint_keypair)
@@ -608,9 +574,25 @@ mod tests {
         TransactionViewReceiveAndBuffer,
         TransactionViewStateContainer,
     ) {
+        setup_transaction_view_receive_and_buffer_with_filter_keys(
+            receiver,
+            bank_forks,
+            Arc::default(),
+        )
+    }
+
+    fn setup_transaction_view_receive_and_buffer_with_filter_keys(
+        receiver: Receiver<BankingPacketBatch>,
+        bank_forks: Arc<RwLock<BankForks>>,
+        filter_keys: Arc<HashSet<Pubkey>>,
+    ) -> (
+        TransactionViewReceiveAndBuffer,
+        TransactionViewStateContainer,
+    ) {
         let receive_and_buffer = TransactionViewReceiveAndBuffer {
             receiver,
             sharable_banks: bank_forks.read().unwrap().sharable_banks(),
+            filter_keys,
         };
         let container = TransactionViewStateContainer::with_capacity(TEST_CONTAINER_CAPACITY);
         (receive_and_buffer, container)
@@ -619,13 +601,22 @@ mod tests {
     // verify container state makes sense:
     // 1. Number of transactions matches expectation
     // 2. All transactions IDs in priority queue exist in the map
+    // 3. Nonce transactions have a matching nonces-in-use entry.
+    #[track_caller]
     fn verify_container<Tx: TransactionWithMeta>(
         container: &mut impl StateContainer<Tx>,
         expected_length: usize,
     ) {
         let mut actual_length: usize = 0;
         while let Some(id) = container.pop() {
-            let Some(_) = container.get_transaction(id.id) else {
+            if let Some(state) = container.get_mut_transaction_state(id.id) {
+                if let Some(nonce) = state.nonce_address().cloned() {
+                    assert_eq!(
+                        id,
+                        *container.get_nonce_transaction_priority_id(&nonce).unwrap()
+                    );
+                }
+            } else {
                 panic!(
                     "transaction in queue position {} with id {} must exist.",
                     actual_length, id.id
@@ -635,6 +626,19 @@ mod tests {
         }
 
         assert_eq!(actual_length, expected_length);
+    }
+
+    fn send_transactions(sender: &Sender<BankingPacketBatch>, transactions: &[Transaction]) {
+        sender.send(to_banking_packet_batch(transactions)).unwrap();
+    }
+
+    fn receive(
+        receive_and_buffer: &mut TransactionViewReceiveAndBuffer,
+        container: &mut TransactionViewStateContainer,
+    ) -> ReceivingStats {
+        receive_and_buffer
+            .receive_and_buffer_packets(container, &BufferedPacketsDecision::Hold)
+            .unwrap()
     }
 
     #[test]
@@ -663,7 +667,7 @@ mod tests {
 
     #[test]
     fn test_receive_and_buffer_disconnected_channel() {
-        let (sender, receiver) = unbounded();
+        let (sender, receiver) = bounded(1024);
         let (bank_forks, _mint_keypair) = test_bank_forks();
         let (mut receive_and_buffer, mut container) =
             setup_transaction_view_receive_and_buffer(receiver, bank_forks);
@@ -676,7 +680,7 @@ mod tests {
 
     #[test]
     fn test_receive_and_buffer_no_hold() {
-        let (sender, receiver) = unbounded();
+        let (sender, receiver) = bounded(1024);
         let (bank_forks, mint_keypair) = test_bank_forks();
         let (mut receive_and_buffer, mut container) =
             setup_transaction_view_receive_and_buffer(receiver, bank_forks.clone());
@@ -687,8 +691,8 @@ mod tests {
             1,
             bank_forks.read().unwrap().root_bank().last_blockhash(),
         );
-        let packet_batches = Arc::new(to_packet_batches(&[transaction], 1));
-        sender.send(packet_batches).unwrap();
+        let packet_batch = to_single_banking_packet_batch(&transaction);
+        sender.send(packet_batch).unwrap();
 
         let ReceivingStats {
             num_received,
@@ -699,8 +703,11 @@ mod tests {
             num_dropped_on_age,
             num_dropped_on_already_processed,
             num_dropped_on_fee_payer,
+            num_dropped_on_filter_key: _,
             num_dropped_on_capacity,
+            num_dropped_on_nonce_dedup,
             num_buffered,
+            num_evicted_on_nonce_dedup,
             receive_time_us: _,
             buffer_time_us: _,
         } = receive_and_buffer
@@ -719,13 +726,15 @@ mod tests {
         assert_eq!(num_dropped_on_already_processed, 0);
         assert_eq!(num_dropped_on_fee_payer, 0);
         assert_eq!(num_dropped_on_capacity, 0);
+        assert_eq!(num_dropped_on_nonce_dedup, 0);
         assert_eq!(num_buffered, 0);
+        assert_eq!(num_evicted_on_nonce_dedup, 0);
         verify_container(&mut container, 0);
     }
 
     #[test]
     fn test_receive_and_buffer_discard() {
-        let (sender, receiver) = unbounded();
+        let (sender, receiver) = bounded(1024);
         let (bank_forks, mint_keypair) = test_bank_forks();
         let (mut receive_and_buffer, mut container) =
             setup_transaction_view_receive_and_buffer(receiver, bank_forks.clone());
@@ -736,13 +745,13 @@ mod tests {
             1,
             bank_forks.read().unwrap().root_bank().last_blockhash(),
         );
-        let mut packet_batches = Arc::new(to_packet_batches(&[transaction], 1));
-        Arc::make_mut(&mut packet_batches)[0]
+        let mut packet_batch = to_single_banking_packet_batch(&transaction);
+        Arc::make_mut(&mut packet_batch)
             .first_mut()
             .unwrap()
             .meta_mut()
             .set_discard(true);
-        sender.send(packet_batches).unwrap();
+        sender.send(packet_batch).unwrap();
 
         let ReceivingStats {
             num_received,
@@ -753,8 +762,11 @@ mod tests {
             num_dropped_on_age,
             num_dropped_on_already_processed,
             num_dropped_on_fee_payer,
+            num_dropped_on_filter_key: _,
             num_dropped_on_capacity,
+            num_dropped_on_nonce_dedup,
             num_buffered,
+            num_evicted_on_nonce_dedup,
             receive_time_us: _,
             buffer_time_us: _,
         } = receive_and_buffer
@@ -770,22 +782,24 @@ mod tests {
         assert_eq!(num_dropped_on_already_processed, 0);
         assert_eq!(num_dropped_on_fee_payer, 0);
         assert_eq!(num_dropped_on_capacity, 0);
+        assert_eq!(num_dropped_on_nonce_dedup, 0);
         assert_eq!(num_buffered, 0);
+        assert_eq!(num_evicted_on_nonce_dedup, 0);
 
         verify_container(&mut container, 0);
     }
 
     #[test]
     fn test_receive_and_buffer_invalid_transaction_format() {
-        let (sender, receiver) = unbounded();
+        let (sender, receiver) = bounded(1024);
         let (bank_forks, _mint_keypair) = test_bank_forks();
         let (mut receive_and_buffer, mut container) =
             setup_transaction_view_receive_and_buffer(receiver, bank_forks);
 
-        let packet_batches = Arc::new(vec![PacketBatch::from(RecycledPacketBatch::new(vec![
+        let packet_batch = Arc::new(PacketBatch::from(RecycledPacketBatch::new(vec![
             Packet::new([1u8; PACKET_DATA_SIZE], Meta::default()),
-        ]))]);
-        sender.send(packet_batches).unwrap();
+        ])));
+        sender.send(packet_batch).unwrap();
 
         let ReceivingStats {
             num_received,
@@ -796,8 +810,11 @@ mod tests {
             num_dropped_on_age,
             num_dropped_on_already_processed,
             num_dropped_on_fee_payer,
+            num_dropped_on_filter_key: _,
             num_dropped_on_capacity,
+            num_dropped_on_nonce_dedup,
             num_buffered,
+            num_evicted_on_nonce_dedup,
             receive_time_us: _,
             buffer_time_us: _,
         } = receive_and_buffer
@@ -813,21 +830,23 @@ mod tests {
         assert_eq!(num_dropped_on_already_processed, 0);
         assert_eq!(num_dropped_on_fee_payer, 0);
         assert_eq!(num_dropped_on_capacity, 0);
+        assert_eq!(num_dropped_on_nonce_dedup, 0);
         assert_eq!(num_buffered, 0);
+        assert_eq!(num_evicted_on_nonce_dedup, 0);
 
         verify_container(&mut container, 0);
     }
 
     #[test]
     fn test_receive_and_buffer_invalid_blockhash() {
-        let (sender, receiver) = unbounded();
+        let (sender, receiver) = bounded(1024);
         let (bank_forks, mint_keypair) = test_bank_forks();
         let (mut receive_and_buffer, mut container) =
             setup_transaction_view_receive_and_buffer(receiver, bank_forks);
 
         let transaction = transfer(&mint_keypair, &Pubkey::new_unique(), 1, Hash::new_unique());
-        let packet_batches = Arc::new(to_packet_batches(&[transaction], 1));
-        sender.send(packet_batches).unwrap();
+        let packet_batch = to_single_banking_packet_batch(&transaction);
+        sender.send(packet_batch).unwrap();
 
         let ReceivingStats {
             num_received,
@@ -838,8 +857,11 @@ mod tests {
             num_dropped_on_age,
             num_dropped_on_already_processed,
             num_dropped_on_fee_payer,
+            num_dropped_on_filter_key: _,
             num_dropped_on_capacity,
+            num_dropped_on_nonce_dedup,
             num_buffered,
+            num_evicted_on_nonce_dedup,
             receive_time_us: _,
             buffer_time_us: _,
         } = receive_and_buffer
@@ -855,14 +877,16 @@ mod tests {
         assert_eq!(num_dropped_on_already_processed, 0);
         assert_eq!(num_dropped_on_fee_payer, 0);
         assert_eq!(num_dropped_on_capacity, 0);
+        assert_eq!(num_dropped_on_nonce_dedup, 0);
         assert_eq!(num_buffered, 0);
+        assert_eq!(num_evicted_on_nonce_dedup, 0);
 
         verify_container(&mut container, 0);
     }
 
     #[test]
     fn test_receive_and_buffer_simple_transfer_unfunded_fee_payer() {
-        let (sender, receiver) = unbounded();
+        let (sender, receiver) = bounded(1024);
         let (bank_forks, _mint_keypair) = test_bank_forks();
         let (mut receive_and_buffer, mut container) =
             setup_transaction_view_receive_and_buffer(receiver, bank_forks.clone());
@@ -873,8 +897,8 @@ mod tests {
             1,
             bank_forks.read().unwrap().root_bank().last_blockhash(),
         );
-        let packet_batches = Arc::new(to_packet_batches(&[transaction], 1));
-        sender.send(packet_batches).unwrap();
+        let packet_batch = to_single_banking_packet_batch(&transaction);
+        sender.send(packet_batch).unwrap();
 
         let ReceivingStats {
             num_received,
@@ -885,8 +909,11 @@ mod tests {
             num_dropped_on_age,
             num_dropped_on_already_processed,
             num_dropped_on_fee_payer,
+            num_dropped_on_filter_key: _,
             num_dropped_on_capacity,
+            num_dropped_on_nonce_dedup,
             num_buffered,
+            num_evicted_on_nonce_dedup,
             receive_time_us: _,
             buffer_time_us: _,
         } = receive_and_buffer
@@ -902,14 +929,16 @@ mod tests {
         assert_eq!(num_dropped_on_already_processed, 0);
         assert_eq!(num_dropped_on_fee_payer, 1);
         assert_eq!(num_dropped_on_capacity, 0);
+        assert_eq!(num_dropped_on_nonce_dedup, 0);
         assert_eq!(num_buffered, 0);
+        assert_eq!(num_evicted_on_nonce_dedup, 0);
 
         verify_container(&mut container, 0);
     }
 
     #[test]
     fn test_receive_and_buffer_failed_alt_resolve() {
-        let (sender, receiver) = unbounded();
+        let (sender, receiver) = bounded(1024);
         let (bank_forks, mint_keypair) = test_bank_forks();
         let (mut receive_and_buffer, mut container) =
             setup_transaction_view_receive_and_buffer(receiver, bank_forks.clone());
@@ -935,8 +964,8 @@ mod tests {
             &[&mint_keypair],
         )
         .unwrap();
-        let packet_batches = Arc::new(to_packet_batches(&[transaction], 1));
-        sender.send(packet_batches).unwrap();
+        let packet_batch = to_single_banking_packet_batch(&transaction);
+        sender.send(packet_batch).unwrap();
 
         let ReceivingStats {
             num_received,
@@ -947,8 +976,11 @@ mod tests {
             num_dropped_on_age,
             num_dropped_on_already_processed,
             num_dropped_on_fee_payer,
+            num_dropped_on_filter_key: _,
             num_dropped_on_capacity,
+            num_dropped_on_nonce_dedup,
             num_buffered,
+            num_evicted_on_nonce_dedup,
             receive_time_us: _,
             buffer_time_us: _,
         } = receive_and_buffer
@@ -964,14 +996,16 @@ mod tests {
         assert_eq!(num_dropped_on_already_processed, 0);
         assert_eq!(num_dropped_on_fee_payer, 0);
         assert_eq!(num_dropped_on_capacity, 0);
+        assert_eq!(num_dropped_on_nonce_dedup, 0);
         assert_eq!(num_buffered, 0);
+        assert_eq!(num_evicted_on_nonce_dedup, 0);
 
         verify_container(&mut container, 0);
     }
 
     #[test]
     fn test_receive_and_buffer_simple_transfer() {
-        let (sender, receiver) = unbounded();
+        let (sender, receiver) = bounded(1024);
         let (bank_forks, mint_keypair) = test_bank_forks();
         let (mut receive_and_buffer, mut container) =
             setup_transaction_view_receive_and_buffer(receiver, bank_forks.clone());
@@ -982,8 +1016,8 @@ mod tests {
             1,
             bank_forks.read().unwrap().root_bank().last_blockhash(),
         );
-        let packet_batches = Arc::new(to_packet_batches(&[transaction], 1));
-        sender.send(packet_batches).unwrap();
+        let packet_batch = to_single_banking_packet_batch(&transaction);
+        sender.send(packet_batch).unwrap();
 
         let ReceivingStats {
             num_received,
@@ -994,8 +1028,11 @@ mod tests {
             num_dropped_on_age,
             num_dropped_on_already_processed,
             num_dropped_on_fee_payer,
+            num_dropped_on_filter_key: _,
             num_dropped_on_capacity,
+            num_dropped_on_nonce_dedup,
             num_buffered,
+            num_evicted_on_nonce_dedup,
             receive_time_us: _,
             buffer_time_us: _,
         } = receive_and_buffer
@@ -1011,14 +1048,138 @@ mod tests {
         assert_eq!(num_dropped_on_already_processed, 0);
         assert_eq!(num_dropped_on_fee_payer, 0);
         assert_eq!(num_dropped_on_capacity, 0);
+        assert_eq!(num_dropped_on_nonce_dedup, 0);
         assert_eq!(num_buffered, 1);
+        assert_eq!(num_evicted_on_nonce_dedup, 0);
 
         verify_container(&mut container, 1);
     }
 
     #[test]
+    fn test_receive_and_buffer_buffers_already_processed() {
+        let (sender, receiver) = bounded(1024);
+        let (bank_forks, mint_keypair) = test_bank_forks();
+        let (mut receive_and_buffer, mut container) =
+            setup_transaction_view_receive_and_buffer(receiver, bank_forks.clone());
+
+        let bank = bank_forks.read().unwrap().root_bank();
+        let transaction = transfer(
+            &mint_keypair,
+            &Pubkey::new_unique(),
+            1,
+            bank.last_blockhash(),
+        );
+        bank.process_transaction(&transaction).unwrap();
+        drop(bank);
+
+        let packet_batch = to_single_banking_packet_batch(&transaction);
+        sender.send(packet_batch).unwrap();
+
+        let stats = receive_and_buffer
+            .receive_and_buffer_packets(&mut container, &BufferedPacketsDecision::Hold)
+            .unwrap();
+
+        assert_eq!(stats.num_received, 1);
+        assert_eq!(stats.num_dropped_on_age, 0);
+        assert_eq!(stats.num_dropped_on_already_processed, 0);
+        assert_eq!(stats.num_buffered, 1);
+        verify_container(&mut container, 1);
+    }
+
+    #[test]
+    fn test_receive_and_buffer_filters_fee_payer() {
+        let (sender, receiver) = bounded(1024);
+        let (bank_forks, mint_keypair) = test_bank_forks();
+        let (mut receive_and_buffer, mut container) =
+            setup_transaction_view_receive_and_buffer_with_filter_keys(
+                receiver,
+                bank_forks.clone(),
+                Arc::new(HashSet::from([mint_keypair.pubkey()])),
+            );
+
+        let transaction = transfer(
+            &mint_keypair,
+            &Pubkey::new_unique(),
+            1,
+            bank_forks.read().unwrap().root_bank().last_blockhash(),
+        );
+        let packet_batch = to_single_banking_packet_batch(&transaction);
+        sender.send(packet_batch).unwrap();
+
+        let stats = receive_and_buffer
+            .receive_and_buffer_packets(&mut container, &BufferedPacketsDecision::Hold)
+            .unwrap();
+
+        assert_eq!(stats.num_received, 1);
+        assert_eq!(stats.num_dropped_on_filter_key, 1);
+        assert_eq!(stats.num_buffered, 0);
+        verify_container(&mut container, 0);
+    }
+
+    #[test]
+    fn test_receive_and_buffer_filters_account_key() {
+        let (sender, receiver) = bounded(1024);
+        let (bank_forks, mint_keypair) = test_bank_forks();
+        let filtered_key = Pubkey::new_unique();
+        let (mut receive_and_buffer, mut container) =
+            setup_transaction_view_receive_and_buffer_with_filter_keys(
+                receiver,
+                bank_forks.clone(),
+                Arc::new(HashSet::from([filtered_key])),
+            );
+
+        let transaction = transfer(
+            &mint_keypair,
+            &filtered_key,
+            1,
+            bank_forks.read().unwrap().root_bank().last_blockhash(),
+        );
+        let packet_batch = to_single_banking_packet_batch(&transaction);
+        sender.send(packet_batch).unwrap();
+
+        let stats = receive_and_buffer
+            .receive_and_buffer_packets(&mut container, &BufferedPacketsDecision::Hold)
+            .unwrap();
+
+        assert_eq!(stats.num_received, 1);
+        assert_eq!(stats.num_dropped_on_filter_key, 1);
+        assert_eq!(stats.num_buffered, 0);
+        verify_container(&mut container, 0);
+    }
+
+    #[test]
+    fn test_receive_and_buffer_does_not_filter_unmatched_keys() {
+        let (sender, receiver) = bounded(1024);
+        let (bank_forks, mint_keypair) = test_bank_forks();
+        let (mut receive_and_buffer, mut container) =
+            setup_transaction_view_receive_and_buffer_with_filter_keys(
+                receiver,
+                bank_forks.clone(),
+                Arc::new(HashSet::from([Pubkey::new_unique()])),
+            );
+
+        let transaction = transfer(
+            &mint_keypair,
+            &Pubkey::new_unique(),
+            1,
+            bank_forks.read().unwrap().root_bank().last_blockhash(),
+        );
+        let packet_batch = to_single_banking_packet_batch(&transaction);
+        sender.send(packet_batch).unwrap();
+
+        let stats = receive_and_buffer
+            .receive_and_buffer_packets(&mut container, &BufferedPacketsDecision::Hold)
+            .unwrap();
+
+        assert_eq!(stats.num_received, 1);
+        assert_eq!(stats.num_dropped_on_filter_key, 0);
+        assert_eq!(stats.num_buffered, 1);
+        verify_container(&mut container, 1);
+    }
+
+    #[test]
     fn test_receive_and_buffer_overfull() {
-        let (sender, receiver) = unbounded();
+        let (sender, receiver) = bounded(1024);
         let (bank_forks, mint_keypair) = test_bank_forks();
         let (mut receive_and_buffer, mut container) =
             setup_transaction_view_receive_and_buffer(receiver, bank_forks.clone());
@@ -1033,8 +1194,8 @@ mod tests {
             )
         }));
 
-        let packet_batches = Arc::new(to_packet_batches(&transactions, 17));
-        sender.send(packet_batches).unwrap();
+        let packet_batch = to_banking_packet_batch(&transactions);
+        sender.send(packet_batch).unwrap();
 
         let ReceivingStats {
             num_received,
@@ -1045,8 +1206,11 @@ mod tests {
             num_dropped_on_age,
             num_dropped_on_already_processed,
             num_dropped_on_fee_payer,
+            num_dropped_on_filter_key: _,
             num_dropped_on_capacity,
+            num_dropped_on_nonce_dedup,
             num_buffered,
+            num_evicted_on_nonce_dedup,
             receive_time_us: _,
             buffer_time_us: _,
         } = receive_and_buffer
@@ -1062,7 +1226,9 @@ mod tests {
         assert_eq!(num_dropped_on_already_processed, 0);
         assert_eq!(num_dropped_on_fee_payer, 0);
         assert!(num_dropped_on_capacity > 0);
+        assert_eq!(num_dropped_on_nonce_dedup, 0);
         assert_eq!(num_buffered, num_transactions);
+        assert_eq!(num_evicted_on_nonce_dedup, 0);
 
         verify_container(&mut container, TEST_CONTAINER_CAPACITY);
     }
@@ -1096,7 +1262,7 @@ mod tests {
             .unwrap()
         }
 
-        let (sender, receiver) = unbounded();
+        let (sender, receiver) = bounded(1024);
         let (bank_forks, mint_keypair) = test_bank_forks();
         let (mut receive_and_buffer, mut container) =
             setup_transaction_view_receive_and_buffer(receiver, bank_forks.clone());
@@ -1112,8 +1278,8 @@ mod tests {
         let bad_tx = create_tx_with_n_keys(&mint_keypair, transaction_account_lock_limit + 1);
         let transactions = [bad_tx];
 
-        let packet_batches = Arc::new(to_packet_batches(&transactions, 17));
-        sender.send(packet_batches).unwrap();
+        let packet_batch = to_banking_packet_batch(&transactions);
+        sender.send(packet_batch).unwrap();
 
         let ReceivingStats {
             num_received,
@@ -1124,8 +1290,11 @@ mod tests {
             num_dropped_on_age,
             num_dropped_on_already_processed,
             num_dropped_on_fee_payer,
+            num_dropped_on_filter_key: _,
             num_dropped_on_capacity,
+            num_dropped_on_nonce_dedup,
             num_buffered,
+            num_evicted_on_nonce_dedup,
             receive_time_us: _,
             buffer_time_us: _,
         } = receive_and_buffer
@@ -1141,8 +1310,502 @@ mod tests {
         assert_eq!(num_dropped_on_already_processed, 0);
         assert_eq!(num_dropped_on_fee_payer, 0);
         assert_eq!(num_dropped_on_capacity, 0);
+        assert_eq!(num_dropped_on_nonce_dedup, 0);
         assert_eq!(num_buffered, 0);
+        assert_eq!(num_evicted_on_nonce_dedup, 0);
 
         verify_container(&mut container, 0);
+    }
+
+    const LOW_FEE: u64 = 1;
+    const HIGH_FEE: u64 = 1_000_000;
+
+    // sets up a nonce account in the bank for a true nonce transaction
+    fn create_nonce_identity(
+        bank_forks: &RwLock<BankForks>,
+        nonce_authority: &Pubkey,
+    ) -> (Pubkey, Hash) {
+        let nonce_pubkey = Pubkey::new_unique();
+        let bank = bank_forks.read().unwrap().root_bank();
+        let nonce_data = nonce::state::Data::new(
+            *nonce_authority,
+            DurableNonce::from_blockhash(&Hash::new_unique()),
+            5_000,
+        );
+        let nonce_account = AccountSharedData::new_data(
+            bank.get_minimum_balance_for_rent_exemption(nonce::state::State::size()),
+            &nonce::versions::Versions::new(nonce::state::State::Initialized(nonce_data.clone())),
+            &system_program::id(),
+        )
+        .unwrap();
+        bank.store_account(&nonce_pubkey, &nonce_account);
+        (nonce_pubkey, nonce_data.blockhash())
+    }
+
+    // build a nonce-like transaction, which may be nonce- or blockhash-based, depending
+    // on the value of `lifetime`
+    fn create_nonce_transaction(
+        fee_payer: &Keypair,
+        nonce_pubkey: &Pubkey,
+        compute_unit_price: u64,
+        lifetime: Hash,
+    ) -> Transaction {
+        let ixs = [
+            system_instruction::advance_nonce_account(nonce_pubkey, &fee_payer.pubkey()),
+            ComputeBudgetInstruction::set_compute_unit_price(compute_unit_price),
+            system_instruction::transfer(&fee_payer.pubkey(), &Pubkey::new_unique(), 1),
+        ];
+        let message = Message::new(&ixs, Some(&fee_payer.pubkey()));
+        Transaction::new(&[fee_payer], message, lifetime)
+    }
+
+    // adding nonce transactions works normally. different nonces dont conflict,
+    // removing a nonce transaction removes its nonces-in-use entry
+    #[test]
+    fn test_receive_and_buffer_nonce_tracked() {
+        let (sender, receiver) = bounded(1024);
+        let (bank_forks, mint_keypair) = test_bank_forks_with_fee();
+        let (mut receive_and_buffer, mut container) =
+            setup_transaction_view_receive_and_buffer(receiver, bank_forks.clone());
+        let (nonce_pubkey1, durable1) = create_nonce_identity(&bank_forks, &mint_keypair.pubkey());
+        let (nonce_pubkey2, durable2) = create_nonce_identity(&bank_forks, &mint_keypair.pubkey());
+
+        send_transactions(
+            &sender,
+            &[
+                create_nonce_transaction(&mint_keypair, &nonce_pubkey1, LOW_FEE, durable1),
+                create_nonce_transaction(&mint_keypair, &nonce_pubkey2, HIGH_FEE, durable2),
+            ],
+        );
+
+        let stats = receive(&mut receive_and_buffer, &mut container);
+        assert_eq!(stats.num_buffered, 2);
+        assert_eq!(stats.num_dropped_on_nonce_dedup, 0);
+        assert_eq!(stats.num_evicted_on_nonce_dedup, 0);
+
+        let nonce_entry1 = *container
+            .get_nonce_transaction_priority_id(&nonce_pubkey1)
+            .unwrap();
+        let nonce_entry2 = *container
+            .get_nonce_transaction_priority_id(&nonce_pubkey2)
+            .unwrap();
+
+        assert!(container.is_queued(&nonce_entry1));
+        assert!(container.is_queued(&nonce_entry2));
+
+        container.remove_by_id(nonce_entry1.id);
+        assert!(!container.is_queued(&nonce_entry1));
+        assert!(container.is_queued(&nonce_entry2));
+        assert!(
+            container
+                .get_nonce_transaction_priority_id(&nonce_pubkey1)
+                .is_none()
+        );
+
+        container.remove_by_id(nonce_entry2.id);
+        assert!(!container.is_queued(&nonce_entry1));
+        assert!(!container.is_queued(&nonce_entry2));
+        assert!(
+            container
+                .get_nonce_transaction_priority_id(&nonce_pubkey2)
+                .is_none()
+        );
+
+        verify_container(&mut container, 0);
+    }
+
+    // a higher priority incoming nonce transaction evicts the existing transaction,
+    // a lower or equal priority incoming nonce transaction is dropped
+    #[test_case(HIGH_FEE, LOW_FEE; "hilo_drop")]
+    #[test_case(HIGH_FEE, HIGH_FEE; "hihi_drop")]
+    #[test_case(LOW_FEE, HIGH_FEE; "lohi_evict")]
+    fn test_receive_and_buffer_nonce_dedup_drop_evict(old_fee: u64, new_fee: u64) {
+        let (sender, receiver) = bounded(1024);
+        let (bank_forks, mint_keypair) = test_bank_forks_with_fee();
+        let (mut receive_and_buffer, mut container) =
+            setup_transaction_view_receive_and_buffer(receiver, bank_forks.clone());
+        let (nonce_pubkey, durable) = create_nonce_identity(&bank_forks, &mint_keypair.pubkey());
+        let new_has_priority = new_fee > old_fee;
+
+        send_transactions(
+            &sender,
+            &[create_nonce_transaction(
+                &mint_keypair,
+                &nonce_pubkey,
+                old_fee,
+                durable,
+            )],
+        );
+        assert_eq!(
+            receive(&mut receive_and_buffer, &mut container).num_buffered,
+            1
+        );
+        let prior_nonce_entry = *container
+            .get_nonce_transaction_priority_id(&nonce_pubkey)
+            .unwrap();
+
+        send_transactions(
+            &sender,
+            &[create_nonce_transaction(
+                &mint_keypair,
+                &nonce_pubkey,
+                new_fee,
+                durable,
+            )],
+        );
+
+        let stats = receive(&mut receive_and_buffer, &mut container);
+        let current_nonce_entry = *container
+            .get_nonce_transaction_priority_id(&nonce_pubkey)
+            .unwrap();
+
+        if new_has_priority {
+            assert_eq!(stats.num_dropped_on_nonce_dedup, 0);
+            assert_eq!(stats.num_evicted_on_nonce_dedup, 1);
+            assert_eq!(stats.num_buffered, 1);
+
+            assert_ne!(prior_nonce_entry, current_nonce_entry);
+            assert!(current_nonce_entry.priority > prior_nonce_entry.priority);
+            assert!(
+                container
+                    .get_mut_transaction_state(prior_nonce_entry.id)
+                    .is_none()
+            );
+        } else {
+            assert_eq!(stats.num_dropped_on_nonce_dedup, 1);
+            assert_eq!(stats.num_evicted_on_nonce_dedup, 0);
+            assert_eq!(stats.num_buffered, 0);
+            assert_eq!(prior_nonce_entry, current_nonce_entry);
+        }
+
+        assert!(container.is_queued(&current_nonce_entry));
+
+        verify_container(&mut container, 1);
+    }
+
+    // a scheduled or held nonce transaction is never evicted regardless of priority
+    #[test_case(false; "held")]
+    #[test_case(true; "scheduled")]
+    fn test_receive_and_buffer_nonce_dedup_preserves_in_flight(is_scheduled: bool) {
+        let (sender, receiver) = bounded(1024);
+        let (bank_forks, mint_keypair) = test_bank_forks_with_fee();
+        let (mut receive_and_buffer, mut container) =
+            setup_transaction_view_receive_and_buffer(receiver, bank_forks.clone());
+        let (nonce_pubkey, durable) = create_nonce_identity(&bank_forks, &mint_keypair.pubkey());
+
+        send_transactions(
+            &sender,
+            &[create_nonce_transaction(
+                &mint_keypair,
+                &nonce_pubkey,
+                LOW_FEE,
+                durable,
+            )],
+        );
+        assert_eq!(
+            receive(&mut receive_and_buffer, &mut container).num_buffered,
+            1
+        );
+
+        let queue_entry = container.pop().unwrap();
+        if is_scheduled {
+            container
+                .get_mut_transaction_state(queue_entry.id)
+                .unwrap()
+                .take_transaction_for_scheduling();
+        } else {
+            container.hold_transaction(queue_entry);
+        }
+
+        send_transactions(
+            &sender,
+            &[create_nonce_transaction(
+                &mint_keypair,
+                &nonce_pubkey,
+                HIGH_FEE,
+                durable,
+            )],
+        );
+        let stats = receive(&mut receive_and_buffer, &mut container);
+        assert_eq!(stats.num_dropped_on_nonce_dedup, 1);
+        assert_eq!(stats.num_evicted_on_nonce_dedup, 0);
+        assert_eq!(stats.num_buffered, 0);
+
+        let nonce_entry = *container
+            .get_nonce_transaction_priority_id(&nonce_pubkey)
+            .unwrap();
+        assert_eq!(queue_entry, nonce_entry);
+        assert!(
+            container
+                .get_mut_transaction_state(nonce_entry.id)
+                .is_some()
+        );
+    }
+
+    // a higher priority nonce transaction that fails validation does not evict the existing one,
+    // and does not affect its nonces-in-use entry
+    #[test]
+    fn test_receive_and_buffer_nonce_dedup_validation_failure() {
+        let (sender, receiver) = bounded(1024);
+        let (bank_forks, mint_keypair) = test_bank_forks_with_fee();
+        let (mut receive_and_buffer, mut container) =
+            setup_transaction_view_receive_and_buffer(receiver, bank_forks.clone());
+        let (nonce_pubkey, durable) = create_nonce_identity(&bank_forks, &mint_keypair.pubkey());
+
+        send_transactions(
+            &sender,
+            &[create_nonce_transaction(
+                &mint_keypair,
+                &nonce_pubkey,
+                LOW_FEE,
+                durable,
+            )],
+        );
+        assert_eq!(
+            receive(&mut receive_and_buffer, &mut container).num_buffered,
+            1
+        );
+        let prior_nonce_entry = *container
+            .get_nonce_transaction_priority_id(&nonce_pubkey)
+            .unwrap();
+
+        // bad blockhash
+        send_transactions(
+            &sender,
+            &[create_nonce_transaction(
+                &mint_keypair,
+                &nonce_pubkey,
+                HIGH_FEE,
+                Hash::new_unique(),
+            )],
+        );
+        let stats = receive(&mut receive_and_buffer, &mut container);
+        assert_eq!(stats.num_dropped_on_age, 1);
+        assert_eq!(stats.num_evicted_on_nonce_dedup, 0);
+        assert_eq!(stats.num_dropped_on_nonce_dedup, 0);
+        assert_eq!(stats.num_buffered, 0);
+
+        let current_nonce_entry = *container
+            .get_nonce_transaction_priority_id(&nonce_pubkey)
+            .unwrap();
+        assert_eq!(prior_nonce_entry, current_nonce_entry);
+        assert!(container.is_queued(&current_nonce_entry));
+
+        // bad authority
+        let bad_authority = Keypair::new();
+        let message = Message::new(
+            &[
+                system_instruction::advance_nonce_account(&nonce_pubkey, &bad_authority.pubkey()),
+                ComputeBudgetInstruction::set_compute_unit_price(HIGH_FEE),
+                system_instruction::transfer(&mint_keypair.pubkey(), &Pubkey::new_unique(), 1),
+            ],
+            Some(&mint_keypair.pubkey()),
+        );
+        let transaction = Transaction::new(&[&mint_keypair, &bad_authority], message, durable);
+        send_transactions(&sender, &[transaction]);
+        let stats = receive(&mut receive_and_buffer, &mut container);
+        assert_eq!(stats.num_dropped_on_age, 1);
+        assert_eq!(stats.num_evicted_on_nonce_dedup, 0);
+        assert_eq!(stats.num_dropped_on_nonce_dedup, 0);
+        assert_eq!(stats.num_buffered, 0);
+
+        let current_nonce_entry = *container
+            .get_nonce_transaction_priority_id(&nonce_pubkey)
+            .unwrap();
+        assert_eq!(prior_nonce_entry, current_nonce_entry);
+        assert!(container.is_queued(&current_nonce_entry));
+
+        // bad feepayer
+        let bad_payer = Keypair::new();
+        let message = Message::new(
+            &[
+                system_instruction::advance_nonce_account(&nonce_pubkey, &mint_keypair.pubkey()),
+                ComputeBudgetInstruction::set_compute_unit_price(HIGH_FEE),
+                system_instruction::transfer(&mint_keypair.pubkey(), &Pubkey::new_unique(), 1),
+            ],
+            Some(&bad_payer.pubkey()),
+        );
+        let transaction = Transaction::new(&[&bad_payer, &mint_keypair], message, durable);
+        send_transactions(&sender, &[transaction]);
+        let stats = receive(&mut receive_and_buffer, &mut container);
+        assert_eq!(stats.num_dropped_on_fee_payer, 1);
+        assert_eq!(stats.num_evicted_on_nonce_dedup, 0);
+        assert_eq!(stats.num_dropped_on_nonce_dedup, 0);
+        assert_eq!(stats.num_buffered, 0);
+
+        let current_nonce_entry = *container
+            .get_nonce_transaction_priority_id(&nonce_pubkey)
+            .unwrap();
+        assert_eq!(prior_nonce_entry, current_nonce_entry);
+        assert!(container.is_queued(&current_nonce_entry));
+
+        verify_container(&mut container, 1);
+    }
+
+    // when a nonce transaction is bumped for capacity, its nonce map entry is cleared
+    #[test]
+    fn test_receive_and_buffer_nonce_capacity_eviction() {
+        let (sender, receiver) = bounded(1024);
+        let (bank_forks, mint_keypair) = test_bank_forks_with_fee();
+        let (mut receive_and_buffer, _container) =
+            setup_transaction_view_receive_and_buffer(receiver, bank_forks.clone());
+        let mut container = TransactionViewStateContainer::with_capacity(1);
+        let (nonce_pubkey, durable) = create_nonce_identity(&bank_forks, &mint_keypair.pubkey());
+
+        send_transactions(
+            &sender,
+            &[create_nonce_transaction(
+                &mint_keypair,
+                &nonce_pubkey,
+                0,
+                durable,
+            )],
+        );
+        assert_eq!(
+            receive(&mut receive_and_buffer, &mut container).num_buffered,
+            1
+        );
+
+        let nonce_entry = container
+            .get_nonce_transaction_priority_id(&nonce_pubkey)
+            .cloned()
+            .unwrap();
+
+        // the previous txn is 0 priority, so this evicts it, even with 0 priority
+        let transaction = transfer(
+            &mint_keypair,
+            &Pubkey::new_unique(),
+            1,
+            bank_forks.read().unwrap().root_bank().last_blockhash(),
+        );
+
+        send_transactions(&sender, &[transaction]);
+        let stats = receive(&mut receive_and_buffer, &mut container);
+        assert_eq!(stats.num_buffered, 1);
+        assert_eq!(stats.num_dropped_on_capacity, 1);
+        assert_eq!(stats.num_evicted_on_nonce_dedup, 0);
+
+        assert!(
+            container
+                .get_nonce_transaction_priority_id(&nonce_pubkey)
+                .is_none()
+        );
+        assert!(!container.is_queued(&nonce_entry));
+
+        verify_container(&mut container, 1);
+    }
+
+    // nonce-like blockhash transactions are queued but not tracked
+    #[test]
+    fn test_receive_and_buffer_pseudo_nonce_untracked() {
+        let (sender, receiver) = bounded(1024);
+        let (bank_forks, mint_keypair) = test_bank_forks_with_fee();
+        let (mut receive_and_buffer, mut container) =
+            setup_transaction_view_receive_and_buffer(receiver, bank_forks.clone());
+        let (nonce_pubkey, durable) = create_nonce_identity(&bank_forks, &mint_keypair.pubkey());
+        let blockhash = bank_forks.read().unwrap().root_bank().last_blockhash();
+
+        send_transactions(
+            &sender,
+            &[create_nonce_transaction(
+                &mint_keypair,
+                &nonce_pubkey,
+                HIGH_FEE,
+                blockhash,
+            )],
+        );
+        assert_eq!(
+            receive(&mut receive_and_buffer, &mut container).num_buffered,
+            1
+        );
+        assert!(
+            container
+                .get_nonce_transaction_priority_id(&nonce_pubkey)
+                .is_none()
+        );
+
+        // a real nonce for the same account is still admitted and tracked
+        send_transactions(
+            &sender,
+            &[create_nonce_transaction(
+                &mint_keypair,
+                &nonce_pubkey,
+                LOW_FEE,
+                durable,
+            )],
+        );
+        let stats = receive(&mut receive_and_buffer, &mut container);
+        assert_eq!(stats.num_buffered, 1);
+        assert_eq!(stats.num_evicted_on_nonce_dedup, 0);
+        assert!(
+            container
+                .get_nonce_transaction_priority_id(&nonce_pubkey)
+                .is_some()
+        );
+
+        verify_container(&mut container, 2);
+    }
+
+    // nonce-like blockhash transactions never evict real nonce transactions
+    #[test_case(LOW_FEE, HIGH_FEE; "lohi_coexist")]
+    #[test_case(HIGH_FEE, LOW_FEE; "hilo_drop")]
+    #[test_case(HIGH_FEE, HIGH_FEE; "hihi_drop")]
+    fn test_receive_and_buffer_pseudo_nonce_never_evicts(real_fee: u64, pseudo_fee: u64) {
+        let (sender, receiver) = bounded(1024);
+        let (bank_forks, mint_keypair) = test_bank_forks_with_fee();
+        let (mut receive_and_buffer, mut container) =
+            setup_transaction_view_receive_and_buffer(receiver, bank_forks.clone());
+        let (nonce_pubkey, durable) = create_nonce_identity(&bank_forks, &mint_keypair.pubkey());
+        let blockhash = bank_forks.read().unwrap().root_bank().last_blockhash();
+        let pseudo_has_priority = pseudo_fee > real_fee;
+
+        send_transactions(
+            &sender,
+            &[create_nonce_transaction(
+                &mint_keypair,
+                &nonce_pubkey,
+                real_fee,
+                durable,
+            )],
+        );
+        assert_eq!(
+            receive(&mut receive_and_buffer, &mut container).num_buffered,
+            1
+        );
+        let nonce_entry = *container
+            .get_nonce_transaction_priority_id(&nonce_pubkey)
+            .unwrap();
+
+        send_transactions(
+            &sender,
+            &[create_nonce_transaction(
+                &mint_keypair,
+                &nonce_pubkey,
+                pseudo_fee,
+                blockhash,
+            )],
+        );
+        let stats = receive(&mut receive_and_buffer, &mut container);
+        assert_eq!(stats.num_evicted_on_nonce_dedup, 0);
+        let expected_len = if pseudo_has_priority {
+            assert_eq!(stats.num_dropped_on_nonce_dedup, 0);
+            assert_eq!(stats.num_buffered, 1);
+            2
+        } else {
+            assert_eq!(stats.num_dropped_on_nonce_dedup, 1);
+            assert_eq!(stats.num_buffered, 0);
+            1
+        };
+
+        // the real nonce transaction still holds the nonce and is queued
+        assert_eq!(
+            *container
+                .get_nonce_transaction_priority_id(&nonce_pubkey)
+                .unwrap(),
+            nonce_entry
+        );
+        assert!(container.is_queued(&nonce_entry));
+
+        verify_container(&mut container, expected_len);
     }
 }

@@ -60,6 +60,10 @@ pub mod parse_token;
 pub mod parse_vote;
 pub mod token_balances;
 
+fn serialize_versioned_transaction(transaction: &VersionedTransaction) -> Vec<u8> {
+    wincode::serialize(transaction).expect("serialize versioned transaction")
+}
+
 pub struct BlockEncodingOptions {
     pub transaction_details: TransactionDetails,
     pub show_rewards: bool,
@@ -398,6 +402,7 @@ pub struct VersionedConfirmedBlockWithEntries {
 
 // Data needed to reconstruct an Entry, given an ordered list of transactions in
 // a block. Used for uploading to BigTable.
+#[derive(Clone, Copy)]
 pub struct EntrySummary {
     pub num_hashes: u64,
     pub hash: Hash,
@@ -634,14 +639,14 @@ impl EncodableWithMeta for VersionedTransaction {
     ) -> Self::Encoded {
         match encoding {
             UiTransactionEncoding::Binary => EncodedTransaction::LegacyBinary(
-                bs58::encode(bincode::serialize(self).unwrap()).into_string(),
+                bs58::encode(serialize_versioned_transaction(self)).into_string(),
             ),
             UiTransactionEncoding::Base58 => EncodedTransaction::Binary(
-                bs58::encode(bincode::serialize(self).unwrap()).into_string(),
+                bs58::encode(serialize_versioned_transaction(self)).into_string(),
                 TransactionBinaryEncoding::Base58,
             ),
             UiTransactionEncoding::Base64 => EncodedTransaction::Binary(
-                BASE64_STANDARD.encode(bincode::serialize(self).unwrap()),
+                BASE64_STANDARD.encode(serialize_versioned_transaction(self)),
                 TransactionBinaryEncoding::Base64,
             ),
             UiTransactionEncoding::Json => self.json_encode(),
@@ -678,14 +683,14 @@ impl Encodable for VersionedTransaction {
     fn encode(&self, encoding: UiTransactionEncoding) -> Self::Encoded {
         match encoding {
             UiTransactionEncoding::Binary => EncodedTransaction::LegacyBinary(
-                bs58::encode(bincode::serialize(self).unwrap()).into_string(),
+                bs58::encode(serialize_versioned_transaction(self)).into_string(),
             ),
             UiTransactionEncoding::Base58 => EncodedTransaction::Binary(
-                bs58::encode(bincode::serialize(self).unwrap()).into_string(),
+                bs58::encode(serialize_versioned_transaction(self)).into_string(),
                 TransactionBinaryEncoding::Base58,
             ),
             UiTransactionEncoding::Base64 => EncodedTransaction::Binary(
-                BASE64_STANDARD.encode(bincode::serialize(self).unwrap()),
+                BASE64_STANDARD.encode(serialize_versioned_transaction(self)),
                 TransactionBinaryEncoding::Base64,
             ),
             UiTransactionEncoding::Json | UiTransactionEncoding::JsonParsed => {
@@ -1074,5 +1079,41 @@ mod test {
         assert_eq!(encoded.slot, 42);
         assert_eq!(encoded.block_time, Some(1234567890));
         assert_eq!(encoded.transaction_index, Some(7));
+    }
+
+    #[test]
+    fn test_v1_binary_encoding_uses_wire_format() {
+        let message = solana_message::v1::Message::new(
+            solana_message::MessageHeader {
+                num_required_signatures: 1,
+                num_readonly_signed_accounts: 0,
+                num_readonly_unsigned_accounts: 1,
+            },
+            solana_message::v1::TransactionConfig::empty(),
+            solana_hash::Hash::new_from_array([7; solana_hash::HASH_BYTES]),
+            vec![
+                solana_pubkey::Pubkey::new_unique(),
+                solana_pubkey::Pubkey::new_unique(),
+            ],
+            vec![],
+        );
+        let transaction = VersionedTransaction {
+            signatures: vec![solana_signature::Signature::default()],
+            message: solana_message::VersionedMessage::V1(message),
+        };
+
+        let EncodedTransaction::Binary(encoded, TransactionBinaryEncoding::Base64) =
+            transaction.encode(UiTransactionEncoding::Base64)
+        else {
+            panic!("expected binary base64 output");
+        };
+        let bytes = BASE64_STANDARD.decode(&encoded).unwrap();
+
+        assert_eq!(bytes[0], solana_message::v1::V1_PREFIX);
+        assert_eq!(bytes, wincode::serialize(&transaction).unwrap());
+        assert_eq!(
+            EncodedTransaction::Binary(encoded, TransactionBinaryEncoding::Base64).decode(),
+            Some(transaction)
+        );
     }
 }

@@ -7,10 +7,12 @@ authors = { workspace = true }
 repository = { workspace = true }
 homepage = { workspace = true }
 license = { workspace = true }
-edition = "2024"
+edition = { workspace = true }
 
 [package.metadata.docs.rs]
 targets = ["x86_64-unknown-linux-gnu"]
+all-features = true
+rustdoc-args = ["--cfg=docsrs"]
 
 [lib]
 crate-type = ["lib"]
@@ -18,6 +20,7 @@ name = "solana_bloom"
 
 [features]
 agave-unstable-api = []
+dev-context-only-utils = []
 frozen-abi = [
     "dep:solana-frozen-abi",
     "dep:solana-frozen-abi-macro",
@@ -37,13 +40,15 @@ solana-frozen-abi-macro = { workspace = true, optional = true, features = [
 ] }
 solana-sanitize = { workspace = true }
 solana-time-utils = { workspace = true }
+wincode = { workspace = true, features = ["bv"] }
 
 [dev-dependencies]
 bencher = { workspace = true }
+bincode = { workspace = true }
 rayon = { workspace = true }
-solana-bloom = { path = ".", features = ["agave-unstable-api"] }
-solana-hash = { workspace = true, features = ["atomic"] }
-solana-sha256-hasher = { workspace = true }
+solana-bloom = { path = ".", features = ["agave-unstable-api", "dev-context-only-utils"] }
+solana-hash = { workspace = true, features = ["atomic", "wincode"] }
+solana-sha256-hasher = { workspace = true, features = ["sha2"] }
 solana-signature = { workspace = true, features = ["std"] }
 
 [[bench]]

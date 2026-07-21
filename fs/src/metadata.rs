@@ -20,27 +20,47 @@ pub enum DirectIoSupport {
 /// direct I/O (`O_DIRECT`).
 ///
 /// Returns `Ok(Supported)` if direct I/O is supported, `Ok(Unsupported)` if it is not,
-/// or `Ok(Uncertain)` if no conclusion can be drawn (e.g. an empty directory or a path
-/// that does not exist).
+/// or `Ok(Uncertain)` if no conclusion can be drawn (e.g. a file path that doesn't exist).
 ///
-/// On Linux: resolves a concrete file under `path` first, then attempts a `statx(2)`-based
-/// check; if the kernel does not support it (< 6.1), falls back to an open-probe check.
+/// On Linux: resolves a concrete file under `path` first; if none exists, falls back to
+/// creating a temporary probe file in `path`. For a resolved or created file, attempts a
+/// `statx(2)`-based check; if the kernel does not support it (< 6.1), falls back to an
+/// open-probe check.
 /// On non-Linux platforms: always returns `Ok(Uncertain)`.
 #[cfg(target_os = "linux")]
 pub fn check_direct_io_capability(path: impl AsRef<Path>) -> io::Result<DirectIoSupport> {
-    let Some(file) = find_any_file_under_path(path.as_ref())? else {
-        return Ok(DirectIoSupport::Uncertain);
-    };
+    let path = path.as_ref();
+    if let Some(file) = find_any_file_under_path(path) {
+        check_direct_io_for_file(&file)
+    } else {
+        if !path.is_dir() {
+            return Ok(DirectIoSupport::Uncertain);
+        }
+        let Ok(tmp) = tempfile::NamedTempFile::new_in(path) else {
+            return Ok(DirectIoSupport::Uncertain);
+        };
+        let result = check_direct_io_for_file(tmp.path());
+        tmp.close()?;
+        result
+    }
+}
+
+/// Check direct I/O capability for an existing `file`.
+///
+/// Attempts a `statx(2)`-based check first; falls back to an open-probe if the kernel did
+/// not populate `STATX_DIOALIGN` fields (kernel < 6.1).
+#[cfg(target_os = "linux")]
+fn check_direct_io_for_file(file: &Path) -> io::Result<DirectIoSupport> {
     // statx with STATX_DIOALIGN is the preferred check, but libc does not expose
     // statx on musl (requires musl >= 1.2.3), so skip it there.
     #[cfg(not(target_env = "musl"))]
     {
-        let statx_result = check_direct_io_via_statx(&file);
+        let statx_result = check_direct_io_via_statx(file);
         if !matches!(&statx_result, Ok(DirectIoSupport::Uncertain)) {
             return statx_result;
         }
     }
-    Ok(check_direct_io_via_open_probe(&file))
+    Ok(check_direct_io_via_open_probe(file))
 }
 
 /// Always returns `Ok(Uncertain)`, since direct I/O functionality is not used on non-Linux.
@@ -114,22 +134,32 @@ fn check_direct_io_via_open_probe(file: &Path) -> DirectIoSupport {
 }
 
 /// Returns a path to any regular file at or under `path`, recursively traversing
-/// directories and returning as soon as one file is found. Returns `Ok(None)` if
-/// no file exists under `path`.
+/// directories and returning as soon as one is found. A directory that cannot be read
+/// is logged and skipped. Returns `None` if no file is found under `path`.
 #[cfg(target_os = "linux")]
-fn find_any_file_under_path(path: &Path) -> io::Result<Option<PathBuf>> {
+fn find_any_file_under_path(path: &Path) -> Option<PathBuf> {
     if path.is_file() {
-        return Ok(Some(path.to_path_buf()));
+        return Some(path.to_path_buf());
     }
-    if path.is_dir() {
-        for entry in fs::read_dir(path)? {
-            let entry = entry?;
-            if let Some(path) = find_any_file_under_path(&entry.path())? {
-                return Ok(Some(path));
-            }
+    if !path.is_dir() {
+        return None;
+    }
+    let entries = match fs::read_dir(path) {
+        Ok(entries) => entries,
+        Err(err) => {
+            log::warn!(
+                "skipping `{}` while probing direct-io support: {err}",
+                path.display()
+            );
+            return None;
+        }
+    };
+    for entry in entries.flatten() {
+        if let Some(found) = find_any_file_under_path(&entry.path()) {
+            return Some(found);
         }
     }
-    Ok(None)
+    None
 }
 
 #[cfg(all(test, target_os = "linux"))]
@@ -142,18 +172,43 @@ mod tests {
         path
     }
 
+    enum UnreadableDirTest<R> {
+        SkippedAsRoot,
+        Ran(R),
+    }
+
+    // Create an unreadable directory at `path`, run `f`, then restore permissions so the
+    // TempDir can clean up. read_dir on a mode-0000 dir only fails for non-root, so skip as root.
+    fn with_unreadable_dir<R>(
+        path: &std::path::Path,
+        f: impl FnOnce() -> R,
+    ) -> UnreadableDirTest<R> {
+        use std::os::unix::fs::PermissionsExt;
+
+        if unsafe { libc::geteuid() } == 0 {
+            return UnreadableDirTest::SkippedAsRoot;
+        }
+
+        std::fs::create_dir(path).unwrap();
+        std::fs::set_permissions(path, std::fs::Permissions::from_mode(0o000)).unwrap();
+        let result = f();
+        std::fs::set_permissions(path, std::fs::Permissions::from_mode(0o700)).unwrap();
+
+        UnreadableDirTest::Ran(result)
+    }
+
     #[test]
     fn test_find_any_file_under_path_file() {
         let dir = TempDir::new().unwrap();
         let file = make_temp_file(&dir, "f.bin", b"hello");
-        assert_eq!(find_any_file_under_path(&file).unwrap(), Some(file));
+        assert_eq!(find_any_file_under_path(&file), Some(file));
     }
 
     #[test]
     fn test_find_any_file_under_path_dir() {
         let dir = TempDir::new().unwrap();
         make_temp_file(&dir, "a.bin", b"data");
-        let candidate = find_any_file_under_path(dir.path()).unwrap();
+        let candidate = find_any_file_under_path(dir.path());
         assert!(candidate.is_some());
         assert!(candidate.unwrap().is_file());
     }
@@ -161,7 +216,48 @@ mod tests {
     #[test]
     fn test_find_any_file_under_path_empty_dir() {
         let dir = TempDir::new().unwrap();
-        assert_eq!(find_any_file_under_path(dir.path()).unwrap(), None);
+        assert_eq!(find_any_file_under_path(dir.path()), None);
+    }
+
+    #[test]
+    fn test_find_any_file_under_path_skips_unreadable_subdir() {
+        let dir = TempDir::new().unwrap();
+        let file = make_temp_file(&dir, "snapshot.bin", b"data");
+        let unreadable = dir.path().join("lost+found");
+
+        // The readable file is found regardless of readdir order; the unreadable sibling is skipped.
+        if let UnreadableDirTest::Ran(found) =
+            with_unreadable_dir(&unreadable, || find_any_file_under_path(dir.path()))
+        {
+            assert_eq!(found, Some(file));
+        }
+    }
+
+    #[test]
+    fn test_find_any_file_under_path_readable_dir_only_unreadable_subdir() {
+        let dir = TempDir::new().unwrap();
+        let unreadable = dir.path().join("lost+found");
+
+        // The dir itself is readable but holds no file, so the caller falls back to the temp
+        // probe rather than aborting; the unreadable subdir doesn't turn this into an error.
+        if let UnreadableDirTest::Ran(found) =
+            with_unreadable_dir(&unreadable, || find_any_file_under_path(dir.path()))
+        {
+            assert_eq!(found, None);
+        }
+    }
+
+    #[test]
+    fn test_find_any_file_under_path_unreadable_path_returns_none() {
+        let parent = TempDir::new().unwrap();
+        let dir = parent.path().join("accounts");
+
+        // An unreadable path is logged and skipped, so the caller falls back to the temp probe.
+        if let UnreadableDirTest::Ran(found) =
+            with_unreadable_dir(&dir, || find_any_file_under_path(&dir))
+        {
+            assert_eq!(found, None);
+        }
     }
 
     #[test]
@@ -192,7 +288,11 @@ mod tests {
     fn test_path_supports_direct_io_empty_dir() {
         let dir = TempDir::new().unwrap();
         let result = check_direct_io_capability(dir.path()).expect("check must not fail");
-        assert_eq!(result, DirectIoSupport::Uncertain);
+        assert_eq!(
+            result,
+            DirectIoSupport::Supported,
+            "dev filesystem must support direct I/O"
+        );
     }
 
     #[test]

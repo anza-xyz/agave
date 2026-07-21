@@ -53,13 +53,8 @@ impl WeightedU64Index {
 #[cfg(test)]
 mod tests {
     use {
-        super::*,
-        assert_matches::assert_matches,
-        rand::SeedableRng as _,
-        rand_chacha::ChaChaRng,
-        sha2::{Digest, Sha256},
-        std::array,
-        test_case::test_case,
+        super::*, assert_matches::assert_matches, rand::SeedableRng as _, rand_chacha::ChaChaRng,
+        solana_sha256_hasher::Hasher, std::array, test_case::test_case,
     };
 
     const CHACHA_SEED: [u8; 32] = [16; 32];
@@ -90,12 +85,12 @@ mod tests {
         let mut rng_compat = ChaChaRng::from_seed(CHACHA_SEED);
         let index_compat = WeightedU64Index::new(weights).expect("non empty and non zero is ok");
 
-        let mut hash = Sha256::new();
+        let mut hash = Hasher::default();
         (0..len).for_each(|_| {
             let compat = index_compat.sample(&mut rng_compat);
-            hash.update(compat.to_le_bytes());
+            hash.hash(&compat.to_le_bytes());
         });
-        assert_eq!(&bs58::encode(hash.finalize()).into_string(), expected_hash);
+        assert_eq!(hash.result().to_string(), expected_hash);
     }
 
     #[test]

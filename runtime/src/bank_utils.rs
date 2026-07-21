@@ -51,25 +51,26 @@ pub fn find_and_send_votes(
             .iter()
             .zip(commit_results.iter())
             .for_each(|(tx, commit_result)| {
-                if tx.is_simple_vote_transaction() && commit_result.was_executed_successfully() {
-                    if let Some(parsed_vote) = vote_parser::parse_sanitized_vote_transaction(tx) {
-                        if parsed_vote.1.last_voted_slot().is_some() {
-                            let vote = match send_type {
-                                ReplayVoteSendType::VerifiedExecuted => {
-                                    ReplayVoteMessage::VerifiedExecuted(parsed_vote)
-                                }
-                                ReplayVoteSendType::Executed {
-                                    replay_bank_id,
-                                    replay_slot,
-                                } => ReplayVoteMessage::Executed {
-                                    replay_bank_id,
-                                    replay_slot,
-                                    parsed_vote,
-                                },
-                            };
-                            let _ = vote_sender.send(vote);
+                if tx.is_simple_vote_transaction()
+                    && commit_result.was_executed_successfully()
+                    && let Some(parsed_vote) = vote_parser::parse_sanitized_vote_transaction(tx)
+                    && parsed_vote.1.last_voted_slot().is_some()
+                {
+                    let vote = match send_type {
+                        ReplayVoteSendType::VerifiedExecuted => {
+                            ReplayVoteMessage::VerifiedExecuted(parsed_vote)
                         }
-                    }
+                        ReplayVoteSendType::Executed {
+                            replay_bank_id,
+                            replay_slot,
+                        } => ReplayVoteMessage::Executed {
+                            replay_bank_id,
+                            replay_slot,
+                            message_hash: *tx.message_hash(),
+                            parsed_vote,
+                        },
+                    };
+                    let _ = vote_sender.send(vote);
                 }
             });
     }

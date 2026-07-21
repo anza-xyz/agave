@@ -49,20 +49,9 @@ scripts/create-release-tarball.sh --build-dir "$RELEASE_BASENAME" \
                                   --target "$TARGET" \
                                   --tarball-basename "$TARBALL_BASENAME"
 
-# Maybe tarballs are platform agnostic, only publish them from the Linux build
-MAYBE_TARBALLS=
-if [[ $TARGET == *linux* ]]; then
-  (
-    set -x
-    platform-tools-sdk/sbf/scripts/package.sh
-    [[ -f sbf-sdk.tar.bz2 ]]
-  )
-  MAYBE_TARBALLS="sbf-sdk.tar.bz2"
-fi
-
 source ci/upload-ci-artifact.sh
 
-for file in "${TARBALL_BASENAME}"-$TARGET.tar.bz2 "${TARBALL_BASENAME}"-$TARGET.yml agave-install-init-"$TARGET"* $MAYBE_TARBALLS; do
+for file in "${TARBALL_BASENAME}"-$TARGET.tar.bz2 "${TARBALL_BASENAME}"-$TARGET.yml agave-install-init-"$TARGET"*; do
   if [[ -n $DO_NOT_PUBLISH_TAR ]]; then
     upload-ci-artifact "$file"
     echo "Skipped $file due to DO_NOT_PUBLISH_TAR"

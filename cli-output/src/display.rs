@@ -1,5 +1,8 @@
 use {
-    crate::cli_output::CliSignatureVerificationStatus,
+    crate::{
+        cli_output::CliSignatureVerificationStatus,
+        stdout::{write_stdout_str, writeln_stdout},
+    },
     agave_reserved_account_keys::ReservedAccountKeys,
     base64::{Engine, prelude::BASE64_STANDARD},
     chrono::{DateTime, Local, SecondsFormat, TimeZone, Utc},
@@ -18,7 +21,9 @@ use {
         Rewards, UiReturnDataEncoding, UiTransactionReturnData, UiTransactionStatusMeta,
     },
     solana_transaction_status_client_types::UiTransactionError,
-    spl_memo_interface::{v1::id as spl_memo_v1_id, v3::id as spl_memo_v3_id},
+    spl_memo_interface::{
+        v1::id as spl_memo_v1_id, v3::id as spl_memo_v3_id, v4::id as spl_memo_v4_id,
+    },
     std::{collections::HashMap, fmt, io, time::Duration},
 };
 
@@ -40,7 +45,7 @@ impl Default for BuildBalanceMessageConfig {
 }
 
 fn is_memo_program(k: &Pubkey) -> bool {
-    *k == spl_memo_v1_id() || *k == spl_memo_v3_id()
+    *k == spl_memo_v1_id() || *k == spl_memo_v3_id() || *k == spl_memo_v4_id()
 }
 
 pub fn build_balance_message_with_config(
@@ -87,13 +92,13 @@ pub fn build_balance_message(lamports: u64, use_lamports_unit: bool, show_unit: 
 }
 
 // Pretty print a "name value"
-pub fn println_name_value(name: &str, value: &str) {
+pub fn println_name_value(name: &str, value: &str) -> io::Result<()> {
     let styled_value = if value.is_empty() {
         style("(not set)").italic()
     } else {
         style(value)
     };
-    println!("{} {}", style(name).bold(), styled_value);
+    writeln_stdout(format_args!("{} {}", style(name).bold(), styled_value))
 }
 
 pub fn writeln_name_value(f: &mut dyn fmt::Write, name: &str, value: &str) -> fmt::Result {
@@ -105,19 +110,19 @@ pub fn writeln_name_value(f: &mut dyn fmt::Write, name: &str, value: &str) -> fm
     writeln!(f, "{} {}", style(name).bold(), styled_value)
 }
 
-pub fn println_name_value_or(name: &str, value: &str, setting_type: SettingType) {
+pub fn println_name_value_or(name: &str, value: &str, setting_type: SettingType) -> io::Result<()> {
     let description = match setting_type {
         SettingType::Explicit => "",
         SettingType::Computed => "(computed)",
         SettingType::SystemDefault => "(default)",
     };
 
-    println!(
+    writeln_stdout(format_args!(
         "{} {} {}",
         style(name).bold(),
         style(value),
         style(description).italic(),
-    );
+    ))
 }
 
 pub fn format_labeled_address(pubkey: &str, address_labels: &HashMap<String, String>) -> String {
@@ -138,22 +143,28 @@ pub fn println_signers(
     signers: &[String],
     absent: &[String],
     bad_sig: &[String],
-) {
-    println!();
-    println!("Blockhash: {blockhash}");
+) -> io::Result<()> {
+    writeln_stdout(format_args!(""))?;
+    writeln_stdout(format_args!("Blockhash: {blockhash}"))?;
     if !signers.is_empty() {
-        println!("Signers (Pubkey=Signature):");
-        signers.iter().for_each(|signer| println!("  {signer}"))
+        writeln_stdout(format_args!("Signers (Pubkey=Signature):"))?;
+        for signer in signers {
+            writeln_stdout(format_args!("  {signer}"))?;
+        }
     }
     if !absent.is_empty() {
-        println!("Absent Signers (Pubkey):");
-        absent.iter().for_each(|pubkey| println!("  {pubkey}"))
+        writeln_stdout(format_args!("Absent Signers (Pubkey):"))?;
+        for pubkey in absent {
+            writeln_stdout(format_args!("  {pubkey}"))?;
+        }
     }
     if !bad_sig.is_empty() {
-        println!("Bad Signatures (Pubkey):");
-        bad_sig.iter().for_each(|pubkey| println!("  {pubkey}"))
+        writeln_stdout(format_args!("Bad Signatures (Pubkey):"))?;
+        for pubkey in bad_sig {
+            writeln_stdout(format_args!("  {pubkey}"))?;
+        }
     }
-    println!();
+    writeln_stdout(format_args!(""))
 }
 
 struct CliAccountMeta {
@@ -466,11 +477,11 @@ fn write_instruction<'a, W: io::Write>(
                 writeln!(w, "{prefix}  {system_instruction:?}")?;
                 raw = false;
             }
-        } else if is_memo_program(program_pubkey) {
-            if let Ok(s) = std::str::from_utf8(&instruction.data) {
-                writeln!(w, "{prefix}  Data: \"{s}\"")?;
-                raw = false;
-            }
+        } else if is_memo_program(program_pubkey)
+            && let Ok(s) = std::str::from_utf8(&instruction.data)
+        {
+            writeln!(w, "{prefix}  Data: \"{s}\"")?;
+            raw = false;
         }
     }
 
@@ -510,31 +521,31 @@ fn write_rewards<W: io::Write>(
     rewards: Option<&Rewards>,
     prefix: &str,
 ) -> io::Result<()> {
-    if let Some(rewards) = rewards {
-        if !rewards.is_empty() {
-            writeln!(w, "{prefix}Rewards:",)?;
+    if let Some(rewards) = rewards
+        && !rewards.is_empty()
+    {
+        writeln!(w, "{prefix}Rewards:",)?;
+        writeln!(
+            w,
+            "{}  {:<44}  {:^15}  {:<16}  {:<20}",
+            prefix, "Address", "Type", "Amount", "New Balance"
+        )?;
+        for reward in rewards {
+            let sign = if reward.lamports < 0 { "-" } else { "" };
             writeln!(
                 w,
-                "{}  {:<44}  {:^15}  {:<16}  {:<20}",
-                prefix, "Address", "Type", "Amount", "New Balance"
+                "{}  {:<44}  {:^15}  {}◎{:<14.9}  ◎{:<18.9}",
+                prefix,
+                reward.pubkey,
+                if let Some(reward_type) = reward.reward_type {
+                    format!("{reward_type}")
+                } else {
+                    "-".to_string()
+                },
+                sign,
+                build_balance_message(reward.lamports.unsigned_abs(), false, false),
+                build_balance_message(reward.post_balance, false, false)
             )?;
-            for reward in rewards {
-                let sign = if reward.lamports < 0 { "-" } else { "" };
-                writeln!(
-                    w,
-                    "{}  {:<44}  {:^15}  {}◎{:<14.9}  ◎{:<18.9}",
-                    prefix,
-                    reward.pubkey,
-                    if let Some(reward_type) = reward.reward_type {
-                        format!("{reward_type}")
-                    } else {
-                        "-".to_string()
-                    },
-                    sign,
-                    build_balance_message(reward.lamports.unsigned_abs(), false, false),
-                    build_balance_message(reward.post_balance, false, false)
-                )?;
-            }
         }
     }
     Ok(())
@@ -643,12 +654,12 @@ fn write_log_messages<W: io::Write>(
     log_messages: Option<&Vec<String>>,
     prefix: &str,
 ) -> io::Result<()> {
-    if let Some(log_messages) = log_messages {
-        if !log_messages.is_empty() {
-            writeln!(w, "{prefix}Log Messages:",)?;
-            for log_message in log_messages {
-                writeln!(w, "{prefix}  {log_message}")?;
-            }
+    if let Some(log_messages) = log_messages
+        && !log_messages.is_empty()
+    {
+        writeln!(w, "{prefix}Log Messages:",)?;
+        for log_message in log_messages {
+            writeln!(w, "{prefix}  {log_message}")?;
         }
     }
     Ok(())
@@ -660,7 +671,7 @@ pub fn println_transaction(
     prefix: &str,
     sigverify_status: Option<&[CliSignatureVerificationStatus]>,
     block_time: Option<UnixTimestamp>,
-) {
+) -> io::Result<()> {
     let mut w = Vec::new();
     if write_transaction(
         &mut w,
@@ -672,11 +683,11 @@ pub fn println_transaction(
         CliTimezone::Local,
     )
     .is_ok()
+        && let Ok(s) = String::from_utf8(w)
     {
-        if let Ok(s) = String::from_utf8(w) {
-            print!("{s}");
-        }
+        write_stdout_str(&s)?;
     }
+    Ok(())
 }
 
 pub fn writeln_transaction(
@@ -698,10 +709,10 @@ pub fn writeln_transaction(
         CliTimezone::Local,
     );
 
-    if write_result.is_ok() {
-        if let Ok(s) = String::from_utf8(w) {
-            write!(f, "{s}")?;
-        }
+    if write_result.is_ok()
+        && let Ok(s) = String::from_utf8(w)
+    {
+        write!(f, "{s}")?;
     }
     Ok(())
 }

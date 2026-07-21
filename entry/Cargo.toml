@@ -11,6 +11,8 @@ edition = { workspace = true }
 
 [package.metadata.docs.rs]
 targets = ["x86_64-unknown-linux-gnu"]
+all-features = true
+rustdoc-args = ["--cfg=docsrs"]
 
 [lib]
 crate-type = ["lib"]
@@ -23,7 +25,6 @@ dev-context-only-utils = []
 [dependencies]
 agave-votor-messages = { workspace = true }
 crossbeam-channel = { workspace = true }
-dlopen2 = { workspace = true }
 log = { workspace = true }
 num_cpus = { workspace = true }
 rayon = { workspace = true }
@@ -31,6 +32,7 @@ smallvec = { workspace = true }
 solana-address = { workspace = true }
 solana-bls-signatures = { workspace = true }
 solana-clock = { workspace = true }
+solana-cost-model = { workspace = true }
 solana-hash = { workspace = true, features = ["wincode"] }
 solana-measure = { workspace = true }
 solana-merkle-tree = { workspace = true }
@@ -49,6 +51,7 @@ wincode = { workspace = true }
 agave-logger = { path = "../logger", features = ["agave-unstable-api"] }
 agave-reserved-account-keys = { path = "../reserved-account-keys", features = ["agave-unstable-api"] }
 assert_matches = { workspace = true }
+criterion = { workspace = true }
 proptest = { workspace = true }
 rand = { workspace = true }
 solana-entry = { path = ".", features = ["agave-unstable-api", "dev-context-only-utils"] }
@@ -60,3 +63,10 @@ solana-signature = { workspace = true }
 solana-signer = { workspace = true }
 solana-system-transaction = { workspace = true }
 solana-transaction = { workspace = true, features = ["verify"] }
+
+[[bench]]
+name = "verify_signatures"
+harness = false
+
+[lints]
+workspace = true

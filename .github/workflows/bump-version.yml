@@ -1,0 +1,99 @@
+name: Bump Version
+
+on:
+  workflow_dispatch:
+    inputs:
+      level:
+        description: Version bump level
+        type: choice
+        default: patch-or-pre-release
+        options:
+          - patch-or-pre-release
+          - patch
+          - minor
+          - major
+          - pre-release
+          - promote-pre-release
+
+jobs:
+  version-bump:
+    if: github.repository_owner == 'anza-xyz'
+    runs-on: ubuntu-24.04
+    permissions:
+      pull-requests: write
+    environment: "Version Bump"
+    steps:
+      - name: Create github app token
+        uses: actions/create-github-app-token@bcd2ba49218906704ab6c1aa796996da409d3eb1 # v3.2.0
+        id: app-token
+        with:
+          client-id: ${{ vars.CLIENT_ID }}
+          private-key: ${{ secrets.PRIVATE_KEY }}
+
+      - name: Set git config
+        run: |
+          git config --global user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git config --global user.name "github-actions[bot]"
+          git config --global url."https://x-access-token:${GITHUB_TOKEN}@github.com/".insteadOf https://github.com/
+        env:
+          GITHUB_TOKEN: ${{ steps.app-token.outputs.token }}
+
+      - name: Checkout code
+        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0  # v7.0.0
+        with:
+          fetch-depth: 0
+          token: ${{ steps.app-token.outputs.token }}
+          persist-credentials: false
+
+      - name: Setup
+        run: |
+          # install toml-cli
+          cargo install toml-cli --locked
+
+          # install xtask
+          cargo install \
+            --git https://github.com/anza-xyz/xtask \
+            --rev 930e3baec27a17cb4491b5585515b33f94dbd039 \
+            --bin xtask
+
+      - name: Process
+        id: process
+        env:
+          BASE_REF: ${{ github.ref }}
+        run: |
+          xtask bump-version ${{ inputs.level }}
+
+          new_version="$(toml get --raw Cargo.toml workspace.package.version)"
+
+          git checkout -b version-bump-$new_version
+          git commit -am "Bump version to $new_version"
+          git push origin version-bump-$new_version
+
+          echo "new_version=$new_version" | tee -a $GITHUB_OUTPUT
+
+          target_branch="${BASE_REF##*/}"
+          echo "target_branch=$target_branch" | tee -a $GITHUB_OUTPUT
+
+      - name: Create PR
+        uses: actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3  # v9.0.0
+        env:
+          NEW_VERSION: ${{ steps.process.outputs.new_version }}
+          TARGET_BRANCH: ${{ steps.process.outputs.target_branch }}
+        with:
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          script: |
+            const pr = await github.rest.pulls.create({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              title: `Bump version to ${process.env.NEW_VERSION}`,
+              draft: true,
+              head: `version-bump-${process.env.NEW_VERSION}`,
+              base: process.env.TARGET_BRANCH
+            })
+
+            await github.rest.issues.addAssignees({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              issue_number: pr.data.number,
+              assignees: [context.actor],
+            })

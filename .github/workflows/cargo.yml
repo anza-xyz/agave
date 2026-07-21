@@ -30,14 +30,14 @@ env:
 
 jobs:
   clippy-nightly:
-    if: github.repository == 'anza-xyz/agave'
+    if: github.repository_owner == 'anza-xyz'
     strategy:
       matrix:
         os:
           - os: macos-15
           # musl with dynamic linking
           - os: ubuntu-24.04
-            container: docker.io/rust:1-alpine3.22
+            container: docker.io/rust:1-alpine3.23
             rustflags: -C target-feature=-crt-static
     runs-on: ${{ matrix.os.os }}
     container:
@@ -53,9 +53,9 @@ jobs:
           apk update
           apk add bash git
 
-      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd  # v6.0.2
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0  # v7.0.0
 
-      - uses: mozilla-actions/sccache-action@7d986dd989559c6ecdb630a3fd2557667be217ad  # v0.0.9
+      - uses: mozilla-actions/sccache-action@9e7fa8a12102821edf02ca5dbea1acd0f89a2696  # v0.0.10
         with:
           version: "v0.10.0"
 
@@ -69,12 +69,12 @@ jobs:
 
   clippy-nightly-windows-2025:
     name: clippy-nightly (windows-2025)
-    if: github.repository == 'anza-xyz/agave' && github.event_name == 'push'
+    if: github.repository_owner == 'anza-xyz' && github.event_name == 'push'
     runs-on: windows-2025
     steps:
-      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd  # v6.0.2
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0  # v7.0.0
 
-      - uses: mozilla-actions/sccache-action@7d986dd989559c6ecdb630a3fd2557667be217ad  # v0.0.9
+      - uses: mozilla-actions/sccache-action@9e7fa8a12102821edf02ca5dbea1acd0f89a2696  # v0.0.10
         with:
           version: "v0.10.0"
 

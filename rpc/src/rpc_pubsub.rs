@@ -154,7 +154,7 @@ pub trait RpcSolPubSub {
         id: PubSubSubscriptionId,
     ) -> Result<bool>;
 
-    // Get notification when slot is encountered
+    // Get notification when processing of a slot begins
     #[pubsub(subscription = "slotNotification", subscribe, name = "slotSubscribe")]
     fn slot_subscribe(&self, meta: Self::Metadata, subscriber: Subscriber<SlotInfo>);
 
@@ -308,7 +308,7 @@ mod internal {
         #[rpc(name = "signatureUnsubscribe")]
         fn signature_unsubscribe(&self, id: SubscriptionId) -> Result<bool>;
 
-        // Get notification when slot is encountered
+        // Get notification when processing of a slot begins
         #[rpc(name = "slotSubscribe")]
         fn slot_subscribe(&self) -> Result<SubscriptionId>;
 

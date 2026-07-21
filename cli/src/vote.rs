@@ -14,7 +14,9 @@ use {
         spend_utils::{SpendAmount, resolve_spend_tx_and_check_account_balances},
         stake::check_current_authority,
     },
-    agave_feature_set::{bls_pubkey_management_in_vote_account, vote_account_initialize_v2},
+    agave_feature_set::{
+        alpenglow, bls_pubkey_management_in_vote_account, vote_account_initialize_v2,
+    },
     agave_votor_messages::consensus_message::BLS_KEYPAIR_DERIVE_SEED,
     clap::{App, Arg, ArgMatches, SubCommand, value_t_or_exit},
     solana_account::Account,
@@ -30,8 +32,8 @@ use {
         offline::*,
     },
     solana_cli_output::{
-        CliEpochVotingHistory, CliLandedVote, CliVoteAccount, ReturnSignersConfig,
-        display::build_balance_message, return_signers_with_config,
+        CliVoteAccount, ReturnSignersConfig, VotesObserved, display::build_balance_message,
+        get_epoch_history, return_signers_with_config,
     },
     solana_commitment_config::CommitmentConfig,
     solana_feature_gate_interface::from_account,
@@ -47,8 +49,8 @@ use {
         vote_error::VoteError,
         vote_instruction::{self, CreateVoteAccountConfig, withdraw},
         vote_state::{
-            VOTE_CREDITS_MAXIMUM_PER_SLOT, VoteAuthorize, VoteInit, VoteInitV2, VoteStateV4,
-            VoterWithBLSArgs, create_bls_proof_of_possession,
+            VoteAuthorize, VoteInit, VoteInitV2, VoteStateV4, VoterWithBLSArgs,
+            create_bls_proof_of_possession,
         },
     },
     std::rc::Rc,
@@ -1040,18 +1042,19 @@ pub async fn process_create_vote_account(
                 inflation_rewards_commission_bps: inflation_rewards_commission_bps
                     .or_else(|| commission.map(|c| (c as u16).saturating_mul(100))) // u16::MAX > u8::MAX * 100
                     .unwrap_or(10000),
-                inflation_rewards_collector: inflation_rewards_collector
-                    .copied()
-                    .unwrap_or(vote_account_address),
                 block_revenue_commission_bps: block_revenue_commission_bps.unwrap_or(10000),
-                block_revenue_collector: block_revenue_collector
-                    .copied()
-                    .unwrap_or(identity_pubkey),
             };
+            let inflation_rewards_collector_key = inflation_rewards_collector
+                .copied()
+                .unwrap_or(vote_account_address);
+            let block_revenue_collector_key =
+                block_revenue_collector.copied().unwrap_or(identity_pubkey);
             vote_instruction::create_account_with_config_v2(
                 &config.signers[0].pubkey(),
                 to,
                 &vote_init,
+                &inflation_rewards_collector_key,
+                &block_revenue_collector_key,
                 lamports,
                 create_vote_account_config,
             )
@@ -1111,17 +1114,14 @@ pub async fn process_create_vote_account(
         if let Ok(response) = rpc_client
             .get_account_with_commitment(&vote_account_address, config.commitment)
             .await
+            && let Some(vote_account) = response.value
         {
-            if let Some(vote_account) = response.value {
-                let err_msg = if vote_account.owner == solana_vote_program::id() {
-                    format!("Vote account {vote_account_address} already exists")
-                } else {
-                    format!(
-                        "Account {vote_account_address} already exists and is not a vote account"
-                    )
-                };
-                return Err(CliError::BadParameter(err_msg).into());
-            }
+            let err_msg = if vote_account.owner == solana_vote_program::id() {
+                format!("Vote account {vote_account_address} already exists")
+            } else {
+                format!("Account {vote_account_address} already exists and is not a vote account")
+            };
+            return Err(CliError::BadParameter(err_msg).into());
         }
 
         if let Some(nonce_account) = &nonce_account {
@@ -1238,14 +1238,14 @@ pub async fn process_vote_authorize(
                     &[current_authorized_voter, vote_state.authorized_withdrawer],
                     &authorized.pubkey(),
                 )?;
-                if let Some(signer) = new_authorized_signer {
-                    if signer.is_interactive() {
-                        return Err(CliError::BadParameter(format!(
-                            "invalid new authorized vote signer {new_authorized_pubkey:?}. \
-                             Interactive vote signers not supported"
-                        ))
-                        .into());
-                    }
+                if let Some(signer) = new_authorized_signer
+                    && signer.is_interactive()
+                {
+                    return Err(CliError::BadParameter(format!(
+                        "invalid new authorized vote signer {new_authorized_pubkey:?}. \
+                         Interactive vote signers not supported"
+                    ))
+                    .into());
                 }
             }
         }
@@ -1615,31 +1615,21 @@ pub async fn process_show_vote_account(
         .and_then(|feature| feature.activated_at);
     let tvc_activation_epoch = tvc_activation_slot.map(|s| epoch_schedule.get_epoch(s));
 
-    let mut votes: Vec<CliLandedVote> = vec![];
-    let mut epoch_voting_history: Vec<CliEpochVotingHistory> = vec![];
-    if !vote_state.votes.is_empty() {
-        for vote in &vote_state.votes {
-            votes.push(vote.into());
-        }
-        for (epoch, credits, prev_credits) in vote_state.epoch_credits.iter().copied() {
-            let credits_earned = credits.saturating_sub(prev_credits);
-            let slots_in_epoch = epoch_schedule.get_slots_in_epoch(epoch);
-            let is_tvc_active = tvc_activation_epoch.map(|e| epoch >= e).unwrap_or_default();
-            let max_credits_per_slot = if is_tvc_active {
-                VOTE_CREDITS_MAXIMUM_PER_SLOT
-            } else {
-                1
-            };
-            epoch_voting_history.push(CliEpochVotingHistory {
-                epoch,
-                slots_in_epoch,
-                credits_earned,
-                credits,
-                prev_credits,
-                max_credits_per_slot,
-            });
-        }
-    }
+    let ag_is_active = get_feature_is_active(rpc_client, &alpenglow::id())
+        .await
+        .unwrap_or(false);
+    let ag_genesis_cert = if ag_is_active {
+        rpc_client.get_ag_genesis_cert().await?
+    } else {
+        None
+    };
+    let votes_observed = VotesObserved::new(&vote_state, &ag_genesis_cert);
+    let epoch_voting_history = get_epoch_history(
+        &epoch_schedule,
+        &vote_state,
+        &ag_genesis_cert,
+        tvc_activation_epoch,
+    );
 
     let epoch_rewards = if let Some(num_epochs) = with_rewards {
         match crate::stake::fetch_epoch_rewards(
@@ -1666,10 +1656,13 @@ pub async fn process_show_vote_account(
         authorized_voters: (&vote_state.authorized_voters).into(),
         authorized_withdrawer: vote_state.authorized_withdrawer.to_string(),
         credits: vote_state.credits(),
-        commission: (vote_state.inflation_rewards_commission_bps / 100) as u8,
+        commission: vote_state
+            .inflation_rewards_commission_bps
+            .div_ceil(100)
+            .min(u8::MAX as u16) as u8,
         root_slot: vote_state.root_slot,
         recent_timestamp: vote_state.last_timestamp.clone(),
-        votes,
+        votes_observed,
         epoch_voting_history,
         use_lamports_unit,
         use_csv,
@@ -1835,13 +1828,12 @@ pub async fn process_close_vote_account(
         .into_iter()
         .chain(vote_account_status.delinquent)
         .next()
+        && vote_account.activated_stake != 0
     {
-        if vote_account.activated_stake != 0 {
-            return Err(format!(
-                "Cannot close a vote account with active stake: {vote_account_pubkey}"
-            )
-            .into());
-        }
+        return Err(format!(
+            "Cannot close a vote account with active stake: {vote_account_pubkey}"
+        )
+        .into());
     }
 
     let latest_blockhash = rpc_client.get_latest_blockhash().await?;

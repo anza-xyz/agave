@@ -18,9 +18,9 @@ use {
         deploy::deploy_program,
         invoke_context::{EnvironmentConfig, InvokeContext},
         loaded_programs::{
-            LoadProgramMetrics, ProgramCacheForTxBatch, ProgramRuntimeEnvironment,
-            ProgramRuntimeEnvironments,
+            ProgramCacheForTxBatch, ProgramRuntimeEnvironment, ProgramRuntimeEnvironments,
         },
+        program_metrics::LoadProgramMetrics,
         sysvar_cache::SysvarCache,
     },
     solana_pubkey::Pubkey,
@@ -83,13 +83,13 @@ impl Bank {
             authority_address: buffer_authority,
         } = bincode::deserialize(&source.buffer_account.data()[..buffer_metadata_size])?
         {
-            if let Some(provided_authority) = upgrade_authority_address {
-                if upgrade_authority_address != buffer_authority {
-                    return Err(CoreBpfMigrationError::UpgradeAuthorityMismatch(
-                        provided_authority,
-                        buffer_authority,
-                    ));
-                }
+            if let Some(provided_authority) = upgrade_authority_address
+                && upgrade_authority_address != buffer_authority
+            {
+                return Err(CoreBpfMigrationError::UpgradeAuthorityMismatch(
+                    provided_authority,
+                    buffer_authority,
+                ));
             }
 
             let elf = &source.buffer_account.data()[buffer_metadata_size..];
@@ -198,6 +198,7 @@ impl Bank {
                 &mut load_program_metrics,
                 dummy_invoke_context.program_cache_for_tx_batch,
                 ProgramRuntimeEnvironment::clone(&program_runtime_environment),
+                false, // disable_sbpf_v0_v1_v2_deployment // explicitly continue to allow them for core program migrations
                 program_id,
                 &bpf_loader_upgradeable::id(),
                 // The size of the program cache entry is the size of the program account
@@ -519,9 +520,7 @@ pub(crate) mod tests {
         agave_feature_set::FeatureSet,
         agave_snapshots::snapshot_config::SnapshotConfig,
         assert_matches::assert_matches,
-        solana_account::{
-            AccountSharedData, ReadableAccount, WritableAccount, state_traits::StateMut,
-        },
+        solana_account::{AccountSharedData, ReadableAccount, WritableAccount},
         solana_accounts_db::accounts_db::ACCOUNTS_DB_CONFIG_FOR_TESTING,
         solana_builtins::{
             BUILTINS,
@@ -537,11 +536,8 @@ pub(crate) mod tests {
         solana_message::Message,
         solana_native_token::LAMPORTS_PER_SOL,
         solana_program_runtime::{
-            loaded_programs::{ProgramCacheEntry, ProgramCacheEntryType},
-            solana_sbpf::{
-                self, memory_region::MemoryMapping, program::BuiltinFunctionDefinition,
-                vm::ContextObject,
-            },
+            program_cache_entry::{ProgramCacheEntry, ProgramCacheEntryType},
+            solana_sbpf::{self, program::BuiltinFunctionDefinition, vm::ContextObject},
         },
         solana_pubkey::Pubkey,
         solana_sdk_ids::{bpf_loader, bpf_loader_upgradeable, native_loader, system_program},
@@ -561,12 +557,19 @@ pub(crate) mod tests {
             _: u64,
             _: u64,
             _: u64,
-            _: &mut MemoryMapping,
         ) -> Result<u64, Box<dyn std::error::Error>> {
             Ok(0)
         }
 
-        fn vm(_: *mut solana_sbpf::vm::EbpfVm<C>, _: u64, _: u64, _: u64, _: u64, _: u64) {}
+        fn vm(
+            _: solana_sbpf::vm::EncryptedHostAddressToEbpfVm<C>,
+            _: u64,
+            _: u64,
+            _: u64,
+            _: u64,
+            _: u64,
+        ) {
+        }
         fn codegen(_: &mut solana_sbpf::program::JitCompiler<C>) {}
     }
 
@@ -713,7 +716,8 @@ pub(crate) mod tests {
 
             // Program account has the correct state, with a pointer to its program
             // data address.
-            let program_account_state: UpgradeableLoaderState = program_account.state().unwrap();
+            let program_account_state: UpgradeableLoaderState =
+                bincode::deserialize(program_account.data()).unwrap();
             assert_eq!(
                 program_account_state,
                 UpgradeableLoaderState::Program {
@@ -1080,7 +1084,7 @@ pub(crate) mod tests {
         let program_data_address = get_program_data_address(&builtin_id);
         let program_data_account = bank.get_account(&program_data_address).unwrap();
         let program_data_account_state: UpgradeableLoaderState =
-            program_data_account.state().unwrap();
+            bincode::deserialize(program_data_account.data()).unwrap();
         assert_eq!(
             program_data_account_state,
             UpgradeableLoaderState::ProgramData {
@@ -1254,7 +1258,7 @@ pub(crate) mod tests {
         let program_data_address = get_program_data_address(&program_address);
         let program_data_account = bank.get_account(&program_data_address).unwrap();
         let program_data_account_state: UpgradeableLoaderState =
-            program_data_account.state().unwrap();
+            bincode::deserialize(program_data_account.data()).unwrap();
         assert_eq!(
             program_data_account_state,
             UpgradeableLoaderState::ProgramData {
@@ -2166,24 +2170,22 @@ pub(crate) mod tests {
         let (_tmp_dir, accounts_dir) = create_tmp_accounts_dir_for_tests();
         let bank_snapshots_dir = tempfile::TempDir::new().unwrap();
         let snapshot_archives_dir = tempfile::TempDir::new().unwrap();
-        let snapshot_archive_format = SnapshotConfig::default().archive_format;
 
-        let full_snapshot_archive_info = bank_to_full_snapshot_archive(
-            bank_snapshots_dir.path(),
-            &bank,
-            None,
-            snapshot_archives_dir.path(),
-            snapshot_archives_dir.path(),
-            snapshot_archive_format,
-        )
-        .unwrap();
+        let snapshot_config = SnapshotConfig {
+            full_snapshot_archives_dir: snapshot_archives_dir.path().to_path_buf(),
+            incremental_snapshot_archives_dir: snapshot_archives_dir.path().to_path_buf(),
+            bank_snapshots_dir: bank_snapshots_dir.path().to_path_buf(),
+            ..SnapshotConfig::default()
+        };
+        let full_snapshot_archive_info =
+            bank_to_full_snapshot_archive(&snapshot_config, &bank).unwrap();
 
         // Restore the bank from the snapshot and run checks.
         let roundtrip_bank = bank_from_snapshot_archives(
             &[accounts_dir],
-            bank_snapshots_dir.path(),
             &full_snapshot_archive_info,
             None,
+            &snapshot_config,
             &genesis_config,
             &RuntimeConfig::default(),
             None,

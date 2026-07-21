@@ -12,7 +12,7 @@ pub(crate) type ShaqError = shaq::error::Error;
 pub const MAX_WORKERS: usize = 64;
 
 /// Protocol version.
-pub(crate) const VERSION: u64 = 3;
+pub(crate) const VERSION: u64 = 4;
 pub(crate) const LOGON_SUCCESS: u8 = 0x01;
 pub(crate) const LOGON_FAILURE: u8 = 0x02;
 pub(crate) const MAX_ALLOCATOR_HANDLES: usize = 128;

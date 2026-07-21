@@ -1,5 +1,7 @@
 //! The `poh_service` module implements a service that records the passing of
 //! "ticks", a measure of time in the PoH stream
+#[cfg(target_os = "linux")]
+use agave_cpu_utils::{CpuId, set_cpu_affinity};
 use {
     crate::{
         poh_controller::{PohServiceMessage, PohServiceMessageGuard, PohServiceMessageReceiver},
@@ -37,7 +39,10 @@ const TARGET_HASH_BATCH_TIME_US: u64 = 50;
 pub const DEFAULT_HASHES_PER_BATCH: u64 =
     TARGET_HASH_BATCH_TIME_US * DEFAULT_HASHES_PER_SECOND / 1_000_000;
 
-pub const DEFAULT_PINNED_CPU_CORE: usize = 0;
+#[cfg(target_os = "linux")]
+pub const DEFAULT_PINNED_CPU_CORE: Option<usize> = Some(0);
+#[cfg(not(target_os = "linux"))]
+pub const DEFAULT_PINNED_CPU_CORE: Option<usize> = None;
 
 const TARGET_SLOT_ADJUSTMENT_NS: u64 = 50_000_000;
 
@@ -100,14 +105,17 @@ impl PohService {
         poh_config: &PohConfig,
         poh_exit: Arc<AtomicBool>,
         ticks_per_slot: u64,
-        pinned_cpu_core: usize,
+        pinned_cpu_core: Option<usize>,
         hashes_per_batch: u64,
         mut record_receiver: RecordReceiver,
         poh_service_receiver: PohServiceMessageReceiver,
         migration_status: Arc<MigrationStatus>,
         record_receiver_sender: Sender<RecordReceiver>,
     ) -> Self {
+        migration_status.set_poh_service_started();
         let poh_config = poh_config.clone();
+        #[cfg(not(target_os = "linux"))]
+        let _ = pinned_cpu_core;
         let tick_producer = Builder::new()
             .name("solPohTickProd".to_string())
             .spawn(move || {
@@ -143,11 +151,18 @@ impl PohService {
                         )
                     }
                 } else {
-                    // PoH service runs in a tight loop, generating hashes as fast as possible.
-                    // Let's dedicate one of the CPU cores to this thread so that it can gain
-                    // from cache performance.
-                    if let Some(cores) = core_affinity::get_core_ids() {
-                        core_affinity::set_for_current(cores[pinned_cpu_core]);
+                    #[cfg(target_os = "linux")]
+                    if let Some(pinned_cpu_core) = pinned_cpu_core {
+                        // PoH service runs in a tight loop, generating hashes as fast as possible.
+                        // Let's dedicate one of the CPU cores to this thread so that it can gain
+                        // from cache performance.
+                        let pinned_cpu = CpuId::new(pinned_cpu_core).unwrap();
+                        set_cpu_affinity(None, [pinned_cpu]).unwrap_or_else(|e| {
+                            panic!(
+                                "Failed to set CPU affinity for POH service to CPU \
+                                 {pinned_cpu_core}: {e:?}. This is critical for performance."
+                            )
+                        });
                     }
                     Self::tick_producer(
                         poh_recorder,
@@ -300,8 +315,8 @@ impl PohService {
         if let Ok(record) = record {
             match poh_recorder.write().unwrap().record(
                 record.bank_id,
-                record.mixins,
-                record.transaction_batches,
+                record.mixin,
+                record.transactions,
             ) {
                 Ok(record_summary) => {
                     if record_receiver
@@ -447,8 +462,8 @@ impl PohService {
                 loop {
                     match poh_recorder_l.record(
                         record.bank_id,
-                        record.mixins,
-                        std::mem::take(&mut record.transaction_batches),
+                        record.mixin,
+                        std::mem::take(&mut record.transactions),
                     ) {
                         Ok(record_summary) => {
                             if record_receiver.should_shutdown(
@@ -602,14 +617,14 @@ impl PohService {
                 }
             }
 
-            if let Some(service_message) = service_message {
-                if !should_exit {
-                    Self::handle_service_message(&poh_recorder, service_message, record_receiver);
-                    target_ns_per_tick = Self::target_tick_ns_adjusted(
-                        ticks_per_slot,
-                        Self::target_tick_ns_reconciled(&poh_recorder, poh_config),
-                    );
-                }
+            if let Some(service_message) = service_message
+                && !should_exit
+            {
+                Self::handle_service_message(&poh_recorder, service_message, record_receiver);
+                target_ns_per_tick = Self::target_tick_ns_adjusted(
+                    ticks_per_slot,
+                    Self::target_tick_ns_reconciled(&poh_recorder, poh_config),
+                );
             }
 
             // If exit signal is set and there are no more records to process, exit.
@@ -728,7 +743,7 @@ mod tests {
             PohConfig::default().target_tick_duration.as_micros() as u64;
         let target_tick_duration = Duration::from_micros(default_target_tick_duration);
         let poh_config = PohConfig {
-            hashes_per_tick: *bank.hashes_per_tick(),
+            hashes_per_tick: bank.hashes_per_tick(),
             target_tick_duration,
             target_tick_count: None,
         };
@@ -758,8 +773,8 @@ mod tests {
         poh_controller.reset(bank.clone(), None).unwrap();
         record_sender
             .try_send(Record {
-                mixins: vec![Hash::new_unique()],
-                transaction_batches: vec![vec![VersionedTransaction::from(test_tx())]],
+                mixin: Hash::new_unique(),
+                transactions: vec![VersionedTransaction::from(test_tx())],
                 bank_id: bank.bank_id(),
             })
             .unwrap();

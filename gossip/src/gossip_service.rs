@@ -9,20 +9,28 @@ use {
     },
     crossbeam_channel::Sender,
     solana_keypair::Keypair,
-    solana_net_utils::{DEFAULT_IP_ECHO_SERVER_THREADS, SocketAddrSpace},
-    solana_perf::recycler::Recycler,
+    solana_net_utils::{
+        DEFAULT_IP_ECHO_SERVER_THREADS, PinnedXdpSender as XdpSender, SocketAddrSpace,
+        TrySendError,
+        multihomed_sockets::{BindIpAddrs, MultihomedSocketProvider, SocketProvider},
+    },
+    solana_perf::{packet::PacketBatch, recycler::Recycler},
     solana_pubkey::Pubkey,
-    solana_runtime::bank_forks::BankForks,
     solana_signer::Signer,
     solana_streamer::{
         evicting_sender::EvictingSender,
-        streamer::{self, StreamerReceiveStats},
+        sendmmsg::{SendPktsError, batch_send},
+        streamer::{
+            self, PacketBatchReceiver, ResponseSender, StreamerReceiveStats,
+            filter_packets_by_socket_addr_space, responder_loop,
+        },
     },
     std::{
         collections::HashSet,
-        net::{SocketAddr, TcpListener, UdpSocket},
+        io,
+        net::{IpAddr, SocketAddr, TcpListener, UdpSocket},
         sync::{
-            Arc, RwLock,
+            Arc,
             atomic::{AtomicBool, Ordering},
         },
         thread::{self, Builder, JoinHandle, sleep},
@@ -39,8 +47,9 @@ pub struct GossipService {
 impl GossipService {
     pub fn new(
         cluster_info: &Arc<ClusterInfo>,
-        bank_forks: Option<Arc<RwLock<BankForks>>>,
+        mut epoch_specs: Option<Box<dyn EpochSpecs>>,
         gossip_sockets: Arc<[UdpSocket]>,
+        xdp_sender: Option<XdpSender>,
         gossip_validators: Option<HashSet<Pubkey>>,
         should_check_duplicate_instance: bool,
         stats_reporter_sender: Option<Sender<Box<dyn FnOnce() + Send>>>,
@@ -51,7 +60,7 @@ impl GossipService {
         trace!(
             "GossipService: id: {}, listening on primary interface: {:?}, all available \
              interfaces: {:?}",
-            &cluster_info.id(),
+            cluster_info.id(),
             gossip_sockets[0].local_addr().unwrap(),
             gossip_sockets,
         );
@@ -72,7 +81,7 @@ impl GossipService {
         let (consume_sender, listen_receiver) =
             EvictingSender::new_bounded(GOSSIP_CHANNEL_CAPACITY);
         let t_socket_consume = cluster_info.clone().start_socket_consume_thread(
-            bank_forks.clone(),
+            epoch_specs.as_ref().map(|es| es.clone_box()),
             request_receiver,
             consume_sender,
             exit.clone(),
@@ -80,38 +89,42 @@ impl GossipService {
         let (response_sender, response_receiver) =
             EvictingSender::new_bounded(GOSSIP_CHANNEL_CAPACITY);
         let t_listen = cluster_info.clone().listen(
-            bank_forks.clone(),
+            epoch_specs.as_ref().map(|es| es.clone_box()),
             listen_receiver,
             response_sender.clone(),
             should_check_duplicate_instance,
             exit.clone(),
         );
         let t_gossip = cluster_info.clone().gossip(
-            bank_forks.clone(),
+            epoch_specs.as_ref().map(|es| es.clone_box()),
             response_sender,
             gossip_validators,
             exit.clone(),
         );
-        let t_responder = streamer::responder_atomic(
+        let gossip_responder_socket = match xdp_sender {
+            Some(xdp_sender) => GossipResponderSocket::Xdp(xdp_sender),
+            None => GossipResponderSocket::Udp {
+                sockets: gossip_sockets.clone(),
+                bind_ip_addrs: cluster_info.bind_ip_addrs(),
+                socket_addr_space,
+            },
+        };
+        let t_responder = run_responder(
             "Gossip",
-            gossip_sockets,
-            cluster_info.bind_ip_addrs(),
+            gossip_responder_socket,
             response_receiver,
-            socket_addr_space,
             stats_reporter_sender,
         );
         let t_metrics = Builder::new()
             .name("solGossipMetr".to_string())
             .spawn({
                 let cluster_info = cluster_info.clone();
-                let mut epoch_specs = bank_forks.map(EpochSpecs::from);
                 move || {
                     while !exit.load(Ordering::Relaxed) {
                         sleep(SUBMIT_GOSSIP_STATS_INTERVAL);
                         let stakes = epoch_specs
                             .as_mut()
-                            .map(|epoch_specs| epoch_specs.current_epoch_staked_nodes())
-                            .cloned()
+                            .map(|es| es.current_epoch_staked_nodes())
                             .unwrap_or_default();
 
                         submit_gossip_stats(&cluster_info.stats, &cluster_info.gossip, &stakes);
@@ -148,7 +161,7 @@ pub fn discover_validators(
     const DISCOVER_CLUSTER_TIMEOUT: Duration = Duration::from_secs(120);
     let (_all_peers, validators) = discover_peers(
         None,
-        &vec![*entrypoint],
+        &[*entrypoint],
         Some(num_nodes),
         DISCOVER_CLUSTER_TIMEOUT,
         None,
@@ -162,7 +175,7 @@ pub fn discover_validators(
 
 pub fn discover_peers(
     keypair: Option<Keypair>,
-    entrypoints: &Vec<SocketAddr>,
+    entrypoints: &[SocketAddr],
     num_nodes: Option<usize>, // num_nodes only counts validators, excludes spy nodes
     timeout: Duration,
     find_nodes_by_pubkey: Option<&[Pubkey]>,
@@ -332,11 +345,135 @@ pub fn make_node(
         None,
         gossip_sockets,
         None,
+        None,
         should_check_duplicate_instance,
         None,
         exit,
     );
     (gossip_service, ip_echo, cluster_info)
+}
+
+enum GossipResponderSocket {
+    Udp {
+        sockets: Arc<[UdpSocket]>,
+        bind_ip_addrs: Arc<BindIpAddrs>,
+        socket_addr_space: SocketAddrSpace,
+    },
+    Xdp(XdpSender),
+}
+
+fn run_responder(
+    name: &'static str,
+    socket: GossipResponderSocket,
+    r: PacketBatchReceiver,
+    stats_reporter_sender: Option<Sender<Box<dyn FnOnce() + Send>>>,
+) -> JoinHandle<()> {
+    Builder::new()
+        .name(format!("solRspndr{name}"))
+        .spawn(move || match socket {
+            GossipResponderSocket::Udp {
+                sockets,
+                bind_ip_addrs,
+                socket_addr_space,
+            } => responder_loop(
+                name,
+                r,
+                GossipUdpSocketProvider::new(sockets, bind_ip_addrs, socket_addr_space),
+                stats_reporter_sender,
+            ),
+            GossipResponderSocket::Xdp(xdp_sender) => {
+                responder_loop(name, r, GossipXdpSender(xdp_sender), stats_reporter_sender)
+            }
+        })
+        .unwrap()
+}
+
+struct GossipUdpSocketProvider {
+    socket_provider: MultihomedSocketProvider,
+    socket_addr_space: SocketAddrSpace,
+}
+
+impl GossipUdpSocketProvider {
+    pub fn new(
+        sockets: Arc<[UdpSocket]>,
+        bind_ip_addrs: Arc<BindIpAddrs>,
+        socket_addr_space: SocketAddrSpace,
+    ) -> Self {
+        Self {
+            socket_provider: MultihomedSocketProvider::new(sockets, bind_ip_addrs),
+            socket_addr_space,
+        }
+    }
+}
+
+impl ResponseSender for GossipUdpSocketProvider {
+    fn send_batch(&self, batch: PacketBatch) -> std::result::Result<(), SendPktsError> {
+        let packets = filter_packets_by_socket_addr_space(batch.iter(), &self.socket_addr_space);
+        let sock = self.socket_provider.current_socket_ref();
+        batch_send(sock, packets.collect::<Vec<_>>())
+    }
+}
+
+struct GossipXdpSender(XdpSender);
+
+impl ResponseSender for GossipXdpSender {
+    fn send_batch(&self, batch: PacketBatch) -> std::result::Result<(), SendPktsError> {
+        let packets = batch.iter().filter_map(|pkt| {
+            let addr = pkt.meta().socket_addr();
+            let data = pkt.data(..)?;
+
+            // For XDP, we don't support IPv6 and no private or loopback IPv4 addresses.
+            match addr.ip() {
+                IpAddr::V4(ip) if !ip.is_private() && !ip.is_loopback() => Some((data, addr)),
+                _ => None,
+            }
+        });
+
+        let mut num_sent = 0;
+        let mut num_dropped_full = 0;
+        let mut num_dropped_disconnected = 0;
+
+        for (idx, (payload, addr)) in packets.enumerate() {
+            match self
+                .0
+                .try_send(idx, addr, bytes::Bytes::copy_from_slice(payload))
+            {
+                Ok(()) => {
+                    num_sent += 1;
+                }
+                Err(TrySendError::Full(_)) => {
+                    num_dropped_full += 1;
+                    continue;
+                }
+                Err(TrySendError::Disconnected(_)) => {
+                    num_dropped_disconnected += 1;
+                    continue;
+                }
+            }
+        }
+
+        let num_failed = num_dropped_full + num_dropped_disconnected;
+        if num_failed > 0 {
+            let kind = if num_dropped_disconnected != 0 {
+                io::ErrorKind::BrokenPipe
+            } else {
+                io::ErrorKind::WouldBlock
+            };
+            return Err(SendPktsError::IoError(
+                io::Error::new(
+                    kind,
+                    format!(
+                        "XDP sender failed to enqueue {num_failed} out of {num_total} gossip \
+                         packets ({num_dropped_full} full queue, {num_dropped_disconnected} \
+                         disconnected)",
+                        num_total = num_sent + num_failed
+                    ),
+                ),
+                num_failed,
+            ));
+        }
+        Ok(())
+    }
 }
 
 #[cfg(test)]
@@ -360,6 +497,7 @@ mod tests {
             &c,
             None,
             tn.sockets.gossip,
+            None,
             None,
             true, // should_check_duplicate_instance
             None,

@@ -2,16 +2,14 @@ use {
     super::leader_slot_timing_metrics::LeaderExecuteAndCommitTimings,
     itertools::Itertools,
     solana_cost_model::cost_model::CostModel,
-    solana_ledger::{
-        blockstore_processor::TransactionStatusSender,
-        transaction_balances::compile_collected_balances,
-    },
     solana_measure::measure_us,
     solana_runtime::{
         bank::{Bank, ProcessedTransactionCounts},
         bank_utils,
         prioritization_fee_cache::PrioritizationFeeCache,
+        transaction_balances::compile_collected_balances,
         transaction_batch::TransactionBatch,
+        transaction_execution::TransactionStatusSender,
         vote_sender_types::{ReplayVoteSendType, ReplayVoteSender},
     },
     solana_runtime_transaction::transaction_with_meta::TransactionWithMeta,
@@ -80,9 +78,8 @@ impl Committer {
         let commit_transaction_statuses = commit_results
             .iter()
             .map(|commit_result| match commit_result {
-                // reports actual execution CUs, and actual loaded accounts size for
-                // transaction committed to block. qos_service uses these information to adjust
-                // reserved block space.
+                // Reports actual execution CUs and loaded accounts size for
+                // actual-cost tracking of transactions committed to the block.
                 Ok(committed_tx) => CommitTransactionDetails::Committed {
                     compute_units: committed_tx.executed_units,
                     loaded_accounts_data_size: committed_tx
@@ -104,11 +101,11 @@ impl Committer {
             );
 
             if let Some(prioritization_fee_cache) = self.prioritization_fee_cache.as_ref() {
-                let committed_transactions = commit_results
+                let fee_paying_transactions = commit_results
                     .iter()
                     .zip(batch.sanitized_transactions())
-                    .filter_map(|(commit_result, tx)| commit_result.was_committed().then_some(tx));
-                prioritization_fee_cache.update(bank, committed_transactions);
+                    .filter_map(|(commit_result, tx)| commit_result.was_fee_paying().then_some(tx));
+                prioritization_fee_cache.update(bank, fee_paying_transactions);
             }
 
             self.collect_balances_and_send_status_batch(

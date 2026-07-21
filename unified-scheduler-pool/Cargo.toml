@@ -9,9 +9,14 @@ homepage = { workspace = true }
 license = { workspace = true }
 edition = { workspace = true }
 
+[package.metadata.docs.rs]
+targets = ["x86_64-unknown-linux-gnu"]
+all-features = true
+rustdoc-args = ["--cfg=docsrs"]
+
 [features]
 agave-unstable-api = []
-dev-context-only-utils = []
+dev-context-only-utils = ["solana-runtime/dev-context-only-utils"]
 
 [dependencies]
 agave-banking-stage-ingress-types = { workspace = true }
@@ -21,12 +26,10 @@ crossbeam-channel = { workspace = true }
 dashmap = { workspace = true }
 derive-where = { workspace = true }
 derive_more = { workspace = true }
-dyn-clone = { workspace = true }
 log = { workspace = true }
 scopeguard = { workspace = true }
 solana-clock = { workspace = true }
 solana-cost-model = { workspace = true }
-solana-ledger = { workspace = true }
 solana-metrics = { workspace = true }
 solana-poh = { workspace = true }
 solana-pubkey = { workspace = true }
@@ -38,7 +41,6 @@ solana-transaction = { workspace = true }
 solana-transaction-error = { workspace = true }
 solana-unified-scheduler-logic = { workspace = true }
 static_assertions = { workspace = true }
-trait-set = { workspace = true }
 unwrap_none = { workspace = true }
 
 [dev-dependencies]
@@ -51,5 +53,8 @@ solana-keypair = { workspace = true }
 solana-runtime = { path = "../runtime", features = ["agave-unstable-api", "dev-context-only-utils"] }
 solana-system-transaction = { workspace = true }
 # See order-crates-for-publishing.py for using this unusual `path = "."`
-solana-unified-scheduler-pool = { path = ".", features = ["dev-context-only-utils"] }
+solana-unified-scheduler-pool = { path = ".", features = ["agave-unstable-api", "dev-context-only-utils"] }
 test-case = { workspace = true }
+
+[lints]
+workspace = true

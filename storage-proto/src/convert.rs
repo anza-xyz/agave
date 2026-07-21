@@ -25,6 +25,7 @@ use {
         convert::{TryFrom, TryInto},
         str::FromStr,
     },
+    wincode::ReadError,
 };
 
 pub mod generated {
@@ -43,6 +44,14 @@ pub mod tx_by_addr {
 
 pub mod entries {
     include!(concat!(env!("OUT_DIR"), "/solana.storage.entries.rs"));
+}
+
+#[derive(Debug, thiserror::Error)]
+#[error("failed to decode {bytes:?}: {source}")]
+pub struct DecodeError {
+    pub bytes: Vec<u8>,
+    #[source]
+    pub source: ReadError,
 }
 
 impl From<Vec<Reward>> for generated::Rewards {
@@ -69,14 +78,14 @@ impl From<generated::Rewards> for Vec<Reward> {
     }
 }
 
-impl From<generated::Rewards> for (Vec<Reward>, Option<u64>) {
+impl From<generated::Rewards> for RewardsAndNumPartitions {
     fn from(rewards: generated::Rewards) -> Self {
-        (
-            rewards.rewards.into_iter().map(|r| r.into()).collect(),
-            rewards
+        Self {
+            rewards: rewards.rewards.into_iter().map(|r| r.into()).collect(),
+            num_partitions: rewards
                 .num_partitions
                 .map(|generated::NumPartitions { num_partitions }| num_partitions),
-        )
+        }
     }
 }
 
@@ -120,6 +129,7 @@ impl From<Reward> for generated::Reward {
                 Some(RewardType::Rent) => generated::RewardType::Rent,
                 Some(RewardType::Staking) => generated::RewardType::Staking,
                 Some(RewardType::Voting) => generated::RewardType::Voting,
+                Some(RewardType::DeactivatedStake) => generated::RewardType::DeactivatedStake,
             } as i32,
             commission: reward.commission.map(|c| c.to_string()).unwrap_or_default(),
             commission_bps: reward
@@ -142,6 +152,7 @@ impl From<generated::Reward> for Reward {
                 2 => Some(RewardType::Rent),
                 3 => Some(RewardType::Staking),
                 4 => Some(RewardType::Voting),
+                5 => Some(RewardType::DeactivatedStake),
                 _ => None,
             },
             commission: reward.commission.parse::<u8>().ok(),
@@ -183,7 +194,7 @@ impl From<VersionedConfirmedBlock> for generated::ConfirmedBlock {
 }
 
 impl TryFrom<generated::ConfirmedBlock> for ConfirmedBlock {
-    type Error = bincode::Error;
+    type Error = DecodeError;
     fn try_from(
         confirmed_block: generated::ConfirmedBlock,
     ) -> std::result::Result<Self, Self::Error> {
@@ -237,7 +248,7 @@ impl From<VersionedTransactionWithStatusMeta> for generated::ConfirmedTransactio
 }
 
 impl TryFrom<generated::ConfirmedTransaction> for TransactionWithStatusMeta {
-    type Error = bincode::Error;
+    type Error = DecodeError;
     fn try_from(value: generated::ConfirmedTransaction) -> std::result::Result<Self, Self::Error> {
         let meta = value.meta.map(|meta| meta.try_into()).transpose()?;
         let transaction = value.transaction.expect("transaction is required").into();
@@ -468,7 +479,7 @@ impl From<TransactionStatusMeta> for generated::TransactionStatusMeta {
         let err = match status {
             Ok(()) => None,
             Err(err) => Some(generated::TransactionError {
-                err: bincode::serialize(&err).expect("transaction error to serialize to bytes"),
+                err: wincode::serialize(&err).expect("transaction error to serialize to bytes"),
             }),
         };
         let inner_instructions_none = inner_instructions.is_none();
@@ -537,7 +548,7 @@ impl From<StoredTransactionStatusMeta> for generated::TransactionStatusMeta {
 }
 
 impl TryFrom<generated::TransactionStatusMeta> for TransactionStatusMeta {
-    type Error = bincode::Error;
+    type Error = DecodeError;
 
     fn try_from(value: generated::TransactionStatusMeta) -> std::result::Result<Self, Self::Error> {
         let generated::TransactionStatusMeta {
@@ -559,9 +570,16 @@ impl TryFrom<generated::TransactionStatusMeta> for TransactionStatusMeta {
             compute_units_consumed,
             cost_units,
         } = value;
-        let status = match &err {
+        let status = match err {
             None => Ok(()),
-            Some(tx_error) => Err(bincode::deserialize(&tx_error.err)?),
+            Some(tx_error) => {
+                let tx_error =
+                    wincode::deserialize(&tx_error.err).map_err(|source| DecodeError {
+                        bytes: tx_error.err,
+                        source,
+                    })?;
+                Err(tx_error)
+            }
         };
         let inner_instructions = if inner_instructions_none {
             None
@@ -596,17 +614,17 @@ impl TryFrom<generated::TransactionStatusMeta> for TransactionStatusMeta {
                 .into_iter()
                 .map(Pubkey::try_from)
                 .collect::<Result<_, _>>()
-                .map_err(|err| {
-                    let err = format!("Invalid writable address: {err:?}");
-                    Self::Error::new(bincode::ErrorKind::Custom(err))
+                .map_err(|bytes| DecodeError {
+                    bytes,
+                    source: ReadError::Custom("Invalid writable address"),
                 })?,
             readonly: loaded_readonly_addresses
                 .into_iter()
                 .map(Pubkey::try_from)
                 .collect::<Result<_, _>>()
-                .map_err(|err| {
-                    let err = format!("Invalid readonly address: {err:?}");
-                    Self::Error::new(bincode::ErrorKind::Custom(err))
+                .map_err(|bytes| DecodeError {
+                    bytes,
+                    source: ReadError::Custom("Invalid readonly address"),
                 })?,
         };
         let return_data = if return_data_none {
@@ -782,78 +800,78 @@ impl TryFrom<tx_by_addr::TransactionError> for TransactionError {
     type Error = &'static str;
 
     fn try_from(transaction_error: tx_by_addr::TransactionError) -> Result<Self, Self::Error> {
-        if transaction_error.transaction_error == 8 {
-            if let Some(instruction_error) = transaction_error.instruction_error {
-                if let Some(custom) = instruction_error.custom {
-                    return Ok(TransactionError::InstructionError(
-                        instruction_error.index as u8,
-                        InstructionError::Custom(custom.custom),
-                    ));
-                }
-
-                let ie = match instruction_error.error {
-                    0 => InstructionError::GenericError,
-                    1 => InstructionError::InvalidArgument,
-                    2 => InstructionError::InvalidInstructionData,
-                    3 => InstructionError::InvalidAccountData,
-                    4 => InstructionError::AccountDataTooSmall,
-                    5 => InstructionError::InsufficientFunds,
-                    6 => InstructionError::IncorrectProgramId,
-                    7 => InstructionError::MissingRequiredSignature,
-                    8 => InstructionError::AccountAlreadyInitialized,
-                    9 => InstructionError::UninitializedAccount,
-                    10 => InstructionError::UnbalancedInstruction,
-                    11 => InstructionError::ModifiedProgramId,
-                    12 => InstructionError::ExternalAccountLamportSpend,
-                    13 => InstructionError::ExternalAccountDataModified,
-                    14 => InstructionError::ReadonlyLamportChange,
-                    15 => InstructionError::ReadonlyDataModified,
-                    16 => InstructionError::DuplicateAccountIndex,
-                    17 => InstructionError::ExecutableModified,
-                    18 => InstructionError::RentEpochModified,
-                    #[allow(deprecated)]
-                    19 => InstructionError::NotEnoughAccountKeys,
-                    20 => InstructionError::AccountDataSizeChanged,
-                    21 => InstructionError::AccountNotExecutable,
-                    22 => InstructionError::AccountBorrowFailed,
-                    23 => InstructionError::AccountBorrowOutstanding,
-                    24 => InstructionError::DuplicateAccountOutOfSync,
-                    26 => InstructionError::InvalidError,
-                    27 => InstructionError::ExecutableDataModified,
-                    28 => InstructionError::ExecutableLamportChange,
-                    29 => InstructionError::ExecutableAccountNotRentExempt,
-                    30 => InstructionError::UnsupportedProgramId,
-                    31 => InstructionError::CallDepth,
-                    32 => InstructionError::MissingAccount,
-                    33 => InstructionError::ReentrancyNotAllowed,
-                    34 => InstructionError::MaxSeedLengthExceeded,
-                    35 => InstructionError::InvalidSeeds,
-                    36 => InstructionError::InvalidRealloc,
-                    37 => InstructionError::ComputationalBudgetExceeded,
-                    38 => InstructionError::PrivilegeEscalation,
-                    39 => InstructionError::ProgramEnvironmentSetupFailure,
-                    40 => InstructionError::ProgramFailedToComplete,
-                    41 => InstructionError::ProgramFailedToCompile,
-                    42 => InstructionError::Immutable,
-                    43 => InstructionError::IncorrectAuthority,
-                    44 => InstructionError::BorshIoError,
-                    45 => InstructionError::AccountNotRentExempt,
-                    46 => InstructionError::InvalidAccountOwner,
-                    47 => InstructionError::ArithmeticOverflow,
-                    48 => InstructionError::UnsupportedSysvar,
-                    49 => InstructionError::IllegalOwner,
-                    50 => InstructionError::MaxAccountsDataAllocationsExceeded,
-                    51 => InstructionError::MaxAccountsExceeded,
-                    52 => InstructionError::MaxInstructionTraceLengthExceeded,
-                    53 => InstructionError::BuiltinProgramsMustConsumeComputeUnits,
-                    _ => return Err("Invalid InstructionError"),
-                };
-
+        if transaction_error.transaction_error == 8
+            && let Some(instruction_error) = transaction_error.instruction_error
+        {
+            if let Some(custom) = instruction_error.custom {
                 return Ok(TransactionError::InstructionError(
                     instruction_error.index as u8,
-                    ie,
+                    InstructionError::Custom(custom.custom),
                 ));
             }
+
+            let ie = match instruction_error.error {
+                0 => InstructionError::GenericError,
+                1 => InstructionError::InvalidArgument,
+                2 => InstructionError::InvalidInstructionData,
+                3 => InstructionError::InvalidAccountData,
+                4 => InstructionError::AccountDataTooSmall,
+                5 => InstructionError::InsufficientFunds,
+                6 => InstructionError::IncorrectProgramId,
+                7 => InstructionError::MissingRequiredSignature,
+                8 => InstructionError::AccountAlreadyInitialized,
+                9 => InstructionError::UninitializedAccount,
+                10 => InstructionError::UnbalancedInstruction,
+                11 => InstructionError::ModifiedProgramId,
+                12 => InstructionError::ExternalAccountLamportSpend,
+                13 => InstructionError::ExternalAccountDataModified,
+                14 => InstructionError::ReadonlyLamportChange,
+                15 => InstructionError::ReadonlyDataModified,
+                16 => InstructionError::DuplicateAccountIndex,
+                17 => InstructionError::ExecutableModified,
+                18 => InstructionError::RentEpochModified,
+                #[allow(deprecated)]
+                19 => InstructionError::NotEnoughAccountKeys,
+                20 => InstructionError::AccountDataSizeChanged,
+                21 => InstructionError::AccountNotExecutable,
+                22 => InstructionError::AccountBorrowFailed,
+                23 => InstructionError::AccountBorrowOutstanding,
+                24 => InstructionError::DuplicateAccountOutOfSync,
+                26 => InstructionError::InvalidError,
+                27 => InstructionError::ExecutableDataModified,
+                28 => InstructionError::ExecutableLamportChange,
+                29 => InstructionError::ExecutableAccountNotRentExempt,
+                30 => InstructionError::UnsupportedProgramId,
+                31 => InstructionError::CallDepth,
+                32 => InstructionError::MissingAccount,
+                33 => InstructionError::ReentrancyNotAllowed,
+                34 => InstructionError::MaxSeedLengthExceeded,
+                35 => InstructionError::InvalidSeeds,
+                36 => InstructionError::InvalidRealloc,
+                37 => InstructionError::ComputationalBudgetExceeded,
+                38 => InstructionError::PrivilegeEscalation,
+                39 => InstructionError::ProgramEnvironmentSetupFailure,
+                40 => InstructionError::ProgramFailedToComplete,
+                41 => InstructionError::ProgramFailedToCompile,
+                42 => InstructionError::Immutable,
+                43 => InstructionError::IncorrectAuthority,
+                44 => InstructionError::BorshIoError,
+                45 => InstructionError::AccountNotRentExempt,
+                46 => InstructionError::InvalidAccountOwner,
+                47 => InstructionError::ArithmeticOverflow,
+                48 => InstructionError::UnsupportedSysvar,
+                49 => InstructionError::IllegalOwner,
+                50 => InstructionError::MaxAccountsDataAllocationsExceeded,
+                51 => InstructionError::MaxAccountsExceeded,
+                52 => InstructionError::MaxInstructionTraceLengthExceeded,
+                53 => InstructionError::BuiltinProgramsMustConsumeComputeUnits,
+                _ => return Err("Invalid InstructionError"),
+            };
+
+            return Ok(TransactionError::InstructionError(
+                instruction_error.index as u8,
+                ie,
+            ));
         }
 
         if let Some(transaction_details) = transaction_error.transaction_details {
@@ -1352,6 +1370,10 @@ mod test {
         assert_eq!(reward, gen_reward.into());
 
         reward.reward_type = Some(RewardType::Staking);
+        let gen_reward: generated::Reward = reward.clone().into();
+        assert_eq!(reward, gen_reward.into());
+
+        reward.reward_type = Some(RewardType::DeactivatedStake);
         let gen_reward: generated::Reward = reward.clone().into();
         assert_eq!(reward, gen_reward.into());
     }

@@ -269,9 +269,8 @@ impl CrdsGossipPush {
         );
         let nodes = crds_gossip::dedup_gossip_addresses(nodes)
             .into_iter()
-            .map(|(_gossip, _stake, pubkey)| pubkey)
-            .collect::<Vec<_>>();
-        if nodes.is_empty() {
+            .map(|(_gossip, stake, pubkey)| (stake, pubkey));
+        if nodes.len() == 0 {
             return;
         }
         let cluster_size = crds.read().unwrap().num_pubkeys().max(stakes.len());
@@ -280,8 +279,7 @@ impl CrdsGossipPush {
             &mut rng,
             CRDS_GOSSIP_PUSH_ACTIVE_SET_SIZE,
             cluster_size,
-            &nodes,
-            stakes,
+            nodes,
         )
     }
 }
@@ -290,17 +288,19 @@ impl CrdsGossipPush {
 mod tests {
     use {
         super::*,
-        crate::{contact_info::ContactInfo, crds_data::CrdsData},
-        std::time::{Duration, Instant},
+        crate::{
+            cluster_info::{GOSSIP_PING_CACHE_OUTSTANDING_PING_TIMEOUT_MS, GOSSIP_PING_CACHE_TTL},
+            contact_info::ContactInfo,
+            crds_data::CrdsData,
+        },
+        std::time::Instant,
     };
 
     fn new_ping_cache() -> PingCache {
         PingCache::new(
-            &mut rand::rng(),
-            Instant::now(),
-            Duration::from_secs(20 * 60),      // ttl
-            Duration::from_secs(20 * 60) / 64, // rate_limit_delay
-            128,                               // capacity
+            GOSSIP_PING_CACHE_TTL,
+            GOSSIP_PING_CACHE_OUTSTANDING_PING_TIMEOUT_MS,
+            128, // capacity (small for tests)
         )
     }
 

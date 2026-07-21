@@ -63,8 +63,11 @@ impl SimpleQosBanlist {
         )
     }
 
-    pub fn ban(&self, pubkey: Pubkey, timeout: Duration) {
-        self.banlist.ban(pubkey, timeout);
+    /// Ban the `pubkey` for the specified `timeout`
+    ///
+    /// Returns `true` if the `id` was already banned else `false`.
+    pub fn ban(&self, pubkey: Pubkey, timeout: Duration) -> bool {
+        let ret = self.banlist.ban(pubkey, timeout);
         match self.eviction_sender.try_send(pubkey) {
             Ok(()) => {}
             Err(TrySendError::Full(pubkey)) => {
@@ -80,6 +83,7 @@ impl SimpleQosBanlist {
                 );
             }
         }
+        ret
     }
 
     pub fn is_banned(&self, pubkey: &Pubkey) -> bool {
@@ -322,22 +326,21 @@ impl QosController<SimpleQosConnectionContext> for SimpleQos {
                         update_open_connections_stat(&self.stats, &connection_table_l);
                     }
 
-                    if connection_table_l.total_size < self.config.max_staked_connections {
-                        if let Ok((last_update, cancel_connection, stream_counter)) = self
+                    if connection_table_l.total_size < self.config.max_staked_connections
+                        && let Ok((last_update, cancel_connection, stream_counter)) = self
                             .cache_new_connection(
                                 client_connection_tracker,
                                 connection,
                                 connection_table_l,
                                 conn_context,
                             )
-                        {
-                            self.stats
-                                .connection_added_from_staked_peer
-                                .fetch_add(1, Ordering::Relaxed);
-                            conn_context.last_update = last_update;
-                            conn_context.stream_counter = Some(stream_counter);
-                            return Some(cancel_connection);
-                        }
+                    {
+                        self.stats
+                            .connection_added_from_staked_peer
+                            .fetch_add(1, Ordering::Relaxed);
+                        conn_context.last_update = last_update;
+                        conn_context.stream_counter = Some(stream_counter);
+                        return Some(cancel_connection);
                     }
                     None
                 }
@@ -431,7 +434,7 @@ mod tests {
                 quic::{ConnectionTable, ConnectionTableType},
                 testing_utilities::get_client_config,
             },
-            quic::{StreamerStats, configure_server},
+            quic::{QuicStreamerConfig, StreamerStats, configure_server},
             streamer::StakedNodes,
         },
         quinn::Endpoint,
@@ -452,7 +455,8 @@ mod tests {
         client_keypair: &Keypair,
     ) -> (Connection, Endpoint, Endpoint) {
         // Create server endpoint
-        let (server_config, _) = configure_server(server_keypair).unwrap();
+        let (server_config, _) =
+            configure_server(server_keypair, &QuicStreamerConfig::default()).unwrap();
         let server_socket = bind_to_localhost_unique().expect("should bind - server");
         let server_addr = server_socket.local_addr().unwrap();
         let server_endpoint = Endpoint::new(
@@ -1181,62 +1185,5 @@ mod tests {
         let final_open_connections = stats.open_staked_connections.load(Ordering::Relaxed);
         assert!(final_open_connections < initial_open_connections);
         assert_eq!(final_open_connections, initial_open_connections - 1);
-    }
-
-    #[tokio::test]
-    async fn test_on_new_stream_throttles_correctly() {
-        // Setup
-        let cancel = CancellationToken::new();
-        let stats = Arc::new(StreamerStats::default());
-
-        // Create keypairs for staked connection
-        let server_keypair = Keypair::new();
-        let client_keypair = Keypair::new();
-        let stake_amount = 50_000_000; // 50M lamports
-
-        let staked_nodes =
-            create_staked_nodes_with_keypairs(&server_keypair, &client_keypair, stake_amount);
-
-        // Set a specific max_streams_per_second for testing
-        let max_streams_per_second = 10;
-        let qos_config = SimpleQosConfig {
-            max_streams_per_second,
-            max_staked_connections: 100,
-            max_connections_per_peer: 10,
-        };
-
-        let simple_qos = SimpleQos::new(qos_config, stats.clone(), staked_nodes, cancel.clone());
-
-        let client_tracker = ClientConnectionTracker {
-            stats: stats.clone(),
-        };
-
-        let (server_connection, _client_endpoint, _server_endpoint) =
-            create_connection_with_keypairs(&server_keypair, &client_keypair).await;
-
-        // Build connection context and add connection to initialize stream counter
-        let mut conn_context = simple_qos.build_connection_context(&server_connection);
-
-        let result = simple_qos
-            .try_add_connection(client_tracker, &server_connection, &mut conn_context)
-            .await;
-
-        assert!(result.is_some()); // Connection should be added successfully
-        assert!(conn_context.stream_counter.is_some()); // Stream counter should be set
-
-        // Test - call on_new_stream and measure timing
-        let start_time = std::time::Instant::now();
-
-        // This should take roughly 1 second to complete
-        // due to rate limit (since we allow initial burst)
-        for _ in 0..max_streams_per_second * 2 {
-            simple_qos.on_new_stream(&conn_context).await;
-        }
-
-        let elapsed = start_time.elapsed();
-
-        // we can not verify precisely so we check rough bounds
-        assert!(elapsed > std::time::Duration::from_millis(950)); // Should not take too little time!
-        assert!(elapsed < std::time::Duration::from_millis(1200)); // Should not take too long!
     }
 }

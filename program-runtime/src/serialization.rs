@@ -1,7 +1,7 @@
 #![allow(clippy::arithmetic_side_effects)]
 
 use {
-    crate::invoke_context::SerializedAccountMetadata,
+    crate::memory_context::SerializedAccountMetadata,
     solana_instruction::error::InstructionError,
     solana_program_entrypoint::{BPF_ALIGN_OF_U128, MAX_PERMITTED_DATA_INCREASE, NON_DUP_MARKER},
     solana_pubkey::Pubkey,
@@ -24,12 +24,18 @@ pub fn modify_memory_region_of_account(
     account: &mut BorrowedInstructionAccount<'_, '_>,
     region: &mut MemoryRegion,
 ) {
-    region.len = account.get_data().len() as u64;
     if account.can_data_be_changed().is_ok() {
-        region.writable = true;
+        unsafe {
+            // SAFETY:
+            // Contract from `HostBuffer::mutable`: This host buffer must have been initially
+            // constructed with a mutable pointer.
+            // Evidence: this region must be pointing to a serialized data buffer which is known to
+            // be mutable.
+            region.redirect(region.host_buffer().mutable());
+        }
         region.access_violation_handler_payload = Some(account.get_index_in_transaction());
     } else {
-        region.writable = false;
+        region.make_immutable();
         region.access_violation_handler_payload = None;
     }
 }
@@ -41,9 +47,9 @@ pub fn create_memory_region_of_account(
 ) -> Result<MemoryRegion, InstructionError> {
     let can_data_be_changed = account.can_data_be_changed().is_ok();
     let mut memory_region = if can_data_be_changed && !account.is_shared() {
-        MemoryRegion::new_writable(account.get_data_mut()?, vaddr)
+        MemoryRegion::new(&raw mut account.get_data_mut()?[..], vaddr)
     } else {
-        MemoryRegion::new_readonly(account.get_data(), vaddr)
+        MemoryRegion::new(&raw const account.get_data()[..], vaddr)
     };
     if can_data_be_changed {
         memory_region.access_violation_handler_payload = Some(account.get_index_in_transaction());
@@ -191,10 +197,9 @@ impl Serializer {
 
     fn push_region(&mut self) {
         let range = self.region_start..self.buffer.len();
-        self.regions.push(MemoryRegion::new_writable(
-            self.buffer.as_slice_mut().get_mut(range.clone()).unwrap(),
-            self.vaddr,
-        ));
+        let region_slice = self.buffer.as_slice_mut().get_mut(range.clone()).unwrap();
+        self.regions
+            .push(MemoryRegion::new(&raw mut region_slice[..], self.vaddr));
         self.region_start = range.end;
         self.vaddr += range.len() as u64;
     }
@@ -373,7 +378,7 @@ fn serialize_parameters_for_abiv0(
                 s.write(position as u8);
             }
             SerializeAccount::Account(_, mut account) => {
-                s.write::<u8>(NON_DUP_MARKER);
+                let vm_addr = s.write::<u8>(NON_DUP_MARKER);
                 s.write::<u8>(account.is_signer() as u8);
                 s.write::<u8>(account.is_writable() as u8);
                 let vm_key_addr = s.write_all(account.get_key().as_ref());
@@ -386,6 +391,7 @@ fn serialize_parameters_for_abiv0(
                 let rent_epoch = u64::MAX;
                 s.write::<u64>(rent_epoch.to_le());
                 accounts_metadata.push(SerializedAccountMetadata {
+                    vm_addr,
                     original_data_len: account.get_data().len(),
                     vm_key_addr,
                     vm_lamports_addr,
@@ -416,9 +422,8 @@ fn deserialize_parameters_for_abiv0<I: IntoIterator<Item = usize>>(
     account_lengths: I,
 ) -> Result<(), InstructionError> {
     let mut start = size_of::<u64>(); // number of accounts
-    for (instruction_account_index, pre_len) in (0..instruction_context
-        .get_number_of_instruction_accounts())
-        .zip(account_lengths.into_iter())
+    for (instruction_account_index, pre_len) in
+        (0..instruction_context.get_number_of_instruction_accounts()).zip(account_lengths)
     {
         let duplicate =
             instruction_context.is_instruction_account_duplicate(instruction_account_index)?;
@@ -540,7 +545,7 @@ fn serialize_parameters_for_abiv1(
     for account in accounts {
         match account {
             SerializeAccount::Account(_, mut borrowed_account) => {
-                s.write::<u8>(NON_DUP_MARKER);
+                let vm_addr = s.write::<u8>(NON_DUP_MARKER);
                 s.write::<u8>(borrowed_account.is_signer() as u8);
                 s.write::<u8>(borrowed_account.is_writable() as u8);
                 #[expect(deprecated)]
@@ -554,6 +559,7 @@ fn serialize_parameters_for_abiv1(
                 let rent_epoch = u64::MAX;
                 s.write::<u64>(rent_epoch.to_le());
                 accounts_metadata.push(SerializedAccountMetadata {
+                    vm_addr,
                     original_data_len: borrowed_account.get_data().len(),
                     vm_key_addr,
                     vm_owner_addr,
@@ -578,7 +584,7 @@ fn serialize_parameters_for_abiv1(
         s.fill_write(offset, 0)
             .map_err(|_| InstructionError::InvalidArgument)?;
         for entry in accounts_metadata.iter() {
-            s.write::<u64>(entry.vm_data_addr.to_le());
+            s.write::<u64>(entry.vm_addr.to_le());
         }
     }
 
@@ -599,9 +605,8 @@ fn deserialize_parameters_for_abiv1<I: IntoIterator<Item = usize>>(
     account_lengths: I,
 ) -> Result<(), InstructionError> {
     let mut start = size_of::<u64>(); // number of accounts
-    for (instruction_account_index, pre_len) in (0..instruction_context
-        .get_number_of_instruction_accounts())
-        .zip(account_lengths.into_iter())
+    for (instruction_account_index, pre_len) in
+        (0..instruction_context.get_number_of_instruction_accounts()).zip(account_lengths)
     {
         let duplicate =
             instruction_context.is_instruction_account_duplicate(instruction_account_index)?;
@@ -702,7 +707,7 @@ mod tests {
             cell::RefCell,
             mem::transmute,
             rc::Rc,
-            slice::{self, from_raw_parts, from_raw_parts_mut},
+            slice::{from_raw_parts, from_raw_parts_mut},
         },
         test_case::test_case,
     };
@@ -849,7 +854,10 @@ mod tests {
 
                 let (mut serialized, regions, _account_lengths, _instruction_data_offset) =
                     serialization_result.unwrap();
-                let mut serialized_regions = concat_regions(&regions);
+                let mut serialized_regions = unsafe {
+                    // SAFETY: test code, serialize_parameters should be constructing valid regions.
+                    concat_regions(&regions)
+                };
                 let (de_program_id, de_accounts, de_instruction_data) = unsafe {
                     deserialize(
                         if !virtual_address_space_adjustments {
@@ -1003,7 +1011,10 @@ mod tests {
                 )
                 .unwrap();
 
-            let mut serialized_regions = concat_regions(&regions);
+            let mut serialized_regions = unsafe {
+                // SAFETY: test code, serialize_parameters should be constructing valid regions.
+                concat_regions(&regions)
+            };
             if !virtual_address_space_adjustments {
                 assert_eq!(serialized.as_slice(), serialized_regions.as_slice());
             }
@@ -1102,7 +1113,10 @@ mod tests {
                     direct_account_pointers_in_program_input,
                 )
                 .unwrap();
-            let mut serialized_regions = concat_regions(&regions);
+            let mut serialized_regions = unsafe {
+                // SAFETY: test code, serialize_parameters should be constructing valid regions.
+                concat_regions(&regions)
+            };
 
             let (de_program_id, de_accounts, de_instruction_data) = unsafe {
                 deserialize_for_abiv0(
@@ -1268,7 +1282,10 @@ mod tests {
             )
             .unwrap();
 
-        let mut serialized_regions = concat_regions(&regions);
+        let mut serialized_regions = unsafe {
+            // SAFETY: test code, serialize_parameters should be constructing valid regions.
+            concat_regions(&regions)
+        };
         let (_de_program_id, de_accounts, _de_instruction_data) = unsafe {
             deserialize(serialized_regions.as_slice_mut().first_mut().unwrap() as *mut u8)
         };
@@ -1300,7 +1317,10 @@ mod tests {
                 direct_account_pointers_in_program_input,
             )
             .unwrap();
-        let mut serialized_regions = concat_regions(&regions);
+        let mut serialized_regions = unsafe {
+            // SAFETY: test code, serialize_parameters should be constructing valid regions.
+            concat_regions(&regions)
+        };
 
         let (_de_program_id, de_accounts, _de_instruction_data) = unsafe {
             deserialize_for_abiv0(serialized_regions.as_slice_mut().first_mut().unwrap() as *mut u8)
@@ -1436,17 +1456,26 @@ mod tests {
         (program_id, accounts, instruction_data)
     }
 
-    fn concat_regions(regions: &[MemoryRegion]) -> AlignedMemory<HOST_ALIGN> {
+    /// # Safety
+    ///
+    /// All memory regions must be pointing to valid to dereference host buffers.
+    unsafe fn concat_regions(regions: &[MemoryRegion]) -> AlignedMemory<HOST_ALIGN> {
         let last_region = regions.last().unwrap();
+        let last_region_vm_addr = last_region.vm_addr_range().start;
         let mut mem = AlignedMemory::zero_filled(
-            (last_region.vm_addr - MM_INPUT_START + last_region.len) as usize,
+            (last_region_vm_addr - MM_INPUT_START + last_region.len() as u64) as usize,
         );
         for region in regions {
-            let host_slice = unsafe {
-                slice::from_raw_parts(region.host_addr as *const u8, region.len as usize)
-            };
-            mem.as_slice_mut()[(region.vm_addr - MM_INPUT_START) as usize..][..region.len as usize]
-                .copy_from_slice(host_slice)
+            let vm_start = region.vm_addr_range().start;
+            let buffer = region.host_buffer().ptr();
+            mem.as_slice_mut()[(vm_start - MM_INPUT_START) as usize..][..buffer.len()]
+                .copy_from_slice(unsafe {
+                    // SAFETY:
+                    // Contract from `<*const [u8]>::as_ref_unchecked`: ensure that the pointer is
+                    // convertible to reference.
+                    // Evidence: The contract delegated to the callers.
+                    buffer.as_ref_unchecked()
+                })
         }
         mem
     }
@@ -1522,13 +1551,15 @@ mod tests {
             aligned_memory_mapping: false,
             ..Config::default()
         };
-        let mut memory_mapping = MemoryMapping::new_with_access_violation_handler(
-            regions,
-            &config,
-            SBPFVersion::V3,
-            transaction_context.access_violation_handler(true, true),
-        )
-        .unwrap();
+        let mut memory_mapping = unsafe {
+            MemoryMapping::new_with_access_violation_handler(
+                regions,
+                &config,
+                SBPFVersion::V3,
+                transaction_context.access_violation_handler(true, true),
+            )
+            .unwrap()
+        };
 
         // Reading readonly account is allowed
         memory_mapping

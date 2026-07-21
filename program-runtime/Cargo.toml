@@ -7,10 +7,12 @@ authors = { workspace = true }
 repository = { workspace = true }
 homepage = { workspace = true }
 license = { workspace = true }
-edition = "2024"
+edition = { workspace = true }
 
 [package.metadata.docs.rs]
 targets = ["x86_64-unknown-linux-gnu"]
+all-features = true
+rustdoc-args = ["--cfg=docsrs"]
 
 [lib]
 crate-type = ["lib"]
@@ -18,7 +20,8 @@ name = "solana_program_runtime"
 
 [features]
 agave-unstable-api = []
-dev-context-only-utils = ["dep:solana-message"]
+conf-stack-frame-size = ["solana-sbpf/conf-stack-frame-size"]
+dev-context-only-utils = ["dep:qualifier_attr", "dep:solana-message"]
 dummy-for-ci-check = ["metrics"]
 frozen-abi = ["dep:solana-frozen-abi", "dep:solana-frozen-abi-macro"]
 metrics = []
@@ -58,9 +61,9 @@ solana-pubkey = { workspace = true }
 solana-rent = { workspace = true }
 solana-sbpf = { workspace = true, features = ["jit"] }
 solana-sdk-ids = { workspace = true }
-solana-slot-hashes = { workspace = true }
+solana-slot-hashes = { workspace = true, features = ["wincode"] }
 solana-stable-layout = { workspace = true }
-solana-stake-interface = { workspace = true, features = ["bincode", "sysvar"] }
+solana-stake-history = { workspace = true }
 solana-svm-callback = { workspace = true }
 solana-svm-feature-set = { workspace = true }
 solana-svm-log-collector = { workspace = true }
@@ -69,19 +72,26 @@ solana-svm-timings = { workspace = true }
 solana-svm-transaction = { workspace = true }
 solana-svm-type-overrides = { workspace = true }
 solana-system-interface = { workspace = true }
-solana-sysvar = { workspace = true, features = ["bincode"] }
+solana-sysvar = { workspace = true }
 solana-sysvar-id = { workspace = true }
 solana-transaction-context = { workspace = true }
 thiserror = { workspace = true }
+wincode = { workspace = true }
 
 [dev-dependencies]
 assert_matches = { workspace = true }
+libsecp256k1 = { workspace = true }
+openssl = { workspace = true }
 solana-account-info = { workspace = true }
+solana-ed25519-program = { workspace = true }
 solana-instruction = { workspace = true, features = ["bincode"] }
 solana-instruction-error = { workspace = true, features = ["serde"] }
 solana-keypair = { workspace = true }
-solana-program-runtime = { path = ".", features = ["dev-context-only-utils"] }
+solana-precompile-error = { workspace = true }
+solana-program-runtime = { path = ".", features = ["agave-unstable-api", "dev-context-only-utils"] }
 solana-pubkey = { workspace = true, features = ["rand"] }
+solana-secp256k1-program = { workspace = true, features = ["bincode"] }
+solana-secp256r1-program = { workspace = true, features = ["openssl-vendored"] }
 solana-signer = { workspace = true }
 solana-transaction = { workspace = true, features = ["dev-context-only-utils"] }
 solana-transaction-context = { path = "../transaction-context", features = [

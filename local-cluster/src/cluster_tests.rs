@@ -4,13 +4,19 @@
 /// discover the rest of the network.
 use log::*;
 use {
-    crate::{cluster::QuicTpuClient, local_cluster::LocalCluster},
-    agave_votor_messages::consensus_message::ConsensusMessage,
+    crate::local_cluster::LocalCluster,
+    agave_votor_messages::{
+        consensus_message::VoteMessage, unverified_vote_message::DecodedWireConsensusMessage,
+        wire::VersionedWireConsensusMessage,
+    },
+    crossbeam_channel::bounded,
     rand::{Rng, rng},
     rayon::{ThreadPool, prelude::*},
-    solana_client::connection_cache::ConnectionCache,
     solana_clock::{self as clock, Slot},
     solana_commitment_config::CommitmentConfig,
+    solana_core::consensus::tower_storage::{
+        FileTowerStorage, SavedTower, SavedTowerVersions, TowerStorage,
+    },
     solana_entry::entry::{self, Entry, EntrySlice},
     solana_epoch_schedule::MINIMUM_SLOTS_PER_EPOCH,
     solana_gossip::{
@@ -25,11 +31,12 @@ use {
     solana_hash::Hash,
     solana_keypair::Keypair,
     solana_ledger::blockstore::Blockstore,
-    solana_net_utils::SocketAddrSpace,
+    solana_net_utils::{SocketAddrSpace, sockets::bind_to_localhost_unique},
+    solana_perf::packet::{PacketRef, packet_config},
     solana_poh_config::PohConfig,
     solana_pubkey::Pubkey,
     solana_rpc_client::rpc_client::RpcClient,
-    solana_signer::Signer,
+    solana_signer::{Signer, signers::Signers},
     solana_streamer::{
         nonblocking::simple_qos::SimpleQosConfig,
         quic::{QuicStreamerConfig, spawn_simple_qos_server},
@@ -37,7 +44,10 @@ use {
     },
     solana_system_transaction as system_transaction,
     solana_time_utils::timestamp,
-    solana_tpu_client::tpu_client::{TpuClient, TpuClientConfig, TpuSenderError},
+    solana_tpu_client_next::{
+        client_builder::{ClientBuilder, TransactionSender},
+        leader_updater::create_pinned_leader_updater,
+    },
     solana_transaction::Transaction,
     solana_transaction_error::TransportError,
     solana_validator_exit::Exit,
@@ -46,7 +56,7 @@ use {
     std::{
         collections::{HashMap, HashSet, VecDeque},
         net::{SocketAddr, TcpListener, UdpSocket},
-        path::Path,
+        path::{Path, PathBuf},
         sync::{
             Arc, RwLock,
             atomic::{AtomicBool, Ordering},
@@ -55,14 +65,176 @@ use {
         time::{Duration, Instant},
     },
     tokio_util::sync::CancellationToken,
+    wincode,
 };
-#[cfg(feature = "dev-context-only-utils")]
-use {
-    solana_core::consensus::tower_storage::{
-        FileTowerStorage, SavedTower, SavedTowerVersions, TowerStorage,
-    },
-    std::path::PathBuf,
-};
+
+/// Packages a multi-threaded tokio runtime with a tpu-client-next sender, providing
+/// a synchronous interface for sending transactions in local-cluster tests.
+#[derive(Clone)]
+pub struct TpuSender {
+    runtime: Arc<tokio::runtime::Runtime>,
+}
+
+impl TpuSender {
+    #[allow(clippy::new_without_default)]
+    pub fn new() -> Self {
+        Self {
+            runtime: Arc::new(
+                tokio::runtime::Builder::new_multi_thread()
+                    .worker_threads(4)
+                    .enable_all()
+                    .build()
+                    .expect("TpuSender: should create tokio runtime"),
+            ),
+        }
+    }
+
+    /// Open a QUIC connection to `tpu_addr`, run `f` with the live sender, then shut down.
+    ///
+    /// Keeps the tpu-client-next scheduler alive for the duration of `f` so that any
+    /// transactions enqueued via [`send_wire_transaction`] are not dropped before wire
+    /// transmission. Shutdown happens synchronously after `f` returns.
+    pub fn with_connection<F, R>(&self, tpu_addr: SocketAddr, f: F) -> R
+    where
+        F: FnOnce(&TransactionSender) -> R,
+    {
+        let bind_socket = bind_to_localhost_unique().expect("TpuSender: should bind UDP socket");
+        let (sender, client) = self
+            .runtime
+            .block_on(async {
+                ClientBuilder::new(create_pinned_leader_updater(tpu_addr))
+                    .bind_socket(bind_socket)
+                    .build()
+            })
+            .expect("TpuSender: should build tpu-client-next client");
+        let result = f(&sender);
+        self.runtime
+            .block_on(async { client.shutdown().await })
+            .ok();
+        result
+    }
+
+    /// Send a pre-serialized transaction wire frame through an open `sender`.
+    pub fn send_wire_transaction(&self, sender: &TransactionSender, wire_tx: Vec<u8>) {
+        self.runtime
+            .block_on(async { sender.send_transactions_in_batch(vec![wire_tx]).await })
+            .expect("TpuSender: should send transactions in batch");
+    }
+
+    /// Send a pre-serialized wire frame, logging any error rather than panicking.
+    ///
+    /// Use this in tests that tolerate transient send failures (e.g. partition tests).
+    pub fn try_send_wire_transaction(&self, sender: &TransactionSender, wire_tx: Vec<u8>) {
+        if let Err(e) = self
+            .runtime
+            .block_on(async { sender.send_transactions_in_batch(vec![wire_tx]).await })
+        {
+            debug!("TpuSender: send_wire_transaction failed: {e:?}");
+        }
+    }
+
+    /// Send and confirm `transaction` with retries via `sender`, using `rpc_client` for
+    /// confirmation and blockhash refresh.
+    fn send_and_confirm_transaction<T: Signers + ?Sized>(
+        &self,
+        sender: &TransactionSender,
+        rpc_client: &RpcClient,
+        signers: &T,
+        transaction: &mut Transaction,
+        max_attempts: usize,
+    ) -> Result<(), TransportError> {
+        for attempt in 1..=max_attempts {
+            let wire_tx = wincode::serialize(transaction)
+                .expect("send_and_confirm_transaction: should serialize transaction");
+            self.send_wire_transaction(sender, wire_tx);
+            if LocalCluster::poll_for_successfully_processed_transaction(rpc_client, transaction)?
+                .is_some()
+            {
+                return Ok(());
+            }
+            let (blockhash, _) =
+                rpc_client.get_latest_blockhash_with_commitment(CommitmentConfig::processed())?;
+            transaction.sign(signers, blockhash);
+            warn!("send_and_confirm_transaction: attempt {attempt} failed, retrying");
+        }
+        Err(std::io::Error::other("failed to confirm transaction after max retries").into())
+    }
+
+    /// Open a QUIC connection to `tpu_addr` and send-and-confirm `transaction` with retries.
+    ///
+    /// Uses `rpc_client` to poll for confirmation and refresh the blockhash between attempts.
+    pub fn send_transaction_with_retries<T: Signers + ?Sized>(
+        &self,
+        tpu_addr: SocketAddr,
+        rpc_client: &RpcClient,
+        signers: &T,
+        transaction: &mut Transaction,
+        attempts: usize,
+    ) -> Result<(), TransportError> {
+        let sender_clone = self.clone();
+        self.with_connection(tpu_addr, move |sender| {
+            sender_clone.send_and_confirm_transaction(
+                sender,
+                rpc_client,
+                signers,
+                transaction,
+                attempts,
+            )
+        })
+    }
+}
+
+/// Resolve the current slot leader and its QUIC TPU address via RPC.
+///
+/// Returns `None` when the leader cannot yet be mapped to a QUIC TPU address.
+fn current_leader(rpc_client: &RpcClient) -> Option<(Pubkey, SocketAddr)> {
+    let leader_pubkey = rpc_client
+        .get_slot_leader()
+        .expect("current_leader: get_slot_leader");
+    let tpu = rpc_client
+        .get_cluster_nodes()
+        .expect("current_leader: get_cluster_nodes")
+        .into_iter()
+        .find(|n| n.pubkey == leader_pubkey.to_string())
+        .and_then(|n| n.tpu_quic)?;
+    Some((leader_pubkey, tpu))
+}
+
+/// Resolve the QUIC TPU address of the current slot leader via RPC.
+///
+/// Returns `None` when the leader cannot yet be mapped to a QUIC TPU address
+fn current_leader_tpu(rpc_client: &RpcClient) -> Option<SocketAddr> {
+    current_leader(rpc_client).map(|(_, tpu)| tpu)
+}
+
+/// Poll until `transaction` is observed as processed by `rpc_client`, or `timeout` elapses.
+///
+/// Returns `true` once the transaction is processed. Returns `false` if timeout expires.
+fn poll_processed_until_timeout(
+    rpc_client: &RpcClient,
+    transaction: &Transaction,
+    timeout: Duration,
+) -> bool {
+    let deadline = Instant::now() + timeout;
+    loop {
+        if let Ok(Some(status)) = rpc_client.get_signature_status_with_commitment(
+            &transaction.signatures[0],
+            CommitmentConfig::processed(),
+        ) {
+            // Surface a genuine execution error rather than silently retrying it as if the
+            // transaction had never arrived.
+            assert!(
+                status.is_ok(),
+                "poll_processed_within: transaction failed on-chain: {status:?}"
+            );
+            return true;
+        }
+        if Instant::now() >= deadline {
+            return false;
+        }
+        sleep(Duration::from_millis(200));
+    }
+}
 
 /// Spend and verify from every node in the network
 pub fn spend_and_verify_all_nodes<S: ::std::hash::BuildHasher + Sync + Send>(
@@ -71,7 +243,7 @@ pub fn spend_and_verify_all_nodes<S: ::std::hash::BuildHasher + Sync + Send>(
     nodes: usize,
     ignore_nodes: HashSet<Pubkey, S>,
     socket_addr_space: SocketAddrSpace,
-    connection_cache: &Arc<ConnectionCache>,
+    tpu_sender: &TpuSender,
 ) {
     let cluster_nodes = discover_validators(
         &entry_point_info.gossip().unwrap(),
@@ -87,34 +259,38 @@ pub fn spend_and_verify_all_nodes<S: ::std::hash::BuildHasher + Sync + Send>(
             return;
         }
         let random_keypair = Keypair::new();
-        let client = new_tpu_quic_client(ingress_node, connection_cache.clone()).unwrap();
-        let bal = client
-            .rpc_client()
+        let rpc_client = RpcClient::new(format!("http://{}", ingress_node.rpc().unwrap()));
+        let bal = rpc_client
             .poll_get_balance_with_commitment(
                 &funding_keypair.pubkey(),
                 CommitmentConfig::processed(),
             )
             .expect("balance in source");
         assert!(bal > 0);
-        let (blockhash, _) = client
-            .rpc_client()
+        let (blockhash, _) = rpc_client
             .get_latest_blockhash_with_commitment(CommitmentConfig::confirmed())
             .unwrap();
         let mut transaction =
             system_transaction::transfer(funding_keypair, &random_keypair.pubkey(), 1, blockhash);
-        LocalCluster::send_transaction_with_retries(
-            &client,
-            &[funding_keypair],
-            &mut transaction,
-            10,
-        )
-        .unwrap();
+        // find target TPU address from RPC
+        let tpu_addr = current_leader_tpu(&rpc_client)
+            .expect("spend_and_verify_all_nodes: no current leader TPU");
+        tpu_sender.with_connection(tpu_addr, |sender| {
+            tpu_sender
+                .send_and_confirm_transaction(
+                    sender,
+                    &rpc_client,
+                    &[funding_keypair],
+                    &mut transaction,
+                    10,
+                )
+                .unwrap();
+        });
         for validator in &cluster_nodes {
             if ignore_nodes.contains(validator.pubkey()) {
                 continue;
             }
-            let client = new_tpu_quic_client(ingress_node, connection_cache.clone()).unwrap();
-            LocalCluster::poll_for_successfully_processed_transaction(&client, &transaction)
+            LocalCluster::poll_for_successfully_processed_transaction(&rpc_client, &transaction)
                 .unwrap()
                 .unwrap();
         }
@@ -124,12 +300,10 @@ pub fn spend_and_verify_all_nodes<S: ::std::hash::BuildHasher + Sync + Send>(
 pub fn verify_balances<S: ::std::hash::BuildHasher>(
     expected_balances: HashMap<Pubkey, u64, S>,
     node: &ContactInfo,
-    connection_cache: Arc<ConnectionCache>,
 ) {
-    let client = new_tpu_quic_client(node, connection_cache.clone()).unwrap();
+    let rpc_client = RpcClient::new(format!("http://{}", node.rpc().unwrap()));
     for (pk, b) in expected_balances {
-        let bal = client
-            .rpc_client()
+        let bal = rpc_client
             .poll_get_balance_with_commitment(&pk, CommitmentConfig::processed())
             .expect("balance in source");
         assert_eq!(bal, b);
@@ -139,47 +313,49 @@ pub fn verify_balances<S: ::std::hash::BuildHasher>(
 pub fn send_many_transactions(
     node: &ContactInfo,
     funding_keypair: &Keypair,
-    connection_cache: &Arc<ConnectionCache>,
+    tpu_sender: &TpuSender,
     max_tokens_per_transfer: u64,
     num_txs: u64,
 ) -> HashMap<Pubkey, u64> {
-    let client = new_tpu_quic_client(node, connection_cache.clone()).unwrap();
-    let mut expected_balances = HashMap::new();
-    for _ in 0..num_txs {
-        let random_keypair = Keypair::new();
-        let bal = client
-            .rpc_client()
-            .poll_get_balance_with_commitment(
-                &funding_keypair.pubkey(),
-                CommitmentConfig::processed(),
-            )
-            .expect("balance in source");
-        assert!(bal > 0);
-        let (blockhash, _) = client
-            .rpc_client()
-            .get_latest_blockhash_with_commitment(CommitmentConfig::processed())
-            .unwrap();
-        let transfer_amount = rng().random_range(1..max_tokens_per_transfer);
-
-        let mut transaction = system_transaction::transfer(
-            funding_keypair,
-            &random_keypair.pubkey(),
-            transfer_amount,
-            blockhash,
-        );
-
-        LocalCluster::send_transaction_with_retries(
-            &client,
-            &[funding_keypair],
-            &mut transaction,
-            5,
-        )
-        .unwrap();
-
-        expected_balances.insert(random_keypair.pubkey(), transfer_amount);
-    }
-
-    expected_balances
+    let rpc_client = RpcClient::new(format!("http://{}", node.rpc().unwrap()));
+    // Ask RPC who the leader is
+    let tpu_addr =
+        current_leader_tpu(&rpc_client).expect("send_many_transactions: no current leader TPU");
+    // One persistent QUIC connection for all transactions to avoid per-tx handshake overhead.
+    tpu_sender.with_connection(tpu_addr, |sender| {
+        let mut expected_balances = HashMap::new();
+        for _ in 0..num_txs {
+            let random_keypair = Keypair::new();
+            let bal = rpc_client
+                .poll_get_balance_with_commitment(
+                    &funding_keypair.pubkey(),
+                    CommitmentConfig::processed(),
+                )
+                .expect("balance in source");
+            assert!(bal > 0);
+            let (blockhash, _) = rpc_client
+                .get_latest_blockhash_with_commitment(CommitmentConfig::processed())
+                .unwrap();
+            let transfer_amount = rng().random_range(1..max_tokens_per_transfer);
+            let mut transaction = system_transaction::transfer(
+                funding_keypair,
+                &random_keypair.pubkey(),
+                transfer_amount,
+                blockhash,
+            );
+            tpu_sender
+                .send_and_confirm_transaction(
+                    sender,
+                    &rpc_client,
+                    &[funding_keypair],
+                    &mut transaction,
+                    5,
+                )
+                .unwrap();
+            expected_balances.insert(random_keypair.pubkey(), transfer_amount);
+        }
+        expected_balances
+    })
 }
 
 pub fn verify_ledger_ticks(ledger_path: &Path, ticks_per_slot: usize) {
@@ -233,7 +409,7 @@ pub fn kill_entry_and_spend_and_verify_rest(
     entry_point_info: &ContactInfo,
     entry_point_validator_exit: &Arc<RwLock<Exit>>,
     funding_keypair: &Keypair,
-    connection_cache: &Arc<ConnectionCache>,
+    tpu_sender: &TpuSender,
     nodes: usize,
     slot_millis: u64,
     socket_addr_space: SocketAddrSpace,
@@ -249,10 +425,9 @@ pub fn kill_entry_and_spend_and_verify_rest(
     )
     .unwrap();
     assert!(cluster_nodes.len() >= nodes);
-    let client = new_tpu_quic_client(entry_point_info, connection_cache.clone()).unwrap();
+    let ep_rpc = RpcClient::new(format!("http://{}", entry_point_info.rpc().unwrap()));
     for ingress_node in &cluster_nodes {
-        client
-            .rpc_client()
+        ep_rpc
             .poll_get_balance_with_commitment(ingress_node.pubkey(), CommitmentConfig::processed())
             .unwrap_or_else(|err| panic!("Node {} has no balance: {}", ingress_node.pubkey(), err));
     }
@@ -273,9 +448,8 @@ pub fn kill_entry_and_spend_and_verify_rest(
         }
 
         // Ensure the current ingress node is still funded.
-        let client = new_tpu_quic_client(ingress_node, connection_cache.clone()).unwrap();
-        let balance = client
-            .rpc_client()
+        let rpc_client = RpcClient::new(format!("http://{}", ingress_node.rpc().unwrap()));
+        let balance = rpc_client
             .poll_get_balance_with_commitment(
                 &funding_keypair.pubkey(),
                 CommitmentConfig::processed(),
@@ -283,63 +457,76 @@ pub fn kill_entry_and_spend_and_verify_rest(
             .expect("balance in source");
         assert_ne!(balance, 0);
 
-        let mut result = Ok(());
-        let mut retries = 0;
-
-        // Retry sending a transaction to the current ingress node until it is
-        // observed by the entire cluster or we exhaust all retries.
-        loop {
-            retries += 1;
-            if retries > 5 {
-                result.unwrap();
+        // After the bootstrap leader is killed it stays in the (fixed) leader schedule for the
+        // rest of the epoch, so `get_slot_leader` points at the dead node for ~1/4 of slots. It
+        // accepts no QUIC connection, so targeting it wastes a whole poll window; skip it and wait
+        // one slot for rotation to a live leader instead. For live leaders, resend with a fresh
+        // blockhash each attempt and give the send a bounded window to land.
+        let killed_leader = *entry_point_info.pubkey();
+        const MAX_SEND_ATTEMPTS: usize = 20;
+        // Generous enough for a live leader to land a transaction on a loaded CI runner, yet far
+        // below the blockhash lifetime so a wrong/stuck target is abandoned in seconds.
+        let poll_window = Duration::from_millis(slot_millis * 20).max(Duration::from_secs(8));
+        let mut confirmed = false;
+        for attempt in 1..=MAX_SEND_ATTEMPTS {
+            let Some((leader_pubkey, tpu_addr)) = current_leader(&rpc_client) else {
+                // Leader not resolvable, back off a slot
+                sleep(Duration::from_millis(slot_millis));
+                continue;
+            };
+            if leader_pubkey == killed_leader {
+                // Scheduled leader is the dead bootstrap node; wait for rotation rather than
+                // burning a poll window on a node that will never accept the transaction.
+                sleep(Duration::from_millis(slot_millis));
+                continue;
             }
-
-            // Send a simple transfer transaction to the current ingress node.
             let random_keypair = Keypair::new();
-            let (blockhash, _) = client
-                .rpc_client()
+            let (blockhash, _) = rpc_client
                 .get_latest_blockhash_with_commitment(CommitmentConfig::processed())
                 .unwrap();
-            let mut transaction = system_transaction::transfer(
+            let transaction = system_transaction::transfer(
                 funding_keypair,
                 &random_keypair.pubkey(),
                 1,
                 blockhash,
             );
-
-            if let Err(err) = LocalCluster::send_transaction_with_retries(
-                &client,
-                &[funding_keypair],
-                &mut transaction,
-                5,
-            ) {
-                result = Err(err);
+            let wire_tx = wincode::serialize(&transaction)
+                .expect("kill_entry_and_spend_and_verify_rest: should serialize transaction");
+            // Poll *inside* the connection: tpu-client-next only enqueues the transaction, so the
+            // QUIC client must stay alive long enough to flush it onto the wire (and retransmit)
+            // before we tear it down.
+            let landed = tpu_sender.with_connection(tpu_addr, |sender| {
+                tpu_sender.send_wire_transaction(sender, wire_tx);
+                poll_processed_until_timeout(&rpc_client, &transaction, poll_window)
+            });
+            if !landed {
+                warn!(
+                    "kill_entry_and_spend_and_verify_rest: attempt {attempt} to {tpu_addr} did \
+                     not land within {poll_window:?}, re-resolving leader"
+                );
                 continue;
             }
 
-            // Ensure all non-entry point nodes are able to confirm the
-            // transaction.
+            // The transaction landed at the targeted node, ensure every other node
+            // observes it too. If it landed on a fork that loses, resend.
             info!("poll_all_nodes_for_signature()");
-            match poll_all_nodes_for_signature(
-                entry_point_info,
-                &cluster_nodes,
-                connection_cache,
-                &transaction,
-            ) {
-                Err(e) => {
-                    info!("poll_all_nodes_for_signature() failed {e:?}");
-                    result = Err(e);
-                }
+            match poll_all_nodes_for_signature(entry_point_info, &cluster_nodes, &transaction) {
                 Ok(()) => {
                     info!("poll_all_nodes_for_signature() succeeded, done.");
+                    confirmed = true;
                     break;
                 }
+                Err(e) => info!("poll_all_nodes_for_signature() failed {e:?}, resending"),
             }
         }
+        assert!(
+            confirmed,
+            "kill_entry_and_spend_and_verify_rest: transaction never confirmed on all surviving \
+             nodes after {MAX_SEND_ATTEMPTS} attempts"
+        );
     }
 }
 
-#[cfg(feature = "dev-context-only-utils")]
 pub fn apply_votes_to_tower(node_keypair: &Keypair, votes: Vec<(Slot, Hash)>, tower_path: PathBuf) {
     let tower_storage = FileTowerStorage::new(tower_path);
     let mut tower = tower_storage.load(&node_keypair.pubkey()).unwrap();
@@ -350,20 +537,14 @@ pub fn apply_votes_to_tower(node_keypair: &Keypair, votes: Vec<(Slot, Hash)>, to
     tower_storage.store(&saved_tower).unwrap();
 }
 
-pub fn check_min_slot_is_rooted(
-    min_slot: Slot,
-    contact_infos: &[ContactInfo],
-    connection_cache: &Arc<ConnectionCache>,
-    test_name: &str,
-) {
+pub fn check_min_slot_is_rooted(min_slot: Slot, contact_infos: &[ContactInfo], test_name: &str) {
     let mut last_print = Instant::now();
     let loop_start = Instant::now();
     let loop_timeout = Duration::from_secs(180);
     for ingress_node in contact_infos.iter() {
-        let client = new_tpu_quic_client(ingress_node, connection_cache.clone()).unwrap();
+        let rpc_client = RpcClient::new(format!("http://{}", ingress_node.rpc().unwrap()));
         loop {
-            let root_slot = client
-                .rpc_client()
+            let root_slot = rpc_client
                 .get_slot_with_commitment(CommitmentConfig::finalized())
                 .unwrap_or(0);
             if root_slot >= min_slot || last_print.elapsed().as_secs() > 3 {
@@ -388,7 +569,6 @@ pub fn check_min_slot_is_rooted(
 fn check_for_new_slots_with_commitment(
     num_new_slots: usize,
     contact_infos: &[ContactInfo],
-    connection_cache: &Arc<ConnectionCache>,
     test_name: &str,
     commitment: CommitmentConfig,
 ) {
@@ -402,11 +582,8 @@ fn check_for_new_slots_with_commitment(
         assert!(loop_start.elapsed() < loop_timeout);
 
         for (i, ingress_node) in contact_infos.iter().enumerate() {
-            let client = new_tpu_quic_client(ingress_node, connection_cache.clone()).unwrap();
-            let slot = client
-                .rpc_client()
-                .get_slot_with_commitment(commitment)
-                .unwrap_or(0);
+            let rpc_client = RpcClient::new(format!("http://{}", ingress_node.rpc().unwrap()));
+            let slot = rpc_client.get_slot_with_commitment(commitment).unwrap_or(0);
             slots[i].insert(slot);
             num_slots_map.insert(*ingress_node.pubkey(), slots[i].len());
             let num_slots = slots.iter().map(|r| r.len()).min().unwrap();
@@ -424,16 +601,10 @@ fn check_for_new_slots_with_commitment(
     }
 }
 
-pub fn check_for_new_roots(
-    num_new_roots: usize,
-    contact_infos: &[ContactInfo],
-    connection_cache: &Arc<ConnectionCache>,
-    test_name: &str,
-) {
+pub fn check_for_new_roots(num_new_roots: usize, contact_infos: &[ContactInfo], test_name: &str) {
     check_for_new_slots_with_commitment(
         num_new_roots,
         contact_infos,
-        connection_cache,
         test_name,
         CommitmentConfig::finalized(),
     );
@@ -442,13 +613,11 @@ pub fn check_for_new_roots(
 pub fn check_for_new_processed(
     num_new_processed: usize,
     contact_infos: &[ContactInfo],
-    connection_cache: &Arc<ConnectionCache>,
     test_name: &str,
 ) {
     check_for_new_slots_with_commitment(
         num_new_processed,
         contact_infos,
-        connection_cache,
         test_name,
         CommitmentConfig::processed(),
     );
@@ -465,7 +634,7 @@ pub fn start_quic_streamer_to_listen_for_votes_and_certs(
     JoinHandle<()>,
     crossbeam_channel::Receiver<solana_streamer::packet::PacketBatch>,
 ) {
-    let (sender, receiver) = crossbeam_channel::unbounded();
+    let (sender, receiver) = bounded(1024);
     let cancel = CancellationToken::new();
     let stakes = validator_keys
         .iter()
@@ -491,11 +660,29 @@ pub fn start_quic_streamer_to_listen_for_votes_and_certs(
     (cancel, result.thread, receiver)
 }
 
+fn convert_packet_to_vote_message(packet: PacketRef, my_shred_version: u16) -> Option<VoteMessage> {
+    let Ok(msg) = VersionedWireConsensusMessage::deserialize_with_expected_shred_version(
+        packet.data(..).unwrap_or_default(),
+        packet_config(),
+        my_shred_version,
+    ) else {
+        return None;
+    };
+    let DecodedWireConsensusMessage::Vote(vote_msg) = DecodedWireConsensusMessage::new(msg) else {
+        return None;
+    };
+    Some(VoteMessage {
+        vote: vote_msg.vote,
+        signature: vote_msg.signature,
+        rank: vote_msg.rank,
+    })
+}
+
 /// Check that all nodes in the cluster are producing notarized votes.
 pub fn check_for_new_notarized_votes(
+    my_shred_version: u16,
     num_new_votes: usize,
     contact_infos: &[ContactInfo],
-    connection_cache: &Arc<ConnectionCache>,
     test_name: &str,
     vote_listener_socket: UdpSocket,
     validator_keys: &[Arc<Keypair>],
@@ -507,10 +694,7 @@ pub fn check_for_new_notarized_votes(
     let Some(current_slot) = contact_infos
         .iter()
         .map(|ingress_node| {
-            let client = new_tpu_quic_client(ingress_node, connection_cache.clone()).unwrap();
-
-            client
-                .rpc_client()
+            RpcClient::new(format!("http://{}", ingress_node.rpc().unwrap()))
                 .get_slot_with_commitment(CommitmentConfig::processed())
                 .unwrap_or(0)
         })
@@ -546,7 +730,8 @@ pub fn check_for_new_notarized_votes(
                     continue;
                 };
                 for packet in packet_batch.iter() {
-                    let Ok(ConsensusMessage::Vote(vote_message)) = packet.deserialize_slice(..)
+                    let Some(vote_message) =
+                        convert_packet_to_vote_message(packet, my_shred_version)
                     else {
                         continue;
                     };
@@ -593,7 +778,6 @@ pub fn check_for_new_notarized_votes(
 pub fn check_no_new_roots(
     num_slots_to_wait: usize,
     contact_infos: &[&ContactInfo],
-    connection_cache: &Arc<ConnectionCache>,
     test_name: &str,
 ) {
     assert!(!contact_infos.is_empty());
@@ -602,14 +786,12 @@ pub fn check_no_new_roots(
         .iter()
         .enumerate()
         .map(|(i, ingress_node)| {
-            let client = new_tpu_quic_client(ingress_node, connection_cache.clone()).unwrap();
-            let initial_root = client
-                .rpc_client()
+            let rpc_client = RpcClient::new(format!("http://{}", ingress_node.rpc().unwrap()));
+            let initial_root = rpc_client
                 .get_slot()
                 .unwrap_or_else(|_| panic!("get_slot for {} failed", ingress_node.pubkey()));
             roots[i] = initial_root;
-            client
-                .rpc_client()
+            rpc_client
                 .get_slot_with_commitment(CommitmentConfig::processed())
                 .unwrap_or_else(|_| panic!("get_slot for {} failed", ingress_node.pubkey()))
         })
@@ -622,9 +804,8 @@ pub fn check_no_new_roots(
     let mut reached_end_slot = false;
     loop {
         for contact_info in contact_infos {
-            let client = new_tpu_quic_client(contact_info, connection_cache.clone()).unwrap();
-            current_slot = client
-                .rpc_client()
+            let rpc_client = RpcClient::new(format!("http://{}", contact_info.rpc().unwrap()));
+            current_slot = rpc_client
                 .get_slot_with_commitment(CommitmentConfig::processed())
                 .unwrap_or_else(|_| panic!("get_slot for {} failed", contact_infos[0].pubkey()));
             if current_slot > end_slot {
@@ -648,10 +829,9 @@ pub fn check_no_new_roots(
     }
 
     for (i, ingress_node) in contact_infos.iter().enumerate() {
-        let client = new_tpu_quic_client(ingress_node, connection_cache.clone()).unwrap();
+        let rpc_client = RpcClient::new(format!("http://{}", ingress_node.rpc().unwrap()));
         assert_eq!(
-            client
-                .rpc_client()
+            rpc_client
                 .get_slot()
                 .unwrap_or_else(|_| panic!("get_slot for {} failed", ingress_node.pubkey())),
             roots[i]
@@ -662,15 +842,15 @@ pub fn check_no_new_roots(
 fn poll_all_nodes_for_signature(
     entry_point_info: &ContactInfo,
     cluster_nodes: &[ContactInfo],
-    connection_cache: &Arc<ConnectionCache>,
     transaction: &Transaction,
 ) -> Result<(), TransportError> {
     for validator in cluster_nodes {
         if validator.pubkey() == entry_point_info.pubkey() {
             continue;
         }
-        let client = new_tpu_quic_client(validator, connection_cache.clone()).unwrap();
-        LocalCluster::poll_for_successfully_processed_transaction(&client, transaction)?.unwrap();
+        let rpc_client = RpcClient::new(format!("http://{}", validator.rpc().unwrap()));
+        LocalCluster::poll_for_successfully_processed_transaction(&rpc_client, transaction)?
+            .unwrap();
     }
 
     Ok(())
@@ -851,25 +1031,5 @@ pub fn submit_vote_to_cluster_gossip(
         node_keypair.pubkey(),
         gossip_addr,
         socket_addr_space,
-    )
-}
-
-pub fn new_tpu_quic_client(
-    contact_info: &ContactInfo,
-    connection_cache: Arc<ConnectionCache>,
-) -> Result<QuicTpuClient, TpuSenderError> {
-    let rpc_pubsub_url = format!("ws://{}/", contact_info.rpc_pubsub().unwrap());
-    let rpc_url = format!("http://{}", contact_info.rpc().unwrap());
-
-    let cache = match &*connection_cache {
-        ConnectionCache::Quic(cache) => cache,
-        ConnectionCache::Udp(_) => panic!("Expected a Quic ConnectionCache. Got UDP"),
-    };
-
-    TpuClient::new_with_connection_cache(
-        Arc::new(RpcClient::new(rpc_url)),
-        rpc_pubsub_url.as_str(),
-        TpuClientConfig::default(),
-        cache.clone(),
     )
 }

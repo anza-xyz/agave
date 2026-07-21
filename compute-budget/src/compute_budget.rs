@@ -1,11 +1,13 @@
-pub use solana_program_runtime::execution_budget::{
-    MAX_CALL_DEPTH, MAX_INSTRUCTION_STACK_DEPTH, STACK_FRAME_SIZE, SVMTransactionExecutionBudget,
-    SVMTransactionExecutionCost,
+pub use solana_program_runtime::{
+    execution_budget::{
+        MAX_CALL_DEPTH, MAX_INSTRUCTION_STACK_DEPTH, SVMTransactionExecutionBudget,
+        SVMTransactionExecutionCost,
+    },
+    solana_sbpf::vm::get_stack_frame_size,
 };
 use {
     solana_fee_structure::FeeDetails,
     solana_program_runtime::execution_budget::SVMTransactionExecutionAndFeeBudgetLimits,
-    std::num::NonZeroU32,
 };
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -97,9 +99,11 @@ pub struct ComputeBudget {
     pub alt_bn128_pairing_one_pair_cost_other: u64,
     /// Big integer modular exponentiation base cost
     pub big_modular_exponentiation_base_cost: u64,
-    /// Big integer moduler exponentiation cost divisor
-    /// The modular exponentiation cost is computed as
-    /// `input_length`/`big_modular_exponentiation_cost_divisor` + `big_modular_exponentiation_base_cost`
+    /// Big integer modular exponentiation cost divisor.
+    /// The modular exponentiation cost is computed from SIMD-0529 operand
+    /// complexity and adjusted exponent bit length, divided by this divisor,
+    /// plus
+    /// `big_modular_exponentiation_base_cost`.
     pub big_modular_exponentiation_cost_divisor: u64,
     /// Coefficient `a` of the quadratic function which determines the number
     /// of compute units consumed to call poseidon syscall for a given number
@@ -301,7 +305,7 @@ impl ComputeBudget {
 
     pub fn get_compute_budget_and_limits(
         &self,
-        loaded_accounts_data_size_limit: NonZeroU32,
+        loaded_accounts_data_size_limit: u32,
         fee_details: FeeDetails,
     ) -> SVMTransactionExecutionAndFeeBudgetLimits {
         SVMTransactionExecutionAndFeeBudgetLimits {

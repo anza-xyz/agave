@@ -3,9 +3,7 @@
 use {
     self::{
         broadcast_duplicates_run::{BroadcastDuplicatesConfig, BroadcastDuplicatesRun},
-        broadcast_fake_shreds_run::BroadcastFakeShredsRun,
         broadcast_metrics::*,
-        fail_entry_verification_broadcast_run::FailEntryVerificationBroadcastRun,
         standard_broadcast_run::StandardBroadcastRun,
     },
     crate::{
@@ -13,7 +11,9 @@ use {
         cluster_nodes::{ClusterNodes, ClusterNodesCache},
     },
     agave_votor::event::VotorEventSender,
-    crossbeam_channel::{Receiver, RecvError, RecvTimeoutError, Sender, unbounded},
+    crossbeam_channel::{
+        Receiver, RecvError, RecvTimeoutError, SendError, Sender, TrySendError, bounded,
+    },
     itertools::Itertools,
     solana_clock::Slot,
     solana_gossip::{
@@ -21,18 +21,23 @@ use {
         contact_info::Protocol,
     },
     solana_keypair::Keypair,
-    solana_ledger::{blockstore::Blockstore, shred::Shred},
+    solana_leader_schedule::NUM_CONSECUTIVE_LEADER_SLOTS,
+    solana_ledger::{
+        blockstore::Blockstore,
+        leader_schedule_cache::LeaderScheduleCache,
+        shred::{MAX_FEC_SETS_PER_SLOT, Shred},
+    },
     solana_measure::measure::Measure,
     solana_metrics::inc_new_counter_error,
     solana_net_utils::SocketAddrSpace,
-    solana_poh::poh_recorder::WorkingBankEntry,
+    solana_poh::poh_recorder::WorkingBankEntryOrMarker,
     solana_pubkey::Pubkey,
     solana_runtime::{bank::MAX_LEADER_SCHEDULE_STAKES, bank_forks::BankForks},
     solana_streamer::sendmmsg::{SendPktsError, batch_send},
     solana_time_utils::{AtomicInterval, timestamp},
     std::{
         collections::{HashMap, HashSet},
-        net::UdpSocket,
+        net::{SocketAddr, UdpSocket},
         sync::{
             Arc, Mutex, RwLock,
             atomic::{AtomicBool, Ordering},
@@ -44,10 +49,8 @@ use {
 };
 
 pub mod broadcast_duplicates_run;
-mod broadcast_fake_shreds_run;
 pub mod broadcast_metrics;
 pub(crate) mod broadcast_utils;
-mod fail_entry_verification_broadcast_run;
 pub(crate) mod standard_broadcast_run;
 
 const _: () = const {
@@ -61,8 +64,53 @@ const _: () = const {
 const CLUSTER_NODES_CACHE_NUM_EPOCH_CAP: usize = MAX_LEADER_SCHEDULE_STAKES as usize;
 const CLUSTER_NODES_CACHE_TTL: Duration = Duration::from_secs(5);
 
+// Capacity in batches. One batch typically packs 1-2 FEC sets worth of bytes
+// (see get_target_batch_bytes_default), so this is at least 4 slots' worth of
+// broadcast traffic. Filling the channel means the consumer (blockstore record
+// or socket transmit) has fallen at least 4 slots behind, which means we've
+// been skipped already.
+const BROADCAST_CHANNEL_CAPACITY: usize = MAX_FEC_SETS_PER_SLOT as usize * 4;
+
 pub(crate) type RecordReceiver = Receiver<(Arc<Vec<Shred>>, Option<BroadcastShredBatchInfo>)>;
 pub(crate) type TransmitReceiver = Receiver<(Arc<Vec<Shred>>, Option<BroadcastShredBatchInfo>)>;
+
+/// Try to send into a bounded channel. If the channel is full,
+/// log an error and fall back to a blocking send so shreds are not dropped.
+/// A full channel means there is something very wrong with our node,
+/// so we want a loud signal but must preserve shreds so the validator
+/// does not start repairing its own blocks.
+fn try_send_or_block<T>(
+    sender: &Sender<T>,
+    msg: T,
+    channel_name: &str,
+) -> std::result::Result<(), SendError<T>> {
+    match sender.try_send(msg) {
+        Ok(()) => Ok(()),
+        Err(TrySendError::Full(msg)) => {
+            error!("The channel to {channel_name} is full, node is resource starved!");
+            sender.send(msg)
+        }
+        Err(TrySendError::Disconnected(msg)) => Err(SendError(msg)),
+    }
+}
+
+/// Fan a batch of shreds out to both the blockstore record path and the
+/// network transmit path. Each leg uses [`try_send_or_block`] so any full
+/// channel is logged loudly but never drops shreds.
+#[allow(clippy::type_complexity)]
+pub(crate) fn dispatch_shreds(
+    blockstore_sender: &Sender<(Arc<Vec<Shred>>, Option<BroadcastShredBatchInfo>)>,
+    socket_sender: &Sender<(Arc<Vec<Shred>>, Option<BroadcastShredBatchInfo>)>,
+    shreds: Arc<Vec<Shred>>,
+    batch_info: Option<BroadcastShredBatchInfo>,
+) -> std::result::Result<(), SendError<(Arc<Vec<Shred>>, Option<BroadcastShredBatchInfo>)>> {
+    try_send_or_block(
+        blockstore_sender,
+        (shreds.clone(), batch_info.clone()),
+        "blockstore",
+    )?;
+    try_send_or_block(socket_sender, (shreds, batch_info), "network egress")
+}
 
 #[derive(Debug, Error)]
 pub enum Error {
@@ -106,8 +154,6 @@ pub enum BroadcastStageReturnType {
 #[derive(Clone, Debug)]
 pub enum BroadcastStageType {
     Standard,
-    FailEntryVerification,
-    BroadcastFakeShreds,
     BroadcastDuplicates(BroadcastDuplicatesConfig),
 }
 
@@ -117,11 +163,12 @@ impl BroadcastStageType {
         &self,
         sock: Vec<UdpSocket>,
         cluster_info: Arc<ClusterInfo>,
-        receiver: Receiver<WorkingBankEntry>,
+        receiver: Receiver<WorkingBankEntryOrMarker>,
         retransmit_slots_receiver: Receiver<Slot>,
         exit_sender: Arc<AtomicBool>,
         blockstore: Arc<Blockstore>,
         bank_forks: Arc<RwLock<BankForks>>,
+        leader_schedule_cache: Arc<LeaderScheduleCache>,
         shred_version: u16,
         xdp_sender: Option<XdpSender>,
         votor_event_sender: VotorEventSender,
@@ -136,31 +183,12 @@ impl BroadcastStageType {
                 exit_sender,
                 blockstore,
                 bank_forks,
-                StandardBroadcastRun::new(shred_version, migration_status, votor_event_sender),
-                xdp_sender,
-            ),
-
-            BroadcastStageType::FailEntryVerification => BroadcastStage::new(
-                sock,
-                cluster_info,
-                receiver,
-                retransmit_slots_receiver,
-                exit_sender,
-                blockstore,
-                bank_forks,
-                FailEntryVerificationBroadcastRun::new(shred_version),
-                xdp_sender,
-            ),
-
-            BroadcastStageType::BroadcastFakeShreds => BroadcastStage::new(
-                sock,
-                cluster_info,
-                receiver,
-                retransmit_slots_receiver,
-                exit_sender,
-                blockstore,
-                bank_forks,
-                BroadcastFakeShredsRun::new(0, shred_version),
+                StandardBroadcastRun::new(
+                    shred_version,
+                    migration_status,
+                    votor_event_sender,
+                    leader_schedule_cache,
+                ),
                 xdp_sender,
             ),
 
@@ -189,7 +217,7 @@ trait BroadcastRun {
         &mut self,
         keypair: &Keypair,
         blockstore: &Blockstore,
-        receiver: &Receiver<WorkingBankEntry>,
+        receiver: &Receiver<WorkingBankEntryOrMarker>,
         socket_sender: &Sender<(Arc<Vec<Shred>>, Option<BroadcastShredBatchInfo>)>,
         blockstore_sender: &Sender<(Arc<Vec<Shred>>, Option<BroadcastShredBatchInfo>)>,
     ) -> Result<()>;
@@ -230,7 +258,7 @@ impl BroadcastStage {
     fn run(
         cluster_info: Arc<ClusterInfo>,
         blockstore: &Blockstore,
-        receiver: &Receiver<WorkingBankEntry>,
+        receiver: &Receiver<WorkingBankEntryOrMarker>,
         socket_sender: &Sender<(Arc<Vec<Shred>>, Option<BroadcastShredBatchInfo>)>,
         blockstore_sender: &Sender<(Arc<Vec<Shred>>, Option<BroadcastShredBatchInfo>)>,
         mut broadcast_stage_run: impl BroadcastRun,
@@ -288,7 +316,7 @@ impl BroadcastStage {
     fn new(
         socks: Vec<UdpSocket>,
         cluster_info: Arc<ClusterInfo>,
-        receiver: Receiver<WorkingBankEntry>,
+        receiver: Receiver<WorkingBankEntryOrMarker>,
         retransmit_slots_receiver: Receiver<Slot>,
         exit: Arc<AtomicBool>,
         blockstore: Arc<Blockstore>,
@@ -296,8 +324,8 @@ impl BroadcastStage {
         mut broadcast_stage_run: impl BroadcastRun + Send + 'static + Clone,
         xdp_sender: Option<XdpSender>,
     ) -> Self {
-        let (socket_sender, socket_receiver) = unbounded();
-        let (blockstore_sender, blockstore_receiver) = unbounded();
+        let (socket_sender, socket_receiver) = bounded(BROADCAST_CHANNEL_CAPACITY);
+        let (blockstore_sender, blockstore_receiver) = bounded(BROADCAST_CHANNEL_CAPACITY);
         let bs_run = broadcast_stage_run.clone();
 
         let socket_sender_ = socket_sender.clone();
@@ -440,7 +468,7 @@ impl BroadcastStage {
                     .all(|shred| shred.slot() == new_retransmit_slot)
             );
             if !data_shreds.is_empty() {
-                socket_sender.send((data_shreds, None))?;
+                try_send_or_block(socket_sender, (data_shreds, None), "network egress")?;
             }
 
             let coding_shreds = Arc::new(
@@ -455,7 +483,7 @@ impl BroadcastStage {
                     .all(|shred| shred.slot() == new_retransmit_slot)
             );
             if !coding_shreds.is_empty() {
-                socket_sender.send((coding_shreds, None))?;
+                try_send_or_block(socket_sender, (coding_shreds, None), "network egress")?;
             }
         }
 
@@ -485,6 +513,20 @@ pub enum BroadcastSocket<'a> {
     Xdp(&'a XdpSender),
 }
 
+/// Returns the pubkey of the next leader after `slot`, or None if it is us.
+fn next_broadcast_leader_pubkey(
+    leader_schedule_cache: &LeaderScheduleCache,
+    working_bank: &solana_runtime::bank::Bank,
+    my_pubkey: &Pubkey,
+    slot: Slot,
+) -> Option<Pubkey> {
+    let next_leader_slot = slot.saturating_add(NUM_CONSECUTIVE_LEADER_SLOTS.get() as Slot);
+    leader_schedule_cache
+        .slot_leader_at(next_leader_slot, Some(working_bank))
+        .map(|next_leader| next_leader.id)
+        .filter(|next_leader_id| next_leader_id != my_pubkey)
+}
+
 /// Broadcasts shreds from the leader (i.e. this node) to the root of the
 /// turbine retransmit tree for each shred.
 pub fn broadcast_shreds(
@@ -495,6 +537,7 @@ pub fn broadcast_shreds(
     transmit_stats: &mut TransmitShredsStats,
     cluster_info: &ClusterInfo,
     bank_forks: &RwLock<BankForks>,
+    leader_schedule_cache: &LeaderScheduleCache,
     socket_addr_space: &SocketAddrSpace,
 ) -> Result<()> {
     let mut result = Ok(());
@@ -504,6 +547,12 @@ pub fn broadcast_shreds(
         let bank_forks = bank_forks.read().unwrap();
         (bank_forks.root_bank(), bank_forks.working_bank())
     };
+    let my_pubkey = cluster_info.id();
+    // Helper to find the next leader's pubkey (None if it is us)
+    let find_next_leader = |slot: Slot| -> Option<Pubkey> {
+        next_broadcast_leader_pubkey(leader_schedule_cache, &working_bank, &my_pubkey, slot)
+    };
+
     let packets: Vec<_> = shreds
         .iter()
         .chunk_by(|shred| shred.slot())
@@ -512,15 +561,28 @@ pub fn broadcast_shreds(
             let cluster_nodes =
                 cluster_nodes_cache.get(slot, &root_bank, &working_bank, cluster_info);
             update_peer_stats(&cluster_nodes, last_datapoint_submit);
-
-            shreds.filter_map(move |shred| {
+            let maybe_next_leader_udp = find_next_leader(slot).and_then(|leader| {
+                cluster_info
+                    .lookup_contact_info(&leader, |node| {
+                        node.tvu(Protocol::UDP)
+                            .filter(|addr| !addr.is_ipv6() && socket_addr_space.check(addr))
+                    })
+                    .flatten()
+            });
+            shreds.flat_map(move |shred| {
                 let key = shred.id();
-                let addr = cluster_nodes
-                    .get_broadcast_peer(&key)?
-                    .tvu(Protocol::UDP)
-                    .filter(|addr| !addr.is_ipv6() && socket_addr_space.check(addr))?;
-
-                Some((shred.payload(), addr))
+                let maybe_standard_broadcast_peer = cluster_nodes
+                    .get_broadcast_peer(&key)
+                    .and_then(|ci| ci.tvu(Protocol::UDP))
+                    .filter(|addr| !addr.is_ipv6() && socket_addr_space.check(addr));
+                // only send to next leader if not standard broadcast peer
+                let maybe_next_leader = maybe_next_leader_udp
+                    .filter(|addr| Some(*addr) != maybe_standard_broadcast_peer);
+                [maybe_next_leader, maybe_standard_broadcast_peer]
+                    .into_iter()
+                    .filter_map(move |tvu_addr: Option<SocketAddr>| {
+                        tvu_addr.map(|addr| (shred.payload(), addr))
+                    })
             })
         })
         .collect();
@@ -570,21 +632,24 @@ pub mod test {
     use {
         super::*,
         agave_votor_messages::migration::MigrationStatus,
-        crossbeam_channel::{bounded, unbounded},
+        crossbeam_channel::bounded,
         rand::Rng,
-        solana_entry::entry::create_ticks,
+        solana_entry::{entry::create_ticks, entry_or_marker::EntryOrMarker},
         solana_gossip::{cluster_info::ClusterInfo, node::Node},
         solana_hash::Hash,
         solana_keypair::Keypair,
+        solana_leader_schedule::{FixedSchedule, LeaderSchedule, SlotLeader},
         solana_ledger::{
             blockstore::Blockstore,
             genesis_utils::{GenesisConfigInfo, create_genesis_config},
             get_tmp_ledger_path_auto_delete,
+            leader_schedule_cache::LeaderScheduleCache,
             shred::{ProcessShredsStats, ReedSolomonCache, Shredder, max_ticks_per_n_shreds},
         },
         solana_runtime::bank::Bank,
         solana_signer::Signer,
         std::{
+            num::NonZeroUsize,
             path::Path,
             sync::{Arc, atomic::AtomicBool},
             thread::sleep,
@@ -659,13 +724,73 @@ pub mod test {
         assert_eq!(num_expected_coding_shreds, coding_index);
     }
 
+    fn fixed_leader_schedule_cache(
+        slot_leaders: Vec<SlotLeader>,
+        repeat: usize,
+        bank: &Bank,
+    ) -> LeaderScheduleCache {
+        let mut leader_schedule_cache = LeaderScheduleCache::new_from_bank(bank);
+        leader_schedule_cache.set_fixed_leader_schedule(Some(FixedSchedule {
+            leader_schedule: Arc::new(LeaderSchedule::new_from_schedule(
+                slot_leaders,
+                NonZeroUsize::new(repeat).unwrap(),
+            )),
+        }));
+        leader_schedule_cache
+    }
+
+    #[test]
+    fn test_next_broadcast_leader_pubkey() {
+        let leader_a = Keypair::new();
+        let leader_b = Keypair::new();
+        let GenesisConfigInfo { genesis_config, .. } = create_genesis_config(10_000);
+        let bank = Bank::new_for_tests(&genesis_config);
+        let leader_schedule_cache = fixed_leader_schedule_cache(
+            vec![
+                SlotLeader {
+                    id: leader_a.pubkey(),
+                    vote_address: Pubkey::new_unique(),
+                },
+                SlotLeader {
+                    id: leader_b.pubkey(),
+                    vote_address: Pubkey::new_unique(),
+                },
+            ],
+            NUM_CONSECUTIVE_LEADER_SLOTS.get(),
+            &bank,
+        );
+
+        assert_eq!(
+            next_broadcast_leader_pubkey(&leader_schedule_cache, &bank, &leader_a.pubkey(), 0,),
+            Some(leader_b.pubkey())
+        );
+        assert_eq!(
+            next_broadcast_leader_pubkey(
+                &leader_schedule_cache,
+                &bank,
+                &leader_b.pubkey(),
+                NUM_CONSECUTIVE_LEADER_SLOTS.get() as Slot,
+            ),
+            Some(leader_a.pubkey())
+        );
+        assert_eq!(
+            next_broadcast_leader_pubkey(
+                &leader_schedule_cache,
+                &bank,
+                &leader_a.pubkey(),
+                NUM_CONSECUTIVE_LEADER_SLOTS.get() as Slot,
+            ),
+            None,
+        );
+    }
+
     #[test]
     fn test_duplicate_retransmit_signal() {
         // Setup
         let ledger_path = get_tmp_ledger_path_auto_delete!();
         let blockstore = Arc::new(Blockstore::open(ledger_path.path()).unwrap());
-        let (transmit_sender, transmit_receiver) = unbounded();
-        let (retransmit_slots_sender, retransmit_slots_receiver) = unbounded();
+        let (transmit_sender, transmit_receiver) = bounded(1024);
+        let (retransmit_slots_sender, retransmit_slots_receiver) = bounded(1024);
 
         // Make some shreds
         let updated_slot = 0;
@@ -676,12 +801,8 @@ pub mod test {
         assert!(num_data_shreds >= 10);
 
         // Insert all the shreds
-        blockstore
-            .insert_shreds(all_data_shreds, None, true)
-            .unwrap();
-        blockstore
-            .insert_shreds(all_coding_shreds, None, true)
-            .unwrap();
+        blockstore.insert_shreds(all_data_shreds, true).unwrap();
+        blockstore.insert_shreds(all_coding_shreds, true).unwrap();
 
         // Insert duplicate retransmit signal, blocks should
         // only be retransmitted once
@@ -712,7 +833,7 @@ pub mod test {
     fn setup_dummy_broadcast_service(
         leader_keypair: Arc<Keypair>,
         ledger_path: &Path,
-        entry_receiver: Receiver<WorkingBankEntry>,
+        entry_receiver: Receiver<WorkingBankEntryOrMarker>,
         retransmit_slots_receiver: Receiver<Slot>,
     ) -> MockBroadcastStage {
         // Make the database ledger
@@ -737,12 +858,24 @@ pub mod test {
         let exit_sender = Arc::new(AtomicBool::new(false));
 
         let GenesisConfigInfo { genesis_config, .. } = create_genesis_config(10_000);
-        let bank = Bank::new_for_tests(&genesis_config);
-        let bank_forks = BankForks::new_rw_arc(bank);
-        let bank = bank_forks.read().unwrap().root_bank();
+        let root_bank = Bank::new_for_tests(&genesis_config);
+        root_bank.set_tick_height(root_bank.max_tick_height());
+        Bank::calculate_and_set_block_id_for_dcou(&root_bank);
+        let bank_forks = BankForks::new_rw_arc(root_bank);
+        let root_bank = bank_forks.read().unwrap().root_bank();
+        let child_bank =
+            Bank::new_from_parent(root_bank.clone(), *root_bank.leader(), root_bank.slot() + 1);
+        let bank = bank_forks
+            .write()
+            .unwrap()
+            .insert(child_bank)
+            .clone_without_scheduler();
 
         // Create votor event channel for test
         let (votor_event_sender, _votor_event_receiver) = bounded(100);
+        let leader_schedule_cache = Arc::new(LeaderScheduleCache::new_from_bank(
+            &bank_forks.read().unwrap().root_bank(),
+        ));
 
         // Start up the broadcast stage
         let broadcast_service = BroadcastStage::new(
@@ -753,7 +886,12 @@ pub mod test {
             exit_sender,
             blockstore.clone(),
             bank_forks,
-            StandardBroadcastRun::new(0, Arc::new(MigrationStatus::default()), votor_event_sender),
+            StandardBroadcastRun::new(
+                0,
+                Arc::new(MigrationStatus::default()),
+                votor_event_sender,
+                leader_schedule_cache,
+            ),
             None,
         );
 
@@ -772,8 +910,8 @@ pub mod test {
         // Create the leader scheduler
         let leader_keypair = Arc::new(Keypair::new());
 
-        let (entry_sender, entry_receiver) = unbounded();
-        let (retransmit_slots_sender, retransmit_slots_receiver) = unbounded();
+        let (entry_sender, entry_receiver) = bounded(1024);
+        let (retransmit_slots_sender, retransmit_slots_receiver) = bounded(1024);
         let broadcast_service = setup_dummy_broadcast_service(
             leader_keypair,
             ledger_path.path(),
@@ -783,17 +921,22 @@ pub mod test {
         let start_tick_height;
         let max_tick_height;
         let ticks_per_slot;
+        let num_expected_entries;
         let slot;
         {
             let bank = broadcast_service.bank;
             start_tick_height = bank.tick_height();
             max_tick_height = bank.max_tick_height();
             ticks_per_slot = bank.ticks_per_slot();
+            num_expected_entries = (max_tick_height - start_tick_height) as usize;
             slot = bank.slot();
             let ticks = create_ticks(max_tick_height - start_tick_height, 0, Hash::default());
             for (i, tick) in ticks.into_iter().enumerate() {
                 entry_sender
-                    .send((bank.clone(), (tick, i as u64 + 1)))
+                    .send((
+                        bank.clone(),
+                        (EntryOrMarker::Entry(tick), start_tick_height + i as u64 + 1),
+                    ))
                     .expect("Expect successful send to broadcast service");
             }
         }
@@ -809,12 +952,11 @@ pub mod test {
                 .blockstore
                 .get_slot_entries(slot, 0)
                 .expect("Expect entries to be present");
-            if entries.len() >= max_tick_height as usize {
+            if entries.len() >= num_expected_entries {
                 break;
             }
             sleep(Duration::from_millis(1000));
         }
-        assert_eq!(entries.len(), max_tick_height as usize);
 
         drop(entry_sender);
         drop(retransmit_slots_sender);
@@ -822,5 +964,6 @@ pub mod test {
             .broadcast_service
             .join()
             .expect("Expect successful join of broadcast service");
+        assert_eq!(entries.len(), num_expected_entries);
     }
 }

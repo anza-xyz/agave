@@ -31,7 +31,6 @@ pub mod inflation;
 pub mod memo;
 pub mod nonce;
 pub mod program;
-pub mod program_v4;
 pub mod spend_utils;
 pub mod stake;
 pub mod test_utils;

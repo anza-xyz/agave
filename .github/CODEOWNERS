@@ -1,8 +1,8 @@
 # Please keep this file sorted
 /bloom/ @anza-xyz/networking
 /bls-cert-verify/ @anza-xyz/consensus
+/bls-sigverify/ @anza-xyz/consensus
 /compute-budget-instruction/ @anza-xyz/fees
-/core/src/bls_sigverify/ @anza-xyz/consensus
 /core/src/consensus.rs @anza-xyz/consensus
 /core/src/consensus/ @anza-xyz/consensus
 /core/src/repair/ @anza-xyz/networking @anza-xyz/consensus
@@ -13,7 +13,6 @@
 /net-utils/ @anza-xyz/networking
 /program-runtime/ @anza-xyz/svm
 /programs/bpf_loader/ @anza-xyz/svm
-/programs/loader-v4/ @anza-xyz/svm
 /runtime-transaction/ @anza-xyz/tx-metadata
 /svm-callback/ @anza-xyz/svm
 /svm-conformance/ @anza-xyz/svm
@@ -21,7 +20,6 @@
 /svm/ @anza-xyz/svm
 /tls-utils/ @anza-xyz/networking
 /transaction-context/ @anza-xyz/svm
-/transaction-view/ @anza-xyz/tx-metadata
 /turbine/ @anza-xyz/networking
 /votor/ @anza-xyz/consensus
 /votor-messages/ @anza-xyz/consensus

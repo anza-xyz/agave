@@ -17,7 +17,7 @@ use {
         replay_stage::{HeaviestForkFailures, ReplayStage, TowerBFTStructures},
         unfrozen_gossip_verified_vote_hashes::UnfrozenGossipVerifiedVoteHashes,
     },
-    crossbeam_channel::unbounded,
+    crossbeam_channel::bounded,
     solana_clock::Slot,
     solana_epoch_schedule::EpochSchedule,
     solana_hash::Hash,
@@ -109,7 +109,7 @@ impl VoteSimulator {
                 .clone_without_scheduler();
             self.progress
                 .entry(slot)
-                .or_insert_with(|| ForkProgress::new(Hash::default(), None, None, 0, 0));
+                .or_insert_with(|| ForkProgress::new(Hash::default(), None, None, 0, 0, None));
             for (pubkey, vote) in cluster_votes.iter() {
                 if vote.contains(&parent) {
                     let keypairs = self.validator_keypairs.get(pubkey).unwrap();
@@ -247,7 +247,7 @@ impl VoteSimulator {
     }
 
     pub fn set_root(&mut self, new_root: Slot) {
-        let (drop_bank_sender, _drop_bank_receiver) = unbounded();
+        let (drop_bank_sender, _drop_bank_receiver) = bounded(1024);
         ReplayStage::handle_new_root(
             new_root,
             &self.bank_forks,
@@ -292,7 +292,7 @@ impl VoteSimulator {
     ) {
         self.progress
             .entry(slot)
-            .or_insert_with(|| ForkProgress::new(Hash::default(), None, None, 0, 0))
+            .or_insert_with(|| ForkProgress::new(Hash::default(), None, None, 0, 0, None))
             .fork_stats
             .lockout_intervals
             .push(LockoutInterval {
@@ -305,7 +305,7 @@ impl VoteSimulator {
     pub fn clear_lockout_intervals(&mut self, slot: Slot) {
         self.progress
             .entry(slot)
-            .or_insert_with(|| ForkProgress::new(Hash::default(), None, None, 0, 0))
+            .or_insert_with(|| ForkProgress::new(Hash::default(), None, None, 0, 0, None))
             .fork_stats
             .lockout_intervals
             .clear()
@@ -419,9 +419,10 @@ pub fn initialize_state_with(
     );
 
     genesis_config.epoch_schedule = EpochSchedule::without_warmup();
-    genesis_config.poh_config.hashes_per_tick = Some(2);
-    let (bank0, bank_forks) = Bank::new_with_config_for_tests(&genesis_config, bank_test_config)
-        .wrap_with_bank_forks_for_tests();
+    genesis_config.poh_config.hashes_per_tick = Some(4);
+    let (bank0, bank_forks) =
+        Bank::new_with_paths_for_tests(&genesis_config, Some(bank_test_config), vec![], None)
+            .wrap_with_bank_forks_for_tests();
     bank0.set_block_id(Some(Hash::new_unique()));
 
     for pubkey in validator_keypairs_map.keys() {
@@ -433,7 +434,15 @@ pub fn initialize_state_with(
     let mut progress = ProgressMap::default();
     progress.insert(
         0,
-        ForkProgress::new_from_bank(&bank0, bank0.leader_id(), &Pubkey::default(), None, 0, 0),
+        ForkProgress::new_from_bank(
+            &bank0,
+            bank0.leader_id(),
+            &Pubkey::default(),
+            None,
+            0,
+            0,
+            None,
+        ),
     );
     let heaviest_subtree_fork_choice =
         HeaviestSubtreeForkChoice::new_from_bank_forks(bank_forks.clone());

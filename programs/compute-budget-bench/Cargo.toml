@@ -27,3 +27,6 @@ solana-svm-transaction = { workspace = true }
 [[bench]]
 name = "compute_budget"
 harness = false
+
+[lints]
+workspace = true

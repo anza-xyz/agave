@@ -26,7 +26,7 @@ use {
 async fn test_vote_authorize_and_withdraw(compute_unit_price: Option<u64>) {
     let mint_keypair = Keypair::new();
     let faucet_addr = run_local_faucet_with_unique_port_for_tests(mint_keypair.insecure_clone());
-    let test_validator = TestValidator::async_with_no_fees(
+    let test_validator = TestValidator::async_start_with_config(
         &mint_keypair,
         Some(faucet_addr),
         SocketAddrSpace::Unspecified,
@@ -41,9 +41,14 @@ async fn test_vote_authorize_and_withdraw(compute_unit_price: Option<u64>) {
     config.json_rpc_url = test_validator.rpc_url();
     config.signers = vec![&default_signer];
 
-    request_and_confirm_airdrop(&rpc_client, &config, &config.signers[0].pubkey(), 100_000)
-        .await
-        .unwrap();
+    request_and_confirm_airdrop(
+        &rpc_client,
+        &config,
+        &config.signers[0].pubkey(),
+        1_000_000_000,
+    )
+    .await
+    .unwrap();
 
     // Create vote account
     let vote_account_keypair = Keypair::new();
@@ -252,7 +257,7 @@ async fn test_vote_authorize_and_withdraw(compute_unit_price: Option<u64>) {
 async fn test_offline_vote_authorize_and_withdraw(compute_unit_price: Option<u64>) {
     let mint_keypair = Keypair::new();
     let faucet_addr = run_local_faucet_with_unique_port_for_tests(mint_keypair.insecure_clone());
-    let test_validator = TestValidator::async_with_no_fees(
+    let test_validator = TestValidator::async_start_with_config(
         &mint_keypair,
         Some(faucet_addr),
         SocketAddrSpace::Unspecified,

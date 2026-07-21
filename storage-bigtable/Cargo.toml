@@ -11,12 +11,21 @@ edition = { workspace = true }
 
 [package.metadata.docs.rs]
 targets = ["x86_64-unknown-linux-gnu"]
+all-features = true
+rustdoc-args = ["--cfg=docsrs"]
 
 [lib]
 crate-type = ["lib"]
 name = "solana_storage_bigtable"
 
 [features]
+frozen-abi = [
+    "dep:solana-frozen-abi",
+    "dep:solana-frozen-abi-macro",
+    "solana-signature/frozen-abi",
+    "solana-transaction/frozen-abi",
+    "solana-transaction-error/frozen-abi",
+]
 agave-unstable-api = []
 
 [dependencies]
@@ -24,7 +33,6 @@ agave-reserved-account-keys = { workspace = true }
 base64 = { workspace = true }
 bincode = { workspace = true }
 bzip2 = { workspace = true }
-enum-iterator = { workspace = true }
 flate2 = { workspace = true }
 futures = { workspace = true }
 goauth = { workspace = true }
@@ -36,6 +44,12 @@ prost-types = { workspace = true }
 serde = { workspace = true }
 smpl_jwt = { workspace = true }
 solana-clock = { workspace = true }
+solana-frozen-abi = { workspace = true, optional = true, features = [
+    "frozen-abi",
+] }
+solana-frozen-abi-macro = { workspace = true, optional = true, features = [
+    "frozen-abi",
+] }
 solana-message = { workspace = true }
 solana-metrics = { workspace = true }
 solana-pubkey = { workspace = true }
@@ -58,3 +72,6 @@ solana-keypair = { workspace = true }
 solana-pubkey = { workspace = true, features = ["rand"] }
 solana-system-transaction = { workspace = true }
 solana-transaction-context = { path = "../transaction-context", features = ["agave-unstable-api", "bincode"] }
+
+[lints]
+workspace = true

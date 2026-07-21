@@ -3,7 +3,7 @@
 //! New reserved account keys may be added as long as they specify a feature
 //! gate that transitions the key into read-only at an epoch boundary.
 #![cfg_attr(feature = "frozen-abi", feature(min_specialization))]
-#![cfg_attr(docsrs, feature(doc_auto_cfg))]
+#![cfg_attr(docsrs, feature(doc_cfg))]
 use {
     agave_feature_set::FeatureSet,
     solana_pubkey::Pubkey,
@@ -150,6 +150,9 @@ static RESERVED_ACCOUNTS: std::sync::LazyLock<Vec<ReservedAccount>> =
             ReservedAccount::new_active(config::id()),
             ReservedAccount::new_active(ed25519_program::id()),
             ReservedAccount::new_active(feature::id()),
+            // "Loader V4" must remain a reserved account key, since it cannot
+            // be removed without breaking consensus.
+            // We will use this address eventually.
             ReservedAccount::new_active(loader_v4::id()),
             ReservedAccount::new_active(secp256k1_program::id()),
             ReservedAccount::new_active(secp256r1_program::id()),

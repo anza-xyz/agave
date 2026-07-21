@@ -2,18 +2,14 @@
 
 use {
     bencher::{Bencher, TDynBenchFn, TestDesc, TestDescAndFn, TestFn, benchmark_main},
-    crossbeam_channel::unbounded,
+    crossbeam_channel::bounded,
     log::*,
     rand::{
         Rng,
         distr::{Distribution, Uniform},
         rng,
     },
-    solana_core::{
-        banking_trace::BankingTracer,
-        sigverify::TransactionSigVerifier,
-        sigverify_stage::{SigVerifier, SigVerifyStage},
-    },
+    solana_core::{banking_trace::BankingTracer, sigverify_stage::SigVerifyStage},
     solana_hash::Hash,
     solana_keypair::Keypair,
     solana_measure::measure::Measure,
@@ -22,14 +18,10 @@ use {
         sigverify,
         test_tx::test_tx,
     },
+    solana_runtime::{bank::Bank, genesis_utils::create_genesis_config},
     solana_signer::Signer,
     solana_system_transaction as system_transaction,
-    std::{
-        borrow::Cow,
-        hint::black_box,
-        sync::Arc,
-        time::{Duration, Instant},
-    },
+    std::{borrow::Cow, hint::black_box, num::NonZeroUsize, sync::Arc, time::Instant},
 };
 
 /// Orphan rules workaround that allows for implementation of `TDynBenchFn`.
@@ -42,91 +34,6 @@ where
     fn run(&self, harness: &mut Bencher) {
         (self.0)(harness)
     }
-}
-
-fn run_bench_packet_discard(num_ips: usize, bencher: &mut Bencher) {
-    agave_logger::setup();
-    let len = 30 * 1000;
-    let chunk_size = 1024;
-    let tx = test_tx();
-    let mut batches = to_packet_batches(&vec![tx; len], chunk_size);
-
-    let mut total = 0;
-
-    let ips: Vec<_> = (0..num_ips)
-        .map(|_| {
-            let mut addr = [0u16; 8];
-            rng().fill(&mut addr);
-            std::net::IpAddr::from(addr)
-        })
-        .collect();
-
-    for batch in batches.iter_mut() {
-        total += batch.len();
-        for mut p in batch.iter_mut() {
-            let ip_index = rng().random_range(0..ips.len());
-            p.meta_mut().addr = ips[ip_index];
-        }
-    }
-    info!("total packets: {total}");
-
-    bencher.iter(move || {
-        SigVerifyStage::discard_excess_packets(&mut batches, 10_000);
-        let mut num_packets = 0;
-        for batch in batches.iter_mut() {
-            for mut p in batch.iter_mut() {
-                if !p.meta().discard() {
-                    num_packets += 1;
-                }
-                p.meta_mut().set_discard(false);
-            }
-        }
-        assert_eq!(num_packets, 10_000);
-    });
-}
-
-fn bench_packet_discard_many_senders(bencher: &mut Bencher) {
-    run_bench_packet_discard(1000, bencher);
-}
-
-fn bench_packet_discard_single_sender(bencher: &mut Bencher) {
-    run_bench_packet_discard(1, bencher);
-}
-
-fn bench_packet_discard_mixed_senders(bencher: &mut Bencher) {
-    const SIZE: usize = 30 * 1000;
-    const CHUNK_SIZE: usize = 1024;
-    fn new_rand_addr<R: Rng>(rng: &mut R) -> std::net::IpAddr {
-        let mut addr = [0u16; 8];
-        rng.fill(&mut addr);
-        std::net::IpAddr::from(addr)
-    }
-    let mut rng = rng();
-    let mut batches = to_packet_batches(&vec![test_tx(); SIZE], CHUNK_SIZE);
-    let spam_addr = new_rand_addr(&mut rng);
-    for batch in batches.iter_mut() {
-        for mut packet in batch.iter_mut() {
-            // One spam address, ~1000 unique addresses.
-            packet.meta_mut().addr = if rng.random_ratio(1, 30) {
-                new_rand_addr(&mut rng)
-            } else {
-                spam_addr
-            }
-        }
-    }
-    bencher.iter(move || {
-        SigVerifyStage::discard_excess_packets(&mut batches, 10_000);
-        let mut num_packets = 0;
-        for batch in batches.iter_mut() {
-            for mut packet in batch.iter_mut() {
-                if !packet.meta().discard() {
-                    num_packets += 1;
-                }
-                packet.meta_mut().set_discard(false);
-            }
-        }
-        assert_eq!(num_packets, 10_000);
-    });
 }
 
 fn gen_batches(use_same_tx: bool) -> Vec<PacketBatch> {
@@ -164,11 +71,28 @@ fn bench_sigverify_stage_without_same_tx(bencher: &mut Bencher) {
 fn bench_sigverify_stage(bencher: &mut Bencher, use_same_tx: bool) {
     agave_logger::setup();
     trace!("start");
-    let (packet_s, packet_r) = unbounded();
+    let (_bank, bank_forks) =
+        Bank::new_with_bank_forks_for_tests(&create_genesis_config(1).genesis_config);
+    let sharable_banks = bank_forks.read().unwrap().sharable_banks();
+    let (packet_s, packet_r) = bounded(1024);
+    let (vote_packet_s, vote_packet_r) = bounded(1024);
     let (verified_s, verified_r) = BankingTracer::channel_for_test();
-    let threadpool = Arc::new(sigverify::threadpool_for_benches());
-    let verifier = TransactionSigVerifier::new(threadpool, verified_s, None);
-    let stage = SigVerifyStage::new(packet_r, verifier, "solSigVerBench", "bench");
+    let (tpu_vote_s, _tpu_vote_r) = BankingTracer::channel_for_test();
+    let (forward_stage_s, _forward_stage_r) = bounded(1024);
+    let (stage, gossip_sigverify_handle) = SigVerifyStage::new(
+        packet_r,
+        vote_packet_r,
+        verified_s,
+        tpu_vote_s,
+        forward_stage_s,
+        NonZeroUsize::new(sigverify::threadpool_for_benches().current_num_threads()).unwrap(),
+        false,
+        sharable_banks,
+        None,
+    );
+    let packet_s = packet_s;
+    let packet_s_for_bench = packet_s.clone();
+    let verified_r_for_bench = verified_r.clone();
 
     bencher.iter(move || {
         let now = Instant::now();
@@ -182,23 +106,25 @@ fn bench_sigverify_stage(bencher: &mut Bencher, use_same_tx: bool) {
         let mut sent_len = 0;
         for batch in batches.into_iter() {
             sent_len += batch.len();
-            packet_s.send(batch).unwrap();
+            packet_s_for_bench.send(batch).unwrap();
         }
-        let mut received = 0;
         let expected = if use_same_tx { 1 } else { sent_len };
         trace!("sent: {sent_len}, expected: {expected}");
-        loop {
-            if let Ok(verifieds) = verified_r.recv_timeout(Duration::from_millis(10)) {
-                received += verifieds.iter().map(|batch| batch.len()).sum::<usize>();
-                black_box(verifieds);
-                if received >= expected {
-                    break;
-                }
-            }
+        let mut verified = 0;
+        while verified < expected {
+            verified += verified_r_for_bench
+                .recv()
+                .unwrap()
+                .iter()
+                .filter(|packet| !packet.meta().discard())
+                .count();
         }
-        trace!("received: {received}");
+        trace!("received: {verified}");
     });
     // This will wait for all packets to make it through sigverify.
+    drop(packet_s);
+    drop(vote_packet_s);
+    drop(gossip_sigverify_handle);
     stage.join().unwrap();
 }
 
@@ -240,17 +166,18 @@ fn prepare_batches(discard_factor: i32) -> (Vec<PacketBatch>, usize) {
 
 fn bench_shrink_sigverify_stage_core(bencher: &mut Bencher, discard_factor: i32) {
     let (batches0, num_valid_packets) = prepare_batches(discard_factor);
-    let (verified_s, _verified_r) = BankingTracer::channel_for_test();
     let threadpool = Arc::new(sigverify::threadpool_for_benches());
-    let verifier = TransactionSigVerifier::new(threadpool, verified_s, None);
 
     let mut c = 0;
     let mut total_verify_time = 0;
 
     bencher.iter(|| {
+        let mut batches = batches0.clone();
+
         let mut verify_time = Measure::start("sigverify_batch_time");
-        let _batches = verifier.verify_batches(batches0.clone(), num_valid_packets);
+        sigverify::ed25519_verify(&threadpool, &mut batches, false, num_valid_packets, false);
         verify_time.stop();
+        black_box(sigverify::count_valid_packets(&batches));
 
         c += 1;
         total_verify_time += verify_time.as_us();
@@ -268,27 +195,6 @@ const BENCH_CASES_SHRINK_SIGVERIFY_STAGE_CORE: &[i32] = &[0, 10, 20, 30, 40, 50,
 
 fn benches() -> Vec<TestDescAndFn> {
     let mut benches = vec![
-        TestDescAndFn {
-            desc: TestDesc {
-                name: Cow::from("bench_packet_discard_many_senders"),
-                ignore: false,
-            },
-            testfn: TestFn::StaticBenchFn(bench_packet_discard_many_senders),
-        },
-        TestDescAndFn {
-            desc: TestDesc {
-                name: Cow::from("bench_packet_discard_single_sender"),
-                ignore: false,
-            },
-            testfn: TestFn::StaticBenchFn(bench_packet_discard_single_sender),
-        },
-        TestDescAndFn {
-            desc: TestDesc {
-                name: Cow::from("bench_packet_discard_mixed_senders"),
-                ignore: false,
-            },
-            testfn: TestFn::StaticBenchFn(bench_packet_discard_mixed_senders),
-        },
         TestDescAndFn {
             desc: TestDesc {
                 name: Cow::from("bench_sigverify_stage_with_same_tx"),

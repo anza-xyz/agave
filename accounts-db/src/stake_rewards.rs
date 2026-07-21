@@ -112,7 +112,7 @@ impl StakeReward {
             1000,
             &validator_voting_keypair.pubkey(),
             0,
-            &validator_voting_keypair.pubkey(),
+            &validator_pubkey,
             validator_stake_lamports,
         );
 
@@ -160,6 +160,7 @@ fn create_stake_account(
     let vote_state =
         vote_state::VoteStateV4::deserialize(vote_account.data(), voter_pubkey).unwrap();
     let credits_observed = vote_state.credits();
+    let last_epoch = vote_state.epoch_credits.last().map(|c| c.0).unwrap_or(0);
 
     let rent_exempt_reserve = rent.minimum_balance(stake_account.data().len());
     let stake_amount = lamports
@@ -168,12 +169,23 @@ fn create_stake_account(
 
     let meta = Meta {
         authorized: Authorized::auto(authorized),
+        #[expect(deprecated)]
         rent_exempt_reserve,
         ..Meta::default()
     };
 
     let stake = Stake {
-        delegation: Delegation::new(voter_pubkey, stake_amount, Epoch::MAX),
+        delegation: Delegation {
+            voter_pubkey: *voter_pubkey,
+            stake: stake_amount,
+            activation_epoch: Epoch::MAX,
+            deactivation_epoch: if stake_amount == 0 {
+                last_epoch
+            } else {
+                Epoch::MAX
+            },
+            ..Default::default()
+        },
         credits_observed,
     };
 

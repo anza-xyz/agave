@@ -2,13 +2,21 @@
 
 use {
     crate::rpc_sender::*,
+    agave_votor_messages::{
+        consensus_message::Block,
+        wire::{WireBlockCertMessage, WireCertSignature},
+    },
     async_trait::async_trait,
     base64::{Engine, prelude::BASE64_STANDARD},
     serde_json::{Number, Value, json},
-    solana_account_decoder_client_types::{UiAccount, UiAccountData, UiAccountEncoding},
+    solana_account_decoder_client_types::{
+        UiAccount, UiAccountData, UiAccountEncoding, token::UiTokenAmount,
+    },
+    solana_bls_signatures::{BLS_SIGNATURE_AFFINE_SIZE, Signature as BLSSignature},
     solana_clock::{Slot, UnixTimestamp},
     solana_epoch_info::EpochInfo,
     solana_epoch_schedule::EpochSchedule,
+    solana_hash::Hash,
     solana_instruction::{TRANSACTION_LEVEL_STACK_HEIGHT, error::InstructionError},
     solana_message::MessageHeader,
     solana_pubkey::Pubkey,
@@ -17,16 +25,16 @@ use {
         config::RpcBlockProductionConfig,
         request::RpcRequest,
         response::{
-            Response, RpcAccountBalance, RpcBlockProduction, RpcBlockProductionRange, RpcBlockhash,
-            RpcConfirmedTransactionStatusWithSignature, RpcContactInfo, RpcIdentity,
-            RpcInflationGovernor, RpcInflationRate, RpcInflationReward, RpcKeyedAccount,
-            RpcPerfSample, RpcPrioritizationFee, RpcResponseContext, RpcSimulateTransactionResult,
-            RpcSnapshotSlotInfo, RpcSupply, RpcVersionInfo, RpcVoteAccountInfo,
-            RpcVoteAccountStatus,
+            Response, RpcAccountBalance, RpcBlockCommitment, RpcBlockProduction,
+            RpcBlockProductionRange, RpcBlockhash, RpcConfirmedTransactionStatusWithSignature,
+            RpcContactInfo, RpcIdentity, RpcInflationGovernor, RpcInflationRate,
+            RpcInflationReward, RpcKeyedAccount, RpcPerfSample, RpcPrioritizationFee,
+            RpcResponseContext, RpcSimulateTransactionResult, RpcSnapshotSlotInfo, RpcSupply,
+            RpcVersionInfo, RpcVoteAccountInfo, RpcVoteAccountStatus,
         },
     },
     solana_signature::Signature,
-    solana_transaction::{Transaction, versioned::TransactionVersion},
+    solana_transaction::versioned::{TransactionVersion, VersionedTransaction},
     solana_transaction_error::{TransactionError, TransactionResult},
     solana_transaction_status_client_types::{
         EncodedConfirmedBlock, EncodedConfirmedTransactionWithStatusMeta, EncodedTransaction,
@@ -35,6 +43,7 @@ use {
         UiRawMessage, UiTransaction, UiTransactionStatusMeta, option_serializer::OptionSerializer,
     },
     solana_version::Version,
+    solana_vote_interface::state::MAX_LOCKOUT_HISTORY,
     std::{
         collections::{HashMap, VecDeque},
         net::SocketAddr,
@@ -168,6 +177,16 @@ impl RpcSender for MockSender {
                 block_height: 34,
                 transaction_count: Some(123),
             })?,
+            "getAgGenesisCert" => {
+                let cert = WireBlockCertMessage {
+                    block: Block { slot: 0, block_id: Hash::default() },
+                    signature: WireCertSignature {
+                        signature:  BLSSignature([0; BLS_SIGNATURE_AFFINE_SIZE]),
+                        bitmap: vec![],
+                     }
+                };
+                serde_json::to_value(Some(cert))?
+            }
             "getSignatureStatuses" => {
                 let status: TransactionResult<()> = if self.url == "account_in_use" {
                     Err(TransactionError::AccountInUse)
@@ -261,7 +280,12 @@ impl RpcSender for MockSender {
                 incremental: Some(110),
             }),
             "getBlockHeight" => Value::Number(Number::from(1234)),
+            "getSlotLeader" => Value::String(PUBKEY.to_string()),
             "getSlotLeaders" => json!([PUBKEY]),
+            "getBlockCommitment" => serde_json::to_value(RpcBlockCommitment {
+                commitment: Some([0; MAX_LOCKOUT_HISTORY + 1]),
+                total_stake: 42,
+            })?,
             "getBlockProduction" => {
                 if params.is_null() {
                     json!(Response {
@@ -327,7 +351,8 @@ impl RpcSender for MockSender {
                         vote_pubkey: PUBKEY.to_string(),
                         node_pubkey: PUBKEY.to_string(),
                         activated_stake: 0,
-                        commission: 0,
+                        commission: 100,
+                        inflation_rewards_commission_bps: Some(10_000), // 100 * 100
                         epoch_vote_account: false,
                         epoch_credits: vec![],
                         last_vote: 0,
@@ -341,7 +366,7 @@ impl RpcSender for MockSender {
                 } else {
                     let tx_str = params.as_array().unwrap()[0].as_str().unwrap().to_string();
                     let data = BASE64_STANDARD.decode(tx_str).unwrap();
-                    let tx: Transaction = bincode::deserialize(&data).unwrap();
+                    let tx: VersionedTransaction = wincode::deserialize(&data).unwrap();
                     tx.signatures[0].to_string()
                 };
                 Value::String(signature)
@@ -490,6 +515,39 @@ impl RpcSender for MockSender {
                     }
                 ])?
             },
+            "getFirstAvailableBlock" => json![0],
+            "getGenesisHash" => Value::String(PUBKEY.to_string()),
+            "getHealth" => Value::String("ok".to_string()),
+            "getTokenAccountBalance" => serde_json::to_value(Response {
+                context: RpcResponseContext { slot: 1, api_version: None },
+                value: UiTokenAmount {
+                    ui_amount: Some(0.0),
+                    decimals: 9,
+                    amount: "0".to_string(),
+                    ui_amount_string: "0".to_string(),
+                },
+            })?,
+            "getTokenAccountsByDelegate" => serde_json::to_value(Response {
+                context: RpcResponseContext { slot: 1, api_version: None },
+                value: Vec::<RpcKeyedAccount>::new(),
+            })?,
+            "getTokenAccountsByOwner" => serde_json::to_value(Response {
+                context: RpcResponseContext { slot: 1, api_version: None },
+                value: Vec::<RpcKeyedAccount>::new(),
+            })?,
+            "getTokenLargestAccounts" => serde_json::to_value(Response {
+                context: RpcResponseContext { slot: 1, api_version: None },
+                value: Vec::<RpcAccountBalance>::new(),
+            })?,
+            "getTokenSupply" => serde_json::to_value(Response {
+                context: RpcResponseContext { slot: 1, api_version: None },
+                value: UiTokenAmount {
+                    ui_amount: Some(0.0),
+                    decimals: 9,
+                    amount: "0".to_string(),
+                    ui_amount_string: "0".to_string(),
+                },
+            })?,
             _ => Value::Null,
         };
         Ok(val)

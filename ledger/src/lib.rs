@@ -19,6 +19,7 @@ pub mod blockstore_metric_report_service;
 pub mod blockstore_metrics;
 pub mod blockstore_options;
 pub mod blockstore_processor;
+pub mod deshred_transaction_notifier_interface;
 pub mod entry_notifier_interface;
 pub mod entry_notifier_service;
 pub mod genesis_utils;
@@ -31,7 +32,6 @@ pub mod sigverify_shreds;
 pub mod slot_stats;
 mod staking_utils;
 mod transaction_address_lookup_table_scanner;
-pub mod transaction_balances;
 pub mod use_snapshot_archives_at_startup;
 
 #[macro_use]

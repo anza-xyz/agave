@@ -28,7 +28,7 @@ agave-install-init
 initializes a new installation
 
 USAGE:
-    agave-install-init [FLAGS] [OPTIONS] --data_dir <PATH> --pubkey <PUBKEY>
+    agave-install-init [FLAGS] [OPTIONS] <release>
 
 FLAGS:
     -h, --help              Prints help information
@@ -36,8 +36,7 @@ FLAGS:
 
 OPTIONS:
     -d, --data-dir <PATH>    Directory to store install data
-    -u, --url <URL>          JSON RPC URL for the solana cluster
-    -p, --pubkey <PUBKEY>    Public key of the update manifest
+
 EOF
 }
 

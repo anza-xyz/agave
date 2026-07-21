@@ -9,6 +9,11 @@ homepage = { workspace = true }
 license = { workspace = true }
 edition = { workspace = true }
 
+[package.metadata.docs.rs]
+targets = ["x86_64-unknown-linux-gnu"]
+all-features = true
+rustdoc-args = ["--cfg=docsrs"]
+
 [lib]
 crate-type = ["lib"]
 name = "solana_bucket_map"
@@ -32,8 +37,9 @@ solana-pubkey = { workspace = true }
 tempfile = { workspace = true }
 
 [dev-dependencies]
-agave-logger = { path = "../logger", features = ["agave-unstable-api"] }
-fs_extra = { workspace = true }
 rayon = { workspace = true }
 solana-bucket-map = { path = ".", features = ["agave-unstable-api", "dev-context-only-utils"] }
 solana-pubkey = { workspace = true, features = ["rand"] }
+
+[lints]
+workspace = true

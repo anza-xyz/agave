@@ -128,6 +128,20 @@ impl AccountStorage {
         self.map.iter().map(|iter_item| *iter_item.key()).collect()
     }
 
+    /// All slots with a storage entry below `max_slot_exclusive`.
+    pub(crate) fn slots_less_than(&self, max_slot_exclusive: Slot) -> Vec<Slot> {
+        assert!(
+            self.no_shrink_in_progress(),
+            "shrink is in progress! slots: {:?}",
+            self.shrink_in_progress_map.read().unwrap().keys(),
+        );
+        self.map
+            .iter()
+            .map(|iter_item| *iter_item.key())
+            .filter(|slot| *slot < max_slot_exclusive)
+            .collect()
+    }
+
     /// returns true if there is no entry for 'slot'
     #[cfg(test)]
     pub(crate) fn is_empty_entry(&self, slot: Slot) -> bool {
@@ -189,13 +203,21 @@ impl AccountStorage {
     pub(crate) fn shrinking_in_progress(
         &self,
         slot: Slot,
+        old_store: Arc<AccountStorageEntry>,
         new_store: Arc<AccountStorageEntry>,
     ) -> ShrinkInProgress<'_> {
-        let shrinking_store = Arc::clone(
+        assert_eq!(new_store.slot(), slot);
+        assert_eq!(old_store.slot(), slot);
+        assert_eq!(
             self.map
                 .get(&slot)
-                .expect("no pre-existing storage for shrinking slot")
-                .value(),
+                .expect("pre-existing storage for shrinking slot")
+                .value()
+                .id(),
+            old_store.id(),
+            "store being shrunk not found in account storage map! slot: {slot}, old store: \
+             {old_store:?}, new store: {new_store:?}, entry in account storage map at slot: {:?}",
+            self.map.get(&slot).unwrap().value(),
         );
 
         // insert 'new_store' into 'shrink_in_progress_map'
@@ -212,7 +234,7 @@ impl AccountStorage {
             storage: self,
             slot,
             new_store,
-            old_store: shrinking_store,
+            old_store,
         }
     }
 
@@ -340,7 +362,7 @@ impl<'a> AccountStoragesOrderer<'a> {
     ) -> Self {
         let len_range = 0..storages.len();
         let mut indices: Vec<_> = len_range.clone().collect();
-        indices.sort_unstable_by_key(|i| storages[*i].capacity());
+        indices.sort_unstable_by_key(|i| storages[*i].written_bytes());
         indices.iter_mut().for_each(|i| {
             *i = select_from_range_with_start_end_rates(len_range.clone(), *i, small_to_large_ratio)
         });
@@ -491,17 +513,31 @@ fn select_from_range_with_start_end_rates(
 }
 
 #[cfg(test)]
-pub(crate) mod tests {
-    use {
-        super::*,
-        crate::accounts_file::{AccountsFileProvider, StorageAccess},
-        std::{iter, path::Path},
-        test_case::test_case,
-    };
+mod tests {
+    use {super::*, crate::accounts_file::AccountsFileProvider, std::iter, tempfile::TempDir};
 
-    #[test_case(#[allow(deprecated)] StorageAccess::Mmap)]
-    #[test_case(StorageAccess::File)]
-    fn test_shrink_in_progress(storage_access: StorageAccess) {
+    fn new_test_storage() -> (TempDir, Arc<AccountStorageEntry>) {
+        new_test_storage_with(0, 0)
+    }
+
+    fn new_test_storage_with(
+        slot: Slot,
+        id: AccountsFileId,
+    ) -> (TempDir, Arc<AccountStorageEntry>) {
+        let temp_dir = TempDir::new().unwrap();
+        let store_file_size = 4000;
+        let storage = Arc::new(AccountStorageEntry::new(
+            temp_dir.path(),
+            slot,
+            id,
+            store_file_size,
+            AccountsFileProvider::AppendVec,
+        ));
+        (temp_dir, storage)
+    }
+
+    #[test]
+    fn test_shrink_in_progress() {
         // test that we check in order map then shrink_in_progress_map
         let storage = AccountStorage::default();
         let slot = 0;
@@ -510,34 +546,36 @@ pub(crate) mod tests {
         assert!(storage.get_account_storage_entry(slot, id).is_none());
 
         // add a map store
-        let common_store_path = Path::new("");
-        let store_file_size = 4000;
-        let store_file_size2 = store_file_size * 2;
+        let common_store_path = TempDir::new().unwrap();
+        let alive_bytes: usize = 4000;
+        let alive_bytes2: usize = alive_bytes * 2;
         // 2 append vecs with same id, but different sizes
         let entry = Arc::new(AccountStorageEntry::new(
-            common_store_path,
+            common_store_path.path(),
             slot,
             id,
-            store_file_size,
+            alive_bytes as u64,
             AccountsFileProvider::AppendVec,
-            storage_access,
         ));
+        entry.num_alive_bytes.store(alive_bytes, Ordering::Release);
         let entry2 = Arc::new(AccountStorageEntry::new(
-            common_store_path,
+            common_store_path.path(),
             slot,
             id,
-            store_file_size2,
+            alive_bytes2 as u64,
             AccountsFileProvider::AppendVec,
-            storage_access,
         ));
+        entry2
+            .num_alive_bytes
+            .store(alive_bytes2, Ordering::Release);
         storage.map.insert(slot, entry);
 
         // look in map
         assert_eq!(
-            store_file_size,
+            alive_bytes,
             storage
                 .get_account_storage_entry(slot, id)
-                .map(|entry| entry.accounts.capacity())
+                .map(|entry| entry.alive_bytes())
                 .unwrap_or_default()
         );
 
@@ -550,10 +588,10 @@ pub(crate) mod tests {
 
         // look in map
         assert_eq!(
-            store_file_size,
+            alive_bytes,
             storage
                 .get_account_storage_entry(slot, id)
-                .map(|entry| entry.accounts.capacity())
+                .map(|entry| entry.alive_bytes())
                 .unwrap_or_default()
         );
 
@@ -562,111 +600,86 @@ pub(crate) mod tests {
 
         // look in shrink_in_progress_map
         assert_eq!(
-            store_file_size2,
+            alive_bytes2,
             storage
                 .get_account_storage_entry(slot, id)
-                .map(|entry| entry.accounts.capacity())
+                .map(|entry| entry.alive_bytes())
                 .unwrap_or_default()
         );
     }
 
-    impl AccountStorage {
-        fn get_test_storage_with_id(
-            &self,
-            id: AccountsFileId,
-            storage_access: StorageAccess,
-        ) -> Arc<AccountStorageEntry> {
-            let slot = 0;
-            // add a map store
-            let common_store_path = Path::new("");
-            let store_file_size = 4000;
-            Arc::new(AccountStorageEntry::new(
-                common_store_path,
-                slot,
-                id,
-                store_file_size,
-                AccountsFileProvider::AppendVec,
-                storage_access,
-            ))
-        }
-        fn get_test_storage(&self, storage_access: StorageAccess) -> Arc<AccountStorageEntry> {
-            self.get_test_storage_with_id(0, storage_access)
-        }
-    }
-
-    #[test_case(#[allow(deprecated)] StorageAccess::Mmap)]
-    #[test_case(StorageAccess::File)]
+    #[test]
     #[should_panic(expected = "shrink is in progress!")]
-    fn test_get_slot_storage_entry_fail(storage_access: StorageAccess) {
+    fn test_get_slot_storage_entry_fail() {
+        let (_temp_dir, sample) = new_test_storage();
         let storage = AccountStorage::default();
         storage
             .shrink_in_progress_map
             .write()
             .unwrap()
-            .insert(0, storage.get_test_storage(storage_access));
+            .insert(0, sample);
         storage.get_slot_storage_entry(0);
     }
 
-    #[test_case(#[allow(deprecated)] StorageAccess::Mmap)]
-    #[test_case(StorageAccess::File)]
+    #[test]
     #[should_panic(expected = "shrink is in progress!")]
-    fn test_all_slots_fail(storage_access: StorageAccess) {
+    fn test_all_slots_fail() {
+        let (_temp_dir, sample) = new_test_storage();
         let storage = AccountStorage::default();
         storage
             .shrink_in_progress_map
             .write()
             .unwrap()
-            .insert(0, storage.get_test_storage(storage_access));
+            .insert(0, sample);
         storage.all_slots();
     }
 
-    #[test_case(#[allow(deprecated)] StorageAccess::Mmap)]
-    #[test_case(StorageAccess::File)]
+    #[test]
     #[should_panic(expected = "shrink is in progress!")]
-    fn test_initialize_fail(storage_access: StorageAccess) {
+    fn test_initialize_fail() {
+        let (_temp_dir, sample) = new_test_storage();
         let mut storage = AccountStorage::default();
         storage
             .shrink_in_progress_map
             .write()
             .unwrap()
-            .insert(0, storage.get_test_storage(storage_access));
+            .insert(0, sample);
         storage.initialize(AccountStorageMap::default());
     }
 
-    #[test_case(#[allow(deprecated)] StorageAccess::Mmap)]
-    #[test_case(StorageAccess::File)]
+    #[test]
     #[should_panic(
         expected = "shrink_can_be_active || self.shrink_in_progress_map.read().unwrap().is_empty()"
     )]
-    fn test_remove_fail(storage_access: StorageAccess) {
+    fn test_remove_fail() {
+        let (_temp_dir, sample) = new_test_storage();
         let storage = AccountStorage::default();
         storage
             .shrink_in_progress_map
             .write()
             .unwrap()
-            .insert(0, storage.get_test_storage(storage_access));
+            .insert(0, sample);
         storage.remove(&0, false);
     }
 
-    #[test_case(#[allow(deprecated)] StorageAccess::Mmap)]
-    #[test_case(StorageAccess::File)]
+    #[test]
     #[should_panic(expected = "shrink is in progress!")]
-    fn test_iter_fail(storage_access: StorageAccess) {
+    fn test_iter_fail() {
+        let (_temp_dir, sample) = new_test_storage();
         let storage = AccountStorage::default();
         storage
             .shrink_in_progress_map
             .write()
             .unwrap()
-            .insert(0, storage.get_test_storage(storage_access));
+            .insert(0, sample);
         storage.iter();
     }
 
-    #[test_case(#[allow(deprecated)] StorageAccess::Mmap)]
-    #[test_case(StorageAccess::File)]
+    #[test]
     #[should_panic(expected = "shrink is in progress!")]
-    fn test_insert_fail(storage_access: StorageAccess) {
+    fn test_insert_fail() {
+        let (_temp_dir, sample) = new_test_storage();
         let storage = AccountStorage::default();
-        let sample = storage.get_test_storage(storage_access);
         storage
             .shrink_in_progress_map
             .write()
@@ -675,48 +688,19 @@ pub(crate) mod tests {
         storage.insert(sample);
     }
 
-    #[test_case(#[allow(deprecated)] StorageAccess::Mmap)]
-    #[test_case(StorageAccess::File)]
-    #[should_panic(expected = "duplicate call")]
-    fn test_shrinking_in_progress_fail3(storage_access: StorageAccess) {
-        // already entry in shrink_in_progress_map
-        let storage = AccountStorage::default();
-        let sample = storage.get_test_storage(storage_access);
-        storage.map.insert(0, sample.clone());
-        storage
-            .shrink_in_progress_map
-            .write()
-            .unwrap()
-            .insert(0, sample.clone());
-        storage.shrinking_in_progress(0, sample);
-    }
-
-    #[test_case(#[allow(deprecated)] StorageAccess::Mmap)]
-    #[test_case(StorageAccess::File)]
-    #[should_panic(expected = "duplicate call")]
-    fn test_shrinking_in_progress_fail4(storage_access: StorageAccess) {
-        // already called 'shrink_in_progress' on this slot and it is still active
-        let storage = AccountStorage::default();
-        let sample_to_shrink = storage.get_test_storage(storage_access);
-        let sample = storage.get_test_storage(storage_access);
-        storage.map.insert(0, sample_to_shrink);
-        let _shrinking_in_progress = storage.shrinking_in_progress(0, sample.clone());
-        storage.shrinking_in_progress(0, sample);
-    }
-
-    #[test_case(#[allow(deprecated)] StorageAccess::Mmap)]
-    #[test_case(StorageAccess::File)]
-    fn test_shrinking_in_progress_second_call(storage_access: StorageAccess) {
+    #[test]
+    fn test_shrinking_in_progress_second_call() {
         // already called 'shrink_in_progress' on this slot, but it finished, so we succeed
         // verify data structures during and after shrink and then with subsequent shrink call
         let storage = AccountStorage::default();
         let slot = 0;
         let id_to_shrink = 1;
         let id_shrunk = 0;
-        let sample_to_shrink = storage.get_test_storage_with_id(id_to_shrink, storage_access);
-        let sample = storage.get_test_storage(storage_access);
-        storage.map.insert(slot, sample_to_shrink);
-        let shrinking_in_progress = storage.shrinking_in_progress(slot, sample.clone());
+        let (_temp_dir1, sample_to_shrink) = new_test_storage_with(slot, id_to_shrink);
+        let (_temp_dir2, sample) = new_test_storage_with(slot, id_shrunk);
+        storage.map.insert(slot, sample_to_shrink.clone());
+        let shrinking_in_progress =
+            storage.shrinking_in_progress(slot, sample_to_shrink.clone(), sample.clone());
         assert!(storage.map.contains_key(&slot));
         assert_eq!(id_to_shrink, storage.map.get(&slot).unwrap().id());
         assert_eq!(
@@ -734,36 +718,52 @@ pub(crate) mod tests {
         assert!(storage.map.contains_key(&slot));
         assert_eq!(id_shrunk, storage.map.get(&slot).unwrap().id());
         assert!(storage.shrink_in_progress_map.read().unwrap().is_empty());
-        storage.shrinking_in_progress(slot, sample);
+        storage.shrinking_in_progress(slot, sample.clone(), sample);
     }
 
-    #[test_case(#[allow(deprecated)] StorageAccess::Mmap)]
-    #[test_case(StorageAccess::File)]
-    #[should_panic(expected = "no pre-existing storage for shrinking slot")]
-    fn test_shrinking_in_progress_fail1(storage_access: StorageAccess) {
+    #[test]
+    #[should_panic(expected = "pre-existing storage for shrinking slot")]
+    fn test_shrinking_in_progress_fail1() {
         // nothing in slot currently
+        let (_temp_dir, sample) = new_test_storage();
         let storage = AccountStorage::default();
-        let sample = storage.get_test_storage(storage_access);
-        storage.shrinking_in_progress(0, sample);
+        storage.shrinking_in_progress(0, sample.clone(), sample);
     }
 
-    #[test_case(#[allow(deprecated)] StorageAccess::Mmap)]
-    #[test_case(StorageAccess::File)]
-    #[should_panic(expected = "no pre-existing storage for shrinking slot")]
-    fn test_shrinking_in_progress_fail2(storage_access: StorageAccess) {
-        // nothing in slot currently, but there is an empty map entry
+    #[test]
+    #[should_panic(expected = "duplicate call")]
+    fn test_shrinking_in_progress_fail2() {
+        // already entry in shrink_in_progress_map
+        let (_temp_dir, sample) = new_test_storage();
         let storage = AccountStorage::default();
-        let sample = storage.get_test_storage(storage_access);
-        storage.shrinking_in_progress(0, sample);
+        storage.map.insert(0, sample.clone());
+        storage
+            .shrink_in_progress_map
+            .write()
+            .unwrap()
+            .insert(0, sample.clone());
+        storage.shrinking_in_progress(0, sample.clone(), sample);
     }
 
-    #[test_case(#[allow(deprecated)] StorageAccess::Mmap)]
-    #[test_case(StorageAccess::File)]
-    fn test_missing(storage_access: StorageAccess) {
+    #[test]
+    #[should_panic(expected = "duplicate call")]
+    fn test_shrinking_in_progress_fail3() {
+        // already called 'shrink_in_progress' on this slot and it is still active
+        let (_temp_dir1, sample_to_shrink) = new_test_storage();
+        let (_temp_dir2, sample) = new_test_storage();
+        let storage = AccountStorage::default();
+        storage.map.insert(0, sample_to_shrink.clone());
+        let _shrinking_in_progress =
+            storage.shrinking_in_progress(0, sample_to_shrink.clone(), sample.clone());
+        storage.shrinking_in_progress(0, sample_to_shrink, sample);
+    }
+
+    #[test]
+    fn test_missing() {
         // already called 'shrink_in_progress' on this slot, but it finished, so we succeed
         // verify data structures during and after shrink and then with subsequent shrink call
+        let (_temp_dir, sample) = new_test_storage();
         let storage = AccountStorage::default();
-        let sample = storage.get_test_storage(storage_access);
         let id = sample.id();
         let missing_id = 9999;
         let slot = sample.slot();
@@ -805,23 +805,22 @@ pub(crate) mod tests {
         assert!(storage.get_account_storage_entry(slot, id).is_some());
     }
 
-    #[test_case(#[allow(deprecated)] StorageAccess::Mmap)]
-    #[test_case(StorageAccess::File)]
-    fn test_get_if(storage_access: StorageAccess) {
+    #[test]
+    fn test_get_if() {
         let storage = AccountStorage::default();
         assert!(storage.get_if(|_, _| true).is_empty());
+        let common_store_path = TempDir::new().unwrap();
 
         // add some entries
         let ids = [123, 456, 789];
         for id in ids {
             let slot = id as Slot;
             let entry = AccountStorageEntry::new(
-                Path::new(""),
+                common_store_path.path(),
                 slot,
                 id,
                 5000,
                 AccountsFileProvider::AppendVec,
-                storage_access,
             );
             storage.map.insert(slot, entry.into());
         }
@@ -841,16 +840,16 @@ pub(crate) mod tests {
         assert_eq!(storage.get_if(|_, _| true).len(), ids.len());
     }
 
-    #[test_case(#[allow(deprecated)] StorageAccess::Mmap)]
-    #[test_case(StorageAccess::File)]
+    #[test]
     #[should_panic(expected = "shrink is in progress!")]
-    fn test_get_if_fail(storage_access: StorageAccess) {
+    fn test_get_if_fail() {
+        let (_temp_dir, sample) = new_test_storage();
         let storage = AccountStorage::default();
         storage
             .shrink_in_progress_map
             .write()
             .unwrap()
-            .insert(0, storage.get_test_storage(storage_access));
+            .insert(0, sample);
         storage.get_if(|_, _| true);
     }
 

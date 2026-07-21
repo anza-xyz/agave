@@ -1,12 +1,5 @@
 #![cfg(feature = "agave-unstable-api")]
 #![cfg_attr(feature = "frozen-abi", feature(min_specialization))]
-// Activate some of the Rust 2024 lints to make the future migration easier.
-#![warn(if_let_rescope)]
-#![warn(keyword_idents_2024)]
-#![warn(rust_2024_incompatible_pat)]
-#![warn(tail_expr_drop_order)]
-#![warn(unsafe_attr_outside_unsafe)]
-#![warn(unsafe_op_in_unsafe_fn)]
 
 #[macro_use]
 extern crate log;
@@ -16,10 +9,8 @@ pub mod common;
 pub mod consensus_metrics;
 pub mod consensus_pool;
 mod consensus_pool_service;
-pub mod consensus_rewards;
 pub mod event;
 mod event_handler;
-pub mod generated_cert_types;
 pub mod root_utils;
 mod staked_validators_cache;
 mod timer_manager;
@@ -32,3 +23,22 @@ pub mod votor;
 #[cfg_attr(feature = "frozen-abi", macro_use)]
 #[cfg(feature = "frozen-abi")]
 extern crate solana_frozen_abi_macro;
+
+#[cfg(test)]
+mod tests {
+    use {
+        solana_gossip::{cluster_info::ClusterInfo, contact_info::ContactInfo},
+        solana_keypair::Keypair,
+        solana_net_utils::SocketAddrSpace,
+        solana_signer::Signer,
+        std::sync::Arc,
+    };
+
+    pub(crate) fn get_cluster_info(keypair: Keypair) -> Arc<ClusterInfo> {
+        Arc::new(ClusterInfo::new(
+            ContactInfo::new_localhost(&keypair.pubkey(), 0),
+            Arc::new(keypair),
+            SocketAddrSpace::Unspecified,
+        ))
+    }
+}

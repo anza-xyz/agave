@@ -11,6 +11,8 @@ edition = { workspace = true }
 
 [package.metadata.docs.rs]
 targets = ["x86_64-unknown-linux-gnu"]
+all-features = true
+rustdoc-args = ["--cfg=docsrs"]
 
 [[bin]]
 name = "solana-faucet"
@@ -22,8 +24,11 @@ clap = { workspace = true }
 log = { workspace = true }
 solana-clap-utils = { workspace = true }
 solana-cli-config = { workspace = true }
-solana-faucet = { workspace = true, features = ["agave-unstable-api"] }
+solana-faucet = { workspace = true }
 solana-keypair = { workspace = true }
 solana-metrics = { workspace = true }
 solana-version = { workspace = true }
 tokio = { workspace = true, features = ["full"] }
+
+[lints]
+workspace = true

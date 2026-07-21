@@ -96,8 +96,20 @@ pub(crate) fn withdraw_nonce_account(
         return Err(InstructionError::InvalidArgument);
     }
 
+    let check_signer = |signer: &Pubkey| {
+        if !signers.contains(signer) {
+            ic_msg!(
+                invoke_context,
+                "Withdraw nonce account: Account {} must sign",
+                signer
+            );
+            return Err(InstructionError::MissingRequiredSignature);
+        }
+        Ok(())
+    };
+
     let state: Versions = from.get_state()?;
-    let signer = match state.state() {
+    match state.state() {
         State::Uninitialized => {
             if lamports > from.get_lamports() {
                 ic_msg!(
@@ -108,7 +120,7 @@ pub(crate) fn withdraw_nonce_account(
                 );
                 return Err(InstructionError::InsufficientFunds);
             }
-            *from.get_key()
+            check_signer(from.get_key())?;
         }
         State::Initialized(data) => {
             if lamports == from.get_lamports() {
@@ -121,6 +133,7 @@ pub(crate) fn withdraw_nonce_account(
                     );
                     return Err(SystemError::NonceBlockhashNotExpired.into());
                 }
+                check_signer(&data.authority)?;
                 from.set_state(&Versions::new(State::Uninitialized))?;
             } else {
                 let min_balance = rent.minimum_balance(from.get_data().len());
@@ -134,19 +147,10 @@ pub(crate) fn withdraw_nonce_account(
                     );
                     return Err(InstructionError::InsufficientFunds);
                 }
+                check_signer(&data.authority)?;
             }
-            data.authority
         }
     };
-
-    if !signers.contains(&signer) {
-        ic_msg!(
-            invoke_context,
-            "Withdraw nonce account: Account {} must sign",
-            signer
-        );
-        return Err(InstructionError::MissingRequiredSignature);
-    }
 
     from.checked_sub_lamports(lamports)?;
     drop(from);

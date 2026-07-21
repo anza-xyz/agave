@@ -18,7 +18,7 @@ pub fn unique_port_range_for_tests(size: u16) -> Range<u16> {
     unique_port_range_for_tests_internal(size)
 }
 
-/// Retrieve a free 25-port slice for unit tests
+/// Retrieve a free 26-port slice for unit tests
 ///
 /// When running under nextest, this will try to provide
 /// a unique slice of port numbers (assuming no other nextest processes
@@ -28,7 +28,7 @@ pub fn unique_port_range_for_tests(size: u16) -> Range<u16> {
 /// When running without nextest, this will only bump an atomic and eventually
 /// panic when it runs out of port numbers to assign.
 pub fn localhost_port_range_for_tests() -> (u16, u16) {
-    let pr = unique_port_range_for_tests(25);
+    let pr = unique_port_range_for_tests(26);
     (pr.start, pr.end)
 }
 
