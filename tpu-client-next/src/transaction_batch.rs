@@ -1,14 +1,11 @@
 //! This module holds [`TransactionBatch`] structure.
 
-use {solana_time_utils::timestamp, tokio_util::bytes::Bytes};
+use tokio_util::bytes::Bytes;
 
-/// Batch of generated transactions timestamp is used to discard batches which
-/// are too old to have valid blockhash.
+/// Batch of generated transactions.
 #[derive(Clone, PartialEq)]
 pub struct TransactionBatch {
     wired_transactions: Vec<WiredTransaction>,
-    // Time of creation of this batch, used for batch timeouts
-    timestamp: u64,
 }
 
 type WiredTransaction = Bytes;
@@ -31,12 +28,6 @@ impl TransactionBatch {
             .map(|v| Bytes::from_owner(v))
             .collect();
 
-        Self {
-            wired_transactions,
-            timestamp: timestamp(),
-        }
-    }
-    pub fn timestamp(&self) -> u64 {
-        self.timestamp
+        Self { wired_transactions }
     }
 }

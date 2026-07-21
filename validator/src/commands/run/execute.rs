@@ -19,6 +19,7 @@ use {
     rand::{rng, seq::SliceRandom},
     solana_accounts_db::{
         accounts_db::{AccountShrinkThreshold, AccountsDbConfig},
+        accounts_file::AccountsFileProvider,
         accounts_index::{
             AccountSecondaryIndexes, AccountsIndexConfig, DEFAULT_NUM_ENTRIES_OVERHEAD,
             DEFAULT_NUM_ENTRIES_TO_EVICT, IndexLimit, IndexLimitThreshold, ScanFilter,
@@ -712,6 +713,7 @@ pub fn execute(
         scan_filter_for_shrinking,
         num_background_threads: Some(accounts_db_background_threads),
         num_foreground_threads: Some(accounts_db_foreground_threads),
+        accounts_file_provider: AccountsFileProvider::AppendVec,
     };
 
     let on_start_geyser_plugin_config_files = if matches.is_present("geyser_plugin_config") {

@@ -1676,8 +1676,6 @@ impl Validator {
             block_metadata_notifier,
             config.wait_to_vote_slot,
             Some(snapshot_controller.clone()),
-            config.runtime_config.log_messages_bytes_limit,
-            prioritization_fee_cache.clone(),
             banking_tracer,
             outstanding_repair_requests.clone(),
             cluster_slots.clone(),
@@ -2881,8 +2879,7 @@ fn cleanup_blockstore_incorrect_shred_versions(
 
     info!("Purging slots {start_slot} to {end_slot} from blockstore");
     let mut timer = Measure::start("blockstore purge");
-    blockstore.purge_from_next_slots(start_slot, end_slot);
-    blockstore.purge_slots(start_slot, end_slot, PurgeType::Exact)?;
+    blockstore.purge_slots_cleanup_chaining(start_slot, end_slot, PurgeType::Exact)?;
     timer.stop();
     info!("Purging slots done. {timer}");
 

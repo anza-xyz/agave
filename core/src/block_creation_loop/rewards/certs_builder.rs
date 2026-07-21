@@ -2,16 +2,12 @@ use {
     crate::block_creation_loop::rewards::msg_types::{
         RewardRequest, RewardRespSucc, RewardResponse,
     },
-    agave_bls_sigverify::rewards::rewards_wants_vote,
-    agave_votor_messages::{
-        consensus_message::VoteMessage,
-        reward_certificate::{BuildRewardCertsRespError, NUM_SLOTS_FOR_REWARD},
-    },
+    agave_bls_sigverify::rewards::RewardVoteMessage,
+    agave_votor_messages::reward_certificate::{BuildRewardCertsRespError, NUM_SLOTS_FOR_REWARD},
     crossbeam_channel::RecvError,
     entry::Entry,
     solana_clock::Slot,
     solana_gossip::cluster_info::ClusterInfo,
-    solana_ledger::leader_schedule_cache::LeaderScheduleCache,
     solana_runtime::bank::Bank,
     std::{collections::BTreeMap, sync::Arc},
 };
@@ -24,20 +20,14 @@ pub(super) struct CertsBuilder {
     votes: BTreeMap<Slot, Entry>,
     /// Stores the latest pubkey for the current node.
     cluster_info: Arc<ClusterInfo>,
-    /// Stores the leader schedules.
-    leader_schedule: Arc<LeaderScheduleCache>,
 }
 
 impl CertsBuilder {
     /// Constructs a new instance of [`CertsBuilder`].
-    pub(super) fn new(
-        cluster_info: Arc<ClusterInfo>,
-        leader_schedule: Arc<LeaderScheduleCache>,
-    ) -> Self {
+    pub(super) fn new(cluster_info: Arc<ClusterInfo>) -> Self {
         Self {
             votes: BTreeMap::default(),
             cluster_info,
-            leader_schedule,
         }
     }
 
@@ -86,24 +76,16 @@ impl CertsBuilder {
     }
 
     /// Returns [`true`] if the rewards container is interested in this vote else [`false`].
-    fn wants_vote(&self, root_slot: Slot, vote: &VoteMessage) -> bool {
-        if !rewards_wants_vote(
-            &self.cluster_info,
-            &self.leader_schedule,
-            root_slot,
-            &vote.vote,
-        ) {
-            return false;
-        }
-        let Some(entry) = self.votes.get(&vote.vote.slot()) else {
+    fn wants_vote(&self, msg: &RewardVoteMessage) -> bool {
+        let Some(entry) = self.votes.get(&msg.vote.slot()) else {
             return true;
         };
-        entry.wants_vote(vote)
+        entry.wants_vote(msg)
     }
 
     /// Adds received [`VoteMessage`] from other validators.
-    pub(super) fn add_vote(&mut self, root_bank: &Bank, vote: &VoteMessage) {
-        let slot = vote.vote.slot();
+    pub(super) fn add_vote(&mut self, root_bank: &Bank, msg: RewardVoteMessage) {
+        let slot = msg.vote.slot();
         let Some(rank_map) = root_bank.get_rank_map(slot) else {
             warn!(
                 "failed to look up rank_map for slot {slot} using bank for slot {}",
@@ -120,18 +102,18 @@ impl CertsBuilder {
             .votes
             .split_off(&root_slot.saturating_sub(NUM_SLOTS_FOR_REWARD));
 
-        if !self.wants_vote(root_slot, vote) {
+        if !self.wants_vote(&msg) {
             return;
         }
         match self
             .votes
-            .entry(vote.vote.slot())
+            .entry(msg.vote.slot())
             .or_insert(Entry::new(max_validators))
-            .add_vote(rank_map, vote)
+            .add_vote(&msg)
         {
             Ok(()) => (),
             Err(e) => {
-                warn!("Adding vote {vote:?} failed with {e}");
+                warn!("Adding vote {msg:?} failed with {e}");
             }
         }
     }

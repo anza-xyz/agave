@@ -2,7 +2,7 @@
 use {
     crate::geyser_plugin_manager::GeyserPluginManager,
     agave_geyser_plugin_interface::geyser_plugin_interface::{
-        ReplicaEntryInfoV3, ReplicaEntryInfoVersions,
+        ReplicaEntryInfoV2, ReplicaEntryInfoVersions,
     },
     arc_swap::ArcSwap,
     log::*,
@@ -31,13 +31,15 @@ impl EntryNotifier for EntryNotifierImpl {
         }
 
         let entry_info =
-            Self::build_replica_entry_info(slot, bank_id, index, entry, starting_transaction_index);
+            Self::build_replica_entry_info(slot, index, entry, starting_transaction_index);
 
         for plugin in plugin_manager.plugins.iter() {
             if !plugin.entry_notifications_enabled() {
                 continue;
             }
-            match plugin.notify_entry(ReplicaEntryInfoVersions::V0_0_3(&entry_info)) {
+            match plugin
+                .notify_entry_for_bank(ReplicaEntryInfoVersions::V0_0_2(&entry_info), bank_id)
+            {
                 Err(err) => {
                     error!(
                         "Failed to notify entry, error: ({}) to plugin {}",
@@ -60,14 +62,12 @@ impl EntryNotifierImpl {
 
     fn build_replica_entry_info(
         slot: Slot,
-        bank_id: BankId,
         index: usize,
         entry: &'_ EntrySummary,
         starting_transaction_index: usize,
-    ) -> ReplicaEntryInfoV3<'_> {
-        ReplicaEntryInfoV3 {
+    ) -> ReplicaEntryInfoV2<'_> {
+        ReplicaEntryInfoV2 {
             slot,
-            bank_id,
             index,
             num_hashes: entry.num_hashes,
             hash: entry.hash.as_ref(),
@@ -102,13 +102,17 @@ mod tests {
             "test-entry-plugin"
         }
 
-        fn notify_entry(&self, entry: ReplicaEntryInfoVersions) -> Result<()> {
-            let ReplicaEntryInfoVersions::V0_0_3(entry) = entry else {
-                panic!("expected V0_0_3 entry info");
+        fn notify_entry_for_bank(
+            &self,
+            entry: ReplicaEntryInfoVersions,
+            bank_id: BankId,
+        ) -> Result<()> {
+            let ReplicaEntryInfoVersions::V0_0_2(entry) = entry else {
+                panic!("expected V0_0_2 entry info");
             };
             self.updates.lock().unwrap().push((
                 entry.slot,
-                entry.bank_id,
+                bank_id,
                 entry.index,
                 entry.starting_transaction_index,
             ));

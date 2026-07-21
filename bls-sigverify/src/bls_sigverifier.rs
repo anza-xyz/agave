@@ -6,7 +6,7 @@ use {
         bls_vote_sigverify::{UnverifiedVotePayload, verify_and_send_votes},
         errors::SigVerifyError,
         generated_cert_types::GeneratedCertTypes,
-        rewards::rewards_wants_vote,
+        rewards::{RewardVoteMessage, rewards_wants_unverified_vote_msg},
         stats::SigVerifierStats,
     },
     agave_votor_messages::{
@@ -14,7 +14,6 @@ use {
         certificate::CertificateType,
         metric_types::ConsensusMetricsEventSender,
         migration::MigrationStatus,
-        reward_certificate::AddVoteMessage,
         sig_verified_messages::SigVerifiedBatch,
         unverified_vote_message::{
             DecodedWireConsensusMessage, UnverifiedCertificate, UnverifiedVoteMessage,
@@ -47,7 +46,10 @@ use {
 /// invalid and discarded.
 ///
 /// This also sets an upper bound on how much storage the various structs in this module require.
-pub(super) const NUM_SLOTS_FOR_VERIFY: Slot = 90_000;
+///
+/// At 200ms slot times, 30K slots is 100mins.  We do not expect a node to catch up if it has
+/// fallen so far behind.
+pub(super) const NUM_SLOTS_FOR_VERIFY: Slot = 30_000;
 
 /// If we receive an invalid certificate or vote, we ban its attributed sender. For certificates
 /// received from blockstore, that sender is the scheduled leader for the carrier slot. We ban the
@@ -70,7 +72,7 @@ pub struct SigVerifierChannels {
     pub packet_receiver: Receiver<PacketBatch>,
     pub certificate_receiver: Receiver<(Slot, UnverifiedCertificate)>,
     pub channel_to_repair: VerifiedVoterSlotsSender,
-    pub channel_to_reward: Sender<AddVoteMessage>,
+    pub channel_to_reward: Sender<Vec<RewardVoteMessage>>,
     pub channel_to_pool: Sender<SigVerifiedBatch>,
     pub channel_to_metrics: ConsensusMetricsEventSender,
 }
@@ -286,10 +288,10 @@ impl SigVerifier {
                 self.stats.num_discarded_pkts += 1;
                 continue;
             }
-            // TODO(#13227): Enforce shred_version matching during deserialization
-            let Ok(msg) = wincode::config::deserialize_exact::<VersionedWireConsensusMessage, _>(
+            let Ok(msg) = VersionedWireConsensusMessage::deserialize_with_expected_shred_version(
                 packet.data(..).unwrap_or_default(),
                 packet_config(),
+                my_shred_version,
             ) else {
                 self.stats.num_malformed_pkts += 1;
                 continue;
@@ -299,11 +301,7 @@ impl SigVerifier {
                 self.stats.num_malformed_pkts += 1;
                 continue;
             };
-            let Some(decoded_msg) = DecodedWireConsensusMessage::try_new(msg, my_shred_version)
-            else {
-                self.stats.num_malformed_pkts += 1;
-                continue;
-            };
+            let decoded_msg = DecodedWireConsensusMessage::new(msg);
 
             match decoded_msg {
                 DecodedWireConsensusMessage::Vote(unverified_vote) => {
@@ -375,11 +373,11 @@ impl SigVerifier {
             return None;
         }
         if vote_slot <= root_slot
-            && !rewards_wants_vote(
+            && !rewards_wants_unverified_vote_msg(
                 &self.cluster_info,
                 &self.leader_schedule,
                 root_slot,
-                &msg.vote,
+                &msg,
             )
         {
             self.stats.num_old_votes_received += 1;
@@ -414,6 +412,7 @@ impl SigVerifier {
             sender_vote_account_pubkey: entry.vote_account_pubkey,
             sender_identity_pubkey,
             rank: *rank,
+            stake: entry.stake,
         })
     }
 }
@@ -495,7 +494,7 @@ mod tests {
 
         _packet_sender: Sender<PacketBatch>,
         repair_receiver: VerifiedVoterSlotsReceiver,
-        _reward_receiver: Receiver<AddVoteMessage>,
+        _reward_receiver: Receiver<Vec<RewardVoteMessage>>,
         pool_receiver: Receiver<SigVerifiedBatch>,
         _metrics_receiver: ConsensusMetricsEventReceiver,
         generated_cert_types: Arc<GeneratedCertTypes>,

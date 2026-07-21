@@ -14,9 +14,15 @@ pub mod fd_hash;
 #[cfg(feature = "conformance")]
 pub mod feature_set;
 pub mod instr;
+pub mod nonce_fields;
 pub mod programs;
 #[cfg(feature = "conformance")]
 pub mod serialization;
 pub mod setup;
 #[cfg(feature = "conformance")]
 pub mod syscall;
+pub mod transaction_address_loader;
+pub mod transaction_meta;
+pub mod txn;
+#[cfg(feature = "conformance")]
+pub mod versioned_message;

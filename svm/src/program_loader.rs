@@ -1,7 +1,7 @@
 #[cfg(feature = "metrics")]
 use solana_program_runtime::program_metrics::LoadProgramMetrics;
 use {
-    solana_account::{AccountSharedData, ReadableAccount, state_traits::StateMut},
+    solana_account::{AccountSharedData, ReadableAccount},
     solana_clock::Slot,
     solana_instruction::error::InstructionError,
     solana_loader_v3_interface::state::UpgradeableLoaderState,
@@ -53,7 +53,7 @@ pub(crate) fn load_program_accounts<CB: TransactionProcessingCallback>(
     } else if bpf_loader_upgradeable::check_id(program_account.owner()) {
         if let Ok(UpgradeableLoaderState::Program {
             programdata_address,
-        }) = program_account.state()
+        }) = bincode::deserialize(program_account.data())
         {
             if let Some((programdata_account, _slot)) =
                 callbacks.get_account_shared_data(&programdata_address)
@@ -62,7 +62,7 @@ pub(crate) fn load_program_accounts<CB: TransactionProcessingCallback>(
                     if let Ok(UpgradeableLoaderState::ProgramData {
                         slot,
                         upgrade_authority_address: _,
-                    }) = programdata_account.state()
+                    }) = bincode::deserialize(programdata_account.data())
                     {
                         ProgramAccountLoadResult::ProgramOfLoaderV3(
                             program_account,
@@ -220,7 +220,7 @@ pub(crate) fn get_program_deployment_slot<CB: TransactionProcessingCallback>(
         ProgramCacheEntryOwner::LoaderV3 => {
             if let Ok(UpgradeableLoaderState::Program {
                 programdata_address,
-            }) = program.state()
+            }) = bincode::deserialize(program.data())
             {
                 let (programdata, _slot) = callbacks
                     .get_account_shared_data(&programdata_address)
@@ -228,7 +228,7 @@ pub(crate) fn get_program_deployment_slot<CB: TransactionProcessingCallback>(
                 if let Ok(UpgradeableLoaderState::ProgramData {
                     slot,
                     upgrade_authority_address: _,
-                }) = programdata.state()
+                }) = bincode::deserialize(programdata.data())
                 {
                     return Ok(slot);
                 }

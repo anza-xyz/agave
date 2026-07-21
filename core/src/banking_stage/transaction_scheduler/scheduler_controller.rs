@@ -468,7 +468,9 @@ where
                 num_dropped_on_fee_payer,
                 num_dropped_on_filter_key,
                 num_dropped_on_capacity,
+                num_dropped_on_nonce_dedup,
                 num_buffered,
+                num_evicted_on_nonce_dedup,
                 receive_time_us: _,
                 buffer_time_us: _,
             } = &receiving_stats;
@@ -485,7 +487,9 @@ where
             count_metrics.num_dropped_on_receive_fee_payer += *num_dropped_on_fee_payer;
             count_metrics.num_dropped_on_filter_key += *num_dropped_on_filter_key;
             count_metrics.num_dropped_on_capacity += *num_dropped_on_capacity;
+            count_metrics.num_dropped_on_nonce_dedup += *num_dropped_on_nonce_dedup;
             count_metrics.num_buffered += *num_buffered;
+            count_metrics.num_evicted_on_nonce_dedup += *num_evicted_on_nonce_dedup;
         });
 
         self.timing_metrics.update(|timing_metrics| {
@@ -540,16 +544,19 @@ mod tests {
         },
         crossbeam_channel::{Receiver, Sender, bounded},
         itertools::Itertools,
+        solana_account::AccountSharedData,
         solana_compute_budget_interface::ComputeBudgetInstruction,
         solana_fee_calculator::FeeRateGovernor,
         solana_hash::Hash,
         solana_keypair::Keypair,
         solana_ledger::genesis_utils::GenesisConfigInfo,
         solana_message::Message,
+        solana_nonce::{self as nonce, state::DurableNonce},
         solana_poh::poh_recorder::{LeaderState, SharedLeaderState},
         solana_pubkey::Pubkey,
         solana_runtime::{bank::Bank, bank_forks::BankForks},
         solana_runtime_transaction::transaction_meta::TransactionMeta,
+        solana_sdk_ids::system_program,
         solana_signer::Signer,
         solana_system_interface::instruction as system_instruction,
         solana_transaction::Transaction,
@@ -665,6 +672,108 @@ mod tests {
         let prioritization = ComputeBudgetInstruction::set_compute_unit_price(compute_unit_price);
         let message = Message::new(&[transfer, prioritization], Some(&from_keypair.pubkey()));
         Transaction::new(&vec![from_keypair], message, recent_blockhash)
+    }
+
+    fn create_nonce_account_and_transaction(
+        bank: &Bank,
+        mint_keypair: &Keypair,
+    ) -> (Transaction, Pubkey) {
+        let nonce_pubkey = Pubkey::new_unique();
+        let nonce_data = nonce::state::Data::new(
+            mint_keypair.pubkey(),
+            DurableNonce::from_blockhash(&Hash::new_unique()),
+            5000,
+        );
+        let nonce_account = AccountSharedData::new_data(
+            bank.get_minimum_balance_for_rent_exemption(nonce::state::State::size()),
+            &nonce::versions::Versions::new(nonce::state::State::Initialized(nonce_data.clone())),
+            &system_program::id(),
+        )
+        .unwrap();
+        bank.store_account(&nonce_pubkey, &nonce_account);
+
+        let ixs = [
+            system_instruction::advance_nonce_account(&nonce_pubkey, &mint_keypair.pubkey()),
+            system_instruction::transfer(&mint_keypair.pubkey(), &Pubkey::new_unique(), 1),
+        ];
+        let message = Message::new(&ixs, Some(&mint_keypair.pubkey()));
+        let transaction = Transaction::new(&[mint_keypair], message, nonce_data.blockhash());
+        (transaction, nonce_pubkey)
+    }
+
+    // `clear_container()` removes nonce map entries with nonce transactions
+    #[test]
+    fn test_clear_container_clears_nonce_entry() {
+        let (mut test_frame, mut scheduler_controller) =
+            create_test_frame(1, test_create_transaction_view_receive_and_buffer);
+        let TestFrame {
+            bank,
+            mint_keypair,
+            banking_packet_sender,
+            ..
+        } = &mut test_frame;
+
+        let (transaction, nonce_pubkey) = create_nonce_account_and_transaction(bank, mint_keypair);
+        banking_packet_sender
+            .send(to_banking_packet_batch(&[transaction]))
+            .unwrap();
+        scheduler_controller
+            .receive_and_buffer_packets(&BufferedPacketsDecision::Hold)
+            .unwrap();
+
+        assert!(
+            scheduler_controller
+                .container
+                .get_nonce_transaction_priority_id(&nonce_pubkey)
+                .is_some()
+        );
+
+        scheduler_controller.clear_container();
+
+        assert!(
+            scheduler_controller
+                .container
+                .get_nonce_transaction_priority_id(&nonce_pubkey)
+                .is_none()
+        );
+    }
+
+    // `incremental_recheck()` removes nonce map entries with nonce transactions
+    #[test]
+    fn test_incremental_recheck_clears_nonce_entry() {
+        let (mut test_frame, mut scheduler_controller) =
+            create_test_frame(1, test_create_transaction_view_receive_and_buffer);
+        let TestFrame {
+            bank,
+            mint_keypair,
+            banking_packet_sender,
+            ..
+        } = &mut test_frame;
+
+        let (transaction, nonce_pubkey) = create_nonce_account_and_transaction(bank, mint_keypair);
+        banking_packet_sender
+            .send(to_banking_packet_batch(std::slice::from_ref(&transaction)))
+            .unwrap();
+        scheduler_controller
+            .receive_and_buffer_packets(&BufferedPacketsDecision::Hold)
+            .unwrap();
+
+        assert!(
+            scheduler_controller
+                .container
+                .get_nonce_transaction_priority_id(&nonce_pubkey)
+                .is_some()
+        );
+
+        bank.process_transaction(&transaction).unwrap();
+        scheduler_controller.incremental_recheck();
+
+        assert!(
+            scheduler_controller
+                .container
+                .get_nonce_transaction_priority_id(&nonce_pubkey)
+                .is_none()
+        );
     }
 
     // Helper function to let test receive and then schedule packets.

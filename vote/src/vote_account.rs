@@ -23,7 +23,9 @@ use {
         sync::{Arc, OnceLock},
     },
     thiserror::Error,
-    wincode::{TypeMeta, WriteResult},
+    wincode::{
+        ReadError, ReadResult, SchemaRead, TypeMeta, WriteResult, config::Config, io::Reader,
+    },
 };
 #[cfg(any(feature = "dev-context-only-utils", feature = "frozen-abi"))]
 use {
@@ -57,7 +59,7 @@ struct VoteAccountInner {
 
 pub type VoteAccountsHashMap = HashMap<Pubkey, (/*stake:*/ u64, VoteAccount)>;
 #[cfg_attr(feature = "frozen-abi", derive(AbiExample, StableAbi, StableAbiSample))]
-#[derive(Debug, Serialize, Deserialize, SchemaWrite)]
+#[derive(Debug, Serialize, Deserialize, SchemaRead, SchemaWrite)]
 #[cfg_attr(
     feature = "dev-context-only-utils",
     field_qualifiers(vote_accounts(pub))
@@ -460,6 +462,21 @@ impl<'de> Deserialize<'de> for VoteAccount {
     {
         let account = AccountSharedData::deserialize(deserializer)?;
         VoteAccount::try_from(account).map_err(serde::de::Error::custom)
+    }
+}
+
+// Read-counterpart of the custom `SchemaWrite` above: read the inner `AccountSharedData` (the only
+// thing written) and rebuild the parsed `vote_state_view` via `try_from`, mirroring the `Deserialize`
+// impl. `VoteAccounts` then derives `SchemaRead` on top of this, just like the serde path.
+unsafe impl<'de, C: Config> SchemaRead<'de, C> for VoteAccount {
+    type Dst = Self;
+
+    fn read(reader: impl Reader<'de>, dst: &mut mem::MaybeUninit<Self::Dst>) -> ReadResult<()> {
+        let account = <AccountSharedData as SchemaRead<'de, C>>::get(reader)?;
+        let vote_account = VoteAccount::try_from(account)
+            .map_err(|_| ReadError::InvalidValue("invalid vote account"))?;
+        dst.write(vote_account);
+        Ok(())
     }
 }
 

@@ -515,6 +515,10 @@ impl Crds {
             .filter(move |VersionedCrdsValue { value, .. }| !value.data().is_deprecated())
     }
 
+    pub(crate) fn filter_bitmask_scan_count(&self, mask: u64, mask_bits: u32) -> usize {
+        self.shards.find_count(mask, mask_bits)
+    }
+
     /// Update the timestamp's of all the labels that are associated with Pubkey
     pub(crate) fn update_record_timestamp(&mut self, pubkey: &Pubkey, now: u64) {
         // It suffices to only overwrite the origin's timestamp since that is

@@ -60,11 +60,10 @@ use {
         voting_service::BLSOp,
         voting_utils::VotingContext,
     },
-    agave_bls_sigverify::generated_cert_types::GeneratedCertTypes,
+    agave_bls_sigverify::{generated_cert_types::GeneratedCertTypes, rewards::RewardVoteMessage},
     agave_votor_messages::{
         consensus_message::Block,
         metric_types::{ConsensusMetricsEventReceiver, ConsensusMetricsEventSender},
-        reward_certificate::AddVoteMessage,
         sig_verified_messages::SigVerifiedBatch,
     },
     crossbeam_channel::{Receiver, Sender},
@@ -115,7 +114,7 @@ pub struct VotorConfig {
     pub highest_parent_ready: Arc<RwLock<(Slot, Block)>>,
     pub event_sender: VotorEventSender,
     pub own_vote_sender: Sender<SigVerifiedBatch>,
-    pub reward_votes_sender: Sender<AddVoteMessage>,
+    pub reward_votes_sender: Sender<Vec<RewardVoteMessage>>,
     pub repair_event_sender: RepairEventSender,
     pub latest_switch_request: LatestSwitchRequest,
 
@@ -198,6 +197,7 @@ impl Votor {
 
         let voting_context = VotingContext {
             cluster_info: cluster_info.clone(),
+            leader_schedule: leader_schedule_cache.clone(),
             vote_history,
             vote_account_pubkey: vote_account,
             identity_keypair,

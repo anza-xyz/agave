@@ -31,6 +31,7 @@ use {
             DeserializableDelegationStakes, InvalidCacheEntryReason, SerdeStakesToStakeFormat,
             Stakes,
         },
+        sysvar_account::{create_account, from_account},
     },
     agave_feature_set::{self as feature_set, FeatureSet},
     agave_reserved_account_keys::ReservedAccount,
@@ -43,9 +44,7 @@ use {
     rayon::{ThreadPool, ThreadPoolBuilder, iter::IntoParallelIterator},
     serde::{Deserialize, Serialize},
     solana_account::{
-        Account, AccountSharedData, ReadableAccount, WritableAccount,
-        create_account_shared_data_with_fields as create_account, from_account,
-        state_traits::StateMut,
+        Account, AccountSharedData, ReadableAccount, WritableAccount, state_traits::StateMut,
     },
     solana_account_info::MAX_PERMITTED_DATA_INCREASE,
     solana_accounts_db::{
@@ -330,7 +329,7 @@ fn test_bank_new() {
     );
 
     let rent_account = bank.get_account(&sysvar::rent::id()).unwrap();
-    let rent = from_account::<sysvar::rent::Rent, _>(&rent_account).unwrap();
+    let rent = from_account::<sysvar::rent::Rent>(&rent_account).unwrap();
 
     assert_eq!(rent.burn_percent, Rent::default().burn_percent);
     assert_eq!(rent.exemption_threshold, 1.0f64.to_le_bytes());
@@ -2824,7 +2823,7 @@ fn test_bank_update_sysvar_account() {
                 let current_account = bank1.get_account(&dummy_clock_id).unwrap();
                 assert_eq!(
                     expected_previous_slot,
-                    from_account::<Clock, _>(&current_account).unwrap().slot
+                    from_account::<Clock>(&current_account).unwrap().slot
                 );
                 assert_eq!(dummy_rent_epoch, current_account.rent_epoch());
             },
@@ -2877,7 +2876,7 @@ fn test_bank_update_sysvar_account() {
             &bank2,
             || {
                 bank2.update_sysvar_account(&dummy_clock_id, |optional_account| {
-                    let slot = from_account::<Clock, _>(optional_account.as_ref().unwrap())
+                    let slot = from_account::<Clock>(optional_account.as_ref().unwrap())
                         .unwrap()
                         .slot
                         + 1;
@@ -2893,7 +2892,7 @@ fn test_bank_update_sysvar_account() {
                 let current_account = bank2.get_account(&dummy_clock_id).unwrap();
                 assert_eq!(
                     expected_next_slot,
-                    from_account::<Clock, _>(&current_account).unwrap().slot
+                    from_account::<Clock>(&current_account).unwrap().slot
                 );
                 assert_eq!(dummy_rent_epoch, current_account.rent_epoch());
             },
@@ -2914,7 +2913,7 @@ fn test_bank_update_sysvar_account() {
             &bank2,
             || {
                 bank2.update_sysvar_account(&dummy_clock_id, |optional_account| {
-                    let slot = from_account::<Clock, _>(optional_account.as_ref().unwrap())
+                    let slot = from_account::<Clock>(optional_account.as_ref().unwrap())
                         .unwrap()
                         .slot
                         + 1;
@@ -2930,7 +2929,7 @@ fn test_bank_update_sysvar_account() {
                 let current_account = bank2.get_account(&dummy_clock_id).unwrap();
                 assert_eq!(
                     expected_next_slot,
-                    from_account::<Clock, _>(&current_account).unwrap().slot
+                    from_account::<Clock>(&current_account).unwrap().slot
                 );
             },
             |old, new| {
@@ -3808,7 +3807,7 @@ fn test_recent_blockhashes_sysvar() {
     for i in 1..5 {
         let bhq_account = bank.get_account(&sysvar::recent_blockhashes::id()).unwrap();
         let recent_blockhashes =
-            from_account::<sysvar::recent_blockhashes::RecentBlockhashes, _>(&bhq_account).unwrap();
+            from_account::<sysvar::recent_blockhashes::RecentBlockhashes>(&bhq_account).unwrap();
         // Check length
         assert_eq!(recent_blockhashes.len(), i);
         let most_recent_hash = recent_blockhashes.iter().next().unwrap().blockhash;
@@ -3827,7 +3826,7 @@ fn test_blockhash_queue_sysvar_consistency() {
 
     let bhq_account = bank.get_account(&sysvar::recent_blockhashes::id()).unwrap();
     let recent_blockhashes =
-        from_account::<sysvar::recent_blockhashes::RecentBlockhashes, _>(&bhq_account).unwrap();
+        from_account::<sysvar::recent_blockhashes::RecentBlockhashes>(&bhq_account).unwrap();
 
     let sysvar_recent_blockhash = recent_blockhashes[0].blockhash;
     let bank_last_blockhash = bank.last_blockhash();
@@ -4674,6 +4673,7 @@ fn test_check_ro_durable_nonce_fails() {
         bank.check_nonce_transaction_validity(
             &new_sanitized_message(tx.message().clone()),
             &bank.next_durable_nonce(),
+            false,
             false,
         ),
         None
@@ -5914,12 +5914,14 @@ fn test_bank_load_program() {
         programdata_data_offset + elf.len(),
         &bpf_loader_upgradeable::id(),
     );
-    programdata_account
-        .set_state(&UpgradeableLoaderState::ProgramData {
+    bincode::serialize_into(
+        programdata_account.data_as_mut_slice(),
+        &UpgradeableLoaderState::ProgramData {
             slot: 42,
             upgrade_authority_address: None,
-        })
-        .unwrap();
+        },
+    )
+    .unwrap();
     programdata_account.data_as_mut_slice()[programdata_data_offset..].copy_from_slice(&elf);
     programdata_account.set_rent_epoch(1);
     bank.store_account_and_update_capitalization(&program_key, &program_account);
@@ -6025,11 +6027,13 @@ fn test_bpf_loader_upgradeable_deploy_with_max_len() {
             UpgradeableLoaderState::size_of_buffer(elf.len()),
             &bpf_loader_upgradeable::id(),
         );
-        account
-            .set_state(&UpgradeableLoaderState::Buffer {
+        bincode::serialize_into(
+            account.data_as_mut_slice(),
+            &UpgradeableLoaderState::Buffer {
                 authority_address: Some(upgrade_authority_keypair.pubkey()),
-            })
-            .unwrap();
+            },
+        )
+        .unwrap();
         account
             .data_as_mut_slice()
             .get_mut(UpgradeableLoaderState::size_of_buffer_metadata()..)
@@ -6153,7 +6157,7 @@ fn test_bpf_loader_upgradeable_deploy_with_max_len() {
         post_program_account.data().len(),
         UpgradeableLoaderState::size_of_program()
     );
-    let state: UpgradeableLoaderState = post_program_account.state().unwrap();
+    let state: UpgradeableLoaderState = bincode::deserialize(post_program_account.data()).unwrap();
     assert_eq!(
         state,
         UpgradeableLoaderState::Program {
@@ -6166,7 +6170,8 @@ fn test_bpf_loader_upgradeable_deploy_with_max_len() {
         post_programdata_account.owner(),
         &bpf_loader_upgradeable::id()
     );
-    let state: UpgradeableLoaderState = post_programdata_account.state().unwrap();
+    let state: UpgradeableLoaderState =
+        bincode::deserialize(post_programdata_account.data()).unwrap();
     assert_eq!(
         state,
         UpgradeableLoaderState::ProgramData {
@@ -6764,7 +6769,7 @@ fn test_rent_feature_gates_epoch_transition() {
         );
 
         let rent_account = bank.get_account(&sysvar::rent::id()).unwrap();
-        let rent = from_account::<sysvar::rent::Rent, _>(&rent_account).unwrap();
+        let rent = from_account::<sysvar::rent::Rent>(&rent_account).unwrap();
         assert_eq!(
             rent.lamports_per_byte, expected_lamports_per_byte,
             "rent sysvar should be updated after activation"
@@ -8656,10 +8661,13 @@ fn do_test_clean_dropped_unrooted_banks(freeze_bank1: FreezeBank1) {
     let key2 = Keypair::new(); // only touched in bank2
     let key3 = Keypair::new(); // touched in both bank1 and bank2
     let key4 = Keypair::new(); // in only bank1, and has zero lamports
-    let key5 = Keypair::new(); // in both bank1 and bank2, and has zero lamports
+    let key5 = Keypair::new(); // rooted in bank0, zero lamports in bank1 and bank2
     bank0
         .transfer(amount, &mint_keypair, &key2.pubkey())
         .unwrap();
+    // key5's rooted non-zero-lamport account makes bank2's zero-lamport update reach storage as a
+    // kill at flush, so clean has a ref count to decrement in scenario 4
+    bank0.store_account(&key5.pubkey(), &AccountSharedData::new(1, 0, &owner));
     bank0.freeze();
 
     let slot = 1;
@@ -11155,6 +11163,11 @@ where
     let account = AccountSharedData::new(1, len1, &program);
     bank.store_account(&bob_pubkey, &account);
 
+    // Root and flush `slot` so bob's account is in storage and the index.
+    // This ensures when bob's account is closed (zero lamports) in the next slot that that version
+    // also reaches storage, rather than being skipped at flush.
+    add_root_and_flush_write_cache(&bank);
+
     // create the next bank where we will store a zero-lamport account to be cleaned
     let slot = bank.slot() + 1;
     let bank = Bank::new_from_parent_with_bank_forks(bank_forks.as_ref(), bank, leader, slot);
@@ -11569,11 +11582,13 @@ fn test_deploy_last_epoch_slot() {
             UpgradeableLoaderState::size_of_buffer(program_len),
             &bpf_loader_upgradeable::id(),
         );
-        account
-            .set_state(&UpgradeableLoaderState::Buffer {
+        bincode::serialize_into(
+            account.data_as_mut_slice(),
+            &UpgradeableLoaderState::Buffer {
                 authority_address: Some(upgrade_authority_keypair.pubkey()),
-            })
-            .unwrap();
+            },
+        )
+        .unwrap();
         account
             .data_as_mut_slice()
             .get_mut(UpgradeableLoaderState::size_of_buffer_metadata()..)
@@ -12024,11 +12039,13 @@ fn test_bpf_loader_upgradeable_deploy_with_more_than_255_accounts() {
             UpgradeableLoaderState::size_of_buffer(elf.len()),
             &bpf_loader_upgradeable::id(),
         );
-        account
-            .set_state(&UpgradeableLoaderState::Buffer {
+        bincode::serialize_into(
+            account.data_as_mut_slice(),
+            &UpgradeableLoaderState::Buffer {
                 authority_address: Some(upgrade_authority_keypair.pubkey()),
-            })
-            .unwrap();
+            },
+        )
+        .unwrap();
         account
             .data_as_mut_slice()
             .get_mut(UpgradeableLoaderState::size_of_buffer_metadata()..)

@@ -98,6 +98,12 @@ impl EpochInflationAccountState {
             .and_then(|acct| wincode::deserialize(acct.data()).ok())
     }
 
+    /// Returns the epoch-start inflation rewards recorded for `epoch`.
+    pub(crate) fn inflation_rewards_for_epoch(self, epoch: Epoch) -> Option<u64> {
+        self.get_epoch_state(epoch)
+            .map(|state| state.max_possible_validator_reward)
+    }
+
     /// Serializes and updates [`Self`] into the accounts in the [`Bank`].
     fn set_state(&self, bank: &Bank) {
         let data = wincode::serialize(&self).unwrap();

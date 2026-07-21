@@ -1,6 +1,8 @@
 //! The `rpc` module implements the Solana RPC interface.
 #[cfg(feature = "dev-context-only-utils")]
-use solana_runtime::installed_scheduler_pool::BankWithScheduler;
+use solana_runtime::installed_scheduler_pool::{
+    BankWithScheduler, InstalledSchedulerPool, SchedulingContext,
+};
 use {
     crate::{
         filter::filter_allows, max_slots::MaxSlots,
@@ -479,12 +481,13 @@ impl JsonRpcRequestProcessor {
             ..
         } = config;
         let runtime = service_runtime(rpc_threads, rpc_blocking_threads, rpc_niceness_adj);
-        let client = create_client_for_tests(runtime.handle().clone(), my_tpu_address, None, 1);
+        let (tpu_sender, _client) =
+            create_client_for_tests(runtime.handle().clone(), my_tpu_address, None, 1);
 
         SendTransactionService::new(
             bank_forks.clone(),
             transaction_receiver,
-            client,
+            tpu_sender,
             SendTransactionServiceConfig {
                 retry_rate_ms: 1_000,
                 leader_forward_count: 1,
@@ -4540,7 +4543,6 @@ pub fn populate_blockstore_for_tests(
     blockstore.set_roots(std::iter::once(&slot)).unwrap();
 
     let (transaction_status_sender, transaction_status_receiver) = bounded(1024);
-    let (replay_vote_sender, _replay_vote_receiver) = bounded(1024);
     let tss_exit = Arc::new(AtomicBool::new(false));
     let transaction_status_service =
         crate::transaction_status_service::TransactionStatusService::new(
@@ -4554,20 +4556,27 @@ pub fn populate_blockstore_for_tests(
             tss_exit.clone(),
         );
 
+    let transaction_status_sender =
+        solana_runtime::transaction_execution::TransactionStatusSender {
+            sender: transaction_status_sender,
+            dependency_tracker: None,
+        };
+    let pool = solana_unified_scheduler_pool::DefaultSchedulerPool::new_for_verification(
+        None,
+        None,
+        Some(transaction_status_sender),
+        None,
+        None,
+    );
+
+    let context = SchedulingContext::new(bank.clone());
+    let scheduler = pool.take_scheduler(context).unwrap();
+    let bank = BankWithScheduler::new(bank, Some(scheduler));
+
     // Check that process_entries successfully writes can_commit transactions statuses, and
     // that they are matched properly by get_rooted_block
     assert_eq!(
-        solana_ledger::blockstore_processor::process_entries_for_tests(
-            &BankWithScheduler::new_without_scheduler(bank),
-            entries,
-            Some(
-                &solana_runtime::transaction_execution::TransactionStatusSender {
-                    sender: transaction_status_sender,
-                    dependency_tracker: None,
-                },
-            ),
-            Some(&replay_vote_sender),
-        ),
+        solana_ledger::blockstore_processor::process_entries_for_tests(&bank, entries),
         Ok(())
     );
 
@@ -6978,11 +6987,12 @@ pub mod tests {
             runtime.clone(),
         );
 
-        let client = create_client_for_tests(runtime.handle().clone(), my_tpu_address, None, 1);
+        let (tpu_sender, _client) =
+            create_client_for_tests(runtime.handle().clone(), my_tpu_address, None, 1);
         SendTransactionService::new(
             bank_forks.clone(),
             receiver,
-            client,
+            tpu_sender,
             SendTransactionServiceConfig {
                 retry_rate_ms: 1_000,
                 leader_forward_count: 1,
@@ -7270,7 +7280,8 @@ pub mod tests {
             ..
         } = config;
         let runtime = service_runtime(rpc_threads, rpc_blocking_threads, rpc_niceness_adj);
-        let client = create_client_for_tests(runtime.handle().clone(), my_tpu_address, None, 1);
+        let (tpu_sender, _client) =
+            create_client_for_tests(runtime.handle().clone(), my_tpu_address, None, 1);
         let (request_processor, receiver) = JsonRpcRequestProcessor::new(
             config,
             None,
@@ -7294,7 +7305,7 @@ pub mod tests {
         SendTransactionService::new(
             bank_forks,
             receiver,
-            client,
+            tpu_sender,
             SendTransactionServiceConfig {
                 retry_rate_ms: 1_000,
                 leader_forward_count: 1,

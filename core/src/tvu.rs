@@ -29,6 +29,7 @@ use {
     agave_bls_sigverify::{
         bls_sigverifier::{self, SigVerifierChannels, SigVerifierContext},
         generated_cert_types::GeneratedCertTypes,
+        rewards::RewardVoteMessage,
     },
     agave_votor::{
         event::{LatestSwitchRequest, LeaderWindowInfo, VotorEventReceiver, VotorEventSender},
@@ -41,7 +42,7 @@ use {
     },
     agave_votor_messages::{
         VerifiedVoterSlotsReceiver, VerifiedVoterSlotsSender, consensus_message::Block,
-        metric_types::MAX_IN_FLIGHT_CONSENSUS_EVENTS, reward_certificate::AddVoteMessage,
+        metric_types::MAX_IN_FLIGHT_CONSENSUS_EVENTS,
     },
     crossbeam_channel::{Receiver, Sender, bounded, unbounded},
     solana_client::connection_cache::ConnectionCache,
@@ -71,7 +72,6 @@ use {
         bank_forks::BankForks,
         bank_forks_controller::{BankForksCommandReceiver, BankForksController},
         commitment::BlockCommitmentCache,
-        prioritization_fee_cache::PrioritizationFeeCache,
         snapshot_controller::SnapshotController,
         transaction_execution::TransactionStatusSender,
         validated_block_finalization::ValidatedBlockFinalizationCert,
@@ -244,15 +244,13 @@ impl Tvu {
         block_metadata_notifier: Option<BlockMetadataNotifierArc>,
         wait_to_vote_slot: Option<Slot>,
         snapshot_controller: Option<Arc<SnapshotController>>,
-        log_messages_bytes_limit: Option<usize>,
-        prioritization_fee_cache: Option<Arc<PrioritizationFeeCache>>,
         banking_tracer: Arc<BankingTracer>,
         outstanding_repair_requests: Arc<RwLock<OutstandingShredRepairs>>,
         cluster_slots: Arc<ClusterSlots>,
         slot_status_notifier: Option<SlotStatusNotifier>,
         vote_connection_cache: Arc<ConnectionCache>,
         votor_init: AlpenglowInitializationState,
-        reward_votes_sender: Sender<AddVoteMessage>,
+        reward_votes_sender: Sender<Vec<RewardVoteMessage>>,
     ) -> Result<Self, String> {
         let migration_status = bank_forks.read().unwrap().migration_status();
 
@@ -588,8 +586,6 @@ impl Tvu {
             tower,
             vote_tracker,
             cluster_slots,
-            log_messages_bytes_limit,
-            prioritization_fee_cache,
             banking_tracer,
             snapshot_controller,
             replay_highest_frozen,
@@ -896,8 +892,6 @@ pub mod tests {
             None, // block_metadata_notifier
             None, // wait_to_vote_slot
             None, // snapshot_controller
-            None, // log_messages_bytes_limit
-            None, // prioritization_fee_cache
             BankingTracer::new_disabled(),
             outstanding_repair_requests,
             cluster_slots,

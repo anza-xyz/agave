@@ -81,7 +81,6 @@ pub struct ClientBuilder {
     identity: Option<StakeIdentity>,
     num_connections: NonZeroUsize,
     leader_send_fanout: usize,
-    skip_check_transaction_age: bool,
     sender_channel_size: usize,
     worker_channel_size: usize,
     max_reconnect_attempts: usize,
@@ -101,7 +100,6 @@ impl ClientBuilder {
             identity: None,
             num_connections: NonZeroUsize::new(64).unwrap(),
             leader_send_fanout: 2,
-            skip_check_transaction_age: true,
             worker_channel_size: 2,
             sender_channel_size: 64,
             max_reconnect_attempts: 2,
@@ -215,7 +213,6 @@ impl ClientBuilder {
             bind,
             stake_identity: self.identity,
             num_connections: self.num_connections,
-            skip_check_transaction_age: self.skip_check_transaction_age,
             worker_channel_size: self.worker_channel_size,
             max_reconnect_attempts: self.max_reconnect_attempts,
             // We open connection to one more leader in advance, which time-wise means ~1.6s

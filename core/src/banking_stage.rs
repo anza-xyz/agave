@@ -64,7 +64,6 @@ mod decision_maker;
 mod latest_validator_vote_packet;
 mod leader_slot_metrics;
 mod leader_slot_timing_metrics;
-mod qos_service;
 mod scheduler_messages;
 mod vote_packet_receiver;
 mod vote_storage;
@@ -1201,8 +1200,8 @@ mod tests {
         let summary = recorder.record_transactions(bank.bank_id(), txs.clone());
         assert!(summary.result.is_ok());
         assert_eq!(
-            record_receiver.try_recv().unwrap().transaction_batches,
-            vec![txs.clone()]
+            record_receiver.try_recv().unwrap().transactions,
+            txs.clone()
         );
         assert!(record_receiver.try_recv().is_err());
 

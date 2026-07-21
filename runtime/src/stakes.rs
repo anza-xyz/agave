@@ -699,68 +699,46 @@ impl Stakes<StakeAccount> {
     }
 }
 
-/// This conversion is very memory intensive so should only be used in
-/// development contexts.
+/// Macro to generate `From<Stakes<From>> for Stakes<To>` impls.
 #[cfg(feature = "dev-context-only-utils")]
-impl From<Stakes<StakeAccount>> for Stakes<Delegation> {
-    fn from(stakes: Stakes<StakeAccount>) -> Self {
-        let stake_delegations = stakes
-            .stake_delegations
-            .into_iter()
-            .map(|(pubkey, stake_account)| (pubkey, *stake_account.delegation()))
-            .collect();
-        Self {
-            vote_accounts: stakes.vote_accounts,
-            stake_delegations,
-            delegated_stakes: DelegatedStakes::default(),
-            unused: stakes.unused,
-            epoch: stakes.epoch,
-            stake_history: stakes.stake_history,
+macro_rules! impl_stake_format_conversion {
+    ($from:ty, $to:ty, |$binding:ident| $expr:expr) => {
+        /// This conversion is memory intensive so should only be used in development contexts.
+        impl From<Stakes<$from>> for Stakes<$to> {
+            fn from(stakes: Stakes<$from>) -> Self {
+                let Stakes {
+                    vote_accounts,
+                    stake_delegations,
+                    delegated_stakes: _,
+                    unused,
+                    epoch,
+                    stake_history,
+                } = stakes;
+                let stake_delegations = stake_delegations
+                    .into_iter()
+                    .map(|(pubkey, $binding)| (pubkey, $expr))
+                    .collect();
+                Self {
+                    vote_accounts,
+                    stake_delegations,
+                    delegated_stakes: DelegatedStakes::default(),
+                    unused,
+                    epoch,
+                    stake_history,
+                }
+            }
         }
-    }
+    };
 }
 
-/// This conversion is very memory intensive so should only be used in
-/// development contexts.
 #[cfg(feature = "dev-context-only-utils")]
-impl From<Stakes<StakeAccount>> for Stakes<Stake> {
-    fn from(stakes: Stakes<StakeAccount>) -> Self {
-        let stake_delegations = stakes
-            .stake_delegations
-            .into_iter()
-            .map(|(pubkey, stake_account)| (pubkey, *stake_account.stake()))
-            .collect();
-        Self {
-            vote_accounts: stakes.vote_accounts,
-            stake_delegations,
-            delegated_stakes: DelegatedStakes::default(),
-            unused: stakes.unused,
-            epoch: stakes.epoch,
-            stake_history: stakes.stake_history,
-        }
-    }
-}
+impl_stake_format_conversion!(StakeAccount, Delegation, |sa| *sa.delegation());
 
-/// This conversion is memory intensive so should only be used in development
-/// contexts.
 #[cfg(feature = "dev-context-only-utils")]
-impl From<Stakes<Stake>> for Stakes<Delegation> {
-    fn from(stakes: Stakes<Stake>) -> Self {
-        let stake_delegations = stakes
-            .stake_delegations
-            .into_iter()
-            .map(|(pubkey, stake)| (pubkey, stake.delegation))
-            .collect();
-        Self {
-            vote_accounts: stakes.vote_accounts,
-            stake_delegations,
-            delegated_stakes: DelegatedStakes::default(),
-            unused: stakes.unused,
-            epoch: stakes.epoch,
-            stake_history: stakes.stake_history,
-        }
-    }
-}
+impl_stake_format_conversion!(StakeAccount, Stake, |sa| *sa.stake());
+
+#[cfg(feature = "dev-context-only-utils")]
+impl_stake_format_conversion!(Stake, Delegation, |stake| stake.delegation);
 
 fn merge_delegated_stakes(
     mut stakes: HashMap</*voter:*/ Pubkey, /*stake:*/ u64>,

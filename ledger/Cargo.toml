@@ -143,6 +143,7 @@ solana-program-option = { workspace = true }
 solana-program-pack = { workspace = true }
 solana-runtime = { path = "../runtime", features = ["agave-unstable-api", "dev-context-only-utils"] }
 solana-signature = { workspace = true, features = ["rand"] }
+solana-unified-scheduler-pool = { path = "../unified-scheduler-pool", features = ["agave-unstable-api", "dev-context-only-utils"] }
 solana-vote = { path = "../vote", features = ["agave-unstable-api", "dev-context-only-utils"] }
 spl-generic-token = { workspace = true }
 spl-pod = { workspace = true }

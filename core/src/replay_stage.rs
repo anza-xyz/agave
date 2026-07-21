@@ -89,7 +89,6 @@ use {
         commitment::BlockCommitmentCache,
         installed_scheduler_pool::BankWithScheduler,
         leader_schedule_utils::first_of_consecutive_leader_slots,
-        prioritization_fee_cache::PrioritizationFeeCache,
         snapshot_controller::SnapshotController,
         transaction_execution::TransactionStatusSender,
         vote_sender_types::{ReplayVoteMessage, ReplayVoteSender},
@@ -261,10 +260,8 @@ struct ProcessActiveBanksContext {
     ancestor_hashes_replay_update_sender: AncestorHashesReplayUpdateSender,
     block_metadata_notifier: Option<BlockMetadataNotifierArc>,
     votor_event_sender: VotorEventSender,
-    log_messages_bytes_limit: Option<usize>,
     replay_mode: ForkReplayMode,
     replay_tx_thread_pool: ThreadPool,
-    prioritization_fee_cache: Option<Arc<PrioritizationFeeCache>>,
     migration_status: Arc<MigrationStatus>,
 }
 
@@ -439,8 +436,6 @@ pub struct ReplayStageConfig {
     pub tower: Tower,
     pub vote_tracker: Arc<VoteTracker>,
     pub cluster_slots: Arc<ClusterSlots>,
-    pub log_messages_bytes_limit: Option<usize>,
-    pub prioritization_fee_cache: Option<Arc<PrioritizationFeeCache>>,
     pub banking_tracer: Arc<BankingTracer>,
     pub snapshot_controller: Option<Arc<SnapshotController>>,
     pub replay_highest_frozen: Arc<ReplayHighestFrozen>,
@@ -760,8 +755,6 @@ impl ReplayStage {
             mut tower,
             vote_tracker,
             cluster_slots,
-            log_messages_bytes_limit,
-            prioritization_fee_cache,
             banking_tracer,
             snapshot_controller,
             replay_highest_frozen,
@@ -923,10 +916,8 @@ impl ReplayStage {
                 ancestor_hashes_replay_update_sender: ancestor_hashes_replay_update_sender.clone(),
                 block_metadata_notifier: block_metadata_notifier.clone(),
                 votor_event_sender: votor_event_sender.clone(),
-                log_messages_bytes_limit,
                 replay_mode,
                 replay_tx_thread_pool,
-                prioritization_fee_cache: prioritization_fee_cache.clone(),
                 migration_status: migration_status.clone(),
             };
             let process_bank_forks_context = ProcessBankForksContext {
@@ -1782,7 +1773,7 @@ impl ReplayStage {
             None,
             &mut HashMap::new(),
         ) {
-            GenerateVoteTxResult::Vote(vote_msg) => {
+            GenerateVoteTxResult::Vote(vote_msg, _, _) => {
                 // Send vote to ConsensusPool and rest of cluster
                 warn!(
                     "{} Alpenglow migration: Casting genesis vote for ({block:?})",
@@ -2453,6 +2444,7 @@ impl ReplayStage {
         let mut ancestor_slot = block.slot;
         let mut ancestor_block_id = block.block_id;
         let mut blocks_to_switch = vec![];
+        let mut original_dead_slots_to_clear = BTreeSet::new();
         loop {
             if ancestor_slot <= root {
                 // This is either (1) an outdated attempt to switch out the
@@ -2473,8 +2465,11 @@ impl ReplayStage {
                 return Ok(());
             };
 
-            if location != BlockLocation::Original {
-                // Need to switch this block
+            if location == BlockLocation::Original {
+                if blockstore.is_dead(ancestor_slot) {
+                    original_dead_slots_to_clear.insert(ancestor_slot);
+                }
+            } else {
                 blocks_to_switch.push((ancestor_slot, location));
             }
 
@@ -2500,10 +2495,12 @@ impl ReplayStage {
             ancestor_slot = parent_slot;
         }
 
-        let slots_to_clear = bank_forks
-            .read()
-            .unwrap()
-            .slots_to_clear(blocks_to_switch.iter().map(|(slot, _)| *slot));
+        let slots_to_clear = bank_forks.read().unwrap().slots_to_clear(
+            blocks_to_switch
+                .iter()
+                .map(|(slot, _)| *slot)
+                .chain(original_dead_slots_to_clear.iter().copied()),
+        );
 
         info!("{my_pubkey}: Clearing banks for switching and descendants: {slots_to_clear:?}");
         Self::clear_banks(
@@ -2521,6 +2518,10 @@ impl ReplayStage {
             blockstore.switch_block_from_alternate(slot, location)?;
             progress.increment_num_bank_switches(slot);
             info!("{my_pubkey}: Switched {slot} from {location:?}");
+        }
+
+        for slot in original_dead_slots_to_clear {
+            blockstore.remove_dead_slot(slot)?;
         }
 
         *pending_switch = None;
@@ -3016,18 +3017,11 @@ impl ReplayStage {
             &mut w_replay_progress,
             false,
             process_active_banks_context
-                .transaction_status_sender
-                .as_ref(),
-            process_active_banks_context
                 .entry_notification_sender
                 .as_ref(),
             Some(&process_active_banks_context.replay_vote_sender),
             Some(finalization_cert_sender),
             false,
-            process_active_banks_context.log_messages_bytes_limit,
-            process_active_banks_context
-                .prioritization_fee_cache
-                .as_deref(),
             process_active_banks_context.migration_status.as_ref(),
         )?;
         let tx_count_after = w_replay_progress.num_txs;

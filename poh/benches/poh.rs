@@ -120,8 +120,8 @@ fn bench_poh_recorder_record(bencher: &mut Bencher) {
         let _record_result = poh_recorder
             .record(
                 bank.slot(),
-                vec![test::black_box(h1)],
-                vec![test::black_box(txs.clone())],
+                test::black_box(h1),
+                test::black_box(txs.clone()),
             )
             .unwrap();
     });

@@ -110,59 +110,15 @@ pub struct ReplicaAccountInfoV3<'a> {
     pub txn: Option<&'a SanitizedTransaction>,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
-#[repr(C)]
-/// Information about an account being updated
-/// (extended with reference to transaction doing this update and bank id)
-pub struct ReplicaAccountInfoV4<'a> {
-    /// The Pubkey for the account
-    pub pubkey: &'a [u8],
-
-    /// The lamports for the account
-    pub lamports: u64,
-
-    /// The Pubkey of the owner program account
-    pub owner: &'a [u8],
-
-    /// This account's data contains a loaded program (and is now read-only)
-    pub executable: bool,
-
-    /// The epoch at which this account will next owe rent
-    pub rent_epoch: u64,
-
-    /// The data held in this account.
-    pub data: &'a [u8],
-
-    /// A global monotonically increasing atomic number, which can be used
-    /// to tell the order of the account update. For example, when an
-    /// account is updated in the same slot multiple times, the update
-    /// with higher write_version should supersede the one with lower
-    /// write_version.
-    pub write_version: u64,
-
-    /// Reference to transaction causing this account modification
-    pub txn: Option<&'a SanitizedTransaction>,
-
-    /// The id of the bank that processed the account update.
-    ///
-    /// This is `None` for account updates restored from a snapshot because they
-    /// are not associated with a live bank.
-    pub bank_id: Option<BankId>,
-}
-
 /// A wrapper to future-proof ReplicaAccountInfo handling.
 /// If there were a change to the structure of ReplicaAccountInfo,
 /// there would be new enum entry for the newer version, forcing
 /// plugin implementations to handle the change.
 #[repr(u32)]
 pub enum ReplicaAccountInfoVersions<'a> {
-    #[deprecated]
     V0_0_1(&'a ReplicaAccountInfo<'a>),
-    #[deprecated]
     V0_0_2(&'a ReplicaAccountInfoV2<'a>),
-    #[deprecated]
     V0_0_3(&'a ReplicaAccountInfoV3<'a>),
-    V0_0_4(&'a ReplicaAccountInfoV4<'a>),
 }
 
 /// Information about a transaction
@@ -225,45 +181,15 @@ pub struct ReplicaTransactionInfoV3<'a> {
     pub index: usize,
 }
 
-/// Information about a transaction, including index in block and bank id
-#[derive(Clone, Debug)]
-#[repr(C)]
-pub struct ReplicaTransactionInfoV4<'a> {
-    /// The transaction signature, used for identifying the transaction.
-    pub signature: &'a Signature,
-
-    /// The transaction message hash, used for identifying the transaction.
-    pub message_hash: &'a Hash,
-
-    /// Indicates if the transaction is a simple vote transaction.
-    pub is_vote: bool,
-
-    /// The versioned transaction.
-    pub transaction: &'a VersionedTransaction,
-
-    /// Metadata of the transaction status.
-    pub transaction_status_meta: &'a TransactionStatusMeta,
-
-    /// The transaction's index in the block
-    pub index: usize,
-
-    /// The id of the bank that processed the transaction.
-    pub bank_id: BankId,
-}
-
 /// A wrapper to future-proof ReplicaTransactionInfo handling.
 /// If there were a change to the structure of ReplicaTransactionInfo,
 /// there would be new enum entry for the newer version, forcing
 /// plugin implementations to handle the change.
 #[repr(u32)]
 pub enum ReplicaTransactionInfoVersions<'a> {
-    #[deprecated]
     V0_0_1(&'a ReplicaTransactionInfo<'a>),
-    #[deprecated]
     V0_0_2(&'a ReplicaTransactionInfoV2<'a>),
-    #[deprecated]
     V0_0_3(&'a ReplicaTransactionInfoV3<'a>),
-    V0_0_4(&'a ReplicaTransactionInfoV4<'a>),
 }
 
 /// Information about a transaction after deshredding (when entries are formed from shreds).
@@ -361,36 +287,13 @@ pub struct ReplicaEntryInfoV2<'a> {
     pub starting_transaction_index: usize,
 }
 
-#[derive(Clone, Debug)]
-#[repr(C)]
-pub struct ReplicaEntryInfoV3<'a> {
-    /// The slot number of the block containing this Entry
-    pub slot: Slot,
-    /// The id of the bank that executed this Entry.
-    pub bank_id: BankId,
-    /// The Entry's index in the block
-    pub index: usize,
-    /// The number of hashes since the previous Entry
-    pub num_hashes: u64,
-    /// The Entry's SHA-256 hash, generated from the previous Entry's hash with
-    /// `solana_entry::entry::next_hash()`
-    pub hash: &'a [u8],
-    /// The number of executed transactions in the Entry
-    pub executed_transaction_count: u64,
-    /// The index-in-block of the first executed transaction in this Entry
-    pub starting_transaction_index: usize,
-}
-
 /// A wrapper to future-proof ReplicaEntryInfo handling. To make a change to the structure of
 /// ReplicaEntryInfo, add an new enum variant wrapping a newer version, which will force plugin
 /// implementations to handle the change.
 #[repr(u32)]
 pub enum ReplicaEntryInfoVersions<'a> {
-    #[deprecated]
     V0_0_1(&'a ReplicaEntryInfo<'a>),
-    #[deprecated]
     V0_0_2(&'a ReplicaEntryInfoV2<'a>),
-    V0_0_3(&'a ReplicaEntryInfoV3<'a>),
 }
 
 #[derive(Clone, Debug)]
@@ -447,33 +350,12 @@ pub struct ReplicaBlockInfoV4<'a> {
     pub entry_count: u64,
 }
 
-/// Extending ReplicaBlockInfoV4 by sending bank id.
-#[derive(Clone, Debug)]
-#[repr(C)]
-pub struct ReplicaBlockInfoV5<'a> {
-    pub parent_slot: Slot,
-    pub parent_blockhash: &'a str,
-    pub slot: Slot,
-    pub bank_id: BankId,
-    pub blockhash: &'a str,
-    pub rewards: &'a RewardsAndNumPartitions,
-    pub block_time: Option<UnixTimestamp>,
-    pub block_height: Option<u64>,
-    pub executed_transaction_count: u64,
-    pub entry_count: u64,
-}
-
 #[repr(u32)]
 pub enum ReplicaBlockInfoVersions<'a> {
-    #[deprecated]
     V0_0_1(&'a ReplicaBlockInfo<'a>),
-    #[deprecated]
     V0_0_2(&'a ReplicaBlockInfoV2<'a>),
-    #[deprecated]
     V0_0_3(&'a ReplicaBlockInfoV3<'a>),
-    #[deprecated]
     V0_0_4(&'a ReplicaBlockInfoV4<'a>),
-    V0_0_5(&'a ReplicaBlockInfoV5<'a>),
 }
 
 /// A snapshot of a validator's gossip contact info at a point in time.
@@ -702,6 +584,10 @@ pub trait GeyserPlugin: Any + Send + Sync + std::fmt::Debug {
     /// When `is_startup` is true, it indicates the account is loaded from
     /// snapshots when the validator starts up. When `is_startup` is false,
     /// the account is updated during transaction processing.
+    #[deprecated(
+        since = "4.3.0",
+        note = "Callers should instead use update_account_from_snapshot or update_account_for_bank"
+    )]
     #[allow(unused_variables)]
     fn update_account(
         &self,
@@ -712,13 +598,42 @@ pub trait GeyserPlugin: Any + Send + Sync + std::fmt::Debug {
         Ok(())
     }
 
+    /// Called when an account is loaded from snapshots when the validator starts up.
+    #[allow(deprecated)]
+    #[allow(unused_variables)]
+    fn update_account_from_snapshot(
+        &self,
+        account: ReplicaAccountInfoVersions,
+        slot: Slot,
+    ) -> Result<()> {
+        self.update_account(account, slot, true)
+    }
+
+    /// Called when an account is updated at a slot during transaction processing.
+    ///
+    /// `bank_id` identifies the concrete bank instance associated with the
+    /// account update.
+    #[allow(deprecated)]
+    #[allow(unused_variables)]
+    fn update_account_for_bank(
+        &self,
+        account: ReplicaAccountInfoVersions,
+        slot: Slot,
+        bank_id: BankId,
+    ) -> Result<()> {
+        self.update_account(account, slot, false)
+    }
+
     /// Called when all accounts are notified of during startup.
     fn notify_end_of_startup(&self) -> Result<()> {
         Ok(())
     }
 
     /// Called when a slot status is updated.
-    #[deprecated]
+    ///
+    /// The validator calls this directly for statuses that are not associated
+    /// with a concrete bank instance: `FirstShredReceived`, `Completed`, and
+    /// `Dead`.
     #[allow(unused_variables)]
     fn update_slot_status(
         &self,
@@ -729,29 +644,27 @@ pub trait GeyserPlugin: Any + Send + Sync + std::fmt::Debug {
         Ok(())
     }
 
-    /// Called when a slot status is updated.
+    /// Called when a bank-scoped slot status is updated.
     ///
-    /// `bank_id` identifies the concrete bank instance associated with the
-    /// status update. It is `Some` for bank-scoped statuses, where the slot
-    /// status is tied to a particular `Bank`: `CreatedBank`, `Processed`,
-    /// `Confirmed`, and `Rooted`.
-    ///
-    /// It is `None` for shred- or slot-level statuses that are not associated
-    /// with a specific bank instance: `FirstShredReceived`, `Completed`, and
-    /// `Dead`.
-    #[allow(deprecated)]
+    /// `bank_id` identifies the concrete bank instance associated with this
+    /// status update. This method is called for statuses tied to a particular
+    /// `Bank`: `Confirmed`, `Processed`, `Rooted`, and `CreatedBank`.
     #[allow(unused_variables)]
-    fn update_slot_status_v2(
+    fn update_bank_status(
         &self,
         slot: Slot,
         parent: Option<u64>,
         status: &SlotStatus,
-        bank_id: Option<BankId>,
+        bank_id: BankId,
     ) -> Result<()> {
         self.update_slot_status(slot, parent, status)
     }
 
     /// Called when a transaction is processed in a slot.
+    #[deprecated(
+        since = "4.3.0",
+        note = "Callers should instead use notify_transaction_for_bank"
+    )]
     #[allow(unused_variables)]
     fn notify_transaction(
         &self,
@@ -761,16 +674,66 @@ pub trait GeyserPlugin: Any + Send + Sync + std::fmt::Debug {
         Ok(())
     }
 
+    /// Called when a transaction is processed in a slot.
+    ///
+    /// `bank_id` identifies the concrete bank instance that processed the
+    /// transaction.
+    #[allow(deprecated)]
+    #[allow(unused_variables)]
+    fn notify_transaction_for_bank(
+        &self,
+        transaction: ReplicaTransactionInfoVersions,
+        slot: Slot,
+        bank_id: BankId,
+    ) -> Result<()> {
+        self.notify_transaction(transaction, slot)
+    }
+
     /// Called when an entry is executed.
+    #[deprecated(
+        since = "4.3.0",
+        note = "Callers should instead use notify_entry_for_bank"
+    )]
     #[allow(unused_variables)]
     fn notify_entry(&self, entry: ReplicaEntryInfoVersions) -> Result<()> {
         Ok(())
     }
 
+    /// Called when an entry is executed.
+    ///
+    /// `bank_id` identifies the concrete bank instance that executed the entry.
+    #[allow(deprecated)]
+    #[allow(unused_variables)]
+    fn notify_entry_for_bank(
+        &self,
+        entry: ReplicaEntryInfoVersions,
+        bank_id: BankId,
+    ) -> Result<()> {
+        self.notify_entry(entry)
+    }
+
     /// Called when block's metadata is updated.
+    #[deprecated(
+        since = "4.3.0",
+        note = "Callers should instead use notify_block_metadata_for_bank"
+    )]
     #[allow(unused_variables)]
     fn notify_block_metadata(&self, blockinfo: ReplicaBlockInfoVersions) -> Result<()> {
         Ok(())
+    }
+
+    /// Called when block's metadata is updated.
+    ///
+    /// `bank_id` identifies the concrete bank instance associated with the block
+    /// metadata.
+    #[allow(deprecated)]
+    #[allow(unused_variables)]
+    fn notify_block_metadata_for_bank(
+        &self,
+        blockinfo: ReplicaBlockInfoVersions,
+        bank_id: BankId,
+    ) -> Result<()> {
+        self.notify_block_metadata(blockinfo)
     }
 
     /// Called when a validator's gossip contact info is learned or updated.

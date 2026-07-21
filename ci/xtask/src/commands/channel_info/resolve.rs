@@ -58,6 +58,44 @@ pub fn stage_of(v: &Version) -> Result<Stage> {
     }
 }
 
+/// Manual channel pins parsed from `ci/channel-overrides` on master. A set pin
+/// forces the corresponding channel to a specific `vX.Y` line, overriding the
+/// version-derived value; `None` leaves auto-resolution in place.
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+pub struct ChannelPins {
+    pub beta: Option<BranchVersion>,
+    pub stable: Option<BranchVersion>,
+}
+
+impl ChannelPins {
+    pub fn parse(contents: &str) -> Result<Self> {
+        Ok(Self {
+            beta: extract_pin(contents, "PINNED_BETA_CHANNEL")?,
+            stable: extract_pin(contents, "PINNED_STABLE_CHANNEL")?,
+        })
+    }
+}
+
+fn extract_pin(contents: &str, key: &str) -> Result<Option<BranchVersion>> {
+    for line in contents.lines() {
+        let Some((k, v)) = line.split_once('=') else {
+            continue;
+        };
+        if k.trim() != key {
+            continue;
+        }
+        let v = v.trim();
+        if v.is_empty() {
+            return Ok(None);
+        }
+        return v
+            .parse::<BranchVersion>()
+            .map(Some)
+            .map_err(|e| anyhow!("invalid {key} pin `{v}`: {e}"));
+    }
+    Ok(None)
+}
+
 #[derive(Debug, Serialize)]
 #[serde(rename_all = "SCREAMING_SNAKE_CASE")]
 pub struct ChannelInfo {
@@ -75,6 +113,7 @@ pub fn derive_channels(
     tags: &[Version],
     branch: Option<&str>,
     channel: Option<&str>,
+    pins: &ChannelPins,
 ) -> Result<ChannelInfo> {
     for (bv, v) in versions {
         if v.major != bv.major || v.minor != bv.minor {
@@ -96,6 +135,9 @@ pub fn derive_channels(
         Some(_) => (h1, h2),
         None => (None, None),
     };
+
+    let beta = pins.beta.or(beta);
+    let stable = pins.stable.or(stable);
 
     let beta = beta.ok_or_else(|| anyhow!("no BETA-eligible vX.Y head"))?;
 
@@ -185,7 +227,7 @@ mod tests {
     fn promotes_top_when_top_is_beta() {
         let vs = versions(&[(bv(4, 0), "4.0.0"), (bv(4, 1), "4.1.0-beta.0")]);
 
-        let info = derive_channels(&vs, &[], None, None).unwrap();
+        let info = derive_channels(&vs, &[], None, None, &ChannelPins::default()).unwrap();
 
         assert_eq!(info.beta_channel, "v4.1");
         assert_eq!(info.stable_channel, "v4.0");
@@ -195,7 +237,7 @@ mod tests {
     fn promotes_top_when_top_is_ga() {
         let vs = versions(&[(bv(4, 0), "4.0.5"), (bv(4, 1), "4.1.0")]);
 
-        let info = derive_channels(&vs, &[], None, None).unwrap();
+        let info = derive_channels(&vs, &[], None, None, &ChannelPins::default()).unwrap();
 
         assert_eq!(info.beta_channel, "v4.1");
         assert_eq!(info.stable_channel, "v4.0");
@@ -209,7 +251,7 @@ mod tests {
             (bv(4, 1), "4.1.0-alpha.0"),
         ]);
 
-        let info = derive_channels(&vs, &[], None, None).unwrap();
+        let info = derive_channels(&vs, &[], None, None, &ChannelPins::default()).unwrap();
 
         assert_eq!(info.beta_channel, "v4.0");
         assert_eq!(info.stable_channel, "v3.1");
@@ -219,7 +261,7 @@ mod tests {
     fn rc_top_is_promoted() {
         let vs = versions(&[(bv(4, 0), "4.0.10"), (bv(4, 1), "4.1.0-rc.2")]);
 
-        let info = derive_channels(&vs, &[], None, None).unwrap();
+        let info = derive_channels(&vs, &[], None, None, &ChannelPins::default()).unwrap();
 
         assert_eq!(info.beta_channel, "v4.1");
         assert_eq!(info.stable_channel, "v4.0");
@@ -229,7 +271,7 @@ mod tests {
     fn rejects_mismatched_workspace_version() {
         let vs = versions(&[(bv(4, 0), "5.0.0")]);
 
-        let err = derive_channels(&vs, &[], None, None).unwrap_err();
+        let err = derive_channels(&vs, &[], None, None, &ChannelPins::default()).unwrap_err();
 
         assert!(err.to_string().contains("does not match branch"));
     }
@@ -238,7 +280,7 @@ mod tests {
     fn rejects_unknown_prerelease_label() {
         let vs = versions(&[(bv(4, 0), "4.0.0"), (bv(4, 1), "4.1.0-dev.0")]);
 
-        let err = derive_channels(&vs, &[], None, None).unwrap_err();
+        let err = derive_channels(&vs, &[], None, None, &ChannelPins::default()).unwrap_err();
 
         assert!(err.to_string().contains("unknown prerelease label"));
     }
@@ -247,14 +289,15 @@ mod tests {
     fn rejects_when_only_alpha_top_and_nothing_below() {
         let vs = versions(&[(bv(4, 1), "4.1.0-alpha.0")]);
 
-        let err = derive_channels(&vs, &[], None, None).unwrap_err();
+        let err = derive_channels(&vs, &[], None, None, &ChannelPins::default()).unwrap_err();
 
         assert!(err.to_string().contains("no BETA-eligible"));
     }
 
     #[test]
     fn rejects_empty() {
-        let err = derive_channels(&BTreeMap::new(), &[], None, None).unwrap_err();
+        let err = derive_channels(&BTreeMap::new(), &[], None, None, &ChannelPins::default())
+            .unwrap_err();
 
         assert!(err.to_string().contains("no BETA-eligible"));
     }
@@ -273,7 +316,7 @@ mod tests {
             v("2.9.9"),
         ];
 
-        let info = derive_channels(&vs, &tags, None, None).unwrap();
+        let info = derive_channels(&vs, &tags, None, None, &ChannelPins::default()).unwrap();
 
         assert_eq!(info.beta_channel_latest_tag, "v3.1.0-beta.1");
         assert_eq!(info.stable_channel_latest_tag, "v3.0.6");
@@ -283,7 +326,7 @@ mod tests {
     fn channel_from_branch_match() {
         let vs = versions(&[(bv(4, 0), "4.0.0"), (bv(4, 1), "4.1.0-beta.0")]);
 
-        let info = derive_channels(&vs, &[], Some("v4.1"), None).unwrap();
+        let info = derive_channels(&vs, &[], Some("v4.1"), None, &ChannelPins::default()).unwrap();
 
         assert_eq!(info.channel, "beta");
     }
@@ -292,7 +335,14 @@ mod tests {
     fn channel_env_var_wins() {
         let vs = versions(&[(bv(4, 0), "4.0.0"), (bv(4, 1), "4.1.0-beta.0")]);
 
-        let info = derive_channels(&vs, &[], Some("master"), Some("stable")).unwrap();
+        let info = derive_channels(
+            &vs,
+            &[],
+            Some("master"),
+            Some("stable"),
+            &ChannelPins::default(),
+        )
+        .unwrap();
 
         assert_eq!(info.channel, "stable");
     }
@@ -300,7 +350,7 @@ mod tests {
     #[test]
     fn json_uses_screaming_snake_case_keys() {
         let vs = versions(&[(bv(4, 0), "4.0.0"), (bv(4, 1), "4.1.0-beta.0")]);
-        let info = derive_channels(&vs, &[], None, None).unwrap();
+        let info = derive_channels(&vs, &[], None, None, &ChannelPins::default()).unwrap();
 
         let json: serde_json::Value =
             serde_json::from_str(&serde_json::to_string(&info).unwrap()).unwrap();
@@ -312,6 +362,76 @@ mod tests {
         assert_eq!(json["STABLE_CHANNEL_LATEST_TAG"], "");
         assert_eq!(json["CHANNEL"], "");
         assert_eq!(json["CHANNEL_LATEST_TAG"], "");
+    }
+
+    #[test]
+    fn pin_overrides_auto_derived_channels() {
+        let vs = versions(&[
+            (bv(4, 0), "4.0.0"),
+            (bv(4, 1), "4.1.0"),
+            (bv(4, 2), "4.2.0-beta.0"),
+        ]);
+        let pins = ChannelPins {
+            beta: Some(bv(4, 1)),
+            stable: Some(bv(4, 0)),
+        };
+
+        let info = derive_channels(&vs, &[], None, None, &pins).unwrap();
+
+        assert_eq!(info.beta_channel, "v4.1");
+        assert_eq!(info.stable_channel, "v4.0");
+    }
+
+    #[test]
+    fn empty_pins_leave_auto_resolution_intact() {
+        let vs = versions(&[(bv(4, 0), "4.0.0"), (bv(4, 1), "4.1.0-beta.0")]);
+
+        let info = derive_channels(&vs, &[], None, None, &ChannelPins::default()).unwrap();
+
+        assert_eq!(info.beta_channel, "v4.1");
+        assert_eq!(info.stable_channel, "v4.0");
+    }
+
+    #[test]
+    fn pinned_channel_picks_its_own_latest_tag() {
+        let vs = versions(&[(bv(4, 0), "4.0.0"), (bv(4, 1), "4.1.0-beta.0")]);
+        let tags = vec![v("4.0.3"), v("4.0.1")];
+        let pins = ChannelPins {
+            beta: None,
+            stable: Some(bv(4, 0)),
+        };
+
+        let info = derive_channels(&vs, &tags, None, None, &pins).unwrap();
+
+        assert_eq!(info.stable_channel, "v4.0");
+        assert_eq!(info.stable_channel_latest_tag, "v4.0.3");
+    }
+
+    #[test]
+    fn parse_reads_set_and_empty_pins() {
+        let contents = "\
+# comment line
+PINNED_BETA_CHANNEL=v4.1
+PINNED_STABLE_CHANNEL=
+";
+        let pins = ChannelPins::parse(contents).unwrap();
+
+        assert_eq!(pins.beta, Some(bv(4, 1)));
+        assert_eq!(pins.stable, None);
+    }
+
+    #[test]
+    fn parse_absent_keys_are_none() {
+        let pins = ChannelPins::parse("# nothing here\n").unwrap();
+
+        assert_eq!(pins, ChannelPins::default());
+    }
+
+    #[test]
+    fn parse_rejects_malformed_pin() {
+        let err = ChannelPins::parse("PINNED_BETA_CHANNEL=4.1\n").unwrap_err();
+
+        assert!(err.to_string().contains("invalid PINNED_BETA_CHANNEL pin"));
     }
 
     #[test]

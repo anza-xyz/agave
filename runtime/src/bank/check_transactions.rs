@@ -6,7 +6,10 @@ use {
     solana_clock::{MAX_TRANSACTION_FORWARDING_DELAY, Slot},
     solana_compute_budget::compute_budget::SVMTransactionExecutionBudget,
     solana_fee::calculate_fee_details,
-    solana_nonce::state::{Data as NonceData, DurableNonce, State as NonceState},
+    solana_nonce::{
+        NONCED_TX_MARKER_IX_INDEX,
+        state::{Data as NonceData, DurableNonce, State as NonceState},
+    },
     solana_nonce_account as nonce_account,
     solana_program_runtime::execution_budget::SVMTransactionExecutionAndFeeBudgetLimits,
     solana_pubkey::Pubkey,
@@ -66,24 +69,35 @@ impl Bank {
         .0
     }
 
-    /// Checks a batch of sanitized transactions against the bank for age and
-    /// compute-budget limits, without checking the status cache.
-    pub fn check_transactions_without_status_cache<Tx: TransactionWithMeta>(
+    /// Checks a sanitized transaction against the bank for age,
+    /// without checking the status cache. This is a leader-only
+    /// function and must not be used in replay without a feature gate.
+    pub fn check_transaction_without_status_cache(
         &self,
-        sanitized_txs: &[impl core::borrow::Borrow<Tx>],
-        lock_results: &[TransactionResult<()>],
+        tx: &impl SVMMessage,
         max_age: usize,
-        strict_nonce_size_check: bool,
         error_counters: &mut TransactionErrorMetrics,
-    ) -> Vec<TransactionCheckResult> {
-        let lock_results = self.filter_v1_transactions(sanitized_txs, lock_results);
+    ) -> TransactionResult<Option<Pubkey>> {
+        let feature_set: &FeatureSet = &self.feature_set;
+        let feature_snapshot = feature_set.snapshot();
+        let enable_tx_v1 = feature_snapshot.enable_tx_v1;
 
-        self.check_age_and_compute_budget_limits(
-            sanitized_txs,
-            lock_results,
+        if !enable_tx_v1 && tx.version() == TransactionVersion::Number(1) {
+            return Err(TransactionError::UnsupportedVersion);
+        }
+
+        let hash_queue = self.blockhash_queue.read().unwrap();
+        let last_blockhash = hash_queue.last_hash();
+        let next_durable_nonce = DurableNonce::from_blockhash(&last_blockhash);
+
+        self.check_transaction_age(
+            tx,
             max_age,
-            strict_nonce_size_check,
+            &next_durable_nonce,
+            &hash_queue,
             error_counters,
+            true, // strict_nonce_size_check
+            true, // strict_nonce_authority_check
         )
     }
 
@@ -193,15 +207,21 @@ impl Bank {
                         .inspect_err(|_err| {
                             error_counters.invalid_compute_budget += 1;
                         })?;
-                    self.check_transaction_age(
+
+                    let nonce_address = self.check_transaction_age(
                         tx.borrow(),
                         max_age,
                         &next_durable_nonce,
                         &hash_queue,
                         error_counters,
-                        compute_budget_and_limits,
                         strict_nonce_size_check,
-                    )
+                        false,
+                    )?;
+
+                    Ok(CheckedTransactionDetails::new(
+                        nonce_address,
+                        compute_budget_and_limits,
+                    ))
                 }
                 Err(e) => Err(e),
             })
@@ -215,22 +235,22 @@ impl Bank {
         next_durable_nonce: &DurableNonce,
         hash_queue: &BlockhashQueue,
         error_counters: &mut TransactionErrorMetrics,
-        compute_budget: SVMTransactionExecutionAndFeeBudgetLimits,
         strict_nonce_size_check: bool,
-    ) -> TransactionCheckResult {
+        strict_nonce_authority_check: bool,
+    ) -> TransactionResult<Option<Pubkey>> {
         let recent_blockhash = tx.recent_blockhash();
         if hash_queue
             .get_hash_info_if_valid(recent_blockhash, max_age)
             .is_some()
         {
-            Ok(CheckedTransactionDetails::new(None, compute_budget))
-        } else if let Some((nonce_address, _)) =
-            self.check_nonce_transaction_validity(tx, next_durable_nonce, strict_nonce_size_check)
-        {
-            Ok(CheckedTransactionDetails::new(
-                Some(nonce_address),
-                compute_budget,
-            ))
+            Ok(None)
+        } else if let Some((nonce_address, _)) = self.check_nonce_transaction_validity(
+            tx,
+            next_durable_nonce,
+            strict_nonce_size_check,
+            strict_nonce_authority_check,
+        ) {
+            Ok(Some(nonce_address))
         } else {
             error_counters.blockhash_not_found += 1;
             Err(TransactionError::BlockhashNotFound)
@@ -242,6 +262,7 @@ impl Bank {
         message: &impl SVMMessage,
         next_durable_nonce: &DurableNonce,
         strict_nonce_size_check: bool,
+        strict_nonce_authority_check: bool,
     ) -> Option<(Pubkey, u64)> {
         let nonce_is_advanceable = message.recent_blockhash() != next_durable_nonce.as_hash();
         if !nonce_is_advanceable {
@@ -250,6 +271,15 @@ impl Bank {
 
         let (nonce_address, nonce_data) =
             self.load_message_nonce_data(message, strict_nonce_size_check)?;
+
+        if strict_nonce_authority_check
+            && !message
+                .get_ix_signers(NONCED_TX_MARKER_IX_INDEX as usize)
+                .any(|signer| signer == &nonce_data.authority)
+        {
+            return None;
+        }
+
         let previous_lamports_per_signature = nonce_data.get_lamports_per_signature();
 
         Some((nonce_address, previous_lamports_per_signature))
@@ -352,7 +382,10 @@ mod tests {
             instruction::{self as system_instruction, SystemInstruction},
             program as system_program,
         },
-        solana_transaction::{sanitized::MessageHash, versioned::VersionedTransaction},
+        solana_transaction::{
+            sanitized::{MessageHash, SanitizedTransaction},
+            versioned::VersionedTransaction,
+        },
         std::collections::HashSet,
     };
 
@@ -387,7 +420,12 @@ mod tests {
         bank.store_account(&nonce_pubkey, &nonce_account);
 
         assert_eq!(
-            bank.check_nonce_transaction_validity(&message, &bank.next_durable_nonce(), false),
+            bank.check_nonce_transaction_validity(
+                &message,
+                &bank.next_durable_nonce(),
+                false,
+                false
+            ),
             Some((nonce_pubkey, STALE_LAMPORTS_PER_SIGNATURE)),
         );
     }
@@ -409,8 +447,13 @@ mod tests {
             &nonce_hash,
         ));
         assert!(
-            bank.check_nonce_transaction_validity(&message, &bank.next_durable_nonce(), false)
-                .is_none()
+            bank.check_nonce_transaction_validity(
+                &message,
+                &bank.next_durable_nonce(),
+                false,
+                false
+            )
+            .is_none()
         );
     }
 
@@ -442,8 +485,13 @@ mod tests {
         bank.store_account(&nonce_pubkey, &resized_nonce_account);
 
         assert!(
-            bank.check_nonce_transaction_validity(&message, &bank.next_durable_nonce(), true)
-                .is_none()
+            bank.check_nonce_transaction_validity(
+                &message,
+                &bank.next_durable_nonce(),
+                true,
+                false
+            )
+            .is_none()
         );
     }
 
@@ -469,6 +517,7 @@ mod tests {
                 &new_sanitized_message(message),
                 &bank.next_durable_nonce(),
                 false,
+                false,
             )
             .is_none()
         );
@@ -493,8 +542,13 @@ mod tests {
             &nonce_hash,
         ));
         assert!(
-            bank.check_nonce_transaction_validity(&message, &bank.next_durable_nonce(), false)
-                .is_none()
+            bank.check_nonce_transaction_validity(
+                &message,
+                &bank.next_durable_nonce(),
+                false,
+                false
+            )
+            .is_none()
         );
     }
 
@@ -514,8 +568,13 @@ mod tests {
             &Hash::default(),
         ));
         assert!(
-            bank.check_nonce_transaction_validity(&message, &bank.next_durable_nonce(), false)
-                .is_none()
+            bank.check_nonce_transaction_validity(
+                &message,
+                &bank.next_durable_nonce(),
+                false,
+                false
+            )
+            .is_none()
         );
     }
 
@@ -572,7 +631,12 @@ mod tests {
         .unwrap();
 
         assert_eq!(
-            bank.check_nonce_transaction_validity(&message, &bank.next_durable_nonce(), false),
+            bank.check_nonce_transaction_validity(
+                &message,
+                &bank.next_durable_nonce(),
+                false,
+                false
+            ),
             None,
         );
     }
@@ -584,7 +648,7 @@ mod tests {
     fn make_test_tx_with_blockhash(
         version: TransactionVersion,
         recent_blockhash: Hash,
-    ) -> impl TransactionWithMeta {
+    ) -> RuntimeTransaction<SanitizedTransaction> {
         let payer = Keypair::new();
         let recipient = Pubkey::new_unique();
         let ix = system_instruction::transfer(&payer.pubkey(), &recipient, 1);
@@ -624,7 +688,7 @@ mod tests {
     }
 
     #[test]
-    fn test_check_transactions_without_status_cache_allows_already_processed() {
+    fn test_check_transaction_without_status_cache_allows_already_processed() {
         let (genesis_config, _mint_keypair) = solana_genesis_config::create_genesis_config(1);
         let bank = Bank::new_for_tests(&genesis_config);
         let tx = make_test_tx_with_blockhash(TransactionVersion::LEGACY, bank.last_blockhash());
@@ -636,11 +700,10 @@ mod tests {
             Ok(()),
         );
 
-        let txs = [tx];
         let lock_results = [Ok(())];
         let mut error_counters = TransactionErrorMetrics::default();
         let check_results = bank.check_transactions(
-            &txs,
+            std::slice::from_ref(&tx),
             &lock_results,
             bank.max_processing_age(),
             true,
@@ -652,14 +715,12 @@ mod tests {
         ));
 
         let mut error_counters = TransactionErrorMetrics::default();
-        let check_results = bank.check_transactions_without_status_cache(
-            &txs,
-            &lock_results,
+        let check_result = bank.check_transaction_without_status_cache(
+            &tx,
             bank.max_processing_age(),
-            true,
             &mut error_counters,
         );
-        assert!(matches!(check_results.as_slice(), [Ok(_)]));
+        assert_eq!(check_result, Ok(None));
     }
 
     #[test]

@@ -2444,9 +2444,8 @@ fn main() {
 
                             // Purge modifies state so use rw_blockstore
                             info!("Purging slot {slot} from Blockstore");
-                            rw_blockstore.purge_from_next_slots(slot, slot);
                             rw_blockstore
-                                .purge_slots(slot, slot, PurgeType::Exact)
+                                .purge_slots_cleanup_chaining(slot, slot, PurgeType::Exact)
                                 .expect("Blockstore operation must succeed");
                         }
 

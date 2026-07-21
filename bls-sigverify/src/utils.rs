@@ -1,12 +1,12 @@
 use {
     crate::{
         errors::{SigVerifyCertError, SigVerifyVoteError},
+        rewards::RewardVoteMessage,
         stats::{SigVerifyCertStats, SigVerifyVoteStats},
     },
     agave_votor_messages::{
         VerifiedVoterSlotsSender,
         metric_types::{ConsensusMetricsEvent, ConsensusMetricsEventSender},
-        reward_certificate::AddVoteMessage,
         sig_verified_messages::SigVerifiedBatch,
     },
     crossbeam_channel::{Sender, TrySendError},
@@ -37,11 +37,11 @@ pub(super) fn send_votes_to_metrics(
 }
 
 pub(super) fn send_votes_to_rewards(
-    msg: AddVoteMessage,
-    channel: &Sender<AddVoteMessage>,
+    msg: Vec<RewardVoteMessage>,
+    channel: &Sender<Vec<RewardVoteMessage>>,
     stats: &mut SigVerifyVoteStats,
 ) -> Result<(), SigVerifyVoteError> {
-    let len = msg.votes.len();
+    let len = msg.len();
     match channel.try_send(msg) {
         Ok(()) => {
             stats.rewards_sent += len as u64;

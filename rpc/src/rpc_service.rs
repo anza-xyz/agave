@@ -41,7 +41,7 @@ use {
     },
     solana_send_transaction_service::{
         send_transaction_service::{self, SendTransactionService},
-        transaction_client::{TpuClientNextClient, TransactionClient},
+        transaction_client::{TpuClient, TpuSender, create_client, create_leader_updater},
     },
     solana_storage_bigtable::CredentialType,
     solana_tls_utils::NotifyKeyUpdate,
@@ -530,16 +530,19 @@ impl JsonRpcService {
                 "Invalid {:?} socket address for TPU",
                 Protocol::QUIC
             ))?;
-        let client = TpuClientNextClient::new(
-            client_runtime,
+        let leader_updater = create_leader_updater(
+            leader_info,
             my_tpu_address,
             config.send_transaction_service_config.tpu_peers.clone(),
-            leader_info,
+        );
+        let (tpu_sender, client) = create_client(
+            client_runtime,
+            leader_updater,
             config.send_transaction_service_config.leader_forward_count,
             Some(identity_keypair),
             tpu_client_socket,
             cancel,
-        );
+        )?;
 
         let json_rpc_service = Self::new(
             config.rpc_addr,
@@ -558,6 +561,7 @@ impl JsonRpcService {
             config.send_transaction_service_config,
             config.max_slots,
             config.leader_schedule_cache,
+            tpu_sender,
             client,
             config.max_complete_transaction_status_slot,
             config.prioritization_fee_cache,
@@ -567,14 +571,7 @@ impl JsonRpcService {
     }
 
     #[allow(clippy::too_many_arguments)]
-    fn new<
-        Client: TransactionClient
-            + NotifyKeyUpdate
-            + Clone
-            + std::marker::Send
-            + std::marker::Sync
-            + 'static,
-    >(
+    fn new(
         rpc_addr: SocketAddr,
         config: JsonRpcConfig,
         snapshot_config: Option<SnapshotConfig>,
@@ -591,7 +588,8 @@ impl JsonRpcService {
         send_transaction_service_config: send_transaction_service::Config,
         max_slots: Arc<MaxSlots>,
         leader_schedule_cache: Arc<LeaderScheduleCache>,
-        client: Client,
+        tpu_sender: TpuSender,
+        client: TpuClient,
         max_complete_transaction_status_slot: Arc<AtomicU64>,
         prioritization_fee_cache: Option<Arc<PrioritizationFeeCache>>,
         runtime: Arc<TokioRuntime>,
@@ -691,7 +689,7 @@ impl JsonRpcService {
         let _send_transaction_service = Arc::new(SendTransactionService::new(
             bank_forks.clone(),
             receiver,
-            client.clone(),
+            tpu_sender,
             send_transaction_service_config,
             exit,
         ));
@@ -887,7 +885,7 @@ mod tests {
             ..send_transaction_service::Config::default()
         };
 
-        let client = create_client_for_tests(
+        let (tpu_sender, client) = create_client_for_tests(
             runtime.handle().clone(),
             tpu_address,
             send_transaction_service_config.tpu_peers.clone(),
@@ -910,6 +908,7 @@ mod tests {
             send_transaction_service_config,
             Arc::new(MaxSlots::default()),
             Arc::new(LeaderScheduleCache::default()),
+            tpu_sender,
             client,
             Arc::new(AtomicU64::default()),
             Some(Arc::new(PrioritizationFeeCache::default())),

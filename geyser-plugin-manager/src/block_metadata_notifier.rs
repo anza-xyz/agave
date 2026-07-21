@@ -4,7 +4,7 @@ use {
         geyser_plugin_manager::GeyserPluginManager,
     },
     agave_geyser_plugin_interface::geyser_plugin_interface::{
-        ReplicaBlockInfoV5, ReplicaBlockInfoVersions,
+        ReplicaBlockInfoV4, ReplicaBlockInfoVersions,
     },
     arc_swap::ArcSwap,
     log::*,
@@ -44,7 +44,6 @@ impl BlockMetadataNotifier for BlockMetadataNotifierImpl {
             parent_slot,
             parent_blockhash,
             slot,
-            bank_id,
             blockhash,
             &rewards,
             block_time,
@@ -54,8 +53,8 @@ impl BlockMetadataNotifier for BlockMetadataNotifierImpl {
         );
 
         for plugin in plugin_manager.plugins.iter() {
-            let block_info = ReplicaBlockInfoVersions::V0_0_5(&block_info);
-            match plugin.notify_block_metadata(block_info) {
+            let block_info = ReplicaBlockInfoVersions::V0_0_4(&block_info);
+            match plugin.notify_block_metadata_for_bank(block_info, bank_id) {
                 Err(err) => {
                     error!(
                         "Failed to update block metadata at slot {}, error: {} to plugin {}",
@@ -111,19 +110,17 @@ impl BlockMetadataNotifierImpl {
         parent_slot: u64,
         parent_blockhash: &'a str,
         slot: u64,
-        bank_id: BankId,
         blockhash: &'a str,
         rewards: &'a RewardsAndNumPartitions,
         block_time: Option<UnixTimestamp>,
         block_height: Option<u64>,
         executed_transaction_count: u64,
         entry_count: u64,
-    ) -> ReplicaBlockInfoV5<'a> {
-        ReplicaBlockInfoV5 {
+    ) -> ReplicaBlockInfoV4<'a> {
+        ReplicaBlockInfoV4 {
             parent_slot,
             parent_blockhash,
             slot,
-            bank_id,
             blockhash,
             rewards,
             block_time,
@@ -161,13 +158,17 @@ mod tests {
             "test-block-metadata-plugin"
         }
 
-        fn notify_block_metadata(&self, blockinfo: ReplicaBlockInfoVersions) -> Result<()> {
-            let ReplicaBlockInfoVersions::V0_0_5(blockinfo) = blockinfo else {
-                panic!("expected V0_0_5 block info");
+        fn notify_block_metadata_for_bank(
+            &self,
+            blockinfo: ReplicaBlockInfoVersions,
+            bank_id: BankId,
+        ) -> Result<()> {
+            let ReplicaBlockInfoVersions::V0_0_4(blockinfo) = blockinfo else {
+                panic!("expected V0_0_4 block info");
             };
             self.updates.lock().unwrap().push((
                 blockinfo.slot,
-                blockinfo.bank_id,
+                bank_id,
                 blockinfo.executed_transaction_count,
                 blockinfo.entry_count,
             ));

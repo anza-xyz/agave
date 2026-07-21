@@ -728,7 +728,12 @@ mod tests {
         let packets = receiver.recv().unwrap();
         let packet = packets.first().expect("No packets received");
         let received_message =
-            wincode::config::deserialize_exact(packet.data(..).unwrap(), packet_config()).unwrap();
+            VersionedWireConsensusMessage::deserialize_with_expected_shred_version(
+                packet.data(..).unwrap(),
+                packet_config(),
+                cluster_info.my_shred_version(),
+            )
+            .unwrap();
         assert_eq!(
             VersionedWireConsensusMessage::new(expected_message, cluster_info.my_shred_version()),
             received_message

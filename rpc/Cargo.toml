@@ -22,8 +22,10 @@ name = "solana_rpc"
 agave-unstable-api = []
 dev-context-only-utils = [
     "agave-votor-messages/dev-context-only-utils",
+    "dep:solana-unified-scheduler-pool",
     "solana-ledger/dev-context-only-utils",
     "solana-rpc/dev-context-only-utils",
+    "solana-unified-scheduler-pool/dev-context-only-utils",
 ]
 
 [dependencies]
@@ -91,6 +93,7 @@ solana-transaction = { workspace = true }
 solana-transaction-context = { workspace = true }
 solana-transaction-error = { workspace = true }
 solana-transaction-status = { workspace = true }
+solana-unified-scheduler-pool = { workspace = true, optional = true }
 solana-validator-exit = { workspace = true }
 solana-version = { workspace = true }
 solana-vote = { workspace = true }

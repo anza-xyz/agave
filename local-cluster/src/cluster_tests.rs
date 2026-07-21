@@ -667,15 +667,14 @@ fn convert_packet_to_vote_message(
     my_shred_version: u16,
 ) -> Option<VoteMessage> {
     let sender = packet.meta().remote_pubkey()?;
-    let Ok(msg) = wincode::config::deserialize_exact::<VersionedWireConsensusMessage, _>(
+    let Ok(msg) = VersionedWireConsensusMessage::deserialize_with_expected_shred_version(
         packet.data(..).unwrap_or_default(),
         packet_config(),
+        my_shred_version,
     ) else {
         return None;
     };
-    let DecodedWireConsensusMessage::Vote(vote_msg) =
-        DecodedWireConsensusMessage::try_new(msg, my_shred_version).unwrap()
-    else {
+    let DecodedWireConsensusMessage::Vote(vote_msg) = DecodedWireConsensusMessage::new(msg) else {
         return None;
     };
     let bank = bank_forks.read().unwrap().root_bank();
