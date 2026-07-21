@@ -120,18 +120,47 @@ struct RetransmitStats {
     unknown_shred_slot_leader: usize,
 }
 
+struct BatchClusterNodesCache {
+    slots: Vec<Slot>,
+    entries: Vec<(Slot, (Pubkey, Arc<ClusterNodes<RetransmitStage>>))>,
+}
+
+impl BatchClusterNodesCache {
+    fn populate(
+        &mut self,
+        slots: impl IntoIterator<Item = Slot>,
+        mut get_entry: impl FnMut(Slot) -> Option<(Pubkey, Arc<ClusterNodes<RetransmitStage>>)>,
+    ) {
+        self.clear();
+        self.slots.extend(slots);
+        self.slots.sort_unstable();
+        self.slots.dedup();
+        for &slot in &self.slots {
+            if let Some(entry) = get_entry(slot) {
+                self.entries.push((slot, entry));
+            }
+        }
+    }
+
+    fn get(&self, slot: Slot) -> Option<&(Pubkey, Arc<ClusterNodes<RetransmitStage>>)> {
+        let index = self
+            .entries
+            .binary_search_by_key(&slot, |&(slot, _)| slot)
+            .ok()?;
+        Some(&self.entries[index].1)
+    }
+
+    fn clear(&mut self) {
+        self.slots.clear();
+        self.entries.clear();
+    }
+}
+
 struct RetransmitState {
     stats: RetransmitStats,
     addr_cache: AddrCache,
     shred_buf: Vec<Vec<shred::Payload>>,
-    /// Reusable scratch buffer for sorting and deduplicating batch slots.
-    slot_cache_slots: Vec<Slot>,
-    /// Per-batch lookup of each slot's leader and cluster nodes.
-    slot_cache: Vec<(
-        Slot,
-        /*leader:*/ Pubkey,
-        Arc<ClusterNodes<RetransmitStage>>,
-    )>,
+    slot_cache: BatchClusterNodesCache,
     pending_first_shred_event: Option<VotorEvent>,
 }
 
@@ -162,8 +191,11 @@ impl RetransmitState {
             stats: RetransmitStats::new(now),
             addr_cache: AddrCache::with_capacity(/*capacity:*/ 4),
             shred_buf: Vec::with_capacity(RETRANSMIT_BATCH_SIZE),
-            slot_cache_slots: Vec::new(),
-            slot_cache: Vec::new(),
+            slot_cache: BatchClusterNodesCache {
+                // Highest observed post-dedup length was 5 for `slots` and `entries`.
+                slots: Vec::with_capacity(solana_perf::packet::PACKETS_PER_BATCH),
+                entries: Vec::with_capacity(32),
+            },
             pending_first_shred_event: None,
         }
     }
@@ -344,7 +376,6 @@ fn retransmit(context: &RetransmitContext, state: &mut RetransmitState) -> Resul
         stats,
         addr_cache,
         shred_buf,
-        slot_cache_slots,
         slot_cache,
         pending_first_shred_event,
     } = state;
@@ -412,30 +443,28 @@ fn retransmit(context: &RetransmitContext, state: &mut RetransmitState) -> Resul
     epoch_cache_update.stop();
     stats.epoch_cache_update += epoch_cache_update.as_us();
     // Lookup slot leader and cluster nodes for each slot.
-    slot_cache_slots.clear();
-    slot_cache_slots.extend(
+    slot_cache.populate(
         shred_buf
             .iter()
             .flatten()
             .filter_map(|shred| shred::layout::get_slot(shred)),
+        |slot| {
+            max_slots.retransmit.fetch_max(slot, Ordering::Relaxed);
+            // TODO: consider using root-bank here for leader lookup!
+            // Shreds' signatures should be verified before they reach here,
+            // and if the leader is unknown they should fail signature check.
+            // So here we should expect to know the slot leader and otherwise
+            // skip the shred.
+            let Some(slot_leader) = leader_schedule_cache.slot_leader_at(slot, Some(&working_bank))
+            else {
+                stats.unknown_shred_slot_leader += num_shreds;
+                return None;
+            };
+            let cluster_nodes =
+                cluster_nodes_cache.get(slot, &root_bank, &working_bank, cluster_info);
+            Some((slot_leader.id, cluster_nodes))
+        },
     );
-    slot_cache_slots.sort_unstable();
-    slot_cache_slots.dedup();
-    slot_cache.extend(slot_cache_slots.iter().filter_map(|&slot| {
-        max_slots.retransmit.fetch_max(slot, Ordering::Relaxed);
-        // TODO: consider using root-bank here for leader lookup!
-        // Shreds' signatures should be verified before they reach here,
-        // and if the leader is unknown they should fail signature check.
-        // So here we should expect to know the slot leader and otherwise
-        // skip the shred.
-        let Some(slot_leader) = leader_schedule_cache.slot_leader_at(slot, Some(&working_bank))
-        else {
-            stats.unknown_shred_slot_leader += num_shreds;
-            return None;
-        };
-        let cluster_nodes = cluster_nodes_cache.get(slot, &root_bank, &working_bank, cluster_info);
-        Some((slot, slot_leader.id, cluster_nodes))
-    }));
     let socket_addr_space = cluster_info.socket_addr_space();
     let record = |mut stats: HashMap<Slot, RetransmitSlotStats>, out: RetransmitShredOutput| {
         let now = timestamp();
@@ -509,11 +538,7 @@ fn retransmit_shred(
     shred: shred::Payload,
     root_bank: &Bank,
     shred_deduper: &ShredDeduper,
-    cache: &[(
-        Slot,
-        /*leader:*/ Pubkey,
-        Arc<ClusterNodes<RetransmitStage>>,
-    )],
+    cache: &BatchClusterNodesCache,
     addr_cache: &AddrCache,
     socket_addr_space: &SocketAddrSpace,
     socket: RetransmitSocket<'_>,
@@ -588,11 +613,7 @@ fn retransmit_shred(
 
 fn get_retransmit_addrs<'a>(
     shred: &ShredId,
-    cache: &[(
-        Slot,
-        /*leader:*/ Pubkey,
-        Arc<ClusterNodes<RetransmitStage>>,
-    )],
+    cache: &BatchClusterNodesCache,
     addr_cache: &'a AddrCache,
     socket_addr_space: &SocketAddrSpace,
     stats: &RetransmitStats,
@@ -601,10 +622,7 @@ fn get_retransmit_addrs<'a>(
         stats.addr_cache_hit.fetch_add(1, Ordering::Relaxed);
         return Some((root_distance, Cow::Borrowed(addrs)));
     }
-    let index = cache
-        .binary_search_by_key(&shred.slot(), |&(slot, _, _)| slot)
-        .ok()?;
-    let (_, slot_leader, cluster_nodes) = &cache[index];
+    let (slot_leader, cluster_nodes) = cache.get(shred.slot())?;
     let (root_distance, addrs) = cluster_nodes
         .get_retransmit_addrs(slot_leader, shred, DATA_PLANE_FANOUT, socket_addr_space)
         .inspect_err(|err| match err {
