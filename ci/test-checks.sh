@@ -50,6 +50,8 @@ else
   echo "Note: cargo-for-all-lock-files.sh skipped because $CI_BASE_BRANCH != $EDGE_CHANNEL"
 fi
 
+_ scripts/check-msrv.sh
+
 _ scripts/cargo-clippy.sh
 
 _ ci/do-audit.sh
