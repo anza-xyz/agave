@@ -78,14 +78,14 @@ where
 
 pub(crate) fn from_account<T>(account: &AccountSharedData) -> Option<T>
 where
-    T: wincode::DeserializeOwned<Dst = T>,
+    T: wincode::DeserializeOwned<Dst = T> + SysvarId,
 {
     wincode::deserialize(account.data()).ok()
 }
 
 pub(crate) fn to_account<T>(sysvar: &T, account: &mut impl WritableAccount) -> Option<()>
 where
-    T: wincode::Serialize<Src = T>,
+    T: wincode::Serialize<Src = T> + SysvarId,
 {
     wincode::serialize_into(account.data_as_mut_slice(), sysvar).ok()
 }
