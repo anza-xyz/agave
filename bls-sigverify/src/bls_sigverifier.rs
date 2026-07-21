@@ -405,7 +405,7 @@ impl SigVerifier {
                 self.stats.discard_vote_invalid_rank += 1;
                 None
             })?;
-        let rank = rank_map.get_rank_for_vote_pubkey(&sender_identity_pubkey)?;
+        let rank = rank_map.get_rank_for_vote_pubkey(&entry.vote_account_pubkey)?;
         Some(UnverifiedVotePayload {
             vote_message: msg,
             sender_bls_pubkey: entry.bls_pubkey,
