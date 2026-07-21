@@ -1500,7 +1500,7 @@ mod tests {
                 &bank,
                 &transactions,
                 std::iter::repeat(Ok(())),
-                ExecutionFlags {
+                &ExecutionFlags {
                     drop_on_failure: false,
                     all_or_nothing: true,
                 },
