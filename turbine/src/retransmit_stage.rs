@@ -120,16 +120,18 @@ struct RetransmitStats {
     unknown_shred_slot_leader: usize,
 }
 
+type ClusterNodesEntry = (Pubkey, Arc<ClusterNodes<RetransmitStage>>);
+
 struct BatchClusterNodesCache {
     slots: Vec<Slot>,
-    entries: Vec<(Slot, (Pubkey, Arc<ClusterNodes<RetransmitStage>>))>,
+    entries: Vec<(Slot, ClusterNodesEntry)>,
 }
 
 impl BatchClusterNodesCache {
     fn populate(
         &mut self,
         slots: impl IntoIterator<Item = Slot>,
-        mut get_entry: impl FnMut(Slot) -> Option<(Pubkey, Arc<ClusterNodes<RetransmitStage>>)>,
+        mut get_entry: impl FnMut(Slot) -> Option<ClusterNodesEntry>,
     ) {
         self.clear();
         self.slots.extend(slots);
@@ -142,7 +144,7 @@ impl BatchClusterNodesCache {
         }
     }
 
-    fn get(&self, slot: Slot) -> Option<&(Pubkey, Arc<ClusterNodes<RetransmitStage>>)> {
+    fn get(&self, slot: Slot) -> Option<&ClusterNodesEntry> {
         let index = self
             .entries
             .binary_search_by_key(&slot, |&(slot, _)| slot)
