@@ -50,6 +50,8 @@
 //! payload can fit into one coding shred / packet.
 
 pub(crate) use self::merkle_tree::PROOF_ENTRIES_FOR_32_32_BATCH;
+#[cfg(test)]
+use rand::Rng;
 use {
     self::traits::{Shred as _, ShredData as _},
     bitflags::bitflags,
@@ -81,8 +83,6 @@ pub use {
     },
     crate::shredder::{ReedSolomonCache, Shredder},
 };
-#[cfg(test)]
-use {rand::Rng, rayon::ThreadPoolBuilder};
 #[cfg(any(test, feature = "dev-context-only-utils"))]
 use {solana_keypair::Keypair, solana_perf::packet::Packet, solana_signer::Signer};
 
@@ -806,7 +806,6 @@ pub(crate) fn make_merkle_shreds_for_tests<R: Rng>(
     data_size: usize,
     is_last_in_slot: bool,
 ) -> Result<Vec<merkle::Shred>, Error> {
-    let thread_pool = ThreadPoolBuilder::new().num_threads(2).build().unwrap();
     let chained_merkle_root = Hash::new_from_array(rng.random());
     let parent_offset = rng.random_range(1..=u16::try_from(slot).unwrap_or(u16::MAX));
     let parent_slot = slot.checked_sub(u64::from(parent_offset)).unwrap();
@@ -814,7 +813,6 @@ pub(crate) fn make_merkle_shreds_for_tests<R: Rng>(
     let fec_set_index = rng.random_range(0..21) * DATA_SHREDS_PER_FEC_BLOCK as u32;
     rng.fill(&mut data[..]);
     merkle::make_shreds_from_data(
-        &thread_pool,
         &Keypair::new(),
         chained_merkle_root,
         &data[..],
