@@ -126,6 +126,14 @@ fn synthesize_vote_account(pva: &ProtoPrevVoteAccount) -> (Pubkey, u64, VoteAcco
     let vote_pubkey = Pubkey::new_from_array(pva.address.clone().try_into().unwrap());
     let node_pk = Pubkey::new_from_array(pva.node_pubkey.clone().try_into().unwrap());
 
+    let inflation_rewards_collector =
+        <[u8; 32]>::try_from(pva.inflation_rewards_collector.as_slice())
+            .map(Pubkey::new_from_array)
+            .unwrap_or(vote_pubkey);
+    let block_revenue_collector = <[u8; 32]>::try_from(pva.block_revenue_collector.as_slice())
+        .map(Pubkey::new_from_array)
+        .unwrap_or(node_pk);
+
     let epoch_credits: Vec<(Epoch, u64, u64)> = pva
         .epoch_credits
         .iter()
@@ -151,6 +159,8 @@ fn synthesize_vote_account(pva: &ProtoPrevVoteAccount) -> (Pubkey, u64, VoteAcco
             node_pubkey: node_pk,
             inflation_rewards_commission_bps: pva.commission_bps as u16,
             epoch_credits,
+            inflation_rewards_collector,
+            block_revenue_collector,
             ..VoteStateV4::default()
         }),
     };
@@ -882,6 +892,8 @@ mod tests {
                 },
             ],
             version: VoteAccountVersion::V3 as i32,
+            inflation_rewards_collector: vec![],
+            block_revenue_collector: vec![],
         }
     }
 
