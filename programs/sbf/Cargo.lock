@@ -272,10 +272,11 @@ dependencies = [
 
 [[package]]
 name = "agave-transaction-view"
-version = "5.0.0"
+version = "5.1.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "86ac5894e2f7b6c0df6433ab25c1d366b4edb774f5faf48eda7835022fe38a1b"
+checksum = "025bb5f7b6dd4a5545a9edd6ce42b896836b8dbc8600ad9f99de041bd65601ef"
 dependencies = [
+ "bytes",
  "solana-hash 4.5.0",
  "solana-message",
  "solana-packet 4.2.0",

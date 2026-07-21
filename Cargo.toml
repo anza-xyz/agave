@@ -183,7 +183,7 @@ agave-reserved-account-keys = { path = "reserved-account-keys", version = "=4.3.
 agave-scheduler-bindings = { path = "scheduler-bindings", version = "=4.3.0-alpha.2", features = ["agave-unstable-api"] }
 agave-scheduling-utils = { path = "scheduling-utils", version = "=4.3.0-alpha.2", features = ["agave-unstable-api"] }
 agave-snapshots = { path = "snapshots", version = "=4.3.0-alpha.2", features = ["agave-unstable-api"] }
-agave-transaction-view = "5.0.0"
+agave-transaction-view = "5.1.0"
 agave-votor = { path = "votor", version = "=4.3.0-alpha.2", features = ["agave-unstable-api"] }
 agave-votor-messages = { path = "votor-messages", version = "=4.3.0-alpha.2", features = ["agave-unstable-api"] }
 agave-xdp = { path = "xdp", version = "=4.3.0-alpha.2", features = ["agave-unstable-api"] }
