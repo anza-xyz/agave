@@ -327,7 +327,7 @@ rolling-file = "0.2.0"
 rpassword = "7.5"
 rts-alloc = { version = "4.0.0" }
 rusb = "0.9"
-rustls = { version = "0.23.41", features = ["std"], default-features = false }
+rustls = { version = "0.23.42", features = ["std"], default-features = false }
 scopeguard = "1.2.0"
 semver = "1.0.28"
 seqlock = "0.2.0"
