@@ -116,10 +116,10 @@ thread_local! {
     static SHRED_BLOCKSTORE_INPUT_COUNT: Cell<u64> = const { Cell::new(0) };
 }
 
-// Purging only marks rows deleted; RocksDB keeps the delete markers around
-// and reads slow down as they pile up. So every N inputs we throw the DB
-// away and open a fresh one. Measured: 128 is fastest; reopening every
-// input is 8x slower, never reopening is 2.6x slower.
+// purge_slots() deletes covered SST files, including state flushed since prior
+// calls, so reuse should reach a steady state rather than degrade indefinitely.
+// Even so, benchmarks favored recreating the DB every 128 inputs: every input
+// was 8x slower, and never reopening was 2.6x slower.
 const BLOCKSTORE_REOPEN_EVERY: u64 = 128;
 
 // Removes the ledger dir on clean exit; dirs leaked by an aborted process are swept by open_ledger.
