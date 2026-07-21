@@ -1,8 +1,9 @@
 use {
     super::{Bank, BankStatusCache},
+    crate::transaction_batch::TARGET_NUM_TRANSACTIONS_PER_BATCH,
     agave_feature_set::FeatureSet,
+    smallvec::SmallVec,
     solana_account::ReadableAccount,
-    solana_accounts_db::blockhash_queue::BlockhashQueue,
     solana_clock::{MAX_TRANSACTION_FORWARDING_DELAY, Slot},
     solana_compute_budget::compute_budget::SVMTransactionExecutionBudget,
     solana_fee::calculate_fee_details,
@@ -89,12 +90,13 @@ impl Bank {
         let hash_queue = self.blockhash_queue.read().unwrap();
         let last_blockhash = hash_queue.last_hash();
         let next_durable_nonce = DurableNonce::from_blockhash(&last_blockhash);
+        let age_is_ok = hash_queue.is_hash_valid_for_age(tx.recent_blockhash(), max_age);
+        drop(hash_queue);
 
         self.check_transaction_age(
             tx,
-            max_age,
+            age_is_ok,
             &next_durable_nonce,
-            &hash_queue,
             error_counters,
             true, // strict_nonce_size_check
             true, // strict_nonce_authority_check
@@ -159,6 +161,12 @@ impl Bank {
         let hash_queue = self.blockhash_queue.read().unwrap();
         let last_blockhash = hash_queue.last_hash();
         let next_durable_nonce = DurableNonce::from_blockhash(&last_blockhash);
+        // Snapshot age checks so fee derivation and nonce loads below run unlocked.
+        let ages_ok: SmallVec<[bool; TARGET_NUM_TRANSACTIONS_PER_BATCH]> = sanitized_txs
+            .iter()
+            .map(|tx| hash_queue.is_hash_valid_for_age(tx.borrow().recent_blockhash(), max_age))
+            .collect();
+        drop(hash_queue);
 
         let feature_set: &FeatureSet = &self.feature_set;
         let feature_snapshot = feature_set.snapshot();
@@ -169,7 +177,8 @@ impl Bank {
         sanitized_txs
             .iter()
             .zip(lock_results)
-            .map(|(tx, lock_res)| match lock_res {
+            .zip(ages_ok)
+            .map(|((tx, lock_res), age_is_ok)| match lock_res {
                 Ok(()) => {
                     let compute_budget_and_limits = tx
                         .borrow()
@@ -210,9 +219,8 @@ impl Bank {
 
                     let nonce_address = self.check_transaction_age(
                         tx.borrow(),
-                        max_age,
+                        age_is_ok,
                         &next_durable_nonce,
-                        &hash_queue,
                         error_counters,
                         strict_nonce_size_check,
                         false,
@@ -231,18 +239,13 @@ impl Bank {
     fn check_transaction_age(
         &self,
         tx: &impl SVMMessage,
-        max_age: usize,
+        age_is_ok: bool,
         next_durable_nonce: &DurableNonce,
-        hash_queue: &BlockhashQueue,
         error_counters: &mut TransactionErrorMetrics,
         strict_nonce_size_check: bool,
         strict_nonce_authority_check: bool,
     ) -> TransactionResult<Option<Pubkey>> {
-        let recent_blockhash = tx.recent_blockhash();
-        if hash_queue
-            .get_hash_info_if_valid(recent_blockhash, max_age)
-            .is_some()
-        {
+        if age_is_ok {
             Ok(None)
         } else if let Some((nonce_address, _)) = self.check_nonce_transaction_validity(
             tx,
