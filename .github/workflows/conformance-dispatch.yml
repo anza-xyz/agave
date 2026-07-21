@@ -36,9 +36,10 @@ jobs:
         shell: bash
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
         run: |
           entries=$(cargo run --quiet --manifest-path ci/xtask/Cargo.toml -- \
-            conformance-table --pr-number ${{ github.event.pull_request.number }})
+            conformance-table --pr-number "$PR_NUMBER")
           echo "entries=$entries" >> "$GITHUB_OUTPUT"
 
   run:
@@ -51,6 +52,9 @@ jobs:
         entry: ${{ fromJSON(needs.detect.outputs.entries) }}
     steps:
       - name: Log (stub)
+        env:
+          HARNESS: ${{ matrix.entry.harness }}
+          FIXTURES_DIR: ${{ matrix.entry.fixtures_dir }}
         run: |
-          echo "stub: would run harness '${{ matrix.entry.harness }}' on fixtures '${{ matrix.entry.fixtures_dir }}'"
+          echo "stub: would run harness '$HARNESS' on fixtures '$FIXTURES_DIR'"
           echo "No fixtures downloaded or executed yet."

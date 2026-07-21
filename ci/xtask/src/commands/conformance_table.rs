@@ -143,6 +143,27 @@ pub fn select_entries(
     entries
 }
 
+/// Every fixture set, used when a change is workspace-wide and can't be
+/// attributed to a single crate (e.g. the workspace manifest or lockfile).
+fn all_entries() -> Vec<TableEntry> {
+    FIXTURE_ANCHORS
+        .iter()
+        .map(|&(fixtures_dir, _, harness)| TableEntry {
+            harness: harness.to_string(),
+            fixtures_dir: fixtures_dir.to_string(),
+        })
+        .collect()
+}
+
+/// A change to the workspace manifest or lockfile can affect any crate, so it
+/// can't be attributed to one anchor. These are the repo-root `Cargo.toml` and
+/// `Cargo.lock` (no directory prefix); nested manifests map to their own crate.
+fn is_workspace_wide_change(changed_files: &[String]) -> bool {
+    changed_files
+        .iter()
+        .any(|f| f == "Cargo.toml" || f == "Cargo.lock")
+}
+
 pub async fn run(args: CommandArgs) -> Result<()> {
     let repo = Repo::from_env();
     let changed_files = github::get_changed_files(&repo, args.pr_number).await?;
@@ -152,18 +173,24 @@ pub async fn run(args: CommandArgs) -> Result<()> {
         return Ok(());
     }
 
-    let changed_crates = changed_files_to_crates(&changed_files)?;
-    info!("changed crates: {changed_crates:?}");
+    let entries = if is_workspace_wide_change(&changed_files) {
+        info!("workspace manifest/lockfile changed; dispatching all fixture sets");
+        all_entries()
+    } else {
+        let changed_crates = changed_files_to_crates(&changed_files)?;
+        info!("changed crates: {changed_crates:?}");
 
-    // Precompute dep sets for each unique anchor (deduplicated).
-    let mut anchor_deps: HashMap<String, HashSet<String>> = HashMap::new();
-    for &(_, anchor, _) in FIXTURE_ANCHORS {
-        anchor_deps
-            .entry(anchor.to_string())
-            .or_insert_with(|| anchor_direct_deps(anchor).unwrap_or_default());
-    }
+        // Precompute dep sets for each unique anchor (deduplicated).
+        let mut anchor_deps: HashMap<String, HashSet<String>> = HashMap::new();
+        for &(_, anchor, _) in FIXTURE_ANCHORS {
+            if !anchor_deps.contains_key(anchor) {
+                anchor_deps.insert(anchor.to_string(), anchor_direct_deps(anchor)?);
+            }
+        }
 
-    let entries = select_entries(&changed_crates, &anchor_deps);
+        select_entries(&changed_crates, &anchor_deps)
+    };
+
     println!("{}", serde_json::to_string(&entries)?);
     Ok(())
 }
@@ -264,5 +291,24 @@ mod tests {
             json,
             r#"{"harness":"sol_compat_instr_v1","fixtures_dir":"instr"}"#
         );
+    }
+
+    #[test]
+    fn test_all_entries_covers_every_fixture() {
+        assert_eq!(all_entries().len(), FIXTURE_ANCHORS.len());
+    }
+
+    #[test]
+    fn test_workspace_root_manifest_and_lockfile_are_workspace_wide() {
+        assert!(is_workspace_wide_change(&["Cargo.toml".to_string()]));
+        assert!(is_workspace_wide_change(&["Cargo.lock".to_string()]));
+    }
+
+    #[test]
+    fn test_nested_manifest_is_not_workspace_wide() {
+        assert!(!is_workspace_wide_change(&[
+            "svm/Cargo.toml".to_string(),
+            "programs/sbf/Cargo.lock".to_string(),
+        ]));
     }
 }
