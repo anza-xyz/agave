@@ -150,7 +150,8 @@ mod bench {
             self.transaction_accounts
                 .push(self.transaction_accounts[1].clone());
             self.instruction_data =
-                bincode::serialize(&UpgradeableLoaderInstruction::Close).unwrap();
+                bincode::serialize(&UpgradeableLoaderInstruction::Close { tombstone: false })
+                    .unwrap();
         }
 
         fn run(&self) {

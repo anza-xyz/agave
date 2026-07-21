@@ -32,7 +32,7 @@ solana-clock = { workspace = true }
 solana-hash = { workspace = true }
 solana-instruction = { workspace = true }
 solana-loader-v2-interface = { workspace = true, features = ["bincode"] }
-solana-loader-v3-interface = { workspace = true, features = ["bincode"] }
+solana-loader-v3-interface = { workspace = true, features = ["serde"] }
 solana-message = { workspace = true }
 solana-program-option = { workspace = true }
 solana-pubkey = { workspace = true }
@@ -58,6 +58,7 @@ wincode = { workspace = true }
 [dev-dependencies]
 bencher = { workspace = true }
 bytemuck = { workspace = true }
+solana-loader-v3-interface = { workspace = true, features = ["wincode"] }
 solana-pubkey = { workspace = true, features = ["rand"] }
 solana-transaction-status = { path = ".", features = ["agave-unstable-api"] }
 spl-token-confidential-transfer-proof-extraction = { workspace = true }

@@ -204,6 +204,7 @@ impl TestSetup {
             &upgrade_authority_address,
             /* program_lamports */ 0, // Doesn't matter here.
             /* max_data_len */ memo.data().len().saturating_mul(2),
+            false,
         )
         .unwrap()
         .pop()

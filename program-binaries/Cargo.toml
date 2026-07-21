@@ -19,7 +19,7 @@ agave-unstable-api = []
 [dependencies]
 bincode = { workspace = true }
 solana-account = { workspace = true }
-solana-loader-v3-interface = { workspace = true, features = ["bincode", "serde"] }
+solana-loader-v3-interface = { workspace = true, features = ["serde"] }
 solana-pubkey = { workspace = true }
 solana-rent = { workspace = true }
 solana-sdk-ids = { workspace = true }

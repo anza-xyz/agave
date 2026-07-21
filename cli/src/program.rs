@@ -1600,6 +1600,7 @@ async fn process_program_upgrade(
             &buffer_pubkey,
             &upgrade_authority_signer.pubkey(),
             &fee_payer_signer.pubkey(),
+            false,
         )],
         Some(&fee_payer_signer.pubkey()),
         &blockhash,
@@ -2225,6 +2226,7 @@ async fn close(
             recipient_pubkey,
             Some(&authority_signer.pubkey()),
             program_pubkey,
+            false,
         )],
         Some(&config.signers[0].pubkey()),
     ));
@@ -2625,6 +2627,7 @@ async fn do_process_program_deploy(
                 .get_minimum_balance_for_rent_exemption(UpgradeableLoaderState::size_of_program())
                 .await?,
             program_data_max_len,
+            false,
         )?
         .with_compute_unit_config(&ComputeUnitConfig {
             compute_unit_price,
@@ -2888,6 +2891,7 @@ async fn do_process_program_upgrade(
         buffer_pubkey,
         &upgrade_authority.pubkey(),
         &fee_payer_signer.pubkey(),
+        false,
     )]
     .with_compute_unit_config(&ComputeUnitConfig {
         compute_unit_price,

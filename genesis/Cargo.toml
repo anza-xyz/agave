@@ -53,7 +53,7 @@ solana-genesis-utils = { workspace = true }
 solana-inflation = { workspace = true }
 solana-keypair = { workspace = true }
 solana-ledger = { workspace = true }
-solana-loader-v3-interface = { workspace = true }
+solana-loader-v3-interface = { workspace = true, features = ["serde"] }
 solana-native-token = { workspace = true }
 solana-poh-config = { workspace = true }
 solana-pubkey = { workspace = true }
