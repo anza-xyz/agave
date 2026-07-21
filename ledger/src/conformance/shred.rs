@@ -402,7 +402,6 @@ fn build_root_bank(root_slot: Slot, feature_set: FeatureSet) -> Arc<Bank> {
     let rent_account = AccountSharedData::new_data(1, &Rent::default(), &sysvar::id()).unwrap();
     accounts.store_accounts_seq(
         (parent_slot, &[(sysvar::rent::id(), rent_account)][..]),
-        0,
         None,
         &Ancestors::default(),
     );
