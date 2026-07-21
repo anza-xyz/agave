@@ -26,3 +26,5 @@ pub mod transaction_meta;
 pub mod txn;
 #[cfg(feature = "conformance")]
 pub mod versioned_message;
+#[cfg(feature = "conformance")]
+pub mod versioned_transaction;

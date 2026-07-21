@@ -51,10 +51,7 @@ use {
 };
 #[cfg(feature = "conformance")]
 use {
-    super::{
-        deserialize_accounts, fee_rate_governor_from_proto, restore_blockhash_queue,
-        versioned_transaction_from_proto,
-    },
+    super::{deserialize_accounts, fee_rate_governor_from_proto, restore_blockhash_queue},
     agave_feature_set::virtual_address_space_adjustments,
     agave_precompiles::is_precompile,
     ahash::AHashSet,
@@ -68,6 +65,7 @@ use {
     solana_svm::conformance::{
         account_state::account_to_proto, direct_mapping::direct_mapping_handle_cu_exhaustion,
         err::serialized_error_code, feature_set::feature_set_from_proto,
+        versioned_transaction::versioned_transaction_from_proto,
     },
     solana_svm::transaction_processing_result::{
         ProcessedTransaction, TransactionProcessingResultExtensions,

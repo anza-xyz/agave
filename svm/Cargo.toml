@@ -26,6 +26,8 @@ conformance = [
     "dep:prost",
     "dep:protosol",
     "dep:solana-poseidon",
+    "dep:solana-signature",
+    "dep:solana-transaction",
     "dep:solana-vote-program",
     "dep:solana-zk-elgamal-proof-program",
     "dep:xxhash-rust",
@@ -111,6 +113,7 @@ solana-program-runtime = { workspace = true }
 solana-pubkey = { workspace = true }
 solana-rent = { workspace = true }
 solana-sdk-ids = { workspace = true }
+solana-signature = { workspace = true, optional = true }
 solana-slot-hashes = { workspace = true, optional = true, features = ["wincode"] }
 solana-svm-callback = { workspace = true }
 solana-svm-feature-set = { workspace = true }
@@ -123,6 +126,7 @@ solana-syscalls = { workspace = true, optional = true }
 solana-system-interface = { workspace = true }
 solana-system-program = { workspace = true, optional = true }
 solana-sysvar-id = { workspace = true }
+solana-transaction = { workspace = true, optional = true }
 solana-transaction-context = { workspace = true }
 solana-transaction-error = { workspace = true }
 solana-vote-program = { workspace = true, optional = true }

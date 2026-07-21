@@ -3,7 +3,7 @@
 use {
     super::{
         deserialize_accounts, fee_rate_governor_from_proto, new_accounts_for_tests_single_threaded,
-        restore_blockhash_queue, versioned_transaction_from_proto,
+        restore_blockhash_queue,
     },
     crate::{
         bank::{
@@ -40,6 +40,7 @@ use {
         conformance::{
             account_state::account_from_proto, fd_hash::fd_hash,
             feature_set::feature_set_from_proto, setup::sysvar_from_accounts,
+            versioned_transaction::versioned_transaction_from_proto,
         },
         transaction_processor::ExecutionRecordingConfig,
     },
@@ -59,15 +60,14 @@ use {prost::Message, std::ffi::c_int};
 const LEADER_SCHEDULE_HASH_SEED: u64 = 0xDEADFACE;
 const SECONDS_PER_YEAR: f64 = 365.242199 * 24.0 * 60.0 * 60.0;
 
-/* This is a little bit hacky because there's no direct Agave API that gets us a populated Stakes<Delegation> object
-from a set of account states. Fine, I'll do it myself... */
+// This is a little bit hacky because there's no direct Agave API that gets us a populated
+// Stakes<Delegation> object from a set of account states. Fine, I'll do it myself...
 fn build_latest_stake_delegations(
     account_states: &[(Pubkey, AccountSharedData)],
     epoch: Epoch,
     stake_history: &StakeHistory,
     use_fixed_point_stake_math: bool,
 ) -> DeserializableDelegationStakes {
-    // let mut stakes = Stakes::<Delegation>::default();
     let mut stakes = DeserializableDelegationStakes {
         vote_accounts: VoteAccounts::default(),
         stake_delegations: account_states
@@ -77,7 +77,7 @@ fn build_latest_stake_delegations(
                 if let Ok(stake_account) =
                     stake_account::StakeAccount::<Delegation>::try_from(account.clone())
                 {
-                    /* Skip zero-stake delegations */
+                    // Skip zero-stake delegations
                     if stake_account.delegation().stake > 0 {
                         return Some((*pubkey, *stake_account.delegation()));
                     }
@@ -90,13 +90,14 @@ fn build_latest_stake_delegations(
         stake_history: stake_history.clone(),
     };
 
-    /* Then populate the vote accounts */
+    // Then populate the vote accounts
     account_states
         .iter()
         .filter(|(_, account)| account.lamports() > 0)
         .for_each(|(pubkey, account)| {
             if let Ok(vote_account) = VoteAccount::try_from(account.clone()) {
-                /* Note we can pass in new_rate_activation_epoch = 0 because the feature is activated on all clusters */
+                // We can pass `new_rate_activation_epoch = 0` because the feature is
+                // activated on all clusters.
                 stakes.vote_accounts.insert(*pubkey, vote_account, || {
                     stakes
                         .stake_delegations
@@ -162,8 +163,8 @@ fn synthesize_vote_account(pva: &ProtoPrevVoteAccount) -> (Pubkey, u64, VoteAcco
     (vote_pubkey, pva.stake, vote_account)
 }
 
-/* Build stake delegations for previous epochs. The difference between this and `build_latest_stake_delegations()` is that
-we use the provided votes cache instead of the latest input account states. */
+// Build stake delegations for previous epochs. Unlike `build_latest_stake_delegations()`,
+// this uses the provided votes cache instead of the latest input account states.
 #[allow(deprecated)]
 fn build_prev_epoch_stakes(
     vote_accounts: &[ProtoPrevVoteAccount],
@@ -414,7 +415,7 @@ pub fn execute_block(context: &ProtoBlockContext) -> ProtoBlockEffects {
 
     let acct_states_from_proto = deserialize_accounts(&context.acct_states);
 
-    /* Epoch schedule */
+    // Epoch schedule
     let epoch_schedule: EpochSchedule =
         sysvar_from_accounts(&acct_states_from_proto, &sysvar::epoch_schedule::id());
     let stake_history: StakeHistory =
@@ -424,14 +425,14 @@ pub fn execute_block(context: &ProtoBlockContext) -> ProtoBlockEffects {
 
     let blockhash_queue = restore_blockhash_queue(&bank_ctx.blockhash_queue);
 
-    /* Accounts DB config and initialization */
+    // Accounts DB config and initialization
     let accounts = new_accounts_for_tests_single_threaded();
 
-    /* Create feature gate accounts for all feature gates that are present in the protobuf
-    feature set.
-
-    These feature gate accounts will be overriden by any account states that are already
-    present in the protobuf, so that it's obvious what the final account state is. */
+    // Create feature gate accounts for all feature gates that are present in the protobuf
+    // feature set.
+    //
+    // These feature gate accounts will be overridden by any account states that are already
+    // present in the protobuf, so that it's obvious what the final account state is.
     let all_acct_state_pubkeys_from_proto: HashSet<_> =
         acct_states_from_proto.iter().map(|(pk, _)| *pk).collect();
     let accounts_to_store: Vec<_> = feature_accounts_from_proto(&fd_features, &feature_set)
@@ -574,6 +575,8 @@ pub fn execute_block(context: &ProtoBlockContext) -> ProtoBlockEffects {
     // Sequentially load+execute+commit each txn against the bank.  Bypasses
     // the block-replay scheduler so cross-txn lock conflicts can't gate one
     // txn on another's outcome.
+    // Each batch contains one transaction; a future context format can group
+    // transactions to exercise intra-batch write-lock conflicts.
     let mut has_err = false;
     for proto_txn in &context.txns {
         let Some(message) = proto_txn.message.as_ref() else {
@@ -625,6 +628,8 @@ pub fn execute_block(context: &ProtoBlockContext) -> ProtoBlockEffects {
     bank.freeze();
     let cost_tracker = bank.read_cost_tracker().unwrap();
 
+    // Emit changed-account bank-hash details for differential-fuzz mismatch analysis.
+    // The debug tooling compares this JSON with Firedancer's SOLCAP output.
     if std::env::var("AGAVE_SOLCAP_DIR").is_ok() {
         let details = create_changed_accounts_bank_hash_details(
             bank_forks.read().unwrap().working_bank().as_ref(),

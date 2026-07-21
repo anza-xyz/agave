@@ -10,18 +10,14 @@ pub mod txn;
 use {
     protosol::protos::{
         AcctState, BlockhashQueueEntry as ProtoBlockhashQueueEntry,
-        FeeRateGovernor as ProtoFeeRateGovernor, SanitizedTransaction as ProtoSanitizedTransaction,
+        FeeRateGovernor as ProtoFeeRateGovernor,
     },
     solana_account::AccountSharedData,
     solana_accounts_db::blockhash_queue::BlockhashQueue,
     solana_fee_calculator::FeeRateGovernor,
     solana_hash::Hash,
     solana_pubkey::Pubkey,
-    solana_signature::Signature,
-    solana_svm::conformance::{
-        account_state::account_from_proto, versioned_message::versioned_message_from_proto,
-    },
-    solana_transaction::versioned::VersionedTransaction,
+    solana_svm::conformance::account_state::account_from_proto,
 };
 use {
     solana_accounts_db::{accounts::Accounts, accounts_db::AccountsDb},
@@ -69,48 +65,5 @@ pub(crate) fn fee_rate_governor_from_proto(
         min_lamports_per_signature: value.min_lamports_per_signature,
         max_lamports_per_signature: value.max_lamports_per_signature,
         burn_percent: value.burn_percent as u8,
-    }
-}
-
-#[cfg(feature = "conformance")]
-pub(crate) fn versioned_transaction_from_proto(
-    value: &ProtoSanitizedTransaction,
-) -> VersionedTransaction {
-    let message = versioned_message_from_proto(value.message.as_ref().unwrap());
-    let signatures = value
-        .signatures
-        .iter()
-        .map(|signature| Signature::try_from(signature.as_slice()).unwrap())
-        .collect();
-
-    VersionedTransaction {
-        signatures,
-        message,
-    }
-}
-
-#[cfg(all(test, feature = "conformance"))]
-mod tests {
-    use {
-        super::versioned_transaction_from_proto,
-        protosol::protos::{
-            SanitizedTransaction as ProtoSanitizedTransaction,
-            TransactionMessage as ProtoTransactionMessage,
-        },
-    };
-
-    #[test]
-    fn versioned_transaction_from_proto_preserves_empty_signatures() {
-        let transaction = ProtoSanitizedTransaction {
-            message: Some(ProtoTransactionMessage {
-                is_legacy: true,
-                ..ProtoTransactionMessage::default()
-            }),
-            ..ProtoSanitizedTransaction::default()
-        };
-
-        let transaction = versioned_transaction_from_proto(&transaction);
-
-        assert!(transaction.signatures.is_empty());
     }
 }
