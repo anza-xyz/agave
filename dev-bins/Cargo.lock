@@ -7858,7 +7858,6 @@ dependencies = [
  "solana-transaction-context",
  "solana-transaction-error",
  "solana-transaction-status",
- "solana-unified-scheduler-pool",
  "solana-validator-exit",
  "solana-version",
  "solana-vote",

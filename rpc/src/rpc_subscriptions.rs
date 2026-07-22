@@ -1211,10 +1211,11 @@ pub(crate) mod tests {
             optimistically_confirmed_bank_tracker::{
                 BankNotification, OptimisticallyConfirmedBank, OptimisticallyConfirmedBankTracker,
             },
-            rpc::{create_test_transaction_entries, populate_blockstore_for_tests},
+            rpc::create_test_transaction_entries,
             rpc_pubsub::RpcSolPubSubInternal,
             rpc_pubsub_service,
         },
+        agave_test_utilities::populate_blockstore_for_tests,
         serial_test::serial,
         solana_commitment_config::CommitmentConfig,
         solana_hash::Hash,
