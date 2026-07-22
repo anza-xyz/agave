@@ -68,8 +68,8 @@ Release channels have their own copy of this changelog:
 * XDP transmit in SKB (copy) mode is now enabled by default on Linux. The validator requires
   `CAP_NET_ADMIN` and `CAP_NET_RAW` capabilities (plus `CAP_BPF` and `CAP_PERFMON` for
   `--xdp-zero-copy`). Pass `--no-xdp` to fall back to UDP sockets. The XDP CPU
-  core is auto-selected to avoid overlapping the PoH core; passing `--xdp-cpu-cores`
-  with a core that conflicts with the PoH core is an error.
+  core is auto-selected to avoid the PoH pinned core; passing
+  `--xdp-cpu-cores` with a core that conflicts with the PoH core is an error.
 #### Deprecations
 * `--accounts-db-access-storages-method` is now deprecated and a no-op (the `mmap` value was
   deprecated in v4.0.0; mmap mode has now been removed entirely). The flag is still accepted for
@@ -79,6 +79,7 @@ Release channels have their own copy of this changelog:
 #### Changes
 * Turbine shred ingestion now rejects shreds more than half an epoch in the future (previously up to 2 full epochs ahead was accepted).
 * When XDP is enabled, gossip egress does not support private and loopback addresses. Operators running with `--allow-private-addr` must also pass `--no-xdp`.
+* Added Linux-only `--config <PATH>` for TOML-based validator settings, initially covering XDP transmit. Any XDP CLI flag replaces the `[tpu.xdp]` file section. `[interfaces.<name>]` sections configure a NIC's hardware queue -> CPU worker assignment and zero-copy; the `[tpu.xdp]` section declares the TPU's XDP transmit endpoint, whose `tx = ["<interface>:<queue>", ...]` entries pin specific TX queues (required and non-empty when the section is present). No XDP worker CPU may overlap the PoH pinned core.
 ### CLI
 #### Breaking
 #### Changes
