@@ -3719,7 +3719,7 @@ checksum = "4ec2a862134d2a7d32d7983ddcdd1c4923530833c9f2ea1a44fc5fa473989058"
 [[package]]
 name = "librocksdb-sys"
 version = "0.17.3+10.4.2"
-source = "git+https://github.com/anza-xyz/rust-rocksdb?rev=2c0ffd79c1b2e1f5220ee5f7c71af5080a5309e3#2c0ffd79c1b2e1f5220ee5f7c71af5080a5309e3"
+source = "git+https://github.com/alessandrod/rust-rocksdb?rev=df04a612d142acc91bf5fdf93841d26330812001#df04a612d142acc91bf5fdf93841d26330812001"
 dependencies = [
  "bindgen",
  "bzip2-sys",
@@ -5152,7 +5152,7 @@ dependencies = [
 [[package]]
 name = "rocksdb"
 version = "0.24.0"
-source = "git+https://github.com/anza-xyz/rust-rocksdb?rev=2c0ffd79c1b2e1f5220ee5f7c71af5080a5309e3#2c0ffd79c1b2e1f5220ee5f7c71af5080a5309e3"
+source = "git+https://github.com/alessandrod/rust-rocksdb?rev=df04a612d142acc91bf5fdf93841d26330812001#df04a612d142acc91bf5fdf93841d26330812001"
 dependencies = [
  "libc",
  "librocksdb-sys",

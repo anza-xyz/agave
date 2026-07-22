@@ -24,7 +24,7 @@ use {
     solana_leader_schedule::NUM_CONSECUTIVE_LEADER_SLOTS,
     solana_ledger::{
         blockstore::Blockstore,
-        blockstore_db::DBPinnableSlice,
+        blockstore_db::{DBPinnableSlice, WriteBatch},
         leader_schedule_cache::LeaderScheduleCache,
         shred::{MAX_FEC_SETS_PER_SLOT, Shred},
     },
@@ -221,6 +221,7 @@ trait BroadcastRun {
         keypair: &Keypair,
         blockstore: &'db Blockstore,
         pinnable_slice: &mut DBPinnableSlice<'db>,
+        write_batch: &mut WriteBatch,
         receiver: &Receiver<WorkingBankEntryOrMarker>,
         socket_sender: &Sender<(Arc<Vec<Shred>>, Option<BroadcastShredBatchInfo>)>,
         blockstore_sender: &Sender<(Arc<Vec<Shred>>, Option<BroadcastShredBatchInfo>)>,
@@ -237,6 +238,7 @@ trait BroadcastRun {
         receiver: &RecordReceiver,
         blockstore: &'db Blockstore,
         pinnable_slice: &mut DBPinnableSlice<'db>,
+        write_batch: &mut WriteBatch,
     ) -> Result<()>;
 }
 
@@ -273,11 +275,13 @@ impl BroadcastStage {
         mut broadcast_stage_run: impl BroadcastRun,
     ) -> BroadcastStageReturnType {
         let mut pinnable_slice = blockstore.new_pinnable_slice();
+        let mut write_batch = blockstore.get_write_batch().unwrap();
         loop {
             let res = broadcast_stage_run.run(
                 &cluster_info.keypair(),
                 blockstore,
                 &mut pinnable_slice,
+                &mut write_batch,
                 receiver,
                 socket_sender,
                 blockstore_sender,
@@ -423,11 +427,13 @@ impl BroadcastStage {
             let blockstore = blockstore.clone();
             let run_record = move || {
                 let mut pinnable_slice = blockstore.new_pinnable_slice();
+                let mut write_batch = blockstore.get_write_batch().unwrap();
                 loop {
                     let res = broadcast_stage_run.record(
                         &blockstore_receiver,
                         &blockstore,
                         &mut pinnable_slice,
+                        &mut write_batch,
                     );
                     let res = Self::handle_error(res, "solana-broadcaster-record");
                     if let Some(res) = res {
