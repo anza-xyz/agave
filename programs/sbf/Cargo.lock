@@ -6510,7 +6510,7 @@ dependencies = [
 name = "solana-compute-budget"
 version = "4.3.0-alpha.2"
 dependencies = [
- "solana-fee-structure",
+ "solana-fee-structure 4.0.0",
  "solana-program-runtime",
 ]
 
@@ -6651,7 +6651,7 @@ dependencies = [
  "solana-epoch-schedule",
  "solana-fee",
  "solana-fee-calculator",
- "solana-fee-structure",
+ "solana-fee-structure 4.0.0",
  "solana-genesis-config",
  "solana-genesis-utils",
  "solana-geyser-plugin-manager",
@@ -6981,7 +6981,7 @@ dependencies = [
 name = "solana-fee"
 version = "4.3.0-alpha.2"
 dependencies = [
- "solana-fee-structure",
+ "solana-fee-structure 4.0.0",
  "solana-svm-transaction",
 ]
 
@@ -6996,6 +6996,12 @@ dependencies = [
  "serde_derive",
  "wincode",
 ]
+
+[[package]]
+name = "solana-fee-structure"
+version = "3.0.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "5e2abdb1223eea8ec64136f39cb1ffcf257e00f915c957c35c0dd9e3f4e700b0"
 
 [[package]]
 name = "solana-fee-structure"
@@ -7881,7 +7887,7 @@ dependencies = [
  "solana-clock",
  "solana-epoch-rewards",
  "solana-epoch-schedule",
- "solana-fee-structure",
+ "solana-fee-structure 4.0.0",
  "solana-hash 4.5.0",
  "solana-instruction",
  "solana-last-restart-slot",
@@ -8337,7 +8343,7 @@ dependencies = [
  "solana-feature-gate-interface",
  "solana-fee",
  "solana-fee-calculator",
- "solana-fee-structure",
+ "solana-fee-structure 4.0.0",
  "solana-genesis-config",
  "solana-hard-forks",
  "solana-hash 4.5.0",
@@ -8452,7 +8458,7 @@ dependencies = [
  "solana-compute-budget-interface",
  "solana-fee",
  "solana-fee-calculator",
- "solana-fee-structure",
+ "solana-fee-structure 3.0.0",
  "solana-hash 4.5.0",
  "solana-instruction",
  "solana-keypair",
@@ -9573,7 +9579,7 @@ dependencies = [
  "solana-compute-budget",
  "solana-compute-budget-instruction",
  "solana-compute-budget-program",
- "solana-fee-structure",
+ "solana-fee-structure 4.0.0",
  "solana-hash 4.5.0",
  "solana-instruction",
  "solana-instruction-error",
