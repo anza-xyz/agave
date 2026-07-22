@@ -500,7 +500,6 @@ impl Bank {
                     stake_delegations,
                     cached_vote_accounts,
                     rewarded_epoch,
-                    point_value.clone(),
                     &ag_epoch_type,
                     thread_pool,
                     reward_calc_tracer,
@@ -550,7 +549,6 @@ impl Bank {
         rewarded_epoch: Epoch,
         stake_pubkey: &Pubkey,
         stake_account: &StakeAccount<Delegation>,
-        point_value: &PointValue,
         stake_history: &StakeHistory,
         cached_vote_accounts: &CachedVoteAccounts<'_>,
         reward_calc_tracer: Option<impl RewardCalcTracer>,
@@ -658,7 +656,10 @@ impl Bank {
             DelegatedVoteState::from(vote_state),
             CalculationEnvironment {
                 rewarded_epoch,
-                point_value,
+                point_value: &PointValue {
+                    rewards: 0,
+                    points: 0,
+                },
                 stake_history,
                 new_rate_activation_epoch,
                 commission_rate_in_basis_points,
@@ -712,7 +713,6 @@ impl Bank {
         stake_delegations: Vec<(&'a Pubkey, &'a StakeAccount<Delegation>)>,
         cached_vote_accounts: CachedVoteAccounts<'_>,
         rewarded_epoch: Epoch,
-        point_value: PointValue,
         ag_epoch_type: &AlpenglowEpochType,
         thread_pool: &ThreadPool,
         reward_calc_tracer: Option<impl RewardCalcTracer>,
@@ -751,7 +751,6 @@ impl Bank {
                         rewarded_epoch,
                         stake_pubkey,
                         stake_account,
-                        &point_value,
                         stake_history,
                         &cached_vote_accounts,
                         reward_calc_tracer.as_ref(),
@@ -961,11 +960,6 @@ impl Bank {
         // preceding epoch.
         let rewarded_epoch = self.epoch().saturating_sub(1);
 
-        let point_value = PointValue {
-            rewards: epoch_rewards_sysvar.total_rewards,
-            points: epoch_rewards_sysvar.total_points,
-        };
-
         let stakes = self.stakes_cache.stakes();
         let EpochRewardCalculateParamInfo {
             stake_history,
@@ -995,7 +989,6 @@ impl Bank {
                 stake_delegations,
                 cached_vote_accounts,
                 rewarded_epoch,
-                point_value,
                 &ag_epoch_type,
                 thread_pool,
                 null_tracer(),
@@ -1510,11 +1503,6 @@ mod tests {
         assert!(epoch_rewards_sysvar.active);
         let rewarded_epoch = bank.epoch().saturating_sub(1);
 
-        let point_value = PointValue {
-            rewards: epoch_rewards_sysvar.total_rewards,
-            points: epoch_rewards_sysvar.total_points,
-        };
-
         let stakes = bank.stakes_cache.stakes();
         let EpochRewardCalculateParamInfo {
             stake_history,
@@ -1527,7 +1515,6 @@ mod tests {
             stake_delegations,
             cached_vote_accounts,
             rewarded_epoch,
-            point_value,
             &AlpenglowEpochType::Tower,
             &thread_pool,
             null_tracer(),
@@ -2146,10 +2133,6 @@ mod tests {
         let thread_pool = ThreadPoolBuilder::new().num_threads(1).build().unwrap();
         let mut rewards_metrics = RewardsMetrics::default();
 
-        let point_value = PointValue {
-            rewards: 100000, // lamports to split
-            points: 1000,    // over these points
-        };
         let tracer = |_event: &RewardCalculationEvent| {};
         let reward_calc_tracer = Some(tracer);
         let rewarded_epoch = bank.epoch();
@@ -2165,7 +2148,6 @@ mod tests {
                 stake_delegations,
                 cached_vote_accounts,
                 rewarded_epoch,
-                point_value,
                 &AlpenglowEpochType::Tower,
                 &thread_pool,
                 reward_calc_tracer,
