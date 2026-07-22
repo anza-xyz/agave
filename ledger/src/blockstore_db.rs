@@ -1,4 +1,4 @@
-pub use rocksdb::Direction as IteratorDirection;
+pub use rocksdb::{DBPinnableSlice, Direction as IteratorDirection};
 use {
     crate::{
         blockstore::{
@@ -20,7 +20,7 @@ use {
     prost::Message,
     rocksdb::{
         self, ColumnFamily, ColumnFamilyDescriptor, CompactionDecision, DB, DBCompressionType,
-        DBIterator, DBPinnableSlice, IteratorMode as RocksIteratorMode, LiveFile, Options,
+        DBIterator, IteratorMode as RocksIteratorMode, LiveFile, Options,
         WriteBatch as RWriteBatch,
         compaction_filter::CompactionFilter,
         compaction_filter_factory::{CompactionFilterContext, CompactionFilterFactory},
@@ -355,6 +355,19 @@ impl Rocks {
         Ok(opt)
     }
 
+    pub(crate) fn new_pinnable_slice(&self) -> DBPinnableSlice<'_> {
+        self.db.new_pinnable_slice()
+    }
+
+    fn get_pinned_cf_into<'db>(
+        &'db self,
+        cf: &ColumnFamily,
+        key: impl AsRef<[u8]>,
+        value: &mut DBPinnableSlice<'db>,
+    ) -> Result<bool> {
+        Ok(self.db.get_pinned_cf_into(cf, key, value)?)
+    }
+
     fn put_cf<K: AsRef<[u8]>>(&self, cf: &ColumnFamily, key: K, value: &[u8]) -> Result<()> {
         self.db.put_cf(cf, key, value)?;
         Ok(())
@@ -651,6 +664,30 @@ where
 
         let key = <C as Column>::key(&index);
         let result = self.backend.get_pinned_cf(self.handle(), key);
+
+        if let Some(op_start_instant) = is_perf_enabled {
+            report_rocksdb_read_perf(
+                C::NAME,
+                PERF_METRIC_OP_NAME_GET,
+                &op_start_instant.elapsed(),
+                &self.column_options,
+            );
+        }
+        result
+    }
+
+    pub fn get_slice_into<'db>(
+        &'db self,
+        index: C::Index,
+        value: &mut DBPinnableSlice<'db>,
+    ) -> Result<bool> {
+        let is_perf_enabled = maybe_enable_rocksdb_perf(
+            self.column_options.rocks_perf_sample_interval,
+            &self.read_perf_status,
+        );
+
+        let key = <C as Column>::key(&index);
+        let result = self.backend.get_pinned_cf_into(self.handle(), key, value);
 
         if let Some(op_start_instant) = is_perf_enabled {
             report_rocksdb_read_perf(

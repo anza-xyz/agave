@@ -9,7 +9,8 @@ use {
         ancestor_iterator::AncestorIterator,
         blockstore::column::{TypedColumn, columns as cf},
         blockstore_db::{
-            DBPinnedT, IteratorDirection, IteratorMode, LedgerColumn, Rocks, WriteBatch,
+            DBPinnableSlice, DBPinnedT, IteratorDirection, IteratorMode, LedgerColumn, Rocks,
+            WriteBatch,
         },
         blockstore_meta::*,
         blockstore_options::{
@@ -888,6 +889,11 @@ impl Blockstore {
     /// Returns the SlotMeta of the specified slot.
     pub fn meta(&self, slot: Slot) -> Result<Option<SlotMeta>> {
         self.meta_cf.get(slot)
+    }
+
+    /// Creates an empty pinnable slice for reuse by pinned get operations.
+    pub fn new_pinnable_slice(&self) -> DBPinnableSlice<'_> {
+        self.db.new_pinnable_slice()
     }
 
     /// Returns the [`SlotMetaRepair`] of the specified slot.
