@@ -530,12 +530,8 @@ solana-vote-program = { path = "programs/vote", version = "=4.2.0-beta.2", defau
 solana-wincode-varint = "1.0.0"
 solana-zk-elgamal-proof-program = { path = "programs/zk-elgamal-proof", version = "=4.2.0-beta.2", features = ["agave-unstable-api"] }
 solana-zk-sdk = "5.0.1"
-<<<<<<< HEAD
-solana-zk-token-proof-program = { path = "programs/zk-token-proof", version = "=4.2.0-beta.2", features = ["agave-unstable-api"] }
-=======
 solana-zk-sdk-pod = "0.1.2"
-solana-zk-token-proof-program = { path = "programs/zk-token-proof", version = "=4.3.0-alpha.0", features = ["agave-unstable-api"] }
->>>>>>> 0c8f483ed (feat: Migrate to spl-token-2022-interface 3.x and parse PermissionedBurn (#13504))
+solana-zk-token-proof-program = { path = "programs/zk-token-proof", version = "=4.2.0-beta.2", features = ["agave-unstable-api"] }
 spl-associated-token-account-interface = "2.0.0"
 spl-generic-token = "2.0.0"
 spl-memo-interface = "2.1.0"
