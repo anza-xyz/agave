@@ -47,7 +47,7 @@ use {
         accounts_hash::{AccountLtHash, AccountsLtHash, ZERO_LAMPORT_ACCOUNT_LT_HASH},
         accounts_index::{
             AccountSecondaryIndexes, AccountsIndex, AccountsIndexScanResult, IndexKey,
-            ReclaimsSlotList, ReclaimsWithNewSlot, RefCount, ScanFilter, SlotList, Startup,
+            ReclaimsSlotList, ReclaimsWithNewestSlot, RefCount, ScanFilter, SlotList, Startup,
             UpsertReclaim, in_mem_accounts_index::StartupStats,
         },
         accounts_scan::{ScanConfig, ScanError, ScanGuard, ScanResult, ScanTracker},
@@ -1185,9 +1185,9 @@ impl AccountsDb {
         &self,
         pubkey: &Pubkey,
         max_clean_root_inclusive: Option<Slot>,
-    ) -> ReclaimsWithNewSlot<AccountInfo> {
+    ) -> ReclaimsWithNewestSlot<AccountInfo> {
         let mut clean_rooted = Measure::start("clean_old_root-ms");
-        let mut reclaims = ReclaimsWithNewSlot::new();
+        let mut reclaims = ReclaimsWithNewestSlot::new();
         let removed_from_index = self.accounts_index.clean_rooted_entries(
             pubkey,
             &mut reclaims,
@@ -1203,12 +1203,12 @@ impl AccountsDb {
         reclaims
     }
 
-    /// Brings a clean candidate snapshotted during the index scan up date based on
-    /// reclaims
+    /// Brings clean candidate information cached during the index scan up date based on
+    /// slots reclaimed 
     fn update_candidate_after_reclaims(
         &self,
         candidate_info: &mut CleaningInfo,
-        reclaims: &ReclaimsWithNewSlot<AccountInfo>,
+        reclaims: &ReclaimsWithNewestSlot<AccountInfo>,
     ) {
         if candidate_info.slot_list.is_empty() {
             return;
@@ -1219,10 +1219,10 @@ impl AccountsDb {
             .expect("candidate ref count covers every reclaimed entry");
         // The reclaimed entries are exactly those below the newest
         // remaining slot at or below the clean root
-        let new_slot = reclaims[0].1;
+        let newest_slot = reclaims[0].1;
         candidate_info
             .slot_list
-            .retain(|(slot, _)| *slot >= new_slot);
+            .retain(|(slot, _)| *slot >= newest_slot);
 
         // Mark any ZLSRs
         if candidate_info.ref_count == 1
@@ -1237,27 +1237,27 @@ impl AccountsDb {
     ///
     /// The reclaimed accounts were already unref'd and removed from the slot list when the
     /// reclaims were collected
-    fn clean_accounts_older_than_root(&self, reclaims: &ReclaimsWithNewSlot<AccountInfo>) {
+    fn clean_accounts_older_than_root(&self, reclaims: &ReclaimsWithNewestSlot<AccountInfo>) {
         if reclaims.is_empty() {
             return;
         }
         let (_, reclaim_us) = measure_us!({
-            // Sort the reclaims by new_slot so that we can mark them obsolete in batches.
-            let mut reclaims_by_obsolete_slot: IntMap<_, ReclaimsSlotList<_>> = IntMap::default();
-            for (reclaimed_item, new_slot) in reclaims {
-                reclaims_by_obsolete_slot
-                    .entry(*new_slot)
+            // Group the reclaims by newest_slot so that we can mark them obsolete in batches.
+            let mut reclaims_by_newest_slot: IntMap<_, ReclaimsSlotList<_>> = IntMap::default();
+            for (reclaimed_item, newest_slot) in reclaims {
+                reclaims_by_newest_slot
+                    .entry(*newest_slot)
                     .or_default()
                     .push(*reclaimed_item);
             }
 
-            for (new_slot, reclaims) in reclaims_by_obsolete_slot {
+            for (newest_slot, reclaims) in reclaims_by_newest_slot {
                 let (purged_account_slots, _reclaimed_offsets) = self.handle_reclaims(
                     reclaims.iter(),
                     None,
                     &HashSet::new(),
                     &self.clean_accounts_stats.purge_stats,
-                    MarkAccountsObsolete::Yes(new_slot),
+                    MarkAccountsObsolete::Yes(newest_slot),
                 );
                 // Marking the reclaims obsolete skips dead-slot handling in
                 // handle_reclaims, so no whole slots are purged here.
@@ -1948,7 +1948,7 @@ impl AccountsDb {
         let not_found_on_fork_accum = AtomicU64::new(0);
         let missing_accum = AtomicU64::new(0);
         let useful_accum = AtomicU64::new(0);
-        let reclaims = ReclaimsWithNewSlot::with_capacity(num_candidates as usize);
+        let reclaims = ReclaimsWithNewestSlot::with_capacity(num_candidates as usize);
         let reclaims = Mutex::new(reclaims);
         // parallel scan the index.
         let do_clean_scan = || {
