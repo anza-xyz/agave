@@ -4658,7 +4658,6 @@ pub mod tests {
             vote_instruction,
             vote_state::{MAX_LOCKOUT_HISTORY, TowerSync, VoteInit, VoteStateVersions},
         },
-        spl_pod::optional_keys::OptionalNonZeroPubkey,
         spl_token_2022_interface::{
             extension::{
                 BaseStateWithExtensionsMut, ExtensionType, StateWithExtensionsMut,
@@ -8053,8 +8052,7 @@ pub mod tests {
                 let mint_close_authority = mint_state
                     .init_extension::<MintCloseAuthority>(true)
                     .unwrap();
-                mint_close_authority.close_authority =
-                    OptionalNonZeroPubkey::try_from(Some(owner)).unwrap();
+                mint_close_authority.close_authority = owner.into();
 
                 let mint_account = AccountSharedData::from(Account {
                     lamports: 111,
@@ -8561,8 +8559,7 @@ pub mod tests {
             let mint_close_authority = mint_state
                 .init_extension::<MintCloseAuthority>(true)
                 .unwrap();
-            mint_close_authority.close_authority =
-                OptionalNonZeroPubkey::try_from(Some(owner)).unwrap();
+            mint_close_authority.close_authority = owner.into();
             if let Some(interest_bearing_config) = interest_bearing_config.as_mut() {
                 interest_bearing_config.initialization_timestamp =
                     bank.clock().unix_timestamp.saturating_sub(1_000_000).into();
