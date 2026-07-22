@@ -55,6 +55,16 @@ default_cargo_audit_extra_args=(
   # URL:       https://rustsec.org/advisories/RUSTSEC-2024-0376
   # Solution:  Upgrade to >=0.12.3
   --ignore RUSTSEC-2024-0376
+
+  # Crate:     crossbeam-epoch
+  # Version:   0.9.5
+  # Title:     Invalid pointer dereference in fmt::Pointer impl for Atomic and Shared
+  # Date:      2026-07-06
+  # ID:        RUSTSEC-2026-0204
+  # URL:       https://rustsec.org/advisories/RUSTSEC-2026-0204
+  # Solution:  Upgrade to >=0.9.20
+  # AGAVE OK:  patched via vendored anza-xyz/crossbeam fork (rev 153b4261), which reports 0.9.5
+  --ignore RUSTSEC-2026-0204
 )
 
 xtask_cargo_audit_extra_args=(
