@@ -625,6 +625,7 @@ impl BlockIdRepairService {
                             slot,
                             block_id,
                             fec_set_index,
+                            fec_set_count,
                         })
                     }));
 
@@ -1316,6 +1317,7 @@ mod tests {
             slot: 102,
             block_id: Hash::new_unique(),
             fec_set_index: 0,
+            fec_set_count: 1,
         });
         state
             .sent_requests
@@ -1482,6 +1484,7 @@ mod tests {
             slot,
             block_id,
             fec_set_index,
+            fec_set_count: fec_set_count as u32,
         };
 
         // Register the request in outstanding_requests and get the nonce

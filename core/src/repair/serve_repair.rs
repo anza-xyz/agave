@@ -231,6 +231,10 @@ pub enum BlockIdRepairType {
         slot: Slot,
         block_id: Hash,
         fec_set_index: u32,
+        /// Total FEC set count for the block, learned from a prior `ParentAndFecSetCount`
+        /// response. Used only locally to bound the expected proof length during
+        /// verification; not transmitted on the wire.
+        fec_set_count: u32,
     },
 }
 
@@ -329,6 +333,7 @@ impl RequestResponse for BlockIdRepairType {
                     slot: _slot,
                     block_id,
                     fec_set_index,
+                    fec_set_count,
                 },
                 Self::Response::FecSetRoot {
                     fec_set_root,
@@ -338,6 +343,16 @@ impl RequestResponse for BlockIdRepairType {
                 debug_assert_eq!(*fec_set_index as usize % DATA_SHREDS_PER_FEC_BLOCK, 0);
                 // Convert from shred-space to leaf-index
                 let leaf_index = *fec_set_index as usize / DATA_SHREDS_PER_FEC_BLOCK;
+                if leaf_index >= *fec_set_count as usize {
+                    return false;
+                }
+                // + 1 to account for the parent info leaf at the end of the tree
+                let proof_size = merkle_tree::get_proof_size(*fec_set_count as usize + 1);
+                if fec_set_proof.len()
+                    != proof_size as usize * merkle_tree::SIZE_OF_MERKLE_PROOF_ENTRY
+                {
+                    return false;
+                }
                 merkle_tree::verify_merkle_proof(
                     *fec_set_root,
                     leaf_index,
@@ -1868,6 +1883,8 @@ impl ServeRepair {
                 slot,
                 block_id,
                 fec_set_index,
+                // Local-only; the server uses its own DoubleMerkleMeta.
+                fec_set_count: _,
             } => RepairProtocol::FecSetRoot {
                 header,
                 slot: *slot,
