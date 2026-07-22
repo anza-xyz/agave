@@ -618,3 +618,5 @@ codegen-units = 1
 [patch.crates-io]
 # for details, see https://github.com/anza-xyz/crossbeam/commit/153b426198d4ef7b56c2705db764994877bd2bab
 crossbeam-epoch = { git = "https://github.com/anza-xyz/crossbeam", rev = "153b426198d4ef7b56c2705db764994877bd2bab" }
+librocksdb-sys = { git = "https://github.com/anza-xyz/rust-rocksdb", rev = "5052db128eafdc8b2c6e96a2e8c9d45e485679d4" }
+rocksdb = { git = "https://github.com/anza-xyz/rust-rocksdb", rev = "5052db128eafdc8b2c6e96a2e8c9d45e485679d4" }
