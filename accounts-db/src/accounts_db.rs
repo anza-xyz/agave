@@ -75,7 +75,7 @@ use {
     solana_account::{Account, AccountSharedData, ReadableAccount},
     solana_clock::{BankId, Epoch, Slot},
     solana_epoch_schedule::EpochSchedule,
-    solana_lattice_hash::lt_hash::LtHash,
+    solana_lattice_hash::{batch, lt_hash::LtHash},
     solana_measure::{measure::Measure, measure_us},
     solana_nohash_hasher::{BuildNoHashHasher, IntMap, IntSet},
     solana_pubkey::{Pubkey, PubkeyHasherBuilder},
@@ -420,7 +420,7 @@ struct IndexGenerationAccumulator {
     /// Number of accounts in this slot that already existed, and were on-disk
     num_existed_on_disk: u64,
     /// The accounts lt hash for the set of accounts processed using this accumulator
-    lt_hash: LtHash,
+    lt_hash_acc: batch::Accumulator,
     /// The capitalization for the set of accounts processed using this accumulator.
     /// Needs to be u128 as it may temporarily overflow u64 due to
     /// all duplicates being summed before being removed.
@@ -442,7 +442,7 @@ impl IndexGenerationAccumulator {
             num_did_not_exist: 0,
             num_existed_in_mem: 0,
             num_existed_on_disk: 0,
-            lt_hash: LtHash::identity(),
+            lt_hash_acc: batch::Accumulator::new(),
             capitalization: 0,
             num_obsolete_accounts_skipped: 0,
             slot_arena: IndexGenerationSlotArena::default(),
@@ -458,7 +458,7 @@ impl IndexGenerationAccumulator {
         self.num_did_not_exist += other.num_did_not_exist;
         self.num_existed_in_mem += other.num_existed_in_mem;
         self.num_existed_on_disk += other.num_existed_on_disk;
-        self.lt_hash.mix_in(&other.lt_hash);
+        self.lt_hash_acc.mix_in(&other.lt_hash_acc.into_lt_hash());
         self.capitalization = self
             .capitalization
             .checked_add(other.capitalization)
@@ -6085,6 +6085,9 @@ impl AccountsDb {
         accum.slot_arena.ensure_empty();
         let keyed_account_infos = &mut accum.slot_arena.keyed_account_infos;
         let zero_lamport_offsets = &mut accum.slot_arena.zero_lamport_offsets;
+        // Batches this thread's account lt-hashes across all its storages; merged
+        // into other accumulators in `accumulate`.
+        let lt_hash_acc = &mut accum.lt_hash_acc;
 
         let geyser_notifier = self
             .accounts_update_notifier
@@ -6148,8 +6151,18 @@ impl AccountsDb {
                     );
                 }
 
-                let account_lt_hash = Self::lt_hash_account(&account, account.pubkey());
-                accum.lt_hash.mix_in(&account_lt_hash.0);
+                // Stream the account's lt-hash message into the (per-thread) batch.
+                // Skip zero-lamport accounts: their `AccountLtHash` is the identity,
+                // so mixing it in is a no-op. These bytes must match the stream that
+                // `hash_account_helper` feeds the `blake3` hasher.
+                if !is_account_zero_lamport {
+                    lt_hash_acc.add_part(&account.lamports().to_le_bytes());
+                    lt_hash_acc.add_part(account.data());
+                    lt_hash_acc.add_part(&[u8::from(account.executable())]);
+                    lt_hash_acc.add_part(account.owner().as_ref());
+                    lt_hash_acc.add_part(account.pubkey().as_ref());
+                    lt_hash_acc.finish_message();
+                }
 
                 // SAFETY: The bank capitalization field is a u64, so the lamport sum of
                 // all accounts modified in a single slot must fit into a u64.
@@ -6497,7 +6510,9 @@ impl AccountsDb {
         timings.visit_duplicate_accounts_time_us = visit_duplicate_accounts_timer.as_us();
         timings.num_duplicate_accounts = num_duplicate_accounts;
 
-        total_accum.lt_hash.mix_out(&duplicates_lt_hash.0);
+        // Finalize the batched account hashes, then remove the duplicates' hashes.
+        let mut accounts_lt_hash = total_accum.lt_hash_acc.into_lt_hash();
+        accounts_lt_hash.mix_out(&duplicates_lt_hash.0);
         total_accum.capitalization = total_accum
             .capitalization
             .checked_sub(capitalization_from_duplicates)
@@ -6571,7 +6586,7 @@ impl AccountsDb {
         };
         IndexGenerationInfo {
             accounts_data_len: total_accum.accounts_data_len,
-            calculated_accounts_lt_hash: AccountsLtHash(total_accum.lt_hash),
+            calculated_accounts_lt_hash: AccountsLtHash(accounts_lt_hash),
             calculated_capitalization,
         }
     }
