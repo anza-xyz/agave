@@ -7,6 +7,7 @@ use {
     log::*,
     serde::{Deserialize, Serialize},
     solana_clock::{Slot, UnixTimestamp},
+    solana_entry::block_component::VersionedBlockMarker,
     solana_message::v0::LoadedAddresses,
     solana_metrics::datapoint_info,
     solana_pubkey::Pubkey,
@@ -68,6 +69,9 @@ pub enum Error {
 
     #[error("tokio error")]
     TokioJoinError(JoinError),
+
+    #[error("Wincode serialization error: {0}")]
+    WincodeWrite(#[from] wincode::WriteError),
 }
 
 impl std::convert::From<bigtable::Error> for Error {
@@ -83,6 +87,31 @@ impl std::convert::From<std::io::Error> for Error {
 }
 
 pub type Result<T> = std::result::Result<T, Error>;
+
+fn deserialize_block_markers(
+    slot: Slot,
+    block_markers: Vec<Vec<u8>>,
+) -> Result<Vec<VersionedBlockMarker>> {
+    block_markers
+        .into_iter()
+        .enumerate()
+        .map(|(index, marker)| {
+            wincode::deserialize(&marker).map_err(|err| {
+                bigtable::Error::ObjectCorrupt(format!(
+                    "Failed to deserialize block marker {index} for slot {slot}: {err}"
+                ))
+                .into()
+            })
+        })
+        .collect()
+}
+
+fn serialize_block_markers(block_markers: &[VersionedBlockMarker]) -> Result<Vec<Vec<u8>>> {
+    block_markers
+        .iter()
+        .map(|marker| wincode::serialize(marker).map_err(Error::from))
+        .collect()
+}
 
 // Convert a slot to its bucket representation whereby lower slots are always lexically ordered
 // before higher slots
@@ -741,11 +770,11 @@ impl LedgerStorage {
         Ok(entries)
     }
 
-    pub async fn get_block_markers(&self, slot: Slot) -> Result<Vec<Vec<u8>>> {
+    pub async fn get_block_markers(&self, slot: Slot) -> Result<Vec<VersionedBlockMarker>> {
         trace!("LedgerStorage::get_block_markers request received: {slot:?}");
         self.stats.increment_num_block_markers_table_reads();
         let mut bigtable = self.connection.client();
-        bigtable
+        let block_markers = bigtable
             .get_bincode_cell::<Vec<Vec<u8>>>(
                 BLOCK_MARKERS_TABLE_NAME,
                 slot_to_block_markers_key(slot),
@@ -754,7 +783,8 @@ impl LedgerStorage {
             .map_err(|err| match err {
                 bigtable::Error::RowNotFound => Error::BlockNotFound(slot),
                 _ => err.into(),
-            })
+            })?;
+        deserialize_block_markers(slot, block_markers)
     }
 
     pub async fn get_signature_status(&self, signature: &Signature) -> Result<TransactionStatus> {
@@ -1056,7 +1086,7 @@ impl LedgerStorage {
         &self,
         slot: Slot,
         confirmed_block: VersionedConfirmedBlockWithEntries,
-        block_markers: Vec<Vec<u8>>,
+        block_markers: Vec<VersionedBlockMarker>,
     ) -> Result<()> {
         trace!("LedgerStorage::upload_confirmed_block_with_entries request received: {slot:?}");
 
@@ -1128,6 +1158,7 @@ impl LedgerStorage {
             },
         );
         let num_block_markers = block_markers.len();
+        let block_markers = serialize_block_markers(&block_markers)?;
         let block_markers_cell = (slot_to_block_markers_key(slot), block_markers);
 
         let mut tasks = vec![];
@@ -1387,7 +1418,36 @@ impl LedgerStorage {
 
 #[cfg(test)]
 mod test {
-    use super::*;
+    use {
+        super::*,
+        solana_entry::block_component::{BlockFooterV1, BlockHeaderV1},
+        solana_hash::Hash,
+    };
+
+    #[test]
+    fn test_block_marker_serialization() {
+        let slot = 42;
+        let block_markers = vec![
+            VersionedBlockMarker::from_block_header(BlockHeaderV1 {
+                parent_slot: slot - 1,
+                parent_block_id: Hash::new_unique(),
+            }),
+            VersionedBlockMarker::from_block_footer(BlockFooterV1 {
+                bank_hash: Hash::new_unique(),
+                block_producer_time_nanos: 123,
+                block_user_agent: b"test".to_vec(),
+                block_final_cert: None,
+                skip_reward_cert: None,
+                notar_reward_cert: None,
+            }),
+        ];
+
+        let serialized = serialize_block_markers(&block_markers).unwrap();
+        assert_eq!(
+            deserialize_block_markers(slot, serialized).unwrap(),
+            block_markers
+        );
+    }
 
     #[test]
     fn test_slot_to_key() {

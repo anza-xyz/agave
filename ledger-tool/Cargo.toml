@@ -92,7 +92,6 @@ solana-vote = { workspace = true }
 solana-vote-program = { workspace = true }
 thiserror = { workspace = true }
 tokio = { workspace = true, features = ["full"] }
-wincode = { workspace = true }
 
 [target.'cfg(not(any(target_env = "msvc", target_os = "freebsd")))'.dependencies]
 jemallocator = { workspace = true }
@@ -104,6 +103,7 @@ signal-hook = { workspace = true }
 assert_cmd = { workspace = true }
 solana-bls-signatures = { workspace = true }
 tempfile = { workspace = true }
+wincode = { workspace = true }
 
 [lints]
 workspace = true

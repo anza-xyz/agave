@@ -5,6 +5,7 @@ use {
     crossbeam_channel::{bounded, unbounded},
     log::*,
     solana_clock::Slot,
+    solana_entry::block_component::VersionedBlockMarker,
     solana_measure::measure::Measure,
     solana_transaction_status::VersionedConfirmedBlockWithEntries,
     std::{
@@ -46,7 +47,7 @@ struct BlockstoreLoadStats {
 
 struct ConfirmedBlockUploadData {
     confirmed_block: VersionedConfirmedBlockWithEntries,
-    block_markers: Vec<Vec<u8>>,
+    block_markers: Vec<VersionedBlockMarker>,
 }
 
 fn get_confirmed_block_upload_data(
@@ -64,7 +65,7 @@ fn get_confirmed_block_upload_data(
             ConfirmedBlockComponent::BlockMarker(marker) => {
                 // Preserve every marker variant in Bigtable, even if shred reconstruction does not
                 // support it yet.
-                block_markers.push(wincode::serialize(&marker)?);
+                block_markers.push(marker);
             }
         }
     }

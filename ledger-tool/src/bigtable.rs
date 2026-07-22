@@ -255,19 +255,16 @@ struct BlockMarkers {
 
 fn classify_alpenglow_block_markers(
     slot: Slot,
-    marker_payloads: Vec<Vec<u8>>,
+    block_markers: Vec<VersionedBlockMarker>,
 ) -> Result<Option<BlockMarkers>, Box<dyn Error>> {
-    if marker_payloads.is_empty() {
+    if block_markers.is_empty() {
         return Ok(None);
     }
 
     let mut header = None;
     let mut genesis = None;
     let mut footer = None;
-    for (index, payload) in marker_payloads.into_iter().enumerate() {
-        let marker: VersionedBlockMarker = wincode::deserialize(&payload).map_err(|err| {
-            format!("Failed to deserialize block marker {index} for slot {slot}: {err}")
-        })?;
+    for marker in block_markers {
         let VersionedBlockMarker::V1(marker_v1) = &marker;
         let (marker_kind, destination) = match marker_v1 {
             BlockMarkerV1::BlockHeader(_) => ("header", &mut header),
