@@ -160,12 +160,13 @@ impl Bank {
                 }
             });
 
-            let mut dummy_transaction_context = TransactionContext::new(
+            let mut dummy_transaction_context = TransactionContext::new_with_feature_flags(
                 vec![],
                 self.rent_collector.rent.clone(),
                 compute_budget.max_instruction_stack_depth,
                 compute_budget.max_instruction_trace_length,
                 1,
+                true,
             );
 
             struct MockCallback {}

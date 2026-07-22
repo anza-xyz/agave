@@ -3574,7 +3574,6 @@ pub mod tests {
 
         fn get_instruction_errors() -> Vec<InstructionError> {
             vec![
-                InstructionError::GenericError,
                 InstructionError::InvalidArgument,
                 InstructionError::InvalidInstructionData,
                 InstructionError::InvalidAccountData,

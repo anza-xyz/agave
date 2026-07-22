@@ -62,6 +62,7 @@ pub(crate) fn prepare_invoke_context_fields<'a, C: InvokeContextCallback>(
         loader_key,
         compute_budget,
         (*rent).clone(),
+        &instr_context.feature_set,
     );
 
     let (blockhash, blockhash_lamports_per_signature) = recent_blockhash(sysvar_cache);
@@ -151,15 +152,17 @@ pub(crate) fn compile_transaction_context(
     loader_key: &Pubkey,
     compute_budget: &ComputeBudget,
     rent: Rent,
+    _feature_set: &SVMFeatureSet,
 ) -> (SanitizedMessage, TransactionContext<'static>) {
     let (sanitized_message, transaction_accounts) =
         mock_compile_message(instruction, accounts, program_id, loader_key);
-    let transaction_context = TransactionContext::new(
+    let transaction_context = TransactionContext::new_with_feature_flags(
         transaction_accounts,
         rent,
         compute_budget.max_instruction_stack_depth,
         compute_budget.max_instruction_trace_length,
         sanitized_message.num_instructions(),
+        true,
     );
     (sanitized_message, transaction_context)
 }

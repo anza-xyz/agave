@@ -877,12 +877,13 @@ macro_rules! with_mock_invoke_context_with_feature_set {
                 }
             }
         });
-        let mut $transaction_context = TransactionContext::new(
+        let mut $transaction_context = TransactionContext::new_with_feature_flags(
             $transaction_accounts,
             Rent::default(),
             compute_budget.max_instruction_stack_depth,
             compute_budget.max_instruction_trace_length,
             $top_level_instructions,
+            true,
         );
         let program_runtime_environments = ProgramRuntimeEnvironments::mock();
         let environment_config = EnvironmentConfig::new(
