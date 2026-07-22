@@ -1,7 +1,7 @@
 //! Per-round metrics for the clock-sync service.
 
 use {
-    crate::{delay::DelayTracker, welch_lynch::RoundOutcome},
+    crate::{clock::LocalNs, delay::DelayTracker, welch_lynch::RoundOutcome},
     solana_metrics::datapoint_info,
 };
 
@@ -27,7 +27,7 @@ impl RoundStats {
         offset_vs_system_ns: i64,
         n_peers: usize,
         delays: &DelayTracker,
-        local_now_ns: i64,
+        local_now: LocalNs,
     ) {
         let (outcome_kind, correction_ns) = match outcome {
             RoundOutcome::Midpoint { correction_ns, .. } => (0i64, *correction_ns),
@@ -63,7 +63,7 @@ impl RoundStats {
             } => (received, in_window, in_window_stake, total_stake, 0),
         };
         let (delay_min_ns, delay_median_ns, delay_max_ns) =
-            delays.stats_ns(local_now_ns).unwrap_or((0, 0, 0));
+            delays.stats_ns(local_now).unwrap_or((0, 0, 0));
         datapoint_info!(
             "clock_sync",
             ("round", round, i64),

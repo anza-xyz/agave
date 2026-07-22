@@ -8,6 +8,7 @@
 //! once the previous round's correction has been applied.
 
 use {
+    crate::clock::LocalNs,
     solana_pubkey::Pubkey,
     std::collections::{BTreeMap, HashMap},
 };
@@ -26,8 +27,8 @@ pub struct Config {
 /// A buffered pulse arrival, in the local timebase.
 #[derive(Debug, Clone, Copy)]
 struct Arrival {
-    /// When the pulse arrived, local ns.
-    arrival_ns: i64,
+    /// When the pulse arrived.
+    arrival: LocalNs,
     /// Calibrated one-way link delay to the sender, ns.
     delay_ns: i64,
     /// Sender-reported send lateness, ns (unclamped; clamped at use).
@@ -89,8 +90,8 @@ pub struct WelchLynch {
     me: Pubkey,
     /// The currently open pulse round.
     round: u64,
-    /// Local time of this round's pulse (ours), ns.
-    next_ns: i64,
+    /// Local time of this round's pulse (ours).
+    next: LocalNs,
     /// The synchronized virtual clock minus the local clock. Round k's pulse
     /// marks synchronized time k*T and fires at local time
     /// `next_k = k*T + Σ corrections`, so this is `-Σ corrections`.
@@ -101,10 +102,10 @@ pub struct WelchLynch {
 }
 
 impl WelchLynch {
-    /// `start_round` and `first_next_ns` come from the bootstrap (Phase 1:
+    /// `start_round` and `first_next` come from the bootstrap (Phase 1:
     /// the next period boundary of the system's wall clock; Phase 2: the
     /// recovery consensus decision).
-    pub fn new(config: Config, me: Pubkey, start_round: u64, first_next_ns: i64) -> Self {
+    pub fn new(config: Config, me: Pubkey, start_round: u64, first_next: LocalNs) -> Self {
         assert!(
             config.window_ns > 0 && config.window_ns < config.period_ns,
             "acceptance window must lie strictly inside the pulse period"
@@ -113,7 +114,7 @@ impl WelchLynch {
             config,
             me,
             round: start_round,
-            next_ns: first_next_ns,
+            next: first_next,
             cumulative_offset_ns: 0,
             buckets: BTreeMap::new(),
         }
@@ -124,13 +125,13 @@ impl WelchLynch {
     }
 
     /// Local time at which this round's pulse should be broadcast.
-    pub fn pulse_due_at_ns(&self) -> i64 {
-        self.next_ns
+    pub fn pulse_due_at(&self) -> LocalNs {
+        self.next
     }
 
     /// Local time at which this round closes and the correction is computed.
-    pub fn round_close_at_ns(&self) -> i64 {
-        self.next_ns.saturating_add(self.config.window_ns)
+    pub fn round_close_at(&self) -> LocalNs {
+        self.next.saturating_add(self.config.window_ns)
     }
 
     pub fn cumulative_offset_ns(&self) -> i64 {
@@ -142,20 +143,20 @@ impl WelchLynch {
         self.buckets.entry(self.round).or_default().insert(
             self.me,
             Arrival {
-                arrival_ns: self.next_ns,
+                arrival: self.next,
                 delay_ns: 0,
                 lateness_ns: 0,
             },
         );
     }
 
-    /// Buffer a peer's pulse. `arrival_ns` is the receive timestamp in our
-    /// local timebase; `delay_ns` the calibrated one-way delay to `peer`.
+    /// Buffer a peer's pulse. `arrival` is the receive timestamp;
+    /// `delay_ns` the calibrated one-way delay to `peer`.
     pub fn on_pulse(
         &mut self,
         peer: Pubkey,
         round: u64,
-        arrival_ns: i64,
+        arrival: LocalNs,
         delay_ns: i64,
         lateness_ns: i64,
     ) -> Result<(), PulseReject> {
@@ -172,7 +173,7 @@ impl WelchLynch {
         bucket.insert(
             peer,
             Arrival {
-                arrival_ns,
+                arrival,
                 delay_ns,
                 lateness_ns,
             },
@@ -187,10 +188,10 @@ impl WelchLynch {
         // could equally do by timing the send.
         let lateness = arrival.lateness_ns.clamp(0, self.config.window_ns);
         arrival
-            .arrival_ns
+            .arrival
+            .saturating_sub(self.next)
             .saturating_sub(arrival.delay_ns)
             .saturating_sub(lateness)
-            .saturating_sub(self.next_ns)
     }
 
     /// Close the currently open round: compute and apply the correction,
@@ -260,8 +261,8 @@ impl WelchLynch {
             self.config.window_ns,
         );
 
-        self.next_ns = self
-            .next_ns
+        self.next = self
+            .next
             .saturating_add(self.config.period_ns)
             .saturating_add(correction);
         self.cumulative_offset_ns = self.cumulative_offset_ns.saturating_sub(correction);
@@ -366,7 +367,7 @@ mod tests {
     }
 
     fn machine(me: Pubkey) -> WelchLynch {
-        WelchLynch::new(config(), me, 100, T)
+        WelchLynch::new(config(), me, 100, LocalNs::from_ns(T))
     }
 
     /// n validators with the given stakes; returns (machine, peer pubkeys,
@@ -384,7 +385,7 @@ mod tests {
         sm.on_pulse(
             peer,
             sm.round(),
-            sm.pulse_due_at_ns() + offset + delay,
+            sm.pulse_due_at().saturating_add(offset + delay),
             delay,
             0,
         )
@@ -414,7 +415,7 @@ mod tests {
             }
         ));
         assert_eq!(sm.round(), 101);
-        assert_eq!(sm.pulse_due_at_ns(), 2 * T);
+        assert_eq!(sm.pulse_due_at().ns(), 2 * T);
     }
 
     #[test]
@@ -472,7 +473,7 @@ mod tests {
         }
         // Applied correction is clamped to the window; we delay our pulse by
         // W, so the synchronized clock reads W behind our (fast) local clock.
-        assert_eq!(sm.pulse_due_at_ns(), T + T + W);
+        assert_eq!(sm.pulse_due_at().ns(), T + T + W);
         assert_eq!(sm.cumulative_offset_ns(), -W);
     }
 
@@ -492,7 +493,7 @@ mod tests {
                 total_stake: 5,
             }
         ));
-        assert_eq!(sm.pulse_due_at_ns(), 2 * T);
+        assert_eq!(sm.pulse_due_at().ns(), 2 * T);
         assert_eq!(sm.cumulative_offset_ns(), 0);
     }
 
@@ -500,7 +501,7 @@ mod tests {
     fn round_tags_gate_buffering() {
         let (mut sm, peers, _stakes) = cluster(&[1; 4]);
         let r = sm.round();
-        let t = sm.pulse_due_at_ns();
+        let t = sm.pulse_due_at();
         assert_eq!(
             sm.on_pulse(peers[1], r - 1, t, 0, 0),
             Err(PulseReject::StaleRound)
@@ -511,11 +512,14 @@ mod tests {
         );
         assert_eq!(sm.on_pulse(peers[1], r, t, 0, 0), Ok(()));
         assert_eq!(
-            sm.on_pulse(peers[1], r, t + 1, 0, 0),
+            sm.on_pulse(peers[1], r, t.saturating_add(1), 0, 0),
             Err(PulseReject::DuplicatePeer)
         );
         // Next round's pulse is buffered now and still there after close.
-        assert_eq!(sm.on_pulse(peers[2], r + 1, t + T, 0, 0), Ok(()));
+        assert_eq!(
+            sm.on_pulse(peers[2], r + 1, t.saturating_add(T), 0, 0),
+            Ok(())
+        );
         sm.record_own_pulse();
         sm.close_round(&HashMap::from([
             (peers[0], 1),
@@ -523,7 +527,7 @@ mod tests {
             (peers[2], 1),
         ]));
         assert_eq!(
-            sm.on_pulse(peers[2], r + 1, t + T, 0, 0),
+            sm.on_pulse(peers[2], r + 1, t.saturating_add(T), 0, 0),
             Err(PulseReject::DuplicatePeer),
             "arrival buffered for r+1 must survive the close of r"
         );
@@ -552,7 +556,7 @@ mod tests {
         sm.on_pulse(
             peers[1],
             sm.round(),
-            sm.pulse_due_at_ns() + delay + 5_000_000,
+            sm.pulse_due_at().saturating_add(delay + 5_000_000),
             delay,
             5_000_000,
         )
@@ -561,7 +565,7 @@ mod tests {
         sm.on_pulse(
             peers[2],
             sm.round(),
-            sm.pulse_due_at_ns() + delay,
+            sm.pulse_due_at().saturating_add(delay),
             delay,
             -100_000_000,
         )
@@ -581,7 +585,7 @@ mod tests {
             },
             Pubkey::new_unique(),
             0,
-            0,
+            LocalNs::from_ns(0),
         );
     }
 }

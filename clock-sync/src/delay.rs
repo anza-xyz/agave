@@ -3,6 +3,7 @@
 //! taken over a sliding bucket window so a route change can expire it.
 
 use {
+    crate::clock::LocalNs,
     solana_pubkey::Pubkey,
     std::{collections::HashMap, time::Duration},
 };
@@ -70,17 +71,17 @@ impl DelayTracker {
         }
     }
 
-    /// Record an RTT sample for `peer` taken at local time `now_ns`.
-    pub fn observe(&mut self, peer: Pubkey, rtt: Duration, now_ns: i64) {
+    /// Record an RTT sample for `peer` taken at local time `now`.
+    pub fn observe(&mut self, peer: Pubkey, rtt: Duration, now: LocalNs) {
         self.peers
             .entry(peer)
             .or_insert_with(PeerDelay::new)
-            .observe(rtt.as_nanos() as i64, now_ns);
+            .observe(rtt.as_nanos() as i64, now.ns());
     }
 
     /// The calibrated one-way delay to `peer`: windowed min RTT / 2.
-    pub fn delay_ns(&self, peer: &Pubkey, now_ns: i64) -> Option<i64> {
-        Some(self.peers.get(peer)?.min_rtt_ns(now_ns)? / 2)
+    pub fn delay_ns(&self, peer: &Pubkey, now: LocalNs) -> Option<i64> {
+        Some(self.peers.get(peer)?.min_rtt_ns(now.ns())? / 2)
     }
 
     /// Drop peers no longer in the validator set.
@@ -89,11 +90,11 @@ impl DelayTracker {
     }
 
     /// (min, median, max) one-way delay across peers, for metrics.
-    pub fn stats_ns(&self, now_ns: i64) -> Option<(i64, i64, i64)> {
+    pub fn stats_ns(&self, now: LocalNs) -> Option<(i64, i64, i64)> {
         let mut delays: Vec<i64> = self
             .peers
             .values()
-            .filter_map(|peer| Some(peer.min_rtt_ns(now_ns)? / 2))
+            .filter_map(|peer| Some(peer.min_rtt_ns(now.ns())? / 2))
             .collect();
         if delays.is_empty() {
             return None;
@@ -120,17 +121,25 @@ mod tests {
 
     const MS: i64 = 1_000_000;
 
+    fn at(ns: i64) -> LocalNs {
+        LocalNs::from_ns(ns)
+    }
+
     #[test]
     fn tracks_windowed_min() {
         let mut tracker = DelayTracker::new();
         let peer = Pubkey::new_unique();
         let start = 1_000 * BUCKET_WIDTH_NS;
-        tracker.observe(peer, Duration::from_millis(80), start);
-        tracker.observe(peer, Duration::from_millis(50), start + BUCKET_WIDTH_NS);
-        tracker.observe(peer, Duration::from_millis(90), start + 2 * BUCKET_WIDTH_NS);
+        tracker.observe(peer, Duration::from_millis(80), at(start));
+        tracker.observe(peer, Duration::from_millis(50), at(start + BUCKET_WIDTH_NS));
+        tracker.observe(
+            peer,
+            Duration::from_millis(90),
+            at(start + 2 * BUCKET_WIDTH_NS),
+        );
         // Min RTT 50ms -> one-way 25ms.
         assert_eq!(
-            tracker.delay_ns(&peer, start + 2 * BUCKET_WIDTH_NS),
+            tracker.delay_ns(&peer, at(start + 2 * BUCKET_WIDTH_NS)),
             Some(25 * MS)
         );
     }
@@ -141,17 +150,17 @@ mod tests {
         let peer = Pubkey::new_unique();
         let start = 1_000 * BUCKET_WIDTH_NS;
         // A short route that later lengthens (e.g. a route change).
-        tracker.observe(peer, Duration::from_millis(40), start);
+        tracker.observe(peer, Duration::from_millis(40), at(start));
         for i in 1..=(NUM_BUCKETS as i64) {
             tracker.observe(
                 peer,
                 Duration::from_millis(100),
-                start + i * BUCKET_WIDTH_NS,
+                at(start + i * BUCKET_WIDTH_NS),
             );
         }
         // The 40ms sample fell out of the window; min is now 100ms.
         assert_eq!(
-            tracker.delay_ns(&peer, start + (NUM_BUCKETS as i64) * BUCKET_WIDTH_NS),
+            tracker.delay_ns(&peer, at(start + (NUM_BUCKETS as i64) * BUCKET_WIDTH_NS)),
             Some(50 * MS)
         );
     }
@@ -159,7 +168,7 @@ mod tests {
     #[test]
     fn unknown_peer_has_no_delay() {
         let tracker = DelayTracker::new();
-        assert_eq!(tracker.delay_ns(&Pubkey::new_unique(), 0), None);
+        assert_eq!(tracker.delay_ns(&Pubkey::new_unique(), at(0)), None);
     }
 
     #[test]
@@ -167,8 +176,8 @@ mod tests {
         let mut tracker = DelayTracker::new();
         let now = 1_000 * BUCKET_WIDTH_NS;
         for rtt_ms in [10, 30, 20] {
-            tracker.observe(Pubkey::new_unique(), Duration::from_millis(rtt_ms), now);
+            tracker.observe(Pubkey::new_unique(), Duration::from_millis(rtt_ms), at(now));
         }
-        assert_eq!(tracker.stats_ns(now), Some((5 * MS, 10 * MS, 15 * MS)));
+        assert_eq!(tracker.stats_ns(at(now)), Some((5 * MS, 10 * MS, 15 * MS)));
     }
 }

@@ -143,10 +143,10 @@ fn full_mesh(nodes: &[Node], stakes: &[u64]) {
 }
 
 fn max_pairwise_skew_ns(nodes: &[Node]) -> i64 {
-    let readings: Vec<i64> = nodes.iter().map(|node| node.clock.now_ns()).collect();
+    let readings: Vec<_> = nodes.iter().map(|node| node.clock.now()).collect();
     let min = readings.iter().min().copied().unwrap();
     let max = readings.iter().max().copied().unwrap();
-    max - min
+    max.saturating_sub(min)
 }
 
 fn make_runtime() -> Runtime {

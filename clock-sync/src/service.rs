@@ -6,7 +6,7 @@
 use {
     crate::{
         ABSORPTION_HALF_WIDTH, ACCEPTANCE_WINDOW, PULSE_PERIOD,
-        clock::SyncedClock,
+        clock::{LocalNs, SyncedClock},
         delay::DelayTracker,
         protocol::{self, Message},
         stats::RoundStats,
@@ -104,9 +104,13 @@ fn run(
     // Bootstrap from the wall clock: the pulse at unix time k*T belongs to
     // round k, consistent across validators whose system clocks agree to
     // within ~W. Phase 2's coarse loop replaces this.
-    let start_round = clock.local_now_ns().div_euclid(period_ns).saturating_add(1);
-    let first_next_ns = start_round.saturating_mul(period_ns);
-    let mut machine = WelchLynch::new(config, identity, start_round as u64, first_next_ns);
+    let start_round = clock
+        .local_now()
+        .ns()
+        .div_euclid(period_ns)
+        .saturating_add(1);
+    let first_next = LocalNs::from_ns(start_round.saturating_mul(period_ns));
+    let mut machine = WelchLynch::new(config, identity, start_round as u64, first_next);
     info!(
         "clock-sync started: round {start_round}, T {:?}, W {:?}",
         timing.period, timing.window
@@ -117,14 +121,14 @@ fn run(
     let mut pulse_sent = false;
 
     while !exit.load(Ordering::Relaxed) {
-        let now_ns = clock.local_now_ns();
-        let due_ns = if pulse_sent {
-            machine.round_close_at_ns()
+        let now = clock.local_now();
+        let due = if pulse_sent {
+            machine.round_close_at()
         } else {
-            machine.pulse_due_at_ns()
+            machine.pulse_due_at()
         };
 
-        if now_ns >= due_ns {
+        if now >= due {
             if pulse_sent {
                 close_round(&mut machine, clock, stakes, &delays, &mut stats);
                 let stakes = stakes.load();
@@ -138,7 +142,7 @@ fn run(
             continue;
         }
 
-        let wait = Duration::from_nanos(due_ns.saturating_sub(now_ns) as u64).min(MAX_WAIT);
+        let wait = Duration::from_nanos(due.saturating_sub(now) as u64).min(MAX_WAIT);
         match ingress.recv_timeout(wait) {
             Ok(datagram) => handle_datagram(datagram, &mut machine, clock, &mut delays, &mut stats),
             Err(RecvTimeoutError::Timeout) => {}
@@ -165,16 +169,16 @@ fn handle_datagram(
     } = datagram;
     // Arrival is stamped at dequeue, not at the socket read; the ingress
     // channel hop lands in the delay-uncertainty term.
-    let arrival_ns = clock.local_now_ns();
+    let arrival = clock.local_now();
     let Ok(Message::Pulse { round, lateness_ns }) = protocol::decode(&message) else {
         stats.decode_errors = stats.decode_errors.saturating_add(1);
         return;
     };
-    delays.observe(peer_pubkey, path_rtt, arrival_ns);
+    delays.observe(peer_pubkey, path_rtt, arrival);
     let delay_ns = delays
-        .delay_ns(&peer_pubkey, arrival_ns)
+        .delay_ns(&peer_pubkey, arrival)
         .expect("peer was observed just above");
-    match machine.on_pulse(peer_pubkey, round, arrival_ns, delay_ns, lateness_ns) {
+    match machine.on_pulse(peer_pubkey, round, arrival, delay_ns, lateness_ns) {
         Ok(()) => {}
         Err(PulseReject::StaleRound) => stats.stale_round = stats.stale_round.saturating_add(1),
         Err(PulseReject::FarFutureRound) => {
@@ -193,8 +197,8 @@ fn send_pulse(
     stats: &mut RoundStats,
 ) {
     let lateness_ns = clock
-        .local_now_ns()
-        .saturating_sub(machine.pulse_due_at_ns())
+        .local_now()
+        .saturating_sub(machine.pulse_due_at())
         .max(0);
     stats.send_lateness_ns = lateness_ns;
     let pulse = protocol::encode_pulse(machine.round(), lateness_ns);
@@ -222,6 +226,6 @@ fn close_round(
         clock.offset_vs_system_ns(),
         n_peers,
         delays,
-        clock.local_now_ns(),
+        clock.local_now(),
     );
 }
