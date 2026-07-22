@@ -1204,7 +1204,7 @@ impl AccountsDb {
     }
 
     /// Brings clean candidate information cached during the index scan up date based on
-    /// slots reclaimed 
+    /// slots reclaimed
     fn update_candidate_after_reclaims(
         &self,
         candidate_info: &mut CleaningInfo,
