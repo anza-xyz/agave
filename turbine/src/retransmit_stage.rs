@@ -134,10 +134,11 @@ impl BatchClusterNodesCache {
         mut get_entry: impl FnMut(Slot) -> Option<ClusterNodesEntry>,
     ) {
         self.clear();
-        self.slots.extend(slots);
-        self.slots.sort_unstable();
-        self.slots.dedup();
-        for &slot in &self.slots {
+        for slot in slots {
+            if self.slots.contains(&slot) {
+                continue;
+            }
+            self.slots.push(slot);
             if let Some(entry) = get_entry(slot) {
                 self.entries.push((slot, entry));
             }
@@ -145,11 +146,10 @@ impl BatchClusterNodesCache {
     }
 
     fn get(&self, slot: Slot) -> Option<&ClusterNodesEntry> {
-        let index = self
-            .entries
-            .binary_search_by_key(&slot, |&(slot, _)| slot)
-            .ok()?;
-        Some(&self.entries[index].1)
+        // Linear search is faster for the observed entry counts (maximum 5 over 20 hours).
+        self.entries
+            .iter()
+            .find_map(|(entry_slot, entry)| (*entry_slot == slot).then_some(entry))
     }
 
     fn clear(&mut self) {
@@ -194,8 +194,8 @@ impl RetransmitState {
             addr_cache: AddrCache::with_capacity(/*capacity:*/ 4),
             shred_buf: Vec::with_capacity(RETRANSMIT_BATCH_SIZE),
             slot_cache: BatchClusterNodesCache {
-                // Highest observed post-dedup length was 5 for `slots` and `entries`.
-                slots: Vec::with_capacity(solana_perf::packet::PACKETS_PER_BATCH),
+                // Maximum observed post-dedup over 20 hours was 5 for `slots` and `entries`.
+                slots: Vec::with_capacity(32),
                 entries: Vec::with_capacity(32),
             },
             pending_first_shred_event: None,
@@ -1011,6 +1011,31 @@ mod tests {
             .map(Keypair::try_from)
             .unwrap()
             .unwrap()
+    }
+
+    #[test]
+    fn test_batch_cluster_nodes_cache() {
+        let (_, stakes, cluster_info) =
+            crate::cluster_nodes::make_test_cluster(&mut rand::rng(), 1, None);
+        let cluster_nodes = Arc::new(crate::cluster_nodes::new_cluster_nodes::<RetransmitStage>(
+            &cluster_info,
+            solana_cluster_type::ClusterType::Development,
+            &stakes,
+            false,
+        ));
+        let leader = Pubkey::new_unique();
+        let mut cache = BatchClusterNodesCache {
+            slots: Vec::new(),
+            entries: Vec::new(),
+        };
+        let mut calls = 0;
+        cache.populate([1, 1, 2], |slot| {
+            calls += 1;
+            (slot == 1).then(|| (leader, cluster_nodes.clone()))
+        });
+        assert_eq!(calls, 2);
+        assert_eq!(cache.get(1).map(|entry| entry.0), Some(leader));
+        assert!(cache.get(2).is_none());
     }
 
     #[test]
