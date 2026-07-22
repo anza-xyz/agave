@@ -8,7 +8,6 @@ use {
         program_metrics::{EMA_SCALE, ProgramCacheStats},
     },
     log::error,
-    percentage::PercentageInteger,
     solana_clock::{Epoch, Slot},
     solana_pubkey::Pubkey,
     solana_sbpf::program::BuiltinProgram,
@@ -115,6 +114,15 @@ pub fn get_mock_program_runtime_environment() -> ProgramRuntimeEnvironment {
 }
 
 pub const MAX_LOADED_ENTRY_COUNT: usize = 512;
+
+/// The given percentage of [`MAX_LOADED_ENTRY_COUNT`], as an entry count.
+/// Equivalent to the former `percentage` crate's
+/// `Percentage::from(percent).apply_to(MAX_LOADED_ENTRY_COUNT)`,
+/// i.e. floor(MAX_LOADED_ENTRY_COUNT * percent / 100).
+fn percent_of_max_entries(percent: u8) -> usize {
+    debug_assert!(percent <= 100, "percent must be <= 100");
+    MAX_LOADED_ENTRY_COUNT.saturating_mul(percent as usize) / 100
+}
 
 /// Relationship between two fork IDs
 #[derive(Copy, Clone, Debug, PartialEq)]
@@ -809,14 +817,14 @@ impl<FG: ForkGraph> ProgramCache<FG> {
     }
 
     /// Unloads programs which were used infrequently
-    pub fn sort_and_unload(&mut self, shrink_to: PercentageInteger) {
+    pub fn sort_and_unload(&mut self, shrink_to_percent: u8) {
         let mut sorted_candidates = self.get_flattened_entries();
         sorted_candidates.sort_by_cached_key(|(_id, _last_modification_slot, program)| {
             program.stats.uses.load(Ordering::Relaxed)
         });
         let num_to_unload = sorted_candidates
             .len()
-            .saturating_sub(shrink_to.apply_to(MAX_LOADED_ENTRY_COUNT));
+            .saturating_sub(percent_of_max_entries(shrink_to_percent));
         for (program, last_modification_slot, entry) in sorted_candidates.iter().take(num_to_unload)
         {
             self.unload_program_entry(*program, *last_modification_slot, entry);
@@ -828,7 +836,7 @@ impl<FG: ForkGraph> ProgramCache<FG> {
     ///
     /// The eviction is performed enough number of times to reduce the cache usage to the given
     /// percentage.
-    pub fn evict_using_random_selection(&mut self, shrink_to: PercentageInteger, now: Slot) {
+    pub fn evict_using_random_selection(&mut self, shrink_to_percent: u8, now: Slot) {
         let mut candidates = self.get_flattened_entries();
         let mut rng = rng();
         self.stats
@@ -836,7 +844,7 @@ impl<FG: ForkGraph> ProgramCache<FG> {
             .store(candidates.len() as u64, Ordering::Relaxed);
         let num_to_unload = candidates
             .len()
-            .saturating_sub(shrink_to.apply_to(MAX_LOADED_ENTRY_COUNT));
+            .saturating_sub(percent_of_max_entries(shrink_to_percent));
         let mut sample_entry = |candidates: &Vec<(Pubkey, u64, Arc<ProgramCacheEntry>)>| {
             // gen_range is deprecated in favor of random_range in rand>=0.9, but we also get
             // rnd() from shuttle, which doesn't yet support rand 0.9 APIs
@@ -971,7 +979,6 @@ pub(crate) mod tests {
             program_metrics::ProgramStatistics,
         },
         assert_matches::assert_matches,
-        percentage::Percentage,
         solana_clock::Slot,
         solana_pubkey::Pubkey,
         solana_sbpf::{elf::Executable, program::BuiltinProgram},
@@ -1190,12 +1197,11 @@ pub(crate) mod tests {
         assert_eq!(num_tombstones, num_tombstones_expected);
 
         // Evict entries from the cache
-        let eviction_pct = 1;
+        let eviction_pct: u8 = 1;
 
-        let num_loaded_expected =
-            Percentage::from(eviction_pct).apply_to(crate::loaded_programs::MAX_LOADED_ENTRY_COUNT);
+        let num_loaded_expected = crate::loaded_programs::percent_of_max_entries(eviction_pct);
         let num_unloaded_expected = num_unloaded_expected + num_loaded - num_loaded_expected;
-        cache.evict_using_random_selection(Percentage::from(eviction_pct), 21);
+        cache.evict_using_random_selection(eviction_pct, 21);
 
         // Count the number of loaded, unloaded and tombstone entries.
         let num_loaded = num_matching_entries(&cache, |program_type| {
@@ -1273,13 +1279,12 @@ pub(crate) mod tests {
         assert_eq!(num_tombstones, num_tombstones_expected);
 
         // Evict entries from the cache
-        let eviction_pct = 1;
+        let eviction_pct: u8 = 1;
 
-        let num_loaded_expected =
-            Percentage::from(eviction_pct).apply_to(crate::loaded_programs::MAX_LOADED_ENTRY_COUNT);
+        let num_loaded_expected = crate::loaded_programs::percent_of_max_entries(eviction_pct);
         let num_unloaded_expected = num_unloaded_expected + num_loaded - num_loaded_expected;
 
-        cache.sort_and_unload(Percentage::from(eviction_pct));
+        cache.sort_and_unload(eviction_pct);
 
         // Check that every program is still in the cache.
         let entries = cache.get_flattened_entries_for_tests();
@@ -1330,9 +1335,9 @@ pub(crate) mod tests {
         let env = get_mock_program_runtime_environment();
 
         let program = Pubkey::new_unique();
-        let evict_to_pct = 2;
+        let evict_to_pct: u8 = 2;
         let cache_capacity_after_shrink =
-            Percentage::from(evict_to_pct).apply_to(crate::loaded_programs::MAX_LOADED_ENTRY_COUNT);
+            crate::loaded_programs::percent_of_max_entries(evict_to_pct);
         // Add enough programs to the cache to trigger 1 eviction after shrinking.
         let num_total_programs = (cache_capacity_after_shrink + 1) as u64;
         (0..num_total_programs).for_each(|i| {
@@ -1344,7 +1349,7 @@ pub(crate) mod tests {
             cache.assign_program(&env, program, i, entry);
         });
 
-        cache.sort_and_unload(Percentage::from(evict_to_pct));
+        cache.sort_and_unload(evict_to_pct);
 
         let num_unloaded = num_matching_entries(&cache, |program_type| {
             matches!(program_type, ProgramCacheEntryType::Unloaded(_))

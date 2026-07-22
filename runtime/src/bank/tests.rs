@@ -10995,7 +10995,7 @@ fn test_feature_activation_loaded_programs_epoch_transition() {
         );
 
         // Unload all (which is only the entry with the new environment)
-        program_cache.sort_and_unload(percentage::Percentage::from(0));
+        program_cache.sort_and_unload(0);
     }
 
     // Reload the unloaded program with the new environment.

@@ -72,7 +72,6 @@ agave-precompiles = { workspace = true, optional = true }
 ahash = { workspace = true }
 bincode = { workspace = true }
 log = { workspace = true }
-percentage = { workspace = true }
 prost = { version = "0.11", optional = true }
 protosol = { workspace = true, optional = true }
 qualifier_attr = { workspace = true, optional = true }
