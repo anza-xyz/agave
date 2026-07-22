@@ -2877,6 +2877,7 @@ impl RpcClient {
             before: config.before.map(|signature| signature.to_string()),
             until: config.until.map(|signature| signature.to_string()),
             limit: config.limit,
+            with_context: None,
             commitment: config.commitment,
             min_context_slot: None,
         };

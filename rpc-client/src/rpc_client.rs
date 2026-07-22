@@ -2604,6 +2604,7 @@ impl RpcClient {
     ///     encoding: Some(UiTransactionEncoding::Json),
     ///     commitment: Some(CommitmentConfig::confirmed()),
     ///     max_supported_transaction_version: Some(0),
+    ///     with_context: None,
     /// };
     /// let transaction = rpc_client.get_transaction_with_config(
     ///     &signature,
