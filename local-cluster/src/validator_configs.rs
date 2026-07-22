@@ -19,7 +19,7 @@ pub fn safe_clone_config(config: &ValidatorConfig) -> ValidatorConfig {
         rpc_addrs: config.rpc_addrs,
         pubsub_config: config.pubsub_config.clone(),
         snapshot_config: config.snapshot_config.clone(),
-        max_ledger_shreds: config.max_ledger_shreds,
+        blockstore_cleanup_strategy: config.blockstore_cleanup_strategy,
         blockstore_options: config.blockstore_options.clone(),
         broadcast_stage_type: config.broadcast_stage_type.clone(),
         turbine_mode: config.turbine_mode.clone(),

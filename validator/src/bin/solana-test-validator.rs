@@ -11,7 +11,7 @@ use {
     solana_account::AccountSharedData,
     solana_accounts_db::accounts_index::{AccountIndex, AccountSecondaryIndexes},
     solana_clap_utils::{
-        input_parsers::{pubkey_of, pubkeys_of, value_of},
+        input_parsers::{pubkey_of, pubkeys_of},
         input_validators::normalize_to_url_if_moniker,
     },
     solana_clock::Slot,
@@ -20,6 +20,7 @@ use {
     solana_faucet::faucet::{Faucet, run_faucet},
     solana_inflation::Inflation,
     solana_keypair::{Keypair, read_keypair_file, write_keypair_file},
+    solana_ledger::blockstore_options::BlockstoreCleanupStrategy,
     solana_native_token::sol_str_to_lamports,
     solana_net_utils::SocketAddrSpace,
     solana_pubkey::Pubkey,
@@ -419,8 +420,20 @@ fn main() {
         );
     }
 
+    let cleanup_strategy = if matches.is_present("limit_ledger_size") {
+        println!("Warning: --limit-ledger-size is deprecated, use --limit-blockstore-size instead");
+        // Use `.unwrap_or()` here instead of setting `.default_value()` on the
+        // argument; `.default_value()` would create problems because
+        // --limit-leder-size and --limit-blockstore-size are conflicting
+        let limit = value_t!(matches, "limit_ledger_size", u64).unwrap_or(10_000);
+        BlockstoreCleanupStrategy::CountDataShreds(limit)
+    } else {
+        let limit = value_t_or_exit!(matches, "limit_blockstore_size", u64);
+        BlockstoreCleanupStrategy::CountDataAndCodingShreds(limit)
+    };
+
     let mut genesis = TestValidatorGenesis::default();
-    genesis.max_ledger_shreds = value_of(&matches, "limit_ledger_size");
+    genesis.blockstore_cleanup_strategy = cleanup_strategy;
     genesis.max_genesis_archive_unpacked_size = Some(u64::MAX);
     genesis.log_messages_bytes_limit = value_t!(matches, "log_messages_bytes_limit", usize).ok();
     genesis.transaction_account_lock_limit =

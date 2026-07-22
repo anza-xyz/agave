@@ -26,6 +26,13 @@ Release channels have their own copy of this changelog:
 #### Deprecations
 * `--disable-banking-trace` is now deprecated and a no-op (banking trace is disabled by
   default). The flag is still accepted for backward compatibility.
+* `--limit-ledger-size` is now deprecated in favor of `--limit-blockstore-size`. The argument is
+still accepted for backwards compatibility but slated for full removal in the future.
+  * `--limit-blockstore-size` uses a more precise counting mechanism than `--limit-ledger-size`.
+  * If using a non-default value with `--limit-ledger-size`, a good starting point is to double
+  that value for `--limit-blockstore-size`.
+  * `--limit-blockstore-size` may occupy more disk footprint at steady state with current cluster
+  activity; however, disk usage should be more stable during abnormal cluster activity.
 #### Changes
 * Validators running without `--full-rpc-api` and with snapshot generation disabled no longer
   store transaction signature keys in the status cache. Message hashes remain cached for duplicate

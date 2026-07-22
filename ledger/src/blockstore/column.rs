@@ -326,13 +326,7 @@ pub trait ProtobufColumn: Column {
     type Type: prost::Message + Default;
 }
 
-/// SlotColumn is a trait for slot-based column families.  Its index is
-/// essentially Slot (or more generally speaking, has a 1:1 mapping to Slot).
-///
-/// The clean-up of any LedgerColumn that implements SlotColumn is managed by
-/// `LedgerCleanupService`, which will periodically deprecate and purge
-/// oldest entries that are older than the latest root in order to maintain the
-/// configured --limit-ledger-size under the validator argument.
+/// Columns where the index (key) is simply a `Slot`
 pub trait SlotColumn<Index = Slot> {}
 
 pub enum IndexError {

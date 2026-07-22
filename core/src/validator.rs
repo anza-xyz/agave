@@ -85,7 +85,9 @@ use {
             MAX_REPLAY_WAKE_UP_SIGNALS, MAX_UPDATE_PARENT_SIGNALS, PurgeType, UpdateParentReceiver,
         },
         blockstore_metric_report_service::BlockstoreMetricReportService,
-        blockstore_options::{BLOCKSTORE_DIRECTORY_ROCKS_LEVEL, BlockstoreOptions},
+        blockstore_options::{
+            BLOCKSTORE_DIRECTORY_ROCKS_LEVEL, BlockstoreCleanupStrategy, BlockstoreOptions,
+        },
         blockstore_processor,
         entry_notifier_interface::EntryNotifierArc,
         entry_notifier_service::{EntryNotifierSender, EntryNotifierService},
@@ -333,7 +335,7 @@ pub struct ValidatorConfig {
     pub rpc_addrs: Option<(SocketAddr, SocketAddr)>, // (JsonRpc, JsonRpcPubSub)
     pub pubsub_config: PubSubConfig,
     pub snapshot_config: SnapshotConfig,
-    pub max_ledger_shreds: Option<u64>,
+    pub blockstore_cleanup_strategy: BlockstoreCleanupStrategy,
     pub blockstore_options: BlockstoreOptions,
     pub broadcast_stage_type: BroadcastStageType,
     pub turbine_mode: TurbineMode,
@@ -409,7 +411,7 @@ impl ValidatorConfig {
             expected_bank_hash: None,
             expected_shred_version: None,
             voting_disabled: false,
-            max_ledger_shreds: None,
+            blockstore_cleanup_strategy: BlockstoreCleanupStrategy::None,
             blockstore_options: BlockstoreOptions::default_for_tests(),
             account_paths: Vec::new(),
             account_snapshot_paths: Vec::new(),
@@ -1660,7 +1662,7 @@ impl Validator {
             bank_notification_sender.clone(),
             duplicate_confirmed_slots_receiver,
             TvuConfig {
-                max_ledger_shreds: config.max_ledger_shreds,
+                blockstore_cleanup_strategy: config.blockstore_cleanup_strategy,
                 shred_version: node.info.shred_version(),
                 repair_validators: config.repair_validators.clone(),
                 repair_whitelist: config.repair_whitelist.clone(),

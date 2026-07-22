@@ -322,7 +322,7 @@ startBootstrapLeader() {
          \"$internalNodesLamports\" \
          $nodeIndex \
          \"$genesisOptions\" \
-         \"$maybeNoSnapshot $maybeSkipLedgerVerify $maybeLimitLedgerSize $maybeWaitForSupermajority $maybeAccountsDbSkipShrink $maybeSkipRequireTower\" \
+         \"$maybeNoSnapshot $maybeSkipLedgerVerify $maybeLimitLedgerSize $maybeLimitBlockstoreSize $maybeWaitForSupermajority $maybeAccountsDbSkipShrink $maybeSkipRequireTower\" \
          \"$maybeWarpSlot\" \
          \"$maybeFullRpc\" \
          \"$waitForNodeInit\" \
@@ -396,7 +396,7 @@ startNode() {
          \"$internalNodesLamports\" \
          $nodeIndex \
          \"$genesisOptions\" \
-         \"$maybeNoSnapshot $maybeSkipLedgerVerify $maybeLimitLedgerSize $maybeWaitForSupermajority $maybeAccountsDbSkipShrink $maybeSkipRequireTower\" \
+         \"$maybeNoSnapshot $maybeSkipLedgerVerify $maybeLimitLedgerSize $maybeLimitBlockstoreSize $maybeWaitForSupermajority $maybeAccountsDbSkipShrink $maybeSkipRequireTower\" \
          \"$maybeWarpSlot\" \
          \"$maybeFullRpc\" \
          \"$waitForNodeInit\" \
@@ -821,6 +821,7 @@ copyProgramUrl=""
 copyProgramPubkey=""
 maybeNoSnapshot=""
 maybeLimitLedgerSize=""
+maybeLimitBlockstoreSize=""
 maybeSkipLedgerVerify=""
 maybeDisableAirdrops=""
 maybeWaitForSupermajority=""
@@ -887,6 +888,9 @@ while [[ -n $1 ]]; do
       shift 1
     elif [[ $1 = --limit-ledger-size ]]; then
       maybeLimitLedgerSize="$1 $2"
+      shift 2
+    elif [[ $1 = --limit-blockstore-size ]]; then
+      maybeLimitBlockstoreSize="$1 $2"
       shift 2
     elif [[ $1 = --skip-poh-verify ]]; then
       maybeSkipLedgerVerify="$1"
