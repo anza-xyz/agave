@@ -39,6 +39,7 @@ use {
         vote_history_storage::{NullVoteHistoryStorage, VoteHistoryStorage},
         voting_service::VotingServiceOverride,
     },
+    agave_votor_messages::migration::MigrationStatus,
     agave_xdp::transmitter::{Transmitter, TransmitterBuilder},
     anyhow::{Result, anyhow},
     crossbeam_channel::{Receiver, bounded, unbounded},
@@ -1504,13 +1505,14 @@ impl Validator {
             )
         };
 
-        let waited_for_supermajority = wait_for_supermajority(
+        let waited_for_supermajority = wait_for_start_conditions(
             config,
             Some(&mut process_blockstore),
             &bank_forks,
             &cluster_info,
             rpc_override_health_check,
             &start_progress,
+            &migration_status,
         )?;
 
         let blockstore_metric_report_service =
@@ -2956,19 +2958,25 @@ pub enum ValidatorError {
     TraceError(#[from] TraceError),
 }
 
-// Return if the validator waited on other nodes to start. In this case
-// it should not wait for one of it's votes to land to produce blocks
-// because if the whole network is waiting, then it will stall.
+// Check for conditions in the cluster to be appropriate for the validator to start.
 //
-// Error indicates that a bad hash was encountered or another condition
-// that is unrecoverable and the validator should exit.
-fn wait_for_supermajority(
+// This primarily checks that the expected start slot has been reached and
+// the bank hashes match (to make sure we are on the correct chain).
+//
+// In Tower BFT it must also wait for supermajority to be online before it produces any
+// blocks because if there are not enough peers block production will stall.
+// In Alpenglow this function will never wait.
+//
+// Error indicates an unrecoverable condition and the
+// validator should exit.
+fn wait_for_start_conditions(
     config: &ValidatorConfig,
     process_blockstore: Option<&mut ProcessBlockStore>,
     bank_forks: &RwLock<BankForks>,
     cluster_info: &ClusterInfo,
     rpc_override_health_check: Arc<AtomicBool>,
     start_progress: &Arc<RwLock<ValidatorStartProgress>>,
+    migration_status: &MigrationStatus,
 ) -> Result<bool, ValidatorError> {
     match config.wait_for_supermajority {
         None => Ok(false),
@@ -2998,6 +3006,11 @@ fn wait_for_supermajority(
                     bank.hash(),
                     expected_bank_hash,
                 ));
+            }
+
+            // Skip the gossip-based supermajority wait once Alpenglow is active.
+            if migration_status.is_full_alpenglow_epoch() {
+                return Ok(true);
             }
 
             for i in 1.. {
@@ -3565,15 +3578,17 @@ mod tests {
         let mut config = ValidatorConfig::default_for_test();
         let rpc_override_health_check = Arc::new(AtomicBool::new(false));
         let start_progress = Arc::new(RwLock::new(ValidatorStartProgress::default()));
+        let migration_status = MigrationStatus::default();
 
         assert!(
-            !wait_for_supermajority(
+            !wait_for_start_conditions(
                 &config,
                 None,
                 &bank_forks,
                 &cluster_info,
                 rpc_override_health_check.clone(),
                 &start_progress,
+                &migration_status,
             )
             .unwrap()
         );
@@ -3581,13 +3596,14 @@ mod tests {
         // bank=0, wait=1, should fail
         config.wait_for_supermajority = Some(1);
         assert!(matches!(
-            wait_for_supermajority(
+            wait_for_start_conditions(
                 &config,
                 None,
                 &bank_forks,
                 &cluster_info,
                 rpc_override_health_check.clone(),
                 &start_progress,
+                &migration_status,
             ),
             Err(ValidatorError::NotEnoughLedgerData(_, _)),
         ));
@@ -3600,13 +3616,14 @@ mod tests {
         ));
         config.wait_for_supermajority = Some(0);
         assert!(
-            !wait_for_supermajority(
+            !wait_for_start_conditions(
                 &config,
                 None,
                 &bank_forks,
                 &cluster_info,
                 rpc_override_health_check.clone(),
                 &start_progress,
+                &migration_status,
             )
             .unwrap()
         );
@@ -3615,13 +3632,14 @@ mod tests {
         config.wait_for_supermajority = Some(1);
         config.expected_bank_hash = Some(hash(&[1]));
         assert!(matches!(
-            wait_for_supermajority(
+            wait_for_start_conditions(
                 &config,
                 None,
                 &bank_forks,
                 &cluster_info,
                 rpc_override_health_check,
                 &start_progress,
+                &migration_status,
             ),
             Err(ValidatorError::BankHashMismatch(_, _)),
         ));
