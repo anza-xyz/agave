@@ -6,7 +6,6 @@ use {
     agave_xdp::netlink::MacAddress,
     std::{
         ffi::{CString, OsString},
-        num::NonZeroU32,
         os::unix::ffi::OsStringExt,
         path::{Path, PathBuf},
         process::{Command, Output},
@@ -40,15 +39,7 @@ pub struct TestGreTunnel {
     pub overlay_ip: std::net::Ipv4Addr,
 }
 
-pub fn setup_veth_pair() -> TestLinks {
-    setup_veth_pair_with_tx_queue_count(NonZeroU32::MIN)
-}
-
-pub fn setup_two_queue_veth_pair() -> TestLinks {
-    setup_veth_pair_with_tx_queue_count(NonZeroU32::new(2).unwrap())
-}
-
-fn setup_veth_pair_with_tx_queue_count(tx_queue_count: NonZeroU32) -> TestLinks {
+pub fn setup_veth_pair_with_tx_queue_count(tx_queue_count: u32) -> TestLinks {
     let left_ip = std::net::Ipv4Addr::new(10, 0, 0, 1);
     let right_ip = std::net::Ipv4Addr::new(10, 0, 0, 2);
     let left_mac = MacAddress([0x02, 0xaa, 0xbb, 0xcc, 0xdd, 0x01]);
