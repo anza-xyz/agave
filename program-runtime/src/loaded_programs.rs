@@ -122,7 +122,7 @@ pub type Percent = u8;
 /// Equivalent to the former `percentage` crate's
 /// `Percentage::from(percent).apply_to(MAX_LOADED_ENTRY_COUNT)`,
 /// i.e. floor(MAX_LOADED_ENTRY_COUNT * percent / 100).
-fn percent_of_max_entries(percent: u8) -> usize {
+fn percent_of_max_entries(percent: Percent) -> usize {
     debug_assert!(percent <= 100, "percent must be <= 100");
     MAX_LOADED_ENTRY_COUNT.saturating_mul(percent as usize) / 100
 }
@@ -971,7 +971,7 @@ pub(crate) mod tests {
     use {
         crate::{
             loaded_programs::{
-                BlockRelation, ForkGraph, ProgramCache, ProgramCacheForTxBatch,
+                BlockRelation, ForkGraph, Percent, ProgramCache, ProgramCacheForTxBatch,
                 ProgramCacheMatchCriteria, ProgramRuntimeEnvironment, ProgramToLoad,
                 get_mock_program_runtime_environment,
             },
@@ -1200,7 +1200,7 @@ pub(crate) mod tests {
         assert_eq!(num_tombstones, num_tombstones_expected);
 
         // Evict entries from the cache
-        let eviction_pct: u8 = 1;
+        let eviction_pct: Percent = 1;
 
         let num_loaded_expected = crate::loaded_programs::percent_of_max_entries(eviction_pct);
         let num_unloaded_expected = num_unloaded_expected + num_loaded - num_loaded_expected;
@@ -1282,7 +1282,7 @@ pub(crate) mod tests {
         assert_eq!(num_tombstones, num_tombstones_expected);
 
         // Evict entries from the cache
-        let eviction_pct: u8 = 1;
+        let eviction_pct: Percent = 1;
 
         let num_loaded_expected = crate::loaded_programs::percent_of_max_entries(eviction_pct);
         let num_unloaded_expected = num_unloaded_expected + num_loaded - num_loaded_expected;
@@ -1338,7 +1338,7 @@ pub(crate) mod tests {
         let env = get_mock_program_runtime_environment();
 
         let program = Pubkey::new_unique();
-        let evict_to_pct: u8 = 2;
+        let evict_to_pct: Percent = 2;
         let cache_capacity_after_shrink =
             crate::loaded_programs::percent_of_max_entries(evict_to_pct);
         // Add enough programs to the cache to trigger 1 eviction after shrinking.
