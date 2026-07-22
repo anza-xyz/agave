@@ -20,9 +20,9 @@ export RUSTFLAGS="-D warnings -A incomplete_features"
 # sort
 if [[ -n $CI ]]; then
   # exclude from printing "Checking xxx ..."
-  _ scripts/cargo-for-all-lock-files.sh -- "+${rust_nightly}" sort --workspace --check > /dev/null
+  _ scripts/cargo-for-all-lock-files.sh -- sort --workspace --check > /dev/null
 else
-  _ scripts/cargo-for-all-lock-files.sh -- "+${rust_nightly}" sort --workspace --check
+  _ scripts/cargo-for-all-lock-files.sh -- sort --workspace --check
 fi
 
 # check dev-context-only-utils isn't used in normal dependencies
