@@ -1242,27 +1242,24 @@ impl AccountsDb {
             return;
         }
         let (_, reclaim_us) = measure_us!({
-            // Group the reclaims by newest_slot so that we can mark them obsolete in batches.
-            let mut reclaims_by_newest_slot: IntMap<_, ReclaimsSlotList<_>> = IntMap::default();
-            for (reclaimed_item, newest_slot) in reclaims {
-                reclaims_by_newest_slot
-                    .entry(*newest_slot)
-                    .or_default()
-                    .push(*reclaimed_item);
-            }
-
-            for (newest_slot, reclaims) in reclaims_by_newest_slot {
-                let (purged_account_slots, _reclaimed_offsets) = self.handle_reclaims(
-                    reclaims.iter(),
-                    None,
-                    &HashSet::new(),
-                    &self.clean_accounts_stats.purge_stats,
-                    MarkAccountsObsolete::Yes(newest_slot),
-                );
-                // Marking the reclaims obsolete skips dead-slot handling in
-                // handle_reclaims, so no whole slots are purged here.
-                assert!(purged_account_slots.is_empty());
-            }
+            // Each reclaim is marked obsolete at the slot of its account's newest
+            // surviving entry
+            self.thread_pool_background.install(|| {
+                reclaims
+                    .par_iter()
+                    .for_each(|(reclaimed_item, newest_slot)| {
+                        let (purged_account_slots, _reclaimed_offsets) = self.handle_reclaims(
+                            iter::once(reclaimed_item),
+                            None,
+                            &HashSet::new(),
+                            &self.clean_accounts_stats.purge_stats,
+                            MarkAccountsObsolete::Yes(*newest_slot),
+                        );
+                        // Marking the reclaims obsolete skips dead-slot handling in
+                        // handle_reclaims, so no whole slots are purged here.
+                        assert!(purged_account_slots.is_empty());
+                    });
+            });
         });
         self.clean_accounts_stats
             .clean_old_root_reclaim_us
