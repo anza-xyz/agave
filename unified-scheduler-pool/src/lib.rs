@@ -55,7 +55,6 @@ use {
         thread::{self, JoinHandle, sleep},
         time::{Duration, Instant},
     },
-    unwrap_none::UnwrapNone,
 };
 
 mod sleepless_testing;
@@ -1133,9 +1132,11 @@ impl<S: SpawnableScheduler<TH>, TH: TaskHandler> ThreadManager<S, TH> {
     }
 
     fn put_session_result_with_timings(&mut self, result_with_timings: ResultWithTimings) {
-        self.session_result_with_timings
-            .replace(result_with_timings)
-            .unwrap_none();
+        assert!(
+            self.session_result_with_timings
+                .replace(result_with_timings)
+                .is_none()
+        );
     }
 
     // This method must take same set of session-related arguments as start_session() to avoid
@@ -1447,9 +1448,11 @@ impl<S: SpawnableScheduler<TH>, TH: TaskHandler> ThreadManager<S, TH> {
                             }
                             Ok(NewTaskPayload::OpenSubchannel(context_and_result_with_timings)) => {
                                 let new_context = context_and_result_with_timings.0;
-                                new_result_with_timings
-                                    .replace(context_and_result_with_timings.1)
-                                    .unwrap_none();
+                                assert!(
+                                    new_result_with_timings
+                                        .replace(context_and_result_with_timings.1)
+                                        .is_none()
+                                );
                                 // We just received subsequent (= not initial) session and about to
                                 // enter into the preceding `while(!is_finished) {...}` loop again.
                                 // Before that, propagate new SchedulingContext to handler threads
