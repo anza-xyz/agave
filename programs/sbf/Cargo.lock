@@ -9223,6 +9223,11 @@ dependencies = [
 ]
 
 [[package]]
+name = "solana-secp256r1"
+version = "0.1.0"
+source = "git+https://github.com/anza-xyz/cryptography#5905da09e5bd070f218563275233a552630d359d"
+
+[[package]]
 name = "solana-secp256r1-program"
 version = "3.0.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -9690,6 +9695,7 @@ dependencies = [
  "solana-sbpf",
  "solana-sdk-ids",
  "solana-secp256k1-recover",
+ "solana-secp256r1",
  "solana-sha256-hasher",
  "solana-sha512-hasher",
  "solana-stable-layout",

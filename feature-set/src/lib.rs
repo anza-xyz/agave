@@ -84,6 +84,7 @@ pub struct FeatureSnapshot {
     pub define_ltds_fee_only_semantics: bool,
     pub upgrade_bpf_stake_program_to_v5_1: bool,
     pub relax_fee_payer_constraint: bool,
+    pub secp256r1_syscall_enabled: bool,
 }
 
 impl From<&AHashMap<Pubkey, u64>> for FeatureSnapshot {
@@ -188,6 +189,7 @@ impl From<&AHashMap<Pubkey, u64>> for FeatureSnapshot {
             define_ltds_fee_only_semantics: is_active(&define_ltds_fee_only_semantics::ID),
             upgrade_bpf_stake_program_to_v5_1: is_active(&upgrade_bpf_stake_program_to_v5_1::ID),
             relax_fee_payer_constraint: is_active(&relax_fee_payer_constraint::ID),
+            secp256r1_syscall_enabled: is_active(&secp256r1_syscall_enabled::ID),
         }
     }
 }
@@ -349,6 +351,7 @@ impl FeatureSet {
             relax_post_exec_min_balance_check: snapshot.relax_post_exec_min_balance_check,
             define_ltds_fee_only_semantics: snapshot.define_ltds_fee_only_semantics,
             relax_fee_payer_constraint: snapshot.relax_fee_payer_constraint,
+            secp256r1_syscall_enabled: snapshot.secp256r1_syscall_enabled,
         }
     }
 }
@@ -1536,6 +1539,10 @@ pub mod relax_fee_payer_constraint {
     solana_pubkey::declare_id!("FEEXbxUuKobtrt1qNK5pjtzbPQhsppBTrNNG74xu4mai");
 }
 
+pub mod secp256r1_syscall_enabled {
+    solana_pubkey::declare_id!("SeRjtX7Abiq5hQYbzdCny266oveDseHZh9tnrs2cdVC");
+}
+
 pub static FEATURE_NAMES: LazyLock<AHashMap<Pubkey, &'static str>> = LazyLock::new(|| {
     [
         (secp256k1_program_enabled::id(), "secp256k1 program"),
@@ -2618,6 +2625,7 @@ pub static FEATURE_NAMES: LazyLock<AHashMap<Pubkey, &'static str>> = LazyLock::n
             relax_fee_payer_constraint::id(),
             "SIMD-0290: Relax block constraint requiring valid fee-payer",
         ),
+        (secp256r1_syscall_enabled::id(), "enable secp256r1 syscall"),
         /*************** ADD NEW FEATURES HERE ***************/
         /***** ADD NEW FEATURE BOOL TO `FeatureSnapshot` *****/
     ]
