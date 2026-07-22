@@ -45,6 +45,7 @@ use {
         metric_types::MAX_IN_FLIGHT_CONSENSUS_EVENTS,
     },
     crossbeam_channel::{Receiver, Sender, bounded, unbounded},
+    solana_bls_signatures::keypair::Keypair as BLSKeypair,
     solana_client::connection_cache::ConnectionCache,
     solana_clock::Slot,
     solana_geyser_plugin_manager::block_metadata_notifier_interface::BlockMetadataNotifierArc,
@@ -211,6 +212,7 @@ impl Tvu {
     pub fn new(
         vote_account: &Pubkey,
         authorized_voter_keypairs: Arc<RwLock<Vec<Arc<Keypair>>>>,
+        bls_keypair: Option<Arc<BLSKeypair>>,
         bank_forks: Arc<RwLock<BankForks>>,
         cluster_info: &Arc<ClusterInfo>,
         sockets: TvuSockets,
@@ -508,6 +510,7 @@ impl Tvu {
             vote_history_storage: vote_history_storage.clone(),
             generated_cert_types,
             authorized_voter_keypairs: authorized_voter_keypairs.clone(),
+            bls_keypair: bls_keypair.clone(),
             blockstore: blockstore.clone(),
             bank_forks: bank_forks.clone(),
             cluster_info: cluster_info.clone(),
@@ -570,6 +573,7 @@ impl Tvu {
         let replay_stage_config = ReplayStageConfig {
             vote_account: *vote_account,
             authorized_voter_keypairs,
+            bls_keypair,
             exit: exit.clone(),
             leader_schedule_cache: leader_schedule_cache.clone(),
             block_commitment_cache,
@@ -846,6 +850,7 @@ pub mod tests {
         let tvu = Tvu::new(
             &vote_keypair.pubkey(),
             Arc::new(RwLock::new(vec![Arc::new(vote_keypair)])),
+            None,
             bank_forks.clone(),
             &cref1,
             TvuSockets {

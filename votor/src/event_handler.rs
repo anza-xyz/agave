@@ -1170,6 +1170,7 @@ mod tests {
             wait_to_vote_slot: None,
             authorized_voter_keypairs: Arc::new(RwLock::new(vec![Arc::new(my_vote_keypair)])),
             vote_history_storage: vote_history_storage.clone(),
+            bls_keypair: None,
             derived_bls_keypairs: HashMap::new(),
             own_vote_sender,
             reward_votes_sender,

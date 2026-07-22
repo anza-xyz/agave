@@ -394,20 +394,39 @@ fn app<'a>(num_threads: &'a str, crate_version: &'a str) -> Command<'a> {
         )
         .subcommand(
             Command::new("bls_pubkey")
-                .about("Display the compressed BLS pubkey derived from given ed25519 keypair file")
+                .about(
+                    "Display the compressed BLS pubkey derived from an ed25519 keypair or read \
+                     from a BLS keypair file",
+                )
                 .disable_version_flag(true)
                 .arg(
                     Arg::new("keypair")
                         .index(1)
                         .value_name("KEYPAIR")
                         .takes_value(true)
-                        .required(true)
+                        .required_unless_present("bls_keypair")
+                        .conflicts_with("bls_keypair")
                         .value_parser(SignerSourceParserBuilder::default().allow_all().build())
-                        .help("Filepath or URL to a keypair"),
+                        .help(
+                            "Filepath or URL to an ed25519 keypair to derive the BLS pubkey from",
+                        ),
+                )
+                .arg(
+                    Arg::new("bls_keypair")
+                        .long("bls-keypair")
+                        .value_name("BLS_KEYPAIR_FILE")
+                        .takes_value(true)
+                        .help(
+                            "Read the pubkey from a custom BLS keypair file. This advanced option \
+                             is only for power users who maintain their own BLS keypair file; \
+                             normally, the BLS keypair is derived from the authorized voter \
+                             keypair",
+                        ),
                 )
                 .arg(
                     Arg::new(SKIP_SEED_PHRASE_VALIDATION_ARG.name)
                         .long(SKIP_SEED_PHRASE_VALIDATION_ARG.long)
+                        .requires("keypair")
                         .help(SKIP_SEED_PHRASE_VALIDATION_ARG.help),
                 )
                 .arg(
@@ -540,8 +559,13 @@ fn do_main(matches: &ArgMatches) -> Result<(), Box<dyn error::Error>> {
             }
         }
         ("bls_pubkey", matches) => {
-            let keypair = get_keypair_from_matches(matches, config, &mut wallet_manager)?;
-            let bls_keypair = BLSKeypair::derive_from_signer(&keypair, BLS_KEYPAIR_DERIVE_SEED)?;
+            let bls_keypair =
+                if let Some(bls_keypair_file) = matches.try_get_one::<String>("bls_keypair")? {
+                    BLSKeypair::read_json_file(bls_keypair_file)?
+                } else {
+                    let keypair = get_keypair_from_matches(matches, config, &mut wallet_manager)?;
+                    BLSKeypair::derive_from_signer(&keypair, BLS_KEYPAIR_DERIVE_SEED)?
+                };
             let bls_pubkey_compressed = bls_keypair.public.to_bytes_compressed();
 
             if matches.try_contains_id("outfile")? {
@@ -1323,6 +1347,65 @@ mod tests {
             BLSKeypair::derive_from_signer(&my_keypair, BLS_KEYPAIR_DERIVE_SEED).unwrap();
         let read_bls_pubkey = read_bls_pubkey_file(&outfile_path).unwrap();
         assert_eq!(read_bls_pubkey, bls_keypair.public.to_bytes_compressed());
+    }
+
+    #[test]
+    fn test_generate_bls_pubkey_from_bls_keypair_file() {
+        let keypair_dir = tempdir().unwrap();
+        let bls_keypair_path = tmp_outfile_path(&keypair_dir, "bls-keypair.json");
+        let bls_keypair = BLSKeypair::new();
+        bls_keypair.write_json_file(&bls_keypair_path).unwrap();
+
+        let outfile_dir = tempdir().unwrap();
+        let outfile_path = tmp_outfile_path(&outfile_dir, "bls-pubkey.json");
+        process_test_command(&[
+            "solana-keygen",
+            "bls_pubkey",
+            "--bls-keypair",
+            &bls_keypair_path,
+            "--outfile",
+            &outfile_path,
+        ])
+        .unwrap();
+
+        assert_eq!(
+            read_bls_pubkey_file(&outfile_path).unwrap(),
+            bls_keypair.public.to_bytes_compressed()
+        );
+    }
+
+    #[test]
+    fn test_bls_pubkey_requires_exactly_one_keypair_source() {
+        let default_num_threads = num_cpus::get().to_string();
+        let solana_version = solana_version::version!();
+        let missing_source = app(&default_num_threads, solana_version)
+            .try_get_matches_from(["solana-keygen", "bls_pubkey"])
+            .unwrap_err();
+        assert_eq!(
+            missing_source.kind(),
+            clap::error::ErrorKind::MissingRequiredArgument
+        );
+
+        let keypair_dir = tempdir().unwrap();
+        let (_, ed25519_keypair_path, _) =
+            create_tmp_keypair_and_config_file(&keypair_dir, &tempdir().unwrap());
+        let bls_keypair_path = tmp_outfile_path(&keypair_dir, "bls-keypair.json");
+        BLSKeypair::new()
+            .write_json_file(&bls_keypair_path)
+            .unwrap();
+        let conflicting_sources = app(&default_num_threads, solana_version)
+            .try_get_matches_from([
+                "solana-keygen",
+                "bls_pubkey",
+                &ed25519_keypair_path,
+                "--bls-keypair",
+                &bls_keypair_path,
+            ])
+            .unwrap_err();
+        assert_eq!(
+            conflicting_sources.kind(),
+            clap::error::ErrorKind::ArgumentConflict
+        );
     }
 
     #[test]

@@ -12,8 +12,8 @@ use {
         hidden_unless_forced,
         input_parsers::keypair_of,
         input_validators::{
-            is_keypair_or_ask_keyword, is_non_zero, is_parsable, is_pow2, is_pubkey,
-            is_pubkey_or_keypair, is_slot, is_within_range, validate_cpu_ranges,
+            is_bls_keypair, is_keypair_or_ask_keyword, is_non_zero, is_parsable, is_pow2,
+            is_pubkey, is_pubkey_or_keypair, is_slot, is_within_range, validate_cpu_ranges,
             validate_maximum_full_snapshot_archives_to_retain,
             validate_maximum_incremental_snapshot_archives_to_retain,
         },
@@ -169,6 +169,21 @@ pub fn add_args<'a>(app: App<'a, 'a>, default_args: &'a DefaultArgs) -> App<'a, 
             .help(
                 "Include an additional authorized voter keypair. May be specified multiple times. \
                  [default: the --identity keypair]",
+            ),
+    )
+    .arg(
+        Arg::with_name("bls_keypair")
+            .long("bls-keypair")
+            .value_name("KEYPAIR")
+            .takes_value(true)
+            .hidden(true)
+            .validator(is_bls_keypair)
+            .requires("vote_account")
+            .help(
+                "Use a separate BLS keypair file for Alpenglow voting. This advanced option is \
+                 normally omitted; by default, BLS keypairs are derived from the authorized voter \
+                 keypairs. Use this only if you intend to securely maintain a separate BLS \
+                 keypair file",
             ),
     )
     .arg(
@@ -1841,5 +1856,15 @@ mod tests {
             vec!["--allow-private-addr", "--no-xdp"],
             expected_args,
         );
+    }
+
+    #[test]
+    fn verify_bls_keypair_option_is_hidden() {
+        let default_args = DefaultArgs::default();
+        let mut app = add_args(App::new("run_command"), &default_args);
+        let mut help = Vec::new();
+        app.write_long_help(&mut help).unwrap();
+        let help = String::from_utf8(help).unwrap();
+        assert!(!help.contains("--bls-keypair"));
     }
 }
