@@ -108,12 +108,6 @@ impl DelayTracker {
     }
 }
 
-impl Default for DelayTracker {
-    fn default() -> Self {
-        Self::new()
-    }
-}
-
 #[cfg(test)]
 #[allow(clippy::arithmetic_side_effects)]
 mod tests {

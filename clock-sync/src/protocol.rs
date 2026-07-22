@@ -27,18 +27,6 @@ pub enum Message {
     },
 }
 
-#[derive(Debug, thiserror::Error, PartialEq, Eq)]
-pub enum ProtocolError {
-    #[error("bad message length {0}, expected {MESSAGE_SIZE}")]
-    BadLength(usize),
-    #[error("unsupported wire version {0}")]
-    BadVersion(u8),
-    #[error("unknown message type {0}")]
-    BadType(u8),
-    #[error("message type {0} is reserved for a later protocol phase")]
-    Reserved(u8),
-}
-
 pub fn encode_pulse(round: u64, lateness_ns: i64) -> Bytes {
     let mut buf = [0u8; MESSAGE_SIZE];
     buf[0] = WIRE_VERSION;
@@ -48,20 +36,19 @@ pub fn encode_pulse(round: u64, lateness_ns: i64) -> Bytes {
     Bytes::copy_from_slice(&buf)
 }
 
-pub fn decode(bytes: &[u8]) -> Result<Message, ProtocolError> {
-    let buf: &[u8; MESSAGE_SIZE] = bytes
-        .try_into()
-        .map_err(|_| ProtocolError::BadLength(bytes.len()))?;
+/// `None` for anything malformed, unknown-typed, or reserved.
+pub fn decode(bytes: &[u8]) -> Option<Message> {
+    let buf: &[u8; MESSAGE_SIZE] = bytes.try_into().ok()?;
     if buf[0] != WIRE_VERSION {
-        return Err(ProtocolError::BadVersion(buf[0]));
+        return None;
     }
     match buf[1] {
-        MSG_TYPE_PULSE => Ok(Message::Pulse {
+        MSG_TYPE_PULSE => Some(Message::Pulse {
             round: u64::from_le_bytes(buf[2..10].try_into().expect("fixed slice")),
             lateness_ns: i64::from_le_bytes(buf[10..18].try_into().expect("fixed slice")),
         }),
-        MSG_TYPE_PANIC => Err(ProtocolError::Reserved(MSG_TYPE_PANIC)),
-        other => Err(ProtocolError::BadType(other)),
+        MSG_TYPE_PANIC => None, // phase 2
+        _ => None,
     }
 }
 
@@ -75,37 +62,33 @@ mod tests {
             let bytes = encode_pulse(round, lateness);
             assert_eq!(bytes.len(), MESSAGE_SIZE);
             assert_eq!(
-                decode(&bytes).unwrap(),
-                Message::Pulse {
+                decode(&bytes),
+                Some(Message::Pulse {
                     round,
                     lateness_ns: lateness
-                }
+                })
             );
         }
     }
 
     #[test]
     fn rejects_malformed() {
-        assert_eq!(decode(&[]), Err(ProtocolError::BadLength(0)));
-        assert_eq!(
-            decode(&[WIRE_VERSION; MESSAGE_SIZE + 1]),
-            Err(ProtocolError::BadLength(MESSAGE_SIZE + 1))
-        );
+        assert_eq!(decode(&[]), None);
+        assert_eq!(decode(&[WIRE_VERSION; MESSAGE_SIZE + 1]), None);
 
-        let mut short = encode_pulse(1, 1).to_vec();
-        short.pop();
-        assert_eq!(decode(&short), Err(ProtocolError::BadLength(17)));
+        let good = encode_pulse(1, 1);
+        assert_eq!(decode(&good[..MESSAGE_SIZE - 1]), None);
 
-        let mut bad_version = encode_pulse(1, 1).to_vec();
+        let mut bad_version = good.to_vec();
         bad_version[0] = 99;
-        assert_eq!(decode(&bad_version), Err(ProtocolError::BadVersion(99)));
+        assert_eq!(decode(&bad_version), None);
 
-        let mut panic_msg = encode_pulse(1, 1).to_vec();
+        let mut panic_msg = good.to_vec();
         panic_msg[1] = MSG_TYPE_PANIC;
-        assert_eq!(decode(&panic_msg), Err(ProtocolError::Reserved(1)));
+        assert_eq!(decode(&panic_msg), None);
 
-        let mut bad_type = encode_pulse(1, 1).to_vec();
+        let mut bad_type = good.to_vec();
         bad_type[1] = 7;
-        assert_eq!(decode(&bad_type), Err(ProtocolError::BadType(7)));
+        assert_eq!(decode(&bad_type), None);
     }
 }

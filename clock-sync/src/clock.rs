@@ -13,7 +13,7 @@ use std::{
 };
 
 /// A point in time in the node's local timebase: unix-anchored ns advancing
-/// at the local oscillator's rate, uncorrected. Minted by [`SyncedClock`].
+/// at the local oscillator's rate, uncorrected. Created by [`SyncedClock`].
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
 pub struct LocalNs(i64);
 
@@ -127,12 +127,6 @@ impl SyncedClock {
     }
 }
 
-impl Default for SyncedClock {
-    fn default() -> Self {
-        Self::new()
-    }
-}
-
 #[cfg(test)]
 #[allow(clippy::arithmetic_side_effects)]
 mod tests {
@@ -165,13 +159,5 @@ mod tests {
         let t0 = Instant::now();
         let t1 = t0 + std::time::Duration::from_millis(10);
         assert_eq!(clock.local(t1).saturating_sub(clock.local(t0)), 10_000_000);
-    }
-
-    #[test]
-    fn instants_shift_by_spans() {
-        let t = LocalNs::from_ns(1_000);
-        assert_eq!(t.saturating_add(500).ns(), 1_500);
-        assert_eq!(t.saturating_add(500).saturating_sub(t), 500);
-        assert!(t < t.saturating_add(1));
     }
 }

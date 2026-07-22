@@ -121,7 +121,6 @@ dependencies = [
  "solana-metrics",
  "solana-pubkey 4.2.0",
  "solana-runtime",
- "thiserror 2.0.18",
  "tokio",
  "tokio-util 0.7.18",
 ]

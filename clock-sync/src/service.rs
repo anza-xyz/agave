@@ -170,7 +170,7 @@ fn handle_datagram(
     // Arrival is stamped at dequeue, not at the socket read; the ingress
     // channel hop lands in the delay-uncertainty term.
     let arrival = clock.local_now();
-    let Ok(Message::Pulse { round, lateness_ns }) = protocol::decode(&message) else {
+    let Some(Message::Pulse { round, lateness_ns }) = protocol::decode(&message) else {
         stats.decode_errors = stats.decode_errors.saturating_add(1);
         return;
     };
