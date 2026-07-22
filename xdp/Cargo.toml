@@ -15,6 +15,7 @@ rustdoc-args = ["--cfg=docsrs"]
 
 [features]
 agave-unstable-api = []
+dev-context-only-utils = []
 
 [dependencies]
 agave-cpu-utils = { workspace = true }
@@ -30,6 +31,9 @@ arrayvec = { workspace = true }
 aya = { workspace = true }
 caps = { workspace = true }
 crossbeam-queue = { workspace = true }
+
+[dev-dependencies]
+agave-xdp = { path = ".", features = ["agave-unstable-api", "dev-context-only-utils"] }
 
 [target.'cfg(target_os = "linux")'.dev-dependencies]
 aya = { workspace = true, features = ["test-helpers"] }

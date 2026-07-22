@@ -90,6 +90,21 @@ impl XdpConfig {
             tx_channel_cap: XdpConfig::DEFAULT_TX_CHANNEL_CAP,
         }
     }
+
+    #[cfg(feature = "dev-context-only-utils")]
+    pub fn with_tx_channel_cap(
+        interface: Option<impl Into<String>>,
+        queues: Vec<QueueCpuBinding>,
+        zero_copy: bool,
+        tx_channel_cap: usize,
+    ) -> Self {
+        Self {
+            interface: interface.map(|s| s.into()),
+            queues,
+            zero_copy,
+            tx_channel_cap,
+        }
+    }
 }
 
 /// [`BytesTxPacket`] encapsulates the information needed to transmit a packet via XDP. Besides

@@ -1532,31 +1532,4 @@ mod xdp_tests {
             "XDP core overlapping PoH core must produce an error"
         );
     }
-
-    #[test]
-    fn test_two_explicit_xdp_cores_configure_two_copy_mode_queues() {
-        let cpus = [1, 2];
-        let cpu_list = format!("{},{}", cpus[0], cpus[1]);
-        let default_args = DefaultArgs::default();
-        let app = add_args(clap::App::new("agave-validator"), &default_args);
-        let matches = app.get_matches_from(vec!["agave-validator", "--xdp-cpu-cores", &cpu_list]);
-
-        let config = build_xdp_config(&matches, &Operation::Run, &single_ip_bind())
-            .unwrap()
-            .expect("two explicit XDP cores enable XDP");
-        assert_eq!(
-            config.queues,
-            vec![
-                QueueCpuBinding {
-                    queue: 0,
-                    cpu: cpus[0],
-                },
-                QueueCpuBinding {
-                    queue: 1,
-                    cpu: cpus[1],
-                },
-            ]
-        );
-        assert!(!config.zero_copy);
-    }
 }

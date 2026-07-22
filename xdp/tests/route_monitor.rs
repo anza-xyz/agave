@@ -64,7 +64,7 @@ fn start_route_monitor() -> RouteMonitorGuard {
 #[ignore = "requires root and network namespace privileges"]
 fn route_monitor_publishes_live_route_updates() {
     let _netns = common::NetNsGuard::new().expect("create network namespace");
-    let links = common::setup_veth_pair();
+    let links = common::setup_veth_pair_with_tx_queue_count(1);
 
     let monitor = start_route_monitor();
 
@@ -113,7 +113,7 @@ fn route_monitor_publishes_live_route_updates() {
 #[ignore = "requires root and network namespace privileges"]
 fn route_monitor_publishes_live_neighbor_updates() {
     let _netns = common::NetNsGuard::new().expect("create network namespace");
-    let links = common::setup_veth_pair();
+    let links = common::setup_veth_pair_with_tx_queue_count(1);
 
     let monitor = start_route_monitor();
     let routed_destination = Ipv4Addr::new(203, 0, 113, 7);
@@ -179,7 +179,7 @@ fn route_monitor_publishes_live_neighbor_updates() {
 #[ignore = "requires root and network namespace privileges"]
 fn route_monitor_publishes_link_removals() {
     let _netns = common::NetNsGuard::new().expect("create network namespace");
-    let links = common::setup_veth_pair();
+    let links = common::setup_veth_pair_with_tx_queue_count(1);
 
     common::replace_neighbor(links.right_ip, links.right_mac, common::LEFT_IFACE);
     common::add_route("203.0.113.0/24", links.right_ip, common::LEFT_IFACE);
@@ -221,7 +221,7 @@ fn route_monitor_publishes_link_removals() {
 #[ignore = "requires root and network namespace privileges"]
 fn route_monitor_publishes_live_gre_route_updates() {
     let _netns = common::NetNsGuard::new().expect("create network namespace");
-    let links = common::setup_veth_pair();
+    let links = common::setup_veth_pair_with_tx_queue_count(1);
 
     let monitor = start_route_monitor();
     let overlay_destination = Ipv4Addr::new(192, 0, 2, 99);

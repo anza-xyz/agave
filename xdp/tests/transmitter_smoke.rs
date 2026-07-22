@@ -34,6 +34,8 @@ use {
     },
 };
 
+const TEST_TX_CHANNEL_CAP: usize = 16;
+
 fn transmitter_cpus<const COUNT: usize>() -> [usize; COUNT] {
     let cores = cpu_affinity(None).expect("linux provides affine cores");
     assert!(
@@ -44,6 +46,7 @@ fn transmitter_cpus<const COUNT: usize>() -> [usize; COUNT] {
     );
     std::array::from_fn(|index| *cores[index])
 }
+
 fn transmitter_cpu() -> usize {
     let [cpu_id] = transmitter_cpus();
     cpu_id
@@ -345,7 +348,7 @@ fn transmitter_sends_udp_payload_over_veth_in_copy_mode() {
     let cpu_id = transmitter_cpu();
 
     let _netns = common::NetNsGuard::new().expect("create network namespace");
-    let links = common::setup_veth_pair();
+    let links = common::setup_veth_pair_with_tx_queue_count(1);
     common::replace_neighbor(links.right_ip, links.right_mac, common::LEFT_IFACE);
 
     let receiver = PacketSocket::bind(links.right_if_index).expect("bind raw packet receiver");
@@ -355,15 +358,15 @@ fn transmitter_sends_udp_payload_over_veth_in_copy_mode() {
     let payload = Bytes::from_static(b"agave-xdp-transmitter-smoke");
 
     let exit = Arc::new(AtomicBool::new(false));
-    let mut config = XdpConfig::new(
+    let config = XdpConfig::with_tx_channel_cap(
         Some(common::LEFT_IFACE.to_string()),
         vec![QueueCpuBinding {
             queue: 0,
             cpu: cpu_id,
         }],
         false,
+        TEST_TX_CHANNEL_CAP,
     );
-    config.tx_channel_cap = 16;
 
     let (transmitter, sender) = TransmitterBuilder::new(config, Arc::clone(&exit))
         .expect("build copy-mode transmitter")
@@ -406,14 +409,14 @@ fn transmitter_sends_udp_payload_over_two_queues_in_copy_mode() {
     let [first_cpu, second_cpu] = transmitter_cpus();
 
     let _netns = common::NetNsGuard::new().expect("create network namespace");
-    let links = common::setup_two_queue_veth_pair();
+    let links = common::setup_veth_pair_with_tx_queue_count(2);
     common::replace_neighbor(links.right_ip, links.right_mac, common::LEFT_IFACE);
 
     let receiver = PacketSocket::bind(links.right_if_index).expect("bind raw packet receiver");
     let src_port = 12_347;
 
     let exit = Arc::new(AtomicBool::new(false));
-    let mut config = XdpConfig::new(
+    let config = XdpConfig::with_tx_channel_cap(
         Some(common::LEFT_IFACE.to_string()),
         vec![
             QueueCpuBinding {
@@ -426,8 +429,8 @@ fn transmitter_sends_udp_payload_over_two_queues_in_copy_mode() {
             },
         ],
         false,
+        TEST_TX_CHANNEL_CAP,
     );
-    config.tx_channel_cap = 16;
 
     let (transmitter, sender) = TransmitterBuilder::new(config, Arc::clone(&exit))
         .expect("build two-queue copy-mode transmitter")
@@ -435,6 +438,7 @@ fn transmitter_sends_udp_payload_over_two_queues_in_copy_mode() {
     let transmitter = TransmitterGuard::new(transmitter, sender, exit);
     assert_eq!(transmitter.sender().len(), 2);
 
+    let mut buf = [0u8; 2048];
     for (sender_index, dst_port, payload) in [
         (
             0,
@@ -461,6 +465,7 @@ fn transmitter_sends_udp_payload_over_two_queues_in_copy_mode() {
 
         let received = receiver
             .recv_matching_udp(
+                &mut buf,
                 &ExpectedUdpPacket {
                     src_mac: links.left_mac,
                     dst_mac: links.right_mac,
@@ -483,7 +488,7 @@ fn transmitter_sends_udp_payload_over_gre_tunnel_in_copy_mode() {
     let cpu_id = transmitter_cpu();
 
     let _netns = common::NetNsGuard::new().expect("create network namespace");
-    let links = common::setup_veth_pair();
+    let links = common::setup_veth_pair_with_tx_queue_count(1);
     common::replace_neighbor(links.right_ip, links.right_mac, common::LEFT_IFACE);
     common::add_route_to_dev(&format!("{}/32", links.right_ip), common::LEFT_IFACE);
     let gre = common::setup_gre_tunnel(&links);
@@ -499,15 +504,15 @@ fn transmitter_sends_udp_payload_over_gre_tunnel_in_copy_mode() {
     let payload = Bytes::from_static(b"agave-xdp-transmitter-gre-smoke");
 
     let exit = Arc::new(AtomicBool::new(false));
-    let mut config = XdpConfig::new(
+    let config = XdpConfig::with_tx_channel_cap(
         Some(common::LEFT_IFACE.to_string()),
         vec![QueueCpuBinding {
             queue: 0,
             cpu: cpu_id,
         }],
         false,
+        TEST_TX_CHANNEL_CAP,
     );
-    config.tx_channel_cap = 16;
 
     let (transmitter, sender) = TransmitterBuilder::new(config, Arc::clone(&exit))
         .expect("build copy-mode transmitter")
