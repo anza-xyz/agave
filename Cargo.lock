@@ -10729,6 +10729,7 @@ dependencies = [
  "serde",
  "smpl_jwt",
  "solana-clock",
+ "solana-entry",
  "solana-frozen-abi",
  "solana-frozen-abi-macro",
  "solana-hash 4.5.0",
@@ -10749,6 +10750,7 @@ dependencies = [
  "tokio",
  "tonic",
  "tonic-prost",
+ "wincode",
  "zstd",
 ]
 

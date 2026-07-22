@@ -44,6 +44,7 @@ prost-types = { workspace = true }
 serde = { workspace = true }
 smpl_jwt = { workspace = true }
 solana-clock = { workspace = true }
+solana-entry = { workspace = true }
 solana-frozen-abi = { workspace = true, optional = true, features = [
     "frozen-abi",
 ] }
@@ -64,6 +65,7 @@ thiserror = { workspace = true }
 tokio = { workspace = true }
 tonic = { workspace = true, features = ["tls-ring", "transport"] }
 tonic-prost = { workspace = true }
+wincode = { workspace = true }
 zstd = { workspace = true }
 
 [dev-dependencies]

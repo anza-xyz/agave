@@ -8316,6 +8316,7 @@ dependencies = [
  "serde",
  "smpl_jwt",
  "solana-clock",
+ "solana-entry",
  "solana-message",
  "solana-metrics",
  "solana-pubkey 4.2.0",
@@ -8330,6 +8331,7 @@ dependencies = [
  "tokio",
  "tonic",
  "tonic-prost",
+ "wincode",
  "zstd",
 ]
 
