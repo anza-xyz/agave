@@ -49,29 +49,37 @@ fn get_config() -> Config {
         .version(solana_version::version!())
         .after_help(
             "ADDITIONAL HELP:
-        To receive a Slack, Discord, PagerDuty and/or Telegram notification on sanity failure,
-        define environment variables before running `agave-watchtower`:
+        Notifications are split into two categories:
+          - `NETWORK_*`  : cluster-wide alerts (transaction count stuck, blockhash stuck,
+                          active stake below threshold, watchtower endpoint reliability)
+          - `IDENTITY_*` : monitored validator alerts (delinquency, low identity balance)
 
-        export SLACK_WEBHOOK=...
-        export DISCORD_WEBHOOK=...
+        For each channel, the prefixed variable is checked first; if unset, the unprefixed
+        variable is used as a fallback. Setting only unprefixed vars routes both categories
+        to the same destination (legacy behavior).
+
+        Supported channels:
+
+        export {NETWORK_,IDENTITY_,}SLACK_WEBHOOK=...
+        export {NETWORK_,IDENTITY_,}DISCORD_WEBHOOK=...
 
         Telegram requires the following two variables:
 
-        export TELEGRAM_BOT_TOKEN=...
-        export TELEGRAM_CHAT_ID=...
+        export {NETWORK_,IDENTITY_,}TELEGRAM_BOT_TOKEN=...
+        export {NETWORK_,IDENTITY_,}TELEGRAM_CHAT_ID=...
 
         PagerDuty requires an Integration Key from the Events API v2 (Add this integration to your \
              PagerDuty service to get this)
 
-        export PAGERDUTY_INTEGRATION_KEY=...
+        export {NETWORK_,IDENTITY_,}PAGERDUTY_INTEGRATION_KEY=...
 
         To receive a Twilio SMS notification on failure, having a Twilio account,
         and a sending number owned by that account,
         define environment variable before running `agave-watchtower`:
 
         export \
-             TWILIO_CONFIG='ACCOUNT=<account>,TOKEN=<securityToken>,TO=<receivingNumber>,\
-             FROM=<sendingNumber>'",
+             {NETWORK_,IDENTITY_,}TWILIO_CONFIG='ACCOUNT=<account>,TOKEN=<securityToken>,\
+             TO=<receivingNumber>,FROM=<sendingNumber>'",
         )
         .arg({
             let arg = Arg::with_name("config_file")
@@ -576,6 +584,10 @@ fn validate_endpoints(
     Ok(())
 }
 
+fn is_identity_failure(test_name: &str) -> bool {
+    matches!(test_name, "delinquent" | "balance")
+}
+
 fn main() -> Result<(), Box<dyn error::Error>> {
     agave_logger::setup_with_default_filter();
     solana_metrics::set_panic_hook("watchtower", /*version:*/ None);
@@ -599,12 +611,18 @@ fn main() -> Result<(), Box<dyn error::Error>> {
 
     let min_agreeing_endpoints = endpoints.len() / 2 + 1;
 
-    let notifier = Notifier::default();
+    let network_notifier = Notifier::new("NETWORK_");
+    let identity_notifier = Notifier::new("IDENTITY_");
 
-    let mut last_notification_msg = "".into();
-    let mut num_consecutive_failures = 0;
-    let mut last_success = Instant::now();
-    let mut incident = Hash::new_unique();
+    let mut net_last_msg: String = "".into();
+    let mut net_consecutive_failures = 0;
+    let mut net_last_success = Instant::now();
+    let mut net_incident = Hash::new_unique();
+
+    let mut id_last_msg: String = "".into();
+    let mut id_consecutive_failures = 0;
+    let mut id_last_success = Instant::now();
+    let mut id_incident = Hash::new_unique();
 
     loop {
         let mut failures = HashMap::new(); // test_name -> message
@@ -641,43 +659,55 @@ fn main() -> Result<(), Box<dyn error::Error>> {
             failures.insert("watchtower-reliability", watchtower_unreliable_msg);
         }
 
-        if num_healthy < min_agreeing_endpoints {
-            if failures.len() > 1 {
-                failures.clear(); // Ignoring other failures when watchtower is unreliable
+        if num_healthy < min_agreeing_endpoints && failures.len() > 1 {
+            failures.clear(); // Ignoring other failures when watchtower is unreliable
 
-                let watchtower_unreliable_msg = "Watchtower is unreliable, RPC endpoints provide \
-                                                 inconsistent information"
-                    .into();
-                failures.insert("watchtower-reliability", watchtower_unreliable_msg);
-            }
+            let watchtower_unreliable_msg =
+                "Watchtower is unreliable, RPC endpoints provide inconsistent information".into();
+            failures.insert("watchtower-reliability", watchtower_unreliable_msg);
+        }
 
-            let (failure_test_name, failure_error_message) = failures.iter().next().unwrap();
+        let network_failure = failures
+            .iter()
+            .find(|(test, _)| !is_identity_failure(test))
+            .map(|(t, m)| (*t, m.clone()));
+        let identity_failure = failures
+            .iter()
+            .find(|(test, _)| is_identity_failure(test))
+            .map(|(t, m)| (*t, m.clone()));
+
+        if let Some((failure_test_name, failure_error_message)) = network_failure {
             let notification_msg = format!(
                 "agave-watchtower{}: Error: {}: {}",
                 config.name_suffix, failure_test_name, failure_error_message
             );
-            num_consecutive_failures += 1;
-            if num_consecutive_failures > config.unhealthy_threshold {
+            net_consecutive_failures += 1;
+            if net_consecutive_failures > config.unhealthy_threshold {
                 datapoint_info!("watchtower-sanity", ("ok", false, bool));
-                if last_notification_msg != notification_msg {
-                    notifier.send(&notification_msg, &NotificationType::Trigger { incident });
+                if net_last_msg != notification_msg {
+                    network_notifier.send(
+                        &notification_msg,
+                        &NotificationType::Trigger {
+                            incident: net_incident,
+                        },
+                    );
                 }
                 datapoint_error!(
                     "watchtower-sanity-failure",
                     ("test", failure_test_name, String),
                     ("err", failure_error_message, String)
                 );
-                last_notification_msg = notification_msg;
+                net_last_msg = notification_msg;
             } else {
                 info!(
                     "Failure {} of {}: {}",
-                    num_consecutive_failures, config.unhealthy_threshold, notification_msg
+                    net_consecutive_failures, config.unhealthy_threshold, notification_msg
                 );
             }
         } else {
             datapoint_info!("watchtower-sanity", ("ok", true, bool));
-            if !last_notification_msg.is_empty() {
-                let alarm_duration = Instant::now().duration_since(last_success);
+            if !net_last_msg.is_empty() {
+                let alarm_duration = Instant::now().duration_since(net_last_success);
                 let alarm_duration = alarm_duration - config.interval; // Subtract the period before the first error
                 let alarm_duration = Duration::from_secs(alarm_duration.as_secs()); // Drop milliseconds in message
 
@@ -686,16 +716,72 @@ fn main() -> Result<(), Box<dyn error::Error>> {
                     humantime::format_duration(alarm_duration)
                 );
                 info!("{all_clear_msg}");
-                notifier.send(
+                network_notifier.send(
                     &format!("agave-watchtower{}: {}", config.name_suffix, all_clear_msg),
-                    &NotificationType::Resolve { incident },
+                    &NotificationType::Resolve {
+                        incident: net_incident,
+                    },
                 );
             }
-            last_notification_msg = "".into();
-            last_success = Instant::now();
-            num_consecutive_failures = 0;
-            incident = Hash::new_unique();
+            net_last_msg = "".into();
+            net_last_success = Instant::now();
+            net_consecutive_failures = 0;
+            net_incident = Hash::new_unique();
         }
+
+        if let Some((failure_test_name, failure_error_message)) = identity_failure {
+            let notification_msg = format!(
+                "agave-watchtower{}: Error: {}: {}",
+                config.name_suffix, failure_test_name, failure_error_message
+            );
+            id_consecutive_failures += 1;
+            if id_consecutive_failures > config.unhealthy_threshold {
+                datapoint_info!("watchtower-sanity", ("ok", false, bool));
+                if id_last_msg != notification_msg {
+                    identity_notifier.send(
+                        &notification_msg,
+                        &NotificationType::Trigger {
+                            incident: id_incident,
+                        },
+                    );
+                }
+                datapoint_error!(
+                    "watchtower-sanity-failure",
+                    ("test", failure_test_name, String),
+                    ("err", failure_error_message, String)
+                );
+                id_last_msg = notification_msg;
+            } else {
+                info!(
+                    "Failure {} of {}: {}",
+                    id_consecutive_failures, config.unhealthy_threshold, notification_msg
+                );
+            }
+        } else {
+            datapoint_info!("watchtower-sanity", ("ok", true, bool));
+            if !id_last_msg.is_empty() {
+                let alarm_duration = Instant::now().duration_since(id_last_success);
+                let alarm_duration = alarm_duration - config.interval;
+                let alarm_duration = Duration::from_secs(alarm_duration.as_secs());
+
+                let all_clear_msg = format!(
+                    "All clear after {}",
+                    humantime::format_duration(alarm_duration)
+                );
+                info!("{all_clear_msg}");
+                identity_notifier.send(
+                    &format!("agave-watchtower{}: {}", config.name_suffix, all_clear_msg),
+                    &NotificationType::Resolve {
+                        incident: id_incident,
+                    },
+                );
+            }
+            id_last_msg = "".into();
+            id_last_success = Instant::now();
+            id_consecutive_failures = 0;
+            id_incident = Hash::new_unique();
+        }
+
         sleep(config.interval);
     }
 }
