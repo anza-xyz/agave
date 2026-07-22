@@ -18,6 +18,9 @@ pub(super) struct ConsensusPoolServiceStats {
     pub(super) parent_ready_missed_window: Saturating<usize>,
     pub(super) parent_ready_produce_window: Saturating<usize>,
     pub(super) received_vote_aggregates: Saturating<usize>,
+    pub(super) received_own_messages: Saturating<usize>,
+    pub(super) received_consensus_message_batches: Saturating<usize>,
+    pub(super) receive_msgs_limit_reached: Saturating<usize>,
     pub(super) received_certificates: Saturating<usize>,
     pub(super) standstill: bool,
     pub(super) prune_old_state_called: Saturating<usize>,
@@ -37,6 +40,9 @@ impl ConsensusPoolServiceStats {
             parent_ready_missed_window: Saturating(0),
             parent_ready_produce_window: Saturating(0),
             received_vote_aggregates: Saturating(0),
+            received_own_messages: Saturating(0),
+            received_consensus_message_batches: Saturating(0),
+            receive_msgs_limit_reached: Saturating(0),
             received_certificates: Saturating(0),
             standstill: false,
             prune_old_state_called: Saturating(0),
@@ -56,6 +62,9 @@ impl ConsensusPoolServiceStats {
             parent_ready_missed_window: Saturating(parent_ready_missed_window),
             parent_ready_produce_window: Saturating(parent_ready_produce_window),
             received_vote_aggregates: Saturating(received_vote_aggregates),
+            received_own_messages: Saturating(received_own_messages),
+            received_consensus_message_batches: Saturating(received_consensus_message_batches),
+            receive_msgs_limit_reached: Saturating(receive_msgs_limit_reached),
             received_certificates: Saturating(received_certificates),
             standstill,
             prune_old_state_called: Saturating(prune_old_state_called),
@@ -85,6 +94,17 @@ impl ConsensusPoolServiceStats {
                 i64
             ),
             ("received_vote_aggregates", received_vote_aggregates, i64),
+            ("received_own_messages", received_own_messages, i64),
+            (
+                "received_consensus_message_batches",
+                received_consensus_message_batches,
+                i64
+            ),
+            (
+                "receive_msgs_limit_reached",
+                receive_msgs_limit_reached,
+                i64
+            ),
             ("received_certificates", received_certificates, i64),
             ("in_standstill_bool", standstill, bool),
             ("prune_old_state_called", prune_old_state_called, i64),

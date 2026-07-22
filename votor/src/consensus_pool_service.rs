@@ -67,6 +67,15 @@ pub(crate) enum PoolMessage {
     Certificates(Vec<Certificate>),
 }
 
+/// Maximum number of messages to process from a selected message channel before
+/// returning to channel selection. This keeps a continuously busy channel from
+/// starving the other consensus pool input channel.
+const TOTAL_MESSAGES_PER_RECEIVE: usize = 128;
+
+/// Number of additional messages to drain from the selected message channel
+/// after receiving the first message.
+const ADDITIONAL_MESSAGES_PER_RECEIVE: usize = TOTAL_MESSAGES_PER_RECEIVE - 1;
+
 /// Inputs for the consensus pool and consensus pool service
 pub(crate) struct ConsensusPoolContext {
     pub(crate) exit: Arc<AtomicBool>,
@@ -568,7 +577,13 @@ impl ConsensusPoolService {
             return Err(());
         };
 
-        for msg in std::iter::once(first).chain(ctx.own_message_receiver.try_iter()) {
+        let mut received_messages = 0;
+        for msg in std::iter::once(first).chain(
+            ctx.own_message_receiver
+                .try_iter()
+                .take(ADDITIONAL_MESSAGES_PER_RECEIVE),
+        ) {
+            received_messages += 1;
             let pool_msg = match msg {
                 OwnMessage::Vote(vote_msg) => {
                     stats.received_vote_aggregates += 1;
@@ -597,6 +612,10 @@ impl ConsensusPoolService {
                 stats,
             )?;
         }
+        stats.received_own_messages += received_messages;
+        if received_messages == TOTAL_MESSAGES_PER_RECEIVE {
+            stats.receive_msgs_limit_reached += 1;
+        }
         Ok(())
     }
 
@@ -613,7 +632,13 @@ impl ConsensusPoolService {
             return Err(());
         };
 
-        for batch in std::iter::once(first).chain(ctx.consensus_message_receiver.try_iter()) {
+        let mut received_batches = 0;
+        for batch in std::iter::once(first).chain(
+            ctx.consensus_message_receiver
+                .try_iter()
+                .take(ADDITIONAL_MESSAGES_PER_RECEIVE),
+        ) {
+            received_batches += 1;
             let msg = match batch {
                 SigVerifiedBatch::Votes(votes) => {
                     stats.received_vote_aggregates += votes.len();
@@ -641,6 +666,10 @@ impl ConsensusPoolService {
                 standstill_timer,
                 stats,
             )?;
+        }
+        stats.received_consensus_message_batches += received_batches;
+        if received_batches == TOTAL_MESSAGES_PER_RECEIVE {
+            stats.receive_msgs_limit_reached += 1;
         }
         Ok(())
     }
@@ -697,7 +726,8 @@ mod tests {
         consensus_pool: ConsensusPool,
         ctx: ConsensusPoolContext,
         bls_receiver: Receiver<BLSOp>,
-        _consensus_message_sender: Sender<SigVerifiedBatch>,
+        consensus_message_sender: Sender<SigVerifiedBatch>,
+        _own_message_sender: Sender<OwnMessage>,
         event_receiver: Receiver<VotorEvent>,
         _repair_event_receiver: Receiver<RepairEvent>,
         validator_keypairs: Vec<ValidatorVoteKeypairs>,
@@ -747,7 +777,7 @@ mod tests {
                 initial_parent_ready,
             );
             let (consensus_message_sender, consensus_message_receiver) = unbounded();
-            let (_own_message_sender, own_message_receiver) = unbounded();
+            let (own_message_sender, own_message_receiver) = unbounded();
             let (event_sender, event_receiver) = unbounded();
             let (repair_event_sender, repair_event_receiver) = unbounded();
 
@@ -772,7 +802,8 @@ mod tests {
                 consensus_pool,
                 ctx,
                 bls_receiver,
-                _consensus_message_sender: consensus_message_sender,
+                consensus_message_sender,
+                _own_message_sender: own_message_sender,
                 event_receiver,
                 _repair_event_receiver: repair_event_receiver,
                 validator_keypairs,
@@ -920,6 +951,39 @@ mod tests {
             }
         }
         assert!(found_skip, "Should have received the skip certificate");
+    }
+
+    #[test]
+    fn test_receive_msgs_limits_batches_per_call() {
+        let mut ctx = TestContext::default();
+
+        for _ in 0..TOTAL_MESSAGES_PER_RECEIVE + 1 {
+            ctx.consensus_message_sender
+                .send(SigVerifiedBatch::Votes(vec![]))
+                .unwrap();
+        }
+
+        let mut events = vec![];
+        let mut standstill_timer = Instant::now();
+        let mut stats = ConsensusPoolServiceStats::new();
+
+        ConsensusPoolService::receive_msgs(
+            &mut ctx.ctx,
+            &mut ctx.consensus_pool,
+            &mut events,
+            &mut standstill_timer,
+            &mut stats,
+            Duration::ZERO,
+        )
+        .unwrap();
+
+        assert_eq!(ctx.ctx.consensus_message_receiver.len(), 1);
+        assert_eq!(stats.received_own_messages.0, 0);
+        assert_eq!(
+            stats.received_consensus_message_batches.0,
+            TOTAL_MESSAGES_PER_RECEIVE
+        );
+        assert_eq!(stats.receive_msgs_limit_reached.0, 1);
     }
 
     #[test]
