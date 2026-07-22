@@ -89,7 +89,11 @@ impl TransactionPtr {
 }
 
 /// A batch of transaction pointers that can be iterated over.
-pub struct TransactionPtrBatch<'a, M = ()> {
+///
+/// `CAPACITY` determines the fixed position of the metadata array within the backing allocation.
+/// The reader and writer of a batch must use the same `CAPACITY`; otherwise the reader locates
+/// metadata at the wrong offset.
+pub struct TransactionPtrBatch<'a, M = (), const CAPACITY: usize = MAX_TRANSACTIONS_PER_MESSAGE> {
     tx_ptr: NonNull<SharableTransactionRegion>,
     meta_ptr: NonNull<M>,
     num_transactions: usize,
@@ -98,19 +102,43 @@ pub struct TransactionPtrBatch<'a, M = ()> {
     _meta: PhantomData<M>,
 }
 
-impl<'a, M> TransactionPtrBatch<'a, M> {
+impl<'a, M, const CAPACITY: usize> TransactionPtrBatch<'a, M, CAPACITY> {
     pub const TRANSACTION_CORE_SIZE: usize = size_of::<SharableTransactionRegion>();
-    pub const TRANSACTION_CORE_END: usize =
-        Self::TRANSACTION_CORE_SIZE * MAX_TRANSACTIONS_PER_MESSAGE;
+    pub const TRANSACTION_CORE_END: usize = Self::TRANSACTION_CORE_SIZE * CAPACITY;
 
     pub const TRANSACTION_META_START: usize =
         Self::TRANSACTION_CORE_END.next_multiple_of(align_of::<M>());
-    pub const TRANSACTION_META_SIZE: usize = size_of::<M>() * MAX_TRANSACTIONS_PER_MESSAGE;
+    pub const TRANSACTION_META_SIZE: usize = size_of::<M>() * CAPACITY;
     pub const TRANSACTION_META_END: usize =
         Self::TRANSACTION_META_START + Self::TRANSACTION_META_SIZE;
 
     #[allow(dead_code, reason = "Invariant assertion")]
-    const TRANSACTION_BATCH_SIZE_ASSERT: () = assert!(Self::TRANSACTION_META_END <= 4096);
+    const TRANSACTION_BATCH_SIZE_ASSERT: () = {
+        assert!(CAPACITY <= MAX_TRANSACTIONS_PER_MESSAGE);
+        assert!(Self::TRANSACTION_META_END <= 4096);
+    };
+
+    /// Allocates a batch container for up to `CAPACITY` transaction regions and metadata values.
+    pub fn allocate(allocator: &'a Allocator) -> Option<Self> {
+        let () = Self::TRANSACTION_BATCH_SIZE_ASSERT;
+        let allocation = allocator.allocate(Self::TRANSACTION_META_END as u32)?;
+        // SAFETY: `allocation` was allocated by `allocator` immediately above.
+        let transactions_offset = unsafe { allocator.offset(allocation) };
+        // SAFETY: `transactions_offset` was obtained from `allocator` immediately above.
+        let base = unsafe { allocator.ptr_from_offset(transactions_offset) };
+        let tx_ptr = base.cast();
+        // SAFETY: `Self::TRANSACTION_META_START` is within the allocation made above.
+        let meta_ptr = unsafe { base.byte_add(Self::TRANSACTION_META_START).cast() };
+
+        Some(Self {
+            tx_ptr,
+            meta_ptr,
+            num_transactions: 0,
+            allocator,
+
+            _meta: PhantomData,
+        })
+    }
 
     /// # Safety
     /// - [`SharableTransactionBatchRegion`] must reference a valid offset and length
@@ -118,10 +146,18 @@ impl<'a, M> TransactionPtrBatch<'a, M> {
     /// - ALL [`SharableTransactionRegion`]  within the batch must be valid.
     ///   See [`TransactionPtr::from_sharable_transaction_region`] for details.
     /// - `M` must match the actual `M` used within this allocation.
+    /// - `CAPACITY` must match the capacity used when the batch allocation was written. The
+    ///   capacity determines the offset of the metadata array.
     pub unsafe fn from_sharable_transaction_batch_region(
         sharable_transaction_batch_region: &SharableTransactionBatchRegion,
         allocator: &'a Allocator,
     ) -> Self {
+        let num_transactions = usize::from(sharable_transaction_batch_region.num_transactions);
+        assert!(
+            num_transactions <= CAPACITY,
+            "batch exceeds TransactionPtrBatch capacity"
+        );
+        let () = Self::TRANSACTION_BATCH_SIZE_ASSERT;
         // SAFETY: `sharable_transaction_batch_region.transactions_offset` was allocated by `allocator`.
         let base = unsafe {
             allocator.ptr_from_offset(sharable_transaction_batch_region.transactions_offset)
@@ -135,7 +171,7 @@ impl<'a, M> TransactionPtrBatch<'a, M> {
         Self {
             tx_ptr,
             meta_ptr,
-            num_transactions: usize::from(sharable_transaction_batch_region.num_transactions),
+            num_transactions,
             allocator,
 
             _meta: PhantomData,
@@ -152,6 +188,49 @@ impl<'a, M> TransactionPtrBatch<'a, M> {
         self.len() == 0
     }
 
+    /// Appends one transaction region and its associated metadata to the batch.
+    ///
+    /// Returns `Err` with the inputs unchanged when the batch is full.
+    pub fn push(
+        &mut self,
+        transaction: SharableTransactionRegion,
+        meta: M,
+    ) -> Result<(), (SharableTransactionRegion, M)> {
+        if self.num_transactions == CAPACITY {
+            return Err((transaction, meta));
+        }
+        // SAFETY: `num_transactions` is strictly below this batch's capacity.
+        unsafe {
+            self.tx_ptr.add(self.num_transactions).write(transaction);
+            self.meta_ptr.add(self.num_transactions).write(meta);
+        }
+        self.num_transactions = self.num_transactions.wrapping_add(1);
+        Ok(())
+    }
+
+    /// Returns a transaction region that was previously written to `index`.
+    pub fn transaction_region(&self, index: usize) -> SharableTransactionRegion {
+        assert!(
+            index < self.num_transactions,
+            "batch index was not initialized"
+        );
+        // SAFETY: `index` was checked against the initialized transaction count above.
+        unsafe { self.tx_ptr.add(index).read() }
+    }
+
+    /// Returns the sharable message region for this initialized batch.
+    pub fn to_sharable_transaction_batch_region(&self) -> SharableTransactionBatchRegion {
+        // SAFETY: `tx_ptr` was derived from this allocator when the batch was allocated.
+        let transactions_offset = unsafe { self.allocator.offset(self.tx_ptr.cast()) };
+        SharableTransactionBatchRegion {
+            num_transactions: self
+                .num_transactions
+                .try_into()
+                .expect("batch capacity is at most 64"),
+            transactions_offset,
+        }
+    }
+
     /// Iterator returning [`TransactionPtr`] for each transaction in the batch.
     pub fn iter(&'a self) -> impl Iterator<Item = (TransactionPtr, M)> + 'a {
         (0..self.num_transactions).map(|idx| unsafe {
@@ -161,6 +240,25 @@ impl<'a, M> TransactionPtrBatch<'a, M> {
 
             (tx, meta)
         })
+    }
+
+    /// Frees every transaction allocation referenced by this batch, followed by the batch
+    /// container itself.
+    ///
+    /// # Safety
+    ///
+    /// - This batch must be exclusively owned.
+    /// - Every transaction region must reference a unique allocation owned by this allocator.
+    pub unsafe fn free_with_transactions(self) {
+        for index in 0..self.num_transactions {
+            let transaction = self.transaction_region(index);
+            // SAFETY: the caller guarantees that this transaction allocation is owned by this
+            // allocator and has not already been freed.
+            unsafe { self.allocator.free_offset(transaction.offset) };
+        }
+
+        // SAFETY: this batch is exclusively owned, as required by the caller.
+        unsafe { self.free() };
     }
 
     /// Free the transaction batch container.
