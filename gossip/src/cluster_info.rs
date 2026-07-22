@@ -34,9 +34,8 @@ use {
         ping_pong::Pong,
         protocol::{
             DUPLICATE_SHRED_MAX_PAYLOAD_SIZE, MAX_INCREMENTAL_SNAPSHOT_HASHES,
-            MAX_PRUNE_DATA_NODES, PULL_RESPONSE_MAX_PAYLOAD_SIZE,
-            PULL_RESPONSE_MIN_SERIALIZED_SIZE, PUSH_MESSAGE_MAX_PAYLOAD_SIZE, Ping, PingCache,
-            Protocol, PruneData, deserialize_protocol, split_gossip_messages,
+            MAX_PRUNE_DATA_NODES, PULL_RESPONSE_MAX_PAYLOAD_SIZE, PUSH_MESSAGE_MAX_PAYLOAD_SIZE,
+            Ping, PingCache, Protocol, PruneData, deserialize_protocol, split_gossip_messages,
         },
         sigverify_cache::SigVerifyCache,
         weighted_shuffle::WeightedShuffle,
@@ -57,9 +56,8 @@ use {
         sockets::{bind_gossip_port_in_range, bind_to_localhost_unique},
         token_bucket::{KeyedRateLimiter, TokenBucket},
     },
-    solana_perf::{
-        data_budget::DataBudget,
-        packet::{Packet, PacketBatch, PacketBatchRecycler, PacketRef, RecycledPacketBatch},
+    solana_perf::packet::{
+        Packet, PacketBatch, PacketBatchRecycler, PacketRef, RecycledPacketBatch,
     },
     solana_pubkey::Pubkey,
     solana_rayon_threadlimit::get_thread_count,
@@ -82,7 +80,7 @@ use {
         iter::repeat,
         net::{IpAddr, Ipv4Addr, SocketAddr, TcpListener, UdpSocket},
         num::NonZeroUsize,
-        ops::{Div, Range},
+        ops::Range,
         path::{Path, PathBuf},
         rc::Rc,
         result::Result,
@@ -158,6 +156,11 @@ pub const DEFAULT_NUM_TVU_RETRANSMIT_SOCKETS: NonZeroUsize = NonZeroUsize::new(1
 type ContactInfoFileConfig =
     wincode::config::Configuration<true, { wincode::config::PREALLOCATION_SIZE_LIMIT_DISABLED }>;
 
+/// Allow 1 MB burst of pull responses
+const PULL_RESPONSE_SERVICE_BURST_BYTES: u64 = 1024 * 1024;
+/// Allow at most 8 MB per second of pull responses
+const PULL_RESPONSE_SERVICE_RATE_BYTES_PER_SECOND: f64 = 8.0e6;
+
 #[derive(Debug, PartialEq, Eq, Error)]
 pub enum ClusterInfoError {
     #[error("NoPeers")]
@@ -181,7 +184,7 @@ pub struct ClusterInfo {
     entrypoints: RwLock<Vec<ContactInfo>>,
     /// Additional pubkeys to preserve during CRDS table trimming.
     known_validators: OnceLock<HashSet<Pubkey>>,
-    outbound_budget: DataBudget,
+    outbound_budget: TokenBucket,
     my_contact_info: RwLock<ContactInfo>,
     ping_cache: Mutex<PingCache>,
     pull_request_budget: KeyedRateLimiter<IpAddr>,
@@ -209,7 +212,11 @@ impl ClusterInfo {
             keypair: ArcSwap::from(keypair),
             entrypoints: RwLock::default(),
             known_validators: OnceLock::new(),
-            outbound_budget: DataBudget::default(),
+            outbound_budget: TokenBucket::new(
+                PULL_RESPONSE_SERVICE_BURST_BYTES,
+                PULL_RESPONSE_SERVICE_BURST_BYTES,
+                PULL_RESPONSE_SERVICE_RATE_BYTES_PER_SECOND,
+            ),
             my_contact_info: RwLock::new(contact_info),
             ping_cache: Mutex::new(PingCache::new(
                 GOSSIP_PING_CACHE_TTL,
@@ -1641,21 +1648,6 @@ impl ClusterInfo {
         }
     }
 
-    fn update_data_budget(&self, num_staked: usize) -> usize {
-        const INTERVAL_MS: u64 = 100;
-        // epoch slots + votes ~= 1.5kB/slot ~= 4kB/s
-        // Allow 10kB/s per staked validator.
-        const BYTES_PER_INTERVAL: usize = 1024;
-        const MAX_BUDGET_MULTIPLE: usize = 5; // allow budget build-up to 5x the interval default
-        let num_staked = num_staked.max(2);
-        self.outbound_budget.update(INTERVAL_MS, |bytes| {
-            std::cmp::min(
-                bytes + num_staked * BYTES_PER_INTERVAL,
-                MAX_BUDGET_MULTIPLE * num_staked * BYTES_PER_INTERVAL,
-            )
-        })
-    }
-
     // Returns a predicate checking if the pull request is from a valid
     // address, and if the address have responded to a ping request. Also
     // appends ping packets for the addresses which need to be (re)verified.
@@ -1722,9 +1714,6 @@ impl ClusterInfo {
         mut requests: Vec<PullRequest>,
         stakes: &HashMap<Pubkey, u64>,
     ) -> RecycledPacketBatch {
-        const DEFAULT_EPOCH_DURATION_MS: u64 = DEFAULT_SLOTS_PER_EPOCH * DEFAULT_MS_PER_SLOT;
-        let output_size_limit =
-            self.update_data_budget(stakes.len()) / PULL_RESPONSE_MIN_SERIALIZED_SIZE;
         let mut packet_batch =
             RecycledPacketBatch::new_with_recycler(recycler, 64, "handle_pull_requests");
         let mut rng = rand::rng();
@@ -1732,6 +1721,16 @@ impl ClusterInfo {
             let now = Instant::now();
             self.check_pull_request(now, &mut rng, &mut packet_batch)
         });
+        // Prioritize requests from higher-staked peers. Weighted-shuffle prevents
+        // faulty high-stake nodes from consuming the whole budget.
+        let order: Vec<usize> = {
+            let weights = requests
+                .iter()
+                .map(|request| stakes.get(&request.pubkey).copied().unwrap_or_default());
+            WeightedShuffle::new("handle-pull-requests", weights)
+                .shuffle(&mut rng)
+                .collect()
+        };
         let now = timestamp();
         let self_id = self.id();
         let is_full_alpenglow_epoch = self.is_full_alpenglow_epoch();
@@ -1739,7 +1738,8 @@ impl ClusterInfo {
             let _st = ScopedTimer::from(&self.stats.generate_pull_responses);
             self.gossip.generate_pull_responses(
                 &requests,
-                output_size_limit,
+                &order,
+                &self.outbound_budget,
                 now,
                 |value| {
                     should_retain_crds_value(
@@ -1755,63 +1755,17 @@ impl ClusterInfo {
                 &self.stats,
             )
         };
-        // Prioritize more recent values, staked values and ContactInfos.
-        let get_score = |value: &CrdsValue| -> u64 {
-            let age = now.saturating_sub(value.wallclock());
-            // score CrdsValue: 2x score if staked; 2x score if ContactInfo
-            let score = DEFAULT_EPOCH_DURATION_MS
-                .saturating_sub(age)
-                .div(CRDS_GOSSIP_PULL_CRDS_TIMEOUT_MS)
-                .max(1);
-            let score = if stakes.contains_key(&value.pubkey()) {
-                2 * score
-            } else {
-                score
-            };
-            match value.data() {
-                CrdsData::ContactInfo(_) => 2 * score,
-                _ => score,
-            }
-        };
-        let mut num_crds_values = 0;
-        let (scores, mut pull_responses): (Vec<_>, Vec<_>) = requests
-            .iter()
-            .zip(pull_responses)
-            .flat_map(|(PullRequest { addr, .. }, values)| {
-                num_crds_values += values.len();
-                split_gossip_messages(PULL_RESPONSE_MAX_PAYLOAD_SIZE, values).map(move |values| {
-                    let score = values.iter().map(get_score).max().unwrap_or_default();
-                    (score, (addr, values))
-                })
-            })
-            .collect();
-        let (total_bytes, sent_crds_values) = WeightedShuffle::new("handle-pull-requests", scores)
-            .shuffle(&mut rng)
-            .filter_map(|k| {
-                let (addr, values) = &mut pull_responses[k];
-                let num_values = values.len();
-                let response = Protocol::PullResponse(self_id, std::mem::take(values));
-                let packet = make_gossip_packet(*addr, &response, &self.stats)?;
-                Some((packet, num_values))
-            })
-            .take_while(|(packet, _)| {
-                if self.outbound_budget.take(packet.meta().size) {
-                    true
-                } else {
-                    self.stats.gossip_pull_request_no_budget.add_relaxed(1);
-                    false
-                }
-            })
-            .map(|(packet, num_values)| {
-                let num_bytes = packet.meta().size;
+        let mut total_bytes = 0usize;
+        for (addr, values) in pull_responses {
+            for values in split_gossip_messages(PULL_RESPONSE_MAX_PAYLOAD_SIZE, values) {
+                let response = Protocol::PullResponse(self_id, values);
+                let Some(packet) = make_gossip_packet(addr, &response, &self.stats) else {
+                    continue;
+                };
+                total_bytes += packet.meta().size;
                 packet_batch.push(packet);
-                (num_bytes, num_values)
-            })
-            .fold((0, 0), |a, b| (a.0 + b.0, a.1 + b.1));
-        let dropped_responses = num_crds_values.saturating_sub(sent_crds_values);
-        self.stats
-            .gossip_pull_request_dropped_requests
-            .add_relaxed(dropped_responses as u64);
+            }
+        }
         self.stats
             .gossip_pull_request_sent_bytes
             .add_relaxed(total_bytes as u64);
