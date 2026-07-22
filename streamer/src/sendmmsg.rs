@@ -1,6 +1,6 @@
 //! The `sendmmsg` module provides sendmmsg() API implementation
 
-#[cfg(target_os = "linux")]
+#[cfg(any(target_os = "linux", target_os = "freebsd"))]
 use {
     crate::msghdr::create_msghdr,
     itertools::izip,
@@ -35,7 +35,7 @@ impl From<SendPktsError> for TransportError {
 }
 
 // The type and lifetime constraints are overspecified to match 'linux' code.
-#[cfg(not(target_os = "linux"))]
+#[cfg(not(any(target_os = "linux", target_os = "freebsd")))]
 pub fn batch_send<'a, S, T: 'a + ?Sized>(
     sock: &UdpSocket,
     packets: impl IntoIterator<Item = (&'a T, S), IntoIter: ExactSizeIterator>,
@@ -62,7 +62,7 @@ where
     }
 }
 
-#[cfg(target_os = "linux")]
+#[cfg(any(target_os = "linux", target_os = "freebsd"))]
 fn mmsghdr_for_packet(
     packet: &[u8],
     dest: &SocketAddr,
@@ -124,6 +124,70 @@ fn mmsghdr_for_packet(
     });
 }
 
+#[cfg(target_os = "freebsd")]
+fn single_sendmsg_retry(sock_fd: libc::c_int, msg: &libc::msghdr) -> io::Result<(usize, i64)> {
+    let mut retries = 0;
+
+    loop {
+        // use sendmsg as sendmmsg is implemented in libc, not a
+        // dedicated syscall so is of little benefit.
+        let n = unsafe { libc::sendmsg(sock_fd, msg, libc::MSG_DONTWAIT) };
+        if n >= 0 {
+            return Ok((n as usize, retries));
+        }
+        let error = io::Error::last_os_error();
+        if error.raw_os_error().is_none_or(|e| e != libc::ENOBUFS) {
+            // return immediately on any error other than ENOBUFS
+            return Err(error);
+        }
+        retries += 1;
+        if retries > 52 {
+            // give up after 52 retries which is roughly 500ms
+            return Err(error);
+        }
+        // given 1.25kb packet is 10k bits so transmission time
+        // at 1G is 0.01ms or 0.001ms at 10G, so 1ms delay should
+        // allow roughly 100 (1,000) tx descriptors to free up at
+        // 1G (10G) speeds.
+        // sleep for periods of 1.25ms, 2.5ms, 5ms and then 10ms
+        let shift = std::cmp::max(1, std::cmp::min(4, retries)) - 1;
+        let rqtp = libc::timespec {
+            tv_sec: 0,
+            tv_nsec: 1_250_000 << shift,
+        };
+        unsafe {
+            libc::clock_nanosleep(libc::CLOCK_MONOTONIC_FAST, 0, &rqtp, ptr::null_mut());
+        }
+    }
+}
+
+#[cfg(target_os = "freebsd")]
+fn sendmmsg_retry(sock: &UdpSocket, hdrs: &mut [mmsghdr]) -> Result<(), SendPktsError> {
+    let sock_fd = sock.as_raw_fd();
+    let mut total_sent = 0;
+    let mut erropt = None;
+
+    for hdr in hdrs.iter_mut() {
+        match single_sendmsg_retry(sock_fd, &hdr.msg_hdr) {
+            Ok((n, _retries)) => {
+                hdr.msg_len = n as isize;
+                total_sent += 1;
+            }
+            Err(err) => {
+                if erropt.is_none() {
+                    erropt = Some(err)
+                }
+            }
+        }
+    }
+
+    if let Some(err) = erropt {
+        return Err(SendPktsError::IoError(err, hdrs.len() - total_sent));
+    }
+
+    Ok(())
+}
+
 #[cfg(target_os = "linux")]
 fn sendmmsg_retry(sock: &UdpSocket, hdrs: &mut [mmsghdr]) -> Result<(), SendPktsError> {
     let sock_fd = sock.as_raw_fd();
@@ -157,10 +221,13 @@ fn sendmmsg_retry(sock: &UdpSocket, hdrs: &mut [mmsghdr]) -> Result<(), SendPkts
     }
 }
 
+#[cfg(target_os = "freebsd")]
+const MAX_IOV: usize = libc::IOV_MAX as usize;
+
 #[cfg(target_os = "linux")]
 const MAX_IOV: usize = libc::UIO_MAXIOV as usize;
 
-#[cfg(target_os = "linux")]
+#[cfg(any(target_os = "linux", target_os = "freebsd"))]
 fn batch_send_max_iov<'a, S, T: 'a + ?Sized>(
     sock: &UdpSocket,
     packets: impl IntoIterator<Item = (&'a T, S), IntoIter: ExactSizeIterator>,
@@ -204,7 +271,7 @@ where
 
 // Need &'a to ensure that raw packet pointers obtained in mmsghdr_for_packet
 // stay valid.
-#[cfg(target_os = "linux")]
+#[cfg(any(target_os = "linux", target_os = "freebsd"))]
 pub fn batch_send<'a, S, T: 'a + ?Sized>(
     sock: &UdpSocket,
     packets: impl IntoIterator<Item = (&'a T, S), IntoIter: ExactSizeIterator>,
