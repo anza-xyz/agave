@@ -3148,12 +3148,9 @@ impl Blockstore {
         true
     }
 
-    /// Checks if the chained merkle root == merkle root
-    ///
-    /// Returns true if no conflict, or if chained merkle roots are not enabled
+    /// Returns true if `chained_merkle_root` chains correctly to `merkle_root`.
     fn check_chaining(&self, merkle_root: Option<Hash>, chained_merkle_root: Option<Hash>) -> bool {
-        chained_merkle_root.is_none()  // Chained merkle roots have not been enabled yet
-            || chained_merkle_root == merkle_root
+        chained_merkle_root == merkle_root
     }
 
     fn should_insert_data_shred(
