@@ -115,6 +115,9 @@ pub fn get_mock_program_runtime_environment() -> ProgramRuntimeEnvironment {
 
 pub const MAX_LOADED_ENTRY_COUNT: usize = 512;
 
+/// A percentage, expected to be in the range `0..=100`.
+pub type Percent = u8;
+
 /// The given percentage of [`MAX_LOADED_ENTRY_COUNT`], as an entry count.
 /// Equivalent to the former `percentage` crate's
 /// `Percentage::from(percent).apply_to(MAX_LOADED_ENTRY_COUNT)`,
@@ -817,7 +820,7 @@ impl<FG: ForkGraph> ProgramCache<FG> {
     }
 
     /// Unloads programs which were used infrequently
-    pub fn sort_and_unload(&mut self, shrink_to_percent: u8) {
+    pub fn sort_and_unload(&mut self, shrink_to_percent: Percent) {
         let mut sorted_candidates = self.get_flattened_entries();
         sorted_candidates.sort_by_cached_key(|(_id, _last_modification_slot, program)| {
             program.stats.uses.load(Ordering::Relaxed)
@@ -836,7 +839,7 @@ impl<FG: ForkGraph> ProgramCache<FG> {
     ///
     /// The eviction is performed enough number of times to reduce the cache usage to the given
     /// percentage.
-    pub fn evict_using_random_selection(&mut self, shrink_to_percent: u8, now: Slot) {
+    pub fn evict_using_random_selection(&mut self, shrink_to_percent: Percent, now: Slot) {
         let mut candidates = self.get_flattened_entries();
         let mut rng = rng();
         self.stats

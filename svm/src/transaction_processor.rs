@@ -41,7 +41,7 @@ use {
         },
         invoke_context::{EnvironmentConfig, InvokeContext},
         loaded_programs::{
-            EpochBoundaryPreparation, ForkGraph, ProgramCache, ProgramCacheForTxBatch,
+            EpochBoundaryPreparation, ForkGraph, Percent, ProgramCache, ProgramCacheForTxBatch,
             ProgramCacheMatchCriteria, ProgramRuntimeEnvironment, ProgramRuntimeEnvironments,
             ProgramToLoad,
         },
@@ -663,7 +663,7 @@ impl<FG: ForkGraph> TransactionBatchProcessor<FG> {
         // occurrences of cooperative loading.
         if program_cache_for_tx_batch.loaded_missing || program_cache_for_tx_batch.merged_modified {
             // NOTE: this is a percentage; do not set above 100.
-            const SHRINK_LOADED_PROGRAMS_TO_PERCENTAGE: u8 = 90;
+            const SHRINK_LOADED_PROGRAMS_TO_PERCENTAGE: Percent = 90;
             self.global_program_cache
                 .write()
                 .unwrap()
