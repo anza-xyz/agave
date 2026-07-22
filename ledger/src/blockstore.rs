@@ -905,6 +905,20 @@ impl Blockstore {
             .transpose()
     }
 
+    /// Returns the [`SlotMetaRepair`] of the specified slot using a reusable pinnable slice.
+    pub fn meta_repair_into<'db>(
+        &'db self,
+        slot: Slot,
+        pinnable_slice: &mut DBPinnableSlice<'db>,
+    ) -> Result<Option<SlotMetaRepair>> {
+        if !self.meta_cf.get_slice_into(slot, pinnable_slice)? {
+            return Ok(None);
+        }
+        let slot_meta = wincode::deserialize(pinnable_slice.as_ref());
+        pinnable_slice.reset();
+        Ok(Some(slot_meta?))
+    }
+
     /// Returns the SlotMeta of the specified slot from the specified location
     fn meta_from_location(&self, slot: Slot, location: BlockLocation) -> Result<Option<SlotMeta>> {
         match location {

@@ -15,7 +15,7 @@ use {
     solana_hash::Hash,
     solana_ledger::{
         ancestor_iterator::AncestorIterator, blockstore::Blockstore,
-        blockstore_meta::SlotMetaRepair,
+        blockstore_db::DBPinnableSlice, blockstore_meta::SlotMetaRepair,
     },
     solana_measure::measure::Measure,
     solana_pubkey::Pubkey,
@@ -217,9 +217,10 @@ impl RepairWeight {
     }
 
     #[allow(clippy::too_many_arguments)]
-    pub fn get_best_weighted_repairs(
+    pub fn get_best_weighted_repairs<'db>(
         &mut self,
-        blockstore: &Blockstore,
+        blockstore: &'db Blockstore,
+        pinnable_slice: &mut DBPinnableSlice<'db>,
         epoch_stakes: &HashMap<Epoch, VersionedEpochStakes>,
         epoch_schedule: &EpochSchedule,
         max_new_orphans: usize,
@@ -255,6 +256,7 @@ impl RepairWeight {
         // Find the best incomplete slots in rooted subtree
         self.get_best_shreds(
             blockstore,
+            pinnable_slice,
             &mut slot_meta_cache,
             &mut best_shreds_repairs,
             max_new_shreds,
@@ -278,6 +280,7 @@ impl RepairWeight {
         let pre_num_slots = processed_slots.len();
         let unknown_last_index_repairs = self.get_best_unknown_last_index(
             blockstore,
+            pinnable_slice,
             &mut slot_meta_cache,
             &mut processed_slots,
             max_unknown_last_index_repairs,
@@ -292,6 +295,7 @@ impl RepairWeight {
         let pre_num_slots = processed_slots.len();
         let (closest_completion_repairs, total_slots_processed) = self.get_best_closest_completion(
             blockstore,
+            pinnable_slice,
             &mut slot_meta_cache,
             &mut processed_slots,
             max_closest_completion_repairs,
@@ -531,9 +535,10 @@ impl RepairWeight {
     }
 
     // Generate shred repairs for main subtree rooted at `self.root`
-    fn get_best_shreds(
+    fn get_best_shreds<'db>(
         &mut self,
-        blockstore: &Blockstore,
+        blockstore: &'db Blockstore,
+        pinnable_slice: &mut DBPinnableSlice<'db>,
         slot_meta_cache: &mut AHashMap<Slot, Option<SlotMetaRepair>>,
         repairs: &mut Vec<ShredRepairType>,
         max_new_shreds: usize,
@@ -544,6 +549,7 @@ impl RepairWeight {
         repair_weighted_traversal::get_best_repair_shreds(
             root_tree,
             blockstore,
+            pinnable_slice,
             slot_meta_cache,
             repairs,
             max_new_shreds,
@@ -628,9 +634,10 @@ impl RepairWeight {
 
     /// For all remaining trees (orphan and rooted), generate legacy
     /// unknown-last-index probes prioritized by known data shred count.
-    fn get_best_unknown_last_index(
+    fn get_best_unknown_last_index<'db>(
         &mut self,
-        blockstore: &Blockstore,
+        blockstore: &'db Blockstore,
+        pinnable_slice: &mut DBPinnableSlice<'db>,
         slot_meta_cache: &mut AHashMap<Slot, Option<SlotMetaRepair>>,
         processed_slots: &mut AHashSet<Slot>,
         max_new_repairs: usize,
@@ -644,6 +651,7 @@ impl RepairWeight {
             let new_repairs = get_unknown_last_index(
                 tree,
                 blockstore,
+                pinnable_slice,
                 slot_meta_cache,
                 processed_slots,
                 max_new_repairs - repairs.len(),
@@ -658,9 +666,10 @@ impl RepairWeight {
     /// index info but are missing shreds prioritized by how close to completion they are. These
     /// repairs are also prioritized by age of ancestors, so slots close to completion will first
     /// start by repairing broken ancestors.
-    fn get_best_closest_completion(
+    fn get_best_closest_completion<'db>(
         &mut self,
-        blockstore: &Blockstore,
+        blockstore: &'db Blockstore,
+        pinnable_slice: &mut DBPinnableSlice<'db>,
         slot_meta_cache: &mut AHashMap<Slot, Option<SlotMetaRepair>>,
         processed_slots: &mut AHashSet<Slot>,
         max_new_repairs: usize,
@@ -676,6 +685,7 @@ impl RepairWeight {
             let (new_repairs, new_processed_slots) = get_closest_completion(
                 tree,
                 blockstore,
+                pinnable_slice,
                 self.root,
                 slot_meta_cache,
                 processed_slots,

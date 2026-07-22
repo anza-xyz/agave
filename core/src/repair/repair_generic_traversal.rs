@@ -9,7 +9,9 @@ use {
     ahash::{AHashMap, AHashSet},
     solana_clock::Slot,
     solana_hash::Hash,
-    solana_ledger::{blockstore::Blockstore, blockstore_meta::SlotMetaRepair},
+    solana_ledger::{
+        blockstore::Blockstore, blockstore_db::DBPinnableSlice, blockstore_meta::SlotMetaRepair,
+    },
     std::collections::HashMap,
 };
 
@@ -49,9 +51,10 @@ impl Iterator for GenericTraversal<'_> {
 /// This preserves the legacy aggressive probing policy by bypassing
 /// `RepairEligibility`. Candidates are prioritized by the number of data shreds
 /// currently present in blockstore.
-pub fn get_unknown_last_index(
+pub fn get_unknown_last_index<'db>(
     tree: &HeaviestSubtreeForkChoice,
-    blockstore: &Blockstore,
+    blockstore: &'db Blockstore,
+    pinnable_slice: &mut DBPinnableSlice<'db>,
     slot_meta_cache: &mut AHashMap<Slot, Option<SlotMetaRepair>>,
     processed_slots: &mut AHashSet<Slot>,
     limit: usize,
@@ -65,7 +68,7 @@ pub fn get_unknown_last_index(
         }
         let slot_meta = slot_meta_cache
             .entry(slot)
-            .or_insert_with(|| blockstore.meta_repair(slot).unwrap());
+            .or_insert_with(|| blockstore.meta_repair_into(slot, pinnable_slice).unwrap());
         if let Some(slot_meta) = slot_meta
             && slot_meta.last_index.is_none()
         {
@@ -95,9 +98,10 @@ pub fn get_unknown_last_index(
 
 /// Path of broken parents from start_slot to earliest ancestor not yet seen
 /// Uses blockstore for fork information
-fn get_unrepaired_path(
+fn get_unrepaired_path<'db>(
     start_slot: Slot,
-    blockstore: &Blockstore,
+    blockstore: &'db Blockstore,
+    pinnable_slice: &mut DBPinnableSlice<'db>,
     slot_meta_cache: &mut AHashMap<Slot, Option<SlotMetaRepair>>,
     visited: &mut AHashSet<Slot>,
 ) -> Vec<Slot> {
@@ -106,7 +110,7 @@ fn get_unrepaired_path(
     while visited.insert(slot) {
         let slot_meta = slot_meta_cache
             .entry(slot)
-            .or_insert_with(|| blockstore.meta_repair(slot).unwrap());
+            .or_insert_with(|| blockstore.meta_repair_into(slot, pinnable_slice).unwrap());
         if let Some(slot_meta) = slot_meta
             && !slot_meta.is_full()
         {
@@ -123,9 +127,10 @@ fn get_unrepaired_path(
 /// Finds repairs for slots that are closest to completion (# of missing shreds).
 /// Additionally repairs their incomplete ancestor path until the first full or
 /// previously visited ancestor.
-pub fn get_closest_completion(
+pub fn get_closest_completion<'db>(
     tree: &HeaviestSubtreeForkChoice,
-    blockstore: &Blockstore,
+    blockstore: &'db Blockstore,
+    pinnable_slice: &mut DBPinnableSlice<'db>,
     root_slot: Slot,
     slot_meta_cache: &mut AHashMap<Slot, Option<SlotMetaRepair>>,
     processed_slots: &mut AHashSet<Slot>,
@@ -141,7 +146,7 @@ pub fn get_closest_completion(
         }
         let slot_meta = slot_meta_cache
             .entry(slot)
-            .or_insert_with(|| blockstore.meta_repair(slot).unwrap());
+            .or_insert_with(|| blockstore.meta_repair_into(slot, pinnable_slice).unwrap());
         if let Some(slot_meta) = slot_meta {
             if slot_meta.is_full() {
                 continue;
@@ -195,7 +200,13 @@ pub fn get_closest_completion(
             break;
         }
         // attempt to repair heaviest slots starting with their parents
-        let path = get_unrepaired_path(slot, blockstore, slot_meta_cache, &mut visited);
+        let path = get_unrepaired_path(
+            slot,
+            blockstore,
+            pinnable_slice,
+            slot_meta_cache,
+            &mut visited,
+        );
         for path_slot in path {
             if repairs.len() >= limit {
                 break;
@@ -232,6 +243,7 @@ pub mod test {
     #[test]
     fn test_get_unknown_last_index() {
         let (blockstore, heaviest_subtree_fork_choice) = setup_forks();
+        let mut pinnable_slice = blockstore.new_pinnable_slice();
         let last_shred = blockstore.meta(0).unwrap().unwrap().received;
         let mut slot_meta_cache = AHashMap::default();
         let mut processed_slots = AHashSet::default();
@@ -239,6 +251,7 @@ pub mod test {
         let repairs = get_unknown_last_index(
             &heaviest_subtree_fork_choice,
             &blockstore,
+            &mut pinnable_slice,
             &mut slot_meta_cache,
             &mut processed_slots,
             10,
@@ -257,6 +270,7 @@ pub mod test {
         let repairs = get_unknown_last_index(
             &heaviest_subtree_fork_choice,
             &blockstore,
+            &mut pinnable_slice,
             &mut slot_meta_cache,
             &mut processed_slots,
             10,
@@ -268,12 +282,14 @@ pub mod test {
     #[test]
     fn test_get_closest_completion() {
         let (blockstore, heaviest_subtree_fork_choice) = setup_forks();
+        let mut pinnable_slice = blockstore.new_pinnable_slice();
         let mut slot_meta_cache = AHashMap::default();
         let mut processed_slots = AHashSet::default();
         let mut outstanding_requests = HashMap::new();
         let (repairs, _) = get_closest_completion(
             &heaviest_subtree_fork_choice,
             &blockstore,
+            &mut pinnable_slice,
             0, // root_slot
             &mut slot_meta_cache,
             &mut processed_slots,
@@ -296,6 +312,7 @@ pub mod test {
             Hash::default(),
         );
         let heaviest_subtree_fork_choice = HeaviestSubtreeForkChoice::new_from_tree(forks);
+        let mut pinnable_slice = blockstore.new_pinnable_slice();
         let mut slot_meta_cache = AHashMap::default();
         let mut processed_slots = AHashSet::default();
         outstanding_requests = HashMap::new();
@@ -304,6 +321,7 @@ pub mod test {
         let (repairs, _) = get_closest_completion(
             &heaviest_subtree_fork_choice,
             &blockstore,
+            &mut pinnable_slice,
             0, // root_slot
             &mut slot_meta_cache,
             &mut processed_slots,
@@ -317,6 +335,7 @@ pub mod test {
         let (repairs, _) = get_closest_completion(
             &heaviest_subtree_fork_choice,
             &blockstore,
+            &mut pinnable_slice,
             0, // root_slot
             &mut slot_meta_cache,
             &mut processed_slots,
@@ -331,6 +350,7 @@ pub mod test {
         let (repairs, _) = get_closest_completion(
             &heaviest_subtree_fork_choice,
             &blockstore,
+            &mut pinnable_slice,
             0, // root_slot
             &mut slot_meta_cache,
             &mut processed_slots,
