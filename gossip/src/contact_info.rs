@@ -86,7 +86,7 @@ pub enum Error {
     feature = "frozen-abi",
     derive(StableAbi),
     frozen_abi(
-        abi_digest = "8uEsgsqpoykiQgP3Majk8kurCVNB3TESe9dejgDowub4",
+        abi_digest = "FRhFNHMZSWd9xbqGJxT5Nyb3C7EHT28kyqsTT7sChppp",
         abi_serializer = ["bincode", "wincode"],
         test_roundtrip = "eq_and_wire",
     )

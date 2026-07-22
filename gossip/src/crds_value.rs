@@ -27,7 +27,7 @@ use {
     feature = "frozen-abi",
     derive(AbiExample, StableAbi, StableAbiSample),
     frozen_abi(
-        abi_digest = "4ABukH5bS69APB3bu1hbMiGyeKPw21nzXAVzCRMtKPih",
+        abi_digest = "EDCM8VE79B6F6MWdsfK5NDKYt6SQRyW4SaV39ksfW6ws",
         abi_serializer = ["bincode", "wincode"],
         // `hash` is recomputed from [signature, data] on deserialize, so it can't
         // match an independently-sampled value; verify the wire round-trip only.

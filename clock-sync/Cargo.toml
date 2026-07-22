@@ -33,8 +33,8 @@ tokio-util = { workspace = true }
 [dev-dependencies]
 agave-logger = { workspace = true }
 solana-keypair = { workspace = true }
-solana-signer = { workspace = true }
 solana-net-utils = { workspace = true, features = ["dev-context-only-utils"] }
+solana-signer = { workspace = true }
 tokio = { workspace = true, features = ["full"] }
 
 [lints]

@@ -60,7 +60,7 @@ type GossipProtocolWincodeConfig =
     feature = "frozen-abi",
     derive(StableAbi, StableAbiSample),
     frozen_abi(
-        abi_digest = "D3Hqum16i1KHnejUD65odaQSbQnJtTQnTJSUoUrjzY2a",
+        abi_digest = "FHD2hS95stsbfcsT4tyLQ3q4KVdPgrj9THSDMfczuEkj",
         abi_serializer = ["bincode", "wincode"],
         // `Protocol` has no `PartialEq` and embeds `CrdsValue` (whose `hash` is
         // recomputed on deserialize), so verify the wire round-trip only.
