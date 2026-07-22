@@ -604,6 +604,17 @@ pub fn add_args<'a>(app: App<'a, 'a>, default_args: &'a DefaultArgs) -> App<'a, 
             ),
     )
     .arg(
+        Arg::with_name("wait_to_vote_slot")
+            .long("wait-to-vote-slot")
+            .value_name("SLOT")
+            .takes_value(true)
+            .validator(is_slot)
+            .help(
+                "Do not vote until reaching this slot. This can be used to avoid submitting \
+                 slashable votes after restoring a stale/missing Tower / VoteHistory",
+            ),
+    )
+    .arg(
         Arg::with_name("no_wait_for_vote_to_start_leader")
             .hidden(hidden_unless_forced())
             .long("no-wait-for-vote-to-start-leader")

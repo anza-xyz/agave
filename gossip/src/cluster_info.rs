@@ -946,7 +946,13 @@ impl ClusterInfo {
             // to push an old vote. This could be a slashable offense so better to panic here.
             let (_, vote, hash, _) = vote_parser::parse_vote_transaction(&vote).unwrap();
             panic!(
-                "Submitting old vote, switch: {}, vote slots: {:?}, tower: {:?}",
+                "Submitting old vote, switch: {}, vote slots: {:?}, tower: {:?}. The local \
+                 tower.bin was out of date or missing, and we are attempting to submit slashable \
+                 votes. Another possibility is that the node was not correctly started with wait \
+                 for supermajority during a cluster restart, and then later started with wait for \
+                 supermajority, causing the tower.bin to be pruned. To progress, either download \
+                 a newer snapshot or set --wait-to-vote-slot higher than the last vote present in \
+                 gossip",
                 hash.is_some(),
                 vote.slots(),
                 tower
