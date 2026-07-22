@@ -20,6 +20,7 @@ use {
     solana_gossip::cluster_info::ClusterInfo,
     solana_ledger::{
         blockstore::{Blockstore, BlockstoreInsertionMetrics, PossibleDuplicateShred},
+        blockstore_db::DBPinnableSlice,
         blockstore_meta::BlockLocation,
         shred::{self, ReedSolomonCache, Shred, filter::ShredRecoveryContext},
     },
@@ -206,11 +207,12 @@ fn run_check_duplicate(
 }
 
 #[allow(clippy::too_many_arguments)]
-fn run_insert<F>(
+fn run_insert<'db, F>(
     thread_pool: &ThreadPool,
     verified_receiver: &Receiver<Vec<(shred::Payload, /*is_repaired:*/ bool, BlockLocation)>>,
-    blockstore: &Blockstore,
+    blockstore: &'db Blockstore,
     shred_recovery_context: &mut ShredRecoveryContext,
+    pinnable_slice: &mut DBPinnableSlice<'db>,
     handle_duplicate: F,
     metrics: &mut BlockstoreInsertionMetrics,
     ws_metrics: &mut WindowServiceMetrics,
@@ -247,6 +249,7 @@ where
         shreds,
         false, // is_trusted
         shred_recovery_context,
+        pinnable_slice,
         &handle_duplicate,
         metrics,
     )?;
@@ -436,6 +439,7 @@ impl WindowService {
                     sharable_banks.root(),
                     shred_version,
                 );
+                let mut pinnable_slice = blockstore.new_pinnable_slice();
 
                 while !exit.load(Ordering::Relaxed) {
                     shred_recovery_context.maybe_update(sharable_banks.root());
@@ -445,6 +449,7 @@ impl WindowService {
                         &verified_receiver,
                         &blockstore,
                         &mut shred_recovery_context,
+                        &mut pinnable_slice,
                         handle_duplicate,
                         &mut metrics,
                         &mut ws_metrics,

@@ -24,6 +24,7 @@ use {
     solana_leader_schedule::NUM_CONSECUTIVE_LEADER_SLOTS,
     solana_ledger::{
         blockstore::Blockstore,
+        blockstore_db::DBPinnableSlice,
         leader_schedule_cache::LeaderScheduleCache,
         shred::{MAX_FEC_SETS_PER_SLOT, Shred},
     },
@@ -215,10 +216,11 @@ impl BroadcastStageType {
 }
 
 trait BroadcastRun {
-    fn run(
+    fn run<'db>(
         &mut self,
         keypair: &Keypair,
-        blockstore: &Blockstore,
+        blockstore: &'db Blockstore,
+        pinnable_slice: &mut DBPinnableSlice<'db>,
         receiver: &Receiver<WorkingBankEntryOrMarker>,
         socket_sender: &Sender<(Arc<Vec<Shred>>, Option<BroadcastShredBatchInfo>)>,
         blockstore_sender: &Sender<(Arc<Vec<Shred>>, Option<BroadcastShredBatchInfo>)>,
@@ -230,7 +232,12 @@ trait BroadcastRun {
         sock: BroadcastSocket,
         bank_forks: &RwLock<BankForks>,
     ) -> Result<()>;
-    fn record(&mut self, receiver: &RecordReceiver, blockstore: &Blockstore) -> Result<()>;
+    fn record<'db>(
+        &mut self,
+        receiver: &RecordReceiver,
+        blockstore: &'db Blockstore,
+        pinnable_slice: &mut DBPinnableSlice<'db>,
+    ) -> Result<()>;
 }
 
 // Implement a destructor for the BroadcastStage thread to signal it exited
@@ -265,10 +272,12 @@ impl BroadcastStage {
         blockstore_sender: &Sender<(Arc<Vec<Shred>>, Option<BroadcastShredBatchInfo>)>,
         mut broadcast_stage_run: impl BroadcastRun,
     ) -> BroadcastStageReturnType {
+        let mut pinnable_slice = blockstore.new_pinnable_slice();
         loop {
             let res = broadcast_stage_run.run(
                 &cluster_info.keypair(),
                 blockstore,
+                &mut pinnable_slice,
                 receiver,
                 socket_sender,
                 blockstore_sender,
@@ -412,11 +421,18 @@ impl BroadcastStage {
         // Until this changes, only a single inserter thread is necessary.
         thread_hdls.push({
             let blockstore = blockstore.clone();
-            let run_record = move || loop {
-                let res = broadcast_stage_run.record(&blockstore_receiver, &blockstore);
-                let res = Self::handle_error(res, "solana-broadcaster-record");
-                if let Some(res) = res {
-                    return res;
+            let run_record = move || {
+                let mut pinnable_slice = blockstore.new_pinnable_slice();
+                loop {
+                    let res = broadcast_stage_run.record(
+                        &blockstore_receiver,
+                        &blockstore,
+                        &mut pinnable_slice,
+                    );
+                    let res = Self::handle_error(res, "solana-broadcaster-record");
+                    if let Some(res) = res {
+                        return res;
+                    }
                 }
             };
             Builder::new()

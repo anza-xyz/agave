@@ -626,6 +626,7 @@ fn do_blockstore_process_command(ledger_path: &Path, matches: &ArgMatches<'_>) -
                 arg_matches,
                 AccessType::PrimaryForMaintenance,
             );
+            let mut pinnable_slice = target.new_pinnable_slice();
 
             for (slot, _meta) in source.slot_meta_iterator(starting_slot)? {
                 if slot > ending_slot {
@@ -633,7 +634,10 @@ fn do_blockstore_process_command(ledger_path: &Path, matches: &ArgMatches<'_>) -
                 }
                 let shreds = source.get_data_shreds_for_slot(slot, 0)?;
                 let shreds = shreds.into_iter().map(Cow::Owned);
-                if target.insert_cow_shreds(shreds, true).is_err() {
+                if target
+                    .insert_cow_shreds(shreds, true, &mut pinnable_slice)
+                    .is_err()
+                {
                     warn!("error inserting shreds for slot {slot}");
                 }
             }

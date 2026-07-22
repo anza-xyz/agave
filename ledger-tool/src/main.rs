@@ -2440,8 +2440,13 @@ fn main() {
                                 arg_matches,
                                 AccessType::PrimaryForMaintenance,
                             ));
+                            let mut pinnable_slice = backup_blockstore.new_pinnable_slice();
                             let _ = backup_blockstore
-                                .insert_cow_shreds(shreds.into_iter().map(Cow::Owned), true)
+                                .insert_cow_shreds(
+                                    shreds.into_iter().map(Cow::Owned),
+                                    true,
+                                    &mut pinnable_slice,
+                                )
                                 .expect("Blockstore operation must succeed");
 
                             // Purge modifies state so use rw_blockstore
@@ -2481,8 +2486,9 @@ fn main() {
                             .filter(Shred::is_data)
                             .map(Cow::Owned)
                             .collect();
+                        let mut pinnable_slice = rw_blockstore.new_pinnable_slice();
                         rw_blockstore
-                            .insert_cow_shreds(shreds, true)
+                            .insert_cow_shreds(shreds, true, &mut pinnable_slice)
                             .expect("Blockstore operation must succeed");
                     }
 

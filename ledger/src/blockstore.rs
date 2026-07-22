@@ -989,6 +989,7 @@ impl Blockstore {
         false
     }
 
+    #[cfg(test)]
     fn erasure_meta(&self, erasure_set: ErasureSetId) -> Result<Option<ErasureMeta>> {
         let (slot, fec_set_index) = erasure_set.store_key();
         self.erasure_meta_cf.get((slot, u64::from(fec_set_index)))
@@ -1634,13 +1635,14 @@ impl Blockstore {
 
     /// Attempts to insert shreds into blockstore and updates relevant metrics
     /// based on the results, split out by shred source (turbine vs. repair).
-    fn attempt_shred_insertion<'a>(
-        &self,
+    fn attempt_shred_insertion<'a, 'db>(
+        &'db self,
         shreds: impl IntoIterator<
             Item = (Cow<'a, Shred>, /*is_repaired:*/ bool, BlockLocation),
             IntoIter: ExactSizeIterator,
         >,
         is_trusted: bool,
+        pinnable_slice: &mut DBPinnableSlice<'db>,
         shred_insertion_tracker: &mut ShredInsertionTracker<'a>,
         metrics: &mut BlockstoreInsertionMetrics,
     ) {
@@ -1662,6 +1664,7 @@ impl Blockstore {
                         shred_insertion_tracker,
                         is_trusted,
                         shred_source,
+                        pinnable_slice,
                     ) {
                         Err(InsertDataShredError::Exists) => {
                             if is_repaired {
@@ -1699,6 +1702,7 @@ impl Blockstore {
                         shred_insertion_tracker,
                         is_trusted,
                         shred_source,
+                        pinnable_slice,
                     ) {
                         Err(InsertCodingShredError::Exists) => {
                             metrics.num_coding_shreds_exists += 1;
@@ -1799,9 +1803,10 @@ impl Blockstore {
     /// 3. Send for retransmit.
     ///
     /// Note: We only perform recovery for the Original shred column
-    fn handle_shred_recovery(
-        &self,
+    fn handle_shred_recovery<'db>(
+        &'db self,
         shred_recovery_context: &mut ShredRecoveryContext,
+        pinnable_slice: &mut DBPinnableSlice<'db>,
         shred_insertion_tracker: &mut ShredInsertionTracker,
         is_trusted: bool,
         metrics: &mut BlockstoreInsertionMetrics,
@@ -1824,6 +1829,7 @@ impl Blockstore {
                 shred_insertion_tracker,
                 is_trusted,
                 ShredSource::Recovered,
+                pinnable_slice,
             ) {
                 Err(InsertDataShredError::Exists) => &mut metrics.num_recovered_exists,
                 Err(InsertDataShredError::InvalidShred) => {
@@ -2194,13 +2200,14 @@ impl Blockstore {
     ///    integrity checks.
     ///  - `shred_recovery_context`: recovery-time dependencies and policy for
     ///    erasure recovery. `None` disables recovery.
+    ///  - `pinnable_slice`: reusable RocksDB pinnable slice.
     ///  - `metrics`: the metric for reporting detailed stats
     ///
     /// On success, the function returns an Ok result with a vector of
     /// `CompletedDataSetInfo` and a vector of its corresponding index in the
     /// input `shreds` vector.
-    fn do_insert_shreds<'a>(
-        &self,
+    fn do_insert_shreds<'a, 'db>(
+        &'db self,
         shreds: impl IntoIterator<
             Item = (Cow<'a, Shred>, /*is_repaired:*/ bool, BlockLocation),
             IntoIter: ExactSizeIterator,
@@ -2212,6 +2219,7 @@ impl Blockstore {
         // from another leader, we need to try erasure recovery and retransmit
         // recovered shreds.
         shred_recovery_context: Option<&mut ShredRecoveryContext>,
+        pinnable_slice: &mut DBPinnableSlice<'db>,
         metrics: &mut BlockstoreInsertionMetrics,
     ) -> Result<InsertResults> {
         let mut total_start = Measure::start("Total elapsed");
@@ -2227,6 +2235,7 @@ impl Blockstore {
             shreds,
             is_trusted,
             shred_recovery_context,
+            pinnable_slice,
             metrics,
         );
 
@@ -2238,8 +2247,8 @@ impl Blockstore {
     }
 
     /// Core shred insertion logic.
-    fn do_insert_shreds_locked<'a>(
-        &self,
+    fn do_insert_shreds_locked<'a, 'db>(
+        &'db self,
         _insert_shreds_lock: &MutexGuard<'_, ()>,
         shreds: impl IntoIterator<
             Item = (Cow<'a, Shred>, /*is_repaired:*/ bool, BlockLocation),
@@ -2247,16 +2256,24 @@ impl Blockstore {
         >,
         is_trusted: bool,
         shred_recovery_context: Option<&mut ShredRecoveryContext>,
+        pinnable_slice: &mut DBPinnableSlice<'db>,
         metrics: &mut BlockstoreInsertionMetrics,
     ) -> Result<InsertResults> {
         let shreds = shreds.into_iter();
         let mut shred_insertion_tracker =
             ShredInsertionTracker::new(shreds.len(), self.get_write_batch()?);
 
-        self.attempt_shred_insertion(shreds, is_trusted, &mut shred_insertion_tracker, metrics);
+        self.attempt_shred_insertion(
+            shreds,
+            is_trusted,
+            pinnable_slice,
+            &mut shred_insertion_tracker,
+            metrics,
+        );
         if let Some(shred_recovery_context) = shred_recovery_context {
             self.handle_shred_recovery(
                 shred_recovery_context,
+                pinnable_slice,
                 &mut shred_insertion_tracker,
                 is_trusted,
                 metrics,
@@ -2327,12 +2344,14 @@ impl Blockstore {
     where
         F: Fn(PossibleDuplicateShred),
     {
+        let mut pinnable_slice = self.new_pinnable_slice();
         self.insert_shreds_at_location_handle_duplicate(
             shreds
                 .into_iter()
                 .map(|(shred, is_repaired)| (shred, is_repaired, BlockLocation::Original)),
             is_trusted,
             shred_recovery_context,
+            &mut pinnable_slice,
             handle_duplicate,
             metrics,
         )
@@ -2343,14 +2362,16 @@ impl Blockstore {
     /// Additionally attempts to recover and retransmit recovered shreds (also identifying
     /// and handling duplicate shreds). Broadcast stage should instead call
     /// Blockstore::insert_shreds when inserting own shreds during leader slots.
-    pub fn insert_shreds_at_location_handle_duplicate<'a, F>(
-        &self,
+    /// The pinnable slice can be reused across calls.
+    pub fn insert_shreds_at_location_handle_duplicate<'a, 'db, F>(
+        &'db self,
         shreds: impl IntoIterator<
             Item = (Cow<'a, Shred>, /*is_repaired:*/ bool, BlockLocation),
             IntoIter: ExactSizeIterator,
         >,
         is_trusted: bool,
         shred_recovery_context: &mut ShredRecoveryContext,
+        pinnable_slice: &mut DBPinnableSlice<'db>,
         handle_duplicate: &F,
         metrics: &mut BlockstoreInsertionMetrics,
     ) -> Result<Vec<CompletedDataSetInfo>>
@@ -2360,7 +2381,13 @@ impl Blockstore {
         let InsertResults {
             completed_data_set_infos,
             duplicate_shreds,
-        } = self.do_insert_shreds(shreds, is_trusted, Some(shred_recovery_context), metrics)?;
+        } = self.do_insert_shreds(
+            shreds,
+            is_trusted,
+            Some(shred_recovery_context),
+            pinnable_slice,
+            metrics,
+        )?;
 
         for shred in duplicate_shreds {
             handle_duplicate(shred);
@@ -2428,12 +2455,13 @@ impl Blockstore {
 
     /// Helper to copy shreds from one location to another.
     /// Reads all data shreds from `from_location` and inserts them at `to_location`.
-    fn copy_shreds_locked(
-        &self,
+    fn copy_shreds_locked<'db>(
+        &'db self,
         lock: &std::sync::MutexGuard<'_, ()>,
         slot: Slot,
         from_location: BlockLocation,
         to_location: BlockLocation,
+        pinnable_slice: &mut DBPinnableSlice<'db>,
     ) -> Result<()> {
         let shreds = self.get_data_shreds_for_slot_from_location(
             slot,
@@ -2449,6 +2477,7 @@ impl Blockstore {
             shreds,
             true, // is_trusted
             None, // should_recover_shreds
+            pinnable_slice,
             &mut BlockstoreInsertionMetrics::default(),
         )?;
 
@@ -2481,6 +2510,7 @@ impl Blockstore {
 
         let (_switch_block_lock, switch_lock_time_us) = measure_us!(self.switch_block_lock.lock());
         let (lock, insert_lock_time_us) = measure_us!(self.insert_shreds_lock.lock().unwrap());
+        let mut pinnable_slice = self.new_pinnable_slice();
         metrics.lock_elapsed_us = switch_lock_time_us.saturating_add(insert_lock_time_us);
 
         // 1. Backup the original block if needed
@@ -2491,7 +2521,13 @@ impl Blockstore {
                 .get_double_merkle_root(slot, backup_location)?
                 .is_none()
             {
-                self.copy_shreds_locked(&lock, slot, BlockLocation::Original, backup_location)?;
+                self.copy_shreds_locked(
+                    &lock,
+                    slot,
+                    BlockLocation::Original,
+                    backup_location,
+                    &mut pinnable_slice,
+                )?;
             }
         }
         backup_measure.stop();
@@ -2518,7 +2554,13 @@ impl Blockstore {
             .expect("Alternate slot must have SlotMeta");
         debug_assert!(alt_meta.is_full(), "Alternate slot must be full");
 
-        self.copy_shreds_locked(&lock, slot, from_location, BlockLocation::Original)?;
+        self.copy_shreds_locked(
+            &lock,
+            slot,
+            from_location,
+            BlockLocation::Original,
+            &mut pinnable_slice,
+        )?;
         copy_measure.stop();
         metrics.copy_elapsed_us = copy_measure.as_us();
 
@@ -2538,10 +2580,11 @@ impl Blockstore {
 
     // Bypasses erasure recovery becuase it is called from broadcast stage
     // when inserting own shreds during leader slots. Stores all shreds in the original column.
-    pub fn insert_cow_shreds<'a>(
-        &self,
+    pub fn insert_cow_shreds<'a, 'db>(
+        &'db self,
         shreds: impl IntoIterator<Item = Cow<'a, Shred>, IntoIter: ExactSizeIterator>,
         is_trusted: bool,
+        pinnable_slice: &mut DBPinnableSlice<'db>,
     ) -> Result<Vec<CompletedDataSetInfo>> {
         let shreds = shreds
             .into_iter()
@@ -2550,6 +2593,7 @@ impl Blockstore {
             shreds,
             is_trusted,
             None, // Skip recovery for locally produced shreds.
+            pinnable_slice,
             &mut BlockstoreInsertionMetrics::default(),
         )?;
         Ok(insert_results.completed_data_set_infos)
@@ -2561,12 +2605,14 @@ impl Blockstore {
         shreds: impl IntoIterator<Item = Shred, IntoIter: ExactSizeIterator>,
         is_trusted: bool,
     ) -> Result<Vec<CompletedDataSetInfo>> {
+        let mut pinnable_slice = self.new_pinnable_slice();
         let shreds = shreds.into_iter().map(Cow::Owned);
-        self.insert_cow_shreds(shreds, is_trusted)
+        self.insert_cow_shreds(shreds, is_trusted, &mut pinnable_slice)
     }
 
     #[cfg(test)]
     fn insert_shred_return_duplicate(&self, shred: Shred) -> Vec<PossibleDuplicateShred> {
+        let mut pinnable_slice = self.new_pinnable_slice();
         let insert_results = self
             .do_insert_shreds(
                 [(
@@ -2576,6 +2622,7 @@ impl Blockstore {
                 )],
                 false,
                 None, // Skip recovery for this direct insertion path.
+                &mut pinnable_slice,
                 &mut BlockstoreInsertionMetrics::default(),
             )
             .unwrap();
@@ -2602,13 +2649,14 @@ impl Blockstore {
     /// - `shred_insertion_tracker`: collection of shred insertion tracking data.
     /// - `is_trusted`: if false, duplicate and integrity checks are applied.
     /// - `shred_source`: the source of the shred.
-    /// - `metrics`: insertion metrics to update.
-    fn check_insert_coding_shred<'a>(
-        &self,
+    /// - `pinnable_slice`: reusable RocksDB pinnable slice.
+    fn check_insert_coding_shred<'a, 'db>(
+        &'db self,
         shred: Cow<'a, Shred>,
         shred_insertion_tracker: &mut ShredInsertionTracker<'a>,
         is_trusted: bool,
         shred_source: ShredSource,
+        pinnable_slice: &mut DBPinnableSlice<'db>,
     ) -> std::result::Result<(), InsertCodingShredError> {
         let slot = shred.slot();
         let shred_index = u64::from(shred.index());
@@ -2629,6 +2677,7 @@ impl Blockstore {
             BlockLocation::Original,
             index_working_set,
             index_meta_time_us,
+            pinnable_slice,
         )?;
 
         let index_meta = &mut index_meta_working_set_entry.index;
@@ -2636,7 +2685,10 @@ impl Blockstore {
 
         if let HashMapEntry::Vacant(entry) =
             merkle_root_metas.entry((BlockLocation::Original, erasure_set))
-            && let Some(meta) = self.merkle_root_meta(erasure_set).unwrap()
+            && let Some(meta) = self
+                .merkle_root_meta_cf
+                .get_with_pinnable_slice(erasure_set.store_key(), pinnable_slice)
+                .unwrap()
         {
             entry.insert(WorkingEntry::Clean(meta));
         }
@@ -2673,7 +2725,9 @@ impl Blockstore {
         }
 
         let erasure_meta_entry = erasure_metas.entry(erasure_set).or_insert_with(|| {
-            self.erasure_meta(erasure_set)
+            let (slot, fec_set_index) = erasure_set.store_key();
+            self.erasure_meta_cf
+                .get_with_pinnable_slice((slot, u64::from(fec_set_index)), pinnable_slice)
                 .expect("Expect database get to succeed")
                 .map(WorkingEntry::Clean)
                 .unwrap_or_else(|| {
@@ -2820,13 +2874,15 @@ impl Blockstore {
     /// - `is_trusted`: if false, this function will check whether the
     ///   input shred is duplicate.
     /// - `shred_source`: the source of the shred.
-    fn check_insert_data_shred<'a>(
-        &self,
+    /// - `pinnable_slice`: reusable RocksDB pinnable slice.
+    fn check_insert_data_shred<'a, 'db>(
+        &'db self,
         shred: Cow<'a, Shred>,
         location: BlockLocation,
         shred_insertion_tracker: &mut ShredInsertionTracker<'a>,
         is_trusted: bool,
         shred_source: ShredSource,
+        pinnable_slice: &mut DBPinnableSlice<'db>,
     ) -> std::result::Result<(), InsertDataShredError> {
         let slot = shred.slot();
         let shred_index = u64::from(shred.index());
@@ -2849,21 +2905,39 @@ impl Blockstore {
             newly_completed_data_sets,
         } = shred_insertion_tracker;
 
-        let index_meta_working_set_entry =
-            self.get_index_meta_entry(slot, location, index_working_set, index_meta_time_us)?;
+        let index_meta_working_set_entry = self.get_index_meta_entry(
+            slot,
+            location,
+            index_working_set,
+            index_meta_time_us,
+            pinnable_slice,
+        )?;
         let index_meta = &mut index_meta_working_set_entry.index;
         let shred_parent_slot = shred
             .parent()
             .map_err(|_| InsertDataShredError::InvalidShred)?;
-        let slot_meta_entry =
-            self.get_slot_meta_entry(slot_meta_working_set, slot, location, shred_parent_slot)?;
+        let slot_meta_entry = self.get_slot_meta_entry(
+            slot_meta_working_set,
+            slot,
+            location,
+            shred_parent_slot,
+            pinnable_slice,
+        )?;
 
         let slot_meta = &mut slot_meta_entry.new_slot_meta.borrow_mut();
         let erasure_set = shred.erasure_set();
         if let HashMapEntry::Vacant(entry) = merkle_root_metas.entry((location, erasure_set))
-            && let Some(meta) = self
-                .merkle_root_meta_from_location(erasure_set, location)
-                .unwrap()
+            && let Some(meta) = match location {
+                BlockLocation::Original => self
+                    .merkle_root_meta_cf
+                    .get_with_pinnable_slice(erasure_set.store_key(), pinnable_slice),
+                BlockLocation::Alternate { block_id } => {
+                    let (slot, fec_set_index) = erasure_set.store_key();
+                    self.alt_merkle_root_meta_cf
+                        .get_with_pinnable_slice((slot, block_id, fec_set_index), pinnable_slice)
+                }
+            }
+            .unwrap()
         {
             entry.insert(WorkingEntry::Clean(meta));
         }
@@ -2965,7 +3039,12 @@ impl Blockstore {
         index_meta_working_set_entry.did_insert_occur = true;
         slot_meta_entry.did_insert_occur = true;
         if let BTreeMapEntry::Vacant(entry) = erasure_metas.entry(erasure_set)
-            && let Some(meta) = self.erasure_meta(erasure_set).unwrap()
+            && let Some(meta) = {
+                let (slot, fec_set_index) = erasure_set.store_key();
+                self.erasure_meta_cf
+                    .get_with_pinnable_slice((slot, u64::from(fec_set_index)), pinnable_slice)
+                    .unwrap()
+            }
         {
             entry.insert(WorkingEntry::Clean(meta));
         }
@@ -5918,18 +5997,26 @@ impl Blockstore {
     ///
     /// This function returns the matched `SlotMetaWorkingSetEntry`.  If such entry
     /// does not exist in the database, a new entry will be created.
-    fn get_slot_meta_entry<'a>(
-        &self,
+    fn get_slot_meta_entry<'a, 'db>(
+        &'db self,
         slot_meta_working_set: &'a mut HashMap<(BlockLocation, u64), SlotMetaWorkingSetEntry>,
         slot: Slot,
         location: BlockLocation,
         parent_slot: Slot,
+        pinnable_slice: &mut DBPinnableSlice<'db>,
     ) -> Result<&'a mut SlotMetaWorkingSetEntry> {
         // Check if we've already inserted the slot metadata for this shred's slot
         let entry = match slot_meta_working_set.entry((location, slot)) {
             HashMapEntry::Occupied(occupied_entry) => occupied_entry.into_mut(),
             HashMapEntry::Vacant(vacant_entry) => {
-                let meta = self.meta_from_location(slot, location)?;
+                let meta = match location {
+                    BlockLocation::Original => {
+                        self.meta_cf.get_with_pinnable_slice(slot, pinnable_slice)?
+                    }
+                    BlockLocation::Alternate { block_id } => self
+                        .alt_meta_cf
+                        .get_with_pinnable_slice((slot, block_id), pinnable_slice)?,
+                };
                 // Insert a new 2-tuple of the metadata (working copy, backup copy)
                 let slot_meta_entry = if let Some(mut meta) = meta {
                     let backup = Some(meta.clone());
@@ -5995,20 +6082,27 @@ impl Blockstore {
         Ok(insert_map.get(&slot).unwrap().clone())
     }
 
-    fn get_index_meta_entry<'a>(
-        &self,
+    fn get_index_meta_entry<'a, 'db>(
+        &'db self,
         slot: Slot,
         location: BlockLocation,
         index_working_set: &'a mut HashMap<(BlockLocation, u64), IndexMetaWorkingSetEntry>,
         index_meta_time_us: &mut u64,
+        pinnable_slice: &mut DBPinnableSlice<'db>,
     ) -> Result<&'a mut IndexMetaWorkingSetEntry> {
         let mut total_start = Measure::start("Total elapsed");
         let index_meta_entry = match index_working_set.entry((location, slot)) {
             HashMapEntry::Occupied(occupied_entry) => occupied_entry.into_mut(),
             HashMapEntry::Vacant(vacant_entry) => {
-                let index = self
-                    .get_index_from_location(slot, location)?
-                    .unwrap_or_else(|| Index::new(slot));
+                let index = match location {
+                    BlockLocation::Original => self
+                        .index_cf
+                        .get_with_pinnable_slice(slot, pinnable_slice)?,
+                    BlockLocation::Alternate { block_id } => self
+                        .alt_index_cf
+                        .get_with_pinnable_slice((slot, block_id), pinnable_slice)?,
+                }
+                .unwrap_or_else(|| Index::new(slot));
                 let index_entry = IndexMetaWorkingSetEntry {
                     index,
                     did_insert_occur: false,
