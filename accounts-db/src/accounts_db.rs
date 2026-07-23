@@ -621,7 +621,6 @@ impl IsZeroLamport for Account {
 pub type AtomicAccountsFileId = AtomicU32;
 pub type AccountsFileId = u32;
 
-type AccountSlots = HashMap<Pubkey, IntSet<Slot>>;
 type SlotOffsets = IntMap<Slot, IntSet<Offset>>;
 type PubkeysRemovedFromAccountsIndex = HashSet<Pubkey>;
 type ShrinkCandidates = IntSet<Slot>;
@@ -2464,15 +2463,10 @@ impl AccountsDb {
         if dead_slots.is_empty() {
             return;
         }
-        let purged_account_slots = Some(&mut AccountSlots::new());
         let mut clean_dead_slots = Measure::start("reclaims::clean_dead_slots");
 
         if clean_stored_dead_slots {
-            self.clean_stored_dead_slots(
-                dead_slots,
-                purged_account_slots,
-                pubkeys_removed_from_accounts_index,
-            );
+            self.clean_stored_dead_slots(dead_slots, pubkeys_removed_from_accounts_index);
         }
 
         clean_dead_slots.stop();
@@ -5466,13 +5460,11 @@ impl AccountsDb {
     }
 
     /// lookup each pubkey in 'purged_slot_pubkeys' and unref it in the accounts index
-    /// populate 'purged_stored_account_slots' by grouping 'purged_slot_pubkeys' by pubkey
     /// pubkeys_removed_from_accounts_index - These keys have already been removed from the accounts index
     ///    and should not be unref'd. If they exist in the accounts index, they are NEW.
     fn unref_accounts(
         &self,
         purged_slot_pubkeys: HashSet<(Slot, Pubkey)>,
-        purged_stored_account_slots: &mut AccountSlots,
         pubkeys_removed_from_accounts_index: &PubkeysRemovedFromAccountsIndex,
     ) {
         self.unref_pubkeys(
@@ -5480,12 +5472,6 @@ impl AccountsDb {
             purged_slot_pubkeys.len(),
             pubkeys_removed_from_accounts_index,
         );
-        for (slot, pubkey) in purged_slot_pubkeys {
-            purged_stored_account_slots
-                .entry(pubkey)
-                .or_default()
-                .insert(slot);
-        }
     }
 
     /// pubkeys_removed_from_accounts_index - These keys have already been removed from the accounts index
@@ -5493,7 +5479,6 @@ impl AccountsDb {
     fn clean_stored_dead_slots(
         &self,
         dead_slots: &IntSet<Slot>,
-        purged_account_slots: Option<&mut AccountSlots>,
         pubkeys_removed_from_accounts_index: &PubkeysRemovedFromAccountsIndex,
     ) {
         let mut measure = Measure::start("clean_stored_dead_slots-ms");
@@ -5541,13 +5526,7 @@ impl AccountsDb {
         //Unref the accounts from storage
         let mut measure_unref = Measure::start("unref_from_storage");
 
-        if let Some(purged_account_slots) = purged_account_slots {
-            self.unref_accounts(
-                purged_slot_pubkeys,
-                purged_account_slots,
-                pubkeys_removed_from_accounts_index,
-            );
-        }
+        self.unref_accounts(purged_slot_pubkeys, pubkeys_removed_from_accounts_index);
         measure_unref.stop();
         self.clean_accounts_stats
             .clean_unref_from_storage_us

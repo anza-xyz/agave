@@ -2822,7 +2822,7 @@ fn test_clean_stored_dead_slots_empty() {
     let accounts = AccountsDb::new_for_tests_with_config(Vec::new(), DEFAULT_ACCOUNTS_DB_CONFIG);
     let mut dead_slots = IntSet::default();
     dead_slots.insert(10);
-    accounts.clean_stored_dead_slots(&dead_slots, None, &HashSet::default());
+    accounts.clean_stored_dead_slots(&dead_slots, &HashSet::default());
 }
 
 #[test]
@@ -5954,16 +5954,7 @@ fn test_unref_pubkeys_removed_from_accounts_index() {
             UpsertReclaim::IgnoreReclaims,
         );
 
-        let mut purged_stored_account_slots = AccountSlots::default();
-        db.unref_accounts(
-            purged_slot_pubkeys,
-            &mut purged_stored_account_slots,
-            &pubkeys_removed_from_accounts_index,
-        );
-        assert_eq!(
-            vec![(pk1, vec![slot1].into_iter().collect::<IntSet<_>>())],
-            purged_stored_account_slots.into_iter().collect::<Vec<_>>()
-        );
+        db.unref_accounts(purged_slot_pubkeys, &pubkeys_removed_from_accounts_index);
         let expected = RefCount::from(already_removed);
         assert_eq!(db.accounts_index.ref_count_from_storage(&pk1), expected);
     }
@@ -5975,14 +5966,8 @@ fn test_unref_accounts() {
 
     {
         let db = AccountsDb::new_for_tests_with_config(Vec::new(), DEFAULT_ACCOUNTS_DB_CONFIG);
-        let mut purged_stored_account_slots = AccountSlots::default();
 
-        db.unref_accounts(
-            HashSet::default(),
-            &mut purged_stored_account_slots,
-            &pubkeys_removed_from_accounts_index,
-        );
-        assert!(purged_stored_account_slots.is_empty());
+        db.unref_accounts(HashSet::default(), &pubkeys_removed_from_accounts_index);
     }
 
     let slot1 = 1;
@@ -6004,21 +5989,11 @@ fn test_unref_accounts() {
             UpsertReclaim::IgnoreReclaims,
         );
 
-        let mut purged_stored_account_slots = AccountSlots::default();
-        db.unref_accounts(
-            purged_slot_pubkeys,
-            &mut purged_stored_account_slots,
-            &pubkeys_removed_from_accounts_index,
-        );
-        assert_eq!(
-            vec![(pk1, vec![slot1].into_iter().collect::<IntSet<_>>())],
-            purged_stored_account_slots.into_iter().collect::<Vec<_>>()
-        );
+        db.unref_accounts(purged_slot_pubkeys, &pubkeys_removed_from_accounts_index);
         assert_eq!(db.accounts_index.ref_count_from_storage(&pk1), 0);
     }
     {
         let db = AccountsDb::new_for_tests_with_config(Vec::new(), DEFAULT_ACCOUNTS_DB_CONFIG);
-        let mut purged_stored_account_slots = AccountSlots::default();
         let mut purged_slot_pubkeys = HashSet::default();
         let mut reclaims = ReclaimsSlotList::default();
         // pk1 and pk2 both in slot1 and slot2, so each has refcount of 2
@@ -6039,16 +6014,7 @@ fn test_unref_accounts() {
         purges.into_iter().for_each(|(slot, pk)| {
             purged_slot_pubkeys.insert((slot, pk));
         });
-        db.unref_accounts(
-            purged_slot_pubkeys,
-            &mut purged_stored_account_slots,
-            &pubkeys_removed_from_accounts_index,
-        );
-        for (pk, slots) in [(pk1, vec![slot1, slot2]), (pk2, vec![slot1])] {
-            let result = purged_stored_account_slots.remove(&pk).unwrap();
-            assert_eq!(result, slots.into_iter().collect::<IntSet<_>>());
-        }
-        assert!(purged_stored_account_slots.is_empty());
+        db.unref_accounts(purged_slot_pubkeys, &pubkeys_removed_from_accounts_index);
         assert_eq!(db.accounts_index.ref_count_from_storage(&pk1), 0);
         assert_eq!(db.accounts_index.ref_count_from_storage(&pk2), 1);
     }
@@ -6057,7 +6023,6 @@ fn test_unref_accounts() {
 #[test]
 fn test_many_unrefs() {
     let db = AccountsDb::new_for_tests_with_config(Vec::new(), DEFAULT_ACCOUNTS_DB_CONFIG);
-    let mut purged_stored_account_slots = AccountSlots::default();
     let mut reclaims = ReclaimsSlotList::default();
     let pk1 = Pubkey::from([1; 32]);
     // make sure we have > 1 batch. Bigger numbers cost more in test time here.
@@ -6082,11 +6047,7 @@ fn test_many_unrefs() {
         n as RefCount,
     );
     // unref all 'n' slots
-    db.unref_accounts(
-        purged_slot_pubkeys,
-        &mut purged_stored_account_slots,
-        &HashSet::default(),
-    );
+    db.unref_accounts(purged_slot_pubkeys, &HashSet::default());
     assert_eq!(db.accounts_index.ref_count_from_storage(&pk1), 0);
 }
 
