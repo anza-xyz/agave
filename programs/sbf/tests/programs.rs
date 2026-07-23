@@ -5369,31 +5369,25 @@ fn test_clone_account_data() {
 
 #[test]
 fn test_stack_heap_zeroed() {
-    agave_logger::setup();
-
-    let GenesisConfigInfo {
-        genesis_config,
-        mint_keypair,
-        ..
-    } = create_genesis_config(100_123_456_789);
-
-    let bank = Bank::new_for_tests(&genesis_config);
-
-    let (bank, bank_forks) = bank.wrap_with_bank_forks_for_tests();
-    let invoke_program_id = create_program(
-        &bank,
-        &bpf_loader_upgradeable::id(),
-        "solana_sbf_rust_invoke",
-    );
-    let mut bank_client = BankClient::new_shared(bank.clone());
-    let bank = bank_client
-        .advance_slot(1, &bank_forks, SlotLeader::default())
-        .unwrap();
-
+    let mint_keypair = Keypair::new();
     let account_keypair = Keypair::new();
-    let mint_pubkey = mint_keypair.pubkey();
+
+    let (payer, [invoke_program_id], feature_set, mut accounts, mut program_cache, sysvar_cache) =
+        program_sbf_txn_fixture([("solana_sbf_rust_invoke", bpf_loader_upgradeable::id())]);
+
+    accounts.extend([
+        (
+            mint_keypair.pubkey(),
+            Account::new(0, 0, &system_program::id()),
+        ),
+        (
+            account_keypair.pubkey(),
+            Account::new(0, 0, &system_program::id()),
+        ),
+        keyed_account_for_compute_budget_program(),
+    ]);
     let account_metas = vec![
-        AccountMeta::new(mint_pubkey, true),
+        AccountMeta::new(mint_keypair.pubkey(), true),
         AccountMeta::new(account_keypair.pubkey(), false),
         AccountMeta::new_readonly(invoke_program_id, false),
     ];
@@ -5407,27 +5401,41 @@ fn test_stack_heap_zeroed() {
         let mut instruction_data = vec![TEST_STACK_HEAP_ZEROED];
         instruction_data.extend_from_slice(&heap_len.to_le_bytes());
 
-        let instruction = Instruction::new_with_bytes(
-            invoke_program_id,
-            &instruction_data,
-            account_metas.clone(),
-        );
-
         let message = Message::new(
             &[
                 ComputeBudgetInstruction::set_compute_unit_limit(1_400_000),
                 ComputeBudgetInstruction::request_heap_frame(heap_len as u32),
-                instruction,
+                Instruction::new_with_bytes(
+                    invoke_program_id,
+                    &instruction_data,
+                    account_metas.clone(),
+                ),
             ],
-            Some(&mint_pubkey),
+            Some(&payer),
         );
-        let tx = Transaction::new(&[&mint_keypair], message.clone(), bank.last_blockhash());
-        let (result, _, logs, _) = process_transaction_and_record_inner(&bank, tx);
-        assert!(result.is_err(), "{result:?}");
+        let sanitized_message = SanitizedMessage::try_from_legacy_message(
+            message,
+            &ReservedAccountKeys::empty_key_set(),
+        )
+        .unwrap();
+
+        let context = TxnContext {
+            feature_set: feature_set.clone(),
+            accounts: accounts.clone(),
+            message: sanitized_message,
+            nonce_fields: None,
+            cu_avail: 1_400_000,
+        };
+
+        let effects = execute_txn(&context, &mut program_cache, &sysvar_cache);
+        assert!(effects.status.is_err(), "{:?}", effects.status);
         assert!(
-            logs.iter()
+            effects
+                .logs
+                .iter()
                 .any(|log| log.contains("Cross-program invocation call depth too deep")),
-            "{logs:?}"
+            "{:?}",
+            effects.logs,
         );
     }
 }
