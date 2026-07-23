@@ -4040,197 +4040,264 @@ fn test_program_sbf_inner_instruction_alignment_checks() {
     assert_eq!(effects.status, Ok(()));
 }
 
-#[test]
+#[test_case(false; "without_virtual_address_space_adjustments")]
+#[test_case(true; "with_virtual_address_space_adjustments")]
 #[cfg(feature = "sbf_rust")]
-fn test_cpi_account_ownership_writability() {
-    agave_logger::setup();
+fn test_cpi_account_ownership_writability(virtual_address_space_adjustments: bool) {
+    let mut configured_feature_set = FeatureSet::all_enabled();
+    if !virtual_address_space_adjustments {
+        configured_feature_set
+            .deactivate(&feature_set::syscall_parameter_address_restrictions::id());
+        configured_feature_set.deactivate(&feature_set::virtual_address_space_adjustments::id());
+        configured_feature_set.deactivate(&feature_set::account_data_direct_mapping::id());
+    }
 
-    for virtual_address_space_adjustments in [false, true] {
-        let GenesisConfigInfo {
-            genesis_config,
-            mint_keypair,
-            ..
-        } = create_genesis_config(100_123_456_789);
+    let (
+        _,
+        mint_keypair,
+        account_keypair,
+        [invoke_program_id, invoked_program_id, realloc_program_id],
+        feature_set,
+        mut accounts,
+        mut program_cache,
+        sysvar_cache,
+    ) = program_sbf_txn_fixture_with_feature_set(
+        [
+            ("solana_sbf_rust_invoke", bpf_loader_upgradeable::id()),
+            ("solana_sbf_rust_invoked", bpf_loader_upgradeable::id()),
+            ("solana_sbf_rust_realloc", bpf_loader_upgradeable::id()),
+        ],
+        configured_feature_set,
+    );
 
-        let mut bank = Bank::new_for_tests(&genesis_config);
-        let mut feature_set = FeatureSet::all_enabled();
-        if !virtual_address_space_adjustments {
-            feature_set.deactivate(&feature_set::syscall_parameter_address_restrictions::id());
-            feature_set.deactivate(&feature_set::virtual_address_space_adjustments::id());
-            feature_set.deactivate(&feature_set::account_data_direct_mapping::id());
-        }
+    let account_metas = vec![
+        AccountMeta::new(mint_keypair.pubkey(), true),
+        AccountMeta::new(account_keypair.pubkey(), false),
+        AccountMeta::new_readonly(invoked_program_id, false),
+        AccountMeta::new_readonly(invoke_program_id, false),
+        AccountMeta::new_readonly(realloc_program_id, false),
+    ];
 
-        bank.feature_set = Arc::new(feature_set);
-        let (bank, bank_forks) = bank.wrap_with_bank_forks_for_tests();
-        let invoke_program_id = create_program(
-            &bank,
-            &bpf_loader_upgradeable::id(),
-            "solana_sbf_rust_invoke",
-        );
-        let invoked_program_id = create_program(
-            &bank,
-            &bpf_loader_upgradeable::id(),
-            "solana_sbf_rust_invoked",
-        );
-        let realloc_program_id = create_program(
-            &bank,
-            &bpf_loader_upgradeable::id(),
-            "solana_sbf_rust_realloc",
-        );
-        let mut bank_client = BankClient::new_shared(bank.clone());
-        let bank = bank_client
-            .advance_slot(1, &bank_forks, SlotLeader::default())
-            .unwrap();
-
-        let account_keypair = Keypair::new();
-
-        let mint_pubkey = mint_keypair.pubkey();
-        let account_metas = vec![
-            AccountMeta::new(mint_pubkey, true),
-            AccountMeta::new(account_keypair.pubkey(), false),
-            AccountMeta::new_readonly(invoked_program_id, false),
-            AccountMeta::new_readonly(invoke_program_id, false),
-            AccountMeta::new_readonly(realloc_program_id, false),
-        ];
-
-        for (account_size, byte_index) in [
-            (0, 0),                                   // first realloc byte
-            (0, MAX_PERMITTED_DATA_INCREASE - 1),     // last realloc byte
-            (2, 0),                                   // first data byte
-            (2, 1),                                   // last data byte
-            (2, 3),                                   // first realloc byte
-            (2, 2 + MAX_PERMITTED_DATA_INCREASE - 1), // last realloc byte
+    for (account_size, byte_index) in [
+        (0, 0),                                   // first realloc byte
+        (0, MAX_PERMITTED_DATA_INCREASE - 1),     // last realloc byte
+        (2, 0),                                   // first data byte
+        (2, 1),                                   // last data byte
+        (2, 3),                                   // first realloc byte
+        (2, 2 + MAX_PERMITTED_DATA_INCREASE - 1), // last realloc byte
+    ] {
+        for instruction_id in [
+            TEST_FORBID_WRITE_AFTER_OWNERSHIP_CHANGE_IN_CALLEE,
+            TEST_FORBID_WRITE_AFTER_OWNERSHIP_CHANGE_IN_CALLER,
         ] {
-            for instruction_id in [
-                TEST_FORBID_WRITE_AFTER_OWNERSHIP_CHANGE_IN_CALLEE,
-                TEST_FORBID_WRITE_AFTER_OWNERSHIP_CHANGE_IN_CALLER,
-            ] {
-                bank.register_unique_recent_blockhash_for_test();
-                let account = AccountSharedData::new(42, account_size, &invoke_program_id);
-                bank.store_account(&account_keypair.pubkey(), &account);
-                let mut instruction_data = vec![instruction_id];
-                instruction_data.extend_from_slice(byte_index.to_le_bytes().as_ref());
+            accounts
+                .iter_mut()
+                .find(|(pubkey, _)| pubkey == &account_keypair.pubkey())
+                .unwrap()
+                .1 = Account::new(42, account_size, &invoke_program_id);
 
-                let instruction = Instruction::new_with_bytes(
+            let mut instruction_data = vec![instruction_id];
+            instruction_data.extend_from_slice(byte_index.to_le_bytes().as_ref());
+
+            let message = Message::new(
+                &[Instruction::new_with_bytes(
                     invoke_program_id,
                     &instruction_data,
                     account_metas.clone(),
+                )],
+                Some(&mint_keypair.pubkey()),
+            );
+            let sanitized_message = SanitizedMessage::try_from_legacy_message(
+                message,
+                &ReservedAccountKeys::empty_key_set(),
+            )
+            .unwrap();
+
+            let context = TxnContext::new_with_default_budget(
+                feature_set.clone(),
+                accounts.clone(),
+                sanitized_message,
+                None,
+            );
+
+            let effects = execute_txn(&context, &mut program_cache, &sysvar_cache);
+            if (byte_index as usize) < account_size || virtual_address_space_adjustments {
+                assert_eq!(
+                    effects.status,
+                    Err(TransactionError::InstructionError(
+                        0,
+                        InstructionError::ExternalAccountDataModified,
+                    )),
                 );
-
-                let result = bank_client.send_and_confirm_instruction(&mint_keypair, instruction);
-
-                if (byte_index as usize) < account_size || virtual_address_space_adjustments {
-                    assert_eq!(
-                        result.unwrap_err().unwrap(),
-                        TransactionError::InstructionError(
-                            0,
-                            InstructionError::ExternalAccountDataModified,
-                        )
-                    );
-                } else {
-                    // without virtual_address_space_adjustments, changes to the realloc padding
-                    // outside the account length are ignored
-                    assert!(result.is_ok(), "{result:?}");
-                }
+            } else {
+                // without virtual_address_space_adjustments, changes to the realloc padding
+                // outside the account length are ignored
+                assert_eq!(effects.status, Ok(()), "{:?}", effects.logs);
             }
         }
-        // Test that the CPI code that updates `ref_to_len_in_vm` fails if we
-        // make it write to an invalid location. This is the first variant which
-        // correctly triggers ExternalAccountDataModified when virtual_address_space_adjustments is
-        // disabled. When virtual_address_space_adjustments is enabled this tests fails early
-        // because we move the account data pointer.
-        // TEST_FORBID_LEN_UPDATE_AFTER_OWNERSHIP_CHANGE is able to make more
-        // progress when virtual_address_space_adjustments is on.
-        let account = AccountSharedData::new(42, 0, &invoke_program_id);
-        bank.store_account(&account_keypair.pubkey(), &account);
-        let instruction_data = vec![
-            TEST_FORBID_LEN_UPDATE_AFTER_OWNERSHIP_CHANGE_MOVING_DATA_POINTER,
-            42,
-            42,
-            42,
-        ];
-        let instruction = Instruction::new_with_bytes(
+    }
+    // Test that the CPI code that updates `ref_to_len_in_vm` fails if we
+    // make it write to an invalid location. This is the first variant which
+    // correctly triggers ExternalAccountDataModified when virtual_address_space_adjustments is
+    // disabled. When virtual_address_space_adjustments is enabled this tests fails early
+    // because we move the account data pointer.
+    // TEST_FORBID_LEN_UPDATE_AFTER_OWNERSHIP_CHANGE is able to make more
+    // progress when virtual_address_space_adjustments is on.
+    accounts
+        .iter_mut()
+        .find(|(pubkey, _)| pubkey == &account_keypair.pubkey())
+        .unwrap()
+        .1 = Account::new(42, 0, &invoke_program_id);
+    let instruction_data = vec![
+        TEST_FORBID_LEN_UPDATE_AFTER_OWNERSHIP_CHANGE_MOVING_DATA_POINTER,
+        42,
+        42,
+        42,
+    ];
+
+    let message = Message::new(
+        &[Instruction::new_with_bytes(
             invoke_program_id,
             &instruction_data,
             account_metas.clone(),
-        );
-        let result = bank_client.send_and_confirm_instruction(&mint_keypair, instruction);
-        assert_eq!(
-            result.unwrap_err().unwrap(),
-            if virtual_address_space_adjustments {
-                // We move the data pointer, virtual_address_space_adjustments doesn't allow it
-                // anymore so it errors out earlier. See
-                // test_cpi_invalid_account_info_pointers.
-                TransactionError::InstructionError(0, InstructionError::ProgramFailedToComplete)
-            } else {
-                // We managed to make CPI write into the account data, but the
-                // usual checks still apply and we get an error.
-                TransactionError::InstructionError(0, InstructionError::ExternalAccountDataModified)
-            }
-        );
+        )],
+        Some(&mint_keypair.pubkey()),
+    );
+    let sanitized_message =
+        SanitizedMessage::try_from_legacy_message(message, &ReservedAccountKeys::empty_key_set())
+            .unwrap();
 
-        // We're going to try and make CPI write ref_to_len_in_vm into a 2nd
-        // account, so we add an extra one here.
-        let account2_keypair = Keypair::new();
-        let mut account_metas = account_metas.clone();
-        account_metas.push(AccountMeta::new(account2_keypair.pubkey(), false));
+    let context = TxnContext::new_with_default_budget(
+        feature_set.clone(),
+        accounts.clone(),
+        sanitized_message,
+        None,
+    );
 
-        for target_account in [1, account_metas.len() as u8 - 1] {
-            // Similar to the test above where we try to make CPI write into account
-            // data. This variant is for when virtual_address_space_adjustments is enabled.
-            let account = AccountSharedData::new(42, 0, &invoke_program_id);
-            bank.store_account(&account_keypair.pubkey(), &account);
-            let account = AccountSharedData::new(42, 0, &invoke_program_id);
-            bank.store_account(&account2_keypair.pubkey(), &account);
-            let instruction_data = vec![
-                TEST_FORBID_LEN_UPDATE_AFTER_OWNERSHIP_CHANGE,
-                target_account,
-                42,
-                42,
-            ];
-            let instruction = Instruction::new_with_bytes(
+    let effects = execute_txn(&context, &mut program_cache, &sysvar_cache);
+    assert_eq!(
+        effects.status,
+        Err(if virtual_address_space_adjustments {
+            // We move the data pointer, virtual_address_space_adjustments doesn't allow it
+            // anymore so it errors out earlier. See
+            // test_cpi_invalid_account_info_pointers.
+            TransactionError::InstructionError(0, InstructionError::ProgramFailedToComplete)
+        } else {
+            // We managed to make CPI write into the account data, but the
+            // usual checks still apply and we get an error.
+            TransactionError::InstructionError(0, InstructionError::ExternalAccountDataModified)
+        }),
+    );
+
+    // We're going to try and make CPI write ref_to_len_in_vm into a 2nd
+    // account, so we add an extra one here.
+    let account2_keypair = Keypair::new();
+    let account2_pubkey = account2_keypair.pubkey();
+    accounts.push((account2_pubkey, Account::new(42, 0, &invoke_program_id)));
+    let mut account_metas = account_metas.clone();
+    account_metas.push(AccountMeta::new(account2_pubkey, false));
+
+    for target_account in [1, (account_metas.len() as u8).checked_sub(1).unwrap()] {
+        // Similar to the test above where we try to make CPI write into account
+        // data. This variant is for when virtual_address_space_adjustments is enabled.
+        accounts
+            .iter_mut()
+            .find(|(pubkey, _)| pubkey == &account_keypair.pubkey())
+            .unwrap()
+            .1 = Account::new(42, 0, &invoke_program_id);
+        accounts
+            .iter_mut()
+            .find(|(pubkey, _)| pubkey == &account2_pubkey)
+            .unwrap()
+            .1 = Account::new(42, 0, &invoke_program_id);
+
+        let instruction_data = vec![
+            TEST_FORBID_LEN_UPDATE_AFTER_OWNERSHIP_CHANGE,
+            target_account,
+            42,
+            42,
+        ];
+
+        let message = Message::new(
+            &[Instruction::new_with_bytes(
                 invoke_program_id,
                 &instruction_data,
                 account_metas.clone(),
-            );
-            let message = Message::new(&[instruction], Some(&mint_pubkey));
-            let tx = Transaction::new(&[&mint_keypair], message.clone(), bank.last_blockhash());
-            let (result, _, logs, _) = process_transaction_and_record_inner(&bank, tx);
-            if virtual_address_space_adjustments {
-                assert_eq!(
-                    result.unwrap_err(),
-                    TransactionError::InstructionError(
-                        0,
-                        InstructionError::ProgramFailedToComplete
-                    )
-                );
-                // We haven't moved the data pointer, but ref_to_len_vm _is_ in
-                // the account data vm range and that's not allowed either.
-                assert!(
-                    logs.iter().any(|log| log.contains("Invalid pointer")),
-                    "{logs:?}"
-                );
-            } else {
-                // we expect this to succeed as after updating `ref_to_len_in_vm`,
-                // CPI will sync the actual account data between the callee and the
-                // caller, _always_ writing over the location pointed by
-                // `ref_to_len_in_vm`. To verify this, we check that the account
-                // data is in fact all zeroes like it is in the callee.
-                result.unwrap();
-                let account = bank.get_account(&account_keypair.pubkey()).unwrap();
-                assert_eq!(account.data(), vec![0; 40]);
-            }
-        }
+            )],
+            Some(&mint_keypair.pubkey()),
+        );
+        let sanitized_message = SanitizedMessage::try_from_legacy_message(
+            message,
+            &ReservedAccountKeys::empty_key_set(),
+        )
+        .unwrap();
 
-        // Test that the caller can write to an account which it received from the callee
-        let account = AccountSharedData::new(42, 0, &invoked_program_id);
-        bank.store_account(&account_keypair.pubkey(), &account);
-        let instruction_data = vec![TEST_ALLOW_WRITE_AFTER_OWNERSHIP_CHANGE_TO_CALLER, 1, 42, 42];
-        let instruction =
-            Instruction::new_with_bytes(invoke_program_id, &instruction_data, account_metas);
-        let result = bank_client.send_and_confirm_instruction(&mint_keypair, instruction);
-        result.unwrap();
+        let context = TxnContext::new_with_default_budget(
+            feature_set.clone(),
+            accounts.clone(),
+            sanitized_message,
+            None,
+        );
+
+        let effects = execute_txn(&context, &mut program_cache, &sysvar_cache);
+        if virtual_address_space_adjustments {
+            assert_eq!(
+                effects.status,
+                Err(TransactionError::InstructionError(
+                    0,
+                    InstructionError::ProgramFailedToComplete
+                )),
+            );
+            // We haven't moved the data pointer, but ref_to_len_vm _is_ in
+            // the account data vm range and that's not allowed either.
+            assert!(
+                effects
+                    .logs
+                    .iter()
+                    .any(|log| log.contains("Invalid pointer")),
+                "{:?}",
+                effects.logs,
+            );
+        } else {
+            // we expect this to succeed as after updating `ref_to_len_in_vm`,
+            // CPI will sync the actual account data between the callee and the
+            // caller, _always_ writing over the location pointed by
+            // `ref_to_len_in_vm`. To verify this, we check that the account
+            // data is in fact all zeroes like it is in the callee.
+            assert_eq!(effects.status, Ok(()), "{:?}", effects.logs);
+            assert_eq!(
+                effects.get_account(&account_keypair.pubkey()).unwrap().data,
+                vec![0; 40],
+            );
+        }
     }
+
+    // Test that the caller can write to an account which it received from the callee
+    accounts
+        .iter_mut()
+        .find(|(pubkey, _)| pubkey == &account_keypair.pubkey())
+        .unwrap()
+        .1 = Account::new(42, 0, &invoked_program_id);
+
+    let instruction_data = vec![TEST_ALLOW_WRITE_AFTER_OWNERSHIP_CHANGE_TO_CALLER, 1, 42, 42];
+
+    let message = Message::new(
+        &[Instruction::new_with_bytes(
+            invoke_program_id,
+            &instruction_data,
+            account_metas,
+        )],
+        Some(&mint_keypair.pubkey()),
+    );
+    let sanitized_message =
+        SanitizedMessage::try_from_legacy_message(message, &ReservedAccountKeys::empty_key_set())
+            .unwrap();
+
+    let context =
+        TxnContext::new_with_default_budget(feature_set, accounts, sanitized_message, None);
+
+    let effects = execute_txn(&context, &mut program_cache, &sysvar_cache);
+    assert_eq!(effects.status, Ok(()), "{:?}", effects.logs);
 }
 
 #[test]
