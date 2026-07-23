@@ -353,6 +353,60 @@ pub struct TowerBFTStructures {
     pub epoch_slots_frozen_slots: EpochSlotsFrozenSlots,
 }
 
+/// State for batched vote submission. Tracks how many votable banks have been
+/// recorded since the last vote tx was pushed, so we can skip pushes until we
+/// hit the batch size.
+///
+/// The local `Tower` already accumulates lockouts on every votable bank;
+/// skipping `push_vote` just delays when those lockouts get serialized into a
+/// vote tx. The next push naturally carries all accumulated votes.
+///
+/// When `adaptive` is true, `batch_n` is recomputed each epoch boundary from
+/// the validator's current active stake using `optimal_batch_n_for_stake`.
+#[derive(Debug, Default)]
+pub(crate) struct VoteBatchState {
+    /// Current batch size (1 = disabled, status quo).
+    pub batch_n: u8,
+    /// Number of votable banks recorded since last push.
+    pub counter: u8,
+    /// When true, batch_n is recomputed from current stake each epoch.
+    pub adaptive: bool,
+    /// Last epoch we recomputed batch_n in adaptive mode.
+    pub last_recomputed_epoch: u64,
+}
+
+impl VoteBatchState {
+    pub(crate) fn new(batch_n: u8, adaptive: bool) -> Self {
+        // Clamp to MAX_LOCKOUT_HISTORY (31). Higher would silently drop oldest
+        // votes from the tower before they reach the vote program.
+        Self {
+            batch_n: batch_n.clamp(1, 31),
+            counter: 0,
+            adaptive,
+            last_recomputed_epoch: u64::MAX,
+        }
+    }
+}
+
+/// Sweet-spot lookup: optimal batch size for a given active stake (in SOL).
+///
+/// Derived empirically from on-chain credit retention vs fee-savings tradeoff
+/// at each batch size (see ../../docs/vote-batching-sweetspot.md). At low
+/// stake, fee savings dwarf credit loss → push N to the tower max. As stake
+/// grows, credit loss starts to dominate → downshift toward N=2 (lossless).
+pub(crate) fn optimal_batch_n_for_stake(stake_sol: u64) -> u8 {
+    match stake_sol {
+        0..=500 => 31,
+        501..=1_500 => 15,
+        1_501..=3_000 => 10,
+        3_001..=7_500 => 7,
+        7_501..=15_000 => 5,
+        15_001..=25_000 => 4,
+        25_001..=50_000 => 3,
+        _ => 2,
+    }
+}
+
 struct PartitionInfo {
     partition_start_time: Option<Instant>,
 }
@@ -426,6 +480,12 @@ pub struct ReplayStageConfig {
     // Stops voting until this slot has been reached. Should be used to avoid
     // duplicate voting which can lead to slashing.
     pub wait_to_vote_slot: Option<Slot>,
+    /// Batch this many votable banks into a single TowerSync transaction.
+    /// 1 = status quo (one vote tx per bank). 2 = safe default (100% credit
+    /// retention via 2-slot grace period, 50% fee savings). Higher trades
+    /// timely-vote-credits for fee savings. Forced flush on fork switches,
+    /// root advances, and impending leader slots regardless of this setting.
+    pub vote_batch_n: u8,
     pub replay_forks_threads: NonZeroUsize,
     pub replay_transactions_threads: NonZeroUsize,
     pub blockstore: Arc<Blockstore>,
@@ -745,6 +805,7 @@ impl ReplayStage {
             wait_for_vote_to_start_leader,
             tower_storage,
             wait_to_vote_slot,
+            vote_batch_n,
             replay_forks_threads,
             replay_transactions_threads,
             blockstore,
@@ -875,6 +936,11 @@ impl ReplayStage {
                 unfrozen_gossip_verified_vote_hashes,
                 epoch_slots_frozen_slots,
             };
+            // vote_batch_n == 0 means adaptive (auto-select N from active stake).
+            // Otherwise the env var pins N.
+            let adaptive = vote_batch_n == 0;
+            let initial_n = if adaptive { 31 } else { vote_batch_n };
+            let mut vote_batch_state = VoteBatchState::new(initial_n, adaptive);
             // AsyncVerificationProgress does a large allocation for its internal channel, so we
             // keep a free list to avoid doing one of those for each slot
             let mut async_verification_freelist = Vec::new();
@@ -1354,6 +1420,7 @@ impl ReplayStage {
                             wait_to_vote_slot,
                             migration_status.as_ref(),
                             &mut tbft_structs,
+                            &mut vote_batch_state,
                         );
                     }
                     voting_time.stop();
@@ -3054,6 +3121,7 @@ impl ReplayStage {
         wait_to_vote_slot: Option<Slot>,
         migration_status: &MigrationStatus,
         tbft_structs: &mut TowerBFTStructures,
+        vote_batch_state: &mut VoteBatchState,
     ) {
         assert!(!migration_status.is_alpenglow_enabled());
         if bank.is_empty() {
@@ -3135,19 +3203,104 @@ impl ReplayStage {
         update_commitment_cache_time.stop();
         replay_timing.update_commitment_cache_us += update_commitment_cache_time.as_us();
 
-        Self::push_vote(
-            bank,
-            vote_account_pubkey,
-            identity_keypair,
-            authorized_voter_keypairs,
-            tower,
-            switch_fork_decision,
-            tracked_vote_transactions,
-            *has_new_vote_been_rooted,
-            replay_timing,
-            voting_sender,
-            wait_to_vote_slot,
-        );
+        // === Vote batching decision ===
+        //
+        // The local Tower already holds every lockout we've recorded since
+        // the last push_vote. Skipping a push just defers the on-chain
+        // serialization; the next push naturally carries all accumulated
+        // lockouts as new votes, and the vote program awards credits per-
+        // lockout based on each landing latency.
+        //
+        // Force a flush when:
+        //   * batch_n == 1                  (feature disabled, status quo)
+        //   * counter has reached batch_n   (batch full)
+        //   * we just rooted a new bank     (don't risk stale tower)
+        //   * fork switch                   (consensus needs the switch ASAP)
+        //   * about to be leader            (our slot needs our latest vote)
+        // Adaptive N: recompute batch_n from current stake at every epoch boundary.
+        // We use the bank's view of stake (not RPC) so it's fork-consistent and free.
+        if vote_batch_state.adaptive {
+            let current_epoch = bank.epoch();
+            if vote_batch_state.last_recomputed_epoch != current_epoch {
+                let stake_lamports = bank.epoch_vote_account_stake(vote_account_pubkey);
+                let stake_sol = stake_lamports / 1_000_000_000;
+                let new_n = optimal_batch_n_for_stake(stake_sol);
+                if new_n != vote_batch_state.batch_n {
+                    info!(
+                        "vote_batch_adaptive: epoch {} active_stake={} SOL, \
+                         adjusting N {} -> {}",
+                        current_epoch, stake_sol, vote_batch_state.batch_n, new_n,
+                    );
+                    datapoint_info!(
+                        "vote_batch_adaptive",
+                        ("epoch", current_epoch as i64, i64),
+                        ("active_stake_sol", stake_sol as i64, i64),
+                        ("old_n", vote_batch_state.batch_n as i64, i64),
+                        ("new_n", new_n as i64, i64),
+                    );
+                    vote_batch_state.batch_n = new_n;
+                }
+                vote_batch_state.last_recomputed_epoch = current_epoch;
+            }
+        }
+
+        let about_to_be_leader = leader_schedule_cache
+            .slot_leader_at(bank.slot().saturating_add(1), Some(bank))
+            .map(|leader| leader.id == identity_keypair.pubkey())
+            .unwrap_or(false);
+        // NOTE: new_root.is_some() is intentionally NOT a force-flush trigger.
+        // The local tower roots every votable bank in steady state, which would
+        // disable batching entirely. The on-chain root will lag by up to
+        // batch_n slots (~12s at N=31), which is fine — other validators do not
+        // rely on our specific vote_state.root_slot to advance their own
+        // consensus.
+        let force_flush = vote_batch_state.batch_n == 1
+            || !matches!(switch_fork_decision, SwitchForkDecision::SameFork)
+            || about_to_be_leader;
+
+        vote_batch_state.counter = vote_batch_state.counter.saturating_add(1);
+        let should_push =
+            force_flush || vote_batch_state.counter >= vote_batch_state.batch_n;
+
+        if should_push {
+            // Use info! (not just datapoint_info!) so we can observe batching
+            // engagement in journalctl without a metrics aggregator configured.
+            info!(
+                "vote_batch_flush: batched={} batch_n={} forced={} slot={}",
+                vote_batch_state.counter,
+                vote_batch_state.batch_n,
+                force_flush,
+                bank.slot()
+            );
+            datapoint_info!(
+                "vote_batch_flush",
+                ("batched_votes", vote_batch_state.counter as i64, i64),
+                ("batch_n", vote_batch_state.batch_n as i64, i64),
+                ("forced", force_flush, bool),
+                ("slot", bank.slot() as i64, i64),
+            );
+            vote_batch_state.counter = 0;
+            Self::push_vote(
+                bank,
+                vote_account_pubkey,
+                identity_keypair,
+                authorized_voter_keypairs,
+                tower,
+                switch_fork_decision,
+                tracked_vote_transactions,
+                *has_new_vote_been_rooted,
+                replay_timing,
+                voting_sender,
+                wait_to_vote_slot,
+            );
+        } else {
+            trace!(
+                "vote_batch: held vote for slot {} ({}/{} pending)",
+                bank.slot(),
+                vote_batch_state.counter,
+                vote_batch_state.batch_n,
+            );
+        }
     }
 
     fn maybe_report_vat_health(
