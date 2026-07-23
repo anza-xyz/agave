@@ -10,7 +10,7 @@ use {
 };
 
 /// An unverified vote message.
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, Hash, PartialEq, Eq)]
 pub struct UnverifiedVoteMessage {
     /// The vote payload that is signed.
     pub vote: Vote,

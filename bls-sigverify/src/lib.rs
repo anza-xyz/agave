@@ -8,3 +8,4 @@ pub mod generated_cert_types;
 pub mod rewards;
 pub mod stats;
 mod utils;
+mod vote_pool;

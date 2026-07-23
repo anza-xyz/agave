@@ -13,7 +13,7 @@ use {
         },
         replay_stage::{Finalizer, ReplayStage},
     },
-    agave_bls_sigverify::rewards::RewardVoteMessage,
+    agave_bls_sigverify::rewards::RewardInput,
     agave_votor::event::LeaderWindowInfo,
     agave_votor_messages::{
         consensus_message::Block,
@@ -86,12 +86,13 @@ pub struct BlockCreationLoop {
 }
 
 impl BlockCreationLoop {
-    pub fn new(config: BlockCreationLoopConfig) -> (Self, Sender<Vec<RewardVoteMessage>>) {
-        let (reward_certs_service, certs_requestor, votes_sender) = RewardCertsService::new(
-            config.cluster_info.clone(),
-            config.sharable_banks.clone(),
-            config.exit.clone(),
-        );
+    pub(crate) fn new(config: BlockCreationLoopConfig) -> (Self, Sender<RewardInput>) {
+        let (reward_certs_service, certs_requestor, reward_aggregates_sender) =
+            RewardCertsService::new(
+                config.cluster_info.clone(),
+                config.sharable_banks.clone(),
+                config.exit.clone(),
+            );
         let t_block_creation_loop = Builder::new()
             .name("solBlkCreatLoop".to_string())
             .spawn(move || {
@@ -106,7 +107,7 @@ impl BlockCreationLoop {
                 t_block_creation_loop,
                 reward_certs_service,
             },
-            votes_sender,
+            reward_aggregates_sender,
         )
     }
 

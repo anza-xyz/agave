@@ -116,7 +116,7 @@ fn verify_stake(
     aggregate_stake: u64,
     total_stake: NonZero<u64>,
 ) -> Result<(), Error> {
-    let (required_fraction, _) = cert.cert_type.limits_and_vote_types();
+    let required_fraction = cert.cert_type.threshold();
     let cert_fraction = Fraction::new(aggregate_stake, total_stake);
     if cert_fraction >= required_fraction {
         Ok(())
@@ -303,6 +303,7 @@ mod test {
             vote,
             signature,
             rank: rank as u16,
+            stake: NonZero::new(123).unwrap(),
         }
     }
 
@@ -401,7 +402,7 @@ mod test {
                 required_fraction,
             } => {
                 assert_eq!(aggregate_stake, 500);
-                assert_eq!(required_fraction, cert_type.limits_and_vote_types().0);
+                assert_eq!(required_fraction, cert_type.threshold());
                 assert_eq!(cert_fraction, Fraction::new(500, total_stake));
             }
             rest => panic!("wrong variant {rest:?}"),

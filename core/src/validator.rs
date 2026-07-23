@@ -1571,7 +1571,7 @@ impl Validator {
             banking_stage_sender: banking_stage_sender_for_bcl,
             sharable_banks: bank_forks.read().unwrap().sharable_banks(),
         };
-        let (block_creation_loop, reward_votes_sender) =
+        let (block_creation_loop, reward_aggregates_sender) =
             BlockCreationLoop::new(block_creation_loop_config);
 
         assert_eq!(
@@ -1698,7 +1698,7 @@ impl Validator {
                 voting_service_test_override: config.voting_service_test_override.clone(),
                 highest_finalized,
             },
-            reward_votes_sender,
+            reward_aggregates_sender,
         )
         .map_err(ValidatorError::Other)?;
 

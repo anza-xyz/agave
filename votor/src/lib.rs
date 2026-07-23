@@ -27,12 +27,25 @@ extern crate solana_frozen_abi_macro;
 #[cfg(test)]
 mod tests {
     use {
+        agave_votor_messages::{
+            consensus_message::VoteMessage, sig_verified_messages::VoteAggregate,
+        },
         solana_gossip::{cluster_info::ClusterInfo, contact_info::ContactInfo},
         solana_keypair::Keypair,
         solana_net_utils::SocketAddrSpace,
+        solana_runtime::bank::Bank,
         solana_signer::Signer,
         std::sync::Arc,
     };
+
+    pub(crate) fn new_vote_aggregate(bank: &Bank, msg: VoteMessage) -> VoteAggregate {
+        let rank_map = bank
+            .epoch_stakes_from_slot(msg.vote.slot())
+            .unwrap()
+            .bls_pubkey_to_rank_map();
+        let max_validators = rank_map.len();
+        VoteAggregate::new_from_verified_vote(max_validators, msg)
+    }
 
     pub(crate) fn get_cluster_info(keypair: Keypair) -> Arc<ClusterInfo> {
         Arc::new(ClusterInfo::new(

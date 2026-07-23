@@ -8,7 +8,7 @@ use {
         use_snapshot_archives_at_startup::UseSnapshotArchivesAtStartup,
     },
     ExecuteTimingType::{NumExecuteBatches, TotalBatchesLen},
-    agave_votor_messages::{migration::MigrationStatus, sig_verified_messages::SigVerifiedBatch},
+    agave_votor_messages::{migration::MigrationStatus, own_message::OwnMessage},
     chrono_humanize::{Accuracy, HumanTime, Tense},
     crossbeam_channel::{Receiver, Sender},
     itertools::Itertools,
@@ -1229,7 +1229,7 @@ pub fn confirm_slot(
     skip_verification: bool,
     entry_notification_sender: Option<&EntryNotifierSender>,
     replay_vote_sender: Option<&ReplayVoteSender>,
-    finalization_cert_sender: Option<&Sender<SigVerifiedBatch>>,
+    finalization_cert_sender: Option<&Sender<OwnMessage>>,
     allow_dead_slots: bool,
     migration_status: &MigrationStatus,
 ) -> result::Result<(), BlockstoreProcessorError> {

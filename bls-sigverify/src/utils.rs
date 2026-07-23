@@ -1,13 +1,13 @@
 use {
     crate::{
         errors::{SigVerifyCertError, SigVerifyVoteError},
-        rewards::RewardVoteMessage,
+        rewards::RewardInput,
         stats::{SigVerifyCertStats, SigVerifyVoteStats},
     },
     agave_votor_messages::{
         VerifiedVoterSlotsSender,
         metric_types::{ConsensusMetricsEvent, ConsensusMetricsEventSender},
-        sig_verified_messages::SigVerifiedBatch,
+        sig_verified_messages::{SigVerifiedBatch, VoteAggregate},
     },
     crossbeam_channel::{Sender, TrySendError},
     log::{error, info},
@@ -37,11 +37,15 @@ pub(super) fn send_votes_to_metrics(
 }
 
 pub(super) fn send_votes_to_rewards(
-    msg: Vec<RewardVoteMessage>,
-    channel: &Sender<Vec<RewardVoteMessage>>,
+    votes: Vec<VoteAggregate>,
+    channel: &Sender<RewardInput>,
     stats: &mut SigVerifyVoteStats,
 ) -> Result<(), SigVerifyVoteError> {
-    let len = msg.len();
+    if votes.is_empty() {
+        return Ok(());
+    }
+    let len = votes.len();
+    let msg = RewardInput::External(votes);
     match channel.try_send(msg) {
         Ok(()) => {
             stats.rewards_sent += len as u64;
@@ -57,7 +61,7 @@ pub(super) fn send_votes_to_rewards(
 
 /// Sends the `batch` to the consensus pool.  If the channel is full, then does a
 /// blocking send.
-pub(super) fn send_votes_to_pool(
+pub(super) fn send_sig_verified_batch_to_pool(
     batch: SigVerifiedBatch,
     channel: &Sender<SigVerifiedBatch>,
     stats: &mut SigVerifyVoteStats,

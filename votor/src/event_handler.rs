@@ -969,12 +969,11 @@ mod tests {
             },
             voting_service::BLSOp,
         },
-        agave_bls_sigverify::rewards::RewardVoteMessage,
+        agave_bls_sigverify::rewards::RewardInput,
         agave_votor_messages::{
             consensus_message::{BLS_KEYPAIR_DERIVE_SEED, VoteMessage},
             metric_types::ConsensusMetricsEventReceiver,
-            sig_verified_messages::SigVerifiedBatch,
-            vote::Vote,
+            own_message::OwnMessage,
             wire::get_vote_payload_to_sign,
         },
         crossbeam_channel::{Receiver, Sender, TryRecvError, bounded},
@@ -1011,9 +1010,9 @@ mod tests {
     struct EventHandlerTestContext {
         bls_receiver: Receiver<BLSOp>,
         commitment_receiver: Receiver<CommitmentAggregationData>,
-        own_vote_receiver: Receiver<SigVerifiedBatch>,
+        own_vote_receiver: Receiver<OwnMessage>,
         #[allow(dead_code)] // Keep receiver alive to prevent SenderDisconnected errors
-        reward_votes_receiver: Receiver<Vec<RewardVoteMessage>>,
+        own_reward_aggregates_receiver: Receiver<RewardInput>,
         bank_forks: Arc<RwLock<BankForks>>,
         my_bls_keypair: BLSKeypair,
         timer_manager: Arc<PlRwLock<TimerManager>>,
@@ -1084,7 +1083,7 @@ mod tests {
         let (bls_sender, bls_receiver) = bounded(1024);
         let (commitment_sender, commitment_receiver) = bounded(1024);
         let (own_vote_sender, own_vote_receiver) = bounded(1024);
-        let (reward_votes_sender, reward_votes_receiver) = bounded(1024);
+        let (reward_aggregates_sender, reward_aggregates_receiver) = bounded(1024);
         let (drop_bank_sender, drop_bank_receiver) = bounded(1024);
         let exit = Arc::new(AtomicBool::new(false));
         let (event_sender, _event_receiver) = bounded(1024);
@@ -1172,7 +1171,7 @@ mod tests {
             vote_history_storage: vote_history_storage.clone(),
             derived_bls_keypairs: HashMap::new(),
             own_vote_sender,
-            reward_votes_sender,
+            own_reward_sender: reward_aggregates_sender,
             consensus_metrics_sender,
             leader_schedule: leader_schedule_cache,
         };
@@ -1195,7 +1194,7 @@ mod tests {
             bls_receiver,
             commitment_receiver,
             own_vote_receiver,
-            reward_votes_receiver,
+            own_reward_aggregates_receiver: reward_aggregates_receiver,
             bank_forks,
             my_bls_keypair,
             timer_manager,
@@ -1427,10 +1426,14 @@ mod tests {
             let payload =
                 get_vote_payload_to_sign(*expected_vote, self.cluster_info.my_shred_version());
             let signature: BLSSignature = self.my_bls_keypair.sign(&payload).into();
+            let root_bank = self.bank_forks.read().unwrap().root_bank();
+            let rank_map = root_bank.get_rank_map(expected_vote.slot()).unwrap();
+            let stake = rank_map.get_pubkey_stake_entry(0).unwrap().stake;
             VoteMessage {
                 vote: *expected_vote,
                 rank: 0,
                 signature,
+                stake,
             }
         }
 
@@ -1453,32 +1456,36 @@ mod tests {
             });
             assert!(found, "Did not find expected vote: {expected_message:?}");
             // Also check own_vote_receiver
-            let own_vote = self.own_vote_receiver.try_recv().unwrap();
-            assert_eq!(own_vote, SigVerifiedBatch::Votes(vec![expected_message]));
+            let own_msg = self.own_vote_receiver.try_recv().unwrap();
+            let OwnMessage::Vote(own_vote_msg) = own_msg else {
+                panic!("wrong msg type");
+            };
+            assert_eq!(own_vote_msg, expected_message);
         }
 
         fn check_for_own_vote(&self, expected_vote: &Vote) {
             let expected_message = self.expected_vote_message(expected_vote);
-            let own_vote = self.own_vote_receiver.try_recv().unwrap();
-            assert_eq!(own_vote, SigVerifiedBatch::Votes(vec![expected_message]));
+            let own_msg = self.own_vote_receiver.try_recv().unwrap();
+            let OwnMessage::Vote(own_vote_msg) = own_msg else {
+                panic!("wrong msg type");
+            };
+            assert_eq!(own_vote_msg, expected_message);
         }
 
         fn check_for_own_votes(&self, expected_votes: &[Vote]) {
             let mut received_messages = Vec::with_capacity(expected_votes.len());
             for _ in expected_votes {
-                let SigVerifiedBatch::Votes(votes) = self.own_vote_receiver.try_recv().unwrap()
-                else {
+                let OwnMessage::Vote(vote_msg) = self.own_vote_receiver.try_recv().unwrap() else {
                     panic!("expected own vote");
                 };
-                assert_eq!(votes.len(), 1);
-                received_messages.push(votes[0].clone());
+                received_messages.push(vote_msg.clone());
             }
 
             for expected_vote in expected_votes {
                 let expected_message = self.expected_vote_message(expected_vote);
                 let index = received_messages
                     .iter()
-                    .position(|message| *message == expected_message)
+                    .position(|message| message == &expected_message)
                     .unwrap_or_else(|| panic!("missing own vote {expected_vote:?}"));
                 received_messages.remove(index);
             }

@@ -1046,6 +1046,88 @@ fn test_clean_dead_slot_unrefs_reclaimed_pubkeys() {
 }
 
 #[test]
+fn test_clean_marks_reclaims_obsolete_at_new_slot() {
+    let accounts = AccountsDb::default_for_tests();
+    let pubkey1 = Pubkey::new_unique();
+    let pubkey2 = Pubkey::new_unique();
+    let pubkey3 = Pubkey::new_unique();
+    let account = AccountSharedData::new(1, 0, &Pubkey::default());
+
+    // Store all three pubkeys in slot 10; pubkey1 is superseded in slot 11 and pubkey2
+    // in slot 12, while pubkey3 keeps slot 10's storage alive.
+    accounts.store_for_tests((
+        10,
+        [
+            (&pubkey1, &account),
+            (&pubkey2, &account),
+            (&pubkey3, &account),
+        ]
+        .as_slice(),
+    ));
+    accounts.add_root(10);
+    accounts.store_for_tests((11, [(&pubkey1, &account)].as_slice()));
+    accounts.add_root(11);
+    accounts.store_for_tests((12, [(&pubkey2, &account)].as_slice()));
+    accounts.add_root(12);
+
+    // Flush without cleaning, so slot 10's superseded versions survive for clean to reclaim.
+    accounts.flush_rooted_accounts_cache_without_clean();
+
+    accounts.clean_accounts_for_tests();
+
+    // Each reclaimed account is marked obsolete at the slot of the entry that superseded
+    // it, not the clean root: pubkey1's slot 10 version at slot 11, pubkey2's at slot 12.
+    let storage = accounts.storage.get_slot_storage_entry(10).unwrap();
+    let obsolete_accounts = storage.obsolete_accounts_read_lock();
+    assert_eq!(
+        obsolete_accounts.filter_obsolete_accounts(Some(10)).count(),
+        0
+    );
+    assert_eq!(
+        obsolete_accounts.filter_obsolete_accounts(Some(11)).count(),
+        1
+    );
+    assert_eq!(
+        obsolete_accounts.filter_obsolete_accounts(Some(12)).count(),
+        2
+    );
+}
+
+#[test]
+fn test_clean_reclaim_marks_zero_lamport_single_ref() {
+    let accounts = AccountsDb::default_for_tests();
+    let pubkey1 = Pubkey::new_unique();
+    let pubkey2 = Pubkey::new_unique();
+    let account = AccountSharedData::new(1, 0, &Pubkey::default());
+    let zero_lamport_account = AccountSharedData::new(0, 0, &Pubkey::default());
+
+    // pubkey1's newest version is zero-lamport in slot 11, whose storage is kept alive by
+    // pubkey2, so clean cannot purge pubkey1 outright.
+    accounts.store_for_tests((10, [(&pubkey1, &account)].as_slice()));
+    accounts.add_root(10);
+    accounts.store_for_tests((
+        11,
+        [(&pubkey1, &zero_lamport_account), (&pubkey2, &account)].as_slice(),
+    ));
+    accounts.add_root(11);
+
+    // Flush without cleaning, so slot 10's superseded version survives for clean to reclaim.
+    accounts.flush_rooted_accounts_cache_without_clean();
+
+    accounts.clean_accounts_for_tests();
+
+    // Reclaiming the slot 10 version made pubkey1 a zero-lamport single-ref account, and
+    // slot 10's storage is dead
+    assert!(accounts.storage.get_slot_storage_entry(10).is_none());
+    assert_eq!(accounts.accounts_index.ref_count_from_storage(&pubkey1), 1);
+
+    // The surviving zero-lamport account is marked single-ref in slot 11's storage, so its
+    // bytes count as dead for shrink and the post-snapshot sweep
+    let storage = accounts.storage.get_slot_storage_entry(11).unwrap();
+    assert_eq!(storage.num_zero_lamport_single_ref_accounts(), 1);
+}
+
+#[test]
 fn test_clean_dead_slot_with_obsolete_accounts() {
     // This test is triggering a scenario in reclaim_accounts where the entire slot is reclaimed
     // When an entire slot is reclaimed, it normally unrefs the pubkeys, while when individual
@@ -4851,72 +4933,87 @@ fn test_clean_drop_dead_storage_handle_zero_lamport_single_ref_accounts() {
     assert!(db.shrink_candidate_slots.lock().unwrap().contains(&1));
 }
 
-/// Tests that shrink correctly marks newly single ref zero lamport accounts and sends them to clean
+/// Tests that clean purges a zero lamport single ref account in the same pass that
+/// reclaims its older entries, and that a snapshot-gated one is instead marked in its
+/// storage and picked back up once the full snapshot advances.
 /// This test can be removed if RPC scan is removed since RPC scan is the only path which leads
 /// single ref zero lamport accounts not being marked immediately in flush_write_cache
 #[test]
-fn test_shrink_unref_handle_zero_lamport_single_ref_accounts() {
+fn test_clean_purges_zero_lamport_single_ref_at_reclaim() {
     let db = AccountsDb::new_for_tests_with_config(Vec::new(), DEFAULT_ACCOUNTS_DB_CONFIG);
-    let epoch_schedule = EpochSchedule::default();
     let account_key1 = Pubkey::new_unique();
     let account_key2 = Pubkey::new_unique();
+    let account_key3 = Pubkey::new_unique();
     let account1 = AccountSharedData::new(1, 0, AccountSharedData::default().owner());
     let account0 = AccountSharedData::new(0, 0, AccountSharedData::default().owner());
 
     // Store into slot 0
     db.store_for_tests((0, [(&account_key1, &account1)].as_slice()));
     db.store_for_tests((0, [(&account_key2, &account1)].as_slice()));
+    db.store_for_tests((0, [(&account_key3, &account1)].as_slice()));
     db.add_root_and_flush_write_cache(0);
 
-    // Make account_key1 in slot 0 outdated by updating in rooted slot 1 with a zero lamport account
+    // Make account_key1 and account_key3 in slot 0 outdated by updating in rooted slots 1
+    // and 3 with zero lamport accounts
     db.store_for_tests((1, &[(&account_key1, &account0)][..]));
     db.add_root(1);
+    db.store_for_tests((3, &[(&account_key3, &account0)][..]));
+    db.add_root(3);
     // Flushes all roots without clean
     db.flush_rooted_accounts_cache_without_clean();
 
-    // Clean to remove outdated entry from slot 0
-    db.clean_accounts(Some(1), false);
+    // Gate zero-lamport purging above slot 1: account_key1's zero-lamport update is
+    // covered by the full snapshot, account_key3's is not.
+    db.set_latest_full_snapshot_slot(1);
 
-    // Shrink Slot 0
-    {
-        let mut shrink_candidate_slots = db.shrink_candidate_slots.lock().unwrap();
-        shrink_candidate_slots.insert(0);
-    }
-    db.shrink_candidate_slots(&epoch_schedule);
+    // Clean reclaims the outdated slot 0 entries, unreffing them at reclaim. That leaves
+    // each zero-lamport update as its account's only ref.
+    db.clean_accounts(Some(3), false);
 
-    // After shrink slot 0, check that the zero_lamport account on slot 1
-    // should be marked since it become singe_ref.
-    assert_eq!(db.accounts_index.ref_count_from_storage(&account_key1), 1);
+    // account_key1's purge is not gated, so the same clean pass purges the account: the
+    // pubkey is removed from the index and slot 1's storage, left with no live accounts,
+    // is dropped.
+    assert_eq!(db.accounts_index.ref_count_from_storage(&account_key1), 0);
+    assert!(!db.accounts_index.contains(&account_key1));
+    assert_no_storages_at_slot(&db, 1);
+
+    // account_key3's purge is gated behind the full snapshot, so it is instead marked
+    // zero-lamport single-ref in slot 3's storage, which now holds only such accounts and
+    // is queued for clean via dirty_stores rather than shrink.
+    assert_eq!(db.accounts_index.ref_count_from_storage(&account_key3), 1);
     assert_eq!(
-        db.get_and_assert_single_storage(1)
+        db.get_and_assert_single_storage(3)
             .num_zero_lamport_single_ref_accounts(),
         1
     );
-    // And now, slot 1 should be marked complete dead, which will be added
-    // to uncleaned slots, which handle dropping dead storage. And it WON'T
-    // be participating shrinking in the next round.
-    assert!(db.dirty_stores.contains_key(&1));
-    assert!(!db.shrink_candidate_slots.lock().unwrap().contains(&1));
+    assert!(db.dirty_stores.contains_key(&3));
+    assert!(!db.shrink_candidate_slots.lock().unwrap().contains(&3));
+
+    // Once the full snapshot advances past slot 3, clean purges account_key3 and drops
+    // slot 3's storage.
+    db.set_latest_full_snapshot_slot(3);
+    db.clean_accounts(Some(3), false);
+    assert!(!db.accounts_index.contains(&account_key3));
+    assert_no_storages_at_slot(&db, 3);
+
+    // Slot 0 still holds the live account_key2; the other records there are obsolete.
+    db.get_and_assert_single_storage(0);
 
     // Now, make slot 0 dead by updating the remaining key
-    db.store_for_tests((2, &[(&account_key2, &account1)][..]));
-    db.add_root(2);
+    db.store_for_tests((4, &[(&account_key2, &account1)][..]));
+    db.add_root(4);
 
     // Flushes all roots
     db.flush_accounts_cache(true, None);
 
-    // Should be one store before clean for slot 1
-    db.get_and_assert_single_storage(1);
-    db.clean_accounts(Some(2), false);
+    db.clean_accounts(Some(4), false);
 
     // No stores should exist for slot 0. Slot 0 stores are cleaned when
-    // slot 2 is flushed; the older accounts are marked obsolete.
+    // slot 4 is flushed; the older accounts are marked obsolete.
     assert_no_storages_at_slot(&db, 0);
-    // No store should exit for slot 1 too as it has only a zero lamport single ref account.
-    assert_no_storages_at_slot(&db, 1);
-    // Store 2 should have a single account.
+    // Store 4 should have a single account.
     assert_eq!(db.accounts_index.ref_count_from_storage(&account_key2), 1);
-    db.get_and_assert_single_storage(2);
+    db.get_and_assert_single_storage(4);
 }
 
 #[test]

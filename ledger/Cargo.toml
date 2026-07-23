@@ -89,7 +89,6 @@ solana-packet = { workspace = true }
 solana-perf = { workspace = true }
 solana-program-runtime = { workspace = true, features = ["metrics"] }
 solana-pubkey = { workspace = true, features = ["wincode"] }
-solana-rayon-threadlimit = { workspace = true }
 solana-runtime = { workspace = true }
 solana-runtime-transaction = { workspace = true }
 solana-sha256-hasher = { workspace = true }

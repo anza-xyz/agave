@@ -47,8 +47,8 @@ use {
         accounts_hash::{AccountLtHash, AccountsLtHash, ZERO_LAMPORT_ACCOUNT_LT_HASH},
         accounts_index::{
             AccountSecondaryIndexes, AccountsIndex, AccountsIndexScanResult, IndexKey,
-            ReclaimsSlotList, RefCount, ScanFilter, SlotList, Startup, UpsertReclaim,
-            in_mem_accounts_index::StartupStats,
+            ReclaimsSlotList, ReclaimsWithNewestSlot, RefCount, ScanFilter, SlotList, Startup,
+            UpsertReclaim, in_mem_accounts_index::StartupStats,
         },
         accounts_scan::{ScanConfig, ScanError, ScanGuard, ScanResult, ScanTracker},
         accounts_update_notifier_interface::{AccountForGeyser, AccountsUpdateNotifier},
@@ -1185,9 +1185,9 @@ impl AccountsDb {
         &self,
         pubkey: &Pubkey,
         max_clean_root_inclusive: Option<Slot>,
-    ) -> ReclaimsSlotList<AccountInfo> {
+    ) -> ReclaimsWithNewestSlot<AccountInfo> {
         let mut clean_rooted = Measure::start("clean_old_root-ms");
-        let mut reclaims = ReclaimsSlotList::new();
+        let mut reclaims = ReclaimsWithNewestSlot::new();
         let removed_from_index = self.accounts_index.clean_rooted_entries(
             pubkey,
             &mut reclaims,
@@ -1203,22 +1203,67 @@ impl AccountsDb {
         reclaims
     }
 
-    /// Reclaim older states of accounts older than max_clean_root_inclusive for AccountsDb bloat mitigation.
-    fn clean_accounts_older_than_root(&self, reclaims: &SlotList<AccountInfo>) -> ReclaimResult {
-        if reclaims.is_empty() {
-            return ReclaimResult::default();
+    /// Brings clean candidate information cached during the index scan up date based on
+    /// slots reclaimed
+    fn update_candidate_after_reclaims(
+        &self,
+        candidate_info: &mut CleaningInfo,
+        reclaims: &ReclaimsWithNewestSlot<AccountInfo>,
+    ) {
+        if candidate_info.slot_list.is_empty() {
+            return;
         }
-        let (reclaim_result, reclaim_us) = measure_us!(self.handle_reclaims(
-            reclaims.iter(),
-            None,
-            &HashSet::new(),
-            &self.clean_accounts_stats.purge_stats,
-            MarkAccountsObsolete::No,
-        ));
+        candidate_info.ref_count = candidate_info
+            .ref_count
+            .checked_sub(reclaims.len() as RefCount)
+            .expect("candidate ref count covers every reclaimed entry");
+        // The reclaimed entries are exactly those below the newest
+        // remaining slot at or below the clean root
+        let newest_slot = reclaims[0].1;
+        candidate_info
+            .slot_list
+            .retain(|(slot, _)| *slot >= newest_slot);
+
+        // Mark any ZLSRs
+        if candidate_info.ref_count == 1
+            && let Some((slot, account_info)) = candidate_info.slot_list.first()
+            && account_info.is_zero_lamport()
+        {
+            self.zero_lamport_single_ref_found(*slot, account_info.offset());
+        }
+    }
+
+    /// Reclaim older states of accounts older than max_clean_root_inclusive for AccountsDb bloat mitigation.
+    ///
+    /// The reclaimed accounts were already unref'd and removed from the slot list when the
+    /// reclaims were collected
+    fn clean_accounts_older_than_root(&self, reclaims: &ReclaimsWithNewestSlot<AccountInfo>) {
+        if reclaims.is_empty() {
+            return;
+        }
+        let (_, reclaim_us) = measure_us!({
+            // Each reclaim is marked obsolete at the slot of its account's newest
+            // surviving entry
+            self.thread_pool_background.install(|| {
+                reclaims
+                    .par_iter()
+                    .for_each(|(reclaimed_item, newest_slot)| {
+                        let (purged_account_slots, _reclaimed_offsets) = self.handle_reclaims(
+                            iter::once(reclaimed_item),
+                            None,
+                            &HashSet::new(),
+                            &self.clean_accounts_stats.purge_stats,
+                            MarkAccountsObsolete::Yes(*newest_slot),
+                        );
+                        // Marking the reclaims obsolete skips dead-slot handling in
+                        // handle_reclaims, so no whole slots are purged here.
+                        assert!(purged_account_slots.is_empty());
+                    });
+            });
+        });
         self.clean_accounts_stats
             .clean_old_root_reclaim_us
             .fetch_add(reclaim_us, Ordering::Relaxed);
-        reclaim_result
     }
 
     /// increment store_counts to non-zero for all stores that can not be deleted.
@@ -1900,7 +1945,7 @@ impl AccountsDb {
         let not_found_on_fork_accum = AtomicU64::new(0);
         let missing_accum = AtomicU64::new(0);
         let useful_accum = AtomicU64::new(0);
-        let reclaims: SlotList<AccountInfo> = SlotList::with_capacity(num_candidates as usize);
+        let reclaims = ReclaimsWithNewestSlot::with_capacity(num_candidates as usize);
         let reclaims = Mutex::new(reclaims);
         // parallel scan the index.
         let do_clean_scan = || {
@@ -1991,6 +2036,7 @@ impl AccountsDb {
                         let reclaims_new =
                             self.collect_reclaims(candidate_pubkey, max_clean_root_inclusive);
                         if !reclaims_new.is_empty() {
+                            self.update_candidate_after_reclaims(candidate_info, &reclaims_new);
                             reclaims.lock().unwrap().extend(reclaims_new);
                         }
                     }
@@ -2026,8 +2072,7 @@ impl AccountsDb {
 
         let active_guard = self.active_stats.activate(ActiveStatItem::CleanOldAccounts);
         let mut clean_old_rooted = Measure::start("clean_old_roots");
-        let (purged_account_slots, removed_accounts) =
-            self.clean_accounts_older_than_root(&reclaims);
+        self.clean_accounts_older_than_root(&reclaims);
         clean_old_rooted.stop();
         drop(active_guard);
 
@@ -2038,33 +2083,11 @@ impl AccountsDb {
             .activate(ActiveStatItem::CleanCollectStoreCounts);
         let mut store_counts_time = Measure::start("store_counts");
         let mut store_counts: HashMap<Slot, (usize, HashSet<Pubkey>)> = HashMap::new();
-        for candidates_bin in candidates.iter_mut() {
-            for (pubkey, cleaning_info) in candidates_bin.iter_mut() {
-                let slot_list = &mut cleaning_info.slot_list;
-                let ref_count = &mut cleaning_info.ref_count;
+        for candidates_bin in candidates.iter() {
+            for (pubkey, cleaning_info) in candidates_bin.iter() {
+                let slot_list = &cleaning_info.slot_list;
                 debug_assert!(!slot_list.is_empty(), "candidate slot_list can't be empty");
-                if purged_account_slots.contains_key(pubkey) {
-                    *ref_count = self.accounts_index.ref_count_from_storage(pubkey);
-                }
-                slot_list.retain(|(slot, account_info)| {
-                    let was_slot_purged = purged_account_slots
-                        .get(pubkey)
-                        .map(|slots_removed| slots_removed.contains(slot))
-                        .unwrap_or(false);
-                    if was_slot_purged {
-                        // No need to look up the slot storage below if the entire
-                        // slot was purged
-                        return false;
-                    }
-                    // Check if this update in `slot` to the account with `key` was reclaimed earlier by
-                    // `clean_accounts_older_than_root()`
-                    let was_reclaimed = removed_accounts
-                        .get(slot)
-                        .map(|store_removed| store_removed.contains(&account_info.offset()))
-                        .unwrap_or(false);
-                    if was_reclaimed {
-                        return false;
-                    }
+                for (slot, account_info) in slot_list.iter() {
                     if let Some(store_count) = store_counts.get_mut(slot) {
                         store_count.0 -= 1;
                         store_count.1.insert(*pubkey);
@@ -2085,8 +2108,7 @@ impl AccountsDb {
                         );
                         store_counts.insert(*slot, (count, key_set));
                     }
-                    true
-                });
+                }
             }
         }
         store_counts_time.stop();
