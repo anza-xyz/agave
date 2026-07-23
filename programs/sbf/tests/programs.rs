@@ -82,7 +82,7 @@ use {
 #[cfg(any(feature = "sbf_c", feature = "sbf_rust"))]
 use {
     solana_account::Account,
-    solana_program_runtime::sysvar_cache::SysvarCache,
+    solana_program_runtime::{loaded_programs::ProgramCacheForTxBatch, sysvar_cache::SysvarCache},
     solana_sdk_ids::sysvar::rent,
     solana_svm::conformance::{
         instr::{context::InstrContext, harness::execute_instr},
@@ -94,7 +94,7 @@ use {
 };
 
 #[cfg(feature = "sbf_rust")]
-fn default_program_cache() -> solana_program_runtime::loaded_programs::ProgramCacheForTxBatch {
+fn default_program_cache() -> ProgramCacheForTxBatch {
     new_program_cache_with_builtins(/* slot */ 0)
 }
 
@@ -102,7 +102,7 @@ fn default_program_cache_with_program(
     program_id: &Pubkey,
     program_elf: &[u8],
     feature_set: &SVMFeatureSet,
-) -> solana_program_runtime::loaded_programs::ProgramCacheForTxBatch {
+) -> ProgramCacheForTxBatch {
     let mut program_cache = default_program_cache();
     add_program_to_program_cache(
         &mut program_cache,
@@ -1686,9 +1686,15 @@ fn assert_instruction_count() {
     }
 }
 
-#[test]
 #[cfg(feature = "sbf_rust")]
-fn test_program_sbf_instruction_introspection() {
+fn program_sbf_instruction_introspection_fixture() -> (
+    Pubkey,
+    Pubkey,
+    FeatureSet,
+    Vec<(Pubkey, Account)>,
+    ProgramCacheForTxBatch,
+    SysvarCache,
+) {
     agave_logger::setup();
 
     let payer = Pubkey::new_unique();
@@ -1710,11 +1716,27 @@ fn test_program_sbf_instruction_introspection() {
     accounts.push((payer, Account::new(50_000, 0, &system_program::id())));
     let sysvar_cache = sysvar_cache_from_accounts(&accounts);
 
-    // Passing transaction
+    (
+        payer,
+        program_id,
+        feature_set,
+        accounts,
+        program_cache,
+        sysvar_cache,
+    )
+}
+
+#[test]
+#[cfg(feature = "sbf_rust")]
+fn test_program_sbf_instruction_introspection_passing_transaction() {
+    let (payer, program_id, feature_set, accounts, mut program_cache, sysvar_cache) =
+        program_sbf_instruction_introspection_fixture();
+
     let account_metas = vec![
         AccountMeta::new_readonly(program_id, false),
         AccountMeta::new_readonly(sysvar::instructions::id(), false),
     ];
+
     let message = Message::new(
         &[
             Instruction::new_with_bytes(program_id, &[0u8, 0u8], account_metas.clone()),
@@ -1723,7 +1745,6 @@ fn test_program_sbf_instruction_introspection() {
         ],
         Some(&payer),
     );
-
     let versioned_message = VersionedMessage::Legacy(message);
     let sanitized_message = sanitized_message_from_versioned_message(versioned_message, &accounts);
 
@@ -1732,31 +1753,61 @@ fn test_program_sbf_instruction_introspection() {
 
     let effects = execute_txn(&context, &mut program_cache, &sysvar_cache);
     assert_eq!(effects.status, Ok(()));
+}
 
-    // // Writable special instructions11111 key.
-    // let account_metas = vec![AccountMeta::new(sysvar::instructions::id(), false)];
-    // let instruction = Instruction::new_with_bytes(program_id, &[0], account_metas);
-    // let message = Message::new(&[instruction], Some(&payer));
-    // let effects = execute_message(message);
-    // assert_eq!(
-    //     effects.status,
-    //     Err(TransactionError::InstructionError(
-    //         0,
-    //         InstructionError::ProgramFailedToComplete,
-    //     )),
-    // );
+#[test]
+#[cfg(feature = "sbf_rust")]
+fn test_program_sbf_instruction_introspection_writable_special_instructions1111() {
+    let (payer, program_id, feature_set, accounts, mut program_cache, sysvar_cache) =
+        program_sbf_instruction_introspection_fixture();
 
-    // // No accounts, should error
-    // let instruction = Instruction::new_with_bytes(program_id, &[0], vec![]);
-    // let message = Message::new(&[instruction], Some(&payer));
-    // let effects = execute_message(message);
-    // #[allow(deprecated)]
-    // let expected_error = Err(TransactionError::InstructionError(
-    //     0,
-    //     InstructionError::NotEnoughAccountKeys,
-    // ));
-    // assert_eq!(effects.status, expected_error);
-    // assert!(effects.get_account(&sysvar::instructions::id()).is_none());
+    let account_metas = vec![AccountMeta::new(sysvar::instructions::id(), false)];
+
+    let message = Message::new(
+        &[Instruction::new_with_bytes(program_id, &[0], account_metas)],
+        Some(&payer),
+    );
+    let versioned_message = VersionedMessage::Legacy(message);
+    let sanitized_message = sanitized_message_from_versioned_message(versioned_message, &accounts);
+
+    let context =
+        TxnContext::new_with_default_budget(feature_set, accounts, sanitized_message, None);
+
+    let effects = execute_txn(&context, &mut program_cache, &sysvar_cache);
+    assert_eq!(
+        effects.status,
+        Err(TransactionError::InstructionError(
+            0,
+            InstructionError::ProgramFailedToComplete,
+        )),
+    );
+}
+
+#[test]
+#[cfg(feature = "sbf_rust")]
+fn test_program_sbf_instruction_introspection_no_accounts() {
+    let (payer, program_id, feature_set, accounts, mut program_cache, sysvar_cache) =
+        program_sbf_instruction_introspection_fixture();
+
+    let message = Message::new(
+        &[Instruction::new_with_bytes(program_id, &[0], vec![])],
+        Some(&payer),
+    );
+    let versioned_message = VersionedMessage::Legacy(message);
+    let sanitized_message = sanitized_message_from_versioned_message(versioned_message, &accounts);
+
+    let context =
+        TxnContext::new_with_default_budget(feature_set, accounts, sanitized_message, None);
+
+    let effects = execute_txn(&context, &mut program_cache, &sysvar_cache);
+
+    #[allow(deprecated)]
+    let expected_error = Err(TransactionError::InstructionError(
+        0,
+        InstructionError::NotEnoughAccountKeys,
+    ));
+    assert_eq!(effects.status, expected_error);
+    assert!(effects.get_account(&sysvar::instructions::id()).is_none());
 }
 
 #[test_matrix(
