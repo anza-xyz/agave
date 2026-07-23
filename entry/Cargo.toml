@@ -23,7 +23,9 @@ agave-unstable-api = []
 dev-context-only-utils = []
 
 [dependencies]
+agave-transaction-view = { workspace = true }
 agave-votor-messages = { workspace = true }
+bytes = { workspace = true }
 crossbeam-channel = { workspace = true }
 log = { workspace = true }
 num_cpus = { workspace = true }
@@ -49,15 +51,23 @@ wincode = { workspace = true }
 
 [dev-dependencies]
 agave-logger = { path = "../logger", features = ["agave-unstable-api"] }
-agave-reserved-account-keys = { path = "../reserved-account-keys", features = ["agave-unstable-api"] }
+agave-reserved-account-keys = { path = "../reserved-account-keys", features = [
+    "agave-unstable-api",
+] }
 assert_matches = { workspace = true }
 criterion = { workspace = true }
 proptest = { workspace = true }
 rand = { workspace = true }
-solana-entry = { path = ".", features = ["agave-unstable-api", "dev-context-only-utils"] }
+solana-entry = { path = ".", features = [
+    "agave-unstable-api",
+    "dev-context-only-utils",
+] }
 solana-keypair = { workspace = true }
 solana-message = { workspace = true }
-solana-perf = { path = "../perf", features = ["agave-unstable-api", "dev-context-only-utils"] }
+solana-perf = { path = "../perf", features = [
+    "agave-unstable-api",
+    "dev-context-only-utils",
+] }
 solana-pubkey = { workspace = true }
 solana-signature = { workspace = true }
 solana-signer = { workspace = true }

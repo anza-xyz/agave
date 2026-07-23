@@ -43,7 +43,7 @@ use {
         validator::{BlockProductionMethod, BlockVerificationMethod, TransactionStructure},
     },
     solana_cost_model::{cost_model::CostModel, cost_tracker::CostTracker},
-    solana_entry::entry::create_ticks,
+    solana_entry::entry::{create_ticks, versioned_transaction_from_view},
     solana_feature_gate_interface::{self as feature, Feature},
     solana_inflation::Inflation,
     solana_instruction::TRANSACTION_LEVEL_STACK_HEIGHT,
@@ -463,7 +463,7 @@ fn compute_slot_cost(
             .into_iter()
             .filter_map(|transaction| {
                 RuntimeTransaction::try_create(
-                    transaction,
+                    versioned_transaction_from_view(&transaction),
                     MessageHash::Compute,
                     None,
                     SimpleAddressLoader::Disabled,

@@ -9,7 +9,7 @@
 
 use {
     crossbeam_channel::{Receiver, RecvTimeoutError, Sender},
-    solana_entry::entry::Entry,
+    solana_entry::entry::{Entry, versioned_transaction_from_view},
     solana_ledger::{
         blockstore::{Blockstore, CompletedDataSetInfo},
         deshred_transaction_notifier_interface::{
@@ -234,16 +234,18 @@ impl CompletedDataSetsService {
 
         for entry in entries {
             for tx in &entry.transactions {
+                // Bridge: the notifier interface consumes VersionedTransaction.
+                let tx = versioned_transaction_from_view(tx);
                 let Some(signature) = tx.signatures.first() else {
                     continue;
                 };
 
                 stats.total_transactions += 1;
-                let is_vote = is_simple_vote_transaction(tx);
+                let is_vote = is_simple_vote_transaction(&tx);
 
                 let mut lut_measure = Measure::start("load_lut");
                 let lut_result = root_bank
-                    .map(|bank| load_transaction_addresses(tx, bank))
+                    .map(|bank| load_transaction_addresses(&tx, bank))
                     .unwrap_or(LutLoadResult::NoLookups);
                 lut_measure.stop();
 
@@ -268,7 +270,7 @@ impl CompletedDataSetsService {
                     completed_data_set_ending_shred_index_exclusive,
                     signature,
                     is_vote,
-                    tx,
+                    &tx,
                     loaded_addresses.as_ref(),
                 );
                 notify_measure.stop();
@@ -283,7 +285,7 @@ impl CompletedDataSetsService {
             .flat_map(|e| {
                 e.transactions
                     .into_iter()
-                    .filter_map(|mut t| t.signatures.drain(..).next())
+                    .filter_map(|t| t.signatures().first().copied())
             })
             .collect::<Vec<Signature>>()
     }
@@ -390,13 +392,8 @@ pub mod test {
         VersionedTransaction::try_new(VersionedMessage::V0(message), &[&keypair]).unwrap()
     }
 
-    #[test]
-    fn test_zero_signatures() {
-        let tx = Transaction::new_with_payer(&[], None);
-        let entries = vec![Entry::new(&Hash::default(), 1, vec![tx])];
-        let signatures = CompletedDataSetsService::get_transaction_signatures(entries);
-        assert!(signatures.is_empty());
-    }
+    // No test for zero-signature transactions: transaction views guarantee at
+    // least one signature, so such transactions cannot appear in an Entry.
 
     #[test]
     fn test_multi_signatures() {
@@ -474,17 +471,11 @@ pub mod test {
             &[],
             Vec::new(),
         ));
-        let unsigned_tx = VersionedTransaction {
-            signatures: vec![],
-            message: VersionedMessage::Legacy(Message::new(&[], None)),
-        };
+        // Transaction views guarantee at least one signature, so unsigned
+        // transactions cannot appear in an Entry.
         let entries = vec![
             next_versioned_entry(&Hash::default(), 1, vec![legacy_vote_tx.clone()]),
-            next_versioned_entry(
-                &Hash::new_unique(),
-                1,
-                vec![legacy_non_vote_tx.clone(), unsigned_tx],
-            ),
+            next_versioned_entry(&Hash::new_unique(), 1, vec![legacy_non_vote_tx.clone()]),
         ];
         let mut stats = DeshredBatchStats::default();
 

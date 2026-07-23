@@ -41,7 +41,7 @@ use {
         transaction_execution::TransactionStatusSender,
         vote_sender_types::{ReplayVoteMessage, ReplayVoteSender},
     },
-    solana_runtime_transaction::runtime_transaction::RuntimeTransaction,
+    solana_runtime_transaction::runtime_transaction::{ReplayTransaction, RuntimeTransaction},
     solana_shred_version::compute_shred_version,
     solana_svm_timings::{ExecuteTimingType, ExecuteTimings, report_execute_timings},
     solana_svm_transaction::svm_message::SVMMessage,
@@ -76,7 +76,7 @@ pub struct LockedTransactionsWithIndexes<Tx: SVMMessage> {
 }
 
 struct ReplayEntry {
-    entry: EntryType<RuntimeTransaction<SanitizedTransaction>>,
+    entry: EntryType<ReplayTransaction>,
     starting_index: usize,
 }
 
@@ -229,7 +229,7 @@ fn schedule_entries_for_tests(bank: &BankWithScheduler, entries: Vec<Entry>) -> 
         let bank = bank.clone_with_scheduler();
         move |versioned_tx: VersionedTransaction,
               serialized_message: &[u8]|
-              -> Result<RuntimeTransaction<SanitizedTransaction>> {
+              -> Result<ReplayTransaction> {
             bank.verify_transaction_with_serialized_message(
                 versioned_tx,
                 serialized_message,
@@ -313,7 +313,7 @@ fn process_entries(bank: &BankWithScheduler, entries: Vec<ReplayEntry>) -> Resul
 fn queue_batches_with_lock_retry(
     bank: &Bank,
     starting_index: usize,
-    transactions: Vec<RuntimeTransaction<SanitizedTransaction>>,
+    transactions: Vec<ReplayTransaction>,
     batches: &mut Vec<LockedTransactionsWithIndexes<SanitizedTransaction>>,
     mut process_batches: impl FnMut(
         Drain<LockedTransactionsWithIndexes<SanitizedTransaction>>,
@@ -2383,7 +2383,7 @@ pub mod tests {
                 BlockComponent, BlockFooterV1, BlockHeaderV1, VersionedBlockFooter,
                 VersionedBlockMarker,
             },
-            entry::{create_ticks, next_entry, next_entry_mut},
+            entry::{create_ticks, next_entry, next_entry_mut, versioned_transaction_from_view},
         },
         solana_epoch_schedule::EpochSchedule,
         solana_hash::Hash,
@@ -3548,8 +3548,16 @@ pub mod tests {
         assert_eq!(bank.get_balance(&keypair4.pubkey()), 4);
 
         // Check all accounts are unlocked
-        let txs1 = entry_1_to_mint.transactions;
-        let txs2 = entry_2_to_3_mint_to_1.transactions;
+        let txs1 = entry_1_to_mint
+            .transactions
+            .iter()
+            .map(versioned_transaction_from_view)
+            .collect::<Vec<_>>();
+        let txs2 = entry_2_to_3_mint_to_1
+            .transactions
+            .iter()
+            .map(versioned_transaction_from_view)
+            .collect::<Vec<_>>();
         let batch1 = bank.prepare_entry_batch(txs1).unwrap();
         for result in batch1.lock_results() {
             assert!(result.is_ok());
@@ -4957,7 +4965,7 @@ pub mod tests {
     fn create_test_transactions(
         mint_keypair: &Keypair,
         genesis_hash: &Hash,
-    ) -> Vec<RuntimeTransaction<SanitizedTransaction>> {
+    ) -> Vec<ReplayTransaction> {
         let pubkey = solana_pubkey::new_rand();
         let keypair2 = Keypair::new();
         let pubkey2 = solana_pubkey::new_rand();
@@ -4965,19 +4973,19 @@ pub mod tests {
         let pubkey3 = solana_pubkey::new_rand();
 
         vec![
-            RuntimeTransaction::from_transaction_for_tests(system_transaction::transfer(
+            ReplayTransaction::from_transaction_for_tests(system_transaction::transfer(
                 mint_keypair,
                 &pubkey,
                 1,
                 *genesis_hash,
             )),
-            RuntimeTransaction::from_transaction_for_tests(system_transaction::transfer(
+            ReplayTransaction::from_transaction_for_tests(system_transaction::transfer(
                 &keypair2,
                 &pubkey2,
                 1,
                 *genesis_hash,
             )),
-            RuntimeTransaction::from_transaction_for_tests(system_transaction::transfer(
+            ReplayTransaction::from_transaction_for_tests(system_transaction::transfer(
                 &keypair3,
                 &pubkey3,
                 1,
@@ -5258,7 +5266,7 @@ pub mod tests {
         let bank = BankWithScheduler::new_without_scheduler(Arc::new(Bank::new_for_tests(
             &genesis_config,
         )));
-        let transactions = vec![RuntimeTransaction::from_transaction_for_tests(
+        let transactions = vec![ReplayTransaction::from_transaction_for_tests(
             system_transaction::transfer(
                 &mint_keypair,
                 &solana_pubkey::new_rand(),

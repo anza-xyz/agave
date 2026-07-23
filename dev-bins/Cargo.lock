@@ -178,6 +178,7 @@ dependencies = [
  "agave-snapshots",
  "assert_cmd",
  "bincode",
+ "bytes",
  "chrono",
  "clap",
  "crossbeam-channel",
@@ -373,8 +374,7 @@ dependencies = [
 [[package]]
 name = "agave-transaction-view"
 version = "5.1.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "025bb5f7b6dd4a5545a9edd6ce42b896836b8dbc8600ad9f99de041bd65601ef"
+source = "git+https://github.com/DSharifi/agave-sdk/?rev=5296f99ab86a2f07831a363f3752338b05f8d5b0#5296f99ab86a2f07831a363f3752338b05f8d5b0"
 dependencies = [
  "bytes",
  "solana-hash 4.5.0",
@@ -386,6 +386,7 @@ dependencies = [
  "solana-signature",
  "solana-svm-transaction",
  "solana-transaction",
+ "wincode",
 ]
 
 [[package]]
@@ -1186,7 +1187,7 @@ checksum = "90dbd31c98227229239363921e60fcf5e558e43ec69094d46fc4996f08d1d5bc"
 dependencies = [
  "bitcoin_hashes",
  "rand 0.8.6",
- "rand_core 0.6.4",
+ "rand_core 0.5.1",
  "serde",
  "unicode-normalization",
 ]
@@ -6535,7 +6536,9 @@ dependencies = [
 name = "solana-entry"
 version = "4.3.0-alpha.2"
 dependencies = [
+ "agave-transaction-view",
  "agave-votor-messages",
+ "bytes",
  "crossbeam-channel",
  "log",
  "num_cpus",

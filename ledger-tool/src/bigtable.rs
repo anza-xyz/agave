@@ -29,7 +29,7 @@ use {
     solana_clock::Slot,
     solana_entry::{
         block_component::{BlockComponent, BlockMarkerV1, VersionedBlockMarker},
-        entry::{Entry, create_ticks},
+        entry::{Entry, create_ticks, transaction_view_from_versioned_transaction},
     },
     solana_hash::Hash,
     solana_keypair::{Keypair, keypair_from_seed},
@@ -323,7 +323,9 @@ fn entries_from_summaries(
             };
             let transactions = transactions
                 .iter()
-                .map(|tx_with_meta| tx_with_meta.get_transaction())
+                .map(|tx_with_meta| {
+                    transaction_view_from_versioned_transaction(&tx_with_meta.get_transaction())
+                })
                 .collect();
 
             Ok(Entry {
@@ -551,7 +553,9 @@ async fn shreds(
                 let transaction_entries = block.transactions.iter().map(|tx_with_meta| Entry {
                     num_hashes: 0,
                     hash: Hash::default(),
-                    transactions: vec![tx_with_meta.get_transaction()],
+                    transactions: vec![transaction_view_from_versioned_transaction(
+                        &tx_with_meta.get_transaction(),
+                    )],
                 });
                 entries.extend(transaction_entries);
 
@@ -1847,12 +1851,16 @@ fn missing_blocks(reference: &[Slot], owned: &[Slot]) -> MissingBlocksData {
 mod tests {
     use {
         super::*,
+        bytes::Bytes,
         solana_bls_signatures::{BLS_SIGNATURE_AFFINE_SIZE, Signature as BLSSignature},
-        solana_entry::block_component::{BlockFooterV1, BlockHeaderV1, GenesisCertBlockMarker},
+        solana_entry::{
+            block_component::{BlockFooterV1, BlockHeaderV1, GenesisCertBlockMarker},
+            parse::entries_from_bytes,
+        },
     };
 
-    fn deshred_batch(batch: &[Shred]) -> Vec<u8> {
-        Shredder::deshred(batch.iter().map(Shred::payload)).unwrap()
+    fn deshred_batch(batch: &[Shred]) -> Bytes {
+        Bytes::from(Shredder::deshred(batch.iter().map(Shred::payload)).unwrap())
     }
 
     fn marker_is_header(marker: &VersionedBlockMarker) -> bool {
@@ -1942,24 +1950,19 @@ mod tests {
         assert!(!batches[3].last().unwrap().last_in_slot());
         assert!(batches[4].last().unwrap().last_in_slot());
 
-        let header_component: BlockComponent =
-            wincode::deserialize(&deshred_batch(batches[0])).unwrap();
+        let header_component = BlockComponent::from_bytes(&deshred_batch(batches[0])).unwrap();
         assert!(header_component.as_marker().is_some_and(marker_is_header));
 
-        let genesis_component: BlockComponent =
-            wincode::deserialize(&deshred_batch(batches[1])).unwrap();
+        let genesis_component = BlockComponent::from_bytes(&deshred_batch(batches[1])).unwrap();
         assert!(genesis_component.as_marker().is_some_and(marker_is_genesis));
 
-        let entry_component: BlockComponent =
-            wincode::deserialize(&deshred_batch(batches[2])).unwrap();
+        let entry_component = BlockComponent::from_bytes(&deshred_batch(batches[2])).unwrap();
         assert_eq!(entry_component, BlockComponent::EntryBatch(vec![entry]));
 
-        let footer_component: BlockComponent =
-            wincode::deserialize(&deshred_batch(batches[3])).unwrap();
+        let footer_component = BlockComponent::from_bytes(&deshred_batch(batches[3])).unwrap();
         assert!(footer_component.as_marker().is_some_and(marker_is_footer));
 
-        let alpentick_entries: Vec<Entry> =
-            wincode::deserialize(&deshred_batch(batches[4])).unwrap();
+        let alpentick_entries = entries_from_bytes(&deshred_batch(batches[4])).unwrap();
         assert_eq!(alpentick_entries.len(), 1);
         assert!(alpentick_entries[0].is_tick());
         assert_eq!(alpentick_entries[0].num_hashes, 1);

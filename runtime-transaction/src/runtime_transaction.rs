@@ -24,7 +24,9 @@ use {
         svm_message::{SVMMessage, SVMStaticMessage},
         svm_transaction::SVMTransaction,
     },
-    solana_transaction::{TransactionError, versioned::TransactionVersion},
+    solana_transaction::{
+        TransactionError, sanitized::SanitizedTransaction, versioned::TransactionVersion,
+    },
 };
 
 mod sdk_transactions;
@@ -38,6 +40,8 @@ pub struct RuntimeTransaction<T> {
     // during message state transition
     meta: CachedTransactionMeta,
 }
+
+pub type ReplayTransaction = RuntimeTransaction<SanitizedTransaction>;
 
 impl<T> RuntimeTransaction<T> {
     pub fn into_inner_transaction(self) -> T {

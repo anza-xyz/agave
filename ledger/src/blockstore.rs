@@ -30,6 +30,7 @@ use {
         migration::MigrationStatus, unverified_vote_message::UnverifiedCertificate,
     },
     assert_matches::{assert_matches, debug_assert_matches},
+    bytes::Bytes,
     crossbeam_channel::{Receiver, Sender, TrySendError, bounded},
     dashmap::DashSet,
     itertools::Itertools,
@@ -48,7 +49,7 @@ use {
             VersionedUpdateParent, finalization_certificates_from_footer,
             genesis_certificate_from_shred,
         },
-        entry::{Entry, create_ticks},
+        entry::{Entry, create_ticks, versioned_transaction_from_view},
     },
     solana_genesis_config::{DEFAULT_GENESIS_ARCHIVE, DEFAULT_GENESIS_FILE, GenesisConfig},
     solana_hash::{HASH_BYTES, Hash},
@@ -515,7 +516,7 @@ impl ParentInfo {
             return None;
         }
 
-        let component: BlockComponent = wincode::deserialize(payload).ok()?;
+        let component = BlockComponent::from_bytes(&Bytes::copy_from_slice(payload)).ok()?;
         let VersionedBlockMarker::V1(marker) = component.as_marker()?;
         let VersionedBlockHeader::V1(header) = marker.as_block_header()?;
 
@@ -1224,7 +1225,7 @@ impl Blockstore {
             return None;
         }
 
-        let component: BlockComponent = wincode::deserialize(payload).ok()?;
+        let component = BlockComponent::from_bytes(&Bytes::copy_from_slice(payload)).ok()?;
         let VersionedBlockMarker::V1(marker) = component.as_marker()?;
         let VersionedUpdateParent::V1(update_parent) = marker.as_update_parent()?;
 
@@ -4131,6 +4132,7 @@ impl Blockstore {
             .flatten()
             .flat_map(|entry| entry.transactions)
             .map(|transaction| {
+                let transaction = versioned_transaction_from_view(&transaction);
                 if let Err(err) = transaction.sanitize() {
                     warn!(
                         "Blockstore::get_complete_block_with_components sanitize failed: {err:?}, \
@@ -4507,6 +4509,7 @@ impl Blockstore {
             .flat_map(|entry| entry.transactions)
             .enumerate()
             .map(|(index, transaction)| {
+                let transaction = versioned_transaction_from_view(&transaction);
                 if let Err(err) = transaction.sanitize() {
                     warn!(
                         "Blockstore::find_transaction_in_slot sanitize failed: {err:?}, slot: \
@@ -4875,6 +4878,7 @@ impl Blockstore {
                 if let Ok(entries) = self.get_slot_entries(slot, 0) {
                     entries.into_par_iter().for_each(|entry| {
                         entry.transactions.into_iter().for_each(|tx| {
+                            let tx = versioned_transaction_from_view(&tx);
                             if let Some(lookups) = tx.message.address_table_lookups() {
                                 add_to_set(
                                     &lookup_tables,
@@ -5037,7 +5041,8 @@ impl Blockstore {
         slot_meta: Option<&SlotMeta>,
     ) -> Result<Vec<BlockComponent>> {
         self.get_slot_data_in_block(slot, completed_ranges, slot_meta, |payload| {
-            wincode::deserialize(&payload)
+            let payload = Bytes::from(payload);
+            BlockComponent::from_bytes(&payload)
                 .map(|component| vec![component])
                 .map_err(|e| {
                     if BlockComponent::infer_is_empty_entry_batch(&payload) {
@@ -5060,7 +5065,8 @@ impl Blockstore {
         slot_meta: Option<&SlotMeta>,
     ) -> Result<Vec<Entry>> {
         self.get_slot_data_in_block(slot, completed_ranges, slot_meta, |payload| {
-            wincode::deserialize(&payload)
+            let payload = Bytes::from(payload);
+            BlockComponent::from_bytes(&payload)
                 .map(|component| match component {
                     BlockComponent::BlockMarker(_) => vec![],
                     BlockComponent::EntryBatch(entries) => entries,

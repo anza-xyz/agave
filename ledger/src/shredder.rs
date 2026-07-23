@@ -407,7 +407,8 @@ mod tests {
             let shreds = data_shreds.iter().map(Shred::payload);
             Shredder::deshred(shreds).unwrap()
         };
-        let deshred_entries: Vec<Entry> = wincode::deserialize(&deshred_payload).unwrap();
+        let deshred_entries =
+            solana_entry::parse::entries_from_bytes(&bytes::Bytes::from(deshred_payload)).unwrap();
         assert_eq!(entries, deshred_entries);
     }
 

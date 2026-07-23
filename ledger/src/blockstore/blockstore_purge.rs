@@ -469,7 +469,7 @@ impl Blockstore {
                 .into_iter()
                 .flat_map(|entry| entry.transactions);
             for (i, transaction) in transactions.enumerate() {
-                if let Some(&signature) = transaction.signatures.first() {
+                if let Some(&signature) = transaction.signatures().first() {
                     self.transaction_status_cf
                         .delete_in_batch(batch, (signature, slot));
                     self.transaction_memos_cf
@@ -478,7 +478,7 @@ impl Blockstore {
                     let meta = self.read_transaction_status((signature, slot))?;
                     let loaded_addresses = meta.map(|meta| meta.loaded_addresses);
                     let account_keys = AccountKeys::new(
-                        transaction.message.static_account_keys(),
+                        transaction.static_account_keys(),
                         loaded_addresses.as_ref(),
                     );
 
@@ -535,11 +535,7 @@ pub mod tests {
         crate::{
             blockstore::tests::make_slot_entries_with_transactions, get_tmp_ledger_path_auto_delete,
         },
-        solana_entry::entry::next_entry_mut,
-        solana_hash::Hash,
-        solana_message::Message,
         solana_sha256_hasher::hash,
-        solana_transaction::Transaction,
         test_case::test_case,
         wincode::serialize,
     };
@@ -903,7 +899,7 @@ pub mod tests {
                 .filter(|entry| !entry.is_tick())
                 .cloned()
                 .flat_map(|entry| entry.transactions)
-                .map(|transaction| transaction.signatures[0])
+                .map(|transaction| transaction.signatures()[0])
                 .collect::<Vec<Signature>>()[0];
             let random_bytes: Vec<u8> = (0..64).map(|_| rand::random::<u8>()).collect();
             blockstore
@@ -944,13 +940,12 @@ pub mod tests {
             blockstore.insert_shreds(shreds, false).unwrap();
 
             for transaction in entries.into_iter().flat_map(|entry| entry.transactions) {
-                assert_eq!(transaction.signatures.len(), 1);
+                assert_eq!(transaction.signatures().len(), 1);
                 blockstore
                     .write_transaction_status(
                         slot,
-                        transaction.signatures[0],
+                        transaction.signatures()[0],
                         transaction
-                            .message
                             .static_account_keys()
                             .iter()
                             .map(|key| (key, true)),
@@ -1097,11 +1092,10 @@ pub mod tests {
         let blockstore = Blockstore::open(ledger_path.path()).unwrap();
 
         let slot = 1;
+        // Transaction views cannot represent zero-signature transactions, so
+        // tick-only entries are the only way a slot yields no signatures.
         let mut entries: Vec<Entry> = vec![];
         for x in 0..5 {
-            let mut tx = Transaction::new_unsigned(Message::default());
-            tx.signatures = vec![];
-            entries.push(next_entry_mut(&mut Hash::default(), 0, vec![tx]));
             let mut tick = create_ticks(1, 0, hash(&serialize(&x).unwrap()));
             entries.append(&mut tick);
         }

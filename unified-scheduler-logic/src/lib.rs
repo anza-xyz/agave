@@ -102,8 +102,7 @@ use {
     solana_clock::{Epoch, Slot},
     solana_hash::Hash,
     solana_pubkey::Pubkey,
-    solana_runtime_transaction::runtime_transaction::RuntimeTransaction,
-    solana_transaction::sanitized::SanitizedTransaction,
+    solana_runtime_transaction::runtime_transaction::ReplayTransaction,
     static_assertions::const_assert_eq,
     std::{
         cmp::Ordering,
@@ -443,7 +442,7 @@ mod utils {
 type LockResult = Result<(), ()>;
 const_assert_eq!(mem::size_of::<LockResult>(), 1);
 
-/// Something to be scheduled; usually a wrapper of [`SanitizedTransaction`].
+/// Something to be scheduled; usually a wrapper of [`ReplayTransaction`].
 pub type Task = Arc<TaskInner>;
 const_assert_eq!(mem::size_of::<Task>(), 8);
 
@@ -463,7 +462,7 @@ const_assert_eq!(mem::size_of::<BlockedUsageCountToken>(), 0);
 /// Internal scheduling data about a particular task.
 #[derive(Debug)]
 pub struct TaskInner {
-    transaction: RuntimeTransaction<SanitizedTransaction>,
+    transaction: ReplayTransaction,
     /// For block verification, the index of a transaction in ledger entries. Carrying this along
     /// with the transaction is needed to properly record the execution result of it.
     /// For block production, the priority of a transaction for reordering with
@@ -505,7 +504,7 @@ impl TaskInner {
         self.alt_invalidation_slot
     }
 
-    pub fn transaction(&self) -> &RuntimeTransaction<SanitizedTransaction> {
+    pub fn transaction(&self) -> &ReplayTransaction {
         &self.transaction
     }
 
@@ -563,7 +562,7 @@ impl TaskInner {
             })
     }
 
-    pub fn into_transaction(self: Task) -> RuntimeTransaction<SanitizedTransaction> {
+    pub fn into_transaction(self: Task) -> ReplayTransaction {
         Task::into_inner(self).unwrap().transaction
     }
 }
@@ -1275,7 +1274,7 @@ impl SchedulingStateMachine {
         }
     }
 
-    /// Creates a new task with [`RuntimeTransaction<SanitizedTransaction>`] with all of
+    /// Creates a new task with [`ReplayTransaction`] with all of
     /// its corresponding [`UsageQueue`]s preloaded.
     ///
     /// Closure (`usage_queue_loader`) is used to delegate the (possibly multi-threaded)
@@ -1289,7 +1288,7 @@ impl SchedulingStateMachine {
     /// after created, if `has_no_active_task()` is `true`. Also note that this is desired for
     /// separation of concern.
     pub fn create_task(
-        transaction: RuntimeTransaction<SanitizedTransaction>,
+        transaction: ReplayTransaction,
         task_id: OrderedTaskId,
         usage_queue_loader: &mut impl FnMut(Pubkey) -> UsageQueue,
     ) -> Task {
@@ -1304,7 +1303,7 @@ impl SchedulingStateMachine {
     }
 
     pub fn create_block_production_task(
-        transaction: RuntimeTransaction<SanitizedTransaction>,
+        transaction: ReplayTransaction,
         task_id: OrderedTaskId,
         consumed_block_size: BlockSize,
         sanitized_epoch: Epoch,
@@ -1322,7 +1321,7 @@ impl SchedulingStateMachine {
     }
 
     fn do_create_task(
-        transaction: RuntimeTransaction<SanitizedTransaction>,
+        transaction: ReplayTransaction,
         task_id: OrderedTaskId,
         consumed_block_size: BlockSize,
         sanitized_epoch: Epoch,
@@ -1511,7 +1510,7 @@ mod tests {
         solana_instruction::{AccountMeta, Instruction},
         solana_message::Message,
         solana_pubkey::Pubkey,
-        solana_transaction::{Transaction, sanitized::SanitizedTransaction},
+        solana_transaction::Transaction,
         std::{
             cell::RefCell,
             collections::HashMap,
@@ -1521,22 +1520,20 @@ mod tests {
         test_case::test_matrix,
     };
 
-    fn simplest_transaction() -> RuntimeTransaction<SanitizedTransaction> {
+    fn simplest_transaction() -> ReplayTransaction {
         let message = Message::new(&[], Some(&Pubkey::new_unique()));
         let unsigned = Transaction::new_unsigned(message);
-        RuntimeTransaction::from_transaction_for_tests(unsigned)
+        ReplayTransaction::from_transaction_for_tests(unsigned)
     }
 
-    fn transaction_with_readonly_address(
-        address: Pubkey,
-    ) -> RuntimeTransaction<SanitizedTransaction> {
+    fn transaction_with_readonly_address(address: Pubkey) -> ReplayTransaction {
         transaction_with_readonly_address_with_payer(address, &Pubkey::new_unique())
     }
 
     fn transaction_with_readonly_address_with_payer(
         address: Pubkey,
         payer: &Pubkey,
-    ) -> RuntimeTransaction<SanitizedTransaction> {
+    ) -> ReplayTransaction {
         let instruction = Instruction {
             program_id: Pubkey::default(),
             accounts: vec![AccountMeta::new_readonly(address, false)],
@@ -1544,19 +1541,17 @@ mod tests {
         };
         let message = Message::new(&[instruction], Some(payer));
         let unsigned = Transaction::new_unsigned(message);
-        RuntimeTransaction::from_transaction_for_tests(unsigned)
+        ReplayTransaction::from_transaction_for_tests(unsigned)
     }
 
-    fn transaction_with_writable_address(
-        address: Pubkey,
-    ) -> RuntimeTransaction<SanitizedTransaction> {
+    fn transaction_with_writable_address(address: Pubkey) -> ReplayTransaction {
         transaction_with_writable_address_with_payer(address, &Pubkey::new_unique())
     }
 
     fn transaction_with_writable_address_with_payer(
         address: Pubkey,
         payer: &Pubkey,
-    ) -> RuntimeTransaction<SanitizedTransaction> {
+    ) -> ReplayTransaction {
         let instruction = Instruction {
             program_id: Pubkey::default(),
             accounts: vec![AccountMeta::new(address, false)],
@@ -1564,7 +1559,7 @@ mod tests {
         };
         let message = Message::new(&[instruction], Some(payer));
         let unsigned = Transaction::new_unsigned(message);
-        RuntimeTransaction::from_transaction_for_tests(unsigned)
+        ReplayTransaction::from_transaction_for_tests(unsigned)
     }
 
     fn create_address_loader(

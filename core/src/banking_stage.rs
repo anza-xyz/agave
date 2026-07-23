@@ -843,7 +843,7 @@ mod tests {
         crossbeam_channel::bounded,
         itertools::Itertools,
         solana_entry::{
-            entry::{self, EntrySlice},
+            entry::{self, EntrySlice, versioned_transaction_from_view},
             entry_or_marker::EntryOrMarker,
         },
         solana_hash::Hash,
@@ -1057,9 +1057,15 @@ mod tests {
                 .status()
         );
         for entry in entries {
-            bank.process_entry_transactions(entry.transactions)
-                .iter()
-                .for_each(|x| assert_eq!(*x, Ok(())));
+            bank.process_entry_transactions(
+                entry
+                    .transactions
+                    .iter()
+                    .map(versioned_transaction_from_view)
+                    .collect(),
+            )
+            .iter()
+            .for_each(|x| assert_eq!(*x, Ok(())));
         }
 
         assert_eq!(bank.get_balance(&to2), 1);
@@ -1170,7 +1176,13 @@ mod tests {
         let (bank, _bank_forks) = Bank::new_with_bank_forks_for_tests(&genesis_config);
         for entry in entries {
             let _ = bank
-                .try_process_entry_transactions(entry.transactions)
+                .try_process_entry_transactions(
+                    entry
+                        .transactions
+                        .iter()
+                        .map(versioned_transaction_from_view)
+                        .collect(),
+                )
                 .expect("All transactions should be processed");
         }
 
