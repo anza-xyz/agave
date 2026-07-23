@@ -185,7 +185,7 @@ version = "4.3.0-alpha.2"
 dependencies = [
  "agave-logger",
  "bzip2",
- "clap 2.33.3",
+ "clap 4.6.4",
  "console 0.16.4",
  "crossbeam-channel",
  "ctrlc",
@@ -350,7 +350,7 @@ dependencies = [
 name = "agave-store-histogram"
 version = "4.3.0-alpha.2"
 dependencies = [
- "clap 2.33.3",
+ "clap 4.6.4",
  "solana-version",
 ]
 
@@ -387,7 +387,7 @@ dependencies = [
  "bytesize",
  "caps",
  "chrono",
- "clap 2.33.3",
+ "clap 4.6.4",
  "console 0.16.4",
  "crossbeam-channel",
  "fd-lock",
@@ -546,7 +546,7 @@ version = "4.3.0-alpha.2"
 dependencies = [
  "agave-feature-set",
  "agave-logger",
- "clap 2.33.3",
+ "clap 4.6.4",
  "humantime",
  "log",
  "solana-clap-utils",
@@ -678,27 +678,12 @@ checksum = "4b46cbb362ab8752921c97e041f5e366ee6297bd428a31275b9fcf1e380f7299"
 
 [[package]]
 name = "anstream"
-version = "0.6.18"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "8acc5369981196006228e28809f761875c0327210a891e941f4c683b3a99529b"
-dependencies = [
- "anstyle",
- "anstyle-parse 0.2.6",
- "anstyle-query",
- "anstyle-wincon",
- "colorchoice",
- "is_terminal_polyfill",
- "utf8parse",
-]
-
-[[package]]
-name = "anstream"
 version = "1.0.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "824a212faf96e9acacdbd09febd34438f8f711fb84e09a8916013cd7815ca28d"
 dependencies = [
  "anstyle",
- "anstyle-parse 1.0.0",
+ "anstyle-parse",
  "anstyle-query",
  "anstyle-wincon",
  "colorchoice",
@@ -711,15 +696,6 @@ name = "anstyle"
 version = "1.0.14"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "940b3a0ca603d1eade50a4846a2afffd5ef57a9feac2c0e2ec2e14f9ead76000"
-
-[[package]]
-name = "anstyle-parse"
-version = "0.2.6"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "3b2d16507662817a6a20a9ea92df6652ee4f94f914589377d69f3b21bc5798a9"
-dependencies = [
- "utf8parse",
-]
 
 [[package]]
 name = "anstyle-parse"
@@ -1930,9 +1906,9 @@ dependencies = [
 
 [[package]]
 name = "clap"
-version = "4.5.31"
+version = "4.6.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "027bb0d98429ae334a8698531da7077bdf906419543a35a55c2cb1b66437d767"
+checksum = "d91e0c145792ef73a6ad36d27c75ac09f1832222a3c209689d90f534685ee5b7"
 dependencies = [
  "clap_builder",
  "clap_derive",
@@ -1940,26 +1916,26 @@ dependencies = [
 
 [[package]]
 name = "clap_builder"
-version = "4.5.31"
+version = "4.6.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "5589e0cba072e0f3d23791efac0fd8627b49c829c196a492e88168e6a669d863"
+checksum = "f09628afdcc538b57f3c6341e9c8e9970f18e4a481690a64974d7023bd33548b"
 dependencies = [
- "anstream 0.6.18",
+ "anstream",
  "anstyle",
- "clap_lex 0.7.4",
+ "clap_lex 1.1.0",
  "strsim 0.11.1",
 ]
 
 [[package]]
 name = "clap_derive"
-version = "4.5.28"
+version = "4.6.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "bf4ced95c6f4a675af3da73304b9ac4ed991640c36374e4b46795c49e17cf1ed"
+checksum = "d012d2b9d65aca7f18f4d9878a045bc17899bba951561ba5ec3c2ba1eed9a061"
 dependencies = [
  "heck 0.5.0",
  "proc-macro2",
  "quote",
- "syn 2.0.117",
+ "syn 3.0.3",
 ]
 
 [[package]]
@@ -1973,9 +1949,9 @@ dependencies = [
 
 [[package]]
 name = "clap_lex"
-version = "0.7.4"
+version = "1.1.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "f46ad14479a25103f283c0f10005961cf086d8dc42205bb44c46ac563475dca6"
+checksum = "c8d4a3bb8b1e0c1050499d1815f5ab16d04f0959b233085fb31653fbfc9d98f9"
 
 [[package]]
 name = "cmov"
@@ -2172,7 +2148,7 @@ dependencies = [
  "anes",
  "cast",
  "ciborium",
- "clap 4.5.31",
+ "clap 4.6.4",
  "criterion-plot",
  "itertools 0.13.0",
  "num-traits",
@@ -2882,7 +2858,7 @@ version = "0.11.11"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "de671bd27a75a797dc9ae289ba1e77276e75e2026408aab65185384e2d5cd3f6"
 dependencies = [
- "anstream 1.0.0",
+ "anstream",
  "anstyle",
  "env_filter",
  "jiff",
@@ -3773,7 +3749,7 @@ dependencies = [
  "libc",
  "percent-encoding 2.3.2",
  "pin-project-lite",
- "socket2 0.5.10",
+ "socket2 0.6.5",
  "tokio",
  "tower-service",
  "tracing",
@@ -5860,7 +5836,7 @@ dependencies = [
  "quinn-udp",
  "rustc-hash",
  "rustls",
- "socket2 0.5.10",
+ "socket2 0.6.5",
  "thiserror 2.0.18",
  "tokio",
  "tracing",
@@ -6415,7 +6391,7 @@ dependencies = [
  "errno",
  "libc",
  "linux-raw-sys 0.12.1",
- "windows-sys 0.52.0",
+ "windows-sys 0.61.0",
 ]
 
 [[package]]
@@ -7135,7 +7111,7 @@ name = "solana-accounts-cluster-bench"
 version = "4.3.0-alpha.2"
 dependencies = [
  "agave-logger",
- "clap 2.33.3",
+ "clap 4.6.4",
  "log",
  "rand 0.9.4",
  "rayon",
@@ -7714,7 +7690,7 @@ dependencies = [
  "bincode",
  "bip39",
  "bs58",
- "clap 2.33.3",
+ "clap 4.6.4",
  "console 0.16.4",
  "const_format",
  "hex",
@@ -8533,7 +8509,7 @@ name = "solana-faucet-cli"
 version = "4.3.0-alpha.2"
 dependencies = [
  "agave-logger",
- "clap 2.33.3",
+ "clap 4.6.4",
  "log",
  "solana-clap-utils",
  "solana-cli-config",
@@ -8655,7 +8631,7 @@ dependencies = [
  "base64 0.22.1",
  "bincode",
  "bs58",
- "clap 2.33.3",
+ "clap 4.6.4",
  "itertools 0.14.0",
  "serde",
  "serde_json",
@@ -8864,7 +8840,7 @@ name = "solana-gossip-cli"
 version = "4.3.0-alpha.2"
 dependencies = [
  "agave-logger",
- "clap 2.33.3",
+ "clap 4.6.4",
  "log",
  "solana-clap-utils",
  "solana-gossip",
@@ -10779,7 +10755,7 @@ dependencies = [
 name = "solana-stake-accounts"
 version = "4.3.0-alpha.2"
 dependencies = [
- "clap 2.33.3",
+ "clap 4.6.4",
  "solana-account 4.3.1",
  "solana-clap-utils",
  "solana-cli-config",
@@ -10925,7 +10901,7 @@ dependencies = [
  "assert_matches",
  "bytes",
  "chrono",
- "clap 4.5.31",
+ "clap 4.6.4",
  "crossbeam-channel",
  "futures 0.3.32",
  "indexmap 2.14.0",
@@ -12330,6 +12306,17 @@ dependencies = [
 ]
 
 [[package]]
+name = "syn"
+version = "3.0.3"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "53e9bae58849f64dfa4f5d5ae372c8341f7305f82a3868709269343628b659a3"
+dependencies = [
+ "proc-macro2",
+ "quote",
+ "unicode-ident",
+]
+
+[[package]]
 name = "sync_wrapper"
 version = "1.0.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -12435,7 +12422,7 @@ dependencies = [
  "getrandom 0.3.4",
  "once_cell",
  "rustix 1.1.4",
- "windows-sys 0.52.0",
+ "windows-sys 0.61.0",
 ]
 
 [[package]]
