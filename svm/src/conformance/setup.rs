@@ -2,7 +2,7 @@
 
 #[cfg(any(feature = "conformance", feature = "dev-context-only-utils"))]
 use solana_account::ReadableAccount;
-#[cfg(any(feature = "conformance", test))]
+#[cfg(any(feature = "conformance", feature = "dev-context-only-utils", test))]
 use {
     crate::conformance::transaction_address_loader::TransactionAddressLoader,
     solana_message::{SanitizedVersionedMessage, VersionedMessage},
@@ -166,7 +166,7 @@ pub(crate) fn compile_transaction_context(
 
 /// Sanitize a versioned message, resolving address table lookups from the
 /// supplied accounts and their sysvar state.
-#[cfg(any(feature = "conformance", test))]
+#[cfg(any(feature = "conformance", feature = "dev-context-only-utils", test))]
 pub fn sanitized_message_from_versioned_message(
     message: VersionedMessage,
     accounts: &[(Pubkey, Account)],
@@ -225,8 +225,8 @@ pub(crate) fn recent_blockhash(sysvar_cache: &SysvarCache) -> (Hash, u64) {
 
 /// Build a sysvar cache populated from any sysvar accounts present in the
 /// input account set.
-#[cfg(any(feature = "conformance", test))]
-pub(crate) fn sysvar_cache_from_accounts(accounts: &[(Pubkey, Account)]) -> SysvarCache {
+#[cfg(any(feature = "conformance", feature = "dev-context-only-utils", test))]
+pub fn sysvar_cache_from_accounts(accounts: &[(Pubkey, Account)]) -> SysvarCache {
     let mut cache = SysvarCache::default();
     cache.fill_missing_entries(|pubkey, set_sysvar| {
         if let Some(data) = sysvar_account_data(accounts, pubkey) {
