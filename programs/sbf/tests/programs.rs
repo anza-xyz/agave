@@ -86,10 +86,24 @@ use {
         instr::{context::InstrContext, harness::execute_instr},
         programs::{
             add_program_to_program_cache, keyed_account_for_bpf_loader_program,
-            keyed_account_for_system_program, load_program_elf, new_program_cache_with_builtins,
+            keyed_account_for_system_program, new_program_cache_with_builtins,
         },
     },
+    std::{fs::File, io::Read, path::PathBuf},
 };
+
+#[cfg(any(feature = "sbf_c", feature = "sbf_rust"))]
+fn load_program_elf(program_name: &str) -> Vec<u8> {
+    let sbf_out_dir =
+        std::env::var("SBF_OUT_DIR").expect("SBF_OUT_DIR must be set to locate program ELFs");
+    let path = PathBuf::from(sbf_out_dir).join(format!("{program_name}.so"));
+    let mut file = File::open(&path)
+        .unwrap_or_else(|e| panic!("Failed to open file {}: {}", path.display(), e));
+    let mut data = Vec::new();
+    file.read_to_end(&mut data)
+        .unwrap_or_else(|e| panic!("Failed to read file {}: {}", path.display(), e));
+    data
+}
 
 #[cfg(feature = "sbf_rust")]
 fn default_program_cache() -> ProgramCacheForTxBatch {
@@ -1743,11 +1757,9 @@ fn test_program_sbf_instruction_introspection_passing_transaction() {
         ],
         Some(&payer),
     );
-    let sanitized_message = SanitizedMessage::try_from_legacy_message(
-        message,
-        &ReservedAccountKeys::empty_key_set(),
-    )
-    .unwrap();
+    let sanitized_message =
+        SanitizedMessage::try_from_legacy_message(message, &ReservedAccountKeys::empty_key_set())
+            .unwrap();
 
     let context =
         TxnContext::new_with_default_budget(feature_set, accounts, sanitized_message, None);
@@ -1768,11 +1780,9 @@ fn test_program_sbf_instruction_introspection_writable_special_instructions1111(
         &[Instruction::new_with_bytes(program_id, &[0], account_metas)],
         Some(&payer),
     );
-    let sanitized_message = SanitizedMessage::try_from_legacy_message(
-        message,
-        &ReservedAccountKeys::empty_key_set(),
-    )
-    .unwrap();
+    let sanitized_message =
+        SanitizedMessage::try_from_legacy_message(message, &ReservedAccountKeys::empty_key_set())
+            .unwrap();
 
     let context =
         TxnContext::new_with_default_budget(feature_set, accounts, sanitized_message, None);
@@ -1797,11 +1807,9 @@ fn test_program_sbf_instruction_introspection_no_accounts() {
         &[Instruction::new_with_bytes(program_id, &[0], vec![])],
         Some(&payer),
     );
-    let sanitized_message = SanitizedMessage::try_from_legacy_message(
-        message,
-        &ReservedAccountKeys::empty_key_set(),
-    )
-    .unwrap();
+    let sanitized_message =
+        SanitizedMessage::try_from_legacy_message(message, &ReservedAccountKeys::empty_key_set())
+            .unwrap();
 
     let context =
         TxnContext::new_with_default_budget(feature_set, accounts, sanitized_message, None);

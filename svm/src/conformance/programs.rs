@@ -19,7 +19,7 @@ use {
     solana_svm_feature_set::SVMFeatureSet,
     solana_svm_timings::ExecuteTimings,
     solana_syscalls::create_program_runtime_environment,
-    std::{collections::HashSet, fs::File, io::Read, path::PathBuf, sync::Arc},
+    std::{collections::HashSet, sync::Arc},
 };
 
 struct SvmBuiltinPrototype {
@@ -120,19 +120,6 @@ pub fn new_program_cache_with_builtins(slot: u64) -> ProgramCacheForTxBatch {
     }
 
     cache
-}
-
-// TODO: copy pasta from runtime for now / tinker around later
-pub fn load_program_elf(program_name: &str) -> Vec<u8> {
-    let sbf_out_dir =
-        std::env::var("SBF_OUT_DIR").expect("SBF_OUT_DIR must be set to locate program ELFs");
-    let path = PathBuf::from(sbf_out_dir).join(format!("{program_name}.so"));
-    let mut file = File::open(&path)
-        .unwrap_or_else(|e| panic!("Failed to open file {}: {}", path.display(), e));
-    let mut data = Vec::new();
-    file.read_to_end(&mut data)
-        .unwrap_or_else(|e| panic!("Failed to read file {}: {}", path.display(), e));
-    data
 }
 
 /// Add a program loaded from ELF bytes to the cache.
