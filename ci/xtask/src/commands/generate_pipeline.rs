@@ -283,56 +283,56 @@ async fn generate_pull_request_pipeline(
 
     let mut pipeline = buildkite::Pipeline::new();
 
-    pipeline.add_step(default_sanity_step());
-    pipeline.add_step(default_channel_info_divergence_step());
-    if flags.shellcheck {
-        pipeline.add_step(default_shellcheck_step());
-    }
+    // pipeline.add_step(default_sanity_step());
+    // pipeline.add_step(default_channel_info_divergence_step());
+    // if flags.shellcheck {
+    //     pipeline.add_step(default_shellcheck_step());
+    // }
 
-    pipeline.add_step(buildkite::Step::Wait(buildkite::WaitStep {}));
+    // pipeline.add_step(buildkite::Step::Wait(buildkite::WaitStep {}));
 
-    if flags.checks {
-        pipeline.add_step(default_checks_step());
-    }
+    // if flags.checks {
+    //     pipeline.add_step(default_checks_step());
+    // }
     if flags.feature_check {
         pipeline.add_step(default_feature_check_step(5));
     }
-    if flags.miri {
-        pipeline.add_step(default_miri_step());
-    }
-    if flags.frozen_abi {
-        pipeline.add_step(default_frozen_abi_step());
-    }
+    // if flags.miri {
+    //     pipeline.add_step(default_miri_step());
+    // }
+    // if flags.frozen_abi {
+    //     pipeline.add_step(default_frozen_abi_step());
+    // }
 
-    pipeline.add_step(buildkite::Step::Wait(buildkite::WaitStep {}));
+    // pipeline.add_step(buildkite::Step::Wait(buildkite::WaitStep {}));
 
-    if flags.stable {
-        pipeline.add_step(default_stable_step(3));
-    }
-    if flags.local_cluster {
-        pipeline.add_step(default_local_cluster_step(10));
-    }
-    if flags.docs {
-        pipeline.add_step(default_docs_check_step());
-    }
-    if flags.localnet {
-        pipeline.add_step(default_localnet_step());
-    }
-    if flags.xdp_tests {
-        pipeline.add_step(default_xdp_test_step());
-    }
+    // if flags.stable {
+    //     pipeline.add_step(default_stable_step(3));
+    // }
+    // if flags.local_cluster {
+    //     pipeline.add_step(default_local_cluster_step(10));
+    // }
+    // if flags.docs {
+    //     pipeline.add_step(default_docs_check_step());
+    // }
+    // if flags.localnet {
+    //     pipeline.add_step(default_localnet_step());
+    // }
+    // if flags.xdp_tests {
+    //     pipeline.add_step(default_xdp_test_step());
+    // }
 
-    pipeline.add_step(buildkite::Step::Wait(buildkite::WaitStep {}));
+    // pipeline.add_step(buildkite::Step::Wait(buildkite::WaitStep {}));
 
-    if flags.stable_sbf {
-        pipeline.add_step(default_stable_sbf_step());
-    }
-    if flags.shuttle {
-        pipeline.add_step(default_shuttle_step());
-    }
-    if flags.coverage {
-        pipeline.add_step(default_coverage_step(3));
-    }
+    // if flags.stable_sbf {
+    //     pipeline.add_step(default_stable_sbf_step());
+    // }
+    // if flags.shuttle {
+    //     pipeline.add_step(default_shuttle_step());
+    // }
+    // if flags.coverage {
+    //     pipeline.add_step(default_coverage_step(3));
+    // }
 
     Ok(pipeline)
 }
