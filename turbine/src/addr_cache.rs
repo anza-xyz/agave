@@ -9,6 +9,7 @@ use {
         cmp::Reverse,
         collections::{HashMap, VecDeque, hash_map::Entry},
         net::SocketAddr,
+        sync::Arc,
     },
 };
 
@@ -51,8 +52,8 @@ pub(crate) struct AddrCache {
 struct CacheEntry {
     // Root distance and socket addresses cached either speculatively or when
     // retransmitting incoming shreds.
-    code: Vec<Option<(/*root_distance:*/ u8, Box<[SocketAddr]>)>>,
-    data: Vec<Option<(/*root_distance:*/ u8, Box<[SocketAddr]>)>>,
+    code: Vec<Option<(/*root_distance:*/ u8, Arc<[SocketAddr]>)>>,
+    data: Vec<Option<(/*root_distance:*/ u8, Arc<[SocketAddr]>)>>,
     // Code and data indices where [..index] are fully populated.
     index_code: usize,
     index_data: usize,
@@ -81,7 +82,10 @@ impl AddrCache {
 
     // Returns (root-distance, socket-addresses) cached for the given shred-id.
     #[inline]
-    pub(crate) fn get(&self, shred: &ShredId) -> Option<(/*root_distance:*/ u8, &[SocketAddr])> {
+    pub(crate) fn get(
+        &self,
+        shred: &ShredId,
+    ) -> Option<(/*root_distance:*/ u8, &Arc<[SocketAddr]>)> {
         self.cache
             .get(&shred.slot())?
             .get(shred.shred_type(), shred.index())
@@ -92,7 +96,7 @@ impl AddrCache {
     pub(crate) fn put(
         &mut self,
         shred: &ShredId,
-        entry: (/*root_distance:*/ u8, Box<[SocketAddr]>),
+        entry: (/*root_distance:*/ u8, Arc<[SocketAddr]>),
     ) {
         self.get_cache_entry_mut(shred.slot())
             .put(shred.shred_type(), shred.index(), entry);
@@ -266,14 +270,14 @@ impl CacheEntry {
         &self,
         shred_type: ShredType,
         shred_index: u32,
-    ) -> Option<(/*root_distance:*/ u8, &[SocketAddr])> {
+    ) -> Option<(/*root_distance:*/ u8, &Arc<[SocketAddr]>)> {
         match shred_type {
             ShredType::Code => &self.code,
             ShredType::Data => &self.data,
         }
         .get(shred_index as usize)?
         .as_ref()
-        .map(|(root_distance, addrs)| (*root_distance, addrs.as_ref()))
+        .map(|(root_distance, addrs)| (*root_distance, addrs))
     }
 
     // Stores (root-distance, socket-addresses) for the given shred type and
@@ -283,7 +287,7 @@ impl CacheEntry {
         &mut self,
         shred_type: ShredType,
         shred_index: u32,
-        entry: (/*root_distance:*/ u8, Box<[SocketAddr]>),
+        entry: (/*root_distance:*/ u8, Arc<[SocketAddr]>),
     ) {
         let cache = match shred_type {
             ShredType::Code => &mut self.code,
@@ -354,9 +358,9 @@ mod tests {
         assert_eq!(entry.index_code, 0);
         assert_eq!(entry.index_data, 0);
 
-        entry.put(ShredType::Code, 0, (0, Box::new([])));
-        entry.put(ShredType::Code, 2, (0, Box::new([])));
-        entry.put(ShredType::Data, 1, (0, Box::new([])));
+        entry.put(ShredType::Code, 0, (0, Arc::from([])));
+        entry.put(ShredType::Code, 2, (0, Arc::from([])));
+        entry.put(ShredType::Data, 1, (0, Arc::from([])));
         assert!(entry.get_shreds(5).eq([
             (ShredType::Code, 1),
             (ShredType::Data, 0),
@@ -369,10 +373,10 @@ mod tests {
         assert_eq!(entry.index_code, 1);
         assert_eq!(entry.index_data, 0);
 
-        entry.put(ShredType::Code, 1, (0, Box::new([])));
-        entry.put(ShredType::Code, 4, (0, Box::new([])));
-        entry.put(ShredType::Data, 0, (0, Box::new([])));
-        entry.put(ShredType::Data, 3, (0, Box::new([])));
+        entry.put(ShredType::Code, 1, (0, Arc::from([])));
+        entry.put(ShredType::Code, 4, (0, Arc::from([])));
+        entry.put(ShredType::Data, 0, (0, Arc::from([])));
+        entry.put(ShredType::Data, 3, (0, Arc::from([])));
         assert!(entry.get_shreds(5).eq([
             (ShredType::Code, 3),
             (ShredType::Data, 2),
@@ -405,8 +409,8 @@ mod tests {
         assert_eq!(entry.index_code, 3);
         assert_eq!(entry.index_data, 2);
 
-        entry.put(ShredType::Code, 3, (0, Box::new([])));
-        entry.put(ShredType::Data, 2, (0, Box::new([])));
+        entry.put(ShredType::Code, 3, (0, Arc::from([])));
+        entry.put(ShredType::Data, 2, (0, Arc::from([])));
         assert!(entry.get_shreds(7).eq([]));
         assert_eq!(entry.index_code, 5);
         assert_eq!(entry.index_data, 4);
