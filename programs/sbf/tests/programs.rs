@@ -4300,266 +4300,579 @@ fn test_cpi_account_ownership_writability(virtual_address_space_adjustments: boo
     assert_eq!(effects.status, Ok(()), "{:?}", effects.logs);
 }
 
-#[test]
+// This tests the case where a caller extends an account beyond the original
+// data length. The callee should see the extended data (asserted in the
+// callee program, not here).
+#[test_matrix([false, true], [false, true], [false, true])]
 #[cfg(feature = "sbf_rust")]
-fn test_cpi_account_data_updates() {
-    agave_logger::setup();
+fn test_cpi_account_data_updates_caller_grows(
+    deprecated_callee: bool,
+    deprecated_caller: bool,
+    virtual_address_space_adjustments: bool,
+) {
+    let mut configured_feature_set = FeatureSet::all_enabled();
+    if !virtual_address_space_adjustments {
+        configured_feature_set
+            .deactivate(&feature_set::syscall_parameter_address_restrictions::id());
+        configured_feature_set.deactivate(&feature_set::virtual_address_space_adjustments::id());
+        configured_feature_set.deactivate(&feature_set::account_data_direct_mapping::id());
+    }
 
-    for (deprecated_callee, deprecated_caller, virtual_address_space_adjustments) in
-        [false, true].into_iter().flat_map(move |z| {
-            [false, true]
-                .into_iter()
-                .flat_map(move |y| [false, true].into_iter().map(move |x| (x, y, z)))
-        })
-    {
-        let GenesisConfigInfo {
-            genesis_config,
-            mint_keypair,
-            ..
-        } = create_genesis_config(100_123_456_789);
-        let mut bank = Bank::new_for_tests(&genesis_config);
-        let mut feature_set = FeatureSet::all_enabled();
-        if !virtual_address_space_adjustments {
-            feature_set.deactivate(&feature_set::syscall_parameter_address_restrictions::id());
-            feature_set.deactivate(&feature_set::virtual_address_space_adjustments::id());
-            feature_set.deactivate(&feature_set::account_data_direct_mapping::id());
-        }
+    let (
+        _,
+        mint_keypair,
+        account_keypair,
+        [invoke_program_id, realloc_program_id, deprecated_program_id],
+        feature_set,
+        mut accounts,
+        mut program_cache,
+        sysvar_cache,
+    ) = program_sbf_txn_fixture_with_feature_set(
+        [
+            ("solana_sbf_rust_invoke", bpf_loader_upgradeable::id()),
+            ("solana_sbf_rust_realloc", bpf_loader_upgradeable::id()),
+            (
+                "solana_sbf_rust_deprecated_loader",
+                bpf_loader_deprecated::id(),
+            ),
+        ],
+        configured_feature_set,
+    );
 
-        bank.feature_set = Arc::new(feature_set);
+    let account_metas = vec![
+        AccountMeta::new(mint_keypair.pubkey(), true),
+        AccountMeta::new(account_keypair.pubkey(), false),
+        AccountMeta::new_readonly(
+            if deprecated_callee {
+                deprecated_program_id
+            } else {
+                realloc_program_id
+            },
+            false,
+        ),
+        AccountMeta::new_readonly(
+            if deprecated_caller {
+                deprecated_program_id
+            } else {
+                invoke_program_id
+            },
+            false,
+        ),
+    ];
 
-        let (bank, bank_forks) = bank.wrap_with_bank_forks_for_tests();
-        let invoke_program_id = create_program(
-            &bank,
-            &bpf_loader_upgradeable::id(),
-            "solana_sbf_rust_invoke",
-        );
-        let realloc_program_id = create_program(
-            &bank,
-            &bpf_loader_upgradeable::id(),
-            "solana_sbf_rust_realloc",
-        );
-        let deprecated_program_id = create_program(
-            &bank,
-            &bpf_loader_deprecated::id(),
-            "solana_sbf_rust_deprecated_loader",
-        );
-        let mut bank_client = BankClient::new_shared(bank.clone());
-        let bank = bank_client
-            .advance_slot(1, &bank_forks, SlotLeader::default())
+    let mut account = Account::new(42, 0, &account_metas[3].pubkey);
+    account.data = b"foo".to_vec();
+    accounts
+        .iter_mut()
+        .find(|(pubkey, _)| pubkey == &account_keypair.pubkey())
+        .unwrap()
+        .1 = account;
+
+    let mut instruction_data = vec![TEST_CPI_ACCOUNT_UPDATE_CALLER_GROWS];
+    instruction_data.extend_from_slice(b"bar");
+
+    let message = Message::new(
+        &[Instruction::new_with_bytes(
+            account_metas[3].pubkey,
+            &instruction_data,
+            account_metas,
+        )],
+        Some(&mint_keypair.pubkey()),
+    );
+    let sanitized_message =
+        SanitizedMessage::try_from_legacy_message(message, &ReservedAccountKeys::empty_key_set())
             .unwrap();
 
-        let account_keypair = Keypair::new();
-        let mint_pubkey = mint_keypair.pubkey();
-        let account_metas = vec![
-            AccountMeta::new(mint_pubkey, true),
-            AccountMeta::new(account_keypair.pubkey(), false),
-            AccountMeta::new_readonly(
-                if deprecated_callee {
-                    deprecated_program_id
+    let context =
+        TxnContext::new_with_default_budget(feature_set, accounts, sanitized_message, None);
+
+    let effects = execute_txn(&context, &mut program_cache, &sysvar_cache);
+
+    if deprecated_caller {
+        assert_eq!(
+            effects.status,
+            Err(TransactionError::InstructionError(
+                0,
+                if virtual_address_space_adjustments {
+                    InstructionError::ProgramFailedToComplete
                 } else {
-                    realloc_program_id
+                    InstructionError::ModifiedProgramId
                 },
-                false,
+            )),
+        );
+    } else {
+        assert_eq!(effects.status, Ok(()), "{:?}", effects.logs);
+        // "bar" here was copied from the realloc region
+        assert_eq!(
+            effects.get_account(&account_keypair.pubkey()).unwrap().data,
+            b"foobar",
+        );
+    }
+}
+
+// This tests the case where a callee extends an account beyond the original
+// data length. The caller should see the extended data where the realloc
+// region contains the new data. In this test the callee owns the account,
+// the caller can't write but the CPI glue still updates correctly.
+#[test_matrix([false, true], [false, true], [false, true])]
+#[cfg(feature = "sbf_rust")]
+fn test_cpi_account_data_updates_callee_grows(
+    deprecated_callee: bool,
+    deprecated_caller: bool,
+    virtual_address_space_adjustments: bool,
+) {
+    let mut configured_feature_set = FeatureSet::all_enabled();
+    if !virtual_address_space_adjustments {
+        configured_feature_set
+            .deactivate(&feature_set::syscall_parameter_address_restrictions::id());
+        configured_feature_set.deactivate(&feature_set::virtual_address_space_adjustments::id());
+        configured_feature_set.deactivate(&feature_set::account_data_direct_mapping::id());
+    }
+
+    let (
+        _,
+        mint_keypair,
+        account_keypair,
+        [invoke_program_id, realloc_program_id, deprecated_program_id],
+        feature_set,
+        mut accounts,
+        mut program_cache,
+        sysvar_cache,
+    ) = program_sbf_txn_fixture_with_feature_set(
+        [
+            ("solana_sbf_rust_invoke", bpf_loader_upgradeable::id()),
+            ("solana_sbf_rust_realloc", bpf_loader_upgradeable::id()),
+            (
+                "solana_sbf_rust_deprecated_loader",
+                bpf_loader_deprecated::id(),
             ),
-            AccountMeta::new_readonly(
-                if deprecated_caller {
-                    deprecated_program_id
+        ],
+        configured_feature_set,
+    );
+
+    let account_metas = vec![
+        AccountMeta::new(mint_keypair.pubkey(), true),
+        AccountMeta::new(account_keypair.pubkey(), false),
+        AccountMeta::new_readonly(
+            if deprecated_callee {
+                deprecated_program_id
+            } else {
+                realloc_program_id
+            },
+            false,
+        ),
+        AccountMeta::new_readonly(
+            if deprecated_caller {
+                deprecated_program_id
+            } else {
+                invoke_program_id
+            },
+            false,
+        ),
+    ];
+
+    let mut account = Account::new(42, 0, &account_metas[2].pubkey);
+    account.data = b"foo".to_vec();
+    accounts
+        .iter_mut()
+        .find(|(pubkey, _)| pubkey == &account_keypair.pubkey())
+        .unwrap()
+        .1 = account;
+
+    let mut instruction_data = vec![TEST_CPI_ACCOUNT_UPDATE_CALLEE_GROWS];
+    instruction_data.extend_from_slice(b"bar");
+
+    let message = Message::new(
+        &[Instruction::new_with_bytes(
+            account_metas[3].pubkey,
+            &instruction_data,
+            account_metas,
+        )],
+        Some(&mint_keypair.pubkey()),
+    );
+    let sanitized_message =
+        SanitizedMessage::try_from_legacy_message(message, &ReservedAccountKeys::empty_key_set())
+            .unwrap();
+
+    let context =
+        TxnContext::new_with_default_budget(feature_set, accounts, sanitized_message, None);
+
+    let effects = execute_txn(&context, &mut program_cache, &sysvar_cache);
+    if deprecated_callee {
+        assert_eq!(effects.status, Ok(()), "{:?}", effects.logs);
+        // deprecated_callee is incapable of resizing accounts
+        assert_eq!(
+            effects.get_account(&account_keypair.pubkey()).unwrap().data,
+            b"foo",
+        );
+    } else if deprecated_caller {
+        assert_eq!(
+            effects.status,
+            Err(TransactionError::InstructionError(
+                0,
+                if virtual_address_space_adjustments {
+                    InstructionError::InvalidRealloc
                 } else {
-                    invoke_program_id
+                    InstructionError::ExternalAccountDataModified
                 },
-                false,
+            )),
+        );
+    } else {
+        assert_eq!(effects.status, Ok(()), "{:?}", effects.logs);
+        // "bar" here was copied from the realloc region
+        assert_eq!(
+            effects.get_account(&account_keypair.pubkey()).unwrap().data,
+            b"foobar",
+        );
+    }
+}
+
+// This tests the case where a callee shrinks an account, the caller data
+// slice must be truncated accordingly and post_len..original_data_len must
+// be zeroed (zeroing is checked in the invoked program not here). Same as
+// above, the callee owns the account but the changes are still reflected in
+// the caller even if things are readonly from the caller's POV.
+#[test_matrix([false, true], [false, true], [false, true])]
+#[cfg(feature = "sbf_rust")]
+fn test_cpi_account_data_updates_callee_shrinks_smaller_than_original_len(
+    deprecated_callee: bool,
+    deprecated_caller: bool,
+    virtual_address_space_adjustments: bool,
+) {
+    let mut configured_feature_set = FeatureSet::all_enabled();
+    if !virtual_address_space_adjustments {
+        configured_feature_set
+            .deactivate(&feature_set::syscall_parameter_address_restrictions::id());
+        configured_feature_set.deactivate(&feature_set::virtual_address_space_adjustments::id());
+        configured_feature_set.deactivate(&feature_set::account_data_direct_mapping::id());
+    }
+
+    let (
+        _,
+        mint_keypair,
+        account_keypair,
+        [invoke_program_id, realloc_program_id, deprecated_program_id],
+        feature_set,
+        mut accounts,
+        mut program_cache,
+        sysvar_cache,
+    ) = program_sbf_txn_fixture_with_feature_set(
+        [
+            ("solana_sbf_rust_invoke", bpf_loader_upgradeable::id()),
+            ("solana_sbf_rust_realloc", bpf_loader_upgradeable::id()),
+            (
+                "solana_sbf_rust_deprecated_loader",
+                bpf_loader_deprecated::id(),
             ),
-        ];
+        ],
+        configured_feature_set,
+    );
 
-        // This tests the case where a caller extends an account beyond the original
-        // data length. The callee should see the extended data (asserted in the
-        // callee program, not here).
-        let mut account = AccountSharedData::new(42, 0, &account_metas[3].pubkey);
-        account.set_data(b"foo".to_vec());
-        bank.store_account(&account_keypair.pubkey(), &account);
-        let mut instruction_data = vec![TEST_CPI_ACCOUNT_UPDATE_CALLER_GROWS];
-        instruction_data.extend_from_slice(b"bar");
-        let instruction = Instruction::new_with_bytes(
+    let account_metas = vec![
+        AccountMeta::new(mint_keypair.pubkey(), true),
+        AccountMeta::new(account_keypair.pubkey(), false),
+        AccountMeta::new_readonly(
+            if deprecated_callee {
+                deprecated_program_id
+            } else {
+                realloc_program_id
+            },
+            false,
+        ),
+        AccountMeta::new_readonly(
+            if deprecated_caller {
+                deprecated_program_id
+            } else {
+                invoke_program_id
+            },
+            false,
+        ),
+    ];
+
+    let mut account = Account::new(42, 0, &account_metas[2].pubkey);
+    account.data = b"foobar".to_vec();
+    accounts
+        .iter_mut()
+        .find(|(pubkey, _)| pubkey == &account_keypair.pubkey())
+        .unwrap()
+        .1 = account;
+
+    let mut instruction_data = vec![
+        TEST_CPI_ACCOUNT_UPDATE_CALLEE_SHRINKS_SMALLER_THAN_ORIGINAL_LEN,
+        virtual_address_space_adjustments as u8,
+    ];
+    instruction_data.extend_from_slice(4usize.to_le_bytes().as_ref());
+
+    let message = Message::new(
+        &[Instruction::new_with_bytes(
             account_metas[3].pubkey,
             &instruction_data,
-            account_metas.clone(),
-        );
-        let result = bank_client.send_and_confirm_instruction(&mint_keypair, instruction);
-        if deprecated_caller {
-            assert_eq!(
-                result.unwrap_err().unwrap(),
-                TransactionError::InstructionError(
-                    0,
-                    if virtual_address_space_adjustments {
-                        InstructionError::ProgramFailedToComplete
-                    } else {
-                        InstructionError::ModifiedProgramId
-                    }
-                )
-            );
-        } else {
-            assert!(result.is_ok(), "{result:?}");
-            let account = bank.get_account(&account_keypair.pubkey()).unwrap();
-            // "bar" here was copied from the realloc region
-            assert_eq!(account.data(), b"foobar");
-        }
+            account_metas,
+        )],
+        Some(&mint_keypair.pubkey()),
+    );
+    let sanitized_message =
+        SanitizedMessage::try_from_legacy_message(message, &ReservedAccountKeys::empty_key_set())
+            .unwrap();
 
-        // This tests the case where a callee extends an account beyond the original
-        // data length. The caller should see the extended data where the realloc
-        // region contains the new data. In this test the callee owns the account,
-        // the caller can't write but the CPI glue still updates correctly.
-        let mut account = AccountSharedData::new(42, 0, &account_metas[2].pubkey);
-        account.set_data(b"foo".to_vec());
-        bank.store_account(&account_keypair.pubkey(), &account);
-        let mut instruction_data = vec![TEST_CPI_ACCOUNT_UPDATE_CALLEE_GROWS];
-        instruction_data.extend_from_slice(b"bar");
-        let instruction = Instruction::new_with_bytes(
+    let context =
+        TxnContext::new_with_default_budget(feature_set, accounts, sanitized_message, None);
+
+    let effects = execute_txn(&context, &mut program_cache, &sysvar_cache);
+    if deprecated_callee {
+        assert_eq!(effects.status, Ok(()), "{:?}", effects.logs);
+        // deprecated_callee is incapable of resizing accounts
+        assert_eq!(
+            effects.get_account(&account_keypair.pubkey()).unwrap().data,
+            b"foobar",
+        );
+    } else if deprecated_caller {
+        assert_eq!(
+            effects.status,
+            Err(TransactionError::InstructionError(
+                0,
+                if virtual_address_space_adjustments && deprecated_callee {
+                    InstructionError::InvalidRealloc
+                } else {
+                    InstructionError::ExternalAccountDataModified
+                },
+            )),
+        );
+    } else {
+        assert_eq!(effects.status, Ok(()), "{:?}", effects.logs);
+        assert_eq!(
+            effects.get_account(&account_keypair.pubkey()).unwrap().data,
+            b"foob",
+        );
+    }
+}
+
+// This tests the case where the program extends an account, then calls
+// itself and in the inner call it shrinks the account to a size that is
+// still larger than the original size. The account data must be set to the
+// correct value in the caller frame, and the realloc region must be zeroed
+// (again tested in the invoked program).
+#[test_matrix([false, true], [false, true], [false, true])]
+#[cfg(feature = "sbf_rust")]
+fn test_cpi_account_data_updates_caller_grows_callee_shrinks_larger_than_original_len(
+    deprecated_callee: bool,
+    deprecated_caller: bool,
+    virtual_address_space_adjustments: bool,
+) {
+    let mut configured_feature_set = FeatureSet::all_enabled();
+    if !virtual_address_space_adjustments {
+        configured_feature_set
+            .deactivate(&feature_set::syscall_parameter_address_restrictions::id());
+        configured_feature_set.deactivate(&feature_set::virtual_address_space_adjustments::id());
+        configured_feature_set.deactivate(&feature_set::account_data_direct_mapping::id());
+    }
+
+    let (
+        _,
+        mint_keypair,
+        account_keypair,
+        [invoke_program_id, realloc_program_id, deprecated_program_id],
+        feature_set,
+        mut accounts,
+        mut program_cache,
+        sysvar_cache,
+    ) = program_sbf_txn_fixture_with_feature_set(
+        [
+            ("solana_sbf_rust_invoke", bpf_loader_upgradeable::id()),
+            ("solana_sbf_rust_realloc", bpf_loader_upgradeable::id()),
+            (
+                "solana_sbf_rust_deprecated_loader",
+                bpf_loader_deprecated::id(),
+            ),
+        ],
+        configured_feature_set,
+    );
+
+    let account_metas = vec![
+        AccountMeta::new(mint_keypair.pubkey(), true),
+        AccountMeta::new(account_keypair.pubkey(), false),
+        AccountMeta::new_readonly(
+            if deprecated_callee {
+                deprecated_program_id
+            } else {
+                realloc_program_id
+            },
+            false,
+        ),
+        AccountMeta::new_readonly(
+            if deprecated_caller {
+                deprecated_program_id
+            } else {
+                invoke_program_id
+            },
+            false,
+        ),
+    ];
+
+    let mut account = Account::new(42, 0, &account_metas[3].pubkey);
+    account.data = b"foo".to_vec();
+    accounts
+        .iter_mut()
+        .find(|(pubkey, _)| pubkey == &account_keypair.pubkey())
+        .unwrap()
+        .1 = account;
+
+    let mut instruction_data = vec![
+        TEST_CPI_ACCOUNT_UPDATE_CALLER_GROWS_CALLEE_SHRINKS,
+        virtual_address_space_adjustments as u8,
+    ];
+    // realloc to "foobazbad" then shrink to "foobazb"
+    instruction_data.extend_from_slice(7usize.to_le_bytes().as_ref());
+    instruction_data.extend_from_slice(b"bazbad");
+
+    let message = Message::new(
+        &[Instruction::new_with_bytes(
             account_metas[3].pubkey,
             &instruction_data,
-            account_metas.clone(),
-        );
-        let result = bank_client.send_and_confirm_instruction(&mint_keypair, instruction);
-        if deprecated_callee {
-            assert!(result.is_ok(), "{result:?}");
-            let account = bank.get_account(&account_keypair.pubkey()).unwrap();
-            // deprecated_callee is incapable of resizing accounts
-            assert_eq!(account.data(), b"foo");
-        } else if deprecated_caller {
-            assert_eq!(
-                result.unwrap_err().unwrap(),
-                TransactionError::InstructionError(
-                    0,
-                    if virtual_address_space_adjustments {
-                        InstructionError::InvalidRealloc
-                    } else {
-                        InstructionError::ExternalAccountDataModified
-                    }
-                )
-            );
-        } else {
-            assert!(result.is_ok(), "{result:?}");
-            let account = bank.get_account(&account_keypair.pubkey()).unwrap();
-            // "bar" here was copied from the realloc region
-            assert_eq!(account.data(), b"foobar");
-        }
+            account_metas,
+        )],
+        Some(&mint_keypair.pubkey()),
+    );
+    let sanitized_message =
+        SanitizedMessage::try_from_legacy_message(message, &ReservedAccountKeys::empty_key_set())
+            .unwrap();
 
-        // This tests the case where a callee shrinks an account, the caller data
-        // slice must be truncated accordingly and post_len..original_data_len must
-        // be zeroed (zeroing is checked in the invoked program not here). Same as
-        // above, the callee owns the account but the changes are still reflected in
-        // the caller even if things are readonly from the caller's POV.
-        let mut account = AccountSharedData::new(42, 0, &account_metas[2].pubkey);
-        account.set_data(b"foobar".to_vec());
-        bank.store_account(&account_keypair.pubkey(), &account);
-        let mut instruction_data = vec![
-            TEST_CPI_ACCOUNT_UPDATE_CALLEE_SHRINKS_SMALLER_THAN_ORIGINAL_LEN,
-            virtual_address_space_adjustments as u8,
-        ];
-        instruction_data.extend_from_slice(4usize.to_le_bytes().as_ref());
-        let instruction = Instruction::new_with_bytes(
+    let context =
+        TxnContext::new_with_default_budget(feature_set, accounts, sanitized_message, None);
+
+    let effects = execute_txn(&context, &mut program_cache, &sysvar_cache);
+    if deprecated_caller {
+        assert_eq!(
+            effects.status,
+            Err(TransactionError::InstructionError(
+                0,
+                if virtual_address_space_adjustments {
+                    InstructionError::ProgramFailedToComplete
+                } else {
+                    InstructionError::ModifiedProgramId
+                },
+            )),
+        );
+    } else {
+        assert_eq!(effects.status, Ok(()), "{:?}", effects.logs);
+        assert_eq!(
+            effects.get_account(&account_keypair.pubkey()).unwrap().data,
+            b"foobazb",
+        );
+    }
+}
+
+// This tests the case where the program extends an account and the nested
+// invocation then shrinks it below the original data length. Both the spare
+// capacity at the end of the account data and the realloc region must be
+// zeroed.
+#[test_matrix([false, true], [false, true], [false, true])]
+#[cfg(feature = "sbf_rust")]
+fn test_cpi_account_data_updates_caller_grows_callee_shrinks_smaller_than_original_len(
+    deprecated_callee: bool,
+    deprecated_caller: bool,
+    virtual_address_space_adjustments: bool,
+) {
+    let mut configured_feature_set = FeatureSet::all_enabled();
+    if !virtual_address_space_adjustments {
+        configured_feature_set
+            .deactivate(&feature_set::syscall_parameter_address_restrictions::id());
+        configured_feature_set.deactivate(&feature_set::virtual_address_space_adjustments::id());
+        configured_feature_set.deactivate(&feature_set::account_data_direct_mapping::id());
+    }
+
+    let (
+        _,
+        mint_keypair,
+        account_keypair,
+        [invoke_program_id, realloc_program_id, deprecated_program_id],
+        feature_set,
+        mut accounts,
+        mut program_cache,
+        sysvar_cache,
+    ) = program_sbf_txn_fixture_with_feature_set(
+        [
+            ("solana_sbf_rust_invoke", bpf_loader_upgradeable::id()),
+            ("solana_sbf_rust_realloc", bpf_loader_upgradeable::id()),
+            (
+                "solana_sbf_rust_deprecated_loader",
+                bpf_loader_deprecated::id(),
+            ),
+        ],
+        configured_feature_set,
+    );
+
+    let account_metas = vec![
+        AccountMeta::new(mint_keypair.pubkey(), true),
+        AccountMeta::new(account_keypair.pubkey(), false),
+        AccountMeta::new_readonly(
+            if deprecated_callee {
+                deprecated_program_id
+            } else {
+                realloc_program_id
+            },
+            false,
+        ),
+        AccountMeta::new_readonly(
+            if deprecated_caller {
+                deprecated_program_id
+            } else {
+                invoke_program_id
+            },
+            false,
+        ),
+    ];
+
+    let mut account = Account::new(42, 0, &account_metas[3].pubkey);
+    account.data = b"foo".to_vec();
+    accounts
+        .iter_mut()
+        .find(|(pubkey, _)| pubkey == &account_keypair.pubkey())
+        .unwrap()
+        .1 = account;
+
+    let mut instruction_data = vec![
+        TEST_CPI_ACCOUNT_UPDATE_CALLER_GROWS_CALLEE_SHRINKS,
+        virtual_address_space_adjustments as u8,
+    ];
+    // realloc to "foobazbad" then shrink to "f"
+    instruction_data.extend_from_slice(1usize.to_le_bytes().as_ref());
+    instruction_data.extend_from_slice(b"bazbad");
+
+    let message = Message::new(
+        &[Instruction::new_with_bytes(
             account_metas[3].pubkey,
             &instruction_data,
-            account_metas.clone(),
-        );
-        let result = bank_client.send_and_confirm_instruction(&mint_keypair, instruction);
-        if deprecated_callee {
-            assert!(result.is_ok(), "{result:?}");
-            let account = bank.get_account(&account_keypair.pubkey()).unwrap();
-            // deprecated_callee is incapable of resizing accounts
-            assert_eq!(account.data(), b"foobar");
-        } else if deprecated_caller {
-            assert_eq!(
-                result.unwrap_err().unwrap(),
-                TransactionError::InstructionError(
-                    0,
-                    if virtual_address_space_adjustments && deprecated_callee {
-                        InstructionError::InvalidRealloc
-                    } else {
-                        InstructionError::ExternalAccountDataModified
-                    }
-                )
-            );
-        } else {
-            assert!(result.is_ok(), "{result:?}");
-            let account = bank.get_account(&account_keypair.pubkey()).unwrap();
-            assert_eq!(account.data(), b"foob");
-        }
+            account_metas,
+        )],
+        Some(&mint_keypair.pubkey()),
+    );
+    let sanitized_message =
+        SanitizedMessage::try_from_legacy_message(message, &ReservedAccountKeys::empty_key_set())
+            .unwrap();
 
-        // This tests the case where the program extends an account, then calls
-        // itself and in the inner call it shrinks the account to a size that is
-        // still larger than the original size. The account data must be set to the
-        // correct value in the caller frame, and the realloc region must be zeroed
-        // (again tested in the invoked program).
-        let mut account = AccountSharedData::new(42, 0, &account_metas[3].pubkey);
-        account.set_data(b"foo".to_vec());
-        bank.store_account(&account_keypair.pubkey(), &account);
-        let mut instruction_data = vec![
-            TEST_CPI_ACCOUNT_UPDATE_CALLER_GROWS_CALLEE_SHRINKS,
-            virtual_address_space_adjustments as u8,
-        ];
-        // realloc to "foobazbad" then shrink to "foobazb"
-        instruction_data.extend_from_slice(7usize.to_le_bytes().as_ref());
-        instruction_data.extend_from_slice(b"bazbad");
-        let instruction = Instruction::new_with_bytes(
-            account_metas[3].pubkey,
-            &instruction_data,
-            account_metas.clone(),
-        );
-        let result = bank_client.send_and_confirm_instruction(&mint_keypair, instruction);
-        if deprecated_caller {
-            assert_eq!(
-                result.unwrap_err().unwrap(),
-                TransactionError::InstructionError(
-                    0,
-                    if virtual_address_space_adjustments {
-                        InstructionError::ProgramFailedToComplete
-                    } else {
-                        InstructionError::ModifiedProgramId
-                    }
-                )
-            );
-        } else {
-            assert!(result.is_ok(), "{result:?}");
-            let account = bank.get_account(&account_keypair.pubkey()).unwrap();
-            assert_eq!(account.data(), b"foobazb");
-        }
+    let context =
+        TxnContext::new_with_default_budget(feature_set, accounts, sanitized_message, None);
 
-        // Similar to the test above, but this time the nested invocation shrinks to
-        // _below_ the original data length. Both the spare capacity in the account
-        // data _end_ the realloc region must be zeroed.
-        let mut account = AccountSharedData::new(42, 0, &account_metas[3].pubkey);
-        account.set_data(b"foo".to_vec());
-        bank.store_account(&account_keypair.pubkey(), &account);
-        let mut instruction_data = vec![
-            TEST_CPI_ACCOUNT_UPDATE_CALLER_GROWS_CALLEE_SHRINKS,
-            virtual_address_space_adjustments as u8,
-        ];
-        // realloc to "foobazbad" then shrink to "f"
-        instruction_data.extend_from_slice(1usize.to_le_bytes().as_ref());
-        instruction_data.extend_from_slice(b"bazbad");
-        let instruction = Instruction::new_with_bytes(
-            account_metas[3].pubkey,
-            &instruction_data,
-            account_metas.clone(),
+    let effects = execute_txn(&context, &mut program_cache, &sysvar_cache);
+    if deprecated_caller {
+        assert_eq!(
+            effects.status,
+            Err(TransactionError::InstructionError(
+                0,
+                if virtual_address_space_adjustments {
+                    InstructionError::ProgramFailedToComplete
+                } else {
+                    InstructionError::ModifiedProgramId
+                },
+            )),
         );
-        let result = bank_client.send_and_confirm_instruction(&mint_keypair, instruction);
-        if deprecated_caller {
-            assert_eq!(
-                result.unwrap_err().unwrap(),
-                TransactionError::InstructionError(
-                    0,
-                    if virtual_address_space_adjustments {
-                        InstructionError::ProgramFailedToComplete
-                    } else {
-                        InstructionError::ModifiedProgramId
-                    }
-                )
-            );
-        } else {
-            assert!(result.is_ok(), "{result:?}");
-            let account = bank.get_account(&account_keypair.pubkey()).unwrap();
-            assert_eq!(account.data(), b"f");
-        }
+    } else {
+        assert_eq!(effects.status, Ok(()), "{:?}", effects.logs);
+        assert_eq!(
+            effects.get_account(&account_keypair.pubkey()).unwrap().data,
+            b"f",
+        );
     }
 }
 
