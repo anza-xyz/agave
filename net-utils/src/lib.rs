@@ -19,7 +19,7 @@ pub mod token_bucket;
 pub mod tooling_for_tests;
 
 pub use {
-    agave_xdp::transmitter::TrySendError,
+    agave_xdp::transmitter::{SendTimeoutError, TrySendError},
     ip_echo_client::IpEchoClientError,
     ip_echo_server::{
         DEFAULT_IP_ECHO_SERVER_THREADS, IpEchoServer, MAX_PORT_COUNT_PER_MESSAGE, ip_echo_server,

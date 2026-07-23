@@ -10,8 +10,8 @@ use {
     crossbeam_channel::Sender,
     solana_keypair::Keypair,
     solana_net_utils::{
-        DEFAULT_IP_ECHO_SERVER_THREADS, PinnedXdpSender as XdpSender, SocketAddrSpace,
-        TrySendError,
+        DEFAULT_IP_ECHO_SERVER_THREADS, PinnedXdpSender as XdpSender, SendTimeoutError,
+        SocketAddrSpace,
         multihomed_sockets::{BindIpAddrs, MultihomedSocketProvider, SocketProvider},
     },
     solana_perf::{packet::PacketBatch, recycler::Recycler},
@@ -430,41 +430,43 @@ impl ResponseSender for GossipXdpSender {
         });
 
         let mut num_sent = 0;
-        let mut num_dropped_full = 0;
+        let mut num_dropped_timeout = 0;
         let mut num_dropped_disconnected = 0;
 
         for (idx, (payload, addr)) in packets.enumerate() {
-            match self
-                .0
-                .try_send(idx, addr, bytes::Bytes::copy_from_slice(payload))
-            {
+            match self.0.send_timeout(
+                idx,
+                addr,
+                bytes::Bytes::copy_from_slice(payload),
+                Duration::from_millis(5),
+            ) {
                 Ok(()) => {
                     num_sent += 1;
                 }
-                Err(TrySendError::Full(_)) => {
-                    num_dropped_full += 1;
+                Err(SendTimeoutError::Timeout(_, _)) => {
+                    num_dropped_timeout += 1;
                     continue;
                 }
-                Err(TrySendError::Disconnected(_)) => {
+                Err(SendTimeoutError::Disconnected(_, _)) => {
                     num_dropped_disconnected += 1;
                     continue;
                 }
             }
         }
 
-        let num_failed = num_dropped_full + num_dropped_disconnected;
+        let num_failed = num_dropped_timeout + num_dropped_disconnected;
         if num_failed > 0 {
             let kind = if num_dropped_disconnected != 0 {
                 io::ErrorKind::BrokenPipe
             } else {
-                io::ErrorKind::WouldBlock
+                io::ErrorKind::TimedOut
             };
             return Err(SendPktsError::IoError(
                 io::Error::new(
                     kind,
                     format!(
                         "XDP sender failed to enqueue {num_failed} out of {num_total} gossip \
-                         packets ({num_dropped_full} full queue, {num_dropped_disconnected} \
+                         packets ({num_dropped_timeout} timed out, {num_dropped_disconnected} \
                          disconnected)",
                         num_total = num_sent + num_failed
                     ),

@@ -832,7 +832,9 @@ impl RepairService {
             let num_pkts = batch.len();
             if let Some(xdp) = xdp_sender {
                 for (i, (bytes, addr)) in batch.into_iter().enumerate() {
-                    if let Err(e) = xdp.try_send(i, addr, Bytes::from(bytes)) {
+                    if let Err(e) =
+                        xdp.send_timeout(i, addr, Bytes::from(bytes), Duration::from_millis(5))
+                    {
                         warn!("repair xdp send failed: {e:?}");
                     }
                 }

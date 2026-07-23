@@ -22,7 +22,7 @@ use {
         shred::{self, ShredFlags, ShredId, ShredType},
     },
     solana_measure::measure::Measure,
-    solana_net_utils::SocketAddrSpace,
+    solana_net_utils::{SendTimeoutError, SocketAddrSpace},
     solana_perf::deduper::Deduper,
     solana_pubkey::Pubkey,
     solana_rpc::{
@@ -522,17 +522,29 @@ fn retransmit_shred(
     let num_addrs = addrs.len();
     let num_nodes = match socket {
         RetransmitSocket::Xdp(sender) => {
-            let mut sent = num_addrs;
-            if num_addrs > 0
-                && let Err(e) = sender.try_send(key.index() as usize, addrs.to_vec(), shred.bytes)
-            {
-                log::warn!("xdp channel full: {e:?}");
-                stats
-                    .num_shreds_dropped_xdp_full
-                    .fetch_add(num_addrs, Ordering::Relaxed);
-                sent = 0;
+            if num_addrs == 0 {
+                0
+            } else {
+                match sender.send_timeout(
+                    key.index() as usize,
+                    addrs.to_vec(),
+                    shred.bytes,
+                    Duration::from_millis(5),
+                ) {
+                    Ok(()) => num_addrs,
+                    Err(SendTimeoutError::Timeout(_, num_unsent)) => {
+                        log::warn!("xdp send timed out");
+                        stats
+                            .num_shreds_dropped_xdp_full
+                            .fetch_add(num_unsent, Ordering::Relaxed);
+                        num_addrs - num_unsent
+                    }
+                    Err(SendTimeoutError::Disconnected(_, num_unsent)) => {
+                        log::warn!("xdp channel disconnected");
+                        num_addrs - num_unsent
+                    }
+                }
             }
-            sent
         }
         RetransmitSocket::Socket(_) | RetransmitSocket::Multihomed { .. } => {
             let socket = socket.get_socket();

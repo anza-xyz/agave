@@ -192,8 +192,8 @@ impl AsyncUdpSocket for QuicXdpTxSocket {
             .try_send(src_ip, t.destination, t.ecn, payload)
         {
             Ok(()) => Ok(()),
-            Err(TrySendError::Full(_)) => Err(io::ErrorKind::WouldBlock.into()),
-            Err(TrySendError::Disconnected(_)) => Err(io::ErrorKind::BrokenPipe.into()),
+            Err(TrySendError::Full(_, _)) => Err(io::ErrorKind::WouldBlock.into()),
+            Err(TrySendError::Disconnected(_, _)) => Err(io::ErrorKind::BrokenPipe.into()),
         }
     }
 
