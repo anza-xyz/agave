@@ -33,6 +33,7 @@ use {
     solana_runtime::{bank::Bank, bank_forks::SharableBanks, epoch_stakes::BLSPubkeyToRankMap},
     solana_streamer::{nonblocking::simple_qos::SimpleQosBanlist, packet::PacketBatch},
     std::{
+        cmp,
         collections::{HashMap, HashSet, hash_map::Entry},
         sync::{
             Arc,
@@ -381,22 +382,26 @@ impl SigVerifier {
             self.stats.vote_too_far_in_future += 1;
             return None;
         }
-        if vote_slot <= root_slot
-            && !rewards_wants_vote(
-                &self.cluster_info,
-                &self.leader_schedule,
-                root_slot,
-                &msg.vote,
-            )
-        {
-            self.stats.num_old_votes_received += 1;
-            return None;
+
+        match vote_slot.cmp(&root_slot) {
+            // Genesis votes are allowed on the root slot
+            cmp::Ordering::Equal if msg.vote.is_genesis_vote() => (),
+            // Votes are allowed at or below the root if they are useful for rewards
+            cmp::Ordering::Less | cmp::Ordering::Equal => {
+                if !rewards_wants_vote(
+                    &self.cluster_info,
+                    &self.leader_schedule,
+                    root_slot,
+                    &msg.vote,
+                ) {
+                    self.stats.num_old_votes_received += 1;
+                    return None;
+                }
+            }
+            // Votes above the root are always allowed
+            cmp::Ordering::Greater => (),
         }
-        // Genesis votes should be allowed on the TowerBFT root
-        if vote_slot == root_slot && !msg.vote.is_genesis_vote() {
-            self.stats.num_old_votes_received += 1;
-            return None;
-        }
+
         let vote_epoch = root_bank.epoch_schedule().get_epoch(vote_slot);
         let rank_map = match self.rank_map_cache.entry(vote_epoch) {
             Entry::Occupied(entry) => entry.into_mut(),
