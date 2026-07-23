@@ -83,7 +83,7 @@ pub fn verify_certificate(
         })
     };
 
-    let (primary_payload, fallback_payload) = cert.cert_type.get_vote_payload(cert.shred_version);
+    let (primary_payload, fallback_payload) = cert.get_vote_payload();
 
     if let Some(fallback_payload) = fallback_payload {
         verify_base3(

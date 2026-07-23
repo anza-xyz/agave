@@ -4,7 +4,7 @@ use {
     crate::{
         certificate::CertificateType,
         vote::Vote,
-        wire::{VersionedWireConsensusMessage, WireConsensusMessageKind},
+        wire::{VersionedWireConsensusMessage, WireConsensusMessageKind, get_vote_payload_to_sign},
     },
     solana_bls_signatures::Signature as BLSSignature,
 };
@@ -32,6 +32,48 @@ pub struct UnverifiedCertificate {
     pub bitmap: Vec<u8>,
     /// the shred version
     pub shred_version: u16,
+}
+
+impl UnverifiedCertificate {
+    /// Returns the serialized vote payloads needed to verify signature on the cert
+    pub fn get_vote_payload(&self) -> (Vec<u8>, Option<Vec<u8>>) {
+        match &self.cert_type {
+            CertificateType::Notarize(block) | CertificateType::FinalizeFast(block) => {
+                let vote = Vote::new_notarization_vote(*block);
+                (get_vote_payload_to_sign(vote, self.shred_version), None)
+            }
+            CertificateType::Genesis(block) => {
+                let vote = Vote::new_genesis_vote(*block);
+                (get_vote_payload_to_sign(vote, self.shred_version), None)
+            }
+            CertificateType::Finalize(slot) => {
+                let vote = Vote::new_finalization_vote(*slot);
+                (get_vote_payload_to_sign(vote, self.shred_version), None)
+            }
+            CertificateType::Skip(slot) => {
+                let skip_vote = Vote::new_skip_vote(*slot);
+                let skip_fallback_vote = Vote::new_skip_fallback_vote(*slot);
+                (
+                    get_vote_payload_to_sign(skip_vote, self.shred_version),
+                    Some(get_vote_payload_to_sign(
+                        skip_fallback_vote,
+                        self.shred_version,
+                    )),
+                )
+            }
+            CertificateType::NotarizeFallback(block) => {
+                let notar_vote = Vote::new_notarization_vote(*block);
+                let notar_fallback_vote = Vote::new_notarization_fallback_vote(*block);
+                (
+                    get_vote_payload_to_sign(notar_vote, self.shred_version),
+                    Some(get_vote_payload_to_sign(
+                        notar_fallback_vote,
+                        self.shred_version,
+                    )),
+                )
+            }
+        }
+    }
 }
 
 /// Output of decoding a wire consensus message into unverified vote or certificate.

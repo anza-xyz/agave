@@ -6,7 +6,6 @@ use {
         fraction::Fraction,
         migration::GENESIS_VOTE_THRESHOLD,
         vote::{Vote, VoteType},
-        wire::get_vote_payload_to_sign,
     },
     solana_bls_signatures::Signature as BLSSignature,
     solana_clock::Slot,
@@ -98,40 +97,6 @@ impl CertificateType {
             | CertificateType::Notarize(Block { slot, block_id: _ })
             | CertificateType::Genesis(Block { slot, block_id: _ })
             | CertificateType::Skip(slot) => *slot,
-        }
-    }
-
-    /// Returns the serialized vote payloads needed to verify signature on the cert
-    pub fn get_vote_payload(&self, shred_version: u16) -> (Vec<u8>, Option<Vec<u8>>) {
-        match self {
-            Self::Notarize(block) | Self::FinalizeFast(block) => {
-                let vote = Vote::new_notarization_vote(*block);
-                (get_vote_payload_to_sign(vote, shred_version), None)
-            }
-            Self::Genesis(block) => {
-                let vote = Vote::new_genesis_vote(*block);
-                (get_vote_payload_to_sign(vote, shred_version), None)
-            }
-            Self::Finalize(slot) => {
-                let vote = Vote::new_finalization_vote(*slot);
-                (get_vote_payload_to_sign(vote, shred_version), None)
-            }
-            Self::Skip(slot) => {
-                let skip_vote = Vote::new_skip_vote(*slot);
-                let skip_fallback_vote = Vote::new_skip_fallback_vote(*slot);
-                (
-                    get_vote_payload_to_sign(skip_vote, shred_version),
-                    Some(get_vote_payload_to_sign(skip_fallback_vote, shred_version)),
-                )
-            }
-            Self::NotarizeFallback(block) => {
-                let notar_vote = Vote::new_notarization_vote(*block);
-                let notar_fallback_vote = Vote::new_notarization_fallback_vote(*block);
-                (
-                    get_vote_payload_to_sign(notar_vote, shred_version),
-                    Some(get_vote_payload_to_sign(notar_fallback_vote, shred_version)),
-                )
-            }
         }
     }
 
