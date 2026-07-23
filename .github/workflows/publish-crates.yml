@@ -107,7 +107,7 @@ jobs:
       - name: Attest crate files
         # actions/attest with only subject-path auto-generates SLSA build provenance
         # (attest-build-provenance is now just a thin wrapper over this).
-        uses: actions/attest@a1948c3f048ba23858d222213b7c278aabede763  # v4.1.1
+        uses: actions/attest@f7c74d28b9d84cb8768d0b8ca14a4bac6ef463e6  # v4.2.0
         env:
           NODE_OPTIONS: --max-http-header-size=32768
         with:
