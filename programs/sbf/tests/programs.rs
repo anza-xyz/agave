@@ -1721,6 +1721,8 @@ fn assert_instruction_count() {
 #[cfg(feature = "sbf_rust")]
 type ProgramSbfTxnFixture<const N: usize> = (
     Pubkey,
+    Keypair,
+    Keypair,
     [Pubkey; N],
     FeatureSet,
     Vec<(Pubkey, Account)>,
@@ -1743,11 +1745,23 @@ fn program_sbf_txn_fixture_with_feature_set<const N: usize>(
     agave_logger::setup();
 
     let payer = Pubkey::new_unique();
+    let mint_keypair = Keypair::new();
+    let account_keypair = Keypair::new();
 
     let program_ids = programs.map(|_| Pubkey::new_unique());
     let mut program_cache = new_program_cache_with_builtins(/* slot */ 0);
 
-    let mut accounts = vec![(payer, Account::new(50_000, 0, &system_program::id()))];
+    let mut accounts = vec![
+        (payer, Account::new(50_000, 0, &system_program::id())),
+        (
+            mint_keypair.pubkey(),
+            Account::new(0, 0, &system_program::id()),
+        ),
+        (
+            account_keypair.pubkey(),
+            Account::new(0, 0, &system_program::id()),
+        ),
+    ];
     for (program_id, (program_name, loader_id)) in program_ids.iter().zip(programs) {
         let program_elf = load_program_elf(program_name);
         add_program_to_program_cache(
@@ -1763,6 +1777,8 @@ fn program_sbf_txn_fixture_with_feature_set<const N: usize>(
 
     (
         payer,
+        mint_keypair,
+        account_keypair,
         program_ids,
         feature_set,
         accounts,
@@ -1774,7 +1790,7 @@ fn program_sbf_txn_fixture_with_feature_set<const N: usize>(
 #[test]
 #[cfg(feature = "sbf_rust")]
 fn test_program_sbf_instruction_introspection_passing_transaction() {
-    let (payer, [program_id], feature_set, accounts, mut program_cache, sysvar_cache) =
+    let (payer, _, _, [program_id], feature_set, accounts, mut program_cache, sysvar_cache) =
         program_sbf_txn_fixture([(
             "solana_sbf_rust_instruction_introspection",
             bpf_loader_upgradeable::id(),
@@ -1807,7 +1823,7 @@ fn test_program_sbf_instruction_introspection_passing_transaction() {
 #[test]
 #[cfg(feature = "sbf_rust")]
 fn test_program_sbf_instruction_introspection_writable_special_instructions1111() {
-    let (payer, [program_id], feature_set, accounts, mut program_cache, sysvar_cache) =
+    let (payer, _, _, [program_id], feature_set, accounts, mut program_cache, sysvar_cache) =
         program_sbf_txn_fixture([(
             "solana_sbf_rust_instruction_introspection",
             bpf_loader_upgradeable::id(),
@@ -1839,7 +1855,7 @@ fn test_program_sbf_instruction_introspection_writable_special_instructions1111(
 #[test]
 #[cfg(feature = "sbf_rust")]
 fn test_program_sbf_instruction_introspection_no_accounts() {
-    let (payer, [program_id], feature_set, accounts, mut program_cache, sysvar_cache) =
+    let (payer, _, _, [program_id], feature_set, accounts, mut program_cache, sysvar_cache) =
         program_sbf_txn_fixture([(
             "solana_sbf_rust_instruction_introspection",
             bpf_loader_upgradeable::id(),
@@ -3813,6 +3829,8 @@ fn test_program_sbf_realloc_invoke() {
 fn test_program_sbf_processed_inner_instruction() {
     let (
         payer,
+        mint_keypair,
+        _,
         [sibling_program_id, sibling_inner_program_id, noop_program_id, invoke_and_return_program_id],
         feature_set,
         accounts,
@@ -3841,14 +3859,14 @@ fn test_program_sbf_processed_inner_instruction() {
                 &[43],
                 vec![
                     AccountMeta::new_readonly(noop_program_id, false),
-                    AccountMeta::new(payer, true),
+                    AccountMeta::new(mint_keypair.pubkey(), true),
                 ],
             ),
             Instruction::new_with_bytes(
                 noop_program_id,
                 &[42],
                 vec![
-                    AccountMeta::new(payer, true),
+                    AccountMeta::new(mint_keypair.pubkey(), true),
                     AccountMeta::new_readonly(noop_program_id, false),
                 ],
             ),
@@ -3856,7 +3874,7 @@ fn test_program_sbf_processed_inner_instruction() {
                 sibling_program_id,
                 &[1, 2, 3, 0, 4, 5, 6],
                 vec![
-                    AccountMeta::new(payer, true),
+                    AccountMeta::new(mint_keypair.pubkey(), true),
                     AccountMeta::new_readonly(noop_program_id, false),
                     AccountMeta::new_readonly(invoke_and_return_program_id, false),
                     AccountMeta::new_readonly(sibling_inner_program_id, false),
@@ -3981,13 +3999,13 @@ fn test_program_fees() {
 #[test]
 #[cfg(feature = "sbf_rust")]
 fn test_program_sbf_inner_instruction_alignment_checks() {
-    let mint_keypair = Keypair::new();
-
     let (
         payer,
+        mint_keypair,
+        _,
         [noop, inner_instruction_alignment_check],
         feature_set,
-        mut accounts,
+        accounts,
         mut program_cache,
         sysvar_cache,
     ) = program_sbf_txn_fixture([
@@ -3997,11 +4015,6 @@ fn test_program_sbf_inner_instruction_alignment_checks() {
             bpf_loader_deprecated::id(),
         ),
     ]);
-
-    accounts.push((
-        mint_keypair.pubkey(),
-        Account::new(50, 0, &system_program::id()),
-    ));
 
     // Invoke an unaligned program, which will call another unaligned program twice.
     // Unaligned pointer access should remain allowed once an invoke completes.
@@ -4559,28 +4572,22 @@ fn test_cpi_invalid_account_info_pointers() {
 #[test]
 #[cfg(feature = "sbf_rust")]
 fn test_deplete_cost_meter_with_access_violation() {
-    let mint_keypair = Keypair::new();
-    let mint_pubkey = mint_keypair.pubkey();
-    let mint_balance = 100_123_456_789;
     let compute_unit_limit = 10_000;
 
-    let (payer, [invoke_program_id], feature_set, mut accounts, mut program_cache, sysvar_cache) =
-        program_sbf_txn_fixture([("solana_sbf_rust_invoke", bpf_loader_upgradeable::id())]);
+    let (
+        payer,
+        mint_keypair,
+        account_keypair,
+        [invoke_program_id],
+        feature_set,
+        mut accounts,
+        mut program_cache,
+        sysvar_cache,
+    ) = program_sbf_txn_fixture([("solana_sbf_rust_invoke", bpf_loader_upgradeable::id())]);
+    accounts.push(keyed_account_for_compute_budget_program());
 
-    let account_keypair = Keypair::new();
-    accounts.extend([
-        (
-            mint_pubkey,
-            Account::new(mint_balance, 0, &system_program::id()),
-        ),
-        (
-            account_keypair.pubkey(),
-            Account::new(0, 0, &system_program::id()),
-        ),
-        keyed_account_for_compute_budget_program(),
-    ]);
     let account_metas = vec![
-        AccountMeta::new(mint_pubkey, true),
+        AccountMeta::new(mint_keypair.pubkey(), true),
         AccountMeta::new(account_keypair.pubkey(), false),
         AccountMeta::new_readonly(invoke_program_id, false),
     ];
@@ -4661,10 +4668,6 @@ fn test_deny_access_beyond_current_length(
     virtual_address_space_adjustments: bool,
     instruction_account_index: u8,
 ) {
-    let mint_keypair = Keypair::new();
-    let mint_pubkey = mint_keypair.pubkey();
-
-    let readonly_account_keypair = Keypair::new();
     let writable_account_keypair = Keypair::new();
 
     let mut configured_feature_set = FeatureSet::all_enabled();
@@ -4675,20 +4678,31 @@ fn test_deny_access_beyond_current_length(
         configured_feature_set.deactivate(&feature_set::account_data_direct_mapping::id());
     }
 
-    let (payer, [invoke_program_id], feature_set, mut accounts, mut program_cache, sysvar_cache) =
-        program_sbf_txn_fixture_with_feature_set(
-            [("solana_sbf_rust_invoke", bpf_loader_upgradeable::id())],
-            configured_feature_set,
-        );
+    let (
+        payer,
+        mint_keypair,
+        readonly_account_keypair,
+        [invoke_program_id],
+        feature_set,
+        mut accounts,
+        mut program_cache,
+        sysvar_cache,
+    ) = program_sbf_txn_fixture_with_feature_set(
+        [("solana_sbf_rust_invoke", bpf_loader_upgradeable::id())],
+        configured_feature_set,
+    );
 
     let account = Account::new(42, 0, &invoke_program_id);
-    accounts.extend([
-        (mint_pubkey, Account::new(0, 0, &system_program::id())),
-        (readonly_account_keypair.pubkey(), account.clone()),
-        (writable_account_keypair.pubkey(), account),
-    ]);
+    let readonly_account_pubkey = readonly_account_keypair.pubkey();
+    accounts
+        .iter_mut()
+        .find(|(pubkey, _)| pubkey == &readonly_account_pubkey)
+        .unwrap()
+        .1 = account.clone();
+    accounts.push((writable_account_keypair.pubkey(), account));
+
     let account_metas = vec![
-        AccountMeta::new(mint_pubkey, true),
+        AccountMeta::new(mint_keypair.pubkey(), true),
         AccountMeta::new_readonly(readonly_account_keypair.pubkey(), false),
         AccountMeta::new(writable_account_keypair.pubkey(), false),
         AccountMeta::new_readonly(invoke_program_id, false),
@@ -4732,9 +4746,6 @@ fn test_deny_access_beyond_current_length(
 #[test_case(true; "with_virtual_address_space_adjustments")]
 #[cfg(feature = "sbf_rust")]
 fn test_deny_executable_write(virtual_address_space_adjustments: bool) {
-    let mint_keypair = Keypair::new();
-    let mint_pubkey = mint_keypair.pubkey();
-
     let mut configured_feature_set = FeatureSet::all_enabled();
     if !virtual_address_space_adjustments {
         configured_feature_set
@@ -4743,22 +4754,22 @@ fn test_deny_executable_write(virtual_address_space_adjustments: bool) {
         configured_feature_set.deactivate(&feature_set::account_data_direct_mapping::id());
     }
 
-    let (payer, [invoke_program_id], feature_set, mut accounts, mut program_cache, sysvar_cache) =
-        program_sbf_txn_fixture_with_feature_set(
-            [("solana_sbf_rust_invoke", bpf_loader_upgradeable::id())],
-            configured_feature_set,
-        );
+    let (
+        payer,
+        mint_keypair,
+        account_keypair,
+        [invoke_program_id],
+        feature_set,
+        accounts,
+        mut program_cache,
+        sysvar_cache,
+    ) = program_sbf_txn_fixture_with_feature_set(
+        [("solana_sbf_rust_invoke", bpf_loader_upgradeable::id())],
+        configured_feature_set,
+    );
 
-    let account_keypair = Keypair::new();
-    accounts.extend([
-        (
-            mint_pubkey,
-            Account::new(100_123_456_789, 0, &system_program::id()),
-        ),
-        (account_keypair.pubkey(), Account::default()),
-    ]);
     let account_metas = vec![
-        AccountMeta::new(mint_pubkey, true),
+        AccountMeta::new(mint_keypair.pubkey(), true),
         AccountMeta::new(account_keypair.pubkey(), false),
         AccountMeta::new_readonly(invoke_program_id, false),
     ];
@@ -5369,23 +5380,17 @@ fn test_clone_account_data() {
 
 #[test]
 fn test_stack_heap_zeroed() {
-    let mint_keypair = Keypair::new();
-    let account_keypair = Keypair::new();
-
-    let (payer, [invoke_program_id], feature_set, mut accounts, mut program_cache, sysvar_cache) =
-        program_sbf_txn_fixture([("solana_sbf_rust_invoke", bpf_loader_upgradeable::id())]);
-
-    accounts.extend([
-        (
-            mint_keypair.pubkey(),
-            Account::new(0, 0, &system_program::id()),
-        ),
-        (
-            account_keypair.pubkey(),
-            Account::new(0, 0, &system_program::id()),
-        ),
-        keyed_account_for_compute_budget_program(),
-    ]);
+    let (
+        payer,
+        mint_keypair,
+        account_keypair,
+        [invoke_program_id],
+        feature_set,
+        mut accounts,
+        mut program_cache,
+        sysvar_cache,
+    ) = program_sbf_txn_fixture([("solana_sbf_rust_invoke", bpf_loader_upgradeable::id())]);
+    accounts.push(keyed_account_for_compute_budget_program());
     let account_metas = vec![
         AccountMeta::new(mint_keypair.pubkey(), true),
         AccountMeta::new(account_keypair.pubkey(), false),
