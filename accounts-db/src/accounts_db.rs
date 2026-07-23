@@ -2154,13 +2154,16 @@ impl AccountsDb {
             self.purge_keys_exact(pubkey_to_slot_set);
 
         if !reclaims.is_empty() {
-            self.handle_reclaims(
+            let expected_dead_slots: IntSet<_> = reclaims.iter().map(|(slot, _)| *slot).collect();
+            let dead_slots = self.handle_reclaims(
                 reclaims.iter(),
                 None,
                 &pubkeys_removed_from_accounts_index,
                 &self.clean_accounts_stats.purge_stats,
                 MarkAccountsObsolete::No,
             );
+            // Every slot with accounts reclaimed should be marked dead
+            assert_eq!(expected_dead_slots, dead_slots);
         }
 
         reclaims_time.stop();
@@ -2339,7 +2342,8 @@ impl AccountsDb {
         pubkeys_removed_from_accounts_index: &PubkeysRemovedFromAccountsIndex,
         purge_stats: &PurgeStats,
         mark_accounts_obsolete: MarkAccountsObsolete,
-    ) where
+    ) -> IntSet<Slot>
+    where
         I: Iterator<Item = &'a (Slot, AccountInfo)>,
     {
         let dead_slots =
@@ -2360,6 +2364,7 @@ impl AccountsDb {
             pubkeys_removed_from_accounts_index,
             clean_stored_dead_slots,
         );
+        dead_slots
     }
 
     /// During clean, some zero-lamport accounts that are marked for purge should *not* actually
@@ -4298,13 +4303,15 @@ impl AccountsDb {
         // There is no reason to mark accounts obsolete as the slot storage is being purged
         let expected_dead_slot = Some(remove_slot);
         if !reclaims.is_empty() {
-            self.handle_reclaims(
+            let dead_slots = self.handle_reclaims(
                 reclaims.iter(),
                 expected_dead_slot,
                 &pubkeys_removed_from_accounts_index,
                 purge_stats,
                 MarkAccountsObsolete::No,
             );
+            // Ensure the expected slot is marked dead
+            assert_eq!(dead_slots, IntSet::from_iter(std::iter::once(remove_slot)));
         }
         handle_reclaims_elapsed.stop();
         purge_stats
