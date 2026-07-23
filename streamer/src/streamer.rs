@@ -11,18 +11,14 @@ use {
     },
     crossbeam_channel::{Receiver, RecvTimeoutError, SendError, Sender, TrySendError},
     solana_measure::measure::Measure,
-    solana_net_utils::{
-        SocketAddrSpace,
-        multihomed_sockets::{
-            BindIpAddrs, CurrentSocket, FixedSocketProvider, MultihomedSocketProvider,
-            SocketProvider,
-        },
+    solana_net_utils::multihomed_sockets::{
+        BindIpAddrs, CurrentSocket, FixedSocketProvider, MultihomedSocketProvider, SocketProvider,
     },
     solana_pubkey::Pubkey,
     std::{
         cmp::Reverse,
         collections::HashMap,
-        net::{IpAddr, SocketAddr, UdpSocket},
+        net::{IpAddr, UdpSocket},
         sync::{
             Arc,
             atomic::{AtomicBool, AtomicUsize, Ordering},
@@ -439,17 +435,6 @@ impl StakedNodes {
     pub fn total_stake(&self) -> u64 {
         self.total_stake
     }
-}
-
-pub fn filter_packets_by_socket_addr_space<'a>(
-    packets: impl Iterator<Item = PacketRef<'a>> + 'a,
-    socket_addr_space: &'a SocketAddrSpace,
-) -> impl Iterator<Item = (&'a [u8], SocketAddr)> + 'a {
-    packets.filter_map(move |pkt| {
-        let addr = pkt.meta().socket_addr();
-        let data = pkt.data(..)?;
-        socket_addr_space.check(&addr).then_some((data, addr))
-    })
 }
 
 pub trait ResponseSender {
