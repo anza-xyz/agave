@@ -3805,12 +3805,7 @@ fn test_program_sbf_realloc_invoke() {
 fn test_program_sbf_processed_inner_instruction() {
     let (
         payer,
-        [
-            sibling_program_id,
-            sibling_inner_program_id,
-            noop_program_id,
-            invoke_and_return_program_id,
-        ],
+        [sibling_program_id, sibling_inner_program_id, noop_program_id, invoke_and_return_program_id],
         feature_set,
         accounts,
         mut program_cache,
@@ -3978,34 +3973,41 @@ fn test_program_fees() {
 #[test]
 #[cfg(feature = "sbf_rust")]
 fn test_program_sbf_inner_instruction_alignment_checks() {
+    let mint_keypair = Keypair::new();
+
     let (
         payer,
         [noop, inner_instruction_alignment_check],
         feature_set,
-        accounts,
+        mut accounts,
         mut program_cache,
         sysvar_cache,
     ) = program_sbf_txn_fixture([
-        ("solana_sbf_rust_noop", bpf_loader::id()),
+        ("solana_sbf_rust_noop", bpf_loader_deprecated::id()),
         (
             "solana_sbf_rust_inner_instruction_alignment_check",
             bpf_loader_deprecated::id(),
         ),
     ]);
 
-    // invoke unaligned program, which will call aligned program twice,
-    // unaligned should be allowed once invoke completes
-    let message = Message::new(
-        &[Instruction::new_with_bytes(
-            inner_instruction_alignment_check,
-            &[1],
-            vec![
-                AccountMeta::new_readonly(noop, false),
-                AccountMeta::new_readonly(payer, false),
-            ],
-        )],
-        Some(&payer),
+    accounts.push((
+        mint_keypair.pubkey(),
+        Account::new(50, 0, &system_program::id()),
+    ));
+
+    // Invoke an unaligned program, which will call another unaligned program twice.
+    // Unaligned pointer access should remain allowed once an invoke completes.
+    let mut instruction = Instruction::new_with_bytes(
+        inner_instruction_alignment_check,
+        &[0],
+        vec![
+            AccountMeta::new_readonly(noop, false),
+            AccountMeta::new_readonly(mint_keypair.pubkey(), false),
+        ],
     );
+    instruction.data[0] += 1;
+
+    let message = Message::new(&[instruction], Some(&payer));
     let sanitized_message =
         SanitizedMessage::try_from_legacy_message(message, &ReservedAccountKeys::empty_key_set())
             .unwrap();
