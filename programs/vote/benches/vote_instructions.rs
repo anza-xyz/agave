@@ -86,7 +86,6 @@ fn create_accounts() -> (
     };
 
     let transaction_accounts = vec![
-        (solana_vote_program::id(), AccountSharedData::default()),
         (vote_pubkey, AccountSharedData::from(vote_account)),
         (
             sysvar::slot_hashes::id(),

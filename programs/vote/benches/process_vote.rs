@@ -75,7 +75,6 @@ fn create_accounts() -> (
     };
 
     let transaction_accounts = vec![
-        (solana_vote_program::id(), AccountSharedData::default()),
         (vote_pubkey, AccountSharedData::from(vote_account)),
         (
             sysvar::slot_hashes::id(),
@@ -89,7 +88,7 @@ fn create_accounts() -> (
     ];
     let mut instruction_account_metas = (0..4)
         .map(|index_in_callee| AccountMeta {
-            pubkey: transaction_accounts[1usize.saturating_add(index_in_callee)].0,
+            pubkey: transaction_accounts[index_in_callee].0,
             is_signer: false,
             is_writable: false,
         })
