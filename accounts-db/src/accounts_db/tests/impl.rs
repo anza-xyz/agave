@@ -1558,11 +1558,7 @@ fn test_shrink_converts_zero_lamport_single_ref_account_to_tombstone() {
             .accounts_index
             .get_with_and_then(&pubkey, &ancestors, false, |account_info| account_info)
             .unwrap();
-        accounts_db.remove_dead_accounts(
-            [account_info].iter(),
-            None,
-            MarkAccountsObsolete::Yes(slot1),
-        );
+        accounts_db.remove_dead_accounts([account_info].iter(), MarkAccountsObsolete::Yes(slot1));
     }
 
     accounts_db.shrink_slot_forced(slot1);
@@ -4291,11 +4287,7 @@ fn test_alive_bytes() {
             assert_eq!(account_info.0, slot);
             let reclaims = [account_info];
             num_obsolete_accounts += reclaims.len();
-            accounts_db.remove_dead_accounts(
-                reclaims.iter(),
-                None,
-                MarkAccountsObsolete::Yes(slot),
-            );
+            accounts_db.remove_dead_accounts(reclaims.iter(), MarkAccountsObsolete::Yes(slot));
             let after_size = storage0.alive_bytes();
             if storage0.count() == 0 {
                 // when `remove_dead_accounts` reaches 0 accounts, all bytes are marked as dead
@@ -6610,11 +6602,7 @@ fn test_shrink_collect_with_obsolete_accounts() {
             // Lookup the pubkey in the database and find the AccountInfo
             db.accounts_index
                 .get_with_and_then(pubkey, &ancestors, false, |account_info| {
-                    db.remove_dead_accounts(
-                        [account_info].iter(),
-                        None,
-                        MarkAccountsObsolete::Yes(slot),
-                    );
+                    db.remove_dead_accounts([account_info].iter(), MarkAccountsObsolete::Yes(slot));
                 });
 
             obsolete_pubkeys.push(*pubkey);
