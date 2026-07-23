@@ -1231,6 +1231,22 @@ pub fn add_args<'a>(app: App<'a, 'a>, default_args: &'a DefaultArgs) -> App<'a, 
             ),
     )
     .arg(
+        Arg::with_name("xdp_queue_ids")
+            .long("xdp-queue-ids")
+            .takes_value(true)
+            .value_name("QUEUE_LIST")
+            .conflicts_with("no_xdp")
+            .conflicts_with("experimental_retransmit_xdp_cpu_cores")
+            .requires("xdp_cpu_cores")
+            .validator(|value| validate_cpu_ranges(value, "--xdp-queue-ids"))
+            .help(
+                "NIC hardware TX queue ids to bind, one per entry in --xdp-cpu-cores and in the \
+                 same order (e.g. \"2-4,17\"). Must contain the same number of ids as \
+                 --xdp-cpu-cores has cores. Requires --xdp-cpu-cores to be set explicitly. \
+                 Defaults to sequential queue ids starting at 0",
+            ),
+    )
+    .arg(
         Arg::with_name("xdp_zero_copy")
             .long("xdp-zero-copy")
             .takes_value(false)
