@@ -214,6 +214,10 @@ fn verify_votes(
     debug_assert!(
         vote_payload_to_sign.slot() <= root_bank.slot().saturating_add(NUM_SLOTS_FOR_VERIFY)
     );
+    let unverified_votes = unverified_votes
+        .into_iter()
+        .filter(|v| !banlist.is_banned(&v.sender_identity_pubkey))
+        .collect();
     // Fallback to individual verification
     let ((verified_votes, invalid_remote_pubkeys), time_us) =
         measure_us!(verify_individual_votes(unverified_votes, thread_pool));

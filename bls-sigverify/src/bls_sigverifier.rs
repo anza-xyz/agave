@@ -262,6 +262,11 @@ impl SigVerifier {
             self.stats.num_generated_certs_received += 1;
             return;
         }
+
+        if self.banlist.is_banned(&sender_identity_pubkey) {
+            return;
+        }
+
         cert_groups
             .entry(cert.cert_type)
             .or_default()
@@ -305,6 +310,9 @@ impl SigVerifier {
 
             match decoded_msg {
                 DecodedWireConsensusMessage::Vote(unverified_vote) => {
+                    if self.banlist.is_banned(&sender_identity_pubkey) {
+                        continue;
+                    }
                     if let Some(payload) =
                         self.keep_vote(unverified_vote, sender_identity_pubkey, root_bank)
                     {
@@ -2117,5 +2125,60 @@ mod tests {
             })
             .collect();
         vec![BytesPacketBatch::from(packets).into()]
+    }
+
+    #[test]
+    fn test_intra_batch_banlisting_skips_remaining_certs_after_first_failure() {
+        const N: usize = 50;
+        let mut ctx = TestContext::new();
+        let shred_version = ctx.verifier.cluster_info.my_shred_version();
+
+        // A structurally valid Finalize cert (valid bitmap / signers / stake) whose aggregate
+        // signature is replaced with a well-formed but WRONG signature. Verification therefore
+        // performs the full work -- decode the bitmap, aggregate all signer pubkeys, run the
+        // pairing -- and only then fails with CertVerifyFailed.
+        let mut invalid_cert = create_signed_certificate_message(
+            shred_version,
+            &ctx.validator_keypairs,
+            CertificateType::Finalize(4),
+            &[0, 2, 3, 4, 5, 7, 8, 9],
+        );
+        invalid_cert.signature = ctx.validator_keypairs[0]
+            .bls_keypair
+            .sign(b"not the certificate payload")
+            .into();
+
+        // One attacker identity sends N copies of the invalid cert in a single batch.
+        let attacker = Pubkey::new_unique();
+        let messages: Vec<(ConsensusMessage, Pubkey)> = (0..N)
+            .map(|_| {
+                (
+                    ConsensusMessage::Certificate(invalid_cert.clone()),
+                    attacker,
+                )
+            })
+            .collect();
+        let batches = messages_to_batches(&messages, shred_version);
+
+        assert!(!ctx.banlist.is_banned(&attacker));
+        ctx.verifier.verify_and_send_batches(batches).unwrap();
+
+        // Only 1 BLS pairing happened -- the fix worked.
+        assert_eq!(ctx.verifier.stats.cert_stats.certs_to_sig_verify.0, 1);
+        assert_eq!(
+            ctx.verifier.stats.cert_stats.certificate_verification_failed.0,
+            1
+        );
+        // N-1 certs were skipped via the is_banned() check inside verify_cert_group
+        // after the first failure -- no BLS work done for them.
+        assert_eq!(
+            ctx.verifier.stats.cert_stats.redundant_certs_skipped.0,
+            (N - 1) as u64
+        );
+        // 1 because verify_cert_group pre-bans on failure, then handle_cert_verify_error
+        // tries to ban again and gets "already banned" back.
+        assert_eq!(ctx.verifier.stats.cert_stats.already_banned.0, 1);
+        assert!(ctx.banlist.is_banned(&attacker));
+        expect_no_receive(&ctx.pool_receiver);
     }
 }
