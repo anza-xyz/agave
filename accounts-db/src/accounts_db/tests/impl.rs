@@ -5721,7 +5721,7 @@ fn assert_no_storages_at_slot(db: &AccountsDb, slot: Slot) {
 // - call `clean_accounts()` with `latest_full_snapshot_slot` set to 2 (older than slot3)
 //     - ensure slot3 is retained, because its tombstone must survive for an incremental snapshot
 // - call `clean_accounts()` with `latest_full_snapshot_slot` set to 3
-//     - ensure clean reclaims slot3, removing pubkey3
+//     - ensure clean reclaims slot3, removing Account1
 #[test]
 fn test_clean_accounts_with_latest_full_snapshot_slot() {
     let accounts_db = AccountsDb::new_for_tests_with_config(Vec::new(), DEFAULT_ACCOUNTS_DB_CONFIG);

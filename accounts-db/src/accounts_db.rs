@@ -4788,13 +4788,11 @@ impl AccountsDb {
         if reclaim_method == UpsertReclaim::ReclaimOldSlots {
             // Zero lamport accounts were deleted from the index by update_index_for_flush, so
             // their secondary index entries may be purgeable.
-            if !self.account_indexes.is_empty() {
-                self.purge_secondary_indexes_for_dead_keys(
-                    accounts.iter().filter_map(|(pubkey, account)| {
-                        account.is_zero_lamport().then_some(*pubkey)
-                    }),
-                );
-            }
+            self.purge_secondary_indexes_for_dead_keys(
+                accounts.iter().filter_map(|(pubkey, account)| {
+                    account.is_zero_lamport().then_some(*pubkey)
+                }),
+            );
             // If the flushed store has only tombstones, it should be added to dirty_stores to be
             // visited by clean
             if let Some(store) = self.storage.get_slot_storage_entry(slot)

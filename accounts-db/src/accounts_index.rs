@@ -908,7 +908,7 @@ impl<T: IndexValue, U: DiskIndexValue + From<T> + Into<T>> AccountsIndex<T, U> {
         map.replace(pubkey, (new_slot, account_info), old_slot);
     }
 
-    /// Deletes every storage version of `pubkey` and removes the pubkey from the index.
+    /// Removes the pubkey from the index
     /// Populate reclaims with any entries previously in the slot list
     pub fn delete(&self, pubkey: &Pubkey, reclaims: &mut ReclaimsSlotList<T>) {
         let map = self.get_bin(pubkey);

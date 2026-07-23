@@ -387,7 +387,8 @@ impl<T: IndexValue, U: DiskIndexValue + From<T> + Into<T>> InMemAccountsIndex<T,
                 self.remove_if_slot_list_empty_entry(Entry::Occupied(occupied));
             }
             Entry::Vacant(vacant) => {
-                // Disk-only entry: load the slot list from dis and drain it to reclaims, then deliete it from disk.
+                // Disk-only entry: load the entry from disk and drain slot list into reclaims
+                // then delete the entry from disk.
                 if let Some((slot_list, _ref_count)) = self.load_from_disk(vacant.key()) {
                     reclaims.extend(
                         slot_list
