@@ -1,0 +1,37 @@
+# Built-in default validator configuration.
+#
+# This file is embedded in the binary (see config_file.rs) and forms the base
+# layer of the configuration. A user file passed with --experimental-config-file
+# overrides these sections, and matching CLI flags override the file in turn.
+#
+# XDP transmit is enabled for every module by default. No [interfaces.<nic>]
+# sections are declared here: with no explicit interface or queue -> CPU
+# mapping, the validator auto-detects the default-route interface and
+# auto-selects a single CPU core (avoiding the PoH core), matching the
+# out-of-the-box behavior from before --experimental-config-file existed.
+#
+# To pin queues to CPUs, declare an interface and reference it from a module:
+#
+#   [interfaces."ens1f0"]
+#   zero_copy = true
+#   queue_to_cpu_mapping = [
+#     { queue = 0, cpu = 8 },
+#     { queue = 1, cpu = 9 },
+#   ]
+#
+#   [turbine]
+#   use_xdp = true
+#   [turbine.xdp]
+#   tx = { ens1f0 = [0, 1] }
+
+[tpu]
+use_xdp = true
+
+[turbine]
+use_xdp = true
+
+[repair]
+use_xdp = true
+
+[gossip]
+use_xdp = true
