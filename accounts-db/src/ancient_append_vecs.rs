@@ -508,16 +508,6 @@ impl AccountsDb {
             return;
         }
 
-        accounts_to_combine
-            .accounts_to_combine
-            .iter()
-            .for_each(|combine| {
-                self.unref_shrunk_dead_accounts(
-                    combine.pubkeys_to_unref.iter().cloned(),
-                    combine.slot,
-                );
-            });
-
         let write_ancient_accounts = self.write_packed_storages(&accounts_to_combine, pack);
 
         self.finish_combine_ancient_slots_packed_internal(
@@ -894,8 +884,7 @@ impl AccountsDb {
                 // This would fail the invariant that the highest slot # where an account exists defines the most recent account.
                 // It could be a clean error or a transient condition that will resolve if we encounter this situation.
                 // The count of these accounts per call will be reported by metrics in `unpackable_slots_count`
-                if shrink_collect.pubkeys_to_unref.is_empty()
-                    && shrink_collect.alive_accounts.one_ref.accounts.is_empty()
+                if shrink_collect.alive_accounts.one_ref.accounts.is_empty()
                     && shrink_collect
                         .alive_accounts
                         .many_refs_this_is_newest_alive
@@ -1143,9 +1132,7 @@ mod tests {
                     remove_account_for_tests,
                 },
             },
-            accounts_index::{
-                AccountsIndexScanResult, ReclaimsSlotList, RefCount, ScanFilter, UpsertReclaim,
-            },
+            accounts_index::{ReclaimsSlotList, UpsertReclaim},
             append_vec::{self, AppendVec},
             storable_accounts::StorableAccountsBySlot,
             utils::create_account_shared_data,
@@ -1190,6 +1177,27 @@ mod tests {
             slot1..(slot1 + slots as Slot),
             slot_infos,
         )
+    }
+
+    /// Give every account backing `storages` a second index entry at slot 0. Sample-storage
+    /// slots start at 1, so slot 0 is older than all of them: each account ends up with
+    /// slot_list.len() == 2 while its storage slot stays newest
+    fn add_older_ref(db: &AccountsDb, storages: &[Arc<AccountStorageEntry>]) {
+        storages.iter().for_each(|storage| {
+            db.get_unique_accounts_from_storage(storage)
+                .stored_accounts
+                .iter()
+                .for_each(|account| {
+                    db.accounts_index.upsert(
+                        0,
+                        0,
+                        account.pubkey(),
+                        AccountInfo::new(StorageLocation::AppendVec(0, 0), false),
+                        &mut ReclaimsSlotList::new(),
+                        UpsertReclaim::IgnoreReclaims,
+                    );
+                });
+        });
     }
 
     fn unique_to_accounts<'a>(
@@ -1756,19 +1764,8 @@ mod tests {
                                     slots_vec = slots.collect::<Vec<_>>()
                                 }
 
-                                let original_results = storages
-                                    .iter()
-                                    .map(|store| db.get_unique_accounts_from_storage(store))
-                                    .collect::<Vec<_>>();
                                 if two_refs {
-                                    original_results.iter().for_each(|results| {
-                                        results.stored_accounts.iter().for_each(|account| {
-                                            db.accounts_index
-                                                .get_and_then(account.pubkey(), |entry| {
-                                                    (false, entry.unwrap().addref())
-                                                });
-                                        })
-                                    });
+                                    add_older_ref(&db, &storages);
                                 }
 
                                 if add_dead_account {
@@ -1782,6 +1779,22 @@ mod tests {
                                             alive,
                                             Some(&db.accounts_index),
                                         );
+                                        // mark the account obsolete and remove it from the index,
+                                        // as clean does when it reclaims an account
+                                        let account_offset =
+                                            db.accounts_index.get_and_then(&pk, |entry| {
+                                                let slot_list =
+                                                    entry.unwrap().slot_list_read_lock();
+                                                (false, slot_list.first().unwrap().1.offset())
+                                            });
+                                        storage
+                                            .obsolete_accounts
+                                            .write()
+                                            .unwrap()
+                                            .mark_accounts_obsolete(
+                                                std::iter::once((account_offset, 0)),
+                                                storage.slot(),
+                                            );
                                         assert!(
                                             db.accounts_index.purge_exact(
                                                 &pk,
@@ -1831,14 +1844,6 @@ mod tests {
                                      {two_refs}, many_refs: {many_ref_slots:?}"
                                 );
 
-                                if add_dead_account {
-                                    assert!(
-                                        !accounts_to_combine
-                                            .accounts_to_combine
-                                            .iter()
-                                            .any(|a| a.pubkeys_to_unref.is_empty())
-                                    );
-                                }
                                 let expected_target_slots_sorted = if !two_refs
                                     || many_ref_slots == IncludeManyRefSlots::Include
                                     || num_slots == 1
@@ -3767,89 +3772,6 @@ mod tests {
             &target_slots_sorted,
             &tuning
         ));
-    }
-
-    #[test]
-    fn test_shrink_ancient_expected_unref() {
-        let db = AccountsDb::default_for_tests();
-        for count in 0..3 {
-            let pubkeys_to_unref = (0..count)
-                .map(|_| solana_pubkey::new_rand())
-                .collect::<Vec<_>>();
-            // how many of `many_ref_accounts` should be found in the index with ref_count=1
-            let mut expected_ref_counts_before_unref = HashMap::<Pubkey, RefCount>::default();
-            let mut expected_ref_counts_after_unref = HashMap::<Pubkey, RefCount>::default();
-
-            pubkeys_to_unref.iter().for_each(|k| {
-                for slot in 0..2 {
-                    // each upsert here (to a different slot) adds a refcount of 1 since entry is NOT cached
-                    db.accounts_index.upsert(
-                        slot,
-                        slot,
-                        k,
-                        AccountInfo::default(),
-                        &mut ReclaimsSlotList::new(),
-                        UpsertReclaim::IgnoreReclaims,
-                    );
-                }
-                expected_ref_counts_before_unref.insert(*k, 2);
-                expected_ref_counts_after_unref.insert(*k, 1);
-            });
-
-            let shrink_collect = ShrinkCollect::<ShrinkCollectAliveSeparatedByRefs> {
-                // the only interesting field
-                pubkeys_to_unref: pubkeys_to_unref.iter().collect(),
-
-                // irrelevant fields
-                zero_lamport_single_ref_pubkeys: Vec::default(),
-                slot: 0,
-                written_bytes: 0,
-                alive_accounts: ShrinkCollectAliveSeparatedByRefs {
-                    one_ref: AliveAccounts::default(),
-                    many_refs_this_is_newest_alive: AliveAccounts::default(),
-                    many_refs_old_alive: AliveAccounts::default(),
-                },
-                tombstones_to_carry_forward: Vec::new(),
-                tombstones_total_bytes: 0,
-                alive_total_bytes: 0,
-                total_starting_accounts: 0,
-                all_are_zero_lamports: false,
-            };
-
-            // Assert ref_counts before unref.
-            db.accounts_index.scan(
-                shrink_collect.pubkeys_to_unref.iter().cloned(),
-                |k, slot_refs| {
-                    assert_eq!(
-                        expected_ref_counts_before_unref.remove(k).unwrap(),
-                        slot_refs.unwrap().1
-                    );
-                    AccountsIndexScanResult::OnlyKeepInMemoryIfDirty
-                },
-                None,
-                ScanFilter::All,
-            );
-            assert!(expected_ref_counts_before_unref.is_empty());
-
-            // unref ref_counts
-            db.unref_shrunk_dead_accounts(shrink_collect.pubkeys_to_unref.iter().cloned(), 0);
-
-            // Assert ref_counts after unref
-            db.accounts_index.scan(
-                shrink_collect.pubkeys_to_unref.iter().cloned(),
-                |k, slot_refs| {
-                    assert_eq!(
-                        expected_ref_counts_after_unref.remove(k).unwrap(),
-                        slot_refs.unwrap().1
-                    );
-                    AccountsIndexScanResult::OnlyKeepInMemoryIfDirty
-                },
-                None,
-                ScanFilter::All,
-            );
-            // should have removed all of them
-            assert!(expected_ref_counts_after_unref.is_empty());
-        }
     }
 
     /// The purpose of this test is to ensure the correct control flow
