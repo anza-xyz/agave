@@ -27,6 +27,13 @@ Release channels have their own copy of this changelog:
 * `--disable-banking-trace` is now deprecated and a no-op (banking trace is disabled by
   default). The flag is still accepted for backward compatibility.
 #### Changes
+* Added `--experimental-config-file <PATH>` (Linux only), pointing to a TOML configuration file.
+  Configuration is resolved in three layers: built-in defaults (embedded in the binary), then the
+  user file (which overrides the defaults section by section), then matching CLI flags (which
+  override the file). It currently covers XDP transmit: `[interfaces.<nic>]` declares a NIC's
+  `queue_to_cpu_mapping` and `zero_copy`, and each XDP-capable module (`tpu`, `turbine`, `repair`,
+  `gossip`) may set `use_xdp` and, under `[<module>.xdp].tx`, the interface and queues it transmits
+  over.
 * Validators running without `--full-rpc-api` and with snapshot generation disabled no longer
   store transaction signature keys in the status cache. Message hashes remain cached for duplicate
   transaction detection.
