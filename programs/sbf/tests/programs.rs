@@ -4655,74 +4655,77 @@ fn test_program_sbf_deplete_cost_meter_with_divide_by_zero() {
     assert_eq!(effects.cu_avail, 0);
 }
 
-#[test]
+#[test_matrix([false, true], [1, 2])]
 #[cfg(feature = "sbf_rust")]
-fn test_deny_access_beyond_current_length() {
-    agave_logger::setup();
+fn test_deny_access_beyond_current_length(
+    virtual_address_space_adjustments: bool,
+    instruction_account_index: u8,
+) {
+    let mint_keypair = Keypair::new();
+    let mint_pubkey = mint_keypair.pubkey();
 
-    let GenesisConfigInfo {
-        genesis_config,
-        mint_keypair,
-        ..
-    } = create_genesis_config(100_123_456_789);
+    let readonly_account_keypair = Keypair::new();
+    let writable_account_keypair = Keypair::new();
 
-    for virtual_address_space_adjustments in [false, true] {
-        let mut bank = Bank::new_for_tests(&genesis_config);
-        let feature_set = Arc::make_mut(&mut bank.feature_set);
-        // by default test banks have all features enabled, so we only need to
-        // disable when needed
-        if !virtual_address_space_adjustments {
-            feature_set.deactivate(&feature_set::syscall_parameter_address_restrictions::id());
-            feature_set.deactivate(&feature_set::virtual_address_space_adjustments::id());
-            feature_set.deactivate(&feature_set::account_data_direct_mapping::id());
-        }
-        let (bank, bank_forks) = bank.wrap_with_bank_forks_for_tests();
-        let invoke_program_id = create_program(
-            &bank,
-            &bpf_loader_upgradeable::id(),
-            "solana_sbf_rust_invoke",
+    let mut configured_feature_set = FeatureSet::all_enabled();
+    if !virtual_address_space_adjustments {
+        configured_feature_set
+            .deactivate(&feature_set::syscall_parameter_address_restrictions::id());
+        configured_feature_set.deactivate(&feature_set::virtual_address_space_adjustments::id());
+        configured_feature_set.deactivate(&feature_set::account_data_direct_mapping::id());
+    }
+
+    let (payer, [invoke_program_id], feature_set, mut accounts, mut program_cache, sysvar_cache) =
+        program_sbf_txn_fixture_with_feature_set(
+            [("solana_sbf_rust_invoke", bpf_loader_upgradeable::id())],
+            configured_feature_set,
         );
-        let mut bank_client = BankClient::new_shared(bank.clone());
-        let bank = bank_client
-            .advance_slot(1, &bank_forks, SlotLeader::default())
+
+    let account = Account::new(42, 0, &invoke_program_id);
+    accounts.extend([
+        (mint_pubkey, Account::new(0, 0, &system_program::id())),
+        (readonly_account_keypair.pubkey(), account.clone()),
+        (writable_account_keypair.pubkey(), account),
+    ]);
+    let account_metas = vec![
+        AccountMeta::new(mint_pubkey, true),
+        AccountMeta::new_readonly(readonly_account_keypair.pubkey(), false),
+        AccountMeta::new(writable_account_keypair.pubkey(), false),
+        AccountMeta::new_readonly(invoke_program_id, false),
+    ];
+
+    let mut instruction_data = vec![TEST_READ_ACCOUNT, instruction_account_index];
+    instruction_data.extend_from_slice(3usize.to_le_bytes().as_ref());
+
+    let message = Message::new(
+        &[Instruction::new_with_bytes(
+            invoke_program_id,
+            &instruction_data,
+            account_metas,
+        )],
+        Some(&payer),
+    );
+    let sanitized_message =
+        SanitizedMessage::try_from_legacy_message(message, &ReservedAccountKeys::empty_key_set())
             .unwrap();
 
-        let account = AccountSharedData::new(42, 0, &invoke_program_id);
-        let readonly_account_keypair = Keypair::new();
-        let writable_account_keypair = Keypair::new();
-        bank.store_account(&readonly_account_keypair.pubkey(), &account);
-        bank.store_account(&writable_account_keypair.pubkey(), &account);
+    let context =
+        TxnContext::new_with_default_budget(feature_set, accounts, sanitized_message, None);
 
-        let mint_pubkey = mint_keypair.pubkey();
-        let account_metas = vec![
-            AccountMeta::new(mint_pubkey, true),
-            AccountMeta::new_readonly(readonly_account_keypair.pubkey(), false),
-            AccountMeta::new(writable_account_keypair.pubkey(), false),
-            AccountMeta::new_readonly(invoke_program_id, false),
-        ];
-
-        for (instruction_account_index, expected_error) in [
-            (1, InstructionError::AccountDataTooSmall),
-            (2, InstructionError::InvalidRealloc),
-        ] {
-            let mut instruction_data = vec![TEST_READ_ACCOUNT, instruction_account_index];
-            instruction_data.extend_from_slice(3usize.to_le_bytes().as_ref());
-            let instruction = Instruction::new_with_bytes(
-                invoke_program_id,
-                &instruction_data,
-                account_metas.clone(),
-            );
-            let result = bank_client.send_and_confirm_instruction(&mint_keypair, instruction);
-            if virtual_address_space_adjustments {
-                assert_eq!(
-                    result.unwrap_err().unwrap(),
-                    TransactionError::InstructionError(0, expected_error)
-                );
-            } else {
-                result.unwrap();
-            }
+    let effects = execute_txn(&context, &mut program_cache, &sysvar_cache);
+    assert_eq!(
+        effects.status,
+        if virtual_address_space_adjustments {
+            let expected_error = match instruction_account_index {
+                1 => InstructionError::AccountDataTooSmall,
+                2 => InstructionError::InvalidRealloc,
+                _ => unreachable!(),
+            };
+            Err(TransactionError::InstructionError(0, expected_error))
+        } else {
+            Ok(())
         }
-    }
+    );
 }
 
 #[test_case(false; "without_virtual_address_space_adjustments")]
