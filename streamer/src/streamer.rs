@@ -439,41 +439,6 @@ impl StakedNodes {
     pub fn total_stake(&self) -> u64 {
         self.total_stake
     }
-
-    // Update the stake map given a new stakes map
-    pub fn update_stake_map(&mut self, stakes: Arc<HashMap<Pubkey, u64>>) {
-        let total_stake = Self::calculate_total_stake(&stakes, &self.overrides);
-        self.total_stake = total_stake;
-        self.stakes = stakes;
-    }
-}
-
-pub fn recv_packet_batches(
-    recvr: &PacketBatchReceiver,
-    soft_receive_limit: usize,
-) -> Result<(Vec<PacketBatch>, usize, Duration)> {
-    let recv_start = Instant::now();
-    let timer = Duration::new(1, 0);
-    let packet_batch = recvr.recv_timeout(timer)?;
-    trace!("got packets");
-    let mut num_packets = packet_batch.len();
-    let mut packet_batches = vec![packet_batch];
-
-    while num_packets < soft_receive_limit {
-        let Ok(packet_batch) = recvr.try_recv() else {
-            break;
-        };
-        trace!("got more packets");
-        num_packets += packet_batch.len();
-        packet_batches.push(packet_batch);
-    }
-    let recv_duration = recv_start.elapsed();
-    trace!(
-        "packet batches len: {}, num packets: {}",
-        packet_batches.len(),
-        num_packets
-    );
-    Ok((packet_batches, num_packets, recv_duration))
 }
 
 struct ServeRepairSocketProvider {
