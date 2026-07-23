@@ -79,5 +79,9 @@ test-case = { workspace = true }
 name = "vote_instructions"
 harness = false
 
+[[bench]]
+name = "process_vote"
+harness = false
+
 [lints]
 workspace = true
