@@ -9,12 +9,14 @@ use {
     solana_pubkey::Pubkey,
 };
 
+pub mod aggregate_accumulator;
 pub mod certificate;
 pub mod consensus_message;
 pub mod finalized_slot;
 pub mod fraction;
 pub mod metric_types;
 pub mod migration;
+pub mod own_message;
 pub mod reward_certificate;
 pub mod sig_verified_messages;
 pub mod unverified_vote_message;

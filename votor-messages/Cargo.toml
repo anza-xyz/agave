@@ -26,6 +26,7 @@ frozen-abi = [
 
 [dependencies]
 agave-feature-set = { workspace = true }
+bitvec = { workspace = true }
 crossbeam-channel = { workspace = true }
 log = { workspace = true }
 serde = { workspace = true }

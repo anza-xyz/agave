@@ -2,6 +2,7 @@ use {
     agave_votor_messages::{
         certificate::{Certificate, CertificateType},
         consensus_message::VoteMessage,
+        vote::VoteType,
     },
     bitvec::prelude::*,
     solana_bls_signatures::{BlsError, SignatureProjective},
@@ -129,7 +130,7 @@ impl BuilderType {
         cert_type: &CertificateType,
         msgs: &[VoteMessage],
     ) -> Result<(), AggregateError> {
-        let vote_types = cert_type.limits_and_vote_types().1;
+        let vote_types = get_vote_types(cert_type);
         match self {
             Self::DoubleVote {
                 signature,
@@ -208,6 +209,17 @@ impl CertificateBuilder {
     }
 }
 
+const fn get_vote_types(cert_type: &CertificateType) -> &'static [VoteType] {
+    match cert_type {
+        CertificateType::Notarize(_) => &[VoteType::Notarize],
+        CertificateType::NotarizeFallback(_) => &[VoteType::Notarize, VoteType::NotarizeFallback],
+        CertificateType::FinalizeFast(_) => &[VoteType::Notarize],
+        CertificateType::Finalize(_) => &[VoteType::Finalize],
+        CertificateType::Skip(_) => &[VoteType::Skip, VoteType::SkipFallback],
+        CertificateType::Genesis(_) => &[VoteType::Genesis],
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use {
@@ -226,6 +238,7 @@ mod tests {
         },
         solana_hash::Hash,
         solana_signer_store::{Decoded, decode},
+        std::num::NonZero,
     };
 
     #[test]
@@ -249,6 +262,7 @@ mod tests {
                     vote,
                     signature: signature.into(),
                     rank,
+                    stake: NonZero::new(123).unwrap(),
                 }
             })
             .collect::<Vec<_>>();
@@ -267,6 +281,7 @@ mod tests {
                     vote,
                     signature: signature.into(),
                     rank,
+                    stake: NonZero::new(123).unwrap(),
                 }
             })
             .collect::<Vec<_>>();
@@ -356,6 +371,7 @@ mod tests {
             vote,
             signature: signature.into(),
             rank: rank_out_of_bounds as u16,
+            stake: NonZero::new(123).unwrap(),
         };
         assert_eq!(
             builder.aggregate(&[message_out_of_bounds]),
@@ -367,6 +383,7 @@ mod tests {
             vote,
             signature: BLSSignature([0; BLS_SIGNATURE_AFFINE_SIZE]), // Invalid signature
             rank: 1,
+            stake: NonZero::new(123).unwrap(),
         };
         assert_eq!(
             builder.aggregate(&[message_with_invalid_signature]),
@@ -380,6 +397,7 @@ mod tests {
             vote,
             signature: signature.into(),
             rank: 1,
+            stake: NonZero::new(123).unwrap(),
         }];
         let mut builder = CertificateBuilder::new(cert_type);
         builder
@@ -389,6 +407,7 @@ mod tests {
             vote: vote2,
             signature: signature.into(),
             rank: 1, // Same rank as in messages_1
+            stake: NonZero::new(123).unwrap(),
         }];
         builder
             .aggregate(&messages_2)
@@ -423,6 +442,7 @@ mod tests {
                 vote,
                 signature: signature.into(),
                 rank: i as u16,
+                stake: NonZero::new(123).unwrap(),
             });
             keypairs.push(keypair);
         }
@@ -467,6 +487,7 @@ mod tests {
                 vote: notarize_vote,
                 signature: signature.into(),
                 rank: i as u16, // Ranks 0, 1, 2
+                stake: NonZero::new(123).unwrap(),
             });
             all_pubkeys.push(keypair.public);
         }
@@ -482,6 +503,7 @@ mod tests {
                 vote: notarize_fallback_vote,
                 signature: signature.into(),
                 rank: i as u16, // Ranks 3, 4, 5
+                stake: NonZero::new(123).unwrap(),
             });
             all_pubkeys.push(keypair.public);
         }

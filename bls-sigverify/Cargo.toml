@@ -32,9 +32,11 @@ log = { workspace = true }
 parking_lot = { workspace = true }
 qualifier_attr = { workspace = true }
 rayon = { workspace = true }
+smallvec = { workspace = true }
 solana-bls-signatures = { workspace = true, features = ["parallel"] }
 solana-clock = { workspace = true }
 solana-gossip = { workspace = true }
+solana-hash = { workspace = true }
 solana-ledger = { workspace = true }
 solana-measure = { workspace = true }
 solana-metrics = { workspace = true }
@@ -56,6 +58,7 @@ agave-votor = { path = "../votor", features = ["agave-unstable-api"] }
 bincode = { workspace = true }
 criterion = { workspace = true }
 solana-epoch-schedule = { workspace = true }
+solana-genesis-config = { workspace = true }
 solana-hash = { workspace = true }
 solana-keypair = { workspace = true }
 solana-net-utils = { workspace = true }

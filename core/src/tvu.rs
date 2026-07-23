@@ -29,7 +29,7 @@ use {
     agave_bls_sigverify::{
         bls_sigverifier::{self, SigVerifierChannels, SigVerifierContext},
         generated_cert_types::GeneratedCertTypes,
-        rewards::RewardVoteMessage,
+        rewards::RewardInput,
     },
     agave_votor::{
         event::{LatestSwitchRequest, LeaderWindowInfo, VotorEventReceiver, VotorEventSender},
@@ -250,7 +250,7 @@ impl Tvu {
         slot_status_notifier: Option<SlotStatusNotifier>,
         vote_connection_cache: Arc<ConnectionCache>,
         votor_init: AlpenglowInitializationState,
-        reward_votes_sender: Sender<Vec<RewardVoteMessage>>,
+        reward_aggregates_sender: Sender<RewardInput>,
     ) -> Result<Self, String> {
         let migration_status = bank_forks.read().unwrap().migration_status();
 
@@ -343,7 +343,7 @@ impl Tvu {
                     packet_receiver: bls_packet_receiver,
                     certificate_receiver,
                     channel_to_repair: verified_voter_slots_sender,
-                    channel_to_reward: reward_votes_sender.clone(),
+                    channel_to_reward: reward_aggregates_sender.clone(),
                     channel_to_pool: consensus_message_sender,
                     channel_to_metrics: consensus_metrics_sender.clone(),
                 },
@@ -523,7 +523,7 @@ impl Tvu {
             event_sender: votor_event_sender.clone(),
             latest_switch_request: latest_switch_request.clone(),
             own_vote_sender: own_message_sender.clone(),
-            reward_votes_sender,
+            own_reward_aggregates_sender: reward_aggregates_sender.clone(),
             repair_event_sender,
             event_receiver: votor_event_receiver,
             consensus_message_receiver,
@@ -841,7 +841,7 @@ pub mod tests {
         let (bank_forks_controller, bank_forks_controller_receiver) =
             BankForksControllerHandle::new();
         let bank_forks_controller = Arc::new(bank_forks_controller);
-        let (reward_votes_sender, _reward_votes_receiver) = bounded(1024);
+        let (reward_vote_aggregates_sender, _reward_vote_aggregates_receiver) = bounded(1024);
 
         let tvu = Tvu::new(
             &vote_keypair.pubkey(),
@@ -914,7 +914,7 @@ pub mod tests {
                 bank_forks_controller,
                 bank_forks_controller_receiver,
             },
-            reward_votes_sender,
+            reward_vote_aggregates_sender,
         )
         .expect("assume success");
         exit.store(true, Ordering::Relaxed);

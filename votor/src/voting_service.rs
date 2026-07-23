@@ -501,6 +501,7 @@ mod tests {
         },
         std::{
             net::SocketAddr,
+            num::NonZero,
             sync::{Arc, RwLock},
         },
         test_case::test_case,
@@ -517,6 +518,7 @@ mod tests {
                 vote,
                 signature: BLSSignature([0; BLS_SIGNATURE_AFFINE_SIZE]),
                 rank,
+                stake: NonZero::new(123).unwrap(),
             },
             shred_verion,
         )
@@ -653,17 +655,19 @@ mod tests {
             vote: Vote::new_skip_vote(5),
             signature: BLSSignature([0; BLS_SIGNATURE_AFFINE_SIZE]),
             rank: 1,
+            stake:NonZero::new(123).unwrap()
         }),
     }, ConsensusMessage::Vote(VoteMessage {
         vote: Vote::new_skip_vote(5),
         signature: BLSSignature([0; BLS_SIGNATURE_AFFINE_SIZE]),
         rank: 1,
+        stake:NonZero::new(123).unwrap()
     }))]
     #[test_case(BLSOp::PushCertificates {
         certificates: vec![Arc::new(Certificate {
-                cert_type: CertificateType::Skip(5),
-            signature: BLSSignature([0; BLS_SIGNATURE_AFFINE_SIZE]),
-            bitmap: Vec::new(),
+        cert_type: CertificateType::Skip(5),
+        signature: BLSSignature([0; BLS_SIGNATURE_AFFINE_SIZE]),
+        bitmap: Vec::new(),
         })],
     }, ConsensusMessage::Certificate(Certificate {
         cert_type: CertificateType::Skip(5),
@@ -672,14 +676,16 @@ mod tests {
     }))]
     #[test_case(BLSOp::RefreshVotes {
         votes: vec![Arc::new(VoteMessage {
-            vote: Vote::new_skip_vote(6),
-            signature: BLSSignature([0; BLS_SIGNATURE_AFFINE_SIZE]),
-            rank: 1,
+        vote: Vote::new_skip_vote(6),
+        signature: BLSSignature([0; BLS_SIGNATURE_AFFINE_SIZE]),
+        rank: 1,
+        stake:NonZero::new(123).unwrap()
         })],
     }, ConsensusMessage::Vote(VoteMessage {
         vote: Vote::new_skip_vote(6),
         signature: BLSSignature([0; BLS_SIGNATURE_AFFINE_SIZE]),
         rank: 1,
+        stake:NonZero::new(123).unwrap()
     }))]
     fn test_send_message(bls_op: BLSOp, expected_message: ConsensusMessage) {
         agave_logger::setup();

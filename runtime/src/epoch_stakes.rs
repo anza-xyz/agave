@@ -53,9 +53,10 @@ pub struct BLSPubkeyToRankMap {
     rank_map: HashMap<BLSPubkeyCompressed, u16>,
     /// stores a mapping from the vote account pubkey to the node's rank.
     vote_pubkey_to_rank: HashMap<Pubkey, u16>,
-    node_pubkey_map: HashMap<Pubkey, BLSPubkeyStakeEntry>,
     /// a mapping from rank to [`BLSPubkeyStakeEntry`].
     sorted_pubkeys: Vec<BLSPubkeyStakeEntry>,
+    /// a mapping from node identity pubkey to [`BLSPubkeyStakeEntry`].
+    node_pubkey_map: HashMap<Pubkey, BLSPubkeyStakeEntry>,
     /// Total stake delegated to this validator.
     total_stake: NonZero<u64>,
 }
@@ -155,8 +156,8 @@ impl BLSPubkeyToRankMap {
             rank_map: bls_pubkey_to_rank_map,
             vote_pubkey_to_rank: vote_pubkey_to_rank_map,
             sorted_pubkeys,
-            node_pubkey_map,
             total_stake,
+            node_pubkey_map,
         }
     }
 

@@ -18,13 +18,14 @@ rustdoc-args = ["--cfg=docsrs"]
 agave-unstable-api = []
 dev-context-only-utils = [
     "agave-banking-stage-ingress-types/dev-context-only-utils",
+    "agave-bls-sigverify/dev-context-only-utils",
+    "agave-votor/dev-context-only-utils",
     "solana-entry/dev-context-only-utils",
     "solana-ledger/dev-context-only-utils",
     "solana-perf/dev-context-only-utils",
     "solana-runtime/dev-context-only-utils",
     "solana-streamer/dev-context-only-utils",
     "solana-tpu-client-next/dev-context-only-utils",
-    "agave-votor/dev-context-only-utils",
 ]
 frozen-abi = [
     "dep:solana-frozen-abi",

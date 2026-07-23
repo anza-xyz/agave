@@ -685,6 +685,7 @@ fn convert_packet_to_vote_message(
         vote: vote_msg.vote,
         signature: vote_msg.signature,
         rank,
+        stake: sender_entry.stake,
     })
 }
 
