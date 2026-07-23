@@ -4300,16 +4300,12 @@ fn test_cpi_account_ownership_writability(virtual_address_space_adjustments: boo
     assert_eq!(effects.status, Ok(()), "{:?}", effects.logs);
 }
 
-// This tests the case where a caller extends an account beyond the original
-// data length. The callee should see the extended data (asserted in the
-// callee program, not here).
-#[test_matrix([false, true], [false, true], [false, true])]
 #[cfg(feature = "sbf_rust")]
-fn test_cpi_account_data_updates_caller_grows(
+fn cpi_account_data_updates_fixture(
     deprecated_callee: bool,
     deprecated_caller: bool,
     virtual_address_space_adjustments: bool,
-) {
+) -> (ProgramSbfTxnFixture<3>, Vec<AccountMeta>) {
     let mut configured_feature_set = FeatureSet::all_enabled();
     if !virtual_address_space_adjustments {
         configured_feature_set
@@ -4318,16 +4314,7 @@ fn test_cpi_account_data_updates_caller_grows(
         configured_feature_set.deactivate(&feature_set::account_data_direct_mapping::id());
     }
 
-    let (
-        _,
-        mint_keypair,
-        account_keypair,
-        [invoke_program_id, realloc_program_id, deprecated_program_id],
-        feature_set,
-        mut accounts,
-        mut program_cache,
-        sysvar_cache,
-    ) = program_sbf_txn_fixture_with_feature_set(
+    let fixture = program_sbf_txn_fixture_with_feature_set(
         [
             ("solana_sbf_rust_invoke", bpf_loader_upgradeable::id()),
             ("solana_sbf_rust_realloc", bpf_loader_upgradeable::id()),
@@ -4338,27 +4325,65 @@ fn test_cpi_account_data_updates_caller_grows(
         ],
         configured_feature_set,
     );
+    let (
+        _,
+        mint_keypair,
+        account_keypair,
+        [invoke_program_id, realloc_program_id, deprecated_program_id],
+        ..,
+    ) = &fixture;
 
     let account_metas = vec![
         AccountMeta::new(mint_keypair.pubkey(), true),
         AccountMeta::new(account_keypair.pubkey(), false),
         AccountMeta::new_readonly(
             if deprecated_callee {
-                deprecated_program_id
+                *deprecated_program_id
             } else {
-                realloc_program_id
+                *realloc_program_id
             },
             false,
         ),
         AccountMeta::new_readonly(
             if deprecated_caller {
-                deprecated_program_id
+                *deprecated_program_id
             } else {
-                invoke_program_id
+                *invoke_program_id
             },
             false,
         ),
     ];
+
+    (fixture, account_metas)
+}
+
+// This tests the case where a caller extends an account beyond the original
+// data length. The callee should see the extended data (asserted in the
+// callee program, not here).
+#[test_matrix([false, true], [false, true], [false, true])]
+#[cfg(feature = "sbf_rust")]
+fn test_cpi_account_data_updates_caller_grows(
+    deprecated_callee: bool,
+    deprecated_caller: bool,
+    virtual_address_space_adjustments: bool,
+) {
+    let (
+        (
+            _,
+            mint_keypair,
+            account_keypair,
+            _,
+            feature_set,
+            mut accounts,
+            mut program_cache,
+            sysvar_cache,
+        ),
+        account_metas,
+    ) = cpi_account_data_updates_fixture(
+        deprecated_callee,
+        deprecated_caller,
+        virtual_address_space_adjustments,
+    );
 
     let mut account = Account::new(42, 0, &account_metas[3].pubkey);
     account.data = b"foo".to_vec();
@@ -4421,55 +4446,23 @@ fn test_cpi_account_data_updates_callee_grows(
     deprecated_caller: bool,
     virtual_address_space_adjustments: bool,
 ) {
-    let mut configured_feature_set = FeatureSet::all_enabled();
-    if !virtual_address_space_adjustments {
-        configured_feature_set
-            .deactivate(&feature_set::syscall_parameter_address_restrictions::id());
-        configured_feature_set.deactivate(&feature_set::virtual_address_space_adjustments::id());
-        configured_feature_set.deactivate(&feature_set::account_data_direct_mapping::id());
-    }
-
     let (
-        _,
-        mint_keypair,
-        account_keypair,
-        [invoke_program_id, realloc_program_id, deprecated_program_id],
-        feature_set,
-        mut accounts,
-        mut program_cache,
-        sysvar_cache,
-    ) = program_sbf_txn_fixture_with_feature_set(
-        [
-            ("solana_sbf_rust_invoke", bpf_loader_upgradeable::id()),
-            ("solana_sbf_rust_realloc", bpf_loader_upgradeable::id()),
-            (
-                "solana_sbf_rust_deprecated_loader",
-                bpf_loader_deprecated::id(),
-            ),
-        ],
-        configured_feature_set,
+        (
+            _,
+            mint_keypair,
+            account_keypair,
+            _,
+            feature_set,
+            mut accounts,
+            mut program_cache,
+            sysvar_cache,
+        ),
+        account_metas,
+    ) = cpi_account_data_updates_fixture(
+        deprecated_callee,
+        deprecated_caller,
+        virtual_address_space_adjustments,
     );
-
-    let account_metas = vec![
-        AccountMeta::new(mint_keypair.pubkey(), true),
-        AccountMeta::new(account_keypair.pubkey(), false),
-        AccountMeta::new_readonly(
-            if deprecated_callee {
-                deprecated_program_id
-            } else {
-                realloc_program_id
-            },
-            false,
-        ),
-        AccountMeta::new_readonly(
-            if deprecated_caller {
-                deprecated_program_id
-            } else {
-                invoke_program_id
-            },
-            false,
-        ),
-    ];
 
     let mut account = Account::new(42, 0, &account_metas[2].pubkey);
     account.data = b"foo".to_vec();
@@ -4539,55 +4532,23 @@ fn test_cpi_account_data_updates_callee_shrinks_smaller_than_original_len(
     deprecated_caller: bool,
     virtual_address_space_adjustments: bool,
 ) {
-    let mut configured_feature_set = FeatureSet::all_enabled();
-    if !virtual_address_space_adjustments {
-        configured_feature_set
-            .deactivate(&feature_set::syscall_parameter_address_restrictions::id());
-        configured_feature_set.deactivate(&feature_set::virtual_address_space_adjustments::id());
-        configured_feature_set.deactivate(&feature_set::account_data_direct_mapping::id());
-    }
-
     let (
-        _,
-        mint_keypair,
-        account_keypair,
-        [invoke_program_id, realloc_program_id, deprecated_program_id],
-        feature_set,
-        mut accounts,
-        mut program_cache,
-        sysvar_cache,
-    ) = program_sbf_txn_fixture_with_feature_set(
-        [
-            ("solana_sbf_rust_invoke", bpf_loader_upgradeable::id()),
-            ("solana_sbf_rust_realloc", bpf_loader_upgradeable::id()),
-            (
-                "solana_sbf_rust_deprecated_loader",
-                bpf_loader_deprecated::id(),
-            ),
-        ],
-        configured_feature_set,
+        (
+            _,
+            mint_keypair,
+            account_keypair,
+            _,
+            feature_set,
+            mut accounts,
+            mut program_cache,
+            sysvar_cache,
+        ),
+        account_metas,
+    ) = cpi_account_data_updates_fixture(
+        deprecated_callee,
+        deprecated_caller,
+        virtual_address_space_adjustments,
     );
-
-    let account_metas = vec![
-        AccountMeta::new(mint_keypair.pubkey(), true),
-        AccountMeta::new(account_keypair.pubkey(), false),
-        AccountMeta::new_readonly(
-            if deprecated_callee {
-                deprecated_program_id
-            } else {
-                realloc_program_id
-            },
-            false,
-        ),
-        AccountMeta::new_readonly(
-            if deprecated_caller {
-                deprecated_program_id
-            } else {
-                invoke_program_id
-            },
-            false,
-        ),
-    ];
 
     let mut account = Account::new(42, 0, &account_metas[2].pubkey);
     account.data = b"foobar".to_vec();
@@ -4659,55 +4620,23 @@ fn test_cpi_account_data_updates_caller_grows_callee_shrinks_larger_than_origina
     deprecated_caller: bool,
     virtual_address_space_adjustments: bool,
 ) {
-    let mut configured_feature_set = FeatureSet::all_enabled();
-    if !virtual_address_space_adjustments {
-        configured_feature_set
-            .deactivate(&feature_set::syscall_parameter_address_restrictions::id());
-        configured_feature_set.deactivate(&feature_set::virtual_address_space_adjustments::id());
-        configured_feature_set.deactivate(&feature_set::account_data_direct_mapping::id());
-    }
-
     let (
-        _,
-        mint_keypair,
-        account_keypair,
-        [invoke_program_id, realloc_program_id, deprecated_program_id],
-        feature_set,
-        mut accounts,
-        mut program_cache,
-        sysvar_cache,
-    ) = program_sbf_txn_fixture_with_feature_set(
-        [
-            ("solana_sbf_rust_invoke", bpf_loader_upgradeable::id()),
-            ("solana_sbf_rust_realloc", bpf_loader_upgradeable::id()),
-            (
-                "solana_sbf_rust_deprecated_loader",
-                bpf_loader_deprecated::id(),
-            ),
-        ],
-        configured_feature_set,
+        (
+            _,
+            mint_keypair,
+            account_keypair,
+            _,
+            feature_set,
+            mut accounts,
+            mut program_cache,
+            sysvar_cache,
+        ),
+        account_metas,
+    ) = cpi_account_data_updates_fixture(
+        deprecated_callee,
+        deprecated_caller,
+        virtual_address_space_adjustments,
     );
-
-    let account_metas = vec![
-        AccountMeta::new(mint_keypair.pubkey(), true),
-        AccountMeta::new(account_keypair.pubkey(), false),
-        AccountMeta::new_readonly(
-            if deprecated_callee {
-                deprecated_program_id
-            } else {
-                realloc_program_id
-            },
-            false,
-        ),
-        AccountMeta::new_readonly(
-            if deprecated_caller {
-                deprecated_program_id
-            } else {
-                invoke_program_id
-            },
-            false,
-        ),
-    ];
 
     let mut account = Account::new(42, 0, &account_metas[3].pubkey);
     account.data = b"foo".to_vec();
@@ -4773,55 +4702,23 @@ fn test_cpi_account_data_updates_caller_grows_callee_shrinks_smaller_than_origin
     deprecated_caller: bool,
     virtual_address_space_adjustments: bool,
 ) {
-    let mut configured_feature_set = FeatureSet::all_enabled();
-    if !virtual_address_space_adjustments {
-        configured_feature_set
-            .deactivate(&feature_set::syscall_parameter_address_restrictions::id());
-        configured_feature_set.deactivate(&feature_set::virtual_address_space_adjustments::id());
-        configured_feature_set.deactivate(&feature_set::account_data_direct_mapping::id());
-    }
-
     let (
-        _,
-        mint_keypair,
-        account_keypair,
-        [invoke_program_id, realloc_program_id, deprecated_program_id],
-        feature_set,
-        mut accounts,
-        mut program_cache,
-        sysvar_cache,
-    ) = program_sbf_txn_fixture_with_feature_set(
-        [
-            ("solana_sbf_rust_invoke", bpf_loader_upgradeable::id()),
-            ("solana_sbf_rust_realloc", bpf_loader_upgradeable::id()),
-            (
-                "solana_sbf_rust_deprecated_loader",
-                bpf_loader_deprecated::id(),
-            ),
-        ],
-        configured_feature_set,
+        (
+            _,
+            mint_keypair,
+            account_keypair,
+            _,
+            feature_set,
+            mut accounts,
+            mut program_cache,
+            sysvar_cache,
+        ),
+        account_metas,
+    ) = cpi_account_data_updates_fixture(
+        deprecated_callee,
+        deprecated_caller,
+        virtual_address_space_adjustments,
     );
-
-    let account_metas = vec![
-        AccountMeta::new(mint_keypair.pubkey(), true),
-        AccountMeta::new(account_keypair.pubkey(), false),
-        AccountMeta::new_readonly(
-            if deprecated_callee {
-                deprecated_program_id
-            } else {
-                realloc_program_id
-            },
-            false,
-        ),
-        AccountMeta::new_readonly(
-            if deprecated_caller {
-                deprecated_program_id
-            } else {
-                invoke_program_id
-            },
-            false,
-        ),
-    ];
 
     let mut account = Account::new(42, 0, &account_metas[3].pubkey);
     account.data = b"foo".to_vec();
