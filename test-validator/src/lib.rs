@@ -468,11 +468,11 @@ impl TestValidatorGenesis {
                             return Err(format!("Invalid alt account data length for {address}"));
                         }
 
-                        for address_slice in
-                            raw_addresses_data.chunks_exact(std::mem::size_of::<Pubkey>())
+                        for address_array in raw_addresses_data
+                            .as_chunks::<{ std::mem::size_of::<Pubkey>() }>()
+                            .0
                         {
-                            // safe because size was checked earlier
-                            let address = Pubkey::try_from(address_slice).unwrap();
+                            let address = Pubkey::from(*address_array);
                             alt_entries.push(address);
                         }
                         self.add_account(*address, AccountSharedData::from(account));
