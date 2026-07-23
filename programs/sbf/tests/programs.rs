@@ -1699,38 +1699,42 @@ fn assert_instruction_count() {
 }
 
 #[cfg(feature = "sbf_rust")]
-fn program_sbf_instruction_introspection_fixture() -> (
+type ProgramSbfTxnFixture<const N: usize> = (
     Pubkey,
-    Pubkey,
+    [Pubkey; N],
     FeatureSet,
     Vec<(Pubkey, Account)>,
     ProgramCacheForTxBatch,
     SysvarCache,
-) {
+);
+
+#[cfg(feature = "sbf_rust")]
+fn program_sbf_txn_fixture<const N: usize>(program_names: [&str; N]) -> ProgramSbfTxnFixture<N> {
     agave_logger::setup();
 
     let payer = Pubkey::new_unique();
 
-    let program_id = Pubkey::new_unique();
-    let program_elf = load_program_elf("solana_sbf_rust_instruction_introspection");
+    let program_ids = program_names.map(|_| Pubkey::new_unique());
     let mut program_cache = new_program_cache_with_builtins(/* slot */ 0);
     let feature_set = FeatureSet::all_enabled();
 
-    add_program_to_program_cache(
-        &mut program_cache,
-        &program_id,
-        &bpf_loader_upgradeable::id(),
-        &program_elf,
-        &feature_set.runtime_features(),
-    );
-
-    let mut accounts = upgradeable_program_accounts(&program_id, &program_elf);
-    accounts.push((payer, Account::new(50_000, 0, &system_program::id())));
+    let mut accounts = vec![(payer, Account::new(50_000, 0, &system_program::id()))];
+    for (program_id, program_name) in program_ids.iter().zip(program_names) {
+        let program_elf = load_program_elf(program_name);
+        add_program_to_program_cache(
+            &mut program_cache,
+            program_id,
+            &bpf_loader_upgradeable::id(),
+            &program_elf,
+            &feature_set.runtime_features(),
+        );
+        accounts.extend(upgradeable_program_accounts(program_id, &program_elf));
+    }
     let sysvar_cache = sysvar_cache_from_accounts(&accounts);
 
     (
         payer,
-        program_id,
+        program_ids,
         feature_set,
         accounts,
         program_cache,
@@ -1741,8 +1745,8 @@ fn program_sbf_instruction_introspection_fixture() -> (
 #[test]
 #[cfg(feature = "sbf_rust")]
 fn test_program_sbf_instruction_introspection_passing_transaction() {
-    let (payer, program_id, feature_set, accounts, mut program_cache, sysvar_cache) =
-        program_sbf_instruction_introspection_fixture();
+    let (payer, [program_id], feature_set, accounts, mut program_cache, sysvar_cache) =
+        program_sbf_txn_fixture(["solana_sbf_rust_instruction_introspection"]);
 
     let account_metas = vec![
         AccountMeta::new_readonly(program_id, false),
@@ -1771,8 +1775,8 @@ fn test_program_sbf_instruction_introspection_passing_transaction() {
 #[test]
 #[cfg(feature = "sbf_rust")]
 fn test_program_sbf_instruction_introspection_writable_special_instructions1111() {
-    let (payer, program_id, feature_set, accounts, mut program_cache, sysvar_cache) =
-        program_sbf_instruction_introspection_fixture();
+    let (payer, [program_id], feature_set, accounts, mut program_cache, sysvar_cache) =
+        program_sbf_txn_fixture(["solana_sbf_rust_instruction_introspection"]);
 
     let account_metas = vec![AccountMeta::new(sysvar::instructions::id(), false)];
 
@@ -1800,8 +1804,8 @@ fn test_program_sbf_instruction_introspection_writable_special_instructions1111(
 #[test]
 #[cfg(feature = "sbf_rust")]
 fn test_program_sbf_instruction_introspection_no_accounts() {
-    let (payer, program_id, feature_set, accounts, mut program_cache, sysvar_cache) =
-        program_sbf_instruction_introspection_fixture();
+    let (payer, [program_id], feature_set, accounts, mut program_cache, sysvar_cache) =
+        program_sbf_txn_fixture(["solana_sbf_rust_instruction_introspection"]);
 
     let message = Message::new(
         &[Instruction::new_with_bytes(program_id, &[0], vec![])],
@@ -3769,70 +3773,60 @@ fn test_program_sbf_realloc_invoke() {
 #[test]
 #[cfg(feature = "sbf_rust")]
 fn test_program_sbf_processed_inner_instruction() {
-    agave_logger::setup();
-
-    let GenesisConfigInfo {
-        genesis_config,
-        mint_keypair,
-        ..
-    } = create_genesis_config(50);
-
-    let (bank, bank_forks) = Bank::new_with_bank_forks_for_tests(&genesis_config);
-    let sibling_program_id = create_program(
-        &bank,
-        &bpf_loader_upgradeable::id(),
+    let (
+        payer,
+        [sibling_program_id, sibling_inner_program_id, noop_program_id, invoke_and_return_program_id],
+        feature_set,
+        accounts,
+        mut program_cache,
+        sysvar_cache,
+    ) = program_sbf_txn_fixture([
         "solana_sbf_rust_sibling_instructions",
-    );
-    let sibling_inner_program_id = create_program(
-        &bank,
-        &bpf_loader_upgradeable::id(),
         "solana_sbf_rust_sibling_inner_instructions",
-    );
-    let noop_program_id =
-        create_program(&bank, &bpf_loader_upgradeable::id(), "solana_sbf_rust_noop");
-    let invoke_and_return_program_id = create_program(
-        &bank,
-        &bpf_loader_upgradeable::id(),
+        "solana_sbf_rust_noop",
         "solana_sbf_rust_invoke_and_return",
-    );
-    let mut bank_client = BankClient::new_shared(bank.clone());
-    bank_client
-        .advance_slot(1, &bank_forks, SlotLeader::default())
-        .unwrap();
+    ]);
 
-    let instruction2 = Instruction::new_with_bytes(
-        noop_program_id,
-        &[43],
-        vec![
-            AccountMeta::new_readonly(noop_program_id, false),
-            AccountMeta::new(mint_keypair.pubkey(), true),
-        ],
-    );
-    let instruction1 = Instruction::new_with_bytes(
-        noop_program_id,
-        &[42],
-        vec![
-            AccountMeta::new(mint_keypair.pubkey(), true),
-            AccountMeta::new_readonly(noop_program_id, false),
-        ],
-    );
-    let instruction0 = Instruction::new_with_bytes(
-        sibling_program_id,
-        &[1, 2, 3, 0, 4, 5, 6],
-        vec![
-            AccountMeta::new(mint_keypair.pubkey(), true),
-            AccountMeta::new_readonly(noop_program_id, false),
-            AccountMeta::new_readonly(invoke_and_return_program_id, false),
-            AccountMeta::new_readonly(sibling_inner_program_id, false),
-        ],
-    );
     let message = Message::new(
-        &[instruction2, instruction1, instruction0],
-        Some(&mint_keypair.pubkey()),
+        &[
+            Instruction::new_with_bytes(
+                noop_program_id,
+                &[43],
+                vec![
+                    AccountMeta::new_readonly(noop_program_id, false),
+                    AccountMeta::new(payer, true),
+                ],
+            ),
+            Instruction::new_with_bytes(
+                noop_program_id,
+                &[42],
+                vec![
+                    AccountMeta::new(payer, true),
+                    AccountMeta::new_readonly(noop_program_id, false),
+                ],
+            ),
+            Instruction::new_with_bytes(
+                sibling_program_id,
+                &[1, 2, 3, 0, 4, 5, 6],
+                vec![
+                    AccountMeta::new(payer, true),
+                    AccountMeta::new_readonly(noop_program_id, false),
+                    AccountMeta::new_readonly(invoke_and_return_program_id, false),
+                    AccountMeta::new_readonly(sibling_inner_program_id, false),
+                ],
+            ),
+        ],
+        Some(&payer),
     );
-    assert!(bank_client
-        .send_and_confirm_message(&[&mint_keypair], message)
-        .is_ok());
+    let sanitized_message =
+        SanitizedMessage::try_from_legacy_message(message, &ReservedAccountKeys::empty_key_set())
+            .unwrap();
+
+    let context =
+        TxnContext::new_with_default_budget(feature_set, accounts, sanitized_message, None);
+
+    let effects = execute_txn(&context, &mut program_cache, &sysvar_cache);
+    assert_eq!(effects.status, Ok(()));
 }
 
 #[test]
