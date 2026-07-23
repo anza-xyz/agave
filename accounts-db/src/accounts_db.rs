@@ -2360,7 +2360,6 @@ impl AccountsDb {
 
         self.process_dead_slots(
             &dead_slots,
-            Some(&mut reclaim_result.0),
             purge_stats,
             pubkeys_removed_from_accounts_index,
             clean_stored_dead_slots,
@@ -2461,7 +2460,6 @@ impl AccountsDb {
     fn process_dead_slots(
         &self,
         dead_slots: &IntSet<Slot>,
-        purged_account_slots: Option<&mut AccountSlots>,
         purge_stats: &PurgeStats,
         pubkeys_removed_from_accounts_index: &PubkeysRemovedFromAccountsIndex,
         clean_stored_dead_slots: bool,
@@ -2469,6 +2467,7 @@ impl AccountsDb {
         if dead_slots.is_empty() {
             return;
         }
+        let purged_account_slots = Some(&mut AccountSlots::new());
         let mut clean_dead_slots = Measure::start("reclaims::clean_dead_slots");
 
         if clean_stored_dead_slots {
