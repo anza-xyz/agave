@@ -112,13 +112,39 @@ struct RawModuleXdp {
     tx: BTreeMap<String, Vec<u32>>,
 }
 
+/// Per-module XDP transmit enablement (`use_xdp`).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) struct ModuleFlags {
+    pub tpu: bool,
+    pub turbine: bool,
+    pub repair: bool,
+    pub gossip: bool,
+}
+
+impl ModuleFlags {
+    /// Whether any module enabled XDP transmit.
+    pub fn any(&self) -> bool {
+        self.tpu || self.turbine || self.repair || self.gossip
+    }
+
+    /// Every module enabled (used when a CLI flag forces XDP on globally).
+    pub fn all() -> Self {
+        Self {
+            tpu: true,
+            turbine: true,
+            repair: true,
+            gossip: true,
+        }
+    }
+}
+
 /// The XDP inputs distilled from the merged config, before CLI overrides. The
 /// caller (see `execute.rs`) layers CLI flags on top and, when `interface` or
 /// `queues` are unset, applies auto-detection.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) struct XdpFileConfig {
-    /// Whether any module enabled XDP transmit.
-    pub enabled: bool,
+    /// Which modules enabled XDP transmit.
+    pub modules: ModuleFlags,
     /// The single interface referenced by enabled modules' `tx` maps, if any.
     /// `None` means no interface was named; the caller auto-detects.
     pub interface: Option<String>,
@@ -209,18 +235,22 @@ fn resolve(config: &RawConfig) -> Result<XdpFileConfig, String> {
         .map(|(name, raw)| resolve_interface(name, raw).map(|iface| (name.clone(), iface)))
         .collect::<Result<BTreeMap<_, _>, _>>()?;
 
-    let mut enabled = false;
+    // A module absent post-merge keeps XDP on, matching the default file.
+    let module_enabled = |block: &Option<RawModule>| block.as_ref().map(|b| b.use_xdp).unwrap_or(true);
+    let modules = ModuleFlags {
+        tpu: module_enabled(&config.tpu),
+        turbine: module_enabled(&config.turbine),
+        repair: module_enabled(&config.repair),
+        gossip: module_enabled(&config.gossip),
+    };
+
     let mut referenced_iface: Option<String> = None;
     let mut used_queues: BTreeSet<u32> = BTreeSet::new();
 
     for (module, block) in config.modules() {
-        // A module absent post-merge keeps XDP on, matching the default file.
-        let use_xdp = block.as_ref().map(|b| b.use_xdp).unwrap_or(true);
-        if !use_xdp {
+        if !module_enabled(block) {
             continue;
         }
-        enabled = true;
-
         let Some(tx) = block.as_ref().and_then(|b| b.xdp.as_ref()).map(|x| &x.tx) else {
             continue;
         };
@@ -274,7 +304,7 @@ fn resolve(config: &RawConfig) -> Result<XdpFileConfig, String> {
     };
 
     Ok(XdpFileConfig {
-        enabled,
+        modules,
         interface,
         queues,
         zero_copy,
@@ -297,7 +327,7 @@ mod tests {
     fn default_config_enables_all_modules_with_auto_selection() {
         let base = parse_str(DEFAULT_CONFIG).expect("default config parses");
         let c = resolve(&base).unwrap();
-        assert!(c.enabled);
+        assert!(c.modules.any());
         assert_eq!(c.interface, None);
         assert!(c.queues.is_empty());
         assert!(!c.zero_copy);
@@ -310,7 +340,7 @@ mod tests {
              8 }, { queue = 1, cpu = 9 }]\n\n[turbine.xdp]\ntx = { eth0 = [0, 1] }\n",
         )
         .unwrap();
-        assert!(c.enabled);
+        assert!(c.modules.any());
         assert_eq!(c.interface.as_deref(), Some("eth0"));
         assert!(c.zero_copy);
         assert_eq!(
@@ -347,7 +377,7 @@ mod tests {
              [turbine.xdp]\ntx = { eth0 = [0] }\n",
         )
         .unwrap();
-        assert!(c.enabled);
+        assert!(c.modules.any());
         assert_eq!(c.interface.as_deref(), Some("eth0"));
     }
 
@@ -358,9 +388,24 @@ mod tests {
              [gossip]\nuse_xdp = false\n",
         )
         .unwrap();
-        assert!(!c.enabled);
+        assert!(!c.modules.any());
         assert_eq!(c.interface, None);
         assert!(c.queues.is_empty());
+    }
+
+    #[test]
+    fn per_module_use_xdp_is_reported() {
+        // Only turbine is disabled; the rest keep the default (on).
+        let c = resolve_with_user("[turbine]\nuse_xdp = false\n").unwrap();
+        assert_eq!(
+            c.modules,
+            ModuleFlags {
+                tpu: true,
+                turbine: false,
+                repair: true,
+                gossip: true,
+            }
+        );
     }
 
     #[test]
@@ -371,6 +416,7 @@ mod tests {
         )
         .unwrap();
         assert_eq!(c.interface, None);
+        assert!(!c.modules.turbine);
     }
 
     #[test]

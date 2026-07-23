@@ -84,6 +84,7 @@ use {
 };
 #[cfg(target_os = "linux")]
 use {
+    crate::commands::run::config_file::{self, ModuleFlags},
     agave_cpu_utils::cpu_affinity,
     agave_xdp::transmitter::{QueueCpuBinding, XdpConfig},
     solana_clap_utils::input_parsers::parse_cpu_ranges,
@@ -171,7 +172,7 @@ pub fn execute(
     // XDP is not needed for init — it only initializes the ledger and exits.
     // Also, init drops all Linux capabilities in main() so XDP setup would fail.
     #[cfg(target_os = "linux")]
-    let xdp_transmit_config: Option<XdpConfig> =
+    let xdp_transmit_config: Option<(XdpConfig, ModuleFlags)> =
         build_xdp_config(matches, &operation, &bind_addresses)?;
 
     let dynamic_port_range =
@@ -302,7 +303,7 @@ pub fn execute(
         required_caps.extend(primordial_caps.clone());
         retained_caps.extend(primordial_caps.clone());
 
-        if let Some(xdp_config) = xdp_transmit_config.as_ref() {
+        if let Some((xdp_config, _modules)) = xdp_transmit_config.as_ref() {
             required_caps.insert(CAP_NET_ADMIN);
             required_caps.insert(CAP_NET_RAW);
             if xdp_config.zero_copy {
@@ -360,10 +361,10 @@ pub fn execute(
         // potentially be used as a privilege escalation gadget
         let (xdp_transmit_setup, report) = xdp_transmit_config
             .clone()
-            .map(|mut xdp_config| {
+            .map(|(mut xdp_config, modules)| {
                 use {
                     agave_xdp::{device::NetworkDevice, interface_ipv4},
-                    solana_core::validator::XdpTransmitSetup,
+                    solana_core::validator::{XdpModules, XdpTransmitSetup},
                 };
 
                 let device = if let Some(interface) = xdp_config.interface.as_ref() {
@@ -390,6 +391,12 @@ pub fn execute(
                         transmitter_builder: TransmitterBuilder::new(xdp_config, exit.clone())
                             .expect("failed to create xdp transmitter"),
                         src_ip,
+                        modules: XdpModules {
+                            tpu: modules.tpu,
+                            turbine: modules.turbine,
+                            repair: modules.repair,
+                            gossip: modules.gossip,
+                        },
                     },
                     XdpNetworkConfigReport {
                         zero_copy,
@@ -1392,9 +1399,7 @@ fn build_xdp_config(
     matches: &ArgMatches,
     operation: &Operation,
     bind_addresses: &BindIpAddrs,
-) -> Result<Option<XdpConfig>, String> {
-    use super::config_file;
-
+) -> Result<Option<(XdpConfig, ModuleFlags)>, String> {
     if matches.is_present("no_xdp") || *operation == Operation::Initialize {
         return Ok(None);
     }
@@ -1405,7 +1410,7 @@ fn build_xdp_config(
     }
     // Layers 1 and 2: built-in defaults overlaid with the optional user file.
     let config_file::XdpFileConfig {
-        enabled: file_enabled,
+        modules: file_modules,
         interface: file_interface,
         queues: file_queues,
         zero_copy: file_zero_copy,
@@ -1424,8 +1429,14 @@ fn build_xdp_config(
         .or_else(|| matches.value_of("experimental_retransmit_xdp_cpu_cores"));
     let any_cli_xdp_flag = cli_interface.is_some() || cli_zero_copy || cli_cpu_cores.is_some();
 
-    // XDP is on if the config enabled it, or a CLI XDP flag forces it on.
-    if !file_enabled && !any_cli_xdp_flag {
+    // A CLI XDP flag is global, so it forces every module on; otherwise the
+    // per-module enablement comes from the config file.
+    let modules = if any_cli_xdp_flag {
+        ModuleFlags::all()
+    } else {
+        file_modules
+    };
+    if !modules.any() {
         return Ok(None);
     }
 
@@ -1486,7 +1497,7 @@ fn build_xdp_config(
         "XDP enabled on CPU cores: {:?}",
         queues.iter().map(|b| b.cpu).collect::<Vec<_>>()
     );
-    Ok(Some(XdpConfig::new(interface, queues, zero_copy)))
+    Ok(Some((XdpConfig::new(interface, queues, zero_copy), modules)))
 }
 
 #[cfg(all(target_os = "linux", test))]
@@ -1576,7 +1587,7 @@ mod xdp_tests {
             "--experimental-config-file",
             file.path().to_str().unwrap(),
         ]);
-        let config = build_xdp_config(&matches, &Operation::Run, &single_ip_bind())
+        let (config, modules) = build_xdp_config(&matches, &Operation::Run, &single_ip_bind())
             .unwrap()
             .expect("config file must enable XDP");
         assert_eq!(config.interface.as_deref(), Some("eth0"));
@@ -1588,6 +1599,7 @@ mod xdp_tests {
                 QueueCpuBinding { queue: 1, cpu: 4 },
             ]
         );
+        assert!(modules.turbine, "turbine XDP must be enabled");
     }
 
     #[test]
@@ -1626,7 +1638,7 @@ mod xdp_tests {
             "--xdp-cpu-cores",
             "5,7",
         ]);
-        let config = build_xdp_config(&matches, &Operation::Run, &single_ip_bind())
+        let (config, modules) = build_xdp_config(&matches, &Operation::Run, &single_ip_bind())
             .unwrap()
             .expect("XDP must be enabled");
         // Interface still comes from the file; queues come from the CLI.
@@ -1638,5 +1650,25 @@ mod xdp_tests {
                 QueueCpuBinding { queue: 1, cpu: 7 },
             ]
         );
+        // A CLI XDP flag forces every module on.
+        assert_eq!(modules, ModuleFlags::all());
+    }
+
+    #[test]
+    fn test_config_file_per_module_disable() {
+        // Only turbine is disabled; the other three keep XDP transmit.
+        let default_args = DefaultArgs::default();
+        let app = add_args(clap::App::new("agave-validator"), &default_args);
+        let file = write_config("[turbine]\nuse_xdp = false\n");
+        let matches = app.get_matches_from(vec![
+            "agave-validator",
+            "--experimental-config-file",
+            file.path().to_str().unwrap(),
+        ]);
+        let (_config, modules) = build_xdp_config(&matches, &Operation::Run, &single_ip_bind())
+            .unwrap()
+            .expect("other modules still enable XDP");
+        assert!(!modules.turbine, "turbine must be disabled");
+        assert!(modules.tpu && modules.repair && modules.gossip);
     }
 }
