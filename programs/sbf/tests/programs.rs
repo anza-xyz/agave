@@ -5232,44 +5232,30 @@ fn test_account_info_rc_in_account(syscall_parameter_address_restrictions: bool,
 
 #[test]
 fn test_clone_account_data() {
-    // Test cloning account data works as expect with
-    agave_logger::setup();
+    let mut configured_feature_set = FeatureSet::all_enabled();
+    configured_feature_set.deactivate(&feature_set::syscall_parameter_address_restrictions::id());
+    configured_feature_set.deactivate(&feature_set::virtual_address_space_adjustments::id());
+    configured_feature_set.deactivate(&feature_set::account_data_direct_mapping::id());
 
-    let GenesisConfigInfo {
-        genesis_config,
+    let (
+        _,
         mint_keypair,
-        ..
-    } = create_genesis_config(100_123_456_789);
-
-    let mut bank = Bank::new_for_tests(&genesis_config);
-    let feature_set = Arc::make_mut(&mut bank.feature_set);
-
-    feature_set.deactivate(&feature_set::syscall_parameter_address_restrictions::id());
-    feature_set.deactivate(&feature_set::virtual_address_space_adjustments::id());
-    feature_set.deactivate(&feature_set::account_data_direct_mapping::id());
-
-    let (bank, bank_forks) = bank.wrap_with_bank_forks_for_tests();
-    let invoke_program_id = create_program(
-        &bank,
-        &bpf_loader_upgradeable::id(),
-        "solana_sbf_rust_invoke",
+        account_keypair,
+        [invoke_program_id, invoke_program_id2],
+        feature_set,
+        mut accounts,
+        mut program_cache,
+        sysvar_cache,
+    ) = program_sbf_txn_fixture_with_feature_set(
+        [
+            ("solana_sbf_rust_invoke", bpf_loader_upgradeable::id()),
+            ("solana_sbf_rust_invoke", bpf_loader_upgradeable::id()),
+        ],
+        configured_feature_set,
     );
-    let invoke_program_id2 = create_program(
-        &bank,
-        &bpf_loader_upgradeable::id(),
-        "solana_sbf_rust_invoke",
-    );
-    let mut bank_client = BankClient::new_shared(bank.clone());
-    let bank = bank_client
-        .advance_slot(1, &bank_forks, SlotLeader::default())
-        .unwrap();
-
-    let account_keypair = Keypair::new();
-
-    let mint_pubkey = mint_keypair.pubkey();
 
     let account_metas = vec![
-        AccountMeta::new(mint_pubkey, true),
+        AccountMeta::new(mint_keypair.pubkey(), true),
         AccountMeta::new(account_keypair.pubkey(), false),
         AccountMeta::new_readonly(invoke_program_id2, false),
         AccountMeta::new_readonly(invoke_program_id, false),
@@ -5278,11 +5264,14 @@ fn test_clone_account_data() {
     // I. clone data and CPI; modify data in callee.
     // Now the original data in the caller is unmodified, and we get a "instruction modified data of an account it does not own"
     // error in the caller
-    let mut account = AccountSharedData::new(42, 10240, &invoke_program_id2);
+    let mut account = Account::new(42, 10240, &invoke_program_id2);
     let data: Vec<u8> = (0..10240).map(|n| n as u8).collect();
-    account.set_data(data);
-
-    bank.store_account(&account_keypair.pubkey(), &account);
+    account.data = data;
+    accounts
+        .iter_mut()
+        .find(|(pubkey, _)| pubkey == &account_keypair.pubkey())
+        .unwrap()
+        .1 = account;
 
     let mut instruction_data = vec![TEST_CALLEE_ACCOUNT_UPDATES, 1, 1];
     instruction_data.extend_from_slice(0usize.to_le_bytes().as_ref());
@@ -5295,27 +5284,48 @@ fn test_clone_account_data() {
     instruction_data.extend_from_slice(0usize.to_le_bytes().as_ref());
     instruction_data.extend_from_slice(8190usize.to_le_bytes().as_ref());
 
-    let instruction =
-        Instruction::new_with_bytes(invoke_program_id, &instruction_data, account_metas.clone());
+    let message = Message::new(
+        &[Instruction::new_with_bytes(
+            invoke_program_id,
+            &instruction_data,
+            account_metas.clone(),
+        )],
+        Some(&mint_keypair.pubkey()),
+    );
+    let sanitized_message =
+        SanitizedMessage::try_from_legacy_message(message, &ReservedAccountKeys::empty_key_set())
+            .unwrap();
 
-    let message = Message::new(&[instruction], Some(&mint_pubkey));
-    let tx = Transaction::new(&[&mint_keypair], message.clone(), bank.last_blockhash());
-    let (result, _, logs, _) = process_transaction_and_record_inner(&bank, tx);
-    assert!(result.is_err(), "{result:?}");
+    let context = TxnContext::new_with_default_budget(
+        feature_set.clone(),
+        accounts.clone(),
+        sanitized_message,
+        None,
+    );
+
+    let effects = execute_txn(&context, &mut program_cache, &sysvar_cache);
+    assert!(effects.status.is_err(), "{:?}", effects.status);
     let error = format!(
         "Program {invoke_program_id} failed: instruction modified data of an account it does not \
          own"
     );
-    assert!(logs.iter().any(|log| log.contains(&error)), "{logs:?}");
+    assert!(
+        effects.logs.iter().any(|log| log.contains(&error)),
+        "{:?}",
+        effects.logs,
+    );
 
     // II. clone data, modify and then CPI
     // The deserialize checks should verify that we're not allowed to modify an account we don't own, even though
     // we have only modified a copy of the data. Fails in caller
-    let mut account = AccountSharedData::new(42, 10240, &invoke_program_id2);
+    let mut account = Account::new(42, 10240, &invoke_program_id2);
     let data: Vec<u8> = (0..10240).map(|n| n as u8).collect();
-    account.set_data(data);
-
-    bank.store_account(&account_keypair.pubkey(), &account);
+    account.data = data;
+    accounts
+        .iter_mut()
+        .find(|(pubkey, _)| pubkey == &account_keypair.pubkey())
+        .unwrap()
+        .1 = account;
 
     let mut instruction_data = vec![TEST_CALLEE_ACCOUNT_UPDATES, 1, 1];
     instruction_data.extend_from_slice(0usize.to_le_bytes().as_ref());
@@ -5328,26 +5338,47 @@ fn test_clone_account_data() {
     instruction_data.extend_from_slice(0usize.to_le_bytes().as_ref());
     instruction_data.extend_from_slice(0usize.to_le_bytes().as_ref());
 
-    let instruction =
-        Instruction::new_with_bytes(invoke_program_id, &instruction_data, account_metas.clone());
+    let message = Message::new(
+        &[Instruction::new_with_bytes(
+            invoke_program_id,
+            &instruction_data,
+            account_metas.clone(),
+        )],
+        Some(&mint_keypair.pubkey()),
+    );
+    let sanitized_message =
+        SanitizedMessage::try_from_legacy_message(message, &ReservedAccountKeys::empty_key_set())
+            .unwrap();
 
-    let message = Message::new(&[instruction], Some(&mint_pubkey));
-    let tx = Transaction::new(&[&mint_keypair], message.clone(), bank.last_blockhash());
-    let (result, _, logs, _) = process_transaction_and_record_inner(&bank, tx);
-    assert!(result.is_err(), "{result:?}");
+    let context = TxnContext::new_with_default_budget(
+        feature_set.clone(),
+        accounts.clone(),
+        sanitized_message,
+        None,
+    );
+
+    let effects = execute_txn(&context, &mut program_cache, &sysvar_cache);
+    assert!(effects.status.is_err(), "{:?}", effects.status);
     let error = format!(
         "Program {invoke_program_id} failed: instruction modified data of an account it does not \
          own"
     );
-    assert!(logs.iter().any(|log| log.contains(&error)), "{logs:?}");
+    assert!(
+        effects.logs.iter().any(|log| log.contains(&error)),
+        "{:?}",
+        effects.logs,
+    );
 
-    // II. Clone data, call, modifiy in callee and then make the same change in the caller - transaction succeeds
+    // III. Clone data, call, modifiy in callee and then make the same change in the caller - transaction succeeds
     // Note the caller needs to modify the original account data, not the copy
-    let mut account = AccountSharedData::new(42, 10240, &invoke_program_id2);
+    let mut account = Account::new(42, 10240, &invoke_program_id2);
     let data: Vec<u8> = (0..10240).map(|n| n as u8).collect();
-    account.set_data(data);
-
-    bank.store_account(&account_keypair.pubkey(), &account);
+    account.data = data;
+    accounts
+        .iter_mut()
+        .find(|(pubkey, _)| pubkey == &account_keypair.pubkey())
+        .unwrap()
+        .1 = account;
 
     let mut instruction_data = vec![TEST_CALLEE_ACCOUNT_UPDATES, 1, 1];
     instruction_data.extend_from_slice(0usize.to_le_bytes().as_ref());
@@ -5360,12 +5391,24 @@ fn test_clone_account_data() {
     instruction_data.extend_from_slice(0usize.to_le_bytes().as_ref());
     instruction_data.extend_from_slice(8190usize.to_le_bytes().as_ref());
 
-    let instruction =
-        Instruction::new_with_bytes(invoke_program_id, &instruction_data, account_metas.clone());
-    let result = bank_client.send_and_confirm_instruction(&mint_keypair, instruction);
+    let message = Message::new(
+        &[Instruction::new_with_bytes(
+            invoke_program_id,
+            &instruction_data,
+            account_metas.clone(),
+        )],
+        Some(&mint_keypair.pubkey()),
+    );
+    let sanitized_message =
+        SanitizedMessage::try_from_legacy_message(message, &ReservedAccountKeys::empty_key_set())
+            .unwrap();
 
+    let context =
+        TxnContext::new_with_default_budget(feature_set, accounts, sanitized_message, None);
+
+    let effects = execute_txn(&context, &mut program_cache, &sysvar_cache);
     // works because the account is exactly the same in caller as callee
-    assert!(result.is_ok(), "{result:?}");
+    assert_eq!(effects.status, Ok(()), "{:?}", effects.logs);
 }
 
 #[test]
