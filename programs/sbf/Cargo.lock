@@ -9527,6 +9527,7 @@ name = "solana-streamer"
 version = "4.3.0-alpha.2"
 dependencies = [
  "agave-xdp",
+ "ahash 0.8.12",
  "bytes",
  "crossbeam-channel",
  "futures 0.3.32",
