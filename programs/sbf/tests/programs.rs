@@ -17,7 +17,7 @@ use solana_runtime::loader_utils::{
 use {
     agave_feature_set::{self as feature_set, FeatureSet},
     agave_reserved_account_keys::ReservedAccountKeys,
-    borsh::{from_slice, to_vec, BorshDeserialize, BorshSerialize},
+    borsh::{BorshDeserialize, BorshSerialize, from_slice, to_vec},
     solana_account::{AccountSharedData, ReadableAccount},
     solana_account_info::MAX_PERMITTED_DATA_INCREASE,
     solana_client_traits::SyncClient,
@@ -29,12 +29,12 @@ use {
     solana_fee_calculator::FeeRateGovernor,
     solana_fee_structure::{FeeBin, FeeStructure},
     solana_hash::Hash,
-    solana_instruction::{error::InstructionError, AccountMeta, Instruction},
+    solana_instruction::{AccountMeta, Instruction, error::InstructionError},
     solana_keypair::Keypair,
     solana_loader_v3_interface::{
         instruction as loader_v3_instruction, state::UpgradeableLoaderState,
     },
-    solana_message::{inner_instruction::InnerInstruction, Message, SanitizedMessage},
+    solana_message::{Message, SanitizedMessage, inner_instruction::InnerInstruction},
     solana_pubkey::Pubkey,
     solana_rent::Rent,
     solana_runtime::{
@@ -42,9 +42,8 @@ use {
         bank_client::BankClient,
         bank_forks::BankForks,
         genesis_utils::{
-            bootstrap_validator_stake_lamports, create_genesis_config,
+            GenesisConfigInfo, bootstrap_validator_stake_lamports, create_genesis_config,
             create_genesis_config_with_leader, create_genesis_config_with_leader_ex,
-            GenesisConfigInfo,
         },
         loader_utils::{create_program, load_upgradeable_buffer},
     },
@@ -66,7 +65,7 @@ use {
     solana_svm_timings::ExecuteTimings,
     solana_svm_transaction::svm_message::SVMStaticMessage,
     solana_svm_type_overrides::rand,
-    solana_system_interface::{program as system_program, MAX_PERMITTED_DATA_LENGTH},
+    solana_system_interface::{MAX_PERMITTED_DATA_LENGTH, program as system_program},
     solana_transaction::Transaction,
     solana_transaction_error::TransactionError,
     std::{
@@ -774,17 +773,21 @@ fn test_return_data_and_log_data_syscall() {
 
         assert!(effects.result.is_none());
 
-        assert!(effects
-            .logs
-            .iter()
-            .any(|log| log == "Program data: AQID BAUG"));
+        assert!(
+            effects
+                .logs
+                .iter()
+                .any(|log| log == "Program data: AQID BAUG")
+        );
 
         assert_eq!(effects.return_data, vec![0x08, 0x01, 0x44]);
 
-        assert!(effects
-            .logs
-            .iter()
-            .any(|log| log == &format!("Program return: {} CAFE", program_id)));
+        assert!(
+            effects
+                .logs
+                .iter()
+                .any(|log| log == &format!("Program return: {} CAFE", program_id))
+        );
     }
 }
 
@@ -3831,7 +3834,12 @@ fn test_program_sbf_processed_inner_instruction() {
         payer,
         mint_keypair,
         _,
-        [sibling_program_id, sibling_inner_program_id, noop_program_id, invoke_and_return_program_id],
+        [
+            sibling_program_id,
+            sibling_inner_program_id,
+            noop_program_id,
+            invoke_and_return_program_id,
+        ],
         feature_set,
         accounts,
         mut program_cache,
