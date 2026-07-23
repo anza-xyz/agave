@@ -98,6 +98,7 @@ pub struct AdminRpcContactInfo {
     pub tvu: SocketAddr,
     pub serve_repair_quic: SocketAddr,
     pub tpu: SocketAddr,
+    pub tpu_quic: Option<SocketAddr>,
     pub tpu_forwards: SocketAddr,
     pub tpu_vote: SocketAddr,
     pub rpc: SocketAddr,
@@ -141,6 +142,7 @@ impl From<ContactInfo> for AdminRpcContactInfo {
             tvu: unwrap_socket!(tvu, Protocol::UDP),
             serve_repair_quic: unwrap_socket!(serve_repair, Protocol::QUIC),
             tpu: unwrap_socket!(tpu, Protocol::UDP),
+            tpu_quic: node.tpu(Protocol::QUIC),
             tpu_forwards: unwrap_socket!(tpu_forwards, Protocol::UDP),
             tpu_vote: unwrap_socket!(tpu_vote, Protocol::UDP),
             rpc: unwrap_socket!(rpc),
@@ -157,6 +159,9 @@ impl Display for AdminRpcContactInfo {
         writeln!(f, "Gossip: {}", self.gossip)?;
         writeln!(f, "TVU: {}", self.tvu)?;
         writeln!(f, "TPU: {}", self.tpu)?;
+        if let Some(tpu_quic) = self.tpu_quic {
+            writeln!(f, "TPU QUIC: {tpu_quic}")?;
+        }
         writeln!(f, "TPU Forwards: {}", self.tpu_forwards)?;
         writeln!(f, "TPU Votes: {}", self.tpu_vote)?;
         writeln!(f, "RPC: {}", self.rpc)?;

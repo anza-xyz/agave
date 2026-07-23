@@ -24,6 +24,7 @@ use {
     std::{
         io, mem,
         net::{Ipv4Addr, SocketAddr, SocketAddrV4},
+        ops::Range,
         os::fd::{AsFd, AsRawFd, OwnedFd},
         sync::{
             Arc,
@@ -113,39 +114,41 @@ impl PacketSocket {
         Ok(Self { fd })
     }
 
-    fn recv_matching_udp(
+    fn recv_matching_udp<'a>(
         &self,
+        buf: &'a mut [u8],
         expected: &ExpectedUdpPacket<'_>,
         timeout: Duration,
-    ) -> io::Result<Vec<u8>> {
-        self.recv_matching_payload("matching UDP frame", timeout, |frame| {
+    ) -> io::Result<&'a [u8]> {
+        self.recv_matching_payload("matching UDP frame", buf, timeout, |frame| {
             matching_udp_payload(frame, expected)
         })
     }
 
-    fn recv_matching_gre_udp(
+    fn recv_matching_gre_udp<'a>(
         &self,
+        buf: &'a mut [u8],
         expected: &ExpectedGreUdpPacket<'_>,
         timeout: Duration,
-    ) -> io::Result<Vec<u8>> {
-        self.recv_matching_payload("matching GRE UDP frame", timeout, |frame| {
+    ) -> io::Result<&'a [u8]> {
+        self.recv_matching_payload("matching GRE UDP frame", buf, timeout, |frame| {
             matching_gre_udp_payload(frame, expected)
         })
     }
 
-    fn recv_matching_payload<F>(
+    fn recv_matching_payload<'a, F>(
         &self,
         description: &str,
+        buf: &'a mut [u8],
         timeout: Duration,
         mut matcher: F,
-    ) -> io::Result<Vec<u8>>
+    ) -> io::Result<&'a [u8]>
     where
-        F: for<'a> FnMut(&'a [u8]) -> Option<&'a [u8]>,
+        F: FnMut(&[u8]) -> Option<Range<usize>>,
     {
         let deadline = Instant::now().checked_add(timeout).ok_or_else(|| {
             io::Error::new(io::ErrorKind::InvalidInput, "timeout overflows instant")
         })?;
-        let mut frame = [0u8; 2048];
         loop {
             let now = Instant::now();
             if now >= deadline {
@@ -164,14 +167,14 @@ impl PacketSocket {
                 Err(err) => return Err(io::Error::from(err)),
             }
 
-            let len = match recv(self.fd.as_raw_fd(), &mut frame, MsgFlags::empty()) {
+            let len = match recv(self.fd.as_raw_fd(), buf, MsgFlags::empty()) {
                 Ok(len) => len,
                 Err(Errno::EINTR) => continue,
                 Err(err) => return Err(io::Error::from(err)),
             };
-            let frame = &frame[..len];
-            if let Some(payload) = matcher(frame) {
-                return Ok(payload.to_vec());
+            let frame = &buf[..len];
+            if let Some(payload_range) = matcher(frame) {
+                return Ok(&buf[payload_range]);
             }
         }
     }
@@ -207,7 +210,7 @@ struct ExpectedUdpDatagram<'a> {
     payload: &'a [u8],
 }
 
-fn matching_udp_payload<'a>(frame: &'a [u8], expected: &ExpectedUdpPacket<'_>) -> Option<&'a [u8]> {
+fn matching_udp_payload(frame: &[u8], expected: &ExpectedUdpPacket<'_>) -> Option<Range<usize>> {
     if frame.len() < ETH_HEADER_SIZE {
         return None;
     }
@@ -218,7 +221,7 @@ fn matching_udp_payload<'a>(frame: &'a [u8], expected: &ExpectedUdpPacket<'_>) -
         return None;
     }
 
-    matching_ipv4_udp_payload(
+    let payload_range = matching_ipv4_udp_payload(
         &frame[ETH_HEADER_SIZE..],
         &ExpectedUdpDatagram {
             src_ip: expected.src_ip,
@@ -227,13 +230,17 @@ fn matching_udp_payload<'a>(frame: &'a [u8], expected: &ExpectedUdpPacket<'_>) -
             dst_port: expected.dst_port,
             payload: expected.payload,
         },
+    )?;
+    Some(
+        payload_range.start.checked_add(ETH_HEADER_SIZE).unwrap()
+            ..payload_range.end.checked_add(ETH_HEADER_SIZE).unwrap(),
     )
 }
 
-fn matching_gre_udp_payload<'a>(
-    frame: &'a [u8],
+fn matching_gre_udp_payload(
+    frame: &[u8],
     expected: &ExpectedGreUdpPacket<'_>,
-) -> Option<&'a [u8]> {
+) -> Option<Range<usize>> {
     const GRE_FLAGS_VERSION_BASIC: u16 = 0x0000;
 
     if frame.len() < ETH_HEADER_SIZE.checked_add(IP_HEADER_SIZE)? {
@@ -273,7 +280,7 @@ fn matching_gre_udp_payload<'a>(
     }
 
     let inner_offset = gre_offset.checked_add(GRE_HEADER_BASE_SIZE)?;
-    matching_ipv4_udp_payload(
+    let payload_range = matching_ipv4_udp_payload(
         frame.get(inner_offset..)?,
         &ExpectedUdpDatagram {
             src_ip: expected.inner_src_ip,
@@ -282,13 +289,17 @@ fn matching_gre_udp_payload<'a>(
             dst_port: expected.dst_port,
             payload: expected.payload,
         },
+    )?;
+    Some(
+        payload_range.start.checked_add(inner_offset).unwrap()
+            ..payload_range.end.checked_add(inner_offset).unwrap(),
     )
 }
 
-fn matching_ipv4_udp_payload<'a>(
-    ip: &'a [u8],
+fn matching_ipv4_udp_payload(
+    ip: &[u8],
     expected: &ExpectedUdpDatagram<'_>,
-) -> Option<&'a [u8]> {
+) -> Option<Range<usize>> {
     let min_udp_len = IP_HEADER_SIZE.checked_add(UDP_HEADER_SIZE)?;
     if ip.len() < min_udp_len {
         return None;
@@ -316,8 +327,11 @@ fn matching_ipv4_udp_payload<'a>(
     if udp_len < UDP_HEADER_SIZE || udp.len() < udp_len {
         return None;
     }
-    let payload = &udp[UDP_HEADER_SIZE..udp_len];
-    (payload == expected.payload).then_some(payload)
+
+    let payload_start = ihl.checked_add(UDP_HEADER_SIZE).unwrap();
+    let payload_end = ihl.checked_add(udp_len).unwrap();
+    let payload = &ip[payload_start..payload_end];
+    (payload == expected.payload).then_some(payload_start..payload_end)
 }
 
 #[test]
@@ -362,8 +376,10 @@ fn transmitter_sends_udp_payload_over_veth_in_copy_mode() {
         .try_send(0, packet)
         .expect("queue packet through XdpSender::try_send");
 
+    let mut buf = [0u8; 2048];
     let received = receiver
         .recv_matching_udp(
+            &mut buf,
             &ExpectedUdpPacket {
                 src_mac: links.left_mac,
                 dst_mac: links.right_mac,
@@ -427,8 +443,10 @@ fn transmitter_sends_udp_payload_over_gre_tunnel_in_copy_mode() {
         .try_send(0, packet)
         .expect("queue packet through XdpSender::try_send");
 
+    let mut buf = [0u8; 2048];
     let received = receiver
         .recv_matching_gre_udp(
+            &mut buf,
             &ExpectedGreUdpPacket {
                 outer_src_mac: links.left_mac,
                 outer_dst_mac: links.right_mac,

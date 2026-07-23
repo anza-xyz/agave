@@ -1,6 +1,6 @@
 use {
     super::*, crate::blockstore::error::BlockstoreManualPurgeError, crossbeam_channel::Sender,
-    solana_message::AccountKeys, std::time::Instant,
+    solana_message::AccountKeys,
 };
 
 #[derive(Default)]
@@ -8,6 +8,23 @@ pub struct PurgeStats {
     delete_range: u64,
     write_batch: u64,
     delete_file_in_range: u64,
+}
+
+impl PurgeStats {
+    fn report(&self, from_slot: Slot, to_slot: Slot) {
+        datapoint_info!(
+            "blockstore-purge",
+            ("from_slot", from_slot as i64, i64),
+            ("to_slot", to_slot as i64, i64),
+            ("delete_range_us", self.delete_range as i64, i64),
+            ("write_batch_us", self.write_batch as i64, i64),
+            (
+                "delete_file_in_range_us",
+                self.delete_file_in_range as i64,
+                i64
+            )
+        );
+    }
 }
 
 #[derive(Clone, Copy, Debug)]
@@ -39,28 +56,51 @@ impl Blockstore {
     /// based on the `purge_type` setting.
     pub fn purge_slots(&self, from_slot: Slot, to_slot: Slot, purge_type: PurgeType) -> Result<()> {
         let mut purge_stats = PurgeStats::default();
-        let purge_result =
-            self.run_purge_with_stats(from_slot, to_slot, purge_type, &mut purge_stats);
-
-        datapoint_info!(
-            "blockstore-purge",
-            ("from_slot", from_slot as i64, i64),
-            ("to_slot", to_slot as i64, i64),
-            ("delete_range_us", purge_stats.delete_range as i64, i64),
-            ("write_batch_us", purge_stats.write_batch as i64, i64),
-            (
-                "delete_file_in_range_us",
-                purge_stats.delete_file_in_range as i64,
-                i64
+        let purge_result = self
+            .run_purge_with_stats(
+                from_slot,
+                to_slot,
+                purge_type,
+                /*cleanup_chaining:*/ false,
+                &mut purge_stats,
             )
-        );
-        purge_result.map_err(|e| BlockstoreError::PurgeFailed {
-            from_slot,
-            to_slot,
-            purge_type,
-            inner: Box::new(e),
-        })?;
-        Ok(())
+            .map_err(|e| BlockstoreError::PurgeFailed {
+                from_slot,
+                to_slot,
+                purge_type,
+                inner: Box::new(e),
+            });
+        purge_stats.report(from_slot, to_slot);
+
+        purge_result
+    }
+
+    /// Similar to `Blockstore::purge_slots()` with the addition of cleaning up
+    /// chaining for slots outside of the purge range that chain to purged slots
+    pub fn purge_slots_cleanup_chaining(
+        &self,
+        from_slot: Slot,
+        to_slot: Slot,
+        purge_type: PurgeType,
+    ) -> Result<()> {
+        let mut purge_stats = PurgeStats::default();
+        let purge_result = self
+            .run_purge_with_stats(
+                from_slot,
+                to_slot,
+                purge_type,
+                /*cleanup_chaining:*/ true,
+                &mut purge_stats,
+            )
+            .map_err(|e| BlockstoreError::PurgeFailed {
+                from_slot,
+                to_slot,
+                purge_type,
+                inner: Box::new(e),
+            });
+        purge_stats.report(from_slot, to_slot);
+
+        purge_result
     }
 
     /// Usually this is paired with .purge_slots() but we can't internally call this in
@@ -74,51 +114,6 @@ impl Blockstore {
         // with Slot::default() for initial compaction filter behavior consistency
         let to_slot = to_slot.checked_add(1).unwrap();
         self.db.set_oldest_slot(to_slot);
-    }
-
-    /// Ensures that the SlotMeta::next_slots vector for all slots contain no references in the
-    /// \[from_slot,to_slot\] range
-    ///
-    /// Dangerous; Use with care
-    pub fn purge_from_next_slots(&self, from_slot: Slot, to_slot: Slot) {
-        let mut count = 0;
-        let mut rewritten = 0;
-        let mut last_print = Instant::now();
-        let mut total_retain_us = 0;
-        for (slot, mut meta) in self
-            .slot_meta_iterator(0)
-            .expect("unable to iterate over meta")
-        {
-            if slot > to_slot {
-                break;
-            }
-
-            count += 1;
-            if last_print.elapsed().as_millis() > 2000 {
-                info!(
-                    "purged: {count} slots rewritten: {rewritten} retain_time: {total_retain_us}us"
-                );
-                count = 0;
-                rewritten = 0;
-                total_retain_us = 0;
-                last_print = Instant::now();
-            }
-            let mut time = Measure::start("retain");
-            let original_len = meta.next_slots.len();
-            meta.next_slots
-                .retain(|slot| *slot < from_slot || *slot > to_slot);
-            if meta.next_slots.len() != original_len {
-                rewritten += 1;
-                info!(
-                    "purge_from_next_slots: meta for slot {} no longer refers to slots {:?}",
-                    slot,
-                    from_slot..=to_slot
-                );
-                self.put_meta(slot, &meta).expect("couldn't update meta");
-            }
-            time.stop();
-            total_retain_us += time.as_us();
-        }
     }
 
     /// Purges all columns relating to `slot`.
@@ -190,11 +185,12 @@ impl Blockstore {
     /// Note: slots > `to_slot` that chained to a purged slot are not properly
     /// cleaned up. This function is not intended to be used if such slots need
     /// to be replayed.
-    pub(crate) fn run_purge_with_stats(
+    fn run_purge_with_stats(
         &self,
         from_slot: Slot,
         to_slot: Slot,
         purge_type: PurgeType,
+        cleanup_chaining: bool,
         purge_stats: &mut PurgeStats,
     ) -> Result<()> {
         let mut write_batch = self.get_write_batch()?;
@@ -207,6 +203,9 @@ impl Blockstore {
             purge_type,
             /* purge_alt_columns */ true,
         )?;
+        if cleanup_chaining {
+            self.cleanup_chaining_for_nonpurged_slots(&mut write_batch, from_slot, to_slot)?;
+        }
         delete_range_timer.stop();
 
         let mut write_timer = Measure::start("write_batch");
@@ -354,6 +353,73 @@ impl Blockstore {
             .delete_file_in_range(from_slot, to_slot)?;
         self.double_merkle_meta_cf
             .delete_file_in_range(from_slot, to_slot)
+    }
+
+    /// Given a range \[`from_slot`, `to_slot`\] to be purged from the
+    /// Blockstore, update the `SlotMeta` for any slots outside of the purge
+    /// range that chain to slots within the purge range. The expectation is
+    /// that the purge will take place in the same `WriteBatch`. Thus, there is
+    /// no need to update chaining between slots within the purge range.
+    ///
+    /// Chaining between two slots is established when the child is inserted.
+    /// The child slot knows its parent, and the parent `SlotMeta` `next_slots`
+    /// field is updated when the child is first inserted. Children slots past
+    /// the purge range may have parents within the purge range. If the parent
+    /// within the purge range is later reinserted, chaining between the parent
+    /// and child would not be automatically reestablished. For this reason,
+    /// - A `SlotMeta` with only the `next_slots` field will be kept for any
+    ///   slots within the purge range with a child after the purge range.
+    /// - To avoid overwriting a retained `SlotMeta`, this method must be
+    ///   called after the range purge. `WriteBatch` respects the ordering.
+    fn cleanup_chaining_for_nonpurged_slots(
+        &self,
+        batch: &mut WriteBatch,
+        from_slot: Slot,
+        to_slot: Slot,
+    ) -> Result<()> {
+        for (slot, mut meta) in self
+            .slot_meta_iterator(from_slot)?
+            .take_while(|(slot, _meta)| *slot <= to_slot)
+        {
+            if let Some(parent_slot) = meta.parent_slot
+                && parent_slot < from_slot
+            {
+                match self.meta(parent_slot)? {
+                    Some(mut parent_meta) => {
+                        // Retain only slots from outside of the purge range
+                        //
+                        // If multiple slots to be purged share a parent, this
+                        // step could be called several times for the same
+                        // parent slot. Because all slots in the purge range are
+                        // removed, the update is the same for each child. A
+                        // write batch can handle multiple updates to the same
+                        // key so there are no issues with this approach. This
+                        // approach avoids an extra HashMap to track dirty
+                        // SlotMeta's
+                        parent_meta
+                            .next_slots
+                            .retain(|slot| *slot < from_slot || *slot > to_slot);
+                        self.meta_cf
+                            .put_in_batch(batch, parent_slot, &parent_meta)
+                            .expect("SlotMeta should serialize into WriteBatch");
+                    }
+                    None => {
+                        error!("Missing parent SlotMeta for slot {slot}, parent {parent_slot}");
+                    }
+                }
+            }
+
+            meta.next_slots.retain(|&next_slot| next_slot > to_slot);
+            if !meta.next_slots.is_empty() {
+                let mut new_meta = SlotMeta::new_orphan(slot);
+                new_meta.next_slots = meta.next_slots;
+                self.meta_cf
+                    .put_in_batch(batch, slot, &new_meta)
+                    .expect("SlotMeta should serialize into WriteBatch");
+            }
+        }
+
+        Ok(())
     }
 
     /// Returns true if the special columns, TransactionStatus and
@@ -714,6 +780,60 @@ pub mod tests {
         all_columns_empty_or_greater_than_slot(&blockstore, 0);
 
         assert_eq!(blockstore.slot_meta_iterator(0).unwrap().next(), None);
+    }
+
+    #[test]
+    fn test_purge_slots_cleanup_chaining() {
+        let ledger_path = get_tmp_ledger_path_auto_delete!();
+        let blockstore = Blockstore::open(ledger_path.path()).unwrap();
+
+        let (shreds, _) = make_many_slot_entries(0, 15, 10);
+        blockstore.insert_shreds(shreds, false).unwrap();
+
+        let purge_range_from = 5;
+        let purge_range_to = 10;
+        blockstore
+            .purge_slots_cleanup_chaining(purge_range_from, purge_range_to, PurgeType::Exact)
+            .unwrap();
+
+        // Ensure nonpurged parent with purged child removes chaining
+        assert!(
+            blockstore
+                .meta(purge_range_from - 1)
+                .unwrap()
+                .unwrap()
+                .next_slots
+                .is_empty(),
+        );
+
+        // Ensure slots in [purged_range_from, purge_range_to) are empty;
+        // purge_range_to remains for sake of chaining (the check below)
+        for purged_slot in purge_range_from..purge_range_to {
+            assert!(blockstore.meta(purged_slot).unwrap().is_none());
+        }
+
+        // Ensure purged parent with nonpurged child retains chaining
+        let purge_range_to_meta = blockstore.meta(purge_range_to).unwrap().unwrap();
+        assert_eq!(purge_range_to_meta.next_slots[0], purge_range_to + 1);
+        assert!(!purge_range_to_meta.is_full());
+        assert_eq!(
+            blockstore
+                .meta(purge_range_to + 1)
+                .unwrap()
+                .unwrap()
+                .parent_slot
+                .unwrap(),
+            purge_range_to
+        );
+
+        // Purge to the end of the Blockstore and ensure all slots fully gone
+        let purge_range_to = 15;
+        blockstore
+            .purge_slots_cleanup_chaining(purge_range_from, purge_range_to, PurgeType::Exact)
+            .unwrap();
+        for purged_slot in purge_range_from..=purge_range_to {
+            assert!(blockstore.meta(purged_slot).unwrap().is_none());
+        }
     }
 
     #[test]

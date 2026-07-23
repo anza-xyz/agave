@@ -2,8 +2,15 @@
 
 #[cfg(any(feature = "conformance", feature = "dev-context-only-utils"))]
 use solana_account::ReadableAccount;
+#[cfg(any(feature = "conformance", test))]
 use {
-    crate::conformance::instr::context::InstrContext,
+    crate::conformance::transaction_address_loader::TransactionAddressLoader,
+    solana_message::{SanitizedVersionedMessage, VersionedMessage},
+    solana_slot_hashes::SlotHashes,
+    std::collections::HashSet,
+};
+use {
+    crate::conformance::{instr::context::InstrContext, nonce_fields::NonceFields},
     solana_account::Account,
     solana_compute_budget::compute_budget::ComputeBudget,
     solana_hash::Hash,
@@ -82,6 +89,42 @@ pub(crate) fn prepare_invoke_context_fields<'a, C: InvokeContextCallback>(
     }
 }
 
+/// Instantiate the fields required by `InvokeContext::new` for an already
+/// sanitized transaction message and transaction context.
+pub(crate) fn prepare_transaction_invoke_context_fields<'a, 'b, C: InvokeContextCallback>(
+    sanitized_message: SanitizedMessage,
+    transaction_context: TransactionContext<'b>,
+    callback: &'a C,
+    feature_set: &'a SVMFeatureSet,
+    sysvar_cache: &'a SysvarCache,
+    compute_budget: &ComputeBudget,
+    execution_budget: SVMTransactionExecutionBudget,
+    program_runtime_environments: &'a ProgramRuntimeEnvironments,
+    nonce_fields: NonceFields,
+) -> InvokeContextFields<'a, 'b> {
+    let environment_config = EnvironmentConfig::new(
+        nonce_fields.blockhash,
+        nonce_fields.blockhash_lamports_per_signature,
+        false,
+        callback,
+        feature_set,
+        program_runtime_environments,
+        sysvar_cache,
+    );
+
+    let log_collector = LogCollector::new_ref();
+    let execution_cost = compute_budget.to_cost();
+
+    InvokeContextFields {
+        sanitized_message,
+        transaction_context,
+        environment_config,
+        log_collector,
+        execution_budget,
+        execution_cost,
+    }
+}
+
 // Create a compute budget from the given feature set.
 pub(crate) fn compute_budget(feature_set: &SVMFeatureSet) -> ComputeBudget {
     let simd_0268_active = feature_set.raise_cpi_nesting_limit_to_8;
@@ -121,6 +164,37 @@ pub(crate) fn compile_transaction_context(
     (sanitized_message, transaction_context)
 }
 
+/// Sanitize a versioned message, resolving address table lookups from the
+/// supplied accounts and their sysvar state.
+#[cfg(any(feature = "conformance", test))]
+pub fn sanitized_message_from_versioned_message(
+    message: VersionedMessage,
+    accounts: &[(Pubkey, Account)],
+) -> SanitizedMessage {
+    let sysvar_cache = sysvar_cache_from_accounts(accounts);
+    let slot = sysvar_cache
+        .get_clock()
+        .map(|clock| clock.slot)
+        .unwrap_or_default();
+    let slot_hashes = sysvar_cache
+        .get_slot_hashes()
+        .map(|slot_hashes| SlotHashes::new(slot_hashes.slot_hashes()))
+        .unwrap_or_else(|_| SlotHashes::new(&[]));
+    let message = SanitizedVersionedMessage::try_new(message)
+        .expect("transaction context message must be sanitized");
+
+    SanitizedMessage::try_new(
+        message,
+        TransactionAddressLoader {
+            accounts,
+            slot,
+            slot_hashes: &slot_hashes,
+        },
+        &HashSet::new(),
+    )
+    .expect("transaction context message must resolve address table lookups")
+}
+
 /// The paired (execution + deployment) program runtime environments for a
 /// harness invocation. Both halves share one environment.
 pub(crate) fn program_runtime_environments(
@@ -151,7 +225,7 @@ pub(crate) fn recent_blockhash(sysvar_cache: &SysvarCache) -> (Hash, u64) {
 
 /// Build a sysvar cache populated from any sysvar accounts present in the
 /// input account set.
-#[cfg(feature = "conformance")]
+#[cfg(any(feature = "conformance", test))]
 pub(crate) fn sysvar_cache_from_accounts(accounts: &[(Pubkey, Account)]) -> SysvarCache {
     let mut cache = SysvarCache::default();
     cache.fill_missing_entries(|pubkey, set_sysvar| {

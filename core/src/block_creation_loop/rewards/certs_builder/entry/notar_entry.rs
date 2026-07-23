@@ -3,12 +3,11 @@
 
 use {
     super::{AddVoteError, BuildSigBitmapError, partial_cert::PartialCert},
+    agave_bls_sigverify::rewards::RewardVoteMessage,
     agave_votor_messages::reward_certificate::{BuildRewardCertsRespError, NotarRewardCertificate},
-    solana_bls_signatures::Signature as BLSSignature,
     solana_clock::Slot,
     solana_hash::Hash,
     solana_pubkey::Pubkey,
-    solana_runtime::epoch_stakes::BLSPubkeyToRankMap,
     std::collections::{HashMap, HashSet},
 };
 
@@ -40,22 +39,20 @@ impl NotarEntry {
     /// Adds a new observed vote to the aggregate.
     pub(super) fn add_vote(
         &mut self,
-        rank_map: &BLSPubkeyToRankMap,
-        rank: u16,
-        signature: &BLSSignature,
+        msg: &RewardVoteMessage,
         block_id: Hash,
         max_validators: usize,
     ) -> Result<(), AddVoteError> {
-        if !self.voted.insert(rank) {
+        if !self.voted.insert(msg.rank) {
             return Err(AddVoteError::Duplicate);
         }
         let partial = self
             .partials
             .entry(block_id)
             .or_insert(PartialCert::new(max_validators));
-        let res = partial.add_vote(rank_map, rank, signature);
+        let res = partial.add_vote(msg);
         if res.is_err() {
-            self.voted.remove(&rank);
+            self.voted.remove(&msg.rank);
         }
         res
     }
@@ -93,15 +90,17 @@ mod tests {
     use {
         super::*,
         crate::block_creation_loop::rewards::certs_builder::entry::tests::{
-            get_rank_map_keypairs, get_rank_map_keypairs_with_stakes, new_vote, validate_bitmap,
+            get_keypair_with_stakes, get_keypairs, new_reward_vote_msg, validate_bitmap,
         },
+        agave_bls_sigverify::rewards::RewardVote,
         agave_votor_messages::{
-            consensus_message::{Block, VoteMessage},
-            vote::Vote,
+            consensus_message::Block,
+            vote::{NotarizationVote, Vote},
         },
         rand::Rng,
-        solana_bls_signatures::signature::BLS_SIGNATURE_AFFINE_SIZE,
+        solana_bls_signatures::{Signature as BLSSignature, signature::BLS_SIGNATURE_AFFINE_SIZE},
         solana_hash::Hash,
+        std::num::NonZero,
     };
 
     #[test]
@@ -109,48 +108,40 @@ mod tests {
         let slot = 123;
         let max_validators = 5;
         let shred_version = rand::rng().random();
-        let (rank_map, keypairs) = get_rank_map_keypairs(max_validators, slot);
+        let keypairs = get_keypairs(max_validators, slot);
         let rank = 0;
         let mut entry = NotarEntry::new(max_validators);
 
         let blockid0 = Hash::new_unique();
-        let notar = Vote::new_notarization_vote(Block {
+        let block = Block {
             slot,
             block_id: blockid0,
+        };
+        let notar_vote = Vote::new_notarization_vote(block);
+        let notar_reward_vote = RewardVote::Notar(NotarizationVote {
+            block: Block {
+                slot,
+                block_id: blockid0,
+            },
         });
-        let invalid_vote = VoteMessage {
-            vote: notar,
+        let invalid_reward_vote_msg = RewardVoteMessage {
+            vote: notar_reward_vote,
             signature: BLSSignature([0; BLS_SIGNATURE_AFFINE_SIZE]),
             rank,
+            stake: NonZero::new(1234).unwrap(),
+            vote_account_pubkey: Pubkey::new_unique(),
         };
         entry
-            .add_vote(
-                &rank_map,
-                invalid_vote.rank,
-                &invalid_vote.signature,
-                blockid0,
-                max_validators,
-            )
+            .add_vote(&invalid_reward_vote_msg, blockid0, max_validators)
             .unwrap_err();
 
-        let vote = new_vote(notar, rank as usize, &keypairs, shred_version);
+        let reward_vote_msg =
+            new_reward_vote_msg(notar_vote, rank as usize, &keypairs, None, shred_version);
         entry
-            .add_vote(
-                &rank_map,
-                vote.rank,
-                &vote.signature,
-                blockid0,
-                max_validators,
-            )
+            .add_vote(&reward_vote_msg, blockid0, max_validators)
             .unwrap();
         let err = entry
-            .add_vote(
-                &rank_map,
-                vote.rank,
-                &vote.signature,
-                blockid0,
-                max_validators,
-            )
+            .add_vote(&reward_vote_msg, blockid0, max_validators)
             .unwrap_err();
         assert!(matches!(err, AddVoteError::Duplicate));
     }
@@ -159,8 +150,8 @@ mod tests {
     fn validate_build_cert() {
         let slot = 123;
         let max_validators = 5;
-        let (rank_map, keypairs) =
-            get_rank_map_keypairs_with_stakes(vec![1_000, 900, 10, 10, 10], slot);
+        let stakes = vec![1_000, 900, 10, 10, 10];
+        let keypairs = get_keypair_with_stakes(stakes.clone(), slot);
         let shred_version = rand::rng().random();
 
         let mut entry = NotarEntry::new(max_validators);
@@ -174,15 +165,10 @@ mod tests {
                 slot,
                 block_id: blockid0,
             });
-            let vote = new_vote(notar, rank, &keypairs, shred_version);
+            let reward_vote_msg =
+                new_reward_vote_msg(notar, rank, &keypairs, Some(&stakes), shred_version);
             entry
-                .add_vote(
-                    &rank_map,
-                    vote.rank,
-                    &vote.signature,
-                    blockid0,
-                    max_validators,
-                )
+                .add_vote(&reward_vote_msg, blockid0, max_validators)
                 .unwrap();
         }
         for rank in 2..5 {
@@ -190,15 +176,10 @@ mod tests {
                 slot,
                 block_id: blockid1,
             });
-            let vote = new_vote(notar, rank, &keypairs, shred_version);
+            let reward_vote_msg =
+                new_reward_vote_msg(notar, rank, &keypairs, Some(&stakes), shred_version);
             entry
-                .add_vote(
-                    &rank_map,
-                    vote.rank,
-                    &vote.signature,
-                    blockid1,
-                    max_validators,
-                )
+                .add_vote(&reward_vote_msg, blockid1, max_validators)
                 .unwrap();
         }
         let (notar_cert, _) = entry.build_cert(slot).unwrap().unwrap();

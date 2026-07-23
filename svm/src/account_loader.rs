@@ -651,7 +651,9 @@ fn load_transaction_account<CB: TransactionProcessingCallback>(
     }
 }
 
-fn construct_instructions_account(message: &impl SVMMessage) -> Result<AccountSharedData> {
+pub(crate) fn construct_instructions_account(
+    message: &impl SVMMessage,
+) -> Result<AccountSharedData> {
     let account_keys = message.account_keys();
     let mut decompiled_instructions = Vec::with_capacity(message.num_instructions());
     for (program_id, instruction) in message.program_instructions_iter() {

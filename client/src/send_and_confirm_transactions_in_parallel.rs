@@ -351,6 +351,9 @@ async fn send_transaction_with_rpc_fallback<S: WireTransactionSender>(
             ErrorKind::TransactionError(TransactionError::BlockhashNotFound) => {
                 // fall through so that we will resend with another blockhash
             }
+            ErrorKind::TransactionError(TransactionError::AlreadyProcessed) => {
+                // the transaction already landed, last one was a duplicate.
+            }
             ErrorKind::TransactionError(transaction_error) => {
                 // if we get other than blockhash not found error the transaction is invalid
                 context.error_map.insert(index, transaction_error.clone());
@@ -368,6 +371,9 @@ async fn send_transaction_with_rpc_fallback<S: WireTransactionSender>(
                 match TransactionError::from(ui_transaction_error.clone()) {
                     TransactionError::BlockhashNotFound => {
                         // fall through so that we will resend with another blockhash
+                    }
+                    TransactionError::AlreadyProcessed => {
+                        // the transaction already landed, last one is a duplicate.
                     }
                     err => {
                         // if we get other than blockhash not found error the transaction is invalid

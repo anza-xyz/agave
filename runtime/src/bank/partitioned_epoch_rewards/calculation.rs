@@ -836,10 +836,10 @@ impl Bank {
             total_stake_rewards_lamports,
         } = rewards_accumulator;
         // SAFETY: We initialized all the `stake_rewards` elements up to
-        // `num_stake_rewards`.
-        debug_assert!(num_stake_rewards <= stake_delegations_len);
+        // `stake_delegations_len` (one cell per delegation, `Some` or `None`).
+        // `num_stake_rewards` is the count of the `Some` cells.
         unsafe {
-            stake_rewards.assume_init(num_stake_rewards);
+            stake_rewards.assume_init(num_stake_rewards, stake_delegations_len);
         }
         measure_redeem_rewards.stop();
         metrics.redeem_rewards_us = measure_redeem_rewards.as_us();

@@ -33,6 +33,8 @@ enum Commands {
     ChannelInfo(commands::channel_info::CommandArgs),
     #[command(about = "Run XDP integration tests")]
     XdpTest(commands::xdp_test::CommandArgs),
+    #[command(about = "Emit conformance fixture dispatch table as JSON")]
+    ConformanceTable(commands::conformance_table::CommandArgs),
 }
 
 #[derive(Args, Debug)]
@@ -88,6 +90,9 @@ async fn try_main(xtask: Xtask) -> Result<()> {
         }
         Commands::XdpTest(args) => {
             commands::xdp_test::run(args)?;
+        }
+        Commands::ConformanceTable(args) => {
+            commands::conformance_table::run(args).await?;
         }
     }
 

@@ -17,7 +17,7 @@ use {
     crate::{
         cluster_info_metrics::{Counter, GossipStats, ScopedTimer, TimedGuard},
         contact_info::{self, ContactInfo, ContactInfoQuery, Error as ContactInfoError},
-        crds::{CRDS_SHARDS_BITS, Crds, Cursor, GossipRoute},
+        crds::{Crds, Cursor, GossipRoute},
         crds_data::{self, CrdsData, EpochSlotsIndex, LowestSlot, MAX_VOTES, SnapshotHashes, Vote},
         crds_filter::{GossipFilterDirection, should_retain_crds_value},
         crds_gossip::CrdsGossip,
@@ -133,13 +133,9 @@ const GOSSIP_PULL_SCAN_BUDGET_REFILL_PER_SEC: u64 =
     4 * crds_gossip_pull::MIN_NUM_BLOOM_ITEMS as u64;
 const GOSSIP_PULL_SCAN_BUDGET_SHARD_COUNT: usize = 64;
 
-/// Estimated CRDS shard scan work for a pull request filter.
 #[inline]
-fn pull_request_scan_cost(crds_len: usize, mask_bits: u32, bloom_hash_count: usize) -> u64 {
-    // Extra mask bits still require one full shard scan.
-    let shift = mask_bits.min(CRDS_SHARDS_BITS);
-    let scan_entries = (crds_len >> shift).max(1) as u64;
-
+fn pull_request_scan_cost(scan_entries: usize, bloom_hash_count: usize) -> u64 {
+    let scan_entries = u64::try_from(scan_entries).unwrap_or(u64::MAX).max(1);
     let bloom_hash_count = u64::try_from(bloom_hash_count)
         .unwrap_or(u64::MAX)
         .max(crds_gossip_pull::KEYS as u64);
@@ -1700,12 +1696,12 @@ impl ClusterInfo {
         }
     }
 
-    fn try_consume_pull_request_scan_budget(&self, request: &PullRequest, crds_len: usize) -> bool {
-        let cost = pull_request_scan_cost(
-            crds_len,
-            request.filter.get_mask_bits(),
-            request.filter.bloom_hash_count(),
-        );
+    fn try_consume_pull_request_scan_budget(
+        &self,
+        request: &PullRequest,
+        scan_entries: usize,
+    ) -> bool {
+        let cost = pull_request_scan_cost(scan_entries, request.filter.bloom_hash_count());
         if self
             .pull_request_budget
             .consume_tokens(request.addr.ip(), cost)
@@ -1753,7 +1749,9 @@ impl ClusterInfo {
                         is_full_alpenglow_epoch,
                     )
                 },
-                |request, crds_len| self.try_consume_pull_request_scan_budget(request, crds_len),
+                |request, scan_entries| {
+                    self.try_consume_pull_request_scan_budget(request, scan_entries)
+                },
                 &self.stats,
             )
         };
@@ -2705,14 +2703,10 @@ mod tests {
 
     #[test]
     fn test_pull_request_scan_cost() {
-        assert_eq!(pull_request_scan_cost(0, 0, 0), 8);
-        assert_eq!(pull_request_scan_cost(1_024, 6, 8), 128);
-        assert_eq!(pull_request_scan_cost(1_024, 6, 12), 192);
-        let crds_len = 1usize << (CRDS_SHARDS_BITS + 1);
-        assert_eq!(
-            pull_request_scan_cost(crds_len, CRDS_SHARDS_BITS + 1, 8),
-            16,
-        );
+        assert_eq!(pull_request_scan_cost(0, 0), 8);
+        assert_eq!(pull_request_scan_cost(16, 8), 128);
+        assert_eq!(pull_request_scan_cost(16, 12), 192);
+        assert_eq!(pull_request_scan_cost(2, 8), 16);
     }
 
     #[test]
@@ -2754,11 +2748,7 @@ mod tests {
         };
         request.filter.sanitize().unwrap();
         let crds_len = crds_gossip_pull::MIN_NUM_BLOOM_ITEMS;
-        let cost = pull_request_scan_cost(
-            crds_len,
-            request.filter.get_mask_bits(),
-            request.filter.bloom_hash_count(),
-        );
+        let cost = pull_request_scan_cost(crds_len, request.filter.bloom_hash_count());
         let successful_requests = GOSSIP_PULL_SCAN_BUDGET_CAPACITY / cost;
 
         assert!(cost <= GOSSIP_PULL_SCAN_BUDGET_CAPACITY);

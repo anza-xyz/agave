@@ -5,36 +5,28 @@ export CI_BUILD_START
 
 source ci/env.sh
 
-#
-# Kill any running docker containers, which are potentially left over from the
-# previous CI job
-#
+# Kill leftover containers from this agent's previous job. Scoped by
+# docker-run.sh's agent label so concurrent sibling jobs survive.
 (
   echo "+++ Killing stale docker containers"
-  while read -r line; do
-    read -r id image _ <<<"$line"
-
-    if [[ $image =~ "anzaxyz/ci" || $image =~ "kellnr" ]]; then
-      if docker kill "$id" >/dev/null; then
-        echo "kill $id $image"
-      fi
+  while read -r id image; do
+    if docker kill "$id" >/dev/null; then
+      echo "kill $id $image"
     fi
-
-  done < <(docker ps | tail -n +2)
+  done < <(docker ps --filter "label=buildkite_agent=${BUILDKITE_AGENT_NAME:-unknown}" --format '{{.ID}} {{.Image}}')
 )
 
-# Processes from previously aborted CI jobs seem to loiter, unclear why as one
-# would expect the buildkite-agent to clean up all child processes of the
-# aborted CI job.
-# But as a workaround for now manually kill some known loiterers.  These
-# processes will all have the `init` process as their PPID:
+# Aborted CI jobs leave loiterers re-parented to init (PPID 1). Re-parenting
+# keeps their environment, so match inherited BUILDKITE_AGENT_NAME to spare
+# sibling jobs' processes.
 (
-  victims=
+  [[ -n $BUILDKITE_AGENT_NAME ]] || exit 0
   for name in bash cargo docker solana; do
-    victims="$victims $(pgrep -u "$(id -u)" -P 1 -d \  $name)"
-  done
-  for victim in $victims; do
-    echo "Killing pid $victim"
-    kill -9 "$victim" || true
+    for pid in $(pgrep -u "$(id -u)" -P 1 "$name"); do
+      if grep -qz "^BUILDKITE_AGENT_NAME=$BUILDKITE_AGENT_NAME$" "/proc/$pid/environ" 2>/dev/null; then
+        echo "Killing pid $pid"
+        kill -9 "$pid" || true
+      fi
+    done
   done
 )

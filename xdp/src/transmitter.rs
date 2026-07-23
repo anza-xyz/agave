@@ -193,7 +193,7 @@ pub struct XdpSender {
 
 pub enum XdpAddrs {
     Single(SocketAddr),
-    Multi(Vec<SocketAddr>),
+    Multi(Arc<[SocketAddr]>),
 }
 
 impl From<SocketAddr> for XdpAddrs {
@@ -206,6 +206,13 @@ impl From<SocketAddr> for XdpAddrs {
 impl From<Vec<SocketAddr>> for XdpAddrs {
     #[inline]
     fn from(addrs: Vec<SocketAddr>) -> Self {
+        XdpAddrs::Multi(addrs.into())
+    }
+}
+
+impl From<Arc<[SocketAddr]>> for XdpAddrs {
+    #[inline]
+    fn from(addrs: Arc<[SocketAddr]>) -> Self {
         XdpAddrs::Multi(addrs)
     }
 }

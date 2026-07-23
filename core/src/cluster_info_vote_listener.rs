@@ -770,7 +770,7 @@ impl ClusterInfoVoteListener {
                 sender
                     .sender
                     .send((
-                        BankNotification::OptimisticallyConfirmed(last_vote_slot),
+                        BankNotification::OptimisticallyConfirmed(last_vote_slot, last_vote_hash),
                         dependency_work,
                     ))
                     .unwrap_or_else(|err| warn!("bank_notification_sender failed: {err:?}"));

@@ -64,7 +64,6 @@ mod decision_maker;
 mod latest_validator_vote_packet;
 mod leader_slot_metrics;
 mod leader_slot_timing_metrics;
-mod qos_service;
 mod scheduler_messages;
 mod vote_packet_receiver;
 mod vote_storage;

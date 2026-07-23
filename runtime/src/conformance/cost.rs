@@ -1,7 +1,8 @@
 //! Transaction cost conformance harness.
 
+#[cfg(not(test))]
+use {prost::Message, std::ffi::c_int};
 use {
-    super::versioned_message_from_proto,
     protosol::protos::{
         CostContext as ProtoCostContext, CostResult as ProtoCostResult,
         SanitizedTransaction as ProtoSanitizedTransaction, TxnCostMode as ProtoTxnCostMode,
@@ -11,14 +12,14 @@ use {
     solana_packet::PACKET_DATA_SIZE,
     solana_runtime_transaction::runtime_transaction::RuntimeTransaction,
     solana_signature::Signature,
-    solana_svm::conformance::feature_set::feature_set_from_proto,
+    solana_svm::conformance::{
+        feature_set::feature_set_from_proto, versioned_message::versioned_message_from_proto,
+    },
     solana_transaction::{
         sanitized::{MessageHash, SanitizedTransaction},
         versioned::VersionedTransaction,
     },
 };
-#[cfg(not(test))]
-use {prost::Message, std::ffi::c_int};
 
 fn runtime_transaction_from_proto(
     proto_tx: &ProtoSanitizedTransaction,

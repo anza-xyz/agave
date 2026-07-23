@@ -78,7 +78,7 @@ fn bench_entry_lock_accounts(c: &mut Criterion) {
             },
         );
 
-        let accounts_db = AccountsDb::new_single_for_tests();
+        let accounts_db = AccountsDb::default_for_tests();
         let accounts = Accounts::new(Arc::new(accounts_db));
 
         let transactions = create_test_transactions(lock_count, read_conflicts);

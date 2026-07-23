@@ -29,6 +29,7 @@ use {
     agave_bls_sigverify::{
         bls_sigverifier::{self, SigVerifierChannels, SigVerifierContext},
         generated_cert_types::GeneratedCertTypes,
+        rewards::RewardVoteMessage,
     },
     agave_votor::{
         event::{LatestSwitchRequest, LeaderWindowInfo, VotorEventReceiver, VotorEventSender},
@@ -41,7 +42,7 @@ use {
     },
     agave_votor_messages::{
         VerifiedVoterSlotsReceiver, VerifiedVoterSlotsSender, consensus_message::Block,
-        metric_types::MAX_IN_FLIGHT_CONSENSUS_EVENTS, reward_certificate::AddVoteMessage,
+        metric_types::MAX_IN_FLIGHT_CONSENSUS_EVENTS,
     },
     crossbeam_channel::{Receiver, Sender, bounded, unbounded},
     solana_client::connection_cache::ConnectionCache,
@@ -249,7 +250,7 @@ impl Tvu {
         slot_status_notifier: Option<SlotStatusNotifier>,
         vote_connection_cache: Arc<ConnectionCache>,
         votor_init: AlpenglowInitializationState,
-        reward_votes_sender: Sender<AddVoteMessage>,
+        reward_votes_sender: Sender<Vec<RewardVoteMessage>>,
     ) -> Result<Self, String> {
         let migration_status = bank_forks.read().unwrap().migration_status();
 

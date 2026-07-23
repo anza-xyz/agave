@@ -179,7 +179,7 @@ pub fn execute_instr_proto(input: ProtoInstrContext) -> ProtoInstrEffects {
 
     let mut effects = execute_instr_with_callback(
         &instr_context,
-        &ConformanceCallback,
+        &ConformanceCallback::default(),
         &mut program_cache,
         &sysvar_cache,
     );

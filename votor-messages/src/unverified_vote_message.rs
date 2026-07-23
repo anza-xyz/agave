@@ -16,8 +16,6 @@ pub struct UnverifiedVoteMessage {
     pub vote: Vote,
     /// The signature
     pub signature: BLSSignature,
-    /// rank of the validator that signed the payload
-    pub rank: u16,
     /// the shred version
     pub shred_version: u16,
 }
@@ -46,46 +44,37 @@ pub enum DecodedWireConsensusMessage {
 
 impl DecodedWireConsensusMessage {
     /// Decodes a wire consensus message.
-    pub fn try_new(msg: VersionedWireConsensusMessage, shred_version: u16) -> Option<Self> {
+    pub fn new(msg: VersionedWireConsensusMessage) -> Self {
         let VersionedWireConsensusMessage::V1(msg) = msg;
-        if msg.shred_version != shred_version {
-            return None;
-        }
-        let msg = match msg.kind {
+        match msg.kind {
             WireConsensusMessageKind::NotarVote(v) => Self::Vote(UnverifiedVoteMessage {
                 vote: Vote::new_notarization_vote(v.block),
                 signature: v.signature.signature,
-                rank: v.signature.rank,
                 shred_version: msg.shred_version,
             }),
             WireConsensusMessageKind::NotarFallbackVote(v) => Self::Vote(UnverifiedVoteMessage {
                 vote: Vote::new_notarization_fallback_vote(v.block),
                 signature: v.signature.signature,
-                rank: v.signature.rank,
                 shred_version: msg.shred_version,
             }),
             WireConsensusMessageKind::FinalizeVote(v) => Self::Vote(UnverifiedVoteMessage {
                 vote: Vote::new_finalization_vote(v.slot),
                 signature: v.signature.signature,
-                rank: v.signature.rank,
                 shred_version: msg.shred_version,
             }),
             WireConsensusMessageKind::SkipVote(v) => Self::Vote(UnverifiedVoteMessage {
                 vote: Vote::new_skip_vote(v.slot),
                 signature: v.signature.signature,
-                rank: v.signature.rank,
                 shred_version: msg.shred_version,
             }),
             WireConsensusMessageKind::SkipFallbackVote(v) => Self::Vote(UnverifiedVoteMessage {
                 vote: Vote::new_skip_fallback_vote(v.slot),
                 signature: v.signature.signature,
-                rank: v.signature.rank,
                 shred_version: msg.shred_version,
             }),
             WireConsensusMessageKind::GenesisVote(v) => Self::Vote(UnverifiedVoteMessage {
                 vote: Vote::new_genesis_vote(v.block),
                 signature: v.signature.signature,
-                rank: v.signature.rank,
                 shred_version: msg.shred_version,
             }),
 
@@ -143,8 +132,7 @@ impl DecodedWireConsensusMessage {
                     shred_version: msg.shred_version,
                 })
             }
-        };
-        Some(msg)
+        }
     }
 
     /// returns the shred version

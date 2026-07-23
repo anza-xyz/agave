@@ -36,6 +36,7 @@ use {
     solana_poh_config::PohConfig,
     solana_pubkey::Pubkey,
     solana_rpc_client::rpc_client::RpcClient,
+    solana_runtime::bank_forks::BankForks,
     solana_signer::{Signer, signers::Signers},
     solana_streamer::{
         nonblocking::simple_qos::SimpleQosConfig,
@@ -660,22 +661,30 @@ pub fn start_quic_streamer_to_listen_for_votes_and_certs(
     (cancel, result.thread, receiver)
 }
 
-fn convert_packet_to_vote_message(packet: PacketRef, my_shred_version: u16) -> Option<VoteMessage> {
-    let Ok(msg) = wincode::config::deserialize_exact::<VersionedWireConsensusMessage, _>(
+fn convert_packet_to_vote_message(
+    bank_forks: &RwLock<BankForks>,
+    packet: PacketRef,
+    my_shred_version: u16,
+) -> Option<VoteMessage> {
+    let sender = packet.meta().remote_pubkey()?;
+    let Ok(msg) = VersionedWireConsensusMessage::deserialize_with_expected_shred_version(
         packet.data(..).unwrap_or_default(),
         packet_config(),
+        my_shred_version,
     ) else {
         return None;
     };
-    let DecodedWireConsensusMessage::Vote(vote_msg) =
-        DecodedWireConsensusMessage::try_new(msg, my_shred_version).unwrap()
-    else {
+    let DecodedWireConsensusMessage::Vote(vote_msg) = DecodedWireConsensusMessage::new(msg) else {
         return None;
     };
+    let bank = bank_forks.read().unwrap().root_bank();
+    let rank_map = bank.get_rank_map(vote_msg.vote.slot())?;
+    let sender_entry = rank_map.node_pubkey_to_stake_entry(&sender)?;
+    let rank = *rank_map.get_rank(&sender_entry.bls_pubkey)?;
     Some(VoteMessage {
         vote: vote_msg.vote,
         signature: vote_msg.signature,
-        rank: vote_msg.rank,
+        rank,
     })
 }
 
@@ -686,8 +695,9 @@ pub fn check_for_new_notarized_votes(
     contact_infos: &[ContactInfo],
     test_name: &str,
     vote_listener_socket: UdpSocket,
-    validator_keys: &[Arc<Keypair>],
+    validator_node_keypairs: &[Arc<Keypair>],
     node_stakes: &[u64],
+    bank_forks: Arc<RwLock<BankForks>>,
 ) {
     let loop_start = Instant::now();
     let loop_timeout = Duration::from_secs(180);
@@ -710,21 +720,22 @@ pub fn check_for_new_notarized_votes(
 
     let (cancel, quic_server_thread, receiver) = start_quic_streamer_to_listen_for_votes_and_certs(
         vote_listener_socket,
-        validator_keys,
+        validator_node_keypairs,
         node_stakes,
     );
 
     // Now start vote listener and wait for new notarized votes.
-    let vote_listener = std::thread::spawn({
-        let mut num_new_notarized_votes = contact_infos_owned.iter().map(|_| 0).collect::<Vec<_>>();
-        let mut last_notarized = contact_infos_owned
-            .iter()
-            .map(|_| current_slot)
-            .collect::<Vec<_>>();
-        let mut last_print = Instant::now();
-        let mut done = false;
+    std::thread::scope(|s| {
+        s.spawn(move || {
+            let mut num_new_notarized_votes =
+                contact_infos_owned.iter().map(|_| 0).collect::<Vec<_>>();
+            let mut last_notarized = contact_infos_owned
+                .iter()
+                .map(|_| current_slot)
+                .collect::<Vec<_>>();
+            let mut last_print = Instant::now();
+            let mut done = false;
 
-        move || {
             while !done {
                 assert!(loop_start.elapsed() < loop_timeout);
                 let Ok(packet_batch) = receiver.recv_timeout(Duration::from_millis(100)) else {
@@ -732,7 +743,7 @@ pub fn check_for_new_notarized_votes(
                 };
                 for packet in packet_batch.iter() {
                     let Some(vote_message) =
-                        convert_packet_to_vote_message(packet, my_shred_version)
+                        convert_packet_to_vote_message(&bank_forks, packet, my_shred_version)
                     else {
                         continue;
                     };
@@ -768,9 +779,8 @@ pub fn check_for_new_notarized_votes(
                     cancel.cancel();
                 }
             }
-        }
+        });
     });
-    vote_listener.join().expect("Vote listener thread panicked");
     quic_server_thread
         .join()
         .expect("QUIC server thread panicked");

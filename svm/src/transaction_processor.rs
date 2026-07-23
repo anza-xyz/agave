@@ -463,6 +463,7 @@ impl<FG: ForkGraph> TransactionBatchProcessor<FG> {
         }
 
         let (mut load_us, mut execution_us): (u64, u64) = (0, 0);
+        let sysvar_cache = self.sysvar_cache();
 
         // Validate, execute, and collect results from each transaction in order.
         // With SIMD83, transactions must be executed in order, because transactions
@@ -576,6 +577,7 @@ impl<FG: ForkGraph> TransactionBatchProcessor<FG> {
                     let executed_tx = self.execute_loaded_transaction(
                         callbacks,
                         tx,
+                        &sysvar_cache,
                         loaded_transaction,
                         &mut execute_timings,
                         &mut error_metrics,
@@ -1025,10 +1027,12 @@ impl<FG: ForkGraph> TransactionBatchProcessor<FG> {
 
     /// Execute a transaction using the provided loaded accounts and update
     /// the executors cache if the transaction was successful.
+    #[allow(clippy::too_many_arguments)]
     fn execute_loaded_transaction<CB: InvokeContextCallback>(
         &self,
         callback: &CB,
         tx: &impl SVMTransaction,
+        sysvar_cache: &SysvarCache,
         mut loaded_transaction: LoadedTransaction,
         execute_timings: &mut ExecuteTimings,
         error_metrics: &mut TransactionErrorMetrics,
@@ -1085,7 +1089,6 @@ impl<FG: ForkGraph> TransactionBatchProcessor<FG> {
         };
 
         let mut executed_units = 0u64;
-        let sysvar_cache = &self.sysvar_cache.read().unwrap();
 
         let mut invoke_context = InvokeContext::new(
             &mut transaction_context,
@@ -1732,10 +1735,12 @@ mod tests {
         processing_config.recording_config.enable_log_recording = true;
 
         let mock_bank = MockBankCallback::default();
+        let sysvar_cache = batch_processor.sysvar_cache();
 
         let executed_tx = batch_processor.execute_loaded_transaction(
             &mock_bank,
             &sanitized_transaction,
+            &sysvar_cache,
             loaded_transaction.clone(),
             &mut ExecuteTimings::default(),
             &mut TransactionErrorMetrics::default(),
@@ -1750,6 +1755,7 @@ mod tests {
         let executed_tx = batch_processor.execute_loaded_transaction(
             &mock_bank,
             &sanitized_transaction,
+            &sysvar_cache,
             loaded_transaction.clone(),
             &mut ExecuteTimings::default(),
             &mut TransactionErrorMetrics::default(),
@@ -1767,6 +1773,7 @@ mod tests {
         let executed_tx = batch_processor.execute_loaded_transaction(
             &mock_bank,
             &sanitized_transaction,
+            &sysvar_cache,
             loaded_transaction,
             &mut ExecuteTimings::default(),
             &mut TransactionErrorMetrics::default(),
@@ -1827,10 +1834,12 @@ mod tests {
         };
         let mut error_metrics = TransactionErrorMetrics::new();
         let mock_bank = MockBankCallback::default();
+        let sysvar_cache = batch_processor.sysvar_cache();
 
         let _ = batch_processor.execute_loaded_transaction(
             &mock_bank,
             &sanitized_transaction,
+            &sysvar_cache,
             loaded_transaction,
             &mut ExecuteTimings::default(),
             &mut error_metrics,
