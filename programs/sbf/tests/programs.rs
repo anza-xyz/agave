@@ -5424,13 +5424,12 @@ fn test_stack_heap_zeroed() {
         )
         .unwrap();
 
-        let context = TxnContext {
-            feature_set: feature_set.clone(),
-            accounts: accounts.clone(),
-            message: sanitized_message,
-            nonce_fields: None,
-            cu_avail: 1_400_000,
-        };
+        let context = TxnContext::new_with_default_budget(
+            feature_set.clone(),
+            accounts.clone(),
+            sanitized_message,
+            None,
+        );
 
         let effects = execute_txn(&context, &mut program_cache, &sysvar_cache);
         assert!(effects.status.is_err(), "{:?}", effects.status);
