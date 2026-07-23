@@ -5551,111 +5551,115 @@ fn test_function_call_args() {
     assert_eq!(decoded.many_args_2, verify_many_args(&input_data));
 }
 
-#[test]
+#[test_case(false; "without_virtual_address_space_adjustments")]
+#[test_case(true; "with_virtual_address_space_adjustments")]
 #[cfg(feature = "sbf_rust")]
-fn test_mem_syscalls_overlap_account_begin_or_end() {
-    agave_logger::setup();
+fn test_mem_syscalls_overlap_account_begin_or_end(virtual_address_space_adjustments: bool) {
+    let mut configured_feature_set = FeatureSet::all_enabled();
+    if !virtual_address_space_adjustments {
+        configured_feature_set
+            .deactivate(&feature_set::syscall_parameter_address_restrictions::id());
+        configured_feature_set.deactivate(&feature_set::virtual_address_space_adjustments::id());
+        configured_feature_set.deactivate(&feature_set::account_data_direct_mapping::id());
+    }
 
-    for virtual_address_space_adjustments in [false, true] {
-        let GenesisConfigInfo {
-            genesis_config,
-            mint_keypair,
-            ..
-        } = create_genesis_config(100_123_456_789);
+    let (
+        _,
+        mint_keypair,
+        account_keypair,
+        [upgradeable_program_id, deprecated_program_id],
+        feature_set,
+        mut accounts,
+        mut program_cache,
+        sysvar_cache,
+    ) = program_sbf_txn_fixture_with_feature_set(
+        [
+            ("solana_sbf_rust_account_mem", bpf_loader_upgradeable::id()),
+            (
+                "solana_sbf_rust_account_mem_deprecated",
+                bpf_loader_deprecated::id(),
+            ),
+        ],
+        configured_feature_set,
+    );
 
-        let mut bank = Bank::new_for_tests(&genesis_config);
-        let mut feature_set = FeatureSet::all_enabled();
-        if !virtual_address_space_adjustments {
-            feature_set.deactivate(&feature_set::syscall_parameter_address_restrictions::id());
-            feature_set.deactivate(&feature_set::virtual_address_space_adjustments::id());
-            feature_set.deactivate(&feature_set::account_data_direct_mapping::id());
-        }
+    for deprecated in [false, true] {
+        let program_id = if deprecated {
+            deprecated_program_id
+        } else {
+            upgradeable_program_id
+        };
+        let account_metas = vec![
+            AccountMeta::new(mint_keypair.pubkey(), true),
+            AccountMeta::new_readonly(program_id, false),
+            AccountMeta::new(account_keypair.pubkey(), false),
+        ];
 
-        let account_keypair = Keypair::new();
-
-        bank.feature_set = Arc::new(feature_set);
-        let (bank, bank_forks) = bank.wrap_with_bank_forks_for_tests();
-        let upgradeable_program_id = create_program(
-            &bank,
-            &bpf_loader_upgradeable::id(),
-            "solana_sbf_rust_account_mem",
-        );
-        let deprecated_program_id = create_program(
-            &bank,
-            &bpf_loader_deprecated::id(),
-            "solana_sbf_rust_account_mem_deprecated",
-        );
-        let mut bank_client = BankClient::new_shared(bank.clone());
-        let bank = bank_client
-            .advance_slot(1, &bank_forks, SlotLeader::default())
-            .unwrap();
-
-        let mint_pubkey = mint_keypair.pubkey();
-
-        for deprecated in [false, true] {
-            let program_id = if deprecated {
-                deprecated_program_id
-            } else {
-                upgradeable_program_id
-            };
-
-            let account_metas = vec![
-                AccountMeta::new(mint_pubkey, true),
-                AccountMeta::new_readonly(program_id, false),
-                AccountMeta::new(account_keypair.pubkey(), false),
-            ];
-
-            let account = AccountSharedData::new(42, 1024, &program_id);
-            bank.store_account(&account_keypair.pubkey(), &account);
+        for account_data_len in [1024, 0] {
+            accounts
+                .iter_mut()
+                .find(|(pubkey, _)| pubkey == &account_keypair.pubkey())
+                .unwrap()
+                .1 = Account::new(42, account_data_len, &program_id);
 
             for instr in 0..=15 {
-                println!(
-                    "Testing deprecated:{deprecated} virtual_address_space_adjustments: \
-                     {virtual_address_space_adjustments} instruction:{instr}"
-                );
-                let instruction =
-                    Instruction::new_with_bytes(program_id, &[instr], account_metas.clone());
-
-                let message = Message::new(&[instruction], Some(&mint_pubkey));
-                let tx = Transaction::new(&[&mint_keypair], message.clone(), bank.last_blockhash());
-                let (result, _, logs, _) = process_transaction_and_record_inner(&bank, tx);
-                let last_line = logs.last().unwrap();
-
-                if virtual_address_space_adjustments {
-                    assert!(last_line.contains(" failed: Access violation"), "{logs:?}");
+                let instruction_data = if account_data_len == 0 {
+                    vec![instr, 0]
                 } else {
-                    assert!(result.is_ok(), "{logs:?}");
-                }
-            }
-
-            let account = AccountSharedData::new(42, 0, &program_id);
-            bank.store_account(&account_keypair.pubkey(), &account);
-
-            for instr in 0..=15 {
-                println!(
-                    "Testing deprecated:{deprecated} virtual_address_space_adjustments: \
-                     {virtual_address_space_adjustments} instruction:{instr} zero-length account"
+                    vec![instr]
+                };
+                let message = Message::new(
+                    &[Instruction::new_with_bytes(
+                        program_id,
+                        &instruction_data,
+                        account_metas.clone(),
+                    )],
+                    Some(&mint_keypair.pubkey()),
                 );
-                let instruction =
-                    Instruction::new_with_bytes(program_id, &[instr, 0], account_metas.clone());
+                let sanitized_message = SanitizedMessage::try_from_legacy_message(
+                    message,
+                    &ReservedAccountKeys::empty_key_set(),
+                )
+                .unwrap();
 
-                let message = Message::new(&[instruction], Some(&mint_pubkey));
-                let tx = Transaction::new(&[&mint_keypair], message.clone(), bank.last_blockhash());
-                let (result, _, logs, _) = process_transaction_and_record_inner(&bank, tx);
-                let last_line = logs.last().unwrap();
+                let context = TxnContext::new_with_default_budget(
+                    feature_set.clone(),
+                    accounts.clone(),
+                    sanitized_message,
+                    None,
+                );
+                let effects = execute_txn(&context, &mut program_cache, &sysvar_cache);
 
-                if virtual_address_space_adjustments && (!deprecated || instr < 8) {
+                if virtual_address_space_adjustments && account_data_len != 0 {
+                    assert!(
+                        effects
+                            .logs
+                            .last()
+                            .unwrap()
+                            .contains(" failed: Access violation"),
+                        "{:?}",
+                        effects.logs,
+                    );
+                } else if virtual_address_space_adjustments && (!deprecated || instr < 8) {
+                    let last_line = effects.logs.last().unwrap();
                     assert!(
                         last_line.contains(" failed: account data too small")
                             || last_line.contains(" failed: Failed to reallocate account data")
                             || last_line.contains(" failed: Access violation"),
-                        "{logs:?}",
+                        "{:?}",
+                        effects.logs,
                     );
                 } else {
                     // virtual_address_space_adjustments && deprecated && instr >= 8 succeeds with zero-length accounts
                     // because there is no MemoryRegion for the account,
                     // so there can be no error when leaving that non-existent region.
-                    assert!(result.is_ok(), "{logs:?}");
+                    assert_eq!(effects.status, Ok(()), "{:?}", effects.logs);
+                }
+
+                // Preserve Bank behavior: commit successful transaction effects for the next
+                // instruction, while leaving account state unchanged after failed transactions.
+                if effects.status.is_ok() {
+                    accounts = effects.resulting_accounts;
                 }
             }
         }
