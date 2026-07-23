@@ -8,7 +8,6 @@ use {
             merkle_tree::{SIZE_OF_MERKLE_PROOF_ENTRY, get_proof_size, verify_merkle_proof},
         },
     },
-    agave_feature_set::discard_unexpected_data_complete_shreds,
     assert_matches::assert_matches,
     rand::{rng, seq::SliceRandom},
     solana_entry::entry::next_entry_mut,
@@ -4716,9 +4715,7 @@ fn test_recovery_discards_unexpected_data_complete_shreds() {
     let blockstore = Blockstore::open(ledger_path.path()).unwrap();
 
     let genesis_config = create_genesis_config(2).genesis_config;
-    let mut root_bank = Bank::new_for_tests(&genesis_config);
-    root_bank.activate_feature(&discard_unexpected_data_complete_shreds::id());
-    let root_bank = Arc::new(root_bank);
+    let root_bank = Arc::new(Bank::new_for_tests(&genesis_config));
     let slot = root_bank.get_slots_in_epoch(root_bank.epoch());
     let reed_solomon_cache = ReedSolomonCache::default();
     let (data_shreds, coding_shreds, leader_keypair) =
