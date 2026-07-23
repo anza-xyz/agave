@@ -5078,16 +5078,9 @@ fn test_update_callee_account() {
     }
 }
 
-#[test]
-fn test_account_info_in_account() {
-    agave_logger::setup();
-
-    let GenesisConfigInfo {
-        genesis_config,
-        mint_keypair,
-        ..
-    } = create_genesis_config(100_123_456_789);
-
+#[test_case(false; "without_syscall_parameter_address_restrictions")]
+#[test_case(true; "with_syscall_parameter_address_restrictions")]
+fn test_account_info_in_account(syscall_parameter_address_restrictions: bool) {
     let mut programs = Vec::new();
     #[cfg(feature = "sbf_c")]
     {
@@ -5099,50 +5092,66 @@ fn test_account_info_in_account() {
     }
 
     for program in programs {
-        for syscall_parameter_address_restrictions in [false, true] {
-            let mut bank = Bank::new_for_tests(&genesis_config);
-            let feature_set = Arc::make_mut(&mut bank.feature_set);
-            // by default test banks have all features enabled, so we only need to
-            // disable when needed
-            if !syscall_parameter_address_restrictions {
-                feature_set.deactivate(&feature_set::syscall_parameter_address_restrictions::id());
-                feature_set.deactivate(&feature_set::virtual_address_space_adjustments::id());
-                feature_set.deactivate(&feature_set::account_data_direct_mapping::id());
-            }
+        let mut configured_feature_set = FeatureSet::all_enabled();
+        if !syscall_parameter_address_restrictions {
+            configured_feature_set
+                .deactivate(&feature_set::syscall_parameter_address_restrictions::id());
+            configured_feature_set
+                .deactivate(&feature_set::virtual_address_space_adjustments::id());
+            configured_feature_set.deactivate(&feature_set::account_data_direct_mapping::id());
+        }
 
-            let (bank, bank_forks) = bank.wrap_with_bank_forks_for_tests();
-            let invoke_program_id = create_program(&bank, &bpf_loader_upgradeable::id(), program);
-            let mut bank_client = BankClient::new_shared(bank.clone());
-            let bank = bank_client
-                .advance_slot(1, &bank_forks, SlotLeader::default())
-                .unwrap();
+        let (
+            payer,
+            mint_keypair,
+            account_keypair,
+            [invoke_program_id],
+            feature_set,
+            mut accounts,
+            mut program_cache,
+            sysvar_cache,
+        ) = program_sbf_txn_fixture_with_feature_set(
+            [(program, bpf_loader_upgradeable::id())],
+            configured_feature_set,
+        );
 
-            let account_keypair = Keypair::new();
+        let account_metas = vec![
+            AccountMeta::new(mint_keypair.pubkey(), true),
+            AccountMeta::new(account_keypair.pubkey(), false),
+            AccountMeta::new_readonly(invoke_program_id, false),
+        ];
 
-            let mint_pubkey = mint_keypair.pubkey();
+        let mut instruction_data = vec![TEST_ACCOUNT_INFO_IN_ACCOUNT];
+        instruction_data.extend_from_slice(32usize.to_le_bytes().as_ref());
 
-            let account_metas = vec![
-                AccountMeta::new(mint_pubkey, true),
-                AccountMeta::new(account_keypair.pubkey(), false),
-                AccountMeta::new_readonly(invoke_program_id, false),
-            ];
+        let message = Message::new(
+            &[Instruction::new_with_bytes(
+                invoke_program_id,
+                &instruction_data,
+                account_metas,
+            )],
+            Some(&payer),
+        );
+        let sanitized_message = SanitizedMessage::try_from_legacy_message(
+            message,
+            &ReservedAccountKeys::empty_key_set(),
+        )
+        .unwrap();
 
-            let mut instruction_data = vec![TEST_ACCOUNT_INFO_IN_ACCOUNT];
-            instruction_data.extend_from_slice(32usize.to_le_bytes().as_ref());
+        accounts
+            .iter_mut()
+            .find(|(pubkey, _)| pubkey == &account_keypair.pubkey())
+            .unwrap()
+            .1 = Account::new(42, 10240, &invoke_program_id);
 
-            let instruction =
-                Instruction::new_with_bytes(invoke_program_id, &instruction_data, account_metas);
+        let context =
+            TxnContext::new_with_default_budget(feature_set, accounts, sanitized_message, None);
 
-            let account = AccountSharedData::new(42, 10240, &invoke_program_id);
-
-            bank.store_account(&account_keypair.pubkey(), &account);
-
-            let result = bank_client.send_and_confirm_instruction(&mint_keypair, instruction);
-            if syscall_parameter_address_restrictions {
-                assert!(result.is_err());
-            } else {
-                assert!(result.is_ok());
-            }
+        let effects = execute_txn(&context, &mut program_cache, &sysvar_cache);
+        if syscall_parameter_address_restrictions {
+            assert!(effects.status.is_err(), "{program}: {:?}", effects.status);
+        } else {
+            assert_eq!(effects.status, Ok(()), "{program}");
         }
     }
 }
