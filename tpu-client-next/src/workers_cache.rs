@@ -1,13 +1,12 @@
-//! This module defines [`WorkersCache`] along with aux struct [`WorkerInfo`]. These
-//! structures provide mechanisms for caching workers, sending transaction
-//! batches, and gathering send transaction statistics.
+//! This module defines [`WorkersCache`] along with the auxiliary
+//! [`WorkerInfo`] struct. These structures provide mechanisms for caching
+//! workers, sending transactions, and gathering send transaction statistics.
 
 use {
     crate::{
-        SendTransactionStats,
+        SendTransactionStats, WireTransaction,
         connection_worker::ConnectionWorker,
         logging::{debug, trace},
-        transaction_batch::TransactionBatch,
     },
     lru::LruCache,
     quinn::Endpoint,
@@ -21,16 +20,16 @@ use {
 };
 
 /// [`WorkerInfo`] holds information about a worker responsible for sending
-/// transaction batches.
+/// transactions.
 pub struct WorkerInfo {
-    sender: mpsc::Sender<TransactionBatch>,
+    sender: mpsc::Sender<WireTransaction>,
     handle: JoinHandle<()>,
     cancel: CancellationToken,
 }
 
 impl WorkerInfo {
     pub fn new(
-        sender: mpsc::Sender<TransactionBatch>,
+        sender: mpsc::Sender<WireTransaction>,
         handle: JoinHandle<()>,
         cancel: CancellationToken,
     ) -> Self {
@@ -41,20 +40,20 @@ impl WorkerInfo {
         }
     }
 
-    fn try_send_transactions(&self, txs_batch: TransactionBatch) -> Result<(), WorkersCacheError> {
-        self.sender.try_send(txs_batch).map_err(|err| match err {
+    fn try_send_transaction(&self, transaction: WireTransaction) -> Result<(), WorkersCacheError> {
+        self.sender.try_send(transaction).map_err(|err| match err {
             TrySendError::Full(_) => WorkersCacheError::FullChannel,
             TrySendError::Closed(_) => WorkersCacheError::ReceiverDropped,
         })?;
         Ok(())
     }
 
-    async fn send_transactions(
+    async fn send_transaction(
         &self,
-        txs_batch: TransactionBatch,
+        transaction: WireTransaction,
     ) -> Result<(), WorkersCacheError> {
         self.sender
-            .send(txs_batch)
+            .send(transaction)
             .await
             .map_err(|_| WorkersCacheError::ReceiverDropped)?;
         Ok(())
@@ -87,14 +86,14 @@ pub fn spawn_worker(
     handshake_timeout: Duration,
     stats: Arc<SendTransactionStats>,
 ) -> WorkerInfo {
-    let (txs_sender, txs_receiver) = mpsc::channel(worker_channel_size);
+    let (transaction_sender, transaction_receiver) = mpsc::channel(worker_channel_size);
     let endpoint = endpoint.clone();
     let peer = *peer;
 
     let (mut worker, cancel) = ConnectionWorker::new(
         endpoint,
         peer,
-        txs_receiver,
+        transaction_receiver,
         max_reconnect_attempts,
         stats,
         handshake_timeout,
@@ -103,7 +102,7 @@ pub fn spawn_worker(
         worker.run().await;
     });
 
-    WorkerInfo::new(txs_sender, handle, cancel)
+    WorkerInfo::new(transaction_sender, handle, cancel)
 }
 
 /// [`WorkersCache`] manages and caches workers. It uses an LRU cache to store and
@@ -111,15 +110,15 @@ pub fn spawn_worker(
 pub struct WorkersCache {
     workers: LruCache<SocketAddr, WorkerInfo>,
 
-    /// Indicates that the `WorkersCache` is been `shutdown()`, interrupting any outstanding
-    /// `send_transactions_to_address()` invocations.
+    /// Indicates that the `WorkersCache` is being shut down, interrupting any
+    /// outstanding `send_transaction_to_address()` invocations.
     cancel: CancellationToken,
 }
 
 #[derive(Debug, Error, PartialEq)]
 pub enum WorkersCacheError {
-    /// typically happens when the client could not establish the connection.
-    #[error("Work receiver has been dropped unexpectedly.")]
+    /// Typically happens when the client could not establish the connection.
+    #[error("Worker receiver has been dropped unexpectedly.")]
     ReceiverDropped,
 
     #[error("Worker's channel is full.")]
@@ -128,7 +127,7 @@ pub enum WorkersCacheError {
     #[error("Task failed to join.")]
     TaskJoinFailure,
 
-    #[error("The WorkersCache is being shutdown.")]
+    #[error("The WorkersCache is being shut down.")]
     ShutdownError,
 
     #[error("No worker exists for the specified peer.")]
@@ -182,7 +181,7 @@ impl WorkersCache {
         stats: Arc<SendTransactionStats>,
     ) -> Option<ShutdownWorker> {
         if let Some(worker) = self.workers.get(&peer) {
-            // if worker is active, we will reuse it. Otherwise, we will spawn
+            // If the worker is active, we will reuse it. Otherwise, we will spawn
             // the new one and the existing will be popped out.
             if worker.is_active() {
                 return None;
@@ -202,25 +201,25 @@ impl WorkersCache {
         self.push(peer, worker)
     }
 
-    /// Attempts to send immediately a batch of transactions to the worker for a
-    /// given peer.
+    /// Attempts to immediately send a transaction to the worker for a given
+    /// peer.
     ///
-    /// This method returns immediately if the channel of worker corresponding
-    /// to this peer is full returning error [`WorkersCacheError::FullChannel`].
+    /// This method returns immediately if the worker channel corresponding to
+    /// this peer is full, returning [`WorkersCacheError::FullChannel`].
     /// If no worker exists for the peer, it returns
     /// [`WorkersCacheError::WorkerNotFound`]. If it happens that the peer's
-    /// worker is stopped, it returns [`WorkersCacheError::ShutdownError`].
-    /// In case if the worker is not stopped but it's channel is unexpectedly
-    /// dropped, it returns [`WorkersCacheError::ReceiverDropped`].
+    /// worker is stopped, it returns [`WorkersCacheError::ShutdownError`]. If
+    /// the worker is not stopped but its channel is unexpectedly dropped, it
+    /// returns [`WorkersCacheError::ReceiverDropped`].
     ///
     /// Note: The worker existence check is necessary because workers can fail
     /// asynchronously between creation and sending. Worker tasks may exit
     /// due to connection failures, network issues, or cache evictions,
     /// making a previously created worker unavailable.
-    pub fn try_send_transactions_to_address(
+    pub fn try_send_transaction_to_address(
         &mut self,
         peer: &SocketAddr,
-        txs_batch: TransactionBatch,
+        transaction: WireTransaction,
     ) -> Result<(), WorkersCacheError> {
         let Self {
             workers, cancel, ..
@@ -231,11 +230,11 @@ impl WorkersCache {
 
         let current_worker = workers.get(peer).ok_or(WorkersCacheError::WorkerNotFound)?;
 
-        let send_res = current_worker.try_send_transactions(txs_batch);
+        let send_res = current_worker.try_send_transaction(transaction);
 
         if let Err(WorkersCacheError::ReceiverDropped) = send_res {
             debug!(
-                "Failed to deliver transaction batch for leader {}, drop batch.",
+                "Failed to deliver transaction for leader {}, drop transaction.",
                 peer.ip()
             );
             if let Some(current_worker) = workers.pop(peer) {
@@ -249,15 +248,15 @@ impl WorkersCache {
         send_res
     }
 
-    /// Sends a batch of transactions to the worker for a given peer.
+    /// Sends a transaction to the worker for a given peer.
     ///
     /// If the worker for the peer is disconnected or fails, it
     /// is removed from the cache. If no worker exists for the peer,
     /// it returns [`WorkersCacheError::WorkerNotFound`].
-    pub async fn send_transactions_to_address(
+    pub async fn send_transaction_to_address(
         &mut self,
         peer: &SocketAddr,
-        txs_batch: TransactionBatch,
+        transaction: WireTransaction,
     ) -> Result<(), WorkersCacheError> {
         let Self {
             workers, cancel, ..
@@ -266,7 +265,7 @@ impl WorkersCache {
         let body = async move {
             let current_worker = workers.get(peer).ok_or(WorkersCacheError::WorkerNotFound)?;
 
-            let send_res = current_worker.send_transactions(txs_batch).await;
+            let send_res = current_worker.send_transaction(transaction).await;
             if let Err(WorkersCacheError::ReceiverDropped) = send_res {
                 // Remove the worker from the cache, if the peer has disconnected.
                 if let Some(current_worker) = workers.pop(peer) {
@@ -303,7 +302,7 @@ impl WorkersCache {
     /// The method awaits the completion of all shutdown tasks, ensuring that
     /// each worker is properly terminated.
     pub async fn shutdown(&mut self) {
-        // Interrupt any outstanding `send_transactions()` calls.
+        // Interrupt any outstanding `send_transaction_to_address()` calls.
         self.cancel.cancel();
 
         let mut tasks = JoinSet::new();
@@ -322,9 +321,9 @@ impl WorkersCache {
     }
 }
 
-/// [`ShutdownWorker`] takes care of stopping the worker. It's method
+/// [`ShutdownWorker`] takes care of stopping the worker. Its method
 /// `shutdown()` should be executed in a separate task to hide the latency of
-/// finishing worker gracefully.
+/// letting the worker finish gracefully.
 pub struct ShutdownWorker {
     leader: SocketAddr,
     worker: WorkerInfo,
@@ -359,7 +358,6 @@ mod tests {
             connection_workers_scheduler::BindTarget,
             quic_networking::{create_client_config, create_client_endpoint},
             send_transaction_stats::SendTransactionStatsNonAtomic,
-            transaction_batch::TransactionBatch,
             workers_cache::{WorkersCache, WorkersCacheError, spawn_worker},
         },
         quinn::Endpoint,
@@ -479,8 +477,7 @@ mod tests {
         assert!(!worker_info.is_active(), "Worker should be inactive");
 
         // try to send to this worker — should fail and remove the worker
-        let result = cache
-            .try_send_transactions_to_address(&peer, TransactionBatch::new(vec![vec![0u8; 1]]));
+        let result = cache.try_send_transaction_to_address(&peer, vec![0u8; 1].into());
 
         assert_eq!(result, Err(WorkersCacheError::ReceiverDropped));
         assert!(

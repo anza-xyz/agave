@@ -4,11 +4,10 @@
 use {
     super::SendTransactionStats,
     crate::{
-        QuicError,
+        QuicError, WireTransaction,
         logging::{debug, error, trace, warn},
         quic_networking::send_data_over_stream,
         send_transaction_stats::record_error,
-        transaction_batch::TransactionBatch,
     },
     quinn::{ConnectError, Connection, ConnectionError, Endpoint},
     solana_clock::DEFAULT_MS_PER_SLOT,
@@ -71,25 +70,25 @@ impl Drop for ConnectionState {
 /// for send failures.
 /// If connection has been closed, [`ConnectionWorker`] tries to reconnect
 /// `max_reconnect_attempts` times. If connection is in `Active` state, it sends
-/// transactions received from `transactions_receiver`. Additionally, it
+/// transactions received from `transaction_receiver`. Additionally, it
 /// accumulates statistics about connections and streams failures.
 pub(crate) struct ConnectionWorker {
     endpoint: Endpoint,
     peer: SocketAddr,
-    transactions_receiver: mpsc::Receiver<TransactionBatch>,
+    transaction_receiver: mpsc::Receiver<WireTransaction>,
     connection: ConnectionState,
     last_congestion_events: u64,
     max_reconnect_attempts: usize,
-    send_txs_stats: Arc<SendTransactionStats>,
-    cancel: CancellationToken,
+    send_transaction_stats: Arc<SendTransactionStats>,
     handshake_timeout: Duration,
+    cancel: CancellationToken,
 }
 
 impl ConnectionWorker {
     /// Constructs a [`ConnectionWorker`].
     ///
     /// [`ConnectionWorker`] maintains a connection to a `peer` and processes
-    /// transactions from `transactions_receiver`. The `max_reconnect_attempts`
+    /// transactions from `transaction_receiver`. The `max_reconnect_attempts`
     /// parameter controls how many times the worker will attempt to reconnect
     /// in case of connection failure. Returns the created `ConnectionWorker`
     /// along with a cancellation token that can be used by the caller to stop
@@ -97,22 +96,22 @@ impl ConnectionWorker {
     pub fn new(
         endpoint: Endpoint,
         peer: SocketAddr,
-        transactions_receiver: mpsc::Receiver<TransactionBatch>,
+        transaction_receiver: mpsc::Receiver<WireTransaction>,
         max_reconnect_attempts: usize,
-        send_txs_stats: Arc<SendTransactionStats>,
+        send_transaction_stats: Arc<SendTransactionStats>,
         handshake_timeout: Duration,
     ) -> (Self, CancellationToken) {
         let cancel = CancellationToken::new();
         let this = Self {
             endpoint,
             peer,
-            transactions_receiver,
+            transaction_receiver,
             connection: ConnectionState::NotSetup,
-            max_reconnect_attempts,
-            send_txs_stats,
-            cancel: cancel.clone(),
-            handshake_timeout,
             last_congestion_events: 0,
+            max_reconnect_attempts,
+            send_transaction_stats,
+            handshake_timeout,
+            cancel: cancel.clone(),
         };
 
         (this, cancel)
@@ -139,17 +138,20 @@ impl ConnectionWorker {
                     ConnectionState::Active(connection) => {
                         tokio::select! {
                             // Process incoming transactions
-                            transactions = self.transactions_receiver.recv() => {
-                                match transactions {
-                                    Some(batch) => {
-                                        self.send_transactions(connection.clone(), batch).await;
+                            transaction = self.transaction_receiver.recv() => {
+                                match transaction {
+                                    Some(transaction) => {
+                                        self
+                                            .send_transaction(connection.clone(), transaction)
+                                            .await;
                                     }
                                     None => {
                                         debug!(
-                                            "Transactions sender has been dropped for peer: {}",
+                                            "Transaction sender has been dropped for peer: {}",
                                             self.peer
                                         );
                                         self.connection = ConnectionState::Closing;
+                                        continue;
                                     }
                                 }
                             }
@@ -236,7 +238,7 @@ impl ConnectionWorker {
             }
         }
 
-        record_error(close_reason.clone().into(), &self.send_txs_stats);
+        record_error(close_reason.clone().into(), &self.send_transaction_stats);
 
         // Determine next state based on close reason
         // Fatal errors transition to Closing, recoverable errors transition to Retry
@@ -248,52 +250,40 @@ impl ConnectionWorker {
         };
     }
 
-    /// Sends a batch of transactions using the provided `connection`.
+    /// Sends a transaction using the provided `connection`.
     ///
-    /// Each transaction in the batch is sent over the QUIC streams one at the
-    /// time, which prevents traffic fragmentation and shows better TPS in
-    /// comparison with multistream send.
-    ///
-    /// The method checks connection health before sending each transaction to
-    /// avoid operations on a closed connection. In case of error, it doesn't
-    /// retry to send the same transactions again but transitions to retry state.
-    async fn send_transactions(&mut self, connection: Connection, transactions: TransactionBatch) {
-        let mut measure_send = Measure::start("send transaction batch");
-        for data in transactions.into_iter() {
-            // Check connection health before each send
-            if connection.close_reason().is_some() {
-                debug!("Connection closed during transaction batch sending");
-                self.connection = ConnectionState::Retry(1);
-                break;
-            }
+    /// In case of error, it doesn't retry to send the same transaction again
+    /// but transitions to retry state.
+    async fn send_transaction(&mut self, connection: Connection, transaction: WireTransaction) {
+        let mut measure_send = Measure::start("send transaction");
+        let result = send_data_over_stream(&connection, transaction).await;
 
-            let result = send_data_over_stream(&connection, &data).await;
-
-            if let Err(error) = result {
-                trace!(
-                    "Failed to send transaction to {} over stream with error: {error}",
-                    self.peer
-                );
-                record_error(error, &self.send_txs_stats);
-                self.connection = ConnectionState::Retry(1);
-                // Exit early since connection is likely broken
-                break;
-            } else {
-                let events = connection.stats().path.congestion_events;
-                self.send_txs_stats.transport_congestion_events.fetch_add(
-                    events.saturating_sub(self.last_congestion_events),
+        if let Err(error) = result {
+            trace!(
+                "Failed to send transaction to {} over stream with error: {error}",
+                self.peer
+            );
+            record_error(error, &self.send_transaction_stats);
+            self.connection = ConnectionState::Retry(1);
+            // Exit early since connection is likely broken
+            return;
+        } else {
+            let events = connection.stats().path.congestion_events;
+            self.send_transaction_stats
+                .transport_congestion_events
+                .fetch_add(
+                    self.last_congestion_events.saturating_sub(events),
                     Ordering::Relaxed,
                 );
-                self.last_congestion_events = events;
+            self.last_congestion_events = events;
 
-                self.send_txs_stats
-                    .successfully_sent
-                    .fetch_add(1, Ordering::Relaxed);
-            }
+            self.send_transaction_stats
+                .successfully_sent
+                .fetch_add(1, Ordering::Relaxed);
         }
         measure_send.stop();
         debug!(
-            "Time to send transactions batch to {}: {} us",
+            "Time to send transaction to {}: {} us",
             self.peer,
             measure_send.as_us()
         );
@@ -325,7 +315,7 @@ impl ConnectionWorker {
                     }
                     Ok(Err(err)) => {
                         warn!("Connection error {}: {}", self.peer, err);
-                        record_error(err.into(), &self.send_txs_stats);
+                        record_error(err.into(), &self.send_transaction_stats);
                         self.connection = ConnectionState::Retry(retries_attempt.saturating_add(1));
                     }
                     Err(_) => {
@@ -333,13 +323,16 @@ impl ConnectionWorker {
                             "Connection to {} timed out after {:?}",
                             self.peer, self.handshake_timeout
                         );
-                        record_error(QuicError::HandshakeTimeout, &self.send_txs_stats);
+                        record_error(QuicError::HandshakeTimeout, &self.send_transaction_stats);
                         self.connection = ConnectionState::Retry(retries_attempt.saturating_add(1));
                     }
                 }
             }
             Err(connecting_error) => {
-                record_error(connecting_error.clone().into(), &self.send_txs_stats);
+                record_error(
+                    connecting_error.clone().into(),
+                    &self.send_transaction_stats,
+                );
                 match connecting_error {
                     ConnectError::EndpointStopping => {
                         debug!(
