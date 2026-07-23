@@ -1248,16 +1248,13 @@ impl AccountsDb {
                 reclaims
                     .par_iter()
                     .for_each(|(reclaimed_item, newest_slot)| {
-                        let (purged_account_slots, _reclaimed_offsets) = self.handle_reclaims(
+                        self.handle_reclaims(
                             iter::once(reclaimed_item),
                             None,
                             &HashSet::new(),
                             &self.clean_accounts_stats.purge_stats,
                             MarkAccountsObsolete::Yes(*newest_slot),
                         );
-                        // Marking the reclaims obsolete skips dead-slot handling in
-                        // handle_reclaims, so no whole slots are purged here.
-                        assert!(purged_account_slots.is_empty());
                     });
             });
         });
@@ -2344,8 +2341,7 @@ impl AccountsDb {
         pubkeys_removed_from_accounts_index: &PubkeysRemovedFromAccountsIndex,
         purge_stats: &PurgeStats,
         mark_accounts_obsolete: MarkAccountsObsolete,
-    ) -> ReclaimResult
-    where
+    ) where
         I: Iterator<Item = &'a (Slot, AccountInfo)>,
     {
         let mut reclaim_result = ReclaimResult::default();
@@ -2369,7 +2365,6 @@ impl AccountsDb {
             pubkeys_removed_from_accounts_index,
             clean_stored_dead_slots,
         );
-        reclaim_result
     }
 
     /// During clean, some zero-lamport accounts that are marked for purge should *not* actually
