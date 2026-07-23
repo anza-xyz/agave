@@ -4807,278 +4807,345 @@ fn test_deny_executable_write(virtual_address_space_adjustments: bool) {
     );
 }
 
-#[test]
-fn test_update_callee_account() {
-    // Test that fn update_callee_account() works and we are updating the callee account on CPI.
-    agave_logger::setup();
+// Test that fn update_callee_account() works and we are updating the callee account on CPI.
+#[test_case(false; "without_virtual_address_space_adjustments")]
+#[test_case(true; "with_virtual_address_space_adjustments")]
+#[cfg(feature = "sbf_rust")]
+fn test_update_callee_account(virtual_address_space_adjustments: bool) {
+    let mut configured_feature_set = FeatureSet::all_enabled();
+    if !virtual_address_space_adjustments {
+        configured_feature_set
+            .deactivate(&feature_set::syscall_parameter_address_restrictions::id());
+        configured_feature_set.deactivate(&feature_set::virtual_address_space_adjustments::id());
+        configured_feature_set.deactivate(&feature_set::account_data_direct_mapping::id());
+    }
 
-    let GenesisConfigInfo {
-        genesis_config,
+    let (
+        _,
         mint_keypair,
-        ..
-    } = create_genesis_config(100_123_456_789);
+        account_keypair,
+        [invoke_program_id],
+        feature_set,
+        mut accounts,
+        mut program_cache,
+        sysvar_cache,
+    ) = program_sbf_txn_fixture_with_feature_set(
+        [("solana_sbf_rust_invoke", bpf_loader_upgradeable::id())],
+        configured_feature_set,
+    );
 
-    for virtual_address_space_adjustments in [false, true] {
-        let mut bank = Bank::new_for_tests(&genesis_config);
-        let feature_set = Arc::make_mut(&mut bank.feature_set);
-        // by default test banks have all features enabled, so we only need to
-        // disable when needed
-        if !virtual_address_space_adjustments {
-            feature_set.deactivate(&feature_set::syscall_parameter_address_restrictions::id());
-            feature_set.deactivate(&feature_set::virtual_address_space_adjustments::id());
-            feature_set.deactivate(&feature_set::account_data_direct_mapping::id());
-        }
-        let (bank, bank_forks) = bank.wrap_with_bank_forks_for_tests();
-        let invoke_program_id = create_program(
-            &bank,
-            &bpf_loader_upgradeable::id(),
-            "solana_sbf_rust_invoke",
-        );
-        let mut bank_client = BankClient::new_shared(bank.clone());
-        let bank = bank_client
-            .advance_slot(1, &bank_forks, SlotLeader::default())
-            .unwrap();
+    let account_metas = vec![
+        AccountMeta::new(mint_keypair.pubkey(), true),
+        AccountMeta::new(account_keypair.pubkey(), false),
+        AccountMeta::new_readonly(invoke_program_id, false),
+    ];
 
-        let account_keypair = Keypair::new();
+    // I. do CPI with account in read only (separate code path with virtual_address_space_adjustments)
+    let mut account = Account::new(42, 10240, &invoke_program_id);
+    let data: Vec<u8> = (0..10240).map(|n| n as u8).collect();
+    account.data = data;
+    accounts
+        .iter_mut()
+        .find(|(pubkey, _)| pubkey == &account_keypair.pubkey())
+        .unwrap()
+        .1 = account;
 
-        let mint_pubkey = mint_keypair.pubkey();
+    let mut instruction_data = vec![TEST_CALLEE_ACCOUNT_UPDATES, 0, 0];
+    instruction_data.extend_from_slice(20480usize.to_le_bytes().as_ref());
+    instruction_data.extend_from_slice(0usize.to_le_bytes().as_ref());
+    instruction_data.extend_from_slice(16384usize.to_le_bytes().as_ref());
+    // instruction data for inner CPI (2x)
+    instruction_data.extend_from_slice(&[TEST_CALLEE_ACCOUNT_UPDATES, 0, 0]);
+    instruction_data.extend_from_slice(0usize.to_le_bytes().as_ref());
+    instruction_data.extend_from_slice(0usize.to_le_bytes().as_ref());
+    instruction_data.extend_from_slice(0usize.to_le_bytes().as_ref());
 
-        let account_metas = vec![
-            AccountMeta::new(mint_pubkey, true),
-            AccountMeta::new(account_keypair.pubkey(), false),
-            AccountMeta::new_readonly(invoke_program_id, false),
-        ];
+    instruction_data.extend_from_slice(&[TEST_CALLEE_ACCOUNT_UPDATES, 0, 0]);
+    instruction_data.extend_from_slice(0usize.to_le_bytes().as_ref());
+    instruction_data.extend_from_slice(0usize.to_le_bytes().as_ref());
+    instruction_data.extend_from_slice(0usize.to_le_bytes().as_ref());
 
-        // I. do CPI with account in read only (separate code path with virtual_address_space_adjustments)
-        let mut account = AccountSharedData::new(42, 10240, &invoke_program_id);
-        let data: Vec<u8> = (0..10240).map(|n| n as u8).collect();
-        account.set_data(data);
-
-        bank.store_account(&account_keypair.pubkey(), &account);
-
-        let mut instruction_data = vec![TEST_CALLEE_ACCOUNT_UPDATES, 0, 0];
-        instruction_data.extend_from_slice(20480usize.to_le_bytes().as_ref());
-        instruction_data.extend_from_slice(0usize.to_le_bytes().as_ref());
-        instruction_data.extend_from_slice(16384usize.to_le_bytes().as_ref());
-        // instruction data for inner CPI (2x)
-        instruction_data.extend_from_slice(&[TEST_CALLEE_ACCOUNT_UPDATES, 0, 0]);
-        instruction_data.extend_from_slice(0usize.to_le_bytes().as_ref());
-        instruction_data.extend_from_slice(0usize.to_le_bytes().as_ref());
-        instruction_data.extend_from_slice(0usize.to_le_bytes().as_ref());
-
-        instruction_data.extend_from_slice(&[TEST_CALLEE_ACCOUNT_UPDATES, 0, 0]);
-        instruction_data.extend_from_slice(0usize.to_le_bytes().as_ref());
-        instruction_data.extend_from_slice(0usize.to_le_bytes().as_ref());
-        instruction_data.extend_from_slice(0usize.to_le_bytes().as_ref());
-
-        let instruction = Instruction::new_with_bytes(
+    let message = Message::new(
+        &[Instruction::new_with_bytes(
             invoke_program_id,
             &instruction_data,
             account_metas.clone(),
-        );
-        let result = bank_client.send_and_confirm_instruction(&mint_keypair, instruction);
-        assert!(result.is_ok());
-
-        let data = bank_client
-            .get_account_data(&account_keypair.pubkey())
-            .unwrap()
+        )],
+        Some(&mint_keypair.pubkey()),
+    );
+    let sanitized_message =
+        SanitizedMessage::try_from_legacy_message(message, &ReservedAccountKeys::empty_key_set())
             .unwrap();
 
-        assert_eq!(data.len(), 20480);
+    let context = TxnContext::new_with_default_budget(
+        feature_set.clone(),
+        accounts.clone(),
+        sanitized_message,
+        None,
+    );
+
+    let effects = execute_txn(&context, &mut program_cache, &sysvar_cache);
+    assert_eq!(effects.status, Ok(()), "{:?}", effects.logs);
+
+    let data = &effects.get_account(&account_keypair.pubkey()).unwrap().data;
+    assert_eq!(data.len(), 20480);
+
+    data.iter().enumerate().for_each(|(i, v)| {
+        let expected = match i {
+            ..=10240 => i as u8,
+            16384 => 0xe5,
+            _ => 0,
+        };
+
+        assert_eq!(*v, expected, "offset:{i} {v:#x} != {expected:#x}");
+    });
+
+    // Preserve Bank behavior by committing successful transaction effects.
+    accounts = effects.resulting_accounts;
+
+    // II. do CPI with account with resize to smaller and write
+    let mut account = Account::new(42, 10240, &invoke_program_id);
+    let data: Vec<u8> = (0..10240).map(|n| n as u8).collect();
+    account.data = data;
+    accounts
+        .iter_mut()
+        .find(|(pubkey, _)| pubkey == &account_keypair.pubkey())
+        .unwrap()
+        .1 = account;
+
+    let mut instruction_data = vec![TEST_CALLEE_ACCOUNT_UPDATES, 1, 0];
+    instruction_data.extend_from_slice(20480usize.to_le_bytes().as_ref());
+    instruction_data.extend_from_slice(0usize.to_le_bytes().as_ref());
+    instruction_data.extend_from_slice(16384usize.to_le_bytes().as_ref());
+    // instruction data for inner CPI
+    instruction_data.extend_from_slice(&[TEST_CALLEE_ACCOUNT_UPDATES, 0, 0]);
+    instruction_data.extend_from_slice(19480usize.to_le_bytes().as_ref());
+    instruction_data.extend_from_slice(0usize.to_le_bytes().as_ref());
+    instruction_data.extend_from_slice(8129usize.to_le_bytes().as_ref());
+
+    let message = Message::new(
+        &[Instruction::new_with_bytes(
+            invoke_program_id,
+            &instruction_data,
+            account_metas.clone(),
+        )],
+        Some(&mint_keypair.pubkey()),
+    );
+    let sanitized_message =
+        SanitizedMessage::try_from_legacy_message(message, &ReservedAccountKeys::empty_key_set())
+            .unwrap();
+
+    let context = TxnContext::new_with_default_budget(
+        feature_set.clone(),
+        accounts.clone(),
+        sanitized_message,
+        None,
+    );
+
+    let effects = execute_txn(&context, &mut program_cache, &sysvar_cache);
+    assert_eq!(effects.status, Ok(()), "{:?}", effects.logs);
+
+    let data = &effects.get_account(&account_keypair.pubkey()).unwrap().data;
+    assert_eq!(data.len(), 19480);
+
+    data.iter().enumerate().for_each(|(i, v)| {
+        let expected = match i {
+            8129 => (i as u8) ^ 0xe5,
+            ..=10240 => i as u8,
+            16384 => 0xe5,
+            _ => 0,
+        };
+
+        assert_eq!(*v, expected, "offset:{i} {v:#x} != {expected:#x}");
+    });
+
+    accounts = effects.resulting_accounts;
+
+    // III. do CPI with account with resize to larger and write
+    let mut account = Account::new(42, 10240, &invoke_program_id);
+    let data: Vec<u8> = (0..10240).map(|n| n as u8).collect();
+    account.data = data;
+    accounts
+        .iter_mut()
+        .find(|(pubkey, _)| pubkey == &account_keypair.pubkey())
+        .unwrap()
+        .1 = account;
+
+    let mut instruction_data = vec![TEST_CALLEE_ACCOUNT_UPDATES, 1, 0];
+    instruction_data.extend_from_slice(16384usize.to_le_bytes().as_ref());
+    instruction_data.extend_from_slice(0usize.to_le_bytes().as_ref());
+    instruction_data.extend_from_slice(16384usize.to_le_bytes().as_ref());
+    // instruction data for inner CPI
+    instruction_data.extend_from_slice(&[TEST_CALLEE_ACCOUNT_UPDATES, 0, 0]);
+    instruction_data.extend_from_slice(20480usize.to_le_bytes().as_ref());
+    instruction_data.extend_from_slice(0usize.to_le_bytes().as_ref());
+    instruction_data.extend_from_slice(16385usize.to_le_bytes().as_ref());
+
+    let message = Message::new(
+        &[Instruction::new_with_bytes(
+            invoke_program_id,
+            &instruction_data,
+            account_metas.clone(),
+        )],
+        Some(&mint_keypair.pubkey()),
+    );
+    let sanitized_message =
+        SanitizedMessage::try_from_legacy_message(message, &ReservedAccountKeys::empty_key_set())
+            .unwrap();
+
+    let context = TxnContext::new_with_default_budget(
+        feature_set.clone(),
+        accounts.clone(),
+        sanitized_message,
+        None,
+    );
+
+    let effects = execute_txn(&context, &mut program_cache, &sysvar_cache);
+    assert_eq!(effects.status, Ok(()), "{:?}", effects.logs);
+
+    let data = &effects.get_account(&account_keypair.pubkey()).unwrap().data;
+    assert_eq!(data.len(), 20480);
+
+    data.iter().enumerate().for_each(|(i, v)| {
+        let expected = match i {
+            ..=10240 => i as u8,
+            16384 | 16385 => 0xe5,
+            _ => 0,
+        };
+
+        assert_eq!(*v, expected, "offset:{i} {v:#x} != {expected:#x}");
+    });
+
+    accounts = effects.resulting_accounts;
+
+    // IV. do CPI with account with resize to larger and write
+    let mut account = Account::new(42, 10240, &invoke_program_id);
+    let data: Vec<u8> = (0..10240).map(|n| n as u8).collect();
+    account.data = data;
+    accounts
+        .iter_mut()
+        .find(|(pubkey, _)| pubkey == &account_keypair.pubkey())
+        .unwrap()
+        .1 = account;
+
+    let mut instruction_data = vec![TEST_CALLEE_ACCOUNT_UPDATES, 1, 0];
+    instruction_data.extend_from_slice(16384usize.to_le_bytes().as_ref());
+    instruction_data.extend_from_slice(0usize.to_le_bytes().as_ref());
+    instruction_data.extend_from_slice(16384usize.to_le_bytes().as_ref());
+    // instruction data for inner CPI (2x)
+    instruction_data.extend_from_slice(&[TEST_CALLEE_ACCOUNT_UPDATES, 1, 0]);
+    instruction_data.extend_from_slice(0usize.to_le_bytes().as_ref());
+    instruction_data.extend_from_slice(0usize.to_le_bytes().as_ref());
+    instruction_data.extend_from_slice(0usize.to_le_bytes().as_ref());
+
+    instruction_data.extend_from_slice(&[TEST_CALLEE_ACCOUNT_UPDATES, 1, 0]);
+    instruction_data.extend_from_slice(0usize.to_le_bytes().as_ref());
+    instruction_data.extend_from_slice(0usize.to_le_bytes().as_ref());
+    instruction_data.extend_from_slice(0usize.to_le_bytes().as_ref());
+    // instruction data for inner CPI
+    instruction_data.extend_from_slice(&[TEST_CALLEE_ACCOUNT_UPDATES, 0, 0]);
+    instruction_data.extend_from_slice(20480usize.to_le_bytes().as_ref());
+    instruction_data.extend_from_slice(0usize.to_le_bytes().as_ref());
+    instruction_data.extend_from_slice(16385usize.to_le_bytes().as_ref());
+
+    let message = Message::new(
+        &[Instruction::new_with_bytes(
+            invoke_program_id,
+            &instruction_data,
+            account_metas.clone(),
+        )],
+        Some(&mint_keypair.pubkey()),
+    );
+    let sanitized_message =
+        SanitizedMessage::try_from_legacy_message(message, &ReservedAccountKeys::empty_key_set())
+            .unwrap();
+
+    let context = TxnContext::new_with_default_budget(
+        feature_set.clone(),
+        accounts.clone(),
+        sanitized_message,
+        None,
+    );
+
+    let effects = execute_txn(&context, &mut program_cache, &sysvar_cache);
+    assert_eq!(effects.status, Ok(()), "{:?}", effects.logs);
+
+    let data = &effects.get_account(&account_keypair.pubkey()).unwrap().data;
+    assert_eq!(data.len(), 20480);
+
+    data.iter().enumerate().for_each(|(i, v)| {
+        let expected = match i {
+            ..=10240 => i as u8,
+            16384 | 16385 => 0xe5,
+            _ => 0,
+        };
+
+        assert_eq!(*v, expected, "offset:{i} {v:#x} != {expected:#x}");
+    });
+
+    accounts = effects.resulting_accounts;
+
+    // V. clone data, modify and CPI
+    let mut account = Account::new(42, 10240, &invoke_program_id);
+    let data: Vec<u8> = (0..10240).map(|n| n as u8).collect();
+    account.data = data;
+    accounts
+        .iter_mut()
+        .find(|(pubkey, _)| pubkey == &account_keypair.pubkey())
+        .unwrap()
+        .1 = account;
+
+    let mut instruction_data = vec![TEST_CALLEE_ACCOUNT_UPDATES, 1, 1];
+    instruction_data.extend_from_slice(0usize.to_le_bytes().as_ref());
+    instruction_data.extend_from_slice(0usize.to_le_bytes().as_ref());
+    instruction_data.extend_from_slice(8190usize.to_le_bytes().as_ref());
+
+    // instruction data for inner CPI
+    instruction_data.extend_from_slice(&[TEST_CALLEE_ACCOUNT_UPDATES, 1, 0]);
+    instruction_data.extend_from_slice(0usize.to_le_bytes().as_ref());
+    instruction_data.extend_from_slice(0usize.to_le_bytes().as_ref());
+    instruction_data.extend_from_slice(8191usize.to_le_bytes().as_ref());
+
+    let message = Message::new(
+        &[Instruction::new_with_bytes(
+            invoke_program_id,
+            &instruction_data,
+            account_metas.clone(),
+        )],
+        Some(&mint_keypair.pubkey()),
+    );
+    let sanitized_message =
+        SanitizedMessage::try_from_legacy_message(message, &ReservedAccountKeys::empty_key_set())
+            .unwrap();
+
+    let context = TxnContext::new_with_default_budget(
+        feature_set.clone(),
+        accounts.clone(),
+        sanitized_message,
+        None,
+    );
+
+    let effects = execute_txn(&context, &mut program_cache, &sysvar_cache);
+
+    if virtual_address_space_adjustments {
+        // changing the data pointer is not permitted
+        assert!(effects.status.is_err(), "{:?}", effects.logs);
+    } else {
+        assert_eq!(effects.status, Ok(()), "{:?}", effects.logs);
+
+        let data = &effects.get_account(&account_keypair.pubkey()).unwrap().data;
+        assert_eq!(data.len(), 10240);
 
         data.iter().enumerate().for_each(|(i, v)| {
             let expected = match i {
+                // since the data is was cloned, the write to 8191 was lost
+                8190 => (i as u8) ^ 0xe5,
                 ..=10240 => i as u8,
-                16384 => 0xe5,
                 _ => 0,
             };
 
             assert_eq!(*v, expected, "offset:{i} {v:#x} != {expected:#x}");
         });
-
-        // II. do CPI with account with resize to smaller and write
-        let mut account = AccountSharedData::new(42, 10240, &invoke_program_id);
-        let data: Vec<u8> = (0..10240).map(|n| n as u8).collect();
-        account.set_data(data);
-        bank.store_account(&account_keypair.pubkey(), &account);
-
-        let mut instruction_data = vec![TEST_CALLEE_ACCOUNT_UPDATES, 1, 0];
-        instruction_data.extend_from_slice(20480usize.to_le_bytes().as_ref());
-        instruction_data.extend_from_slice(0usize.to_le_bytes().as_ref());
-        instruction_data.extend_from_slice(16384usize.to_le_bytes().as_ref());
-        // instruction data for inner CPI
-        instruction_data.extend_from_slice(&[TEST_CALLEE_ACCOUNT_UPDATES, 0, 0]);
-        instruction_data.extend_from_slice(19480usize.to_le_bytes().as_ref());
-        instruction_data.extend_from_slice(0usize.to_le_bytes().as_ref());
-        instruction_data.extend_from_slice(8129usize.to_le_bytes().as_ref());
-
-        let instruction = Instruction::new_with_bytes(
-            invoke_program_id,
-            &instruction_data,
-            account_metas.clone(),
-        );
-        let result = bank_client.send_and_confirm_instruction(&mint_keypair, instruction);
-        assert!(result.is_ok());
-
-        let data = bank_client
-            .get_account_data(&account_keypair.pubkey())
-            .unwrap()
-            .unwrap();
-
-        assert_eq!(data.len(), 19480);
-
-        data.iter().enumerate().for_each(|(i, v)| {
-            let expected = match i {
-                8129 => (i as u8) ^ 0xe5,
-                ..=10240 => i as u8,
-                16384 => 0xe5,
-                _ => 0,
-            };
-
-            assert_eq!(*v, expected, "offset:{i} {v:#x} != {expected:#x}");
-        });
-
-        // III. do CPI with account with resize to larger and write
-        let mut account = AccountSharedData::new(42, 10240, &invoke_program_id);
-        let data: Vec<u8> = (0..10240).map(|n| n as u8).collect();
-        account.set_data(data);
-        bank.store_account(&account_keypair.pubkey(), &account);
-
-        let mut instruction_data = vec![TEST_CALLEE_ACCOUNT_UPDATES, 1, 0];
-        instruction_data.extend_from_slice(16384usize.to_le_bytes().as_ref());
-        instruction_data.extend_from_slice(0usize.to_le_bytes().as_ref());
-        instruction_data.extend_from_slice(16384usize.to_le_bytes().as_ref());
-        // instruction data for inner CPI
-        instruction_data.extend_from_slice(&[TEST_CALLEE_ACCOUNT_UPDATES, 0, 0]);
-        instruction_data.extend_from_slice(20480usize.to_le_bytes().as_ref());
-        instruction_data.extend_from_slice(0usize.to_le_bytes().as_ref());
-        instruction_data.extend_from_slice(16385usize.to_le_bytes().as_ref());
-
-        let instruction = Instruction::new_with_bytes(
-            invoke_program_id,
-            &instruction_data,
-            account_metas.clone(),
-        );
-        let result = bank_client.send_and_confirm_instruction(&mint_keypair, instruction);
-        assert!(result.is_ok());
-
-        let data = bank_client
-            .get_account_data(&account_keypair.pubkey())
-            .unwrap()
-            .unwrap();
-
-        assert_eq!(data.len(), 20480);
-
-        data.iter().enumerate().for_each(|(i, v)| {
-            let expected = match i {
-                ..=10240 => i as u8,
-                16384 | 16385 => 0xe5,
-                _ => 0,
-            };
-
-            assert_eq!(*v, expected, "offset:{i} {v:#x} != {expected:#x}");
-        });
-
-        // IV. do CPI with account with resize to larger and write
-        let mut account = AccountSharedData::new(42, 10240, &invoke_program_id);
-        let data: Vec<u8> = (0..10240).map(|n| n as u8).collect();
-        account.set_data(data);
-        bank.store_account(&account_keypair.pubkey(), &account);
-
-        let mut instruction_data = vec![TEST_CALLEE_ACCOUNT_UPDATES, 1, 0];
-        instruction_data.extend_from_slice(16384usize.to_le_bytes().as_ref());
-        instruction_data.extend_from_slice(0usize.to_le_bytes().as_ref());
-        instruction_data.extend_from_slice(16384usize.to_le_bytes().as_ref());
-        // instruction data for inner CPI (2x)
-        instruction_data.extend_from_slice(&[TEST_CALLEE_ACCOUNT_UPDATES, 1, 0]);
-        instruction_data.extend_from_slice(0usize.to_le_bytes().as_ref());
-        instruction_data.extend_from_slice(0usize.to_le_bytes().as_ref());
-        instruction_data.extend_from_slice(0usize.to_le_bytes().as_ref());
-
-        instruction_data.extend_from_slice(&[TEST_CALLEE_ACCOUNT_UPDATES, 1, 0]);
-        instruction_data.extend_from_slice(0usize.to_le_bytes().as_ref());
-        instruction_data.extend_from_slice(0usize.to_le_bytes().as_ref());
-        instruction_data.extend_from_slice(0usize.to_le_bytes().as_ref());
-        // instruction data for inner CPI
-        instruction_data.extend_from_slice(&[TEST_CALLEE_ACCOUNT_UPDATES, 0, 0]);
-        instruction_data.extend_from_slice(20480usize.to_le_bytes().as_ref());
-        instruction_data.extend_from_slice(0usize.to_le_bytes().as_ref());
-        instruction_data.extend_from_slice(16385usize.to_le_bytes().as_ref());
-
-        let instruction = Instruction::new_with_bytes(
-            invoke_program_id,
-            &instruction_data,
-            account_metas.clone(),
-        );
-        let result = bank_client.send_and_confirm_instruction(&mint_keypair, instruction);
-        assert!(result.is_ok());
-
-        let data = bank_client
-            .get_account_data(&account_keypair.pubkey())
-            .unwrap()
-            .unwrap();
-
-        assert_eq!(data.len(), 20480);
-
-        data.iter().enumerate().for_each(|(i, v)| {
-            let expected = match i {
-                ..=10240 => i as u8,
-                16384 | 16385 => 0xe5,
-                _ => 0,
-            };
-
-            assert_eq!(*v, expected, "offset:{i} {v:#x} != {expected:#x}");
-        });
-
-        // V. clone data, modify and CPI
-        let mut account = AccountSharedData::new(42, 10240, &invoke_program_id);
-        let data: Vec<u8> = (0..10240).map(|n| n as u8).collect();
-        account.set_data(data);
-
-        bank.store_account(&account_keypair.pubkey(), &account);
-
-        let mut instruction_data = vec![TEST_CALLEE_ACCOUNT_UPDATES, 1, 1];
-        instruction_data.extend_from_slice(0usize.to_le_bytes().as_ref());
-        instruction_data.extend_from_slice(0usize.to_le_bytes().as_ref());
-        instruction_data.extend_from_slice(8190usize.to_le_bytes().as_ref());
-
-        // instruction data for inner CPI
-        instruction_data.extend_from_slice(&[TEST_CALLEE_ACCOUNT_UPDATES, 1, 0]);
-        instruction_data.extend_from_slice(0usize.to_le_bytes().as_ref());
-        instruction_data.extend_from_slice(0usize.to_le_bytes().as_ref());
-        instruction_data.extend_from_slice(8191usize.to_le_bytes().as_ref());
-
-        let instruction = Instruction::new_with_bytes(
-            invoke_program_id,
-            &instruction_data,
-            account_metas.clone(),
-        );
-        let result = bank_client.send_and_confirm_instruction(&mint_keypair, instruction);
-
-        if virtual_address_space_adjustments {
-            // changing the data pointer is not permitted
-            assert!(result.is_err());
-        } else {
-            assert!(result.is_ok());
-
-            let data = bank_client
-                .get_account_data(&account_keypair.pubkey())
-                .unwrap()
-                .unwrap();
-
-            assert_eq!(data.len(), 10240);
-
-            data.iter().enumerate().for_each(|(i, v)| {
-                let expected = match i {
-                    // since the data is was cloned, the write to 8191 was lost
-                    8190 => (i as u8) ^ 0xe5,
-                    ..=10240 => i as u8,
-                    _ => 0,
-                };
-
-                assert_eq!(*v, expected, "offset:{i} {v:#x} != {expected:#x}");
-            });
-        }
     }
 }
 
