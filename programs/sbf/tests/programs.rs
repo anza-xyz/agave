@@ -1729,19 +1729,18 @@ type ProgramSbfTxnFixture<const N: usize> = (
 
 #[cfg(feature = "sbf_rust")]
 fn program_sbf_txn_fixture<const N: usize>(
-    program_names: [&str; N],
-    loader_id: Pubkey,
+    programs: [(&str, Pubkey); N],
 ) -> ProgramSbfTxnFixture<N> {
     agave_logger::setup();
 
     let payer = Pubkey::new_unique();
 
-    let program_ids = program_names.map(|_| Pubkey::new_unique());
+    let program_ids = programs.map(|_| Pubkey::new_unique());
     let mut program_cache = new_program_cache_with_builtins(/* slot */ 0);
     let feature_set = FeatureSet::all_enabled();
 
     let mut accounts = vec![(payer, Account::new(50_000, 0, &system_program::id()))];
-    for (program_id, program_name) in program_ids.iter().zip(program_names) {
+    for (program_id, (program_name, loader_id)) in program_ids.iter().zip(programs) {
         let program_elf = load_program_elf(program_name);
         add_program_to_program_cache(
             &mut program_cache,
@@ -1768,10 +1767,10 @@ fn program_sbf_txn_fixture<const N: usize>(
 #[cfg(feature = "sbf_rust")]
 fn test_program_sbf_instruction_introspection_passing_transaction() {
     let (payer, [program_id], feature_set, accounts, mut program_cache, sysvar_cache) =
-        program_sbf_txn_fixture(
-            ["solana_sbf_rust_instruction_introspection"],
+        program_sbf_txn_fixture([(
+            "solana_sbf_rust_instruction_introspection",
             bpf_loader_upgradeable::id(),
-        );
+        )]);
 
     let account_metas = vec![
         AccountMeta::new_readonly(program_id, false),
@@ -1801,10 +1800,10 @@ fn test_program_sbf_instruction_introspection_passing_transaction() {
 #[cfg(feature = "sbf_rust")]
 fn test_program_sbf_instruction_introspection_writable_special_instructions1111() {
     let (payer, [program_id], feature_set, accounts, mut program_cache, sysvar_cache) =
-        program_sbf_txn_fixture(
-            ["solana_sbf_rust_instruction_introspection"],
+        program_sbf_txn_fixture([(
+            "solana_sbf_rust_instruction_introspection",
             bpf_loader_upgradeable::id(),
-        );
+        )]);
 
     let account_metas = vec![AccountMeta::new(sysvar::instructions::id(), false)];
 
@@ -1833,10 +1832,10 @@ fn test_program_sbf_instruction_introspection_writable_special_instructions1111(
 #[cfg(feature = "sbf_rust")]
 fn test_program_sbf_instruction_introspection_no_accounts() {
     let (payer, [program_id], feature_set, accounts, mut program_cache, sysvar_cache) =
-        program_sbf_txn_fixture(
-            ["solana_sbf_rust_instruction_introspection"],
+        program_sbf_txn_fixture([(
+            "solana_sbf_rust_instruction_introspection",
             bpf_loader_upgradeable::id(),
-        );
+        )]);
 
     let message = Message::new(
         &[Instruction::new_with_bytes(program_id, &[0], vec![])],
@@ -3816,15 +3815,21 @@ fn test_program_sbf_processed_inner_instruction() {
         accounts,
         mut program_cache,
         sysvar_cache,
-    ) = program_sbf_txn_fixture(
-        [
+    ) = program_sbf_txn_fixture([
+        (
             "solana_sbf_rust_sibling_instructions",
+            bpf_loader_upgradeable::id(),
+        ),
+        (
             "solana_sbf_rust_sibling_inner_instructions",
-            "solana_sbf_rust_noop",
+            bpf_loader_upgradeable::id(),
+        ),
+        ("solana_sbf_rust_noop", bpf_loader_upgradeable::id()),
+        (
             "solana_sbf_rust_invoke_and_return",
-        ],
-        bpf_loader_upgradeable::id(),
-    );
+            bpf_loader_upgradeable::id(),
+        ),
+    ]);
 
     let message = Message::new(
         &[
@@ -3980,13 +3985,13 @@ fn test_program_sbf_inner_instruction_alignment_checks() {
         accounts,
         mut program_cache,
         sysvar_cache,
-    ) = program_sbf_txn_fixture(
-        [
-            "solana_sbf_rust_noop",
+    ) = program_sbf_txn_fixture([
+        ("solana_sbf_rust_noop", bpf_loader::id()),
+        (
             "solana_sbf_rust_inner_instruction_alignment_check",
-        ],
-        bpf_loader_deprecated::id(),
-    );
+            bpf_loader_deprecated::id(),
+        ),
+    ]);
 
     // invoke unaligned program, which will call aligned program twice,
     // unaligned should be allowed once invoke completes
