@@ -5156,96 +5156,73 @@ fn test_account_info_in_account(syscall_parameter_address_restrictions: bool) {
     }
 }
 
-#[test]
-fn test_account_info_rc_in_account() {
-    agave_logger::setup();
+#[test_matrix(
+    [false, true],
+    [TEST_ACCOUNT_INFO_LAMPORTS_RC, TEST_ACCOUNT_INFO_DATA_RC]
+)]
+fn test_account_info_rc_in_account(syscall_parameter_address_restrictions: bool, instruction: u8) {
+    let mut configured_feature_set = FeatureSet::all_enabled();
+    if !syscall_parameter_address_restrictions {
+        configured_feature_set
+            .deactivate(&feature_set::syscall_parameter_address_restrictions::id());
+        configured_feature_set.deactivate(&feature_set::virtual_address_space_adjustments::id());
+        configured_feature_set.deactivate(&feature_set::account_data_direct_mapping::id());
+    }
 
-    let GenesisConfigInfo {
-        genesis_config,
+    let (
+        payer,
         mint_keypair,
-        ..
-    } = create_genesis_config(100_123_456_789);
+        account_keypair,
+        [invoke_program_id],
+        feature_set,
+        mut accounts,
+        mut program_cache,
+        sysvar_cache,
+    ) = program_sbf_txn_fixture_with_feature_set(
+        [("solana_sbf_rust_invoke", bpf_loader_upgradeable::id())],
+        configured_feature_set,
+    );
 
-    for syscall_parameter_address_restrictions in [false, true] {
-        let mut bank = Bank::new_for_tests(&genesis_config);
-        let feature_set = Arc::make_mut(&mut bank.feature_set);
-        // by default test banks have all features enabled, so we only need to
-        // disable when needed
-        if !syscall_parameter_address_restrictions {
-            feature_set.deactivate(&feature_set::syscall_parameter_address_restrictions::id());
-            feature_set.deactivate(&feature_set::virtual_address_space_adjustments::id());
-            feature_set.deactivate(&feature_set::account_data_direct_mapping::id());
-        }
+    accounts
+        .iter_mut()
+        .find(|(pubkey, _)| pubkey == &account_keypair.pubkey())
+        .unwrap()
+        .1 = Account::new(42, 10240, &invoke_program_id);
+    let account_metas = vec![
+        AccountMeta::new(mint_keypair.pubkey(), true),
+        AccountMeta::new(account_keypair.pubkey(), false),
+        AccountMeta::new_readonly(invoke_program_id, false),
+    ];
 
-        let (bank, bank_forks) = bank.wrap_with_bank_forks_for_tests();
-        let invoke_program_id = create_program(
-            &bank,
-            &bpf_loader_upgradeable::id(),
-            "solana_sbf_rust_invoke",
-        );
-        let mut bank_client = BankClient::new_shared(bank.clone());
-        let bank = bank_client
-            .advance_slot(1, &bank_forks, SlotLeader::default())
+    let message = Message::new(
+        &[Instruction::new_with_bytes(
+            invoke_program_id,
+            &[instruction, 0, 0, 0],
+            account_metas,
+        )],
+        Some(&payer),
+    );
+    let sanitized_message =
+        SanitizedMessage::try_from_legacy_message(message, &ReservedAccountKeys::empty_key_set())
             .unwrap();
 
-        let account_keypair = Keypair::new();
+    let context =
+        TxnContext::new_with_default_budget(feature_set, accounts, sanitized_message, None);
 
-        let mint_pubkey = mint_keypair.pubkey();
-
-        let account_metas = vec![
-            AccountMeta::new(mint_pubkey, true),
-            AccountMeta::new(account_keypair.pubkey(), false),
-            AccountMeta::new_readonly(invoke_program_id, false),
-        ];
-
-        let instruction_data = vec![TEST_ACCOUNT_INFO_LAMPORTS_RC, 0, 0, 0];
-
-        let instruction = Instruction::new_with_bytes(
-            invoke_program_id,
-            &instruction_data,
-            account_metas.clone(),
+    let effects = execute_txn(&context, &mut program_cache, &sysvar_cache);
+    if syscall_parameter_address_restrictions {
+        assert!(
+            effects
+                .logs
+                .last()
+                .unwrap()
+                .ends_with(" failed: Invalid pointer"),
+            "{:?}",
+            effects.logs,
         );
-
-        let account = AccountSharedData::new(42, 10240, &invoke_program_id);
-
-        bank.store_account(&account_keypair.pubkey(), &account);
-
-        let message = Message::new(&[instruction], Some(&mint_pubkey));
-        let tx = Transaction::new(&[&mint_keypair], message.clone(), bank.last_blockhash());
-        let (result, _, logs, _) = process_transaction_and_record_inner(&bank, tx);
-
-        if syscall_parameter_address_restrictions {
-            assert!(
-                logs.last().unwrap().ends_with(" failed: Invalid pointer"),
-                "{logs:?}"
-            );
-            assert!(result.is_err());
-        } else {
-            assert!(result.is_ok(), "{logs:?}");
-        }
-
-        let instruction_data = vec![TEST_ACCOUNT_INFO_DATA_RC, 0, 0, 0];
-
-        let instruction =
-            Instruction::new_with_bytes(invoke_program_id, &instruction_data, account_metas);
-
-        let account = AccountSharedData::new(42, 10240, &invoke_program_id);
-
-        bank.store_account(&account_keypair.pubkey(), &account);
-
-        let message = Message::new(&[instruction], Some(&mint_pubkey));
-        let tx = Transaction::new(&[&mint_keypair], message.clone(), bank.last_blockhash());
-        let (result, _, logs, _) = process_transaction_and_record_inner(&bank, tx);
-
-        if syscall_parameter_address_restrictions {
-            assert!(
-                logs.last().unwrap().ends_with(" failed: Invalid pointer"),
-                "{logs:?}"
-            );
-            assert!(result.is_err());
-        } else {
-            assert!(result.is_ok(), "{logs:?}");
-        }
+        assert!(effects.status.is_err());
+    } else {
+        assert_eq!(effects.status, Ok(()), "{:?}", effects.logs);
     }
 }
 
