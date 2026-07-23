@@ -1817,6 +1817,36 @@ fn test_should_insert_data_shred() {
 }
 
 #[test]
+fn test_handle_duplicate_shred_returns_duplicate_proof() {
+    let ledger_path = get_tmp_ledger_path_auto_delete!();
+    let blockstore = Blockstore::open(ledger_path.path()).unwrap();
+    let (shreds, _) = make_many_slot_entries(5, 5, 10);
+    blockstore.insert_shreds(shreds.clone(), false).unwrap();
+    let duplicate_index = 0;
+    let original_shred = shreds[duplicate_index].clone();
+    let duplicate_shred = {
+        let (mut shreds, _) = make_many_slot_entries(5, 1, 10);
+        shreds.swap_remove(duplicate_index)
+    };
+    let duplicate_shred_slot = duplicate_shred.slot();
+    assert!(!blockstore.has_duplicate_shreds_in_slot(duplicate_shred_slot));
+
+    let (returned_shred, conflicting_payload) = handle_duplicate_shred(
+        &blockstore,
+        PossibleDuplicateShred::Exists(duplicate_shred.clone()),
+        true,
+    )
+    .unwrap()
+    .unwrap();
+
+    assert_eq!(returned_shred.payload(), duplicate_shred.payload());
+    assert_eq!(conflicting_payload, *original_shred.payload());
+    let duplicate_proof = blockstore.get_duplicate_slot(duplicate_shred_slot).unwrap();
+    assert_eq!(duplicate_proof.shred1, *original_shred.payload());
+    assert_eq!(duplicate_proof.shred2, *duplicate_shred.payload());
+}
+
+#[test]
 fn test_is_data_shred_present() {
     let (shreds, _) = make_slot_entries(0, 0, 200);
     let ledger_path = get_tmp_ledger_path_auto_delete!();
