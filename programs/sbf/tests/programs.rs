@@ -5445,27 +5445,19 @@ fn test_stack_heap_zeroed() {
 }
 
 #[test]
+// This function tests edge compiler edge cases when calling functions with more than five
+// arguments and passing by value arguments with more than 16 bytes.
 fn test_function_call_args() {
-    // This function tests edge compiler edge cases when calling functions with more than five
-    // arguments and passing by value arguments with more than 16 bytes.
-    agave_logger::setup();
-
-    let GenesisConfigInfo {
-        genesis_config,
+    let (
+        payer,
         mint_keypair,
-        ..
-    } = create_genesis_config(100_123_456_789);
-
-    let (bank, bank_forks) = Bank::new_with_bank_forks_for_tests(&genesis_config);
-    let program_id = create_program(
-        &bank,
-        &bpf_loader_upgradeable::id(),
-        "solana_sbf_rust_call_args",
-    );
-    let mut bank_client = BankClient::new_shared(bank.clone());
-    let bank = bank_client
-        .advance_slot(1, &bank_forks, SlotLeader::default())
-        .unwrap();
+        account_keypair,
+        [program_id],
+        feature_set,
+        accounts,
+        mut program_cache,
+        sysvar_cache,
+    ) = program_sbf_txn_fixture([("solana_sbf_rust_call_args", bpf_loader_upgradeable::id())]);
 
     #[derive(BorshSerialize, BorshDeserialize, PartialEq, Eq, Debug)]
     struct Test128 {
@@ -5508,60 +5500,29 @@ fn test_function_call_args() {
         arg7: rand::random::<i64>(),
         arg8: rand::random::<i64>(),
     };
-
     let instruction_data = to_vec(&input_data).unwrap();
-    let account_metas = vec![
-        AccountMeta::new(mint_keypair.pubkey(), true),
-        AccountMeta::new(Keypair::new().pubkey(), false),
-    ];
 
-    let instruction = Instruction::new_with_bytes(program_id, &instruction_data, account_metas);
-    let message = Message::new(&[instruction], Some(&mint_keypair.pubkey()));
+    let message = Message::new(
+        &[Instruction::new_with_bytes(
+            program_id,
+            &instruction_data,
+            vec![
+                AccountMeta::new(mint_keypair.pubkey(), true),
+                AccountMeta::new(account_keypair.pubkey(), false),
+            ],
+        )],
+        Some(&payer),
+    );
+    let sanitized_message =
+        SanitizedMessage::try_from_legacy_message(message, &ReservedAccountKeys::empty_key_set())
+            .unwrap();
 
-    let tx = Transaction::new(&[&mint_keypair], message.clone(), bank.last_blockhash());
+    let context =
+        TxnContext::new_with_default_budget(feature_set, accounts, sanitized_message, None);
 
-    let txs = vec![tx];
-    let tx_batch = bank.prepare_batch_for_tests(txs);
-    let result = bank
-        .load_execute_and_commit_transactions(
-            &tx_batch,
-            ExecutionRecordingConfig {
-                enable_cpi_recording: false,
-                enable_log_recording: false,
-                enable_return_data_recording: true,
-                enable_transaction_balance_recording: false,
-            },
-            &mut ExecuteTimings::default(),
-            None,
-        )
-        .0;
+    let effects = execute_txn(&context, &mut program_cache, &sysvar_cache);
 
-    fn verify_many_args(input: &InputData) -> i64 {
-        let a = input
-            .arg1
-            .overflowing_add(input.arg2)
-            .0
-            .overflowing_sub(input.arg3)
-            .0
-            .overflowing_add(input.arg4)
-            .0
-            .overflowing_sub(input.arg5)
-            .0;
-        (a % input.arg6)
-            .overflowing_sub(input.arg7)
-            .0
-            .overflowing_add(input.arg8)
-            .0
-    }
-
-    let return_data = &result[0]
-        .as_ref()
-        .unwrap()
-        .return_data
-        .as_ref()
-        .unwrap()
-        .data;
-    let decoded: OutputData = from_slice::<OutputData>(return_data).unwrap();
+    let decoded: OutputData = from_slice::<OutputData>(&effects.return_data).unwrap();
     assert_eq!(
         decoded.res_128,
         input_data.test_128.a % input_data.test_128.b
@@ -5581,6 +5542,25 @@ fn test_function_call_args() {
                 .0
         }
     );
+
+    fn verify_many_args(input: &InputData) -> i64 {
+        let a = input
+            .arg1
+            .overflowing_add(input.arg2)
+            .0
+            .overflowing_sub(input.arg3)
+            .0
+            .overflowing_add(input.arg4)
+            .0
+            .overflowing_sub(input.arg5)
+            .0;
+        (a % input.arg6)
+            .overflowing_sub(input.arg7)
+            .0
+            .overflowing_add(input.arg8)
+            .0
+    }
+
     assert_eq!(decoded.many_args_1, verify_many_args(&input_data));
     assert_eq!(decoded.many_args_2, verify_many_args(&input_data));
 }
