@@ -46,6 +46,24 @@ use {
     },
 };
 
+/// Maximum number of batches to process from a selected message channel before
+/// returning to channel selection. This keeps a continuously busy channel from
+/// starving the other consensus pool input channel.
+const TOTAL_SIG_VERIFIED_BATCHES_PER_RECEIVE: usize = 128;
+
+/// Number of additional batches to drain from the selected message channel
+/// after receiving the first batch.
+const ADDITIONAL_SIG_VERIFIED_BATCHES_PER_RECEIVE: usize =
+    TOTAL_SIG_VERIFIED_BATCHES_PER_RECEIVE - 1;
+
+/// Message channel selected by `receive_msgs()`.
+enum SelectedMessageChannel {
+    /// Locally generated consensus messages from this validator.
+    Own,
+    /// Consensus messages received from peers.
+    Consensus,
+}
+
 /// Inputs for the consensus pool and consensus pool service
 pub(crate) struct ConsensusPoolContext {
     pub(crate) exit: Arc<AtomicBool>,
@@ -590,12 +608,22 @@ impl ConsensusPoolService {
         stats: &mut ConsensusPoolServiceStats,
         wait_timeout: Duration,
     ) -> Result<(), ()> {
-        let (msg, receiver, channel_name) = select_biased! {
+        let (msg, receiver, channel_name, selected_channel) = select_biased! {
             recv(ctx.own_message_receiver) -> msg => {
-                (msg, ctx.own_message_receiver.clone(), "own_message_receiver channel")
+                (
+                    msg,
+                    ctx.own_message_receiver.clone(),
+                    "own_message_receiver channel",
+                    SelectedMessageChannel::Own,
+                )
             }
             recv(ctx.consensus_message_receiver) -> msg => {
-                (msg, ctx.consensus_message_receiver.clone(), "consensus_message_receiver channel")
+                (
+                    msg,
+                    ctx.consensus_message_receiver.clone(),
+                    "consensus_message_receiver channel",
+                    SelectedMessageChannel::Consensus,
+                )
             }
             default(wait_timeout) => return Ok(()),
         };
@@ -605,7 +633,13 @@ impl ConsensusPoolService {
             return Err(());
         };
 
-        for batch in std::iter::once(first).chain(receiver.try_iter()) {
+        let mut received_batches = 0;
+        for batch in std::iter::once(first).chain(
+            receiver
+                .try_iter()
+                .take(ADDITIONAL_SIG_VERIFIED_BATCHES_PER_RECEIVE),
+        ) {
+            received_batches += 1;
             match batch {
                 SigVerifiedBatch::Votes(votes) => {
                     for vote in votes {
@@ -634,6 +668,15 @@ impl ConsensusPoolService {
                     }
                 }
             }
+        }
+        match selected_channel {
+            SelectedMessageChannel::Own => stats.received_own_message_batches += received_batches,
+            SelectedMessageChannel::Consensus => {
+                stats.received_consensus_message_batches += received_batches
+            }
+        }
+        if received_batches == TOTAL_SIG_VERIFIED_BATCHES_PER_RECEIVE {
+            stats.receive_msgs_batch_limit_reached += 1;
         }
         Ok(())
     }
@@ -671,7 +714,7 @@ mod tests {
         consensus_pool: ConsensusPool,
         ctx: ConsensusPoolContext,
         bls_receiver: Receiver<BLSOp>,
-        _consensus_message_sender: Sender<SigVerifiedBatch>,
+        consensus_message_sender: Sender<SigVerifiedBatch>,
         event_receiver: Receiver<VotorEvent>,
         _repair_event_receiver: Receiver<RepairEvent>,
         validator_keypairs: Vec<ValidatorVoteKeypairs>,
@@ -748,7 +791,7 @@ mod tests {
                 consensus_pool,
                 ctx,
                 bls_receiver,
-                _consensus_message_sender: consensus_message_sender,
+                consensus_message_sender,
                 event_receiver,
                 _repair_event_receiver: repair_event_receiver,
                 validator_keypairs,
@@ -892,6 +935,39 @@ mod tests {
             }
         }
         assert!(found_skip, "Should have received the skip certificate");
+    }
+
+    #[test]
+    fn test_receive_msgs_limits_batches_per_call() {
+        let mut ctx = TestContext::default();
+
+        for _ in 0..TOTAL_SIG_VERIFIED_BATCHES_PER_RECEIVE + 1 {
+            ctx.consensus_message_sender
+                .send(SigVerifiedBatch::Votes(vec![]))
+                .unwrap();
+        }
+
+        let mut events = vec![];
+        let mut standstill_timer = Instant::now();
+        let mut stats = ConsensusPoolServiceStats::new();
+
+        ConsensusPoolService::receive_msgs(
+            &mut ctx.ctx,
+            &mut ctx.consensus_pool,
+            &mut events,
+            &mut standstill_timer,
+            &mut stats,
+            Duration::ZERO,
+        )
+        .unwrap();
+
+        assert_eq!(ctx.ctx.consensus_message_receiver.len(), 1);
+        assert_eq!(stats.received_own_message_batches.0, 0);
+        assert_eq!(
+            stats.received_consensus_message_batches.0,
+            TOTAL_SIG_VERIFIED_BATCHES_PER_RECEIVE
+        );
+        assert_eq!(stats.receive_msgs_batch_limit_reached.0, 1);
     }
 
     #[test]

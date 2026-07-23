@@ -17,6 +17,9 @@ pub(super) struct ConsensusPoolServiceStats {
     pub(super) new_finalized_slot: Saturating<usize>,
     pub(super) parent_ready_missed_window: Saturating<usize>,
     pub(super) parent_ready_produce_window: Saturating<usize>,
+    pub(super) received_own_message_batches: Saturating<usize>,
+    pub(super) received_consensus_message_batches: Saturating<usize>,
+    pub(super) receive_msgs_batch_limit_reached: Saturating<usize>,
     pub(super) received_votes: Saturating<usize>,
     pub(super) received_certificates: Saturating<usize>,
     pub(super) standstill: bool,
@@ -36,6 +39,9 @@ impl ConsensusPoolServiceStats {
             new_finalized_slot: Saturating(0),
             parent_ready_missed_window: Saturating(0),
             parent_ready_produce_window: Saturating(0),
+            received_own_message_batches: Saturating(0),
+            received_consensus_message_batches: Saturating(0),
+            receive_msgs_batch_limit_reached: Saturating(0),
             received_votes: Saturating(0),
             received_certificates: Saturating(0),
             standstill: false,
@@ -55,6 +61,9 @@ impl ConsensusPoolServiceStats {
             new_finalized_slot: Saturating(new_finalized_slot),
             parent_ready_missed_window: Saturating(parent_ready_missed_window),
             parent_ready_produce_window: Saturating(parent_ready_produce_window),
+            received_own_message_batches: Saturating(received_own_message_batches),
+            received_consensus_message_batches: Saturating(received_consensus_message_batches),
+            receive_msgs_batch_limit_reached: Saturating(receive_msgs_batch_limit_reached),
             received_votes: Saturating(received_votes),
             received_certificates: Saturating(received_certificates),
             standstill,
@@ -82,6 +91,21 @@ impl ConsensusPoolServiceStats {
             (
                 "parent_ready_produce_window",
                 parent_ready_produce_window,
+                i64
+            ),
+            (
+                "received_own_message_batches",
+                received_own_message_batches,
+                i64
+            ),
+            (
+                "received_consensus_message_batches",
+                received_consensus_message_batches,
+                i64
+            ),
+            (
+                "receive_msgs_batch_limit_reached",
+                receive_msgs_batch_limit_reached,
                 i64
             ),
             ("received_votes", received_votes, i64),
