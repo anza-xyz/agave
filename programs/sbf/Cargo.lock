@@ -301,7 +301,7 @@ dependencies = [
  "bytesize",
  "caps",
  "chrono",
- "clap",
+ "clap 4.6.4",
  "console 0.16.4",
  "crossbeam-channel",
  "fd-lock",
@@ -1593,15 +1593,41 @@ dependencies = [
 
 [[package]]
 name = "clap"
-version = "2.33.3"
+version = "2.34.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "37e58ac78573c40708d45522f0d80fa2f01cc4f9b4e2bf749807255454312002"
+checksum = "a0610544180c38b88101fecf2dd634b174a62eef6946f84dfc6a7127512b381c"
 dependencies = [
  "bitflags 1.2.1",
  "strsim 0.8.0",
  "textwrap",
  "unicode-width 0.1.8",
 ]
+
+[[package]]
+name = "clap"
+version = "4.6.4"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "d91e0c145792ef73a6ad36d27c75ac09f1832222a3c209689d90f534685ee5b7"
+dependencies = [
+ "clap_builder",
+]
+
+[[package]]
+name = "clap_builder"
+version = "4.6.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "f09628afdcc538b57f3c6341e9c8e9970f18e4a481690a64974d7023bd33548b"
+dependencies = [
+ "anstyle",
+ "clap_lex",
+ "strsim 0.11.1",
+]
+
+[[package]]
+name = "clap_lex"
+version = "1.1.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "c8d4a3bb8b1e0c1050499d1815f5ab16d04f0959b233085fb31653fbfc9d98f9"
 
 [[package]]
 name = "cmov"
@@ -6334,7 +6360,7 @@ dependencies = [
  "bip39",
  "bs58",
  "chrono",
- "clap",
+ "clap 2.34.0",
  "rpassword",
  "solana-bls-signatures",
  "solana-cli-config",
@@ -6378,7 +6404,7 @@ dependencies = [
  "base64 0.22.1",
  "bitvec",
  "chrono",
- "clap",
+ "clap 2.34.0",
  "console 0.16.4",
  "humantime",
  "indicatif",

@@ -222,7 +222,7 @@ caps = "0.5.6"
 cfg-if = "1.0.4"
 chrono = { version = "0.4.45", default-features = false }
 chrono-humanize = "0.2.3"
-clap = { version = "2.33.1", default-features = false, features = ["suggestions"] }
+clap = { version = "4.6.2", default-features = false, features = ["suggestions"] }
 console = "0.16.4"
 const_format = "0.2.36"
 criterion = "0.8.2"
