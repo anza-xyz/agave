@@ -68,7 +68,6 @@ agave-reserved-account-keys = { workspace = true }
 agave-snapshots = { workspace = true }
 agave-votor-messages = { workspace = true }
 ahash = { workspace = true }
-aquamarine = { workspace = true }
 arc-swap = { workspace = true }
 arrayref = { workspace = true }
 assert_matches = { workspace = true }

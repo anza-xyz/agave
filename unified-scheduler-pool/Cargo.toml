@@ -20,7 +20,6 @@ dev-context-only-utils = ["solana-runtime/dev-context-only-utils"]
 
 [dependencies]
 agave-banking-stage-ingress-types = { workspace = true }
-aquamarine = { workspace = true }
 assert_matches = { workspace = true }
 crossbeam-channel = { workspace = true }
 dashmap = { workspace = true }

@@ -858,7 +858,6 @@ fn disconnected<T>() -> Receiver<T> {
     crossbeam_channel::unbounded().1
 }
 
-#[cfg_attr(doc, aquamarine::aquamarine)]
 /// The concrete scheduler instance along with 1 scheduler and N handler threads.
 ///
 /// This implements the dyn-compatible [`InstalledScheduler`] trait to be interacted by
@@ -900,31 +899,6 @@ fn disconnected<T>() -> Receiver<T> {
 /// reasons like [`UsageQueueLoader`] being overgrown or many idling schedulers in the pool, in
 /// addition to the obvious reason of aborted scheduler.
 ///
-/// ### Life cycle and ownership movement across crates of a particular scheduler
-///
-/// ```mermaid
-/// stateDiagram-v2
-///     [*] --> Active: Spawned (New bank by solReplayStage)
-///     state solana-runtime {
-///         state if_usable <<choice>>
-///         Active --> if_usable: Returned (Bank-freezing by solReplayStage)
-///         Active --> if_usable: Dropped (BankForks-pruning by solReplayStage)
-///         Aborted --> if_usable: Dropped (BankForks-pruning by solReplayStage)
-///         if_usable --> Pooled: IF !overgrown && !aborted
-///         Active --> Aborted: Errored on TX execution
-///         Aborted --> Stale: !Dropped after TIMEOUT_DURATION since taken
-///         Active --> Stale: No new TX after TIMEOUT_DURATION since taken
-///         Stale --> if_usable: Returned (Timeout-triggered by solScCleaner)
-///         Pooled --> Active: Taken (New bank by solReplayStage)
-///     }
-///     state solana-unified-scheduler-pool {
-///         Pooled --> Idle: !Taken after POOLING_DURATION
-///         if_usable --> Trashed: IF overgrown || aborted
-///         Idle --> Retired
-///         Trashed --> Retired
-///     }
-///     Retired --> [*]: Terminated (by solScCleaner)
-/// ```
 #[derive(Debug)]
 pub struct PooledScheduler<TH: TaskHandler> {
     inner: PooledSchedulerInner<Self, TH>,
