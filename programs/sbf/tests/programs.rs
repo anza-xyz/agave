@@ -4499,71 +4499,75 @@ fn test_cpi_account_data_updates() {
 #[test]
 #[cfg(any(feature = "sbf_c", feature = "sbf_rust"))]
 fn test_cpi_invalid_account_info_pointers() {
-    agave_logger::setup();
-
-    let GenesisConfigInfo {
-        genesis_config,
+    let (
+        _,
         mint_keypair,
-        ..
-    } = create_genesis_config(100_123_456_789);
+        account_keypair,
+        program_ids,
+        feature_set,
+        mut accounts,
+        mut program_cache,
+        sysvar_cache,
+    ) = program_sbf_txn_fixture([
+        #[cfg(feature = "sbf_rust")]
+        ("solana_sbf_rust_invoke", bpf_loader_upgradeable::id()),
+        #[cfg(feature = "sbf_c")]
+        ("invoke", bpf_loader_upgradeable::id()),
+    ]);
 
-    let bank = Bank::new_for_tests(&genesis_config);
-    let (bank, bank_forks) = bank.wrap_with_bank_forks_for_tests();
-
-    let account_keypair = Keypair::new();
-    let mint_pubkey = mint_keypair.pubkey();
     let mut account_metas = vec![
-        AccountMeta::new(mint_pubkey, true),
+        AccountMeta::new(mint_keypair.pubkey(), true),
         AccountMeta::new(account_keypair.pubkey(), false),
     ];
+    account_metas.extend(
+        program_ids
+            .iter()
+            .map(|program_id| AccountMeta::new_readonly(*program_id, false)),
+    );
 
-    let mut program_ids: Vec<Pubkey> = Vec::with_capacity(2);
-
-    #[cfg(feature = "sbf_rust")]
-    {
-        let invoke_program_id = create_program(
-            &bank,
-            &bpf_loader_upgradeable::id(),
-            "solana_sbf_rust_invoke",
-        );
-        account_metas.push(AccountMeta::new_readonly(invoke_program_id, false));
-        program_ids.push(invoke_program_id);
-    }
-
-    #[cfg(feature = "sbf_c")]
-    {
-        let c_invoke_program_id = create_program(&bank, &bpf_loader_upgradeable::id(), "invoke");
-        account_metas.push(AccountMeta::new_readonly(c_invoke_program_id, false));
-        program_ids.push(c_invoke_program_id);
-    }
-
-    let mut bank_client = BankClient::new_shared(bank.clone());
-    let bank = bank_client
-        .advance_slot(1, &bank_forks, SlotLeader::default())
-        .unwrap();
-
-    for invoke_program_id in &program_ids {
+    for invoke_program_id in program_ids {
         for ix in [
             TEST_CPI_INVALID_KEY_POINTER,
             TEST_CPI_INVALID_LAMPORTS_POINTER,
             TEST_CPI_INVALID_OWNER_POINTER,
             TEST_CPI_INVALID_DATA_POINTER,
         ] {
-            let account = AccountSharedData::new(42, 5, invoke_program_id);
-            bank.store_account(&account_keypair.pubkey(), &account);
-            let instruction = Instruction::new_with_bytes(
-                *invoke_program_id,
-                &[ix, 42, 42, 42],
-                account_metas.clone(),
+            accounts
+                .iter_mut()
+                .find(|(pubkey, _)| pubkey == &account_keypair.pubkey())
+                .unwrap()
+                .1 = Account::new(42, 5, &invoke_program_id);
+
+            let message = Message::new(
+                &[Instruction::new_with_bytes(
+                    invoke_program_id,
+                    &[ix, 42, 42, 42],
+                    account_metas.clone(),
+                )],
+                Some(&mint_keypair.pubkey()),
+            );
+            let sanitized_message = SanitizedMessage::try_from_legacy_message(
+                message,
+                &ReservedAccountKeys::empty_key_set(),
+            )
+            .unwrap();
+
+            let context = TxnContext::new_with_default_budget(
+                feature_set.clone(),
+                accounts.clone(),
+                sanitized_message,
+                None,
             );
 
-            let message = Message::new(&[instruction], Some(&mint_pubkey));
-            let tx = Transaction::new(&[&mint_keypair], message.clone(), bank.last_blockhash());
-            let (result, _, logs, _) = process_transaction_and_record_inner(&bank, tx);
-            assert!(result.is_err(), "{result:?}");
+            let effects = execute_txn(&context, &mut program_cache, &sysvar_cache);
+            assert!(effects.status.is_err(), "{:?}", effects.status);
             assert!(
-                logs.iter().any(|log| log.contains("Invalid pointer")),
-                "{logs:?}"
+                effects
+                    .logs
+                    .iter()
+                    .any(|log| log.contains("Invalid pointer")),
+                "{:?}",
+                effects.logs,
             );
         }
     }
