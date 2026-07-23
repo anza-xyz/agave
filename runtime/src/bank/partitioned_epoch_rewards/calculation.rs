@@ -431,8 +431,8 @@ impl Bank {
                 self.calculate_epoch_inflation_rewards(capitalization, rewarded_epoch)
             };
         // `distribution_epoch_vote_accounts` is the post-VAT-filter snapshot
-        // produced upstream of this call (or unfiltered when VAT is off),
-        // so its length is the right value for the `epoch_rewards` metric.
+        // produced upstream of this call, so its length is the right value for
+        // the `epoch_rewards` metric.
         let num_filtered_vote_accounts =
             cached_vote_accounts.distribution_epoch_vote_accounts.len();
 
@@ -525,9 +525,9 @@ impl Bank {
         let stake_history = stakes.history().clone();
         let stake_delegations = stakes.stake_delegations_vec();
 
-        // Use the vote-account snapshot from epoch_stakes, which is VAT-filtered
-        // when admission filtering is enabled. Recalculation should match the
-        // vote-account admission policy used for distribution.
+        // Use the VAT-filtered vote-account snapshot from epoch_stakes.
+        // Recalculation should match the vote-account admission policy used for
+        // distribution.
         let leader_schedule_epoch = self.epoch_schedule().get_leader_schedule_epoch(self.slot());
         let distribution_epoch_vote_accounts = self
             .epoch_stakes(leader_schedule_epoch)

@@ -3161,9 +3161,6 @@ impl ReplayStage {
         *last_vat_status_check = Instant::now();
 
         let bank = bank_forks.read().unwrap().root_bank();
-        if !bank.feature_set.snapshot().validator_admission_ticket {
-            return;
-        }
 
         let is_voting_validator = !authorized_voter_keypairs.read().unwrap().is_empty();
         if !is_voting_validator {

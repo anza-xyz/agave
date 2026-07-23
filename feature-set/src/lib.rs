@@ -74,7 +74,6 @@ pub struct FeatureSnapshot {
     pub set_lamports_per_byte_to_1322: bool,
     pub block_revenue_sharing: bool,
     pub vote_account_initialize_v2: bool,
-    pub validator_admission_ticket: bool,
     pub direct_account_pointers_in_program_input: bool,
     pub upgrade_bpf_stake_program_to_v5: bool,
     pub loader_v3_minimum_extend_program_size: bool,
@@ -174,7 +173,6 @@ impl From<&AHashMap<Pubkey, u64>> for FeatureSnapshot {
             set_lamports_per_byte_to_1322: is_active(&set_lamports_per_byte_to_1322::ID),
             block_revenue_sharing: is_active(&block_revenue_sharing::ID),
             vote_account_initialize_v2: is_active(&vote_account_initialize_v2::ID),
-            validator_admission_ticket: is_active(&validator_admission_ticket::ID),
             direct_account_pointers_in_program_input: is_active(
                 &direct_account_pointers_in_program_input::ID,
             ),

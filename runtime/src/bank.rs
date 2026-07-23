@@ -1187,8 +1187,7 @@ struct NewEpochBundle {
     /// Current effective stake delegated to each vote account pubkey.
     delegated_stakes: DelegatedStakes,
     /// Vote accounts computed from the stakes cache for the current
-    /// (distribution) epoch *after* applying VAT filtering (or an unfiltered
-    /// clone when VAT is disabled).
+    /// (distribution) epoch *after* applying VAT filtering.
     filtered_distribution_vote_accounts: VoteAccounts,
     rewards_calculation: Arc<PartitionedRewardsCalculation>,
     calculate_activated_stake_time_us: u64,
@@ -1779,22 +1778,14 @@ impl Bank {
         ));
         debug_assert_eq!(reward_epoch_delegated_stakes.epoch, rewarded_epoch);
 
-        // Apply stake rewards and commission using the distribution vote-account
-        // snapshot that matches VAT admission filtering when enabled.
-        let filtered_distribution_vote_accounts =
-            if self.feature_set.snapshot().validator_admission_ticket {
-                unfiltered_distribution_vote_accounts.clone_and_filter_for_vat(
-                    MAX_ALPENGLOW_VOTE_ACCOUNTS,
-                    self.minimum_vote_account_balance_for_vat(),
-                )
-            } else {
-                unfiltered_distribution_vote_accounts.clone()
-            };
-        if AlpenglowEpochType::is_alpenglow_or_migration_epoch(self, rewarded_epoch) {
-            assert!(
-                self.feature_set.snapshot().validator_admission_ticket,
-                "Alpenglow should not be activated before the VAT"
+        // Apply stake rewards and commission using the VAT-filtered distribution
+        // vote-account snapshot.
+        let filtered_distribution_vote_accounts = unfiltered_distribution_vote_accounts
+            .clone_and_filter_for_vat(
+                MAX_ALPENGLOW_VOTE_ACCOUNTS,
+                self.minimum_vote_account_balance_for_vat(),
             );
+        if AlpenglowEpochType::is_alpenglow_or_migration_epoch(self, rewarded_epoch) {
             reward_epoch_delegated_stakes.set(self, &filtered_distribution_vote_accounts);
         }
         let cached_vote_accounts =
@@ -2650,15 +2641,13 @@ impl Bank {
         }
     }
 
-    /// Burn the Validator Admission ticket from each vote account if both the VAT and Alpenglow feature flags
-    /// are enabled
+    /// Burn the Validator Admission ticket from each vote account if Alpenglow is enabled
     ///
     /// Note: This must ONLY be called after the vote accounts have been filtered (`clone_and_filter_for_vat`)
     /// to the top `MAX_ALPENGLOW_VOTE_ACCOUNTS` that contain enough balance for admission.
     fn maybe_burn_vat_from_staked_accounts(&mut self, epoch_stakes: &VersionedEpochStakes) {
-        // Only deduct and burn the VAT if both the VAT and alpenglow features are active.
         let feature_snapshot = self.feature_set.snapshot();
-        if !feature_snapshot.alpenglow || !feature_snapshot.validator_admission_ticket {
+        if !feature_snapshot.alpenglow {
             return;
         }
 
@@ -6635,19 +6624,13 @@ impl Bank {
         }
     }
 
-    /// If the VAT feature is active, returns the `Stakes` as filtered by SIMD-0357
+    /// Returns the `Stakes` as filtered by SIMD-0357
     /// See `VoteAccounts::clone_and_filter_for_vat` for the full criteria
-    ///
-    /// If the VAT feature is not active, return all stakes
     pub fn get_top_epoch_stakes(&self) -> Stakes<StakeAccount<Delegation>> {
-        if self.feature_set.snapshot().validator_admission_ticket {
-            self.stakes_cache.stakes().clone_and_filter_for_vat(
-                MAX_ALPENGLOW_VOTE_ACCOUNTS,
-                self.minimum_vote_account_balance_for_vat(),
-            )
-        } else {
-            self.stakes_cache.stakes().clone()
-        }
+        self.stakes_cache.stakes().clone_and_filter_for_vat(
+            MAX_ALPENGLOW_VOTE_ACCOUNTS,
+            self.minimum_vote_account_balance_for_vat(),
+        )
     }
 
     /// Calculates and sets block id for `bank`.

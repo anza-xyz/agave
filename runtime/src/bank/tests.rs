@@ -770,8 +770,10 @@ where
 
     let ((vote_id, mut vote_account), (stake_id, stake_account)) =
         crate::stakes::tests::create_staked_node_accounts(10_000, &bank0.rent_collector.rent);
+    let vote_account_balance = bank0.minimum_vote_account_balance_for_vat();
+    vote_account.set_lamports(vote_account_balance);
     let starting_vote_and_stake_balance = 10_000
-        + 1
+        + vote_account_balance
         + bank0
             .rent_collector
             .rent
@@ -923,7 +925,7 @@ fn do_test_bank_update_rewards_determinism() -> u64 {
         &vote_id,
         0,
         &node_pubkey,
-        100,
+        bank.minimum_vote_account_balance_for_vat(),
     );
     let stake_id1 = solana_pubkey::new_rand();
     let stake_account1 = crate::stakes::tests::create_stake_account(
@@ -6486,10 +6488,6 @@ fn test_vat_burn_slot_params() {
             false,
         );
         activate_feature(&mut genesis_config, feature_set::alpenglow::id());
-        activate_feature(
-            &mut genesis_config,
-            feature_set::validator_admission_ticket::id(),
-        );
         if let Some(feature_id) = slot_time_feature_id {
             activate_feature(&mut genesis_config, feature_id);
         }

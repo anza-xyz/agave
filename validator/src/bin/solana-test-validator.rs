@@ -387,15 +387,11 @@ fn main() {
 
     let features_to_deactivate = pubkeys_of(&matches, "deactivate_feature").unwrap_or_default();
     if matches.is_present("alpenglow")
-        && features_to_deactivate.iter().any(|feature| {
-            *feature == agave_feature_set::alpenglow::id()
-                || *feature == agave_feature_set::validator_admission_ticket::id()
-        })
+        && features_to_deactivate
+            .iter()
+            .any(|feature| *feature == agave_feature_set::alpenglow::id())
     {
-        println!(
-            "Error: --alpenglow requires both the alpenglow and validator_admission_ticket \
-             features to be active"
-        );
+        println!("Error: --alpenglow requires the alpenglow feature to be active");
         exit(1);
     }
 

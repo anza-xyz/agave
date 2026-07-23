@@ -1,10 +1,7 @@
 #![cfg(feature = "agave-unstable-api")]
 #![allow(clippy::arithmetic_side_effects)]
 use {
-    agave_feature_set::{
-        FEATURE_NAMES, FeatureSet, alpenglow, raise_cpi_nesting_limit_to_8,
-        validator_admission_ticket,
-    },
+    agave_feature_set::{FEATURE_NAMES, FeatureSet, alpenglow, raise_cpi_nesting_limit_to_8},
     agave_snapshots::{
         SnapshotInterval, paths::BANK_SNAPSHOTS_DIR, snapshot_config::SnapshotConfig,
     },
@@ -276,8 +273,6 @@ impl TestValidatorGenesis {
 
     pub fn activate_alpenglow(&mut self) -> &mut Self {
         self.deactivate_feature_set.remove(&alpenglow::id());
-        self.deactivate_feature_set
-            .remove(&validator_admission_ticket::id());
         self
     }
 
@@ -920,11 +915,6 @@ impl TestValidator {
             }
         }
         let is_alpenglow_active = feature_set.is_active(&alpenglow::id());
-        if is_alpenglow_active && !feature_set.is_active(&validator_admission_ticket::id()) {
-            return Err(
-                "Alpenglow requires the validator_admission_ticket feature to be active".into(),
-            );
-        }
 
         let runtime_features = feature_set.runtime_features();
         let program_runtime_environment = create_program_runtime_environment(
@@ -1617,7 +1607,6 @@ mod test {
             alpenglow::id(),
             agave_feature_set::bls_pubkey_management_in_vote_account::id(),
             agave_feature_set::vote_account_initialize_v2::id(),
-            agave_feature_set::validator_admission_ticket::id(),
         ]
         .into_iter()
         .for_each(|feature| {

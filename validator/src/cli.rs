@@ -867,10 +867,7 @@ pub fn test_app<'a>(version: &'a str, default_args: &'a DefaultTestArgs) -> App<
             Arg::with_name("alpenglow")
                 .long("alpenglow")
                 .takes_value(false)
-                .help(
-                    "Activate Alpenglow at genesis. The validator_admission_ticket feature must \
-                     remain active",
-                ),
+                .help("Activate Alpenglow at genesis"),
         )
         .arg(
             Arg::with_name("deactivate_feature")

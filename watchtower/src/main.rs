@@ -347,13 +347,6 @@ fn get_minimum_vat_vote_account_balance(
     rpc_client: &RpcClient,
 ) -> client_error::Result<Option<u64>> {
     let slot = rpc_client.get_slot()?;
-    if !is_feature_active_at_slot(
-        rpc_client,
-        &agave_feature_set::validator_admission_ticket::id(),
-        slot,
-    )? {
-        return Ok(None);
-    }
 
     let vote_account_rent_exempt_minimum =
         rpc_client.get_minimum_balance_for_rent_exemption(VoteStateV4::size_of())?;

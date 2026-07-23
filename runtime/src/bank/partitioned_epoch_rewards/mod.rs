@@ -335,7 +335,7 @@ pub(super) struct PartitionedRewardsCalculation {
     capitalization: u64,
     point_value: PointValue,
     /// Number of vote accounts in the distribution-epoch snapshot after
-    /// SIMD-0357 VAT filtering (or the unfiltered count when VAT is off).
+    /// SIMD-0357 VAT filtering.
     /// Surfaced for the `epoch_rewards` datapoint without re-running the
     /// filter at distribution time.
     num_filtered_vote_accounts: usize,

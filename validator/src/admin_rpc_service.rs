@@ -118,7 +118,6 @@ pub struct AdminRpcValidatorAdmissionTicketStatus {
     pub vote_account: Pubkey,
     pub voting_enabled: bool,
     pub current_epoch: Epoch,
-    pub vat_active: bool,
     pub in_current_epoch_vat: bool,
     pub current_epoch_vote_account_stake: u64,
     pub current_epoch_vote_accounts: usize,
@@ -650,7 +649,6 @@ impl AdminRpc for AdminRpcImpl {
         meta.with_post_init(|post_init| {
             let bank = post_init.bank_forks.read().unwrap().root_bank();
             let current_epoch = bank.epoch();
-            let vat_active = bank.feature_set.snapshot().validator_admission_ticket;
             let epoch_vote_accounts = bank
                 .epoch_vote_accounts(current_epoch)
                 .ok_or_else(jsonrpc_core::Error::internal_error)?;
@@ -670,8 +668,7 @@ impl AdminRpc for AdminRpcImpl {
                 vote_account: post_init.vote_account,
                 voting_enabled,
                 current_epoch,
-                vat_active,
-                in_current_epoch_vat: vat_active && in_current_epoch_vote_accounts,
+                in_current_epoch_vat: in_current_epoch_vote_accounts,
                 current_epoch_vote_account_stake,
                 current_epoch_vote_accounts: epoch_vote_accounts.len(),
                 next_epoch_vat_failure_reason,
@@ -1349,9 +1346,7 @@ mod tests {
         let bank = post_init.bank_forks.read().unwrap().root_bank();
         let current_epoch = bank.epoch();
         let epoch_vote_accounts = bank.epoch_vote_accounts(current_epoch).unwrap();
-        let expected_vat_active = bank.feature_set.snapshot().validator_admission_ticket;
-        let expected_in_vat =
-            expected_vat_active && epoch_vote_accounts.contains_key(&post_init.vote_account);
+        let expected_in_vat = epoch_vote_accounts.contains_key(&post_init.vote_account);
         let expected_stake = epoch_vote_accounts
             .get(&post_init.vote_account)
             .map(|(stake, _vote_account)| *stake)
@@ -1368,7 +1363,6 @@ mod tests {
         assert_eq!(status.vote_account, post_init.vote_account);
         assert!(status.voting_enabled);
         assert_eq!(status.current_epoch, current_epoch);
-        assert_eq!(status.vat_active, expected_vat_active);
         assert_eq!(status.in_current_epoch_vat, expected_in_vat);
         assert_eq!(status.current_epoch_vote_account_stake, expected_stake);
         assert_eq!(

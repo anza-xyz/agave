@@ -235,10 +235,6 @@ fn format_vat_status(
         return "VAT: failed to connect to admin RPC".to_string();
     };
 
-    if !status.vat_active {
-        return "VAT: inactive".to_string();
-    }
-
     format!(
         "{}{}",
         format_current_vat_status(status),
