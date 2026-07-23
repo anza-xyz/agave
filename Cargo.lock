@@ -9780,6 +9780,7 @@ dependencies = [
  "base64 0.22.1",
  "bincode",
  "cfg-if 1.0.4",
+ "crossbeam-channel",
  "itertools 0.14.0",
  "libsecp256k1",
  "log",
