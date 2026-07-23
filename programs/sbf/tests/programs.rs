@@ -86,7 +86,8 @@ use {
         instr::{context::InstrContext, harness::execute_instr},
         programs::{
             add_program_to_program_cache, keyed_account_for_bpf_loader_program,
-            keyed_account_for_system_program, new_program_cache_with_builtins,
+            keyed_account_for_compute_budget_program, keyed_account_for_system_program,
+            new_program_cache_with_builtins,
         },
     },
     std::{fs::File, io::Read, path::PathBuf},
@@ -4558,27 +4559,26 @@ fn test_cpi_invalid_account_info_pointers() {
 #[test]
 #[cfg(feature = "sbf_rust")]
 fn test_deplete_cost_meter_with_access_violation() {
-    agave_logger::setup();
-    let GenesisConfigInfo {
-        genesis_config,
-        mint_keypair,
-        ..
-    } = create_genesis_config(100_123_456_789);
+    let mint_keypair = Keypair::new();
+    let mint_pubkey = mint_keypair.pubkey();
+    let mint_balance = 100_123_456_789;
+    let compute_unit_limit = 10_000;
 
-    let bank = Bank::new_for_tests(&genesis_config);
-    let (bank, bank_forks) = bank.wrap_with_bank_forks_for_tests();
-    let invoke_program_id = create_program(
-        &bank,
-        &bpf_loader_upgradeable::id(),
-        "solana_sbf_rust_invoke",
-    );
-    let mut bank_client = BankClient::new_shared(bank.clone());
-    let bank = bank_client
-        .advance_slot(1, &bank_forks, SlotLeader::default())
-        .unwrap();
+    let (payer, [invoke_program_id], feature_set, mut accounts, mut program_cache, sysvar_cache) =
+        program_sbf_txn_fixture([("solana_sbf_rust_invoke", bpf_loader_upgradeable::id())]);
 
     let account_keypair = Keypair::new();
-    let mint_pubkey = mint_keypair.pubkey();
+    accounts.extend([
+        (
+            mint_pubkey,
+            Account::new(mint_balance, 0, &system_program::id()),
+        ),
+        (
+            account_keypair.pubkey(),
+            Account::new(0, 0, &system_program::id()),
+        ),
+        keyed_account_for_compute_budget_program(),
+    ]);
     let account_metas = vec![
         AccountMeta::new(mint_pubkey, true),
         AccountMeta::new(account_keypair.pubkey(), false),
@@ -4589,28 +4589,36 @@ fn test_deplete_cost_meter_with_access_violation() {
     instruction_data.extend_from_slice(3usize.to_le_bytes().as_ref());
     instruction_data.push(42);
 
-    let instruction =
-        Instruction::new_with_bytes(invoke_program_id, &instruction_data, account_metas.clone());
-
-    let compute_unit_limit = 10_000u32;
     let message = Message::new(
         &[
             ComputeBudgetInstruction::set_compute_unit_limit(compute_unit_limit),
-            instruction,
+            Instruction::new_with_bytes(
+                invoke_program_id,
+                &instruction_data,
+                account_metas.clone(),
+            ),
         ],
-        Some(&mint_keypair.pubkey()),
+        Some(&payer),
     );
-    let tx = Transaction::new(&[&mint_keypair], message, bank.last_blockhash());
 
-    let result = load_execute_and_commit_transaction(&bank, tx).unwrap();
+    let sanitized_message =
+        SanitizedMessage::try_from_legacy_message(message, &ReservedAccountKeys::empty_key_set())
+            .unwrap();
 
+    let context =
+        TxnContext::new_with_default_budget(feature_set, accounts, sanitized_message, None);
+
+    let effects = execute_txn(&context, &mut program_cache, &sysvar_cache);
     assert_eq!(
-        result.status.unwrap_err(),
-        TransactionError::InstructionError(1, InstructionError::ReadonlyDataModified)
+        effects.status,
+        Err(TransactionError::InstructionError(
+            1,
+            InstructionError::ReadonlyDataModified,
+        )),
     );
 
     // all compute unit limit should be consumed due to SBF VM error
-    assert_eq!(result.executed_units, u64::from(compute_unit_limit));
+    assert_eq!(effects.executed_units, (compute_unit_limit as u64));
 }
 
 #[test]
@@ -4732,17 +4740,11 @@ fn test_deny_executable_write(virtual_address_space_adjustments: bool) {
         configured_feature_set.deactivate(&feature_set::account_data_direct_mapping::id());
     }
 
-    let (
-        payer,
-        [invoke_program_id],
-        feature_set,
-        mut accounts,
-        mut program_cache,
-        sysvar_cache,
-    ) = program_sbf_txn_fixture_with_feature_set(
-        [("solana_sbf_rust_invoke", bpf_loader_upgradeable::id())],
-        configured_feature_set,
-    );
+    let (payer, [invoke_program_id], feature_set, mut accounts, mut program_cache, sysvar_cache) =
+        program_sbf_txn_fixture_with_feature_set(
+            [("solana_sbf_rust_invoke", bpf_loader_upgradeable::id())],
+            configured_feature_set,
+        );
 
     let account_keypair = Keypair::new();
     accounts.extend([
@@ -4770,11 +4772,9 @@ fn test_deny_executable_write(virtual_address_space_adjustments: bool) {
         )],
         Some(&payer),
     );
-    let sanitized_message = SanitizedMessage::try_from_legacy_message(
-        message,
-        &ReservedAccountKeys::empty_key_set(),
-    )
-    .unwrap();
+    let sanitized_message =
+        SanitizedMessage::try_from_legacy_message(message, &ReservedAccountKeys::empty_key_set())
+            .unwrap();
 
     let context =
         TxnContext::new_with_default_budget(feature_set, accounts, sanitized_message, None);
