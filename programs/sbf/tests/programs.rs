@@ -75,7 +75,7 @@ use {
         sync::{Arc, RwLock},
         time::Duration,
     },
-    test_case::test_matrix,
+    test_case::{test_case, test_matrix},
 };
 #[cfg(any(feature = "sbf_c", feature = "sbf_rust"))]
 use {
@@ -1731,13 +1731,20 @@ type ProgramSbfTxnFixture<const N: usize> = (
 fn program_sbf_txn_fixture<const N: usize>(
     programs: [(&str, Pubkey); N],
 ) -> ProgramSbfTxnFixture<N> {
+    program_sbf_txn_fixture_with_feature_set(programs, FeatureSet::all_enabled())
+}
+
+#[cfg(feature = "sbf_rust")]
+fn program_sbf_txn_fixture_with_feature_set<const N: usize>(
+    programs: [(&str, Pubkey); N],
+    feature_set: FeatureSet,
+) -> ProgramSbfTxnFixture<N> {
     agave_logger::setup();
 
     let payer = Pubkey::new_unique();
 
     let program_ids = programs.map(|_| Pubkey::new_unique());
     let mut program_cache = new_program_cache_with_builtins(/* slot */ 0);
-    let feature_set = FeatureSet::all_enabled();
 
     let mut accounts = vec![(payer, Account::new(50_000, 0, &system_program::id()))];
     for (program_id, (program_name, loader_id)) in program_ids.iter().zip(programs) {
@@ -4710,60 +4717,76 @@ fn test_deny_access_beyond_current_length() {
     }
 }
 
-#[test]
+#[test_case(false; "without_virtual_address_space_adjustments")]
+#[test_case(true; "with_virtual_address_space_adjustments")]
 #[cfg(feature = "sbf_rust")]
-fn test_deny_executable_write() {
-    agave_logger::setup();
+fn test_deny_executable_write(virtual_address_space_adjustments: bool) {
+    let mint_keypair = Keypair::new();
+    let mint_pubkey = mint_keypair.pubkey();
 
-    let GenesisConfigInfo {
-        genesis_config,
-        mint_keypair,
-        ..
-    } = create_genesis_config(100_123_456_789);
+    let mut configured_feature_set = FeatureSet::all_enabled();
+    if !virtual_address_space_adjustments {
+        configured_feature_set
+            .deactivate(&feature_set::syscall_parameter_address_restrictions::id());
+        configured_feature_set.deactivate(&feature_set::virtual_address_space_adjustments::id());
+        configured_feature_set.deactivate(&feature_set::account_data_direct_mapping::id());
+    }
 
-    for virtual_address_space_adjustments in [false, true] {
-        let mut bank = Bank::new_for_tests(&genesis_config);
-        let feature_set = Arc::make_mut(&mut bank.feature_set);
-        // by default test banks have all features enabled, so we only need to
-        // disable when needed
-        if !virtual_address_space_adjustments {
-            feature_set.deactivate(&feature_set::syscall_parameter_address_restrictions::id());
-            feature_set.deactivate(&feature_set::virtual_address_space_adjustments::id());
-            feature_set.deactivate(&feature_set::account_data_direct_mapping::id());
-        }
-        let (bank, bank_forks) = bank.wrap_with_bank_forks_for_tests();
-        let invoke_program_id = create_program(
-            &bank,
-            &bpf_loader_upgradeable::id(),
-            "solana_sbf_rust_invoke",
-        );
-        let mut bank_client = BankClient::new_shared(bank.clone());
-        bank_client
-            .advance_slot(1, &bank_forks, SlotLeader::default())
-            .unwrap();
+    let (
+        payer,
+        [invoke_program_id],
+        feature_set,
+        mut accounts,
+        mut program_cache,
+        sysvar_cache,
+    ) = program_sbf_txn_fixture_with_feature_set(
+        [("solana_sbf_rust_invoke", bpf_loader_upgradeable::id())],
+        configured_feature_set,
+    );
 
-        let account_keypair = Keypair::new();
-        let mint_pubkey = mint_keypair.pubkey();
-        let account_metas = vec![
-            AccountMeta::new(mint_pubkey, true),
-            AccountMeta::new(account_keypair.pubkey(), false),
-            AccountMeta::new_readonly(invoke_program_id, false),
-        ];
+    let account_keypair = Keypair::new();
+    accounts.extend([
+        (
+            mint_pubkey,
+            Account::new(100_123_456_789, 0, &system_program::id()),
+        ),
+        (account_keypair.pubkey(), Account::default()),
+    ]);
+    let account_metas = vec![
+        AccountMeta::new(mint_pubkey, true),
+        AccountMeta::new(account_keypair.pubkey(), false),
+        AccountMeta::new_readonly(invoke_program_id, false),
+    ];
 
-        let mut instruction_data = vec![TEST_WRITE_ACCOUNT, 2];
-        instruction_data.extend_from_slice(3usize.to_le_bytes().as_ref());
-        instruction_data.push(42);
-        let instruction = Instruction::new_with_bytes(
+    let mut instruction_data = vec![TEST_WRITE_ACCOUNT, 2];
+    instruction_data.extend_from_slice(3usize.to_le_bytes().as_ref());
+    instruction_data.push(42);
+
+    let message = Message::new(
+        &[Instruction::new_with_bytes(
             invoke_program_id,
             &instruction_data,
-            account_metas.clone(),
-        );
-        let result = bank_client.send_and_confirm_instruction(&mint_keypair, instruction);
-        assert_eq!(
-            result.unwrap_err().unwrap(),
-            TransactionError::InstructionError(0, InstructionError::ReadonlyDataModified)
-        );
-    }
+            account_metas,
+        )],
+        Some(&payer),
+    );
+    let sanitized_message = SanitizedMessage::try_from_legacy_message(
+        message,
+        &ReservedAccountKeys::empty_key_set(),
+    )
+    .unwrap();
+
+    let context =
+        TxnContext::new_with_default_budget(feature_set, accounts, sanitized_message, None);
+
+    let effects = execute_txn(&context, &mut program_cache, &sysvar_cache);
+    assert_eq!(
+        effects.status,
+        Err(TransactionError::InstructionError(
+            0,
+            InstructionError::ReadonlyDataModified,
+        )),
+    );
 }
 
 #[test]
