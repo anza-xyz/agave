@@ -34,9 +34,7 @@ use {
     solana_loader_v3_interface::{
         instruction as loader_v3_instruction, state::UpgradeableLoaderState,
     },
-    solana_message::{
-        inner_instruction::InnerInstruction, Message, SanitizedMessage, VersionedMessage,
-    },
+    solana_message::{inner_instruction::InnerInstruction, Message, SanitizedMessage},
     solana_pubkey::Pubkey,
     solana_rent::Rent,
     solana_runtime::{
@@ -58,7 +56,7 @@ use {
     solana_signer::Signer,
     solana_svm::{
         conformance::{
-            setup::{sanitized_message_from_versioned_message, sysvar_cache_from_accounts},
+            setup::sysvar_cache_from_accounts,
             txn::{context::TxnContext, harness::execute_txn},
         },
         transaction_commit_result::{CommittedTransaction, TransactionCommitResult},
@@ -1745,8 +1743,11 @@ fn test_program_sbf_instruction_introspection_passing_transaction() {
         ],
         Some(&payer),
     );
-    let versioned_message = VersionedMessage::Legacy(message);
-    let sanitized_message = sanitized_message_from_versioned_message(versioned_message, &accounts);
+    let sanitized_message = SanitizedMessage::try_from_legacy_message(
+        message,
+        &ReservedAccountKeys::empty_key_set(),
+    )
+    .unwrap();
 
     let context =
         TxnContext::new_with_default_budget(feature_set, accounts, sanitized_message, None);
@@ -1767,8 +1768,11 @@ fn test_program_sbf_instruction_introspection_writable_special_instructions1111(
         &[Instruction::new_with_bytes(program_id, &[0], account_metas)],
         Some(&payer),
     );
-    let versioned_message = VersionedMessage::Legacy(message);
-    let sanitized_message = sanitized_message_from_versioned_message(versioned_message, &accounts);
+    let sanitized_message = SanitizedMessage::try_from_legacy_message(
+        message,
+        &ReservedAccountKeys::empty_key_set(),
+    )
+    .unwrap();
 
     let context =
         TxnContext::new_with_default_budget(feature_set, accounts, sanitized_message, None);
@@ -1793,8 +1797,11 @@ fn test_program_sbf_instruction_introspection_no_accounts() {
         &[Instruction::new_with_bytes(program_id, &[0], vec![])],
         Some(&payer),
     );
-    let versioned_message = VersionedMessage::Legacy(message);
-    let sanitized_message = sanitized_message_from_versioned_message(versioned_message, &accounts);
+    let sanitized_message = SanitizedMessage::try_from_legacy_message(
+        message,
+        &ReservedAccountKeys::empty_key_set(),
+    )
+    .unwrap();
 
     let context =
         TxnContext::new_with_default_budget(feature_set, accounts, sanitized_message, None);
