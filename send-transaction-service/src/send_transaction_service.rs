@@ -439,9 +439,6 @@ impl SendTransactionService {
             {
                 info!("Dropping transaction due to max retries: {signature}");
                 result.max_retries_elapsed += 1;
-                stats
-                    .transactions_exceeding_max_retries
-                    .fetch_add(1, Ordering::Relaxed);
                 return false;
             }
 
@@ -899,6 +896,12 @@ mod test {
                 max_retries_elapsed: 2,
                 ..ProcessTransactionsResult::default()
             }
+        );
+        assert_eq!(
+            stats
+                .transactions_exceeding_max_retries
+                .load(Ordering::Relaxed),
+            result.max_retries_elapsed,
         );
         client.shutdown().await.unwrap();
     }
