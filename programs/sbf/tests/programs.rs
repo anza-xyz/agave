@@ -135,6 +135,25 @@ fn upgradeable_program_accounts(program_id: &Pubkey, program_elf: &[u8]) -> Vec<
     .into()
 }
 
+fn program_accounts(
+    program_id: &Pubkey,
+    program_elf: &[u8],
+    loader_id: Pubkey,
+) -> Vec<(Pubkey, Account)> {
+    if bpf_loader_upgradeable::check_id(&loader_id) {
+        return upgradeable_program_accounts(program_id, program_elf);
+    }
+
+    assert!(bpf_loader::check_id(&loader_id) || bpf_loader_deprecated::check_id(&loader_id));
+    let (program_id, mut account) = solana_program_binaries::bpf_loader_program_account(
+        program_id,
+        program_elf,
+        &Rent::default(),
+    );
+    account.owner = loader_id;
+    vec![(program_id, account)]
+}
+
 #[cfg(feature = "sbf_rust")]
 fn default_sysvar_cache() -> SysvarCache {
     let mut sysvar_cache = SysvarCache::default();
@@ -1709,7 +1728,10 @@ type ProgramSbfTxnFixture<const N: usize> = (
 );
 
 #[cfg(feature = "sbf_rust")]
-fn program_sbf_txn_fixture<const N: usize>(program_names: [&str; N]) -> ProgramSbfTxnFixture<N> {
+fn program_sbf_txn_fixture<const N: usize>(
+    program_names: [&str; N],
+    loader_id: Pubkey,
+) -> ProgramSbfTxnFixture<N> {
     agave_logger::setup();
 
     let payer = Pubkey::new_unique();
@@ -1724,11 +1746,11 @@ fn program_sbf_txn_fixture<const N: usize>(program_names: [&str; N]) -> ProgramS
         add_program_to_program_cache(
             &mut program_cache,
             program_id,
-            &bpf_loader_upgradeable::id(),
+            &loader_id,
             &program_elf,
             &feature_set.runtime_features(),
         );
-        accounts.extend(upgradeable_program_accounts(program_id, &program_elf));
+        accounts.extend(program_accounts(program_id, &program_elf, loader_id));
     }
     let sysvar_cache = sysvar_cache_from_accounts(&accounts);
 
@@ -1746,7 +1768,10 @@ fn program_sbf_txn_fixture<const N: usize>(program_names: [&str; N]) -> ProgramS
 #[cfg(feature = "sbf_rust")]
 fn test_program_sbf_instruction_introspection_passing_transaction() {
     let (payer, [program_id], feature_set, accounts, mut program_cache, sysvar_cache) =
-        program_sbf_txn_fixture(["solana_sbf_rust_instruction_introspection"]);
+        program_sbf_txn_fixture(
+            ["solana_sbf_rust_instruction_introspection"],
+            bpf_loader_upgradeable::id(),
+        );
 
     let account_metas = vec![
         AccountMeta::new_readonly(program_id, false),
@@ -1776,7 +1801,10 @@ fn test_program_sbf_instruction_introspection_passing_transaction() {
 #[cfg(feature = "sbf_rust")]
 fn test_program_sbf_instruction_introspection_writable_special_instructions1111() {
     let (payer, [program_id], feature_set, accounts, mut program_cache, sysvar_cache) =
-        program_sbf_txn_fixture(["solana_sbf_rust_instruction_introspection"]);
+        program_sbf_txn_fixture(
+            ["solana_sbf_rust_instruction_introspection"],
+            bpf_loader_upgradeable::id(),
+        );
 
     let account_metas = vec![AccountMeta::new(sysvar::instructions::id(), false)];
 
@@ -1805,7 +1833,10 @@ fn test_program_sbf_instruction_introspection_writable_special_instructions1111(
 #[cfg(feature = "sbf_rust")]
 fn test_program_sbf_instruction_introspection_no_accounts() {
     let (payer, [program_id], feature_set, accounts, mut program_cache, sysvar_cache) =
-        program_sbf_txn_fixture(["solana_sbf_rust_instruction_introspection"]);
+        program_sbf_txn_fixture(
+            ["solana_sbf_rust_instruction_introspection"],
+            bpf_loader_upgradeable::id(),
+        );
 
     let message = Message::new(
         &[Instruction::new_with_bytes(program_id, &[0], vec![])],
@@ -3775,17 +3806,25 @@ fn test_program_sbf_realloc_invoke() {
 fn test_program_sbf_processed_inner_instruction() {
     let (
         payer,
-        [sibling_program_id, sibling_inner_program_id, noop_program_id, invoke_and_return_program_id],
+        [
+            sibling_program_id,
+            sibling_inner_program_id,
+            noop_program_id,
+            invoke_and_return_program_id,
+        ],
         feature_set,
         accounts,
         mut program_cache,
         sysvar_cache,
-    ) = program_sbf_txn_fixture([
-        "solana_sbf_rust_sibling_instructions",
-        "solana_sbf_rust_sibling_inner_instructions",
-        "solana_sbf_rust_noop",
-        "solana_sbf_rust_invoke_and_return",
-    ]);
+    ) = program_sbf_txn_fixture(
+        [
+            "solana_sbf_rust_sibling_instructions",
+            "solana_sbf_rust_sibling_inner_instructions",
+            "solana_sbf_rust_noop",
+            "solana_sbf_rust_invoke_and_return",
+        ],
+        bpf_loader_upgradeable::id(),
+    );
 
     let message = Message::new(
         &[
@@ -3934,39 +3973,43 @@ fn test_program_fees() {
 #[test]
 #[cfg(feature = "sbf_rust")]
 fn test_program_sbf_inner_instruction_alignment_checks() {
-    agave_logger::setup();
-
-    let GenesisConfigInfo {
-        genesis_config,
-        mint_keypair,
-        ..
-    } = create_genesis_config(50);
-    let (bank, bank_forks) = Bank::new_with_bank_forks_for_tests(&genesis_config);
-    let noop = create_program(&bank, &bpf_loader_deprecated::id(), "solana_sbf_rust_noop");
-    let inner_instruction_alignment_check = create_program(
-        &bank,
-        &bpf_loader_deprecated::id(),
-        "solana_sbf_rust_inner_instruction_alignment_check",
+    let (
+        payer,
+        [noop, inner_instruction_alignment_check],
+        feature_set,
+        accounts,
+        mut program_cache,
+        sysvar_cache,
+    ) = program_sbf_txn_fixture(
+        [
+            "solana_sbf_rust_noop",
+            "solana_sbf_rust_inner_instruction_alignment_check",
+        ],
+        bpf_loader_deprecated::id(),
     );
 
     // invoke unaligned program, which will call aligned program twice,
     // unaligned should be allowed once invoke completes
-    let mut bank_client = BankClient::new_shared(bank);
-    bank_client
-        .advance_slot(1, bank_forks.as_ref(), SlotLeader::default())
-        .expect("Failed to advance the slot");
-    let mut instruction = Instruction::new_with_bytes(
-        inner_instruction_alignment_check,
-        &[0],
-        vec![
-            AccountMeta::new_readonly(noop, false),
-            AccountMeta::new_readonly(mint_keypair.pubkey(), false),
-        ],
+    let message = Message::new(
+        &[Instruction::new_with_bytes(
+            inner_instruction_alignment_check,
+            &[1],
+            vec![
+                AccountMeta::new_readonly(noop, false),
+                AccountMeta::new_readonly(payer, false),
+            ],
+        )],
+        Some(&payer),
     );
+    let sanitized_message =
+        SanitizedMessage::try_from_legacy_message(message, &ReservedAccountKeys::empty_key_set())
+            .unwrap();
 
-    instruction.data[0] += 1;
-    let result = bank_client.send_and_confirm_instruction(&mint_keypair, instruction.clone());
-    assert!(result.is_ok(), "{result:?}");
+    let context =
+        TxnContext::new_with_default_budget(feature_set, accounts, sanitized_message, None);
+
+    let effects = execute_txn(&context, &mut program_cache, &sysvar_cache);
+    assert_eq!(effects.status, Ok(()));
 }
 
 #[test]
