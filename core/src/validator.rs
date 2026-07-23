@@ -540,6 +540,15 @@ pub enum ValidatorStartProgress {
 pub struct XdpTransmitSetup {
     pub transmitter_builder: TransmitterBuilder,
     pub src_ip: Ipv4Addr,
+    pub modules: XdpModules,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct XdpModules {
+    pub tpu: bool,
+    pub turbine: bool,
+    pub repair: bool,
+    pub gossip: bool,
 }
 
 struct BlockstoreRootScan {
@@ -1442,6 +1451,7 @@ impl Validator {
         ) = if let Some(XdpTransmitSetup {
             transmitter_builder,
             src_ip,
+            modules,
         }) = xdp_transmit_setup
         {
             let turbine_src_port = node.sockets.retransmit_sockets[0]
@@ -1464,19 +1474,19 @@ impl Validator {
             let (transmitter, sender) = transmitter_builder.build();
             (
                 Some(transmitter),
-                Some(PinnedXdpSender::new(
-                    sender.clone(),
-                    SocketAddrV4::new(src_ip, turbine_src_port),
-                )),
-                Some((sender.clone(), src_ip)),
-                Some(PinnedXdpSender::new(
-                    sender.clone(),
-                    SocketAddrV4::new(src_ip, repair_src_port),
-                )),
-                Some(PinnedXdpSender::new(
-                    sender,
-                    SocketAddrV4::new(src_ip, gossip_src_port),
-                )),
+                modules.turbine.then(|| {
+                    PinnedXdpSender::new(
+                        sender.clone(),
+                        SocketAddrV4::new(src_ip, turbine_src_port),
+                    )
+                }),
+                modules.tpu.then(|| (sender.clone(), src_ip)),
+                modules.repair.then(|| {
+                    PinnedXdpSender::new(sender.clone(), SocketAddrV4::new(src_ip, repair_src_port))
+                }),
+                modules.gossip.then(|| {
+                    PinnedXdpSender::new(sender, SocketAddrV4::new(src_ip, gossip_src_port))
+                }),
             )
         } else {
             (None, None, None, None, None)

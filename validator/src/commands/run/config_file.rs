@@ -1,37 +1,14 @@
 //! Parser for the validator's `--experimental-config-file` TOML file.
 //!
-//! Configuration is resolved in three layers, each overriding the previous:
-//!   1. the built-in defaults, embedded from `default_config.toml`;
-//!   2. the user file passed with `--experimental-config-file`, which overrides
-//!      the default file section by section;
-//!   3. CLI flags, applied by the caller (see `execute.rs`).
+//! Config is resolved as built-in defaults, then user TOML, then CLI overrides.
+//! The file currently covers XDP transmit settings. `[interfaces.<nic>]` maps
+//! hardware queues to CPU workers, and `[<module>.xdp].tx` selects which queues
+//! each XDP-enabled module uses.
 //!
-//! ```toml
-//! [interfaces."ens1f0"]
-//! zero_copy = true
-//! queue_to_cpu_mapping = [
-//!   { queue = 0, cpu = 8 },
-//!   { queue = 1, cpu = 9 },
-//! ]
-//!
-//! [turbine]
-//! use_xdp = true
-//! [turbine.xdp]
-//! tx = { ens1f0 = [0, 1] }
-//! ```
-//!
-//! `[interfaces.<nic>]` declares a NIC's hardware queue -> CPU worker pool. Each
-//! XDP-capable module (`tpu`, `turbine`, `repair`, `gossip`) may enable XDP
-//! transmit (`use_xdp`) and, under `[<module>.xdp].tx`, name the interface(s)
-//! and queues it transmits over. Unknown fields and unknown top-level sections
-//! are rejected so typos fail loudly.
-//!
-//! The runtime currently drives a single shared XDP transmitter, so the enabled
-//! modules' `tx` maps must reference at most one interface; the transmitter is
-//! built over the union of the queues they name. A module that enables XDP
-//! without naming any queue (as in the built-in default) leaves the interface
-//! and CPU unspecified, and the caller falls back to auto-detecting the
-//! default-route interface and auto-selecting a CPU.
+//! The runtime currently uses a single shared XDP transmitter, so enabled
+//! modules may reference only one interface. Its queue set is the union of
+//! module `tx` queues; with no explicit queue, startup falls back to
+//! interface/CPU auto-selection.
 
 use {
     agave_xdp::transmitter::QueueCpuBinding,
@@ -42,15 +19,13 @@ use {
     },
 };
 
-/// The built-in defaults, embedded into the binary.
 const DEFAULT_CONFIG: &str = include_str!("default_config.toml");
 
 fn default_true() -> bool {
     true
 }
 
-/// TOML shape used for serde. Field-typed rather than a map so that unknown
-/// module/section names are rejected by `deny_unknown_fields`.
+/// Field-typed TOML shape so `deny_unknown_fields` rejects unknown sections.
 #[derive(Debug, Default, Deserialize)]
 #[serde(deny_unknown_fields)]
 struct RawConfig {
@@ -63,7 +38,6 @@ struct RawConfig {
 }
 
 impl RawConfig {
-    /// The XDP-capable module blocks paired with their names.
     fn modules(&self) -> [(&'static str, &Option<RawModule>); 4] {
         [
             ("tpu", &self.tpu),
@@ -74,7 +48,6 @@ impl RawConfig {
     }
 }
 
-/// A single `[interfaces.<nic>]` entry: a NIC's queue -> CPU worker pool.
 #[derive(Debug, Clone, Deserialize)]
 #[serde(deny_unknown_fields)]
 struct RawInterface {
@@ -83,7 +56,6 @@ struct RawInterface {
     queue_to_cpu_mapping: Vec<QueueCpu>,
 }
 
-/// One `{ queue = <n>, cpu = <n> }` binding.
 #[derive(Debug, Clone, Copy, Deserialize)]
 #[serde(deny_unknown_fields)]
 struct QueueCpu {
@@ -91,19 +63,15 @@ struct QueueCpu {
     cpu: usize,
 }
 
-/// A single `[<module>]` block.
 #[derive(Debug, Clone, Deserialize)]
 #[serde(deny_unknown_fields)]
 struct RawModule {
-    /// Whether the module transmits over XDP. Defaults to `true` so that a user
-    /// file adding only a `[<module>.xdp]` block does not silently disable the
-    /// module.
+    /// Defaults to true so a file that only adds `[<module>.xdp]` keeps XDP on.
     #[serde(default = "default_true")]
     use_xdp: bool,
     xdp: Option<RawModuleXdp>,
 }
 
-/// The `[<module>.xdp]` block.
 #[derive(Debug, Clone, Deserialize)]
 #[serde(deny_unknown_fields)]
 struct RawModuleXdp {
@@ -112,13 +80,26 @@ struct RawModuleXdp {
     tx: BTreeMap<String, Vec<u32>>,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) struct ModuleFlags {
+    pub tpu: bool,
+    pub turbine: bool,
+    pub repair: bool,
+    pub gossip: bool,
+}
+
+impl ModuleFlags {
+    pub fn any(&self) -> bool {
+        self.tpu || self.turbine || self.repair || self.gossip
+    }
+}
+
 /// The XDP inputs distilled from the merged config, before CLI overrides. The
 /// caller (see `execute.rs`) layers CLI flags on top and, when `interface` or
 /// `queues` are unset, applies auto-detection.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) struct XdpFileConfig {
-    /// Whether any module enabled XDP transmit.
-    pub enabled: bool,
+    pub modules: ModuleFlags,
     /// The single interface referenced by enabled modules' `tx` maps, if any.
     /// `None` means no interface was named; the caller auto-detects.
     pub interface: Option<String>,
@@ -130,8 +111,6 @@ pub(crate) struct XdpFileConfig {
     pub zero_copy: bool,
 }
 
-/// Resolve the effective XDP configuration from the built-in defaults overlaid
-/// with the optional user file.
 pub(crate) fn resolve_xdp_config(user_path: Option<&Path>) -> Result<XdpFileConfig, String> {
     let base = parse_str(DEFAULT_CONFIG)
         .map_err(|e| format!("built-in default config is invalid: {e}"))?;
@@ -152,8 +131,7 @@ fn parse_str(text: &str) -> Result<RawConfig, toml::de::Error> {
     toml::from_str(text)
 }
 
-/// Overlay `over` onto `base`: interfaces merge per NIC name, and a module block
-/// present in `over` replaces the base block wholesale.
+/// Interfaces merge by NIC name; module blocks replace defaults wholesale.
 fn merge(mut base: RawConfig, over: RawConfig) -> RawConfig {
     base.interfaces.extend(over.interfaces);
     if over.tpu.is_some() {
@@ -171,7 +149,6 @@ fn merge(mut base: RawConfig, over: RawConfig) -> RawConfig {
     base
 }
 
-/// A validated `[interfaces.<nic>]` entry.
 struct ResolvedInterface {
     zero_copy: bool,
     queue_to_cpu: BTreeMap<u32, usize>,
@@ -179,7 +156,9 @@ struct ResolvedInterface {
 
 fn resolve_interface(name: &str, raw: &RawInterface) -> Result<ResolvedInterface, String> {
     if raw.queue_to_cpu_mapping.is_empty() {
-        return Err(format!("interface `{name}` has an empty queue_to_cpu_mapping"));
+        return Err(format!(
+            "interface `{name}` has an empty queue_to_cpu_mapping"
+        ));
     }
     let mut queue_to_cpu = BTreeMap::new();
     let mut seen_cpus = BTreeSet::new();
@@ -202,25 +181,29 @@ fn resolve_interface(name: &str, raw: &RawInterface) -> Result<ResolvedInterface
 }
 
 fn resolve(config: &RawConfig) -> Result<XdpFileConfig, String> {
-    // Validate every declared interface's queue -> CPU mapping up front.
     let interfaces = config
         .interfaces
         .iter()
         .map(|(name, raw)| resolve_interface(name, raw).map(|iface| (name.clone(), iface)))
         .collect::<Result<BTreeMap<_, _>, _>>()?;
 
-    let mut enabled = false;
+    // A module absent post-merge keeps XDP on, matching the default file.
+    let module_enabled =
+        |block: &Option<RawModule>| block.as_ref().map(|b| b.use_xdp).unwrap_or(true);
+    let modules = ModuleFlags {
+        tpu: module_enabled(&config.tpu),
+        turbine: module_enabled(&config.turbine),
+        repair: module_enabled(&config.repair),
+        gossip: module_enabled(&config.gossip),
+    };
+
     let mut referenced_iface: Option<String> = None;
     let mut used_queues: BTreeSet<u32> = BTreeSet::new();
 
     for (module, block) in config.modules() {
-        // A module absent post-merge keeps XDP on, matching the default file.
-        let use_xdp = block.as_ref().map(|b| b.use_xdp).unwrap_or(true);
-        if !use_xdp {
+        if !module_enabled(block) {
             continue;
         }
-        enabled = true;
-
         let Some(tx) = block.as_ref().and_then(|b| b.xdp.as_ref()).map(|x| &x.tx) else {
             continue;
         };
@@ -274,7 +257,7 @@ fn resolve(config: &RawConfig) -> Result<XdpFileConfig, String> {
     };
 
     Ok(XdpFileConfig {
-        enabled,
+        modules,
         interface,
         queues,
         zero_copy,
@@ -285,8 +268,6 @@ fn resolve(config: &RawConfig) -> Result<XdpFileConfig, String> {
 mod tests {
     use super::*;
 
-    /// Merge the built-in defaults with `user` TOML and resolve, mirroring
-    /// `resolve_xdp_config` without touching the filesystem.
     fn resolve_with_user(user: &str) -> Result<XdpFileConfig, String> {
         let base = parse_str(DEFAULT_CONFIG).expect("default config parses");
         let over = parse_str(user).map_err(|e| e.to_string())?;
@@ -297,7 +278,7 @@ mod tests {
     fn default_config_enables_all_modules_with_auto_selection() {
         let base = parse_str(DEFAULT_CONFIG).expect("default config parses");
         let c = resolve(&base).unwrap();
-        assert!(c.enabled);
+        assert!(c.modules.any());
         assert_eq!(c.interface, None);
         assert!(c.queues.is_empty());
         assert!(!c.zero_copy);
@@ -310,7 +291,7 @@ mod tests {
              8 }, { queue = 1, cpu = 9 }]\n\n[turbine.xdp]\ntx = { eth0 = [0, 1] }\n",
         )
         .unwrap();
-        assert!(c.enabled);
+        assert!(c.modules.any());
         assert_eq!(c.interface.as_deref(), Some("eth0"));
         assert!(c.zero_copy);
         assert_eq!(
@@ -324,7 +305,6 @@ mod tests {
 
     #[test]
     fn union_of_module_queues_is_taken() {
-        // tpu uses queue 0, turbine queue 1; the shared transmitter needs both.
         let c = resolve_with_user(
             "[interfaces.\"eth0\"]\nqueue_to_cpu_mapping = [{ queue = 0, cpu = 8 }, { queue = 1, \
              cpu = 9 }]\n\n[tpu.xdp]\ntx = { eth0 = [0] }\n\n[turbine.xdp]\ntx = { eth0 = [1] }\n",
@@ -341,26 +321,39 @@ mod tests {
 
     #[test]
     fn adding_xdp_block_does_not_disable_module() {
-        // A user file that adds only [turbine.xdp] must keep use_xdp = true.
         let c = resolve_with_user(
-            "[interfaces.\"eth0\"]\nqueue_to_cpu_mapping = [{ queue = 0, cpu = 8 }]\n\n\
-             [turbine.xdp]\ntx = { eth0 = [0] }\n",
+            "[interfaces.\"eth0\"]\nqueue_to_cpu_mapping = [{ queue = 0, cpu = 8 \
+             }]\n\n[turbine.xdp]\ntx = { eth0 = [0] }\n",
         )
         .unwrap();
-        assert!(c.enabled);
+        assert!(c.modules.any());
         assert_eq!(c.interface.as_deref(), Some("eth0"));
     }
 
     #[test]
     fn all_modules_disabled_reports_not_enabled() {
         let c = resolve_with_user(
-            "[tpu]\nuse_xdp = false\n[turbine]\nuse_xdp = false\n[repair]\nuse_xdp = false\n\
-             [gossip]\nuse_xdp = false\n",
+            "[tpu]\nuse_xdp = false\n[turbine]\nuse_xdp = false\n[repair]\nuse_xdp = \
+             false\n[gossip]\nuse_xdp = false\n",
         )
         .unwrap();
-        assert!(!c.enabled);
+        assert!(!c.modules.any());
         assert_eq!(c.interface, None);
         assert!(c.queues.is_empty());
+    }
+
+    #[test]
+    fn per_module_use_xdp_is_reported() {
+        let c = resolve_with_user("[turbine]\nuse_xdp = false\n").unwrap();
+        assert_eq!(
+            c.modules,
+            ModuleFlags {
+                tpu: true,
+                turbine: false,
+                repair: true,
+                gossip: true,
+            }
+        );
     }
 
     #[test]
@@ -371,6 +364,7 @@ mod tests {
         )
         .unwrap();
         assert_eq!(c.interface, None);
+        assert!(!c.modules.turbine);
     }
 
     #[test]
@@ -382,8 +376,8 @@ mod tests {
     #[test]
     fn queue_not_in_mapping_is_error() {
         let e = resolve_with_user(
-            "[interfaces.\"eth0\"]\nqueue_to_cpu_mapping = [{ queue = 0, cpu = 8 }]\n\n\
-             [turbine.xdp]\ntx = { eth0 = [3] }\n",
+            "[interfaces.\"eth0\"]\nqueue_to_cpu_mapping = [{ queue = 0, cpu = 8 \
+             }]\n\n[turbine.xdp]\ntx = { eth0 = [3] }\n",
         )
         .unwrap_err();
         assert!(e.contains("not in its queue_to_cpu_mapping"), "{e}");
@@ -392,9 +386,9 @@ mod tests {
     #[test]
     fn multiple_interfaces_is_error() {
         let e = resolve_with_user(
-            "[interfaces.\"eth0\"]\nqueue_to_cpu_mapping = [{ queue = 0, cpu = 8 }]\n\
-             [interfaces.\"eth1\"]\nqueue_to_cpu_mapping = [{ queue = 0, cpu = 9 }]\n\n\
-             [tpu.xdp]\ntx = { eth0 = [0] }\n[turbine.xdp]\ntx = { eth1 = [0] }\n",
+            "[interfaces.\"eth0\"]\nqueue_to_cpu_mapping = [{ queue = 0, cpu = 8 \
+             }]\n[interfaces.\"eth1\"]\nqueue_to_cpu_mapping = [{ queue = 0, cpu = 9 \
+             }]\n\n[tpu.xdp]\ntx = { eth0 = [0] }\n[turbine.xdp]\ntx = { eth1 = [0] }\n",
         )
         .unwrap_err();
         assert!(e.contains("multiple interfaces"), "{e}");
@@ -423,8 +417,8 @@ mod tests {
     #[test]
     fn empty_mapping_is_error() {
         let e = resolve_with_user(
-            "[interfaces.\"eth0\"]\nqueue_to_cpu_mapping = []\n\n[turbine.xdp]\ntx = { eth0 = \
-             [0] }\n",
+            "[interfaces.\"eth0\"]\nqueue_to_cpu_mapping = []\n\n[turbine.xdp]\ntx = { eth0 = [0] \
+             }\n",
         )
         .unwrap_err();
         assert!(e.contains("empty queue_to_cpu_mapping"), "{e}");
@@ -433,8 +427,8 @@ mod tests {
     #[test]
     fn empty_tx_queue_list_is_error() {
         let e = resolve_with_user(
-            "[interfaces.\"eth0\"]\nqueue_to_cpu_mapping = [{ queue = 0, cpu = 8 }]\n\n\
-             [turbine.xdp]\ntx = { eth0 = [] }\n",
+            "[interfaces.\"eth0\"]\nqueue_to_cpu_mapping = [{ queue = 0, cpu = 8 \
+             }]\n\n[turbine.xdp]\ntx = { eth0 = [] }\n",
         )
         .unwrap_err();
         assert!(e.contains("lists no queues"), "{e}");
@@ -443,7 +437,6 @@ mod tests {
     #[test]
     fn unknown_top_level_section_is_rejected() {
         let e = resolve_with_user("[nonsense]\nfoo = 1\n").unwrap_err();
-        // serde reports an unknown-field error for the whole document.
         assert!(!e.is_empty());
         assert!(parse_str("[nonsense]\nfoo = 1\n").is_err());
     }
@@ -455,9 +448,12 @@ mod tests {
 
     #[test]
     fn unknown_interface_field_is_rejected() {
-        assert!(parse_str(
-            "[interfaces.\"eth0\"]\nbogus = 1\nqueue_to_cpu_mapping = [{ queue = 0, cpu = 8 }]\n"
-        )
-        .is_err());
+        assert!(
+            parse_str(
+                "[interfaces.\"eth0\"]\nbogus = 1\nqueue_to_cpu_mapping = [{ queue = 0, cpu = 8 \
+                 }]\n"
+            )
+            .is_err()
+        );
     }
 }
