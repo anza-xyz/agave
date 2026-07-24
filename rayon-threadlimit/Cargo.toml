@@ -21,8 +21,5 @@ agave-unstable-api = []
 log = { workspace = true }
 num_cpus = { workspace = true }
 
-[dev-dependencies]
-solana-rayon-threadlimit = { path = ".", features = ["agave-unstable-api"] }
-
 [lints]
 workspace = true

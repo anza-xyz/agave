@@ -195,7 +195,6 @@ agave-reserved-account-keys = { path = "../reserved-account-keys", features = ["
 agave-scheduler-bindings = { path = "../scheduler-bindings", features = ["agave-unstable-api"] }
 bencher = { workspace = true }
 bitvec = { workspace = true }
-criterion = { workspace = true }
 serial_test = { workspace = true }
 solana-account = { workspace = true, features = ["dev-context-only-utils"] }
 solana-bpf-loader-program = { path = "../programs/bpf_loader", default-features = false, features = ["agave-unstable-api", "svm-internal"] }
@@ -224,9 +223,6 @@ solana-vote-program = { path = "../programs/vote", features = ["agave-unstable-a
 spl-memo-interface = { workspace = true }
 static_assertions = { workspace = true }
 test-case = { workspace = true }
-
-[target.'cfg(not(any(target_env = "msvc", target_os = "freebsd")))'.dev-dependencies]
-jemallocator = { workspace = true }
 
 [[bench]]
 name = "sigverify_stage"
