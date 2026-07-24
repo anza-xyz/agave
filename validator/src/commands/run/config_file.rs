@@ -70,8 +70,9 @@ struct RawModuleXdp {
 }
 
 /// A module's XDP transmit config: whether it uses XDP (`use_xdp`) and the
-/// hardware queue ids it transmits over (from `[<module>.xdp].tx`, empty when
-/// none were named).
+/// hardware queue ids it transmits over (from `[<module>.xdp].tx`). `tx_queues`
+/// is empty when the module named no queues, which the caller treats as "all
+/// queues".
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) struct ModuleXdp {
     pub enabled: bool,
