@@ -5157,6 +5157,128 @@ pub mod tests {
     }
 
     #[test]
+    fn test_verification_workers_small_capacity() {
+        let num_workers = 2;
+        let channel_capacity = 1;
+        let worker_pool =
+            ReplayVerificationWorkerPool::with_capacity(num_workers, channel_capacity);
+        let mut progress = AsyncVerificationProgress::new(channel_capacity);
+        let start_hash = Hash::new_unique();
+        let verification_entries = entry::entries_to_verification_data(&create_ticks(
+            (num_workers + 1) as u64,
+            1,
+            start_hash,
+        ));
+
+        for _ in 0..10 {
+            progress
+                .spawn_poh_verification(&worker_pool, verification_entries.clone(), start_hash, 0)
+                .unwrap();
+            assert_eq!(progress.pending_jobs, channel_capacity);
+        }
+
+        progress.wait_for_all_results().unwrap();
+        assert_eq!(progress.pending_jobs, 0);
+    }
+
+    #[test]
+    fn test_verification_workers_max_results() {
+        let num_workers = 4;
+        // ideally we'd use MAX_FEC_SETS_PER_SLOT here, but CI is too slow to be true
+        let fake_max_fec_sets_per_slot = 10usize;
+        let job_capacity = fake_max_fec_sets_per_slot
+            // poh + signature verification
+            .checked_mul(2)
+            .unwrap()
+            // each poh/signature batch can be split into multiple jobs, at most 1 for each worker
+            .checked_mul(num_workers)
+            .expect("verification job queue capacity overflow");
+        let worker_pool = ReplayVerificationWorkerPool::with_capacity(num_workers, job_capacity);
+
+        // make sure that each batch generates work for each worker
+        let num_items = num_workers + 1;
+
+        let start_hash = Hash::new_unique();
+        let verification_entries =
+            entry::entries_to_verification_data(&create_ticks(num_items as u64, 1, start_hash));
+        let transaction = system_transaction::transfer(
+            &Keypair::new(),
+            &Pubkey::new_unique(),
+            1,
+            Hash::new_unique(),
+        );
+        let entry = Entry::new(&Hash::new_unique(), 1, vec![transaction; num_items]);
+
+        // Simulate two parallel banks. This tests that we make progress even when the number of
+        // jobs exceeds the capacity of the pool.
+        let result_channel_capacity = worker_pool.job_capacity;
+        let mut progresses = [
+            AsyncVerificationProgress::new(result_channel_capacity),
+            AsyncVerificationProgress::new(result_channel_capacity),
+        ];
+
+        // simulate full slots
+        for _ in 0..fake_max_fec_sets_per_slot {
+            for (slot, progress) in progresses.iter_mut().enumerate() {
+                let slot = slot as Slot;
+                progress
+                    .spawn_poh_verification(
+                        &worker_pool,
+                        verification_entries.clone(),
+                        start_hash,
+                        slot,
+                    )
+                    .unwrap();
+                let unverified_signatures = entry::validate_and_hash_transactions(
+                    vec![entry.clone()],
+                    num_items,
+                    transaction_hash_verify_thread_pool(),
+                    |transaction, _| {
+                        Ok(RuntimeTransaction::from_transaction_for_tests(
+                            transaction.into_legacy_transaction().unwrap(),
+                        ))
+                    },
+                )
+                .unwrap()
+                .unverified_signatures;
+                progress
+                    .spawn_signature_verification(
+                        &worker_pool,
+                        unverified_signatures,
+                        slot,
+                        slot,
+                        None,
+                    )
+                    .unwrap();
+            }
+        }
+
+        let expected_results = result_channel_capacity;
+        for progress in &progresses {
+            assert_eq!(progress.pending_jobs, expected_results);
+        }
+        let deadline = Instant::now() + Duration::from_secs(5);
+        while progresses
+            .iter()
+            .any(|progress| progress.receiver.len() < expected_results)
+            && Instant::now() < deadline
+        {
+            thread::yield_now();
+        }
+        let result_counts = progresses
+            .each_ref()
+            .map(|progress| progress.receiver.len());
+
+        for progress in &mut progresses {
+            progress.wait_for_all_results().unwrap();
+        }
+        assert_eq!(
+            result_counts, [expected_results; 2],
+            "verification workers did not send all results before the timeout"
+        );
+    }
+
+    #[test]
     fn test_async_verification_progress_drop() {
         struct BlockingVerificationJob {
             job: VerificationJob,
