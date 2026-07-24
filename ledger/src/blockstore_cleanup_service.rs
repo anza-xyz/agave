@@ -23,18 +23,34 @@ use {
     },
 };
 
-// - To try and keep the RocksDB size under 400GB:
-//   Seeing about 1600b/shred, using 2000b/shred for margin, so 200m shreds can be stored in 400gb.
-//   at 5k shreds/slot at 50k tps, this is 40k slots (~4.4 hours).
-//   At idle, 60 shreds/slot this is about 3.33m slots (~15 days)
-// This is chosen to allow enough time for
-// - A validator to download a snapshot from a peer and boot from it
-// - To make sure that if a validator needs to reboot from its own snapshot, it has enough slots locally
-//   to catch back up to where it was when it stopped
-pub const DEFAULT_MAX_LEDGER_SHREDS: u64 = 200_000_000;
+// Shreds occupy the majority of disk space in the Blockstore. Transaction
+// metadata can occupy quite a bit of space as well for (RPC) nodes that are
+// recording this data; however, this impact is very dependent and variable on
+// cluster load and node configuration. Additionally, transaction and block
+// metadata columns are keyed differently than other columns, and are not
+// subject to the regular FIFO cleanup logic in this file. So at this time,
+// block and transaction metadata columns are excluded from consideration in the
+// below comments and logic in this file.
+//
+// Shreds are approximated at 1250 bytes per shred:
+// - Shreds have an upper bound of the IPv6 minimum MTU (1280 bytes); actual
+//   paylod is less when networking headers are subtracted out
+// - Shred metadata columns introduce several kB overhead per slot. But, this
+//   data is fixed per slot and relatively small when amortized
+// - Data and coding shreds are assumed to be stored at a 1:1 ratio to match
+//   consensus parameters. However, the budget is shared between the two so
+//   the logic accounts for deviations from this assumption. Under normal
+//   conditions, more data shreds will be present than coding shreds because
+//   only missing data shreds are recovered and inserted (not coding shreds).
+//
+// Target a default 500 GB footprint for the Blockstore by default. Blocks may
+// have infrequent access after replay, but keeping a decent amount of block
+// history is useful for replaying from a snapshot as well as being a good
+// network participant to be able to serve repair requests for older blocks.
+pub const DEFAULT_MAX_LEDGER_SHREDS: u64 = 400_000_000;
 
-// Allow down to 50m, or 3.5 days at idle, 1hr at 50k load, around ~100GB
-pub const DEFAULT_MIN_MAX_LEDGER_SHREDS: u64 = 50_000_000;
+// Allow down to 100m total shreds
+pub const DEFAULT_MIN_MAX_LEDGER_SHREDS: u64 = 100_000_000;
 
 // Perform blockstore cleanup at this interval to limit the overhead of cleanup
 // Cleanup will be considered after the latest root has advanced by this value
@@ -130,15 +146,27 @@ impl BlockstoreCleanupService {
         *last_purge_slot = root;
 
         info!("Looking for Blockstore data to cleanup, latest root: {root}");
+        let (num_data_shreds, num_coding_shreds, num_total_shreds) = {
+            let live_files = blockstore
+                .live_files_metadata()
+                .expect("Blockstore::live_files_metadata()");
 
-        let live_files = blockstore
-            .live_files_metadata()
-            .expect("Blockstore::live_files_metadata()");
-        let num_shreds: u64 = live_files
-            .iter()
-            .filter(|live_file| live_file.column_family_name == columns::ShredData::NAME)
-            .map(|file_meta| file_meta.num_entries)
-            .sum();
+            let mut num_data_shreds = 0;
+            let mut num_coding_shreds = 0;
+            live_files
+                .iter()
+                .for_each(|file_meta| match file_meta.column_family_name.as_str() {
+                    columns::ShredData::NAME => num_data_shreds += file_meta.num_entries,
+                    columns::ShredCode::NAME => num_coding_shreds += file_meta.num_entries,
+                    _ => {}
+                });
+
+            (
+                num_data_shreds,
+                num_coding_shreds,
+                num_data_shreds + num_coding_shreds,
+            )
+        };
 
         // Using the difference between the lowest and highest slot seen will
         // result in overestimating the number of slots in the blockstore since
@@ -174,20 +202,21 @@ impl BlockstoreCleanupService {
         // The + 1 ensures we count the correct number of slots. Additionally,
         // it guarantees num_slots >= 1 for the subsequent division.
         let num_slots = highest_slot - lowest_slot + 1;
-        let mean_shreds_per_slot = num_shreds / num_slots;
+        let mean_shreds_per_slot = num_total_shreds / num_slots;
         info!(
-            "Blockstore has {num_shreds} alive shreds in slots [{lowest_slot}, {highest_slot}], \
-             mean of {mean_shreds_per_slot} shreds per slot",
+            "Blockstore has {num_total_shreds} shreds in slots [{lowest_slot}, {highest_slot}]; \
+             {num_data_shreds} data shreds, {num_coding_shreds} coding shreds, \
+             {mean_shreds_per_slot} mean shreds per slot",
         );
 
-        if num_shreds <= max_ledger_shreds {
+        if num_total_shreds <= max_ledger_shreds {
             // Cleanup is not necessary at this time
             return;
         }
 
         // Add an extra (mean_shreds_per_slot - 1) in the numerator
         // so that our integer division rounds up
-        let num_slots_to_clean = (num_shreds - max_ledger_shreds + mean_shreds_per_slot - 1)
+        let num_slots_to_clean = (num_total_shreds - max_ledger_shreds + mean_shreds_per_slot - 1)
             .checked_div(mean_shreds_per_slot);
         let Some(num_slots_to_clean) = num_slots_to_clean else {
             error!("Skipping Blockstore automatic cleanup: calculated mean of 0 shreds per slot");
