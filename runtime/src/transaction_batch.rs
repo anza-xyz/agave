@@ -3,6 +3,9 @@ use {
     solana_transaction_error::TransactionResult as Result,
 };
 
+/// Target number of transactions in a batch produced by the banking stage.
+pub const TARGET_NUM_TRANSACTIONS_PER_BATCH: usize = 64;
+
 pub enum OwnedOrBorrowed<'a, T> {
     Owned(Vec<T>),
     Borrowed(&'a [T]),

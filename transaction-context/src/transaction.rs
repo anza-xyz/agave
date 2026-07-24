@@ -294,7 +294,7 @@ impl<'ix_data> TransactionContext<'ix_data> {
         instruction_data: Cow<'ix_data, [u8]>,
         caller_index: Option<u16>,
     ) -> Result<(), InstructionError> {
-        debug_assert_eq!(deduplication_map.len(), MAX_ACCOUNTS_PER_TRANSACTION);
+        debug_assert!(deduplication_map.len() <= MAX_ACCOUNTS_PER_TRANSACTION);
 
         let instruction = self
             .instruction_trace

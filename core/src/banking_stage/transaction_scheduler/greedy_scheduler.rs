@@ -10,7 +10,7 @@ use {
         transaction_state_container::StateContainer,
     },
     crate::banking_stage::{
-        consumer::{ENTRY_OVERHEAD_BYTES, TARGET_NUM_TRANSACTIONS_PER_BATCH},
+        consumer::ENTRY_OVERHEAD_BYTES,
         scheduler_messages::{ConsumeWork, FinishedConsumeWork},
     },
     agave_scheduling_utils::thread_aware_account_locks::{
@@ -19,6 +19,7 @@ use {
     crossbeam_channel::{Receiver, Sender},
     solana_cost_model::block_cost_limits::MAX_BLOCK_UNITS,
     solana_ledger::shred::get_data_shred_bytes_per_batch_typical,
+    solana_runtime::transaction_batch::TARGET_NUM_TRANSACTIONS_PER_BATCH,
     solana_runtime_transaction::transaction_with_meta::TransactionWithMeta,
     std::num::Saturating,
 };

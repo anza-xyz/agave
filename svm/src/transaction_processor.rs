@@ -465,6 +465,9 @@ impl<FG: ForkGraph> TransactionBatchProcessor<FG> {
         let (mut load_us, mut execution_us): (u64, u64) = (0, 0);
         let sysvar_cache = self.sysvar_cache();
 
+        // Read-lock the sysvar cache once per batch; writers only run between batches.
+        let sysvar_cache = self.sysvar_cache.read().unwrap();
+
         // Validate, execute, and collect results from each transaction in order.
         // With SIMD83, transactions must be executed in order, because transactions
         // in the same batch may modify the same accounts. Transaction order is
@@ -582,6 +585,7 @@ impl<FG: ForkGraph> TransactionBatchProcessor<FG> {
                         &mut execute_timings,
                         &mut error_metrics,
                         &mut program_cache_for_tx_batch,
+                        &sysvar_cache,
                         environment,
                         config,
                     );
@@ -905,6 +909,11 @@ impl<FG: ForkGraph> TransactionBatchProcessor<FG> {
         limit_to_load_programs: bool,
         increment_usage_counter: bool,
     ) {
+        if missing_programs.is_empty() {
+            // Nothing to load, so skip the global cache and fork graph locks.
+            // Program-cache hit/miss counters are unchanged for empty work.
+            return;
+        }
         let mut count_hits_and_misses = true;
         loop {
             // Lock the global cache.
@@ -1037,6 +1046,7 @@ impl<FG: ForkGraph> TransactionBatchProcessor<FG> {
         execute_timings: &mut ExecuteTimings,
         error_metrics: &mut TransactionErrorMetrics,
         program_cache_for_tx_batch: &mut ProgramCacheForTxBatch,
+        sysvar_cache: &SysvarCache,
         environment: &TransactionProcessingEnvironment,
         config: &TransactionProcessingConfig,
     ) -> ExecutedTransaction {
@@ -1745,6 +1755,7 @@ mod tests {
             &mut ExecuteTimings::default(),
             &mut TransactionErrorMetrics::default(),
             &mut program_cache_for_tx_batch,
+            &batch_processor.sysvar_cache(),
             &processing_environment,
             &processing_config,
         );
@@ -1760,6 +1771,7 @@ mod tests {
             &mut ExecuteTimings::default(),
             &mut TransactionErrorMetrics::default(),
             &mut program_cache_for_tx_batch,
+            &batch_processor.sysvar_cache(),
             &processing_environment,
             &processing_config,
         );
@@ -1778,6 +1790,7 @@ mod tests {
             &mut ExecuteTimings::default(),
             &mut TransactionErrorMetrics::default(),
             &mut program_cache_for_tx_batch,
+            &batch_processor.sysvar_cache(),
             &processing_environment,
             &processing_config,
         );
@@ -1798,7 +1811,7 @@ mod tests {
             header: MessageHeader::default(),
             instructions: vec![CompiledInstruction {
                 program_id_index: 0,
-                accounts: vec![2],
+                accounts: vec![1],
                 data: vec![],
             }],
             recent_blockhash: Hash::default(),
@@ -1814,8 +1827,6 @@ mod tests {
             false,
         );
 
-        let mut account_data = AccountSharedData::default();
-        account_data.set_owner(bpf_loader::id());
         let loaded_transaction = LoadedTransaction {
             accounts: vec![
                 (key1, AccountSharedData::default()),
@@ -1844,6 +1855,7 @@ mod tests {
             &mut ExecuteTimings::default(),
             &mut error_metrics,
             &mut program_cache_for_tx_batch,
+            &batch_processor.sysvar_cache(),
             &get_mock_transaction_processing_environment(),
             &processing_config,
         );
