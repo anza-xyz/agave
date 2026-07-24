@@ -97,7 +97,7 @@ pub(crate) struct ConsensusPoolService {
 impl ConsensusPoolService {
     pub(crate) fn new(ctx: ConsensusPoolContext) -> Self {
         let t_consensus_pool_service = Builder::new()
-            .name("solConPoolService".to_string())
+            .name("solVotorConPoolSvc".to_string())
             .spawn(move || {
                 Self::main_loop(ctx);
                 info!("consensus pool service exited.");
