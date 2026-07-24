@@ -8,7 +8,10 @@
 //! The runtime currently uses a single shared XDP transmitter, so enabled
 //! modules may reference only one interface. Its queue set is the union of
 //! module `tx` queues; with no explicit queue, startup falls back to
-//! interface/CPU auto-selection.
+//! interface/CPU auto-selection. An enabled module that names no `tx` transmits
+//! over that whole shared queue set (the union above), not the NIC's full
+//! hardware queue set. Every declared `[interfaces.<nic>]` must be named by some
+//! module's `tx`; a dangling one is rejected.
 
 use {
     agave_xdp::transmitter::QueueCpuBinding,
@@ -215,6 +218,11 @@ fn resolve_module(
                          which is not in its queue_to_cpu_mapping"
                     ));
                 }
+                if tx_queues.contains(queue) {
+                    return Err(format!(
+                        "module `{module}` XDP tx lists queue {queue} more than once"
+                    ));
+                }
                 tx_queues.push(*queue);
             }
         }
@@ -228,6 +236,23 @@ fn resolve(config: &RawConfig) -> Result<XdpFileConfig, String> {
         .iter()
         .map(|(name, raw)| resolve_interface(name, raw).map(|iface| (name.clone(), iface)))
         .collect::<Result<BTreeMap<_, _>, _>>()?;
+
+    // Every declared interface must be named by some module's `tx` (whether or
+    // not that module is enabled); a dangling `[interfaces.<name>]` is a typo or
+    // leftover and is rejected rather than silently ignored.
+    let tx_named: BTreeSet<&str> = [&config.tpu, &config.turbine, &config.repair, &config.gossip]
+        .into_iter()
+        .filter_map(|b| b.as_ref())
+        .filter_map(|m| m.xdp.as_ref())
+        .flat_map(|x| x.tx.keys().map(String::as_str))
+        .collect();
+    for name in interfaces.keys() {
+        if !tx_named.contains(name.as_str()) {
+            return Err(format!(
+                "interface `{name}` is declared but no module's XDP tx references it"
+            ));
+        }
+    }
 
     let mut referenced_iface: Option<String> = None;
     let tpu = resolve_module("tpu", &config.tpu, &interfaces, &mut referenced_iface)?;
@@ -401,6 +426,37 @@ mod tests {
         )
         .unwrap_err();
         assert!(e.contains("multiple interfaces"), "{e}");
+    }
+
+    #[test]
+    fn unreferenced_interface_is_error() {
+        // eth0 is declared with a valid mapping but no module names it in tx.
+        let e = resolve_with_user(
+            "[interfaces.\"eth0\"]\nqueue_to_cpu_mapping = [{ queue = 0, cpu = 8 }]\n",
+        )
+        .unwrap_err();
+        assert!(e.contains("declared but no module"), "{e}");
+    }
+
+    #[test]
+    fn interface_referenced_only_by_disabled_module_is_ok() {
+        // Disabling the sole referencing module must not strand its interface.
+        let c = resolve_with_user(
+            "[interfaces.\"eth0\"]\nqueue_to_cpu_mapping = [{ queue = 0, cpu = 8 }]\n\n\
+             [turbine]\nuse_xdp = false\n[turbine.xdp]\ntx = { eth0 = [0] }\n",
+        )
+        .unwrap();
+        assert!(!c.turbine.enabled);
+    }
+
+    #[test]
+    fn duplicate_tx_queue_is_error() {
+        let e = resolve_with_user(
+            "[interfaces.\"eth0\"]\nqueue_to_cpu_mapping = [{ queue = 0, cpu = 8 \
+             }]\n\n[turbine.xdp]\ntx = { eth0 = [0, 0] }\n",
+        )
+        .unwrap_err();
+        assert!(e.contains("queue 0 more than once"), "{e}");
     }
 
     #[test]
