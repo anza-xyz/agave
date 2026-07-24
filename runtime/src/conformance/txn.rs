@@ -17,6 +17,7 @@
 //! SolFuzz-Agave.
 
 use {
+    super::new_accounts_for_tests_single_threaded,
     crate::{
         bank::{Bank, BankFieldsToDeserialize, BankRc},
         epoch_stakes::VersionedEpochStakes,
@@ -25,11 +26,8 @@ use {
     },
     agave_feature_set::FeatureSet,
     solana_account::AccountSharedData,
-    solana_accounts_db::{
-        accounts::Accounts, accounts_db::AccountsDb, ancestors::Ancestors,
-        blockhash_queue::BlockhashQueue,
-    },
-    solana_clock::{BankId, Clock, Epoch, MAX_PROCESSING_AGE},
+    solana_accounts_db::{ancestors::Ancestors, blockhash_queue::BlockhashQueue},
+    solana_clock::{BankId, Clock, DEFAULT_TICKS_PER_SLOT, Epoch, MAX_PROCESSING_AGE},
     solana_epoch_schedule::EpochSchedule,
     solana_fee_calculator::FeeRateGovernor,
     solana_pubkey::Pubkey,
@@ -49,27 +47,25 @@ use {
     },
     solana_transaction_error::TransactionError,
     solana_vote::vote_account::VoteAccounts,
-    std::{collections::HashMap, sync::Arc},
+    std::collections::HashMap,
 };
 #[cfg(feature = "conformance")]
 use {
+    super::{deserialize_accounts, fee_rate_governor_from_proto, restore_blockhash_queue},
     agave_feature_set::virtual_address_space_adjustments,
     agave_precompiles::is_precompile,
     ahash::AHashSet,
     protosol::protos::{
-        self, AcctState, FeeDetails as ProtoFeeDetails, TxnContext as ProtoTxnContext,
+        AcctState, FeeDetails as ProtoFeeDetails, TxnContext as ProtoTxnContext,
         TxnResult as ProtoTxnResult,
     },
-    solana_hash::Hash,
     solana_instruction::error::InstructionError,
     solana_message::SanitizedMessage,
     solana_signature::Signature,
     solana_svm::conformance::{
-        account_state::{account_from_proto, account_to_proto},
-        direct_mapping::direct_mapping_handle_cu_exhaustion,
-        err::serialized_error_code,
-        feature_set::feature_set_from_proto,
-        versioned_message::versioned_message_from_proto,
+        account_state::account_to_proto, direct_mapping::direct_mapping_handle_cu_exhaustion,
+        err::serialized_error_code, feature_set::feature_set_from_proto,
+        versioned_transaction::versioned_transaction_from_proto,
     },
     solana_svm::transaction_processing_result::{
         ProcessedTransaction, TransactionProcessingResultExtensions,
@@ -106,8 +102,6 @@ pub fn execute_txn(
     total_epoch_stake: u64,
     transaction: VersionedTransaction,
 ) -> BankTxnProcessingResult {
-    const TICKS_PER_SLOT: u64 = 64;
-
     // Slot and parent slot come from the clock sysvar.
     let clock: Clock = sysvar_from_accounts(accounts, &sysvar::clock::id());
     let slot = clock.slot;
@@ -118,7 +112,7 @@ pub fn execute_txn(
     let epoch = epoch_schedule.get_epoch(slot);
 
     // Populate the accounts DB with the input accounts at the parent slot.
-    let bank_accounts = Accounts::new(Arc::new(AccountsDb::default_for_tests()));
+    let bank_accounts = new_accounts_for_tests_single_threaded();
     let ancestors = Ancestors::from(vec![parent_slot]);
     bank_accounts.store_accounts_seq((parent_slot, accounts), BankId::default(), None, &ancestors);
     bank_accounts.accounts_db.add_root(parent_slot);
@@ -148,9 +142,9 @@ pub fn execute_txn(
     let bank_fields = BankFieldsToDeserialize {
         blockhash_queue,
         parent_slot,
-        tick_height: TICKS_PER_SLOT.saturating_mul(slot),
-        max_tick_height: TICKS_PER_SLOT.saturating_mul(slot.saturating_add(1)),
-        ticks_per_slot: TICKS_PER_SLOT,
+        tick_height: DEFAULT_TICKS_PER_SLOT.saturating_mul(slot),
+        max_tick_height: DEFAULT_TICKS_PER_SLOT.saturating_mul(slot.saturating_add(1)),
+        ticks_per_slot: DEFAULT_TICKS_PER_SLOT,
         slot,
         block_height: slot,
         fee_rate_governor,
@@ -205,30 +199,6 @@ pub fn execute_txn(
         result,
         runtime_transaction: Box::new(runtime_transaction),
     }
-}
-
-/// Parse the input accounts into keyed `AccountSharedData`, dropping zero-lamport
-/// accounts (treated as nonexistent).
-#[cfg(feature = "conformance")]
-fn deserialize_accounts(accounts: &[AcctState]) -> Vec<(Pubkey, AccountSharedData)> {
-    accounts
-        .iter()
-        .filter(|account| account.lamports > 0)
-        .map(|account| {
-            let (pubkey, account) = account_from_proto(account.clone());
-            (pubkey, account.into())
-        })
-        .collect()
-}
-
-#[cfg(feature = "conformance")]
-fn restore_blockhash_queue(entries: &[protos::BlockhashQueueEntry]) -> BlockhashQueue {
-    let mut blockhash_queue = BlockhashQueue::default();
-    for entry in entries {
-        let bytes = <[u8; 32]>::try_from(entry.blockhash.as_slice()).unwrap();
-        blockhash_queue.register_hash(&Hash::new_from_array(bytes), entry.lamports_per_signature);
-    }
-    blockhash_queue
 }
 
 /// Firedancer error numbers: the bincode-serialized enum discriminant `+ 1`.
@@ -439,14 +409,10 @@ pub fn execute_txn_proto(context: &ProtoTxnContext) -> ProtoTxnResult {
     // On snapshot boot the fee rate governor's lamports_per_signature comes from
     // the manifest, so use the provided value directly.
     let input_fee_rate_governor = txn_bank.fee_rate_governor.as_ref().unwrap();
-    let fee_rate_governor = FeeRateGovernor {
-        lamports_per_signature: u64::from(txn_bank.rbh_lamports_per_signature),
-        target_lamports_per_signature: input_fee_rate_governor.target_lamports_per_signature,
-        target_signatures_per_slot: input_fee_rate_governor.target_signatures_per_slot,
-        min_lamports_per_signature: input_fee_rate_governor.min_lamports_per_signature,
-        max_lamports_per_signature: input_fee_rate_governor.max_lamports_per_signature,
-        burn_percent: input_fee_rate_governor.burn_percent as u8,
-    };
+    let fee_rate_governor = fee_rate_governor_from_proto(
+        input_fee_rate_governor,
+        u64::from(txn_bank.rbh_lamports_per_signature),
+    );
 
     let feature_set = txn_bank
         .features
@@ -458,20 +424,11 @@ pub fn execute_txn_proto(context: &ProtoTxnContext) -> ProtoTxnResult {
 
     let tx = context.tx.as_ref().unwrap();
     let proto_message = tx.message.as_ref().unwrap();
-    let message = versioned_message_from_proto(proto_message);
-    let mut signatures = tx
-        .signatures
-        .iter()
-        .map(|item| Signature::try_from(item.as_slice()).unwrap())
-        .collect::<Vec<Signature>>();
-    if signatures.is_empty() {
+    let mut transaction = versioned_transaction_from_proto(tx);
+    if transaction.signatures.is_empty() {
         // Default: a single empty signature (keeps simple cases valid).
-        signatures.push(Signature::default());
+        transaction.signatures.push(Signature::default());
     }
-    let transaction = VersionedTransaction {
-        signatures,
-        message,
-    };
 
     let (result, runtime_transaction) = match execute_txn(
         &accounts,

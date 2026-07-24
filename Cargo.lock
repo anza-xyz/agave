@@ -3776,7 +3776,7 @@ dependencies = [
  "libc",
  "percent-encoding 2.3.2",
  "pin-project-lite",
- "socket2 0.5.10",
+ "socket2 0.6.5",
  "tokio",
  "tower-service",
  "tracing",
@@ -5797,9 +5797,9 @@ dependencies = [
 
 [[package]]
 name = "protosol"
-version = "10.0.0"
+version = "11.0.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "af9013c1a8949ccb889978c36843b6df4ce3e5533457e38fb56631c694f9fffc"
+checksum = "69385b9321a454c4d168688ef83877e4fd7b92af510b33c34e131151ca765048"
 dependencies = [
  "prost 0.11.9",
 ]
@@ -5863,7 +5863,7 @@ dependencies = [
  "quinn-udp",
  "rustc-hash",
  "rustls",
- "socket2 0.5.10",
+ "socket2 0.6.5",
  "thiserror 2.0.18",
  "tokio",
  "tracing",
@@ -6418,7 +6418,7 @@ dependencies = [
  "errno",
  "libc",
  "linux-raw-sys 0.12.1",
- "windows-sys 0.52.0",
+ "windows-sys 0.61.0",
 ]
 
 [[package]]
@@ -12437,7 +12437,7 @@ dependencies = [
  "getrandom 0.3.4",
  "once_cell",
  "rustix 1.1.4",
- "windows-sys 0.52.0",
+ "windows-sys 0.61.0",
 ]
 
 [[package]]

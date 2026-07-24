@@ -45,6 +45,28 @@ pub struct AccountsDbConfig {
     pub accounts_file_provider: AccountsFileProvider,
 }
 
+#[cfg(feature = "dev-context-only-utils")]
+impl AccountsDbConfig {
+    /// AccountsDb configuration optimized for short-lived, single-threaded test invocations.
+    pub fn new_for_tests_single_threaded() -> Self {
+        let single_thread = NonZeroUsize::new(1).unwrap();
+        Self {
+            index: Some(AccountsIndexConfig {
+                bins: Some(2),
+                num_flush_threads: Some(single_thread),
+                index_limit: crate::accounts_index::IndexLimit::InMemOnly,
+                ..AccountsIndexConfig::default()
+            }),
+            skip_initial_hash_calc: true,
+            num_background_threads: Some(single_thread),
+            num_foreground_threads: Some(single_thread),
+            exhaustively_verify_refcounts: false,
+            read_cache_num_shards: Some(2),
+            ..Self::default()
+        }
+    }
+}
+
 pub const ACCOUNTS_DB_CONFIG_FOR_TESTING: AccountsDbConfig = AccountsDbConfig {
     index: Some(ACCOUNTS_INDEX_CONFIG_FOR_TESTING),
     account_indexes: None,
@@ -86,3 +108,23 @@ pub const ACCOUNTS_DB_CONFIG_FOR_BENCHMARKS: AccountsDbConfig = AccountsDbConfig
     num_foreground_threads: None,
     accounts_file_provider: AccountsFileProvider::AppendVec,
 };
+
+#[cfg(all(test, feature = "dev-context-only-utils"))]
+mod tests {
+    use {super::AccountsDbConfig, crate::accounts_index::IndexLimit};
+
+    #[test]
+    fn test_new_for_tests_single_threaded_config() {
+        let config = AccountsDbConfig::new_for_tests_single_threaded();
+        let index = config.index.unwrap();
+
+        assert_eq!(index.bins, Some(2));
+        assert_eq!(index.num_flush_threads.map(usize::from), Some(1));
+        assert!(matches!(index.index_limit, IndexLimit::InMemOnly));
+        assert!(config.skip_initial_hash_calc);
+        assert!(!config.exhaustively_verify_refcounts);
+        assert_eq!(config.read_cache_num_shards, Some(2));
+        assert_eq!(config.num_background_threads.map(usize::from), Some(1));
+        assert_eq!(config.num_foreground_threads.map(usize::from), Some(1));
+    }
+}
