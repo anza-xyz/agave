@@ -23,7 +23,7 @@ use {
     solana_clock::{BankId, Slot},
     solana_entry::{
         block_component::{BlockComponent, VersionedBlockMarker},
-        entry::{self, Entry, EntrySlice, EntryType, create_ticks},
+        entry::{self, Entry, EntrySlice, EntryType, UnverifiedSignatures, create_ticks},
     },
     solana_genesis_config::GenesisConfig,
     solana_hash::Hash,
@@ -998,6 +998,83 @@ struct AsyncVerificationResult {
     error: Option<BlockstoreProcessorError>,
 }
 
+struct PohVerificationJob {
+    entries: Vec<entry::EntryVerificationData>,
+    start_hash: Hash,
+    slot: Slot,
+}
+
+impl PohVerificationJob {
+    fn run(self) -> AsyncVerificationResult {
+        let Self {
+            entries,
+            start_hash,
+            slot,
+        } = self;
+        datapoint_debug!("verify-batch-size", ("size", entries.len() as i64, i64));
+        let state = entry::verify_entries_cpu(&entries, &start_hash);
+        let error = if state.status() {
+            None
+        } else {
+            warn!("Ledger proof of history failed at slot: {slot}");
+            Some(BlockstoreProcessorError::InvalidBlock(
+                BlockError::InvalidEntryHash,
+            ))
+        };
+        AsyncVerificationResult {
+            poh_verify_elapsed: state.poh_duration_us(),
+            transaction_verify_elapsed: 0,
+            error,
+        }
+    }
+}
+
+struct SignaturesVerificationJob {
+    signatures: UnverifiedSignatures,
+    slot: Slot,
+    bank_id: BankId,
+    replay_vote_sender: Option<ReplayVoteSender>,
+}
+
+impl SignaturesVerificationJob {
+    fn run(self) -> AsyncVerificationResult {
+        let Self {
+            signatures,
+            slot,
+            bank_id,
+            replay_vote_sender,
+        } = self;
+        let verification_start = Instant::now();
+        let error = signatures
+            .verify()
+            .map_err(BlockstoreProcessorError::from)
+            .err();
+        if let Some(err) = &error {
+            warn!("Ledger transaction signature verification failed at slot {slot}: {err}");
+            if let Some(replay_vote_sender) = &replay_vote_sender {
+                let _ = replay_vote_sender.send(ReplayVoteMessage::InvalidBank {
+                    replay_bank_id: bank_id,
+                    replay_slot: slot,
+                });
+            }
+        } else if let Some(replay_vote_sender) = &replay_vote_sender {
+            let message_hashes = signatures.vote_transaction_message_hashes();
+            if !message_hashes.is_empty() {
+                let _ = replay_vote_sender.send(ReplayVoteMessage::Verified {
+                    replay_bank_id: bank_id,
+                    replay_slot: slot,
+                    message_hashes,
+                });
+            }
+        }
+        AsyncVerificationResult {
+            poh_verify_elapsed: 0,
+            transaction_verify_elapsed: verification_start.elapsed().as_micros() as u64,
+            error,
+        }
+    }
+}
+
 pub struct AsyncVerificationProgress {
     sender: Sender<AsyncVerificationResult>,
     receiver: Receiver<AsyncVerificationResult>,
@@ -1029,6 +1106,38 @@ impl AsyncVerificationProgress {
             poh_verify_elapsed: 0,
             transaction_verify_elapsed: 0,
         }
+    }
+
+    fn spawn_poh_verification(
+        &mut self,
+        replay_tx_thread_pool: &ThreadPool,
+        entries: Vec<entry::EntryVerificationData>,
+        start_hash: Hash,
+        slot: Slot,
+    ) -> result::Result<(), BlockstoreProcessorError> {
+        let job = PohVerificationJob {
+            entries,
+            start_hash,
+            slot,
+        };
+        self.spawn(replay_tx_thread_pool, move || job.run())
+    }
+
+    fn spawn_signature_verification(
+        &mut self,
+        replay_tx_thread_pool: &ThreadPool,
+        signatures: UnverifiedSignatures,
+        slot: Slot,
+        bank_id: BankId,
+        replay_vote_sender: Option<ReplayVoteSender>,
+    ) -> result::Result<(), BlockstoreProcessorError> {
+        let job = SignaturesVerificationJob {
+            signatures,
+            slot,
+            bank_id,
+            replay_vote_sender,
+        };
+        self.spawn(replay_tx_thread_pool, move || job.run())
     }
 
     // Spawns the given work on the given thread pool. The result, once
@@ -1359,28 +1468,12 @@ fn confirm_slot_entries(
     if !skip_verification {
         let start_hash = progress.last_entry;
         let verify_entries = entry::entries_to_verification_data(&entries);
-        progress
-            .async_verification()
-            .spawn(replay_tx_thread_pool, move || {
-                datapoint_debug!(
-                    "verify-batch-size",
-                    ("size", verify_entries.len() as i64, i64)
-                );
-                let state = entry::verify_entries_cpu(&verify_entries, &start_hash);
-                let error = if state.status() {
-                    None
-                } else {
-                    warn!("Ledger proof of history failed at slot: {slot}");
-                    Some(BlockstoreProcessorError::InvalidBlock(
-                        BlockError::InvalidEntryHash,
-                    ))
-                };
-                AsyncVerificationResult {
-                    poh_verify_elapsed: state.poh_duration_us(),
-                    transaction_verify_elapsed: 0,
-                    error,
-                }
-            })?;
+        progress.async_verification().spawn_poh_verification(
+            replay_tx_thread_pool,
+            verify_entries,
+            start_hash,
+            slot,
+        )?;
     }
 
     let validate_and_hash_transaction = {
@@ -1426,38 +1519,13 @@ fn confirm_slot_entries(
         }
     } else {
         let replay_vote_sender = replay_vote_sender.cloned();
-        progress
-            .async_verification()
-            .spawn(replay_tx_thread_pool, move || {
-                let verification_start = Instant::now();
-                let error = unverified_signatures
-                    .verify()
-                    .map_err(BlockstoreProcessorError::from)
-                    .err();
-                if let Some(err) = &error {
-                    warn!("Ledger transaction signature verification failed at slot {slot}: {err}");
-                    if let Some(replay_vote_sender) = &replay_vote_sender {
-                        let _ = replay_vote_sender.send(ReplayVoteMessage::InvalidBank {
-                            replay_bank_id: bank_id,
-                            replay_slot: slot,
-                        });
-                    }
-                } else if let Some(replay_vote_sender) = &replay_vote_sender {
-                    let message_hashes = unverified_signatures.vote_transaction_message_hashes();
-                    if !message_hashes.is_empty() {
-                        let _ = replay_vote_sender.send(ReplayVoteMessage::Verified {
-                            replay_bank_id: bank_id,
-                            replay_slot: slot,
-                            message_hashes,
-                        });
-                    }
-                }
-                AsyncVerificationResult {
-                    poh_verify_elapsed: 0,
-                    transaction_verify_elapsed: verification_start.elapsed().as_micros() as u64,
-                    error,
-                }
-            })?;
+        progress.async_verification().spawn_signature_verification(
+            replay_tx_thread_pool,
+            unverified_signatures,
+            slot,
+            bank_id,
+            replay_vote_sender,
+        )?;
     }
 
     let mut replay_timer = Measure::start("replay_elapsed");
