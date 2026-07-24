@@ -288,17 +288,9 @@ impl TransactionViewReceiveAndBuffer {
                     continue;
                 }
             };
-            let transaction_id = container.insert_map_only(state);
-            let (priority, raw_nonce_address) = container
-                .get_mut_transaction_state(transaction_id)
-                .map(|state| {
-                    (
-                        state.priority(),
-                        state.transaction().get_durable_nonce().cloned(),
-                    )
-                })
-                .expect("transaction must exist");
-            let priority_id = TransactionPriorityId::new(priority, transaction_id);
+
+            let priority = state.priority();
+            let raw_nonce_address = state.transaction().get_durable_nonce().cloned();
 
             // When we first receive a transaction, we drop it if a) it looks nonce-like, AND
             // b) there is a higher-priority nonce transaction using the same nonce in the queue
@@ -314,18 +306,13 @@ impl TransactionViewReceiveAndBuffer {
 
             if drop_incoming_nonce_tx {
                 receiving_stats.num_dropped_on_nonce_dedup += 1;
-                container.remove_by_id(transaction_id);
                 continue;
             }
-
-            let transaction = container
-                .get_transaction(transaction_id)
-                .expect("transaction must exist");
 
             // Check blockhash transaction age is ok, or nonce transaction has a valid nonce.
             // Only a fully validated nonce address can be used for priority queue eviction.
             let validated_nonce_address = match working_bank.check_transaction_without_status_cache(
-                transaction,
+                state.transaction(),
                 working_bank.max_processing_age(),
                 &mut error_counters,
             ) {
@@ -338,19 +325,22 @@ impl TransactionViewReceiveAndBuffer {
                 // Invalid
                 Err(ref err) => {
                     receiving_stats.add_transaction_error(err);
-                    container.remove_by_id(transaction_id);
                     continue;
                 }
             };
 
             // Check the transaction's fee-payer validates.
-            if let Err(_err) =
-                Consumer::check_fee_payer_unlocked(working_bank, transaction, &mut error_counters)
-            {
+            if let Err(_err) = Consumer::check_fee_payer_unlocked(
+                working_bank,
+                state.transaction(),
+                &mut error_counters,
+            ) {
                 receiving_stats.num_dropped_on_fee_payer += 1;
-                container.remove_by_id(transaction_id);
                 continue;
             };
+
+            let transaction_id = container.insert_map_only(state);
+            let priority_id = TransactionPriorityId::new(priority, transaction_id);
 
             // Now, if this is a nonce transaction, we know it is validated and higher-priority than any
             // which may exist in the priority queue. If one is queued, evict it. Regardless, record the
