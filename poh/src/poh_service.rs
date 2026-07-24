@@ -687,6 +687,10 @@ impl PohService {
                 }
             }
         }
+        // Publish the final PoH state and clear the pending-message count before waking replay.
+        // A full bounded wakeup channel means replay already has a wakeup queued.
+        drop(service_message);
+        recorder.notify_replay_wakeup();
     }
 
     /// If we have a service message and there are no more records to process,
@@ -721,7 +725,7 @@ mod tests {
             leader_schedule_cache::LeaderScheduleCache,
         },
         solana_perf::test_tx::test_tx,
-        solana_runtime::bank::Bank,
+        solana_runtime::{bank::Bank, installed_scheduler_pool::BankWithScheduler},
         solana_transaction::versioned::VersionedTransaction,
         std::time::Duration,
     };
@@ -805,5 +809,76 @@ mod tests {
         // Shutdown.
         exit.store(true, Ordering::Relaxed);
         poh_service.join().unwrap();
+    }
+
+    #[test]
+    fn test_handle_service_messages_notify_replay_after_completion() {
+        let GenesisConfigInfo { genesis_config, .. } = create_genesis_config(2);
+        let bank = Arc::new(Bank::new_for_tests(&genesis_config));
+        let ledger_path = get_tmp_ledger_path_auto_delete!();
+        let blockstore = Arc::new(
+            Blockstore::open(ledger_path.path())
+                .expect("Expected to be able to open database ledger"),
+        );
+        let leader_schedule_cache = Arc::new(LeaderScheduleCache::new_from_bank(&bank));
+        let (replay_wakeup_sender, replay_wakeup_receiver) = bounded(1);
+        let (poh_recorder, _entry_receiver) = PohRecorder::new_with_clear_signal(
+            bank.tick_height(),
+            bank.last_blockhash(),
+            bank.clone(),
+            None,
+            bank.ticks_per_slot(),
+            false,
+            blockstore,
+            Some(replay_wakeup_sender),
+            &leader_schedule_cache,
+            &genesis_config.poh_config,
+            Arc::new(AtomicBool::default()),
+        );
+        let poh_recorder = Arc::new(RwLock::new(poh_recorder));
+        let (mut poh_controller, poh_service_message_receiver) = PohController::new();
+        let (_record_sender, mut record_receiver) = record_channels(false);
+
+        poh_controller
+            .set_bank(BankWithScheduler::new_without_scheduler(bank.clone()))
+            .unwrap();
+        let service_message = poh_service_message_receiver.try_recv().unwrap();
+        PohService::handle_service_message(&poh_recorder, service_message, &mut record_receiver);
+
+        // ReplayStage treats either a pending controller message or a working bank as
+        // `tpu_has_bank`, so SetBank completion must clear the former and publish the latter.
+        assert!(!poh_controller.has_pending_message());
+        assert!(
+            poh_recorder
+                .read()
+                .unwrap()
+                .shared_leader_state()
+                .load()
+                .working_bank()
+                .is_some()
+        );
+        // Controller completion must also queue the signal consumed by ReplayStage's
+        // ledger-signal select branch.
+        assert!(replay_wakeup_receiver.try_recv().is_ok());
+
+        poh_controller.reset(bank, None).unwrap();
+        let service_message = poh_service_message_receiver.try_recv().unwrap();
+        PohService::handle_service_message(&poh_recorder, service_message, &mut record_receiver);
+
+        // Once Reset clears both ReplayStage gates, the validator is eligible to start its
+        // next leader bank.
+        assert!(!poh_controller.has_pending_message());
+        assert!(
+            poh_recorder
+                .read()
+                .unwrap()
+                .shared_leader_state()
+                .load()
+                .working_bank()
+                .is_none()
+        );
+        // This queued wake prevents ReplayStage from falling through to its 100 ms timeout
+        // with the stale pre-reset `tpu_has_bank` snapshot.
+        assert!(replay_wakeup_receiver.try_recv().is_ok());
     }
 }
