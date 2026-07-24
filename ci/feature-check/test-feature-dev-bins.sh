@@ -14,5 +14,10 @@ fi
 # shellcheck source=ci/rust-version.sh
 source "$here"/../rust-version.sh nightly
 
-cargo +"$rust_nightly" hack --manifest-path "$here/../../dev-bins/Cargo.toml" check --all-targets
-cargo +"$rust_nightly" hack --manifest-path "$here/../../dev-bins/Cargo.toml" check --all-targets --all-features
+export RUSTFLAGS="-D warnings"
+
+cargo +"$rust_nightly" hack clippy --manifest-path "$here/../../dev-bins/Cargo.toml" --each-feature --all-targets --keep-going
+
+cargo +"$rust_nightly" hack clippy --manifest-path "$here/../../ci/xtask/Cargo.toml" --each-feature --all-targets --keep-going
+
+cargo +"$rust_nightly" hack clippy --manifest-path "$here/../../programs/sbf/Cargo.toml" --each-feature --all-targets --keep-going

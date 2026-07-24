@@ -24,9 +24,10 @@ exclude_features=(
 
 export RUSTFLAGS="-D warnings"
 
-cargo +"$rust_nightly" hack check \
+cargo +"$rust_nightly" hack clippy \
 	--each-feature \
 	--exclude-features "$(IFS=,; echo "${exclude_features[*]}")" \
 	--exclude-all-features \
 	--all-targets \
-	--partition "$partition"
+	--partition "$partition" \
+	--keep-going
