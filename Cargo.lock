@@ -7043,7 +7043,6 @@ dependencies = [
  "solana-vote-interface",
  "solana-zk-sdk-pod",
  "spl-generic-token",
- "spl-pod",
  "spl-token-2022-interface",
  "spl-token-group-interface",
  "spl-token-interface",
@@ -9869,7 +9868,6 @@ dependencies = [
 name = "solana-pubsub-client"
 version = "4.3.0-alpha.2"
 dependencies = [
- "anyhow",
  "crossbeam-channel",
  "futures-util",
  "log",
@@ -10079,7 +10077,6 @@ dependencies = [
  "solana-vote-interface",
  "solana-vote-program",
  "spl-generic-token",
- "spl-pod",
  "spl-token-2022-interface",
  "spl-token-interface",
  "stream-cancel",
@@ -10136,7 +10133,6 @@ dependencies = [
  "solana-transaction-status-client-types",
  "solana-version",
  "solana-vote-interface",
- "static_assertions",
  "test-case",
  "tokio",
  "wincode",
