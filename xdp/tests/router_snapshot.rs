@@ -11,7 +11,7 @@ use {
 #[ignore = "requires root and network namespace privileges"]
 fn router_snapshot_resolves_gre_routes_from_netlink() {
     let _netns = common::NetNsGuard::new().expect("create network namespace");
-    let links = common::setup_veth_pair();
+    let links = common::setup_veth_pair_with_tx_queue_count(1);
 
     common::replace_neighbor(links.right_ip, links.right_mac, common::LEFT_IFACE);
     common::add_route_to_dev(&format!("{}/32", links.right_ip), common::LEFT_IFACE);

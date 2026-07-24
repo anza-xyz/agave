@@ -34,14 +34,20 @@ use {
     },
 };
 
-fn transmitter_cpu() -> usize {
+fn transmitter_cpus<const COUNT: usize>() -> [usize; COUNT] {
     let cores = cpu_affinity(None).expect("linux provides affine cores");
     assert!(
-        cores.len() >= 2,
-        "transmitter smoke test requires at least 2 affine CPU cores, found {}",
+        cores.len() > COUNT,
+        "transmitter smoke test requires at least {} affine CPU cores, found {}",
+        COUNT.saturating_add(1),
         cores.len(),
     );
-    **cores.first().expect("at least two affine cores")
+    std::array::from_fn(|index| *cores[index])
+}
+
+fn transmitter_cpu() -> usize {
+    let [cpu_id] = transmitter_cpus();
+    cpu_id
 }
 
 struct PacketSocket {
@@ -340,7 +346,7 @@ fn transmitter_sends_udp_payload_over_veth_in_copy_mode() {
     let cpu_id = transmitter_cpu();
 
     let _netns = common::NetNsGuard::new().expect("create network namespace");
-    let links = common::setup_veth_pair();
+    let links = common::setup_veth_pair_with_tx_queue_count(1);
     common::replace_neighbor(links.right_ip, links.right_mac, common::LEFT_IFACE);
 
     let receiver = PacketSocket::bind(links.right_if_index).expect("bind raw packet receiver");
@@ -350,15 +356,15 @@ fn transmitter_sends_udp_payload_over_veth_in_copy_mode() {
     let payload = Bytes::from_static(b"agave-xdp-transmitter-smoke");
 
     let exit = Arc::new(AtomicBool::new(false));
-    let mut config = XdpConfig::new(
+    let config = XdpConfig::new(
         Some(common::LEFT_IFACE.to_string()),
         vec![QueueCpuBinding {
             queue: 0,
             cpu: cpu_id,
         }],
         false,
-    );
-    config.tx_channel_cap = 16;
+    )
+    .with_tx_channel_cap(16);
 
     let (transmitter, sender) = TransmitterBuilder::new(config, Arc::clone(&exit))
         .expect("build copy-mode transmitter")
@@ -397,11 +403,90 @@ fn transmitter_sends_udp_payload_over_veth_in_copy_mode() {
 
 #[test]
 #[ignore = "requires root and network namespace privileges"]
+fn transmitter_sends_udp_payload_over_two_queues_in_copy_mode() {
+    let [first_cpu, second_cpu] = transmitter_cpus();
+
+    let _netns = common::NetNsGuard::new().expect("create network namespace");
+    let links = common::setup_veth_pair_with_tx_queue_count(2);
+    common::replace_neighbor(links.right_ip, links.right_mac, common::LEFT_IFACE);
+
+    let receiver = PacketSocket::bind(links.right_if_index).expect("bind raw packet receiver");
+    let src_port = 12_347;
+
+    let exit = Arc::new(AtomicBool::new(false));
+    let config = XdpConfig::new(
+        Some(common::LEFT_IFACE.to_string()),
+        vec![
+            QueueCpuBinding {
+                queue: 0,
+                cpu: first_cpu,
+            },
+            QueueCpuBinding {
+                queue: 1,
+                cpu: second_cpu,
+            },
+        ],
+        false,
+    )
+    .with_tx_channel_cap(16);
+
+    let (transmitter, sender) = TransmitterBuilder::new(config, Arc::clone(&exit))
+        .expect("build two-queue copy-mode transmitter")
+        .build();
+    let transmitter = TransmitterGuard::new(transmitter, sender, exit);
+    assert_eq!(transmitter.sender().len(), 2);
+
+    let mut buf = [0u8; 2048];
+    for (sender_index, dst_port, payload) in [
+        (
+            0,
+            45_680,
+            Bytes::from_static(b"agave-xdp-transmitter-queue-0"),
+        ),
+        (
+            1,
+            45_681,
+            Bytes::from_static(b"agave-xdp-transmitter-queue-1"),
+        ),
+    ] {
+        let destination = SocketAddr::V4(SocketAddrV4::new(links.right_ip, dst_port));
+        let packet = BytesTxPacket::new(
+            SocketAddrV4::new(links.left_ip, src_port),
+            destination,
+            None,
+            payload.clone(),
+        );
+        transmitter
+            .sender()
+            .try_send(sender_index, packet)
+            .unwrap_or_else(|err| panic!("queue packet through sender {sender_index}: {err}"));
+
+        let received = receiver
+            .recv_matching_udp(
+                &mut buf,
+                &ExpectedUdpPacket {
+                    src_mac: links.left_mac,
+                    dst_mac: links.right_mac,
+                    src_ip: links.left_ip,
+                    dst_ip: links.right_ip,
+                    src_port,
+                    dst_port,
+                    payload: payload.as_ref(),
+                },
+                Duration::from_secs(3),
+            )
+            .unwrap_or_else(|err| panic!("receive UDP frame from sender {sender_index}: {err}"));
+        assert_eq!(received, payload.as_ref());
+    }
+}
+
+#[test]
+#[ignore = "requires root and network namespace privileges"]
 fn transmitter_sends_udp_payload_over_gre_tunnel_in_copy_mode() {
     let cpu_id = transmitter_cpu();
 
     let _netns = common::NetNsGuard::new().expect("create network namespace");
-    let links = common::setup_veth_pair();
+    let links = common::setup_veth_pair_with_tx_queue_count(1);
     common::replace_neighbor(links.right_ip, links.right_mac, common::LEFT_IFACE);
     common::add_route_to_dev(&format!("{}/32", links.right_ip), common::LEFT_IFACE);
     let gre = common::setup_gre_tunnel(&links);
@@ -417,15 +502,15 @@ fn transmitter_sends_udp_payload_over_gre_tunnel_in_copy_mode() {
     let payload = Bytes::from_static(b"agave-xdp-transmitter-gre-smoke");
 
     let exit = Arc::new(AtomicBool::new(false));
-    let mut config = XdpConfig::new(
+    let config = XdpConfig::new(
         Some(common::LEFT_IFACE.to_string()),
         vec![QueueCpuBinding {
             queue: 0,
             cpu: cpu_id,
         }],
         false,
-    );
-    config.tx_channel_cap = 16;
+    )
+    .with_tx_channel_cap(16);
 
     let (transmitter, sender) = TransmitterBuilder::new(config, Arc::clone(&exit))
         .expect("build copy-mode transmitter")
