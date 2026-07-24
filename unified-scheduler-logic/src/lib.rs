@@ -111,7 +111,6 @@ use {
         mem,
         sync::Arc,
     },
-    unwrap_none::UnwrapNone,
 };
 
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -678,8 +677,10 @@ trait PriorityUsageQueueExt: Sized {
 
 impl PriorityUsageQueueExt for PriorityUsageQueue {
     fn insert_usage_from_task(&mut self, usage_from_task: UsageFromTask) {
-        self.insert(usage_from_task.1.task_id(), usage_from_task)
-            .unwrap_none();
+        assert!(
+            self.insert(usage_from_task.1.task_id(), usage_from_task)
+                .is_none()
+        );
     }
 
     fn pop_first_usage_from_task(&mut self) -> Option<UsageFromTask> {
@@ -764,9 +765,7 @@ impl UsageQueueInner {
             Self::Priority { current_usage, .. } => match current_usage {
                 Some(PriorityUsage::Readonly(tasks)) => match requested_usage {
                     RequestedUsage::Readonly => {
-                        tasks
-                            .insert(new_task.task_id(), new_task.clone())
-                            .unwrap_none();
+                        assert!(tasks.insert(new_task.task_id(), new_task.clone()).is_none());
                         Ok(())
                     }
                     RequestedUsage::Writable => Err(()),
@@ -1144,7 +1143,7 @@ impl SchedulingStateMachine {
     ///
     /// Note that this function takes ownership of the task to allow for future optimizations.
     pub fn buffer_task(&mut self, task: Task) {
-        self.schedule_or_buffer_task(task, true).unwrap_none();
+        assert!(self.schedule_or_buffer_task(task, true).is_none());
     }
 
     /// Schedules or buffers given `task`, returning successful one unless buffering is forced.
