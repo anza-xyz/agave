@@ -44,6 +44,10 @@ Release channels have their own copy of this changelog:
   `notify_block_metadata_for_bank` replaces `notify_block_metadata`.
 * Added `update_bank_status` for bank-scoped slot status updates with `bank_id`;
   `update_slot_status` remains for non-bank slot statuses.
+* Added `GeyserPlugin::notify_block_footer` and
+  `GeyserPlugin::block_footer_notifications_enabled`; plugins can opt in to receive the complete
+  versioned Alpenglow block footer, slot, and bank ID in entry order independently of entry
+  notifications.
 ### SDK
 #### Breaking
 * solana-program-test: syscall getters (e.g. `Rent::get()`, `Clock::get()`) and `solana_sysvar::get_sysvar()` now return

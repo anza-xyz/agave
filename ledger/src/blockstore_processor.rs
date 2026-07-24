@@ -20,7 +20,7 @@ use {
     },
     solana_clock::{BankId, Slot},
     solana_entry::{
-        block_component::BlockComponent,
+        block_component::{BlockComponent, VersionedBlockMarker},
         entry::{self, Entry, EntrySlice, EntryType, create_ticks},
     },
     solana_genesis_config::GenesisConfig,
@@ -1320,7 +1320,10 @@ pub fn confirm_slot(
                 )?;
             }
             BlockComponent::BlockMarker(marker) => {
-                if marker.is_footer() {
+                let block_footer = match &marker {
+                    VersionedBlockMarker::V1(marker) => marker.as_block_footer().cloned(),
+                };
+                if block_footer.is_some() {
                     // The footer path mutates vote accounts directly to pay rewards.
                     // All prior transactions must finish first so vote account view is deterministic.
                     if let Some((result, execute_time)) = bank.wait_for_completed_scheduler() {
@@ -1349,6 +1352,20 @@ pub fn confirm_slot(
                                 );
                             }
                         })?;
+                    if let Some(block_footer) = block_footer
+                        && let Some(entry_notification_sender) = entry_notification_sender
+                        && let Err(err) =
+                            entry_notification_sender.send(EntryNotification::BlockFooter {
+                                slot,
+                                bank_id: bank.bank_id(),
+                                block_footer: Box::new(block_footer),
+                            })
+                    {
+                        warn!(
+                            "Slot {slot} block footer entry_notification_sender send failed: \
+                             {err:?}"
+                        );
+                    }
                 }
                 progress.num_shreds += num_shreds as u64;
             }
@@ -1402,7 +1419,7 @@ fn confirm_slot_entries(
         .map(|(i, entry)| {
             if let Some(entry_notification_sender) = entry_notification_sender {
                 let entry_index = progress.num_entries.saturating_add(i);
-                if let Err(err) = entry_notification_sender.send(EntryNotification {
+                if let Err(err) = entry_notification_sender.send(EntryNotification::Entry {
                     slot,
                     bank_id,
                     index: entry_index,
@@ -2362,7 +2379,10 @@ pub mod tests {
         solana_account::{AccountSharedData, WritableAccount},
         solana_bls_signatures::{BLS_SIGNATURE_AFFINE_SIZE, Signature as BLSSignature},
         solana_entry::{
-            block_component::{BlockComponent, BlockFooterV1, BlockHeaderV1, VersionedBlockMarker},
+            block_component::{
+                BlockComponent, BlockFooterV1, BlockHeaderV1, VersionedBlockFooter,
+                VersionedBlockMarker,
+            },
             entry::{create_ticks, next_entry, next_entry_mut},
         },
         solana_epoch_schedule::EpochSchedule,
@@ -5411,7 +5431,7 @@ pub mod tests {
         )
         .unwrap();
         let footer = VersionedBlockMarker::from_block_footer(BlockFooterV1 {
-            bank_hash: Hash::new_unique(),
+            bank_hash: Hash::new_from_array([42; 32]),
             block_producer_time_nanos,
             block_user_agent: b"test".to_vec(),
             block_final_cert: None,
@@ -5564,6 +5584,8 @@ pub mod tests {
                 .is_active(&agave_feature_set::alpenglow::id())
         );
         let bank1 = bank_forks.write().unwrap().insert(bank1);
+        let (entry_notification_sender, entry_notification_receiver) =
+            bounded::<EntryNotification>(2);
 
         confirm_slot(
             &blockstore,
@@ -5573,13 +5595,57 @@ pub mod tests {
             &mut ConfirmationTiming::default(),
             &mut ConfirmationProgress::new(bank0.last_blockhash()),
             true,
-            None,
+            Some(&entry_notification_sender),
             None,
             None,
             false,
             &MigrationStatus::post_migration_status(),
         )
         .unwrap();
+
+        let EntryNotification::BlockFooter {
+            slot,
+            bank_id,
+            block_footer,
+        } = entry_notification_receiver.try_recv().unwrap()
+        else {
+            panic!("expected block footer notification before the alpentick entry");
+        };
+        assert_eq!(slot, bank1.slot());
+        assert_eq!(bank_id, bank1.bank_id());
+        let VersionedBlockFooter::V1(block_footer) = *block_footer;
+        assert_eq!(block_footer.bank_hash, Hash::new_from_array([42; 32]));
+        assert_eq!(
+            block_footer.block_producer_time_nanos,
+            u64::try_from(
+                genesis_config
+                    .creation_time
+                    .saturating_mul(1_000_000_000)
+                    .saturating_add(1),
+            )
+            .unwrap()
+        );
+        assert_eq!(block_footer.block_user_agent, b"test");
+        assert!(block_footer.block_final_cert.is_none());
+        assert!(block_footer.skip_reward_cert.is_none());
+        assert!(block_footer.notar_reward_cert.is_none());
+
+        let EntryNotification::Entry {
+            slot,
+            bank_id,
+            index,
+            entry,
+            starting_transaction_index,
+        } = entry_notification_receiver.try_recv().unwrap()
+        else {
+            panic!("expected alpentick entry notification after the block footer");
+        };
+        assert_eq!(slot, bank1.slot());
+        assert_eq!(bank_id, bank1.bank_id());
+        assert_eq!(index, 0);
+        assert_eq!(entry.num_transactions, 0);
+        assert_eq!(starting_transaction_index, 0);
+        assert!(entry_notification_receiver.try_recv().is_err());
     }
 
     #[test]

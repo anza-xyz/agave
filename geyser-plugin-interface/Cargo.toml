@@ -20,6 +20,7 @@ agave-unstable-api = []
 [dependencies]
 log = { workspace = true, features = ["std"] }
 solana-clock = { workspace = true }
+solana-entry = { workspace = true }
 solana-hash = { workspace = true }
 solana-message = { workspace = true }
 solana-signature = { workspace = true }

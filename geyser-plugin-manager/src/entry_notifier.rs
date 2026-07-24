@@ -2,12 +2,13 @@
 use {
     crate::geyser_plugin_manager::GeyserPluginManager,
     agave_geyser_plugin_interface::geyser_plugin_interface::{
-        ReplicaEntryInfoV2, ReplicaEntryInfoVersions,
+        ReplicaBlockFooterInfo, ReplicaBlockFooterInfoVersions, ReplicaEntryInfoV2,
+        ReplicaEntryInfoVersions,
     },
     arc_swap::ArcSwap,
     log::*,
     solana_clock::{BankId, Slot},
-    solana_entry::entry::EntrySummary,
+    solana_entry::{block_component::VersionedBlockFooter, entry::EntrySummary},
     solana_ledger::entry_notifier_interface::EntryNotifier,
     std::sync::Arc,
 };
@@ -53,6 +54,39 @@ impl EntryNotifier for EntryNotifierImpl {
             }
         }
     }
+
+    fn notify_block_footer(
+        &self,
+        slot: Slot,
+        bank_id: BankId,
+        block_footer: &VersionedBlockFooter,
+    ) {
+        let plugin_manager = self.plugin_manager.load();
+        if plugin_manager.plugins.is_empty() {
+            return;
+        }
+
+        let block_footer_info = ReplicaBlockFooterInfo { slot, block_footer };
+        for plugin in plugin_manager.plugins.iter() {
+            if !plugin.block_footer_notifications_enabled() {
+                continue;
+            }
+            match plugin.notify_block_footer(
+                ReplicaBlockFooterInfoVersions::V0_0_1(&block_footer_info),
+                bank_id,
+            ) {
+                Err(err) => error!(
+                    "Failed to notify block footer, error: ({}) to plugin {}",
+                    err,
+                    plugin.name()
+                ),
+                Ok(_) => trace!(
+                    "Successfully notified block footer to plugin {}",
+                    plugin.name()
+                ),
+            }
+        }
+    }
 }
 
 impl EntryNotifierImpl {
@@ -85,16 +119,20 @@ mod tests {
         agave_geyser_plugin_interface::geyser_plugin_interface::{GeyserPlugin, Result},
         arc_swap::ArcSwap,
         libloading::Library,
+        solana_entry::block_component::BlockFooterV1,
         solana_hash::Hash,
         std::sync::{Arc, Mutex},
     };
 
     type EntryUpdate = (Slot, BankId, usize, usize);
+    type BlockFooterUpdate = (Slot, BankId, VersionedBlockFooter);
 
     #[derive(Debug)]
     struct TestEntryPlugin {
         entry_notifications_enabled: bool,
-        updates: Arc<Mutex<Vec<EntryUpdate>>>,
+        block_footer_notifications_enabled: bool,
+        entry_updates: Arc<Mutex<Vec<EntryUpdate>>>,
+        block_footer_updates: Arc<Mutex<Vec<BlockFooterUpdate>>>,
     }
 
     impl GeyserPlugin for TestEntryPlugin {
@@ -110,7 +148,7 @@ mod tests {
             let ReplicaEntryInfoVersions::V0_0_2(entry) = entry else {
                 panic!("expected V0_0_2 entry info");
             };
-            self.updates.lock().unwrap().push((
+            self.entry_updates.lock().unwrap().push((
                 entry.slot,
                 bank_id,
                 entry.index,
@@ -119,8 +157,26 @@ mod tests {
             Ok(())
         }
 
+        fn notify_block_footer(
+            &self,
+            block_footer: ReplicaBlockFooterInfoVersions,
+            bank_id: BankId,
+        ) -> Result<()> {
+            let ReplicaBlockFooterInfoVersions::V0_0_1(block_footer) = block_footer;
+            self.block_footer_updates.lock().unwrap().push((
+                block_footer.slot,
+                bank_id,
+                block_footer.block_footer.clone(),
+            ));
+            Ok(())
+        }
+
         fn entry_notifications_enabled(&self) -> bool {
             self.entry_notifications_enabled
+        }
+
+        fn block_footer_notifications_enabled(&self) -> bool {
+            self.block_footer_notifications_enabled
         }
     }
 
@@ -138,18 +194,24 @@ mod tests {
     }
 
     #[test]
-    fn test_notify_entry_includes_bank_id() {
-        let enabled_updates = Arc::new(Mutex::new(Vec::new()));
-        let disabled_updates = Arc::new(Mutex::new(Vec::new()));
+    fn test_notify_entry_and_block_footer_independently() {
+        let entry_plugin_entry_updates = Arc::new(Mutex::new(Vec::new()));
+        let entry_plugin_block_footer_updates = Arc::new(Mutex::new(Vec::new()));
+        let block_footer_plugin_entry_updates = Arc::new(Mutex::new(Vec::new()));
+        let block_footer_plugin_block_footer_updates = Arc::new(Mutex::new(Vec::new()));
         let plugin_manager = Arc::new(ArcSwap::from(Arc::new(GeyserPluginManager {
             plugins: vec![
                 loaded_test_plugin(TestEntryPlugin {
                     entry_notifications_enabled: true,
-                    updates: enabled_updates.clone(),
+                    block_footer_notifications_enabled: false,
+                    entry_updates: entry_plugin_entry_updates.clone(),
+                    block_footer_updates: entry_plugin_block_footer_updates.clone(),
                 }),
                 loaded_test_plugin(TestEntryPlugin {
                     entry_notifications_enabled: false,
-                    updates: disabled_updates.clone(),
+                    block_footer_notifications_enabled: true,
+                    entry_updates: block_footer_plugin_entry_updates.clone(),
+                    block_footer_updates: block_footer_plugin_block_footer_updates.clone(),
                 }),
             ],
         })));
@@ -159,10 +221,27 @@ mod tests {
             hash: Hash::new_unique(),
             num_transactions: 2,
         };
+        let block_footer = VersionedBlockFooter::V1(BlockFooterV1 {
+            bank_hash: Hash::new_unique(),
+            block_producer_time_nanos: 123,
+            block_user_agent: b"test-validator".to_vec(),
+            block_final_cert: None,
+            skip_reward_cert: None,
+            notar_reward_cert: None,
+        });
 
         notifier.notify_entry(42, 9, 3, &entry, 7);
+        notifier.notify_block_footer(42, 9, &block_footer);
 
-        assert_eq!(*enabled_updates.lock().unwrap(), vec![(42, 9, 3, 7)]);
-        assert!(disabled_updates.lock().unwrap().is_empty());
+        assert_eq!(
+            *entry_plugin_entry_updates.lock().unwrap(),
+            vec![(42, 9, 3, 7)]
+        );
+        assert!(entry_plugin_block_footer_updates.lock().unwrap().is_empty());
+        assert!(block_footer_plugin_entry_updates.lock().unwrap().is_empty());
+        assert_eq!(
+            *block_footer_plugin_block_footer_updates.lock().unwrap(),
+            vec![(42, 9, block_footer)]
+        );
     }
 }

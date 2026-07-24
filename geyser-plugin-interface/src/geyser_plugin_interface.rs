@@ -4,6 +4,7 @@
 //! creates the implementation of the plugin.
 use {
     solana_clock::{BankId, Slot, UnixTimestamp},
+    solana_entry::block_component::VersionedBlockFooter,
     solana_hash::Hash,
     solana_message::v0::LoadedAddresses,
     solana_signature::Signature,
@@ -294,6 +295,22 @@ pub struct ReplicaEntryInfoV2<'a> {
 pub enum ReplicaEntryInfoVersions<'a> {
     V0_0_1(&'a ReplicaEntryInfo<'a>),
     V0_0_2(&'a ReplicaEntryInfoV2<'a>),
+}
+
+/// Information about an Alpenglow block footer.
+#[derive(Clone, Debug)]
+#[repr(C)]
+pub struct ReplicaBlockFooterInfo<'a> {
+    /// The slot containing the block footer.
+    pub slot: Slot,
+    /// The versioned block footer.
+    pub block_footer: &'a VersionedBlockFooter,
+}
+
+/// A wrapper to future-proof ReplicaBlockFooterInfo handling.
+#[repr(u32)]
+pub enum ReplicaBlockFooterInfoVersions<'a> {
+    V0_0_1(&'a ReplicaBlockFooterInfo<'a>),
 }
 
 #[derive(Clone, Debug)]
@@ -712,6 +729,20 @@ pub trait GeyserPlugin: Any + Send + Sync + std::fmt::Debug {
         self.notify_entry(entry)
     }
 
+    /// Called when an Alpenglow block footer is processed.
+    ///
+    /// `bank_id` identifies the concrete bank instance associated with the
+    /// footer. This callback is ordered with entry notifications and is only
+    /// called when `block_footer_notifications_enabled()` returns true.
+    #[allow(unused_variables)]
+    fn notify_block_footer(
+        &self,
+        block_footer: ReplicaBlockFooterInfoVersions,
+        bank_id: BankId,
+    ) -> Result<()> {
+        Ok(())
+    }
+
     /// Called when block's metadata is updated.
     #[deprecated(
         since = "4.3.0",
@@ -807,6 +838,13 @@ pub trait GeyserPlugin: Any + Send + Sync + std::fmt::Debug {
     /// Default is false -- if the plugin is interested in
     /// entry data, return true.
     fn entry_notifications_enabled(&self) -> bool {
+        false
+    }
+
+    /// Check if the plugin is interested in Alpenglow block footer data.
+    /// Default is false -- if the plugin is interested in
+    /// Alpenglow block footer data, return true.
+    fn block_footer_notifications_enabled(&self) -> bool {
         false
     }
 

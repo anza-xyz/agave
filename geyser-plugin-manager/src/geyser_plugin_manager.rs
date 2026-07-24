@@ -113,6 +113,16 @@ impl GeyserPluginManager {
         false
     }
 
+    /// Check if there is any plugin interested in Alpenglow block footer data
+    pub fn block_footer_notifications_enabled(&self) -> bool {
+        for plugin in &self.plugins {
+            if plugin.block_footer_notifications_enabled() {
+                return true;
+            }
+        }
+        false
+    }
+
     /// Check if there is any plugin interested in deshred transaction data
     pub fn deshred_transaction_notifications_enabled(&self) -> bool {
         for plugin in &self.plugins {
