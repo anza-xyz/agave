@@ -186,7 +186,6 @@ impl PullRequestPipelineFlags {
                         || file.ends_with("scripts/cargo-for-all-lock-files.sh")
                         || file.ends_with("scripts/check-dev-context-only-utils.sh")
                         || file.ends_with("scripts/agave-build-lists.sh")
-                        || file.ends_with("ci/order-crates-for-publishing.py")
                         || file.ends_with("scripts/cargo-clippy.sh")
                         || file.ends_with("ci/do-audit.sh")
                         || file.ends_with("ci/check-install-all.sh")
