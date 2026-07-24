@@ -22,7 +22,6 @@ name = "solana_merkle_tree"
 agave-unstable-api = []
 
 [dependencies]
-fast-math = { workspace = true }
 solana-hash = { workspace = true }
 solana-sha256-hasher = { workspace = true }
 
