@@ -21,6 +21,7 @@ use {
         validator::SchedulerPacing,
     },
     agave_banking_stage_ingress_types::SchedulerPriorityFloor,
+    agave_scheduling_utils::cost_pacer::CostPacer,
     solana_clock::DEFAULT_MS_PER_SLOT,
     solana_cost_model::cost_tracker::SharedBlockCost,
     solana_measure::measure_us,
@@ -32,7 +33,7 @@ use {
             Arc,
             atomic::{AtomicBool, Ordering},
         },
-        time::{Duration, Instant},
+        time::Instant,
     },
 };
 
@@ -242,12 +243,10 @@ where
                         );
                     }
 
-                    CostPacer {
-                        block_limit,
+                    (
+                        CostPacer::new(block_limit, now, fill_time),
                         shared_block_cost,
-                        detection_time: now,
-                        fill_time,
-                    }
+                    )
                 });
             }
 
@@ -287,14 +286,14 @@ where
     fn process_transactions(
         &mut self,
         decision: &BufferedPacketsDecision,
-        cost_pacer: Option<&CostPacer>,
+        cost_pacer: Option<&(CostPacer, SharedBlockCost)>,
         now: &Instant,
     ) -> Result<usize, SchedulerError> {
         let scheduled = match decision {
             BufferedPacketsDecision::Consume(_bank) => {
-                let scheduling_budget = cost_pacer
-                    .expect("cost pacer must be set for Consume")
-                    .scheduling_budget(now);
+                let (cost_pacer, shared_block_cost) =
+                    cost_pacer.expect("cost pacer must be set for Consume");
+                let scheduling_budget = cost_pacer.scheduling_budget(now, shared_block_cost.load());
                 let (scheduling_summary, schedule_time_us) = measure_us!(
                     self.scheduler
                         .schedule(&mut self.container, scheduling_budget,)?
@@ -501,33 +500,6 @@ where
     }
 }
 
-struct CostPacer {
-    block_limit: u64,
-    shared_block_cost: SharedBlockCost,
-    detection_time: Instant,
-    fill_time: Option<Duration>,
-}
-
-impl CostPacer {
-    fn scheduling_budget(&self, current_time: &Instant) -> u64 {
-        let target = if let Some(fill_time) = &self.fill_time {
-            let time_since = current_time.saturating_duration_since(self.detection_time);
-            if time_since >= *fill_time {
-                self.block_limit
-            } else {
-                // on millisecond granularity, pace the cost linearly.
-                let allocation_per_milli = self.block_limit / fill_time.as_millis() as u64;
-                let millis_since_detection = time_since.as_millis() as u64;
-                allocation_per_milli * millis_since_detection
-            }
-        } else {
-            self.block_limit
-        };
-
-        target.saturating_sub(self.shared_block_cost.load())
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use {
@@ -560,7 +532,10 @@ mod tests {
         solana_signer::Signer,
         solana_system_interface::instruction as system_instruction,
         solana_transaction::Transaction,
-        std::sync::{Arc, RwLock},
+        std::{
+            sync::{Arc, RwLock},
+            time::Duration,
+        },
     };
 
     fn create_channels<T>(num: usize) -> (Vec<Sender<T>>, Vec<Receiver<T>>) {
@@ -806,20 +781,19 @@ mod tests {
             .bank()
             .map(|bank| Duration::from_nanos_u128(bank.ns_per_slot))
             .unwrap();
+        let cost_pacer = (
+            CostPacer::new(
+                u64::MAX,
+                now.checked_sub(slot_time).unwrap(),
+                Some(slot_time.saturating_sub(Duration::from_millis(
+                    DEFAULT_SCHEDULER_PACING_NON_FILL_TIME_MILLIS,
+                ))),
+            ),
+            SharedBlockCost::new(0),
+        );
         assert!(
             scheduler_controller
-                .process_transactions(
-                    &decision,
-                    Some(&CostPacer {
-                        block_limit: u64::MAX,
-                        shared_block_cost: SharedBlockCost::new(0),
-                        detection_time: now.checked_sub(slot_time).unwrap(),
-                        fill_time: Some(slot_time.saturating_sub(Duration::from_millis(
-                            DEFAULT_SCHEDULER_PACING_NON_FILL_TIME_MILLIS
-                        ))),
-                    }),
-                    &now
-                )
+                .process_transactions(&decision, Some(&cost_pacer), &now)
                 .is_ok()
         );
     }
