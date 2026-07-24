@@ -5731,7 +5731,7 @@ pub mod tests {
         let leader_schedule_cache = LeaderScheduleCache::new_from_bank(&bank0);
 
         let mut genesis_meta = SlotMeta::new(0, None);
-        genesis_meta.next_slots = vec![1, 2];
+        genesis_meta.next_slots = smallvec::smallvec![1, 2];
         blockstore.put_meta(0, &genesis_meta).unwrap();
 
         for slot in [1, 2] {
@@ -5814,7 +5814,7 @@ pub mod tests {
 
         let leader_schedule_cache = LeaderScheduleCache::new_from_bank(&parent_bank);
         let mut parent_meta = SlotMeta::new(1, Some(0));
-        parent_meta.next_slots = vec![2, 3];
+        parent_meta.next_slots = smallvec::smallvec![2, 3];
 
         for (slot, block_id) in [(2, Hash::new_unique()), (3, parent_block_id)] {
             let mut meta = SlotMeta::new(slot, Some(1));

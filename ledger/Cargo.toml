@@ -60,6 +60,7 @@ rayon = { workspace = true }
 reed-solomon-erasure = { workspace = true, features = ["simd-accel"] }
 scopeguard = { workspace = true }
 serde = { workspace = true }
+smallvec = { workspace = true }
 solana-account = { workspace = true }
 solana-accounts-db = { workspace = true }
 solana-address-lookup-table-interface = { workspace = true, features = ["wincode"] }
@@ -119,7 +120,7 @@ thiserror = { workspace = true }
 tokio = { workspace = true, features = ["full"] }
 tokio-stream = { workspace = true }
 trees = { workspace = true }
-wincode = { workspace = true, features = ["bytes"] }
+wincode = { workspace = true, features = ["bytes", "smallvec"] }
 
 [dependencies.rocksdb]
 # Avoid the vendored bzip2 within rocksdb-sys that can cause linker conflicts

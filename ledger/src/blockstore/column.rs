@@ -887,6 +887,7 @@ mod tests {
     use {
         super::*,
         crate::blockstore_meta::{CompletedDataIndexes, ConnectedFlags},
+        smallvec::smallvec,
         solana_hash::Hash,
         wincode,
     };
@@ -900,7 +901,7 @@ mod tests {
             first_shred_timestamp: 1234567890,
             last_index: Some(14),
             parent_slot: Some(41),
-            next_slots: vec![43, 44],
+            next_slots: smallvec![43, 44],
             connected_flags: ConnectedFlags::CONNECTED | ConnectedFlags::PARENT_CONNECTED,
             completed_data_indexes: [0u32, 5, 10].into_iter().collect(),
             parent_block_id: Hash::new_unique(),
@@ -921,7 +922,7 @@ mod tests {
             first_shred_timestamp: 1234567890,
             last_index: Some(14),
             parent_slot: Some(41),
-            next_slots: vec![43, 44],
+            next_slots: smallvec![43, 44],
             connected_flags: ConnectedFlags::CONNECTED | ConnectedFlags::PARENT_CONNECTED,
             completed_data_indexes: [0u32, 5, 10].into_iter().collect(),
         };
@@ -935,7 +936,7 @@ mod tests {
             first_shred_timestamp: 1234567890,
             last_index: Some(14),
             parent_slot: Some(41),
-            next_slots: vec![43, 44],
+            next_slots: smallvec![43, 44],
             connected_flags: ConnectedFlags::CONNECTED | ConnectedFlags::PARENT_CONNECTED,
             completed_data_indexes: [0u32, 5, 10].into_iter().collect(),
             ..Default::default()
@@ -952,7 +953,7 @@ mod tests {
             first_shred_timestamp: 0,
             last_index: None,
             parent_slot: Some(0),
-            next_slots: vec![],
+            next_slots: smallvec![],
             connected_flags: ConnectedFlags::empty(),
             completed_data_indexes: CompletedDataIndexes::default(),
         };
@@ -968,7 +969,7 @@ mod tests {
             first_shred_timestamp: 0,
             last_index: None,
             parent_slot: Some(0),
-            next_slots: vec![],
+            next_slots: smallvec![],
             connected_flags: ConnectedFlags::empty(),
             completed_data_indexes: CompletedDataIndexes::default(),
             parent_block_id: Hash::new_unique(),

@@ -136,7 +136,8 @@ fn verify_next_slots(blockstore: &Blockstore, parent_slot: Slot, expected: &[Slo
 
     match (actual, expected.is_empty()) {
         (Some(actual), _) => assert_eq!(
-            actual, expected,
+            actual.as_slice(),
+            expected.as_slice(),
             "Parent slot {parent_slot} next_slots mismatch",
         ),
         (None, false) => panic!("Slot {parent_slot} meta doesn't exist"),
@@ -287,7 +288,7 @@ fn test_write_entries() {
         if i == num_slots - 1 {
             assert!(meta.next_slots.is_empty());
         } else {
-            assert_eq!(meta.next_slots, vec![i + 1]);
+            assert_eq!(meta.next_slots.as_slice(), &[i + 1]);
         }
         if i == 0 {
             assert_eq!(meta.parent_slot, Some(0));
@@ -899,7 +900,7 @@ fn test_handle_chaining_basic() {
     // Check the first slot again, it should chain to the second slot,
     // but still isn't connected.
     let meta1 = blockstore.meta(1).unwrap().unwrap();
-    assert_eq!(meta1.next_slots, vec![2]);
+    assert_eq!(meta1.next_slots.as_slice(), &[2]);
     assert!(!meta1.is_connected());
     assert_eq!(meta1.parent_slot, Some(0));
     assert_eq!(meta1.last_index, Some(shreds_per_slot as u64 - 1));
@@ -911,7 +912,7 @@ fn test_handle_chaining_basic() {
         let meta = blockstore.meta(slot).unwrap().unwrap();
         // The last slot will not chain to any other slots
         if slot != 2 {
-            assert_eq!(meta.next_slots, vec![slot + 1]);
+            assert_eq!(meta.next_slots.as_slice(), &[slot + 1]);
         }
         if slot == 0 {
             assert_eq!(meta.parent_slot, Some(0));
@@ -950,7 +951,7 @@ fn test_handle_chaining_missing_slots() {
         // - Have an unknown parent since no shreds to indicate
         let meta = blockstore.meta(slot).unwrap().unwrap();
         if slot % 2 == 0 {
-            assert_eq!(meta.next_slots, vec![slot + 1]);
+            assert_eq!(meta.next_slots.as_slice(), &[slot + 1]);
             assert_eq!(meta.parent_slot, None);
         } else {
             assert!(meta.next_slots.is_empty());
@@ -970,7 +971,7 @@ fn test_handle_chaining_missing_slots() {
         let meta = blockstore.meta(slot).unwrap().unwrap();
         // All slots except the last one should have a slot in next_slots
         if slot != num_slots - 1 {
-            assert_eq!(meta.next_slots, vec![slot + 1]);
+            assert_eq!(meta.next_slots.as_slice(), &[slot + 1]);
         } else {
             assert!(meta.next_slots.is_empty());
         }
@@ -1019,7 +1020,7 @@ pub fn test_forward_chaining_is_connected() {
         let meta = blockstore.meta(slot).unwrap().unwrap();
         // The last slot will not chain to any other slots
         if slot != num_slots - 1 {
-            assert_eq!(meta.next_slots, vec![slot + 1]);
+            assert_eq!(meta.next_slots.as_slice(), &[slot + 1]);
         } else {
             assert!(meta.next_slots.is_empty());
         }
@@ -1048,7 +1049,7 @@ pub fn test_forward_chaining_is_connected() {
                 let meta = blockstore.meta(slot).unwrap().unwrap();
 
                 if slot != num_slots - 1 {
-                    assert_eq!(meta.next_slots, vec![slot + 1]);
+                    assert_eq!(meta.next_slots.as_slice(), &[slot + 1]);
                 } else {
                     assert!(meta.next_slots.is_empty());
                 }
@@ -1301,6 +1302,7 @@ fn test_slot_range_connected_starting_slot_not_full() {
 
 #[test]
 fn test_get_slots_since() {
+    use smallvec::{SmallVec, smallvec};
     let ledger_path = get_tmp_ledger_path_auto_delete!();
     let blockstore = Blockstore::open(ledger_path.path()).unwrap();
 
@@ -1311,22 +1313,24 @@ fn test_get_slots_since() {
     blockstore.meta_cf.put(0, &meta0).unwrap();
 
     // Slot exists, chains to nothing
-    let expected: HashMap<u64, Vec<u64>> = vec![(0, vec![])].into_iter().collect();
+    let expected: HashMap<u64, SmallVec<[Slot; 2]>> = vec![(0, smallvec![])].into_iter().collect();
     assert_eq!(blockstore.get_slots_since(&[0]).unwrap(), expected);
-    meta0.next_slots = vec![1, 2];
+    meta0.next_slots = smallvec![1, 2];
     blockstore.meta_cf.put(0, &meta0).unwrap();
 
     // Slot exists, chains to some other slots
-    let expected: HashMap<u64, Vec<u64>> = vec![(0, vec![1, 2])].into_iter().collect();
+    let expected: HashMap<u64, SmallVec<[Slot; 2]>> =
+        vec![(0, smallvec![1, 2])].into_iter().collect();
     assert_eq!(blockstore.get_slots_since(&[0]).unwrap(), expected);
     assert_eq!(blockstore.get_slots_since(&[0, 1]).unwrap(), expected);
 
     let mut meta3 = SlotMeta::new(3, Some(1));
-    meta3.next_slots = vec![10, 5];
+    meta3.next_slots = smallvec![10, 5];
     blockstore.meta_cf.put(3, &meta3).unwrap();
-    let expected: HashMap<u64, Vec<u64>> = vec![(0, vec![1, 2]), (3, vec![10, 5])]
-        .into_iter()
-        .collect();
+    let expected: HashMap<u64, SmallVec<[Slot; 2]>> =
+        vec![(0, smallvec![1, 2]), (3, smallvec![10, 5])]
+            .into_iter()
+            .collect();
     assert_eq!(blockstore.get_slots_since(&[0, 1, 3]).unwrap(), expected);
 }
 
@@ -2613,10 +2617,10 @@ fn test_no_insert_but_modify_slot_meta() {
     shreds3.insert(0, shreds0[1].clone());
     blockstore.insert_shreds(shreds2, false).unwrap();
     let slot_meta = blockstore.meta(0).unwrap().unwrap();
-    assert_eq!(slot_meta.next_slots, vec![2]);
+    assert_eq!(slot_meta.next_slots.as_slice(), &[2]);
     blockstore.insert_shreds(shreds3, false).unwrap();
     let slot_meta = blockstore.meta(0).unwrap().unwrap();
-    assert_eq!(slot_meta.next_slots, vec![2, 3]);
+    assert_eq!(slot_meta.next_slots.as_slice(), &[2, 3]);
 }
 
 #[test]
@@ -5143,8 +5147,9 @@ fn test_clear_unconfirmed_slot() {
             .meta(unconfirmed_slot)
             .unwrap()
             .unwrap()
-            .next_slots,
-        vec![unconfirmed_child_slot]
+            .next_slots
+            .as_slice(),
+        &[unconfirmed_child_slot]
     );
     assert!(
         blockstore
@@ -5192,8 +5197,13 @@ fn test_clear_unconfirmed_slot_and_insert_again() {
         .insert_shreds(unconfirmed_slot_shreds, false)
         .unwrap();
     assert_eq!(
-        blockstore.meta(confirmed_slot).unwrap().unwrap().next_slots,
-        vec![unconfirmed_slot]
+        blockstore
+            .meta(confirmed_slot)
+            .unwrap()
+            .unwrap()
+            .next_slots
+            .as_slice(),
+        &[unconfirmed_slot]
     );
 }
 
