@@ -23,7 +23,7 @@ use {
     futures::{StreamExt, stream::FuturesUnordered},
     histogram::Histogram,
     solana_gossip::{cluster_info::ClusterInfo, contact_info::ContactInfoQuery},
-    solana_perf::packet::PACKETS_PER_BATCH,
+    solana_perf::packet::{PACKETS_PER_BATCH, PacketRef, bytes::Bytes},
     solana_poh::{
         poh_controller::PohController, poh_recorder::PohRecorder,
         transaction_recorder::TransactionRecorder,
@@ -82,6 +82,13 @@ const DEFAULT_NUM_WORKERS: NonZeroUsize = NonZeroUsize::new(4).unwrap();
 
 const TOTAL_BUFFERED_PACKETS: usize = 100_000;
 const SLOT_BOUNDARY_CHECK_PERIOD: Duration = Duration::from_millis(10);
+
+fn packet_bytes(packet: PacketRef<'_>, packet_data: &[u8]) -> Bytes {
+    match packet {
+        PacketRef::Bytes(packet) => packet.buffer().clone(),
+        PacketRef::Packet(_) => Bytes::copy_from_slice(packet_data),
+    }
+}
 
 #[derive(Debug, Default)]
 pub struct BankingStageStats {

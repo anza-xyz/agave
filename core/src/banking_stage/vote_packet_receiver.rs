@@ -1,9 +1,8 @@
 use {
     super::{
         BankingStageStats, latest_validator_vote_packet::VoteSource,
-        leader_slot_metrics::LeaderSlotMetricsTracker, vote_storage::VoteStorage,
+        leader_slot_metrics::LeaderSlotMetricsTracker, packet_bytes, vote_storage::VoteStorage,
     },
-    crate::banking_stage::transaction_scheduler::transaction_state_container::SharedBytes,
     agave_banking_stage_ingress_types::{BankingPacketBatch, BankingPacketReceiver},
     agave_transaction_view::{
         result::TransactionViewError, sanitize::SanitizeConfig,
@@ -11,6 +10,7 @@ use {
     },
     crossbeam_channel::RecvTimeoutError,
     solana_measure::{measure::Measure, measure_us},
+    solana_perf::packet::bytes::Bytes,
     solana_pubkey::Pubkey,
     solana_runtime_transaction::sanitize_config::sanitize_config,
     std::{
@@ -139,7 +139,7 @@ impl VotePacketReceiver {
             };
 
             match SanitizedTransactionView::try_new_sanitized(
-                Arc::new(packet_data.to_vec()),
+                packet_bytes(packet, packet_data),
                 sanitize_config,
             ) {
                 Ok(packet) => {
@@ -219,7 +219,7 @@ impl VotePacketReceiver {
         slot_metrics_tracker.increment_received_packet_counts(stats.packet_stats);
     }
 
-    fn should_filter_packet(&self, packet: &SanitizedTransactionView<SharedBytes>) -> bool {
+    fn should_filter_packet(&self, packet: &SanitizedTransactionView<Bytes>) -> bool {
         // Vote transactions do not use address lookup tables, so static keys cover this path.
         !self.filter_keys.is_empty()
             && packet
