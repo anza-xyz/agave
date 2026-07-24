@@ -120,10 +120,49 @@ struct RetransmitStats {
     unknown_shred_slot_leader: usize,
 }
 
+type ClusterNodesEntry = (Pubkey, Arc<ClusterNodes<RetransmitStage>>);
+
+struct BatchClusterNodesCache {
+    slots: Vec<Slot>,
+    entries: Vec<(Slot, ClusterNodesEntry)>,
+}
+
+impl BatchClusterNodesCache {
+    fn populate(
+        &mut self,
+        slots: impl IntoIterator<Item = Slot>,
+        mut get_entry: impl FnMut(Slot) -> Option<ClusterNodesEntry>,
+    ) {
+        self.clear();
+        for slot in slots {
+            if self.slots.contains(&slot) {
+                continue;
+            }
+            self.slots.push(slot);
+            if let Some(entry) = get_entry(slot) {
+                self.entries.push((slot, entry));
+            }
+        }
+    }
+
+    fn get(&self, slot: Slot) -> Option<&ClusterNodesEntry> {
+        // Linear search is faster for the observed entry counts (maximum 5 over 20 hours).
+        self.entries
+            .iter()
+            .find_map(|(entry_slot, entry)| (*entry_slot == slot).then_some(entry))
+    }
+
+    fn clear(&mut self) {
+        self.slots.clear();
+        self.entries.clear();
+    }
+}
+
 struct RetransmitState {
     stats: RetransmitStats,
     addr_cache: AddrCache,
     shred_buf: Vec<Vec<shred::Payload>>,
+    slot_cache: BatchClusterNodesCache,
     pending_first_shred_event: Option<VotorEvent>,
 }
 
@@ -154,6 +193,11 @@ impl RetransmitState {
             stats: RetransmitStats::new(now),
             addr_cache: AddrCache::with_capacity(/*capacity:*/ 4),
             shred_buf: Vec::with_capacity(RETRANSMIT_BATCH_SIZE),
+            slot_cache: BatchClusterNodesCache {
+                // Maximum observed post-dedup over 20 hours was 5 for `slots` and `entries`.
+                slots: Vec::with_capacity(32),
+                entries: Vec::with_capacity(32),
+            },
             pending_first_shred_event: None,
         }
     }
@@ -334,6 +378,7 @@ fn retransmit(context: &RetransmitContext, state: &mut RetransmitState) -> Resul
         stats,
         addr_cache,
         shred_buf,
+        slot_cache,
         pending_first_shred_event,
     } = state;
 
@@ -400,13 +445,12 @@ fn retransmit(context: &RetransmitContext, state: &mut RetransmitState) -> Resul
     epoch_cache_update.stop();
     stats.epoch_cache_update += epoch_cache_update.as_us();
     // Lookup slot leader and cluster nodes for each slot.
-    let cache: HashMap<Slot, _> = shred_buf
-        .iter()
-        .flatten()
-        .filter_map(|shred| shred::layout::get_slot(shred))
-        .collect::<HashSet<Slot>>()
-        .into_iter()
-        .filter_map(|slot: Slot| {
+    slot_cache.populate(
+        shred_buf
+            .iter()
+            .flatten()
+            .filter_map(|shred| shred::layout::get_slot(shred)),
+        |slot| {
             max_slots.retransmit.fetch_max(slot, Ordering::Relaxed);
             // TODO: consider using root-bank here for leader lookup!
             // Shreds' signatures should be verified before they reach here,
@@ -420,9 +464,9 @@ fn retransmit(context: &RetransmitContext, state: &mut RetransmitState) -> Resul
             };
             let cluster_nodes =
                 cluster_nodes_cache.get(slot, &root_bank, &working_bank, cluster_info);
-            Some((slot, (slot_leader.id, cluster_nodes)))
-        })
-        .collect();
+            Some((slot_leader.id, cluster_nodes))
+        },
+    );
     let socket_addr_space = cluster_info.socket_addr_space();
     let record = |mut stats: HashMap<Slot, RetransmitSlotStats>, out: RetransmitShredOutput| {
         let now = timestamp();
@@ -435,7 +479,7 @@ fn retransmit(context: &RetransmitContext, state: &mut RetransmitState) -> Resul
             shred,
             &root_bank,
             shred_deduper,
-            &cache,
+            slot_cache,
             addr_cache,
             socket_addr_space,
             socket,
@@ -478,6 +522,7 @@ fn retransmit(context: &RetransmitContext, state: &mut RetransmitState) -> Resul
         &context.notifiers,
         pending_first_shred_event,
     );
+    slot_cache.clear();
     timer_start.stop();
     stats.total_time += timer_start.as_us();
     stats.maybe_submit(
@@ -495,7 +540,7 @@ fn retransmit_shred(
     shred: shred::Payload,
     root_bank: &Bank,
     shred_deduper: &ShredDeduper,
-    cache: &HashMap<Slot, (/*leader:*/ Pubkey, Arc<ClusterNodes<RetransmitStage>>)>,
+    cache: &BatchClusterNodesCache,
     addr_cache: &AddrCache,
     socket_addr_space: &SocketAddrSpace,
     socket: RetransmitSocket<'_>,
@@ -571,7 +616,7 @@ fn retransmit_shred(
 
 fn get_retransmit_addrs<'a>(
     shred: &ShredId,
-    cache: &HashMap<Slot, (/*leader:*/ Pubkey, Arc<ClusterNodes<RetransmitStage>>)>,
+    cache: &BatchClusterNodesCache,
     addr_cache: &'a AddrCache,
     socket_addr_space: &SocketAddrSpace,
     stats: &RetransmitStats,
@@ -580,7 +625,7 @@ fn get_retransmit_addrs<'a>(
         stats.addr_cache_hit.fetch_add(1, Ordering::Relaxed);
         return Some((root_distance, Cow::Borrowed(addrs)));
     }
-    let (slot_leader, cluster_nodes) = cache.get(&shred.slot())?;
+    let (slot_leader, cluster_nodes) = cache.get(shred.slot())?;
     let (root_distance, addrs) = cluster_nodes
         .get_retransmit_addrs(slot_leader, shred, DATA_PLANE_FANOUT, socket_addr_space)
         .inspect_err(|err| match err {
@@ -967,6 +1012,31 @@ mod tests {
             .map(Keypair::try_from)
             .unwrap()
             .unwrap()
+    }
+
+    #[test]
+    fn test_batch_cluster_nodes_cache() {
+        let (_, stakes, cluster_info) =
+            crate::cluster_nodes::make_test_cluster(&mut rand::rng(), 1, None);
+        let cluster_nodes = Arc::new(crate::cluster_nodes::new_cluster_nodes::<RetransmitStage>(
+            &cluster_info,
+            solana_cluster_type::ClusterType::Development,
+            &stakes,
+            false,
+        ));
+        let leader = Pubkey::new_unique();
+        let mut cache = BatchClusterNodesCache {
+            slots: Vec::new(),
+            entries: Vec::new(),
+        };
+        let mut calls = 0;
+        cache.populate([1, 1, 2], |slot| {
+            calls += 1;
+            (slot == 1).then(|| (leader, cluster_nodes.clone()))
+        });
+        assert_eq!(calls, 2);
+        assert_eq!(cache.get(1).map(|entry| entry.0), Some(leader));
+        assert!(cache.get(2).is_none());
     }
 
     #[test]
