@@ -4,22 +4,27 @@
 ### 1) Through bootstrap validator cli args:
 ```
 --bootstrap-validator <IDENTITY_PUBKEY> <VOTE_PUBKEY> <STAKE_PUBKEY>
+--bootstrap-validator-bls-pubkey <BLS_PUBKEY>
 --bootstrap-validator-lamports <LAMPORTS>
 --bootstrap-validator-stake-lamports <LAMPORTS>
 ```
-Note: you can pass in `--bootstrap-validator ...` multiple times, but the lamports associated with `--bootstrap-validator-lamports` and `--bootstrap-validator-stake-lamports` will apply to all `--bootstrap-validator` arguments.
+Note: you can pass in `--bootstrap-validator ...` multiple times. Each bootstrap validator requires one corresponding `--bootstrap-validator-bls-pubkey`, specified in the same order. The lamports associated with `--bootstrap-validator-lamports` and `--bootstrap-validator-stake-lamports` will apply to all `--bootstrap-validator` arguments.
 For example:
 ```
 cargo run --bin solana-genesis --
     --bootstrap-validator <IDENTITY_PUBKEY_0> <VOTE_PUBKEY_0> <STAKE_PUBKEY_0>
+    --bootstrap-validator-bls-pubkey <BLS_PUBKEY_0>
     --bootstrap-validator <IDENTITY_PUBKEY_1> <VOTE_PUBKEY_1> <STAKE_PUBKEY_1>
+    --bootstrap-validator-bls-pubkey <BLS_PUBKEY_1>
     ...
     --bootstrap-validator <IDENTITY_PUBKEY_N> <VOTE_PUBKEY_N> <STAKE_PUBKEY_N>
+    --bootstrap-validator-bls-pubkey <BLS_PUBKEY_N>
     --bootstrap-validator-stake-lamports 10000000000
     --bootstrap-validator-lamports 100000000000
 ```
 All validator accounts will receive the same number of stake and account lamports
 
+To find the corresponding bls pubkey for a validator identity, run `solana-keygen bls_pubkey <IDENTITY_KEYPAIR>`
 ### 2) Through the primordial accounts file flag:
 The primordial accounts file can be used to add accounts of any type to genesis. A user can define all account data and metadata. `data` field must be BASE64 encoded.
 ```
