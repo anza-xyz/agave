@@ -68,8 +68,8 @@ Release channels have their own copy of this changelog:
 * XDP transmit in SKB (copy) mode is now enabled by default on Linux. The validator requires
   `CAP_NET_ADMIN` and `CAP_NET_RAW` capabilities (plus `CAP_BPF` and `CAP_PERFMON` for
   `--xdp-zero-copy`). Pass `--no-xdp` to fall back to UDP sockets. The XDP CPU
-  core is auto-selected to avoid overlapping the PoH core; passing `--xdp-cpu-cores`
-  with a core that conflicts with the PoH core is an error.
+  core is auto-selected to avoid the exclusively-reserved PoH core; passing
+  `--xdp-cpu-cores` with a core that conflicts with an exclusive PoH core is an error.
 #### Deprecations
 * `--accounts-db-access-storages-method` is now deprecated and a no-op (the `mmap` value was
   deprecated in v4.0.0; mmap mode has now been removed entirely). The flag is still accepted for
@@ -79,6 +79,7 @@ Release channels have their own copy of this changelog:
 #### Changes
 * Turbine shred ingestion now rejects shreds more than half an epoch in the future (previously up to 2 full epochs ahead was accepted).
 * When XDP is enabled, gossip egress does not support private and loopback addresses. Operators running with `--allow-private-addr` must also pass `--no-xdp`.
+* Added Linux-only `--config <PATH>` for TOML-based validator settings, initially covering XDP and PoH CPU placement. CLI flags override file values. `[interfaces.<name>]` sections configure a NIC's hardware queue -> CPU worker assignment and zero-copy; `[xdp.<name>]` sections declare an XDP endpoint and the interface it reads from, sharing that interface's worker pool with any other endpoint naming it (only one endpoint is supported today). XDP and PoH CPU assignments may not overlap; other managed threads can opt into overlap checks with `reservation = "exclusive"`.
 ### CLI
 #### Breaking
 #### Changes
