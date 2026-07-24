@@ -1558,11 +1558,7 @@ fn test_shrink_converts_zero_lamport_single_ref_account_to_tombstone() {
             .accounts_index
             .get_with_and_then(&pubkey, &ancestors, false, |account_info| account_info)
             .unwrap();
-        accounts_db.remove_dead_accounts(
-            [account_info].iter(),
-            None,
-            MarkAccountsObsolete::Yes(slot1),
-        );
+        accounts_db.remove_dead_accounts([account_info].iter(), MarkAccountsObsolete::Yes(slot1));
     }
 
     accounts_db.shrink_slot_forced(slot1);
@@ -2815,14 +2811,6 @@ fn test_exhaustively_verify_refcounts_small_dataset_detects_mismatch() {
     });
 
     accounts.exhaustively_verify_refcounts(Some(slot));
-}
-
-#[test]
-fn test_clean_stored_dead_slots_empty() {
-    let accounts = AccountsDb::new_for_tests_with_config(Vec::new(), DEFAULT_ACCOUNTS_DB_CONFIG);
-    let mut dead_slots = IntSet::default();
-    dead_slots.insert(10);
-    accounts.clean_stored_dead_slots(&dead_slots, &HashSet::default());
 }
 
 #[test]
@@ -4291,11 +4279,7 @@ fn test_alive_bytes() {
             assert_eq!(account_info.0, slot);
             let reclaims = [account_info];
             num_obsolete_accounts += reclaims.len();
-            accounts_db.remove_dead_accounts(
-                reclaims.iter(),
-                None,
-                MarkAccountsObsolete::Yes(slot),
-            );
+            accounts_db.remove_dead_accounts(reclaims.iter(), MarkAccountsObsolete::Yes(slot));
             let after_size = storage0.alive_bytes();
             if storage0.count() == 0 {
                 // when `remove_dead_accounts` reaches 0 accounts, all bytes are marked as dead
@@ -5931,127 +5915,6 @@ fn test_filter_zero_lamport_clean_for_incremental_snapshots() {
 }
 
 #[test]
-/// test 'unref' parameter 'pubkeys_removed_from_accounts_index'
-fn test_unref_pubkeys_removed_from_accounts_index() {
-    let slot1 = 1;
-    let pk1 = Pubkey::from([1; 32]);
-    for already_removed in [false, true] {
-        let mut pubkeys_removed_from_accounts_index = PubkeysRemovedFromAccountsIndex::default();
-        if already_removed {
-            pubkeys_removed_from_accounts_index.insert(pk1);
-        }
-        // pk1 in slot1, purge it
-        let db = AccountsDb::new_for_tests_with_config(Vec::new(), DEFAULT_ACCOUNTS_DB_CONFIG);
-        let mut purged_slot_pubkeys = HashSet::default();
-        purged_slot_pubkeys.insert((slot1, pk1));
-        let mut reclaims = ReclaimsSlotList::default();
-        db.accounts_index.upsert(
-            slot1,
-            slot1,
-            &pk1,
-            AccountInfo::default(),
-            &mut reclaims,
-            UpsertReclaim::IgnoreReclaims,
-        );
-
-        db.unref_accounts(purged_slot_pubkeys, &pubkeys_removed_from_accounts_index);
-        let expected = RefCount::from(already_removed);
-        assert_eq!(db.accounts_index.ref_count_from_storage(&pk1), expected);
-    }
-}
-
-#[test]
-fn test_unref_accounts() {
-    let pubkeys_removed_from_accounts_index = PubkeysRemovedFromAccountsIndex::default();
-
-    {
-        let db = AccountsDb::new_for_tests_with_config(Vec::new(), DEFAULT_ACCOUNTS_DB_CONFIG);
-
-        db.unref_accounts(HashSet::default(), &pubkeys_removed_from_accounts_index);
-    }
-
-    let slot1 = 1;
-    let slot2 = 2;
-    let pk1 = Pubkey::from([1; 32]);
-    let pk2 = Pubkey::from([2; 32]);
-    {
-        // pk1 in slot1, purge it
-        let db = AccountsDb::new_for_tests_with_config(Vec::new(), DEFAULT_ACCOUNTS_DB_CONFIG);
-        let mut purged_slot_pubkeys = HashSet::default();
-        purged_slot_pubkeys.insert((slot1, pk1));
-        let mut reclaims = ReclaimsSlotList::default();
-        db.accounts_index.upsert(
-            slot1,
-            slot1,
-            &pk1,
-            AccountInfo::default(),
-            &mut reclaims,
-            UpsertReclaim::IgnoreReclaims,
-        );
-
-        db.unref_accounts(purged_slot_pubkeys, &pubkeys_removed_from_accounts_index);
-        assert_eq!(db.accounts_index.ref_count_from_storage(&pk1), 0);
-    }
-    {
-        let db = AccountsDb::new_for_tests_with_config(Vec::new(), DEFAULT_ACCOUNTS_DB_CONFIG);
-        let mut purged_slot_pubkeys = HashSet::default();
-        let mut reclaims = ReclaimsSlotList::default();
-        // pk1 and pk2 both in slot1 and slot2, so each has refcount of 2
-        for slot in [slot1, slot2] {
-            for pk in [pk1, pk2] {
-                db.accounts_index.upsert(
-                    slot,
-                    slot,
-                    &pk,
-                    AccountInfo::default(),
-                    &mut reclaims,
-                    UpsertReclaim::IgnoreReclaims,
-                );
-            }
-        }
-        // purge pk1 from both 1 and 2 and pk2 from slot 1
-        let purges = vec![(slot1, pk1), (slot1, pk2), (slot2, pk1)];
-        purges.into_iter().for_each(|(slot, pk)| {
-            purged_slot_pubkeys.insert((slot, pk));
-        });
-        db.unref_accounts(purged_slot_pubkeys, &pubkeys_removed_from_accounts_index);
-        assert_eq!(db.accounts_index.ref_count_from_storage(&pk1), 0);
-        assert_eq!(db.accounts_index.ref_count_from_storage(&pk2), 1);
-    }
-}
-
-#[test]
-fn test_many_unrefs() {
-    let db = AccountsDb::new_for_tests_with_config(Vec::new(), DEFAULT_ACCOUNTS_DB_CONFIG);
-    let mut reclaims = ReclaimsSlotList::default();
-    let pk1 = Pubkey::from([1; 32]);
-    // make sure we have > 1 batch. Bigger numbers cost more in test time here.
-    let n = (UNREF_ACCOUNTS_BATCH_SIZE + 1) as Slot;
-    // put the pubkey into the acct idx in 'n' slots
-    let purged_slot_pubkeys = (0..n)
-        .map(|slot| {
-            db.accounts_index.upsert(
-                slot,
-                slot,
-                &pk1,
-                AccountInfo::default(),
-                &mut reclaims,
-                UpsertReclaim::IgnoreReclaims,
-            );
-            (slot, pk1)
-        })
-        .collect::<HashSet<_>>();
-
-    assert_eq!(
-        db.accounts_index.ref_count_from_storage(&pk1),
-        n as RefCount,
-    );
-    // unref all 'n' slots
-    db.unref_accounts(purged_slot_pubkeys, &HashSet::default());
-    assert_eq!(db.accounts_index.ref_count_from_storage(&pk1), 0);
-}
-
-#[test]
 fn test_mark_dirty_dead_stores_empty() {
     let db = AccountsDb::new_for_tests_with_config(Vec::new(), DEFAULT_ACCOUNTS_DB_CONFIG);
     let slot = 0;
@@ -6610,11 +6473,7 @@ fn test_shrink_collect_with_obsolete_accounts() {
             // Lookup the pubkey in the database and find the AccountInfo
             db.accounts_index
                 .get_with_and_then(pubkey, &ancestors, false, |account_info| {
-                    db.remove_dead_accounts(
-                        [account_info].iter(),
-                        None,
-                        MarkAccountsObsolete::Yes(slot),
-                    );
+                    db.remove_dead_accounts([account_info].iter(), MarkAccountsObsolete::Yes(slot));
                 });
 
             obsolete_pubkeys.push(*pubkey);

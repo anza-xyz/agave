@@ -301,7 +301,6 @@ pub struct CleanAccountsStats {
     pub clean_old_root_reclaim_us: AtomicU64,
     pub remove_dead_accounts_remove_us: AtomicU64,
     pub remove_dead_accounts_shrink_us: AtomicU64,
-    pub clean_stored_dead_slots_us: AtomicU64,
     pub get_account_sizes_us: AtomicU64,
     pub slots_cleaned: AtomicU64,
 }
