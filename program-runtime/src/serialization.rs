@@ -696,7 +696,7 @@ mod tests {
         solana_program_entrypoint::deserialize,
         solana_rent::Rent,
         solana_sbpf::{memory_region::MemoryMapping, program::SBPFVersion, vm::Config},
-        solana_sdk_ids::bpf_loader,
+        solana_sdk_ids::{bpf_loader, bpf_loader_upgradeable},
         solana_system_interface::MAX_PERMITTED_ACCOUNTS_DATA_ALLOCATIONS_PER_TRANSACTION,
         solana_transaction_context::{
             MAX_ACCOUNTS_PER_TRANSACTION, instruction_accounts::InstructionAccount,
@@ -1695,5 +1695,58 @@ mod tests {
                 .len(),
             remaining_allowed_growth,
         );
+    }
+
+    #[test]
+    fn test_regression_initial_serialized_account_region_does_not_include_resize_affordance() {
+        let program_id = Pubkey::new_unique();
+        let transaction_accounts = vec![
+            (
+                Pubkey::new_unique(),
+                AccountSharedData::new(0, 4, &program_id),
+            ),
+            (
+                solana_pubkey::new_rand(),
+                AccountSharedData::from(Account {
+                    lamports: 0,
+                    data: b"agave".into(),
+                    owner: bpf_loader_upgradeable::id(),
+                    executable: false,
+                    rent_epoch: 0,
+                }),
+            ),
+        ];
+        with_mock_invoke_context!(invoke_context, transaction_context, transaction_accounts);
+        invoke_context
+            .transaction_context
+            .configure_top_level_instruction_for_tests(
+                0,
+                vec![InstructionAccount::new(1, false, true)],
+                vec![],
+            )
+            .unwrap();
+        invoke_context.push().unwrap();
+        let instruction_context = invoke_context
+            .transaction_context
+            .get_current_instruction_context()
+            .unwrap();
+        let (_serialized, regions, accounts_metadata, _instruction_data_offset) =
+            crate::serialization::serialize_parameters(
+                &instruction_context,
+                true,  // virtual_address_space_adjustments
+                false, // account_data_direct_mapping
+                false, // direct_account_pointers_in_program_input
+            )
+            .unwrap();
+        let config = Config {
+            aligned_memory_mapping: false,
+            ..Config::default()
+        };
+        let memory_mapping =
+            unsafe { MemoryMapping::new(regions, &config, SBPFVersion::V3).unwrap() };
+        let account_metadata = &accounts_metadata[0];
+        let vm_data_addr = account_metadata.vm_data_addr;
+        let (_region_index, region) = memory_mapping.find_region(vm_data_addr).unwrap();
+        assert_eq!(region.len(), 5);
     }
 }
