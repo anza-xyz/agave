@@ -87,8 +87,7 @@ impl Bank {
         }
 
         let hash_queue = self.blockhash_queue.read().unwrap();
-        let last_blockhash = hash_queue.last_hash();
-        let next_durable_nonce = DurableNonce::from_blockhash(&last_blockhash);
+        let next_durable_nonce = hash_queue.next_durable_nonce();
 
         self.check_transaction_age(
             tx,
@@ -157,8 +156,7 @@ impl Bank {
         error_counters: &mut TransactionErrorMetrics,
     ) -> Vec<TransactionCheckResult> {
         let hash_queue = self.blockhash_queue.read().unwrap();
-        let last_blockhash = hash_queue.last_hash();
-        let next_durable_nonce = DurableNonce::from_blockhash(&last_blockhash);
+        let next_durable_nonce = hash_queue.next_durable_nonce();
 
         let feature_set: &FeatureSet = &self.feature_set;
         let feature_snapshot = feature_set.snapshot();

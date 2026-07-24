@@ -262,8 +262,11 @@ impl From<DeserializableVersionedBank> for BankFieldsToDeserialize {
         // This serves as a canary for the LtHash.
         // If it is not replaced during deserialization, it indicates a bug.
         const LT_HASH_CANARY: LtHash = LtHash([0xCAFE; LtHash::NUM_ELEMENTS]);
+        // `durable_nonce` is skipped from the wire; recompute it from the last hash.
+        let mut blockhash_queue = dvb.blockhash_queue;
+        blockhash_queue.refresh_durable_nonce();
         BankFieldsToDeserialize {
-            blockhash_queue: dvb.blockhash_queue,
+            blockhash_queue,
             hash: dvb.hash,
             parent_hash: dvb.parent_hash,
             parent_slot: dvb.parent_slot,
