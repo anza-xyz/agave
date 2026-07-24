@@ -61,9 +61,28 @@ jobs:
         env:
           BASE_REF: ${{ github.ref }}
         run: |
+          old_version="$(toml get --raw Cargo.toml workspace.package.version)"
+
           xtask bump-version ${{ inputs.level }}
 
           new_version="$(toml get --raw Cargo.toml workspace.package.version)"
+
+          added="$(git diff | grep -E -v '^(\+\+\+|---) ' | grep -E '^\+' | grep -cF "${new_version}\"")"
+          removed="$(git diff | grep -E -v '^(\+\+\+|---) ' | grep -E '^-' | grep -cF "${old_version}\"")"
+          stray="$(git diff | grep -E -v '^(\+\+\+|---) ' | grep -E '^[+-]' | grep -vF "${new_version}\"" | grep -vF "${old_version}\"" || true)"
+
+          echo "version lines added (${new_version}): $added"
+          echo "version lines removed (${old_version}): $removed"
+
+          if [[ -n "$stray" ]]; then
+            echo "Error: bump diff contains non-version changes:" >&2
+            echo "$stray" >&2
+            exit 1
+          fi
+          if [[ "$added" -eq 0 || "$added" -ne "$removed" ]]; then
+            echo "Error: version line count mismatch (added=$added removed=$removed)" >&2
+            exit 1
+          fi
 
           git checkout -b version-bump-$new_version
           git commit -am "Bump version to $new_version"
