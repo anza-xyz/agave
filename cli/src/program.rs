@@ -59,7 +59,13 @@ use {
         request::MAX_MULTIPLE_ACCOUNTS,
     },
     solana_rpc_client_nonce_utils::nonblocking::blockhash_query::BlockhashQuery,
-    solana_sbpf::{elf::Executable, verifier::RequisiteVerifier},
+    solana_sbpf::{
+        elf::{ElfError, Executable, get_sbpf_version},
+        error::EbpfError,
+        program::SBPFVersion,
+        verifier::RequisiteVerifier,
+        vm::Config,
+    },
     solana_sdk_ids::{bpf_loader, bpf_loader_deprecated, bpf_loader_upgradeable, compute_budget},
     solana_signature::Signature,
     solana_signer::Signer,
@@ -3045,15 +3051,51 @@ fn verify_elf(
         false,
     )
     .unwrap();
+    let config = program_runtime_environment.get_config();
     let executable = Executable::<InvokeContext>::from_elf(
         program_data,
         Arc::clone(&*program_runtime_environment),
     )
-    .map_err(|err| format!("ELF error: {err}"))?;
+    .map_err(|err| explain_elf_error(&err, program_data, config))?;
 
     executable
         .verify::<RequisiteVerifier>()
-        .map_err(|err| format!("ELF error: {err}").into())
+        .map_err(|err| explain_elf_error(&err, program_data, config).into())
+}
+
+/// Turns an `EbpfError` from local ELF verification into a concise error
+/// message and a remediation hint.
+fn explain_elf_error(err: &EbpfError, program_data: &[u8], config: &Config) -> String {
+    // `UnsupportedSBPFVersion` is special-cased here. Richer, per-field
+    // diagnostics for malformed headers require changes to `sbpf::ElfError`;
+    // tracked by https://github.com/anza-xyz/sbpf/issues/204.
+    let EbpfError::ElfError(ElfError::UnsupportedSBPFVersion) = err else {
+        return format!("{err} (local pre-flight)");
+    };
+
+    fn sbpf_version_label(version: SBPFVersion) -> &'static str {
+        match version {
+            SBPFVersion::V0 => "v0",
+            SBPFVersion::V1 => "v1",
+            SBPFVersion::V2 => "v2",
+            SBPFVersion::V3 => "v3",
+            SBPFVersion::V4 => "v4",
+            SBPFVersion::Reserved => "reserved",
+        }
+    }
+
+    let min = sbpf_version_label(*config.enabled_sbpf_versions.start());
+    let max = sbpf_version_label(*config.enabled_sbpf_versions.end());
+    match get_sbpf_version(program_data) {
+        Ok(version) => {
+            let detected = sbpf_version_label(version);
+            format!(
+                "program targets SBPF {detected}, which this CLI does not have enabled (enabled: \
+                 {min}–{max}). Rebuild the program targeting {max}."
+            )
+        }
+        Err(error) => format!("could not read SBPF version: {error} (local pre-flight)"),
+    }
 }
 
 async fn check_payer(
@@ -3334,6 +3376,9 @@ mod tests {
         solana_cli_output::OutputFormat,
         solana_hash::Hash,
         solana_keypair::write_keypair_file,
+        solana_sbpf::elf_parser::consts::{
+            EI_OSABI, ELFCLASS64, ELFDATA2LSB, ELFMAG, ELFOSABI_NONE, EV_CURRENT,
+        },
     };
 
     fn make_tmp_path(name: &str) -> String {
@@ -4552,5 +4597,35 @@ mod tests {
             program_id.parse::<Pubkey>().unwrap(),
             program_pubkey.pubkey()
         );
+    }
+
+    /// Minimal ELF64 header buffer with a valid `e_ident` and `e_flags`
+    /// (which encodes the SBPF version).
+    fn fake_elf(e_flags: u32) -> Vec<u8> {
+        let mut bytes = vec![0u8; 64];
+        bytes[..4].copy_from_slice(&ELFMAG);
+        bytes[4] = ELFCLASS64;
+        bytes[5] = ELFDATA2LSB;
+        bytes[6] = EV_CURRENT as u8;
+        bytes[EI_OSABI as usize] = ELFOSABI_NONE;
+        bytes[48..52].copy_from_slice(&e_flags.to_le_bytes());
+        bytes
+    }
+
+    fn deploy_config(versions: std::ops::RangeInclusive<SBPFVersion>) -> Config {
+        Config {
+            enabled_sbpf_versions: versions,
+            ..Config::default()
+        }
+    }
+
+    #[test]
+    fn test_explain_unsupported_sbpf_version() {
+        let elf = fake_elf(1); // e_flags=1 -> SBPF v1
+        let config = deploy_config(SBPFVersion::V3..=SBPFVersion::V3);
+        let err = EbpfError::ElfError(ElfError::UnsupportedSBPFVersion);
+        let msg = explain_elf_error(&err, &elf, &config);
+        assert!(msg.contains("SBPF v1"), "got: {msg}");
+        assert!(msg.contains("enabled: v3"), "got: {msg}");
     }
 }
