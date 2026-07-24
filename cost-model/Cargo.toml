@@ -37,6 +37,7 @@ frozen-abi = [
 [dependencies]
 agave-feature-set = { workspace = true }
 ahash = { workspace = true }
+log = { workspace = true }
 solana-bincode = { workspace = true }
 solana-clock = { workspace = true }
 solana-compute-budget = { workspace = true }
