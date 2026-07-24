@@ -1202,6 +1202,17 @@ pub fn add_args<'a>(app: App<'a, 'a>, default_args: &'a DefaultArgs) -> App<'a, 
             .help(DefaultSchedulerPool::cli_message()),
     )
     .arg(
+        Arg::with_name("experimental_config_file")
+            .long("experimental-config-file")
+            .takes_value(true)
+            .value_name("PATH")
+            .help(
+                "Path to a TOML configuration file. Its sections override the built-in defaults, \
+                 and matching CLI flags override the file. Currently covers XDP transmit settings \
+                 (Linux only)",
+            ),
+    )
+    .arg(
         Arg::with_name("no_xdp")
             .long("no-xdp")
             .takes_value(false)
