@@ -202,7 +202,7 @@ solana-fee-structure = "3.0.0"
 solana-hash = "4.3.0"
 solana-instruction = { workspace = true }
 solana-keypair = "3.1.2"
-solana-loader-v3-interface = "7.0.0"
+solana-loader-v3-interface = { version = "8.0.1", features = ["serde", "wincode"] }
 solana-message = "4.1.0"
 solana-program-binaries = { workspace = true, features = ["agave-unstable-api"] }
 solana-program-runtime = { workspace = true, features = ["dev-context-only-utils"] }

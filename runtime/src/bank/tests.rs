@@ -6132,6 +6132,7 @@ fn test_bpf_loader_upgradeable_deploy_with_max_len() {
             &upgrade_authority_keypair.pubkey(),
             min_program_balance,
             elf.len(),
+            false,
         )
         .unwrap(),
         Some(&payer_keypair.pubkey()),
@@ -11625,6 +11626,7 @@ fn test_deploy_last_epoch_slot() {
             &upgrade_authority_keypair.pubkey(),
             min_program_balance,
             program_len,
+            false,
         )
         .unwrap(),
         Some(&payer_keypair.pubkey()),
@@ -12109,7 +12111,10 @@ fn test_bpf_loader_upgradeable_deploy_with_more_than_255_accounts() {
             ),
             Instruction::new_with_bincode(
                 bpf_loader_upgradeable::id(),
-                &UpgradeableLoaderInstruction::DeployWithMaxDataLen { max_data_len },
+                &UpgradeableLoaderInstruction::DeployWithMaxDataLen {
+                    max_data_len,
+                    close_buffer: false,
+                },
                 deploy_ix_accounts,
             ),
         ])
