@@ -2,15 +2,19 @@ use {
     crate::repair::serve_repair::ServeRepair,
     crossbeam_channel::{Sender, bounded},
     solana_net_utils::SocketAddrSpace,
-    solana_perf::recycler::Recycler,
+    solana_perf::{packet::PacketBatch, recycler::Recycler},
     solana_streamer::{
         evicting_sender::EvictingSender,
-        streamer::{self, StreamerReceiveStats},
+        sendmmsg::{SendPktsError, batch_send},
+        streamer::{
+            self, PacketBatchReceiver, ResponseSender, StreamerReceiveStats,
+            filter_packets_by_socket_addr_space, responder_loop,
+        },
     },
     std::{
         net::UdpSocket,
         sync::{Arc, atomic::AtomicBool},
-        thread::{self, JoinHandle},
+        thread::{self, Builder, JoinHandle},
         time::Duration,
     },
 };
@@ -47,7 +51,7 @@ impl ServeRepairService {
             false,                          // is_staked_service
         );
         let (response_sender, response_receiver) = bounded(RESPONSE_CHANNEL_SIZE);
-        let t_responder = streamer::responder(
+        let t_responder = responder(
             "Repair",
             serve_repair_socket,
             response_receiver,
@@ -62,5 +66,40 @@ impl ServeRepairService {
 
     pub(crate) fn join(self) -> thread::Result<()> {
         self.thread_hdls.into_iter().try_for_each(JoinHandle::join)
+    }
+}
+
+fn responder(
+    name: &'static str,
+    sock: Arc<UdpSocket>,
+    r: PacketBatchReceiver,
+    socket_addr_space: SocketAddrSpace,
+    stats_reporter_sender: Option<Sender<Box<dyn FnOnce() + Send>>>,
+) -> JoinHandle<()> {
+    Builder::new()
+        .name(format!("solRspndr{name}"))
+        .spawn(move || {
+            responder_loop(
+                name,
+                r,
+                ServeRepairSocketProvider {
+                    socket: sock,
+                    socket_addr_space,
+                },
+                stats_reporter_sender,
+            );
+        })
+        .unwrap()
+}
+
+struct ServeRepairSocketProvider {
+    socket: Arc<UdpSocket>,
+    socket_addr_space: SocketAddrSpace,
+}
+
+impl ResponseSender for ServeRepairSocketProvider {
+    fn send_batch(&self, batch: PacketBatch) -> std::result::Result<(), SendPktsError> {
+        let packets = filter_packets_by_socket_addr_space(batch.iter(), &self.socket_addr_space);
+        batch_send(self.socket.as_ref(), packets.collect::<Vec<_>>())
     }
 }
