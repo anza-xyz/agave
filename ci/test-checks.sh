@@ -52,6 +52,8 @@ fi
 
 _ ci/order-crates-for-publishing.py
 
+_ scripts/check-msrv.sh
+
 _ scripts/cargo-clippy.sh
 
 _ ci/do-audit.sh

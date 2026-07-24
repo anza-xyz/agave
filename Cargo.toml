@@ -144,6 +144,7 @@ repository = "https://github.com/anza-xyz/agave"
 homepage = "https://anza.xyz/"
 license = "Apache-2.0"
 edition = "2024"
+rust-version = "1.97.1"
 
 [workspace.lints.rust.unexpected_cfgs]
 level = "warn"
