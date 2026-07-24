@@ -7,8 +7,8 @@ use {
             swqos::{SwQos, SwQosConfig},
         },
         quic_socket::QuicSocket,
-        streamer::StakedNodes,
     },
+    agave_cluster_transport::staked_nodes::StakedNodes,
     crossbeam_channel::Sender,
     pem::Pem,
     quinn::{

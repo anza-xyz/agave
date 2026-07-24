@@ -2,8 +2,8 @@
 //! an interface for sending data
 
 use {
+    agave_cluster_transport::sendmmsg::batch_send,
     solana_connection_cache::client_connection::ClientConnection,
-    solana_streamer::sendmmsg::batch_send,
     solana_transaction_error::TransportResult,
     std::{
         net::{SocketAddr, UdpSocket},

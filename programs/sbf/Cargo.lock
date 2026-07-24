@@ -109,6 +109,25 @@ dependencies = [
 ]
 
 [[package]]
+name = "agave-cluster-transport"
+version = "4.3.0-alpha.2"
+dependencies = [
+ "crossbeam-channel",
+ "itertools 0.14.0",
+ "libc",
+ "log",
+ "nix",
+ "solana-measure",
+ "solana-metrics",
+ "solana-net-utils",
+ "solana-packet 4.2.0",
+ "solana-perf",
+ "solana-pubkey 4.2.0",
+ "solana-transaction-error",
+ "thiserror 2.0.18",
+]
+
+[[package]]
 name = "agave-cpu-utils"
 version = "4.3.0-alpha.2"
 dependencies = [
@@ -6366,6 +6385,7 @@ dependencies = [
 name = "solana-client"
 version = "4.3.0-alpha.2"
 dependencies = [
+ "agave-cluster-transport",
  "async-trait",
  "bincode",
  "dashmap",
@@ -6387,7 +6407,6 @@ dependencies = [
  "solana-rpc-client-nonce-utils",
  "solana-signature",
  "solana-signer",
- "solana-streamer",
  "solana-time-utils",
  "solana-tls-utils",
  "solana-tpu-client",
@@ -7301,6 +7320,7 @@ dependencies = [
 name = "solana-ledger"
 version = "4.3.0-alpha.2"
 dependencies = [
+ "agave-cluster-transport",
  "agave-feature-set",
  "agave-reserved-account-keys",
  "agave-snapshots",
@@ -7366,7 +7386,6 @@ dependencies = [
  "solana-stake-interface",
  "solana-storage-bigtable",
  "solana-storage-proto",
- "solana-streamer",
  "solana-svm",
  "solana-svm-timings",
  "solana-svm-transaction",
@@ -7965,6 +7984,7 @@ dependencies = [
 name = "solana-quic-client"
 version = "4.3.0-alpha.2"
 dependencies = [
+ "agave-cluster-transport",
  "async-lock",
  "async-trait",
  "futures 0.3.32",
@@ -9471,6 +9491,7 @@ dependencies = [
 name = "solana-streamer"
 version = "4.3.0-alpha.2"
 dependencies = [
+ "agave-cluster-transport",
  "agave-xdp",
  "bytes",
  "crossbeam-channel",
@@ -10062,11 +10083,11 @@ dependencies = [
 name = "solana-udp-client"
 version = "4.3.0-alpha.2"
 dependencies = [
+ "agave-cluster-transport",
  "async-trait",
  "solana-connection-cache",
  "solana-keypair",
  "solana-net-utils",
- "solana-streamer",
  "solana-transaction-error",
 ]
 
