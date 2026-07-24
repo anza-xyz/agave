@@ -341,6 +341,18 @@ pub(crate) fn create_simple_test_bank(lamports: u64) -> Bank {
     Bank::new_for_tests(&genesis_config)
 }
 
+#[test]
+fn test_prefunded_empty_well_known_accounts_do_not_panic() {
+    let bank = create_simple_test_bank(100_000);
+    let prefunded_empty_account = AccountSharedData::new(1, 0, &system_program::ID);
+
+    bank.store_account(&GENESIS_CERTIFICATE_ACCOUNT, &prefunded_empty_account);
+    bank.store_account(&NANOSECOND_CLOCK_ACCOUNT, &prefunded_empty_account);
+
+    assert!(bank.get_alpenglow_genesis_certificate().is_none());
+    assert!(bank.get_nanosecond_clock().is_none());
+}
+
 fn create_simple_test_arc_bank(lamports: u64) -> (Arc<Bank>, Arc<RwLock<BankForks>>) {
     let bank = create_simple_test_bank(lamports);
     bank.wrap_with_bank_forks_for_tests()
