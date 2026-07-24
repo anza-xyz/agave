@@ -1,9 +1,10 @@
 #[cfg(target_os = "linux")]
 use {
-    crate::commands::run::config_file::{self, ModuleFlags},
+    crate::commands::run::config_file,
     agave_cpu_utils::cpu_affinity,
     agave_xdp::transmitter::{QueueCpuBinding, XdpConfig},
     solana_clap_utils::input_parsers::parse_cpu_ranges,
+    solana_core::validator::XdpModules,
 };
 use {
     crate::{
@@ -172,7 +173,7 @@ pub fn execute(
     // XDP is not needed for init — it only initializes the ledger and exits.
     // Also, init drops all Linux capabilities in main() so XDP setup would fail.
     #[cfg(target_os = "linux")]
-    let xdp_transmit_config: Option<(XdpConfig, ModuleFlags)> =
+    let xdp_transmit_config: Option<(XdpConfig, XdpModules)> =
         build_xdp_config(matches, &operation, &bind_addresses)?;
 
     let dynamic_port_range =
@@ -364,7 +365,7 @@ pub fn execute(
             .map(|(mut xdp_config, modules)| {
                 use {
                     agave_xdp::{device::NetworkDevice, interface_ipv4},
-                    solana_core::validator::{XdpModules, XdpTransmitSetup},
+                    solana_core::validator::XdpTransmitSetup,
                 };
 
                 let device = if let Some(interface) = xdp_config.interface.as_ref() {
@@ -391,12 +392,7 @@ pub fn execute(
                         transmitter_builder: TransmitterBuilder::new(xdp_config, exit.clone())
                             .expect("failed to create xdp transmitter"),
                         src_ip,
-                        modules: XdpModules {
-                            tpu: modules.tpu,
-                            turbine: modules.turbine,
-                            repair: modules.repair,
-                            gossip: modules.gossip,
-                        },
+                        modules,
                     },
                     XdpNetworkConfigReport {
                         zero_copy,
@@ -1384,18 +1380,32 @@ fn build_xdp_config(
     matches: &ArgMatches,
     operation: &Operation,
     bind_addresses: &BindIpAddrs,
-) -> Result<Option<(XdpConfig, ModuleFlags)>, String> {
+) -> Result<Option<(XdpConfig, XdpModules)>, String> {
     if matches.is_present("no_xdp") || *operation == Operation::Initialize {
         return Ok(None);
     }
     let config_file::XdpFileConfig {
-        modules: file_modules,
+        tpu,
+        turbine,
+        repair,
+        gossip,
         interface: file_interface,
         queues: file_queues,
         zero_copy: file_zero_copy,
     } = config_file::resolve_xdp_config(
         matches.value_of("experimental_config_file").map(Path::new),
     )?;
+
+    // CLI flags do not override per-module use_xdp; a fully-disabled config
+    // skips the multihoming XDP guard.
+    if !(tpu.enabled || turbine.enabled || repair.enabled || gossip.enabled) {
+        return Ok(None);
+    }
+    if bind_addresses.len() > 1 {
+        return Err(
+            "XDP cannot be used in a multihoming context; pass --no-xdp to disable XDP".to_string(),
+        );
+    }
 
     let cli_interface = matches
         .value_of("xdp_interface")
@@ -1406,18 +1416,6 @@ fn build_xdp_config(
         .value_of("xdp_cpu_cores")
         .or_else(|| matches.value_of("experimental_retransmit_xdp_cpu_cores"));
 
-    // CLI XDP flags override interface/queue/zero-copy settings only. Per-module
-    // use_xdp stays with the config file because there is no matching CLI flag.
-    let modules = file_modules;
-    if !modules.any() {
-        return Ok(None);
-    }
-    if bind_addresses.len() > 1 {
-        return Err(
-            "XDP cannot be used in a multihoming context; pass --no-xdp to disable XDP".to_string(),
-        );
-    }
-
     let poh_pinned_cpu_core = value_of(matches, "poh_pinned_cpu_core")
         .or_else(|| value_of(matches, "experimental_poh_pinned_cpu_core"))
         .or(poh_service::DEFAULT_PINNED_CPU_CORE);
@@ -1425,9 +1423,11 @@ fn build_xdp_config(
     let interface = cli_interface.map(str::to_string).or(file_interface);
     let zero_copy = cli_zero_copy || file_zero_copy;
 
-    // Queue -> CPU bindings: CLI, config file, or one auto-selected core.
-    let queues: Vec<QueueCpuBinding> = if let Some(cpu_str) = cli_cpu_cores {
-        parse_cpu_ranges(cpu_str)
+    // Queue source precedence: CLI, file tx union, then auto-selection.
+    // File-sourced queues preserve per-module scoping; global sources do not.
+    let (queues, file_tx_mode): (Vec<QueueCpuBinding>, bool) = if let Some(cpu_str) = cli_cpu_cores
+    {
+        let queues = parse_cpu_ranges(cpu_str)
             .expect("clap validator already accepted this CPU list")
             .into_iter()
             .enumerate()
@@ -1435,9 +1435,10 @@ fn build_xdp_config(
                 queue: queue as u32,
                 cpu,
             })
-            .collect()
+            .collect();
+        (queues, false)
     } else if !file_queues.is_empty() {
-        file_queues
+        (file_queues, true)
     } else {
         let allowed = cpu_affinity(None).map_err(|e| {
             format!(
@@ -1457,7 +1458,7 @@ fn build_xdp_config(
                      XDP."
                 )
             })?;
-        vec![QueueCpuBinding { queue: 0, cpu }]
+        (vec![QueueCpuBinding { queue: 0, cpu }], false)
     };
 
     // XDP and PoH must never share a CPU core, whatever the mapping's source.
@@ -1468,6 +1469,31 @@ fn build_xdp_config(
             "XDP maps a worker to PoH core {poh_core}; XDP and PoH must not share a CPU core"
         ));
     }
+
+    // Convert per-module queue ids into sender positions.
+    let all_positions: Vec<usize> = (0..queues.len()).collect();
+    let module_positions = |module: &config_file::ModuleXdp| -> Option<Vec<usize>> {
+        if !module.enabled {
+            return None;
+        }
+        if file_tx_mode {
+            let positions: Vec<usize> = queues
+                .iter()
+                .enumerate()
+                .filter(|(_, binding)| module.tx_queues.contains(&binding.queue))
+                .map(|(i, _)| i)
+                .collect();
+            (!positions.is_empty()).then_some(positions)
+        } else {
+            Some(all_positions.clone())
+        }
+    };
+    let modules = XdpModules {
+        tpu: module_positions(&tpu),
+        turbine: module_positions(&turbine),
+        repair: module_positions(&repair),
+        gossip: module_positions(&gossip),
+    };
 
     info!(
         "XDP enabled on CPU cores: {:?}",
@@ -1578,7 +1604,11 @@ mod xdp_tests {
                 QueueCpuBinding { queue: 1, cpu: 4 },
             ]
         );
-        assert!(modules.turbine, "turbine XDP must be enabled");
+        // turbine named queues 0 and 1 via tx; modules without tx get no sender.
+        assert_eq!(modules.turbine, Some(vec![0, 1]));
+        assert!(modules.tpu.is_none());
+        assert!(modules.repair.is_none());
+        assert!(modules.gossip.is_none());
     }
 
     #[test]
@@ -1647,7 +1677,10 @@ mod xdp_tests {
                 QueueCpuBinding { queue: 1, cpu: 7 },
             ]
         );
-        assert!(modules.turbine);
+        // --xdp-cpu-cores is a global queue source, so every enabled module
+        // (all of them, by default) uses all queues.
+        assert_eq!(modules.turbine, Some(vec![0, 1]));
+        assert_eq!(modules.tpu, Some(vec![0, 1]));
     }
 
     #[test]
@@ -1663,8 +1696,8 @@ mod xdp_tests {
         let (_config, modules) = build_xdp_config(&matches, &Operation::Run, &single_ip_bind())
             .unwrap()
             .expect("other modules still enable XDP");
-        assert!(!modules.turbine, "turbine must be disabled");
-        assert!(modules.tpu && modules.repair && modules.gossip);
+        assert!(modules.turbine.is_none(), "turbine must be disabled");
+        assert!(modules.tpu.is_some() && modules.repair.is_some() && modules.gossip.is_some());
     }
 
     #[test]
@@ -1682,7 +1715,10 @@ mod xdp_tests {
         let (_config, modules) = build_xdp_config(&matches, &Operation::Run, &single_ip_bind())
             .unwrap()
             .expect("other modules still enable XDP");
-        assert!(!modules.gossip, "CLI XDP flags must not re-enable gossip");
-        assert!(modules.tpu && modules.turbine && modules.repair);
+        assert!(
+            modules.gossip.is_none(),
+            "CLI XDP flags must not re-enable gossip"
+        );
+        assert!(modules.tpu.is_some() && modules.turbine.is_some() && modules.repair.is_some());
     }
 }

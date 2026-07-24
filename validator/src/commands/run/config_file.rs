@@ -37,17 +37,6 @@ struct RawConfig {
     gossip: Option<RawModule>,
 }
 
-impl RawConfig {
-    fn modules(&self) -> [(&'static str, &Option<RawModule>); 4] {
-        [
-            ("tpu", &self.tpu),
-            ("turbine", &self.turbine),
-            ("repair", &self.repair),
-            ("gossip", &self.gossip),
-        ]
-    }
-}
-
 #[derive(Debug, Clone, Deserialize)]
 #[serde(deny_unknown_fields)]
 struct RawInterface {
@@ -80,18 +69,13 @@ struct RawModuleXdp {
     tx: BTreeMap<String, Vec<u32>>,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(crate) struct ModuleFlags {
-    pub tpu: bool,
-    pub turbine: bool,
-    pub repair: bool,
-    pub gossip: bool,
-}
-
-impl ModuleFlags {
-    pub fn any(&self) -> bool {
-        self.tpu || self.turbine || self.repair || self.gossip
-    }
+/// A module's XDP transmit config: whether it uses XDP (`use_xdp`) and the
+/// hardware queue ids it transmits over (from `[<module>.xdp].tx`, empty when
+/// none were named).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct ModuleXdp {
+    pub enabled: bool,
+    pub tx_queues: Vec<u32>,
 }
 
 /// The XDP inputs distilled from the merged config, before CLI overrides. The
@@ -99,13 +83,16 @@ impl ModuleFlags {
 /// `queues` are unset, applies auto-detection.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) struct XdpFileConfig {
-    pub modules: ModuleFlags,
-    /// The single interface referenced by enabled modules' `tx` maps, if any.
-    /// `None` means no interface was named; the caller auto-detects.
+    pub tpu: ModuleXdp,
+    pub turbine: ModuleXdp,
+    pub repair: ModuleXdp,
+    pub gossip: ModuleXdp,
+    /// The single interface referenced by modules' `tx` maps, if any. `None`
+    /// means no interface was named; the caller auto-detects.
     pub interface: Option<String>,
-    /// Union of the enabled modules' `tx` queues, mapped to CPUs via the
-    /// interface's `queue_to_cpu_mapping`. Empty means no queues were named;
-    /// the caller auto-selects a CPU.
+    /// Union of all modules' `tx` queues, mapped to CPUs via the interface's
+    /// `queue_to_cpu_mapping`. Empty means no queues were named; the caller
+    /// auto-selects a CPU.
     pub queues: Vec<QueueCpuBinding>,
     /// Zero-copy setting of the referenced interface (`false` when none).
     pub zero_copy: bool,
@@ -180,33 +167,24 @@ fn resolve_interface(name: &str, raw: &RawInterface) -> Result<ResolvedInterface
     })
 }
 
-fn resolve(config: &RawConfig) -> Result<XdpFileConfig, String> {
-    let interfaces = config
-        .interfaces
-        .iter()
-        .map(|(name, raw)| resolve_interface(name, raw).map(|iface| (name.clone(), iface)))
-        .collect::<Result<BTreeMap<_, _>, _>>()?;
-
+/// Resolve one module's `use_xdp` and validated `tx` queue ids, tracking the
+/// single interface all modules must share.
+fn resolve_module(
+    module: &str,
+    block: &Option<RawModule>,
+    interfaces: &BTreeMap<String, ResolvedInterface>,
+    referenced_iface: &mut Option<String>,
+) -> Result<ModuleXdp, String> {
     // A module absent post-merge keeps XDP on, matching the default file.
-    let module_enabled =
-        |block: &Option<RawModule>| block.as_ref().map(|b| b.use_xdp).unwrap_or(true);
-    let modules = ModuleFlags {
-        tpu: module_enabled(&config.tpu),
-        turbine: module_enabled(&config.turbine),
-        repair: module_enabled(&config.repair),
-        gossip: module_enabled(&config.gossip),
-    };
-
-    let mut referenced_iface: Option<String> = None;
-    let mut used_queues: BTreeSet<u32> = BTreeSet::new();
-
-    for (module, block) in config.modules() {
-        if !module_enabled(block) {
-            continue;
-        }
-        let Some(tx) = block.as_ref().and_then(|b| b.xdp.as_ref()).map(|x| &x.tx) else {
-            continue;
-        };
+    let enabled = block.as_ref().map(|b| b.use_xdp).unwrap_or(true);
+    if !enabled {
+        return Ok(ModuleXdp {
+            enabled: false,
+            tx_queues: Vec::new(),
+        });
+    }
+    let mut tx_queues = Vec::new();
+    if let Some(tx) = block.as_ref().and_then(|b| b.xdp.as_ref()).map(|x| &x.tx) {
         for (iface_name, queues) in tx {
             let iface = interfaces.get(iface_name).ok_or_else(|| {
                 format!(
@@ -219,7 +197,7 @@ fn resolve(config: &RawConfig) -> Result<XdpFileConfig, String> {
                     "module `{module}` XDP tx for interface `{iface_name}` lists no queues"
                 ));
             }
-            match &referenced_iface {
+            match referenced_iface {
                 Some(existing) if existing != iface_name => {
                     return Err(format!(
                         "XDP tx references multiple interfaces (`{existing}` and `{iface_name}`); \
@@ -227,7 +205,7 @@ fn resolve(config: &RawConfig) -> Result<XdpFileConfig, String> {
                     ));
                 }
                 Some(_) => {}
-                None => referenced_iface = Some(iface_name.clone()),
+                None => *referenced_iface = Some(iface_name.clone()),
             }
             for queue in queues {
                 if !iface.queue_to_cpu.contains_key(queue) {
@@ -236,10 +214,36 @@ fn resolve(config: &RawConfig) -> Result<XdpFileConfig, String> {
                          which is not in its queue_to_cpu_mapping"
                     ));
                 }
-                used_queues.insert(*queue);
+                tx_queues.push(*queue);
             }
         }
     }
+    Ok(ModuleXdp { enabled, tx_queues })
+}
+
+fn resolve(config: &RawConfig) -> Result<XdpFileConfig, String> {
+    let interfaces = config
+        .interfaces
+        .iter()
+        .map(|(name, raw)| resolve_interface(name, raw).map(|iface| (name.clone(), iface)))
+        .collect::<Result<BTreeMap<_, _>, _>>()?;
+
+    let mut referenced_iface: Option<String> = None;
+    let tpu = resolve_module("tpu", &config.tpu, &interfaces, &mut referenced_iface)?;
+    let turbine = resolve_module(
+        "turbine",
+        &config.turbine,
+        &interfaces,
+        &mut referenced_iface,
+    )?;
+    let repair = resolve_module("repair", &config.repair, &interfaces, &mut referenced_iface)?;
+    let gossip = resolve_module("gossip", &config.gossip, &interfaces, &mut referenced_iface)?;
+
+    // The transmitter's queue set is the union of every module's tx queues.
+    let used_queues: BTreeSet<u32> = [&tpu, &turbine, &repair, &gossip]
+        .iter()
+        .flat_map(|m| m.tx_queues.iter().copied())
+        .collect();
 
     let (interface, queues, zero_copy) = match referenced_iface {
         Some(name) => {
@@ -257,7 +261,10 @@ fn resolve(config: &RawConfig) -> Result<XdpFileConfig, String> {
     };
 
     Ok(XdpFileConfig {
-        modules,
+        tpu,
+        turbine,
+        repair,
+        gossip,
         interface,
         queues,
         zero_copy,
@@ -278,7 +285,9 @@ mod tests {
     fn default_config_enables_all_modules_with_auto_selection() {
         let base = parse_str(DEFAULT_CONFIG).expect("default config parses");
         let c = resolve(&base).unwrap();
-        assert!(c.modules.any());
+        assert!(c.tpu.enabled && c.turbine.enabled && c.repair.enabled && c.gossip.enabled);
+        // No tx anywhere, so no queues are named; the caller auto-selects.
+        assert!(c.turbine.tx_queues.is_empty());
         assert_eq!(c.interface, None);
         assert!(c.queues.is_empty());
         assert!(!c.zero_copy);
@@ -291,7 +300,9 @@ mod tests {
              8 }, { queue = 1, cpu = 9 }]\n\n[turbine.xdp]\ntx = { eth0 = [0, 1] }\n",
         )
         .unwrap();
-        assert!(c.modules.any());
+        assert_eq!(c.turbine.tx_queues, vec![0, 1]);
+        // Modules without a tx block name no queues.
+        assert!(c.tpu.tx_queues.is_empty());
         assert_eq!(c.interface.as_deref(), Some("eth0"));
         assert!(c.zero_copy);
         assert_eq!(
@@ -326,7 +337,8 @@ mod tests {
              }]\n\n[turbine.xdp]\ntx = { eth0 = [0] }\n",
         )
         .unwrap();
-        assert!(c.modules.any());
+        assert!(c.turbine.enabled);
+        assert_eq!(c.turbine.tx_queues, vec![0]);
         assert_eq!(c.interface.as_deref(), Some("eth0"));
     }
 
@@ -337,7 +349,7 @@ mod tests {
              false\n[gossip]\nuse_xdp = false\n",
         )
         .unwrap();
-        assert!(!c.modules.any());
+        assert!(!c.tpu.enabled && !c.turbine.enabled && !c.repair.enabled && !c.gossip.enabled);
         assert_eq!(c.interface, None);
         assert!(c.queues.is_empty());
     }
@@ -345,15 +357,10 @@ mod tests {
     #[test]
     fn per_module_use_xdp_is_reported() {
         let c = resolve_with_user("[turbine]\nuse_xdp = false\n").unwrap();
-        assert_eq!(
-            c.modules,
-            ModuleFlags {
-                tpu: true,
-                turbine: false,
-                repair: true,
-                gossip: true,
-            }
-        );
+        assert!(c.tpu.enabled);
+        assert!(!c.turbine.enabled);
+        assert!(c.repair.enabled);
+        assert!(c.gossip.enabled);
     }
 
     #[test]
@@ -364,7 +371,8 @@ mod tests {
         )
         .unwrap();
         assert_eq!(c.interface, None);
-        assert!(!c.modules.turbine);
+        assert!(!c.turbine.enabled);
+        assert!(c.turbine.tx_queues.is_empty());
     }
 
     #[test]

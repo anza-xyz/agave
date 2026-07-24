@@ -543,12 +543,13 @@ pub struct XdpTransmitSetup {
     pub modules: XdpModules,
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+/// Per-module XDP sender positions. `None` means the module uses UDP.
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub struct XdpModules {
-    pub tpu: bool,
-    pub turbine: bool,
-    pub repair: bool,
-    pub gossip: bool,
+    pub tpu: Option<Vec<usize>>,
+    pub turbine: Option<Vec<usize>>,
+    pub repair: Option<Vec<usize>>,
+    pub gossip: Option<Vec<usize>>,
 }
 
 struct BlockstoreRootScan {
@@ -1474,18 +1475,26 @@ impl Validator {
             let (transmitter, sender) = transmitter_builder.build();
             (
                 Some(transmitter),
-                modules.turbine.then(|| {
+                modules.turbine.map(|positions| {
                     PinnedXdpSender::new(
-                        sender.clone(),
+                        sender.subset(&positions),
                         SocketAddrV4::new(src_ip, turbine_src_port),
                     )
                 }),
-                modules.tpu.then(|| (sender.clone(), src_ip)),
-                modules.repair.then(|| {
-                    PinnedXdpSender::new(sender.clone(), SocketAddrV4::new(src_ip, repair_src_port))
+                modules
+                    .tpu
+                    .map(|positions| (sender.subset(&positions), src_ip)),
+                modules.repair.map(|positions| {
+                    PinnedXdpSender::new(
+                        sender.subset(&positions),
+                        SocketAddrV4::new(src_ip, repair_src_port),
+                    )
                 }),
-                modules.gossip.then(|| {
-                    PinnedXdpSender::new(sender, SocketAddrV4::new(src_ip, gossip_src_port))
+                modules.gossip.map(|positions| {
+                    PinnedXdpSender::new(
+                        sender.subset(&positions),
+                        SocketAddrV4::new(src_ip, gossip_src_port),
+                    )
                 }),
             )
         } else {
