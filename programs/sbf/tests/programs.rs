@@ -17,7 +17,7 @@ use solana_runtime::loader_utils::{
 use {
     agave_feature_set::{self as feature_set, FeatureSet},
     agave_reserved_account_keys::ReservedAccountKeys,
-    borsh::{BorshDeserialize, BorshSerialize, from_slice, to_vec},
+    borsh::{from_slice, to_vec, BorshDeserialize, BorshSerialize},
     solana_account::{AccountSharedData, ReadableAccount},
     solana_account_info::MAX_PERMITTED_DATA_INCREASE,
     solana_client_traits::SyncClient,
@@ -29,12 +29,12 @@ use {
     solana_fee_calculator::FeeRateGovernor,
     solana_fee_structure::{FeeBin, FeeStructure},
     solana_hash::Hash,
-    solana_instruction::{AccountMeta, Instruction, error::InstructionError},
+    solana_instruction::{error::InstructionError, AccountMeta, Instruction},
     solana_keypair::Keypair,
     solana_loader_v3_interface::{
         instruction as loader_v3_instruction, state::UpgradeableLoaderState,
     },
-    solana_message::{Message, SanitizedMessage, inner_instruction::InnerInstruction},
+    solana_message::{inner_instruction::InnerInstruction, Message, SanitizedMessage},
     solana_pubkey::Pubkey,
     solana_rent::Rent,
     solana_runtime::{
@@ -42,8 +42,9 @@ use {
         bank_client::BankClient,
         bank_forks::BankForks,
         genesis_utils::{
-            GenesisConfigInfo, bootstrap_validator_stake_lamports, create_genesis_config,
+            bootstrap_validator_stake_lamports, create_genesis_config,
             create_genesis_config_with_leader, create_genesis_config_with_leader_ex,
+            GenesisConfigInfo,
         },
         loader_utils::{create_program, load_upgradeable_buffer},
     },
@@ -65,7 +66,7 @@ use {
     solana_svm_timings::ExecuteTimings,
     solana_svm_transaction::svm_message::SVMStaticMessage,
     solana_svm_type_overrides::rand,
-    solana_system_interface::{MAX_PERMITTED_DATA_LENGTH, program as system_program},
+    solana_system_interface::{program as system_program, MAX_PERMITTED_DATA_LENGTH},
     solana_transaction::Transaction,
     solana_transaction_error::TransactionError,
     std::{
@@ -773,21 +774,17 @@ fn test_return_data_and_log_data_syscall() {
 
         assert!(effects.result.is_none());
 
-        assert!(
-            effects
-                .logs
-                .iter()
-                .any(|log| log == "Program data: AQID BAUG")
-        );
+        assert!(effects
+            .logs
+            .iter()
+            .any(|log| log == "Program data: AQID BAUG"));
 
         assert_eq!(effects.return_data, vec![0x08, 0x01, 0x44]);
 
-        assert!(
-            effects
-                .logs
-                .iter()
-                .any(|log| log == &format!("Program return: {} CAFE", program_id))
-        );
+        assert!(effects
+            .logs
+            .iter()
+            .any(|log| log == &format!("Program return: {} CAFE", program_id)));
     }
 }
 
@@ -2747,428 +2744,365 @@ fn test_program_sbf_ro_account_modify() {
     }
 }
 
-#[test]
+#[test_case(false; "without_virtual_address_space_adjustments")]
+#[test_case(true; "with_virtual_address_space_adjustments")]
 #[cfg(feature = "sbf_rust")]
-fn test_program_sbf_realloc() {
-    agave_logger::setup();
-
+fn test_program_sbf_realloc(virtual_address_space_adjustments: bool) {
     const START_BALANCE: u64 = 100_000_000_000;
 
-    let GenesisConfigInfo {
-        genesis_config,
-        mint_keypair,
-        ..
-    } = create_genesis_config(1_000_000_000_000);
-
-    let mint_pubkey = mint_keypair.pubkey();
-    let signer = &[&mint_keypair];
-    for virtual_address_space_adjustments in [false, true] {
-        let mut bank = Bank::new_for_tests(&genesis_config);
-        let feature_set = Arc::make_mut(&mut bank.feature_set);
-        // by default test banks have all features enabled, so we only need to
-        // disable when needed
-        if !virtual_address_space_adjustments {
-            feature_set.deactivate(&feature_set::syscall_parameter_address_restrictions::id());
-            feature_set.deactivate(&feature_set::virtual_address_space_adjustments::id());
-            feature_set.deactivate(&feature_set::account_data_direct_mapping::id());
-        }
-        let (bank, bank_forks) = bank.wrap_with_bank_forks_for_tests();
-        let program_id = create_program(
-            &bank,
-            &bpf_loader_upgradeable::id(),
-            "solana_sbf_rust_realloc",
-        );
-        let mut bank_client = BankClient::new_shared(bank.clone());
-        let bank = bank_client
-            .advance_slot(1, &bank_forks, SlotLeader::default())
-            .unwrap();
-
-        let mut bump = 0;
-        let keypair = Keypair::new();
-        let pubkey = keypair.pubkey();
-        let account = AccountSharedData::new(START_BALANCE, 5, &program_id);
-        bank.store_account(&pubkey, &account);
-
-        // Realloc RO account
-        let mut instruction = realloc(&program_id, &pubkey, 0, &mut bump);
-        instruction.accounts[0].is_writable = false;
-        assert_eq!(
-            bank_client
-                .send_and_confirm_message(
-                    signer,
-                    Message::new(
-                        &[
-                            instruction,
-                            ComputeBudgetInstruction::set_loaded_accounts_data_size_limit(
-                                LOADED_ACCOUNTS_DATA_SIZE_LIMIT_FOR_TEST
-                            ),
-                        ],
-                        Some(&mint_pubkey),
-                    ),
-                )
-                .unwrap_err()
-                .unwrap(),
-            TransactionError::InstructionError(0, InstructionError::ReadonlyDataModified)
-        );
-
-        // Realloc account to overflow
-        assert_eq!(
-            bank_client
-                .send_and_confirm_message(
-                    signer,
-                    Message::new(
-                        &[
-                            realloc(&program_id, &pubkey, usize::MAX, &mut bump),
-                            ComputeBudgetInstruction::set_loaded_accounts_data_size_limit(
-                                LOADED_ACCOUNTS_DATA_SIZE_LIMIT_FOR_TEST
-                            ),
-                        ],
-                        Some(&mint_pubkey),
-                    ),
-                )
-                .unwrap_err()
-                .unwrap(),
-            TransactionError::InstructionError(0, InstructionError::InvalidRealloc)
-        );
-
-        // Realloc account to 0
-        bank_client
-            .send_and_confirm_message(
-                signer,
-                Message::new(
-                    &[
-                        realloc(&program_id, &pubkey, 0, &mut bump),
-                        ComputeBudgetInstruction::set_loaded_accounts_data_size_limit(
-                            LOADED_ACCOUNTS_DATA_SIZE_LIMIT_FOR_TEST,
-                        ),
-                    ],
-                    Some(&mint_pubkey),
-                ),
-            )
-            .unwrap();
-        let data = bank_client.get_account_data(&pubkey).unwrap().unwrap();
-        assert_eq!(0, data.len());
-
-        // Realloc account to max then undo
-        bank_client
-            .send_and_confirm_message(
-                signer,
-                Message::new(
-                    &[
-                        realloc_extend_and_undo(
-                            &program_id,
-                            &pubkey,
-                            MAX_PERMITTED_DATA_INCREASE,
-                            &mut bump,
-                        ),
-                        ComputeBudgetInstruction::set_loaded_accounts_data_size_limit(
-                            LOADED_ACCOUNTS_DATA_SIZE_LIMIT_FOR_TEST,
-                        ),
-                    ],
-                    Some(&mint_pubkey),
-                ),
-            )
-            .unwrap();
-        let data = bank_client.get_account_data(&pubkey).unwrap().unwrap();
-        assert_eq!(0, data.len());
-
-        // Realloc account to max + 1 then undo
-        assert_eq!(
-            bank_client
-                .send_and_confirm_message(
-                    signer,
-                    Message::new(
-                        &[
-                            realloc_extend_and_undo(
-                                &program_id,
-                                &pubkey,
-                                MAX_PERMITTED_DATA_INCREASE + 1,
-                                &mut bump,
-                            ),
-                            ComputeBudgetInstruction::set_loaded_accounts_data_size_limit(
-                                LOADED_ACCOUNTS_DATA_SIZE_LIMIT_FOR_TEST
-                            ),
-                        ],
-                        Some(&mint_pubkey),
-                    ),
-                )
-                .unwrap_err()
-                .unwrap(),
-            TransactionError::InstructionError(0, InstructionError::InvalidRealloc)
-        );
-
-        // Realloc to max + 1
-        assert_eq!(
-            bank_client
-                .send_and_confirm_message(
-                    signer,
-                    Message::new(
-                        &[
-                            realloc(
-                                &program_id,
-                                &pubkey,
-                                MAX_PERMITTED_DATA_INCREASE + 1,
-                                &mut bump
-                            ),
-                            ComputeBudgetInstruction::set_loaded_accounts_data_size_limit(
-                                LOADED_ACCOUNTS_DATA_SIZE_LIMIT_FOR_TEST
-                            ),
-                        ],
-                        Some(&mint_pubkey),
-                    ),
-                )
-                .unwrap_err()
-                .unwrap(),
-            TransactionError::InstructionError(0, InstructionError::InvalidRealloc)
-        );
-
-        // Realloc to max length in max increase increments
-        for i in 0..MAX_PERMITTED_DATA_LENGTH as usize / MAX_PERMITTED_DATA_INCREASE {
-            let mut bump = i as u64;
-            bank_client
-                .send_and_confirm_message(
-                    signer,
-                    Message::new(
-                        &[
-                            realloc_extend_and_fill(
-                                &program_id,
-                                &pubkey,
-                                MAX_PERMITTED_DATA_INCREASE,
-                                1,
-                                &mut bump,
-                            ),
-                            ComputeBudgetInstruction::set_loaded_accounts_data_size_limit(
-                                LOADED_ACCOUNTS_DATA_SIZE_LIMIT_FOR_TEST,
-                            ),
-                        ],
-                        Some(&mint_pubkey),
-                    ),
-                )
-                .unwrap();
-            let data = bank_client.get_account_data(&pubkey).unwrap().unwrap();
-            assert_eq!((i + 1) * MAX_PERMITTED_DATA_INCREASE, data.len());
-        }
-        for i in 0..data.len() {
-            assert_eq!(data[i], 1);
-        }
-
-        // and one more time should fail
-        assert_eq!(
-            bank_client
-                .send_and_confirm_message(
-                    signer,
-                    Message::new(
-                        &[
-                            realloc_extend(
-                                &program_id,
-                                &pubkey,
-                                MAX_PERMITTED_DATA_INCREASE,
-                                &mut bump
-                            ),
-                            ComputeBudgetInstruction::set_loaded_accounts_data_size_limit(
-                                LOADED_ACCOUNTS_DATA_SIZE_LIMIT_FOR_TEST
-                            ),
-                        ],
-                        Some(&mint_pubkey),
-                    )
-                )
-                .unwrap_err()
-                .unwrap(),
-            TransactionError::InstructionError(0, InstructionError::InvalidRealloc)
-        );
-
-        // Realloc to 6 bytes
-        bank_client
-            .send_and_confirm_message(
-                signer,
-                Message::new(
-                    &[
-                        realloc(&program_id, &pubkey, 6, &mut bump),
-                        ComputeBudgetInstruction::set_loaded_accounts_data_size_limit(
-                            LOADED_ACCOUNTS_DATA_SIZE_LIMIT_FOR_TEST,
-                        ),
-                    ],
-                    Some(&mint_pubkey),
-                ),
-            )
-            .unwrap();
-        let data = bank_client.get_account_data(&pubkey).unwrap().unwrap();
-        assert_eq!(6, data.len());
-
-        // Extend by 2 bytes and write a u64. This ensures that we can do writes that span the original
-        // account length (6 bytes) and the realloc data (2 bytes).
-        bank_client
-            .send_and_confirm_message(
-                signer,
-                Message::new(
-                    &[
-                        extend_and_write_u64(&program_id, &pubkey, 0x1122334455667788),
-                        ComputeBudgetInstruction::set_loaded_accounts_data_size_limit(
-                            LOADED_ACCOUNTS_DATA_SIZE_LIMIT_FOR_TEST,
-                        ),
-                    ],
-                    Some(&mint_pubkey),
-                ),
-            )
-            .unwrap();
-        let data = bank_client.get_account_data(&pubkey).unwrap().unwrap();
-        assert_eq!(8, data.len());
-        assert_eq!(0x1122334455667788, unsafe { *data.as_ptr().cast::<u64>() });
-
-        // Realloc to 0
-        bank_client
-            .send_and_confirm_message(
-                signer,
-                Message::new(
-                    &[
-                        realloc(&program_id, &pubkey, 0, &mut bump),
-                        ComputeBudgetInstruction::set_loaded_accounts_data_size_limit(
-                            LOADED_ACCOUNTS_DATA_SIZE_LIMIT_FOR_TEST,
-                        ),
-                    ],
-                    Some(&mint_pubkey),
-                ),
-            )
-            .unwrap();
-        let data = bank_client.get_account_data(&pubkey).unwrap().unwrap();
-        assert_eq!(0, data.len());
-
-        // Realloc and assign
-        bank_client
-            .send_and_confirm_message(
-                signer,
-                Message::new(
-                    &[
-                        Instruction::new_with_bytes(
-                            program_id,
-                            &[REALLOC_AND_ASSIGN],
-                            vec![AccountMeta::new(pubkey, false)],
-                        ),
-                        ComputeBudgetInstruction::set_loaded_accounts_data_size_limit(
-                            LOADED_ACCOUNTS_DATA_SIZE_LIMIT_FOR_TEST,
-                        ),
-                    ],
-                    Some(&mint_pubkey),
-                ),
-            )
-            .unwrap();
-        let account = bank.get_account(&pubkey).unwrap();
-        assert_eq!(&solana_system_interface::program::id(), account.owner());
-        let data = bank_client.get_account_data(&pubkey).unwrap().unwrap();
-        assert_eq!(MAX_PERMITTED_DATA_INCREASE, data.len());
-
-        // Realloc to 0 with wrong owner
-        assert_eq!(
-            bank_client
-                .send_and_confirm_message(
-                    signer,
-                    Message::new(
-                        &[
-                            realloc(&program_id, &pubkey, 0, &mut bump),
-                            ComputeBudgetInstruction::set_loaded_accounts_data_size_limit(
-                                LOADED_ACCOUNTS_DATA_SIZE_LIMIT_FOR_TEST
-                            ),
-                        ],
-                        Some(&mint_pubkey),
-                    ),
-                )
-                .unwrap_err()
-                .unwrap(),
-            TransactionError::InstructionError(0, InstructionError::ExternalAccountDataModified)
-        );
-
-        // realloc and assign to self via cpi
-        assert_eq!(
-            bank_client
-                .send_and_confirm_message(
-                    &[&mint_keypair, &keypair],
-                    Message::new(
-                        &[
-                            Instruction::new_with_bytes(
-                                program_id,
-                                &[REALLOC_AND_ASSIGN_TO_SELF_VIA_SYSTEM_PROGRAM],
-                                vec![
-                                    AccountMeta::new(pubkey, true),
-                                    AccountMeta::new(solana_system_interface::program::id(), false),
-                                ],
-                            ),
-                            ComputeBudgetInstruction::set_loaded_accounts_data_size_limit(
-                                LOADED_ACCOUNTS_DATA_SIZE_LIMIT_FOR_TEST
-                            ),
-                        ],
-                        Some(&mint_pubkey),
-                    )
-                )
-                .unwrap_err()
-                .unwrap(),
-            TransactionError::InstructionError(0, InstructionError::ExternalAccountDataModified)
-        );
-
-        // Assign to self and realloc via cpi
-        bank_client
-            .send_and_confirm_message(
-                &[&mint_keypair, &keypair],
-                Message::new(
-                    &[
-                        Instruction::new_with_bytes(
-                            program_id,
-                            &[ASSIGN_TO_SELF_VIA_SYSTEM_PROGRAM_AND_REALLOC],
-                            vec![
-                                AccountMeta::new(pubkey, true),
-                                AccountMeta::new(solana_system_interface::program::id(), false),
-                            ],
-                        ),
-                        ComputeBudgetInstruction::set_loaded_accounts_data_size_limit(
-                            LOADED_ACCOUNTS_DATA_SIZE_LIMIT_FOR_TEST,
-                        ),
-                    ],
-                    Some(&mint_pubkey),
-                ),
-            )
-            .unwrap();
-        let account = bank.get_account(&pubkey).unwrap();
-        assert_eq!(&program_id, account.owner());
-        let data = bank_client.get_account_data(&pubkey).unwrap().unwrap();
-        assert_eq!(2 * MAX_PERMITTED_DATA_INCREASE, data.len());
-
-        // Realloc to 0
-        bank_client
-            .send_and_confirm_message(
-                signer,
-                Message::new(
-                    &[
-                        realloc(&program_id, &pubkey, 0, &mut bump),
-                        ComputeBudgetInstruction::set_loaded_accounts_data_size_limit(
-                            LOADED_ACCOUNTS_DATA_SIZE_LIMIT_FOR_TEST,
-                        ),
-                    ],
-                    Some(&mint_pubkey),
-                ),
-            )
-            .unwrap();
-        let data = bank_client.get_account_data(&pubkey).unwrap().unwrap();
-        assert_eq!(0, data.len());
-
-        // zero-init
-        bank_client
-            .send_and_confirm_message(
-                &[&mint_keypair, &keypair],
-                Message::new(
-                    &[
-                        Instruction::new_with_bytes(
-                            program_id,
-                            &[ZERO_INIT],
-                            vec![AccountMeta::new(pubkey, true)],
-                        ),
-                        ComputeBudgetInstruction::set_loaded_accounts_data_size_limit(
-                            LOADED_ACCOUNTS_DATA_SIZE_LIMIT_FOR_TEST,
-                        ),
-                    ],
-                    Some(&mint_pubkey),
-                ),
-            )
-            .unwrap();
+    let mut configured_feature_set = FeatureSet::all_enabled();
+    if !virtual_address_space_adjustments {
+        configured_feature_set
+            .deactivate(&feature_set::syscall_parameter_address_restrictions::id());
+        configured_feature_set.deactivate(&feature_set::virtual_address_space_adjustments::id());
+        configured_feature_set.deactivate(&feature_set::account_data_direct_mapping::id());
     }
+
+    let (
+        _,
+        mint_keypair,
+        account_keypair,
+        [program_id],
+        feature_set,
+        mut accounts,
+        mut program_cache,
+        sysvar_cache,
+    ) = program_sbf_txn_fixture_with_feature_set(
+        [("solana_sbf_rust_realloc", bpf_loader_upgradeable::id())],
+        configured_feature_set,
+    );
+
+    accounts
+        .iter_mut()
+        .find(|(pubkey, _)| pubkey == &account_keypair.pubkey())
+        .unwrap()
+        .1 = Account::new(START_BALANCE, 5, &program_id);
+    accounts.extend([
+        keyed_account_for_compute_budget_program(),
+        keyed_account_for_system_program(),
+    ]);
+
+    // Loaded-account data size limit is not enforced by the transaction conformance harness,
+    // but keep the compute-budget instruction to preserve the original transaction.
+    let mut execute = |transaction_accounts, instruction| {
+        let message = Message::new(
+            &[
+                instruction,
+                ComputeBudgetInstruction::set_loaded_accounts_data_size_limit(
+                    LOADED_ACCOUNTS_DATA_SIZE_LIMIT_FOR_TEST,
+                ),
+            ],
+            Some(&mint_keypair.pubkey()),
+        );
+        let sanitized_message = SanitizedMessage::try_from_legacy_message(
+            message,
+            &ReservedAccountKeys::empty_key_set(),
+        )
+        .unwrap();
+        let context = TxnContext::new_with_default_budget(
+            feature_set.clone(),
+            transaction_accounts,
+            sanitized_message,
+            None,
+        );
+
+        execute_txn(&context, &mut program_cache, &sysvar_cache)
+    };
+
+    let mut bump = 0;
+
+    // Realloc RO account
+    let mut instruction = realloc(&program_id, &account_keypair.pubkey(), 0, &mut bump);
+    instruction.accounts[0].is_writable = false;
+
+    let effects = execute(accounts.clone(), instruction);
+    assert_eq!(
+        effects.status,
+        Err(TransactionError::InstructionError(
+            0,
+            InstructionError::ReadonlyDataModified,
+        )),
+    );
+
+    // Realloc account to overflow
+    let effects = execute(
+        accounts.clone(),
+        realloc(
+            &program_id,
+            &account_keypair.pubkey(),
+            usize::MAX,
+            &mut bump,
+        ),
+    );
+    assert_eq!(
+        effects.status,
+        Err(TransactionError::InstructionError(
+            0,
+            InstructionError::InvalidRealloc,
+        )),
+    );
+
+    // Realloc account to 0
+    let effects = execute(
+        accounts,
+        realloc(&program_id, &account_keypair.pubkey(), 0, &mut bump),
+    );
+    let data_len = effects
+        .get_account(&account_keypair.pubkey())
+        .unwrap()
+        .data
+        .len();
+    assert_eq!(effects.status, Ok(()), "{:?}", effects.logs);
+    assert_eq!(data_len, 0,);
+    // to preserve banking behaviour
+    accounts = effects.resulting_accounts;
+
+    // Realloc account to max then undo
+    let effects = execute(
+        accounts,
+        realloc_extend_and_undo(
+            &program_id,
+            &account_keypair.pubkey(),
+            MAX_PERMITTED_DATA_INCREASE,
+            &mut bump,
+        ),
+    );
+    let data_len = effects
+        .get_account(&account_keypair.pubkey())
+        .unwrap()
+        .data
+        .len();
+    assert_eq!(effects.status, Ok(()), "{:?}", effects.logs);
+    assert_eq!(data_len, 0,);
+
+    accounts = effects.resulting_accounts;
+
+    // Realloc account to max + 1 then undo
+    let effects = execute(
+        accounts.clone(),
+        realloc_extend_and_undo(
+            &program_id,
+            &account_keypair.pubkey(),
+            MAX_PERMITTED_DATA_INCREASE + 1,
+            &mut bump,
+        ),
+    );
+    assert_eq!(
+        effects.status,
+        Err(TransactionError::InstructionError(
+            0,
+            InstructionError::InvalidRealloc,
+        )),
+    );
+
+    // Realloc to max + 1
+    let effects = execute(
+        accounts.clone(),
+        realloc(
+            &program_id,
+            &account_keypair.pubkey(),
+            MAX_PERMITTED_DATA_INCREASE + 1,
+            &mut bump,
+        ),
+    );
+    assert_eq!(
+        effects.status,
+        Err(TransactionError::InstructionError(
+            0,
+            InstructionError::InvalidRealloc,
+        )),
+    );
+
+    // Realloc to max length in max increase increments
+    for i in 0..MAX_PERMITTED_DATA_LENGTH as usize / MAX_PERMITTED_DATA_INCREASE {
+        let mut bump = i as u64;
+
+        let effects = execute(
+            accounts,
+            realloc_extend_and_fill(
+                &program_id,
+                &account_keypair.pubkey(),
+                MAX_PERMITTED_DATA_INCREASE,
+                1,
+                &mut bump,
+            ),
+        );
+        let data_len = effects
+            .get_account(&account_keypair.pubkey())
+            .unwrap()
+            .data
+            .len();
+        assert_eq!(effects.status, Ok(()), "{:?}", effects.logs);
+        assert_eq!(
+            data_len,
+            i.saturating_add(1)
+                .saturating_mul(MAX_PERMITTED_DATA_INCREASE),
+        );
+
+        accounts = effects.resulting_accounts;
+    }
+
+    // and one more time should fail
+    let effects = execute(
+        accounts.clone(),
+        realloc_extend(
+            &program_id,
+            &account_keypair.pubkey(),
+            MAX_PERMITTED_DATA_INCREASE,
+            &mut bump,
+        ),
+    );
+    assert_eq!(
+        effects.status,
+        Err(TransactionError::InstructionError(
+            0,
+            InstructionError::InvalidRealloc,
+        )),
+    );
+
+    // Realloc to 6 bytes
+    let effects = execute(
+        accounts,
+        realloc(&program_id, &account_keypair.pubkey(), 6, &mut bump),
+    );
+    let data_len = effects
+        .get_account(&account_keypair.pubkey())
+        .unwrap()
+        .data
+        .len();
+    assert_eq!(effects.status, Ok(()), "{:?}", effects.logs);
+    assert_eq!(data_len, 6,);
+
+    accounts = effects.resulting_accounts;
+
+    // Extend by 2 bytes and write a u64. This ensures that we can do writes that span the original
+    // account length (6 bytes) and the realloc data (2 bytes).
+    let val = 0x1122334455667788;
+
+    let effects = execute(
+        accounts,
+        extend_and_write_u64(&program_id, &account_keypair.pubkey(), val),
+    );
+    assert_eq!(effects.status, Ok(()), "{:?}", effects.logs);
+
+    let data = &effects.get_account(&account_keypair.pubkey()).unwrap().data;
+    assert_eq!(8, data.len());
+    assert_eq!(val, unsafe { *data.as_ptr().cast::<u64>() });
+
+    accounts = effects.resulting_accounts;
+
+    // Realloc to 0
+    let effects = execute(
+        accounts,
+        realloc(&program_id, &account_keypair.pubkey(), 0, &mut bump),
+    );
+    assert_eq!(effects.status, Ok(()), "{:?}", effects.logs);
+
+    let data_len = effects
+        .get_account(&account_keypair.pubkey())
+        .unwrap()
+        .data
+        .len();
+    assert_eq!(data_len, 0,);
+
+    accounts = effects.resulting_accounts;
+
+    // Realloc and assign
+    let effects = execute(
+        accounts,
+        Instruction::new_with_bytes(
+            program_id,
+            &[REALLOC_AND_ASSIGN],
+            vec![AccountMeta::new(account_keypair.pubkey(), false)],
+        ),
+    );
+    assert_eq!(effects.status, Ok(()), "{:?}", effects.logs);
+
+    let acc = effects.get_account(&account_keypair.pubkey()).unwrap();
+    assert_eq!(&system_program::id(), acc.owner());
+    assert_eq!(MAX_PERMITTED_DATA_INCREASE, acc.data.len());
+
+    accounts = effects.resulting_accounts;
+
+    // Realloc to 0 with wrong owner
+    let effects = execute(
+        accounts.clone(),
+        realloc(&program_id, &account_keypair.pubkey(), 0, &mut bump),
+    );
+    assert_eq!(
+        effects.status,
+        Err(TransactionError::InstructionError(
+            0,
+            InstructionError::ExternalAccountDataModified,
+        )),
+    );
+
+    // realloc and assign to self via cpi
+    let effects = execute(
+        accounts.clone(),
+        Instruction::new_with_bytes(
+            program_id,
+            &[REALLOC_AND_ASSIGN_TO_SELF_VIA_SYSTEM_PROGRAM],
+            vec![
+                AccountMeta::new(account_keypair.pubkey(), true),
+                AccountMeta::new(system_program::id(), false),
+            ],
+        ),
+    );
+    assert_eq!(
+        effects.status,
+        Err(TransactionError::InstructionError(
+            0,
+            InstructionError::ExternalAccountDataModified,
+        )),
+    );
+
+    // Assign to self and realloc via cpi
+    let effects = execute(
+        accounts,
+        Instruction::new_with_bytes(
+            program_id,
+            &[ASSIGN_TO_SELF_VIA_SYSTEM_PROGRAM_AND_REALLOC],
+            vec![
+                AccountMeta::new(account_keypair.pubkey(), true),
+                AccountMeta::new(system_program::id(), false),
+            ],
+        ),
+    );
+    assert_eq!(effects.status, Ok(()), "{:?}", effects.logs);
+
+    let acc = effects.get_account(&account_keypair.pubkey()).unwrap();
+    assert_eq!(&program_id, acc.owner());
+    assert_eq!(2 * MAX_PERMITTED_DATA_INCREASE, acc.data.len());
+
+    accounts = effects.resulting_accounts;
+
+    // Realloc to 0
+    let effects = execute(
+        accounts,
+        realloc(&program_id, &account_keypair.pubkey(), 0, &mut bump),
+    );
+    assert_eq!(effects.status, Ok(()), "{:?}", effects.logs);
+
+    let data_len = effects
+        .get_account(&account_keypair.pubkey())
+        .unwrap()
+        .data
+        .len();
+    assert_eq!(data_len, 0);
+
+    accounts = effects.resulting_accounts;
+
+    // zero-init
+    let effects = execute(
+        accounts,
+        Instruction::new_with_bytes(
+            program_id,
+            &[ZERO_INIT],
+            vec![AccountMeta::new(account_keypair.pubkey(), true)],
+        ),
+    );
+    assert_eq!(effects.status, Ok(()), "{:?}", effects.logs);
 }
 
 #[test]
@@ -3834,12 +3768,7 @@ fn test_program_sbf_processed_inner_instruction() {
         payer,
         mint_keypair,
         _,
-        [
-            sibling_program_id,
-            sibling_inner_program_id,
-            noop_program_id,
-            invoke_and_return_program_id,
-        ],
+        [sibling_program_id, sibling_inner_program_id, noop_program_id, invoke_and_return_program_id],
         feature_set,
         accounts,
         mut program_cache,
