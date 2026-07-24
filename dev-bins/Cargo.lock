@@ -6759,9 +6759,9 @@ dependencies = [
 
 [[package]]
 name = "solana-fee-structure"
-version = "3.0.0"
+version = "4.0.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "5e2abdb1223eea8ec64136f39cb1ffcf257e00f915c957c35c0dd9e3f4e700b0"
+checksum = "c2d77bd543931994bf059f1b58bd543f305d737b8b87b10d8eb0d8bc475f12ff"
 dependencies = [
  "serde",
  "serde_derive",
