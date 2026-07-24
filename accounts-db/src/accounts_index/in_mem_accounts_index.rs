@@ -388,6 +388,7 @@ impl<T: IndexValue, U: DiskIndexValue + From<T> + Into<T>> InMemAccountsIndex<T,
     }
 
     /// Convenience wrapper for slot_list_mut_with_entry that ignores the entry
+    #[cfg(test)]
     pub(crate) fn slot_list_mut<RT>(
         &self,
         pubkey: &Pubkey,

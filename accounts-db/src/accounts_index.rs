@@ -327,6 +327,7 @@ impl<T: IndexValue, U: DiskIndexValue + From<T> + Into<T>> AccountsIndex<T, U> {
             .is_some()
     }
 
+    #[cfg(test)]
     fn slot_list_mut<RT>(
         &self,
         pubkey: &Pubkey,
@@ -410,6 +411,9 @@ impl<T: IndexValue, U: DiskIndexValue + From<T> + Into<T>> AccountsIndex<T, U> {
             .collect()
     }
 
+    /// Removes `slots_to_purge` from the slot list of `pubkey`, pushing removed entries into
+    /// `reclaims` and unreffing each removed entry under the same lock.
+    ///
     /// returns true if, after this fn call:
     /// accounts index entry for `pubkey` has an empty slot list
     /// or `pubkey` does not exist in accounts index
@@ -419,16 +423,21 @@ impl<T: IndexValue, U: DiskIndexValue + From<T> + Into<T>> AccountsIndex<T, U> {
         slots_to_purge: impl for<'a> Contains<'a, Slot>,
         reclaims: &mut ReclaimsSlotList<T>,
     ) -> bool {
-        self.slot_list_mut(pubkey, |mut slot_list| {
-            slot_list.retain_and_count(|(slot, item)| {
+        let map = self.get_bin(pubkey);
+        map.slot_list_mut_with_entry(pubkey, |mut slot_list, entry| {
+            let mut removed_count = 0;
+            let count = slot_list.retain_and_count(|(slot, item)| {
                 let should_purge = slots_to_purge.contains(slot);
                 if should_purge {
                     reclaims.push((*slot, *item));
+                    removed_count += 1;
                     false
                 } else {
                     true
                 }
-            }) == 0
+            });
+            entry.unref_by_count(removed_count);
+            count == 0
         })
         .unwrap_or(true)
     }
