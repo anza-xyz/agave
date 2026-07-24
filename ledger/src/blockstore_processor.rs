@@ -9,6 +9,7 @@ use {
     },
     ExecuteTimingType::{NumExecuteBatches, TotalBatchesLen},
     agave_votor_messages::{migration::MigrationStatus, own_message::OwnMessage},
+    ahash::AHashSet,
     chrono_humanize::{Accuracy, HumanTime, Tense},
     crossbeam_channel::{Receiver, Sender},
     itertools::Itertools,
@@ -16,7 +17,8 @@ use {
     rayon::ThreadPool,
     scopeguard::defer,
     solana_accounts_db::{
-        accounts_db::AccountsDbConfig, accounts_update_notifier_interface::AccountsUpdateNotifier,
+        account_locks::validate_account_locks, accounts_db::AccountsDbConfig,
+        accounts_update_notifier_interface::AccountsUpdateNotifier,
     },
     solana_clock::{BankId, Slot},
     solana_entry::{
@@ -27,7 +29,6 @@ use {
     solana_hash::Hash,
     solana_keypair::Keypair,
     solana_measure::measure::Measure,
-    solana_metrics::datapoint_error,
     solana_pubkey::Pubkey,
     solana_runtime::{
         bank::Bank,
@@ -60,33 +61,15 @@ use {
         result,
         sync::{Arc, OnceLock, RwLock, atomic::AtomicBool},
         time::{Duration, Instant},
-        vec::Drain,
     },
     thiserror::Error,
 };
 #[cfg(feature = "dev-context-only-utils")]
 use {qualifier_attr::qualifiers, solana_runtime::bank::HashOverrides};
 
-// `TransactionBatchWithIndexes` but without the `Drop` that prevents
-// us from nicely unwinding these with manual unlocking.
-pub struct LockedTransactionsWithIndexes<Tx: SVMMessage> {
-    lock_results: Vec<Result<()>>,
-    transactions: Vec<RuntimeTransaction<Tx>>,
-    starting_index: usize,
-}
-
 struct ReplayEntry {
     entry: EntryType<RuntimeTransaction<SanitizedTransaction>>,
     starting_index: usize,
-}
-
-fn first_err(results: &[Result<()>]) -> Result<()> {
-    for r in results {
-        if r.is_err() {
-            return r.clone();
-        }
-    }
-    Ok(())
 }
 
 /// Result of checking a child slot's chained block ID against its parent.
@@ -144,65 +127,16 @@ impl ExecuteBatchesInternalMetrics {
     }
 }
 
-// Scheduling usually succeeds (immediately returns `Ok(())`) here without being blocked on the
-// actual transaction executions.
-//
-// As an exception, this fn could propagate the transaction execution _errors of
-// previously-scheduled transactions_ to notify the replay stage. Then, the replay stage will bail
-// out the further processing of the malformed (possibly malicious) block immediately, not to
-// waste any system resources. Note that this propagation is of early hints; the returned error is
-// completely unrelated to the `locked_entries` at hand. Even if errors won't be propagated in
-// this way, they are guaranteed to be propagated eventually via the blocking fn called
-// BankWithScheduler::wait_for_completed_scheduler().
-fn process_batches(
-    bank: &BankWithScheduler,
-    locked_entries: impl ExactSizeIterator<Item = LockedTransactionsWithIndexes<SanitizedTransaction>>,
-) -> Result<()> {
-    // Tick-only flushes and the empty lock-retry flush are no-ops; this also
-    // covers slot 0, the only bank replayed before the scheduler pool is installed.
-    if locked_entries.len() == 0 {
-        return Ok(());
-    };
-    assert!(
-        bank.has_installed_scheduler(),
-        "no scheduler installed for bank of slot {} during replay",
-        bank.slot()
-    );
-
-    debug!("process_batches({} batches)", locked_entries.len());
-
-    // Track the first error encountered in the loop below, if any.
-    // This error will be propagated to the replay stage, or Ok(()).
-    let mut first_err = Ok(());
-
-    for LockedTransactionsWithIndexes {
-        lock_results,
-        transactions,
-        starting_index,
-    } in locked_entries
-    {
-        // unlock before sending to scheduler.
-        bank.unlock_accounts(transactions.iter().zip(lock_results.iter()));
-        // give ownership to scheduler. capture the first error, but continue the loop
-        // to unlock.
-        // scheduling is skipped if we have already detected an error in this loop
-        let indexes = starting_index..starting_index + transactions.len();
-        // Widening usize index to OrderedTaskId (= u128) won't ever fail.
-        let task_ids = indexes.map(|i| i.try_into().unwrap());
-        first_err = first_err.and_then(|()| {
-            bank.schedule_transaction_executions(transactions.into_iter().zip_eq(task_ids))
-        });
-    }
-    first_err
-}
-
-/// Process an ordered list of entries and wait for their completed execution
-/// 1. In order lock accounts for each entry while the lock succeeds, up to a Tick entry
-/// 2. Schedule the locked group for execution on `bank`'s installed unified scheduler
-/// 3. Register the `Tick` if it's available
-/// 4. goto 1
-/// 5. Wait for the scheduler's completed execution, so that `Ok(())` means the entries executed
-///    successfully
+/// Process an ordered list of entries and wait for their completed execution.
+/// 1. For each entry in order, up to a block-boundary `Tick`:
+///    - `Transactions`: validate each transaction's account locks (and reject duplicate message
+///      hashes within the entry) *without* taking the locks, then schedule the transactions directly
+///      onto `bank`'s installed unified scheduler. The scheduler orders conflicts across entries
+///      itself, so no account locks are held here.
+///    - `Tick`: save it to register after the entries are scheduled.
+/// 2. Register the `Tick` if it's available
+/// 3. Wait for the scheduler's completed execution, so that `Ok(())` means the
+///    entries executed successfully.
 ///
 /// Waiting ends the bank's scheduler session; processing further entries against the same bank
 /// requires wrapping it with a freshly taken scheduler again.
@@ -268,8 +202,6 @@ fn schedule_entries_for_tests(bank: &BankWithScheduler, entries: Vec<Entry>) -> 
 }
 
 fn process_entries(bank: &BankWithScheduler, entries: Vec<ReplayEntry>) -> Result<()> {
-    // accumulator for entries that can be processed in parallel
-    let mut batches = vec![];
     let mut tick_hashes = vec![];
 
     for ReplayEntry {
@@ -286,92 +218,56 @@ fn process_entries(bank: &BankWithScheduler, entries: Vec<ReplayEntry>) -> Resul
                 }
             }
             EntryType::Transactions(transactions) => {
-                queue_batches_with_lock_retry(
-                    bank,
-                    starting_index,
-                    transactions,
-                    &mut batches,
-                    |batches| process_batches(bank, batches),
+                if transactions.is_empty() {
+                    continue;
+                }
+
+                // Any bank replaying transactions must have a scheduler installed. Slot 0 -
+                // the only bank replayed before the scheduler pool is installed - is tick-only,
+                // so it never reaches here.
+                assert!(
+                    bank.has_installed_scheduler(),
+                    "no scheduler installed for bank of slot {} during replay",
+                    bank.slot()
+                );
+                validate_entry_transactions(
+                    &transactions,
+                    bank.get_transaction_account_lock_limit(),
                 )?;
+
+                let indexes = starting_index..starting_index + transactions.len();
+                // Widening usize index to OrderedTaskId (= u128) won't ever fail.
+                let task_ids = indexes.map(|i| i.try_into().unwrap());
+
+                bank.schedule_transaction_executions(transactions.into_iter().zip_eq(task_ids))?;
             }
         }
     }
-    process_batches(bank, batches.into_iter())?;
     for hash in tick_hashes {
         bank.register_tick(&hash);
     }
     Ok(())
 }
 
-/// If an entry can be locked without failure, the transactions are pushed
-/// as a batch to `batches`. If the lock fails, the transactions are unlocked
-/// and the batches are processed.
-/// The locking process is retried, and if it fails again the block is marked
-/// as dead.
-/// If the lock retry succeeds, then the batch is pushed into `batches`.
-fn queue_batches_with_lock_retry(
-    bank: &Bank,
-    starting_index: usize,
-    transactions: Vec<RuntimeTransaction<SanitizedTransaction>>,
-    batches: &mut Vec<LockedTransactionsWithIndexes<SanitizedTransaction>>,
-    mut process_batches: impl FnMut(
-        Drain<LockedTransactionsWithIndexes<SanitizedTransaction>>,
-    ) -> Result<()>,
+/// Validate an entry's transactions before scheduling: each transaction's account
+/// locks (count and duplicates), and rejection of duplicate message hashes within
+/// the entry. Does not take account locks - the unified scheduler orders conflicts.
+/// Post-SIMD-83 the duplicate-message-hash check is what rejects an entry that
+/// replays the same transaction twice (it no longer conflicts on locks).
+fn validate_entry_transactions(
+    transactions: &[RuntimeTransaction<SanitizedTransaction>],
+    tx_account_lock_limit: usize,
 ) -> Result<()> {
-    // try to lock the accounts
-    let lock_results = bank.try_lock_accounts(&transactions);
-    let first_lock_err = first_err(&lock_results);
-    if first_lock_err.is_ok() {
-        batches.push(LockedTransactionsWithIndexes {
-            lock_results,
-            transactions,
-            starting_index,
-        });
-        return Ok(());
-    }
+    let mut batch_message_hashes = AHashSet::with_capacity(transactions.len());
 
-    // We need to unlock the transactions that succeeded to lock before the
-    // retry.
-    bank.unlock_accounts(transactions.iter().zip(lock_results.iter()));
-
-    // We failed to lock, there are 2 possible reasons:
-    // 1. A batch already in `batches` holds the lock.
-    // 2. The batch is "self-conflicting" (i.e. the batch has account lock conflicts with itself)
-
-    // Use the callback to process batches, and clear them.
-    // Clearing the batches will `Drop` the batches which will unlock the accounts.
-    process_batches(batches.drain(..))?;
-
-    // Retry the lock
-    let lock_results = bank.try_lock_accounts(&transactions);
-    match first_err(&lock_results) {
-        Ok(()) => {
-            batches.push(LockedTransactionsWithIndexes {
-                lock_results,
-                transactions,
-                starting_index,
-            });
-            Ok(())
-        }
-        Err(err) => {
-            // We still may have succeeded to lock some accounts, unlock them.
-            bank.unlock_accounts(transactions.iter().zip(lock_results.iter()));
-
-            // An entry has account lock conflicts with *itself*, which should not happen
-            // if generated by a properly functioning leader
-            datapoint_error!(
-                "validator_process_entry_error",
-                (
-                    "error",
-                    format!(
-                        "Lock accounts error, entry conflicts with itself, txs: {transactions:?}"
-                    ),
-                    String
-                )
-            );
-            Err(err)
+    for transaction in transactions {
+        validate_account_locks(transaction.account_keys(), tx_account_lock_limit)?;
+        if !batch_message_hashes.insert(transaction.message_hash()) {
+            return Err(TransactionError::AlreadyProcessed);
         }
     }
+
+    Ok(())
 }
 
 #[derive(Error, Debug)]
@@ -2369,6 +2265,7 @@ pub mod tests {
         solana_instruction::{Instruction, error::InstructionError},
         solana_keypair::Keypair,
         solana_leader_schedule::SlotLeader,
+        solana_message::{Message, MessageHeader, compiled_instruction::CompiledInstruction},
         solana_native_token::LAMPORTS_PER_SOL,
         solana_program_runtime::{
             declare_process_instruction, solana_sbpf::program::BuiltinFunctionDefinition,
@@ -3166,39 +3063,6 @@ pub mod tests {
                 .map(|bank| bank.slot())
                 .next()
                 .is_none()
-        );
-    }
-
-    #[test]
-    fn test_first_err() {
-        assert_eq!(first_err(&[Ok(())]), Ok(()));
-        assert_eq!(
-            first_err(&[Ok(()), Err(TransactionError::AlreadyProcessed)]),
-            Err(TransactionError::AlreadyProcessed)
-        );
-        assert_eq!(
-            first_err(&[
-                Ok(()),
-                Err(TransactionError::AlreadyProcessed),
-                Err(TransactionError::AccountInUse)
-            ]),
-            Err(TransactionError::AlreadyProcessed)
-        );
-        assert_eq!(
-            first_err(&[
-                Ok(()),
-                Err(TransactionError::AccountInUse),
-                Err(TransactionError::AlreadyProcessed)
-            ]),
-            Err(TransactionError::AccountInUse)
-        );
-        assert_eq!(
-            first_err(&[
-                Err(TransactionError::AccountInUse),
-                Ok(()),
-                Err(TransactionError::AlreadyProcessed)
-            ]),
-            Err(TransactionError::AccountInUse)
         );
     }
 
@@ -5129,7 +4993,44 @@ pub mod tests {
         exit_barrier.wait();
     }
 
-    fn do_test_process_batches(should_succeed: bool) {
+    #[test]
+    fn test_process_entries_tick_only_requires_no_scheduler() {
+        // A tick-only slot (e.g. slot 0, replayed before the scheduler pool is
+        // installed) has no transaction entries, so it must process without one.
+        let genesis_config = create_genesis_config(100).genesis_config;
+        let bank = BankWithScheduler::new_without_scheduler(Arc::new(Bank::new_for_tests(
+            &genesis_config,
+        )));
+        let tick = next_entry(&genesis_config.hash(), 1, vec![]);
+        assert_eq!(process_entries_for_tests(&bank, vec![tick]), Ok(()));
+    }
+
+    #[test]
+    #[should_panic(expected = "no scheduler installed for bank of slot 0")]
+    fn test_process_entries_asserts_installed_scheduler() {
+        // Given: a bank with no scheduler installed and a single transaction entry
+        let GenesisConfigInfo {
+            genesis_config,
+            mint_keypair,
+            ..
+        } = create_genesis_config(100);
+        let bank = BankWithScheduler::new_without_scheduler(Arc::new(Bank::new_for_tests(
+            &genesis_config,
+        )));
+        let tx = system_transaction::transfer(
+            &mint_keypair,
+            &Pubkey::new_unique(),
+            1,
+            genesis_config.hash(),
+        );
+        let entry = next_entry(&genesis_config.hash(), 1, vec![tx]);
+
+        // When: processing the entry
+        // Then: unreachable; the missing-scheduler assert must have fired
+        let _ = process_entries_for_tests(&bank, vec![entry]);
+    }
+
+    fn do_test_process_entries(should_succeed: bool) {
         agave_logger::setup();
         let dummy_leader_pubkey = solana_pubkey::new_rand();
         let GenesisConfigInfo {
@@ -5186,13 +5087,14 @@ pub mod tests {
             });
         let bank = BankWithScheduler::new(bank, Some(Box::new(mocked_scheduler)));
 
-        let locked_entry = LockedTransactionsWithIndexes {
-            lock_results: bank.try_lock_accounts(&txs),
-            transactions: txs,
+        // process_batches was removed; drive the same scheduling path through
+        // process_entries with a single transaction entry.
+        let replay_entry = ReplayEntry {
+            entry: EntryType::Transactions(txs),
             starting_index: 0,
         };
 
-        let result = process_batches(&bank, [locked_entry].into_iter());
+        let result = process_entries(&bank, vec![replay_entry]);
         if should_succeed {
             assert_matches!(result, Ok(()));
         } else {
@@ -5201,59 +5103,13 @@ pub mod tests {
     }
 
     #[test]
-    fn test_process_batches_success() {
-        do_test_process_batches(true);
+    fn test_process_entries_success() {
+        do_test_process_entries(true);
     }
 
     #[test]
-    fn test_process_batches_failure() {
-        do_test_process_batches(false);
-    }
-
-    #[test]
-    fn process_batches_is_noop_for_empty_batches_without_scheduler() {
-        // Given: a bank with no scheduler installed
-        let genesis_config = create_genesis_config(100).genesis_config;
-        let bank = BankWithScheduler::new_without_scheduler(Arc::new(Bank::new_for_tests(
-            &genesis_config,
-        )));
-
-        // When: processing an empty set of batches, like those of a tick-only slot
-        let result = process_batches(&bank, std::iter::empty());
-
-        // Then: nothing needs to be scheduled, so no scheduler is required
-        assert_eq!(result, Ok(()));
-    }
-
-    #[test]
-    #[should_panic(expected = "no scheduler installed for bank of slot 0")]
-    fn process_batches_asserts_installed_scheduler() {
-        // Given: a bank with no scheduler installed and a single batch of one transaction
-        let GenesisConfigInfo {
-            genesis_config,
-            mint_keypair,
-            ..
-        } = create_genesis_config(100);
-        let bank = BankWithScheduler::new_without_scheduler(Arc::new(Bank::new_for_tests(
-            &genesis_config,
-        )));
-        let transactions = vec![RuntimeTransaction::from_transaction_for_tests(
-            system_transaction::transfer(
-                &mint_keypair,
-                &solana_pubkey::new_rand(),
-                1,
-                genesis_config.hash(),
-            ),
-        )];
-        let batch = LockedTransactionsWithIndexes {
-            lock_results: bank.try_lock_accounts(&transactions),
-            transactions,
-            starting_index: 0,
-        };
-
-        // When: processing the batch
-        // Then: unreachable; the missing-scheduler assert must have fired
-        let _ = process_batches(&bank, [batch].into_iter());
+    fn test_process_entries_failure() {
+        do_test_process_entries(false);
     }
 
     #[test]
@@ -5862,6 +5718,88 @@ pub mod tests {
                 .map(|(_, bank, _)| bank.slot())
                 .collect::<BTreeSet<_>>(),
             BTreeSet::from([2, 3])
+        );
+    }
+
+    #[test]
+    fn test_validate_entry_transactions_ok() {
+        let payer = Keypair::new();
+        let hash = Hash::new_unique();
+        let txs = vec![
+            RuntimeTransaction::from_transaction_for_tests(system_transaction::transfer(
+                &payer,
+                &Pubkey::new_unique(),
+                1,
+                hash,
+            )),
+            RuntimeTransaction::from_transaction_for_tests(system_transaction::transfer(
+                &payer,
+                &Pubkey::new_unique(),
+                1,
+                hash,
+            )),
+        ];
+        assert_eq!(validate_entry_transactions(&txs, 10), Ok(()));
+    }
+
+    #[test]
+    fn test_validate_entry_transactions_too_many_locks() {
+        let txs = vec![RuntimeTransaction::from_transaction_for_tests(
+            system_transaction::transfer(
+                &Keypair::new(),
+                &Pubkey::new_unique(),
+                1,
+                Hash::new_unique(),
+            ),
+        )];
+        // transfer touches >1 account; limit of 1 must reject
+        assert_eq!(
+            validate_entry_transactions(&txs, 1),
+            Err(TransactionError::TooManyAccountLocks)
+        );
+    }
+
+    #[test]
+    fn test_validate_entry_transactions_account_loaded_twice() {
+        // Message compilation dedups account keys, so a normal transfer can't repeat one.
+        // Hand-build a message whose account_keys list the payer twice to exercise the
+        // duplicate-key check.
+        let payer = Keypair::new();
+        let message = Message {
+            header: MessageHeader {
+                num_required_signatures: 1,
+                num_readonly_signed_accounts: 0,
+                num_readonly_unsigned_accounts: 1,
+            },
+            account_keys: vec![
+                payer.pubkey(),
+                payer.pubkey(),
+                solana_system_interface::program::id(),
+            ],
+            recent_blockhash: Hash::new_unique(),
+            instructions: vec![CompiledInstruction::new(2, &(), vec![0, 1])],
+        };
+        let txs = vec![RuntimeTransaction::from_transaction_for_tests(
+            Transaction::new(&[&payer], message, Hash::new_unique()),
+        )];
+        assert_eq!(
+            validate_entry_transactions(&txs, 10),
+            Err(TransactionError::AccountLoadedTwice)
+        );
+    }
+
+    #[test]
+    fn test_validate_entry_transactions_duplicate_message_hash() {
+        let payer = Keypair::new();
+        let hash = Hash::new_unique();
+        let tx = system_transaction::transfer(&payer, &Pubkey::new_unique(), 1, hash);
+        let txs = vec![
+            RuntimeTransaction::from_transaction_for_tests(tx.clone()),
+            RuntimeTransaction::from_transaction_for_tests(tx),
+        ];
+        assert_eq!(
+            validate_entry_transactions(&txs, 10),
+            Err(TransactionError::AlreadyProcessed)
         );
     }
 }
