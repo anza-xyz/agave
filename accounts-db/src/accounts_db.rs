@@ -2328,6 +2328,8 @@ impl AccountsDb {
     ///   determine the state of the account at a specified slot. This should only be done if the
     ///   account is already unrefed and removed from the accounts index
     ///   It must be unrefed and removed to avoid double counting or missed counting in shrink
+    ///
+    /// Returns the set of dead slots that were removed from storage as a result of this call.
     fn handle_reclaims<'a, I>(
         &'a self,
         reclaims: I,
@@ -4294,7 +4296,7 @@ impl AccountsDb {
                 MarkAccountsObsolete::No,
             );
             // Ensure the expected slot is marked dead
-            assert_eq!(dead_slots, IntSet::from_iter(std::iter::once(remove_slot)));
+            assert_eq!(dead_slots, IntSet::from_iter(iter::once(remove_slot)));
         }
         handle_reclaims_elapsed.stop();
         purge_stats
