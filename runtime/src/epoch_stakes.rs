@@ -1,5 +1,3 @@
-#[cfg(feature = "dev-context-only-utils")]
-use qualifier_attr::qualifiers;
 use {
     crate::{stake_history::StakeHistory, stakes::SerdeStakesToStakeFormat},
     serde::{
@@ -23,6 +21,8 @@ use {
     },
     wincode::{ReadResult, SchemaRead, SchemaWrite, WriteResult, config::Config, io::Reader},
 };
+#[cfg(feature = "dev-context-only-utils")]
+use {indexmap::IndexMap, qualifier_attr::qualifiers};
 
 pub type NodeIdToVoteAccounts = HashMap<Pubkey, NodeVoteAccounts>;
 pub type EpochAuthorizedVoters = HashMap<Pubkey, Pubkey>;
@@ -303,7 +303,7 @@ impl VersionedEpochStakes {
             SerdeStakesToStakeFormat::Account(crate::stakes::Stakes::new_for_tests(
                 0,
                 solana_vote::vote_account::VoteAccounts::from(Arc::new(vote_accounts_hash_map)),
-                imbl::HashMap::default(),
+                Arc::new(IndexMap::default()),
             )),
             leader_schedule_epoch,
         )
@@ -1078,7 +1078,7 @@ pub(crate) mod tests {
         let stakes = Stakes::new_for_tests(
             epoch,
             vote_accounts,
-            imbl::HashMap::from_iter([(stake_pubkey, stake_account)]),
+            Arc::new(IndexMap::from_iter([(stake_pubkey, stake_account)])),
         );
 
         // ensure stake delegations start off *not* empty
