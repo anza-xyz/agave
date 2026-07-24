@@ -583,6 +583,29 @@ impl<FG: ForkGraph> ProgramCache<FG> {
         }
     }
 
+    /// Convenience wrapper for callers that only have the cache's weak fork graph handle.
+    ///
+    /// Prefer `prune(..., fork_graph)` when a caller already holds a stable fork graph reference.
+    pub fn prune_with_cache_fork_graph(
+        &mut self,
+        new_root_slot: Slot,
+        upcoming_environment: Option<ProgramRuntimeEnvironment>,
+    ) {
+        let Some(fork_graph) = self.fork_graph.clone() else {
+            error!("Program cache doesn't have fork graph.");
+            return;
+        };
+        let Some(fork_graph) = fork_graph.upgrade() else {
+            error!("Program cache fork graph has been dropped.");
+            return;
+        };
+        let Ok(fork_graph) = fork_graph.read() else {
+            error!("Failed to lock fork graph for reading.");
+            return;
+        };
+        self.prune(new_root_slot, upcoming_environment, &fork_graph);
+    }
+
     /// Extracts a subset of the programs relevant to a transaction batch
     /// and returns which program accounts the accounts DB needs to load.
     pub fn extract(
@@ -1715,6 +1738,19 @@ pub(crate) mod tests {
         assert!(cache.get_flattened_entries_for_tests().is_empty());
 
         cache.prune(10, None, &fork_graph.read().unwrap());
+        assert!(cache.get_flattened_entries_for_tests().is_empty());
+    }
+
+    #[test]
+    fn test_prune_with_dropped_fork_graph() {
+        let mut cache = ProgramCache::<TestForkGraph>::new(0);
+        let fork_graph = Arc::new(RwLock::new(TestForkGraph {
+            relation: BlockRelation::Ancestor,
+        }));
+        cache.set_fork_graph(Arc::downgrade(&fork_graph));
+        drop(fork_graph);
+
+        cache.prune_with_cache_fork_graph(0, None);
         assert!(cache.get_flattened_entries_for_tests().is_empty());
     }
 
