@@ -1381,9 +1381,16 @@ fn build_xdp_config(
     operation: &Operation,
     bind_addresses: &BindIpAddrs,
 ) -> Result<Option<(XdpConfig, XdpModules)>, String> {
+    // Always parse and validate the config file (if provided) so errors surface
+    // even when XDP is disabled (--no-xdp) or during ledger init.
+    let file = config_file::resolve_xdp_config(
+        matches.value_of("experimental_config_file").map(Path::new),
+    )?;
+
     if matches.is_present("no_xdp") || *operation == Operation::Initialize {
         return Ok(None);
     }
+
     let config_file::XdpFileConfig {
         tpu,
         turbine,
@@ -1392,9 +1399,7 @@ fn build_xdp_config(
         interface: file_interface,
         queues: file_queues,
         zero_copy: file_zero_copy,
-    } = config_file::resolve_xdp_config(
-        matches.value_of("experimental_config_file").map(Path::new),
-    )?;
+    } = file;
 
     // CLI flags do not override per-module use_xdp; a fully-disabled config
     // skips the multihoming XDP guard.
@@ -1470,20 +1475,24 @@ fn build_xdp_config(
         ));
     }
 
-    // Convert per-module queue ids into sender positions.
+    // Convert per-module config into sender positions (indices into `queues`),
+    // or None when the module does not use XDP. A disabled module gets no
+    // sender. An enabled module that named queues in `tx` is scoped to those; an
+    // enabled module with no `tx` (or when the queue source is the global
+    // --xdp-cpu-cores / auto-selected core) uses all queues.
     let all_positions: Vec<usize> = (0..queues.len()).collect();
     let module_positions = |module: &config_file::ModuleXdp| -> Option<Vec<usize>> {
         if !module.enabled {
             return None;
         }
-        if file_tx_mode {
-            let positions: Vec<usize> = queues
+        if file_tx_mode && !module.tx_queues.is_empty() {
+            let positions = queues
                 .iter()
                 .enumerate()
                 .filter(|(_, binding)| module.tx_queues.contains(&binding.queue))
                 .map(|(i, _)| i)
                 .collect();
-            (!positions.is_empty()).then_some(positions)
+            Some(positions)
         } else {
             Some(all_positions.clone())
         }
@@ -1604,11 +1613,64 @@ mod xdp_tests {
                 QueueCpuBinding { queue: 1, cpu: 4 },
             ]
         );
-        // turbine named queues 0 and 1 via tx; modules without tx get no sender.
+        // turbine named queues 0 and 1 via tx; modules without a tx block use
+        // all queues.
         assert_eq!(modules.turbine, Some(vec![0, 1]));
-        assert!(modules.tpu.is_none());
-        assert!(modules.repair.is_none());
-        assert!(modules.gossip.is_none());
+        assert_eq!(modules.tpu, Some(vec![0, 1]));
+        assert_eq!(modules.repair, Some(vec![0, 1]));
+        assert_eq!(modules.gossip, Some(vec![0, 1]));
+    }
+
+    #[test]
+    fn test_per_module_tx_scopes_queues() {
+        let default_args = DefaultArgs::default();
+        let app = add_args(clap::App::new("agave-validator"), &default_args);
+        // tpu and turbine each name one queue; repair/gossip name none.
+        let file = write_config(
+            "[interfaces.\"eth0\"]\nqueue_to_cpu_mapping = [{ queue = 0, cpu = 3 }, { queue = 1, \
+             cpu = 4 }]\n\n[tpu.xdp]\ntx = { eth0 = [0] }\n\n[turbine.xdp]\ntx = { eth0 = [1] }\n",
+        );
+        let matches = app.get_matches_from(vec![
+            "agave-validator",
+            "--experimental-config-file",
+            file.path().to_str().unwrap(),
+        ]);
+        let (config, modules) = build_xdp_config(&matches, &Operation::Run, &single_ip_bind())
+            .unwrap()
+            .expect("config file must enable XDP");
+        // The transmitter carries the union of both queues.
+        assert_eq!(
+            config.queues,
+            vec![
+                QueueCpuBinding { queue: 0, cpu: 3 },
+                QueueCpuBinding { queue: 1, cpu: 4 },
+            ]
+        );
+        // tpu -> queue 0 (position 0); turbine -> queue 1 (position 1).
+        assert_eq!(modules.tpu, Some(vec![0]));
+        assert_eq!(modules.turbine, Some(vec![1]));
+        // repair/gossip named no queues, so they use all of them.
+        assert_eq!(modules.repair, Some(vec![0, 1]));
+        assert_eq!(modules.gossip, Some(vec![0, 1]));
+    }
+
+    #[test]
+    fn test_config_file_validated_even_when_xdp_disabled() {
+        let default_args = DefaultArgs::default();
+        let app = add_args(clap::App::new("agave-validator"), &default_args);
+        // References an interface with no [interfaces.<name>] section.
+        let file = write_config("[turbine.xdp]\ntx = { eth0 = [0] }\n");
+        let matches = app.get_matches_from(vec![
+            "agave-validator",
+            "--experimental-config-file",
+            file.path().to_str().unwrap(),
+            "--no-xdp",
+        ]);
+        let result = build_xdp_config(&matches, &Operation::Run, &single_ip_bind());
+        assert!(
+            result.unwrap_err().contains("undeclared interface"),
+            "config file must be validated even with --no-xdp"
+        );
     }
 
     #[test]
