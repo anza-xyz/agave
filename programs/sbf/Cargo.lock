@@ -455,7 +455,6 @@ dependencies = [
 name = "agave-xdp-ebpf"
 version = "4.3.0-alpha.2"
 dependencies = [
- "aya",
  "aya-ebpf",
 ]
 
@@ -7499,7 +7498,6 @@ dependencies = [
  "bincode",
  "bytes",
  "cfg-if 1.0.4",
- "crossbeam-channel",
  "dashmap",
  "itertools 0.14.0",
  "log",
