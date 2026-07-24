@@ -21,7 +21,8 @@ members = [
     "cli-config",
     "cli-output",
     "client",
-    "client-test",
+    "client-test", "cluster-transport",
+    "cluster-transport",
     "compute-budget",
     "compute-budget-instruction",
     "connection-cache",
@@ -167,6 +168,7 @@ new_without_default = "allow"
 
 [workspace.dependencies]
 Inflector = "0.11.4"
+agave-cluster-transport = { path = "cluster-transport", version = "=4.3.0-alpha.2", features = ["agave-unstable-api"] }
 agave-banking-stage-ingress-types = { path = "banking-stage-ingress-types", version = "=4.3.0-alpha.2", features = ["agave-unstable-api"] }
 agave-bls-cert-verify = { path = "bls-cert-verify", version = "=4.3.0-alpha.2", features = ["agave-unstable-api"] }
 agave-bls-sigverify = { path = "bls-sigverify", version = "=4.3.0-alpha.2", features = ["agave-unstable-api"] }

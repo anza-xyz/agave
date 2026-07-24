@@ -23,6 +23,7 @@ agave-unstable-api = []
 dev-context-only-utils = []
 
 [dependencies]
+agave-cluster-transport = { workspace = true }
 agave-xdp = { workspace = true }
 bytes = { workspace = true }
 crossbeam-channel = { workspace = true }

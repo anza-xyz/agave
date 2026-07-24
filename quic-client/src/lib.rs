@@ -17,6 +17,7 @@ use {
             QuicClientConnection as BlockingQuicClientConnection, close_quic_connection,
         },
     },
+    agave_cluster_transport::staked_nodes::StakedNodes,
     log::debug,
     quic_client::get_runtime,
     quinn::{Endpoint, EndpointConfig, TokioRuntime},
@@ -30,7 +31,6 @@ use {
     solana_keypair::Keypair,
     solana_pubkey::Pubkey,
     solana_signer::Signer,
-    solana_streamer::streamer::StakedNodes,
     solana_tls_utils::{QuicClientCertificate, new_dummy_x509_certificate},
     std::{
         net::{IpAddr, SocketAddr, UdpSocket},
