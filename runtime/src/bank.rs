@@ -6217,6 +6217,20 @@ impl Bank {
             self.fee_rate_governor.burn_percent = solana_fee_calculator::DEFAULT_BURN_PERCENT;
         }
 
+        // SIMD-0550: double the taper, re-anchoring `initial` to keep the rate continuous.
+        if new_feature_activations.contains(&feature_set::double_disinflation_rate::id()) {
+            let year = self.slot_in_year_for_inflation();
+            let mut inflation = *self.inflation.read().unwrap();
+            let anchor_rate = inflation.total(year);
+            let taper = feature_set::double_disinflation_rate::TAPER;
+            inflation.taper = taper;
+            inflation.initial = anchor_rate / (1.0 - taper).powf(year);
+            // The lock is shared with parent and sibling banks; replace it instead
+            // of writing through it so every boundary bank anchors off the
+            // pre-activation schedule and other forks never observe the change.
+            self.inflation = Arc::new(RwLock::new(inflation));
+        }
+
         // Apply unconditionally: this is relatively cheap and idempotent.
         self.apply_slot_time_persistent_changes();
         self.apply_slot_time_runtime_changes();

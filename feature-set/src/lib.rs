@@ -1536,6 +1536,12 @@ pub mod relax_fee_payer_constraint {
     solana_pubkey::declare_id!("FEEXbxUuKobtrt1qNK5pjtzbPQhsppBTrNNG74xu4mai");
 }
 
+pub mod double_disinflation_rate {
+    solana_pubkey::declare_id!("dd5DqPiA9qwqkLmZE6gvBTxG2YvJt1PJD1ootKhBBJK");
+    /// Taper (yearly disinflation rate) applied from activation onward.
+    pub const TAPER: f64 = 0.30;
+}
+
 pub static FEATURE_NAMES: LazyLock<AHashMap<Pubkey, &'static str>> = LazyLock::new(|| {
     [
         (secp256k1_program_enabled::id(), "secp256k1 program"),
@@ -2617,6 +2623,10 @@ pub static FEATURE_NAMES: LazyLock<AHashMap<Pubkey, &'static str>> = LazyLock::n
         (
             relax_fee_payer_constraint::id(),
             "SIMD-0290: Relax block constraint requiring valid fee-payer",
+        ),
+        (
+            double_disinflation_rate::id(),
+            "SIMD-0550: Double disinflation rate",
         ),
         /*************** ADD NEW FEATURES HERE ***************/
         /***** ADD NEW FEATURE BOOL TO `FeatureSnapshot` *****/
