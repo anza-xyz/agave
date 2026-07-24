@@ -1,5 +1,5 @@
-#![feature(test)]
-extern crate test;
+
+
 
 #[cfg(not(feature = "shuttle-test"))]
 use {bincode::serialize, solana_hash::HASH_BYTES, solana_sha256_hasher::hash};
@@ -9,11 +9,11 @@ use {
     solana_hash::Hash,
     solana_runtime::bank::BankStatusCache,
     solana_signature::{SIGNATURE_BYTES, Signature},
-    test::Bencher,
+    Bencher,
 };
 
 #[cfg(not(feature = "shuttle-test"))]
-#[bench]
+
 fn bench_status_cache_serialize(bencher: &mut Bencher) {
     let mut status_cache = BankStatusCache::default();
     status_cache.add_root(0);
@@ -37,7 +37,7 @@ fn bench_status_cache_serialize(bencher: &mut Bencher) {
 }
 
 #[cfg(not(feature = "shuttle-test"))]
-#[bench]
+
 fn bench_status_cache_serialize_max(bencher: &mut Bencher) {
     // Fill up the status cache to better match what intense runtime usage would
     // look like.
@@ -51,7 +51,7 @@ fn bench_status_cache_serialize_max(bencher: &mut Bencher) {
     });
 }
 
-#[bench]
+
 fn bench_status_cache_root_slot_deltas(bencher: &mut Bencher) {
     let mut status_cache = BankStatusCache::default();
 
@@ -86,7 +86,7 @@ fn fill_status_cache_slot(
     }
 }
 
-#[bench]
+
 fn bench_status_cache_check_and_insert(bencher: &mut Bencher) {
     // Fill up the status cache to better match what intense runtime usage would
     // look like.
@@ -125,7 +125,7 @@ fn bench_status_cache_check_and_insert(bencher: &mut Bencher) {
     });
 }
 
-#[bench]
+
 fn bench_status_cache_add_roots(bencher: &mut Bencher) {
     // Fill up the status cache to better match what intense runtime usage would
     // look like.
@@ -139,3 +139,6 @@ fn bench_status_cache_add_roots(bencher: &mut Bencher) {
         }
     });
 }
+
+benchmark_group!(benches, bench_status_cache_serialize, bench_status_cache_serialize_max, bench_status_cache_root_slot_deltas, bench_status_cache_check_and_insert, bench_status_cache_add_roots);
+benchmark_main!(benches);
