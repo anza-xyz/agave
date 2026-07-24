@@ -7557,7 +7557,6 @@ dependencies = [
  "clap 3.2.23",
  "five8",
  "rpassword",
- "solana-clap-v3-utils",
  "solana-cli-config",
  "solana-clock",
  "solana-cluster-type",
@@ -7677,7 +7676,6 @@ dependencies = [
 name = "solana-cli-config"
 version = "4.3.0-alpha.2"
 dependencies = [
- "anyhow",
  "dirs-next",
  "serde",
  "serde_yaml",

@@ -51,7 +51,6 @@ url = { workspace = true }
 
 [dev-dependencies]
 assert_matches = { workspace = true }
-solana-clap-v3-utils = { path = ".", features = ["agave-unstable-api"] }
 solana-pubkey = { workspace = true, features = ["rand"] }
 solana-system-interface = { workspace = true, features = ["bincode"] }
 tempfile = { workspace = true }
