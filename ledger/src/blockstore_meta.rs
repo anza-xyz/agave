@@ -102,10 +102,12 @@ impl CompletedDataIndexes {
         self.index.prev_set_bit(bound as usize).map(|i| i as u32)
     }
 
-    /// Equivalent to `range(from..).next()`.
+    /// Equivalent to `range(from..end).next()`.
     #[inline]
-    pub(crate) fn next_completed_index(&self, from: u32) -> Option<u32> {
-        self.index.next_set_bit(from as usize).map(|i| i as u32)
+    pub(crate) fn next_completed_index(&self, from: u32, end: u32) -> Option<u32> {
+        self.index
+            .next_set_bit_in_range(from as usize, end as usize)
+            .map(|i| i as u32)
     }
 }
 
