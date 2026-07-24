@@ -1479,7 +1479,10 @@ fn build_xdp_config(
     // or None when the module does not use XDP. A disabled module gets no
     // sender. An enabled module that named queues in `tx` is scoped to those; an
     // enabled module with no `tx` (or when the queue source is the global
-    // --xdp-cpu-cores / auto-selected core) uses all queues.
+    // --xdp-cpu-cores / auto-selected core) uses all queues. "All queues" here
+    // means the transmitter's entire queue set (`queues` — the union of every
+    // module's tx queues, or the CLI/auto queues), not all hardware queues the
+    // NIC has.
     let all_positions: Vec<usize> = (0..queues.len()).collect();
     let module_positions = |module: &config_file::ModuleXdp| -> Option<Vec<usize>> {
         if !module.enabled {

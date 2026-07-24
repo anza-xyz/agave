@@ -244,6 +244,9 @@ impl AsRef<[SocketAddr]> for XdpAddrs {
 
 impl XdpSender {
     /// Return a sender restricted to positions in this sender's queue list.
+    ///
+    /// Each element of `positions` must be a valid index into the transmitter's
+    /// `queues` (i.e. `< queues.len()`); out-of-range indices panic.
     pub fn subset(&self, positions: &[usize]) -> XdpSender {
         #[cfg(target_os = "linux")]
         {
