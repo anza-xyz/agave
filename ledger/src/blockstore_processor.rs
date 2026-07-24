@@ -55,6 +55,7 @@ use {
     std::{
         cmp,
         collections::{HashMap, HashSet},
+        mem,
         num::Saturating,
         ops::Index,
         path::PathBuf,
@@ -935,7 +936,7 @@ impl ConfirmationProgress {
         debug_assert!(
             async_verification
                 .as_ref()
-                .map(|av| av.pending_jobs == 0 && av.first_error.is_none())
+                .map(|av| { av.pending_jobs == 0 && av.first_error.is_none() })
                 .unwrap_or(true)
         );
         Self {
@@ -955,12 +956,14 @@ impl ConfirmationProgress {
         poh_verify_elapsed: &mut u64,
         transaction_verify_elapsed: &mut u64,
     ) -> result::Result<(), BlockstoreProcessorError> {
-        self.async_verification
-            .as_mut()
-            .map_or(Ok(()), |async_verification| {
-                async_verification
-                    .collect_available_results(poh_verify_elapsed, transaction_verify_elapsed)
-            })
+        let Some(async_verification) = self.async_verification.as_mut() else {
+            return Ok(());
+        };
+        let result = async_verification.collect_available_results();
+        let (poh_us, transaction_us) = async_verification.take_timings();
+        *poh_verify_elapsed = poh_verify_elapsed.saturating_add(poh_us);
+        *transaction_verify_elapsed = transaction_verify_elapsed.saturating_add(transaction_us);
+        result
     }
 
     pub fn wait_for_all_verification_results(
@@ -968,19 +971,21 @@ impl ConfirmationProgress {
         poh_verify_elapsed: &mut u64,
         transaction_verify_elapsed: &mut u64,
     ) -> result::Result<(), BlockstoreProcessorError> {
-        self.async_verification
-            .as_mut()
-            .map_or(Ok(()), |async_verification| {
-                async_verification
-                    .wait_for_all_results(poh_verify_elapsed, transaction_verify_elapsed)
-            })
+        let Some(async_verification) = self.async_verification.as_mut() else {
+            return Ok(());
+        };
+        let result = async_verification.wait_for_all_results();
+        let (poh_us, transaction_us) = async_verification.take_timings();
+        *poh_verify_elapsed = poh_verify_elapsed.saturating_add(poh_us);
+        *transaction_verify_elapsed = transaction_verify_elapsed.saturating_add(transaction_us);
+        result
     }
 
     pub fn take_async_verification(&mut self) -> Option<AsyncVerificationProgress> {
         debug_assert!(
             self.async_verification
                 .as_ref()
-                .map(|av| av.pending_jobs == 0 && av.first_error.is_none())
+                .map(|av| { av.pending_jobs == 0 && av.first_error.is_none() })
                 .unwrap_or(true)
         );
         self.async_verification.take()
@@ -998,6 +1003,8 @@ pub struct AsyncVerificationProgress {
     receiver: Receiver<AsyncVerificationResult>,
     pending_jobs: usize,
     first_error: Option<BlockstoreProcessorError>,
+    poh_verify_elapsed: u64,
+    transaction_verify_elapsed: u64,
 }
 
 impl Default for AsyncVerificationProgress {
@@ -1019,6 +1026,8 @@ impl AsyncVerificationProgress {
             receiver,
             pending_jobs: 0,
             first_error: None,
+            poh_verify_elapsed: 0,
+            transaction_verify_elapsed: 0,
         }
     }
 
@@ -1028,8 +1037,6 @@ impl AsyncVerificationProgress {
     fn spawn(
         &mut self,
         replay_tx_thread_pool: &ThreadPool,
-        poh_verify_elapsed: &mut u64,
-        transaction_verify_elapsed: &mut u64,
         work: impl FnOnce() -> AsyncVerificationResult + Send + 'static,
     ) -> result::Result<(), BlockstoreProcessorError> {
         while self.sender.is_full() {
@@ -1039,7 +1046,7 @@ impl AsyncVerificationProgress {
             //
             // We also really don't want sender.send(result) below to sleep, because that would
             // block rayon threads slowing down progress even more.
-            self.collect_available_results(poh_verify_elapsed, transaction_verify_elapsed)?;
+            self.collect_available_results()?;
         }
         self.pending_jobs = self.pending_jobs.saturating_add(1);
         let sender = self.sender.clone();
@@ -1050,13 +1057,9 @@ impl AsyncVerificationProgress {
     }
 
     // Collects all available results from the channel.
-    fn collect_available_results(
-        &mut self,
-        poh_verify_elapsed: &mut u64,
-        transaction_verify_elapsed: &mut u64,
-    ) -> result::Result<(), BlockstoreProcessorError> {
+    fn collect_available_results(&mut self) -> result::Result<(), BlockstoreProcessorError> {
         while let Ok(result) = self.receiver.try_recv() {
-            self.apply_result(result, poh_verify_elapsed, transaction_verify_elapsed);
+            self.apply_result(result);
         }
         if let Some(error) = self.first_error.take() {
             return Err(error);
@@ -1067,16 +1070,12 @@ impl AsyncVerificationProgress {
     // Waits for all pending jobs to complete and collects their results.
     //
     // This MUST be called at the end of a slot.
-    fn wait_for_all_results(
-        &mut self,
-        poh_verify_elapsed: &mut u64,
-        transaction_verify_elapsed: &mut u64,
-    ) -> result::Result<(), BlockstoreProcessorError> {
+    fn wait_for_all_results(&mut self) -> result::Result<(), BlockstoreProcessorError> {
         while self.pending_jobs > 0 {
             let result = self.receiver.recv().map_err(|_| {
                 BlockstoreProcessorError::InvalidBlock(BlockError::InvalidEntryHash)
             })?;
-            self.apply_result(result, poh_verify_elapsed, transaction_verify_elapsed);
+            self.apply_result(result);
         }
         if let Some(error) = self.first_error.take() {
             return Err(error);
@@ -1087,19 +1086,26 @@ impl AsyncVerificationProgress {
     fn apply_result(
         &mut self,
         AsyncVerificationResult {
-            poh_verify_elapsed: poh_us,
-            transaction_verify_elapsed: tx_verify_us,
+            poh_verify_elapsed,
+            transaction_verify_elapsed,
             error,
         }: AsyncVerificationResult,
-        poh_verify_elapsed: &mut u64,
-        transaction_verify_elapsed: &mut u64,
     ) {
         self.pending_jobs = self.pending_jobs.saturating_sub(1);
-        *poh_verify_elapsed = poh_verify_elapsed.saturating_add(poh_us);
-        *transaction_verify_elapsed = transaction_verify_elapsed.saturating_add(tx_verify_us);
+        self.poh_verify_elapsed = self.poh_verify_elapsed.saturating_add(poh_verify_elapsed);
+        self.transaction_verify_elapsed = self
+            .transaction_verify_elapsed
+            .saturating_add(transaction_verify_elapsed);
         if self.first_error.is_none() {
             self.first_error = error;
         }
+    }
+
+    fn take_timings(&mut self) -> (u64, u64) {
+        (
+            mem::take(&mut self.poh_verify_elapsed),
+            mem::take(&mut self.transaction_verify_elapsed),
+        )
     }
 }
 
@@ -1353,11 +1359,9 @@ fn confirm_slot_entries(
     if !skip_verification {
         let start_hash = progress.last_entry;
         let verify_entries = entry::entries_to_verification_data(&entries);
-        progress.async_verification().spawn(
-            replay_tx_thread_pool,
-            poh_verify_elapsed,
-            transaction_verify_elapsed,
-            move || {
+        progress
+            .async_verification()
+            .spawn(replay_tx_thread_pool, move || {
                 datapoint_debug!(
                     "verify-batch-size",
                     ("size", verify_entries.len() as i64, i64)
@@ -1376,8 +1380,7 @@ fn confirm_slot_entries(
                     transaction_verify_elapsed: 0,
                     error,
                 }
-            },
-        )?;
+            })?;
     }
 
     let validate_and_hash_transaction = {
@@ -1423,11 +1426,9 @@ fn confirm_slot_entries(
         }
     } else {
         let replay_vote_sender = replay_vote_sender.cloned();
-        progress.async_verification().spawn(
-            replay_tx_thread_pool,
-            poh_verify_elapsed,
-            transaction_verify_elapsed,
-            move || {
+        progress
+            .async_verification()
+            .spawn(replay_tx_thread_pool, move || {
                 let verification_start = Instant::now();
                 let error = unverified_signatures
                     .verify()
@@ -1456,8 +1457,7 @@ fn confirm_slot_entries(
                     transaction_verify_elapsed: verification_start.elapsed().as_micros() as u64,
                     error,
                 }
-            },
-        )?;
+            })?;
     }
 
     let mut replay_timer = Measure::start("replay_elapsed");
@@ -4973,7 +4973,7 @@ pub mod tests {
 
         let mut progress = AsyncVerificationProgress::new();
         progress
-            .spawn(&pool, &mut 0, &mut 0, {
+            .spawn(&pool, {
                 let drop_barrier = drop_barrier.clone();
                 move || {
                     // wait for the test to drop `progress` so the channel spawn() sends results to
