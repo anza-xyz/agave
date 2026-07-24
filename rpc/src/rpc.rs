@@ -1,8 +1,4 @@
 //! The `rpc` module implements the Solana RPC interface.
-#[cfg(feature = "dev-context-only-utils")]
-use solana_runtime::installed_scheduler_pool::{
-    BankWithScheduler, InstalledSchedulerPool, SchedulingContext,
-};
 use {
     crate::{
         filter::filter_allows, max_slots::MaxSlots,
@@ -4526,63 +4522,6 @@ pub fn create_test_transaction_entries(
     (vec![entry_1, entry_2], signatures)
 }
 
-#[cfg(feature = "dev-context-only-utils")]
-pub fn populate_blockstore_for_tests(
-    entries: Vec<Entry>,
-    bank: Arc<Bank>,
-    blockstore: Arc<Blockstore>,
-    max_complete_transaction_status_slot: Arc<AtomicU64>,
-) {
-    use crossbeam_channel::bounded;
-
-    let slot = bank.slot();
-    let parent_slot = bank.parent_slot();
-    let shreds =
-        solana_ledger::blockstore::entries_to_test_shreds(&entries, slot, parent_slot, true, 0);
-    blockstore.insert_shreds(shreds, false).unwrap();
-    blockstore.set_roots(std::iter::once(&slot)).unwrap();
-
-    let (transaction_status_sender, transaction_status_receiver) = bounded(1024);
-    let tss_exit = Arc::new(AtomicBool::new(false));
-    let transaction_status_service =
-        crate::transaction_status_service::TransactionStatusService::new(
-            transaction_status_receiver,
-            max_complete_transaction_status_slot,
-            true,
-            None,
-            blockstore,
-            false,
-            None,
-            tss_exit.clone(),
-        );
-
-    let transaction_status_sender =
-        solana_runtime::transaction_execution::TransactionStatusSender {
-            sender: transaction_status_sender,
-            dependency_tracker: None,
-        };
-    let pool = solana_unified_scheduler_pool::DefaultSchedulerPool::new_for_verification(
-        None,
-        None,
-        Some(transaction_status_sender),
-        None,
-        None,
-    );
-
-    let context = SchedulingContext::new(bank.clone());
-    let scheduler = pool.take_scheduler(context).unwrap();
-    let bank = BankWithScheduler::new(bank, Some(scheduler));
-
-    // Check that process_entries successfully writes can_commit transactions statuses, and
-    // that they are matched properly by get_rooted_block
-    assert_eq!(
-        solana_ledger::blockstore_processor::process_entries_for_tests(&bank, entries),
-        Ok(())
-    );
-
-    transaction_status_service.quiesce_and_join_for_tests(tss_exit);
-}
-
 #[cfg(test)]
 pub mod tests {
     use {
@@ -4597,6 +4536,7 @@ pub mod tests {
             rpc_subscriptions::RpcSubscriptions,
         },
         agave_reserved_account_keys::ReservedAccountKeys,
+        agave_test_utilities::populate_blockstore_for_tests,
         jsonrpc_core::{ErrorCode, MetaIoHandler, Output, Response, Value, futures},
         jsonrpc_core_client::transports::local,
         serde::de::DeserializeOwned,

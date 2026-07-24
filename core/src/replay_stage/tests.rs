@@ -11,6 +11,7 @@ use {
         replay_stage::ReplayStage,
         vote_simulator::{self, VoteSimulator},
     },
+    agave_test_utilities::populate_blockstore_for_tests,
     agave_votor_messages::{
         certificate::{CertSignature, GenesisCert},
         consensus_message::Block,
@@ -53,8 +54,7 @@ use {
     solana_poh_config::PohConfig,
     solana_rpc::{
         optimistically_confirmed_bank_tracker::OptimisticallyConfirmedBank,
-        rpc::{create_test_transaction_entries, populate_blockstore_for_tests},
-        slot_status_notifier::SlotStatusNotifierInterface,
+        rpc::create_test_transaction_entries, slot_status_notifier::SlotStatusNotifierInterface,
     },
     solana_runtime::{
         bank::BankTestConfig,

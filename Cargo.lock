@@ -357,6 +357,18 @@ dependencies = [
 ]
 
 [[package]]
+name = "agave-test-utilities"
+version = "4.3.0-alpha.2"
+dependencies = [
+ "crossbeam-channel",
+ "solana-entry",
+ "solana-ledger",
+ "solana-rpc",
+ "solana-runtime",
+ "solana-unified-scheduler-pool",
+]
+
+[[package]]
 name = "agave-transaction-view"
 version = "5.1.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -7899,6 +7911,7 @@ name = "solana-client-test"
 version = "4.3.0-alpha.2"
 dependencies = [
  "agave-logger",
+ "agave-test-utilities",
  "async-trait",
  "futures-util",
  "log",
@@ -8108,6 +8121,7 @@ dependencies = [
  "agave-scheduler-bindings",
  "agave-scheduling-utils",
  "agave-snapshots",
+ "agave-test-utilities",
  "agave-transaction-view",
  "agave-votor",
  "agave-votor-messages",
@@ -10046,6 +10060,7 @@ dependencies = [
  "agave-feature-set",
  "agave-reserved-account-keys",
  "agave-snapshots",
+ "agave-test-utilities",
  "agave-votor-messages",
  "base64 0.22.1",
  "bs58",
@@ -10126,7 +10141,6 @@ dependencies = [
  "solana-transaction-context",
  "solana-transaction-error",
  "solana-transaction-status",
- "solana-unified-scheduler-pool",
  "solana-validator-exit",
  "solana-version",
  "solana-vote",

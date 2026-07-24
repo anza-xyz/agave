@@ -1,0 +1,29 @@
+[package]
+name = "agave-test-utilities"
+publish = false
+version = { workspace = true }
+authors = { workspace = true }
+description = { workspace = true }
+repository = { workspace = true }
+homepage = { workspace = true }
+license = { workspace = true }
+edition = { workspace = true }
+
+[features]
+dev-context-only-utils = [
+    "solana-ledger/dev-context-only-utils",
+    "solana-rpc/dev-context-only-utils",
+    "solana-runtime/dev-context-only-utils",
+    "solana-unified-scheduler-pool/dev-context-only-utils",
+]
+
+[dependencies]
+crossbeam-channel = { workspace = true }
+solana-entry = { workspace = true }
+solana-ledger = { workspace = true }
+solana-rpc = { workspace = true }
+solana-runtime = { workspace = true }
+solana-unified-scheduler-pool = { workspace = true }
+
+[lints]
+workspace = true
