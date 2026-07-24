@@ -3,12 +3,13 @@ use {
         transaction_priority_id::TransactionPriorityId,
         transaction_state::TransactionState,
         transaction_state_container::{
-            SharedBytes, StateContainer, TransactionViewState, TransactionViewStateContainer,
+            StateContainer, TransactionViewState, TransactionViewStateContainer,
         },
     },
     crate::{
         banking_stage::{
-            consumer::Consumer, decision_maker::BufferedPacketsDecision, scheduler_messages::MaxAge,
+            consumer::Consumer, decision_maker::BufferedPacketsDecision, packet_bytes,
+            scheduler_messages::MaxAge,
         },
         transaction_priority::calculate_priority_and_cost,
     },
@@ -24,6 +25,7 @@ use {
     solana_address_lookup_table_interface::state::estimate_last_valid_slot,
     solana_clock::{Epoch, Slot},
     solana_message::v0::LoadedAddresses,
+    solana_perf::packet::bytes::Bytes,
     solana_pubkey::Pubkey,
     solana_runtime::{
         bank::Bank,
@@ -140,7 +142,7 @@ pub(crate) struct TransactionViewReceiveAndBuffer {
 }
 
 impl ReceiveAndBuffer for TransactionViewReceiveAndBuffer {
-    type Transaction = RuntimeTransaction<ResolvedTransactionView<SharedBytes>>;
+    type Transaction = RuntimeTransaction<ResolvedTransactionView<Bytes>>;
     type Container = TransactionViewStateContainer;
 
     fn receive_and_buffer_packets(
@@ -268,27 +270,25 @@ impl TransactionViewReceiveAndBuffer {
                 continue;
             }
 
-            // Reserve free-space to copy packet into, run sanitization checks, and insert.
-            if let Some(transaction_id) =
-                container.try_insert_map_only_with_data(packet_data, |bytes| {
-                    match Self::try_handle_packet(
-                        bytes,
-                        root_bank,
-                        working_bank,
-                        transaction_account_lock_limit,
-                        &sanitize_config,
-                        &self.filter_keys,
-                    ) {
-                        // Parent giving us state means successful parse, ALTs resolved, no obvious static issues.
-                        Ok(state) => Ok(state),
+            let bytes = packet_bytes(packet, packet_data);
+            let state = match Self::try_handle_packet(
+                bytes,
+                root_bank,
+                working_bank,
+                transaction_account_lock_limit,
+                &sanitize_config,
+                &self.filter_keys,
+            ) {
+                // Successful parse, ALTs resolved, and no obvious static issues.
+                Ok(state) => state,
 
-                        // Parsing or some other static checks failed.
-                        Err(ref err) => {
-                            receiving_stats.add_packet_handling_error(err);
-                            Err(())
-                        }
-                    }
-                })
+                // Parsing or some other static checks failed.
+                Err(ref err) => {
+                    receiving_stats.add_packet_handling_error(err);
+                    continue;
+                }
+            };
+            let transaction_id = container.insert_map_only(state);
             {
                 let (priority, raw_nonce_address) = container
                     .get_mut_transaction_state(transaction_id)
@@ -383,7 +383,7 @@ impl TransactionViewReceiveAndBuffer {
     }
 
     fn try_handle_packet(
-        bytes: SharedBytes,
+        bytes: Bytes,
         root_bank: &Bank,
         working_bank: &Bank,
         transaction_account_lock_limit: usize,
@@ -1052,6 +1052,32 @@ mod tests {
         assert_eq!(num_buffered, 1);
         assert_eq!(num_evicted_on_nonce_dedup, 0);
 
+        verify_container(&mut container, 1);
+    }
+
+    #[test]
+    fn test_receive_and_buffer_pinned_packet() {
+        let (sender, receiver) = bounded(1024);
+        let (bank_forks, mint_keypair) = test_bank_forks();
+        let (mut receive_and_buffer, mut container) =
+            setup_transaction_view_receive_and_buffer(receiver, bank_forks.clone());
+
+        let transaction = transfer(
+            &mint_keypair,
+            &Pubkey::new_unique(),
+            1,
+            bank_forks.read().unwrap().root_bank().last_blockhash(),
+        );
+        let packet = Packet::from_data(None, transaction).unwrap();
+        sender
+            .send(Arc::new(PacketBatch::from(RecycledPacketBatch::new(vec![
+                packet,
+            ]))))
+            .unwrap();
+
+        let stats = receive(&mut receive_and_buffer, &mut container);
+        assert_eq!(stats.num_received, 1);
+        assert_eq!(stats.num_buffered, 1);
         verify_container(&mut container, 1);
     }
 
