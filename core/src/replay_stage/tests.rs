@@ -100,11 +100,7 @@ impl ProcessActiveBanksContext {
         let (ancestor_hashes_replay_update_sender, _) = bounded(1024);
         let (votor_event_sender, _) = bounded(1024);
         let migration_status = Arc::new(MigrationStatus::default());
-        let replay_tx_thread_pool = rayon::ThreadPoolBuilder::new()
-            .num_threads(1)
-            .thread_name(|i| format!("solReplayTest{i:02}"))
-            .build()
-            .expect("new rayon threadpool");
+        let replay_verification_worker_pool = ReplayVerificationWorkerPool::new(1);
         Self {
             bank_forks,
             blockstore,
@@ -120,7 +116,7 @@ impl ProcessActiveBanksContext {
             block_metadata_notifier: None,
             votor_event_sender,
             replay_mode: ForkReplayMode::Serial,
-            replay_tx_thread_pool,
+            replay_verification_worker_pool,
             migration_status,
         }
     }
@@ -1057,26 +1053,29 @@ fn do_test_dead_slot_on_complete_bank(failure: CompleteBankFailure) {
     let bank = bank_forks.write().unwrap().insert(child_bank);
 
     let slot = bank.slot();
-    let (replay_vote_sender, _replay_vote_receiver) = bounded(1024);
+    let (replay_vote_sender, replay_vote_receiver) = bounded(match failure {
+        CompleteBankFailure::ReplayError => 1024,
+        CompleteBankFailure::VerifyError => 0,
+    });
     let (finalization_cert_sender, _finalization_cert_receiver) = bounded(1024);
     let process_active_banks_context = ProcessActiveBanksContext::new_for_tests(
         bank_forks.clone(),
         blockstore.clone(),
         replay_vote_sender,
     );
-    let finish_verify = match failure {
+    let replay_vote_message_thread = match failure {
         CompleteBankFailure::ReplayError => None,
         CompleteBankFailure::VerifyError => {
-            let finish_verify = Arc::new(Barrier::new(2));
-            process_active_banks_context.replay_tx_thread_pool.spawn({
-                let finish_verify = finish_verify.clone();
-                move || {
-                    // stall verify so we can collect the result after replay finishes
-                    finish_verify.wait();
-                }
+            let start = Arc::new(Barrier::new(2));
+            let thread_start = Arc::clone(&start);
+            let handle = std::thread::spawn(move || {
+                // verification will block sending to replay_vote_sender. We use this to model
+                // getting a verify error after replay has completed.
+                thread_start.wait();
+                // pop until the channel gets closed
+                for _ in replay_vote_receiver {}
             });
-
-            Some(finish_verify)
+            Some((start, handle))
         }
     };
     let replay_result = {
@@ -1127,8 +1126,8 @@ fn do_test_dead_slot_on_complete_bank(failure: CompleteBankFailure) {
     // the sync path succeeded, we want to hit async failures
     assert_matches!(replay_result.replay_result, Some(Ok(1)));
 
-    if let Some(finish_verify) = finish_verify {
-        finish_verify.wait();
+    if let Some((start, _handle)) = &replay_vote_message_thread {
+        start.wait();
     }
 
     let my_pubkey = Pubkey::default();
@@ -1150,6 +1149,12 @@ fn do_test_dead_slot_on_complete_bank(failure: CompleteBankFailure) {
         &[replay_result],
         &my_pubkey,
     );
+
+    if let Some((_, handle)) = replay_vote_message_thread {
+        // drop the context so replay_vote_sender is dropped and the thread can exit
+        drop(process_active_banks_context);
+        handle.join().unwrap();
+    }
 
     assert!(progress.get(&slot).unwrap().dead_reason.is_some());
     assert!(blockstore.is_dead(slot));
@@ -1175,7 +1180,7 @@ fn test_complete_replay_verification_recycles_async_verification() {
     }
     let replay_progress = RwLock::new(ConfirmationProgress::new_with_async_verification(
         Hash::new_unique(),
-        Some(AsyncVerificationProgress::new()),
+        Some(AsyncVerificationProgress::new(1)),
     ));
     let mut async_verification_freelist = Vec::new();
 
@@ -1222,7 +1227,7 @@ fn test_complete_bank_replay_sends_bank_complete() {
         None,
         0,
         0,
-        Some(AsyncVerificationProgress::new()),
+        Some(AsyncVerificationProgress::new(1)),
     );
     let mut async_verification_freelist = Vec::new();
 
@@ -6382,17 +6387,13 @@ fn test_initialize_progress_and_fork_choice_with_duplicates() {
     let bank_forks = BankForks::new_rw_arc(Bank::new_for_tests(&genesis_config));
     let bank0 = bank_forks.read().unwrap().get_with_scheduler(0).unwrap();
     let shred_version = compute_shred_version(&genesis_config.hash(), None);
-    let replay_tx_thread_pool = rayon::ThreadPoolBuilder::new()
-        .num_threads(1)
-        .thread_name(|i| format!("solReplayTx{i:02}"))
-        .build()
-        .expect("new rayon threadpool");
+    let replay_verification_worker_pool = ReplayVerificationWorkerPool::new(1);
 
     process_bank_0(
         &bank0,
         shred_version,
         &blockstore,
-        &replay_tx_thread_pool,
+        &replay_verification_worker_pool,
         &ProcessOptions::default(),
         None,
         None,
@@ -6413,7 +6414,7 @@ fn test_initialize_progress_and_fork_choice_with_duplicates() {
         &blockstore,
         &bank1,
         shred_version,
-        &replay_tx_thread_pool,
+        &replay_verification_worker_pool,
         &ProcessOptions::default(),
         &mut ConfirmationProgress::new(bank0.last_blockhash()),
         None,

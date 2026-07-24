@@ -190,6 +190,30 @@ impl UnverifiedSignatures {
         })
     }
 
+    pub fn len(&self) -> usize {
+        self.signatures.len()
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.signatures.is_empty()
+    }
+
+    pub fn verify_signatures(&self, index: usize) -> bool {
+        let tx_data = &self.signatures[index];
+        tx_data
+            .signatures
+            .iter()
+            .zip(&tx_data.signer_pubkeys)
+            .all(|(signature, pubkey)| {
+                signature.verify(pubkey.as_ref(), &tx_data.serialized_message)
+            })
+    }
+
+    pub fn vote_transaction_message_hash(&self, index: usize) -> Option<Hash> {
+        let tx_data = &self.signatures[index];
+        (tx_data.is_simple_vote && !tx_data.signatures.is_empty()).then_some(tx_data.message_hash)
+    }
+
     pub fn vote_transaction_message_hashes(&self) -> Vec<Hash> {
         self.signatures
             .iter()

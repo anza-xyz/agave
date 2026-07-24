@@ -64,7 +64,7 @@ use {
         blockstore_processor::{
             self, AsyncVerificationProgress, BlockstoreProcessorError, ChainedBlockIdCheck,
             ConfirmationProgress, ExecuteBatchesInternalMetrics, ReplaySlotStats,
-            check_chained_block_id,
+            ReplayVerificationWorkerPool, check_chained_block_id,
         },
         entry_notifier_service::EntryNotifierSender,
         leader_schedule_cache::LeaderScheduleCache,
@@ -263,7 +263,7 @@ struct ProcessActiveBanksContext {
     block_metadata_notifier: Option<BlockMetadataNotifierArc>,
     votor_event_sender: VotorEventSender,
     replay_mode: ForkReplayMode,
-    replay_tx_thread_pool: ThreadPool,
+    replay_verification_worker_pool: ReplayVerificationWorkerPool,
     migration_status: Arc<MigrationStatus>,
 }
 
@@ -899,13 +899,8 @@ impl ReplayStage {
                     .expect("new rayon threadpool");
                 ForkReplayMode::Parallel(pool)
             };
-            // Thread pool to replay multiple transactions within one block in parallel
-            let replay_tx_thread_pool = rayon::ThreadPoolBuilder::new()
-                .num_threads(replay_transactions_threads.get())
-                .stack_size(8 * 1024 * 1024)
-                .thread_name(|i| format!("solReplayTx{i:02}"))
-                .build()
-                .expect("new rayon threadpool");
+            let replay_verification_worker_pool =
+                ReplayVerificationWorkerPool::new(replay_transactions_threads.get());
 
             let process_active_banks_context = ProcessActiveBanksContext {
                 bank_forks: bank_forks.clone(),
@@ -922,7 +917,7 @@ impl ReplayStage {
                 block_metadata_notifier: block_metadata_notifier.clone(),
                 votor_event_sender: votor_event_sender.clone(),
                 replay_mode,
-                replay_tx_thread_pool,
+                replay_verification_worker_pool,
                 migration_status: migration_status.clone(),
             };
             let process_bank_forks_context = ProcessBankForksContext {
@@ -3016,7 +3011,7 @@ impl ReplayStage {
             &process_active_banks_context.blockstore,
             bank,
             my_shred_version,
-            &process_active_banks_context.replay_tx_thread_pool,
+            &process_active_banks_context.replay_verification_worker_pool,
             &mut w_replay_stats,
             &mut w_replay_progress,
             false,

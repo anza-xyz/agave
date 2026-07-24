@@ -316,7 +316,8 @@ struct ReplayTransactionsThreadsArg;
 impl ThreadArg for ReplayTransactionsThreadsArg {
     const NAME: &'static str = "replay_transactions_threads";
     const LONG_NAME: &'static str = "replay-transactions-threads";
-    const HELP: &'static str = "Number of threads to use for transaction replay";
+    const HELP: &'static str =
+        "Number of threads to use for PoH and transaction signature verification during replay";
 
     fn default() -> usize {
         num_cpus::get()
