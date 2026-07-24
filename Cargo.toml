@@ -304,7 +304,6 @@ openssl = "0.10"
 pairing = "0.23.0"
 parking_lot = "0.12"
 pem = "1.1.1"
-percentage = "0.1.0"
 pickledb = { version = "0.5.1", default-features = false }
 predicates = "3.1"
 pretty-hex = "0.4.2"

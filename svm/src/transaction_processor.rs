@@ -21,7 +21,6 @@ use {
         transaction_processing_result::{ProcessedTransaction, TransactionProcessingResult},
     },
     log::debug,
-    percentage::Percentage,
     solana_account::{AccountSharedData, ReadableAccount, state_traits::StateMut},
     solana_clock::{Epoch, Slot},
     solana_hash::Hash,
@@ -42,7 +41,7 @@ use {
         },
         invoke_context::{EnvironmentConfig, InvokeContext},
         loaded_programs::{
-            EpochBoundaryPreparation, ForkGraph, ProgramCache, ProgramCacheForTxBatch,
+            EpochBoundaryPreparation, ForkGraph, Percent, ProgramCache, ProgramCacheForTxBatch,
             ProgramCacheMatchCriteria, ProgramRuntimeEnvironment, ProgramRuntimeEnvironments,
             ProgramToLoad,
         },
@@ -663,14 +662,12 @@ impl<FG: ForkGraph> TransactionBatchProcessor<FG> {
         // still at least one other batch, which will evict the program cache, even after the
         // occurrences of cooperative loading.
         if program_cache_for_tx_batch.loaded_missing || program_cache_for_tx_batch.merged_modified {
-            const SHRINK_LOADED_PROGRAMS_TO_PERCENTAGE: u8 = 90;
+            // NOTE: this is a percentage; do not set above 100.
+            const SHRINK_LOADED_PROGRAMS_TO_PERCENTAGE: Percent = 90;
             self.global_program_cache
                 .write()
                 .unwrap()
-                .evict_using_random_selection(
-                    Percentage::from(SHRINK_LOADED_PROGRAMS_TO_PERCENTAGE),
-                    self.slot,
-                );
+                .evict_using_random_selection(SHRINK_LOADED_PROGRAMS_TO_PERCENTAGE, self.slot);
         }
 
         debug!(

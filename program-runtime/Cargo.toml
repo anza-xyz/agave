@@ -35,7 +35,6 @@ bincode = { workspace = true }
 cfg-if = { workspace = true }
 itertools = { workspace = true }
 log = { workspace = true }
-percentage = { workspace = true }
 qualifier_attr = { workspace = true, optional = true }
 rand = { workspace = true }
 serde = { workspace = true }
