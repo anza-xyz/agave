@@ -566,8 +566,11 @@ impl<'ix_data> TransactionContext<'ix_data> {
                     {
                         return;
                     }
+
+                    account.resize(new_len, 0);
+                    let data_ptr = region.host_buffer().ptr() as *mut u8;
+                    let new_buffer = std::ptr::slice_from_raw_parts_mut(data_ptr, new_len);
                     unsafe {
-                        account.resize(new_len, 0);
                         // SAFETY:
                         //
                         // Contract from `MemoryRegion::redirect`: MemoryRegion must point to a
@@ -581,6 +584,11 @@ impl<'ix_data> TransactionContext<'ix_data> {
                         // * In the direct mapping case `account.resize` invalidates the buffer this
                         // region has been pointing at, but this is fixed up later in the "unshare"
                         // branch later.
+                        // * In the serialization case the section of serialized buffer has the
+                        // necessary padding after the account payload proper for resize. This
+                        // padding is a part of the originally constructed `MemoryRegion` and is
+                        // only later subsliced to not expose it before the first access to the
+                        // area (which invokes this handler.)
                         //
                         // Contract from `MemoryRegion::redirect`: For `MemoryRegion`s marked
                         // writable, the host buffer must accept arbitrary bytes being overwritten
@@ -591,12 +599,7 @@ impl<'ix_data> TransactionContext<'ix_data> {
                         // writable (even though the HostBuffer might have been initially created as
                         // immutable.) In the direct mapping case we redirect the region to the
                         // buffer stored in the account later on.
-                        //
-                        // Contract from `HostBuffer::mutable`: This host buffer must have been
-                        // initially constructed with a mutable pointer.
-                        // Evidence: See `create_memory_region_of_account`. Direct mapping case
-                        // later reconstructs this buffer from scratch. See below.
-                        region.redirect(region.host_buffer().mutable());
+                        region.redirect(new_buffer);
                     }
                 }
 

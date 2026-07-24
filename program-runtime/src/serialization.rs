@@ -24,18 +24,30 @@ pub fn modify_memory_region_of_account(
     account: &mut BorrowedInstructionAccount<'_, '_>,
     region: &mut MemoryRegion,
 ) {
+    let data_ptr = region.host_buffer().ptr() as *mut u8;
+    let new_buffer = std::ptr::slice_from_raw_parts_mut(data_ptr, account.get_data().len());
     if account.can_data_be_changed().is_ok() {
         unsafe {
             // SAFETY:
-            // Contract from `HostBuffer::mutable`: This host buffer must have been initially
-            // constructed with a mutable pointer.
-            // Evidence: this region must be pointing to a serialized data buffer which is known to
-            // be mutable.
-            region.redirect(region.host_buffer().mutable());
+            // Contract from `MemoryRegion::redirect`: The memory pointed to by the MemoryRegions
+            // must point to a valid object live for the duration of this MemoryMapping.
+            //
+            // TODO(nagisa): Local reasoning for this contract is infeasible. In particular for the
+            // `serialization.rs` code it is pretty easy to see that the regions passed in will
+            // always be larger than `account.get_data().len()`. However for `cpi.rs` callsite this
+            // is not as easy to prove and relies on careful coordination between any code that
+            // might increase the account data buffer length.
+            region.redirect(new_buffer);
         }
         region.access_violation_handler_payload = Some(account.get_index_in_transaction());
     } else {
-        region.make_immutable();
+        unsafe {
+            // SAFETY:
+            //
+            // Contract from `MemoryRegion::redirect`: same as for the call above.
+            // Evidence: same as for the call above.
+            region.redirect(new_buffer.cast_const());
+        }
         region.access_violation_handler_payload = None;
     }
 }
