@@ -1,13 +1,15 @@
 use {
     agave_votor::aggregate_accumulator::{AggregateAccumulator, AggregateAccumulatorError},
     agave_votor_messages::{consensus_message::VoteMessage, sig_verified_messages::VoteAggregate},
-    solana_bls_signatures::SignatureCompressed as BLSSignatureCompressed,
+    solana_bls_signatures::{SignatureCompressed as BLSSignatureCompressed, SignatureProjective},
     solana_pubkey::Pubkey,
     solana_signer_store::EncodeError,
+    std::sync::LazyLock,
 };
 
 pub(super) enum BuildResult {
     Empty,
+    Identity,
     EncodingError(EncodeError),
     Success {
         signature: BLSSignatureCompressed,
@@ -15,6 +17,9 @@ pub(super) enum BuildResult {
         validators: Vec<Pubkey>,
     },
 }
+
+static IDENTITY_SIGNATURE: LazyLock<BLSSignatureCompressed> =
+    LazyLock::new(|| SignatureProjective::identity().into());
 
 #[derive(Clone)]
 /// Struct to hold state for building a single reward cert.
@@ -65,6 +70,18 @@ impl PartialCert {
             Ok(res) => res,
             Err(e) => return BuildResult::EncodingError(e),
         };
+
+        // In case of a aggregate with low participation, malicious validators can collude
+        // such that the aggregate signature ends up being the identity signature.
+        // The individual votes would be valid, but their aggregate would be invalid.
+        // To protect against this, we do not pack such rewards aggregates.
+        //
+        // Note: this does not affect normal certificate construction, as that requires at least
+        // 60% stake participation. For such a certificate to aggregate to the identity signature,
+        // all 60% must be malicious.
+        if signature == *IDENTITY_SIGNATURE {
+            return BuildResult::Identity;
+        }
         BuildResult::Success {
             signature,
             bitmap,

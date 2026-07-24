@@ -13,7 +13,7 @@ use {
     solana_clock::Slot,
     solana_hash::Hash,
     solana_pubkey::Pubkey,
-    std::collections::HashMap,
+    std::{cmp::Reverse, collections::HashMap},
 };
 
 #[derive(Clone)]
@@ -69,27 +69,26 @@ impl NotarEntry {
         reward_slot: Slot,
     ) -> Result<Option<(NotarRewardCertificate, Vec<Pubkey>)>, BuildRewardCertsRespError> {
         // We can only submit one notar rewards certificate, but different validators may vote for
-        // different block ids. Pick the block id with the most stake to maximize leader rewards.
-        let selected = self
-            .partials
-            .into_iter()
-            .max_by_key(|(_block_id, partial)| partial.stake());
-        let Some((block_id, partial)) = selected else {
-            return Ok(None);
-        };
-        match partial.build_sig_bitmap() {
-            BuildResult::Empty => Ok(None),
-            BuildResult::EncodingError(e) => Err(BuildRewardCertsRespError::Encoding(e)),
-            BuildResult::Success {
-                signature,
-                bitmap,
-                validators,
-            } => {
-                let cert =
-                    NotarRewardCertificate::try_new(reward_slot, block_id, signature, bitmap)?;
-                Ok(Some((cert, validators)))
-            }
+        // different block ids. Try them in descending stake order to maximize leader rewards,
+        // skipping empty candidates and aggregates with an identity signature.
+        let mut candidates = self.partials.into_iter().collect::<Vec<_>>();
+        candidates.sort_unstable_by_key(|(_block_id, partial)| Reverse(partial.stake()));
+        for (block_id, partial) in candidates {
+            let (signature, bitmap, validators) = match partial.build_sig_bitmap() {
+                BuildResult::Empty | BuildResult::Identity => continue,
+                BuildResult::EncodingError(e) => {
+                    return Err(BuildRewardCertsRespError::Encoding(e));
+                }
+                BuildResult::Success {
+                    signature,
+                    bitmap,
+                    validators,
+                } => (signature, bitmap, validators),
+            };
+            let cert = NotarRewardCertificate::try_new(reward_slot, block_id, signature, bitmap)?;
+            return Ok(Some((cert, validators)));
         }
+        Ok(None)
     }
 }
 
@@ -98,7 +97,8 @@ mod tests {
     use {
         super::*,
         crate::block_creation_loop::rewards::certs_builder::entry::tests::{
-            get_keypair_with_stakes, get_keypairs, new_reward_vote_aggregate, validate_bitmap,
+            get_keypair_with_stakes, get_keypairs, new_identity_reward_vote_aggregate,
+            new_reward_vote_aggregate, validate_bitmap,
         },
         agave_votor_messages::{consensus_message::Block, vote::Vote},
         rand::Rng,
@@ -169,5 +169,61 @@ mod tests {
         // We should pick the block id with the most stake (not the most votes)
         assert_eq!(notar_cert.block_id, blockid0);
         validate_bitmap(notar_cert.bitmap(), 2, 5);
+    }
+
+    #[test]
+    fn build_cert_falls_back_to_buildable_candidate() {
+        let slot = 123;
+        let max_validators = 5;
+        let shred_version = rand::rng().random();
+        let keypairs = get_keypairs(max_validators, slot);
+        let mut entry = NotarEntry::new();
+
+        let blockid0 = Hash::new_unique();
+        let notar = Vote::new_notarization_vote(Block {
+            slot,
+            block_id: blockid0,
+        });
+        let (aggregate, vote_account_pubkeys) = new_identity_reward_vote_aggregate(
+            notar,
+            max_validators,
+            &[(0, 200), (1, 200)],
+            shred_version,
+        );
+        entry
+            .add_aggregate(aggregate, vote_account_pubkeys, blockid0, max_validators)
+            .unwrap();
+
+        let blockid1 = Hash::new_unique();
+        let notar = Vote::new_notarization_vote(Block {
+            slot,
+            block_id: blockid1,
+        });
+        let (aggregate, vote_account_pubkeys) = new_identity_reward_vote_aggregate(
+            notar,
+            max_validators,
+            &[(2, 150), (3, 150)],
+            shred_version,
+        );
+        entry
+            .add_aggregate(aggregate, vote_account_pubkeys, blockid1, max_validators)
+            .unwrap();
+
+        let blockid2 = Hash::new_unique();
+        let notar = Vote::new_notarization_vote(Block {
+            slot,
+            block_id: blockid2,
+        });
+        let (aggregate, vote_account_pubkeys) =
+            new_reward_vote_aggregate(notar, 4, &keypairs, None, shred_version);
+        let expected_validators = vote_account_pubkeys.clone();
+        entry
+            .add_aggregate(aggregate, vote_account_pubkeys, blockid2, max_validators)
+            .unwrap();
+
+        let (notar_cert, validators) = entry.build_cert(slot).unwrap().unwrap();
+        assert_eq!(notar_cert.block_id, blockid2);
+        assert_eq!(validators, expected_validators);
+        validate_bitmap(notar_cert.bitmap(), 1, max_validators);
     }
 }
