@@ -99,6 +99,11 @@ pub enum BlockComponentProcessorError {
 }
 
 impl BlockComponentProcessorError {
+    /// Returns whether this error can come from an optimistic-parent prefix
+    /// that a later usable `UpdateParent` makes obsolete.
+    ///
+    /// This only determines soft-dead eligibility. Replay also verifies that
+    /// the failure occurred before the `UpdateParent`.
     pub fn is_update_parent_recoverable_replay_error(&self) -> bool {
         match self {
             BlockComponentProcessorError::MissingParentMarker
@@ -110,19 +115,19 @@ impl BlockComponentProcessorError {
             | BlockComponentProcessorError::NanosecondClockOutOfBounds
             | BlockComponentProcessorError::UnexpectedInitialUpdateParent
             | BlockComponentProcessorError::GenesisCertificateOutOfOrder
+            | BlockComponentProcessorError::GenesisCertificateAlreadyPopulated
+            | BlockComponentProcessorError::GenesisCertificateInAlpenglowCluster
+            | BlockComponentProcessorError::GenesisCertificateOnNonChild
+            | BlockComponentProcessorError::GenesisCertificateFailedVerification
+            | BlockComponentProcessorError::SpuriousUpdateParent
             | BlockComponentProcessorError::AbandonedBank(_)
             | BlockComponentProcessorError::InvalidRewardCerts(_)
             | BlockComponentProcessorError::UpdateBankFooter(_)
             | BlockComponentProcessorError::InvalidFinalizationCertificate(_) => true,
             BlockComponentProcessorError::BlockComponentPreMigration
-            | BlockComponentProcessorError::GenesisCertificateAlreadyPopulated
-            | BlockComponentProcessorError::GenesisCertificateInAlpenglowCluster
-            | BlockComponentProcessorError::GenesisCertificateOnNonChild
-            | BlockComponentProcessorError::GenesisCertificateFailedVerification
             | BlockComponentProcessorError::MissingBlockFooter
             | BlockComponentProcessorError::MissingGenesisCertificateMarker
             | BlockComponentProcessorError::MultipleUpdateParents
-            | BlockComponentProcessorError::SpuriousUpdateParent
             | BlockComponentProcessorError::UpdateParentNotFirstInLeaderWindow(_) => false,
         }
     }
