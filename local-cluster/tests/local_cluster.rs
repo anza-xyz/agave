@@ -6143,6 +6143,7 @@ fn test_alpenglow_basic_equivocation() {
     let node_b_turbine_mode = TurbineMode::new(TurbineModeKind::TurbineDisabled);
     let mut b_validator_config = safe_clone_config(&a_validator_config);
     b_validator_config.turbine_mode = node_b_turbine_mode.clone();
+    let unstaked_turbine_mode = TurbineMode::new(TurbineModeKind::TurbineDisabled);
 
     // Equivocate every other slot, one shred per FEC set
     let last_duplicate = 20;
@@ -6166,6 +6167,8 @@ fn test_alpenglow_basic_equivocation() {
                 .zip(iter::repeat_with(|| true))
                 .collect(),
         ),
+        num_listeners: 1,
+        listener_turbine_mode: Some(unstaked_turbine_mode.clone()),
         slots_per_epoch,
         stakers_slot_offset: slots_per_epoch,
         skip_warmup_slots: true,
@@ -6202,11 +6205,12 @@ fn test_alpenglow_basic_equivocation() {
         sleep(Duration::from_secs(1));
     }
 
-    // Turn turbine back on, now the low staked node will be able to catchup
+    // Turn turbine back on, now the low-staked and unstaked nodes will be able to catch up
     node_b_turbine_mode.set(TurbineModeKind::Enabled);
+    unstaked_turbine_mode.set(TurbineModeKind::Enabled);
 
-    // Ensure all nodes are rooting
-    // Although the low staked node might be behind while the leader is equivocating,
+    // Ensure all nodes (including the unstaked) are rooting
+    // Although the low staked nodes might be behind while the leader is equivocating,
     // once the leader stops equivocating it will be able to catch up
     cluster.check_for_new_roots(
         32,
@@ -6217,6 +6221,7 @@ fn test_alpenglow_basic_equivocation() {
 
 fn test_alpenglow_migration(
     num_nodes: usize,
+    num_listeners: u64,
     test_name: &str,
     leader_schedule: &[usize],
 ) -> (
@@ -6249,6 +6254,7 @@ fn test_alpenglow_migration(
         validator_configs: make_identical_validator_configs(&validator_config, num_nodes),
         validator_keys: Some(keys.clone().into_iter().zip(iter::repeat(true)).collect()),
         node_stakes: node_stakes.clone(),
+        num_listeners,
         slots_per_epoch,
         stakers_slot_offset: slots_per_epoch,
         // So we don't have to wait so long
@@ -6268,11 +6274,12 @@ fn test_alpenglow_migration(
     // Create local cluster with alpenglow accounts but feature not activated
     let cluster = LocalCluster::new(&mut cluster_config, SocketAddrSpace::Unspecified);
 
-    let validator_keys: Vec<Arc<Keypair>> = cluster
-        .validators
-        .values()
-        .map(|v| v.info.keypair.clone())
-        .collect();
+    let validator_keys: Vec<Arc<Keypair>> =
+        keys.iter().map(|keys| keys.node_keypair.clone()).collect();
+    let staked_node_contact_infos = validator_keys
+        .iter()
+        .map(|keypair| cluster.get_contact_info(&keypair.pubkey()).unwrap().clone())
+        .collect_vec();
 
     let client = RpcClient::new_socket_with_commitment(
         cluster.entry_point_info.rpc().unwrap(),
@@ -6307,17 +6314,18 @@ fn test_alpenglow_migration(
 
     info!("Migration slot reached, checking for notarized votes");
 
-    // Check for new notarized votes
-    cluster.check_for_new_notarized_votes(
+    // Check that the staked nodes are sending new notarized votes
+    cluster_tests::check_for_new_notarized_votes(
+        compute_shred_version(&cluster.genesis_config.hash(), None),
         4,
+        &staked_node_contact_infos,
         test_name,
-        SocketAddrSpace::Unspecified,
         vote_listener_addr,
         &validator_keys,
         &node_stakes,
     );
 
-    // Additionally ensure that roots are being made
+    // Additionally ensure that roots are being made on all nodes (including unstaked)
     cluster.check_for_new_roots(8, test_name, SocketAddrSpace::Unspecified);
     (cluster, keys, migration_slot)
 }
@@ -6327,7 +6335,14 @@ fn test_alpenglow_migration(
 #[test]
 #[serial]
 fn test_alpenglow_migration_1() {
-    test_alpenglow_migration(1, "test_alpenglow_migration_1", &[4]);
+    test_alpenglow_migration(1, 0, "test_alpenglow_migration_1", &[4]);
+}
+
+/// An unstaked listener learns the genesis certificate from the first Alpenglow block and roots.
+#[test]
+#[serial]
+fn test_alpenglow_migration_1_with_unstaked_node() {
+    test_alpenglow_migration(1, 1, "test_alpenglow_migration_1_with_unstaked_node", &[4]);
 }
 
 /// Multi-node migration into Alpenglow, including notarized-vote and root production
@@ -6335,7 +6350,7 @@ fn test_alpenglow_migration_1() {
 #[test]
 #[serial]
 fn test_alpenglow_migration_4() {
-    test_alpenglow_migration(4, "test_alpenglow_migration_4", &[4, 4, 4, 4]);
+    test_alpenglow_migration(4, 0, "test_alpenglow_migration_4", &[4, 4, 4, 4]);
 }
 
 #[test]
@@ -6344,7 +6359,7 @@ fn test_alpenglow_restart_post_migration() {
     let test_name = "test_alpenglow_restart_post_migration";
 
     // Start a 2 node cluster and have it go through the migration
-    let (mut cluster, _, _) = test_alpenglow_migration(2, test_name, &[4, 4]);
+    let (mut cluster, _, _) = test_alpenglow_migration(2, 0, test_name, &[4, 4]);
 
     // Now restart one of the nodes. This causes the cluster to temporarily halt
     let node_pubkey = cluster.get_node_pubkeys()[0];
@@ -6371,7 +6386,7 @@ fn test_alpenglow_missed_migration_entirely() {
     // Critical that the third node is not in the leader schedule, as since
     // we clear blockstore later, we could end up producing duplicate blocks
     let (mut cluster, validator_keys, migration_slot) =
-        test_alpenglow_migration(3, test_name, &[4, 4, 0]);
+        test_alpenglow_migration(3, 0, test_name, &[4, 4, 0]);
 
     // Now kill the second node
     let node_pubkey = validator_keys[2].node_keypair.pubkey();

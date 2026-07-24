@@ -288,7 +288,7 @@ impl Tvu {
             bounded(MAX_IN_FLIGHT_CONSENSUS_EVENTS);
         let generated_cert_types = Arc::new(GeneratedCertTypes::default());
         let (certificate_sender, certificate_receiver) = bounded(MAX_CERTIFICATES_FROM_BLOCKSTORE);
-        blockstore.set_certificate_sender(certificate_sender);
+        blockstore.set_certificate_sender(certificate_sender, migration_status.clone());
 
         let bls_sigverify_threads = {
             let (bls_packet_sender, bls_packet_receiver) = bounded(MAX_ALPENGLOW_PACKET_NUM);

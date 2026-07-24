@@ -28,7 +28,10 @@ use {
         node::Node,
     },
     solana_keypair::Keypair,
-    solana_ledger::{create_new_tmp_ledger, shred::Shred},
+    solana_ledger::{
+        create_new_tmp_ledger,
+        shred::{Shred, filter::TurbineMode},
+    },
     solana_message::Message,
     solana_native_token::LAMPORTS_PER_SOL,
     solana_net_utils::{SocketAddrSpace, sockets::bind_to_localhost_unique},
@@ -85,6 +88,9 @@ pub struct ClusterConfig {
     pub validator_configs: Vec<ValidatorConfig>,
     /// Number of nodes that are unstaked and not voting (a.k.a listening)
     pub num_listeners: u64,
+    /// Optional turbine mode shared by all listener nodes. When unset, listeners inherit the
+    /// bootstrap validator's turbine mode.
+    pub listener_turbine_mode: Option<TurbineMode>,
     /// List of tuples (pubkeys, in_genesis) of each node if specified. If
     /// `in_genesis` == true, the validator's vote and stake accounts
     //  will be inserted into the genesis block instead of warming up through
@@ -129,6 +135,7 @@ impl Default for ClusterConfig {
         ClusterConfig {
             validator_configs: vec![],
             num_listeners: 0,
+            listener_turbine_mode: None,
             validator_keys: None,
             node_stakes: vec![],
             mint_lamports: DEFAULT_MINT_LAMPORTS,
@@ -467,6 +474,10 @@ impl LocalCluster {
 
         let mut listener_config = safe_clone_config(&config.validator_configs[0]);
         listener_config.voting_disabled = true;
+        listener_config.wait_for_supermajority = None;
+        if let Some(turbine_mode) = &config.listener_turbine_mode {
+            listener_config.turbine_mode = turbine_mode.clone();
+        }
         (0..config.num_listeners).for_each(|_| {
             cluster.add_validator_listener(
                 &listener_config,

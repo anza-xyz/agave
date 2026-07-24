@@ -132,8 +132,10 @@
 use {
     crate::entry::{Entry, MaxDataShredsLen},
     agave_votor_messages::{
-        certificate::{CertSignature, GenesisCert},
+        certificate::{CertSignature, CertificateType, GenesisCert},
+        consensus_message::Block,
         reward_certificate::{NotarRewardCertificate, SkipRewardCertificate},
+        unverified_vote_message::UnverifiedCertificate,
     },
     solana_bls_signatures::{
         BlsError, Signature as BLSSignature, SignatureCompressed as BLSSignatureCompressed,
@@ -141,6 +143,7 @@ use {
     },
     solana_clock::Slot,
     solana_hash::Hash,
+    solana_packet::PACKET_DATA_SIZE,
     std::mem::MaybeUninit,
     wincode::{
         ReadResult, SchemaRead, SchemaWrite, TypeMeta, WriteResult,
@@ -592,10 +595,96 @@ unsafe impl<'de, C: Config> SchemaRead<'de, C> for BlockComponent {
     }
 }
 
+/// Try to parse a Genesis certificate from a data shred payload
+pub fn genesis_certificate_from_shred(
+    payload: &[u8],
+    shred_version: u16,
+) -> Option<UnverifiedCertificate> {
+    if !BlockComponent::infer_is_block_marker(payload).unwrap_or(false) {
+        return None;
+    }
+    let BlockComponent::BlockMarker(VersionedBlockMarker::V1(marker)) =
+        wincode::config::deserialize_exact(
+            payload,
+            DefaultConfig::default().with_preallocation_size_limit::<{ PACKET_DATA_SIZE }>(),
+        )
+        .ok()?
+    else {
+        return None;
+    };
+    let BlockMarkerV1::GenesisCertificate(marker) = marker else {
+        return None;
+    };
+    let GenesisCertBlockMarker {
+        slot,
+        block_id,
+        bls_signature,
+        bitmap,
+    } = marker.into_inner();
+    if bitmap.len() > GenesisCertBlockMarker::MAX_BITMAP_SIZE {
+        return None;
+    }
+    Some(UnverifiedCertificate {
+        cert_type: CertificateType::Genesis(Block { slot, block_id }),
+        signature: bls_signature,
+        bitmap,
+        shred_version,
+    })
+}
+
+/// Converts a block footer finalization certificate into certificates ready for BLS verification.
+///
+/// A fast-finalization footer produces one `FinalizeFast` certificate. A slow-finalization footer
+/// produces the corresponding `Notarize` and `Finalize` certificates.
+pub fn finalization_certificates_from_footer(
+    block_final_cert: BlockFinalizationCert,
+    shred_version: u16,
+) -> Option<Vec<UnverifiedCertificate>> {
+    let BlockFinalizationCert {
+        slot,
+        block_id,
+        final_aggregate,
+        notar_aggregate,
+    } = block_final_cert;
+    let block = Block { slot, block_id };
+
+    let final_signature = final_aggregate.uncompress_signature().ok()?;
+    let final_bitmap = final_aggregate.into_bitmap();
+    if let Some(notar_aggregate) = notar_aggregate {
+        let notar_signature = notar_aggregate.uncompress_signature().ok()?;
+        let notar_bitmap = notar_aggregate.into_bitmap();
+        Some(vec![
+            UnverifiedCertificate {
+                cert_type: CertificateType::Notarize(block),
+                signature: notar_signature,
+                bitmap: notar_bitmap,
+                shred_version,
+            },
+            UnverifiedCertificate {
+                cert_type: CertificateType::Finalize(slot),
+                signature: final_signature,
+                bitmap: final_bitmap,
+                shred_version,
+            },
+        ])
+    } else {
+        Some(vec![UnverifiedCertificate {
+            cert_type: CertificateType::FinalizeFast(block),
+            signature: final_signature,
+            bitmap: final_bitmap,
+            shred_version,
+        }])
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use {
-        super::*, solana_bls_signatures::BLS_SIGNATURE_AFFINE_SIZE, std::iter::repeat_n,
+        super::*,
+        solana_bls_signatures::{
+            BLS_SIGNATURE_AFFINE_SIZE, Keypair as BlsKeypair, Signature as BlsSignature,
+        },
+        std::iter::repeat_n,
         wincode::config::DEFAULT_PREALLOCATION_SIZE_LIMIT,
     };
 
@@ -612,6 +701,118 @@ mod tests {
             skip_reward_cert: None,
             notar_reward_cert: None,
         }
+    }
+
+    fn test_votes_aggregate(payload: &[u8], bitmap: Vec<u8>) -> (VotesAggregate, BlsSignature) {
+        let signature: BlsSignature = BlsKeypair::new().sign(payload).into();
+        let aggregate = VotesAggregate::from_cert_signature(CertSignature { signature, bitmap });
+        (aggregate, signature)
+    }
+
+    #[test]
+    fn parse_genesis_certificate_from_shred() {
+        let parent_slot = 41;
+        let block_id = Hash::new_unique();
+        let shred_version = 123;
+        let signature: BlsSignature = BlsKeypair::new().sign(b"genesis").into();
+        let bitmap = vec![0xa5; 64];
+        let marker = GenesisCertBlockMarker {
+            slot: parent_slot,
+            block_id,
+            bls_signature: signature,
+            bitmap: bitmap.clone(),
+        };
+        let component = BlockComponent::new_block_marker(
+            VersionedBlockMarker::from_genesis_cert_block_marker(marker),
+        );
+        let payload = wincode::serialize(&component).unwrap();
+
+        let certificate = genesis_certificate_from_shred(&payload, shred_version).unwrap();
+        assert_eq!(
+            certificate.cert_type,
+            CertificateType::Genesis(Block {
+                slot: parent_slot,
+                block_id,
+            })
+        );
+        assert_eq!(certificate.signature, signature);
+        assert_eq!(certificate.bitmap, bitmap);
+        assert_eq!(certificate.shred_version, shred_version);
+
+        let mut payload_with_trailing_data = payload;
+        payload_with_trailing_data.push(0);
+        assert!(
+            genesis_certificate_from_shred(&payload_with_trailing_data, shred_version,).is_none()
+        );
+    }
+
+    #[test]
+    fn finalization_certificates_from_fast_footer() {
+        let slot = 42;
+        let block_id = Hash::new_unique();
+        let shred_version = 123;
+        let final_bitmap = vec![0x11; 64];
+        let (final_aggregate, final_signature) =
+            test_votes_aggregate(b"fast-finalize", final_bitmap.clone());
+        let certificates = finalization_certificates_from_footer(
+            BlockFinalizationCert {
+                slot,
+                block_id,
+                final_aggregate,
+                notar_aggregate: None,
+            },
+            shred_version,
+        )
+        .unwrap();
+
+        let [certificate] = certificates.as_slice() else {
+            panic!("expected one fast-finalization certificate");
+        };
+        assert_eq!(
+            certificate.cert_type,
+            CertificateType::FinalizeFast(Block { slot, block_id })
+        );
+        assert_eq!(certificate.signature, final_signature);
+        assert_eq!(certificate.bitmap, final_bitmap);
+        assert_eq!(certificate.shred_version, shred_version);
+    }
+
+    #[test]
+    fn finalization_certificates_from_slow_footer() {
+        let slot = 42;
+        let block_id = Hash::new_unique();
+        let shred_version = 123;
+        let final_bitmap = vec![0x11; 64];
+        let notar_bitmap = vec![0x22; 64];
+        let (final_aggregate, final_signature) =
+            test_votes_aggregate(b"finalize", final_bitmap.clone());
+        let (notar_aggregate, notar_signature) =
+            test_votes_aggregate(b"notarize", notar_bitmap.clone());
+        let certificates = finalization_certificates_from_footer(
+            BlockFinalizationCert {
+                slot,
+                block_id,
+                final_aggregate,
+                notar_aggregate: Some(notar_aggregate),
+            },
+            shred_version,
+        )
+        .unwrap();
+
+        let [notarize, finalize] = certificates.as_slice() else {
+            panic!("expected notarize and finalize certificates");
+        };
+        assert_eq!(
+            notarize.cert_type,
+            CertificateType::Notarize(Block { slot, block_id })
+        );
+        assert_eq!(notarize.signature, notar_signature);
+        assert_eq!(notarize.bitmap, notar_bitmap);
+        assert_eq!(notarize.shred_version, shred_version);
+        assert_eq!(finalize.cert_type, CertificateType::Finalize(slot));
+        assert_eq!(finalize.signature, final_signature);
+        assert_eq!(finalize.bitmap, final_bitmap);
+        assert_eq!(finalize.shred_version, shred_version);
     }
 
     #[test]

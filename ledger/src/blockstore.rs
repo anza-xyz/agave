@@ -44,7 +44,9 @@ use {
     solana_clock::{Slot, UnixTimestamp},
     solana_entry::{
         block_component::{
-            BlockComponent, VersionedBlockHeader, VersionedBlockMarker, VersionedUpdateParent,
+            BlockComponent, VersionedBlockFooter, VersionedBlockHeader, VersionedBlockMarker,
+            VersionedUpdateParent, finalization_certificates_from_footer,
+            genesis_certificate_from_shred,
         },
         entry::{Entry, create_ticks},
     },
@@ -118,6 +120,7 @@ pub const MAX_COMPLETED_SLOTS_IN_CHANNEL: usize = 100_000;
 /// a latency event rather than the only source of truth. Keep this small enough
 /// that Tower validators do not pay a large idle-memory cost for the channel.
 pub const MAX_UPDATE_PARENT_SIGNALS: usize = 4_096;
+const GENESIS_BLOCK_MARKER_SHRED_INDEX: u64 = DATA_SHREDS_PER_FEC_BLOCK as u64;
 // Update parent events are expected to be rare, so a small cache to avoid
 // hitting blockstore should suffice here. The "DoS" attack to cause cache churn
 // and misses is also expensive because it would involve malicious leader giving
@@ -132,6 +135,52 @@ pub type UpdateParentReceiver = Receiver<UpdateParentSignal>;
 type UpdateParentShredParentKey = (BlockLocation, Slot, u32);
 type UpdateParentShredParentCache =
     LruCache<UpdateParentShredParentKey, /* parent used for shred filtering */ Slot>;
+
+struct SignalUpdates {
+    should_signal: bool,
+    newly_completed_slots_with_last_index: Vec<(u64, u64)>,
+    update_parent_signals: Vec<UpdateParentSignal>,
+}
+
+#[derive(Debug)]
+struct CertificateForwarder {
+    /// The certificate along with the slot # of the block it was present in
+    sender: Sender<(Slot, UnverifiedCertificate)>,
+    migration_status: Arc<MigrationStatus>,
+}
+
+impl CertificateForwarder {
+    #[inline]
+    fn maybe_forward_genesis_certificate(&self, shred: &Shred) {
+        if self.migration_status.is_in_migration()
+            && let Some(certificate) = shred
+                .data()
+                .ok()
+                .and_then(|payload| genesis_certificate_from_shred(payload, shred.version()))
+        {
+            let _ = self.sender.try_send((shred.slot(), certificate));
+        }
+    }
+
+    fn maybe_forward_block_footer_certificate(
+        &self,
+        blockstore: &Blockstore,
+        slot: Slot,
+        last_index: u64,
+    ) {
+        if !self.migration_status.should_allow_block_markers(slot) {
+            return;
+        }
+        match blockstore.get_block_footer_certificates(slot, last_index) {
+            Ok(certificates) => {
+                for certificate in certificates {
+                    let _ = self.sender.try_send((slot, certificate));
+                }
+            }
+            Err(err) => warn!("failed to read block footer certificate for slot {slot}: {err}"),
+        }
+    }
+}
 
 #[derive(Debug, Clone)]
 pub struct UpdateParentSignal {
@@ -340,7 +389,7 @@ pub struct Blockstore {
     /// parent. This tiny cache avoids a blockstore lookup for each later shred
     /// in small insertion batches.
     update_parent_shred_parent_cache: Mutex<UpdateParentShredParentCache>,
-    certificate_sender: OnceLock<Sender<(Slot, UnverifiedCertificate)>>,
+    certificate_forwarder: OnceLock<CertificateForwarder>,
     pub lowest_cleanup_slot: RwLock<Slot>,
     // A sender that feeds into the BlockstoreCleanupService request channel
     // to enable manual Blockstore purge requests to be issued
@@ -589,9 +638,16 @@ impl Blockstore {
     /// the slot in the certificate is the block being certified. The carrier slot is needed to
     /// check whether block markers were active and to attribute an invalid certificate to the
     /// leader that included it.
-    pub fn set_certificate_sender(&self, sender: Sender<(Slot, UnverifiedCertificate)>) {
-        self.certificate_sender
-            .set(sender)
+    pub fn set_certificate_sender(
+        &self,
+        sender: Sender<(Slot, UnverifiedCertificate)>,
+        migration_status: Arc<MigrationStatus>,
+    ) {
+        self.certificate_forwarder
+            .set(CertificateForwarder {
+                sender,
+                migration_status,
+            })
             .expect("certificate sender already set");
     }
 
@@ -685,7 +741,7 @@ impl Blockstore {
             update_parent_shred_parent_cache: Mutex::new(LruCache::new(
                 UPDATE_PARENT_SHRED_PARENT_CACHE_CAPACITY,
             )),
-            certificate_sender: OnceLock::new(),
+            certificate_forwarder: OnceLock::new(),
             insert_shreds_lock: Mutex::<()>::default(),
             switch_block_lock: SwitchBlockLock(FairMutex::new(())),
             max_root,
@@ -2022,17 +2078,12 @@ impl Blockstore {
         &self,
         shred_insertion_tracker: &mut ShredInsertionTracker,
         metrics: &mut BlockstoreInsertionMetrics,
-    ) -> Result<(
-        /* signal slot updates */ bool,
-        /* slots updated */ Vec<u64>,
-        /* update parent signals */ Vec<UpdateParentSignal>,
-    )> {
+    ) -> Result<SignalUpdates> {
         let mut start = Measure::start("Commit Working Sets");
-        let (should_signal, newly_completed_slots, update_parent_signals) = self
-            .commit_slot_meta_working_set(
-                &shred_insertion_tracker.slot_meta_working_set,
-                &mut shred_insertion_tracker.write_batch,
-            )?;
+        let signal_updates = self.commit_slot_meta_working_set(
+            &shred_insertion_tracker.slot_meta_working_set,
+            &mut shred_insertion_tracker.write_batch,
+        )?;
 
         for (erasure_set, working_erasure_meta) in &shred_insertion_tracker.erasure_metas {
             if !working_erasure_meta.should_write() {
@@ -2077,7 +2128,7 @@ impl Blockstore {
         start.stop();
         metrics.commit_working_sets_elapsed_us += start.as_us();
 
-        Ok((should_signal, newly_completed_slots, update_parent_signals))
+        Ok(signal_updates)
     }
 
     /// The main helper function that performs the shred insertion logic
@@ -2199,8 +2250,11 @@ impl Blockstore {
         // Compute DoubleMerkleMeta for any newly completed slots so it's committed atomically
         self.compute_double_merkle_meta_for_newly_completed_slots(&mut shred_insertion_tracker)?;
 
-        let (should_signal, newly_completed_slots, update_parent_signals) =
-            self.commit_updates_to_write_batch(&mut shred_insertion_tracker, metrics)?;
+        let SignalUpdates {
+            should_signal,
+            newly_completed_slots_with_last_index,
+            update_parent_signals,
+        } = self.commit_updates_to_write_batch(&mut shred_insertion_tracker, metrics)?;
 
         // Write out the accumulated batch.
         let mut start = Measure::start("Write Batch");
@@ -2208,12 +2262,18 @@ impl Blockstore {
         start.stop();
         metrics.write_batch_elapsed_us += start.as_us();
 
+        if let Some(forwarder) = self.certificate_forwarder.get() {
+            for (slot, last_index) in newly_completed_slots_with_last_index.iter() {
+                forwarder.maybe_forward_block_footer_certificate(self, *slot, *last_index);
+            }
+        }
+
         send_signals(
             &self.new_shreds_signals.lock().unwrap(),
             &self.completed_slots_senders.lock().unwrap(),
             &self.update_parent_signals.lock().unwrap(),
             should_signal,
-            newly_completed_slots,
+            newly_completed_slots_with_last_index,
             update_parent_signals,
         );
 
@@ -2745,6 +2805,12 @@ impl Blockstore {
     ) -> std::result::Result<(), InsertDataShredError> {
         let slot = shred.slot();
         let shred_index = u64::from(shred.index());
+
+        if shred_index == GENESIS_BLOCK_MARKER_SHRED_INDEX
+            && let Some(forwarder) = self.certificate_forwarder.get()
+        {
+            forwarder.maybe_forward_genesis_certificate(&shred);
+        }
 
         let ShredInsertionTracker {
             index_working_set,
@@ -5895,13 +5961,9 @@ impl Blockstore {
         &self,
         slot_meta_working_set: &HashMap<(BlockLocation, u64), SlotMetaWorkingSetEntry>,
         write_batch: &mut WriteBatch,
-    ) -> Result<(
-        /* signal slot updates */ bool,
-        /* slots updated */ Vec<u64>,
-        /* update parent signals */ Vec<UpdateParentSignal>,
-    )> {
+    ) -> Result<SignalUpdates> {
         let mut should_signal = false;
-        let mut newly_completed_slots = vec![];
+        let mut newly_completed_slots_with_last_index = vec![];
         let mut update_parent_signals = Vec::new();
         let completed_slots_senders = self.completed_slots_senders.lock().unwrap();
 
@@ -5913,7 +5975,11 @@ impl Blockstore {
             let meta: &SlotMeta = &RefCell::borrow(&*slot_meta_entry.new_slot_meta);
             let meta_backup = &slot_meta_entry.old_slot_meta;
             if !completed_slots_senders.is_empty() && is_newly_completed_slot(meta, meta_backup) {
-                newly_completed_slots.push(slot);
+                newly_completed_slots_with_last_index.push((
+                    slot,
+                    meta.last_index
+                        .expect("newly completed slot has last index"),
+                ));
             }
             // Check if the working copy of the metadata has changed
             if Some(meta) != meta_backup.as_ref() {
@@ -5933,7 +5999,11 @@ impl Blockstore {
             }
         }
 
-        Ok((should_signal, newly_completed_slots, update_parent_signals))
+        Ok(SignalUpdates {
+            should_signal,
+            newly_completed_slots_with_last_index,
+            update_parent_signals,
+        })
     }
 
     /// Obtain the SlotMeta from the in-memory slot_meta_working_set or load
@@ -6073,6 +6143,50 @@ impl Blockstore {
         let shreds = entries_to_test_shreds(&entries, bank.slot(), bank.parent_slot(), true, 0);
         self.insert_shreds(shreds, false).unwrap();
     }
+
+    fn get_block_footer_certificates(
+        &self,
+        slot: Slot,
+        last_index: u64,
+    ) -> Result<Vec<UnverifiedCertificate>> {
+        let fec_set_size = DATA_SHREDS_PER_FEC_BLOCK as u32;
+        let Some(final_fec_start) = u32::try_from(last_index)
+            .ok()
+            .and_then(|index| index.checked_add(1))
+            .and_then(|end| end.checked_sub(fec_set_size))
+        else {
+            return Ok(vec![]);
+        };
+        let Some(footer_fec_start) = final_fec_start.checked_sub(fec_set_size) else {
+            return Ok(vec![]);
+        };
+        let completed_ranges = std::iter::once(footer_fec_start..final_fec_start).collect();
+        let components =
+            self.get_slot_components_in_block(slot, &completed_ranges, /*slot_meta:*/ None)?;
+        let [BlockComponent::BlockMarker(VersionedBlockMarker::V1(marker))] = components.as_slice()
+        else {
+            return Ok(vec![]);
+        };
+        let Some(VersionedBlockFooter::V1(footer)) = marker.as_block_footer() else {
+            return Ok(vec![]);
+        };
+        let Some(certificate) = footer.block_final_cert.clone() else {
+            return Ok(vec![]);
+        };
+
+        let shred_bytes = self
+            .get_data_shred(slot, u64::from(footer_fec_start))?
+            .ok_or(BlockstoreError::MissingShred(
+                slot,
+                u64::from(footer_fec_start),
+            ))?;
+        let shred = Shred::new_from_serialized_shred(shred_bytes).map_err(|err| {
+            BlockstoreError::InvalidShredData(format!(
+                "could not deserialize block footer shred in slot {slot}: {err}"
+            ))
+        })?;
+        Ok(finalization_certificates_from_footer(certificate, shred.version()).unwrap_or_default())
+    }
 }
 
 // Updates the `completed_data_indexes` with a new shred `new_shred_index`.
@@ -6144,7 +6258,7 @@ fn send_signals(
     completed_slots_senders: &[Sender<Vec<u64>>],
     update_parent_senders: &[UpdateParentSender],
     should_signal: bool,
-    newly_completed_slots: Vec<u64>,
+    newly_completed_slots: Vec<(u64, u64)>,
     update_parent_signals: Vec<UpdateParentSignal>,
 ) {
     if should_signal {
@@ -6162,11 +6276,14 @@ fn send_signals(
     }
 
     if !completed_slots_senders.is_empty() && !newly_completed_slots.is_empty() {
-        let mut slots: Vec<_> = (0..completed_slots_senders.len() - 1)
-            .map(|_| newly_completed_slots.clone())
+        let slots: Vec<_> = (0..completed_slots_senders.len())
+            .map(|_| {
+                newly_completed_slots
+                    .iter()
+                    .map(|(slot, _)| *slot)
+                    .collect()
+            })
             .collect();
-
-        slots.push(newly_completed_slots);
 
         for (signal, slots) in completed_slots_senders.iter().zip(slots) {
             let res = signal.try_send(slots);
