@@ -38,7 +38,7 @@ use {
         net::{IpAddr, Ipv4Addr, SocketAddr},
         path::{Path, PathBuf},
         process::exit,
-        sync::{Arc, Mutex, RwLock},
+        sync::{Arc, Mutex},
         thread,
         time::{Duration, SystemTime, UNIX_EPOCH},
     },
@@ -434,7 +434,7 @@ fn main() {
     let tower_storage = Arc::new(FileTowerStorage::new(ledger_path.clone()));
     let vote_history_storage = Arc::new(FileVoteHistoryStorage::new(ledger_path.clone()));
 
-    let admin_service_post_init = Arc::new(RwLock::new(None));
+    let admin_service_post_init = genesis.admin_rpc_service_post_init.clone();
     // If geyser_plugin_config value is invalid, the validator will exit when the values are extracted below
     let (rpc_to_plugin_manager_sender, rpc_to_plugin_manager_receiver) =
         if matches.is_present("geyser_plugin_config") {

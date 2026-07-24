@@ -167,7 +167,7 @@ pub struct TestValidatorGenesis {
     pub log_messages_bytes_limit: Option<usize>,
     pub transaction_account_lock_limit: Option<usize>,
     pub geyser_plugin_manager: Arc<ArcSwap<GeyserPluginManager>>,
-    admin_rpc_service_post_init: Arc<RwLock<Option<AdminRpcRequestMetadataPostInit>>>,
+    pub admin_rpc_service_post_init: Arc<RwLock<Option<AdminRpcRequestMetadataPostInit>>>,
 }
 
 impl Default for TestValidatorGenesis {
