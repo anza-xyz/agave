@@ -1,6 +1,10 @@
 use {
     super::Bank,
-    crossbeam_utils::CachePadded,
+    crossbeam_queue::SegQueue,
+    crossbeam_utils::{
+        CachePadded,
+        sync::{Parker, Unparker},
+    },
     rayon::{
         ThreadPool, ThreadPoolBuilder,
         iter::{IntoParallelIterator, ParallelIterator},
@@ -10,13 +14,16 @@ use {
     solana_lattice_hash::lt_hash::LtHash,
     solana_pubkey::Pubkey,
     std::{
-        array, hint,
+        array,
+        collections::hash_map::Entry,
+        hint,
         mem::size_of,
         sync::{
             Arc, LazyLock, Mutex,
             atomic::{AtomicU64, AtomicUsize, Ordering},
         },
-        time::Instant,
+        thread,
+        time::{Duration, Instant},
     },
 };
 
@@ -27,7 +34,7 @@ const NUM_ACCOUNTS_HASHER_THREADS: usize = 4;
 const MAX_BYTES_SEEN_ACCOUNTS_FREELIST: usize = 10_000_000;
 
 impl Bank {
-    /// Enqueues the accounts lt hash updates for `accounts` to the accounts hasher thread pool.
+    /// Enqueues the accounts lt hash updates for `accounts` to the accounts hasher threads.
     ///
     /// This fn is meant to be called by on-chain events, e.g. transaction processing.
     /// This fn deduplicates from `accounts`, keeping only the latest version of each account.
@@ -43,12 +50,12 @@ impl Bank {
             return;
         }
 
+        let manager = accounts_lt_hash_manager();
         let seen_accounts_freelist = seen_accounts_freelist();
         let mut seen_accounts = seen_accounts_freelist.try_pop().unwrap_or_default();
-        let async_progress = &self.accounts_lt_hash_async_progress;
-        let thread_pool = accounts_hasher_thread_pool();
 
         // process accounts in reverse because we must only count the latest version of each account
+        let mut num_enqueued = 0;
         for index in (0..accounts.len()).rev() {
             let address = accounts.pubkey(index);
             if !seen_accounts.insert(*address) {
@@ -67,22 +74,28 @@ impl Bank {
                 // the account was ephemeral; skip it
             } else {
                 // the account was modified; enqueue this update
-                async_progress.spawn(
-                    thread_pool,
-                    AccountsLtHashUpdate {
+                let async_progress = Arc::clone(&self.accounts_lt_hash_async_progress);
+                manager.queue.push(QueuedAccountsLtHashUpdate {
+                    async_progress,
+                    num_updates: 1,
+                    inner: AccountsLtHashUpdate {
                         address: *address,
                         prev_account,
                         curr_account,
                     },
-                );
+                });
+                num_enqueued += 1;
             }
         }
+        self.accounts_lt_hash_async_progress
+            .num_jobs_pending
+            .fetch_add(num_enqueued, Ordering::Relaxed);
 
         // reclaim the seen accounts hashset
         seen_accounts_freelist.try_push(seen_accounts);
     }
 
-    /// Enqueues the accounts lt hash updates for `accounts` to the accounts hasher thread pool.
+    /// Enqueues the accounts lt hash updates for `accounts` to the accounts hasher threads.
     ///
     /// This fn is meant to be called by off-chain events, meaning we know/control `accounts`.
     /// Contrasting with `enqueue_on_chain_accounts_lt_hash_updates()`, this fn:
@@ -90,7 +103,7 @@ impl Bank {
     /// - Does not assume loading the previous version of accounts is fast,
     ///   e.g. when storing stake accounts as part of partitioned epoch rewards.
     ///
-    /// If Some, `thread_pool_for_hashing_accounts` will be used
+    /// If Some, `thread_pool_for_loading_accounts` will be used
     /// to load the previous version of accounts in parallel.
     pub fn enqueue_off_chain_accounts_lt_hash_updates<'a>(
         &self,
@@ -126,12 +139,11 @@ impl Bank {
             }
         }
 
-        let async_progress = &self.accounts_lt_hash_async_progress;
         let thread_pool_for_hashing_accounts = accounts_hasher_thread_pool();
 
-        // A closure that does the loading and enqueueing, so code is shared
+        // A closure that does the loading and spawning, so code is shared
         // whether using the thread_pool_for_loading_accounts or not.
-        let load_then_enqueue = |index| {
+        let load_then_spawn = |index| {
             let address = accounts.pubkey(index);
             let prev_account = self
                 .rc
@@ -141,19 +153,16 @@ impl Bank {
             let curr_account = accounts.account(index, |account| {
                 (account.lamports() != 0).then(|| account.take_account())
             });
-            if prev_account.is_none() && curr_account.is_none() {
-                // the account was ephemeral; skip it
-            } else {
-                // the account was modified; enqueue this update
-                async_progress.spawn(
-                    thread_pool_for_hashing_accounts,
-                    AccountsLtHashUpdate {
-                        address: *address,
-                        prev_account,
-                        curr_account,
-                    },
-                );
-            }
+            let async_progress = Arc::clone(&self.accounts_lt_hash_async_progress);
+            async_progress.spawn(
+                thread_pool_for_hashing_accounts,
+                AccountsLtHashUpdate {
+                    address: *address,
+                    prev_account,
+                    curr_account,
+                },
+                1,
+            );
         };
 
         if let Some(thread_pool_for_loading_accounts) = thread_pool_for_loading_accounts {
@@ -162,11 +171,15 @@ impl Bank {
             thread_pool_for_loading_accounts.install(|| {
                 (0..accounts.len())
                     .into_par_iter()
-                    .for_each(load_then_enqueue);
+                    .for_each(load_then_spawn);
             });
         } else {
-            (0..accounts.len()).for_each(load_then_enqueue);
+            (0..accounts.len()).for_each(load_then_spawn);
         }
+
+        self.accounts_lt_hash_async_progress
+            .num_jobs_pending
+            .fetch_add(accounts.len(), Ordering::Relaxed);
     }
 
     /// Updates the accounts lt hash.
@@ -179,12 +192,17 @@ impl Bank {
     /// This function waits for any in-flight jobs on the accounts hasher threads,
     /// computes their combined delta lt hash, then mixes it into the bank.
     pub fn finish_accounts_lt_hash_updates(&self) {
+        let manager = accounts_lt_hash_manager();
+
         let timer = Instant::now();
+        manager.num_banks_waiting.fetch_add(1, Ordering::Relaxed);
+        manager.unparker.unpark();
         let num_jobs_total = {
             let mut accounts_lt_hash = self.accounts_lt_hash.lock().unwrap();
             self.accounts_lt_hash_async_progress
                 .finish(&mut accounts_lt_hash.0)
         };
+        manager.num_banks_waiting.fetch_sub(1, Ordering::Relaxed);
         let finish_time = timer.elapsed();
 
         let seen_accounts_freelist_stats = seen_accounts_freelist().stats();
@@ -240,8 +258,8 @@ pub struct AccountsLtHashAsyncProgress {
     //  │       │                │         │       │                │         │
     //  │0      │6 <-- unaligned │2054     │2176   │2182            │4230     │4352
     //
-    accumulators: Arc<[Mutex<CachePadded<LtHash>>; NUM_ACCOUNTS_HASHER_THREADS]>,
-    num_jobs_pending: Arc<AtomicUsize>,
+    accumulators: [Mutex<CachePadded<LtHash>>; NUM_ACCOUNTS_HASHER_THREADS],
+    num_jobs_pending: AtomicUsize,
     num_jobs_total: AtomicU64,
 }
 
@@ -249,36 +267,37 @@ impl AccountsLtHashAsyncProgress {
     /// Creates a new AccountsLtHashAsyncProgress variable, which is suitable for a new Bank.
     pub fn new() -> Self {
         Self {
-            accumulators: Arc::new(array::from_fn(|_| {
-                Mutex::new(CachePadded::new(LtHash::identity()))
-            })),
-            num_jobs_pending: Arc::new(AtomicUsize::new(0)),
+            accumulators: array::from_fn(|_| Mutex::new(CachePadded::new(LtHash::identity()))),
+            num_jobs_pending: AtomicUsize::new(0),
             num_jobs_total: AtomicU64::new(0),
         }
     }
 
     /// Enqueues `update` into `thread_pool` for asynchronous processing.
-    fn spawn(&self, thread_pool: &'static ThreadPool, update: AccountsLtHashUpdate) {
-        self.num_jobs_pending.fetch_add(1, Ordering::Relaxed);
+    fn spawn(
+        self: Arc<Self>,
+        thread_pool: &'static ThreadPool,
+        update: AccountsLtHashUpdate,
+        num_updates: usize,
+    ) {
         self.num_jobs_total.fetch_add(1, Ordering::Relaxed);
         thread_pool.spawn({
-            let accumulators = Arc::clone(&self.accumulators);
-            let num_jobs_pending = Arc::clone(&self.num_jobs_pending);
             move || {
                 // SAFETY: We always call from the same/correct Rayon thread pool.
                 let worker_index = thread_pool.current_thread_index().unwrap();
 
                 // SAFETY: There are num_threads accumulators, and each
                 // thread's index shall always be in range 0..num_threads.
-                debug_assert!(worker_index < accumulators.len());
-                let accumulator = unsafe { accumulators.get_unchecked(worker_index) };
+                debug_assert!(worker_index < self.accumulators.len());
+                let accumulator = unsafe { self.accumulators.get_unchecked(worker_index) };
 
                 Self::process(&mut accumulator.lock().unwrap(), update);
 
                 // Decrementing the number of pending jobs MUST happen *after*
                 // accumulating the result.  This ensures `finish()` cannot
                 // observe zero pending jobs until all workers are done.
-                num_jobs_pending.fetch_sub(1, Ordering::Relaxed);
+                self.num_jobs_pending
+                    .fetch_sub(num_updates, Ordering::Relaxed);
             }
         });
     }
@@ -320,6 +339,130 @@ impl AccountsLtHashAsyncProgress {
             accum_lt_hash.mix_in(&curr_lt_hash.0);
         }
     }
+}
+
+/// Returns the global accounts lt hash manager.
+///
+/// Note, the manager instance will be created on first call.
+fn accounts_lt_hash_manager() -> &'static AccountsLtHashManager {
+    static MANAGER: LazyLock<AccountsLtHashManager> = LazyLock::new(AccountsLtHashManager::new);
+    &MANAGER
+}
+
+/// Manages account updates.
+///
+/// Replay/etc threads push account updates into a queue owned by the manager.
+/// The manager handles deduplicating updates and spawning into the thread pool.
+/// This helps speed up the replay/etc threads since they don't need to wait
+/// for spawning into the thread pool to complete.
+struct AccountsLtHashManager {
+    /// the queue of account updates
+    queue: Arc<SegQueue<QueuedAccountsLtHashUpdate>>,
+    /// thread unparker, used to wake up early and break out of the dedup loop
+    unparker: Unparker,
+    /// A count used to signal when banks are waiting on updates.
+    /// When non-zero, updates are spawned immediately; the manager does not wait to dedup.
+    num_banks_waiting: Arc<AtomicUsize>,
+}
+
+impl AccountsLtHashManager {
+    /// How often the accounts lt hash manager drains and deduplicates queued updates.
+    const DEDUP_INTERVAL: Duration = Duration::from_millis(2);
+
+    fn new() -> Self {
+        let queue = Arc::new(SegQueue::<QueuedAccountsLtHashUpdate>::new());
+        let num_banks_waiting = Arc::new(AtomicUsize::new(0));
+        let parker = Parker::new();
+        let unparker = parker.unparker().clone();
+        thread::Builder::new()
+            .name("solAcctsHashMgr".into())
+            .spawn({
+                let queue = Arc::clone(&queue);
+                let num_banks_waiting = Arc::clone(&num_banks_waiting);
+                move || {
+                    let thread_pool = accounts_hasher_thread_pool();
+                    let mut deduplicated_updates = ahash::HashMap::default();
+                    loop {
+                        // poll the queue for up to DEDUP_INTERVAL
+                        let start_time = Instant::now();
+                        loop {
+                            while let Some(queued_update) = queue.pop() {
+                                Self::deduplicate_update(&mut deduplicated_updates, queued_update);
+                            }
+
+                            let remaining_time =
+                                Self::DEDUP_INTERVAL.saturating_sub(start_time.elapsed());
+                            if remaining_time == Duration::ZERO
+                                || num_banks_waiting.load(Ordering::Relaxed) > 0
+                            {
+                                // If we've been polling the queue for longer than the dedup
+                                // interval OR a bank is actively waiting (i.e. freezing),
+                                // then break and immediately spawn the updates we have.
+                                break;
+                            }
+
+                            parker.park_timeout(remaining_time);
+                        }
+
+                        // spawn updates into thread pool for processing
+                        for (_, queued_update) in deduplicated_updates.drain() {
+                            let QueuedAccountsLtHashUpdate {
+                                async_progress,
+                                num_updates,
+                                inner: account_update,
+                            } = queued_update;
+                            async_progress.spawn(thread_pool, account_update, num_updates);
+                        }
+                    }
+                }
+            })
+            .expect("new accounts hasher manager thread");
+        Self {
+            queue,
+            unparker,
+            num_banks_waiting,
+        }
+    }
+
+    /// Deduplicates account updates.
+    ///
+    /// Given an account update, `queued_updated`, check `deduplicated_updates`
+    /// if this account already has a pending update.
+    /// If yes, deduplicate the update by merging the two: retain the existing
+    /// update's 'previous' version, and use `queued_update`'s 'current' version.
+    /// If no, insert `queued_update` into `deduplicated_updates`.
+    fn deduplicate_update(
+        deduplicated_updates: &mut ahash::HashMap<(usize, Pubkey), QueuedAccountsLtHashUpdate>,
+        queued_update: QueuedAccountsLtHashUpdate,
+    ) {
+        // Include the AsyncProgress instance in the hashmap key as a proxy for the Bank.
+        // Since updates for the same address can apply to different banks/forks.
+        let key = (
+            Arc::as_ptr(&queued_update.async_progress) as usize,
+            queued_update.inner.address,
+        );
+        match deduplicated_updates.entry(key) {
+            Entry::Vacant(entry) => {
+                entry.insert(queued_update);
+            }
+            Entry::Occupied(mut entry) => {
+                let value = entry.get_mut();
+                value.num_updates += queued_update.num_updates;
+                value.inner.curr_account = queued_update.inner.curr_account;
+            }
+        }
+    }
+}
+
+/// An account update, queued to the manager.
+struct QueuedAccountsLtHashUpdate {
+    /// The async progress instance this account update should apply to.
+    async_progress: Arc<AccountsLtHashAsyncProgress>,
+    /// The number of total updates this instance represents.
+    /// When updates are deduplicated, this count is incremented.
+    num_updates: usize,
+    // The actual account update.
+    inner: AccountsLtHashUpdate,
 }
 
 /// A single accounts lt hash update to process.
@@ -992,6 +1135,61 @@ mod tests {
         accounts.shuffle(&mut rand::rng());
 
         bank.store_accounts((bank.slot(), accounts.as_slice()), None);
+    }
+
+    #[test]
+    fn test_deduplicate_account_updates() {
+        let address = Pubkey::new_unique();
+        let async_progress1 = Arc::new(AccountsLtHashAsyncProgress::new());
+        let async_progress2 = Arc::new(AccountsLtHashAsyncProgress::new());
+        let mut deduplicated_updates = ahash::HashMap::default();
+
+        AccountsLtHashManager::deduplicate_update(
+            &mut deduplicated_updates,
+            QueuedAccountsLtHashUpdate {
+                async_progress: Arc::clone(&async_progress1),
+                num_updates: 1,
+                inner: AccountsLtHashUpdate {
+                    address,
+                    prev_account: Some(AccountSharedData::new(11, 0, &Pubkey::default())),
+                    curr_account: Some(AccountSharedData::new(12, 0, &Pubkey::default())),
+                },
+            },
+        );
+        // An update for the same account; should be deduplicated.
+        AccountsLtHashManager::deduplicate_update(
+            &mut deduplicated_updates,
+            QueuedAccountsLtHashUpdate {
+                async_progress: Arc::clone(&async_progress1),
+                num_updates: 1,
+                inner: AccountsLtHashUpdate {
+                    address,
+                    prev_account: Some(AccountSharedData::new(12, 0, &Pubkey::default())),
+                    curr_account: Some(AccountSharedData::new(13, 0, &Pubkey::default())),
+                },
+            },
+        );
+        // An update for the same account, but in a different slot/bank;
+        // should *NOT* be deduplicated.
+        AccountsLtHashManager::deduplicate_update(
+            &mut deduplicated_updates,
+            QueuedAccountsLtHashUpdate {
+                async_progress: Arc::clone(&async_progress2),
+                num_updates: 1,
+                inner: AccountsLtHashUpdate {
+                    address,
+                    prev_account: Some(AccountSharedData::new(21, 0, &Pubkey::default())),
+                    curr_account: Some(AccountSharedData::new(22, 0, &Pubkey::default())),
+                },
+            },
+        );
+
+        assert_eq!(deduplicated_updates.len(), 2);
+        let key = (Arc::as_ptr(&async_progress1) as usize, address);
+        let update = deduplicated_updates.get(&key).unwrap();
+        assert_eq!(update.num_updates, 2);
+        assert_eq!(update.inner.prev_account.as_ref().unwrap().lamports(), 11);
+        assert_eq!(update.inner.curr_account.as_ref().unwrap().lamports(), 13);
     }
 
     /// Ensure freelist respects max size.

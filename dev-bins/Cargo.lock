@@ -7939,6 +7939,7 @@ dependencies = [
  "bitvec",
  "bytemuck",
  "crossbeam-channel",
+ "crossbeam-queue",
  "crossbeam-utils",
  "dashmap",
  "imbl",

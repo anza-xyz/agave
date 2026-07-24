@@ -1041,7 +1041,7 @@ pub struct Bank {
     accounts_lt_hash: Mutex<AccountsLtHash>,
 
     /// Track progress of the asynchronous accounts lt hashing for this Bank.
-    accounts_lt_hash_async_progress: AccountsLtHashAsyncProgress,
+    accounts_lt_hash_async_progress: Arc<AccountsLtHashAsyncProgress>,
 
     /// The unique identifier for the corresponding block for this bank.
     /// None for banks that have not yet completed replay or for leader banks as we cannot populate block_id
@@ -1266,7 +1266,7 @@ impl Bank {
             #[cfg(feature = "dev-context-only-utils")]
             hash_overrides: Arc::new(Mutex::new(HashOverrides::default())),
             accounts_lt_hash: Mutex::new(AccountsLtHash(LtHash::identity())),
-            accounts_lt_hash_async_progress: AccountsLtHashAsyncProgress::new(),
+            accounts_lt_hash_async_progress: Arc::new(AccountsLtHashAsyncProgress::new()),
             block_id: RwLock::new(None),
             expected_bank_hash: RwLock::new(None),
             bank_hash_stats: AtomicBankHashStats::default(),
@@ -1533,7 +1533,7 @@ impl Bank {
             #[cfg(feature = "dev-context-only-utils")]
             hash_overrides: parent.hash_overrides.clone(),
             accounts_lt_hash: Mutex::new(parent.accounts_lt_hash.lock().unwrap().clone()),
-            accounts_lt_hash_async_progress: AccountsLtHashAsyncProgress::new(),
+            accounts_lt_hash_async_progress: Arc::new(AccountsLtHashAsyncProgress::new()),
             block_id: RwLock::new(None),
             expected_bank_hash: RwLock::new(None),
             bank_hash_stats: AtomicBankHashStats::default(),
@@ -2189,7 +2189,7 @@ impl Bank {
             #[cfg(feature = "dev-context-only-utils")]
             hash_overrides: Arc::new(Mutex::new(HashOverrides::default())),
             accounts_lt_hash: Mutex::new(fields.accounts_lt_hash),
-            accounts_lt_hash_async_progress: AccountsLtHashAsyncProgress::new(),
+            accounts_lt_hash_async_progress: Arc::new(AccountsLtHashAsyncProgress::new()),
             block_id: RwLock::new(fields.block_id),
             bank_hash_stats: AtomicBankHashStats::new(&fields.bank_hash_stats),
             epoch_rewards_calculation_cache: Arc::new(Mutex::new(HashMap::default())),
