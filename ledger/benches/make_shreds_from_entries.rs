@@ -1,5 +1,6 @@
 #![allow(clippy::arithmetic_side_effects)]
 use {
+    agave_cluster_transport::evicting_sender::EvictingSender,
     criterion::{Criterion, criterion_group, criterion_main},
     rand::Rng,
     solana_entry::entry::Entry,
@@ -15,7 +16,6 @@ use {
     solana_packet::PACKET_DATA_SIZE,
     solana_pubkey::Pubkey,
     solana_runtime::bank::Bank,
-    solana_streamer::evicting_sender::EvictingSender,
     solana_transaction::Transaction,
     std::{hint::black_box, iter::repeat_with, sync::Arc},
 };

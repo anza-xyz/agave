@@ -98,7 +98,7 @@ pub(crate) fn recv_from(
     max_wait: Option<Duration>,
     poll_fd: &mut [PollFd],
 ) -> Result<usize> {
-    use crate::streamer::SOCKET_READ_TIMEOUT;
+    use crate::receiver::SOCKET_READ_TIMEOUT;
 
     // Implementation note:
     // This is a reimplementation of the above (now, non-unix) `recv_from` function, and
@@ -215,7 +215,7 @@ pub(crate) fn recv_from(
                     let timeout = if i == 0 {
                         // This emulates the behavior of the original `recv_from` function,
                         // where it anticipates that the first read of the socket will block for
-                        // `crate::streamer::SOCKET_READ_TIMEOUT` before failing with
+                        // `crate::receiver::SOCKET_READ_TIMEOUT` before failing with
                         // `ErrorKind::WouldBlock`. The condition `i == 0` indicates that we are just
                         // after the initial read, which did not result in any packets being read.
                         SOCKET_READ_TIMEOUT

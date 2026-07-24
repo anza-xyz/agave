@@ -14,7 +14,6 @@ use {
     solana_net_utils::multihomed_sockets::{
         BindIpAddrs, CurrentSocket, FixedSocketProvider, MultihomedSocketProvider, SocketProvider,
     },
-    solana_pubkey::Pubkey,
     std::{
         cmp::Reverse,
         collections::HashMap,
@@ -63,14 +62,6 @@ where
 }
 
 pub(crate) const SOCKET_READ_TIMEOUT: Duration = Duration::from_secs(1);
-
-// Total stake and nodes => stake map
-#[derive(Default)]
-pub struct StakedNodes {
-    stakes: Arc<HashMap<Pubkey, u64>>,
-    overrides: HashMap<Pubkey, u64>,
-    total_stake: u64,
-}
 
 pub type PacketBatchReceiver = Receiver<PacketBatch>;
 pub type PacketBatchSender = Sender<PacketBatch>;
@@ -401,42 +392,6 @@ impl StreamerSendStats {
     }
 }
 
-impl StakedNodes {
-    fn calculate_total_stake(
-        stakes: &HashMap<Pubkey, u64>,
-        overrides: &HashMap<Pubkey, u64>,
-    ) -> u64 {
-        stakes
-            .iter()
-            .filter(|(pubkey, _)| !overrides.contains_key(pubkey))
-            .map(|(_, &stake)| stake)
-            .chain(overrides.values().copied())
-            .sum()
-    }
-
-    pub fn new(stakes: Arc<HashMap<Pubkey, u64>>, overrides: HashMap<Pubkey, u64>) -> Self {
-        let total_stake = Self::calculate_total_stake(&stakes, &overrides);
-        Self {
-            stakes,
-            overrides,
-            total_stake,
-        }
-    }
-
-    pub fn get_node_stake(&self, pubkey: &Pubkey) -> Option<u64> {
-        self.overrides
-            .get(pubkey)
-            .or_else(|| self.stakes.get(pubkey))
-            .filter(|&&stake| stake > 0)
-            .copied()
-    }
-
-    #[inline]
-    pub fn total_stake(&self) -> u64 {
-        self.total_stake
-    }
-}
-
 pub trait ResponseSender {
     /// Send a batch of packets.
     ///
@@ -527,9 +482,10 @@ mod test {
     use {
         super::*,
         crate::{
-            packet::{PACKET_DATA_SIZE, Packet, RecycledPacketBatch},
+            packet::{
+                PACKET_DATA_SIZE, Packet, RecycledPacketBatch, filter_packets_by_socket_addr_space,
+            },
             sendmmsg::batch_send,
-            streamer::receiver,
         },
         crossbeam_channel::bounded,
         solana_net_utils::{SocketAddrSpace, sockets::bind_to_localhost_unique},

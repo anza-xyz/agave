@@ -8,8 +8,8 @@ use {
         },
         quic::{QUIC_MAX_TIMEOUT, QuicServerError, QuicStreamerConfig, StreamerStats},
         quic_socket::QuicSocket,
-        streamer::StakedNodes,
     },
+    agave_cluster_transport::staked_nodes::StakedNodes,
     crossbeam_channel::{Receiver, Sender, bounded},
     quinn::{
         ClientConfig, Connection, EndpointConfig, IdleTimeout, TokioRuntime, TransportConfig,

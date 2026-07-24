@@ -7,13 +7,13 @@ use {
         ShredFlags, ShredType, ShredVariant, layout, merkle,
     },
     crate::blockstore,
+    agave_cluster_transport::{evicting_sender::EvictingSender, receiver::ChannelSend},
     assert_matches::debug_assert_matches,
     solana_clock::Slot,
     solana_epoch_schedule::EpochSchedule,
     solana_perf::packet::PacketRef,
     solana_pubkey::Pubkey,
     solana_runtime::bank::Bank,
-    solana_streamer::{evicting_sender::EvictingSender, streamer::ChannelSend},
     std::{
         sync::{
             Arc,

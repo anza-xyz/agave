@@ -1,5 +1,6 @@
 pub use solana_connection_cache::connection_cache::{DEFAULT_MAX_CONNECTIONS, Protocol};
 use {
+    agave_cluster_transport::staked_nodes::StakedNodes,
     solana_connection_cache::{
         client_connection::ClientConnection,
         connection_cache::{
@@ -10,7 +11,6 @@ use {
     solana_keypair::Keypair,
     solana_pubkey::Pubkey,
     solana_quic_client::{QuicConfig, QuicConnectionManager, QuicPool},
-    solana_streamer::streamer::StakedNodes,
     solana_tls_utils::NotifyKeyUpdate,
     solana_transaction_error::TransportResult,
     solana_udp_client::{UdpConfig, UdpConnectionManager, UdpPool},
