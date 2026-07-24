@@ -105,7 +105,6 @@ solana-nonce-account = { workspace = true, features = ["wincode"] }
 solana-poseidon = { workspace = true, optional = true }
 solana-precompile-error = { workspace = true, optional = true }
 solana-program-entrypoint = { workspace = true }
-solana-program-pack = { workspace = true }
 solana-program-runtime = { workspace = true }
 solana-pubkey = { workspace = true }
 solana-rent = { workspace = true }
@@ -121,7 +120,6 @@ solana-svm-type-overrides = { workspace = true }
 solana-syscalls = { workspace = true, optional = true }
 solana-system-interface = { workspace = true }
 solana-system-program = { workspace = true, optional = true }
-solana-sysvar-id = { workspace = true }
 solana-transaction-context = { workspace = true }
 solana-transaction-error = { workspace = true }
 solana-vote-program = { workspace = true, optional = true }
@@ -133,8 +131,6 @@ xxhash-rust = { workspace = true, optional = true, features = ["xxh64"] }
 [dev-dependencies]
 assert_matches = { workspace = true }
 env_logger = { workspace = true }
-libsecp256k1 = { workspace = true }
-openssl = { workspace = true }
 protosol = { workspace = true }
 rand = { workspace = true }
 shuttle = { workspace = true }
@@ -144,7 +140,6 @@ solana-clock = { workspace = true }
 solana-compute-budget = { path = "../compute-budget", features = ["agave-unstable-api"] }
 solana-compute-budget-interface = { workspace = true }
 solana-compute-budget-program = { path = "../programs/compute-budget", features = ["agave-unstable-api"] }
-solana-ed25519-program = { workspace = true }
 solana-epoch-schedule = { workspace = true }
 solana-fee-calculator = { workspace = true }
 solana-keypair = { workspace = true }
@@ -155,8 +150,6 @@ solana-program-runtime = { path = "../program-runtime", features = ["agave-unsta
 solana-pubkey = { workspace = true, features = ["rand"] }
 solana-rent = { workspace = true }
 solana-sbpf = { workspace = true, features = ["jit"] }
-solana-secp256k1-program = { workspace = true, features = ["bincode"] }
-solana-secp256r1-program = { workspace = true, features = ["openssl-vendored"] }
 solana-signature = { workspace = true, features = ["rand"] }
 solana-signer = { workspace = true }
 solana-svm = { path = ".", features = ["agave-unstable-api", "dev-context-only-utils", "svm-internal"] }
@@ -168,6 +161,8 @@ solana-transaction = { workspace = true, features = ["dev-context-only-utils"] }
 solana-transaction-context = { path = "../transaction-context", features = ["agave-unstable-api", "bincode", "dev-context-only-utils"] }
 spl-token-interface = { workspace = true }
 test-case = { workspace = true }
+solana-program-pack = { workspace = true }
+solana-sysvar-id = { workspace = true }
 
 [lints]
 workspace = true

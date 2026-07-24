@@ -68,7 +68,6 @@ serde_bytes = { workspace = true }
 solana-bloom = { workspace = true }
 solana-clock = { workspace = true }
 solana-entry = { workspace = true }
-solana-epoch-schedule = { workspace = true }
 solana-frozen-abi = { workspace = true, optional = true, features = [
     "frozen-abi",
 ] }
@@ -108,7 +107,6 @@ anyhow = { workspace = true }
 bincode = { workspace = true }
 bs58 = { workspace = true }
 criterion = { workspace = true }
-num_cpus = { workspace = true }
 serial_test = { workspace = true }
 solana-gossip = { path = ".", features = ["agave-unstable-api", "dev-context-only-utils", "conformance"] }
 solana-net-utils = { path = "../net-utils", features = ["agave-unstable-api", "dev-context-only-utils"] }

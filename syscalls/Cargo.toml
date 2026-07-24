@@ -72,7 +72,6 @@ solana-program = { workspace = true }
 solana-program-runtime = { path = "../program-runtime", features = ["agave-unstable-api", "dev-context-only-utils"] }
 solana-pubkey = { workspace = true, features = ["rand"] }
 solana-slot-hashes = { workspace = true }
-solana-svm-callback = { path = "../svm-callback", features = ["agave-unstable-api"] }
 solana-transaction-context = { path = "../transaction-context", features = ["agave-unstable-api", "bincode", "dev-context-only-utils"] }
 test-case = { workspace = true }
 

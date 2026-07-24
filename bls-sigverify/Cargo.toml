@@ -40,7 +40,6 @@ solana-hash = { workspace = true }
 solana-ledger = { workspace = true }
 solana-measure = { workspace = true }
 solana-metrics = { workspace = true }
-solana-packet = { workspace = true }
 solana-perf = { workspace = true }
 solana-pubkey = { workspace = true }
 solana-runtime = { workspace = true }
@@ -53,7 +52,6 @@ wincode = { workspace = true }
 agave-bls-sigverify = { path = ".", features = ["agave-unstable-api", "dev-context-only-utils"] }
 agave-logger = { workspace = true }
 agave-votor = { path = "../votor", features = ["agave-unstable-api"] }
-bincode = { workspace = true }
 criterion = { workspace = true }
 solana-epoch-schedule = { workspace = true }
 solana-genesis-config = { workspace = true }

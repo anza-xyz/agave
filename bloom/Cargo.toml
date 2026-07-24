@@ -38,7 +38,6 @@ solana-frozen-abi = { workspace = true, optional = true, features = [
 solana-frozen-abi-macro = { workspace = true, optional = true, features = [
     "frozen-abi",
 ] }
-solana-sanitize = { workspace = true }
 solana-time-utils = { workspace = true }
 wincode = { workspace = true, features = ["bv"] }
 

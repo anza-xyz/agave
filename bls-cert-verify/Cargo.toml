@@ -26,7 +26,6 @@ rayon = { workspace = true }
 solana-bls-signatures = { workspace = true, features = ["parallel"] }
 solana-signer-store = { workspace = true }
 thiserror = { workspace = true }
-wincode = { workspace = true }
 
 [dev-dependencies]
 agave-bls-cert-verify = { path = ".", features = ["agave-unstable-api", "dev-context-only-utils"] }

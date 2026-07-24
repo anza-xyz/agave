@@ -151,7 +151,6 @@ solana-precompile-error = { workspace = true }
 solana-program-binaries = { workspace = true, optional = true }
 solana-program-runtime = { workspace = true, features = ["metrics"] }
 solana-pubkey = { workspace = true, features = ["rand", "wincode"] }
-solana-rayon-threadlimit = { workspace = true }
 solana-rent = { workspace = true, features = ["wincode"] }
 solana-reward-info = { workspace = true }
 solana-runtime-transaction = { workspace = true }
@@ -189,7 +188,6 @@ solana-vote-interface = { workspace = true }
 solana-vote-program = { workspace = true }
 spl-generic-token = { workspace = true }
 static_assertions = { workspace = true }
-strum = { workspace = true, features = ["derive"] }
 strum_macros = { workspace = true }
 tempfile = { workspace = true }
 thiserror = { workspace = true }
@@ -197,11 +195,9 @@ wincode = { workspace = true, features = ["smallvec"] }
 
 [dev-dependencies]
 agave-logger = { path = "../logger", features = ["agave-unstable-api"] }
-agave-transaction-view = { workspace = true }
 bitvec = { workspace = true }
 criterion = { workspace = true }
 libsecp256k1 = { workspace = true }
-memoffset = { workspace = true }
 proptest = { workspace = true }
 solana-accounts-db = { path = "../accounts-db", features = ["agave-unstable-api", "dev-context-only-utils"] }
 solana-builtins = { path = "../builtins", features = ["agave-unstable-api", "dev-context-only-utils"] }

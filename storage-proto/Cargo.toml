@@ -23,7 +23,6 @@ agave-unstable-api = []
 
 [dependencies]
 bs58 = { workspace = true }
-prost = { workspace = true }
 serde = { workspace = true }
 solana-account-decoder = { workspace = true }
 solana-hash = { workspace = true }

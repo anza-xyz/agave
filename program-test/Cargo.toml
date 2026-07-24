@@ -19,7 +19,6 @@ agave-unstable-api = []
 [dependencies]
 agave-feature-set = { workspace = true }
 agave-logger = { workspace = true }
-assert_matches = { workspace = true }
 async-trait = { workspace = true }
 base64 = { workspace = true }
 bincode = { workspace = true }
@@ -35,7 +34,6 @@ solana-banks-interface = { workspace = true }
 solana-banks-server = { workspace = true }
 solana-clock = { workspace = true }
 solana-cluster-type = { workspace = true }
-solana-commitment-config = { workspace = true }
 solana-compute-budget = { workspace = true }
 solana-epoch-rewards = { workspace = true }
 solana-epoch-schedule = { workspace = true }
@@ -44,9 +42,6 @@ solana-genesis-config = { workspace = true }
 solana-hash = { workspace = true }
 solana-instruction = { workspace = true }
 solana-keypair = { workspace = true }
-solana-loader-v3-interface = { workspace = true }
-solana-message = { workspace = true }
-solana-msg = { workspace = true }
 solana-native-token = { workspace = true }
 solana-poh-config = { workspace = true }
 solana-program-binaries = { workspace = true }
@@ -59,26 +54,30 @@ solana-runtime = { workspace = true }
 solana-sbpf = { workspace = true }
 solana-sdk-ids = { workspace = true }
 solana-signer = { workspace = true }
-solana-stake-history = { workspace = true }
-solana-stake-interface = { workspace = true }
 solana-svm-log-collector = { workspace = true }
-solana-system-interface = { workspace = true }
 solana-sysvar = { workspace = true }
 solana-sysvar-id = { workspace = true }
-solana-transaction = { workspace = true }
 solana-transaction-context = { workspace = true }
-solana-transaction-error = { workspace = true }
 solana-vote-program = { workspace = true }
-spl-generic-token = { workspace = true }
-spl-memo-interface = { workspace = true }
 thiserror = { workspace = true }
 tokio = { workspace = true, features = ["full"] }
 
 [dev-dependencies]
-solana-cpi = { workspace = true }
 solana-program = { workspace = true }
 solana-program-test = { path = ".", features = ["agave-unstable-api"] }
 test-case = { workspace = true }
+assert_matches = { workspace = true }
+solana-commitment-config = { workspace = true }
+solana-loader-v3-interface = { workspace = true }
+solana-message = { workspace = true }
+solana-msg = { workspace = true }
+solana-stake-history = { workspace = true }
+solana-stake-interface = { workspace = true }
+solana-system-interface = { workspace = true }
+solana-transaction = { workspace = true }
+solana-transaction-error = { workspace = true }
+spl-generic-token = { workspace = true }
+spl-memo-interface = { workspace = true }
 
 [lints]
 workspace = true
