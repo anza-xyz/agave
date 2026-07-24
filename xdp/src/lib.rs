@@ -47,14 +47,3 @@ pub fn interface_ipv4(interface: &str) -> Result<Ipv4Addr, io::Error> {
 pub fn interface_ipv4(_interface: &str) -> Result<Ipv4Addr, io::Error> {
     unimplemented!()
 }
-
-/// Returns the IPv4 address of the device associated with the default route.
-#[cfg(target_os = "linux")]
-pub fn default_device_ipv4() -> Result<Ipv4Addr, io::Error> {
-    crate::device::NetworkDevice::new_from_default_route()?.ipv4_addr()
-}
-
-#[cfg(not(target_os = "linux"))]
-pub fn default_device_ipv4() -> Result<Ipv4Addr, io::Error> {
-    unimplemented!()
-}
