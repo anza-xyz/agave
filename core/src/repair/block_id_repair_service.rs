@@ -176,8 +176,8 @@ struct RepairState {
     /// Peers from which we will accept Ping challenges, keyed by sender and source socket.
     expected_ping_responses: HashMap<(Pubkey, SocketAddr), u64>,
 
-    /// Repair events that are pending because Turbine/Eager repair hasn't completed yet.
-    /// These are re-processed each iteration until Turbine/Eager repair completes or marks the slot dead.
+    /// Repair events that cannot yet be acted upon.
+    /// These are re-processed each iteration until they become actionable.
     /// Only the lowest slots are retained if the queue reaches [`MAX_PENDING_REPAIR_EVENTS`].
     pending_repair_events: BTreeSet<RepairEvent>,
 
@@ -380,7 +380,7 @@ impl BlockIdRepairService {
         } else {
             // Otherwise wait for:
             // - a new block repair request from votor,
-            // - turbine block full event from blockstore (for deferred events)
+            // - block completion event from blockstore (for pending events)
             // - a response to our repair request
             //
             // If none of those are received, we still continue on in order to retry any timed out requests
@@ -740,10 +740,7 @@ impl BlockIdRepairService {
                     }));
                 }
 
-                // We don't have the block. Check if turbine failed (dead)
-                // Note: we require the invariant that Turbine + Eager repair will either:
-                // - Eventually fill in all shreds for a slot (slot_meta.is_full()) resulting in the DMR calculation
-                // - Mark the slot as dead
+                // We don't have the block. Check if the original slot is dead.
                 if blockstore.is_dead(block.slot) {
                     info!(
                         "{my_pubkey}: FetchBlock: slot {} is dead, starting repair for \
@@ -755,15 +752,17 @@ impl BlockIdRepairService {
                     }));
                 }
 
-                // Turbine did not fail, check the progress
+                // Check whether the Original column has completed a block.
                 match blockstore.get_double_merkle_root(block.slot, BlockLocation::Original)? {
                     None => {
-                        // Turbine has not completed, defer and check again later
                         debug!(
-                            "{my_pubkey}: FetchBlock: Turbine not complete for slot {}, deferring",
+                            "{my_pubkey}: FetchBlock: No complete Original block for slot {}, \
+                             starting repair",
                             block.slot
                         );
-                        Ok(PendingRepairDecision::KeepPending)
+                        Ok(PendingRepairDecision::Act(RepairAction::StartRepair {
+                            block,
+                        }))
                     }
                     Some(turbine_block_id) if turbine_block_id != block.block_id => {
                         // Turbine has a different block
@@ -1730,8 +1729,7 @@ mod tests {
     }
 
     #[test]
-    fn test_process_repair_event_deferred_when_turbine_not_complete() {
-        // When Turbine hasn't completed (slot not dead, no DMR), event should be deferred
+    fn test_process_repair_event_starts_repair_without_original_dmr() {
         let ledger_path = get_tmp_ledger_path_auto_delete!();
         let blockstore = Arc::new(Blockstore::open(ledger_path.path()).unwrap());
         let (mut state, _bank_forks) = create_test_repair_state();
@@ -1745,16 +1743,36 @@ mod tests {
         process_repair_event_for_test(Pubkey::new_unique(), event, 0, &blockstore, &mut state)
             .unwrap();
 
-        // Verify: No repair request was added (event was deferred)
+        assert_eq!(
+            state.pending_repair_requests.pop(),
+            Some(OutgoingMessage::Metadata(
+                BlockIdRepairType::ParentAndFecSetCount { slot, block_id }
+            ))
+        );
+        assert!(state.pending_repair_events.is_empty());
+        assert!(state.requested_blocks.contains(&Block { slot, block_id }));
+    }
+
+    #[test]
+    fn test_process_repair_event_matching_dmr_without_slot_meta_kept_pending() {
+        let ledger_path = get_tmp_ledger_path_auto_delete!();
+        let blockstore = Arc::new(Blockstore::open(ledger_path.path()).unwrap());
+        let (mut state, _bank_forks) = create_test_repair_state();
+
+        let slot = 100u64;
+        let block_id = Hash::new_unique();
+        blockstore
+            .set_double_merkle_root(slot, BlockLocation::Original, block_id)
+            .unwrap();
+        let event = RepairEvent::FetchBlock {
+            block: Block { slot, block_id },
+        };
+
+        process_repair_event_for_test(Pubkey::new_unique(), event, 0, &blockstore, &mut state)
+            .unwrap();
+
         assert!(state.pending_repair_requests.is_empty());
-
-        // Verify: Event was deferred
-        assert_eq!(state.pending_repair_events.len(), 1);
-        let RepairEvent::FetchBlock { block } = state.pending_repair_events.first().unwrap();
-        assert_eq!(block.slot, slot);
-        assert_eq!(block.block_id, block_id);
-
-        // Verify: block was NOT added to requested_blocks (so it can be re-added when reprocessed)
+        assert_eq!(state.pending_repair_events, BTreeSet::from([event]));
         assert!(!state.requested_blocks.contains(&Block { slot, block_id }));
     }
 
