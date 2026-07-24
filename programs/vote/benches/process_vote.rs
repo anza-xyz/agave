@@ -1,9 +1,6 @@
-#![feature(test)]
-
-extern crate test;
-
 use {
     agave_feature_set::{FeatureSet, deprecate_legacy_vote_ixs},
+    criterion::{BatchSize, Criterion, criterion_group, criterion_main},
     solana_account::{Account, AccountSharedData, create_account_for_test},
     solana_clock::{Clock, Slot},
     solana_hash::Hash,
@@ -23,7 +20,7 @@ use {
             VoteStateVersions, handler::VoteStateHandler,
         },
     },
-    test::Bencher,
+    std::time::Duration,
 };
 
 fn create_accounts() -> (
@@ -75,7 +72,6 @@ fn create_accounts() -> (
     };
 
     let transaction_accounts = vec![
-        (solana_vote_program::id(), AccountSharedData::default()),
         (vote_pubkey, AccountSharedData::from(vote_account)),
         (
             sysvar::slot_hashes::id(),
@@ -89,7 +85,7 @@ fn create_accounts() -> (
     ];
     let mut instruction_account_metas = (0..4)
         .map(|index_in_callee| AccountMeta {
-            pubkey: transaction_accounts[1usize.saturating_add(index_in_callee)].0,
+            pubkey: transaction_accounts[index_in_callee].0,
             is_signer: false,
             is_writable: false,
         })
@@ -106,50 +102,80 @@ fn create_accounts() -> (
 }
 
 fn bench_process_deprecated_vote_instruction(
-    bencher: &mut Bencher,
+    c: &mut Criterion,
+    name: &str,
     transaction_accounts: Vec<KeyedAccountSharedData>,
     instruction_account_metas: Vec<AccountMeta>,
     instruction_data: Vec<u8>,
 ) {
     let mut deprecated_feature_set = FeatureSet::all_enabled();
     deprecated_feature_set.deactivate(&deprecate_legacy_vote_ixs::id());
-    bencher.iter(|| {
-        mock_process_instruction_with_feature_set(
-            &solana_vote_program::id(),
-            &instruction_data,
-            transaction_accounts.clone(),
-            instruction_account_metas.clone(),
-            Ok(()),
-            solana_vote_program::vote_processor::Entrypoint::register,
-            |_invoke_context| {},
-            |_invoke_context| {},
-            &deprecated_feature_set.runtime_features(),
-        );
+    let feature_set = deprecated_feature_set.runtime_features();
+    c.bench_function(name, |bencher| {
+        // Processing a vote mutates the vote-account state, so hand each
+        // iteration a fresh clone of the accounts/metas via the (untimed)
+        // batched setup closure.
+        bencher.iter_batched(
+            || {
+                (
+                    transaction_accounts.clone(),
+                    instruction_account_metas.clone(),
+                )
+            },
+            |(transaction_accounts, instruction_account_metas)| {
+                mock_process_instruction_with_feature_set(
+                    &solana_vote_program::id(),
+                    &instruction_data,
+                    transaction_accounts,
+                    instruction_account_metas,
+                    Ok(()),
+                    solana_vote_program::vote_processor::Entrypoint::register,
+                    |_invoke_context| {},
+                    |_invoke_context| {},
+                    &feature_set,
+                );
+            },
+            BatchSize::SmallInput,
+        )
     });
 }
 
 fn bench_process_vote_instruction(
-    bencher: &mut Bencher,
+    c: &mut Criterion,
+    name: &str,
     transaction_accounts: Vec<KeyedAccountSharedData>,
     instruction_account_metas: Vec<AccountMeta>,
     instruction_data: Vec<u8>,
 ) {
-    bencher.iter(|| {
-        mock_process_instruction(
-            &solana_vote_program::id(),
-            &instruction_data,
-            transaction_accounts.clone(),
-            instruction_account_metas.clone(),
-            Ok(()),
-            solana_vote_program::vote_processor::Entrypoint::register,
-            |_invoke_context| {},
-            |_invoke_context| {},
-        );
+    c.bench_function(name, |bencher| {
+        // Processing a vote mutates the vote-account state, so hand each
+        // iteration a fresh clone of the accounts/metas via the (untimed)
+        // batched setup closure.
+        bencher.iter_batched(
+            || {
+                (
+                    transaction_accounts.clone(),
+                    instruction_account_metas.clone(),
+                )
+            },
+            |(transaction_accounts, instruction_account_metas)| {
+                mock_process_instruction(
+                    &solana_vote_program::id(),
+                    &instruction_data,
+                    transaction_accounts,
+                    instruction_account_metas,
+                    Ok(()),
+                    solana_vote_program::vote_processor::Entrypoint::register,
+                    |_invoke_context| {},
+                    |_invoke_context| {},
+                );
+            },
+            BatchSize::SmallInput,
+        )
     });
 }
 
-#[bench]
-fn bench_process_vote(bencher: &mut Bencher) {
+fn bench_process_vote(c: &mut Criterion) {
     let (num_initial_votes, slot_hashes, transaction_accounts, instruction_account_metas) =
         create_accounts();
 
@@ -169,15 +195,15 @@ fn bench_process_vote(bencher: &mut Bencher) {
     let instruction_data = bincode::serialize(&VoteInstruction::Vote(vote)).unwrap();
 
     bench_process_deprecated_vote_instruction(
-        bencher,
+        c,
+        "process_vote",
         transaction_accounts,
         instruction_account_metas,
         instruction_data,
     );
 }
 
-#[bench]
-fn bench_process_vote_state_update(bencher: &mut Bencher) {
+fn bench_process_vote_state_update(c: &mut Criterion) {
     let (num_initial_votes, slot_hashes, transaction_accounts, instruction_account_metas) =
         create_accounts();
 
@@ -199,15 +225,15 @@ fn bench_process_vote_state_update(bencher: &mut Bencher) {
         bincode::serialize(&VoteInstruction::UpdateVoteState(vote_state_update)).unwrap();
 
     bench_process_deprecated_vote_instruction(
-        bencher,
+        c,
+        "process_vote_state_update",
         transaction_accounts,
         instruction_account_metas,
         instruction_data,
     );
 }
 
-#[bench]
-fn bench_process_tower_sync(bencher: &mut Bencher) {
+fn bench_process_tower_sync(c: &mut Criterion) {
     let (num_initial_votes, slot_hashes, transaction_accounts, instruction_account_metas) =
         create_accounts();
 
@@ -229,9 +255,24 @@ fn bench_process_tower_sync(bencher: &mut Bencher) {
     let instruction_data = bincode::serialize(&VoteInstruction::TowerSync(tower_sync)).unwrap();
 
     bench_process_vote_instruction(
-        bencher,
+        c,
+        "process_tower_sync",
         transaction_accounts,
         instruction_account_metas,
         instruction_data,
     );
 }
+
+criterion_group! {
+    name = benches;
+    // Trim criterion's defaults so the suite runs in a couple of seconds.
+    // These are cheap, low-variance CPU-bound benchmarks, so short windows and
+    // few samples already give tight confidence intervals.
+    config = Criterion::default()
+        .warm_up_time(Duration::from_millis(250))
+        .measurement_time(Duration::from_millis(400))
+        .sample_size(10)
+        .without_plots();
+    targets = bench_process_vote, bench_process_vote_state_update, bench_process_tower_sync,
+}
+criterion_main!(benches);
