@@ -523,7 +523,6 @@ name = "agave-votor-messages"
 version = "4.3.0-alpha.2"
 dependencies = [
  "agave-feature-set",
- "agave-votor-messages",
  "bitvec",
  "crossbeam-channel",
  "log",
@@ -538,7 +537,6 @@ dependencies = [
  "solana-pubkey 4.2.0",
  "solana-short-vec",
  "solana-signer-store",
- "tempfile",
  "thiserror 2.0.18",
  "wincode",
 ]
@@ -11690,7 +11688,6 @@ dependencies = [
 name = "solana-vote"
 version = "4.3.0-alpha.2"
 dependencies = [
- "agave-logger",
  "arbitrary",
  "bencher",
  "bincode",
