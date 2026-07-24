@@ -608,11 +608,9 @@ fn produce_window(
         bank_completion_measure.stop();
         ctx.slot_metrics.report();
 
-        ctx.metrics.bank_timeout_completion_count += 1;
-        let _ = ctx
-            .metrics
-            .bank_timeout_completion_elapsed_hist
-            .increment(bank_completion_measure.as_us());
+        ctx.metrics
+            .bank_completion_timing_stats
+            .record(bank_completion_measure.as_us());
 
         // Produce our next slot
         slot += 1;
@@ -627,7 +625,7 @@ fn produce_window(
     }
 
     window_production_start.stop();
-    ctx.metrics.window_production_elapsed += window_production_start.as_us();
+    ctx.metrics.window_production_elapsed_us += window_production_start.as_us();
     Ok(())
 }
 
@@ -1068,16 +1066,7 @@ fn start_leader_wait_for_parent_replay(
         match maybe_start_leader(slot, parent_slot, parent_hash, ctx) {
             Ok(()) => {
                 slot_delay_start.stop();
-                let _ = ctx
-                    .slot_metrics
-                    .slot_delay_hist
-                    .increment(slot_delay_start.as_us())
-                    .inspect_err(|e| {
-                        error!(
-                            "{}: unable to increment slot delay histogram {e:?}",
-                            ctx.my_pubkey
-                        );
-                    });
+                ctx.slot_metrics.slot_delay_us = slot_delay_start.as_us();
 
                 ctx.slot_metrics.report();
                 return Ok(ctx
@@ -1110,16 +1099,6 @@ fn start_leader_wait_for_parent_replay(
                 };
                 wait_start.stop();
                 ctx.slot_metrics.replay_is_behind_cumulative_wait_elapsed += wait_start.as_us();
-                let _ = ctx
-                    .slot_metrics
-                    .replay_is_behind_wait_elapsed_hist
-                    .increment(wait_start.as_us())
-                    .inspect_err(|e| {
-                        error!(
-                            "{}: unable to increment replay is behind histogram {e:?}",
-                            ctx.my_pubkey
-                        );
-                    });
             }
             Err(StartLeaderError::ParentBlockIdMismatch {
                 expected, actual, ..
@@ -1144,10 +1123,6 @@ fn start_leader_wait_for_parent_replay(
                 }
                 wait_start.stop();
                 ctx.slot_metrics.replay_is_behind_cumulative_wait_elapsed += wait_start.as_us();
-                let _ = ctx
-                    .slot_metrics
-                    .replay_is_behind_wait_elapsed_hist
-                    .increment(wait_start.as_us());
             }
             Err(e) => return Err(e),
         }
