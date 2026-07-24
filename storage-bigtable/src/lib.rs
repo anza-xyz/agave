@@ -7,6 +7,7 @@ use {
     log::*,
     serde::{Deserialize, Serialize},
     solana_clock::{Slot, UnixTimestamp},
+    solana_entry::block_component::VersionedBlockMarker,
     solana_message::v0::LoadedAddresses,
     solana_metrics::datapoint_info,
     solana_pubkey::Pubkey,
@@ -68,6 +69,9 @@ pub enum Error {
 
     #[error("tokio error")]
     TokioJoinError(JoinError),
+
+    #[error("Wincode serialization error: {0}")]
+    WincodeWrite(#[from] wincode::WriteError),
 }
 
 impl std::convert::From<bigtable::Error> for Error {
@@ -84,6 +88,31 @@ impl std::convert::From<std::io::Error> for Error {
 
 pub type Result<T> = std::result::Result<T, Error>;
 
+fn deserialize_block_markers(
+    slot: Slot,
+    block_markers: Vec<Vec<u8>>,
+) -> Result<Vec<VersionedBlockMarker>> {
+    block_markers
+        .into_iter()
+        .enumerate()
+        .map(|(index, marker)| {
+            wincode::deserialize(&marker).map_err(|err| {
+                bigtable::Error::ObjectCorrupt(format!(
+                    "Failed to deserialize block marker {index} for slot {slot}: {err}"
+                ))
+                .into()
+            })
+        })
+        .collect()
+}
+
+fn serialize_block_markers(block_markers: &[VersionedBlockMarker]) -> Result<Vec<Vec<u8>>> {
+    block_markers
+        .iter()
+        .map(|marker| wincode::serialize(marker).map_err(Error::from))
+        .collect()
+}
+
 // Convert a slot to its bucket representation whereby lower slots are always lexically ordered
 // before higher slots
 fn slot_to_key(slot: Slot) -> String {
@@ -95,6 +124,10 @@ fn slot_to_blocks_key(slot: Slot) -> String {
 }
 
 fn slot_to_entries_key(slot: Slot) -> String {
+    slot_to_key(slot)
+}
+
+fn slot_to_block_markers_key(slot: Slot) -> String {
     slot_to_key(slot)
 }
 
@@ -438,6 +471,7 @@ pub const DEFAULT_APP_PROFILE_ID: &str = "default";
 pub const DEFAULT_MAX_MESSAGE_SIZE: usize = 64 * 1024 * 1024; // 64MB
 
 const BLOCKS_TABLE_NAME: &str = "blocks";
+const BLOCK_MARKERS_TABLE_NAME: &str = "block-markers";
 const ENTRIES_TABLE_NAME: &str = "entries";
 const TX_TABLE_NAME: &str = "tx";
 const TX_BY_ADDR_TABLE_NAME: &str = "tx-by-addr";
@@ -476,6 +510,7 @@ const METRICS_REPORT_INTERVAL_MS: u64 = 10_000;
 #[derive(Default)]
 struct LedgerStorageStats {
     num_blocks_table_reads: AtomicI64,
+    num_block_markers_table_reads: AtomicI64,
     num_entries_table_reads: AtomicI64,
     num_tx_table_reads: AtomicI64,
     num_tx_by_addr_table_reads: AtomicI64,
@@ -485,6 +520,12 @@ struct LedgerStorageStats {
 impl LedgerStorageStats {
     fn increment_num_blocks_table_reads(&self) {
         self.num_blocks_table_reads.fetch_add(1, Ordering::Relaxed);
+        self.maybe_report();
+    }
+
+    fn increment_num_block_markers_table_reads(&self) {
+        self.num_block_markers_table_reads
+            .fetch_add(1, Ordering::Relaxed);
         self.maybe_report();
     }
 
@@ -511,6 +552,12 @@ impl LedgerStorageStats {
                 (
                     "num_blocks_table_reads",
                     self.num_blocks_table_reads.swap(0, Ordering::Relaxed),
+                    i64
+                ),
+                (
+                    "num_block_markers_table_reads",
+                    self.num_block_markers_table_reads
+                        .swap(0, Ordering::Relaxed),
                     i64
                 ),
                 (
@@ -721,6 +768,23 @@ impl LedgerStorage {
             })?;
         let entries = entry_cell_data.entries.into_iter().map(Into::into);
         Ok(entries)
+    }
+
+    pub async fn get_block_markers(&self, slot: Slot) -> Result<Vec<VersionedBlockMarker>> {
+        trace!("LedgerStorage::get_block_markers request received: {slot:?}");
+        self.stats.increment_num_block_markers_table_reads();
+        let mut bigtable = self.connection.client();
+        let block_markers = bigtable
+            .get_bincode_cell::<Vec<Vec<u8>>>(
+                BLOCK_MARKERS_TABLE_NAME,
+                slot_to_block_markers_key(slot),
+            )
+            .await
+            .map_err(|err| match err {
+                bigtable::Error::RowNotFound => Error::BlockNotFound(slot),
+                _ => err.into(),
+            })?;
+        deserialize_block_markers(slot, block_markers)
     }
 
     pub async fn get_signature_status(&self, signature: &Signature) -> Result<TransactionStatus> {
@@ -1014,6 +1078,16 @@ impl LedgerStorage {
         slot: Slot,
         confirmed_block: VersionedConfirmedBlockWithEntries,
     ) -> Result<()> {
+        self.upload_confirmed_block_with_entries_and_markers(slot, confirmed_block, Vec::new())
+            .await
+    }
+
+    pub async fn upload_confirmed_block_with_entries_and_markers(
+        &self,
+        slot: Slot,
+        confirmed_block: VersionedConfirmedBlockWithEntries,
+        block_markers: Vec<VersionedBlockMarker>,
+    ) -> Result<()> {
         trace!("LedgerStorage::upload_confirmed_block_with_entries request received: {slot:?}");
 
         let mut by_addr: HashMap<&Pubkey, Vec<TransactionByAddrInfo>> = HashMap::new();
@@ -1083,6 +1157,9 @@ impl LedgerStorage {
                 entries: entries.into_iter().enumerate().map(Into::into).collect(),
             },
         );
+        let num_block_markers = block_markers.len();
+        let block_markers = serialize_block_markers(&block_markers)?;
+        let block_markers_cell = (slot_to_block_markers_key(slot), block_markers);
 
         let mut tasks = vec![];
 
@@ -1116,6 +1193,17 @@ impl LedgerStorage {
                         &[entry_cell],
                     )
                     .await
+            }));
+        }
+
+        if num_block_markers > 0 {
+            let conn = self.connection.clone();
+            tasks.push(tokio::spawn(async move {
+                conn.put_bincode_cells_with_retry::<Vec<Vec<u8>>>(
+                    BLOCK_MARKERS_TABLE_NAME,
+                    &[block_markers_cell],
+                )
+                .await
             }));
         }
 
@@ -1163,6 +1251,7 @@ impl LedgerStorage {
             ("slot", slot, i64),
             ("transactions", num_transactions, i64),
             ("entries", num_entries, i64),
+            ("block_markers", num_block_markers, i64),
             ("bytes", bytes_written, i64),
         );
         Ok(())
@@ -1268,6 +1357,12 @@ impl LedgerStorage {
             .row_key_exists(ENTRIES_TABLE_NAME, slot_to_entries_key(slot))
             .await
             .is_ok_and(|x| x);
+        let block_markers_exist = self
+            .connection
+            .client()
+            .row_key_exists(BLOCK_MARKERS_TABLE_NAME, slot_to_block_markers_key(slot))
+            .await
+            .is_ok_and(|x| x);
 
         if !dry_run {
             if !address_slot_rows.is_empty() {
@@ -1288,6 +1383,15 @@ impl LedgerStorage {
                     .await?;
             }
 
+            if block_markers_exist {
+                self.connection
+                    .delete_rows_with_retry(
+                        BLOCK_MARKERS_TABLE_NAME,
+                        &[slot_to_block_markers_key(slot)],
+                    )
+                    .await?;
+            }
+
             self.connection
                 .delete_rows_with_retry(BLOCKS_TABLE_NAME, &[slot_to_blocks_key(slot)])
                 .await?;
@@ -1295,12 +1399,17 @@ impl LedgerStorage {
 
         info!(
             "{}deleted ledger data for slot {}: {} transaction rows, {} address slot rows, {} \
-             entry row",
+             entry row, {} block marker row",
             if dry_run { "[dry run] " } else { "" },
             slot,
             tx_deletion_rows.len(),
             address_slot_rows.len(),
-            if entries_exist { "with" } else { "WITHOUT" }
+            if entries_exist { "with" } else { "WITHOUT" },
+            if block_markers_exist {
+                "with"
+            } else {
+                "WITHOUT"
+            }
         );
 
         Ok(())
@@ -1309,7 +1418,36 @@ impl LedgerStorage {
 
 #[cfg(test)]
 mod test {
-    use super::*;
+    use {
+        super::*,
+        solana_entry::block_component::{BlockFooterV1, BlockHeaderV1},
+        solana_hash::Hash,
+    };
+
+    #[test]
+    fn test_block_marker_serialization() {
+        let slot = 42;
+        let block_markers = vec![
+            VersionedBlockMarker::from_block_header(BlockHeaderV1 {
+                parent_slot: slot - 1,
+                parent_block_id: Hash::new_unique(),
+            }),
+            VersionedBlockMarker::from_block_footer(BlockFooterV1 {
+                bank_hash: Hash::new_unique(),
+                block_producer_time_nanos: 123,
+                block_user_agent: b"test".to_vec(),
+                block_final_cert: None,
+                skip_reward_cert: None,
+                notar_reward_cert: None,
+            }),
+        ];
+
+        let serialized = serialize_block_markers(&block_markers).unwrap();
+        assert_eq!(
+            deserialize_block_markers(slot, serialized).unwrap(),
+            block_markers
+        );
+    }
 
     #[test]
     fn test_slot_to_key() {

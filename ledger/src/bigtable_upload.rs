@@ -1,9 +1,13 @@
 use {
-    crate::blockstore::Blockstore,
+    crate::blockstore::{
+        Blockstore, ConfirmedBlockComponent, VersionedConfirmedBlockWithComponents,
+    },
     crossbeam_channel::{bounded, unbounded},
     log::*,
     solana_clock::Slot,
+    solana_entry::block_component::VersionedBlockMarker,
     solana_measure::measure::Measure,
+    solana_transaction_status::VersionedConfirmedBlockWithEntries,
     std::{
         cmp::{max, min},
         collections::HashSet,
@@ -39,6 +43,37 @@ impl Default for ConfirmedBlockUploadConfig {
 struct BlockstoreLoadStats {
     pub num_blocks_read: usize,
     pub elapsed: Duration,
+}
+
+struct ConfirmedBlockUploadData {
+    confirmed_block: VersionedConfirmedBlockWithEntries,
+    block_markers: Vec<VersionedBlockMarker>,
+}
+
+fn get_confirmed_block_upload_data(
+    blockstore: &Blockstore,
+    slot: Slot,
+) -> Result<ConfirmedBlockUploadData, Box<dyn std::error::Error>> {
+    let VersionedConfirmedBlockWithComponents { block, components } =
+        blockstore.get_rooted_block_with_components(slot, true)?;
+    let mut entries = Vec::new();
+    let mut block_markers = Vec::new();
+
+    for component in components {
+        match component {
+            ConfirmedBlockComponent::EntryBatch(entry_batch) => entries.extend(entry_batch),
+            ConfirmedBlockComponent::BlockMarker(marker) => {
+                // Preserve every marker variant in Bigtable, even if shred reconstruction does not
+                // support it yet.
+                block_markers.push(marker);
+            }
+        }
+    }
+
+    Ok(ConfirmedBlockUploadData {
+        confirmed_block: VersionedConfirmedBlockWithEntries { block, entries },
+        block_markers,
+    })
 }
 
 /// Uploads a range of blocks from a Blockstore to bigtable LedgerStorage
@@ -174,10 +209,10 @@ pub async fn upload_confirmed_blocks(
                                     break;
                                 }
 
-                                let _ = match blockstore.get_rooted_block_with_entries(slot, true) {
-                                    Ok(confirmed_block_with_entries) => {
+                                let _ = match get_confirmed_block_upload_data(&blockstore, slot) {
+                                    Ok(upload_data) => {
                                         num_blocks_read += 1;
-                                        sender.send((slot, Some(confirmed_block_with_entries)))
+                                        sender.send((slot, Some(upload_data)))
                                     }
                                     Err(err) => {
                                         warn!(
@@ -222,8 +257,12 @@ pub async fn upload_confirmed_blocks(
             Some(confirmed_block) => {
                 let bt = bigtable.clone();
                 Some(tokio::spawn(async move {
-                    bt.upload_confirmed_block_with_entries(slot, confirmed_block)
-                        .await
+                    bt.upload_confirmed_block_with_entries_and_markers(
+                        slot,
+                        confirmed_block.confirmed_block,
+                        confirmed_block.block_markers,
+                    )
+                    .await
                 }))
             }
         });
