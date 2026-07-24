@@ -1248,7 +1248,6 @@ impl AccountsDb {
                     .for_each(|(reclaimed_item, newest_slot)| {
                         self.handle_reclaims(
                             iter::once(reclaimed_item),
-                            None,
                             &HashSet::new(),
                             &self.clean_accounts_stats.purge_stats,
                             MarkAccountsObsolete::Yes(*newest_slot),
@@ -2154,13 +2153,15 @@ impl AccountsDb {
             self.purge_keys_exact(pubkey_to_slot_set);
 
         if !reclaims.is_empty() {
-            self.handle_reclaims(
+            let expected_dead_slots: IntSet<_> = reclaims.iter().map(|(slot, _)| *slot).collect();
+            let dead_slots = self.handle_reclaims(
                 reclaims.iter(),
-                None,
                 &pubkeys_removed_from_accounts_index,
                 &self.clean_accounts_stats.purge_stats,
                 MarkAccountsObsolete::No,
             );
+            // Every slot with accounts reclaimed should be marked dead
+            assert_eq!(expected_dead_slots, dead_slots);
         }
 
         reclaims_time.stop();
@@ -2312,11 +2313,6 @@ impl AccountsDb {
     /// * `reclaims` - The accounts to remove from storage entries' "count". Note here
     ///   that we should not remove cache entries, only entries for accounts actually
     ///   stored in a storage entry.
-    /// * `expected_single_dead_slot` - A correctness assertion. If this is equal to `Some(S)`,
-    ///   then the function will check that the only slot being cleaned up in `reclaims`
-    ///   is the slot == `S`. This is true for instance when `handle_reclaims` is called
-    ///   from store or slot shrinking, as those should only touch the slot they are
-    ///   currently storing to or shrinking.
     /// * `pubkeys_removed_from_accounts_index` - These keys have already been removed from the
     ///   accounts index and should not be unref'd. If they exist in the accounts index,
     ///   they are NEW.
@@ -2335,21 +2331,15 @@ impl AccountsDb {
     fn handle_reclaims<'a, I>(
         &'a self,
         reclaims: I,
-        expected_single_dead_slot: Option<Slot>,
         pubkeys_removed_from_accounts_index: &PubkeysRemovedFromAccountsIndex,
         purge_stats: &PurgeStats,
         mark_accounts_obsolete: MarkAccountsObsolete,
-    ) where
+    ) -> IntSet<Slot>
+    where
         I: Iterator<Item = &'a (Slot, AccountInfo)>,
     {
-        let dead_slots =
-            self.remove_dead_accounts(reclaims, expected_single_dead_slot, mark_accounts_obsolete);
-        if let Some(expected_single_dead_slot) = expected_single_dead_slot {
-            assert!(dead_slots.len() <= 1);
-            if dead_slots.len() == 1 {
-                assert!(dead_slots.contains(&expected_single_dead_slot));
-            }
-        }
+        let dead_slots = self.remove_dead_accounts(reclaims, mark_accounts_obsolete);
+
         // if we are marking accounts obsolete, then any dead slots have already been cleaned
         let clean_stored_dead_slots =
             !matches!(mark_accounts_obsolete, MarkAccountsObsolete::Yes(_));
@@ -2360,6 +2350,7 @@ impl AccountsDb {
             pubkeys_removed_from_accounts_index,
             clean_stored_dead_slots,
         );
+        dead_slots
     }
 
     /// During clean, some zero-lamport accounts that are marked for purge should *not* actually
@@ -4294,17 +4285,16 @@ impl AccountsDb {
         // `handle_reclaims()` should remove all the account index entries and
         // storage entries
         let mut handle_reclaims_elapsed = Measure::start("handle_reclaims_elapsed");
-        // Slot should be dead after removing all its account entries
         // There is no reason to mark accounts obsolete as the slot storage is being purged
-        let expected_dead_slot = Some(remove_slot);
         if !reclaims.is_empty() {
-            self.handle_reclaims(
+            let dead_slots = self.handle_reclaims(
                 reclaims.iter(),
-                expected_dead_slot,
                 &pubkeys_removed_from_accounts_index,
                 purge_stats,
                 MarkAccountsObsolete::No,
             );
+            // Ensure the expected slot is marked dead
+            assert_eq!(dead_slots, IntSet::from_iter(std::iter::once(remove_slot)));
         }
         handle_reclaims_elapsed.stop();
         purge_stats
@@ -5296,7 +5286,6 @@ impl AccountsDb {
     fn remove_dead_accounts<'a, I>(
         &'a self,
         reclaims: I,
-        expected_slot: Option<Slot>,
         mark_accounts_obsolete: MarkAccountsObsolete,
     ) -> IntSet<Slot>
     where
@@ -5314,10 +5303,6 @@ impl AccountsDb {
                 .entry(*slot)
                 .or_default()
                 .insert(account_info.offset());
-        }
-        if let Some(expected_slot) = expected_slot {
-            assert_eq!(reclaimed_offsets.len(), 1);
-            assert!(reclaimed_offsets.contains_key(&expected_slot));
         }
 
         self.clean_accounts_stats
@@ -5729,7 +5714,6 @@ impl AccountsDb {
             let purge_stats = PurgeStats::default();
             self.handle_reclaims(
                 reclaims.iter().flatten(),
-                None,
                 &HashSet::default(),
                 &purge_stats,
                 MarkAccountsObsolete::Yes(slot),
@@ -6587,7 +6571,6 @@ impl AccountsDb {
                 if !reclaims.is_empty() {
                     self.handle_reclaims(
                         reclaims.iter(),
-                        None,
                         &HashSet::new(),
                         &stats,
                         MarkAccountsObsolete::Yes(slot_marked_obsolete),
