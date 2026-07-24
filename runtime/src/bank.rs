@@ -3912,7 +3912,12 @@ impl Bank {
                         )
                     }
                     ProcessedTransaction::FeesOnly(fees_only_tx) => (
-                        vec![],
+                        // For a fees-only transaction the post-simulation state is the
+                        // rollback accounts: the charged fee payer and, if a durable
+                        // nonce was used, the advanced nonce account. Surface them so
+                        // callers can see the fee/nonce changes a failed-but-charged
+                        // transaction would commit, instead of an empty list (#9231).
+                        fees_only_tx.rollback_accounts.iter().cloned().collect(),
                         Err(fees_only_tx.load_error),
                         Some(fees_only_tx.fee_details.total_fee()),
                         None,
