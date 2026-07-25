@@ -1,5 +1,6 @@
 #![allow(clippy::arithmetic_side_effects)]
 use {
+    agave_cluster_transport::evicting_sender::EvictingSender,
     solana_clock::Slot,
     solana_entry::entry::Entry,
     solana_epoch_schedule::{EpochSchedule, MINIMUM_SLOTS_PER_EPOCH},
@@ -16,7 +17,6 @@ use {
     },
     solana_runtime::bank::Bank,
     solana_signer::Signer,
-    solana_streamer::evicting_sender::EvictingSender,
     solana_system_transaction as system_transaction,
     std::{
         collections::{BTreeMap, HashSet},

@@ -19,6 +19,7 @@ agave-unstable-api = []
 dev-context-only-utils = []
 
 [dependencies]
+agave-cluster-transport = { workspace = true }
 async-trait = { workspace = true }
 bincode = { workspace = true }
 dashmap = { workspace = true }
@@ -40,7 +41,6 @@ solana-rpc-client-api = { workspace = true }
 solana-rpc-client-nonce-utils = { workspace = true }
 solana-signature = { workspace = true }
 solana-signer = { workspace = true }
-solana-streamer = { workspace = true }
 solana-time-utils = { workspace = true }
 solana-tls-utils = { workspace = true }
 solana-tpu-client = { workspace = true, features = ["default"] }

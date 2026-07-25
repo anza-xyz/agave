@@ -1,5 +1,5 @@
 use {
-    crate::streamer::ChannelSend,
+    crate::receiver::ChannelSend,
     crossbeam_channel::{Receiver, Sender, TryRecvError, TrySendError, bounded},
 };
 

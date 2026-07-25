@@ -18,8 +18,8 @@ use {
             DEFAULT_MAX_QUIC_CONNECTIONS_PER_UNSTAKED_PEER, DEFAULT_MAX_STAKED_CONNECTIONS,
             DEFAULT_MAX_STREAMS_PER_MS, DEFAULT_MAX_UNSTAKED_CONNECTIONS, StreamerStats,
         },
-        streamer::StakedNodes,
     },
+    agave_cluster_transport::staked_nodes::StakedNodes,
     quinn::{Connection, VarInt},
     solana_time_utils as timing,
     std::{

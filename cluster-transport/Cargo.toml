@@ -1,0 +1,45 @@
+[package]
+name = "agave-cluster-transport"
+description = "Agave Cluster Transport"
+documentation = "https://docs.rs/agave-cluster-transport"
+version = { workspace = true }
+authors = { workspace = true }
+repository = { workspace = true }
+homepage = { workspace = true }
+license = { workspace = true }
+edition = { workspace = true }
+
+[package.metadata.docs.rs]
+targets = ["x86_64-unknown-linux-gnu"]
+all-features = true
+rustdoc-args = ["--cfg=docsrs"]
+
+[lib]
+crate-type = ["lib"]
+name = "agave_cluster_transport"
+
+[features]
+agave-unstable-api = []
+dev-context-only-utils = []
+
+[dependencies]
+crossbeam-channel = { workspace = true }
+itertools = { workspace = true }
+libc = { workspace = true }
+log = { workspace = true }
+nix = { workspace = true, features = ["net", "poll", "signal"] }
+solana-measure = { workspace = true }
+solana-metrics = { workspace = true }
+solana-net-utils = { workspace = true }
+solana-packet = { workspace = true }
+solana-perf = { workspace = true }
+solana-pubkey = { workspace = true }
+solana-transaction-error = { workspace = true }
+thiserror = { workspace = true }
+
+[dev-dependencies]
+agave-logger = { workspace = true }
+assert_matches = { workspace = true }
+
+[lints]
+workspace = true
