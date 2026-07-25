@@ -68,7 +68,7 @@ use {
 type OutstandingBlockIdRepairs = OutstandingRequests<BlockIdRepairType>;
 
 const MAX_REPAIR_REQUESTS_PER_ITERATION: usize = 200;
-const MAX_ALTERNATE_BLOCKS_PER_SLOT: usize = 11;
+const MAX_ALTERNATE_BLOCKS_PER_SLOT: usize = 6;
 const MAX_PENDING_REPAIR_EVENTS: usize = 10_000;
 
 /// Idle wake-up cadence for `run_repair_iteration`'s `select!`. Bounds the worst-case

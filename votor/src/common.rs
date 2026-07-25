@@ -3,7 +3,7 @@ use {agave_votor_messages::fraction::Fraction, std::time::Duration};
 // Core consensus types and constants
 pub(crate) type Stake = u64;
 
-pub(crate) const MAX_NOTAR_FALLBACK_BLOCKS: usize = 7;
+pub(crate) const MAX_NOTAR_FALLBACK_BLOCKS: usize = 4;
 
 pub(crate) const SAFE_TO_NOTAR_MIN_NOTARIZE_ONLY: Fraction = Fraction::from_percentage(40);
 pub(crate) const SAFE_TO_NOTAR_MIN_NOTARIZE_FOR_NOTARIZE_OR_SKIP: Fraction =
