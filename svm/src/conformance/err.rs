@@ -14,7 +14,7 @@ use {
     solana_syscalls::SyscallError,
 };
 
-pub(crate) fn elf_error_code(error: &ElfError) -> u32 {
+pub fn elf_error_code(error: &ElfError) -> u32 {
     (error.discriminant() as u32).saturating_add(1)
 }
 
