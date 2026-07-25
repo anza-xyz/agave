@@ -3523,14 +3523,19 @@ impl Bank {
         assert_eq!(sanitized_txs.len(), processing_results.len());
         for (tx, processing_result) in sanitized_txs.iter().zip(processing_results) {
             if let Ok(processed_tx) = &processing_result {
-                // Add the message hash to the status cache to ensure that this message
-                // won't be processed again with a different signature.
-                status_cache.insert(
-                    tx.recent_blockhash(),
-                    tx.message_hash(),
-                    self.slot(),
-                    processed_tx.status(),
-                );
+                // If this is a blockhash transaction, add the message hash to the status cache
+                // to ensure that this message won't be processed again with a different signature.
+                // Nonce transactions are protected from replay via the durable nonce mechanic.
+                // This exclusion is necessary to support SIMD-0297 (nonce relaxation).
+                if processed_tx.nonce_address().is_none() {
+                    status_cache.insert(
+                        tx.recent_blockhash(),
+                        tx.message_hash(),
+                        self.slot(),
+                        processed_tx.status(),
+                    );
+                }
+
                 if self.store_transaction_signatures_in_status_cache {
                     // Add the transaction signature to the status cache so that transaction
                     // status can be queried by transaction signature over RPC.
@@ -5318,7 +5323,7 @@ impl Bank {
             .map(|v| v.1)
     }
 
-    pub fn get_committed_transaction_status_and_slot(
+    pub fn get_transaction_status_and_slot_from_status_cache(
         &self,
         message_hash: &Hash,
         transaction_blockhash: &Hash,

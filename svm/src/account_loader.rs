@@ -174,6 +174,7 @@ pub struct NoOpTransaction {
     pub fee_payer_balance: Option<u64>,
     pub compute_unit_limit: u64,
     pub loaded_accounts_bytes_limit: u32,
+    pub nonce_address: Option<Pubkey>,
 }
 
 // This is an internal SVM type that tracks account changes throughout a

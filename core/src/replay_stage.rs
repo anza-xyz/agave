@@ -5097,7 +5097,10 @@ impl ReplayStage {
             } in tracked_vote_transactions.iter()
             {
                 if new_root_bank
-                    .get_committed_transaction_status_and_slot(message_hash, transaction_blockhash)
+                    .get_transaction_status_and_slot_from_status_cache(
+                        message_hash,
+                        transaction_blockhash,
+                    )
                     .is_some()
                 {
                     *has_new_vote_been_rooted = true;
