@@ -1,5 +1,5 @@
 [workspace]
-members = ["../accounts-db/store-tool", "../ledger-tool"]
+members = ["../accounts-db/store-tool", "../ledger-tool", "../svm-conformance"]
 
 resolver = "2"
 

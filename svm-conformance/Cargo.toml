@@ -1,0 +1,23 @@
+[package]
+name = "solana-svm-conformance"
+description = "Conformance harnesses for the Solana SVM"
+publish = false
+version = { workspace = true }
+authors = { workspace = true }
+repository = { workspace = true }
+homepage = { workspace = true }
+license = { workspace = true }
+edition = { workspace = true }
+workspace = "../dev-bins"
+
+[lib]
+crate-type = ["cdylib", "rlib"]
+
+[features]
+agave-unstable-api = []
+dev-context-only-utils = []
+dummy-for-ci-check = []
+frozen-abi = []
+
+[lints]
+workspace = true

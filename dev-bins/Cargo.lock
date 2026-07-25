@@ -8457,6 +8457,10 @@ dependencies = [
 ]
 
 [[package]]
+name = "solana-svm-conformance"
+version = "4.3.0-alpha.2"
+
+[[package]]
 name = "solana-svm-feature-set"
 version = "4.3.0-alpha.2"
 
