@@ -208,7 +208,6 @@ proptest = { workspace = true }
 solana-accounts-db = { path = "../accounts-db", features = ["agave-unstable-api", "dev-context-only-utils"] }
 solana-builtins = { path = "../builtins", features = ["agave-unstable-api", "dev-context-only-utils"] }
 solana-instruction-error = { workspace = true }
-# See order-crates-for-publishing.py for using this unusual `path = "."`
 solana-runtime = { path = ".", features = ["agave-unstable-api", "dev-context-only-utils"] }
 solana-runtime-transaction = { path = "../runtime-transaction", features = ["agave-unstable-api", "dev-context-only-utils"] }
 solana-sdk-ids = { workspace = true }
