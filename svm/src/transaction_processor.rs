@@ -764,6 +764,7 @@ impl<FG: ForkGraph> TransactionBatchProcessor<FG> {
                     compute_unit_limit: compute_budget_and_limits.budget.compute_unit_limit,
                     loaded_accounts_bytes_limit: compute_budget_and_limits
                         .loaded_accounts_data_size_limit,
+                    nonce_address,
                 })
             }
             Err(e) => TransactionValidationResult::Unprocessable(e),
@@ -2293,6 +2294,7 @@ mod tests {
                 fee_payer_balance: None,
                 compute_unit_limit: fee_and_limits.budget.compute_unit_limit,
                 loaded_accounts_bytes_limit: fee_and_limits.loaded_accounts_data_size_limit,
+                nonce_address: None,
             })
         } else {
             TransactionValidationResult::Unprocessable(expected_error)
@@ -2345,6 +2347,7 @@ mod tests {
                 fee_payer_balance: Some(fee_payer_balance),
                 compute_unit_limit: fee_and_limits.budget.compute_unit_limit,
                 loaded_accounts_bytes_limit: fee_and_limits.loaded_accounts_data_size_limit,
+                nonce_address: None,
             })
         } else {
             TransactionValidationResult::Unprocessable(expected_error)
@@ -2400,6 +2403,7 @@ mod tests {
                 fee_payer_balance: Some(starting_balance),
                 compute_unit_limit: fee_and_limits.budget.compute_unit_limit,
                 loaded_accounts_bytes_limit: fee_and_limits.loaded_accounts_data_size_limit,
+                nonce_address: None,
             })
         } else {
             TransactionValidationResult::Unprocessable(expected_error)
@@ -2451,6 +2455,7 @@ mod tests {
                 fee_payer_balance: Some(fee_payer_balance),
                 compute_unit_limit: fee_and_limits.budget.compute_unit_limit,
                 loaded_accounts_bytes_limit: fee_and_limits.loaded_accounts_data_size_limit,
+                nonce_address: None,
             })
         } else {
             TransactionValidationResult::Unprocessable(expected_error)

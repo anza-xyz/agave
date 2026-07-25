@@ -837,6 +837,7 @@ mod tests {
                 fee_payer_balance: Some(42),
                 compute_unit_limit: COMPUTE_UNIT_LIMIT,
                 loaded_accounts_bytes_limit: LOADED_ACCOUNTS_BYTES_LIMIT,
+                nonce_address: None,
             },
         )));
 

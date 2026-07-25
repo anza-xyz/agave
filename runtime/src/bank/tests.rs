@@ -124,13 +124,15 @@ use {
         state::{Authorized, Delegation, Lockup, Stake, StakeStateV2},
     },
     solana_svm::{
-        account_loader::{FeesOnlyTransaction, LoadedTransaction, TRANSACTION_ACCOUNT_BASE_SIZE},
+        account_loader::{
+            FeesOnlyTransaction, LoadedTransaction, NoOpTransaction, TRANSACTION_ACCOUNT_BASE_SIZE,
+        },
         rollback_accounts::RollbackAccounts,
         transaction_commit_result::TransactionCommitResultExtensions,
         transaction_execution_result::{AccountsDeltas, ExecutedTransaction},
     },
     solana_svm_timings::ExecuteTimings,
-    solana_svm_transaction::svm_message::SVMMessage,
+    solana_svm_transaction::svm_message::{SVMMessage, SVMStaticMessage},
     solana_system_interface::{
         MAX_PERMITTED_ACCOUNTS_DATA_ALLOCATIONS_PER_TRANSACTION, MAX_PERMITTED_DATA_LENGTH,
         error::SystemError,
@@ -170,7 +172,7 @@ use {
         thread::Builder,
         time::{Duration, Instant},
     },
-    test_case::test_case,
+    test_case::{test_case, test_matrix},
 };
 
 fn create_genesis_config_no_tx_fee_no_rent(lamports: u64) -> (GenesisConfig, Keypair) {
@@ -251,6 +253,7 @@ fn test_race_register_tick_freeze() {
 fn new_executed_processing_result(
     status: Result<()>,
     fee_details: FeeDetails,
+    rollback_accounts: RollbackAccounts,
 ) -> TransactionProcessingResult {
     let accounts_deltas = status.as_ref().is_ok().then_some(AccountsDeltas {
         accounts_resize_delta: 0,
@@ -259,6 +262,9 @@ fn new_executed_processing_result(
     Ok(ProcessedTransaction::Executed(Box::new(
         ExecutedTransaction {
             loaded_transaction: LoadedTransaction {
+                accounts: vec![KeyedAccountSharedData::default()],
+                touched_flags: Box::new([false]),
+                rollback_accounts,
                 fee_details,
                 ..LoadedTransaction::default()
             },
@@ -2235,6 +2241,88 @@ fn test_tx_already_processed() {
         bank.process_transaction(&tx),
         Err(TransactionError::AlreadyProcessed)
     );
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum NonceTestCase {
+    Success,
+    Failed,
+    FeesOnly,
+    NoOp,
+    Blockhash,
+}
+
+#[test_matrix(
+    [NonceTestCase::Success, NonceTestCase::Failed, NonceTestCase::FeesOnly, NonceTestCase::NoOp, NonceTestCase::Blockhash],
+    [false, true]
+)]
+fn test_status_cache_ignores_nonce(case: NonceTestCase, separate_nonce: bool) {
+    let (genesis_config, mint_keypair) = create_genesis_config(LAMPORTS_PER_SOL);
+    let (bank, _bank_forks) = Bank::new_with_bank_forks_for_tests(&genesis_config);
+
+    let is_blockhash_transaction = case == NonceTestCase::Blockhash;
+    let fee_details = FeeDetails::new(5000, 0);
+    let rollback_accounts = match (is_blockhash_transaction, separate_nonce) {
+        (true, _) => RollbackAccounts::default(),
+        (false, true) => RollbackAccounts::SeparateNonceAndFeePayer {
+            nonce: KeyedAccountSharedData::default(),
+            fee_payer: KeyedAccountSharedData::default(),
+        },
+        (false, false) => RollbackAccounts::SameNonceAndFeePayer {
+            nonce: KeyedAccountSharedData::default(),
+        },
+    };
+
+    let result = match case {
+        NonceTestCase::Success | NonceTestCase::Blockhash => {
+            new_executed_processing_result(Ok(()), fee_details, rollback_accounts)
+        }
+        NonceTestCase::Failed => new_executed_processing_result(
+            Err(TransactionError::InstructionError(
+                0,
+                InstructionError::Custom(0),
+            )),
+            fee_details,
+            rollback_accounts,
+        ),
+        NonceTestCase::FeesOnly => Ok(ProcessedTransaction::FeesOnly(Box::new(
+            FeesOnlyTransaction {
+                load_error: TransactionError::InvalidProgramForExecution,
+                rollback_accounts,
+                fee_details,
+                loaded_accounts_data_size: 0,
+            },
+        ))),
+        NonceTestCase::NoOp => Ok(ProcessedTransaction::NoOp(Box::new(NoOpTransaction {
+            validation_error: TransactionError::AccountNotFound,
+            fee_payer_balance: None,
+            compute_unit_limit: 0,
+            loaded_accounts_bytes_limit: 0,
+            nonce_address: Some(Pubkey::default()),
+        }))),
+    };
+
+    let tx = RuntimeTransaction::from_transaction_for_tests(system_transaction::transfer(
+        &mint_keypair,
+        &Pubkey::new_unique(),
+        1,
+        bank.last_blockhash(),
+    ));
+
+    bank.commit_transactions(
+        std::slice::from_ref(&tx),
+        vec![result],
+        &ProcessedTransactionCounts::default(),
+        &mut ExecuteTimings::default(),
+    );
+
+    let is_message_hash_in_status_cache = bank
+        .get_transaction_status_and_slot_from_status_cache(tx.message_hash(), tx.recent_blockhash())
+        .is_some();
+    assert_eq!(is_message_hash_in_status_cache, is_blockhash_transaction);
+
+    let is_signature_in_status_cache = bank.get_signature_status(tx.signature()).is_some();
+    assert!(is_signature_in_status_cache);
 }
 
 #[test]
@@ -12051,8 +12139,9 @@ fn test_filter_program_errors_and_collect_fee_details() {
                 SystemError::ResultWithNegativeLamports.into(),
             )),
             fee_details,
+            RollbackAccounts::default(),
         ),
-        new_executed_processing_result(Ok(()), fee_details),
+        new_executed_processing_result(Ok(()), fee_details, RollbackAccounts::default()),
     ];
 
     bank.filter_program_errors_and_collect_fee_details(&results);
