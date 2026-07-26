@@ -592,6 +592,7 @@ impl<'a, 'ix_data> InvokeContext<'a, 'ix_data> {
     }
 
     /// Processes an instruction and returns how many compute units were used
+    #[cfg_attr(feature = "dev-context-only-utils", qualifiers(pub))]
     pub(crate) fn process_instruction(
         &mut self,
         compute_units_consumed: &mut u64,
