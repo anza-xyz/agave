@@ -26,6 +26,10 @@ frozen-abi = [
     "solana-runtime/frozen-abi",
 ]
 agave-unstable-api = []
+# Accelerated multi-buffer SHA-256 behind `shred::hash_batch`. Off by default:
+# the scalar path in that module is the specification, and this backend must
+# produce byte-identical output for every input.
+tape-sha256 = ["dep:tape-sha256"]
 
 [dependencies]
 agave-feature-set = { workspace = true }
@@ -114,6 +118,7 @@ solana-vote = { workspace = true }
 solana-vote-program = { workspace = true }
 static_assertions = { workspace = true }
 strum = { workspace = true, features = ["derive"] }
+tape-sha256 = { workspace = true, optional = true }
 tar = { workspace = true }
 tempfile = { workspace = true }
 thiserror = { workspace = true }
@@ -154,6 +159,10 @@ name = "blockstore"
 
 [[bench]]
 name = "make_shreds_from_entries"
+harness = false
+
+[[bench]]
+name = "merkle_hash_batch"
 harness = false
 
 [lints]

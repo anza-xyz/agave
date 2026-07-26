@@ -88,6 +88,7 @@ use {solana_keypair::Keypair, solana_perf::packet::Packet, solana_signer::Signer
 
 mod common;
 pub mod filter;
+pub mod hash_batch;
 pub mod merkle;
 pub mod merkle_tree;
 mod payload;

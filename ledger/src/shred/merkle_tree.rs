@@ -1,6 +1,12 @@
 use {
-    crate::shred::Error, solana_hash::Hash, solana_sha256_hasher::hashv,
-    static_assertions::const_assert_eq, std::iter::successors,
+    crate::shred::{
+        hash_batch::{self, MIN_BATCHED_LEVEL},
+        Error,
+    },
+    solana_hash::Hash,
+    solana_sha256_hasher::hashv,
+    static_assertions::const_assert_eq,
+    std::iter::successors,
 };
 
 pub(crate) const SIZE_OF_MERKLE_ROOT: usize = std::mem::size_of::<Hash>();
@@ -53,15 +59,34 @@ impl MerkleTree {
         for shred in shreds {
             nodes.push(shred?);
         }
+        let mut parents: Vec<[u8; SIZE_OF_MERKLE_ROOT]> = Vec::with_capacity(len.div_ceil(2));
         let init = (len > 1).then_some(len);
         for size in successors(init, |&k| (k > 2).then_some((k + 1) >> 1)) {
             let offset = nodes.len() - size;
-            for index in (offset..offset + size).step_by(2) {
-                let node = &nodes[index];
-                let other = &nodes[(index + 1).min(offset + size - 1)];
-                let parent = join_nodes(node, other);
-                nodes.push(parent);
+            // Near the root the levels are only a couple of nodes wide.
+            if size < MIN_BATCHED_LEVEL {
+                for index in (offset..offset + size).step_by(2) {
+                    let node = &nodes[index];
+                    let other = &nodes[(index + 1).min(offset + size - 1)];
+                    let parent = join_nodes(node, other);
+                    nodes.push(parent);
+                }
+                continue;
             }
+            parents.clear();
+            parents.resize(size.div_ceil(2), [0u8; SIZE_OF_MERKLE_ROOT]);
+            {
+                let mut left = Vec::with_capacity(parents.len());
+                let mut right = Vec::with_capacity(parents.len());
+                for index in (offset..offset + size).step_by(2) {
+                    let node = &nodes[index];
+                    let other = &nodes[(index + 1).min(offset + size - 1)];
+                    left.push(&node.as_ref()[..SIZE_OF_MERKLE_PROOF_ENTRY]);
+                    right.push(&other.as_ref()[..SIZE_OF_MERKLE_PROOF_ENTRY]);
+                }
+                hash_batch::hash_pairs(MERKLE_HASH_PREFIX_NODE, &left, &right, &mut parents);
+            }
+            nodes.extend(parents.iter().copied().map(Hash::new_from_array));
         }
         debug_assert_eq!(nodes.len(), capacity);
         Ok(MerkleTree { nodes })
@@ -205,6 +230,41 @@ mod tests {
                 tree.make_merkle_proof(index, size).next(),
                 Some(Err(Error::InvalidMerkleProof))
             );
+        }
+    }
+
+    fn reference_tree(leaves: &[Hash]) -> Vec<Hash> {
+        let mut nodes = leaves.to_vec();
+        let len = leaves.len();
+        let init = (len > 1).then_some(len);
+        for size in successors(init, |&k| (k > 2).then_some((k + 1) >> 1)) {
+            let offset = nodes.len() - size;
+            for index in (offset..offset + size).step_by(2) {
+                let node = &nodes[index];
+                let other = &nodes[(index + 1).min(offset + size - 1)];
+                let parent = hashv(&[
+                    MERKLE_HASH_PREFIX_NODE,
+                    &node.as_ref()[..SIZE_OF_MERKLE_PROOF_ENTRY],
+                    &other.as_ref()[..SIZE_OF_MERKLE_PROOF_ENTRY],
+                ]);
+                nodes.push(parent);
+            }
+        }
+        nodes
+    }
+
+    #[test]
+    fn test_tree_matches_scalar_reference() {
+        let mut rng = rand::rng();
+        for size in 1..=256 {
+            let leaves: Vec<Hash> = repeat_with(|| rng.random::<[u8; 32]>())
+                .map(Hash::from)
+                .take(size)
+                .collect();
+            let tree = MerkleTree::try_new(leaves.iter().cloned().map(Ok)).unwrap();
+            let reference = reference_tree(&leaves);
+            assert_eq!(tree.nodes, reference, "leaf count {size}");
+            assert_eq!(tree.root(), reference.last().unwrap(), "leaf count {size}");
         }
     }
 

@@ -547,6 +547,7 @@ strum_macros = "0.28.0"
 symlink = "0.1.0"
 sys-info = "0.9.1"
 sysctl = "0.7.1"
+tape-sha256 = { git = "https://github.com/crypt0miester/sha256", rev = "873de9bd16a8c996b86459f8c1268c0ba7b2dc21" }
 tar = "0.4.46"
 tarpc = "0.29.0"
 tempfile = "3.27.0"

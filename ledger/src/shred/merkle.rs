@@ -8,7 +8,7 @@ use {
             SIZE_OF_CODING_SHRED_HEADERS, SIZE_OF_DATA_SHRED_HEADERS, SIZE_OF_NONCE,
             SIZE_OF_SIGNATURE, ShredCommonHeader, ShredFlags, ShredVariant,
             common::impl_shred_common,
-            dispatch,
+            dispatch, hash_batch,
             merkle_tree::*,
             payload::{Payload, PayloadMutGuard},
             shred_code, shred_data,
@@ -76,7 +76,11 @@ pub(crate) enum Shred {
 impl Shred {
     dispatch!(fn erasure_shard_index(&self) -> Result<usize, Error>);
     dispatch!(fn erasure_shard_mut(&mut self) -> Result<PayloadMutGuard<'_, Range<usize>>, Error>);
+    // Superseded in production by the batched `merkle_tree_from_shreds`, and
+    // retained as the scalar reference that path is tested against.
+    #[cfg(test)]
     dispatch!(fn merkle_node(&self) -> Result<Hash, Error>);
+    dispatch!(fn merkle_node_bytes(&self) -> Result<&[u8], Error>);
     dispatch!(fn sanitize(&self) -> Result<(), Error>);
     dispatch!(fn set_chained_merkle_root(&mut self, chained_merkle_root: &Hash) -> Result<(), Error>);
     dispatch!(fn set_signature(&mut self, signature: Signature));
@@ -392,9 +396,16 @@ macro_rules! impl_merkle_shred {
             get_merkle_proof(&self.payload, proof_offset, proof_size)
         }
 
+        #[cfg(test)]
         fn merkle_node(&self) -> Result<Hash, Error> {
+            Ok(hashv(&[MERKLE_HASH_PREFIX_LEAF, self.merkle_node_bytes()?]))
+        }
+
+        fn merkle_node_bytes(&self) -> Result<&[u8], Error> {
             let proof_offset = self.proof_offset()?;
-            get_merkle_node(&self.payload, SIZE_OF_SIGNATURE..proof_offset)
+            self.payload
+                .get(SIZE_OF_SIGNATURE..proof_offset)
+                .ok_or(Error::InvalidPayloadSize(self.payload.len()))
         }
 
         fn set_merkle_proof<'a, I>(&mut self, proof: I) -> Result<(), Error>
@@ -665,6 +676,21 @@ fn get_merkle_node(shred: &[u8], offsets: Range<usize>) -> Result<Hash, Error> {
     Ok(hashv(&[MERKLE_HASH_PREFIX_LEAF, node]))
 }
 
+/// Builds the Merkle tree over an erasure batch, hashing every leaf in one
+/// batched pass.
+fn merkle_tree_from_shreds(shreds: &[Shred]) -> Result<MerkleTree, Error> {
+    if shreds.is_empty() {
+        return Err(Error::EmptyIterator);
+    }
+    let leaves = shreds
+        .iter()
+        .map(Shred::merkle_node_bytes)
+        .collect::<Result<Vec<_>, Error>>()?;
+    let mut nodes = vec![[0u8; SIZE_OF_MERKLE_ROOT]; leaves.len()];
+    hash_batch::hash_many_prefixed(MERKLE_HASH_PREFIX_LEAF, &leaves, &mut nodes);
+    MerkleTree::try_new(nodes.into_iter().map(Hash::new_from_array).map(Ok))
+}
+
 pub(super) fn recover(
     mut shreds: Vec<Shred>,
     reed_solomon_cache: &ReedSolomonCache,
@@ -807,29 +833,24 @@ pub(super) fn recover(
     drop(shards);
     // Verify and sanitize recovered shreds, re-compute the Merkle tree and set
     // the merkle proof on the recovered shreds.
-    let nodes = shreds
-        .iter_mut()
-        .zip(&mask)
-        .enumerate()
-        .map(|(index, (shred, mask))| {
-            if !mask {
-                if index < num_data_shreds {
-                    let Shred::ShredData(shred) = shred else {
-                        return Err(Error::InvalidRecoveredShred);
-                    };
-                    let (common_header, data_header) = wincode::deserialize(&shred.payload[..])?;
-                    if shred.common_header != common_header {
-                        return Err(Error::InvalidRecoveredShred);
-                    }
-                    shred.data_header = data_header;
-                } else if !matches!(shred, Shred::ShredCode(_)) {
+    for (index, (shred, mask)) in shreds.iter_mut().zip(&mask).enumerate() {
+        if !mask {
+            if index < num_data_shreds {
+                let Shred::ShredData(shred) = shred else {
+                    return Err(Error::InvalidRecoveredShred);
+                };
+                let (common_header, data_header) = wincode::deserialize(&shred.payload[..])?;
+                if shred.common_header != common_header {
                     return Err(Error::InvalidRecoveredShred);
                 }
-                shred.sanitize()?;
+                shred.data_header = data_header;
+            } else if !matches!(shred, Shred::ShredCode(_)) {
+                return Err(Error::InvalidRecoveredShred);
             }
-            shred.merkle_node()
-        });
-    let tree = MerkleTree::try_new(nodes)?;
+            shred.sanitize()?;
+        }
+    }
+    let tree = merkle_tree_from_shreds(&shreds)?;
     // The attached signature verifies only if we obtain the same Merkle root.
     // Because shreds obtained from turbine or repair are sig-verified, this
     // also means that we don't need to verify signatures for recovered shreds.
@@ -1285,7 +1306,7 @@ fn finish_erasure_batch(
     }
 
     // Compute the Merkle tree for the erasure batch.
-    let tree = MerkleTree::try_new(shreds.iter().map(Shred::merkle_node))?;
+    let tree = merkle_tree_from_shreds(&shreds)?;
     // Sign the root of the Merkle tree.
     let signature = keypair.sign_message(tree.root().as_ref());
     // Populate merkle proof for all shreds and attach signature.
@@ -1549,6 +1570,12 @@ mod test {
         }
         let nodes = shreds.iter().map(Shred::merkle_node);
         let tree = MerkleTree::try_new(nodes).unwrap();
+        // Batching the leaves must not change the root: this is the identity
+        // the production path relies on, over real shred payloads.
+        assert_eq!(
+            merkle_tree_from_shreds(&shreds).unwrap().root(),
+            tree.root()
+        );
         for (index, shred) in shreds.iter_mut().enumerate() {
             let proof = tree.make_merkle_proof(index, num_shreds);
             shred.set_merkle_proof(proof).unwrap();
