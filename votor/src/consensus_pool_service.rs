@@ -70,11 +70,11 @@ pub(crate) enum PoolMessage {
 /// Maximum number of messages to process from a selected message channel before
 /// returning to channel selection. This keeps a continuously busy channel from
 /// starving the other consensus pool input channel.
-const TOTAL_MESSAGES_PER_RECEIVE: usize = 128;
+const MAX_MESSAGES_PER_RECEIVE: usize = 128;
 
 /// Number of additional messages to drain from the selected message channel
 /// after receiving the first message.
-const ADDITIONAL_MESSAGES_PER_RECEIVE: usize = TOTAL_MESSAGES_PER_RECEIVE - 1;
+const ADDITIONAL_MESSAGES_PER_RECEIVE: usize = MAX_MESSAGES_PER_RECEIVE - 1;
 
 /// Inputs for the consensus pool and consensus pool service
 pub(crate) struct ConsensusPoolContext {
@@ -613,7 +613,7 @@ impl ConsensusPoolService {
             )?;
         }
         stats.received_own_messages += received_messages;
-        if received_messages == TOTAL_MESSAGES_PER_RECEIVE {
+        if received_messages == MAX_MESSAGES_PER_RECEIVE {
             stats.receive_msgs_limit_reached += 1;
         }
         Ok(())
@@ -668,7 +668,7 @@ impl ConsensusPoolService {
             )?;
         }
         stats.received_consensus_message_batches += received_batches;
-        if received_batches == TOTAL_MESSAGES_PER_RECEIVE {
+        if received_batches == MAX_MESSAGES_PER_RECEIVE {
             stats.receive_msgs_limit_reached += 1;
         }
         Ok(())
@@ -957,7 +957,7 @@ mod tests {
     fn test_receive_msgs_limits_batches_per_call() {
         let mut ctx = TestContext::default();
 
-        for _ in 0..TOTAL_MESSAGES_PER_RECEIVE + 1 {
+        for _ in 0..MAX_MESSAGES_PER_RECEIVE + 1 {
             ctx.consensus_message_sender
                 .send(SigVerifiedBatch::Votes(vec![]))
                 .unwrap();
@@ -981,7 +981,7 @@ mod tests {
         assert_eq!(stats.received_own_messages.0, 0);
         assert_eq!(
             stats.received_consensus_message_batches.0,
-            TOTAL_MESSAGES_PER_RECEIVE
+            MAX_MESSAGES_PER_RECEIVE
         );
         assert_eq!(stats.receive_msgs_limit_reached.0, 1);
     }
