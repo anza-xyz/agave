@@ -84,15 +84,16 @@ impl From<ProgramCacheEntryOwner> for Pubkey {
     - Loaded => Loaded (with different account_owner)
 
     Eviction and unloading (in the same slot):
-    - Unloaded => Loaded in ProgramCache::assign_program
+    - Unloaded => Loaded / FailedVerification in ProgramCache::assign_program
     - Loaded => Unloaded in ProgramCache::unload_program_entry
 
     At epoch boundary (when feature set and environment changes):
     - Loaded => FailedVerification in Bank::_new_from_parent
     - FailedVerification => Loaded in Bank::_new_from_parent
 
-    Through pruning (when on orphan fork or overshadowed on the rooted fork):
-    - Closed / Unloaded / Loaded / Builtin => Empty in ProgramCache::prune
+    Through pruning:
+    - Closed / Unloaded / Loaded / Builtin => Empty in ProgramCache::prune (when on orphan fork or overshadowed on the rooted fork)
+    - FailedVerification / Unloaded / Loaded => Unloaded in ProgramCache::prune (when on outdated program runtime environment)
 */
 
 /// Actual payload of [ProgramCacheEntry].
@@ -285,19 +286,19 @@ impl ProgramCacheEntry {
         })
     }
 
-    pub fn to_unloaded(&self) -> Option<Self> {
+    pub fn to_unloaded_in_env(&self, environment: ProgramRuntimeEnvironment) -> Option<Self> {
         match &self.program {
-            ProgramCacheEntryType::Loaded(_) => {}
-            ProgramCacheEntryType::FailedVerification(_)
-            | ProgramCacheEntryType::Closed
+            ProgramCacheEntryType::Loaded(_)
+            | ProgramCacheEntryType::FailedVerification(_)
+            | ProgramCacheEntryType::Unloaded(_) => {}
+            ProgramCacheEntryType::Closed
             | ProgramCacheEntryType::DelayVisibility
-            | ProgramCacheEntryType::Unloaded(_)
             | ProgramCacheEntryType::Builtin(_) => {
                 return None;
             }
         }
         Some(Self {
-            program: ProgramCacheEntryType::Unloaded(self.program.get_environment()?.clone()),
+            program: ProgramCacheEntryType::Unloaded(environment),
             account_owner: self.account_owner,
             account_size: self.account_size,
             deployment_slot: self.deployment_slot,
@@ -305,6 +306,12 @@ impl ProgramCacheEntry {
             stats: Arc::clone(&self.stats),
             latest_access_slot: AtomicU64::new(self.latest_access_slot.load(Ordering::Relaxed)),
         })
+    }
+
+    pub fn to_unloaded(&self) -> Option<Self> {
+        self.to_unloaded_in_env(ProgramRuntimeEnvironment::clone(
+            self.program.get_environment()?,
+        ))
     }
 
     /// Creates a new built-in program
