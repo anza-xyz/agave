@@ -85,7 +85,7 @@ impl MerkleTree {
         // computed cap is 16400, actually using is 16398
         // about performance: current used fast_math log2 code is constant algo time
         if leaf_count > 0 {
-            fast_math::log2_raw(leaf_count as f32) as usize + 2 * leaf_count + 1
+            leaf_count.ilog2() as usize + 2 * leaf_count + 1
         } else {
             0
         }
