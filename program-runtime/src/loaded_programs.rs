@@ -485,7 +485,7 @@ impl<FG: ForkGraph> ProgramCache<FG> {
                             .zip(entry.program.get_environment())
                             .map(|(a, b)| a != b)
                             .unwrap_or(false)
-                        || existing == &entry
+                        || Arc::ptr_eq(existing, &entry)
                 });
             }
         }
@@ -949,7 +949,7 @@ impl<FG: ForkGraph> ProgramCache<FG> {
                 let second_level = entries.get_mut(&id).expect("Cache lookup failed");
                 let candidate = second_level
                     .iter_mut()
-                    .find(|entry| entry == &remove_entry)
+                    .find(|entry| Arc::ptr_eq(entry, remove_entry))
                     .expect("Program entry not found");
 
                 // Only loaded entries shall be unloaded by eviction.
