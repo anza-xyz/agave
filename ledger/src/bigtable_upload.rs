@@ -63,8 +63,6 @@ fn get_confirmed_block_upload_data(
         match component {
             ConfirmedBlockComponent::EntryBatch(entry_batch) => entries.extend(entry_batch),
             ConfirmedBlockComponent::BlockMarker(marker) => {
-                // Preserve every marker variant in Bigtable, even if shred reconstruction does not
-                // support it yet.
                 block_markers.push(marker);
             }
         }

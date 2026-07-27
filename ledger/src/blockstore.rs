@@ -4113,8 +4113,8 @@ impl Blockstore {
             return self.do_get_complete_block_with_components(
                 slot,
                 require_previous_blockhash,
-                true,
-                /*allow_dead_slots:*/ false,
+                /* populate_components */ true,
+                /* allow_dead_slots */ false,
             );
         }
         Err(BlockstoreError::SlotNotRooted)
