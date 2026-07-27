@@ -203,71 +203,75 @@ fn run_alpenglow_byzfuzz(
     let schedule_for_policy = schedule.clone();
 
     // Centralize all Alpenglow messages here before adding fuzz actions.
-    let proxy = AlpenglowInterceptor::new(&validator_keys, move |intercepted| {
-        // Network faults are temporal and apply to every node: a node is
-        // isolated while consensus is *progressing through* the window, keyed
-        // on logical time, not the message's subject slot. Keying on subject
-        // slot would drop catch-up traffic for those slots forever and stall
-        // the isolated node permanently.
-        if schedule_for_policy.drops_link(
-            intercepted.current_slot,
-            &intercepted.source,
-            &intercepted.destination,
-        ) {
-            debug!(
-                "byzfuzz policy current_slot={} source={} destination={} msg=\"{}\" \
-                 action=\"drop\" reason=network_isolation",
+    let proxy = AlpenglowInterceptor::new_with_stakes(
+        &validator_keys,
+        &source_stakes,
+        move |intercepted| {
+            // Network faults are temporal and apply to every node: a node is
+            // isolated while consensus is *progressing through* the window, keyed
+            // on logical time, not the message's subject slot. Keying on subject
+            // slot would drop catch-up traffic for those slots forever and stall
+            // the isolated node permanently.
+            if schedule_for_policy.drops_link(
                 intercepted.current_slot,
-                intercepted.source,
-                intercepted.destination,
-                describe_consensus_message(&intercepted.message),
-            );
-            return AlpenglowInterceptAction::Drop;
-        }
-
-        // Corruptions target a slot's agreement, so they key on the message's
-        // subject slot, and only apply to byzantine sources: re-signing a
-        // mutated message needs that source's BLS key.
-        let slot = message_slot(&intercepted.message);
-        if byzantine_sources_for_policy.contains(&intercepted.source)
-            && schedule_for_policy.in_corruption_window(slot)
-        {
-            let source_bls_keypair = byzantine_bls_keypairs_for_policy
-                .get(&intercepted.source)
-                .map(|keypair| keypair.as_ref());
-            // Content-derived RNG: deterministic per (message, destination), so
-            // the same vote to different peers can be mutated differently.
-            let mut rng =
-                schedule_for_policy.corruption_rng(&intercepted.message, &intercepted.destination);
-
-            byzantine_message_count_for_policy.fetch_add(1, Ordering::Relaxed);
-            if let Some(result) = maybe_mutate_alpenglow_message(
-                &intercepted.message,
-                intercepted.shred_version,
-                &mut rng,
-                source_bls_keypair,
-                forced_mutation,
+                &intercepted.source,
+                &intercepted.destination,
             ) {
                 debug!(
                     "byzfuzz policy current_slot={} source={} destination={} msg=\"{}\" \
-                     action=\"{}\" reason=byzantine_corruption mutation={:?}",
+                 action=\"drop\" reason=network_isolation",
                     intercepted.current_slot,
                     intercepted.source,
                     intercepted.destination,
                     describe_consensus_message(&intercepted.message),
-                    describe_intercept_action(&result.action),
-                    result.mutation,
                 );
-                *mutation_coverage_for_policy
-                    .lock()
-                    .unwrap()
-                    .entry(format!("{:?}", result.mutation))
-                    .or_default() += 1;
-                return result.action;
+                return AlpenglowInterceptAction::Drop;
             }
-        }
-        AlpenglowInterceptAction::Forward
-    });
+
+            // Corruptions target a slot's agreement, so they key on the message's
+            // subject slot, and only apply to byzantine sources: re-signing a
+            // mutated message needs that source's BLS key.
+            let slot = message_slot(&intercepted.message);
+            if byzantine_sources_for_policy.contains(&intercepted.source)
+                && schedule_for_policy.in_corruption_window(slot)
+            {
+                let source_bls_keypair = byzantine_bls_keypairs_for_policy
+                    .get(&intercepted.source)
+                    .map(|keypair| keypair.as_ref());
+                // Content-derived RNG: deterministic per (message, destination), so
+                // the same vote to different peers can be mutated differently.
+                let mut rng = schedule_for_policy
+                    .corruption_rng(&intercepted.message, &intercepted.destination);
+
+                byzantine_message_count_for_policy.fetch_add(1, Ordering::Relaxed);
+                if let Some(result) = maybe_mutate_alpenglow_message(
+                    &intercepted.message,
+                    intercepted.shred_version,
+                    &mut rng,
+                    source_bls_keypair,
+                    forced_mutation,
+                ) {
+                    debug!(
+                        "byzfuzz policy current_slot={} source={} destination={} msg=\"{}\" \
+                     action=\"{}\" reason=byzantine_corruption mutation={:?}",
+                        intercepted.current_slot,
+                        intercepted.source,
+                        intercepted.destination,
+                        describe_consensus_message(&intercepted.message),
+                        describe_intercept_action(&result.action),
+                        result.mutation,
+                    );
+                    *mutation_coverage_for_policy
+                        .lock()
+                        .unwrap()
+                        .entry(format!("{:?}", result.mutation))
+                        .or_default() += 1;
+                    return result.action;
+                }
+            }
+            AlpenglowInterceptAction::Forward
+        },
+    );
 
     info!(
         "{test_name}: Alpenglow byzantine test stake distribution (byzantine indices = {:?}, \
@@ -308,8 +312,8 @@ fn run_alpenglow_byzfuzz(
         ),
         node_stakes: node_stakes.clone(),
         ticks_per_slot: 8,
-        slots_per_epoch: MINIMUM_SLOTS_PER_EPOCH,
-        stakers_slot_offset: MINIMUM_SLOTS_PER_EPOCH,
+        slots_per_epoch: MINIMUM_SLOTS_PER_EPOCH * 2,
+        stakers_slot_offset: MINIMUM_SLOTS_PER_EPOCH * 2,
         skip_warmup_slots: true,
         ..ClusterConfig::default()
     };

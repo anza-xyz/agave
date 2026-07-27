@@ -3,17 +3,22 @@ use {
         byzzfuzz::schedule::message_slot, integration_tests::ValidatorKeys,
         local_cluster::LocalCluster,
     },
+    agave_bls_cert_verify::cert_verify::verify_certificate,
     agave_votor::voting_service::{AlpenglowPortOverride, VotingServiceOverride},
     agave_votor_messages::{
         certificate::Certificate,
-        consensus_message::{ConsensusMessage, VoteMessage},
-        unverified_vote_message::DecodedWireConsensusMessage,
+        consensus_message::{ConsensusMessage, VoteMessage, BLS_KEYPAIR_DERIVE_SEED},
+        unverified_vote_message::{DecodedWireConsensusMessage, UnverifiedCertificate},
         vote::Vote,
-        wire::VersionedWireConsensusMessage,
+        wire::{get_vote_payload_to_sign, VersionedWireConsensusMessage},
     },
     crossbeam_channel::bounded,
     log::{debug, info, warn},
     rand::rngs::StdRng,
+    solana_bls_signatures::{
+        keypair::Keypair as BLSKeypair,
+        pubkey::{PopVerified, PubkeyAffine as BlsPubkeyAffine, VerifySignature},
+    },
     solana_client::connection_cache::ConnectionCache,
     solana_clock::Slot,
     solana_connection_cache::client_connection::ClientConnection,
@@ -23,15 +28,16 @@ use {
     solana_signer::Signer,
     solana_streamer::{
         nonblocking::simple_qos::SimpleQosConfig,
-        quic::{QuicStreamerConfig, SpawnServerResult, spawn_simple_qos_server},
+        quic::{spawn_simple_qos_server, QuicStreamerConfig, SpawnServerResult},
         streamer::{PacketBatchReceiver, StakedNodes},
     },
     std::{
         collections::HashMap,
         net::{IpAddr, Ipv4Addr, SocketAddr},
+        num::NonZeroU64,
         sync::{
-            Arc, Mutex, RwLock,
             atomic::{AtomicBool, AtomicU64, Ordering},
+            Arc, Mutex, RwLock,
         },
         thread::{self, Builder, JoinHandle},
         time::Duration,
@@ -182,6 +188,104 @@ struct DelayedMessage {
     shred_version: u16,
 }
 
+#[derive(Clone, Copy)]
+struct ValidatorVerificationEntry {
+    stake: NonZeroU64,
+    bls_pubkey: PopVerified<BlsPubkeyAffine>,
+}
+
+/// Reproduces the destination sigverifier's cryptographic acceptance check.
+///
+/// The interceptor still forwards invalid mutations, but they must not become
+/// evidence for protocol invariants because validators discard them before the
+/// consensus pool sees them.
+struct MessageVerifier {
+    rank_entries: Vec<ValidatorVerificationEntry>,
+    total_stake: NonZeroU64,
+    cache: Mutex<HashMap<(ConsensusMessage, u16), bool>>,
+}
+
+impl MessageVerifier {
+    fn new(validator_keys: &[ValidatorKeys], source_stakes: &HashMap<Pubkey, u64>) -> Self {
+        let mut rank_entries = validator_keys
+            .iter()
+            .map(|keys| {
+                let source = keys.node_keypair.pubkey();
+                let stake =
+                    NonZeroU64::new(source_stakes.get(&source).copied().unwrap_or_else(|| {
+                        panic!("byzfuzz: missing stake for validator {source}")
+                    }))
+                    .unwrap_or_else(|| panic!("byzfuzz: validator {source} has zero stake"));
+                let bls_keypair = BLSKeypair::derive_from_signer(
+                    keys.vote_keypair.as_ref(),
+                    BLS_KEYPAIR_DERIVE_SEED,
+                )
+                .expect("byzfuzz: derive validator BLS keypair");
+                ValidatorVerificationEntry {
+                    stake,
+                    bls_pubkey: bls_keypair.public,
+                }
+            })
+            .collect::<Vec<_>>();
+        // Match BLSPubkeyToRankMap: descending stake, then ascending compressed
+        // BLS pubkey for a deterministic tie-break.
+        rank_entries.sort_by(|a, b| {
+            b.stake.cmp(&a.stake).then(
+                a.bls_pubkey
+                    .to_bytes_compressed()
+                    .cmp(&b.bls_pubkey.to_bytes_compressed()),
+            )
+        });
+        let total_stake = rank_entries
+            .iter()
+            .fold(0u64, |total, entry| total.saturating_add(entry.stake.get()));
+        Self {
+            rank_entries,
+            total_stake: NonZeroU64::new(total_stake)
+                .expect("byzfuzz: total validator stake must be nonzero"),
+            cache: Mutex::new(HashMap::new()),
+        }
+    }
+
+    fn accepts(&self, message: &ConsensusMessage, shred_version: u16) -> bool {
+        let key = (message.clone(), shred_version);
+        if let Some(accepted) = self.cache.lock().unwrap().get(&key).copied() {
+            return accepted;
+        }
+        let accepted = match message {
+            ConsensusMessage::Vote(vote) => {
+                self.rank_entries
+                    .get(vote.rank as usize)
+                    .is_some_and(|entry| {
+                        let payload = get_vote_payload_to_sign(vote.vote, shred_version);
+                        entry
+                            .bls_pubkey
+                            .verify_signature(&vote.signature, &payload)
+                            .is_ok()
+                    })
+            }
+            ConsensusMessage::Certificate(certificate) => verify_certificate(
+                UnverifiedCertificate {
+                    cert_type: certificate.cert_type,
+                    signature: certificate.signature,
+                    bitmap: certificate.bitmap.clone(),
+                    shred_version,
+                },
+                self.rank_entries.len(),
+                self.total_stake,
+                |rank| {
+                    self.rank_entries
+                        .get(rank)
+                        .map(|entry| (entry.stake, entry.bls_pubkey))
+                },
+            )
+            .is_ok(),
+        };
+        self.cache.lock().unwrap().insert(key, accepted);
+        accepted
+    }
+}
+
 pub struct AlpenglowInterceptor {
     pub state: Arc<Mutex<AlpenglowInterceptorState>>,
     port_override: AlpenglowPortOverride,
@@ -193,6 +297,22 @@ pub struct AlpenglowInterceptor {
 impl AlpenglowInterceptor {
     pub fn new(
         validator_keys: &[ValidatorKeys],
+        policy: impl Fn(AlpenglowInterceptedMessage) -> AlpenglowInterceptAction + Send + Sync + 'static,
+    ) -> Self {
+        Self::new_inner(validator_keys, None, policy)
+    }
+
+    pub fn new_with_stakes(
+        validator_keys: &[ValidatorKeys],
+        source_stakes: &HashMap<Pubkey, u64>,
+        policy: impl Fn(AlpenglowInterceptedMessage) -> AlpenglowInterceptAction + Send + Sync + 'static,
+    ) -> Self {
+        Self::new_inner(validator_keys, Some(source_stakes), policy)
+    }
+
+    fn new_inner(
+        validator_keys: &[ValidatorKeys],
+        source_stakes: Option<&HashMap<Pubkey, u64>>,
         policy: impl Fn(AlpenglowInterceptedMessage) -> AlpenglowInterceptAction + Send + Sync + 'static,
     ) -> Self {
         let source_clients = Arc::new(Self::source_clients(validator_keys));
@@ -214,6 +334,8 @@ impl AlpenglowInterceptor {
             validator_count: validator_keys.len(),
             ..AlpenglowInterceptorState::default()
         }));
+        let message_verifier =
+            source_stakes.map(|stakes| Arc::new(MessageVerifier::new(validator_keys, stakes)));
         let policy: InterceptPolicy = Arc::new(policy);
         let port_override = AlpenglowPortOverride::default();
         let mut override_map = HashMap::new();
@@ -262,6 +384,7 @@ impl AlpenglowInterceptor {
                 current_slot.clone(),
                 stagnation_watchdog.clone(),
                 state.clone(),
+                message_verifier.clone(),
                 exit.clone(),
             );
 
@@ -352,6 +475,7 @@ impl AlpenglowInterceptor {
         current_slot: Arc<AtomicU64>,
         stagnation_watchdog: Arc<Mutex<StagnationWatchdog>>,
         state: Arc<Mutex<AlpenglowInterceptorState>>,
+        message_verifier: Option<Arc<MessageVerifier>>,
         exit: Arc<AtomicBool>,
     ) -> JoinHandle<()> {
         Builder::new()
@@ -430,8 +554,6 @@ impl AlpenglowInterceptor {
                         }
                         let now = current_slot.load(Ordering::Relaxed);
 
-                        // Record original traffic before policy decisions mutate it.
-                        Self::record_message(&state, source, destination, &message);
                         let action = policy(AlpenglowInterceptedMessage {
                             source,
                             destination,
@@ -449,6 +571,8 @@ impl AlpenglowInterceptor {
                                 source_clients.clone(),
                                 destinations.clone(),
                                 exit.clone(),
+                                state.clone(),
+                                message_verifier.clone(),
                             ),
                             AlpenglowInterceptAction::Drop => {
                                 debug!("AlpenglowInterceptor: dropped {source} -> {destination}");
@@ -462,6 +586,8 @@ impl AlpenglowInterceptor {
                                     source_clients.clone(),
                                     destinations.clone(),
                                     exit.clone(),
+                                    state.clone(),
+                                    message_verifier.clone(),
                                 );
                                 Self::forward(
                                     source,
@@ -471,6 +597,8 @@ impl AlpenglowInterceptor {
                                     source_clients.clone(),
                                     destinations.clone(),
                                     exit.clone(),
+                                    state.clone(),
+                                    message_verifier.clone(),
                                 );
                             }
                             AlpenglowInterceptAction::DuplicateToAll => {
@@ -482,6 +610,8 @@ impl AlpenglowInterceptor {
                                     source_clients.clone(),
                                     destinations.clone(),
                                     exit.clone(),
+                                    state.clone(),
+                                    message_verifier.clone(),
                                 );
                             }
                             AlpenglowInterceptAction::DelayMessages(delay) => {
@@ -503,6 +633,8 @@ impl AlpenglowInterceptor {
                                 source_clients.clone(),
                                 destinations.clone(),
                                 exit.clone(),
+                                state.clone(),
+                                message_verifier.clone(),
                             ),
                         }
                         Self::release_due_messages(
@@ -511,6 +643,8 @@ impl AlpenglowInterceptor {
                             source_clients.clone(),
                             destinations.clone(),
                             exit.clone(),
+                            state.clone(),
+                            message_verifier.clone(),
                         );
                     }
                 }
@@ -580,6 +714,8 @@ impl AlpenglowInterceptor {
         source_clients: Arc<HashMap<Pubkey, Arc<ConnectionCache>>>,
         destinations: Arc<RwLock<HashMap<Pubkey, SocketAddr>>>,
         exit: Arc<AtomicBool>,
+        state: Arc<Mutex<AlpenglowInterceptorState>>,
+        message_verifier: Option<Arc<MessageVerifier>>,
     ) {
         let due = {
             let mut delayed_messages = delayed_messages.lock().unwrap();
@@ -609,6 +745,8 @@ impl AlpenglowInterceptor {
                 source_clients.clone(),
                 destinations.clone(),
                 exit.clone(),
+                state.clone(),
+                message_verifier.clone(),
             );
         }
     }
@@ -621,6 +759,8 @@ impl AlpenglowInterceptor {
         source_clients: Arc<HashMap<Pubkey, Arc<ConnectionCache>>>,
         destinations: Arc<RwLock<HashMap<Pubkey, SocketAddr>>>,
         exit: Arc<AtomicBool>,
+        state: Arc<Mutex<AlpenglowInterceptorState>>,
+        message_verifier: Option<Arc<MessageVerifier>>,
     ) {
         for destination in all_destinations.iter().copied() {
             Self::forward(
@@ -631,6 +771,8 @@ impl AlpenglowInterceptor {
                 source_clients.clone(),
                 destinations.clone(),
                 exit.clone(),
+                state.clone(),
+                message_verifier.clone(),
             );
         }
     }
@@ -643,6 +785,8 @@ impl AlpenglowInterceptor {
         source_clients: Arc<HashMap<Pubkey, Arc<ConnectionCache>>>,
         destinations: Arc<RwLock<HashMap<Pubkey, SocketAddr>>>,
         exit: Arc<AtomicBool>,
+        state: Arc<Mutex<AlpenglowInterceptorState>>,
+        message_verifier: Option<Arc<MessageVerifier>>,
     ) {
         let Some(destination_addr) = Self::wait_for_destination(destination, &destinations, &exit)
         else {
@@ -652,6 +796,21 @@ impl AlpenglowInterceptor {
             warn!("AlpenglowInterceptor: unknown source {source}");
             return;
         };
+        // Invariant state describes effective, accepted egress: dropped and
+        // still-delayed messages are absent, and invalid mutations are omitted
+        // because the destination's sigverifier discards them before consensus.
+        if message_verifier
+            .as_ref()
+            .is_none_or(|verifier| verifier.accepts(&message, shred_version))
+        {
+            Self::record_message(&state, source, destination, &message);
+        } else {
+            debug!(
+                "AlpenglowInterceptor: excluding sigverify-rejected message from invariant state: \
+                 {source} -> {destination} {}",
+                describe_consensus_message(&message),
+            );
+        }
         // Re-wrap into the wire format so the destination validator's
         // sigverifier can decode it; preserve the original shred version.
         let wire_message = VersionedWireConsensusMessage::new(message, shred_version);
@@ -696,5 +855,54 @@ impl Drop for AlpenglowInterceptor {
                 thread.join().ok();
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use {
+        super::*,
+        agave_votor_messages::{certificate::CertificateType, vote::Vote},
+    };
+
+    #[test]
+    fn test_message_verifier_filters_rejected_effective_egress() {
+        let validator_keys = [ValidatorKeys::new(), ValidatorKeys::new()];
+        let source_stakes = validator_keys
+            .iter()
+            .enumerate()
+            .map(|(index, keys)| (keys.node_keypair.pubkey(), (index as u64 + 1) * 10))
+            .collect::<HashMap<_, _>>();
+        let verifier = MessageVerifier::new(&validator_keys, &source_stakes);
+
+        let bls_keypair = BLSKeypair::derive_from_signer(
+            validator_keys[0].vote_keypair.as_ref(),
+            BLS_KEYPAIR_DERIVE_SEED,
+        )
+        .unwrap();
+        let rank = verifier
+            .rank_entries
+            .iter()
+            .position(|entry| entry.bls_pubkey == bls_keypair.public)
+            .unwrap() as u16;
+        let vote = Vote::new_skip_vote(5);
+        let shred_version = 42;
+        let signature = bls_keypair
+            .sign(&get_vote_payload_to_sign(vote, shred_version))
+            .into();
+        let valid_vote = ConsensusMessage::new_vote(vote, signature, rank);
+        assert!(verifier.accepts(&valid_vote, shred_version));
+
+        let wrong_rank_vote = ConsensusMessage::new_vote(vote, signature, rank ^ 1);
+        assert!(!verifier.accepts(&wrong_rank_vote, shred_version));
+
+        let malformed_certificate = ConsensusMessage::new_certificate(
+            CertificateType::Skip(5),
+            vec![u8::MAX],
+            bls_keypair.sign(b"not a certificate payload").into(),
+        );
+        assert!(!verifier.accepts(&malformed_certificate, shred_version));
+        // The cached result must preserve the rejection.
+        assert!(!verifier.accepts(&malformed_certificate, shred_version));
     }
 }

@@ -21,9 +21,9 @@ for M in "${MUTS[@]}"; do
     SEED=$(grep -oE "using seed [0-9]+" "$OUT" | head -1 | grep -oE "[0-9]+")
     [ -z "$SEED" ] && SEED="unk"
     cp "$OUT" "$LOGDIR/${M}_${SEED}.log"
-    if grep -q "byzzfuzz invariant failed" "$OUT"; then
+    if grep -q "byzfuzz invariant failed" "$OUT"; then
       echo "VIOLATION mutation=$M seed=$SEED rc=$RC log=$LOGDIR/${M}_${SEED}.log" | tee -a "$STATUS"
-      grep -n "byzzfuzz invariant failed" "$OUT" | head -5
+      grep -n "byzfuzz invariant failed" "$OUT" | head -5
       exit 42
     fi
     if [ "$RC" -ne 0 ]; then
