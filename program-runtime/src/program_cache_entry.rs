@@ -187,6 +187,7 @@ impl std::fmt::Debug for ProgramCacheEntry {
     }
 }
 
+#[cfg(feature = "dev-context-only-utils")]
 impl PartialEq for ProgramCacheEntry {
     fn eq(&self, other: &Self) -> bool {
         self.effective_slot == other.effective_slot
