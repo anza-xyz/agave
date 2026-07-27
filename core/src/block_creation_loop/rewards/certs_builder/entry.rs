@@ -1,27 +1,21 @@
 use {
     super::BuildRewardCertsRespError,
-    crate::block_creation_loop::rewards::msg_types::RewardRespSucc,
+    crate::block_creation_loop::rewards::{
+        certs_builder::entry::partial_cert::BuildResult, msg_types::RewardRespSucc,
+    },
+    agave_votor::aggregate_accumulator::AggregateAccumulatorError,
     agave_votor_messages::{
-        aggregate_accumulator::AggregateAccumulatorError, consensus_message::VoteMessage,
-        reward_certificate::SkipRewardCertificate, sig_verified_messages::VoteAggregate,
-        vote::Vote,
+        consensus_message::VoteMessage, reward_certificate::SkipRewardCertificate,
+        sig_verified_messages::VoteAggregate, vote::Vote,
     },
     notar_entry::NotarEntry,
-    partial_cert::{BuildSigBitmapError, PartialCert},
+    partial_cert::PartialCert,
     solana_clock::Slot,
     solana_pubkey::Pubkey,
-    thiserror::Error,
 };
 
 mod notar_entry;
 mod partial_cert;
-
-/// Different types of errors that can be returned from adding votes.
-#[derive(Debug, Error)]
-pub(super) enum AddAggregateError {
-    #[error("AggregateAccumulator failed with {0}")]
-    Accumulating(#[from] AggregateAccumulatorError),
-}
 
 #[derive(Clone)]
 /// Per slot container for storing notar and skip votes for creating rewards certificates.
@@ -49,7 +43,7 @@ impl Entry {
         &mut self,
         aggregate: VoteAggregate,
         vote_account_pubkeys: Vec<Pubkey>,
-    ) -> Result<(), AddAggregateError> {
+    ) -> Result<(), AggregateAccumulatorError> {
         match *aggregate.vote() {
             Vote::Notarize(notar) => self.notar.add_aggregate(
                 aggregate,
@@ -67,7 +61,7 @@ impl Entry {
         &mut self,
         vote_msg: VoteMessage,
         vote_account_pubkey: Pubkey,
-    ) -> Result<(), AddAggregateError> {
+    ) -> Result<(), AggregateAccumulatorError> {
         match vote_msg.vote {
             Vote::Notarize(notar) => self.notar.add_own_msg(
                 vote_msg,
@@ -87,15 +81,15 @@ impl Entry {
     ) -> Result<RewardRespSucc, BuildRewardCertsRespError> {
         let notar = self.notar.build_cert(reward_slot)?;
         let skip = match self.skip.build_sig_bitmap() {
-            Err(e) => match e {
-                BuildSigBitmapError::Empty => None,
-                BuildSigBitmapError::Accumulating(e) => {
-                    return Err(BuildRewardCertsRespError::RewardCertTryNew(e.into()));
-                }
-            },
-            Ok((signature, bitmap, skip_validators)) => {
+            BuildResult::Empty => None,
+            BuildResult::EncodingError(e) => return Err(BuildRewardCertsRespError::Encoding(e)),
+            BuildResult::Success {
+                signature,
+                bitmap,
+                validators,
+            } => {
                 let cert = SkipRewardCertificate::try_new(reward_slot, signature, bitmap)?;
-                Some((cert, skip_validators))
+                Some((cert, validators))
             }
         };
 

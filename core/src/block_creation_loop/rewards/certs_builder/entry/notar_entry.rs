@@ -2,8 +2,9 @@
 
 use {
     crate::block_creation_loop::rewards::certs_builder::entry::{
-        AddAggregateError, BuildSigBitmapError, PartialCert,
+        PartialCert, partial_cert::BuildResult,
     },
+    agave_votor::aggregate_accumulator::AggregateAccumulatorError,
     agave_votor_messages::{
         consensus_message::VoteMessage,
         reward_certificate::{BuildRewardCertsRespError, NotarRewardCertificate},
@@ -39,7 +40,7 @@ impl NotarEntry {
         vote_account_pubkeys: Vec<Pubkey>,
         block_id: Hash,
         max_validators: usize,
-    ) -> Result<(), AddAggregateError> {
+    ) -> Result<(), AggregateAccumulatorError> {
         let partial = self
             .partials
             .entry(block_id)
@@ -54,7 +55,7 @@ impl NotarEntry {
         vote_account_pubkey: Pubkey,
         block_id: Hash,
         max_validators: usize,
-    ) -> Result<(), AddAggregateError> {
+    ) -> Result<(), AggregateAccumulatorError> {
         let partial = self
             .partials
             .entry(block_id)
@@ -77,13 +78,13 @@ impl NotarEntry {
             return Ok(None);
         };
         match partial.build_sig_bitmap() {
-            Err(e) => match e {
-                BuildSigBitmapError::Empty => Ok(None),
-                BuildSigBitmapError::Accumulating(e) => {
-                    Err(BuildRewardCertsRespError::RewardCertTryNew(e.into()))
-                }
-            },
-            Ok((signature, bitmap, validators)) => {
+            BuildResult::Empty => Ok(None),
+            BuildResult::EncodingError(e) => Err(BuildRewardCertsRespError::Encoding(e)),
+            BuildResult::Success {
+                signature,
+                bitmap,
+                validators,
+            } => {
                 let cert =
                     NotarRewardCertificate::try_new(reward_slot, block_id, signature, bitmap)?;
                 Ok(Some((cert, validators)))

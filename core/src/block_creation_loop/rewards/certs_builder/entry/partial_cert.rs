@@ -1,22 +1,19 @@
 use {
-    crate::block_creation_loop::rewards::certs_builder::entry::AddAggregateError,
-    agave_votor_messages::{
-        aggregate_accumulator::{AggregateAccumulator, AggregateAccumulatorError},
-        consensus_message::VoteMessage,
-        sig_verified_messages::VoteAggregate,
-    },
+    agave_votor::aggregate_accumulator::{AggregateAccumulator, AggregateAccumulatorError},
+    agave_votor_messages::{consensus_message::VoteMessage, sig_verified_messages::VoteAggregate},
     solana_bls_signatures::SignatureCompressed as BLSSignatureCompressed,
     solana_pubkey::Pubkey,
-    thiserror::Error,
+    solana_signer_store::EncodeError,
 };
 
-/// Different types of errors that can be returned from building signature and the associated bitmap.
-#[derive(Debug, Error)]
-pub(super) enum BuildSigBitmapError {
-    #[error("Empty bitvec")]
+pub(super) enum BuildResult {
     Empty,
-    #[error("AggregateAccumulator failed with {0}")]
-    Accumulating(#[from] AggregateAccumulatorError),
+    EncodingError(EncodeError),
+    Success {
+        signature: BLSSignatureCompressed,
+        bitmap: Vec<u8>,
+        validators: Vec<Pubkey>,
+    },
 }
 
 #[derive(Clone)]
@@ -40,7 +37,7 @@ impl PartialCert {
         &mut self,
         aggregate: VoteAggregate,
         mut vote_account_pubkeys: Vec<Pubkey>,
-    ) -> Result<(), AddAggregateError> {
+    ) -> Result<(), AggregateAccumulatorError> {
         self.accumulator.add_aggregate(&aggregate)?;
         self.validators.append(&mut vote_account_pubkeys);
         Ok(())
@@ -51,7 +48,7 @@ impl PartialCert {
         &mut self,
         vote_msg: VoteMessage,
         vote_account_pubkey: Pubkey,
-    ) -> Result<(), AddAggregateError> {
+    ) -> Result<(), AggregateAccumulatorError> {
         self.accumulator.add_own_vote_message(&vote_msg)?;
         self.validators.push(vote_account_pubkey);
         Ok(())
@@ -60,14 +57,19 @@ impl PartialCert {
     /// Builds a signature and associated bitmap from the collected votes.
     ///
     /// On success, returns the built signature, bitmap, and the list of validators in the bitmap.
-    pub(super) fn build_sig_bitmap(
-        self,
-    ) -> Result<(BLSSignatureCompressed, Vec<u8>, Vec<Pubkey>), BuildSigBitmapError> {
+    pub(super) fn build_sig_bitmap(self) -> BuildResult {
         if self.validators.is_empty() {
-            return Err(BuildSigBitmapError::Empty);
+            return BuildResult::Empty;
         }
-        let (signature, ranks) = self.accumulator.into_sig_and_ranks()?;
-        Ok((signature, ranks, self.validators))
+        let (signature, bitmap) = match self.accumulator.into_sig_and_ranks() {
+            Ok(res) => res,
+            Err(e) => return BuildResult::EncodingError(e),
+        };
+        BuildResult::Success {
+            signature,
+            bitmap,
+            validators: self.validators,
+        }
     }
 
     /// Returns how much stake has been observed.
@@ -96,7 +98,7 @@ mod tests {
         let mut partial_cert = PartialCert::new(max_validators);
         assert!(matches!(
             partial_cert.clone().build_sig_bitmap(),
-            Err(BuildSigBitmapError::Empty)
+            BuildResult::Empty
         ));
         let skip = Vote::new_skip_vote(slot);
         for rank in 0..max_validators {
@@ -105,7 +107,10 @@ mod tests {
             partial_cert
                 .add_aggregate(aggregate, vote_account_pubkeys)
                 .unwrap();
-            let (_signature, bitmap, _) = partial_cert.clone().build_sig_bitmap().unwrap();
+            let BuildResult::Success { bitmap, .. } = partial_cert.clone().build_sig_bitmap()
+            else {
+                panic!("wrong type");
+            };
             validate_bitmap(&bitmap, rank + 1, max_validators);
         }
     }

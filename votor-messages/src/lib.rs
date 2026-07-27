@@ -9,7 +9,6 @@ use {
     solana_pubkey::Pubkey,
 };
 
-pub mod aggregate_accumulator;
 pub mod certificate;
 pub mod consensus_message;
 pub mod finalized_slot;

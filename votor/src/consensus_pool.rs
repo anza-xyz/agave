@@ -1,11 +1,12 @@
 //! Defines ConsensusPool to store received and generated votes and certificates.
 use {
     crate::{
+        aggregate_accumulator::AggregateAccumulatorError,
         consensus_pool::{
             parent_ready_tracker::{ParentReady, ParentReadyTracker},
             slot_stake_counters::SlotStakeCounters,
             stats::ConsensusPoolStats,
-            vote_pool::{VotePool, VotePoolError},
+            vote_pool::VotePool,
         },
         consensus_pool_service::{PoolMessage, PoolVote},
         event::VotorEvent,
@@ -45,7 +46,7 @@ pub(crate) enum AddVoteError {
     #[error("Received old msg with slot:{slot} in root_slot:{root_slot}")]
     OldMessage { slot: Slot, root_slot: Slot },
     #[error("Adding vote to vote_pool failed with {0}")]
-    VotePoolAddVote(VotePoolError),
+    VotePoolAddVote(AggregateAccumulatorError),
 }
 
 fn get_rank_map(bank: &Bank, slot: Slot) -> Result<&BLSPubkeyToRankMap, AddVoteError> {

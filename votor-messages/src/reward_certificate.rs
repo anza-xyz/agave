@@ -1,11 +1,11 @@
 //! Defines aggregates used for vote rewards.
 
 use {
-    crate::aggregate_accumulator::AggregateAccumulatorError,
     solana_bls_signatures::SignatureCompressed as BLSSignatureCompressed,
     solana_clock::Slot,
     solana_hash::Hash,
     solana_short_vec::ShortU16,
+    solana_signer_store::EncodeError,
     thiserror::Error,
     wincode::{SchemaRead, SchemaWrite, containers::Vec as WincodeVec, pod_wrapper},
 };
@@ -25,9 +25,6 @@ pub enum RewardCertError {
     /// Invalid bitmap was supplied.
     #[error("invalid bitmap was supplied")]
     InvalidBitmap,
-    /// Accumilating into aggregator failed.
-    #[error("AggregateAccumulator failed with {0}")]
-    Accumulating(#[from] AggregateAccumulatorError),
 }
 
 /// Reward certificate for the validators that voted skip.
@@ -124,4 +121,7 @@ pub enum BuildRewardCertsRespError {
     /// Building either the skip or the notar reward cert failed.
     #[error("try_new() on skip or notar cert failed with {0}")]
     RewardCertTryNew(#[from] RewardCertError),
+    /// Encoding failed
+    #[error("encoding failed with {0:?}")]
+    Encoding(EncodeError),
 }

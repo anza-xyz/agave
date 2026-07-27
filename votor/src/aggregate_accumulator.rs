@@ -1,7 +1,7 @@
 //! Defines `AggregateAccumulator` that can used to aggregate votes and produce certificates.
 
 use {
-    crate::{
+    agave_votor_messages::{
         certificate::{Certificate, CertificateType},
         consensus_message::VoteMessage,
         fraction::Fraction,
@@ -156,13 +156,11 @@ impl AggregateAccumulator {
     }
 
     /// Returns the aggregated signature and ranks from the accumulated VoteAggregates so far.
-    pub fn into_sig_and_ranks(
-        self,
-    ) -> Result<(BLSSignatureCompressed, Vec<u8>), AggregateAccumulatorError> {
+    pub fn into_sig_and_ranks(self) -> Result<(BLSSignatureCompressed, Vec<u8>), EncodeError> {
         let mut ranks = self.ranks;
         let new_len = ranks.last_one().map_or(0, |i| i.saturating_add(1));
         ranks.resize(new_len, false);
-        let ranks = encode_base2(&ranks).map_err(AggregateAccumulatorError::EncodingFailed)?;
+        let ranks = encode_base2(&ranks)?;
         let signature = BLSSignature::from(self.signature).try_into().unwrap();
         Ok((signature, ranks))
     }

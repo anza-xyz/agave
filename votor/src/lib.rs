@@ -4,6 +4,7 @@
 #[macro_use]
 extern crate log;
 
+pub mod aggregate_accumulator;
 pub mod commitment;
 pub mod common;
 pub mod consensus_metrics;

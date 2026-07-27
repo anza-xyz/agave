@@ -5,9 +5,11 @@
 //! The pool assumes that the bls-sigverifier has performed all conflicting votes checks.
 
 use {
-    crate::consensus_pool_service::PoolVote,
-    agave_votor_messages::{
+    crate::{
         aggregate_accumulator::{AggregateAccumulator, AggregateAccumulatorError},
+        consensus_pool_service::PoolVote,
+    },
+    agave_votor_messages::{
         certificate::{Certificate, CertificateType},
         vote::Vote,
     },
@@ -16,14 +18,7 @@ use {
         num::NonZero,
         sync::Arc,
     },
-    thiserror::Error,
 };
-
-#[derive(Debug, PartialEq, Eq, Error)]
-pub(crate) enum VotePoolError {
-    #[error("AggregateAccumulator failed with {0}")]
-    Accumulating(#[from] AggregateAccumulatorError),
-}
 
 pub(super) struct VotePool {
     max_validators: usize,
@@ -44,7 +39,7 @@ impl VotePool {
         vote: Vote,
         completed_certs: &BTreeMap<CertificateType, Arc<Certificate>>,
         acc: &AggregateAccumulator,
-    ) -> Result<Option<Certificate>, VotePoolError> {
+    ) -> Result<Option<Certificate>, AggregateAccumulatorError> {
         match vote {
             Vote::Notarize(notar) => {
                 for cert_type in [
@@ -150,7 +145,7 @@ impl VotePool {
         total_stake: NonZero<u64>,
         msg: &PoolVote,
         completed_certs: &BTreeMap<CertificateType, Arc<Certificate>>,
-    ) -> Result<(u64, Option<Certificate>), VotePoolError> {
+    ) -> Result<(u64, Option<Certificate>), AggregateAccumulatorError> {
         let vote = *msg.vote();
         let acc = self
             .accumulators
