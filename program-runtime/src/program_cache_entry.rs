@@ -153,7 +153,7 @@ impl ProgramCacheEntryType {
 /// Holds a program version at a specific address and on a specific slot / fork.
 ///
 /// It contains the actual program in [ProgramCacheEntryType] and a bunch of meta-data.
-#[derive(Debug, Default)]
+#[derive(Default)]
 pub struct ProgramCacheEntry {
     /// The program of this entry
     pub program: ProgramCacheEntryType,
@@ -168,6 +168,23 @@ pub struct ProgramCacheEntry {
     /// How often this entry was used by a transaction
     pub stats: Arc<ProgramStatistics>,
     pub latest_access_slot: AtomicU64,
+}
+
+impl std::fmt::Debug for ProgramCacheEntry {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("ProgramCacheEntry")
+            .field("slot", &self.deployment_slot)
+            .field(
+                "env",
+                &self
+                    .program
+                    .get_environment()
+                    .map(|env| Arc::as_ptr(env))
+                    .unwrap_or(std::ptr::null()),
+            )
+            .field("type", &self.program)
+            .finish()
+    }
 }
 
 impl PartialEq for ProgramCacheEntry {
