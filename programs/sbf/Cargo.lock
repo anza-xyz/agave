@@ -9879,6 +9879,7 @@ dependencies = [
  "solana-account-decoder",
  "solana-address-lookup-table-interface",
  "solana-clock",
+ "solana-entry",
  "solana-hash 4.5.0",
  "solana-instruction",
  "solana-loader-v2-interface",

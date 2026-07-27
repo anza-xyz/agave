@@ -21,8 +21,9 @@ use {
         ConfirmedBlock, ConfirmedTransactionStatusWithSignature,
         ConfirmedTransactionWithStatusMeta, EntrySummary, Reward, TransactionByAddrInfo,
         TransactionConfirmationStatus, TransactionStatus, TransactionStatusMeta,
-        TransactionWithStatusMeta, VersionedConfirmedBlock, VersionedConfirmedBlockWithEntries,
-        VersionedTransactionWithStatusMeta, extract_and_fmt_memos,
+        TransactionWithStatusMeta, VersionedConfirmedBlock,
+        VersionedConfirmedBlockWithSplitComponents, VersionedTransactionWithStatusMeta,
+        extract_and_fmt_memos,
     },
     std::{
         collections::{HashMap, HashSet},
@@ -1063,37 +1064,32 @@ impl LedgerStorage {
     ) -> Result<()> {
         trace!("LedgerStorage::upload_confirmed_block request received: {slot:?}");
 
-        self.upload_confirmed_block_with_entries(
+        self.upload_confirmed_block_with_split_components(
             slot,
-            VersionedConfirmedBlockWithEntries {
+            VersionedConfirmedBlockWithSplitComponents {
                 block: confirmed_block,
                 entries: vec![],
+                markers: vec![],
             },
         )
         .await
     }
 
-    pub async fn upload_confirmed_block_with_entries(
+    pub async fn upload_confirmed_block_with_split_components(
         &self,
         slot: Slot,
-        confirmed_block: VersionedConfirmedBlockWithEntries,
+        confirmed_block: VersionedConfirmedBlockWithSplitComponents,
     ) -> Result<()> {
-        self.upload_confirmed_block_with_entries_and_markers(slot, confirmed_block, Vec::new())
-            .await
-    }
-
-    pub async fn upload_confirmed_block_with_entries_and_markers(
-        &self,
-        slot: Slot,
-        confirmed_block: VersionedConfirmedBlockWithEntries,
-        block_markers: Vec<VersionedBlockMarker>,
-    ) -> Result<()> {
-        trace!("LedgerStorage::upload_confirmed_block_with_entries request received: {slot:?}");
+        trace!(
+            "LedgerStorage::upload_confirmed_block_with_split_components request received: \
+             {slot:?}"
+        );
 
         let mut by_addr: HashMap<&Pubkey, Vec<TransactionByAddrInfo>> = HashMap::new();
-        let VersionedConfirmedBlockWithEntries {
+        let VersionedConfirmedBlockWithSplitComponents {
             block: confirmed_block,
             entries,
+            markers,
         } = confirmed_block;
 
         let reserved_account_keys = ReservedAccountKeys::new_all_activated();
@@ -1157,8 +1153,8 @@ impl LedgerStorage {
                 entries: entries.into_iter().enumerate().map(Into::into).collect(),
             },
         );
-        let num_block_markers = block_markers.len();
-        let block_markers = serialize_block_markers(&block_markers)?;
+        let num_block_markers = markers.len();
+        let block_markers = serialize_block_markers(&markers)?;
         let block_markers_cell = (slot_to_block_markers_key(slot), block_markers);
 
         let mut tasks = vec![];

@@ -29,6 +29,7 @@ serde_json = { workspace = true }
 solana-account-decoder = { workspace = true }
 solana-address-lookup-table-interface = { workspace = true }
 solana-clock = { workspace = true }
+solana-entry = { workspace = true }
 solana-hash = { workspace = true }
 solana-instruction = { workspace = true }
 solana-loader-v2-interface = { workspace = true, features = ["bincode"] }

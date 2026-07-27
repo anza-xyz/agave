@@ -66,8 +66,7 @@ use {
     solana_transaction_status::{
         ConfirmedTransactionStatusWithSignature, ConfirmedTransactionWithStatusMeta, EntrySummary,
         RewardsAndNumPartitions, TransactionStatusMeta, TransactionWithStatusMeta,
-        VersionedConfirmedBlock, VersionedConfirmedBlockWithEntries,
-        VersionedTransactionWithStatusMeta,
+        VersionedConfirmedBlock, VersionedTransactionWithStatusMeta,
     },
     std::{
         borrow::Cow,
@@ -3941,165 +3940,13 @@ impl Blockstore {
         slot: Slot,
         require_previous_blockhash: bool,
     ) -> Result<VersionedConfirmedBlock> {
-        self.do_get_complete_block_with_entries(
+        self.do_get_complete_block_with_components(
             slot,
             require_previous_blockhash,
-            false,
-            /*allow_dead_slots:*/ false,
+            /* populate_components */ false,
+            /* allow_dead_slots */ false,
         )
         .map(|result| result.block)
-    }
-
-    pub fn get_rooted_block_with_entries(
-        &self,
-        slot: Slot,
-        require_previous_blockhash: bool,
-    ) -> Result<VersionedConfirmedBlockWithEntries> {
-        let _lock = self.check_lowest_cleanup_slot(slot)?;
-
-        if self.is_root(slot) {
-            return self.do_get_complete_block_with_entries(
-                slot,
-                require_previous_blockhash,
-                true,
-                /*allow_dead_slots:*/ false,
-            );
-        }
-        Err(BlockstoreError::SlotNotRooted)
-    }
-
-    #[cfg(feature = "dev-context-only-utils")]
-    pub fn get_complete_block_with_entries(
-        &self,
-        slot: Slot,
-        require_previous_blockhash: bool,
-        populate_entries: bool,
-        allow_dead_slots: bool,
-    ) -> Result<VersionedConfirmedBlockWithEntries> {
-        self.do_get_complete_block_with_entries(
-            slot,
-            require_previous_blockhash,
-            populate_entries,
-            allow_dead_slots,
-        )
-    }
-
-    fn do_get_complete_block_with_entries(
-        &self,
-        slot: Slot,
-        require_previous_blockhash: bool,
-        populate_entries: bool,
-        allow_dead_slots: bool,
-    ) -> Result<VersionedConfirmedBlockWithEntries> {
-        let Some(slot_meta) = self.meta_cf.get(slot)? else {
-            trace!("do_get_complete_block_with_entries() failed for {slot} (missing SlotMeta)");
-            return Err(BlockstoreError::SlotUnavailable);
-        };
-
-        if !slot_meta.is_full() {
-            trace!("do_get_complete_block_with_entries() failed for {slot} (slot not full)");
-            return Err(BlockstoreError::SlotUnavailable);
-        }
-
-        let (slot_entries, _, _) = self.get_slot_entries_with_shred_info(
-            slot,
-            /*shred_start_index:*/ 0,
-            allow_dead_slots,
-        )?;
-
-        if slot_entries.is_empty() {
-            trace!("do_get_complete_block_with_entries() failed for {slot} (no entries found)");
-            return Err(BlockstoreError::SlotUnavailable);
-        }
-
-        let blockhash = slot_entries
-            .last()
-            .map(|entry| entry.hash)
-            .unwrap_or_else(|| panic!("Rooted slot {slot:?} must have blockhash"));
-
-        let mut starting_transaction_index = 0;
-        let mut entries = if populate_entries {
-            Vec::with_capacity(slot_entries.len())
-        } else {
-            Vec::new()
-        };
-
-        let slot_transaction_iterator = slot_entries
-            .into_iter()
-            .flat_map(|entry| {
-                if populate_entries {
-                    entries.push(solana_transaction_status::EntrySummary {
-                        num_hashes: entry.num_hashes,
-                        hash: entry.hash,
-                        num_transactions: entry.transactions.len() as u64,
-                        starting_transaction_index,
-                    });
-                    starting_transaction_index += entry.transactions.len();
-                }
-                entry.transactions
-            })
-            .map(|transaction| {
-                if let Err(err) = transaction.sanitize() {
-                    warn!(
-                        "Blockstore::get_block sanitize failed: {err:?}, slot: {slot:?}, \
-                         {transaction:?}",
-                    );
-                }
-                transaction
-            });
-
-        let previous_blockhash = slot_meta.parent_slot.and_then(|parent_slot| {
-            self.get_slot_entries_with_shred_info(
-                parent_slot,
-                /*shred_start_index:*/ 0,
-                allow_dead_slots,
-            )
-            .ok()
-            .and_then(|(entries, _, is_full)| {
-                // The blockhash is specifically the final entry hash in a
-                // block so ensure the block is full
-                if is_full {
-                    entries.last().map(|entry| entry.hash)
-                } else {
-                    None
-                }
-            })
-        });
-        if previous_blockhash.is_none() && require_previous_blockhash {
-            return Err(BlockstoreError::ParentEntriesUnavailable);
-        }
-        let previous_blockhash = previous_blockhash.unwrap_or_else(Hash::default);
-
-        let RewardsAndNumPartitions {
-            rewards,
-            num_partitions,
-        } = self
-            .read_rewards(slot)?
-            .unwrap_or_else(|| RewardsAndNumPartitions {
-                rewards: Vec::new(),
-                num_partitions: None,
-            });
-
-        // The Blocktime and BlockHeight column families are updated asynchronously; they
-        // may not be written by the time the complete slot entries are available. In this
-        // case, these fields will be `None`.
-        let block_time = self.blocktime_cf.get(slot)?;
-        let block_height = self.block_height_cf.get(slot)?;
-
-        let block = VersionedConfirmedBlock {
-            previous_blockhash: previous_blockhash.to_string(),
-            blockhash: blockhash.to_string(),
-            // If the slot is full it should have parent_slot populated
-            // from shreds received.
-            parent_slot: slot_meta.parent_slot.unwrap(),
-            transactions: self.map_transactions_to_statuses(slot, slot_transaction_iterator)?,
-            rewards,
-            num_partitions,
-            block_time,
-            block_height,
-        };
-
-        Ok(VersionedConfirmedBlockWithEntries { block, entries })
     }
 
     pub fn get_rooted_block_with_components(
