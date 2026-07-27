@@ -183,7 +183,6 @@ impl<T> SlotListWriteGuard<'_, T> {
     }
 
     /// Clears the list, removing all elements.
-    #[cfg(test)]
     pub fn clear(&mut self) {
         self.0.clear();
     }
