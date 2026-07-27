@@ -16,10 +16,12 @@ rustdoc-args = ["--cfg=docsrs"]
 
 [features]
 agave-unstable-api = []
+dev-context-only-utils = ["dep:wincode"]
 
 [dependencies]
 crossbeam-channel = { workspace = true }
 solana-perf = { workspace = true }
+wincode = { workspace = true, optional = true }
 
 [lints]
 workspace = true

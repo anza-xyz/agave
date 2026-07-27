@@ -21,7 +21,6 @@ agave-unstable-api = []
 dirs-next = { workspace = true }
 serde = { workspace = true }
 serde_yaml = { workspace = true }
-solana-clap-utils = { workspace = true }
 solana-commitment-config = { workspace = true }
 url = { workspace = true }
 

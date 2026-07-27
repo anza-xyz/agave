@@ -1,8 +1,5 @@
 use {
-    crate::{
-        staked_validators_cache::StakedValidatorsCache,
-        vote_history_storage::{SavedVoteHistoryVersions, VoteHistoryStorage},
-    },
+    crate::staked_validators_cache::StakedValidatorsCache,
     agave_votor_messages::{
         certificate::Certificate, consensus_message::VoteMessage,
         wire::VersionedWireConsensusMessage,
@@ -12,7 +9,6 @@ use {
     solana_clock::Slot,
     solana_connection_cache::client_connection::ClientConnection,
     solana_gossip::cluster_info::ClusterInfo,
-    solana_measure::measure::Measure,
     solana_pubkey::Pubkey,
     solana_runtime::{
         bank_forks::BankForks, validated_block_finalization::ValidatedBlockFinalizationCert,
@@ -52,19 +48,10 @@ const STANDSTILL_REFRESH_INTERVAL: Duration = Duration::from_secs(1);
 
 #[derive(Debug)]
 pub enum BLSOp {
-    PushVote {
-        vote: Arc<VoteMessage>,
-        saved_vote_history: SavedVoteHistoryVersions,
-    },
-    PushCertificates {
-        certificates: Vec<Arc<Certificate>>,
-    },
-    RefreshVotes {
-        votes: Vec<Arc<VoteMessage>>,
-    },
-    RefreshCertificates {
-        certificates: Vec<Arc<Certificate>>,
-    },
+    PushVote { vote: Arc<VoteMessage> },
+    PushCertificates { certificates: Vec<Arc<Certificate>> },
+    RefreshVotes { votes: Vec<Arc<VoteMessage>> },
+    RefreshCertificates { certificates: Vec<Arc<Certificate>> },
 }
 
 #[derive(Debug)]
@@ -268,7 +255,6 @@ impl VotingService {
     pub fn new(
         bls_receiver: Receiver<BLSOp>,
         cluster_info: Arc<ClusterInfo>,
-        vote_history_storage: Arc<dyn VoteHistoryStorage>,
         connection_cache: Arc<ConnectionCache>,
         bank_forks: Arc<RwLock<BankForks>>,
         highest_finalized: Arc<RwLock<Option<ValidatedBlockFinalizationCert>>>,
@@ -312,7 +298,6 @@ impl VotingService {
                     };
                     Self::handle_bls_op(
                         &cluster_info,
-                        vote_history_storage.as_ref(),
                         bls_op,
                         &connection_cache,
                         &additional_listeners,
@@ -432,7 +417,6 @@ impl VotingService {
 
     fn handle_bls_op(
         cluster_info: &ClusterInfo,
-        vote_history_storage: &dyn VoteHistoryStorage,
         bls_op: BLSOp,
         connection_cache: &ConnectionCache,
         additional_listeners: &[SocketAddr],
@@ -440,17 +424,7 @@ impl VotingService {
         standstill_queue: &mut StandstillRefreshQueue,
     ) {
         match bls_op {
-            BLSOp::PushVote {
-                vote,
-                saved_vote_history,
-            } => {
-                let mut measure = Measure::start("alpenglow vote history save");
-                if let Err(err) = vote_history_storage.store(&saved_vote_history) {
-                    error!("Unable to save vote history to storage: {err:?}");
-                    std::process::exit(1);
-                }
-                measure.stop();
-                trace!("{measure}");
+            BLSOp::PushVote { vote, .. } => {
                 let msg = VersionedWireConsensusMessage::new_from_vote(
                     Arc::unwrap_or_clone(vote),
                     cluster_info.my_shred_version(),
@@ -508,9 +482,6 @@ impl VotingService {
 mod tests {
     use {
         super::*,
-        crate::vote_history_storage::{
-            NullVoteHistoryStorage, SavedVoteHistory, SavedVoteHistoryVersions,
-        },
         agave_votor_messages::{
             certificate::{Certificate, CertificateType},
             consensus_message::{ConsensusMessage, VoteMessage},
@@ -538,6 +509,7 @@ mod tests {
         },
         std::{
             net::SocketAddr,
+            num::NonZero,
             sync::{Arc, RwLock},
         },
         test_case::test_case,
@@ -554,6 +526,7 @@ mod tests {
                 vote,
                 signature: BLSSignature([0; BLS_SIGNATURE_AFFINE_SIZE]),
                 rank,
+                stake: NonZero::new(123).unwrap(),
             },
             shred_verion,
         )
@@ -669,7 +642,6 @@ mod tests {
             VotingService::new(
                 bls_receiver,
                 cluster_info.clone(),
-                Arc::new(NullVoteHistoryStorage::default()),
                 Arc::new(ConnectionCache::new_quic(
                     "TestAlpenglowConnectionCache",
                     10,
@@ -691,18 +663,19 @@ mod tests {
             vote: Vote::new_skip_vote(5),
             signature: BLSSignature([0; BLS_SIGNATURE_AFFINE_SIZE]),
             rank: 1,
+            stake:NonZero::new(123).unwrap()
         }),
-        saved_vote_history: SavedVoteHistoryVersions::Current(SavedVoteHistory::default()),
     }, ConsensusMessage::Vote(VoteMessage {
         vote: Vote::new_skip_vote(5),
         signature: BLSSignature([0; BLS_SIGNATURE_AFFINE_SIZE]),
         rank: 1,
+        stake:NonZero::new(123).unwrap()
     }))]
     #[test_case(BLSOp::PushCertificates {
         certificates: vec![Arc::new(Certificate {
-                cert_type: CertificateType::Skip(5),
-            signature: BLSSignature([0; BLS_SIGNATURE_AFFINE_SIZE]),
-            bitmap: Vec::new(),
+        cert_type: CertificateType::Skip(5),
+        signature: BLSSignature([0; BLS_SIGNATURE_AFFINE_SIZE]),
+        bitmap: Vec::new(),
         })],
     }, ConsensusMessage::Certificate(Certificate {
         cert_type: CertificateType::Skip(5),
@@ -711,14 +684,16 @@ mod tests {
     }))]
     #[test_case(BLSOp::RefreshVotes {
         votes: vec![Arc::new(VoteMessage {
-            vote: Vote::new_skip_vote(6),
-            signature: BLSSignature([0; BLS_SIGNATURE_AFFINE_SIZE]),
-            rank: 1,
+        vote: Vote::new_skip_vote(6),
+        signature: BLSSignature([0; BLS_SIGNATURE_AFFINE_SIZE]),
+        rank: 1,
+        stake:NonZero::new(123).unwrap()
         })],
     }, ConsensusMessage::Vote(VoteMessage {
         vote: Vote::new_skip_vote(6),
         signature: BLSSignature([0; BLS_SIGNATURE_AFFINE_SIZE]),
         rank: 1,
+        stake:NonZero::new(123).unwrap()
     }))]
     fn test_send_message(bls_op: BLSOp, expected_message: ConsensusMessage) {
         agave_logger::setup();
@@ -767,7 +742,12 @@ mod tests {
         let packets = receiver.recv().unwrap();
         let packet = packets.first().expect("No packets received");
         let received_message =
-            wincode::config::deserialize_exact(packet.data(..).unwrap(), packet_config()).unwrap();
+            VersionedWireConsensusMessage::deserialize_with_expected_shred_version(
+                packet.data(..).unwrap(),
+                packet_config(),
+                cluster_info.my_shred_version(),
+            )
+            .unwrap();
         assert_eq!(
             VersionedWireConsensusMessage::new(expected_message, cluster_info.my_shred_version()),
             received_message

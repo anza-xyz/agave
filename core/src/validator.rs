@@ -86,7 +86,7 @@ use {
         },
         blockstore_metric_report_service::BlockstoreMetricReportService,
         blockstore_options::{BLOCKSTORE_DIRECTORY_ROCKS_LEVEL, BlockstoreOptions},
-        blockstore_processor::{self, TransactionStatusSender},
+        blockstore_processor,
         entry_notifier_interface::EntryNotifierArc,
         entry_notifier_service::{EntryNotifierSender, EntryNotifierService},
         leader_schedule_cache::LeaderScheduleCache,
@@ -133,6 +133,7 @@ use {
         snapshot_bank_utils,
         snapshot_controller::SnapshotController,
         snapshot_utils,
+        transaction_execution::TransactionStatusSender,
     },
     solana_send_transaction_service::send_transaction_service::Config as SendTransactionServiceConfig,
     solana_shred_version::compute_shred_version,
@@ -995,6 +996,7 @@ impl Validator {
         cluster_info.restore_contact_info(ledger_path, config.contact_save_interval);
         cluster_info.set_bind_ip_addrs(node.bind_ip_addrs.clone());
         let cluster_info = Arc::new(cluster_info);
+        cluster_info.set_migration_status(migration_status.clone());
         let node_multihoming = Arc::new(NodeMultihoming::from(&node));
         migration_status.set_pubkey(cluster_info.id());
 
@@ -1244,8 +1246,6 @@ impl Validator {
             json_rpc_service,
             rpc_subscriptions,
             pubsub_service,
-            completed_data_sets_sender,
-            completed_data_sets_service,
             rpc_completed_slots_service,
             sample_performance_service,
             optimistically_confirmed_bank_tracker,
@@ -1328,27 +1328,6 @@ impl Validator {
                 Some(pubsub_service)
             };
 
-            let (completed_data_sets_sender, completed_data_sets_service) =
-                if !config.rpc_config.full_api {
-                    (None, None)
-                } else {
-                    let (completed_data_sets_sender, completed_data_sets_receiver) =
-                        bounded(MAX_COMPLETED_DATA_SETS_IN_CHANNEL);
-                    let completed_data_sets_service = CompletedDataSetsService::new(
-                        completed_data_sets_receiver,
-                        blockstore.clone(),
-                        rpc_subscriptions.clone(),
-                        deshred_transaction_notifier.clone(),
-                        exit.clone(),
-                        max_slots.clone(),
-                        bank_forks.clone(),
-                    );
-                    (
-                        Some(completed_data_sets_sender),
-                        Some(completed_data_sets_service),
-                    )
-                };
-
             let rpc_completed_slots_service =
                 if config.rpc_config.full_api || geyser_plugin_service.is_some() {
                     let (completed_slots_sender, completed_slots_receiver) =
@@ -1398,16 +1377,42 @@ impl Validator {
                 Some(json_rpc_service),
                 Some(rpc_subscriptions),
                 pubsub_service,
-                completed_data_sets_sender,
-                completed_data_sets_service,
                 rpc_completed_slots_service,
                 sample_performance_service,
                 optimistically_confirmed_bank_tracker,
                 bank_notification_sender_config,
             )
         } else {
-            (None, None, None, None, None, None, None, None, None)
+            (None, None, None, None, None, None, None)
         };
+
+        // CompletedDataSetsService feeds two independent sinks: RPC signatureSubscribe
+        // notifications (which need rpc_subscriptions) and the geyser deshred-transaction notifier
+        // (which does not). Spawn it whenever either sink wants it, kept out of the rpc_addrs block
+        // above so a geyser node started without --rpc-port still gets deshred notifications.
+        // Gating on the notifier itself rather than on a plugin being loaded keeps the per-data-set
+        // blockstore reads off nodes whose plugins don't subscribe; --geyser-plugin-always-enabled
+        // is the exception, where the notifier is present with no subscribers.
+        let (completed_data_sets_sender, completed_data_sets_service) =
+            if config.rpc_config.full_api || deshred_transaction_notifier.is_some() {
+                let (completed_data_sets_sender, completed_data_sets_receiver) =
+                    bounded(MAX_COMPLETED_DATA_SETS_IN_CHANNEL);
+                let completed_data_sets_service = CompletedDataSetsService::new(
+                    completed_data_sets_receiver,
+                    blockstore.clone(),
+                    rpc_subscriptions.clone(),
+                    deshred_transaction_notifier.clone(),
+                    exit.clone(),
+                    max_slots.clone(),
+                    bank_forks.clone(),
+                );
+                (
+                    Some(completed_data_sets_sender),
+                    Some(completed_data_sets_service),
+                )
+            } else {
+                (None, None)
+            };
 
         let ip_echo_server = match node.sockets.ip_echo {
             None => None,
@@ -1566,7 +1571,7 @@ impl Validator {
             banking_stage_sender: banking_stage_sender_for_bcl,
             sharable_banks: bank_forks.read().unwrap().sharable_banks(),
         };
-        let (block_creation_loop, reward_votes_sender) =
+        let (block_creation_loop, reward_aggregates_sender) =
             BlockCreationLoop::new(block_creation_loop_config);
 
         assert_eq!(
@@ -1671,8 +1676,6 @@ impl Validator {
             block_metadata_notifier,
             config.wait_to_vote_slot,
             Some(snapshot_controller.clone()),
-            config.runtime_config.log_messages_bytes_limit,
-            prioritization_fee_cache.clone(),
             banking_tracer,
             outstanding_repair_requests.clone(),
             cluster_slots.clone(),
@@ -1695,7 +1698,7 @@ impl Validator {
                 voting_service_test_override: config.voting_service_test_override.clone(),
                 highest_finalized,
             },
-            reward_votes_sender,
+            reward_aggregates_sender,
         )
         .map_err(ValidatorError::Other)?;
 
@@ -2876,8 +2879,7 @@ fn cleanup_blockstore_incorrect_shred_versions(
 
     info!("Purging slots {start_slot} to {end_slot} from blockstore");
     let mut timer = Measure::start("blockstore purge");
-    blockstore.purge_from_next_slots(start_slot, end_slot);
-    blockstore.purge_slots(start_slot, end_slot, PurgeType::Exact)?;
+    blockstore.purge_slots_cleanup_chaining(start_slot, end_slot, PurgeType::Exact)?;
     timer.stop();
     info!("Purging slots done. {timer}");
 

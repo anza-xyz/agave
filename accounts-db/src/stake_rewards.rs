@@ -139,58 +139,6 @@ impl StakeReward {
         }
     }
 
-    pub fn new_with_pre_stake_account(
-        reward_lamports: i64,
-        stake_lamports: u64,
-        rent: &Rent,
-    ) -> (AccountSharedData, Self) {
-        let vote_pubkey = Pubkey::new_unique();
-        let node_pubkey = Pubkey::new_unique();
-        let vote_account = vote_state::create_v4_account_with_authorized(
-            &node_pubkey,
-            &vote_pubkey,
-            [0u8; BLS_PUBLIC_KEY_COMPRESSED_SIZE],
-            &vote_pubkey,
-            1000,
-            &vote_pubkey,
-            0,
-            &node_pubkey,
-            stake_lamports,
-        );
-
-        let rent_exempt_reserve = rent.minimum_balance(StakeStateV2::size_of());
-        let stake_pubkey = Pubkey::new_unique();
-        let pre_stake_account = create_stake_account(
-            &stake_pubkey,
-            &vote_pubkey,
-            &vote_account,
-            rent,
-            rent_exempt_reserve + stake_lamports,
-        );
-        let post_stake_account = create_stake_account(
-            &stake_pubkey,
-            &vote_pubkey,
-            &vote_account,
-            rent,
-            rent_exempt_reserve + stake_lamports + reward_lamports as u64,
-        );
-
-        (
-            pre_stake_account,
-            Self {
-                stake_pubkey,
-                stake_reward_info: StakeRewardInfo {
-                    reward_type: solana_reward_info::RewardType::Staking,
-                    lamports: reward_lamports,
-                    post_balance: 0,         /* unused atm */
-                    commission_bps: Some(0), /* unused but tests require some value */
-                },
-
-                stake_account: post_stake_account,
-            },
-        )
-    }
-
     pub fn credit(&mut self, amount: u64) {
         self.stake_reward_info.lamports = amount as i64;
         self.stake_reward_info.post_balance += amount;

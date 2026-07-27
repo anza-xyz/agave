@@ -4,7 +4,6 @@ use {
     agave_reserved_account_keys::ReservedAccountKeys,
     log::debug,
     solana_account::{AccountSharedData, ReadableAccount, WritableAccount},
-    solana_fee::FeeFeatures,
     solana_pubkey::Pubkey,
     solana_rent::Rent,
     solana_reward_info::RewardType,
@@ -86,7 +85,7 @@ impl Bank {
             transaction,
             self.fee_structure().lamports_per_signature,
             transaction_configuration.priority_fee_lamports,
-            FeeFeatures::from(self.feature_set.as_ref()),
+            self.fee_features(),
         );
         let FeeDistribution {
             deposit: reward,

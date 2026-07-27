@@ -26,8 +26,5 @@ agave-unstable-api = []
 [target.'cfg(target_arch = "bpf")'.dependencies]
 aya-ebpf = { workspace = true }
 
-[target.'cfg(target_os = "linux")'.dependencies]
-aya = { workspace = true }
-
 [lints]
 workspace = true

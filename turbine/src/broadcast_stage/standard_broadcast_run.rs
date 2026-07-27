@@ -137,11 +137,17 @@ impl StandardBroadcastRun {
         blockstore: &Blockstore,
         bank: &Bank,
         process_stats: &mut ProcessShredsStats,
-    ) {
+    ) -> Result<()> {
         debug_assert_ne!(bank.slot(), self.slot);
 
-        let parent_block_id = bank
-            .parent_block_id()
+        let Some(parent_bank) = bank.parent() else {
+            // If our broadcast is quite backed up, the parent bank could have already been
+            // pruned from BankForks by a newer window getting rooted
+            return Err(Error::WindowSkipped(bank.slot()));
+        };
+        debug_assert!(parent_bank.is_frozen());
+        let parent_block_id = parent_bank
+            .block_id()
             .expect("All banks frozen (including snapshot banks) must have a block id");
 
         let chained_merkle_root = if self.slot == bank.parent_slot() {
@@ -179,6 +185,8 @@ impl StandardBroadcastRun {
 
         process_stats.receive_elapsed = 0;
         process_stats.coalesce_elapsed = 0;
+
+        Ok(())
     }
 
     // If the current slot has changed, generates an empty shred indicating
@@ -388,7 +396,7 @@ impl StandardBroadcastRun {
             }
 
             // Reinitialize state for this slot.
-            self.reinitialize_state(blockstore, &bank, process_stats);
+            self.reinitialize_state(blockstore, &bank, process_stats)?;
             true
         } else {
             false

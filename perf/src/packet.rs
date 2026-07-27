@@ -73,9 +73,13 @@ where
 }
 
 /// Representation of a packet used in TPU.
-#[cfg_attr(feature = "frozen-abi", derive(AbiExample))]
+#[cfg_attr(feature = "frozen-abi", derive(AbiExample, StableAbi, StableAbiSample))]
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
 pub struct BytesPacket {
+    #[cfg_attr(
+        feature = "frozen-abi",
+        stable_abi_sample(with = "solana_frozen_abi::stable_abi::sample_collection(rng)")
+    )]
     buffer: Bytes,
     meta: Meta,
 }
@@ -166,7 +170,10 @@ impl BytesPacket {
     }
 }
 
-#[cfg_attr(feature = "frozen-abi", derive(AbiExample, AbiEnumVisitor))]
+#[cfg_attr(
+    feature = "frozen-abi",
+    derive(AbiExample, AbiEnumVisitor, StableAbi, StableAbiSample)
+)]
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
 pub enum PacketBatch {
     Pinned(RecycledPacketBatch),
@@ -638,7 +645,7 @@ impl IndexedParallelIterator for PacketBatchParIterMut<'_> {
     }
 }
 
-#[cfg_attr(feature = "frozen-abi", derive(AbiExample))]
+#[cfg_attr(feature = "frozen-abi", derive(AbiExample, StableAbi, StableAbiSample))]
 #[derive(Debug, Default, Clone, Eq, PartialEq, Serialize, Deserialize)]
 pub struct RecycledPacketBatch {
     packets: RecycledVec<Packet>,
@@ -814,7 +821,7 @@ fn to_packet_batches_for_tests<T: Serialize>(items: &[T]) -> Vec<PacketBatch> {
     to_packet_batches(items, NUM_PACKETS)
 }
 
-#[cfg_attr(feature = "frozen-abi", derive(AbiExample))]
+#[cfg_attr(feature = "frozen-abi", derive(AbiExample, StableAbi, StableAbiSample))]
 #[derive(Debug, Default, Clone, Eq, PartialEq, Serialize, Deserialize)]
 pub struct BytesPacketBatch {
     packets: Vec<BytesPacket>,

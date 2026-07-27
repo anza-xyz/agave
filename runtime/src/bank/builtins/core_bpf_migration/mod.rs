@@ -520,9 +520,7 @@ pub(crate) mod tests {
         agave_feature_set::FeatureSet,
         agave_snapshots::snapshot_config::SnapshotConfig,
         assert_matches::assert_matches,
-        solana_account::{
-            AccountSharedData, ReadableAccount, WritableAccount, state_traits::StateMut,
-        },
+        solana_account::{AccountSharedData, ReadableAccount, WritableAccount},
         solana_accounts_db::accounts_db::ACCOUNTS_DB_CONFIG_FOR_TESTING,
         solana_builtins::{
             BUILTINS,
@@ -718,7 +716,8 @@ pub(crate) mod tests {
 
             // Program account has the correct state, with a pointer to its program
             // data address.
-            let program_account_state: UpgradeableLoaderState = program_account.state().unwrap();
+            let program_account_state: UpgradeableLoaderState =
+                bincode::deserialize(program_account.data()).unwrap();
             assert_eq!(
                 program_account_state,
                 UpgradeableLoaderState::Program {
@@ -1085,7 +1084,7 @@ pub(crate) mod tests {
         let program_data_address = get_program_data_address(&builtin_id);
         let program_data_account = bank.get_account(&program_data_address).unwrap();
         let program_data_account_state: UpgradeableLoaderState =
-            program_data_account.state().unwrap();
+            bincode::deserialize(program_data_account.data()).unwrap();
         assert_eq!(
             program_data_account_state,
             UpgradeableLoaderState::ProgramData {
@@ -1259,7 +1258,7 @@ pub(crate) mod tests {
         let program_data_address = get_program_data_address(&program_address);
         let program_data_account = bank.get_account(&program_data_address).unwrap();
         let program_data_account_state: UpgradeableLoaderState =
-            program_data_account.state().unwrap();
+            bincode::deserialize(program_data_account.data()).unwrap();
         assert_eq!(
             program_data_account_state,
             UpgradeableLoaderState::ProgramData {

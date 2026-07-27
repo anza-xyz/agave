@@ -390,7 +390,7 @@ fn main() -> Result<(), Box<dyn error::Error>> {
                 .value_name("BLS_PUBKEY")
                 .multiple(true)
                 .takes_value(true)
-                .required(false)
+                .required(true)
                 .help("The bootstrap validator's bls pubkey"),
         )
         .arg(

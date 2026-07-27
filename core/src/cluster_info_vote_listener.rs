@@ -508,12 +508,14 @@ impl ClusterInfoVoteListener {
                 let (vote_txs, packets) =
                     Self::verify_votes(votes, &mut gossip_sigverify_handle, &sharable_banks)?;
                 verified_vote_transactions_sender.send(vote_txs)?;
-                // Sample backlog before the push.
-                stats.banking_channel_max_len = stats
-                    .banking_channel_max_len
-                    .max(verified_packets_sender.len());
-                stats.banking_channel_eviction_drops +=
-                    verified_packets_sender.send(BankingPacketBatch::new(packets))?;
+                for packet_batch in packets {
+                    // Sample backlog before the push.
+                    stats.banking_channel_max_len = stats
+                        .banking_channel_max_len
+                        .max(verified_packets_sender.len());
+                    stats.banking_channel_eviction_drops +=
+                        verified_packets_sender.send(BankingPacketBatch::new(packet_batch))?;
+                }
             }
             if last_report.elapsed() >= STATS_REPORT_INTERVAL {
                 datapoint_info!(
@@ -768,7 +770,7 @@ impl ClusterInfoVoteListener {
                 sender
                     .sender
                     .send((
-                        BankNotification::OptimisticallyConfirmed(last_vote_slot),
+                        BankNotification::OptimisticallyConfirmed(last_vote_slot, last_vote_hash),
                         dependency_work,
                     ))
                     .unwrap_or_else(|err| warn!("bank_notification_sender failed: {err:?}"));

@@ -23,9 +23,6 @@ use {
     log::*,
     scopeguard::defer,
     solana_clock::Slot,
-    solana_ledger::blockstore_processor::{
-        TransactionBatchWithIndexes, TransactionStatusSender, execute_batch,
-    },
     solana_pubkey::Pubkey,
     solana_runtime::{
         installed_scheduler_pool::{
@@ -34,6 +31,9 @@ use {
             UninstalledScheduler, UninstalledSchedulerBox, initialized_result_with_timings,
         },
         prioritization_fee_cache::PrioritizationFeeCache,
+        transaction_execution::{
+            TransactionBatchWithIndexes, TransactionStatusSender, execute_batch,
+        },
         vote_sender_types::{ReplayVoteSendType, ReplayVoteSender},
     },
     solana_runtime_transaction::runtime_transaction::RuntimeTransaction,
@@ -585,7 +585,6 @@ impl TaskHandler for DefaultTaskHandler {
             timings,
             handler_context.log_messages_bytes_limit,
             handler_context.prioritization_fee_cache.as_deref(),
-            None::<fn(&_) -> _>,
         );
         sleepless_testing::at(CheckPoint::TaskHandled(task_id));
     }
@@ -859,7 +858,6 @@ fn disconnected<T>() -> Receiver<T> {
     crossbeam_channel::unbounded().1
 }
 
-#[cfg_attr(doc, aquamarine::aquamarine)]
 /// The concrete scheduler instance along with 1 scheduler and N handler threads.
 ///
 /// This implements the dyn-compatible [`InstalledScheduler`] trait to be interacted by
@@ -901,31 +899,6 @@ fn disconnected<T>() -> Receiver<T> {
 /// reasons like [`UsageQueueLoader`] being overgrown or many idling schedulers in the pool, in
 /// addition to the obvious reason of aborted scheduler.
 ///
-/// ### Life cycle and ownership movement across crates of a particular scheduler
-///
-/// ```mermaid
-/// stateDiagram-v2
-///     [*] --> Active: Spawned (New bank by solReplayStage)
-///     state solana-runtime {
-///         state if_usable <<choice>>
-///         Active --> if_usable: Returned (Bank-freezing by solReplayStage)
-///         Active --> if_usable: Dropped (BankForks-pruning by solReplayStage)
-///         Aborted --> if_usable: Dropped (BankForks-pruning by solReplayStage)
-///         if_usable --> Pooled: IF !overgrown && !aborted
-///         Active --> Aborted: Errored on TX execution
-///         Aborted --> Stale: !Dropped after TIMEOUT_DURATION since taken
-///         Active --> Stale: No new TX after TIMEOUT_DURATION since taken
-///         Stale --> if_usable: Returned (Timeout-triggered by solScCleaner)
-///         Pooled --> Active: Taken (New bank by solReplayStage)
-///     }
-///     state solana-unified-scheduler-pool {
-///         Pooled --> Idle: !Taken after POOLING_DURATION
-///         if_usable --> Trashed: IF overgrown || aborted
-///         Idle --> Retired
-///         Trashed --> Retired
-///     }
-///     Retired --> [*]: Terminated (by solScCleaner)
-/// ```
 #[derive(Debug)]
 pub struct PooledScheduler<TH: TaskHandler> {
     inner: PooledSchedulerInner<Self, TH>,
@@ -1904,12 +1877,16 @@ mod tests {
         crate::sleepless_testing,
         assert_matches::assert_matches,
         solana_clock::Slot,
+        solana_hash::Hash,
         solana_keypair::Keypair,
         solana_pubkey::Pubkey,
         solana_runtime::{
             bank::{Bank, SlotLeader},
             bank_forks::BankForks,
-            genesis_utils::{GenesisConfigInfo, create_genesis_config},
+            genesis_utils::{
+                GenesisConfigInfo, bootstrap_validator_stake_lamports, create_genesis_config,
+                create_genesis_config_with_leader,
+            },
             installed_scheduler_pool::{
                 BankWithScheduler, InstalledSchedulerPoolArc, SchedulingContext,
             },
@@ -2760,12 +2737,11 @@ mod tests {
         let context = SchedulingContext::new(bank.clone());
         let scheduler = pool.take_scheduler(context).unwrap();
 
-        let unfunded_keypair = Keypair::new();
         let bad_tx = RuntimeTransaction::from_transaction_for_tests(system_transaction::transfer(
-            &unfunded_keypair,
+            &mint_keypair,
             &solana_pubkey::new_rand(),
             2,
-            genesis_config.hash(),
+            Hash::new_unique(),
         ));
         assert_eq!(bank.transaction_count(), 0);
         scheduler.schedule_execution(bad_tx, 0).unwrap();
@@ -2790,7 +2766,7 @@ mod tests {
         if extra_tx_after_failure {
             assert_matches!(
                 bank.schedule_transaction_executions([(good_tx_after_bad_tx, 1)].into_iter()),
-                Err(TransactionError::AccountNotFound)
+                Err(TransactionError::BlockhashNotFound)
             );
         }
         // transaction_count should remain same as scheduler should be bailing out.
@@ -2803,7 +2779,7 @@ mod tests {
         assert_eq!(pool_raw.trashed_scheduler_inners.lock().unwrap().len(), 0);
         assert_matches!(
             bank.wait_for_completed_scheduler(),
-            Some((Err(TransactionError::AccountNotFound), _timings))
+            Some((Err(TransactionError::BlockhashNotFound), _timings))
         );
 
         // Block solScCleaner until we see trashed schedler...
@@ -2981,13 +2957,17 @@ mod tests {
     }
 
     fn create_genesis_config_for_block_production(lamports: u64) -> GenesisConfigInfo {
-        // The in-scope create_genesis_config(), which is imported from the `solana-runtime`,
-        // doesn't properly setup leader schedule, causing the following panic if used for poh
-        // recorder, so use the one from the `solana-ledger` crate:
+        // The in-scope create_genesis_config() doesn't properly setup leader schedule, causing
+        // the following panic if used for poh recorder, so set up a bootstrap validator stake
+        // like `solana-ledger`'s genesis_utils does:
         //
         //   thread 'tests::...' panicked at ledger/src/leader_schedule.rs:LL:CC:
         //   called `Result::unwrap()` on an `Err` value: NoItem
-        solana_ledger::genesis_utils::create_genesis_config(lamports)
+        create_genesis_config_with_leader(
+            lamports,
+            &Pubkey::new_unique(),
+            bootstrap_validator_stake_lamports(),
+        )
     }
 
     #[test]

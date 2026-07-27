@@ -104,21 +104,15 @@ impl StoreAccountsUnfrozenStats {
 #[derive(Debug, Default)]
 pub struct StoreAccountsForShrinkStats {
     pub write_accounts_us: u64,
-    pub mark_zero_lamport_single_ref_accounts_us: u64,
     pub update_index_us: u64,
     pub num_accounts_stored: u64,
-    pub num_zero_lamport_single_ref_accounts_marked: u64,
 }
 
 impl StoreAccountsForShrinkStats {
     pub fn accumulate(&mut self, other: &Self) {
         self.write_accounts_us += other.write_accounts_us;
-        self.mark_zero_lamport_single_ref_accounts_us +=
-            other.mark_zero_lamport_single_ref_accounts_us;
         self.update_index_us += other.update_index_us;
         self.num_accounts_stored += other.num_accounts_stored;
-        self.num_zero_lamport_single_ref_accounts_marked +=
-            other.num_zero_lamport_single_ref_accounts_marked;
     }
 }
 
@@ -238,10 +232,11 @@ impl PurgeStats {
 
 #[derive(Debug, Default)]
 pub struct FlushStats {
-    pub num_accounts_flushed: Saturating<usize>,
-    pub num_bytes_flushed: Saturating<u64>,
-    pub num_accounts_purged: Saturating<usize>,
-    pub num_bytes_purged: Saturating<u64>,
+    pub num_accounts_stored: Saturating<usize>,
+    pub num_bytes_stored: Saturating<u64>,
+    pub num_accounts_skipped: Saturating<usize>,
+    pub num_bytes_skipped: Saturating<u64>,
+    pub num_zero_lamport_accounts_skipped: Saturating<usize>,
     pub store_accounts_total_us: Saturating<u64>,
     pub write_accounts_us: Saturating<u64>,
     pub update_index_us: Saturating<u64>,
@@ -275,10 +270,11 @@ impl FlushStats {
     }
 
     pub fn accumulate(&mut self, other: &Self) {
-        self.num_accounts_flushed += other.num_accounts_flushed;
-        self.num_bytes_flushed += other.num_bytes_flushed;
-        self.num_accounts_purged += other.num_accounts_purged;
-        self.num_bytes_purged += other.num_bytes_purged;
+        self.num_accounts_stored += other.num_accounts_stored;
+        self.num_bytes_stored += other.num_bytes_stored;
+        self.num_accounts_skipped += other.num_accounts_skipped;
+        self.num_bytes_skipped += other.num_bytes_skipped;
+        self.num_zero_lamport_accounts_skipped += other.num_zero_lamport_accounts_skipped;
         self.store_accounts_total_us += other.store_accounts_total_us;
         self.write_accounts_us += other.write_accounts_us;
         self.update_index_us += other.update_index_us;
@@ -344,6 +340,8 @@ pub struct ShrinkStatsSub {
     pub store_accounts_stats: StoreAccountsForShrinkStats,
     pub rewrite_elapsed_us: Saturating<u64>,
     pub create_and_insert_store_elapsed_us: Saturating<u64>,
+    pub tombstone_carry_forward_us: Saturating<u64>,
+    pub num_tombstones_carried_forward: Saturating<u64>,
 }
 
 #[derive(Debug, Default)]
@@ -380,6 +378,9 @@ pub struct ShrinkStats {
     pub num_zero_lamport_single_ref_accounts_marked: AtomicU64,
     pub remove_old_stores_shrink_us: AtomicU64,
     pub rewrite_elapsed: AtomicU64,
+    pub tombstone_carry_forward_us: AtomicU64,
+    /// number of zero-lamport accounts carried forward to the new storage as tombstones
+    pub num_tombstones_carried_forward: AtomicU64,
     pub unpackable_slots_count: AtomicU64,
     pub newest_alive_packed_count: AtomicU64,
     pub drop_storage_entries_elapsed: AtomicU64,
@@ -415,6 +416,12 @@ impl ShrinkStats {
         );
         self.rewrite_elapsed
             .fetch_add(stats_sub.rewrite_elapsed_us.0, Ordering::Relaxed);
+        self.tombstone_carry_forward_us
+            .fetch_add(stats_sub.tombstone_carry_forward_us.0, Ordering::Relaxed);
+        self.num_tombstones_carried_forward.fetch_add(
+            stats_sub.num_tombstones_carried_forward.0,
+            Ordering::Relaxed,
+        );
         self.accumulate_store_accounts_for_shrink_stats(stats_sub.store_accounts_stats);
     }
 
@@ -424,18 +431,10 @@ impl ShrinkStats {
     ) {
         self.write_accounts_us
             .fetch_add(store_accounts_stats.write_accounts_us, Ordering::Relaxed);
-        self.mark_zero_lamport_single_ref_accounts_us.fetch_add(
-            store_accounts_stats.mark_zero_lamport_single_ref_accounts_us,
-            Ordering::Relaxed,
-        );
         self.update_index_us
             .fetch_add(store_accounts_stats.update_index_us, Ordering::Relaxed);
         self.num_accounts_stored
             .fetch_add(store_accounts_stats.num_accounts_stored, Ordering::Relaxed);
-        self.num_zero_lamport_single_ref_accounts_marked.fetch_add(
-            store_accounts_stats.num_zero_lamport_single_ref_accounts_marked,
-            Ordering::Relaxed,
-        );
     }
 
     pub fn report(&self) {
@@ -525,6 +524,17 @@ impl ShrinkStats {
                 (
                     "rewrite_elapsed",
                     self.rewrite_elapsed.swap(0, Ordering::Relaxed),
+                    i64
+                ),
+                (
+                    "tombstone_carry_forward_us",
+                    self.tombstone_carry_forward_us.swap(0, Ordering::Relaxed),
+                    i64
+                ),
+                (
+                    "num_tombstones_carried_forward",
+                    self.num_tombstones_carried_forward
+                        .swap(0, Ordering::Relaxed),
                     i64
                 ),
                 (

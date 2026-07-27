@@ -567,7 +567,7 @@ mod tests {
         for target_slot in 0..max_slots {
             for entries in 0..2 {
                 for starting_slot in 0..max_slots {
-                    let db = AccountsDb::new_single_for_tests();
+                    let db = AccountsDb::default_for_tests();
                     let mut raw = Vec::new();
                     let mut raw2 = Vec::new();
                     let mut raw4 = Vec::new();
@@ -633,9 +633,8 @@ mod tests {
 
                     let storage = setup_sample_storage(&db, source_slot);
                     // store the accounts so they can be looked up later in `db`
-                    if let Some(offsets) = storage
-                        .accounts
-                        .write_accounts(&(source_slot, &three[..]), 0)
+                    if let Some(offsets) =
+                        storage.accounts.write_accounts(&(source_slot, &three[..]))
                     {
                         three_accounts_from_storage_byval
                             .iter_mut()
@@ -745,7 +744,7 @@ mod tests {
                 for entries1 in 0..=remaining1 {
                     let remaining2 = entries.saturating_sub(entries0 + entries1);
                     for entries2 in 0..=remaining2 {
-                        let db = AccountsDb::new_single_for_tests();
+                        let db = AccountsDb::default_for_tests();
                         let remaining3 = entries.saturating_sub(entries0 + entries1 + entries2);
                         let entries_by_level = [entries0, entries1, entries2, remaining3];
                         let mut overall_index = 0;
@@ -764,7 +763,7 @@ mod tests {
                                     let storage = setup_sample_storage(&db, slot);
                                     if let Some(offsets) = storage
                                         .accounts
-                                        .write_accounts(&(slot, &raw2_refs[range.clone()]), 0)
+                                        .write_accounts(&(slot, &raw2_refs[range.clone()]))
                                     {
                                         result.iter_mut().zip(offsets.offsets.iter()).for_each(
                                             |(account, offset)| {
@@ -813,7 +812,7 @@ mod tests {
 
     #[test]
     fn test_find_internal_index_with_multiple_entries_multiple_slots() {
-        let db = AccountsDb::new_single_for_tests();
+        let db = AccountsDb::default_for_tests();
         let storage_id = 0; // does not matter
         let offset = 0; // does not matter
         let account = AccountSharedData::default();
@@ -854,7 +853,7 @@ mod tests {
 
     #[test]
     fn test_find_internal_index_with_multiple_entries_single_slot() {
-        let accounts_db = AccountsDb::new_single_for_tests();
+        let accounts_db = AccountsDb::default_for_tests();
         let all_accounts: Vec<_> = iter::repeat_with(|| AccountFromStorage {
             index_info: AccountInfo::new(
                 StorageLocation::AppendVec(0, 0), // id and offset do not matter
@@ -881,7 +880,7 @@ mod tests {
 
     #[test]
     fn test_find_internal_index_with_single_entry_single_slot() {
-        let accounts_db = AccountsDb::new_single_for_tests();
+        let accounts_db = AccountsDb::default_for_tests();
         let all_accounts: Vec<_> = iter::repeat_with(|| AccountFromStorage {
             index_info: AccountInfo::new(
                 StorageLocation::AppendVec(0, 0), // id and offset do not matter

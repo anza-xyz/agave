@@ -175,8 +175,16 @@ pub fn validate_account_paths_for_direct_io(
         let mut unsupported_paths = vec![];
         for path in paths.into_iter() {
             let path = path.as_ref();
-            if agave_fs::metadata::check_direct_io_capability(path)? == DirectIoSupport::Unsupported
-            {
+            let support = agave_fs::metadata::check_direct_io_capability(path).map_err(|err| {
+                io::Error::new(
+                    err.kind(),
+                    format!(
+                        "failed to validate direct-io support for account path `{}`: {err}",
+                        path.display()
+                    ),
+                )
+            })?;
+            if support == DirectIoSupport::Unsupported {
                 unsupported_paths.push(path.display().to_string());
             }
         }

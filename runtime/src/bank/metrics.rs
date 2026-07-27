@@ -181,6 +181,8 @@ pub(crate) struct RewardsStoreMetrics {
     pub(crate) total_stake_accounts_count: usize,
     pub(crate) distributed_rewards: u64,
     pub(crate) burned_rewards: u64,
+    pub(crate) distributed_block_rewards: u64,
+    pub(crate) burned_block_rewards: u64,
     pub(crate) pre_capitalization: u64,
     pub(crate) post_capitalization: u64,
 }
@@ -211,6 +213,12 @@ pub(crate) fn report_partitioned_reward_metrics(bank: &Bank, timings: RewardsSto
         ),
         ("distributed_rewards", timings.distributed_rewards, i64),
         ("burned_rewards", timings.burned_rewards, i64),
+        (
+            "distributed_block_rewards",
+            timings.distributed_block_rewards,
+            i64
+        ),
+        ("burned_block_rewards", timings.burned_block_rewards, i64),
         ("pre_capitalization", timings.pre_capitalization, i64),
         ("post_capitalization", timings.post_capitalization, i64),
     );

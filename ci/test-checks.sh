@@ -10,7 +10,9 @@ cd "$(dirname "$0")/.."
 source ci/_
 source ci/rust-version.sh stable
 source ci/rust-version.sh nightly
-eval "$(ci/channel-info.sh)"
+channel_info="$(cargo xtask channel-info --json)"
+EDGE_CHANNEL="$(jq -r '.EDGE_CHANNEL' <<<"$channel_info")"
+CHANNEL="$(jq -r '.CHANNEL' <<<"$channel_info")"
 
 export RUST_BACKTRACE=1
 export RUSTFLAGS="-D warnings -A incomplete_features"
@@ -18,9 +20,9 @@ export RUSTFLAGS="-D warnings -A incomplete_features"
 # sort
 if [[ -n $CI ]]; then
   # exclude from printing "Checking xxx ..."
-  _ scripts/cargo-for-all-lock-files.sh -- "+${rust_nightly}" sort --workspace --check > /dev/null
+  _ scripts/cargo-for-all-lock-files.sh -- sort --workspace --check > /dev/null
 else
-  _ scripts/cargo-for-all-lock-files.sh -- "+${rust_nightly}" sort --workspace --check
+  _ scripts/cargo-for-all-lock-files.sh -- sort --workspace --check
 fi
 
 # check dev-context-only-utils isn't used in normal dependencies
@@ -47,8 +49,6 @@ if [[ $CI_BASE_BRANCH = "$EDGE_CHANNEL" ]]; then
 else
   echo "Note: cargo-for-all-lock-files.sh skipped because $CI_BASE_BRANCH != $EDGE_CHANNEL"
 fi
-
-_ ci/order-crates-for-publishing.py
 
 _ scripts/cargo-clippy.sh
 

@@ -478,7 +478,7 @@ pub(super) fn calc_vote_rewards_update_vote_states(
         )?,
     };
 
-    bank.store_accounts((bank.slot(), updated_accounts.as_slice()));
+    bank.store_accounts((bank.slot(), updated_accounts.as_slice()), None);
     Ok(())
 }
 
@@ -614,7 +614,7 @@ mod tests {
         },
         agave_feature_set::FeatureSet,
         agave_votor_messages::{
-            certificate::{Certificate, CertificateType},
+            certificate::{CertSignature, FastFinalizeCert},
             consensus_message::Block,
             reward_certificate::NUM_SLOTS_FOR_REWARD,
         },
@@ -676,18 +676,18 @@ mod tests {
             slot: bank.slot(),
             block_id: Hash::new_unique(),
         };
-        let cert_type = CertificateType::FinalizeFast(block);
         let max_rank = signing_ranks.iter().copied().max().unwrap_or(0);
         let mut bitvec = BitVec::<u8, Lsb0>::repeat(false, max_rank.saturating_add(1));
         for &rank in signing_ranks {
             bitvec.set(rank, true);
         }
         let bitmap = encode_base2(&bitvec).unwrap();
-
-        let cert = Certificate {
-            cert_type,
-            signature: BLSSignature([0; BLS_SIGNATURE_AFFINE_SIZE]),
-            bitmap,
+        let cert = FastFinalizeCert {
+            block,
+            signature: CertSignature {
+                signature: BLSSignature([0; BLS_SIGNATURE_AFFINE_SIZE]),
+                bitmap,
+            },
         };
         ValidatedBlockFinalizationCert::from_validated_fast(cert, bank)
     }

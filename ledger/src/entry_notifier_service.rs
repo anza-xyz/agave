@@ -1,7 +1,7 @@
 use {
     crate::entry_notifier_interface::EntryNotifierArc,
     crossbeam_channel::{Receiver, RecvTimeoutError, Sender, unbounded},
-    solana_clock::Slot,
+    solana_clock::{BankId, Slot},
     solana_entry::entry::EntrySummary,
     std::{
         sync::{
@@ -15,6 +15,7 @@ use {
 
 pub struct EntryNotification {
     pub slot: Slot,
+    pub bank_id: BankId,
     pub index: usize,
     pub entry: EntrySummary,
     pub starting_transaction_index: usize,
@@ -59,11 +60,12 @@ impl EntryNotifierService {
     ) -> Result<(), RecvTimeoutError> {
         let EntryNotification {
             slot,
+            bank_id,
             index,
             entry,
             starting_transaction_index,
         } = entry_notification_receiver.recv_timeout(Duration::from_secs(1))?;
-        entry_notifier.notify_entry(slot, index, &entry, starting_transaction_index);
+        entry_notifier.notify_entry(slot, bank_id, index, &entry, starting_transaction_index);
         Ok(())
     }
 

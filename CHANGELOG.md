@@ -20,7 +20,37 @@ Release channels have their own copy of this changelog:
 #### Changes
 ### Validator
 #### Breaking
+* Loading a snapshot that contains an invalid vote account is now a hard error. Previously such
+  accounts were silently dropped for compatibility with snapshots created before v2.1.0.
+* Banking trace is now disabled by default. To enable, provide `--enable-banking-trace <max bytes>`.
+#### Deprecations
+* `--disable-banking-trace` is now deprecated and a no-op (banking trace is disabled by
+  default). The flag is still accepted for backward compatibility.
 #### Changes
+* Validators running without `--full-rpc-api` and with snapshot generation disabled no longer
+  store transaction signature keys in the status cache. Message hashes remain cached for duplicate
+  transaction detection.
+* External scheduler execution responses now report `PARTIAL_BATCH_CANCELLED` for
+  `CommitCancelled` errors in non-all-or-nothing batches. All-or-nothing batches continue to use
+  `ALL_OR_NOTHING_BATCH_FAILURE`.
+### Geyser
+#### Deprecations
+* The legacy `GeyserPlugin` methods `update_account`, `notify_transaction`, `notify_entry`, and
+  `notify_block_metadata` are slated for removal in the next major release.
+#### Changes
+* Added `GeyserPlugin` methods to replace deprecated methods: `update_account_from_snapshot` and
+  `update_account_for_bank` replace `update_account`, `notify_transaction_for_bank` replaces
+  `notify_transaction`, `notify_entry_for_bank` replaces `notify_entry`, and
+  `notify_block_metadata_for_bank` replaces `notify_block_metadata`.
+* Added `update_bank_status` for bank-scoped slot status updates with `bank_id`;
+  `update_slot_status` remains for non-bank slot statuses.
+### SDK
+#### Breaking
+* solana-program-test: syscall getters (e.g. `Rent::get()`, `Clock::get()`) and `solana_sysvar::get_sysvar()` now return
+  `ProgramError::UnsupportedSysvar` in native-mode processors (programs registered with `processor!`). Programs
+  executed as BPF (including the bundled SPL programs), are unaffected, even when invoked via CPI from a native
+  processor. Native-mode processors can use the `solana_program_test::sol_get_*` sysvar helpers directly. See
+  `program-test/tests/sysvar.rs` for examples of what is and is not supported.
 
 ## 4.2.0
 ### RPC

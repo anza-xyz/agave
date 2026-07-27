@@ -104,7 +104,9 @@ impl CompletedDataSetsService {
     pub fn new(
         completed_sets_receiver: CompletedDataSetsReceiver,
         blockstore: Arc<Blockstore>,
-        rpc_subscriptions: Arc<RpcSubscriptions>,
+        // None when the node has no RPC subscriptions (e.g. a geyser node without --rpc-port); the
+        // deshred-transaction sink still runs, only the signatureSubscribe path is skipped.
+        rpc_subscriptions: Option<Arc<RpcSubscriptions>>,
         deshred_transaction_notifier: Option<DeshredTransactionNotifierArc>,
         exit: Arc<AtomicBool>,
         max_slots: Arc<MaxSlots>,
@@ -121,7 +123,7 @@ impl CompletedDataSetsService {
                     if let Err(RecvTimeoutError::Disconnected) = Self::recv_completed_data_sets(
                         &completed_sets_receiver,
                         &blockstore,
-                        &rpc_subscriptions,
+                        rpc_subscriptions.as_deref(),
                         &deshred_transaction_notifier,
                         &max_slots,
                         &bank_forks,
@@ -138,7 +140,7 @@ impl CompletedDataSetsService {
     fn recv_completed_data_sets(
         completed_sets_receiver: &CompletedDataSetsReceiver,
         blockstore: &Blockstore,
-        rpc_subscriptions: &RpcSubscriptions,
+        rpc_subscriptions: Option<&RpcSubscriptions>,
         deshred_transaction_notifier: &Option<DeshredTransactionNotifierArc>,
         max_slots: &Arc<MaxSlots>,
         bank_forks: &RwLock<BankForks>,
@@ -174,9 +176,11 @@ impl CompletedDataSetsService {
                             &mut stats,
                         );
 
-                        let transactions = Self::get_transaction_signatures(entries);
-                        if !transactions.is_empty() {
-                            rpc_subscriptions.notify_signatures_received((slot, transactions));
+                        if let Some(rpc_subscriptions) = rpc_subscriptions {
+                            let transactions = Self::get_transaction_signatures(entries);
+                            if !transactions.is_empty() {
+                                rpc_subscriptions.notify_signatures_received((slot, transactions));
+                            }
                         }
                     }
                     Err(e) => warn!("completed-data-set-service deserialize error: {e:?}"),
@@ -559,7 +563,7 @@ pub mod test {
         CompletedDataSetsService::recv_completed_data_sets(
             &receiver,
             &blockstore,
-            &rpc_subscriptions,
+            Some(&rpc_subscriptions),
             &notifier,
             &max_slots,
             &bank_forks,
@@ -625,7 +629,7 @@ pub mod test {
         CompletedDataSetsService::recv_completed_data_sets(
             &receiver,
             &blockstore,
-            &rpc_subscriptions,
+            Some(&rpc_subscriptions),
             &notifier,
             &max_slots,
             &bank_forks,

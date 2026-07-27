@@ -830,16 +830,16 @@ pub type ProcessResult = Result<String, Box<dyn std::error::Error>>;
 
 pub async fn process_command(config: &CliConfig<'_>) -> ProcessResult {
     if config.verbose && config.output_format == OutputFormat::DisplayVerbose {
-        println_name_value("RPC URL:", &config.json_rpc_url);
-        println_name_value("Default Signer Path:", &config.keypair_path);
+        println_name_value("RPC URL:", &config.json_rpc_url)?;
+        println_name_value("Default Signer Path:", &config.keypair_path)?;
         if config.keypair_path.starts_with("usb://") {
             let pubkey = config
                 .pubkey()
                 .map(|pubkey| format!("{pubkey:?}"))
                 .unwrap_or_else(|_| "Unavailable".to_string());
-            println_name_value("Pubkey:", &pubkey);
+            println_name_value("Pubkey:", &pubkey)?;
         }
-        println_name_value("Commitment:", &config.commitment.commitment.to_string());
+        println_name_value("Commitment:", &config.commitment.commitment.to_string())?;
     }
 
     let rpc_client = if let Some(rpc_client) = config.rpc_client.as_ref() {

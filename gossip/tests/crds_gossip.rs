@@ -591,7 +591,6 @@ fn network_run_pull(
                     .map(|node| {
                         node.gossip
                             .generate_pull_responses(
-                                thread_pool,
                                 &requests,
                                 usize::MAX, // output_size_limit
                                 now,
@@ -662,9 +661,9 @@ fn build_gossip_thread_pool() -> ThreadPool {
 
 fn new_ping_cache() -> Mutex<PingCache> {
     let ping_cache = PingCache::new(
-        Duration::from_secs(20 * 60),      // ttl
-        Duration::from_secs(20 * 60) / 64, // rate_limit_delay
-        2048,                              // capacity
+        Duration::from_secs(20 * 60),
+        1000..2000,
+        2048, // capacity
     );
     Mutex::new(ping_cache)
 }

@@ -31,10 +31,7 @@ use {
     solana_clock::Slot,
     solana_gossip::cluster_info::ClusterInfo,
     solana_keypair::Keypair,
-    solana_ledger::{
-        blockstore::Blockstore, blockstore_processor::TransactionStatusSender,
-        entry_notifier_service::EntryNotifierSender,
-    },
+    solana_ledger::{blockstore::Blockstore, entry_notifier_service::EntryNotifierSender},
     solana_poh::{
         poh_recorder::{PohRecorder, WorkingBankEntryOrMarker},
         transaction_recorder::TransactionRecorder,
@@ -47,6 +44,7 @@ use {
     solana_runtime::{
         bank_forks::BankForks,
         prioritization_fee_cache::PrioritizationFeeCache,
+        transaction_execution::TransactionStatusSender,
         vote_sender_types::{ReplayVoteReceiver, ReplayVoteSender},
     },
     solana_streamer::{

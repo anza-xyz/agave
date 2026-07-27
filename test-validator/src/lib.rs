@@ -1,10 +1,7 @@
 #![cfg(feature = "agave-unstable-api")]
 #![allow(clippy::arithmetic_side_effects)]
 use {
-    agave_feature_set::{
-        FEATURE_NAMES, FeatureSet, alpenglow, raise_cpi_nesting_limit_to_8,
-        validator_admission_ticket,
-    },
+    agave_feature_set::{FEATURE_NAMES, FeatureSet, alpenglow, raise_cpi_nesting_limit_to_8},
     agave_snapshots::{
         SnapshotInterval, paths::BANK_SNAPSHOTS_DIR, snapshot_config::SnapshotConfig,
     },
@@ -167,7 +164,7 @@ pub struct TestValidatorGenesis {
     pub log_messages_bytes_limit: Option<usize>,
     pub transaction_account_lock_limit: Option<usize>,
     pub geyser_plugin_manager: Arc<ArcSwap<GeyserPluginManager>>,
-    admin_rpc_service_post_init: Arc<RwLock<Option<AdminRpcRequestMetadataPostInit>>>,
+    pub admin_rpc_service_post_init: Arc<RwLock<Option<AdminRpcRequestMetadataPostInit>>>,
 }
 
 impl Default for TestValidatorGenesis {
@@ -276,8 +273,6 @@ impl TestValidatorGenesis {
 
     pub fn activate_alpenglow(&mut self) -> &mut Self {
         self.deactivate_feature_set.remove(&alpenglow::id());
-        self.deactivate_feature_set
-            .remove(&validator_admission_ticket::id());
         self
     }
 
@@ -468,11 +463,11 @@ impl TestValidatorGenesis {
                             return Err(format!("Invalid alt account data length for {address}"));
                         }
 
-                        for address_slice in
-                            raw_addresses_data.chunks_exact(std::mem::size_of::<Pubkey>())
+                        for address_array in raw_addresses_data
+                            .as_chunks::<{ std::mem::size_of::<Pubkey>() }>()
+                            .0
                         {
-                            // safe because size was checked earlier
-                            let address = Pubkey::try_from(address_slice).unwrap();
+                            let address = Pubkey::from(*address_array);
                             alt_entries.push(address);
                         }
                         self.add_account(*address, AccountSharedData::from(account));
@@ -920,11 +915,6 @@ impl TestValidator {
             }
         }
         let is_alpenglow_active = feature_set.is_active(&alpenglow::id());
-        if is_alpenglow_active && !feature_set.is_active(&validator_admission_ticket::id()) {
-            return Err(
-                "Alpenglow requires the validator_admission_ticket feature to be active".into(),
-            );
-        }
 
         let runtime_features = feature_set.runtime_features();
         let program_runtime_environment = create_program_runtime_environment(
@@ -1170,6 +1160,7 @@ impl TestValidator {
                 }),
             log_messages_bytes_limit: config.log_messages_bytes_limit,
             transaction_account_lock_limit: config.transaction_account_lock_limit,
+            ..RuntimeConfig::default()
         };
 
         let mut validator_config = ValidatorConfig {
@@ -1616,7 +1607,6 @@ mod test {
             alpenglow::id(),
             agave_feature_set::bls_pubkey_management_in_vote_account::id(),
             agave_feature_set::vote_account_initialize_v2::id(),
-            agave_feature_set::validator_admission_ticket::id(),
         ]
         .into_iter()
         .for_each(|feature| {

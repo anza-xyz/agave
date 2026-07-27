@@ -85,6 +85,8 @@ pub struct SchedulerCountMetricsInner {
     pub num_dropped_on_clean: Saturating<usize>,
     /// Number of transactions that were dropped due to exceeded capacity.
     pub num_dropped_on_capacity: Saturating<usize>,
+    pub num_dropped_on_nonce_dedup: Saturating<usize>,
+    pub num_evicted_on_nonce_dedup: Saturating<usize>,
     /// Min prioritization fees in the transaction container
     pub min_prioritization_fees: u64,
     /// Max prioritization fees in the transaction container
@@ -140,6 +142,8 @@ impl SchedulerCountMetricsInner {
             num_dropped_on_clear: Saturating(num_dropped_on_clear),
             num_dropped_on_clean: Saturating(num_dropped_on_clean),
             num_dropped_on_capacity: Saturating(num_dropped_on_capacity),
+            num_dropped_on_nonce_dedup: Saturating(num_dropped_on_nonce_dedup),
+            num_evicted_on_nonce_dedup: Saturating(num_evicted_on_nonce_dedup),
             min_prioritization_fees: _min_prioritization_fees,
             max_prioritization_fees: _max_prioritization_fees,
         } = self;
@@ -187,6 +191,8 @@ impl SchedulerCountMetricsInner {
                 i64
             ),
             ("num_dropped_on_capacity", num_dropped_on_capacity, i64),
+            ("num_dropped_on_nonce_dedup", num_dropped_on_nonce_dedup, i64),
+            ("num_evicted_on_nonce_dedup", num_evicted_on_nonce_dedup, i64),
             ("min_priority", self.get_min_priority(), i64),
             ("max_priority", self.get_max_priority(), i64),
         );
@@ -226,6 +232,8 @@ impl SchedulerCountMetricsInner {
         self.num_dropped_on_clear = Saturating(0);
         self.num_dropped_on_clean = Saturating(0);
         self.num_dropped_on_capacity = Saturating(0);
+        self.num_dropped_on_nonce_dedup = Saturating(0);
+        self.num_evicted_on_nonce_dedup = Saturating(0);
         self.min_prioritization_fees = u64::MAX;
         self.max_prioritization_fees = 0;
     }

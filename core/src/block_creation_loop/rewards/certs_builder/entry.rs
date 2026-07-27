@@ -2,13 +2,14 @@ use {
     super::BuildRewardCertsRespError,
     crate::block_creation_loop::rewards::msg_types::RewardRespSucc,
     agave_votor_messages::{
-        consensus_message::VoteMessage, reward_certificate::SkipRewardCertificate, vote::Vote,
+        aggregate_accumulator::AggregateAccumulatorError, consensus_message::VoteMessage,
+        reward_certificate::SkipRewardCertificate, sig_verified_messages::VoteAggregate,
+        vote::Vote,
     },
     notar_entry::NotarEntry,
     partial_cert::{BuildSigBitmapError, PartialCert},
-    solana_bls_signatures::BlsError,
     solana_clock::Slot,
-    solana_runtime::epoch_stakes::BLSPubkeyToRankMap,
+    solana_pubkey::Pubkey,
     thiserror::Error,
 };
 
@@ -17,17 +18,13 @@ mod partial_cert;
 
 /// Different types of errors that can be returned from adding votes.
 #[derive(Debug, Error)]
-pub(super) enum AddVoteError {
-    #[error("rank on vote is invalid")]
-    InvalidRank,
-    #[error("duplicate vote")]
-    Duplicate,
-    #[error("BLS error: {0}")]
-    Bls(#[from] BlsError),
+pub(super) enum AddAggregateError {
+    #[error("AggregateAccumulator failed with {0}")]
+    Accumulating(#[from] AggregateAccumulatorError),
 }
 
-/// Per slot container for storing notar and skip votes for creating rewards certificates.
 #[derive(Clone)]
+/// Per slot container for storing notar and skip votes for creating rewards certificates.
 pub(super) struct Entry {
     /// [`PartialCert`] for observed skip votes.
     skip: PartialCert,
@@ -42,38 +39,43 @@ impl Entry {
     pub(super) fn new(max_validators: usize) -> Self {
         Self {
             skip: PartialCert::new(max_validators),
-            notar: NotarEntry::new(max_validators),
+            notar: NotarEntry::new(),
             max_validators,
         }
     }
 
-    /// Returns true if the [`Entry`] needs the vote else false.
-    pub(super) fn wants_vote(&self, vote: &VoteMessage) -> bool {
-        match vote.vote {
-            Vote::Skip(_) => self.skip.wants_vote(vote.rank),
-            Vote::Notarize(_) => self.notar.wants_vote(vote.rank),
-            Vote::Finalize(_)
-            | Vote::NotarizeFallback(_)
-            | Vote::SkipFallback(_)
-            | Vote::Genesis(_) => false,
-        }
-    }
-
-    /// Adds the given [`VoteMessage`] to the aggregate.
-    pub(super) fn add_vote(
+    /// Adds the given [`VoteAggregate`] from another validator to the aggregate.
+    pub(super) fn add_aggregate(
         &mut self,
-        rank_map: &BLSPubkeyToRankMap,
-        vote: &VoteMessage,
-    ) -> Result<(), AddVoteError> {
-        match vote.vote {
-            Vote::Notarize(notar) => self.notar.add_vote(
-                rank_map,
-                vote.rank,
-                &vote.signature,
+        aggregate: VoteAggregate,
+        vote_account_pubkeys: Vec<Pubkey>,
+    ) -> Result<(), AddAggregateError> {
+        match *aggregate.vote() {
+            Vote::Notarize(notar) => self.notar.add_aggregate(
+                aggregate,
+                vote_account_pubkeys,
                 notar.block.block_id,
                 self.max_validators,
             ),
-            Vote::Skip(_) => self.skip.add_vote(rank_map, vote.rank, &vote.signature),
+            Vote::Skip(_) => self.skip.add_aggregate(aggregate, vote_account_pubkeys),
+            _ => Ok(()),
+        }
+    }
+
+    /// Adds the given [`VoteMessage`] from this node itself to the aggregate.
+    pub(super) fn add_own_msg(
+        &mut self,
+        vote_msg: VoteMessage,
+        vote_account_pubkey: Pubkey,
+    ) -> Result<(), AddAggregateError> {
+        match vote_msg.vote {
+            Vote::Notarize(notar) => self.notar.add_own_msg(
+                vote_msg,
+                vote_account_pubkey,
+                notar.block.block_id,
+                self.max_validators,
+            ),
+            Vote::Skip(_) => self.skip.add_own_msg(vote_msg, vote_account_pubkey),
             _ => Ok(()),
         }
     }
@@ -87,7 +89,9 @@ impl Entry {
         let skip = match self.skip.build_sig_bitmap() {
             Err(e) => match e {
                 BuildSigBitmapError::Empty => None,
-                BuildSigBitmapError::Encode(e) => return Err(BuildRewardCertsRespError::Encode(e)),
+                BuildSigBitmapError::Accumulating(e) => {
+                    return Err(BuildRewardCertsRespError::RewardCertTryNew(e.into()));
+                }
             },
             Ok((signature, bitmap, skip_validators)) => {
                 let cert = SkipRewardCertificate::try_new(reward_slot, signature, bitmap)?;
@@ -120,11 +124,14 @@ impl Entry {
 mod tests {
     use {
         super::*,
-        agave_votor_messages::{consensus_message::Block, wire::get_vote_payload_to_sign},
+        agave_votor_messages::{
+            consensus_message::Block, vote::Vote, wire::get_vote_payload_to_sign,
+        },
         rand::Rng,
         solana_bls_signatures::{Keypair as BlsKeypair, PubkeyCompressed as BlsPubkeyCompressed},
         solana_epoch_schedule::EpochSchedule,
         solana_hash::Hash,
+        solana_pubkey::Pubkey,
         solana_runtime::{
             bank::{Bank, SlotLeader},
             genesis_utils::{
@@ -132,7 +139,7 @@ mod tests {
             },
         },
         solana_signer_store::{Decoded, decode},
-        std::{collections::HashMap, sync::Arc},
+        std::{collections::HashMap, num::NonZero},
     };
 
     pub(crate) fn validate_bitmap(bitmap: &[u8], num_set: usize, max_len: usize) {
@@ -143,32 +150,34 @@ mod tests {
         }
     }
 
-    pub(crate) fn new_vote(
+    pub(crate) fn new_reward_vote_aggregate(
         vote: Vote,
         rank: usize,
         keypairs: &[BlsKeypair],
+        stakes: Option<&[u64]>,
         shred_version: u16,
-    ) -> VoteMessage {
+    ) -> (VoteAggregate, Vec<Pubkey>) {
         let serialized = get_vote_payload_to_sign(vote, shred_version);
         let signature = keypairs[rank].sign(&serialized).into();
-        VoteMessage {
+        let stake = match stakes {
+            None => NonZero::new(123).unwrap(),
+            Some(stakes) => NonZero::new(stakes[rank]).unwrap(),
+        };
+        let vote_msg = VoteMessage {
             vote,
             signature,
             rank: rank.try_into().unwrap(),
-        }
+            stake,
+        };
+        let aggregate = VoteAggregate::new_from_verified_vote(keypairs.len(), vote_msg);
+        (aggregate, vec![Pubkey::new_unique()])
     }
 
-    pub(crate) fn get_rank_map_keypairs(
-        max_validators: usize,
-        slot: Slot,
-    ) -> (Arc<BLSPubkeyToRankMap>, Vec<BlsKeypair>) {
-        get_rank_map_keypairs_with_stakes(vec![100; max_validators], slot)
+    pub(crate) fn get_keypairs(max_validators: usize, slot: Slot) -> Vec<BlsKeypair> {
+        get_keypair_with_stakes(vec![100; max_validators], slot)
     }
 
-    pub(crate) fn get_rank_map_keypairs_with_stakes(
-        stakes: Vec<u64>,
-        slot: Slot,
-    ) -> (Arc<BLSPubkeyToRankMap>, Vec<BlsKeypair>) {
+    pub(crate) fn get_keypair_with_stakes(stakes: Vec<u64>, slot: Slot) -> Vec<BlsKeypair> {
         let max_validators = stakes.len();
         let validator_keypairs = (0..max_validators)
             .map(|_| ValidatorVoteKeypairs::new_rand())
@@ -198,7 +207,7 @@ mod tests {
             slot,
         );
         let rank_map = bank.get_rank_map(slot).unwrap().clone();
-        let signing_keys = (0..max_validators)
+        (0..max_validators)
             .map(|index| {
                 let pubkey_affine = rank_map.get_pubkey_stake_entry(index).unwrap().bls_pubkey;
                 keypair_map
@@ -206,15 +215,14 @@ mod tests {
                     .unwrap()
                     .clone()
             })
-            .collect::<Vec<_>>();
-        (rank_map, signing_keys)
+            .collect()
     }
 
     #[test]
     fn validate_build_skip_cert() {
         let slot = 123;
         let max_validators = 5;
-        let (rank_map, keypairs) = get_rank_map_keypairs(max_validators, slot);
+        let keypairs = get_keypairs(max_validators, slot);
         let shred_version = rand::rng().random();
         let mut entry = Entry::new(max_validators);
         let resp = entry.clone().build_certs(slot).unwrap();
@@ -222,8 +230,11 @@ mod tests {
         assert_eq!(resp.notar, None);
 
         let skip = Vote::new_skip_vote(7);
-        let vote = new_vote(skip, 0, &keypairs, shred_version);
-        entry.add_vote(&rank_map, &vote).unwrap();
+        let (aggregate, vote_account_pubkeys) =
+            new_reward_vote_aggregate(skip, 0, &keypairs, None, shred_version);
+        entry
+            .add_aggregate(aggregate, vote_account_pubkeys)
+            .unwrap();
         let resp = entry.build_certs(slot).unwrap();
         assert_eq!(resp.notar, None);
         let skip = resp.skip.unwrap();
@@ -236,7 +247,7 @@ mod tests {
         let slot = 123;
         let max_validators = 5;
         let shred_version = rand::rng().random();
-        let (rank_map, keypairs) = get_rank_map_keypairs(max_validators, slot);
+        let keypairs = get_keypairs(max_validators, slot);
 
         let mut entry = Entry::new(max_validators);
         let resp = entry.clone().build_certs(slot).unwrap();
@@ -251,16 +262,22 @@ mod tests {
                 slot,
                 block_id: blockid0,
             });
-            let vote = new_vote(notar, rank, &keypairs, shred_version);
-            entry.add_vote(&rank_map, &vote).unwrap();
+            let (aggregate, vote_account_pubkeys) =
+                new_reward_vote_aggregate(notar, rank, &keypairs, None, shred_version);
+            entry
+                .add_aggregate(aggregate, vote_account_pubkeys)
+                .unwrap();
         }
         for rank in 2..5 {
             let notar = Vote::new_notarization_vote(Block {
                 slot,
                 block_id: blockid1,
             });
-            let vote = new_vote(notar, rank, &keypairs, shred_version);
-            entry.add_vote(&rank_map, &vote).unwrap();
+            let (aggregate, vote_account_pubkeys) =
+                new_reward_vote_aggregate(notar, rank, &keypairs, None, shred_version);
+            entry
+                .add_aggregate(aggregate, vote_account_pubkeys)
+                .unwrap();
         }
         let resp = entry.build_certs(slot).unwrap();
         assert_eq!(resp.skip, None);

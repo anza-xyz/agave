@@ -18,10 +18,13 @@ rustdoc-args = ["--cfg=docsrs"]
 agave-unstable-api = []
 fuzzing = []
 dev-context-only-utils = [
-    "solana-runtime/dev-context-only-utils",
+    "agave-bls-sigverify/dev-context-only-utils",
     "agave-votor-messages/dev-context-only-utils",
+    "solana-runtime/dev-context-only-utils",
 ]
 frozen-abi = [
+    "dep:serde",
+    "dep:serde_bytes",
     "dep:solana-frozen-abi",
     "dep:solana-frozen-abi-macro",
     "solana-ledger/frozen-abi",
@@ -41,8 +44,8 @@ itertools = { workspace = true }
 lazy-lru = { workspace = true }
 log = { workspace = true }
 parking_lot = { workspace = true }
-serde = { workspace = true }
-serde_bytes = { workspace = true }
+serde = { workspace = true, optional = true }
+serde_bytes = { workspace = true, optional = true }
 solana-bls-signatures = { workspace = true, features = ["solana-signer-derive"] }
 solana-client = { workspace = true }
 solana-clock = { workspace = true }

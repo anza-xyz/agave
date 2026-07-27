@@ -15,7 +15,9 @@ use {
         compute_budget::ComputeUnitLimit, fee_payer::*, hidden_unless_forced, input_parsers::*,
         input_validators::*, keypair::*,
     },
-    solana_cli_output::{QuietDisplay, VerboseDisplay, cli_version::CliVersion},
+    solana_cli_output::{
+        QuietDisplay, VerboseDisplay, cli_version::CliVersion, stdout::writeln_stdout,
+    },
     solana_clock::{Epoch, Slot},
     solana_cluster_type::ClusterType,
     solana_epoch_schedule::EpochSchedule,
@@ -1011,7 +1013,7 @@ async fn process_activate(
                         .into(),
                 );
             }
-            ForceActivation::Yes => println!("FEATURE ACTIVATION FORCED"),
+            ForceActivation::Yes => writeln_stdout(format_args!("FEATURE ACTIVATION FORCED"))?,
             ForceActivation::No => {
                 return Err("Feature activation is not allowed at this time".into());
             }
@@ -1042,11 +1044,11 @@ async fn process_activate(
     let mut transaction = Transaction::new_unsigned(message);
     transaction.try_sign(&config.signers, blockhash)?;
 
-    println!(
+    writeln_stdout(format_args!(
         "Activating {} ({})",
         FEATURE_NAMES.get(&feature_id).unwrap(),
         feature_id
-    );
+    ))?;
     let result = rpc_client
         .send_and_confirm_transaction_with_spinner_and_config(
             &transaction,
@@ -1099,11 +1101,11 @@ async fn process_revoke(
     let mut transaction = Transaction::new_unsigned(message);
     transaction.try_sign(&config.signers, blockhash)?;
 
-    println!(
+    writeln_stdout(format_args!(
         "Revoking {} ({})",
         FEATURE_NAMES.get(&feature_id).unwrap(),
         feature_id
-    );
+    ))?;
     let result = rpc_client
         .send_and_confirm_transaction_with_spinner_and_config(
             &transaction,

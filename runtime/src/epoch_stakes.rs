@@ -17,9 +17,11 @@ use {
     std::{
         collections::HashMap,
         fmt,
+        mem::MaybeUninit,
         num::NonZero,
         sync::{Arc, OnceLock},
     },
+    wincode::{ReadResult, SchemaRead, SchemaWrite, WriteResult, config::Config, io::Reader},
 };
 
 pub type NodeIdToVoteAccounts = HashMap<Pubkey, NodeVoteAccounts>;
@@ -47,9 +49,15 @@ pub struct BLSPubkeyStakeEntry {
 #[derive(Clone, Debug)]
 #[cfg_attr(feature = "dev-context-only-utils", derive(PartialEq))]
 pub struct BLSPubkeyToRankMap {
+    /// stores a mapping from the bls pubkey to the node's rank.
     rank_map: HashMap<BLSPubkeyCompressed, u16>,
+    /// stores a mapping from the vote account pubkey to the node's rank.
     vote_pubkey_to_rank: HashMap<Pubkey, u16>,
+    /// a mapping from rank to [`BLSPubkeyStakeEntry`].
     sorted_pubkeys: Vec<BLSPubkeyStakeEntry>,
+    /// a mapping from node identity pubkey to [`BLSPubkeyStakeEntry`].
+    node_pubkey_map: HashMap<Pubkey, BLSPubkeyStakeEntry>,
+    /// Total stake delegated to this validator.
     total_stake: NonZero<u64>,
 }
 
@@ -63,6 +71,7 @@ impl solana_frozen_abi::abi_example::AbiExample for BLSPubkeyToRankMap {
             vote_pubkey_to_rank: HashMap::new(),
             sorted_pubkeys: Vec::new(),
             total_stake: NonZero::new(1).unwrap(),
+            node_pubkey_map: HashMap::new(),
         }
     }
 }
@@ -134,11 +143,13 @@ impl BLSPubkeyToRankMap {
             HashMap::with_capacity(keys_stake_entry_with_compressed.len());
         let mut vote_pubkey_to_rank_map =
             HashMap::with_capacity(keys_stake_entry_with_compressed.len());
+        let mut node_pubkey_map = HashMap::with_capacity(keys_stake_entry_with_compressed.len());
         for (rank, (entry, bls_pubkey_compressed)) in
             keys_stake_entry_with_compressed.into_iter().enumerate()
         {
             vote_pubkey_to_rank_map.insert(entry.vote_account_pubkey, rank as u16);
             bls_pubkey_to_rank_map.insert(bls_pubkey_compressed, rank as u16);
+            node_pubkey_map.insert(entry.node_pubkey, entry.clone());
             sorted_pubkeys.push(entry);
         }
         Self {
@@ -146,6 +157,7 @@ impl BLSPubkeyToRankMap {
             vote_pubkey_to_rank: vote_pubkey_to_rank_map,
             sorted_pubkeys,
             total_stake,
+            node_pubkey_map,
         }
     }
 
@@ -173,10 +185,14 @@ impl BLSPubkeyToRankMap {
     pub fn get_pubkey_stake_entry(&self, index: usize) -> Option<&BLSPubkeyStakeEntry> {
         self.sorted_pubkeys.get(index)
     }
+
+    pub fn node_pubkey_to_stake_entry(&self, node_pubkey: &Pubkey) -> Option<&BLSPubkeyStakeEntry> {
+        self.node_pubkey_map.get(node_pubkey)
+    }
 }
 
 #[cfg_attr(feature = "frozen-abi", derive(AbiExample, StableAbi, StableAbiSample))]
-#[derive(Clone, Serialize, Debug, Deserialize, Default, PartialEq, Eq)]
+#[derive(Clone, Serialize, Debug, Deserialize, Default, PartialEq, Eq, SchemaRead, SchemaWrite)]
 pub struct NodeVoteAccounts {
     pub vote_accounts: Vec<Pubkey>,
     pub total_stake: u64,
@@ -186,10 +202,18 @@ pub struct NodeVoteAccounts {
 ///
 /// Its bincode serializaiton format is identical as `VersionedEpochStakes`, but allows faster
 /// deserialization by ignoring serialized stake delegations entirely.
-#[derive(Clone, Debug, Deserialize)]
+#[cfg_attr(
+    feature = "frozen-abi",
+    derive(Serialize, SchemaWrite, AbiEnumVisitor, StableAbi, StableAbiSample)
+)]
+#[derive(Clone, Debug, Deserialize, SchemaRead)]
 #[cfg_attr(feature = "dev-context-only-utils", qualifiers(pub))]
 pub(crate) enum DeserializableVersionedEpochStakes {
     Current {
+        #[cfg_attr(
+            feature = "frozen-abi",
+            stable_abi_sample(with = "stable_abi_sample_deserializable_epoch_stakes(rng)")
+        )]
         stakes: DeserializableEpochStakes,
         total_stake: u64,
         node_id_to_vote_accounts: NodeIdToVoteAccounts,
@@ -197,7 +221,26 @@ pub(crate) enum DeserializableVersionedEpochStakes {
     },
 }
 
-#[derive(Clone, Debug, Serialize)]
+/// Draws in `EpochStakes` declaration order (`epoch` first, not wire order) so the sample matches
+/// the serialize side; the serializer injects empty `stake_delegations`/zero `unused`, mirrored here.
+#[cfg(feature = "frozen-abi")]
+fn stable_abi_sample_deserializable_epoch_stakes(
+    rng: &mut (impl solana_frozen_abi::rand::RngCore + ?Sized),
+) -> DeserializableEpochStakes {
+    use solana_frozen_abi::stable_abi::StableAbi;
+    let epoch = Epoch::random(rng);
+    let vote_accounts = VoteAccounts::random(rng);
+    let stake_history = StakeHistory::random(rng);
+    DeserializableEpochStakes {
+        vote_accounts,
+        _stake_delegations: Vec::new(),
+        _unused: 0,
+        epoch,
+        stake_history,
+    }
+}
+
+#[derive(Clone, Debug, Serialize, SchemaWrite)]
 #[cfg_attr(
     feature = "frozen-abi",
     derive(AbiExample, AbiEnumVisitor, StableAbi, StableAbiSample)
@@ -212,6 +255,7 @@ pub enum VersionedEpochStakes {
         epoch_authorized_voters: Arc<EpochAuthorizedVoters>,
         #[cfg_attr(feature = "frozen-abi", stable_abi_sample(with = "Default::default()"))]
         #[serde(skip)]
+        #[wincode(skip)]
         bls_pubkey_to_rank_map: OnceLock<Arc<BLSPubkeyToRankMap>>,
     },
 }
@@ -392,29 +436,50 @@ impl EpochStakes {
 
 /// Customization of EpochStakes for snapshot serialization.
 ///
-/// Needed because snapshots require additional fields no longer present in EpochStakes.
+/// Needed because snapshots require additional fields no longer present in EpochStakes: the
+/// fields are reordered relative to `EpochStakes` and an always-empty `stake_delegations` list
+/// plus an unused `u64` are injected to match the historical wire format.
+#[derive(Serialize, SchemaWrite)]
+struct SerializableEpochStakes<'a> {
+    vote_accounts: &'a VoteAccounts,
+    stake_delegations: Vec<(Pubkey, Stake)>,
+    unused: u64,
+    epoch: Epoch,
+    stake_history: &'a StakeHistory,
+}
+
+impl<'a> From<&'a EpochStakes> for SerializableEpochStakes<'a> {
+    fn from(epoch_stakes: &'a EpochStakes) -> Self {
+        Self {
+            vote_accounts: &epoch_stakes.vote_accounts,
+            stake_delegations: Vec::new(), // do not serialize any stake delegations
+            unused: 0,
+            epoch: epoch_stakes.epoch,
+            stake_history: &epoch_stakes.stake_history,
+        }
+    }
+}
+
 impl Serialize for EpochStakes {
     fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
     where
         S: Serializer,
     {
-        #[derive(Serialize)]
-        struct SerializableEpochStakes<'a> {
-            vote_accounts: &'a VoteAccounts,
-            stake_delegations: Vec<(Pubkey, Stake)>,
-            unused: u64,
-            epoch: Epoch,
-            stake_history: &'a StakeHistory,
-        }
+        SerializableEpochStakes::from(self).serialize(serializer)
+    }
+}
 
-        SerializableEpochStakes {
-            vote_accounts: &self.vote_accounts,
-            stake_delegations: Vec::new(), // do not serialize any stake delegations
-            unused: 0,
-            epoch: self.epoch,
-            stake_history: &self.stake_history,
-        }
-        .serialize(serializer)
+// Mirror the `Serialize` impl above for wincode by delegating to the same `SerializableEpochStakes`
+// wire layout, so the snapshot bytes match bincode.
+unsafe impl<C: wincode::config::Config> SchemaWrite<C> for EpochStakes {
+    type Src = Self;
+
+    fn size_of(src: &Self::Src) -> WriteResult<usize> {
+        <SerializableEpochStakes<'_> as SchemaWrite<C>>::size_of(&src.into())
+    }
+
+    fn write(writer: impl wincode::io::Writer, src: &Self::Src) -> WriteResult<()> {
+        <SerializableEpochStakes<'_> as SchemaWrite<C>>::write(writer, &src.into())
     }
 }
 
@@ -435,15 +500,50 @@ impl From<SerdeStakesToStakeFormat> for EpochStakes {
 /// Customization of EpochStakes for snapshot deserialization.
 ///
 /// Needed because snapshots contain additional fields no longer present in EpochStakes.
-#[derive(Clone, Debug, Deserialize)]
+// Sampling is overridden at the parent (`DeserializableVersionedEpochStakes::Current.stakes`), so
+// no StableAbi/StableAbiSample is needed here.
+#[cfg_attr(feature = "frozen-abi", derive(Serialize, SchemaWrite))]
+#[derive(Clone, Debug, Deserialize, SchemaRead)]
 #[cfg_attr(feature = "dev-context-only-utils", qualifiers(pub))]
 pub(crate) struct DeserializableEpochStakes {
     vote_accounts: VoteAccounts,
+    // Read-and-discarded (always empty); the serialize side writes it empty too.
     #[serde(deserialize_with = "deserialize_and_ignore_stake_delegations")]
-    _stake_delegations: (),
+    #[wincode(with = "IgnoredStakeDelegations")]
+    _stake_delegations: Vec<(Pubkey, Stake)>,
     _unused: u64,
     epoch: Epoch,
     stake_history: StakeHistory,
+}
+
+/// wincode `with` schema for the ignored stake delegations: reads and discards the wire's
+/// length-prefixed `Vec<(Pubkey, Stake)>`, yielding an empty `Vec`; writes it back through `Vec`
+/// (always empty, matching the serialize side).
+struct IgnoredStakeDelegations;
+
+unsafe impl<'de, C: Config> SchemaRead<'de, C> for IgnoredStakeDelegations {
+    type Dst = Vec<(Pubkey, Stake)>;
+
+    fn read(reader: impl Reader<'de>, dst: &mut MaybeUninit<Self::Dst>) -> ReadResult<()> {
+        <Vec<(Pubkey, Stake)> as SchemaRead<'de, C>>::get(reader)?;
+        dst.write(Vec::new());
+        Ok(())
+    }
+}
+
+#[cfg(feature = "frozen-abi")]
+unsafe impl<C: Config> SchemaWrite<C> for IgnoredStakeDelegations {
+    type Src = Vec<(Pubkey, Stake)>;
+
+    const TYPE_META: wincode::TypeMeta = <Vec<(Pubkey, Stake)> as SchemaWrite<C>>::TYPE_META;
+
+    fn size_of(src: &Self::Src) -> WriteResult<usize> {
+        <Vec<(Pubkey, Stake)> as SchemaWrite<C>>::size_of(src)
+    }
+
+    fn write(writer: impl wincode::io::Writer, src: &Self::Src) -> WriteResult<()> {
+        <Vec<(Pubkey, Stake)> as SchemaWrite<C>>::write(writer, src)
+    }
 }
 
 impl From<DeserializableEpochStakes> for EpochStakes {
@@ -466,14 +566,16 @@ impl From<DeserializableEpochStakes> for EpochStakes {
 /// Snapshot epoch stakes contain delegations, but the main EpochStakes no longer uses them.
 /// This fn does custom deserialization to visit-and-ignore the delegations,
 /// avoiding the need to construct an expensive imbl::HashMap.
-fn deserialize_and_ignore_stake_delegations<'de, D>(deserializer: D) -> Result<(), D::Error>
+fn deserialize_and_ignore_stake_delegations<'de, D>(
+    deserializer: D,
+) -> Result<Vec<(Pubkey, Stake)>, D::Error>
 where
     D: Deserializer<'de>,
 {
     struct IgnoredStakeDelegationsVisitor;
 
     impl<'de> Visitor<'de> for IgnoredStakeDelegationsVisitor {
-        type Value = ();
+        type Value = Vec<(Pubkey, Stake)>;
 
         fn expecting(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
             formatter.write_str("a sequence of serialized stake delegations")
@@ -486,7 +588,7 @@ where
             while seq.next_element::<(Pubkey, Stake)>()?.is_some() {
                 // nothing to do here, ignore the delegations
             }
-            Ok(())
+            Ok(Vec::new())
         }
     }
 
@@ -497,7 +599,9 @@ where
 pub(crate) mod tests {
     use {
         super::*,
-        crate::{stake_account::StakeAccount, stakes::Stakes},
+        crate::{
+            serde_snapshot::deserialize_wincode_from, stake_account::StakeAccount, stakes::Stakes,
+        },
         solana_account::AccountSharedData,
         solana_bls_signatures::keypair::Keypair as BLSKeypair,
         solana_rent::Rent,
@@ -1015,9 +1119,11 @@ pub(crate) mod tests {
         }
 
         let deserialized_epoch_stakes: VersionedEpochStakes =
-            bincode::deserialize::<DeserializableVersionedEpochStakes>(&serialized_bytes)
-                .unwrap()
-                .into();
+            deserialize_wincode_from::<_, DeserializableVersionedEpochStakes>(
+                std::io::Cursor::new(&serialized_bytes),
+            )
+            .unwrap()
+            .into();
         assert_eq!(
             deserialized_epoch_stakes
                 .stakes()

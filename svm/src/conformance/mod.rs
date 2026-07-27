@@ -4,17 +4,25 @@
 pub mod account_state;
 pub mod callback;
 #[cfg(feature = "conformance")]
+pub mod direct_mapping;
+#[cfg(feature = "conformance")]
 pub mod elf_loader;
 #[cfg(feature = "conformance")]
-mod err;
+pub mod err;
 #[cfg(feature = "conformance")]
 pub mod fd_hash;
 #[cfg(feature = "conformance")]
 pub mod feature_set;
 pub mod instr;
+pub mod nonce_fields;
 pub mod programs;
 #[cfg(feature = "conformance")]
 pub mod serialization;
-mod setup;
+pub mod setup;
 #[cfg(feature = "conformance")]
 pub mod syscall;
+pub mod transaction_address_loader;
+pub mod transaction_meta;
+pub mod txn;
+#[cfg(feature = "conformance")]
+pub mod versioned_message;

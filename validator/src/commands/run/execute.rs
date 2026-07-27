@@ -19,6 +19,7 @@ use {
     rand::{rng, seq::SliceRandom},
     solana_accounts_db::{
         accounts_db::{AccountShrinkThreshold, AccountsDbConfig},
+        accounts_file::AccountsFileProvider,
         accounts_index::{
             AccountSecondaryIndexes, AccountsIndexConfig, DEFAULT_NUM_ENTRIES_OVERHEAD,
             DEFAULT_NUM_ENTRIES_TO_EVICT, IndexLimit, IndexLimitThreshold, ScanFilter,
@@ -33,7 +34,6 @@ use {
     solana_clock::{DEFAULT_SLOTS_PER_EPOCH, Slot},
     solana_core::{
         banking_stage::transaction_scheduler::scheduler_controller::SchedulerConfig,
-        banking_trace::DISABLED_BAKING_TRACE_DIR,
         consensus::tower_storage,
         repair::repair_handler::RepairHandlerType,
         resource_limits,
@@ -713,6 +713,7 @@ pub fn execute(
         scan_filter_for_shrinking,
         num_background_threads: Some(accounts_db_background_threads),
         num_foreground_threads: Some(accounts_db_foreground_threads),
+        accounts_file_provider: AccountsFileProvider::AppendVec,
     };
 
     let on_start_geyser_plugin_config_files = if matches.is_present("geyser_plugin_config") {
@@ -759,6 +760,15 @@ pub fn execute(
         UseSnapshotArchivesAtStartup
     );
 
+    let skip_transaction_signatures_in_status_cache =
+        !run_args.json_rpc_config.full_api && !snapshot_config.should_generate_snapshots();
+    if skip_transaction_signatures_in_status_cache {
+        info!(
+            "Transaction signatures will not be stored in the status cache because full RPC and \
+             snapshot generation are disabled"
+        );
+    }
+
     let mut validator_config = ValidatorConfig {
         log_config,
         require_tower: matches.is_present("require_tower"),
@@ -775,6 +785,11 @@ pub fn execute(
             .map(|s| Hash::from_str(s).unwrap()),
         expected_shred_version,
         new_hard_forks: hardforks_of(matches, "hard_forks"),
+        runtime_config: RuntimeConfig {
+            log_messages_bytes_limit: value_of(matches, "log_messages_bytes_limit"),
+            skip_transaction_signatures_in_status_cache,
+            ..RuntimeConfig::default()
+        },
         rpc_config: run_args.json_rpc_config,
         on_start_geyser_plugin_config_files,
         geyser_plugin_always_enabled: matches.is_present("geyser_plugin_always_enabled"),
@@ -826,11 +841,7 @@ pub fn execute(
         accounts_db_force_initial_clean: matches.is_present("no_skip_initial_accounts_db_clean"),
         snapshot_config,
         no_wait_for_vote_to_start_leader: matches.is_present("no_wait_for_vote_to_start_leader"),
-        wait_to_vote_slot: None,
-        runtime_config: RuntimeConfig {
-            log_messages_bytes_limit: value_of(matches, "log_messages_bytes_limit"),
-            ..RuntimeConfig::default()
-        },
+        wait_to_vote_slot: value_t!(matches, "wait_to_vote_slot", Slot).ok(),
         staked_nodes_overrides: staked_nodes_overrides.clone(),
         use_snapshot_archives_at_startup,
         ip_echo_server_threads,
@@ -869,7 +880,11 @@ pub fn execute(
         },
         enable_block_production_forwarding: staked_nodes_overrides_path.is_some(),
         enable_scheduler_bindings: matches.is_present("enable_scheduler_bindings"),
-        banking_trace_dir_byte_limit: parse_banking_trace_dir_byte_limit(matches),
+        banking_trace_dir_byte_limit: value_t_or_exit!(
+            matches,
+            "banking_trace_dir_byte_limit",
+            u64
+        ),
         validator_exit: Arc::new(RwLock::new(Exit::default())),
         validator_exit_backpressure: [(
             SnapshotPackagerService::NAME.to_string(),
@@ -1189,19 +1204,6 @@ fn get_cluster_shred_version(entrypoints: &[SocketAddr], bind_address: IpAddr) -
         }
     }
     None
-}
-
-fn parse_banking_trace_dir_byte_limit(matches: &ArgMatches) -> u64 {
-    if matches.is_present("disable_banking_trace") {
-        // disable with an explicit flag; This effectively becomes `opt-out` by resetting to
-        // DISABLED_BAKING_TRACE_DIR, while allowing us to specify a default sensible limit in clap
-        // configuration for cli help.
-        DISABLED_BAKING_TRACE_DIR
-    } else {
-        // a default value in clap configuration (BANKING_TRACE_DIR_DEFAULT_BYTE_LIMIT) or
-        // explicit user-supplied override value
-        value_t_or_exit!(matches, "banking_trace_dir_byte_limit", u64)
-    }
 }
 
 fn new_snapshot_config(

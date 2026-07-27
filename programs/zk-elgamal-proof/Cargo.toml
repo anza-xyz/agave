@@ -22,11 +22,11 @@ solana-instruction = { workspace = true, features = ["std"] }
 solana-program-runtime = { workspace = true }
 solana-sdk-ids = { workspace = true }
 solana-svm-log-collector = { workspace = true }
+solana-zk-elgamal-proof-interface = { workspace = true }
 solana-zk-sdk = { workspace = true }
 
 [dev-dependencies]
 criterion = { workspace = true }
-curve25519-dalek = { workspace = true }
 
 [[bench]]
 name = "verify_proofs"

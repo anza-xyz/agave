@@ -7,10 +7,12 @@ use {
     agave_votor::voting_service::{AlpenglowPortOverride, VotingServiceOverride},
     agave_votor_messages::{
         certificate::Certificate,
-        consensus_message::{ConsensusMessage, VoteMessage, BLS_KEYPAIR_DERIVE_SEED},
-        unverified_vote_message::{DecodedWireConsensusMessage, UnverifiedCertificate},
+        consensus_message::{BLS_KEYPAIR_DERIVE_SEED, ConsensusMessage, VoteMessage},
+        unverified_vote_message::{
+            DecodedWireConsensusMessage, UnverifiedCertificate, UnverifiedVoteMessage,
+        },
         vote::Vote,
-        wire::{get_vote_payload_to_sign, VersionedWireConsensusMessage},
+        wire::{VersionedWireConsensusMessage, get_vote_payload_to_sign},
     },
     crossbeam_channel::bounded,
     log::{debug, info, warn},
@@ -28,7 +30,7 @@ use {
     solana_signer::Signer,
     solana_streamer::{
         nonblocking::simple_qos::SimpleQosConfig,
-        quic::{spawn_simple_qos_server, QuicStreamerConfig, SpawnServerResult},
+        quic::{QuicStreamerConfig, SpawnServerResult, spawn_simple_qos_server},
         streamer::{PacketBatchReceiver, StakedNodes},
     },
     std::{
@@ -36,8 +38,8 @@ use {
         net::{IpAddr, Ipv4Addr, SocketAddr},
         num::NonZeroU64,
         sync::{
-            atomic::{AtomicBool, AtomicU64, Ordering},
             Arc, Mutex, RwLock,
+            atomic::{AtomicBool, AtomicU64, Ordering},
         },
         thread::{self, Builder, JoinHandle},
         time::Duration,
@@ -190,6 +192,7 @@ struct DelayedMessage {
 
 #[derive(Clone, Copy)]
 struct ValidatorVerificationEntry {
+    source: Pubkey,
     stake: NonZeroU64,
     bls_pubkey: PopVerified<BlsPubkeyAffine>,
 }
@@ -222,6 +225,7 @@ impl MessageVerifier {
                 )
                 .expect("byzfuzz: derive validator BLS keypair");
                 ValidatorVerificationEntry {
+                    source,
                     stake,
                     bls_pubkey: bls_keypair.public,
                 }
@@ -247,6 +251,24 @@ impl MessageVerifier {
         }
     }
 
+    fn materialize_vote(
+        &self,
+        source: &Pubkey,
+        vote: UnverifiedVoteMessage,
+    ) -> Option<ConsensusMessage> {
+        let (rank, entry) = self
+            .rank_entries
+            .iter()
+            .enumerate()
+            .find(|(_, entry)| &entry.source == source)?;
+        Some(ConsensusMessage::new_vote(
+            vote.vote,
+            vote.signature,
+            rank.try_into().ok()?,
+            entry.stake,
+        ))
+    }
+
     fn accepts(&self, message: &ConsensusMessage, shred_version: u16) -> bool {
         let key = (message.clone(), shred_version);
         if let Some(accepted) = self.cache.lock().unwrap().get(&key).copied() {
@@ -257,6 +279,9 @@ impl MessageVerifier {
                 self.rank_entries
                     .get(vote.rank as usize)
                     .is_some_and(|entry| {
+                        if vote.stake != entry.stake {
+                            return false;
+                        }
                         let payload = get_vote_payload_to_sign(vote.vote, shred_version);
                         entry
                             .bls_pubkey
@@ -334,8 +359,26 @@ impl AlpenglowInterceptor {
             validator_count: validator_keys.len(),
             ..AlpenglowInterceptorState::default()
         }));
-        let message_verifier =
-            source_stakes.map(|stakes| Arc::new(MessageVerifier::new(validator_keys, stakes)));
+        let (message_metadata, message_verifier) = match source_stakes {
+            Some(stakes) => {
+                let verifier = Arc::new(MessageVerifier::new(validator_keys, stakes));
+                (verifier.clone(), Some(verifier))
+            }
+            None => {
+                // The compatibility constructor is only used with equal-stake
+                // validators. Build the same deterministic rank metadata while
+                // retaining its historical "record every forwarded message"
+                // behavior by leaving the acceptance verifier disabled.
+                let equal_stakes = validator_keys
+                    .iter()
+                    .map(|keys| (keys.node_keypair.pubkey(), 1))
+                    .collect::<HashMap<_, _>>();
+                (
+                    Arc::new(MessageVerifier::new(validator_keys, &equal_stakes)),
+                    None,
+                )
+            }
+        };
         let policy: InterceptPolicy = Arc::new(policy);
         let port_override = AlpenglowPortOverride::default();
         let mut override_map = HashMap::new();
@@ -384,6 +427,7 @@ impl AlpenglowInterceptor {
                 current_slot.clone(),
                 stagnation_watchdog.clone(),
                 state.clone(),
+                message_metadata.clone(),
                 message_verifier.clone(),
                 exit.clone(),
             );
@@ -475,6 +519,7 @@ impl AlpenglowInterceptor {
         current_slot: Arc<AtomicU64>,
         stagnation_watchdog: Arc<Mutex<StagnationWatchdog>>,
         state: Arc<Mutex<AlpenglowInterceptorState>>,
+        message_metadata: Arc<MessageVerifier>,
         message_verifier: Option<Arc<MessageVerifier>>,
         exit: Arc<AtomicBool>,
     ) -> JoinHandle<()> {
@@ -494,27 +539,45 @@ impl AlpenglowInterceptor {
                             warn!("AlpenglowInterceptor: packet missing data");
                             continue;
                         };
+                        if bytes.len() < std::mem::size_of::<u16>() {
+                            warn!("AlpenglowInterceptor: malformed consensus message");
+                            continue;
+                        }
+                        // The interceptor must discover, rather than enforce, the
+                        // sender's shred version. It is the final fixed-width field
+                        // in the wire message; use it as the contextual decoder's
+                        // expected value so the destination remains responsible for
+                        // validating it against the cluster's version.
+                        let shred_version = u16::from_le_bytes(
+                            bytes[bytes.len() - std::mem::size_of::<u16>()..]
+                                .try_into()
+                                .expect("two-byte shred-version suffix"),
+                        );
                         let Ok(wire_message) =
-                            wincode::deserialize::<VersionedWireConsensusMessage>(bytes)
+                            VersionedWireConsensusMessage::deserialize_with_expected_shred_version(
+                                bytes,
+                                wincode::config::DefaultConfig::default(),
+                                shred_version,
+                            )
                         else {
                             warn!("AlpenglowInterceptor: malformed consensus message");
                             continue;
                         };
                         // Preserve the wire shred version so forwarded messages are
                         // accepted by the destination validator's sigverifier.
-                        let shred_version = wire_message.shred_version();
-                        // Passing the message's own shred version makes the decode's
-                        // shred-version filter a no-op; the interceptor relays rather
-                        // than validates.
-                        let Some(decoded) =
-                            DecodedWireConsensusMessage::try_new(wire_message, shred_version)
-                        else {
-                            warn!("AlpenglowInterceptor: malformed consensus message");
-                            continue;
-                        };
+                        let decoded = DecodedWireConsensusMessage::new(wire_message);
                         let message = match decoded {
                             DecodedWireConsensusMessage::Vote(vote) => {
-                                ConsensusMessage::new_vote(vote.vote, vote.signature, vote.rank)
+                                match message_metadata.materialize_vote(&source, vote) {
+                                    Some(message) => message,
+                                    None => {
+                                        warn!(
+                                            "AlpenglowInterceptor: no rank metadata for source \
+                                             {source}"
+                                        );
+                                        continue;
+                                    }
+                                }
                             }
                             DecodedWireConsensusMessage::Certificate(cert) => {
                                 ConsensusMessage::new_certificate(
@@ -890,10 +953,11 @@ mod tests {
         let signature = bls_keypair
             .sign(&get_vote_payload_to_sign(vote, shred_version))
             .into();
-        let valid_vote = ConsensusMessage::new_vote(vote, signature, rank);
+        let stake = verifier.rank_entries[rank as usize].stake;
+        let valid_vote = ConsensusMessage::new_vote(vote, signature, rank, stake);
         assert!(verifier.accepts(&valid_vote, shred_version));
 
-        let wrong_rank_vote = ConsensusMessage::new_vote(vote, signature, rank ^ 1);
+        let wrong_rank_vote = ConsensusMessage::new_vote(vote, signature, rank ^ 1, stake);
         assert!(!verifier.accepts(&wrong_rank_vote, shred_version));
 
         let malformed_certificate = ConsensusMessage::new_certificate(

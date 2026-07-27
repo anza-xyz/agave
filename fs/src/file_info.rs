@@ -1,4 +1,7 @@
-use std::{fs::File, io, path::PathBuf};
+use {
+    crate::FileSize,
+    std::{fs::File, io, path::PathBuf},
+};
 
 /// Open `File` coupled with its filesystem location and most useful information
 ///
@@ -10,7 +13,7 @@ use std::{fs::File, io, path::PathBuf};
 pub struct FileInfo {
     pub file: File,
     pub path: PathBuf,
-    pub size: u64,
+    pub size: FileSize,
 }
 
 impl FileInfo {

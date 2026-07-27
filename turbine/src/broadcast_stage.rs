@@ -142,6 +142,8 @@ pub enum Error {
     UnknownLastIndex(Slot),
     #[error("Unknown slot meta, slot: {0}")]
     UnknownSlotMeta(Slot),
+    #[error("Window for slot {0} has already been skipped - newer window finalized")]
+    WindowSkipped(Slot),
 }
 
 type Result<T> = std::result::Result<T, Error>;

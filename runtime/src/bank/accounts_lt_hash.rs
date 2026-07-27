@@ -1,7 +1,10 @@
 use {
     super::Bank,
     crossbeam_utils::CachePadded,
-    rayon::{ThreadPool, ThreadPoolBuilder},
+    rayon::{
+        ThreadPool, ThreadPoolBuilder,
+        iter::{IntoParallelIterator, ParallelIterator},
+    },
     solana_account::{AccountSharedData, ReadableAccount},
     solana_accounts_db::{accounts_db::AccountsDb, storable_accounts::StorableAccounts},
     solana_lattice_hash::lt_hash::LtHash,
@@ -25,7 +28,17 @@ const MAX_BYTES_SEEN_ACCOUNTS_FREELIST: usize = 10_000_000;
 
 impl Bank {
     /// Enqueues the accounts lt hash updates for `accounts` to the accounts hasher thread pool.
-    pub fn enqueue_accounts_lt_hash_updates<'a>(&self, accounts: &impl StorableAccounts<'a>) {
+    ///
+    /// This fn is meant to be called by on-chain events, e.g. transaction processing.
+    /// This fn deduplicates from `accounts`, keeping only the latest version of each account.
+    /// It also loads the previous version of each account inline, because we assume the previous
+    /// version of each account is still in the accounts write cache, and thus fast to load.
+    ///
+    /// For non-transaction processing callers, consider `enqueue_off_chain_accounts_lt_hash_updates()`.
+    pub fn enqueue_on_chain_accounts_lt_hash_updates<'a>(
+        &self,
+        accounts: &impl StorableAccounts<'a>,
+    ) {
         if accounts.is_empty() {
             return;
         }
@@ -67,6 +80,93 @@ impl Bank {
 
         // reclaim the seen accounts hashset
         seen_accounts_freelist.try_push(seen_accounts);
+    }
+
+    /// Enqueues the accounts lt hash updates for `accounts` to the accounts hasher thread pool.
+    ///
+    /// This fn is meant to be called by off-chain events, meaning we know/control `accounts`.
+    /// Contrasting with `enqueue_on_chain_accounts_lt_hash_updates()`, this fn:
+    /// - Does not deduplicate accounts, requiring the caller to ensure there are no duplicates.
+    /// - Does not assume loading the previous version of accounts is fast,
+    ///   e.g. when storing stake accounts as part of partitioned epoch rewards.
+    ///
+    /// If Some, `thread_pool_for_hashing_accounts` will be used
+    /// to load the previous version of accounts in parallel.
+    pub fn enqueue_off_chain_accounts_lt_hash_updates<'a>(
+        &self,
+        accounts: &impl StorableAccounts<'a>,
+        thread_pool_for_loading_accounts: Option<&ThreadPool>,
+    ) {
+        if cfg!(debug_assertions) {
+            // if debug assertions are on, we will check for duplicates
+            use ahash::HashSetExt as _;
+            let mut seen_accounts = ahash::HashSet::with_capacity(accounts.len());
+            let mut duplicate_pubkeys = ahash::HashSet::with_capacity(0); // assume no duplicates
+            for index in 0..accounts.len() {
+                let pubkey = accounts.pubkey(index);
+                if !seen_accounts.insert(pubkey) {
+                    // we've already seen this account, so add it to the duplicates list
+                    duplicate_pubkeys.insert(pubkey);
+                }
+            }
+            if !duplicate_pubkeys.is_empty() {
+                let mut duplicate_accounts = ahash::HashMap::<_, Vec<_>>::default();
+                for duplicate_pubkey in duplicate_pubkeys {
+                    for index in 0..accounts.len() {
+                        let pubkey = accounts.pubkey(index);
+                        if pubkey == duplicate_pubkey {
+                            duplicate_accounts
+                                .entry(pubkey)
+                                .or_default()
+                                .push(accounts.account(index, |account| account.take_account()));
+                        }
+                    }
+                }
+                panic!("duplicate accounts were enqueued for hashing: {duplicate_accounts:?}");
+            }
+        }
+
+        let async_progress = &self.accounts_lt_hash_async_progress;
+        let thread_pool_for_hashing_accounts = accounts_hasher_thread_pool();
+
+        // A closure that does the loading and enqueueing, so code is shared
+        // whether using the thread_pool_for_loading_accounts or not.
+        let load_then_enqueue = |index| {
+            let address = accounts.pubkey(index);
+            let prev_account = self
+                .rc
+                .accounts
+                .load_with_fixed_root_do_not_populate_read_cache(&self.ancestors, address)
+                .map(|(account, _slot)| account);
+            let curr_account = accounts.account(index, |account| {
+                (account.lamports() != 0).then(|| account.take_account())
+            });
+            if prev_account.is_none() && curr_account.is_none() {
+                // the account was ephemeral; skip it
+            } else {
+                // the account was modified; enqueue this update
+                async_progress.spawn(
+                    thread_pool_for_hashing_accounts,
+                    AccountsLtHashUpdate {
+                        address: *address,
+                        prev_account,
+                        curr_account,
+                    },
+                );
+            }
+        };
+
+        if let Some(thread_pool_for_loading_accounts) = thread_pool_for_loading_accounts {
+            // The previous version of accounts must be loaded before subsequent account
+            // modifications occur, so ThreadPool::spawn() canot be used here.
+            thread_pool_for_loading_accounts.install(|| {
+                (0..accounts.len())
+                    .into_par_iter()
+                    .for_each(load_then_enqueue);
+            });
+        } else {
+            (0..accounts.len()).for_each(load_then_enqueue);
+        }
     }
 
     /// Updates the accounts lt hash.
@@ -863,6 +963,35 @@ mod tests {
         .unwrap();
 
         assert_eq!(roundtrip_bank, *bank);
+    }
+
+    /// Ensure enqueue_off_chain_accounts_lt_hash_updates() catches duplicates in debug mode.
+    #[should_panic(expected = "duplicate accounts were enqueued for hashing")]
+    #[test_case(Features::None; "no features")]
+    #[test_case(Features::All; "all features")]
+    fn test_enqueue_off_chain_accounts_lt_hash_updates_catches_duplicates(features: Features) {
+        use rand::seq::SliceRandom as _;
+        let (genesis_config, _) = genesis_config_with(features);
+        let bank = Bank::new_for_tests(&genesis_config);
+
+        let pubkey1 = pubkey::new_rand();
+        let pubkey2 = pubkey::new_rand();
+        let pubkey3 = pubkey::new_rand();
+
+        let mut accounts = [
+            // one version of pubkey1
+            (&pubkey1, &AccountSharedData::new(11, 0, &Pubkey::default())),
+            // two versions of pubkey2
+            (&pubkey2, &AccountSharedData::new(21, 0, &Pubkey::default())),
+            (&pubkey2, &AccountSharedData::new(22, 0, &Pubkey::default())),
+            // three versions of pubkey3
+            (&pubkey3, &AccountSharedData::new(31, 0, &Pubkey::default())),
+            (&pubkey3, &AccountSharedData::new(32, 0, &Pubkey::default())),
+            (&pubkey3, &AccountSharedData::new(33, 0, &Pubkey::default())),
+        ];
+        accounts.shuffle(&mut rand::rng());
+
+        bank.store_accounts((bank.slot(), accounts.as_slice()), None);
     }
 
     /// Ensure freelist respects max size.

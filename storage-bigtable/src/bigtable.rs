@@ -916,25 +916,13 @@ impl<F: FnMut(Request<()>) -> InterceptedRequestResult> BigTable<F> {
         table_name: &str,
         request: ReadRowsRequest,
     ) -> Result<tonic::Response<tonic::Streaming<ReadRowsResponse>>> {
-        let datapoint_bigtable = if table_name == "blocks" {
-            "bigtable_blocks"
-        } else if table_name == "tx" {
-            "bigtable_tx"
-        } else if table_name == "tx-by-addr" {
-            "bigtable_tx-by-addr"
-        } else if table_name == "entries" {
-            "bigtable_entries"
-        } else {
-            "bigtable_unknown"
-        };
-        datapoint_info!(datapoint_bigtable, ("read_rows", 1, i64));
         tokio::time::timeout(
             self.timeout.unwrap_or(Duration::from_secs(30)),
             self.client.read_rows(request),
         )
         .await
         .map_err(|_| {
-            datapoint_error!(datapoint_bigtable, ("timeout", 1, i64));
+            datapoint_error!("storage-bigtable-timeout", ("table", table_name, String));
             Error::Timeout
         })?
         .map_err(Error::from)

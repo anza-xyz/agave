@@ -26,6 +26,7 @@ frozen-abi = [
 
 [dependencies]
 agave-feature-set = { workspace = true }
+bitvec = { workspace = true }
 crossbeam-channel = { workspace = true }
 log = { workspace = true }
 serde = { workspace = true }
@@ -48,10 +49,6 @@ solana-short-vec = { workspace = true, features = ["wincode"] }
 solana-signer-store = { workspace = true }
 thiserror = { workspace = true }
 wincode = { workspace = true }
-
-[dev-dependencies]
-agave-votor-messages = { path = ".", features = ["agave-unstable-api", "dev-context-only-utils"] }
-tempfile = { workspace = true }
 
 [lints]
 workspace = true

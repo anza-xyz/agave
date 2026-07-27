@@ -57,8 +57,6 @@ pub enum Mutations {
     DuplicateMessage,
     DuplicateToAll,
     DelayMessage,
-    RankBitFlip,
-    WrongRank,
     NotarizeEquivocation,
     FallbackEquivocation,
     FastFallbackSwap,
@@ -81,8 +79,6 @@ impl Mutations {
         Self::DuplicateMessage,
         Self::DuplicateToAll,
         Self::DelayMessage,
-        Self::RankBitFlip,
-        Self::WrongRank,
         Self::NotarizeEquivocation,
         Self::FallbackEquivocation,
         Self::FastFallbackSwap,
@@ -169,21 +165,13 @@ impl Mutations {
         // Only byzantine sources reach here, and re-signing needs their key.
         let source_bls_keypair = source_bls_keypair?;
         let mut mutated = vote_message.clone();
-        match self {
-            Self::RankBitFlip => bitflip_rank(&mut mutated.rank, rng),
-            Self::WrongRank => mutated.rank ^= 1,
-            _ => {
-                mutated.vote = match self {
-                    Self::EquivocateVote => equivocate_vote(vote_message.vote, rng),
-                    Self::NotarizeEquivocation => notarize_equivocation(vote_message.vote, rng),
-                    Self::FallbackEquivocation => fallback_equivocation(vote_message.vote, rng),
-                    Self::FastFallbackSwap => fast_fallback_swap(vote_message.vote),
-                    _ => {
-                        mutate_vote_block(vote_message.vote, |block| self.mutate_block(block, rng))
-                    }
-                }?;
-            }
-        }
+        mutated.vote = match self {
+            Self::EquivocateVote => equivocate_vote(vote_message.vote, rng),
+            Self::NotarizeEquivocation => notarize_equivocation(vote_message.vote, rng),
+            Self::FallbackEquivocation => fallback_equivocation(vote_message.vote, rng),
+            Self::FastFallbackSwap => fast_fallback_swap(vote_message.vote),
+            _ => mutate_vote_block(vote_message.vote, |block| self.mutate_block(block, rng)),
+        }?;
         // Re-sign mutated votes as the sending validator.
         let vote_payload = get_vote_payload_to_sign(mutated.vote, shred_version);
         mutated.signature = source_bls_keypair.sign(vote_payload.as_slice()).into();
@@ -263,11 +251,6 @@ fn mutate_vote_block(vote: Vote, mutate: impl FnOnce(Block) -> Option<Block>) ->
         }
         Vote::Finalize(_) | Vote::Skip(_) | Vote::SkipFallback(_) => None,
     }
-}
-
-fn bitflip_rank(rank: &mut u16, rng: &mut AlpenglowRng) {
-    let bit = rng.random_range(0..16);
-    *rank ^= 1u16 << bit;
 }
 
 fn equivocate_vote(vote: Vote, rng: &mut AlpenglowRng) -> Option<Vote> {

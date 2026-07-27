@@ -1,4 +1,4 @@
-pub use solana_client::connection_cache::Protocol;
+pub use solana_net_utils::Protocol;
 use {
     crate::{
         crds_data::MAX_WALLCLOCK,

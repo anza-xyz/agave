@@ -14,11 +14,10 @@ use {
     solana_program_test::{ProgramTest, ProgramTestBanksClientExt, ProgramTestError, processor},
     solana_pubkey::Pubkey,
     solana_signer::Signer,
+    solana_stake_history::{StakeHistory, sysvar as stake_history},
     solana_stake_interface::{
         instruction as stake_instruction,
-        stake_history::StakeHistory,
         state::{StakeActivationStatus, StakeStateV2},
-        sysvar::stake_history,
     },
     solana_sysvar::{SysvarSerialize, clock},
     solana_transaction::Transaction,

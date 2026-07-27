@@ -1,5 +1,5 @@
 use {
-    solana_clock::Epoch,
+    solana_clock::{DEFAULT_MS_PER_SLOT, Epoch},
     solana_epoch_schedule::EpochSchedule,
     solana_gossip::epoch_specs::EpochSpecs as EpochSpecsTrait,
     solana_pubkey::Pubkey,
@@ -92,7 +92,9 @@ impl From<Arc<RwLock<BankForks>>> for EpochSpecs {
 
 fn get_epoch_duration(bank: &Bank) -> Duration {
     let num_slots = bank.get_slots_in_epoch(bank.epoch());
-    Duration::from_nanos_u128(num_slots as u128 * bank.ns_per_slot)
+    // Gossip staked-CRDS timeout/purge intentionally follows the legacy
+    // default slot duration, not the runtime slot duration.
+    Duration::from_millis(num_slots.saturating_mul(DEFAULT_MS_PER_SLOT))
 }
 
 #[cfg(test)]
@@ -116,7 +118,7 @@ mod tests {
         assert_eq!(bank.get_slots_in_epoch(epoch), num_slots);
         assert_eq!(
             get_epoch_duration(&bank),
-            Duration::from_nanos(num_slots * bank.ns_per_slot as u64)
+            Duration::from_millis(num_slots * DEFAULT_MS_PER_SLOT)
         );
         for slot in 1..32 {
             bank = Bank::new_from_parent_with_bank_forks(
@@ -129,7 +131,7 @@ mod tests {
             assert_eq!(bank.get_slots_in_epoch(epoch), num_slots);
             assert_eq!(
                 get_epoch_duration(&bank),
-                Duration::from_nanos(num_slots * bank.ns_per_slot as u64)
+                Duration::from_millis(num_slots * DEFAULT_MS_PER_SLOT)
             );
         }
         let epoch = 1;
@@ -145,7 +147,7 @@ mod tests {
             assert_eq!(bank.get_slots_in_epoch(epoch), num_slots);
             assert_eq!(
                 get_epoch_duration(&bank),
-                Duration::from_nanos(num_slots * bank.ns_per_slot as u64)
+                Duration::from_millis(num_slots * DEFAULT_MS_PER_SLOT)
             );
         }
         let epoch = 2;
@@ -161,7 +163,7 @@ mod tests {
             assert_eq!(bank.get_slots_in_epoch(epoch), num_slots);
             assert_eq!(
                 get_epoch_duration(&bank),
-                Duration::from_nanos(num_slots * bank.ns_per_slot as u64)
+                Duration::from_millis(num_slots * DEFAULT_MS_PER_SLOT)
             );
         }
     }

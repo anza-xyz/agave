@@ -156,7 +156,15 @@ impl PackedMinor {
     }
 }
 
-#[cfg_attr(feature = "frozen-abi", derive(StableAbi))]
+#[cfg_attr(
+    feature = "frozen-abi",
+    derive(StableAbi),
+    frozen_abi(
+        abi_digest = "CAvtbh3st7PCvB93NjvDDQj1tBz82BmYPL4cNXMByfLX",
+        abi_serializer = ["bincode", "wincode"],
+        test_roundtrip = "eq_and_wire",
+    )
+)]
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Version {
     major: u16,

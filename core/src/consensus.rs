@@ -544,7 +544,7 @@ impl Tower {
         debug_assert!(total_stake > 0);
         let parent_is_super_oc = bank_slot == parent_slot + 1
             && Fraction::new(super_oc_stake, NonZeroU64::new(total_stake).unwrap())
-                > GENESIS_VOTE_THRESHOLD;
+                >= GENESIS_VOTE_THRESHOLD;
 
         // TODO: populate_ancestor_voted_stakes only adds zeros. Comment why
         // that is necessary (if so).

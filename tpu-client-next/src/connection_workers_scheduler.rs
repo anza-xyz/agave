@@ -88,9 +88,6 @@ pub struct ConnectionWorkersSchedulerConfig {
     /// The number of connections to be maintained by the scheduler.
     pub num_connections: NonZeroUsize,
 
-    /// Whether to skip checking the transaction blockhash expiration.
-    pub skip_check_transaction_age: bool,
-
     /// The size of the channel used to transmit transaction batches to the
     /// worker tasks.
     pub worker_channel_size: usize,
@@ -215,7 +212,6 @@ impl ConnectionWorkersScheduler {
             bind,
             stake_identity,
             num_connections,
-            skip_check_transaction_age,
             worker_channel_size,
             max_reconnect_attempts,
             leaders_fanout,
@@ -282,7 +278,6 @@ impl ConnectionWorkersScheduler {
                     peer,
                     &endpoint,
                     worker_channel_size,
-                    skip_check_transaction_age,
                     max_reconnect_attempts,
                     DEFAULT_MAX_CONNECTION_HANDSHAKE_TIMEOUT,
                     stats.clone(),

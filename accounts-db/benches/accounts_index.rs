@@ -35,7 +35,7 @@ fn bench_accounts_index(c: &mut Criterion) {
                 pubkey,
                 AccountInfo::default(),
                 &mut reclaims,
-                UpsertReclaim::PopulateReclaims,
+                UpsertReclaim::ReclaimOldSlots,
             );
         }
     }
@@ -51,7 +51,7 @@ fn bench_accounts_index(c: &mut Criterion) {
                     &pubkeys[pubkey],
                     AccountInfo::default(),
                     &mut reclaims,
-                    UpsertReclaim::PopulateReclaims,
+                    UpsertReclaim::ReclaimOldSlots,
                 );
                 reclaims.clear();
             }

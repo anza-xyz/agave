@@ -1199,13 +1199,14 @@ unsafe fn update_caller_account_region(
             .find_region(caller_account.vm_data_addr)
             .ok_or_else(|| Box::new(InstructionError::MissingAccount) as Error)?;
         // vm_data_addr must always point to the beginning of the region
-        debug_assert_eq!(region.vm_addr, caller_account.vm_data_addr);
+        let region_start_vm_addr = region.vm_addr_range().start;
+        debug_assert_eq!(region_start_vm_addr, caller_account.vm_data_addr);
         let mut new_region;
         if !account_data_direct_mapping {
             new_region = region.clone();
             modify_memory_region_of_account(callee_account, &mut new_region);
         } else {
-            new_region = create_memory_region_of_account(callee_account, region.vm_addr)?;
+            new_region = create_memory_region_of_account(callee_account, region_start_vm_addr)?;
         }
         unsafe {
             // SAFETY: the lifetime invariants are delegated to the callers of this function. Both

@@ -147,9 +147,9 @@ pub(crate) fn push_and_serialize_parameters<'ix_data>(
 
 fn memory_region_to_proto(region: &MemoryRegion) -> ProtoVmInputMemoryRegion {
     ProtoVmInputMemoryRegion {
-        vm_address: region.vm_addr,
-        region_size: region.len,
-        is_writable: region.writable,
+        vm_address: region.vm_addr_range().start,
+        region_size: region.len() as u64,
+        is_writable: region.host_buffer().is_mutable(),
     }
 }
 

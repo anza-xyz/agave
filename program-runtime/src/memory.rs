@@ -1,10 +1,6 @@
 //! Memory translation utilities.
 
-use {
-    solana_sbpf::memory_region::{AccessType, MemoryMapping},
-    solana_transaction_context::vm_slice::VmSlice,
-    std::mem::align_of,
-};
+use {solana_sbpf::memory_region::MemoryMapping, solana_transaction_context::vm_slice::VmSlice};
 
 /// Error types for memory translation operations.
 #[derive(Debug, thiserror::Error, PartialEq, Eq, Clone)]
@@ -15,18 +11,11 @@ pub enum MemoryTranslationError {
     InvalidLength,
 }
 
-pub fn address_is_aligned<T>(address: u64) -> bool {
-    (address as *mut T as usize)
-        .checked_rem(align_of::<T>())
-        .map(|rem| rem == 0)
-        .expect("T to be non-zero aligned")
-}
-
 // Do not use this directly
 #[macro_export]
 macro_rules! translate_inner {
     ($memory_mapping:expr, $map:ident, $access_type:expr, $vm_addr:expr, $len:expr $(,)?) => {
-        Result::<u64, Box<dyn std::error::Error>>::from(
+        Result::<$crate::solana_sbpf::memory_region::HostBuffer, Box<dyn std::error::Error>>::from(
             $memory_mapping
                 .$map($access_type, $vm_addr, $len)
                 .map_err(|err| err.into()),
@@ -37,20 +26,34 @@ macro_rules! translate_inner {
 // Do not use this directly
 #[macro_export]
 macro_rules! translate_type_inner {
-    ($memory_mapping:expr, $access_type:expr, $vm_addr:expr, $T:ty, $check_aligned:expr $(,)?) => {{
+    ($memory_mapping:expr, AccessType::Store, $vm_addr:expr, $T:ty, $check_aligned:expr $(,)?) => {{
         let host_addr = $crate::translate_inner!(
             $memory_mapping,
             map,
-            $access_type,
+            $crate::solana_sbpf::memory_region::AccessType::Store,
             $vm_addr,
             size_of::<$T>() as u64
         )?;
-        if !$check_aligned {
-            Ok(unsafe { std::mem::transmute::<u64, &mut $T>(host_addr) })
-        } else if !$crate::memory::address_is_aligned::<$T>(host_addr) {
+        let ptr = host_addr.ptr_mut().cast::<$T>();
+        if $check_aligned && !ptr.is_aligned() {
             Err($crate::memory::MemoryTranslationError::UnalignedPointer.into())
         } else {
-            Ok(unsafe { &mut *(host_addr as *mut $T) })
+            Ok(unsafe { ptr.as_mut_unchecked() })
+        }
+    }};
+    ($memory_mapping:expr, AccessType::Load, $vm_addr:expr, $T:ty, $check_aligned:expr $(,)?) => {{
+        let host_addr = $crate::translate_inner!(
+            $memory_mapping,
+            map,
+            $crate::solana_sbpf::memory_region::AccessType::Load,
+            $vm_addr,
+            size_of::<$T>() as u64
+        )?;
+        let ptr = host_addr.ptr().cast::<$T>();
+        if $check_aligned && !ptr.is_aligned() {
+            Err($crate::memory::MemoryTranslationError::UnalignedPointer.into())
+        } else {
+            Ok(unsafe { ptr.as_ref_unchecked() })
         }
     }};
 }
@@ -58,7 +61,7 @@ macro_rules! translate_type_inner {
 // Do not use this directly
 #[macro_export]
 macro_rules! translate_slice_inner {
-    ($memory_mapping:expr, $access_type:expr, $vm_addr:expr, $len:expr, $T:ty, $check_aligned:expr $(,)?) => {{
+    ($memory_mapping:expr, AccessType::Store, $vm_addr:expr, $len:expr, $T:ty, $check_aligned:expr $(,)?) => {{
         if $len == 0 {
             Ok(std::ptr::slice_from_raw_parts_mut(
                 std::ptr::dangling_mut::<$T>(),
@@ -72,19 +75,46 @@ macro_rules! translate_slice_inner {
                 match $crate::translate_inner!(
                     $memory_mapping,
                     map,
-                    $access_type,
+                    $crate::solana_sbpf::memory_region::AccessType::Store,
                     $vm_addr,
                     total_size
                 ) {
                     Err(e) => Err(e),
-                    Ok(host_addr)
-                        if $check_aligned
-                            && !$crate::memory::address_is_aligned::<$T>(host_addr) =>
-                    {
+                    Ok(host_buf) if $check_aligned && !host_buf.ptr().cast::<$T>().is_aligned() => {
                         Err($crate::memory::MemoryTranslationError::UnalignedPointer.into())
                     }
-                    Ok(host_addr) => Ok(std::ptr::slice_from_raw_parts_mut(
-                        host_addr as *mut $T,
+                    Ok(host_buf) => Ok(std::ptr::slice_from_raw_parts_mut(
+                        host_buf.ptr_mut().cast(),
+                        $len as usize,
+                    )),
+                }
+            }
+        }
+    }};
+    ($memory_mapping:expr, AccessType::Load, $vm_addr:expr, $len:expr, $T:ty, $check_aligned:expr $(,)?) => {{
+        if $len == 0 {
+            Ok(std::ptr::slice_from_raw_parts(
+                std::ptr::dangling_mut::<$T>(),
+                0,
+            ))
+        } else {
+            let total_size = $len.saturating_mul(size_of::<$T>() as u64);
+            if isize::try_from(total_size).is_err() {
+                Err($crate::memory::MemoryTranslationError::InvalidLength.into())
+            } else {
+                match $crate::translate_inner!(
+                    $memory_mapping,
+                    map,
+                    $crate::solana_sbpf::memory_region::AccessType::Load,
+                    $vm_addr,
+                    total_size
+                ) {
+                    Err(e) => Err(e),
+                    Ok(host_buf) if $check_aligned && !host_buf.ptr().cast::<$T>().is_aligned() => {
+                        Err($crate::memory::MemoryTranslationError::UnalignedPointer.into())
+                    }
+                    Ok(host_buf) => Ok(std::ptr::slice_from_raw_parts(
+                        host_buf.ptr().cast(),
                         $len as usize,
                     )),
                 }
@@ -99,7 +129,6 @@ pub fn translate_type<'a, T>(
     check_aligned: bool,
 ) -> Result<&'a T, Box<dyn std::error::Error>> {
     translate_type_inner!(memory_mapping, AccessType::Load, vm_addr, T, check_aligned)
-        .map(|value| &*value)
 }
 
 pub fn translate_slice<T>(

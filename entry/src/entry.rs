@@ -694,7 +694,6 @@ mod tests {
                     None,
                     SimpleAddressLoader::Disabled,
                     &ReservedAccountKeys::empty_key_set(),
-                    true,
                 )
             }
         };
@@ -727,7 +726,6 @@ mod tests {
                     None,
                     SimpleAddressLoader::Disabled,
                     &ReservedAccountKeys::empty_key_set(),
-                    true,
                 )
             };
         let txs =

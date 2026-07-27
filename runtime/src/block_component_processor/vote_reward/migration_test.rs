@@ -14,13 +14,14 @@ mod tests {
             },
             inflation_rewards::commission_split_preserve_lamports,
             stake_utils,
+            sysvar_account::from_account,
         },
         agave_feature_set::FeatureSet,
         agave_votor_messages::{
             certificate::{CertSignature, GenesisCert},
             consensus_message::Block,
         },
-        solana_account::{Account, ReadableAccount, from_account},
+        solana_account::{Account, ReadableAccount},
         solana_bls_signatures::{BLS_SIGNATURE_AFFINE_SIZE, Signature as BLSSignature},
         solana_cluster_type::ClusterType,
         solana_epoch_schedule::EpochSchedule,
@@ -212,7 +213,7 @@ mod tests {
                     vote_state.serialize().unwrap()
                 })
                 .collect::<Vec<_>>();
-            bank.store_accounts((bank.slot(), updated_accounts.as_slice()));
+            bank.store_accounts((bank.slot(), updated_accounts.as_slice()), None);
             let slot = bank.slot() + 10;
             new_bank_from_parent(bank, slot)
         }
@@ -236,7 +237,7 @@ mod tests {
                     vote_state.serialize().unwrap()
                 })
                 .collect::<Vec<_>>();
-            bank.store_accounts((bank.slot(), updated_accounts.as_slice()));
+            bank.store_accounts((bank.slot(), updated_accounts.as_slice()), None);
             let slot = bank.slot() + 10;
             new_bank_from_parent(bank, slot)
         }

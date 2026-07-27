@@ -2,7 +2,7 @@
 
 use {
     crate::conformance::{
-        callback::DefaultCallback,
+        callback::ConformanceCallback,
         err::{UnpackedResult, unpack_stable_result},
         instr::context::InstrContext,
         programs::{fill_program_cache_from_accounts, new_program_cache_with_builtins},
@@ -25,7 +25,7 @@ use {
         solana_sbpf::{
             aligned_memory::AlignedMemory,
             ebpf::{HOST_ALIGN, MM_BYTECODE_START, MM_HEAP_START, MM_INPUT_START, MM_STACK_START},
-            error::{ProgramResult, StableResult},
+            error::{EbpfError, ProgramResult, StableResult},
             memory_region::{AccessViolationHandler, MemoryMapping, MemoryRegion},
             program::{BuiltinProgram, SBPFVersion},
             vm::{Config, ContextObject, EbpfVm},
@@ -77,13 +77,13 @@ pub fn execute_vm_syscall(input: ProtoSyscallContext) -> ProtoSyscallEffects {
             deployment_environment,
             &instr_context.accounts,
             slot,
-        )
-        .expect("failed to fill program cache from accounts");
+        );
         cache
     } else {
         ProgramCacheForTxBatch::default()
     };
 
+    let callback = ConformanceCallback::default();
     let InvokeContextFields {
         sanitized_message,
         mut transaction_context,
@@ -93,7 +93,7 @@ pub fn execute_vm_syscall(input: ProtoSyscallContext) -> ProtoSyscallEffects {
         ..
     } = prepare_invoke_context_fields(
         &instr_context,
-        &DefaultCallback,
+        &callback,
         &loader_key,
         &sysvar_cache,
         &compute_budget,
@@ -181,15 +181,19 @@ pub fn execute_vm_syscall(input: ProtoSyscallContext) -> ProtoSyscallEffects {
         virtual_address_space_adjustments,
     );
 
+    let cu_avail = invoke_context.get_remaining();
+    let mut program_result = program_result;
+    if let Err(pop_err) = invoke_context.pop()
+        && matches!(program_result, StableResult::Ok(_))
+    {
+        program_result = StableResult::Err(EbpfError::SyscallError(Box::new(pop_err)));
+    }
+
     let UnpackedResult {
         error,
         error_kind,
         r0,
     } = unpack_stable_result(program_result);
-    let cu_avail = invoke_context.get_remaining();
-    invoke_context
-        .pop()
-        .expect("failed to pop instruction context");
 
     ProtoSyscallEffects {
         error,
@@ -309,7 +313,7 @@ fn extract_input_data_regions(
             let mut regions: Vec<ProtoInputDataRegion> = mapping
                 .get_regions()
                 .iter()
-                .filter(|region| region.vm_addr >= MM_INPUT_START)
+                .filter(|region| region.vm_addr_range().start >= MM_INPUT_START)
                 .map(mem_region_to_input_data_region)
                 .collect();
             regions.sort_by_key(|region| region.offset);
@@ -319,12 +323,11 @@ fn extract_input_data_regions(
 }
 
 fn mem_region_to_input_data_region(region: &MemoryRegion) -> ProtoInputDataRegion {
+    let host_buffer = region.host_buffer();
     ProtoInputDataRegion {
-        content: unsafe {
-            std::slice::from_raw_parts(region.host_addr as *const u8, region.len as usize).to_vec()
-        },
-        offset: region.vm_addr.saturating_sub(MM_INPUT_START),
-        is_writable: region.writable,
+        content: unsafe { host_buffer.ptr().as_ref_unchecked().to_vec() },
+        offset: region.vm_addr_range().start.saturating_sub(MM_INPUT_START),
+        is_writable: host_buffer.is_mutable(),
     }
 }
 

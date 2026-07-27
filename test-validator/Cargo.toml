@@ -75,7 +75,6 @@ tokio = { workspace = true, features = ["full"] }
 
 [dev-dependencies]
 solana-sdk-ids = { workspace = true }
-# See order-crates-for-publishing.py for using this unusual `path = "."`
 solana-test-validator = { path = ".", features = ["agave-unstable-api", "dev-context-only-utils"] }
 
 [lints]

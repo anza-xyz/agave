@@ -28,7 +28,6 @@ anyhow = { workspace = true, optional = true }
 bincode = { workspace = true }
 bytes = { workspace = true }
 cfg-if = { workspace = true }
-crossbeam-channel = { workspace = true }
 dashmap = { workspace = true, features = ["raw-api"] }
 hxdmp = { version = "0.2.1", optional = true }
 itertools = { workspace = true }

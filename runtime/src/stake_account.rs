@@ -10,6 +10,7 @@ use {
     },
     std::marker::PhantomData,
     thiserror::Error,
+    wincode::SchemaWrite,
 };
 #[cfg(feature = "frozen-abi")]
 use {
@@ -33,6 +34,25 @@ pub struct StakeAccount<T> {
     )]
     stake_state: StakeStateV2,
     _phantom: PhantomData<T>,
+}
+
+// `StakeAccount<Delegation>` is only ever wincode-serialized as part of the snapshot's
+// `stake_delegations` map, which uses the delegation format: just the `Delegation` is written (see
+// `serialize_stake_accounts_to_delegation_format`). Mirror that here so the wincode bytes match
+// bincode; `FromIntoIterator` on the map picks up this per-value schema automatically.
+unsafe impl<C: wincode::config::Config> SchemaWrite<C> for StakeAccount<Delegation> {
+    type Src = Self;
+
+    const TYPE_META: wincode::TypeMeta =
+        <Delegation as SchemaWrite<C>>::TYPE_META.keep_zero_copy(false);
+
+    fn size_of(src: &Self::Src) -> wincode::WriteResult<usize> {
+        <Delegation as SchemaWrite<C>>::size_of(src.delegation())
+    }
+
+    fn write(writer: impl wincode::io::Writer, src: &Self::Src) -> wincode::WriteResult<()> {
+        <Delegation as SchemaWrite<C>>::write(writer, src.delegation())
+    }
 }
 
 /// Samples a random `StakeStateV2::Stake`; the delegation-format serializer unwraps

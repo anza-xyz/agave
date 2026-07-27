@@ -197,16 +197,22 @@ mod tests {
         solana_hash::Hash,
         solana_leader_schedule::SlotLeader,
         solana_signer_store::encode_base2,
-        std::collections::HashMap,
+        std::{collections::HashMap, num::NonZero},
     };
 
-    fn new_vote(vote: Vote, rank: usize, keypair: &BlsKeypair, shred_version: u16) -> VoteMessage {
+    fn new_vote_msg(
+        vote: Vote,
+        rank: usize,
+        keypair: &BlsKeypair,
+        shred_version: u16,
+    ) -> VoteMessage {
         let payload = get_vote_payload_to_sign(vote, shred_version);
         let signature = keypair.sign(&payload).into();
         VoteMessage {
             vote,
             signature,
             rank: rank.try_into().unwrap(),
+            stake: NonZero::new(123).unwrap(),
         }
     }
 
@@ -275,7 +281,7 @@ mod tests {
             block_id,
         });
         let notar_votes = (0..num_notar_validators)
-            .map(|rank| new_vote(notar_vote, rank, signing_keys[rank], shred_version))
+            .map(|rank| new_vote_msg(notar_vote, rank, signing_keys[rank], shred_version))
             .collect::<Vec<_>>();
         let (signature, bitmap) = build_sig_bitmap(&notar_votes);
         let notar_reward_cert =
@@ -283,7 +289,7 @@ mod tests {
 
         let skip_vote = Vote::new_skip_vote(reward_slot);
         let skip_votes = (num_notar_validators..num_validators)
-            .map(|rank| new_vote(skip_vote, rank, signing_keys[rank], shred_version))
+            .map(|rank| new_vote_msg(skip_vote, rank, signing_keys[rank], shred_version))
             .collect::<Vec<_>>();
         let (signature, bitmap) = build_sig_bitmap(&skip_votes);
         let skip_reward_cert =

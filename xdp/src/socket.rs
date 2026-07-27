@@ -34,7 +34,7 @@ impl<U: Umem> Socket<U> {
     #[allow(clippy::type_complexity)]
     pub fn new(
         dev_queue: DeviceQueue,
-        mut umem: U,
+        umem: U,
         zero_copy: bool,
         rx_fill_ring_size: usize,
         rx_ring_size: usize,
@@ -279,8 +279,8 @@ impl<U: Umem> Socket<U> {
         &self.dev_queue
     }
 
-    pub fn umem(&mut self) -> &mut U {
-        &mut self.umem
+    pub fn umem(&self) -> &U {
+        &self.umem
     }
 }
 

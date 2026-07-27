@@ -26,22 +26,18 @@ log = { workspace = true }
 reqwest = { workspace = true, features = ["blocking", "brotli", "deflate", "gzip", "rustls-tls", "json"] }
 serde_json = { workspace = true }
 solana-account-decoder = { workspace = true }
-solana-client = { workspace = true }
 solana-net-utils = { workspace = true }
 solana-pubsub-client = { workspace = true }
 solana-rpc-client = { workspace = true }
 solana-rpc-client-api = { workspace = true }
-solana-tpu-client = { workspace = true }
-solana-tpu-client-next = { workspace = true }
+solana-tpu-client-next = { workspace = true, features = ["websocket-node-address-service"] }
 solana-transaction-status = { workspace = true }
 tokio = { workspace = true, features = ["full"] }
 
 [dev-dependencies]
 agave-logger = { path = "../logger", features = ["agave-unstable-api"] }
-solana-client = { path = "../client", features = ["dev-context-only-utils"] }
 solana-clock = { workspace = true }
 solana-commitment-config = { workspace = true }
-solana-connection-cache = { path = "../connection-cache", features = ["agave-unstable-api"] }
 solana-hash = { workspace = true }
 solana-keypair = { workspace = true }
 solana-pubkey = { workspace = true }
@@ -51,6 +47,7 @@ solana-signer = { workspace = true }
 solana-system-transaction = { workspace = true }
 solana-test-validator = { workspace = true, features = ["agave-unstable-api", "dev-context-only-utils"] }
 solana-transaction = { workspace = true }
+tokio-util = { workspace = true }
 
 [lints]
 workspace = true

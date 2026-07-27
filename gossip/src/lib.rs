@@ -34,8 +34,6 @@ pub mod restart_crds_values;
 mod sigverify_cache;
 pub mod weighted_shuffle;
 
-pub use solana_net_utils::PinnedXdpSender as XdpSender;
-
 #[macro_use]
 extern crate log;
 
@@ -54,6 +52,6 @@ extern crate solana_metrics;
 pub use protocol::gossip_decode_to_effects;
 
 #[cfg(feature = "conformance")]
-mod harness;
+pub mod harness;
 
 mod wire_format_tests;

@@ -1,6 +1,6 @@
 use {
     crate::{
-        account_loader::FeesOnlyTransaction,
+        account_loader::{FeesOnlyTransaction, NoOpTransaction},
         transaction_execution_result::{ExecutedTransaction, TransactionExecutionDetails},
     },
     solana_fee_structure::FeeDetails,
@@ -24,6 +24,8 @@ pub enum ProcessedTransaction {
     /// Transaction was not able to be executed but fees are able to be
     /// collected and any nonces are advanceable
     FeesOnly(Box<FeesOnlyTransaction>),
+    /// Transactions that cannot modify state but can still be processed
+    NoOp(Box<NoOpTransaction>),
 }
 
 impl TransactionProcessingResultExtensions for TransactionProcessingResult {
@@ -53,7 +55,7 @@ impl ProcessedTransaction {
     fn was_processed_with_successful_result(&self) -> bool {
         match self {
             Self::Executed(executed_tx) => executed_tx.execution_details.status.is_ok(),
-            Self::FeesOnly(_) => false,
+            Self::FeesOnly(_) | Self::NoOp(_) => false,
         }
     }
 
@@ -61,6 +63,7 @@ impl ProcessedTransaction {
         match self {
             Self::Executed(executed_tx) => executed_tx.execution_details.status.clone(),
             Self::FeesOnly(details) => Err(TransactionError::clone(&details.load_error)),
+            Self::NoOp(details) => Err(TransactionError::clone(&details.validation_error)),
         }
     }
 
@@ -68,33 +71,37 @@ impl ProcessedTransaction {
         match self {
             Self::Executed(executed_tx) => executed_tx.loaded_transaction.fee_details,
             Self::FeesOnly(details) => details.fee_details,
+            Self::NoOp(_) => FeeDetails::new(0, 0),
         }
     }
 
     pub fn executed_transaction(&self) -> Option<&ExecutedTransaction> {
         match self {
             Self::Executed(context) => Some(context),
-            Self::FeesOnly { .. } => None,
+            Self::FeesOnly(_) | Self::NoOp(_) => None,
         }
     }
 
     pub fn execution_details(&self) -> Option<&TransactionExecutionDetails> {
         match self {
             Self::Executed(context) => Some(&context.execution_details),
-            Self::FeesOnly { .. } => None,
+            Self::FeesOnly(_) | Self::NoOp(_) => None,
         }
     }
 
     pub fn executed_units(&self) -> u64 {
-        self.execution_details()
-            .map(|detail| detail.executed_units)
-            .unwrap_or_default()
+        match self {
+            Self::Executed(context) => context.execution_details.executed_units,
+            Self::FeesOnly(_) => 0,
+            Self::NoOp(details) => details.compute_unit_limit,
+        }
     }
 
     pub fn loaded_accounts_data_size(&self) -> u32 {
         match self {
             Self::Executed(context) => context.loaded_transaction.loaded_accounts_data_size,
             Self::FeesOnly(details) => details.loaded_accounts_data_size,
+            Self::NoOp(details) => details.loaded_accounts_bytes_limit,
         }
     }
 }

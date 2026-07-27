@@ -29,6 +29,7 @@ use {
     agave_bls_sigverify::{
         bls_sigverifier::{self, SigVerifierChannels, SigVerifierContext},
         generated_cert_types::GeneratedCertTypes,
+        rewards::RewardInput,
     },
     agave_votor::{
         event::{LatestSwitchRequest, LeaderWindowInfo, VotorEventReceiver, VotorEventSender},
@@ -41,7 +42,7 @@ use {
     },
     agave_votor_messages::{
         VerifiedVoterSlotsReceiver, VerifiedVoterSlotsSender, consensus_message::Block,
-        metric_types::MAX_IN_FLIGHT_CONSENSUS_EVENTS, reward_certificate::AddVoteMessage,
+        metric_types::MAX_IN_FLIGHT_CONSENSUS_EVENTS,
     },
     crossbeam_channel::{Receiver, Sender, bounded, unbounded},
     solana_client::connection_cache::ConnectionCache,
@@ -55,7 +56,6 @@ use {
     solana_ledger::{
         blockstore::{Blockstore, MAX_COMPLETED_SLOTS_IN_CHANNEL, UpdateParentReceiver},
         blockstore_cleanup_service::BlockstoreCleanupService,
-        blockstore_processor::TransactionStatusSender,
         entry_notifier_service::EntryNotifierSender,
         leader_schedule_cache::LeaderScheduleCache,
         shred::filter::TurbineMode,
@@ -72,8 +72,8 @@ use {
         bank_forks::BankForks,
         bank_forks_controller::{BankForksCommandReceiver, BankForksController},
         commitment::BlockCommitmentCache,
-        prioritization_fee_cache::PrioritizationFeeCache,
         snapshot_controller::SnapshotController,
+        transaction_execution::TransactionStatusSender,
         validated_block_finalization::ValidatedBlockFinalizationCert,
         vote_sender_types::ReplayVoteSender,
     },
@@ -108,6 +108,9 @@ pub(crate) const MAX_ALPENGLOW_PACKET_NUM: usize = 10_000;
 /// This is overprovisioned to account for standstill scenarios, where a large amount
 /// of votes / certificate need to be refreshed.
 const MAX_BLS_MESSAGES_TO_SEND: usize = 1000;
+
+/// Bounds certificates recovered from blockstore and awaiting BLS verification.
+const MAX_CERTIFICATES_FROM_BLOCKSTORE: usize = 1_024;
 
 pub struct Tvu {
     fetch_stage: ShredFetchStage,
@@ -241,15 +244,13 @@ impl Tvu {
         block_metadata_notifier: Option<BlockMetadataNotifierArc>,
         wait_to_vote_slot: Option<Slot>,
         snapshot_controller: Option<Arc<SnapshotController>>,
-        log_messages_bytes_limit: Option<usize>,
-        prioritization_fee_cache: Option<Arc<PrioritizationFeeCache>>,
         banking_tracer: Arc<BankingTracer>,
         outstanding_repair_requests: Arc<RwLock<OutstandingShredRepairs>>,
         cluster_slots: Arc<ClusterSlots>,
         slot_status_notifier: Option<SlotStatusNotifier>,
         vote_connection_cache: Arc<ConnectionCache>,
         votor_init: AlpenglowInitializationState,
-        reward_votes_sender: Sender<AddVoteMessage>,
+        reward_aggregates_sender: Sender<RewardInput>,
     ) -> Result<Self, String> {
         let migration_status = bank_forks.read().unwrap().migration_status();
 
@@ -286,6 +287,8 @@ impl Tvu {
         let (consensus_metrics_sender, consensus_metrics_receiver) =
             bounded(MAX_IN_FLIGHT_CONSENSUS_EVENTS);
         let generated_cert_types = Arc::new(GeneratedCertTypes::default());
+        let (certificate_sender, certificate_receiver) = bounded(MAX_CERTIFICATES_FROM_BLOCKSTORE);
+        blockstore.set_certificate_sender(certificate_sender);
 
         let bls_sigverify_threads = {
             let (bls_packet_sender, bls_packet_receiver) = bounded(MAX_ALPENGLOW_PACKET_NUM);
@@ -338,8 +341,9 @@ impl Tvu {
                 },
                 SigVerifierChannels {
                     packet_receiver: bls_packet_receiver,
+                    certificate_receiver,
                     channel_to_repair: verified_voter_slots_sender,
-                    channel_to_reward: reward_votes_sender,
+                    channel_to_reward: reward_aggregates_sender.clone(),
                     channel_to_pool: consensus_message_sender,
                     channel_to_metrics: consensus_metrics_sender.clone(),
                 },
@@ -519,6 +523,7 @@ impl Tvu {
             event_sender: votor_event_sender.clone(),
             latest_switch_request: latest_switch_request.clone(),
             own_vote_sender: own_message_sender.clone(),
+            own_reward_aggregates_sender: reward_aggregates_sender.clone(),
             repair_event_sender,
             event_receiver: votor_event_receiver,
             consensus_message_receiver,
@@ -581,8 +586,6 @@ impl Tvu {
             tower,
             vote_tracker,
             cluster_slots,
-            log_messages_bytes_limit,
-            prioritization_fee_cache,
             banking_tracer,
             snapshot_controller,
             replay_highest_frozen,
@@ -599,7 +602,6 @@ impl Tvu {
         let bls_voting_service = BLSVotingService::new(
             bls_receiver,
             cluster_info.clone(),
-            vote_history_storage,
             bls_connection_cache,
             bank_forks.clone(),
             highest_finalized,
@@ -626,6 +628,7 @@ impl Tvu {
             exit.clone(),
         );
 
+        let migration_status = bank_forks.read().unwrap().migration_status();
         let epoch_specs: Box<dyn solana_gossip::epoch_specs::EpochSpecs> =
             Box::new(EpochSpecs::from(bank_forks));
 
@@ -638,6 +641,7 @@ impl Tvu {
                 epoch_specs,
                 duplicate_slots_sender,
                 tvu_config.shred_version,
+                migration_status,
             ),
         );
 
@@ -837,7 +841,7 @@ pub mod tests {
         let (bank_forks_controller, bank_forks_controller_receiver) =
             BankForksControllerHandle::new();
         let bank_forks_controller = Arc::new(bank_forks_controller);
-        let (reward_votes_sender, _reward_votes_receiver) = bounded(1024);
+        let (reward_vote_aggregates_sender, _reward_vote_aggregates_receiver) = bounded(1024);
 
         let tvu = Tvu::new(
             &vote_keypair.pubkey(),
@@ -888,8 +892,6 @@ pub mod tests {
             None, // block_metadata_notifier
             None, // wait_to_vote_slot
             None, // snapshot_controller
-            None, // log_messages_bytes_limit
-            None, // prioritization_fee_cache
             BankingTracer::new_disabled(),
             outstanding_repair_requests,
             cluster_slots,
@@ -912,7 +914,7 @@ pub mod tests {
                 bank_forks_controller,
                 bank_forks_controller_receiver,
             },
-            reward_votes_sender,
+            reward_vote_aggregates_sender,
         )
         .expect("assume success");
         exit.store(true, Ordering::Relaxed);

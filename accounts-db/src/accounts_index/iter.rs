@@ -75,7 +75,7 @@ mod tests {
             &solana_pubkey::new_rand(),
             true,
             &mut gc,
-            UpsertReclaim::PopulateReclaims,
+            UpsertReclaim::ReclaimOldSlots,
         );
 
         // ensure the iterator remains exhausted
@@ -107,7 +107,7 @@ mod tests {
                 pubkey,
                 value,
                 &mut gc,
-                UpsertReclaim::PopulateReclaims,
+                UpsertReclaim::ReclaimOldSlots,
             );
         }
 
@@ -148,7 +148,7 @@ mod tests {
                 pubkey,
                 value,
                 &mut gc,
-                UpsertReclaim::PopulateReclaims,
+                UpsertReclaim::ReclaimOldSlots,
             );
         }
 

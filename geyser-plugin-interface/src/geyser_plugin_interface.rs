@@ -3,7 +3,7 @@
 //! In addition, the dynamic library must export a "C" function _create_plugin which
 //! creates the implementation of the plugin.
 use {
-    solana_clock::{Slot, UnixTimestamp},
+    solana_clock::{BankId, Slot, UnixTimestamp},
     solana_hash::Hash,
     solana_message::v0::LoadedAddresses,
     solana_signature::Signature,
@@ -584,6 +584,10 @@ pub trait GeyserPlugin: Any + Send + Sync + std::fmt::Debug {
     /// When `is_startup` is true, it indicates the account is loaded from
     /// snapshots when the validator starts up. When `is_startup` is false,
     /// the account is updated during transaction processing.
+    #[deprecated(
+        since = "4.3.0",
+        note = "Callers should instead use update_account_from_snapshot or update_account_for_bank"
+    )]
     #[allow(unused_variables)]
     fn update_account(
         &self,
@@ -594,12 +598,42 @@ pub trait GeyserPlugin: Any + Send + Sync + std::fmt::Debug {
         Ok(())
     }
 
+    /// Called when an account is loaded from snapshots when the validator starts up.
+    #[allow(deprecated)]
+    #[allow(unused_variables)]
+    fn update_account_from_snapshot(
+        &self,
+        account: ReplicaAccountInfoVersions,
+        slot: Slot,
+    ) -> Result<()> {
+        self.update_account(account, slot, true)
+    }
+
+    /// Called when an account is updated at a slot during transaction processing.
+    ///
+    /// `bank_id` identifies the concrete bank instance associated with the
+    /// account update.
+    #[allow(deprecated)]
+    #[allow(unused_variables)]
+    fn update_account_for_bank(
+        &self,
+        account: ReplicaAccountInfoVersions,
+        slot: Slot,
+        bank_id: BankId,
+    ) -> Result<()> {
+        self.update_account(account, slot, false)
+    }
+
     /// Called when all accounts are notified of during startup.
     fn notify_end_of_startup(&self) -> Result<()> {
         Ok(())
     }
 
-    /// Called when a slot status is updated
+    /// Called when a slot status is updated.
+    ///
+    /// The validator calls this directly for statuses that are not associated
+    /// with a concrete bank instance: `FirstShredReceived`, `Completed`, and
+    /// `Dead`.
     #[allow(unused_variables)]
     fn update_slot_status(
         &self,
@@ -610,7 +644,27 @@ pub trait GeyserPlugin: Any + Send + Sync + std::fmt::Debug {
         Ok(())
     }
 
+    /// Called when a bank-scoped slot status is updated.
+    ///
+    /// `bank_id` identifies the concrete bank instance associated with this
+    /// status update. This method is called for statuses tied to a particular
+    /// `Bank`: `Confirmed`, `Processed`, `Rooted`, and `CreatedBank`.
+    #[allow(unused_variables)]
+    fn update_bank_status(
+        &self,
+        slot: Slot,
+        parent: Option<u64>,
+        status: &SlotStatus,
+        bank_id: BankId,
+    ) -> Result<()> {
+        self.update_slot_status(slot, parent, status)
+    }
+
     /// Called when a transaction is processed in a slot.
+    #[deprecated(
+        since = "4.3.0",
+        note = "Callers should instead use notify_transaction_for_bank"
+    )]
     #[allow(unused_variables)]
     fn notify_transaction(
         &self,
@@ -620,16 +674,66 @@ pub trait GeyserPlugin: Any + Send + Sync + std::fmt::Debug {
         Ok(())
     }
 
+    /// Called when a transaction is processed in a slot.
+    ///
+    /// `bank_id` identifies the concrete bank instance that processed the
+    /// transaction.
+    #[allow(deprecated)]
+    #[allow(unused_variables)]
+    fn notify_transaction_for_bank(
+        &self,
+        transaction: ReplicaTransactionInfoVersions,
+        slot: Slot,
+        bank_id: BankId,
+    ) -> Result<()> {
+        self.notify_transaction(transaction, slot)
+    }
+
     /// Called when an entry is executed.
+    #[deprecated(
+        since = "4.3.0",
+        note = "Callers should instead use notify_entry_for_bank"
+    )]
     #[allow(unused_variables)]
     fn notify_entry(&self, entry: ReplicaEntryInfoVersions) -> Result<()> {
         Ok(())
     }
 
+    /// Called when an entry is executed.
+    ///
+    /// `bank_id` identifies the concrete bank instance that executed the entry.
+    #[allow(deprecated)]
+    #[allow(unused_variables)]
+    fn notify_entry_for_bank(
+        &self,
+        entry: ReplicaEntryInfoVersions,
+        bank_id: BankId,
+    ) -> Result<()> {
+        self.notify_entry(entry)
+    }
+
     /// Called when block's metadata is updated.
+    #[deprecated(
+        since = "4.3.0",
+        note = "Callers should instead use notify_block_metadata_for_bank"
+    )]
     #[allow(unused_variables)]
     fn notify_block_metadata(&self, blockinfo: ReplicaBlockInfoVersions) -> Result<()> {
         Ok(())
+    }
+
+    /// Called when block's metadata is updated.
+    ///
+    /// `bank_id` identifies the concrete bank instance associated with the block
+    /// metadata.
+    #[allow(deprecated)]
+    #[allow(unused_variables)]
+    fn notify_block_metadata_for_bank(
+        &self,
+        blockinfo: ReplicaBlockInfoVersions,
+        bank_id: BankId,
+    ) -> Result<()> {
+        self.notify_block_metadata(blockinfo)
     }
 
     /// Called when a validator's gossip contact info is learned or updated.

@@ -344,9 +344,7 @@ pub(super) fn handle_abandoned_bank(
                 .is_some()
             });
     if !update_parent_ready {
-        let root = bank_forks.read().unwrap().root();
         let mut dead_slot_context = process_active_banks_context.dead_slot_context(
-            root,
             duplicate_slots_to_repair,
             purge_repair_slot_counter,
             tbft_structs,

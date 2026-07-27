@@ -587,7 +587,7 @@ pub async fn transaction_history(
                                     "  ",
                                     None,
                                     None,
-                                );
+                                )?;
                             }
                         }
                         break;
@@ -668,7 +668,7 @@ async fn copy(args: CopyArgs) -> Result<(), Box<dyn std::error::Error>> {
     debug!("from_slot: {from_slot}, to_slot: {to_slot}");
 
     if from_slot > to_slot {
-        return Err("starting slot should be less than or equal to ending slot")?;
+        Err("starting slot should be less than or equal to ending slot")?;
     }
 
     let source_bigtable = get_bigtable(GetBigtableArgs {

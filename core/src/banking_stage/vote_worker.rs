@@ -12,7 +12,7 @@ use {
     },
     crate::banking_stage::{
         consumer::{ExecuteAndCommitTransactionsOutput, ProcessTransactionBatchOutput},
-        transaction_scheduler::transaction_state_container::{RuntimeTransactionView, SharedBytes},
+        transaction_scheduler::transaction_state_container::RuntimeTransactionView,
     },
     agave_transaction_view::{
         transaction_version::TransactionVersion, transaction_view::SanitizedTransactionView,
@@ -21,6 +21,7 @@ use {
     solana_accounts_db::account_locks::validate_account_locks,
     solana_clock::FORWARD_TRANSACTIONS_TO_LEADER_AT_SLOT_OFFSET,
     solana_measure::{measure::Measure, measure_us},
+    solana_perf::packet::bytes::Bytes,
     solana_poh::poh_recorder::PohRecorderError,
     solana_runtime::{bank::Bank, bank_forks::BankForks},
     solana_runtime_transaction::{
@@ -443,7 +444,7 @@ impl VoteWorker {
 
 fn consume_scan_should_process_packet(
     bank: &Bank,
-    packet: SanitizedTransactionView<SharedBytes>,
+    packet: SanitizedTransactionView<Bytes>,
     error_counters: &mut TransactionErrorMetrics,
 ) -> Option<RuntimeTransactionView> {
     // Construct the RuntimeTransaction.

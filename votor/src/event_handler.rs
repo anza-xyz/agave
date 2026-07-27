@@ -197,7 +197,15 @@ impl EventHandler {
             let mut send_votes_batch_time = Measure::start("send_votes_batch");
             for vote in votes {
                 local_context.stats.incr_vote(&vote);
-                vctx.bls_sender.send(vote).map_err(|_| SendError(()))?;
+                match vctx.bls_sender.try_send(vote) {
+                    Ok(_) => (),
+                    Err(TrySendError::Full(_)) => {
+                        warn!("Vote propagation is backed up, skipping send");
+                    }
+                    Err(TrySendError::Disconnected(_)) => {
+                        return Err(EventLoopError::ReceiverDisconnected(RecvError));
+                    }
+                }
             }
             send_votes_batch_time.stop();
             local_context.stats.send_votes_batch_time_us = local_context
@@ -1055,10 +1063,11 @@ mod tests {
             },
             voting_service::BLSOp,
         },
+        agave_bls_sigverify::rewards::RewardInput,
         agave_votor_messages::{
-            consensus_message::{BLS_KEYPAIR_DERIVE_SEED, ConsensusMessage, VoteMessage},
+            consensus_message::{BLS_KEYPAIR_DERIVE_SEED, VoteMessage},
             metric_types::ConsensusMetricsEventReceiver,
-            vote::Vote,
+            own_message::OwnMessage,
             wire::get_vote_payload_to_sign,
         },
         crossbeam_channel::{Receiver, Sender, TryRecvError, bounded},
@@ -1095,7 +1104,9 @@ mod tests {
     struct EventHandlerTestContext {
         bls_receiver: Receiver<BLSOp>,
         commitment_receiver: Receiver<CommitmentAggregationData>,
-        own_vote_receiver: Receiver<ConsensusMessage>,
+        own_vote_receiver: Receiver<OwnMessage>,
+        #[allow(dead_code)] // Keep receiver alive to prevent SenderDisconnected errors
+        own_reward_aggregates_receiver: Receiver<RewardInput>,
         bank_forks: Arc<RwLock<BankForks>>,
         my_bls_keypair: BLSKeypair,
         timer_manager: Arc<PlRwLock<TimerManager>>,
@@ -1111,6 +1122,9 @@ mod tests {
         root_context: RootContext,
         local_context: LocalContext,
         bls_ops: Vec<BLSOp>,
+        vote_history_storage: Arc<FileVoteHistoryStorage>,
+        // Keep the temp directory alive for `vote_history_storage`.
+        _vote_history_storage_dir: TempDir,
     }
 
     struct DirectBankForksController {
@@ -1163,6 +1177,7 @@ mod tests {
         let (bls_sender, bls_receiver) = bounded(1024);
         let (commitment_sender, commitment_receiver) = bounded(1024);
         let (own_vote_sender, own_vote_receiver) = bounded(1024);
+        let (reward_aggregates_sender, reward_aggregates_receiver) = bounded(1024);
         let (drop_bank_sender, drop_bank_receiver) = bounded(1024);
         let exit = Arc::new(AtomicBool::new(false));
         let (event_sender, _event_receiver) = bounded(1024);
@@ -1216,15 +1231,19 @@ mod tests {
             my_pubkey: my_node_keypair.pubkey(),
             bank_forks: bank_forks.clone(),
             blockstore: blockstore.clone(),
-            leader_schedule_cache,
+            leader_schedule_cache: leader_schedule_cache.clone(),
             drop_bank_sender: drop_bank_sender.clone(),
         });
         let highest_parent_ready = Arc::new(RwLock::default());
 
+        let vote_history_storage_dir = TempDir::new().unwrap();
+        let vote_history_storage = Arc::new(FileVoteHistoryStorage::new(
+            vote_history_storage_dir.path().to_path_buf(),
+        ));
         let shared_context = SharedContext {
             cluster_info: cluster_info.clone(),
             bank_forks: bank_forks.clone(),
-            vote_history_storage: Arc::new(FileVoteHistoryStorage::default()),
+            vote_history_storage: vote_history_storage.clone(),
             leader_window_info_sender,
             blockstore: blockstore.clone(),
             highest_parent_ready: highest_parent_ready.clone(),
@@ -1243,9 +1262,12 @@ mod tests {
             vote_account_pubkey: my_vote_keypair.pubkey(),
             wait_to_vote_slot: None,
             authorized_voter_keypairs: Arc::new(RwLock::new(vec![Arc::new(my_vote_keypair)])),
+            vote_history_storage: vote_history_storage.clone(),
             derived_bls_keypairs: HashMap::new(),
             own_vote_sender,
+            own_reward_sender: reward_aggregates_sender,
             consensus_metrics_sender,
+            leader_schedule: leader_schedule_cache,
         };
 
         let root_context = RootContext {
@@ -1266,6 +1288,7 @@ mod tests {
             bls_receiver,
             commitment_receiver,
             own_vote_receiver,
+            own_reward_aggregates_receiver: reward_aggregates_receiver,
             bank_forks,
             my_bls_keypair,
             timer_manager,
@@ -1280,6 +1303,8 @@ mod tests {
             root_context,
             local_context,
             bls_ops: vec![],
+            vote_history_storage,
+            _vote_history_storage_dir: vote_history_storage_dir,
         }
     }
 
@@ -1495,10 +1520,14 @@ mod tests {
             let payload =
                 get_vote_payload_to_sign(*expected_vote, self.cluster_info.my_shred_version());
             let signature: BLSSignature = self.my_bls_keypair.sign(&payload).into();
+            let root_bank = self.bank_forks.read().unwrap().root_bank();
+            let rank_map = root_bank.get_rank_map(expected_vote.slot()).unwrap();
+            let stake = rank_map.get_pubkey_stake_entry(0).unwrap().stake;
             VoteMessage {
                 vote: *expected_vote,
                 rank: 0,
                 signature,
+                stake,
             }
         }
 
@@ -1521,31 +1550,36 @@ mod tests {
             });
             assert!(found, "Did not find expected vote: {expected_message:?}");
             // Also check own_vote_receiver
-            let own_vote = self.own_vote_receiver.try_recv().unwrap();
-            assert_eq!(own_vote, ConsensusMessage::Vote(expected_message));
+            let own_msg = self.own_vote_receiver.try_recv().unwrap();
+            let OwnMessage::Vote(own_vote_msg) = own_msg else {
+                panic!("wrong msg type");
+            };
+            assert_eq!(own_vote_msg, expected_message);
         }
 
         fn check_for_own_vote(&self, expected_vote: &Vote) {
             let expected_message = self.expected_vote_message(expected_vote);
-            let own_vote = self.own_vote_receiver.try_recv().unwrap();
-            assert_eq!(own_vote, ConsensusMessage::Vote(expected_message));
+            let own_msg = self.own_vote_receiver.try_recv().unwrap();
+            let OwnMessage::Vote(own_vote_msg) = own_msg else {
+                panic!("wrong msg type");
+            };
+            assert_eq!(own_vote_msg, expected_message);
         }
 
         fn check_for_own_votes(&self, expected_votes: &[Vote]) {
             let mut received_messages = Vec::with_capacity(expected_votes.len());
             for _ in expected_votes {
-                let ConsensusMessage::Vote(vote) = self.own_vote_receiver.try_recv().unwrap()
-                else {
+                let OwnMessage::Vote(vote_msg) = self.own_vote_receiver.try_recv().unwrap() else {
                     panic!("expected own vote");
                 };
-                received_messages.push(vote);
+                received_messages.push(vote_msg.clone());
             }
 
             for expected_vote in expected_votes {
                 let expected_message = self.expected_vote_message(expected_vote);
                 let index = received_messages
                     .iter()
-                    .position(|message| *message == expected_message)
+                    .position(|message| message == &expected_message)
                     .unwrap_or_else(|| panic!("missing own vote {expected_vote:?}"));
                 received_messages.remove(index);
             }
@@ -1598,12 +1632,11 @@ mod tests {
             &mut self,
             new_identity: &Keypair,
         ) -> PathBuf {
-            let file_vote_history_storage = FileVoteHistoryStorage::default();
             let saved_vote_history =
                 SavedVoteHistory::new(&VoteHistory::new(new_identity.pubkey(), 0), &new_identity)
                     .unwrap();
             assert!(
-                file_vote_history_storage
+                self.vote_history_storage
                     .store(&SavedVoteHistoryVersions::from(saved_vote_history),)
                     .is_ok()
             );
@@ -1611,7 +1644,7 @@ mod tests {
                 .set_keypair(Arc::new(new_identity.insecure_clone()));
 
             self.send_set_identity_event();
-            file_vote_history_storage.filename(&new_identity.pubkey())
+            self.vote_history_storage.filename(&new_identity.pubkey())
         }
     }
 
@@ -2168,6 +2201,39 @@ mod tests {
     }
 
     #[test]
+    fn test_parent_ready_for_first_slot_of_window() {
+        let mut test_context = setup();
+
+        let root_bank = test_context
+            .bank_forks
+            .read()
+            .unwrap()
+            .sharable_banks()
+            .root();
+        let bank1 = test_context.create_block_and_send_block_event(1, root_bank);
+        let block_id_1 = bank1.block_id().unwrap();
+
+        let bank4 = test_context.create_block_and_send_block_event(4, bank1);
+        let block_id_4 = bank4.block_id().unwrap();
+
+        test_context.send_finalized_event(
+            Block {
+                slot: 4,
+                block_id: block_id_4,
+            },
+            true,
+        );
+
+        test_context.check_parent_ready_slot((
+            4,
+            Block {
+                slot: 1,
+                block_id: block_id_1,
+            },
+        ));
+    }
+
+    #[test]
     fn test_received_standstill() {
         let mut test_context = setup();
 
@@ -2324,10 +2390,7 @@ mod tests {
         let mut test_context = setup();
         let old_identity = test_context.cluster_info.keypair().insecure_clone();
         let new_identity = Keypair::new();
-        let temp_dir = TempDir::new().unwrap();
-        let vote_history_storage =
-            Arc::new(FileVoteHistoryStorage::new(temp_dir.path().to_path_buf()));
-        test_context.shared_context.vote_history_storage = vote_history_storage.clone();
+        let vote_history_storage = test_context.vote_history_storage.clone();
 
         let new_vote_history = VoteHistory::new(new_identity.pubkey(), 0);
         let saved_vote_history = SavedVoteHistory::new(&new_vote_history, &new_identity).unwrap();

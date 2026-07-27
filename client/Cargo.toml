@@ -44,6 +44,7 @@ solana-streamer = { workspace = true }
 solana-time-utils = { workspace = true }
 solana-tls-utils = { workspace = true }
 solana-tpu-client = { workspace = true, features = ["default"] }
+solana-tpu-client-next = { workspace = true }
 solana-transaction = { workspace = true }
 solana-transaction-error = { workspace = true }
 solana-udp-client = { workspace = true }

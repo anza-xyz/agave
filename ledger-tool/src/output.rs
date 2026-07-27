@@ -1207,7 +1207,7 @@ impl AccountsScanner {
             if let Some(serializer) = seq_serializer {
                 serializer.serialize_element(&cli_account).unwrap();
             } else {
-                print!("{}", &cli_account);
+                print!("{cli_account}");
                 // CliAccount doesn't print the account data payload so handle
                 // that separately. If --no-account-data was specified,
                 // output_config.data_slice_config will have been created to

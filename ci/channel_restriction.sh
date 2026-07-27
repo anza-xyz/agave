@@ -7,7 +7,7 @@ set -ex
 
 [[ -n $CI_TAG ]] && exit 0
 
-eval "$(ci/channel-info.sh)"
+CHANNEL="$(cargo xtask channel-info --json | jq -r '.CHANNEL')"
 
 for acceptable_channel in "$@"; do
   if [[ "$CHANNEL" == "$acceptable_channel" ]]; then

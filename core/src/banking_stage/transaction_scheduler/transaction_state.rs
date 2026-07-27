@@ -1,4 +1,4 @@
-use crate::banking_stage::scheduler_messages::MaxAge;
+use {crate::banking_stage::scheduler_messages::MaxAge, solana_pubkey::Pubkey};
 
 /// TransactionState is used to track the state of a transaction in the transaction scheduler
 /// and banking stage as a whole.
@@ -20,6 +20,8 @@ pub(crate) struct TransactionState<Tx> {
     priority: u64,
     /// Estimated cost of the transaction.
     cost: u64,
+    /// Nonce address, if this is a validated nonce transaction.
+    nonce_address: Option<Pubkey>,
 }
 
 impl<Tx> TransactionState<Tx> {
@@ -30,6 +32,7 @@ impl<Tx> TransactionState<Tx> {
             max_age,
             priority,
             cost,
+            nonce_address: None,
         }
     }
 
@@ -43,6 +46,11 @@ impl<Tx> TransactionState<Tx> {
     /// Return the cost of the transaction.
     pub(crate) fn cost(&self) -> u64 {
         self.cost
+    }
+
+    /// Return the nonce address of the transaction, if one exists.
+    pub(crate) fn nonce_address(&self) -> Option<&Pubkey> {
+        self.nonce_address.as_ref()
     }
 
     /// Intended to be called when a transaction is scheduled. This method
@@ -78,6 +86,12 @@ impl<Tx> TransactionState<Tx> {
         self.transaction
             .as_ref()
             .expect("transaction is not pending")
+    }
+
+    /// Set the nonce address, used in `set_nonce_transaction_priority_id()` after
+    /// the nonce transaction is fully validated.
+    pub(crate) fn set_nonce_address(&mut self, nonce_address: Option<Pubkey>) {
+        self.nonce_address = nonce_address;
     }
 }
 

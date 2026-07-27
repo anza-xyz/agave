@@ -8,6 +8,7 @@ use {
     solana_bls_signatures::Signature as BLSSignature,
     solana_clock::Slot,
     solana_hash::Hash,
+    std::num::NonZero,
     wincode::{SchemaRead, SchemaWrite},
 };
 
@@ -54,6 +55,8 @@ pub struct VoteMessage {
     pub signature: BLSSignature,
     /// The rank of the validator.
     pub rank: u16,
+    /// The stake of the validator
+    pub stake: NonZero<u64>,
 }
 
 /// A consensus message sent between validators.
@@ -68,11 +71,12 @@ pub enum ConsensusMessage {
 
 impl ConsensusMessage {
     /// Create a new vote message
-    pub fn new_vote(vote: Vote, signature: BLSSignature, rank: u16) -> Self {
+    pub fn new_vote(vote: Vote, signature: BLSSignature, rank: u16, stake: NonZero<u64>) -> Self {
         Self::Vote(VoteMessage {
             vote,
             signature,
             rank,
+            stake,
         })
     }
 

@@ -38,7 +38,7 @@ use {
         net::{IpAddr, Ipv4Addr, SocketAddr},
         path::{Path, PathBuf},
         process::exit,
-        sync::{Arc, Mutex, RwLock},
+        sync::{Arc, Mutex},
         thread,
         time::{Duration, SystemTime, UNIX_EPOCH},
     },
@@ -387,15 +387,11 @@ fn main() {
 
     let features_to_deactivate = pubkeys_of(&matches, "deactivate_feature").unwrap_or_default();
     if matches.is_present("alpenglow")
-        && features_to_deactivate.iter().any(|feature| {
-            *feature == agave_feature_set::alpenglow::id()
-                || *feature == agave_feature_set::validator_admission_ticket::id()
-        })
+        && features_to_deactivate
+            .iter()
+            .any(|feature| *feature == agave_feature_set::alpenglow::id())
     {
-        println!(
-            "Error: --alpenglow requires both the alpenglow and validator_admission_ticket \
-             features to be active"
-        );
+        println!("Error: --alpenglow requires the alpenglow feature to be active");
         exit(1);
     }
 
@@ -434,7 +430,7 @@ fn main() {
     let tower_storage = Arc::new(FileTowerStorage::new(ledger_path.clone()));
     let vote_history_storage = Arc::new(FileVoteHistoryStorage::new(ledger_path.clone()));
 
-    let admin_service_post_init = Arc::new(RwLock::new(None));
+    let admin_service_post_init = genesis.admin_rpc_service_post_init.clone();
     // If geyser_plugin_config value is invalid, the validator will exit when the values are extracted below
     let (rpc_to_plugin_manager_sender, rpc_to_plugin_manager_receiver) =
         if matches.is_present("geyser_plugin_config") {

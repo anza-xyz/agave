@@ -18,7 +18,6 @@ rustdoc-args = ["--cfg=docsrs"]
 agave-unstable-api = []
 
 [dependencies]
-agave-feature-set = { workspace = true }
 solana-fee-structure = { workspace = true }
 solana-svm-transaction = { workspace = true }
 

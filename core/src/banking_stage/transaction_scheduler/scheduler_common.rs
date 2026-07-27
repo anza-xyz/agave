@@ -17,10 +17,13 @@ use {
     solana_runtime_transaction::transaction_with_meta::TransactionWithMeta,
 };
 
+const MAX_RECYCLED_BATCHES: usize = 1024;
+
 pub struct Batches<Tx> {
     ids: Vec<Vec<TransactionId>>,
     transactions: Vec<Vec<Tx>>,
     max_ages: Vec<Vec<MaxAge>>,
+    recycled_batches: Vec<(Vec<TransactionId>, Vec<Tx>, Vec<MaxAge>)>,
     total_cus: Vec<u64>,
     entry_bytes: Vec<u64>,
     target_num_transactions_per_batch: usize,
@@ -41,6 +44,7 @@ impl<Tx> Batches<Tx> {
             ids: make_vecs(num_threads, target_num_transactions_per_batch),
             transactions: make_vecs(num_threads, target_num_transactions_per_batch),
             max_ages: make_vecs(num_threads, target_num_transactions_per_batch),
+            recycled_batches: Vec::with_capacity(num_threads),
             total_cus: vec![0; num_threads],
             entry_bytes: vec![ENTRY_OVERHEAD_BYTES; num_threads],
             target_num_transactions_per_batch,
@@ -91,20 +95,20 @@ impl<Tx> Batches<Tx> {
         &mut self,
         thread_id: ThreadId,
     ) -> (Vec<TransactionId>, Vec<Tx>, Vec<MaxAge>, u64) {
+        let (replacement_ids, replacement_transactions, replacement_max_ages) =
+            self.recycled_batches.pop().unwrap_or_else(|| {
+                (
+                    Vec::with_capacity(self.target_num_transactions_per_batch),
+                    Vec::with_capacity(self.target_num_transactions_per_batch),
+                    Vec::with_capacity(self.target_num_transactions_per_batch),
+                )
+            });
+
         self.entry_bytes[thread_id] = ENTRY_OVERHEAD_BYTES;
         (
-            core::mem::replace(
-                &mut self.ids[thread_id],
-                Vec::with_capacity(self.target_num_transactions_per_batch),
-            ),
-            core::mem::replace(
-                &mut self.transactions[thread_id],
-                Vec::with_capacity(self.target_num_transactions_per_batch),
-            ),
-            core::mem::replace(
-                &mut self.max_ages[thread_id],
-                Vec::with_capacity(self.target_num_transactions_per_batch),
-            ),
+            core::mem::replace(&mut self.ids[thread_id], replacement_ids),
+            core::mem::replace(&mut self.transactions[thread_id], replacement_transactions),
+            core::mem::replace(&mut self.max_ages[thread_id], replacement_max_ages),
             core::mem::replace(&mut self.total_cus[thread_id], 0),
         )
     }
@@ -238,9 +242,9 @@ impl<Tx: TransactionWithMeta> SchedulingCommon<Tx> {
                 work:
                     ConsumeWork {
                         batch_id,
-                        ids,
-                        transactions,
-                        max_ages: _,
+                        mut ids,
+                        mut transactions,
+                        mut max_ages,
                     },
                 retryable_indexes,
             }) => {
@@ -252,7 +256,9 @@ impl<Tx: TransactionWithMeta> SchedulingCommon<Tx> {
 
                 // Assumption - retryable indexes are in order (sorted by workers).
                 let mut retryable_iter = retryable_indexes.iter().peekable();
-                for (index, (id, transaction)) in izip!(ids, transactions).enumerate() {
+                for (index, (id, transaction)) in
+                    izip!(ids.drain(..), transactions.drain(..)).enumerate()
+                {
                     if let Some(&retryable_index) = retryable_iter.peek()
                         && retryable_index.index == index
                     {
@@ -275,6 +281,13 @@ impl<Tx: TransactionWithMeta> SchedulingCommon<Tx> {
                         .map(|index| index.index)
                         .collect::<Vec<_>>(),
                 );
+
+                max_ages.clear();
+                if self.batches.recycled_batches.len() < MAX_RECYCLED_BATCHES {
+                    self.batches
+                        .recycled_batches
+                        .push((ids, transactions, max_ages));
+                }
 
                 Ok((num_transactions, num_retryable))
             }

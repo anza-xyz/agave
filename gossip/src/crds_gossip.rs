@@ -231,16 +231,14 @@ impl CrdsGossip {
 
     pub fn generate_pull_responses(
         &self,
-        thread_pool: &ThreadPool,
         requests: &[PullRequest],
         output_size_limit: usize, // Limit number of crds values returned.
         now: u64,
-        should_retain_crds_value: impl Fn(&CrdsValue) -> bool + Sync,
-        try_consume_scan_budget: impl Fn(&PullRequest, usize) -> bool + Sync,
+        should_retain_crds_value: impl Fn(&CrdsValue) -> bool,
+        try_consume_scan_budget: impl Fn(&PullRequest, usize) -> bool,
         stats: &GossipStats,
     ) -> Vec<Vec<CrdsValue>> {
         CrdsGossipPull::generate_pull_responses(
-            thread_pool,
             &self.crds,
             requests,
             output_size_limit,
@@ -394,7 +392,12 @@ pub(crate) fn maybe_ping_gossip_addresses<R: Rng + CryptoRng>(
 #[cfg(test)]
 mod test {
     use {
-        super::*, crate::contact_info::ContactInfo, solana_sha256_hasher::hash,
+        super::*,
+        crate::{
+            cluster_info::{GOSSIP_PING_CACHE_OUTSTANDING_PING_TIMEOUT_MS, GOSSIP_PING_CACHE_TTL},
+            contact_info::ContactInfo,
+        },
+        solana_sha256_hasher::hash,
         solana_time_utils::timestamp,
     };
 
@@ -416,9 +419,9 @@ mod test {
             )
             .unwrap();
         let ping_cache = PingCache::new(
-            Duration::from_secs(20 * 60),      // ttl
-            Duration::from_secs(20 * 60) / 64, // rate_limit_delay
-            128,                               // capacity
+            GOSSIP_PING_CACHE_TTL,
+            GOSSIP_PING_CACHE_OUTSTANDING_PING_TIMEOUT_MS,
+            128, // capacity (small for tests)
         );
         let ping_cache = Mutex::new(ping_cache);
         crds_gossip.refresh_push_active_set(

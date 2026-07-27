@@ -36,7 +36,6 @@ fn build_unverified_signatures(num_transactions: usize) -> UnverifiedSignatures 
             None,
             SimpleAddressLoader::Disabled,
             &ReservedAccountKeys::empty_key_set(),
-            true,
         )
     };
 

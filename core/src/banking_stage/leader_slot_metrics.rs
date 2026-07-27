@@ -2,7 +2,7 @@ use {
     super::{
         consumer::LeaderProcessedTransactionCounts,
         leader_slot_timing_metrics::{LeaderExecuteAndCommitTimings, LeaderSlotTimingMetrics},
-        vote_storage::VoteBatchInsertionMetrics,
+        vote_storage::VoteInsertionMetrics,
     },
     crate::banking_stage::vote_packet_receiver::PacketReceiverStats,
     solana_clock::Slot,
@@ -617,19 +617,17 @@ impl LeaderSlotMetricsTracker {
         }
     }
 
-    pub(crate) fn accumulate_vote_batch_insertion_metrics(
+    pub(crate) fn accumulate_vote_insertion_metrics(
         &mut self,
-        vote_batch_insertion_metrics: &VoteBatchInsertionMetrics,
+        vote_insertion_metrics: &VoteInsertionMetrics,
     ) {
         self.increment_exceeded_buffer_limit_dropped_packets_count(
-            vote_batch_insertion_metrics.total_dropped_packets() as u64,
+            vote_insertion_metrics.total_dropped_packets() as u64,
         );
         self.increment_dropped_gossip_vote_count(
-            vote_batch_insertion_metrics.dropped_gossip_packets() as u64,
+            vote_insertion_metrics.dropped_gossip_packets() as u64
         );
-        self.increment_dropped_tpu_vote_count(
-            vote_batch_insertion_metrics.dropped_tpu_packets() as u64
-        );
+        self.increment_dropped_tpu_vote_count(vote_insertion_metrics.dropped_tpu_packets() as u64);
     }
 
     pub(crate) fn accumulate_transaction_errors(

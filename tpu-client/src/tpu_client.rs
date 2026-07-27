@@ -215,6 +215,10 @@ where
         })
     }
 
+    #[deprecated(
+        since = "4.3.0",
+        note = "prefer send_and_confirm_transactions_in_parallel_v3"
+    )]
     #[cfg(feature = "spinner")]
     pub fn send_and_confirm_messages_with_spinner<T: Signers + ?Sized>(
         &self,
@@ -222,6 +226,7 @@ where
         signers: &T,
     ) -> Result<Vec<Option<TransactionError>>> {
         self.invoke(
+            #[allow(deprecated)]
             self.tpu_client
                 .send_and_confirm_messages_with_spinner(messages, signers),
         )

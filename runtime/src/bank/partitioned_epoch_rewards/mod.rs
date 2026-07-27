@@ -25,13 +25,15 @@ use {
 /// Distributing rewards to stake accounts begins AFTER this many blocks.
 const REWARD_CALCULATION_NUM_BLOCKS: u64 = 1;
 
-/// Total reward for a stake account, currently just inflation rewards.
+/// Total reward for a stake account, comprising inflation and block rewards.
 #[derive(Debug, Clone, PartialEq)]
 pub(crate) struct PartitionedStakeReward {
     /// Stake account address
     pub stake_pubkey: Pubkey,
     /// Inflation reward information
     pub inflation: InflationReward,
+    /// Block rewards due during distribution
+    pub block_reward: u64,
 }
 
 /// Just the inflation portion of a partitioned stake reward
@@ -94,9 +96,12 @@ impl PartitionedStakeRewards {
         self.rewards.spare_capacity_mut()
     }
 
-    unsafe fn assume_init(&mut self, num_stake_rewards: usize) {
+    /// Safety: all `total_len` elements must be initialized in `self.rewards`.
+    /// `num_stake_rewards` is the number of those elements that are `Some`.
+    unsafe fn assume_init(&mut self, num_stake_rewards: usize, total_len: usize) {
+        debug_assert!(num_stake_rewards <= total_len);
         unsafe {
-            self.rewards.set_len(self.rewards.capacity());
+            self.rewards.set_len(total_len);
         }
         self.num_rewards = num_stake_rewards;
     }
@@ -114,6 +119,18 @@ impl FromIterator<Option<PartitionedStakeReward>> for PartitionedStakeRewards {
         Self {
             rewards,
             num_rewards: len_some,
+        }
+    }
+}
+
+#[cfg(test)]
+impl FromIterator<PartitionedStakeReward> for PartitionedStakeRewards {
+    fn from_iter<T: IntoIterator<Item = PartitionedStakeReward>>(iter: T) -> Self {
+        let rewards = Vec::from_iter(iter.into_iter().map(Some));
+        let num_rewards = rewards.len();
+        Self {
+            rewards,
+            num_rewards,
         }
     }
 }
@@ -318,7 +335,7 @@ pub(super) struct PartitionedRewardsCalculation {
     capitalization: u64,
     point_value: PointValue,
     /// Number of vote accounts in the distribution-epoch snapshot after
-    /// SIMD-0357 VAT filtering (or the unfiltered count when VAT is off).
+    /// SIMD-0357 VAT filtering.
     /// Surfaced for the `epoch_rewards` datapoint without re-running the
     /// filter at distribution time.
     num_filtered_vote_accounts: usize,
@@ -429,8 +446,10 @@ mod tests {
             },
             runtime_config::RuntimeConfig,
             stake_utils,
+            sysvar_account::from_account,
         },
         assert_matches::assert_matches,
+        rand::Rng,
         solana_account::{Account, state_traits::StateMut},
         solana_accounts_db::{
             accounts_db::{ACCOUNTS_DB_CONFIG_FOR_TESTING, AccountsDbConfig},
@@ -440,10 +459,8 @@ mod tests {
         solana_hash::Hash,
         solana_keypair::Keypair,
         solana_native_token::LAMPORTS_PER_SOL,
-        solana_rent::Rent,
         solana_reward_info::RewardType,
         solana_signer::Signer,
-        solana_stake_interface::state::StakeStateV2,
         solana_system_transaction as system_transaction,
         solana_vote::vote_transaction,
         solana_vote_interface::state::{MAX_LOCKOUT_HISTORY, VoteStateV4, VoteStateVersions},
@@ -452,25 +469,48 @@ mod tests {
     };
 
     impl PartitionedStakeReward {
-        fn maybe_from(stake_reward: &StakeReward) -> Option<Self> {
-            if let Ok(StakeStateV2::Stake(_meta, stake, _flags)) =
-                stake_reward.stake_account.state()
-            {
-                Some(Self {
-                    stake_pubkey: stake_reward.stake_pubkey,
-                    inflation: InflationReward {
-                        stake,
-                        stake_reward: stake_reward.stake_reward_info.lamports as u64,
-                        commission_bps: stake_reward.stake_reward_info.commission_bps,
+        pub fn new_random() -> Self {
+            let mut rng = rand::rng();
+            let stake_reward = rng.random_range(1..200);
+            Self {
+                stake_pubkey: Pubkey::new_unique(),
+                inflation: InflationReward {
+                    stake: Stake {
+                        delegation: Delegation {
+                            voter_pubkey: Pubkey::new_unique(),
+                            stake: rng.random_range(1..200) + stake_reward,
+                            activation_epoch: 0,
+                            deactivation_epoch: u64::MAX,
+                            ..Default::default()
+                        },
+                        credits_observed: rng.random_range(1..200),
                     },
-                })
-            } else {
-                None
+                    stake_reward,
+                    commission_bps: None,
+                },
+                block_reward: rng.random_range(0..10_000_000_000),
             }
         }
 
-        pub fn new_random(rent: &Rent) -> Self {
-            Self::maybe_from(&StakeReward::new_random(rent)).unwrap()
+        pub fn new_with_lamport_amounts(stake_reward: u64, block_reward: u64, stake: u64) -> Self {
+            Self {
+                stake_pubkey: Pubkey::new_unique(),
+                inflation: InflationReward {
+                    stake: Stake {
+                        delegation: Delegation {
+                            voter_pubkey: Pubkey::new_unique(),
+                            stake: stake + stake_reward,
+                            activation_epoch: 0,
+                            deactivation_epoch: u64::MAX,
+                            ..Default::default()
+                        },
+                        credits_observed: 0,
+                    },
+                    stake_reward,
+                    commission_bps: None,
+                },
+                block_reward,
+            }
         }
     }
 
@@ -489,15 +529,6 @@ mod tests {
                     .collect::<PartitionedStakeRewards>()
             })
             .collect::<Vec<_>>()
-    }
-
-    pub fn convert_rewards(
-        stake_rewards: impl IntoIterator<Item = StakeReward>,
-    ) -> PartitionedStakeRewards {
-        stake_rewards
-            .into_iter()
-            .map(|stake_reward| Some(PartitionedStakeReward::maybe_from(&stake_reward).unwrap()))
-            .collect()
     }
 
     #[derive(Debug, PartialEq, Eq, Copy, Clone)]
@@ -679,11 +710,7 @@ mod tests {
         let expected_num = 100;
 
         let stake_rewards = (0..expected_num)
-            .map(|_| {
-                Some(PartitionedStakeReward::new_random(
-                    &bank.rent_collector.rent,
-                ))
-            })
+            .map(|_| Some(PartitionedStakeReward::new_random()))
             .collect::<PartitionedStakeRewards>();
 
         let partition_indices = vec![(0..expected_num).collect()];
@@ -741,11 +768,7 @@ mod tests {
             |num_stakes: u64, expected_num_reward_distribution_blocks: u64| {
                 // Given the short epoch, i.e. 32 slots, we should cap the number of reward distribution blocks to 32/10 = 3.
                 let stake_rewards = (0..num_stakes)
-                    .map(|_| {
-                        Some(PartitionedStakeReward::new_random(
-                            &bank.rent_collector.rent,
-                        ))
-                    })
+                    .map(|_| Some(PartitionedStakeReward::new_random()))
                     .collect::<PartitionedStakeRewards>();
 
                 assert_eq!(
@@ -783,11 +806,7 @@ mod tests {
         // Given 8k rewards, it will take 2 blocks to credit all the rewards
         let expected_num = 8192;
         let stake_rewards = (0..expected_num)
-            .map(|_| {
-                Some(PartitionedStakeReward::new_random(
-                    &bank.rent_collector.rent,
-                ))
-            })
+            .map(|_| Some(PartitionedStakeReward::new_random()))
             .collect::<PartitionedStakeRewards>();
 
         assert_eq!(bank.get_reward_distribution_num_blocks(&stake_rewards), 2);
@@ -822,9 +841,7 @@ mod tests {
                 if i % 4 == 0 {
                     None
                 } else {
-                    Some(PartitionedStakeReward::new_random(
-                        &bank.rent_collector.rent,
-                    ))
+                    Some(PartitionedStakeReward::new_random())
                 }
             })
             .collect::<PartitionedStakeRewards>();
@@ -894,7 +911,7 @@ mod tests {
                     .get_account(&solana_sysvar::epoch_rewards::id())
                     .unwrap();
                 let epoch_rewards: solana_sysvar::epoch_rewards::EpochRewards =
-                    solana_account::from_account(&account).unwrap();
+                    from_account(&account).unwrap();
                 assert_eq!(post_cap, pre_cap + epoch_rewards.distributed_rewards);
             } else {
                 // 2. when curr_slot == SLOTS_PER_EPOCH + 2, the 3rd block of
@@ -945,7 +962,7 @@ mod tests {
                 .get_account(&solana_sysvar::epoch_rewards::id())
                 .unwrap_or_default();
             let pre_epoch_rewards: solana_sysvar::epoch_rewards::EpochRewards =
-                solana_account::from_account(&pre_sysvar_account).unwrap_or_default();
+                from_account(&pre_sysvar_account).unwrap_or_default();
             let pre_distributed_rewards = pre_epoch_rewards.distributed_rewards;
             let curr_bank = Bank::new_from_parent_with_bank_forks(
                 bank_forks.as_ref(),
@@ -988,7 +1005,7 @@ mod tests {
                     .get_account(&solana_sysvar::epoch_rewards::id())
                     .unwrap();
                 let epoch_rewards: solana_sysvar::epoch_rewards::EpochRewards =
-                    solana_account::from_account(&account).unwrap();
+                    from_account(&account).unwrap();
                 reward_distribution_completion_slot =
                     Some(SLOTS_PER_EPOCH + epoch_rewards.num_partitions);
             } else if slot
@@ -1006,7 +1023,7 @@ mod tests {
                     .get_account(&solana_sysvar::epoch_rewards::id())
                     .unwrap();
                 let epoch_rewards: solana_sysvar::epoch_rewards::EpochRewards =
-                    solana_account::from_account(&account).unwrap();
+                    from_account(&account).unwrap();
                 assert_eq!(
                     post_cap,
                     pre_cap + epoch_rewards.distributed_rewards - pre_distributed_rewards
@@ -1043,7 +1060,7 @@ mod tests {
                     .get_account(&solana_sysvar::epoch_rewards::id())
                     .unwrap();
                 let epoch_rewards: solana_sysvar::epoch_rewards::EpochRewards =
-                    solana_account::from_account(&account).unwrap();
+                    from_account(&account).unwrap();
                 assert_eq!(
                     post_cap,
                     pre_cap + epoch_rewards.distributed_rewards - pre_distributed_rewards

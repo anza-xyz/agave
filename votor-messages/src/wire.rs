@@ -49,7 +49,10 @@ use {
     serde::{Deserialize, Serialize},
     solana_bls_signatures::Signature as BLSSignature,
     solana_clock::Slot,
-    wincode::{SchemaRead, SchemaWrite, pod_wrapper},
+    wincode::{
+        ReadError, SchemaRead, SchemaReadContext, SchemaWrite, config::Config, io::Reader,
+        pod_wrapper,
+    },
 };
 
 #[cfg(feature = "frozen-abi")]
@@ -66,8 +69,11 @@ pod_wrapper! {
     unsafe struct PodBLSSignature(BLSSignature);
 }
 
-#[cfg_attr(feature = "frozen-abi", derive(AbiExample, StableAbi, StableAbiSample))]
-#[derive(Clone, Debug, Hash, PartialEq, Eq, SchemaRead, SchemaWrite, Serialize)]
+#[cfg_attr(
+    feature = "frozen-abi",
+    derive(AbiExample, StableAbi, StableAbiSample, Serialize)
+)]
+#[derive(Clone, Debug, Hash, PartialEq, Eq, SchemaRead, SchemaWrite)]
 pub(crate) struct WireVoteSignature {
     #[cfg_attr(
         feature = "frozen-abi",
@@ -75,27 +81,31 @@ pub(crate) struct WireVoteSignature {
     )]
     #[wincode(with = "PodBLSSignature")]
     pub(crate) signature: BLSSignature,
-    pub(crate) rank: u16,
 }
 
 impl From<VoteMessage> for WireVoteSignature {
     fn from(msg: VoteMessage) -> Self {
         Self {
             signature: msg.signature,
-            rank: msg.rank,
         }
     }
 }
 
-#[cfg_attr(feature = "frozen-abi", derive(AbiExample, StableAbi, StableAbiSample))]
-#[derive(Clone, Debug, Hash, PartialEq, Eq, SchemaRead, SchemaWrite, Serialize)]
+#[cfg_attr(
+    feature = "frozen-abi",
+    derive(AbiExample, StableAbi, StableAbiSample, Serialize)
+)]
+#[derive(Clone, Debug, Hash, PartialEq, Eq, SchemaRead, SchemaWrite)]
 pub(crate) struct WireBlockVoteMessage {
     pub(crate) block: Block,
     pub(crate) signature: WireVoteSignature,
 }
 
-#[cfg_attr(feature = "frozen-abi", derive(AbiExample, StableAbi, StableAbiSample))]
-#[derive(Clone, Debug, Hash, PartialEq, Eq, SchemaRead, SchemaWrite, Serialize)]
+#[cfg_attr(
+    feature = "frozen-abi",
+    derive(AbiExample, StableAbi, StableAbiSample, Serialize)
+)]
+#[derive(Clone, Debug, Hash, PartialEq, Eq, SchemaRead, SchemaWrite)]
 pub(crate) struct WireSlotVoteMessage {
     pub(crate) slot: Slot,
     pub(crate) signature: WireVoteSignature,
@@ -125,8 +135,11 @@ impl From<Certificate> for WireCertSignature {
     }
 }
 
-#[cfg_attr(feature = "frozen-abi", derive(AbiExample, StableAbi, StableAbiSample))]
-#[derive(Debug, Clone, Hash, PartialEq, Eq, SchemaRead, SchemaWrite, Serialize)]
+#[cfg_attr(
+    feature = "frozen-abi",
+    derive(AbiExample, StableAbi, StableAbiSample, Serialize)
+)]
+#[derive(Debug, Clone, Hash, PartialEq, Eq, SchemaRead, SchemaWrite)]
 pub(crate) struct WireSlotCertMessage {
     pub(crate) slot: Slot,
     pub(crate) signature: WireCertSignature,
@@ -144,9 +157,9 @@ pub struct WireBlockCertMessage {
 
 #[cfg_attr(
     feature = "frozen-abi",
-    derive(AbiExample, StableAbi, StableAbiSample, AbiEnumVisitor)
+    derive(AbiExample, StableAbi, StableAbiSample, AbiEnumVisitor, Serialize)
 )]
-#[derive(Debug, Clone, Hash, PartialEq, Eq, SchemaWrite, SchemaRead, Serialize)]
+#[derive(Debug, Clone, Hash, PartialEq, Eq, SchemaWrite, SchemaRead)]
 #[wincode(tag_encoding = "u8")]
 pub(crate) enum WireConsensusMessageKind {
     #[wincode(tag = 1)]
@@ -252,12 +265,47 @@ impl WireConsensusMessageKind {
     }
 }
 
-#[cfg_attr(feature = "frozen-abi", derive(AbiExample, StableAbi, StableAbiSample))]
-#[derive(Debug, Clone, Hash, PartialEq, Eq, Serialize, SchemaWrite, SchemaRead)]
+#[derive(Clone, Copy)]
+/// Context wrapper for the expected shred version during deserialization.
+pub struct ExpectedShredVersion(pub u16);
+
+#[cfg_attr(
+    feature = "frozen-abi",
+    derive(AbiExample, StableAbi, StableAbiSample, Serialize, SchemaRead)
+)]
+#[derive(Debug, Clone, Hash, PartialEq, Eq, SchemaWrite)]
 /// First version of a wire consensus message
 pub struct WireConsensusMessageV1 {
     pub(crate) kind: WireConsensusMessageKind,
     pub(crate) shred_version: u16,
+}
+
+// SAFETY: The custom read_with_context implementation sequentially reads the exact same fields
+// as a derived `SchemaRead` implementation would, guaranteeing the safe initialization of `Dst`.
+unsafe impl<'de, C: Config> SchemaReadContext<'de, C, ExpectedShredVersion>
+    for WireConsensusMessageV1
+{
+    type Dst = WireConsensusMessageV1;
+
+    fn read_with_context(
+        expected: ExpectedShredVersion,
+        mut reader: impl Reader<'de>,
+        dst: &mut std::mem::MaybeUninit<Self::Dst>,
+    ) -> wincode::ReadResult<()> {
+        let kind = <WireConsensusMessageKind as SchemaRead<'de, C>>::get(reader.by_ref())?;
+        let shred_version = <u16 as SchemaRead<'de, C>>::get(reader.by_ref())?;
+
+        if shred_version != expected.0 {
+            return Err(ReadError::Custom("shred version mismatch"));
+        }
+
+        dst.write(WireConsensusMessageV1 {
+            kind,
+            shred_version,
+        });
+
+        Ok(())
+    }
 }
 
 impl WireConsensusMessageV1 {
@@ -289,15 +337,22 @@ impl WireConsensusMessageV1 {
 
 #[cfg_attr(
     feature = "frozen-abi",
-    derive(AbiExample, AbiEnumVisitor, StableAbi, StableAbiSample),
+    derive(
+        AbiExample,
+        AbiEnumVisitor,
+        StableAbi,
+        StableAbiSample,
+        Serialize,
+        SchemaRead
+    ),
     frozen_abi(
-        digest = "Gf8GEMXaXezQnGsqwDdpZN3WtNkMZw5wfp3nwep9j55V",
-        abi_digest = "AHPJsANgE3T8wfzkFZwao1PAWwd6LtS5GAhGrN9X4Xhy",
+        digest = "DjdpNzNd3eQ569wuRQq7cKAsj791nkjbbhcqWa7TQeKj",
+        abi_digest = "ErGjoTr18hn3dvPVA7jFgK5WLwb4jgx7a39Yn8dSzB2K",
         abi_serializer = "wincode",
         test_roundtrip = "eq_and_wire",
     )
 )]
-#[derive(Debug, Clone, Hash, PartialEq, Eq, Serialize, SchemaWrite, SchemaRead)]
+#[derive(Debug, Clone, Hash, PartialEq, Eq, SchemaWrite)]
 #[wincode(tag_encoding = "u8")]
 /// versioned wire format of consensus message
 pub enum VersionedWireConsensusMessage {
@@ -306,7 +361,50 @@ pub enum VersionedWireConsensusMessage {
     V1(WireConsensusMessageV1),
 }
 
+// SAFETY: The custom read_with_context implementation sequentially reads the exact same fields
+// as a derived `SchemaRead` implementation would, guaranteeing the safe initialization of `Dst`.
+unsafe impl<'de, C: Config> SchemaReadContext<'de, C, ExpectedShredVersion>
+    for VersionedWireConsensusMessage
+{
+    type Dst = VersionedWireConsensusMessage;
+
+    fn read_with_context(
+        expected: ExpectedShredVersion,
+        mut reader: impl Reader<'de>,
+        dst: &mut std::mem::MaybeUninit<Self::Dst>,
+    ) -> wincode::ReadResult<()> {
+        let tag = reader.take_byte()?;
+        match tag {
+            1 => {
+                let v1 = <WireConsensusMessageV1 as SchemaReadContext<
+                    'de,
+                    C,
+                    ExpectedShredVersion,
+                >>::get_with_context(expected, reader)?;
+                dst.write(VersionedWireConsensusMessage::V1(v1));
+                Ok(())
+            }
+            _ => Err(ReadError::Custom(
+                "unknown tag for VersionedWireConsensusMessage",
+            )),
+        }
+    }
+}
+
 impl VersionedWireConsensusMessage {
+    /// Deserializes a versioned wire consensus message and verifies the shred version.
+    pub fn deserialize_with_expected_shred_version<'de, C: Config>(
+        reader: impl Reader<'de>,
+        config: C,
+        expected_shred_version: u16,
+    ) -> wincode::ReadResult<Self> {
+        let _ = config;
+        <Self as SchemaReadContext<'de, C, _>>::get_with_context(
+            ExpectedShredVersion(expected_shred_version),
+            reader,
+        )
+    }
+
     /// Constructs a new versioned wire consensus message.
     pub fn new(msg: ConsensusMessage, shred_version: u16) -> Self {
         let v1 = WireConsensusMessageV1::new(msg, shred_version);
@@ -342,7 +440,7 @@ impl VersionedWireConsensusMessage {
 
 #[cfg_attr(
     feature = "frozen-abi",
-    derive(AbiExample, AbiEnumVisitor, StableAbi, StableAbiSample),
+    derive(AbiExample, AbiEnumVisitor, StableAbi, StableAbiSample, Serialize),
     frozen_abi(
         digest = "AKMt6bqYRf1xh7tWg4eAgG7jNN1qtUvNVPb5XZn9vjtV",
         abi_digest = "2aBMTuPyDgGSYeYX1aBbXURgA4qqr92Eh9yiTeHX6qZq",
@@ -350,7 +448,7 @@ impl VersionedWireConsensusMessage {
         test_roundtrip = "eq_and_wire",
     )
 )]
-#[derive(Debug, Copy, Clone, PartialEq, Eq, Hash, Serialize, SchemaWrite, SchemaRead)]
+#[derive(Debug, Copy, Clone, PartialEq, Eq, Hash, SchemaWrite, SchemaRead)]
 #[wincode(tag_encoding = "u8")]
 /// Vote payload that must be signed
 pub enum VotePayloadToSign {

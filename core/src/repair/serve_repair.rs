@@ -13,7 +13,7 @@ use {
             duplicate_repair_status::get_ancestor_hash_repair_sample_size,
             outstanding_requests::OutstandingRequests,
             repair_handler::RepairHandler,
-            repair_service::{OutstandingShredRepairs, REPAIR_MS, RepairInfo, RepairStats},
+            repair_service::{OutstandingShredRepairs, RepairInfo, RepairStats},
             request_response::RequestResponse,
             result::{Error, RepairVerifyError, Result},
         },
@@ -65,6 +65,7 @@ use {
         cmp::Reverse,
         collections::{HashMap, HashSet},
         net::{SocketAddr, UdpSocket},
+        ops::Range,
         sync::{
             Arc, RwLock,
             atomic::{AtomicBool, Ordering},
@@ -96,7 +97,7 @@ pub const MAX_ANCESTOR_RESPONSES: usize =
 const REPAIR_PING_TOKEN_SIZE: usize = HASH_BYTES;
 pub const REPAIR_PING_CACHE_CAPACITY: usize = 65536;
 pub const REPAIR_PING_CACHE_TTL: Duration = Duration::from_secs(1280);
-const REPAIR_PING_CACHE_RATE_LIMIT_DELAY: Duration = Duration::from_secs(2);
+const REPAIR_PING_CACHE_OUTSTANDING_PING_TIMEOUT_MS: Range<u64> = 1000..2000;
 pub(crate) const REPAIR_RESPONSE_SERIALIZED_PING_BYTES: usize =
     4 /*enum discriminator*/ + PUBKEY_BYTES + REPAIR_PING_TOKEN_SIZE + SIGNATURE_BYTES;
 const SIGNED_REPAIR_TIME_WINDOW: Duration = Duration::from_secs(60 * 10); // 10 min
@@ -1377,12 +1378,9 @@ impl ServeRepair {
     ) -> JoinHandle<()> {
         const MAX_BYTES_PER_SECOND: u64 = 12_000_000;
 
-        // rate limit delay should be greater than the repair request iteration delay
-        assert!(REPAIR_PING_CACHE_RATE_LIMIT_DELAY > Duration::from_millis(REPAIR_MS));
-
         let mut ping_cache = PingCache::new(
             REPAIR_PING_CACHE_TTL,
-            REPAIR_PING_CACHE_RATE_LIMIT_DELAY,
+            REPAIR_PING_CACHE_OUTSTANDING_PING_TIMEOUT_MS,
             REPAIR_PING_CACHE_CAPACITY,
         );
 
@@ -2043,7 +2041,7 @@ mod tests {
         let from_addr = socketaddr!(Ipv4Addr::LOCALHOST, 1234);
         let mut ping_cache = PingCache::new(
             REPAIR_PING_CACHE_TTL,
-            REPAIR_PING_CACHE_RATE_LIMIT_DELAY,
+            REPAIR_PING_CACHE_OUTSTANDING_PING_TIMEOUT_MS,
             REPAIR_PING_CACHE_CAPACITY,
         );
         let slot = 42;
@@ -3215,11 +3213,11 @@ mod tests {
         assert!(!repair.verify_response(&AncestorHashesResponse::Hashes(response)));
     }
 
-    // A second check() within REPAIR_PING_CACHE_RATE_LIMIT_DELAY must not generate
+    // A second check() within REPAIR_PING_CACHE_OUTSTANDING_PING_TIMEOUT must not generate
     // a new ping. If it did, it would overwrite the stored token and invalidate the Pong,
     // making Ping fail for no reason.
     #[test]
-    fn test_repair_no_ping_overwrite_within_rate_limit_delay() {
+    fn test_repair_no_ping_overwrite_while_already_probing() {
         let mut rng = rand::rng();
         let this_node = Keypair::new();
         let remote_socket = SocketAddr::V4(SocketAddrV4::new(Ipv4Addr::LOCALHOST, 8001));
@@ -3227,7 +3225,7 @@ mod tests {
         let remote_node = (remote_keypair.pubkey(), remote_socket);
         let mut cache = PingCache::new(
             REPAIR_PING_CACHE_TTL,
-            REPAIR_PING_CACHE_RATE_LIMIT_DELAY,
+            REPAIR_PING_CACHE_OUTSTANDING_PING_TIMEOUT_MS,
             REPAIR_PING_CACHE_CAPACITY,
         );
         let now = Instant::now();
@@ -3235,13 +3233,13 @@ mod tests {
         let (_, ping1) = cache.check(&mut rng, &this_node, now, remote_node);
         let ping1 = ping1.expect("should generate ping for unknown node");
 
-        // Second check within REPAIR_PING_CACHE_RATE_LIMIT_DELAY must not generate
-        // a new ping — that would overwrite the stored hash and invalidate the in-flight pong.
-        let within_delay = now + REPAIR_PING_CACHE_RATE_LIMIT_DELAY - Duration::from_millis(1);
+        // Use the minimum possible expiry minus 1ms — guaranteed to be before any expiry.
+        let within_delay =
+            now + Duration::from_millis(REPAIR_PING_CACHE_OUTSTANDING_PING_TIMEOUT_MS.start - 1);
         let (_, ping2) = cache.check(&mut rng, &this_node, within_delay, remote_node);
         assert!(
             ping2.is_none(),
-            "must not generate a second ping within REPAIR_PING_CACHE_RATE_LIMIT_DELAY"
+            "must not generate a second ping within REPAIR_PING_CACHE_OUTSTANDING_PING_TIMEOUT"
         );
 
         // Pong for ping1 must still be valid — token was not overwritten.

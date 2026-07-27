@@ -14,7 +14,7 @@ use {
     solana_vote_program::{
         vote_instruction,
         vote_state::{
-            self, VoteAuthorize, VoteInit, VoteStateV4, VoterWithBLSArgs,
+            self, VoteAuthorize, VoteInit, VoterWithBLSArgs,
             create_bls_pubkey_and_proof_of_possession,
         },
     },
@@ -58,12 +58,8 @@ pub async fn setup_vote(context: &mut ProgramTestContext) -> Pubkey {
         0,
         &system_program::id(),
     ));
-    let vote_lamports = if context.is_active(&agave_feature_set::validator_admission_ticket::id()) {
-        // Fund vote accounts above VAT admission threshold
-        minimum_vote_account_balance_for_vat(10)
-    } else {
-        Rent::default().minimum_balance(VoteStateV4::size_of())
-    };
+    // Fund vote accounts above VAT admission threshold
+    let vote_lamports = minimum_vote_account_balance_for_vat(10);
 
     let vote_keypair = Keypair::new();
     instructions.append(&mut vote_instruction::create_account_with_config(

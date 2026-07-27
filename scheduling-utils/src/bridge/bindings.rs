@@ -165,7 +165,7 @@ where
         let tx = unsafe { TransactionPtr::from_raw_parts(ptr, tx.len()) };
 
         // Sanitize the transaction, drop it immediately if it fails sanitization.
-        match SanitizedTransactionView::try_new_sanitized(tx, &sanitize_config(true)) {
+        match SanitizedTransactionView::try_new_sanitized(tx, &sanitize_config()) {
             Ok(tx) => {
                 let key = self.state.insert(TransactionState {
                     dead: false,
@@ -255,8 +255,7 @@ where
             };
 
             // Sanitize the transaction, drop it immediately if it fails sanitization.
-            let Ok(tx) = SanitizedTransactionView::try_new_sanitized(tx, &sanitize_config(true))
-            else {
+            let Ok(tx) = SanitizedTransactionView::try_new_sanitized(tx, &sanitize_config()) else {
                 // SAFETY:
                 // - We own `tx` exclusively.
                 // - The previous `TransactionPtr` has been dropped by `try_new_sanitized`.

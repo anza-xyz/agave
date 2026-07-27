@@ -315,8 +315,8 @@ impl PohService {
         if let Ok(record) = record {
             match poh_recorder.write().unwrap().record(
                 record.bank_id,
-                record.mixins,
-                record.transaction_batches,
+                record.mixin,
+                record.transactions,
             ) {
                 Ok(record_summary) => {
                     if record_receiver
@@ -462,8 +462,8 @@ impl PohService {
                 loop {
                     match poh_recorder_l.record(
                         record.bank_id,
-                        record.mixins,
-                        std::mem::take(&mut record.transaction_batches),
+                        record.mixin,
+                        std::mem::take(&mut record.transactions),
                     ) {
                         Ok(record_summary) => {
                             if record_receiver.should_shutdown(
@@ -773,8 +773,8 @@ mod tests {
         poh_controller.reset(bank.clone(), None).unwrap();
         record_sender
             .try_send(Record {
-                mixins: vec![Hash::new_unique()],
-                transaction_batches: vec![vec![VersionedTransaction::from(test_tx())]],
+                mixin: Hash::new_unique(),
+                transactions: vec![VersionedTransaction::from(test_tx())],
                 bank_id: bank.bank_id(),
             })
             .unwrap();

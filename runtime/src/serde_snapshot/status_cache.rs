@@ -105,7 +105,7 @@ pub fn deserialize_status_cache(
                             ),
                         )
                     })
-                    .collect::<ahash::HashMap<_, _>>();
+                    .collect::<HashMap<_, _, solana_hash::HashHasherBuilder>>();
                 (slot_delta.0, slot_delta.1, Arc::new(Mutex::new(status_map)))
             })
             .collect::<Vec<_>>();

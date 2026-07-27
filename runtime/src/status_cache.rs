@@ -3,7 +3,6 @@ use shuttle::sync::{Arc, Mutex};
 #[cfg(not(feature = "shuttle-test"))]
 use std::sync::{Arc, Mutex};
 use {
-    ahash::{HashMap, HashMapExt as _},
     log::*,
     serde::Serialize,
     smallvec::SmallVec,
@@ -11,7 +10,7 @@ use {
     solana_clock::{MAX_RECENT_BLOCKHASHES, Slot},
     solana_hash::Hash,
     std::{
-        collections::{HashSet, hash_map::Entry},
+        collections::{HashMap, HashSet, hash_map::Entry},
         num::{NonZero, NonZeroUsize},
     },
 };
@@ -25,7 +24,7 @@ const MAX_ROOT_ENTRIES: usize = MAX_RECENT_BLOCKHASHES;
 const CACHED_KEY_SIZE: usize = 20;
 
 // Store forks in a single chunk of memory to avoid another hash lookup.
-pub type ForkStatus<T> = Vec<(Slot, T)>;
+pub type ForkStatus<T> = SmallVec<[(Slot, T); 1]>;
 
 // The type of the key used in the cache.
 pub(crate) type KeySlice = [u8; CACHED_KEY_SIZE];
@@ -33,11 +32,12 @@ pub(crate) type KeySlice = [u8; CACHED_KEY_SIZE];
 type KeyMap<T> = HashMap<KeySlice, ForkStatus<T>>;
 
 // Map of Hash and status
-pub type Status<T> = Arc<Mutex<HashMap<Hash, (usize, Vec<(KeySlice, T)>)>>>;
+pub type Status<T> =
+    Arc<Mutex<HashMap<Hash, (usize, Vec<(KeySlice, T)>), solana_hash::HashHasherBuilder>>>;
 
 // A Map of hash + the highest fork it's been observed on along with
 // the key offset and a Map of the key slice + Fork status for that key
-type KeyStatusMap<T> = HashMap<Hash, (Slot, usize, KeyMap<T>)>;
+type KeyStatusMap<T> = HashMap<Hash, (Slot, usize, KeyMap<T>), solana_hash::HashHasherBuilder>;
 
 // The type used for StatusCache::slot_deltas. See the field definition for more details.
 type SlotDeltaMap<T> = HashMap<Slot, Status<T>>;

@@ -10,10 +10,8 @@ use {
     solana_clock::Epoch,
     solana_instruction::error::InstructionError,
     solana_pubkey::Pubkey,
-    solana_stake_interface::{
-        stake_history::StakeHistory,
-        state::{Delegation, Stake, StakeStateV2},
-    },
+    solana_stake_history::StakeHistory,
+    solana_stake_interface::state::{Delegation, Stake, StakeStateV2},
     solana_vote::vote_state_view::VoteStateView,
     std::cmp::Ordering,
 };

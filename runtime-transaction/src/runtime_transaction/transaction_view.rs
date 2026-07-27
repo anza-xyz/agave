@@ -158,11 +158,29 @@ impl<D: TransactionData> TransactionWithMeta for RuntimeTransaction<ResolvedTran
                 message: Cow::Owned(message),
                 is_writable_account_cache,
             }),
-            VersionedMessage::V0(message) => SanitizedMessage::V0(LoadedMessage {
-                message: Cow::Owned(message),
-                loaded_addresses: Cow::Owned(self.loaded_addresses().unwrap().clone()),
-                is_writable_account_cache,
-            }),
+            VersionedMessage::V0(message) => {
+                // transaction-view does not expose its loaded-address source. Reconstruct the
+                // legacy representation from the resolved account keys, whose layout is static,
+                // writable loaded, then readonly loaded.
+                let mut loaded_account_keys = self
+                    .account_keys()
+                    .iter()
+                    .skip(self.static_account_keys().len())
+                    .copied();
+                let loaded_addresses = LoadedAddresses {
+                    writable: loaded_account_keys
+                        .by_ref()
+                        .take(usize::from(self.total_writable_lookup_accounts()))
+                        .collect(),
+                    readonly: loaded_account_keys.collect(),
+                };
+
+                SanitizedMessage::V0(LoadedMessage {
+                    message: Cow::Owned(message),
+                    loaded_addresses: Cow::Owned(loaded_addresses),
+                    is_writable_account_cache,
+                })
+            }
             VersionedMessage::V1(message) => SanitizedMessage::V1(v1::CachedMessage {
                 message: Cow::Owned(message),
                 is_writable_account_cache,
@@ -282,7 +300,7 @@ mod tests {
         let hash = Hash::new_unique();
         let transaction = SanitizedTransactionView::try_new_sanitized(
             &serialized_transaction[..],
-            &sanitize_config(true),
+            &sanitize_config(),
         )
         .unwrap();
         let static_runtime_transaction =
@@ -317,7 +335,7 @@ mod tests {
         ) {
             let bytes = wincode::serialize(&original_transaction).unwrap();
             let transaction_view =
-                SanitizedTransactionView::try_new_sanitized(&bytes[..], &sanitize_config(true))
+                SanitizedTransactionView::try_new_sanitized(&bytes[..], &sanitize_config())
                     .unwrap();
             let runtime_transaction = RuntimeTransaction::<SanitizedTransactionView<_>>::try_new(
                 transaction_view,
@@ -385,7 +403,7 @@ mod tests {
             let bytes =
                 wincode::serialize(&original_transaction.to_versioned_transaction()).unwrap();
             let transaction_view =
-                SanitizedTransactionView::try_new_sanitized(&bytes[..], &sanitize_config(true))
+                SanitizedTransactionView::try_new_sanitized(&bytes[..], &sanitize_config())
                     .unwrap();
             let runtime_transaction = RuntimeTransaction::<SanitizedTransactionView<_>>::try_new(
                 transaction_view,
@@ -475,7 +493,7 @@ mod tests {
             .unwrap();
         let transaction_view = SanitizedTransactionView::try_new_sanitized(
             &serialized_transaction[..],
-            &sanitize_config(true),
+            &sanitize_config(),
         )
         .unwrap();
         let runtime_transaction = RuntimeTransaction::<SanitizedTransactionView<_>>::try_new(

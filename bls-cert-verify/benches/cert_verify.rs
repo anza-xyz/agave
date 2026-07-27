@@ -38,6 +38,7 @@ fn create_signed_vote_message(
         vote,
         signature,
         rank: rank as u16,
+        stake: NonZero::new(123).unwrap(),
     }
 }
 

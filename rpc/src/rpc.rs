@@ -1,6 +1,8 @@
 //! The `rpc` module implements the Solana RPC interface.
 #[cfg(feature = "dev-context-only-utils")]
-use solana_runtime::installed_scheduler_pool::BankWithScheduler;
+use solana_runtime::installed_scheduler_pool::{
+    BankWithScheduler, InstalledSchedulerPool, SchedulingContext,
+};
 use {
     crate::{
         filter::filter_allows, max_slots::MaxSlots,
@@ -28,7 +30,6 @@ use {
         accounts_index::{AccountIndex, AccountSecondaryIndexes, IndexKey},
         accounts_scan::ScanResult,
     },
-    solana_client::connection_cache::Protocol,
     solana_clock::{Slot, UnixTimestamp},
     solana_commitment_config::{CommitmentConfig, CommitmentLevel},
     solana_entry::entry::Entry,
@@ -46,6 +47,7 @@ use {
     },
     solana_message::{AddressLoader, SanitizedMessage},
     solana_metrics::inc_new_counter_info,
+    solana_net_utils::Protocol,
     solana_perf::packet::PACKET_DATA_SIZE,
     solana_program_pack::Pack,
     solana_pubkey::{PUBKEY_BYTES, Pubkey},
@@ -55,8 +57,9 @@ use {
         filter::{Memcmp, RpcFilterType},
         request::{
             DELINQUENT_VALIDATOR_SLOT_DISTANCE, MAX_GET_CONFIRMED_BLOCKS_RANGE,
-            MAX_GET_CONFIRMED_SIGNATURES_FOR_ADDRESS2_LIMIT, MAX_GET_PROGRAM_ACCOUNT_FILTERS,
-            MAX_GET_SIGNATURE_STATUSES_QUERY_ITEMS, MAX_GET_SLOT_LEADERS, MAX_MULTIPLE_ACCOUNTS,
+            MAX_GET_CONFIRMED_SIGNATURES_FOR_ADDRESS2_LIMIT, MAX_GET_INFLATION_REWARD_ADDRESSES,
+            MAX_GET_PROGRAM_ACCOUNT_FILTERS, MAX_GET_SIGNATURE_STATUSES_QUERY_ITEMS,
+            MAX_GET_SLOT_LEADERS, MAX_MULTIPLE_ACCOUNTS,
             MAX_RPC_VOTE_ACCOUNT_INFO_EPOCH_CREDITS_HISTORY, NUM_LARGEST_ACCOUNTS,
             TokenAccountsFilter,
         },
@@ -478,12 +481,13 @@ impl JsonRpcRequestProcessor {
             ..
         } = config;
         let runtime = service_runtime(rpc_threads, rpc_blocking_threads, rpc_niceness_adj);
-        let client = create_client_for_tests(runtime.handle().clone(), my_tpu_address, None, 1);
+        let (tpu_sender, _client) =
+            create_client_for_tests(runtime.handle().clone(), my_tpu_address, None, 1);
 
         SendTransactionService::new(
             bank_forks.clone(),
             transaction_receiver,
-            client,
+            tpu_sender,
             SendTransactionServiceConfig {
                 retry_rate_ms: 1_000,
                 leader_forward_count: 1,
@@ -3895,10 +3899,6 @@ pub mod rpc_full {
                 unsanitized_tx,
                 preflight_bank,
                 preflight_bank.get_reserved_account_keys(),
-                preflight_bank
-                    .feature_set
-                    .snapshot()
-                    .limit_instruction_accounts,
             )?;
             let blockhash = *transaction.message().recent_blockhash();
             let message_hash = *transaction.message_hash();
@@ -4056,12 +4056,8 @@ pub mod rpc_full {
                 });
             }
 
-            let transaction = sanitize_transaction(
-                unsanitized_tx,
-                bank,
-                bank.get_reserved_account_keys(),
-                bank.feature_set.snapshot().limit_instruction_accounts,
-            )?;
+            let transaction =
+                sanitize_transaction(unsanitized_tx, bank, bank.get_reserved_account_keys())?;
 
             let verification_error = if sig_verify {
                 transaction.verify().err()
@@ -4160,10 +4156,10 @@ pub mod rpc_full {
                     pre_balances,
                     post_balances,
                     pre_token_balances: pre_token_balances.map(|balances| {
-                        balances.into_iter().map(|balance| solana_ledger::transaction_balances::svm_token_info_to_token_balance(balance).into()).collect()
+                        balances.into_iter().map(|balance| solana_runtime::transaction_balances::svm_token_info_to_token_balance(balance).into()).collect()
                     }),
                     post_token_balances: post_token_balances.map(|balances| {
-                        balances.into_iter().map(|balance| solana_ledger::transaction_balances::svm_token_info_to_token_balance(balance).into()).collect()
+                        balances.into_iter().map(|balance| solana_runtime::transaction_balances::svm_token_info_to_token_balance(balance).into()).collect()
                     }),
                     loaded_addresses: Some(UiLoadedAddresses::from(&transaction.get_loaded_addresses())),
                 },
@@ -4283,6 +4279,11 @@ pub mod rpc_full {
                 "get_inflation_reward rpc request received: {:?}",
                 address_strs.len()
             );
+            if address_strs.len() > MAX_GET_INFLATION_REWARD_ADDRESSES {
+                return Box::pin(future::err(Error::invalid_params(format!(
+                    "Too many inputs provided; max {MAX_GET_INFLATION_REWARD_ADDRESSES}"
+                ))));
+            }
 
             let mut addresses: Vec<Pubkey> = vec![];
             for address_str in address_strs {
@@ -4474,7 +4475,6 @@ fn sanitize_transaction(
     transaction: VersionedTransaction,
     address_loader: impl AddressLoader,
     reserved_account_keys: &HashSet<Pubkey>,
-    enable_instruction_accounts_limit: bool,
 ) -> Result<RuntimeTransaction<SanitizedTransaction>> {
     RuntimeTransaction::try_create(
         transaction,
@@ -4482,7 +4482,6 @@ fn sanitize_transaction(
         None,
         address_loader,
         reserved_account_keys,
-        enable_instruction_accounts_limit,
     )
     .map_err(|err| Error::invalid_params(format!("invalid transaction: {err}")))
 }
@@ -4544,7 +4543,6 @@ pub fn populate_blockstore_for_tests(
     blockstore.set_roots(std::iter::once(&slot)).unwrap();
 
     let (transaction_status_sender, transaction_status_receiver) = bounded(1024);
-    let (replay_vote_sender, _replay_vote_receiver) = bounded(1024);
     let tss_exit = Arc::new(AtomicBool::new(false));
     let transaction_status_service =
         crate::transaction_status_service::TransactionStatusService::new(
@@ -4558,20 +4556,27 @@ pub fn populate_blockstore_for_tests(
             tss_exit.clone(),
         );
 
+    let transaction_status_sender =
+        solana_runtime::transaction_execution::TransactionStatusSender {
+            sender: transaction_status_sender,
+            dependency_tracker: None,
+        };
+    let pool = solana_unified_scheduler_pool::DefaultSchedulerPool::new_for_verification(
+        None,
+        None,
+        Some(transaction_status_sender),
+        None,
+        None,
+    );
+
+    let context = SchedulingContext::new(bank.clone());
+    let scheduler = pool.take_scheduler(context).unwrap();
+    let bank = BankWithScheduler::new(bank, Some(scheduler));
+
     // Check that process_entries successfully writes can_commit transactions statuses, and
     // that they are matched properly by get_rooted_block
     assert_eq!(
-        solana_ledger::blockstore_processor::process_entries_for_tests(
-            &BankWithScheduler::new_without_scheduler(bank),
-            entries,
-            Some(
-                &solana_ledger::blockstore_processor::TransactionStatusSender {
-                    sender: transaction_status_sender,
-                    dependency_tracker: None,
-                },
-            ),
-            Some(&replay_vote_sender),
-        ),
+        solana_ledger::blockstore_processor::process_entries_for_tests(&bank, entries),
         Ok(())
     );
 
@@ -5243,8 +5248,8 @@ pub mod tests {
             "tpuForwardsQuic": "127.0.0.1:8010",
             "tpuVote": "127.0.0.1:8005",
             "serveRepair": "127.0.0.1:8008",
-            "rpc": format!("127.0.0.1:8899"),
-            "pubsub": format!("127.0.0.1:8900"),
+            "rpc": "127.0.0.1:8899",
+            "pubsub": "127.0.0.1:8900",
             "version": format!("{version}"),
             "featureSet": version.feature_set(),
             "clientId": "Agave",
@@ -5259,8 +5264,8 @@ pub mod tests {
             "tpuForwardsQuic": "127.0.0.1:1245",
             "tpuVote": "127.0.0.1:1241",
             "serveRepair": "127.0.0.1:1242",
-            "rpc": format!("127.0.0.1:8899"),
-            "pubsub": format!("127.0.0.1:8900"),
+            "rpc": "127.0.0.1:8899",
+            "pubsub": "127.0.0.1:8900",
             "version": format!("{version}"),
             "featureSet": version.feature_set(),
             "clientId": "Agave",
@@ -5598,6 +5603,26 @@ pub mod tests {
         let expected = (
             ErrorCode::InvalidParams.code(),
             String::from("Invalid slot range: leader schedule for epoch 2 is unavailable"),
+        );
+        assert_eq!(response, expected);
+    }
+
+    #[test]
+    fn test_rpc_get_inflation_reward_too_many_addresses() {
+        let rpc = RpcHandler::start();
+
+        // A request with more than the allowed number of addresses must be
+        // rejected by the count check before any address parsing or lookup.
+        let addresses: Vec<String> = (0..=MAX_GET_INFLATION_REWARD_ADDRESSES)
+            .map(|_| Pubkey::new_unique().to_string())
+            .collect();
+        assert_eq!(addresses.len(), MAX_GET_INFLATION_REWARD_ADDRESSES + 1);
+
+        let request = create_test_request("getInflationReward", Some(json!([addresses])));
+        let response = parse_failure_response(rpc.handle_request_sync(request));
+        let expected = (
+            ErrorCode::InvalidParams.code(),
+            format!("Too many inputs provided; max {MAX_GET_INFLATION_REWARD_ADDRESSES}"),
         );
         assert_eq!(response, expected);
     }
@@ -6962,11 +6987,12 @@ pub mod tests {
             runtime.clone(),
         );
 
-        let client = create_client_for_tests(runtime.handle().clone(), my_tpu_address, None, 1);
+        let (tpu_sender, _client) =
+            create_client_for_tests(runtime.handle().clone(), my_tpu_address, None, 1);
         SendTransactionService::new(
             bank_forks.clone(),
             receiver,
-            client,
+            tpu_sender,
             SendTransactionServiceConfig {
                 retry_rate_ms: 1_000,
                 leader_forward_count: 1,
@@ -7254,7 +7280,8 @@ pub mod tests {
             ..
         } = config;
         let runtime = service_runtime(rpc_threads, rpc_blocking_threads, rpc_niceness_adj);
-        let client = create_client_for_tests(runtime.handle().clone(), my_tpu_address, None, 1);
+        let (tpu_sender, _client) =
+            create_client_for_tests(runtime.handle().clone(), my_tpu_address, None, 1);
         let (request_processor, receiver) = JsonRpcRequestProcessor::new(
             config,
             None,
@@ -7278,7 +7305,7 @@ pub mod tests {
         SendTransactionService::new(
             bank_forks,
             receiver,
-            client,
+            tpu_sender,
             SendTransactionServiceConfig {
                 retry_rate_ms: 1_000,
                 leader_forward_count: 1,
@@ -8999,6 +9026,10 @@ pub mod tests {
         let bank2 = bank_forks.read().unwrap().get(2).unwrap();
         let bank3 = Bank::new_from_parent(bank2, SlotLeader::default(), 3);
         bank_forks.write().unwrap().insert(bank3);
+        let bank3_pending_hash = Hash::new_unique();
+        let bank1_hash = bank_forks.read().unwrap().get(1).unwrap().hash();
+        let bank2 = bank_forks.read().unwrap().get(2).unwrap();
+        let bank2_hash = bank2.hash();
 
         let prioritization_fee_cache_inner = None;
         let prioritization_fee_cache = prioritization_fee_cache_inner.as_deref();
@@ -9057,7 +9088,7 @@ pub mod tests {
 
         OptimisticallyConfirmedBankTracker::process_notification(
             (
-                BankNotification::OptimisticallyConfirmed(2),
+                BankNotification::OptimisticallyConfirmed(2, bank2_hash),
                 None, /* no dependency work */
             ),
             &bank_forks,
@@ -9081,7 +9112,7 @@ pub mod tests {
         // Test rollback does not appear to happen, even if slots are notified out of order
         OptimisticallyConfirmedBankTracker::process_notification(
             (
-                BankNotification::OptimisticallyConfirmed(1),
+                BankNotification::OptimisticallyConfirmed(1, bank1_hash),
                 None, /* no dependency work */
             ),
             &bank_forks,
@@ -9105,7 +9136,7 @@ pub mod tests {
         // Test bank will only be cached when frozen
         OptimisticallyConfirmedBankTracker::process_notification(
             (
-                BankNotification::OptimisticallyConfirmed(3),
+                BankNotification::OptimisticallyConfirmed(3, bank3_pending_hash),
                 None, /* no dependency work */
             ),
             &bank_forks,
@@ -9128,6 +9159,9 @@ pub mod tests {
 
         // Test freezing an optimistically confirmed bank will update cache
         let bank3 = bank_forks.read().unwrap().get(3).unwrap();
+        bank3.freeze();
+        assert!(pending_optimistically_confirmed_banks.remove(&(3, bank3_pending_hash)));
+        pending_optimistically_confirmed_banks.insert((3, bank3.hash()));
         OptimisticallyConfirmedBankTracker::process_notification(
             (
                 BankNotification::Frozen(bank3),
@@ -9349,7 +9383,6 @@ pub mod tests {
                 unsanitary_versioned_tx,
                 SimpleAddressLoader::Disabled,
                 &ReservedAccountKeys::empty_key_set(),
-                true,
             )
             .unwrap_err(),
             expect58
@@ -9375,7 +9408,6 @@ pub mod tests {
                 versioned_tx,
                 SimpleAddressLoader::Disabled,
                 &ReservedAccountKeys::empty_key_set(),
-                true,
             )
             .unwrap_err(),
             Error::invalid_params(

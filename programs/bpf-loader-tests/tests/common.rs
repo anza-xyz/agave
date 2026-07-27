@@ -2,7 +2,7 @@
 
 use {
     agave_feature_set::loader_v3_minimum_extend_program_size,
-    solana_account::{AccountSharedData, state_traits::StateMut},
+    solana_account::{AccountSharedData, WritableAccount},
     solana_instruction::{Instruction, error::InstructionError},
     solana_keypair::Keypair,
     solana_loader_v3_interface::state::UpgradeableLoaderState,
@@ -83,8 +83,7 @@ pub async fn add_upgradeable_loader_account(
         account_data_len,
         &id(),
     );
-    account
-        .set_state(account_state)
+    bincode::serialize_into(account.data_as_mut_slice(), account_state)
         .expect("state failed to serialize into account data");
     account_callback(&mut account);
     context.set_account(account_address, &account);

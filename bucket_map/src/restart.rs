@@ -7,7 +7,6 @@ use {
         collections::HashMap,
         fmt::{Debug, Formatter},
         fs::{self, OpenOptions, remove_file},
-        io::{Seek, SeekFrom, Write},
         path::{Path, PathBuf},
         sync::{Arc, Mutex},
     },
@@ -237,21 +236,17 @@ impl Restart {
 
     /// create mmap from `file`
     fn new_map(file: impl AsRef<Path>, capacity: u64) -> Result<MmapMut, std::io::Error> {
-        let mut data = OpenOptions::new()
+        let data = OpenOptions::new()
             .read(true)
             .write(true)
             .create_new(true)
             .open(file)?;
 
         if capacity > 0 {
-            // Theoretical performance optimization: write a zero to the end of
-            // the file so that we won't have to resize it later, which may be
-            // expensive.
-            data.seek(SeekFrom::Start(capacity - 1)).unwrap();
-            data.write_all(&[0]).unwrap();
-            data.rewind().unwrap();
+            // Theoretical performance optimization: set the logical/inode size
+            // so that we don't have to resize it later, which may be expensive.
+            data.set_len(capacity).unwrap();
         }
-        data.flush().unwrap();
         Ok(unsafe { MmapMut::map_mut(&data).unwrap() })
     }
 

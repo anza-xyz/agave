@@ -16,8 +16,8 @@ use {
         consensus_message::Block,
     },
     blockstore_processor::{
-        ConfirmationProgress, ProcessOptions, confirm_full_slot, fill_blockstore_slot_with_ticks,
-        process_bank_0,
+        AsyncVerificationProgress, ConfirmationProgress, ProcessOptions, confirm_full_slot,
+        fill_blockstore_slot_with_ticks, process_bank_0,
     },
     crossbeam_channel::bounded,
     itertools::Itertools,
@@ -119,10 +119,8 @@ impl ProcessActiveBanksContext {
             ancestor_hashes_replay_update_sender,
             block_metadata_notifier: None,
             votor_event_sender,
-            log_messages_bytes_limit: None,
             replay_mode: ForkReplayMode::Serial,
             replay_tx_thread_pool,
-            prioritization_fee_cache: None,
             migration_status,
         }
     }
@@ -682,13 +680,17 @@ fn test_dead_fork_transaction_error() {
             &blockhash,
             hashes_per_tick.saturating_sub(1),
             vec![
-                system_transaction::transfer(&keypair1, &keypair2.pubkey(), 2, blockhash), // should be fine,
+                // valid transfer
+                system_transaction::transfer(&keypair1, &keypair2.pubkey(), 2, blockhash),
+                // unfunded fee-payer, successful no-op
                 system_transaction::transfer(
                     &missing_keypair,
                     &missing_keypair2.pubkey(),
                     2,
                     blockhash,
-                ), // should cause AccountNotFound error
+                ),
+                // invalid blockhash
+                system_transaction::transfer(&keypair1, &keypair2.pubkey(), 2, Hash::new_unique()),
             ],
         );
         entries_to_test_shreds(
@@ -703,7 +705,7 @@ fn test_dead_fork_transaction_error() {
     assert_matches!(
         res,
         Err(BlockstoreProcessorError::InvalidTransaction(
-            TransactionError::AccountNotFound
+            TransactionError::BlockhashNotFound
         ))
     );
 }
@@ -906,17 +908,17 @@ impl SlotStatusNotifierForTest {
 }
 
 impl SlotStatusNotifierInterface for SlotStatusNotifierForTest {
-    fn notify_slot_confirmed(&self, _slot: Slot, _parent: Option<Slot>) {}
+    fn notify_slot_confirmed(&self, _slot: Slot, _parent: Option<Slot>, _bank_id: BankId) {}
 
-    fn notify_slot_processed(&self, _slot: Slot, _parent: Option<Slot>) {}
+    fn notify_slot_processed(&self, _slot: Slot, _parent: Option<Slot>, _bank_id: BankId) {}
 
-    fn notify_slot_rooted(&self, _slot: Slot, _parent: Option<Slot>) {}
+    fn notify_slot_rooted(&self, _slot: Slot, _parent: Option<Slot>, _bank_id: BankId) {}
 
     fn notify_first_shred_received(&self, _slot: Slot) {}
 
     fn notify_completed(&self, _slot: Slot) {}
 
-    fn notify_created_bank(&self, _slot: Slot, _parent: Slot) {}
+    fn notify_created_bank(&self, _slot: Slot, _parent: Slot, _bank_id: BankId) {}
 
     fn notify_slot_dead(&self, slot: Slot, _parent: Slot, _error: String) {
         self.dead_slots.lock().unwrap().insert(slot);
@@ -999,12 +1001,12 @@ fn do_test_dead_slot_on_complete_bank(failure: CompleteBankFailure) {
             .or_insert_with(|| ForkProgress::new(bank.last_blockhash(), None, None, 0, 0, None));
         let tx = match failure {
             CompleteBankFailure::ReplayError => {
-                // trigger a replay error since from_keypair is not funded
+                // trigger a replay error since blockhash is invalid
                 system_transaction::transfer(
-                    &Keypair::new(),
+                    &funded_keypair,
                     &Keypair::new().pubkey(),
                     1,
-                    bank.last_blockhash(),
+                    Hash::new_unique(),
                 )
             }
             CompleteBankFailure::VerifyError => {
@@ -1077,6 +1079,95 @@ fn test_dead_slot_on_complete_bank_replay_err() {
 #[test]
 fn test_dead_slot_on_complete_bank_verify_err() {
     do_test_dead_slot_on_complete_bank(CompleteBankFailure::VerifyError);
+}
+
+#[test]
+fn test_complete_replay_verification_recycles_async_verification() {
+    let replay_stats = RwLock::new(ReplaySlotStats::default());
+    {
+        let mut replay_stats = replay_stats.write().unwrap();
+        replay_stats.poh_verify_elapsed = 11;
+        replay_stats.transaction_verify_elapsed = 17;
+    }
+    let replay_progress = RwLock::new(ConfirmationProgress::new_with_async_verification(
+        Hash::new_unique(),
+        Some(AsyncVerificationProgress::new()),
+    ));
+    let mut async_verification_freelist = Vec::new();
+
+    assert_matches!(
+        ReplayStage::complete_replay_verification(
+            &replay_stats,
+            &replay_progress,
+            &mut async_verification_freelist,
+        ),
+        Ok(())
+    );
+
+    assert_eq!(async_verification_freelist.len(), 1);
+    assert!(
+        replay_progress
+            .write()
+            .unwrap()
+            .take_async_verification()
+            .is_none()
+    );
+    let replay_stats = replay_stats.read().unwrap();
+    assert_eq!(replay_stats.poh_verify_elapsed, 11);
+    assert_eq!(replay_stats.transaction_verify_elapsed, 17);
+}
+
+#[test]
+fn test_complete_bank_replay_sends_bank_complete() {
+    let ReplayBlockstoreComponents {
+        blockstore,
+        vote_simulator,
+        ..
+    } = replay_blockstore_components(Some(tr(0)), 1, None);
+    let bank_forks = vote_simulator.bank_forks;
+    let bank = bank_forks.read().unwrap().get_with_scheduler(0).unwrap();
+    let (replay_vote_sender, replay_vote_receiver) = bounded(1024);
+    let process_active_banks_context = ProcessActiveBanksContext::new_for_tests(
+        bank_forks.clone(),
+        blockstore,
+        replay_vote_sender,
+    );
+    let mut bank_progress = ForkProgress::new(
+        bank.last_blockhash(),
+        None,
+        None,
+        0,
+        0,
+        Some(AsyncVerificationProgress::new()),
+    );
+    let mut async_verification_freelist = Vec::new();
+
+    let completed_replay = ReplayStage::complete_bank_replay(
+        &process_active_banks_context,
+        &bank,
+        &mut bank_progress,
+        &mut async_verification_freelist,
+    )
+    .unwrap();
+
+    assert!(!completed_replay.is_unified_scheduler_enabled);
+    assert!(Arc::ptr_eq(
+        &completed_replay.replay_stats,
+        &bank_progress.replay_stats
+    ));
+    assert!(Arc::ptr_eq(
+        &completed_replay.replay_progress,
+        &bank_progress.replay_progress
+    ));
+    assert_eq!(async_verification_freelist.len(), 1);
+    assert_eq!(
+        replay_vote_receiver.try_recv(),
+        Ok(ReplayVoteMessage::BankComplete {
+            replay_bank_id: bank.bank_id(),
+            replay_slot: bank.slot(),
+        })
+    );
+    assert!(replay_vote_receiver.try_recv().is_err());
 }
 
 #[test]
@@ -1226,6 +1317,9 @@ where
         let bank0 = bank_forks.read().unwrap().get(0).unwrap();
         assert!(bank0.is_frozen());
         assert_eq!(bank0.tick_height(), bank0.max_tick_height());
+        bank_forks.write().unwrap().install_scheduler_pool(
+            DefaultSchedulerPool::new_for_verification(None, None, None, None, None),
+        );
         let bank1 = Bank::new_from_parent(bank0, SlotLeader::default(), 1);
         bank_forks.write().unwrap().insert(bank1);
         let bank1 = bank_forks.read().unwrap().get_with_scheduler(1).unwrap();
@@ -1269,6 +1363,11 @@ where
                 stats.transaction_verify_elapsed += tx_verify_elapsed;
             }
             verify_result?;
+            // Transaction errors from the unified scheduler surface when waiting for its
+            // completion, like replay stage does before freezing the bank.
+            if let Some((result, _timings)) = bank1.wait_for_completed_scheduler() {
+                result?;
+            }
             Ok(replay_tx_count)
         });
         let max_complete_transaction_status_slot = Arc::new(AtomicU64::default());
@@ -6200,7 +6299,6 @@ fn test_initialize_progress_and_fork_choice_with_duplicates() {
         &replay_tx_thread_pool,
         &ProcessOptions::default(),
         &mut ConfirmationProgress::new(bank0.last_blockhash()),
-        None,
         None,
         None,
         &mut ExecuteTimings::default(),

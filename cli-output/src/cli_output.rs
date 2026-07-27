@@ -37,10 +37,8 @@ use {
         RpcSupply, RpcVoteAccountInfo,
     },
     solana_signature::Signature,
-    solana_stake_interface::{
-        stake_history::StakeHistoryEntry,
-        state::{Authorized, Lockup},
-    },
+    solana_stake_history::StakeHistoryEntry,
+    solana_stake_interface::state::{Authorized, Lockup},
     solana_transaction::{Transaction, versioned::VersionedTransaction},
     solana_transaction_status::{
         EncodedConfirmedBlock, EncodedTransaction, TransactionConfirmationStatus,

@@ -13,10 +13,11 @@ use {
         },
         replay_stage::{Finalizer, ReplayStage},
     },
+    agave_bls_sigverify::rewards::RewardInput,
     agave_votor::event::LeaderWindowInfo,
     agave_votor_messages::{
         consensus_message::Block,
-        reward_certificate::{AddVoteMessage, NotarRewardCertificate, SkipRewardCertificate},
+        reward_certificate::{NotarRewardCertificate, SkipRewardCertificate},
     },
     crossbeam_channel::{Receiver, Sender, select_biased},
     solana_clock::Slot,
@@ -85,13 +86,13 @@ pub struct BlockCreationLoop {
 }
 
 impl BlockCreationLoop {
-    pub fn new(config: BlockCreationLoopConfig) -> (Self, Sender<AddVoteMessage>) {
-        let (reward_certs_service, certs_requestor, votes_sender) = RewardCertsService::new(
-            config.cluster_info.clone(),
-            config.leader_schedule_cache.clone(),
-            config.sharable_banks.clone(),
-            config.exit.clone(),
-        );
+    pub(crate) fn new(config: BlockCreationLoopConfig) -> (Self, Sender<RewardInput>) {
+        let (reward_certs_service, certs_requestor, reward_aggregates_sender) =
+            RewardCertsService::new(
+                config.cluster_info.clone(),
+                config.sharable_banks.clone(),
+                config.exit.clone(),
+            );
         let t_block_creation_loop = Builder::new()
             .name("solBlkCreatLoop".to_string())
             .spawn(move || {
@@ -106,7 +107,7 @@ impl BlockCreationLoop {
                 t_block_creation_loop,
                 reward_certs_service,
             },
-            votes_sender,
+            reward_aggregates_sender,
         )
     }
 
@@ -704,19 +705,16 @@ fn record_and_complete_block(
             },
             recv(ctx.record_receiver.inner()) -> msg => {
                 let record = msg.map_err(|_| PohRecorderError::ChannelDisconnected)?;
-                ctx.record_receiver
-                    .on_received_record(record.transaction_batches.len() as u64);
+                ctx.record_receiver.on_received_record();
 
                 if optimistic_parent.is_some() {
-                    record.transaction_batches.iter().for_each(|batch| {
-                        accumulated_txs.extend(batch.iter().cloned());
-                    });
+                    accumulated_txs.extend(record.transactions.iter().cloned());
                 }
 
                 ctx.poh_recorder.write().unwrap().record(
                     record.bank_id,
-                    record.mixins,
-                    record.transaction_batches,
+                    record.mixin,
+                    record.transactions,
                 )?;
             },
             default(select_timeout) => {},
@@ -990,7 +988,7 @@ fn handle_parent_ready(
             packets.len(),
         );
         let batch: PacketBatch = packets.into();
-        let banking_packet_batch = Arc::new(vec![batch]);
+        let banking_packet_batch = Arc::new(batch);
         ctx.banking_stage_sender
             // technically this send can evict to make room (which may drop a few packets)
             // but this should (hopefully) not be significant amounts since we are evicting
@@ -1002,7 +1000,7 @@ fn handle_parent_ready(
     Ok(Some(new_bank))
 }
 
-/// Shut down record intake and synchronously record all already-reserved batches.
+/// Shut down record intake and synchronously process all already-reserved records.
 ///
 /// When `accumulated_txs` is provided, the drained transactions are retained so
 /// sad handover can reschedule them against the recreated bank.
@@ -1015,16 +1013,13 @@ fn shutdown_and_drain_record_receiver(
 
     for record in record_receiver.drain_after_shutdown() {
         if let Some(accumulated_txs) = accumulated_txs.as_deref_mut() {
-            record.transaction_batches.iter().for_each(|batch| {
-                accumulated_txs.extend(batch.iter().cloned());
-            });
+            accumulated_txs.extend(record.transactions.iter().cloned());
         }
 
-        poh_recorder.write().unwrap().record(
-            record.bank_id,
-            record.mixins,
-            record.transaction_batches,
-        )?;
+        poh_recorder
+            .write()
+            .unwrap()
+            .record(record.bank_id, record.mixin, record.transactions)?;
     }
 
     Ok(())
@@ -1505,10 +1500,9 @@ mod tests {
     fn recv_rescheduled_transactions(
         receiver: &BankingPacketReceiver,
     ) -> Vec<VersionedTransaction> {
-        let packet_batches = receiver.recv_timeout(Duration::from_secs(1)).unwrap();
-        packet_batches
+        let packet_batch = receiver.recv_timeout(Duration::from_secs(1)).unwrap();
+        packet_batch
             .iter()
-            .flat_map(|batch| batch.iter())
             .map(|packet| {
                 wincode::deserialize::<VersionedTransaction>(
                     packet.data(..packet.meta().size).unwrap(),
@@ -1779,8 +1773,8 @@ mod tests {
         let bank_id = ctx.poh_recorder.read().unwrap().bank().unwrap().bank_id();
         record_sender
             .try_send(Record::new(
-                vec![Hash::new_unique()],
-                vec![vec![versioned_transfer(1)]],
+                Hash::new_unique(),
+                vec![versioned_transfer(1)],
                 bank_id,
             ))
             .unwrap();
@@ -1892,8 +1886,8 @@ mod tests {
         let drained_tx = versioned_transfer(2);
         record_sender
             .try_send(Record::new(
-                vec![Hash::new_unique()],
-                vec![vec![drained_tx.clone()]],
+                Hash::new_unique(),
+                vec![drained_tx.clone()],
                 optimistic_bank_id,
             ))
             .unwrap();

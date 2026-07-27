@@ -10,10 +10,7 @@ use {
     solana_program_error::{ProgramError, ProgramResult},
     solana_pubkey::Pubkey,
     solana_sdk_ids::sysvar,
-    solana_stake_interface::{
-        stake_history::{StakeHistory, StakeHistoryGetEntry},
-        sysvar::stake_history::StakeHistorySysvar,
-    },
+    solana_stake_history::{StakeHistory, StakeHistoryGetEntry, sysvar::StakeHistorySysvar},
     solana_sysvar::{
         Sysvar, SysvarSerialize,
         clock::Clock,
@@ -25,26 +22,6 @@ use {
     },
 };
 
-// Adapted from `solana_sysvar::get_sysvar` (private).
-#[cfg(target_os = "solana")]
-fn sol_get_sysvar_handler<T>(dst: &mut [u8], offset: u64, length: u64) -> Result<(), ProgramError>
-where
-    T: SysvarSerialize,
-{
-    let sysvar_id = &T::id() as *const _ as *const u8;
-    let var_addr = dst as *mut _ as *mut u8;
-
-    let result = unsafe {
-        solana_define_syscall::definitions::sol_get_sysvar(sysvar_id, var_addr, offset, length)
-    };
-
-    match result {
-        solana_program_entrypoint::SUCCESS => Ok(()),
-        e => Err(e.into()),
-    }
-}
-
-// Double-helper arrangement is easier to write to a mutable slice.
 fn sol_get_sysvar<T>() -> Result<T, ProgramError>
 where
     T: SysvarSerialize,
@@ -54,7 +31,7 @@ where
         let len = T::size_of();
         let mut data = vec![0; len];
 
-        sol_get_sysvar_handler::<T>(&mut data, 0, len as u64)?;
+        solana_sysvar::get_sysvar(&mut data, &T::id(), 0, len as u64)?;
 
         bincode::deserialize(&data).map_err(|_| ProgramError::InvalidArgument)
     }

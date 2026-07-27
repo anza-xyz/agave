@@ -213,7 +213,7 @@ fn validate_certificate_thresholds(
     for (_, _, certificate) in &data.certificates {
         let summary = certificate_signer_summary(certificate, data.validator_count, &rank_stakes);
         let actual = Fraction::new(summary.stake, total_stake);
-        let required = certificate.cert_type.limits_and_vote_types().0;
+        let required = certificate.cert_type.threshold();
         let cert_type = &certificate.cert_type;
         assert!(
             summary.users > 0,

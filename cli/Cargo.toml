@@ -35,6 +35,7 @@ remote-wallet-libusb = ["solana-remote-wallet/linux-static-libusb"]
 agave-feature-set = { workspace = true }
 agave-logger = { workspace = true }
 agave-votor-messages = { workspace = true }
+async-trait = { workspace = true }
 bincode = { workspace = true }
 bip39 = { workspace = true }
 bs58 = { workspace = true }
@@ -58,7 +59,7 @@ solana-clap-utils = { workspace = true }
 solana-cli-config = { workspace = true }
 solana-cli-output = { workspace = true }
 solana-client = { workspace = true }
-solana-clock = { workspace = true }
+solana-clock = { workspace = true, features = ["wincode"] }
 solana-cluster-type = { workspace = true }
 solana-commitment-config = { workspace = true }
 solana-compute-budget-interface = { workspace = true, features = ["borsh"] }
@@ -71,6 +72,7 @@ solana-keypair = { workspace = true }
 solana-loader-v3-interface = { workspace = true, features = ["bincode"] }
 solana-message = { workspace = true }
 solana-native-token = { workspace = true }
+solana-net-utils = { workspace = true }
 solana-nonce = { workspace = true }
 solana-offchain-message = { workspace = true, features = ["verify"] }
 solana-packet = { workspace = true }
@@ -78,7 +80,7 @@ solana-program-runtime = { workspace = true }
 solana-pubkey = { workspace = true }
 solana-pubsub-client = { workspace = true }
 solana-remote-wallet = { workspace = true, features = ["keystone"] }
-solana-rent = { workspace = true }
+solana-rent = { workspace = true, features = ["wincode"] }
 solana-rpc-client = { workspace = true, features = ["default"] }
 solana-rpc-client-api = { workspace = true }
 solana-rpc-client-nonce-utils = { workspace = true, features = ["clap"] }
@@ -88,10 +90,12 @@ solana-signature = { workspace = true }
 solana-signer = { workspace = true }
 solana-signer-store = { workspace = true }
 solana-slot-history = { workspace = true, features = ["wincode"] }
-solana-stake-interface = { workspace = true }
+solana-stake-history = { workspace = true, features = ["wincode"] }
+solana-stake-interface = { workspace = true, features = ["wincode"] }
 solana-syscalls = { workspace = true }
 solana-system-interface = { workspace = true, features = ["bincode"] }
 solana-tpu-client = { workspace = true, features = ["default"] }
+solana-tpu-client-next = { workspace = true, features = ["websocket-node-address-service"] }
 solana-transaction = { workspace = true }
 solana-transaction-error = { workspace = true }
 solana-transaction-status = { workspace = true }
@@ -100,6 +104,7 @@ solana-vote-program = { workspace = true }
 spl-memo-interface = { workspace = true }
 thiserror = { workspace = true }
 tokio = { workspace = true }
+tokio-util = { workspace = true }
 wincode = { workspace = true }
 
 [dev-dependencies]
@@ -109,6 +114,7 @@ solana-faucet = { path = "../faucet", features = ["agave-unstable-api", "dev-con
 solana-fee-calculator = { workspace = true }
 solana-fee-structure = { workspace = true }
 solana-net-utils = { path = "../net-utils", features = ["agave-unstable-api"] }
+solana-nonce = { workspace = true, features = ["wincode"] }
 solana-nonce-account = { workspace = true }
 solana-presigner = { workspace = true }
 solana-rpc = { path = "../rpc", features = ["agave-unstable-api"] }

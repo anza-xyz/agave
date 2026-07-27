@@ -219,7 +219,7 @@ fn run_alpenglow_byzfuzz(
             ) {
                 debug!(
                     "byzfuzz policy current_slot={} source={} destination={} msg=\"{}\" \
-                 action=\"drop\" reason=network_isolation",
+                     action=\"drop\" reason=network_isolation",
                     intercepted.current_slot,
                     intercepted.source,
                     intercepted.destination,
@@ -253,7 +253,7 @@ fn run_alpenglow_byzfuzz(
                 ) {
                     debug!(
                         "byzfuzz policy current_slot={} source={} destination={} msg=\"{}\" \
-                     action=\"{}\" reason=byzantine_corruption mutation={:?}",
+                         action=\"{}\" reason=byzantine_corruption mutation={:?}",
                         intercepted.current_slot,
                         intercepted.source,
                         intercepted.destination,

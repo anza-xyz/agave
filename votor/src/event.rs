@@ -4,6 +4,7 @@ use {
     solana_clock::Slot,
     solana_runtime::bank::Bank,
     std::{
+        cmp::Ordering,
         sync::{Arc, Mutex},
         time::Instant,
     },
@@ -137,7 +138,7 @@ impl RepairEvent {
 }
 
 /// Event sent to replay_stage when a bank needs to be switched as a result of a ParentReady.
-#[derive(Debug, Copy, Clone, PartialEq, Eq, PartialOrd, Ord)]
+#[derive(Debug, Copy, Clone, PartialEq, Eq)]
 pub enum SwitchBankEvent {
     /// We need to switch any existing banks to this bank including ancestors.
     Switch { block: Block },
@@ -148,6 +149,24 @@ impl SwitchBankEvent {
         match self {
             SwitchBankEvent::Switch { block } => *block,
         }
+    }
+}
+
+// We tie break slot by block_id, preferring the lower block_id
+impl Ord for SwitchBankEvent {
+    fn cmp(&self, other: &Self) -> Ordering {
+        let block = self.block();
+        let other_block = other.block();
+        match block.slot.cmp(&other_block.slot) {
+            Ordering::Equal => other_block.block_id.cmp(&block.block_id),
+            ordering => ordering,
+        }
+    }
+}
+
+impl PartialOrd for SwitchBankEvent {
+    fn partial_cmp(&self, other: &Self) -> Option<Ordering> {
+        Some(self.cmp(other))
     }
 }
 
@@ -174,5 +193,42 @@ impl LatestSwitchRequest {
     /// Atomically takes the current request, leaving the cell empty.
     pub fn take(&self) -> Option<SwitchBankEvent> {
         self.0.lock().unwrap().take()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use {super::*, solana_hash::Hash};
+
+    fn block(slot: u64, id_byte: u8) -> Block {
+        let mut bytes = [0; 32];
+        bytes[31] = id_byte;
+        Block {
+            slot,
+            block_id: Hash::new_from_array(bytes),
+        }
+    }
+
+    fn switch(block: Block) -> SwitchBankEvent {
+        SwitchBankEvent::Switch { block }
+    }
+
+    #[test]
+    fn latest_switch_request_advances_by_slot_with_lowest_block_id_tie_breaker() {
+        let latest = LatestSwitchRequest::default();
+        let slot_3_high = switch(block(3, 9));
+        let slot_3_low = switch(block(3, 3));
+        let slot_2 = switch(block(2, 1));
+        let slot_4 = switch(block(4, 255));
+
+        assert_eq!(latest.try_advance(slot_3_high), None);
+        assert_eq!(latest.try_advance(slot_2), None);
+        assert_eq!(latest.take(), Some(slot_3_high));
+
+        assert_eq!(latest.try_advance(slot_3_high), None);
+        assert_eq!(latest.try_advance(slot_3_low), Some(slot_3_high));
+        assert_eq!(latest.try_advance(slot_3_high), None);
+        assert_eq!(latest.try_advance(slot_4), Some(slot_3_low));
+        assert_eq!(latest.take(), Some(slot_4));
     }
 }

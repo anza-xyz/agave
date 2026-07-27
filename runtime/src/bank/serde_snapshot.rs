@@ -146,6 +146,31 @@ mod tests {
         }
         drop(writer);
 
+        // The wincode serialization path must produce byte-for-byte identical output to bincode.
+        {
+            let mut buf_wincode = Vec::new();
+            let mut bank_fields = bank2.get_fields_to_serialize();
+            let versioned_epoch_stakes = mem::take(&mut bank_fields.versioned_epoch_stakes);
+            let accounts_lt_hash = Some(bank_fields.accounts_lt_hash.clone().into());
+            let block_id = Some(bank_fields.block_id);
+            serde_snapshot::serialize_bank_snapshot_into_wincode(
+                &mut buf_wincode,
+                bank_fields,
+                bank2.get_bank_hash_stats(),
+                &bank2.get_snapshot_storages(None),
+                ExtraFieldsToSerialize {
+                    lamports_per_signature: bank2.fee_rate_governor.lamports_per_signature,
+                    unused_incremental_snapshot_persistence: None,
+                    unused_epoch_accounts_hash: None,
+                    versioned_epoch_stakes,
+                    accounts_lt_hash,
+                    block_id,
+                },
+            )
+            .unwrap();
+            assert_eq!(buf, buf_wincode);
+        }
+
         // Now deserialize the serialized bank and ensure it matches the original bank
 
         // Create a new set of directories for this bank's accounts
