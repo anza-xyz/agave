@@ -22,10 +22,6 @@ use {
 
 const WRITABLE_ACCOUNTS_PER_BLOCK: usize = 4096;
 
-// Capacity of `try_add`'s rollback bitmap.
-// For crafted transactions beyond this bound, possible using tooling paths like ledger-tool, rollback stays panic free.
-const ROLLBACK_BITMAP_ACCOUNTS: usize = 256;
-
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum CostTrackerError {
     /// would exceed block max limit
@@ -169,8 +165,8 @@ impl CostTracker {
     /// Checks the block and account limits and, if the transaction fits,
     /// adds its cost to the tracker.
     ///
-    /// A failed call leaves the tracker unchanged on all validated paths:
-    /// account costs applied before the failing account are rolled back,
+    /// A failed call leaves the tracker equivalent to the pre-call state.
+    /// Account costs applied before the failing account are rolled back,
     /// and the block-level state (including the lock free shared `block_cost`)
     /// is only published after every check has passed.
     pub fn try_add(
@@ -197,11 +193,8 @@ impl CostTracker {
         }
 
         // Check each account against account_cost_limit and apply the cost in
-        // the same lookup. On failure, undo the applied prefix. `inserted`
-        // records which of those lookups created a new entry (a pre-existing
-        // entry may hold 0, so the value alone cannot distinguish them).
+        // the same lookup. On failure, undo the applied prefix.
         let mut updated_costliest_account_cost = 0;
-        let mut inserted = [0u64; ROLLBACK_BITMAP_ACCOUNTS / u64::BITS as usize];
         for (index, account_key) in tx_cost.writable_accounts().enumerate() {
             let new_account_cost = match self.cost_by_writable_accounts.entry(*account_key) {
                 Entry::Occupied(mut entry) => {
@@ -217,15 +210,12 @@ impl CostTracker {
                     // `cost <= limits.account_cost` was checked above, so an
                     // account without chained cost always fits
                     entry.insert(cost);
-                    if let Some(word) = inserted.get_mut(index / u64::BITS as usize) {
-                        *word |= 1 << (index % u64::BITS as usize);
-                    }
                     Some(cost)
                 }
             };
             let Some(new_account_cost) = new_account_cost else {
                 // the first `index` accounts were applied before this failure
-                self.roll_back_applied_costs(tx_cost, cost, index, &inserted);
+                self.roll_back_applied_costs(tx_cost, cost, index);
                 return Err(CostTrackerError::WouldExceedAccountMaxLimit);
             };
             updated_costliest_account_cost = updated_costliest_account_cost.max(new_account_cost);
@@ -249,30 +239,22 @@ impl CostTracker {
     }
 
     /// Undoes the first `num_applied` per account cost applications of a
-    /// partially applied transaction. Entries newly created by this call
-    /// (per the `inserted` bitmap) are removed, pre existing ones are decremented.
-    ///
-    /// Tolerates precondition violating inputs from unvalidated (non consensus) callers.
-    /// With duplicate keys, only the first occurrence is marked.
-    /// Its removal makes the later occurrences undo a no-op.
-    /// The net effect (entry absent) still matches the pre-call state.
-    ///
-    /// Keys past the bitmap capacity are decremented rather than removed, possibly leaving a zero-cost entry.
+    /// partially applied transaction by subtracting the cost each one added.
+    /// Entries left with zero cost are removed.
     fn roll_back_applied_costs(
         &mut self,
         tx_cost: &TransactionCost<impl TransactionWithMeta>,
         cost: u64,
         num_applied: usize,
-        inserted: &[u64],
     ) {
-        for (index, account_key) in tx_cost.writable_accounts().take(num_applied).enumerate() {
-            let was_inserted = inserted
-                .get(index / u64::BITS as usize)
-                .is_some_and(|word| word & (1 << (index % u64::BITS as usize)) != 0);
-            if was_inserted {
-                self.cost_by_writable_accounts.remove(account_key);
-            } else if let Some(account_cost) = self.cost_by_writable_accounts.get_mut(account_key) {
-                *account_cost = account_cost.saturating_sub(cost);
+        for account_key in tx_cost.writable_accounts().take(num_applied) {
+            if let Entry::Occupied(mut entry) = self.cost_by_writable_accounts.entry(*account_key) {
+                let new_account_cost = entry.get().saturating_sub(cost);
+                if new_account_cost == 0 {
+                    entry.remove();
+                } else {
+                    *entry.get_mut() = new_account_cost;
+                }
             }
         }
     }
@@ -842,7 +824,7 @@ mod tests {
     }
 
     #[test]
-    fn test_try_add_rollback_across_bitmap_words() {
+    fn test_try_add_rollback_many_accounts() {
         let cost = 100;
         let hot_account = Pubkey::new_unique();
         let mut testee = CostTracker::new(cost * 2, cost * 1000);
@@ -855,7 +837,7 @@ mod tests {
         let block_cost_before = testee.block_cost();
 
         // 100 fresh accounts followed by hot_account, all 100 fresh entries
-        // (bitmap words 0 and 1) are inserted before the failure at index 100
+        // are inserted before the failure at index 100
         let mut keys: Vec<Pubkey> = (0..100).map(|_| Pubkey::new_unique()).collect();
         keys.push(hot_account);
         let transaction = WritableKeysTransaction::new(keys);
@@ -873,8 +855,8 @@ mod tests {
         assert_eq!(block_cost_before, testee.block_cost());
     }
 
-    // Duplicate writable keys are tolerated by the rollback.
-    // Check if only the first occurrence is bitmap marked so rollback must net out to the pre-call state
+    // Duplicate writable keys net out.
+    // Each occurrence's undo subtracts what it added, and the entry is removed when it reaches zero
     #[test]
     fn test_try_add_rollback_with_duplicate_keys() {
         let cost = 100;
@@ -890,7 +872,7 @@ mod tests {
         }
         let block_cost_before = testee.block_cost();
 
-        // fresh dup - rollback removes the single entry on the first occurrence, the second undo is a no-op
+        // fresh dup - each undo subtracts what that occurrence added; the entry reaches zero on the second undo and is removed
         let transaction = WritableKeysTransaction::new(vec![dup, dup, hot_account]);
         let tx_cost = simple_transaction_cost(&transaction, cost);
         assert!(matches!(
@@ -913,6 +895,41 @@ mod tests {
             Err(CostTrackerError::WouldExceedAccountMaxLimit)
         ));
         assert_eq!(Some(&cost), testee.cost_by_writable_accounts.get(&dup));
+        assert_eq!(block_cost_before, testee.block_cost());
+    }
+
+    #[test]
+    fn test_try_add_rollback_removes_zeroed_entries() {
+        let cost = 100;
+        let zeroed = Pubkey::new_unique();
+        let hot_account = Pubkey::new_unique();
+        let mut testee = CostTracker::new(cost * 2, cost * 1000);
+
+        // leave `zeroed` in the map with zero cost
+        let transaction = WritableKeysTransaction::new(vec![zeroed]);
+        let tx_cost = simple_transaction_cost(&transaction, cost);
+        assert!(testee.try_add(&tx_cost).is_ok());
+        testee.remove(&tx_cost);
+        assert_eq!(Some(&0), testee.cost_by_writable_accounts.get(&zeroed));
+
+        // drive hot_account to the limit so the next charge fails
+        let transaction = WritableKeysTransaction::new(vec![hot_account]);
+        let tx_cost = simple_transaction_cost(&transaction, cost);
+        assert!(testee.try_add(&tx_cost).is_ok());
+        assert!(testee.try_add(&tx_cost).is_ok());
+        let block_cost_before = testee.block_cost();
+
+        let transaction = WritableKeysTransaction::new(vec![zeroed, hot_account]);
+        let tx_cost = simple_transaction_cost(&transaction, cost);
+        assert!(matches!(
+            testee.try_add(&tx_cost),
+            Err(CostTrackerError::WouldExceedAccountMaxLimit)
+        ));
+        assert!(!testee.cost_by_writable_accounts.contains_key(&zeroed));
+        assert_eq!(
+            Some(&(cost * 2)),
+            testee.cost_by_writable_accounts.get(&hot_account)
+        );
         assert_eq!(block_cost_before, testee.block_cost());
     }
 
