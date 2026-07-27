@@ -21,7 +21,6 @@ agave-unstable-api = []
 num-traits = { workspace = true }
 
 [dev-dependencies]
-agave-math-utils = { path = ".", features = ["agave-unstable-api"] }
 rand = { workspace = true }
 test-case = { workspace = true }
 

@@ -122,7 +122,6 @@ dependencies = [
  "ahash 0.8.12",
  "solana-epoch-schedule",
  "solana-hash 4.5.0",
- "solana-keypair",
  "solana-pubkey 4.2.0",
  "solana-sha256-hasher",
  "solana-svm-feature-set",
@@ -256,7 +255,6 @@ dependencies = [
  "env_logger",
  "libc",
  "log",
- "signal-hook",
 ]
 
 [[package]]
@@ -6250,7 +6248,6 @@ dependencies = [
  "solana-compute-budget",
  "solana-compute-budget-interface",
  "solana-instruction",
- "solana-packet 4.2.0",
  "solana-pubkey 4.2.0",
  "solana-sdk-ids",
  "solana-svm-transaction",
@@ -7931,7 +7928,6 @@ dependencies = [
  "solana-nonce",
  "solana-nonce-account",
  "solana-packet 4.2.0",
- "solana-perf",
  "solana-poh-config",
  "solana-precompile-error",
  "solana-program-binaries",
@@ -8933,7 +8929,6 @@ dependencies = [
 name = "solana-unified-scheduler-pool"
 version = "4.3.0-alpha.2"
 dependencies = [
- "agave-banking-stage-ingress-types",
  "assert_matches",
  "crossbeam-channel",
  "dashmap",
@@ -8944,7 +8939,6 @@ dependencies = [
  "solana-clock",
  "solana-cost-model",
  "solana-metrics",
- "solana-poh",
  "solana-pubkey 4.2.0",
  "solana-runtime",
  "solana-runtime-transaction",

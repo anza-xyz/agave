@@ -99,7 +99,6 @@ thiserror = { workspace = true }
 wincode = { workspace = true }
 
 [dev-dependencies]
-agave-logger = { path = "../logger", features = ["agave-unstable-api"] }
 agave-reserved-account-keys = { path = "../reserved-account-keys", features = ["agave-unstable-api"] }
 assert_matches = { workspace = true }
 bincode = { workspace = true }
