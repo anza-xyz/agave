@@ -27,11 +27,11 @@ fn exec(input: &PathBuf) -> bool {
 
     let ok = actual == expected;
     if ok {
-        println!("OK: {:?}", input);
+        println!("OK: {input:?}");
     } else {
-        println!("FAIL: {:?}", input);
-        println!("Expected: {:?}", expected);
-        println!("Actual: {:?}", actual);
+        println!("FAIL: {input:?}");
+        println!("Expected: {expected:?}");
+        println!("Actual: {actual:?}");
     }
     ok
 }
