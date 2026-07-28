@@ -675,7 +675,7 @@ impl<FG: ForkGraph> ProgramCache<FG> {
                                 );
                             if entry_in_same_branch {
                                 let entry_is_effective =
-                                    loaded_programs_for_tx_batch.slot >= entry.effective_slot;
+                                    loaded_programs_for_tx_batch.slot >= entry.effective_slot();
                                 let entry_to_return = if entry_is_effective {
                                     if !Self::matches_environment(
                                         entry,
@@ -1411,7 +1411,7 @@ pub(crate) mod tests {
                     // Test that the usage counter is retained for the unloaded program
                     assert_eq!(program.stats.uses.load(Ordering::Relaxed), 10);
                     assert_eq!(program.deployment_slot, 0);
-                    assert_eq!(program.effective_slot, 1);
+                    assert_eq!(program.effective_slot(), 1);
                 }
             });
 
@@ -1430,7 +1430,7 @@ pub(crate) mod tests {
             .for_each(|(_key, program)| {
                 if matches!(program.program, ProgramCacheEntryType::Unloaded(_))
                     && program.deployment_slot == 0
-                    && program.effective_slot == 1
+                    && program.effective_slot() == 1
                 {
                     // Test that the usage counter was correctly updated.
                     assert_eq!(program.stats.uses.load(Ordering::Relaxed), 10);
@@ -1479,7 +1479,7 @@ pub(crate) mod tests {
             {
                 assert_eq!(entry.deployment_slot, *deployment_slot);
                 assert_eq!(
-                    entry.effective_slot,
+                    entry.effective_slot(),
                     deployment_slot.saturating_add(*delay_visibility as u64)
                 );
             }
@@ -1668,7 +1668,7 @@ pub(crate) mod tests {
         );
         assert!(tombstone.is_tombstone());
         assert_eq!(tombstone.deployment_slot, 0);
-        assert_eq!(tombstone.effective_slot, 0);
+        assert_eq!(tombstone.effective_slot(), 0);
 
         let tombstone = ProgramCacheEntry::new_tombstone(
             100,
@@ -1678,7 +1678,7 @@ pub(crate) mod tests {
         assert_matches!(tombstone.program, ProgramCacheEntryType::Closed);
         assert!(tombstone.is_tombstone());
         assert_eq!(tombstone.deployment_slot, 100);
-        assert_eq!(tombstone.effective_slot, 100);
+        assert_eq!(tombstone.effective_slot(), 100);
 
         let mut cache = ProgramCache::<TestForkGraph>::new(0);
         let program1 = Pubkey::new_unique();
@@ -1692,7 +1692,7 @@ pub(crate) mod tests {
         assert_eq!(slot_versions.len(), 1);
         assert!(slot_versions.first().unwrap().is_tombstone());
         assert_eq!(tombstone.deployment_slot, 10);
-        assert_eq!(tombstone.effective_slot, 10);
+        assert_eq!(tombstone.effective_slot(), 10);
 
         // Add a program at slot 50, and a tombstone for the program at slot 60
         let program2 = Pubkey::new_unique();
@@ -1713,7 +1713,7 @@ pub(crate) mod tests {
         assert!(slot_versions.get(1).unwrap().is_tombstone());
         assert!(tombstone.is_tombstone());
         assert_eq!(tombstone.deployment_slot, 60);
-        assert_eq!(tombstone.effective_slot, 60);
+        assert_eq!(tombstone.effective_slot(), 60);
     }
 
     struct TestForkGraph {
@@ -2400,7 +2400,7 @@ pub(crate) mod tests {
         let entry = new_test_entry_with_usage(1, 2, stats);
         let unloaded_entry = entry.to_unloaded().unwrap();
         assert_eq!(unloaded_entry.deployment_slot, 1);
-        assert_eq!(unloaded_entry.effective_slot, 2);
+        assert_eq!(unloaded_entry.effective_slot(), 2);
         assert_eq!(unloaded_entry.latest_access_slot.load(Ordering::Relaxed), 1);
         assert_eq!(unloaded_entry.stats.uses.load(Ordering::Relaxed), 3);
 

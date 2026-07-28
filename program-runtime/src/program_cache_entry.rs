@@ -188,7 +188,7 @@ impl std::fmt::Debug for ProgramCacheEntry {
 #[cfg(feature = "dev-context-only-utils")]
 impl PartialEq for ProgramCacheEntry {
     fn eq(&self, other: &Self) -> bool {
-        self.effective_slot == other.effective_slot
+        self.effective_slot() == other.effective_slot()
             && self.deployment_slot == other.deployment_slot
             && self.account_owner == other.account_owner
             && self.is_tombstone() == other.is_tombstone()
@@ -378,10 +378,10 @@ impl ProgramCacheEntry {
 
     pub(crate) fn is_implicit_delay_visibility_tombstone(&self, slot: Slot) -> bool {
         !matches!(self.program, ProgramCacheEntryType::Builtin(_))
-            && self.effective_slot.saturating_sub(self.deployment_slot)
+            && self.effective_slot().saturating_sub(self.deployment_slot)
                 == DELAY_VISIBILITY_SLOT_OFFSET
             && slot >= self.deployment_slot
-            && slot < self.effective_slot
+            && slot < self.effective_slot()
     }
 
     pub fn effective_slot(&self) -> Slot {

@@ -6466,7 +6466,7 @@ fn test_bpf_loader_upgradeable_deploy_with_max_len() {
         let slot_versions = program_cache.get_slot_versions_for_tests(&program_keypair.pubkey());
         assert_eq!(slot_versions.len(), 1);
         assert_eq!(slot_versions[0].deployment_slot, bank.slot());
-        assert_eq!(slot_versions[0].effective_slot, bank.slot());
+        assert_eq!(slot_versions[0].effective_slot(), bank.slot());
         assert!(matches!(
             slot_versions[0].program,
             ProgramCacheEntryType::Closed,
@@ -6494,7 +6494,7 @@ fn test_bpf_loader_upgradeable_deploy_with_max_len() {
         let slot_versions = program_cache.get_slot_versions_for_tests(&buffer_address);
         assert_eq!(slot_versions.len(), 1);
         assert_eq!(slot_versions[0].deployment_slot, bank.slot());
-        assert_eq!(slot_versions[0].effective_slot, bank.slot());
+        assert_eq!(slot_versions[0].effective_slot(), bank.slot());
         assert!(matches!(
             slot_versions[0].program,
             ProgramCacheEntryType::Closed,
@@ -6603,7 +6603,7 @@ fn test_bpf_loader_upgradeable_deploy_with_max_len() {
         let slot_versions = program_cache.get_slot_versions_for_tests(&program_keypair.pubkey());
         assert_eq!(slot_versions.len(), 1);
         assert_eq!(slot_versions[0].deployment_slot, bank.slot() - 1);
-        assert_eq!(slot_versions[0].effective_slot, bank.slot());
+        assert_eq!(slot_versions[0].effective_slot(), bank.slot());
         assert!(matches!(
             slot_versions[0].program,
             ProgramCacheEntryType::Loaded(_),

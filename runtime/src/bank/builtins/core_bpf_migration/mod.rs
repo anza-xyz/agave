@@ -774,7 +774,7 @@ pub(crate) mod tests {
 
             // The target program entry should be updated.
             assert_eq!(target_entry.deployment_slot, migration_or_upgrade_slot);
-            assert_eq!(target_entry.effective_slot, migration_or_upgrade_slot + 1);
+            assert_eq!(target_entry.effective_slot(), migration_or_upgrade_slot + 1);
 
             // The target program entry should be a BPF program.
             assert_matches!(target_entry.program, ProgramCacheEntryType::Loaded(..));
