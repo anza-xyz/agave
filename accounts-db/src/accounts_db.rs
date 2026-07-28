@@ -4165,9 +4165,8 @@ impl AccountsDb {
             .get_slot_storage_entry_shrinking_in_progress_ok(remove_slot)
         {
             storage
-                .accounts
-                .scan_pubkeys(|pk| {
-                    stored_keys.insert((*pk, remove_slot));
+                .scan_accounts_without_data(|_offset, account| {
+                    stored_keys.insert((*account.pubkey(), remove_slot));
                 })
                 .expect("must scan accounts storage");
         }
