@@ -14,6 +14,11 @@ targets = ["x86_64-unknown-linux-gnu"]
 all-features = true
 rustdoc-args = ["--cfg=docsrs"]
 
+[package.metadata.cargo-shear]
+# self dev-dependency enables agave-unstable-api / dev-context-only-utils for the
+# crate's own test targets; cargo-shear flags it as unused (false positive).
+ignored = ["solana-transaction-context"]
+
 [features]
 agave-unstable-api = []
 bincode = ["dep:bincode", "serde"]
@@ -42,6 +47,10 @@ solana-account-info = { workspace = true }
 solana-program-entrypoint = { workspace = true }
 solana-pubkey = { workspace = true, features = ["rand"] }
 solana-system-interface = { workspace = true }
+solana-transaction-context = { path = ".", features = [
+    "agave-unstable-api",
+    "dev-context-only-utils",
+] }
 static_assertions = { workspace = true }
 
 [lints]

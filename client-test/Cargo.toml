@@ -33,10 +33,10 @@ solana-net-utils = { path = "../net-utils", features = ["agave-unstable-api"] }
 solana-packet = { workspace = true }
 solana-pubkey = { workspace = true }
 solana-pubsub-client = { workspace = true }
-solana-rpc = { workspace = true }
+solana-rpc = { workspace = true, features = ["agave-unstable-api", "dev-context-only-utils"] }
 solana-rpc-client = { workspace = true }
 solana-rpc-client-api = { workspace = true }
-solana-runtime = { workspace = true }
+solana-runtime = { workspace = true, features = ["agave-unstable-api", "dev-context-only-utils"] }
 solana-signer = { workspace = true }
 solana-system-interface = { workspace = true }
 solana-system-transaction = { workspace = true }

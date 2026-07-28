@@ -14,6 +14,11 @@ targets = ["x86_64-unknown-linux-gnu"]
 all-features = true
 rustdoc-args = ["--cfg=docsrs"]
 
+[package.metadata.cargo-shear]
+# self dev-dependency enables agave-unstable-api / dev-context-only-utils for the
+# crate's own test targets; cargo-shear flags it as unused (false positive).
+ignored = ["solana-unified-scheduler-pool"]
+
 [features]
 agave-unstable-api = []
 dev-context-only-utils = ["solana-runtime/dev-context-only-utils"]
@@ -44,6 +49,7 @@ solana-hash = { workspace = true }
 solana-keypair = { workspace = true }
 solana-runtime = { path = "../runtime", features = ["agave-unstable-api", "dev-context-only-utils"] }
 solana-system-transaction = { workspace = true }
+solana-unified-scheduler-pool = { path = ".", features = ["agave-unstable-api", "dev-context-only-utils"] }
 
 [lints]
 workspace = true

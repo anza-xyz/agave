@@ -14,6 +14,12 @@ targets = ["x86_64-unknown-linux-gnu"]
 all-features = true
 rustdoc-args = ["--cfg=docsrs"]
 
+[package.metadata.cargo-shear]
+# enables the `decode` feature on solana-hash so `Hash: Display` is available to
+# tests (used via to_string() on a value from the sha256 hasher, not named
+# directly); cargo-shear can't see that usage (false positive).
+ignored = ["solana-hash"]
+
 [lib]
 crate-type = ["lib"]
 name = "agave_random"
@@ -27,6 +33,7 @@ rand = { workspace = true }
 [dev-dependencies]
 assert_matches = { workspace = true }
 rand_chacha = { workspace = true }
+solana-hash = { workspace = true, features = ["decode"] }
 solana-sha256-hasher = { workspace = true, features = ["sha2"] }
 test-case = { workspace = true }
 

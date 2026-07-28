@@ -15,9 +15,10 @@ all-features = true
 rustdoc-args = ["--cfg=docsrs"]
 
 [package.metadata.cargo-shear]
-# log is required by the `datapoint_info!` macro expansion in cost_tracker.rs;
-# cargo-shear can't see through the macro (false positive).
-ignored = ["log"]
+# log: required by the `datapoint_info!` macro expansion in cost_tracker.rs.
+# solana-cost-model: self dev-dependency enabling dev-context-only-utils for the
+# crate's own test targets. cargo-shear can't see either (false positives).
+ignored = ["log", "solana-cost-model"]
 
 [lib]
 crate-type = ["lib"]
@@ -71,6 +72,7 @@ agave-logger = { path = "../logger", features = ["agave-unstable-api"] }
 agave-reserved-account-keys = { path = "../reserved-account-keys", features = ["agave-unstable-api"] }
 itertools = { workspace = true }
 solana-compute-budget-interface = { workspace = true }
+solana-cost-model = { path = ".", features = ["agave-unstable-api", "dev-context-only-utils"] }
 solana-hash = { workspace = true, features = ["atomic"] }
 solana-instruction = { workspace = true }
 solana-keypair = { workspace = true }

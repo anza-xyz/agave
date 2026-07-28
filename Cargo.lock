@@ -229,6 +229,7 @@ dependencies = [
 name = "agave-math-utils"
 version = "4.3.0-alpha.2"
 dependencies = [
+ "agave-math-utils",
  "num-traits",
  "rand 0.9.4",
  "test-case",
@@ -266,6 +267,7 @@ dependencies = [
  "assert_matches",
  "rand 0.9.4",
  "rand_chacha 0.9.0",
+ "solana-hash 4.5.0",
  "solana-sha256-hasher",
  "test-case",
 ]
@@ -8075,6 +8077,7 @@ dependencies = [
  "solana-clock",
  "solana-compute-budget",
  "solana-compute-budget-interface",
+ "solana-cost-model",
  "solana-frozen-abi",
  "solana-frozen-abi-macro",
  "solana-hash 4.5.0",
@@ -9597,6 +9600,7 @@ dependencies = [
  "solana-message",
  "solana-precompile-error",
  "solana-program-entrypoint",
+ "solana-program-runtime",
  "solana-pubkey 4.2.0",
  "solana-rent",
  "solana-sbpf",
@@ -9768,6 +9772,7 @@ version = "4.3.0-alpha.2"
 dependencies = [
  "log",
  "num_cpus",
+ "solana-rayon-threadlimit",
 ]
 
 [[package]]
@@ -11097,6 +11102,7 @@ dependencies = [
  "solana-signer",
  "solana-streamer",
  "solana-syscalls",
+ "solana-test-validator",
  "solana-transaction",
  "solana-validator-exit",
  "solana-vote-interface",
@@ -11278,6 +11284,7 @@ dependencies = [
  "solana-sdk-ids",
  "solana-signature",
  "solana-system-interface 3.2.0",
+ "solana-transaction-context",
  "static_assertions",
  "wincode",
 ]
@@ -11469,6 +11476,7 @@ dependencies = [
  "solana-transaction",
  "solana-transaction-error",
  "solana-unified-scheduler-logic",
+ "solana-unified-scheduler-pool",
  "static_assertions",
 ]
 

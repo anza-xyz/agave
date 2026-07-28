@@ -14,6 +14,11 @@ targets = ["x86_64-unknown-linux-gnu"]
 all-features = true
 rustdoc-args = ["--cfg=docsrs"]
 
+[package.metadata.cargo-shear]
+# self dev-dependency enables agave-unstable-api / dev-context-only-utils for the
+# crate's own test targets; cargo-shear flags it as unused (false positive).
+ignored = ["agave-math-utils"]
+
 [features]
 agave-unstable-api = []
 
@@ -21,6 +26,7 @@ agave-unstable-api = []
 num-traits = { workspace = true }
 
 [dev-dependencies]
+agave-math-utils = { path = ".", features = ["agave-unstable-api"] }
 rand = { workspace = true }
 test-case = { workspace = true }
 
