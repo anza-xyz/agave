@@ -5204,15 +5204,6 @@ impl AccountsDb {
             .remove_dead_accounts_shrink_us
             .fetch_add(measure.as_us(), Ordering::Relaxed);
 
-        dead_slots.retain(|slot| {
-            if let Some(slot_store) = self.storage.get_slot_storage_entry(*slot)
-                && slot_store.count() != 0
-            {
-                return false;
-            }
-            true
-        });
-
         dead_slots
     }
 
