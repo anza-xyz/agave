@@ -55,7 +55,7 @@ pub fn deploy_program(
     disable_sbpf_v0_v1_v2_deployment: bool,
     program_id: &Pubkey,
     loader_key: &Pubkey,
-    account_size: usize,
+    _account_size: usize,
     programdata: &[u8],
     deployment_slot: Slot,
 ) -> Result<(), InstructionError> {
@@ -110,7 +110,6 @@ pub fn deploy_program(
             deployment_slot,
             deployment_slot.saturating_add(DELAY_VISIBILITY_SLOT_OFFSET),
             programdata,
-            account_size,
             #[cfg(feature = "metrics")]
             load_program_metrics,
         )

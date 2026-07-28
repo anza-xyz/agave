@@ -214,7 +214,6 @@ impl ProgramCacheEntry {
         deployment_slot: Slot,
         effective_slot: Slot,
         elf_bytes: &[u8],
-        _account_size: usize,
         #[cfg(feature = "metrics")] metrics: &mut LoadProgramMetrics,
     ) -> Result<Self, Box<dyn std::error::Error>> {
         Self::new_internal(
