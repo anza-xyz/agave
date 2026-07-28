@@ -23,6 +23,11 @@ name = "test_exec_vm_serialization"
 path = "src/bin/test_exec_vm_serialization.rs"
 required-features = ["cli", "ffi"]
 
+[[bin]]
+name = "test_exec_vm_syscall"
+path = "src/bin/test_exec_vm_syscall.rs"
+required-features = ["cli", "ffi"]
+
 [features]
 default = ["cli", "ffi"]
 agave-unstable-api = []
