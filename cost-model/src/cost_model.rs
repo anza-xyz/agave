@@ -115,7 +115,7 @@ impl CostModel {
         let allocated_accounts_data_size =
             Self::calculate_allocated_accounts_data_size(instructions, feature_set);
 
-        let usage_cost_details = UsageCostDetails {
+        TransactionCost {
             transaction,
             signature_cost,
             write_lock_cost,
@@ -123,9 +123,7 @@ impl CostModel {
             programs_execution_cost,
             loaded_accounts_data_size_cost,
             allocated_accounts_data_size,
-        };
-
-        TransactionCost::new(usage_cost_details)
+        }
     }
 
     /// Returns signature details and the total signature cost

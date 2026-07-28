@@ -3,56 +3,70 @@ use {
     solana_svm_transaction::svm_message::SVMMessage,
 };
 
+// Costs are stored in compute units.
 #[derive(Debug)]
 pub struct TransactionCost<'a, Tx> {
-    usage_cost: UsageCostDetails<'a, Tx>,
+    pub transaction: &'a Tx,
+    pub signature_cost: u64,
+    pub write_lock_cost: u64,
+    pub data_bytes_cost: u16,
+    pub programs_execution_cost: u64,
+    pub loaded_accounts_data_size_cost: u64,
+    pub allocated_accounts_data_size: u64,
 }
+
+/// Backward-compatible alias for callers that still name the old inner type.
+pub type UsageCostDetails<'a, Tx> = TransactionCost<'a, Tx>;
 
 impl<'a, Tx> TransactionCost<'a, Tx> {
     pub fn new(usage_cost: UsageCostDetails<'a, Tx>) -> Self {
-        Self { usage_cost }
+        usage_cost
     }
 
     pub fn usage_cost_details(&self) -> &UsageCostDetails<'a, Tx> {
-        &self.usage_cost
+        self
     }
 
     pub fn usage_cost_details_mut(&mut self) -> &mut UsageCostDetails<'a, Tx> {
-        &mut self.usage_cost
+        self
     }
 
     pub fn sum(&self) -> u64 {
-        self.usage_cost.sum()
+        self.signature_cost
+            .saturating_add(self.write_lock_cost)
+            .saturating_add(u64::from(self.data_bytes_cost))
+            .saturating_add(self.programs_execution_cost)
+            .saturating_add(self.loaded_accounts_data_size_cost)
     }
 
     pub fn programs_execution_cost(&self) -> u64 {
-        self.usage_cost.programs_execution_cost
+        self.programs_execution_cost
     }
 
     pub fn data_bytes_cost(&self) -> u16 {
-        self.usage_cost.data_bytes_cost
+        self.data_bytes_cost
     }
 
     pub fn allocated_accounts_data_size(&self) -> u64 {
-        self.usage_cost.allocated_accounts_data_size
+        self.allocated_accounts_data_size
     }
 
     pub fn loaded_accounts_data_size_cost(&self) -> u64 {
-        self.usage_cost.loaded_accounts_data_size_cost
+        self.loaded_accounts_data_size_cost
     }
 
     pub fn signature_cost(&self) -> u64 {
-        self.usage_cost.signature_cost
+        self.signature_cost
     }
 
     pub fn write_lock_cost(&self) -> u64 {
-        self.usage_cost.write_lock_cost
+        self.write_lock_cost
     }
 }
 
 impl<Tx: SVMMessage> TransactionCost<'_, Tx> {
     pub fn writable_accounts(&self) -> impl Iterator<Item = &Pubkey> {
-        let transaction = self.usage_cost.transaction;
+        let transaction = self.transaction;
         transaction
             .account_keys()
             .iter()
@@ -63,53 +77,27 @@ impl<Tx: SVMMessage> TransactionCost<'_, Tx> {
 
 impl<Tx: TransactionMeta> TransactionCost<'_, Tx> {
     pub fn num_transaction_signatures(&self) -> u64 {
-        self.usage_cost
-            .transaction
+        self.transaction
             .signature_details()
             .num_transaction_signatures()
     }
 
     pub fn num_secp256k1_instruction_signatures(&self) -> u64 {
-        self.usage_cost
-            .transaction
+        self.transaction
             .signature_details()
             .num_secp256k1_instruction_signatures()
     }
 
     pub fn num_ed25519_instruction_signatures(&self) -> u64 {
-        self.usage_cost
-            .transaction
+        self.transaction
             .signature_details()
             .num_ed25519_instruction_signatures()
     }
 
     pub fn num_secp256r1_instruction_signatures(&self) -> u64 {
-        self.usage_cost
-            .transaction
+        self.transaction
             .signature_details()
             .num_secp256r1_instruction_signatures()
-    }
-}
-
-// costs are stored in number of 'compute unit's
-#[derive(Debug)]
-pub struct UsageCostDetails<'a, Tx> {
-    pub transaction: &'a Tx,
-    pub signature_cost: u64,
-    pub write_lock_cost: u64,
-    pub data_bytes_cost: u16,
-    pub programs_execution_cost: u64,
-    pub loaded_accounts_data_size_cost: u64,
-    pub allocated_accounts_data_size: u64,
-}
-
-impl<Tx> UsageCostDetails<'_, Tx> {
-    pub fn sum(&self) -> u64 {
-        self.signature_cost
-            .saturating_add(self.write_lock_cost)
-            .saturating_add(u64::from(self.data_bytes_cost))
-            .saturating_add(self.programs_execution_cost)
-            .saturating_add(self.loaded_accounts_data_size_cost)
     }
 }
 
@@ -351,7 +339,7 @@ mod tests {
                     MAX_LOADED_ACCOUNTS_DATA_SIZE_BYTES.get(),
                     &feature_set,
                 );
-            let vote_program_usage_details = UsageCostDetails {
+            let vote_program_cost = TransactionCost {
                 transaction: &vote_transaction,
                 signature_cost,
                 write_lock_cost,
@@ -360,7 +348,7 @@ mod tests {
                 loaded_accounts_data_size_cost,
                 allocated_accounts_data_size: 0,
             };
-            let expected_cost = vote_program_usage_details.sum();
+            let expected_cost = vote_program_cost.sum();
 
             let vote_cost = CostModel::calculate_cost(&vote_transaction, &feature_set);
             assert_eq!(expected_cost, vote_cost.sum());

@@ -1269,9 +1269,8 @@ mod tests {
                 };
 
             let mut cost = CostModel::calculate_cost(&transactions[0], &bank.feature_set);
-            let usage_cost = cost.usage_cost_details_mut();
-            usage_cost.programs_execution_cost = actual_programs_execution_cost;
-            usage_cost.loaded_accounts_data_size_cost = actual_loaded_accounts_data_size_cost;
+            cost.programs_execution_cost = actual_programs_execution_cost;
+            cost.loaded_accounts_data_size_cost = actual_loaded_accounts_data_size_cost;
 
             block_cost + cost.sum()
         };

@@ -480,11 +480,11 @@ mod tests {
         }
     }
 
-    fn simple_usage_cost_details(
+    fn simple_transaction_cost(
         transaction: &WritableKeysTransaction,
         programs_execution_cost: u64,
-    ) -> UsageCostDetails<'_, WritableKeysTransaction> {
-        UsageCostDetails {
+    ) -> TransactionCost<'_, WritableKeysTransaction> {
+        TransactionCost {
             transaction,
             signature_cost: 0,
             write_lock_cost: 0,
@@ -495,20 +495,10 @@ mod tests {
         }
     }
 
-    fn simple_transaction_cost(
-        transaction: &WritableKeysTransaction,
-        programs_execution_cost: u64,
-    ) -> TransactionCost<'_, WritableKeysTransaction> {
-        TransactionCost::new(simple_usage_cost_details(
-            transaction,
-            programs_execution_cost,
-        ))
-    }
-
     fn simple_vote_transaction_cost(
         transaction: &WritableKeysTransaction,
     ) -> TransactionCost<'_, WritableKeysTransaction> {
-        TransactionCost::new(UsageCostDetails {
+        TransactionCost {
             transaction,
             signature_cost: 1,
             write_lock_cost: 2,
@@ -516,7 +506,7 @@ mod tests {
             programs_execution_cost: solana_vote_program::vote_processor::DEFAULT_COMPUTE_UNITS,
             loaded_accounts_data_size_cost: 8,
             allocated_accounts_data_size: 0,
-        })
+        }
     }
 
     #[test]
@@ -565,9 +555,7 @@ mod tests {
         let mint_keypair = test_setup();
         let tx = build_simple_transaction(&mint_keypair);
         let mut tx_cost = simple_transaction_cost(&tx, 5);
-        tx_cost
-            .usage_cost_details_mut()
-            .allocated_accounts_data_size = 1;
+        tx_cost.allocated_accounts_data_size = 1;
         let cost = tx_cost.sum();
 
         // build testee to have capacity for one simple transaction
@@ -714,12 +702,8 @@ mod tests {
         let mut tx_cost1 = simple_transaction_cost(&tx1, 5);
         let tx2 = build_simple_transaction(&second_account);
         let mut tx_cost2 = simple_transaction_cost(&tx2, 5);
-        tx_cost1
-            .usage_cost_details_mut()
-            .allocated_accounts_data_size = MAX_BLOCK_ACCOUNTS_DATA_SIZE_DELTA;
-        tx_cost2
-            .usage_cost_details_mut()
-            .allocated_accounts_data_size = MAX_BLOCK_ACCOUNTS_DATA_SIZE_DELTA + 1;
+        tx_cost1.allocated_accounts_data_size = MAX_BLOCK_ACCOUNTS_DATA_SIZE_DELTA;
+        tx_cost2.allocated_accounts_data_size = MAX_BLOCK_ACCOUNTS_DATA_SIZE_DELTA + 1;
         let cost1 = tx_cost1.sum();
         let cost2 = tx_cost2.sum();
 
@@ -739,9 +723,7 @@ mod tests {
         let mint_keypair = test_setup();
         let tx = build_simple_transaction(&mint_keypair);
         let mut tx_cost = simple_transaction_cost(&tx, 5);
-        tx_cost
-            .usage_cost_details_mut()
-            .allocated_accounts_data_size = 2;
+        tx_cost.allocated_accounts_data_size = 2;
 
         // Transaction fits with default limit.
         let mut testee = CostTracker::new(u64::MAX, u64::MAX);
@@ -915,10 +897,8 @@ mod tests {
                 .collect(),
         );
 
-        let mut usage_cost =
-            simple_usage_cost_details(&transaction, estimated_programs_execution_cost);
-        usage_cost.loaded_accounts_data_size_cost = estimated_loaded_accounts_data_size_cost;
-        let tx_cost = TransactionCost::new(usage_cost);
+        let mut tx_cost = simple_transaction_cost(&transaction, estimated_programs_execution_cost);
+        tx_cost.loaded_accounts_data_size_cost = estimated_loaded_accounts_data_size_cost;
         // confirm tx_cost is only made up by programs_execution_cost and
         // loaded_accounts_data_size_cost
         let estimated_tx_cost = tx_cost.sum();
