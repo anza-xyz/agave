@@ -4912,25 +4912,6 @@ impl AccountsDb {
         }
     }
 
-    /// Returns all of the accounts' pubkeys for a given slot
-    pub fn get_pubkeys_for_slot(&self, slot: Slot) -> Vec<Pubkey> {
-        let scan_result = self.scan_cache_storage_fallback(
-            slot,
-            |loaded_account| Some(*loaded_account.pubkey()),
-            |accum: &mut HashSet<Pubkey>, storage| {
-                storage
-                    .scan_pubkeys(|pubkey| {
-                        accum.insert(*pubkey);
-                    })
-                    .expect("must scan accounts storage");
-            },
-        );
-        match scan_result {
-            ScanStorageResult::Cached(cached_result) => cached_result,
-            ScanStorageResult::Stored(stored_result) => stored_result.into_iter().collect(),
-        }
-    }
-
     /// Return all of the accounts for a given slot
     pub fn get_pubkey_account_for_slot(&self, slot: Slot) -> Vec<(Pubkey, AccountSharedData)> {
         let scan_result = self.scan_account_storage(

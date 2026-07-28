@@ -11343,13 +11343,8 @@ fn test_register_hard_fork() {
 #[test]
 fn test_last_restart_slot() {
     fn last_restart_slot_dirty(bank: &Bank) -> bool {
-        let dirty_accounts = bank
-            .rc
-            .accounts
-            .accounts_db
-            .get_pubkeys_for_slot(bank.slot());
-        let dirty_accounts: HashSet<_> = dirty_accounts.into_iter().collect();
-        dirty_accounts.contains(&sysvar::last_restart_slot::id())
+        bank.get_account_modified_slot(&sysvar::last_restart_slot::id())
+            .is_some_and(|(_, slot)| slot == bank.slot())
     }
 
     fn get_last_restart_slot(bank: &Bank) -> Option<Slot> {
