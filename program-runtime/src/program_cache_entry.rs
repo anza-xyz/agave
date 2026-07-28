@@ -384,6 +384,19 @@ impl ProgramCacheEntry {
             && slot < self.effective_slot
     }
 
+    pub fn effective_slot(&self) -> Slot {
+        match self.program {
+            ProgramCacheEntryType::Closed
+            | ProgramCacheEntryType::DelayVisibility
+            | ProgramCacheEntryType::FailedVerification(_)
+            | ProgramCacheEntryType::Builtin(_) => self.deployment_slot,
+            ProgramCacheEntryType::Unloaded(_)
+            | ProgramCacheEntryType::Loaded(_) => self
+                .deployment_slot
+                .saturating_add(DELAY_VISIBILITY_SLOT_OFFSET),
+        }
+    }
+
     pub fn update_access_slot(&self, slot: Slot) {
         let _ = self.latest_access_slot.fetch_max(slot, Ordering::Relaxed);
     }
