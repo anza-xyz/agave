@@ -14,6 +14,11 @@ targets = ["x86_64-unknown-linux-gnu"]
 all-features = true
 rustdoc-args = ["--cfg=docsrs"]
 
+[package.metadata.cargo-shear]
+# strum is referenced by the `strum_macros::EnumIter` derive expansion (used
+# under cfg(test)); cargo-shear can't see through the derive (false positive).
+ignored = ["strum"]
+
 [lib]
 crate-type = ["lib"]
 name = "solana_runtime"
@@ -188,6 +193,7 @@ solana-vote-interface = { workspace = true }
 solana-vote-program = { workspace = true }
 spl-generic-token = { workspace = true }
 static_assertions = { workspace = true }
+strum = { workspace = true, features = ["derive"] }
 strum_macros = { workspace = true }
 tempfile = { workspace = true }
 thiserror = { workspace = true }

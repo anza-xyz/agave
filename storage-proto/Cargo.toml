@@ -14,6 +14,11 @@ targets = ["x86_64-unknown-linux-gnu"]
 all-features = true
 rustdoc-args = ["--cfg=docsrs"]
 
+[package.metadata.cargo-shear]
+# prost is referenced by the protobuf code generated into OUT_DIR at build time;
+# cargo-shear only scans source and can't see it (false positive).
+ignored = ["prost"]
+
 [lib]
 crate-type = ["lib"]
 name = "solana_storage_proto"
@@ -23,6 +28,7 @@ agave-unstable-api = []
 
 [dependencies]
 bs58 = { workspace = true }
+prost = { workspace = true }
 serde = { workspace = true }
 solana-account-decoder = { workspace = true }
 solana-hash = { workspace = true }

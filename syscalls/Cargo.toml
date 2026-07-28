@@ -14,6 +14,11 @@ targets = ["x86_64-unknown-linux-gnu"]
 all-features = true
 rustdoc-args = ["--cfg=docsrs"]
 
+[package.metadata.cargo-shear]
+# used by the `with_mock_invoke_context!` macro expansion in tests; cargo-shear
+# can't see through the macro (false positive).
+ignored = ["solana-svm-callback"]
+
 [features]
 default = ["metrics"]
 agave-unstable-api = []
@@ -72,6 +77,7 @@ solana-program = { workspace = true }
 solana-program-runtime = { path = "../program-runtime", features = ["agave-unstable-api", "dev-context-only-utils"] }
 solana-pubkey = { workspace = true, features = ["rand"] }
 solana-slot-hashes = { workspace = true }
+solana-svm-callback = { path = "../svm-callback", features = ["agave-unstable-api"] }
 solana-transaction-context = { path = "../transaction-context", features = ["agave-unstable-api", "bincode", "dev-context-only-utils"] }
 test-case = { workspace = true }
 

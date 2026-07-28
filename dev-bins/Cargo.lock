@@ -7942,6 +7942,7 @@ dependencies = [
  "solana-vote-program",
  "spl-generic-token",
  "static_assertions",
+ "strum",
  "strum_macros",
  "tempfile",
  "thiserror 2.0.18",
@@ -8291,6 +8292,7 @@ dependencies = [
  "hyper-util",
  "log",
  "prost",
+ "prost-types",
  "serde",
  "smpl_jwt",
  "solana-clock",
@@ -8307,6 +8309,7 @@ dependencies = [
  "thiserror 2.0.18",
  "tokio",
  "tonic",
+ "tonic-prost",
  "zstd",
 ]
 
@@ -8315,6 +8318,7 @@ name = "solana-storage-proto"
 version = "4.3.0-alpha.2"
 dependencies = [
  "bs58",
+ "prost",
  "protobuf-src",
  "serde",
  "solana-account-decoder",
@@ -9816,6 +9820,17 @@ dependencies = [
  "proc-macro2",
  "quote",
  "syn 2.0.117",
+]
+
+[[package]]
+name = "tonic-prost"
+version = "0.14.6"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "50849f68853be452acf590cde0b146665b8d507b3b8af17261df47e02c209ea0"
+dependencies = [
+ "bytes",
+ "prost",
+ "tonic",
 ]
 
 [[package]]

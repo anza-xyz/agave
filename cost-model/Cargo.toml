@@ -14,6 +14,11 @@ targets = ["x86_64-unknown-linux-gnu"]
 all-features = true
 rustdoc-args = ["--cfg=docsrs"]
 
+[package.metadata.cargo-shear]
+# log is required by the `datapoint_info!` macro expansion in cost_tracker.rs;
+# cargo-shear can't see through the macro (false positive).
+ignored = ["log"]
+
 [lib]
 crate-type = ["lib"]
 name = "solana_cost_model"

@@ -7382,6 +7382,8 @@ dependencies = [
  "solana-rent",
  "solana-sbpf",
  "solana-sdk-ids",
+ "solana-svm-callback",
+ "solana-svm-feature-set",
  "solana-svm-log-collector",
  "solana-svm-measure",
  "solana-svm-type-overrides",
@@ -7425,6 +7427,7 @@ dependencies = [
  "modular-bitfield",
  "num_enum",
  "rand 0.9.4",
+ "solana-bucket-map",
  "solana-clock",
  "solana-measure",
  "solana-pubkey 4.2.0",
@@ -10223,6 +10226,7 @@ dependencies = [
  "solana-vote-program",
  "spl-generic-token",
  "static_assertions",
+ "strum",
  "strum_macros",
  "tempfile",
  "test-case",
@@ -10639,6 +10643,7 @@ dependencies = [
  "hyper-util",
  "log",
  "prost 0.14.4",
+ "prost-types 0.14.4",
  "serde",
  "smpl_jwt",
  "solana-clock",
@@ -10661,6 +10666,7 @@ dependencies = [
  "thiserror 2.0.18",
  "tokio",
  "tonic",
+ "tonic-prost",
  "zstd",
 ]
 
@@ -10670,6 +10676,7 @@ version = "4.3.0-alpha.2"
 dependencies = [
  "bs58",
  "enum-iterator",
+ "prost 0.14.4",
  "protobuf-src",
  "serde",
  "solana-account-decoder",
@@ -10906,6 +10913,7 @@ dependencies = [
  "solana-slot-hashes",
  "solana-stable-layout",
  "solana-stake-history",
+ "solana-svm-callback",
  "solana-svm-feature-set",
  "solana-svm-log-collector",
  "solana-svm-type-overrides",
@@ -10969,6 +10977,7 @@ dependencies = [
  "solana-rent",
  "solana-sdk-ids",
  "solana-sha256-hasher",
+ "solana-svm-callback",
  "solana-svm-feature-set",
  "solana-svm-log-collector",
  "solana-system-interface 3.2.0",
@@ -12522,6 +12531,17 @@ dependencies = [
  "proc-macro2",
  "quote",
  "syn 2.0.117",
+]
+
+[[package]]
+name = "tonic-prost"
+version = "0.14.6"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "50849f68853be452acf590cde0b146665b8d507b3b8af17261df47e02c209ea0"
+dependencies = [
+ "bytes",
+ "prost 0.14.4",
+ "tonic",
 ]
 
 [[package]]

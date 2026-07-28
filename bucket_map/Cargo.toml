@@ -14,6 +14,11 @@ targets = ["x86_64-unknown-linux-gnu"]
 all-features = true
 rustdoc-args = ["--cfg=docsrs"]
 
+[package.metadata.cargo-shear]
+# self-dependency enables the `dev-context-only-utils` feature for the crate's
+# own tests; cargo-shear flags it as unused (false positive).
+ignored = ["solana-bucket-map"]
+
 [lib]
 crate-type = ["lib"]
 name = "solana_bucket_map"
@@ -37,6 +42,7 @@ solana-pubkey = { workspace = true }
 tempfile = { workspace = true }
 
 [dev-dependencies]
+solana-bucket-map = { path = ".", features = ["agave-unstable-api", "dev-context-only-utils"] }
 solana-pubkey = { workspace = true, features = ["rand"] }
 
 [lints]
