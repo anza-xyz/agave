@@ -4106,7 +4106,6 @@ mod tests {
         let program = ProgramCacheEntry {
             program: ProgramCacheEntryType::Unloaded(env),
             account_owner: ProgramCacheEntryOwner::LoaderV2,
-            account_size: 0,
             deployment_slot: 0,
             effective_slot: 0,
             stats: stats.into(),
@@ -4159,7 +4158,6 @@ mod tests {
         let program = ProgramCacheEntry {
             program: ProgramCacheEntryType::Unloaded(env),
             account_owner: ProgramCacheEntryOwner::LoaderV2,
-            account_size: 0,
             deployment_slot: 0,
             effective_slot: 0,
             stats: stats.into(),

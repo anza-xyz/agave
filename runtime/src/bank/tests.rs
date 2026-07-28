@@ -5945,10 +5945,6 @@ fn test_bank_load_program() {
             panic!();
         };
         assert_matches!(program.program, ProgramCacheEntryType::Loaded(_));
-        assert_eq!(
-            program.account_size,
-            program_account.data().len() + programdata_account.data().len()
-        );
     }
 }
 

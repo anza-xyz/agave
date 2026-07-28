@@ -1055,7 +1055,6 @@ pub(crate) mod tests {
         Arc::new(ProgramCacheEntry {
             program: new_loaded_entry(get_mock_program_runtime_environment()),
             account_owner: ProgramCacheEntryOwner::LoaderV2,
-            account_size: 0,
             deployment_slot,
             effective_slot,
             stats: Arc::new(stats),
@@ -1070,7 +1069,6 @@ pub(crate) mod tests {
         Arc::new(ProgramCacheEntry {
             program: ProgramCacheEntryType::Builtin(BuiltinProgram::new_mock()),
             account_owner: ProgramCacheEntryOwner::NativeLoader,
-            account_size: 0,
             deployment_slot,
             effective_slot,
             stats: Arc::default(),
@@ -1448,7 +1446,6 @@ pub(crate) mod tests {
                         BuiltinProgram::new_mock(),
                     )), // Assign them different environments
                     account_owner: ProgramCacheEntryOwner::LoaderV2,
-                    account_size: 0,
                     deployment_slot,
                     effective_slot,
                     stats: Arc::default(),
@@ -1511,7 +1508,6 @@ pub(crate) mod tests {
             Arc::new(ProgramCacheEntry {
                 program: old,
                 account_owner: ProgramCacheEntryOwner::LoaderV2,
-                account_size: 0,
                 deployment_slot: 10,
                 effective_slot: 11,
                 stats: Arc::default(),
@@ -1525,7 +1521,6 @@ pub(crate) mod tests {
             Arc::new(ProgramCacheEntry {
                 program: new,
                 account_owner: ProgramCacheEntryOwner::LoaderV2,
-                account_size: 0,
                 deployment_slot: 10,
                 effective_slot: 11,
                 stats: Arc::default(),
@@ -1561,7 +1556,6 @@ pub(crate) mod tests {
             Arc::new(ProgramCacheEntry {
                 program: old,
                 account_owner: ProgramCacheEntryOwner::LoaderV2,
-                account_size: 0,
                 deployment_slot: 10,
                 effective_slot: 11,
                 stats: Arc::default(),
@@ -1575,7 +1569,6 @@ pub(crate) mod tests {
             Arc::new(ProgramCacheEntry {
                 program: new,
                 account_owner: ProgramCacheEntryOwner::LoaderV2,
-                account_size: 0,
                 deployment_slot: 10,
                 effective_slot: 11,
                 stats: Arc::default(),
@@ -1592,7 +1585,6 @@ pub(crate) mod tests {
         let closed_other_slot = Arc::new(ProgramCacheEntry {
             program: ProgramCacheEntryType::Closed,
             account_owner: ProgramCacheEntryOwner::LoaderV2,
-            account_size: 0,
             deployment_slot: 9,
             effective_slot: 9,
             stats: Arc::default(),
@@ -1601,7 +1593,6 @@ pub(crate) mod tests {
         let closed_current_slot = Arc::new(ProgramCacheEntry {
             program: ProgramCacheEntryType::Closed,
             account_owner: ProgramCacheEntryOwner::LoaderV2,
-            account_size: 0,
             deployment_slot: 10,
             effective_slot: 10,
             stats: Arc::default(),
@@ -1610,7 +1601,6 @@ pub(crate) mod tests {
         let loaded_entry_current_env = Arc::new(ProgramCacheEntry {
             program: ProgramCacheEntryType::Unloaded(get_mock_program_runtime_environment()),
             account_owner: ProgramCacheEntryOwner::LoaderV2,
-            account_size: 0,
             deployment_slot: 10,
             effective_slot: 11,
             stats: Arc::default(),
@@ -1621,7 +1611,6 @@ pub(crate) mod tests {
                 BuiltinProgram::new_mock(),
             )),
             account_owner: ProgramCacheEntryOwner::LoaderV2,
-            account_size: 0,
             deployment_slot: 10,
             effective_slot: 11,
             stats: Arc::default(),
@@ -2366,7 +2355,6 @@ pub(crate) mod tests {
             let entry = Arc::new(ProgramCacheEntry {
                 program: program_cache_entry_type,
                 account_owner: ProgramCacheEntryOwner::LoaderV2,
-                account_size: 0,
                 deployment_slot: 0,
                 effective_slot: 0,
                 stats: Arc::default(),

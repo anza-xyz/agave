@@ -843,7 +843,6 @@ mod tests {
                 Arc::new(ProgramCacheEntry {
                     program: ProgramCacheEntryType::Builtin(BuiltinProgram::new_mock()),
                     account_owner: ProgramCacheEntryOwner::NativeLoader,
-                    account_size: 0,
                     deployment_slot: 0,
                     effective_slot: 0,
                     stats: Arc::default(),

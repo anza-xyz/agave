@@ -777,10 +777,6 @@ pub(crate) mod tests {
                 .unwrap();
 
             // The target program entry should be updated.
-            assert_eq!(
-                target_entry.account_size,
-                program_account.data().len() + program_data_account.data().len()
-            );
             assert_eq!(target_entry.deployment_slot, migration_or_upgrade_slot);
             assert_eq!(target_entry.effective_slot, migration_or_upgrade_slot + 1);
 
