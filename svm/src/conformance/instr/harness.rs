@@ -413,7 +413,7 @@ mod tests {
         );
         let sysvar_cache = sysvar_cache_with_rent();
 
-        let mut program_cache = new_program_cache_with_builtins(0);
+        let mut program_cache = new_program_cache_with_builtins(1);
         add_program_to_program_cache(
             &mut program_cache,
             &program_id,

@@ -466,7 +466,7 @@ mod tests {
             compilation_time_ema: AtomicU64::new(u64::MAX),
             ..Default::default()
         };
-        let program = new_test_entry_with_usage(0, 0, stats);
+        let program = new_test_entry_with_usage(0, 1, stats);
         program.update_access_slot(1);
         assert!(
             dbg!(program.retention_score()) <= 129,

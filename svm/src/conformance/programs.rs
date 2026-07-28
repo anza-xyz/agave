@@ -143,7 +143,7 @@ pub fn add_program_to_program_cache(
         loader_key,
         program_runtime_environment,
         0, // deployment_slot
-        0, // effective_slot
+        1, // effective_slot
         elf,
         elf.len(),
         #[cfg(feature = "metrics")]

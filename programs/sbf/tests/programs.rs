@@ -102,7 +102,7 @@ fn load_program_elf(program_name: &str) -> Vec<u8> {
 
 #[cfg(feature = "sbf_rust")]
 fn default_program_cache() -> solana_program_runtime::loaded_programs::ProgramCacheForTxBatch {
-    new_program_cache_with_builtins(/* slot */ 0)
+    new_program_cache_with_builtins(/* slot */ 1)
 }
 
 fn default_program_cache_with_program(
@@ -491,7 +491,7 @@ fn test_sol_alloc_free_no_longer_deployable_with_upgradeable_loader() {
         (authority_pubkey, Account::default()),
     ];
 
-    let mut program_cache = default_program_cache();
+    let mut program_cache = new_program_cache_with_builtins(0);
     let sysvar_cache = default_sysvar_cache();
 
     // Build the deploy instruction (DeployWithMaxDataLen only, skip CreateAccount)
@@ -1417,7 +1417,7 @@ fn test_program_sbf_program_id_spoofing() {
         (to_pubkey, Account::new(0, 0, &system_program::id())),
     ]);
 
-    let mut program_cache = new_program_cache_with_builtins(0);
+    let mut program_cache = default_program_cache();
     add_program_to_program_cache(
         &mut program_cache,
         &malicious_swap_pubkey,
@@ -1476,7 +1476,7 @@ fn test_program_sbf_caller_has_access_to_cpi_program() {
         &caller_access_elf,
     ));
 
-    let mut program_cache = new_program_cache_with_builtins(0);
+    let mut program_cache = default_program_cache();
     add_program_to_program_cache(
         &mut program_cache,
         &caller_pubkey,
@@ -2345,7 +2345,7 @@ fn test_program_reads_from_program_account() {
 
     let feature_set = SVMFeatureSet::all_enabled();
 
-    let mut program_cache = new_program_cache_with_builtins(0);
+    let mut program_cache = default_program_cache();
     add_program_to_program_cache(
         &mut program_cache,
         &program_id,
@@ -2387,7 +2387,7 @@ fn test_program_sbf_c_dup() {
     let program_id = Pubkey::new_unique();
 
     let feature_set = SVMFeatureSet::all_enabled();
-    let mut program_cache = new_program_cache_with_builtins(0);
+    let mut program_cache = default_program_cache();
     add_program_to_program_cache(
         &mut program_cache,
         &program_id,
