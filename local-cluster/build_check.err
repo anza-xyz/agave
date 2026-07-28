@@ -1,0 +1,75 @@
+warning: unreachable statement
+   --> votor/src/consensus_pool_service.rs:501:13
+    |
+495 | /                 panic!(
+496 | |                     "invariant: unable to compute leader for parent-ready slot \
+497 | |                      {highest_parent_ready} (root_bank_slot={})",
+498 | |                     root_bank.slot()
+499 | |                 );
+    | |_________________- any code following this expression is unreachable
+500 |               }
+501 |               ctx.exit.store(true, Ordering::Relaxed);
+    |               ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ unreachable statement
+    |
+    = note: `#[warn(unreachable_code)]` (part of `#[warn(unused)]`) on by default
+
+warning: unreachable expression
+    --> votor/src/event_handler.rs:1027:13
+     |
+1022 | /                 panic!(
+1023 | |                     "invariant: {my_pubkey}: Repair event channel is full for slot {}",
+1024 | |                     block.slot
+1025 | |                 );
+     | |_________________- any code following this expression is unreachable
+1026 |               }
+1027 | /             sender
+1028 | |                 .send(event)
+1029 | |                 .map_err(|_| EventLoopError::SenderDisconnected(SendError(())))
+     | |_______________________________________________________________________________^ unreachable expression
+
+warning: unreachable statement
+   --> votor/src/voting_service.rs:413:17
+    |
+408 | /                     panic!(
+409 | |                         "invariant: serializing an outgoing alpenglow message must not fail: \
+410 | |                          {err:?}"
+411 | |                     );
+    | |_____________________- any code following this expression is unreachable
+412 |                   }
+413 |                   return;
+    |                   ^^^^^^^ unreachable statement
+
+warning: unused variable: `event`
+    --> votor/src/event_handler.rs:1013:32
+     |
+1013 |         Err(TrySendError::Full(event)) => {
+     |                                ^^^^^ help: if this is intentional, prefix it with an underscore: `_event`
+     |
+     = note: `#[warn(unused_variables)]` (part of `#[warn(unused)]`) on by default
+
+warning: `agave-votor` (lib) generated 4 warnings (run `cargo fix --lib -p agave-votor` to apply 1 suggestion)
+warning: unused variable: `source`
+   --> local-cluster/src/byzzfuzz/interceptor.rs:567:9
+    |
+567 |         source: Pubkey,
+    |         ^^^^^^ help: if this is intentional, prefix it with an underscore: `_source`
+    |
+    = note: `#[warn(unused_variables)]` (part of `#[warn(unused)]`) on by default
+
+warning: unused variable: `destination`
+   --> local-cluster/src/byzzfuzz/interceptor.rs:568:9
+    |
+568 |         destination: Pubkey,
+    |         ^^^^^^^^^^^ help: if this is intentional, prefix it with an underscore: `_destination`
+
+warning: unused variable: `current_slot`
+   --> local-cluster/src/byzzfuzz/interceptor.rs:569:9
+    |
+569 |         current_slot: Slot,
+    |         ^^^^^^^^^^^^ help: if this is intentional, prefix it with an underscore: `_current_slot`
+
+warning: `solana-local-cluster` (lib test) generated 3 warnings (run `cargo fix --lib -p solana-local-cluster --tests` to apply 3 suggestions)
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 0.53s
+warning: the following packages contain code that will be rejected by a future version of Rust: proc-macro-error2 v2.0.1
+note: to see what the problems were, use the option `--future-incompat-report`, or run `cargo report future-incompatibilities --id 1`
+  Executable unittests src/lib.rs (/home/aarnav/fuzz/agave/target/debug/deps/solana_local_cluster-3c867c90b2946ff2)

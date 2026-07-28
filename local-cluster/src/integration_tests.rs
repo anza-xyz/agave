@@ -69,7 +69,7 @@ pub const AG_DEBUG_LOG_FILTER: &str =
      solana_ledger::blockstore_processor=info";
 pub const DEFAULT_NODE_STAKE: u64 = 10 * LAMPORTS_PER_SOL;
 
-#[derive(Clone)]
+#[derive(Clone, Debug)]
 pub struct ValidatorKeys {
     pub node_keypair: Arc<Keypair>,
     pub vote_keypair: Arc<Keypair>,
