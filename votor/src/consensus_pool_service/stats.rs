@@ -20,7 +20,8 @@ pub(super) struct ConsensusPoolServiceStats {
     pub(super) received_vote_aggregates: Saturating<usize>,
     pub(super) received_own_messages: Saturating<usize>,
     pub(super) received_consensus_message_batches: Saturating<usize>,
-    pub(super) receive_msgs_limit_reached: Saturating<usize>,
+    pub(super) own_message_receive_limit_reached: Saturating<usize>,
+    pub(super) consensus_message_batch_receive_limit_reached: Saturating<usize>,
     pub(super) received_certificates: Saturating<usize>,
     pub(super) standstill: bool,
     pub(super) prune_old_state_called: Saturating<usize>,
@@ -42,7 +43,8 @@ impl ConsensusPoolServiceStats {
             received_vote_aggregates: Saturating(0),
             received_own_messages: Saturating(0),
             received_consensus_message_batches: Saturating(0),
-            receive_msgs_limit_reached: Saturating(0),
+            own_message_receive_limit_reached: Saturating(0),
+            consensus_message_batch_receive_limit_reached: Saturating(0),
             received_certificates: Saturating(0),
             standstill: false,
             prune_old_state_called: Saturating(0),
@@ -64,7 +66,9 @@ impl ConsensusPoolServiceStats {
             received_vote_aggregates: Saturating(received_vote_aggregates),
             received_own_messages: Saturating(received_own_messages),
             received_consensus_message_batches: Saturating(received_consensus_message_batches),
-            receive_msgs_limit_reached: Saturating(receive_msgs_limit_reached),
+            own_message_receive_limit_reached: Saturating(own_message_receive_limit_reached),
+            consensus_message_batch_receive_limit_reached:
+                Saturating(consensus_message_batch_receive_limit_reached),
             received_certificates: Saturating(received_certificates),
             standstill,
             prune_old_state_called: Saturating(prune_old_state_called),
@@ -101,8 +105,13 @@ impl ConsensusPoolServiceStats {
                 i64
             ),
             (
-                "receive_msgs_limit_reached",
-                receive_msgs_limit_reached,
+                "own_message_receive_limit_reached",
+                own_message_receive_limit_reached,
+                i64
+            ),
+            (
+                "consensus_message_batch_receive_limit_reached",
+                consensus_message_batch_receive_limit_reached,
                 i64
             ),
             ("received_certificates", received_certificates, i64),
