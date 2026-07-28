@@ -1,7 +1,7 @@
 use {
     super::*,
     crate::{
-        accounts_file::AccountsFileProvider,
+        accounts_file::{AccountsFile, AccountsFileProvider},
         accounts_index::{
             ACCOUNTS_INDEX_CONFIG_FOR_TESTING, AccountIndex, AccountSecondaryIndexesIncludeExclude,
             AccountsIndexConfig, IndexLimit, IndexLimitThreshold, test_utils::*,
