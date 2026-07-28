@@ -6,7 +6,7 @@ use {
     },
     crate::{
         accounts_background_service::{PrunedBanksRequestHandler, SendDroppedBankCallback},
-        bank::BankRc,
+        bank::{BankRc, partitioned_epoch_rewards::EpochRewardPhase},
         bank_client::BankClient,
         bank_forks::BankForks,
         epoch_stakes::VersionedEpochStakes,
@@ -18,7 +18,7 @@ use {
             minimum_vote_account_balance_for_vat,
         },
         runtime_config::RuntimeConfig,
-        serde_snapshot::fields_from_stream,
+        serde_snapshot::{bank_to_stream, fields_from_stream},
         slot_params::{
             DEFAULT_MAX_ENTRY_BYTES_PER_SLOT, LEGACY_HASHES_PER_TICK, LEGACY_SLOT_PARAMS,
             SLOT_PARAMS_200MS, SLOT_PARAMS_250MS, SLOT_PARAMS_300MS, SLOT_PARAMS_350MS, SlotParams,
@@ -29,7 +29,7 @@ use {
         stake_utils,
         stakes::{
             DeserializableDelegationStakes, InvalidCacheEntryReason, SerdeStakesToStakeFormat,
-            Stakes,
+            Stakes, StakesCache,
         },
         sysvar_account::{create_account, from_account},
     },
@@ -111,6 +111,7 @@ use {
         bpf_loader, bpf_loader_upgradeable, ed25519_program, incinerator, native_loader,
         secp256k1_program,
     },
+    solana_seed_derivable::SeedDerivable,
     solana_sha256_hasher::hash,
     solana_signature::Signature,
     solana_signer::Signer,
@@ -5293,6 +5294,8 @@ fn test_fuzz_instructions() {
 #[test_case(false ; "legacy")]
 #[test_case(true ; "deprecate rent exemption threshold")]
 fn test_bank_hash_consistency(deprecate_rent_exemption_threshold: bool) {
+    const VALIDATOR_STAKE_LAMPORTS: u64 = 100 * LAMPORTS_PER_SOL;
+
     let mut genesis_config = GenesisConfig {
         // Override the creation time to ensure bank hash consistency
         creation_time: 0,
@@ -5306,6 +5309,38 @@ fn test_bank_hash_consistency(deprecate_rent_exemption_threshold: bool) {
 
     genesis_config.rent.lamports_per_byte = DEFAULT_LAMPORTS_PER_BYTE / 2;
     genesis_config.rent.exemption_threshold = 2.0f64.to_le_bytes();
+
+    // Include a deterministic vote and stake account in the genesis bank.
+    let validator_keypairs = (0..2)
+        .map(|index| {
+            ValidatorVoteKeypairs::new(
+                Keypair::from_seed(&(index as u64).to_le_bytes().repeat(4)).unwrap(),
+                Keypair::from_seed(&((1u64 << 32) | index as u64).to_le_bytes().repeat(4)).unwrap(),
+                Keypair::from_seed(&((2u64 << 32) | index as u64).to_le_bytes().repeat(4)).unwrap(),
+            )
+        })
+        .collect::<Vec<_>>();
+    let create_validator_accounts = |validator_keypairs: &ValidatorVoteKeypairs, stake_lamports| {
+        genesis_utils::create_validator(
+            &genesis_config.rent,
+            validator_keypairs.node_keypair.pubkey(),
+            1_000_000,
+            validator_keypairs.vote_keypair.pubkey(),
+            minimum_vote_account_balance_for_vat(100),
+            validator_keypairs.stake_keypair.pubkey(),
+            stake_lamports,
+            Some(validator_keypairs.bls_keypair.public.to_bytes_compressed()),
+        )
+    };
+    let genesis_validator_accounts =
+        create_validator_accounts(&validator_keypairs[0], VALIDATOR_STAKE_LAMPORTS);
+    let stored_validator_accounts =
+        create_validator_accounts(&validator_keypairs[1], VALIDATOR_STAKE_LAMPORTS + 1_000_000);
+    genesis_config.accounts.extend(
+        genesis_validator_accounts
+            .into_iter()
+            .map(|(pubkey, account)| (pubkey, Account::from(account))),
+    );
 
     // Set the feature set to all enabled so that we detect any inconsistencies
     // in the hash computation that may arise from feature set changes
@@ -5323,14 +5358,74 @@ fn test_bank_hash_consistency(deprecate_rent_exemption_threshold: bool) {
         BankTestConfig::default().accounts_db_config,
         None,
         Some(SlotLeader {
-            id: Pubkey::from([42; 32]),
-            vote_address: Pubkey::from([67; 32]),
+            id: validator_keypairs[0].node_keypair.pubkey(),
+            vote_address: validator_keypairs[0].vote_keypair.pubkey(),
         }),
         Arc::default(),
         None,
         Some(feature_set),
     )
     .wrap_with_bank_forks_for_tests();
+
+    // Change vote account data and replace its genesis stake account.
+    let vote_pubkey = validator_keypairs[0].vote_keypair.pubkey();
+    let mut vote_account = bank.get_account(&vote_pubkey).unwrap();
+    let mut vote_state = VoteStateHandler::new_v4(
+        VoteStateV4::deserialize(vote_account.data(), &vote_pubkey).unwrap(),
+    );
+    for slot in 0..4 {
+        vote_state::process_slot_vote_unchecked(&mut vote_state, slot);
+    }
+    vote_account
+        .set_state(&VoteStateVersions::V4(Box::new(vote_state.unwrap_v4())))
+        .unwrap();
+    bank.store_account_and_update_capitalization(&vote_pubkey, &vote_account);
+
+    let stake_pubkey = validator_keypairs[0].stake_keypair.pubkey();
+    let stake_account = stake_utils::create_stake_account(
+        &stake_pubkey,
+        &vote_pubkey,
+        &vote_account,
+        &bank.rent_collector.rent,
+        VALIDATOR_STAKE_LAMPORTS + 123_456,
+    );
+    bank.store_account_and_update_capitalization(&stake_pubkey, &stake_account);
+
+    // Add another validator, then remove and reinsert its stake account in the
+    // same fork.
+    for (pubkey, account) in stored_validator_accounts {
+        bank.store_account_and_update_capitalization(&pubkey, &account);
+    }
+
+    let stored_stake_pubkey = validator_keypairs[1].stake_keypair.pubkey();
+    let mut removed_stake_account = AccountSharedData::default();
+    removed_stake_account.set_owner(stake_program::id());
+    bank.store_account_and_update_capitalization(&stored_stake_pubkey, &removed_stake_account);
+    let stored_vote_pubkey = validator_keypairs[1].vote_keypair.pubkey();
+    let stored_vote_account = bank.get_account(&stored_vote_pubkey).unwrap();
+    let stored_stake_account = stake_utils::create_stake_account(
+        &stored_stake_pubkey,
+        &stored_vote_pubkey,
+        &stored_vote_account,
+        &bank.rent_collector.rent,
+        VALIDATOR_STAKE_LAMPORTS + 1_654_321,
+    );
+    bank.store_account_and_update_capitalization(&stored_stake_pubkey, &stored_stake_account);
+
+    // Exercise multiple stores to the same regular account with both lamports
+    // and data changing.
+    let stored_account_pubkey = Pubkey::from([84; 32]);
+    let mut stored_account = AccountSharedData::new(123_456, 16, &system_program::id());
+    bank.store_account_and_update_capitalization(&stored_account_pubkey, &stored_account);
+    stored_account.set_lamports(234_567);
+    stored_account.set_data_from_slice(&[42; 32]);
+    bank.store_account_and_update_capitalization(&stored_account_pubkey, &stored_account);
+
+    assert_eq!(
+        bank.capitalization(),
+        bank.calculate_capitalization_for_tests()
+    );
+
     loop {
         goto_end_of_slot(Arc::clone(&bank));
         if bank.slot == 0 {
@@ -5338,9 +5433,9 @@ fn test_bank_hash_consistency(deprecate_rent_exemption_threshold: bool) {
             assert_eq!(
                 bank.hash().to_string(),
                 if deprecate_rent_exemption_threshold {
-                    "5aBbXvZ6LXfuMEEG3KZ35U3JsJ8fhDVTsYgtDfjoNcfe"
+                    "2QrCteCh1PA4toLPj6sDJTipCzQJg6AnAEHnQRuabZGU"
                 } else {
-                    "7oDjEoqPnjqyj1cSekUdNHrfmXhwvdxuZPy6ZqgiGvgy"
+                    "5wEEfpCoZz5MpLXhTYTePKMGiBVLzzLwcAecPagTgbN5"
                 },
             );
         }
@@ -5350,9 +5445,9 @@ fn test_bank_hash_consistency(deprecate_rent_exemption_threshold: bool) {
             assert_eq!(
                 bank.hash().to_string(),
                 if deprecate_rent_exemption_threshold {
-                    "7JJ15D1ce8yW5NceFtK3YN4JMeRV9epZRbpNjiw4Y2BW"
+                    "GgaWD5q3aFyK6cdZYxxwdyS2ypQnsMttwTuhdks439eT"
                 } else {
-                    "GFDc9UWSp6E6sbjgk9EhZLBrX3bUyC8bkh9YmLUxsH23"
+                    "AaXmmStgpHGz8uQ12RvtbUwYDYR4yq29aTKvWbSkaP1H"
                 },
             );
         }
@@ -5361,15 +5456,274 @@ fn test_bank_hash_consistency(deprecate_rent_exemption_threshold: bool) {
             assert_eq!(
                 bank.hash().to_string(),
                 if deprecate_rent_exemption_threshold {
-                    "AxoMcCKN43V2JPtAc3ivoCFTfS2wmjB7xpZkn7u9KbLQ"
+                    "7yoUV11msdHHFFXBKrdYu5UGhgbcpyLaRMpbwc9tF9B3"
                 } else {
-                    "79wpAVbcHWEJGLWtW4rDNjwdHnuRKbJheEstvsx9g3Xf"
+                    "7ELHxVoFeCequrCbSH74LFWqaFae35jPn97PqCYMApV2"
                 },
             );
             break;
         }
         bank = Arc::new(new_from_parent(bank));
     }
+}
+
+/// Tests determinism of a bank hash across snapshot restores and epoch
+/// boundaries.
+#[test]
+fn test_bank_hash_deterministic_with_stakes_cache() {
+    const NUM_VALIDATORS: usize = 128;
+    const SNAPSHOT_STAKES_PER_VALIDATOR: usize = 64;
+    const ADDITIONAL_STAKES_PER_VALIDATOR: usize = 16;
+    const NUM_REGULAR_ACCOUNTS: usize = 2_048;
+    const SLOTS_PER_EPOCH: u64 = 32;
+    const STAKE_LAMPORTS: u64 = 2_000_000_000;
+
+    // Populate enough validators, stake delegations, and regular accounts to exercise parallel
+    // snapshot loading and epoch reward calculation.
+    let validator_keypairs = (0..NUM_VALIDATORS)
+        .map(|index| {
+            ValidatorVoteKeypairs::new(
+                Keypair::from_seed(&(index as u64).to_le_bytes().repeat(4)).unwrap(),
+                Keypair::from_seed(&((1u64 << 32) | index as u64).to_le_bytes().repeat(4)).unwrap(),
+                Keypair::from_seed(&((2u64 << 32) | index as u64).to_le_bytes().repeat(4)).unwrap(),
+            )
+        })
+        .collect::<Vec<_>>();
+    let GenesisConfigInfo {
+        mut genesis_config, ..
+    } = genesis_utils::create_genesis_config_with_alpenglow_vote_accounts(
+        1_000_000_000,
+        &validator_keypairs,
+        vec![STAKE_LAMPORTS; NUM_VALIDATORS],
+    );
+
+    genesis_config.creation_time = 0;
+    genesis_config.epoch_schedule = EpochSchedule::new(SLOTS_PER_EPOCH);
+
+    let mut bank0 = Bank::new_for_tests(&genesis_config);
+    let rent = bank0.rent_collector.rent.clone();
+
+    for (validator_index, validator_keypairs) in validator_keypairs.iter().enumerate() {
+        let vote_pubkey = validator_keypairs.vote_keypair.pubkey();
+        let mut vote_account = bank0.get_account(&vote_pubkey).unwrap();
+        let mut vote_state = VoteStateHandler::new_v4(
+            VoteStateV4::deserialize(vote_account.data(), &vote_pubkey).unwrap(),
+        );
+        for slot in 0..MAX_LOCKOUT_HISTORY + 42 {
+            vote_state::process_slot_vote_unchecked(&mut vote_state, slot as u64);
+        }
+        vote_account
+            .set_state(&VoteStateVersions::V4(Box::new(vote_state.unwrap_v4())))
+            .unwrap();
+        bank0.store_account_and_update_capitalization(&vote_pubkey, &vote_account);
+
+        for stake_index in 0..SNAPSHOT_STAKES_PER_VALIDATOR {
+            let index = validator_index * SNAPSHOT_STAKES_PER_VALIDATOR + stake_index;
+            let stake_pubkey =
+                Keypair::from_seed(&((4u64 << 32) | index as u64).to_le_bytes().repeat(4))
+                    .unwrap()
+                    .pubkey();
+            let stake_account = stake_utils::create_stake_account(
+                &stake_pubkey,
+                &vote_pubkey,
+                &vote_account,
+                &rent,
+                STAKE_LAMPORTS + index as u64,
+            );
+            bank0.store_account_and_update_capitalization(&stake_pubkey, &stake_account);
+        }
+    }
+
+    for index in 0..NUM_REGULAR_ACCOUNTS {
+        let pubkey = Keypair::from_seed(&((5u64 << 32) | index as u64).to_le_bytes().repeat(4))
+            .unwrap()
+            .pubkey();
+        let account =
+            AccountSharedData::new(1_000 + index as u64, index % 128, &system_program::id());
+        bank0.store_account_and_update_capitalization(&pubkey, &account);
+    }
+
+    // Simulate starting from a snapshot so subsequent stores populate every overlay: overrides,
+    // additions, and removals.
+    let restored_stakes = {
+        let stakes = bank0.stakes_cache.stakes();
+        let deserialized_stakes = DeserializableDelegationStakes {
+            vote_accounts: stakes.vote_accounts().clone(),
+            stake_delegations: stakes
+                .stake_delegations()
+                .iter()
+                .map(|(pubkey, stake_account)| (*pubkey, *stake_account.delegation()))
+                .collect(),
+            unused: 0,
+            epoch: 0,
+            stake_history: stakes.history().clone(),
+        };
+        Stakes::load_from_deserialized_delegations(deserialized_stakes, |pubkey| {
+            bank0.get_account(pubkey)
+        })
+        .unwrap()
+    };
+    bank0.stakes_cache = StakesCache::new(restored_stakes);
+    bank0.stakes_cache.refresh_delegated_stakes(
+        bank0.new_warmup_cooldown_rate_epoch(),
+        bank0.use_fixed_point_stake_math(),
+    );
+
+    for (validator_index, validator_keypairs) in validator_keypairs.iter().enumerate() {
+        let vote_pubkey = validator_keypairs.vote_keypair.pubkey();
+        let vote_account = bank0.get_account(&vote_pubkey).unwrap();
+        for stake_index in 0..SNAPSHOT_STAKES_PER_VALIDATOR {
+            let index = validator_index * SNAPSHOT_STAKES_PER_VALIDATOR + stake_index;
+            let stake_pubkey =
+                Keypair::from_seed(&((4u64 << 32) | index as u64).to_le_bytes().repeat(4))
+                    .unwrap()
+                    .pubkey();
+            match stake_index % 8 {
+                0 => {
+                    // Remove a snapshot-backed delegation, leaving a pending removal.
+                    let mut removed_stake_account = AccountSharedData::default();
+                    removed_stake_account.set_owner(solana_stake_interface::program::id());
+                    bank0.store_account_and_update_capitalization(
+                        &stake_pubkey,
+                        &removed_stake_account,
+                    );
+                }
+                1 => {
+                    // Override a snapshot-backed delegation.
+                    let stake_account = stake_utils::create_stake_account(
+                        &stake_pubkey,
+                        &vote_pubkey,
+                        &vote_account,
+                        &rent,
+                        STAKE_LAMPORTS + 1_000_000 + index as u64,
+                    );
+                    bank0.store_account_and_update_capitalization(&stake_pubkey, &stake_account);
+                }
+                2 => {
+                    // Remove and re-insert a snapshot-backed delegation in the same fork.
+                    let mut removed_stake_account = AccountSharedData::default();
+                    removed_stake_account.set_owner(solana_stake_interface::program::id());
+                    bank0.store_account_and_update_capitalization(
+                        &stake_pubkey,
+                        &removed_stake_account,
+                    );
+                    let stake_account = stake_utils::create_stake_account(
+                        &stake_pubkey,
+                        &vote_pubkey,
+                        &vote_account,
+                        &rent,
+                        STAKE_LAMPORTS + 3_000_000 + index as u64,
+                    );
+                    bank0.store_account_and_update_capitalization(&stake_pubkey, &stake_account);
+                }
+                _ => {
+                    // Leave the snapshot-backed delegation unchanged.
+                }
+            }
+        }
+        for stake_index in 0..ADDITIONAL_STAKES_PER_VALIDATOR {
+            let index = validator_index * ADDITIONAL_STAKES_PER_VALIDATOR + stake_index;
+            let stake_pubkey =
+                Keypair::from_seed(&((6u64 << 32) | index as u64).to_le_bytes().repeat(4))
+                    .unwrap()
+                    .pubkey();
+            let stake_account = stake_utils::create_stake_account(
+                &stake_pubkey,
+                &vote_pubkey,
+                &vote_account,
+                &rent,
+                STAKE_LAMPORTS + 2_000_000 + index as u64,
+            );
+            bank0.store_account_and_update_capitalization(&stake_pubkey, &stake_account);
+        }
+    }
+
+    // Round-trip the real bank snapshot wire format. In particular, this checks the exact-size
+    // iterator contract used by wincode when stake removals are pending.
+    let expected_stake_delegations = {
+        let stakes = bank0.stakes_cache.stakes();
+        stakes.stake_delegations().len()
+    };
+    bank0.set_block_id(Some(Hash::from([7u8; 32])));
+    let mut snapshot_stream = std::io::BufWriter::new(Vec::new());
+    bank_to_stream(&mut snapshot_stream, &bank0, &[]).unwrap();
+    let snapshot_bytes = snapshot_stream.into_inner().unwrap();
+    let (snapshot_fields, _) =
+        fields_from_stream(&mut std::io::BufReader::new(Cursor::new(snapshot_bytes))).unwrap();
+    assert_eq!(
+        snapshot_fields.stakes.stake_delegations.len(),
+        expected_stake_delegations,
+        "snapshot roundtrip must preserve the number of stake delegations",
+    );
+    let restored_stakes =
+        Stakes::load_from_deserialized_delegations(snapshot_fields.stakes, |pubkey| {
+            bank0.get_account(pubkey)
+        })
+        .unwrap();
+    bank0.stakes_cache = StakesCache::new(restored_stakes);
+    bank0.stakes_cache.refresh_delegated_stakes(
+        bank0.new_warmup_cooldown_rate_epoch(),
+        bank0.use_fixed_point_stake_math(),
+    );
+
+    // Cross two epoch boundaries and root the first after distributing partitioned epoch rewards.
+    // This calculates rewards from the restored stakes cache, then folds its overlay into the
+    // rooted snapshot before calculating the next epoch.
+    let (bank0, bank_forks) = bank0.wrap_with_bank_forks_for_tests();
+    let bank1 = Bank::new_from_parent_with_bank_forks(
+        &bank_forks,
+        bank0,
+        SlotLeader::default(),
+        SLOTS_PER_EPOCH,
+    );
+    let num_reward_partitions = bank1
+        .get_rewards_and_num_partitions()
+        .num_partitions
+        .unwrap();
+    assert!(num_reward_partitions > 1);
+    assert!(matches!(
+        bank1.epoch_reward_status,
+        EpochRewardStatus::Active(EpochRewardPhase::Calculation(_))
+    ));
+    let mut bank_after_rewards = bank1;
+    for partition_index in 0..num_reward_partitions {
+        bank_after_rewards = Bank::new_from_parent_with_bank_forks(
+            &bank_forks,
+            bank_after_rewards,
+            SlotLeader::default(),
+            SLOTS_PER_EPOCH + partition_index + 1,
+        );
+        if partition_index + 1 == num_reward_partitions {
+            assert_eq!(
+                bank_after_rewards.epoch_reward_status,
+                EpochRewardStatus::Inactive
+            );
+        } else {
+            assert!(matches!(
+                bank_after_rewards.epoch_reward_status,
+                EpochRewardStatus::Active(EpochRewardPhase::Distribution(_))
+            ));
+        }
+    }
+    bank_forks
+        .write()
+        .unwrap()
+        .set_root(bank_after_rewards.slot(), None, None);
+    let bank2 = Bank::new_from_parent_with_bank_forks(
+        &bank_forks,
+        bank_after_rewards,
+        SlotLeader::default(),
+        SLOTS_PER_EPOCH * 2,
+    );
+    bank2.freeze();
+
+    assert_eq!(
+        bank2.hash().as_bytes(),
+        &[
+            86, 205, 172, 21, 39, 187, 21, 151, 201, 56, 22, 172, 139, 53, 77, 130, 14, 146, 1,
+            218, 250, 142, 9, 250, 247, 196, 50, 85, 43, 193, 19, 227
+        ]
+    );
 }
 
 #[ignore]
