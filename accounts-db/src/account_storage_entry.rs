@@ -1,10 +1,12 @@
 use {
     crate::{
         account_info::Offset,
+        account_storage::stored_account_info::StoredAccountInfo,
         accounts_db::AccountsFileId,
         accounts_file::{AccountsFile, AccountsFileError, AccountsFileProvider},
         obsolete_accounts::ObsoleteAccounts,
     },
+    agave_fs::buffered_reader::RequiredLenBufFileRead,
     solana_clock::Slot,
     solana_nohash_hasher::IntSet,
     std::{
@@ -286,6 +288,35 @@ impl AccountStorageEntry {
         prev_num_alive_accounts - num_accounts
     }
 
+    /// Collect the offsets that should be excluded from scans
+    fn excluded_offsets(&self) -> IntSet<Offset> {
+        let mut offsets: IntSet<Offset> = self
+            .obsolete_accounts_read_lock()
+            .filter_obsolete_accounts(None)
+            .map(|(offset, _)| offset)
+            .collect();
+        offsets.extend(self.tombstone_offsets_read_lock().iter().copied());
+        offsets
+    }
+
+    /// Iterate over the alive accounts in this storage, excluding obsolete accounts and tombstones.
+    /// The return value is the number of values excluded from the scan.
+    pub(crate) fn scan_accounts<'a>(
+        &'a self,
+        reader: &mut impl RequiredLenBufFileRead<'a>,
+        mut callback: impl for<'local> FnMut(Offset, StoredAccountInfo<'local>),
+    ) -> Result<u64, AccountsFileError> {
+        let excluded_offsets = self.excluded_offsets();
+        let mut num_excluded = 0;
+        self.accounts.scan_accounts(reader, |offset, account| {
+            if excluded_offsets.contains(&offset) {
+                num_excluded += 1;
+                return;
+            }
+            callback(offset, account);
+        })?;
+        Ok(num_excluded)
+    }
     /// Returns the path to the underlying accounts storage file
     pub fn path(&self) -> &Path {
         self.accounts.path()
@@ -301,5 +332,73 @@ impl AccountStorageEntry {
 
     pub(crate) fn zero_lamport_single_ref_offsets(&self) -> &RwLock<IntSet<Offset>> {
         &self.zero_lamport_single_ref_offsets
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use {
+        super::*,
+        crate::{accounts_db::get_temp_accounts_paths, append_vec::new_scan_accounts_reader},
+        solana_account::AccountSharedData,
+        solana_pubkey::Pubkey,
+    };
+
+    /// scan_accounts visits every account except those marked obsolete or recorded as a tombstone,
+    /// and returns the number of accounts it excluded.
+    #[test]
+    fn test_scan_accounts_excludes_obsolete_and_tombstones() {
+        let slot = 0;
+        let (_temp_dirs, paths) = get_temp_accounts_paths(1).unwrap();
+        let storage = AccountStorageEntry::new(
+            &paths[0],
+            slot,
+            0,
+            1024 * 1024,
+            AccountsFileProvider::AppendVec,
+        );
+
+        // Write five accounts and capture their offsets.
+        let accounts: Vec<_> = (0..5)
+            .map(|_| {
+                (
+                    Pubkey::new_unique(),
+                    AccountSharedData::new(1, 10, &Pubkey::default()),
+                )
+            })
+            .collect();
+        let offsets = storage
+            .accounts
+            .write_accounts(&(slot, &accounts[..]))
+            .unwrap()
+            .offsets;
+
+        // Mark account 1 obsolete and record account 3 as a tombstone.
+        let obsolete_offset = offsets[1];
+        let tombstone_offset = offsets[3];
+        let data_lens = storage.accounts.get_account_data_lens(&[obsolete_offset]);
+        storage
+            .obsolete_accounts()
+            .write()
+            .unwrap()
+            .mark_accounts_obsolete(std::iter::once((obsolete_offset, data_lens[0])), slot);
+        storage.batch_insert_tombstone_offsets([tombstone_offset]);
+
+        // Scan and collect the accounts that were visited, in offset order.
+        let mut reader = new_scan_accounts_reader();
+        let mut visited = Vec::new();
+        let num_excluded = storage
+            .scan_accounts(&mut reader, |offset, account| {
+                visited.push((offset, *account.pubkey()));
+            })
+            .unwrap();
+
+        // Accounts 0, 2, and 4 are alive; 1 (obsolete) and 3 (tombstone) are excluded.
+        assert_eq!(num_excluded, 2);
+        let expected: Vec<_> = [0, 2, 4]
+            .iter()
+            .map(|&i| (offsets[i], accounts[i].0))
+            .collect();
+        assert_eq!(visited, expected);
     }
 }
