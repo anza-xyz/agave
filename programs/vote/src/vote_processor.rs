@@ -576,7 +576,6 @@ mod tests {
                     solana_sdk_ids::system_program::id(),
                     Arc::new(ProgramCacheEntry::new_builtin(
                         0,
-                        0,
                         solana_system_program::system_processor::Entrypoint::register,
                     )),
                 );

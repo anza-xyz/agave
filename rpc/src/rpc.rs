@@ -4802,7 +4802,7 @@ pub mod tests {
             solana_pubkey::pubkey!("TestProgram11111111111111111111111111111111");
 
         fn cache_entry() -> ProgramCacheEntry {
-            ProgramCacheEntry::new_builtin(0, Self::NAME.len(), Self::register)
+            ProgramCacheEntry::new_builtin(0, Self::register)
         }
 
         fn instruction(

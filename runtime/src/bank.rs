@@ -5958,7 +5958,7 @@ impl Bank {
         self.add_builtin(
             program_id,
             "mockup",
-            ProgramCacheEntry::new_builtin(self.slot, 0, builtin),
+            ProgramCacheEntry::new_builtin(self.slot, builtin),
         );
     }
 
@@ -6262,7 +6262,6 @@ impl Bank {
                     builtin.name,
                     ProgramCacheEntry::new_builtin(
                         self.feature_set.activated_slot(&feature_id).unwrap_or(0),
-                        builtin.name.len(),
                         builtin.register_fn,
                     ),
                 );
@@ -6418,11 +6417,7 @@ impl Bank {
                     .unwrap_or(0);
                 self.transaction_processor.add_builtin(
                     builtin.program_id,
-                    ProgramCacheEntry::new_builtin(
-                        activation_slot,
-                        builtin.name.len(),
-                        builtin.register_fn,
-                    ),
+                    ProgramCacheEntry::new_builtin(activation_slot, builtin.register_fn),
                 );
             }
         }

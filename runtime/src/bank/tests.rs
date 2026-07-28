@@ -3746,12 +3746,12 @@ fn test_add_instruction_processor_for_existing_unrelated_accounts() {
         bank.add_builtin(
             vote_id,
             "mock_program1",
-            ProgramCacheEntry::new_builtin(0, 0, MockBuiltin::register),
+            ProgramCacheEntry::new_builtin(0, MockBuiltin::register),
         );
         bank.add_builtin(
             stake_id,
             "mock_program2",
-            ProgramCacheEntry::new_builtin(0, 0, MockBuiltin::register),
+            ProgramCacheEntry::new_builtin(0, MockBuiltin::register),
         );
         {
             let stakes = bank.stakes_cache.stakes();
@@ -5139,7 +5139,7 @@ fn test_fuzz_instructions() {
             bank.add_builtin(
                 key,
                 name.as_str(),
-                ProgramCacheEntry::new_builtin(0, 0, MockBuiltin::register),
+                ProgramCacheEntry::new_builtin(0, MockBuiltin::register),
             );
             (key, name.as_bytes().to_vec())
         })

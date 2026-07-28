@@ -311,11 +311,7 @@ impl ProgramCacheEntry {
     }
 
     /// Creates a new built-in program
-    pub fn new_builtin(
-        deployment_slot: Slot,
-        _account_size: usize,
-        register_fn: BuiltinFunctionRegisterer,
-    ) -> Self {
+    pub fn new_builtin(deployment_slot: Slot, register_fn: BuiltinFunctionRegisterer) -> Self {
         let mut program = BuiltinProgram::new_builtin();
         register_fn(&mut program, "entrypoint").unwrap();
         Self {

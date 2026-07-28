@@ -284,7 +284,6 @@ pub fn register_builtins(
         loader_v3_name,
         ProgramCacheEntry::new_builtin(
             DEPLOYMENT_SLOT,
-            loader_v3_name.len(),
             solana_bpf_loader_program::Entrypoint::register,
         ),
     );
@@ -297,7 +296,6 @@ pub fn register_builtins(
         loader_v1_name,
         ProgramCacheEntry::new_builtin(
             DEPLOYMENT_SLOT,
-            loader_v1_name.len(),
             solana_bpf_loader_program::Entrypoint::register,
         ),
     );
@@ -309,7 +307,6 @@ pub fn register_builtins(
         loader_v2_name,
         ProgramCacheEntry::new_builtin(
             DEPLOYMENT_SLOT,
-            loader_v2_name.len(),
             solana_bpf_loader_program::Entrypoint::register,
         ),
     );
@@ -323,7 +320,6 @@ pub fn register_builtins(
         system_program_name,
         ProgramCacheEntry::new_builtin(
             DEPLOYMENT_SLOT,
-            system_program_name.len(),
             solana_system_program::system_processor::Entrypoint::register,
         ),
     );
@@ -336,7 +332,6 @@ pub fn register_builtins(
         compute_budget_program_name,
         ProgramCacheEntry::new_builtin(
             DEPLOYMENT_SLOT,
-            compute_budget_program_name.len(),
             solana_compute_budget_program::Entrypoint::register,
         ),
     );
