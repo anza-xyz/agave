@@ -2579,6 +2579,39 @@ fn test_check_propagation_skip_propagation_check() {
 }
 
 #[test]
+fn test_clear_slots_clears_status_cache_for_removed_bank() {
+    let VoteSimulator {
+        bank_forks,
+        node_pubkeys,
+        validator_keypairs,
+        mut progress,
+        ..
+    } = VoteSimulator::new(1);
+    let bank0 = bank_forks.read().unwrap().get(0).unwrap();
+    let bank1 = Bank::new_from_parent(bank0, SlotLeader::default(), 1);
+    let sender = node_pubkeys[0];
+    let transfer_signature = bank1
+        .transfer(
+            1,
+            &validator_keypairs.get(&sender).unwrap().node_keypair,
+            &Pubkey::new_unique(),
+        )
+        .unwrap();
+    bank_forks.write().unwrap().insert(bank1);
+    let bank1 = bank_forks.read().unwrap().get(1).unwrap();
+    assert!(bank1.get_signature_status(&transfer_signature).is_some());
+
+    let removed_bank = bank_forks.write().unwrap().remove(1).unwrap();
+    drop(removed_bank);
+    assert!(bank_forks.read().unwrap().get(1).is_none());
+    assert!(bank1.get_signature_status(&transfer_signature).is_some());
+
+    ReplayStage::clear_slots([1], &bank_forks, &mut progress, &mut Vec::new());
+
+    assert!(bank1.get_signature_status(&transfer_signature).is_none());
+}
+
+#[test]
 fn test_purge_unconfirmed_duplicate_slot() {
     let (vote_simulator, blockstore) = setup_default_forks(2, None::<GenerateVotes>);
     let VoteSimulator {
