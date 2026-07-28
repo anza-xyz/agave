@@ -134,7 +134,6 @@ impl Bank {
         program_id: &Pubkey,
         programdata: &[u8],
     ) -> Result<(), InstructionError> {
-        let data_len = programdata.len();
         let progradata_metadata_size = UpgradeableLoaderState::size_of_programdata_metadata();
         let elf = &programdata[progradata_metadata_size..];
         // Set up the two `LoadedProgramsForTxBatch` instances, as if
@@ -201,9 +200,6 @@ impl Bank {
                 false, // disable_sbpf_v0_v1_v2_deployment // explicitly continue to allow them for core program migrations
                 program_id,
                 &bpf_loader_upgradeable::id(),
-                // The size of the program cache entry is the size of the program account
-                // + size of the program data account.
-                UpgradeableLoaderState::size_of_program().saturating_add(data_len),
                 elf,
                 self.slot,
             )?;

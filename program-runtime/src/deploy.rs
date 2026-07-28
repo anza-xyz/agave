@@ -55,7 +55,6 @@ pub fn deploy_program(
     disable_sbpf_v0_v1_v2_deployment: bool,
     program_id: &Pubkey,
     loader_key: &Pubkey,
-    _account_size: usize,
     programdata: &[u8],
     deployment_slot: Slot,
 ) -> Result<(), InstructionError> {
@@ -134,7 +133,7 @@ macro_rules! deploy_program {
     ($invoke_context:expr,
      $program_id:expr,
      $loader_key:expr,
-     $account_size:expr,
+     $_account_size:expr,
      $programdata:expr,
      $deployment_slot:expr,
      $disable_sbpf_v0_v1_v2_deployment:expr $(,)?) => {
@@ -155,7 +154,6 @@ macro_rules! deploy_program {
             $disable_sbpf_v0_v1_v2_deployment,
             $program_id,
             $loader_key,
-            $account_size,
             $programdata,
             $deployment_slot,
         )?;
