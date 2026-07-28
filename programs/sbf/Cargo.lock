@@ -74,7 +74,6 @@ dependencies = [
  "solana-bls-signatures",
  "solana-signer-store",
  "thiserror 2.0.18",
- "wincode",
 ]
 
 [[package]]
@@ -98,7 +97,6 @@ dependencies = [
  "solana-ledger",
  "solana-measure",
  "solana-metrics",
- "solana-packet 4.2.0",
  "solana-perf",
  "solana-pubkey 4.2.0",
  "solana-runtime",
@@ -122,7 +120,6 @@ dependencies = [
  "ahash 0.8.12",
  "solana-epoch-schedule",
  "solana-hash 4.5.0",
- "solana-keypair",
  "solana-pubkey 4.2.0",
  "solana-sha256-hasher",
  "solana-svm-feature-set",
@@ -174,7 +171,6 @@ dependencies = [
  "env_logger",
  "libc",
  "log",
- "signal-hook",
 ]
 
 [[package]]
@@ -331,7 +327,6 @@ dependencies = [
  "solana-commitment-config",
  "solana-core",
  "solana-download-utils",
- "solana-entry",
  "solana-epoch-schedule",
  "solana-faucet",
  "solana-genesis-utils",
@@ -5979,7 +5974,6 @@ dependencies = [
 name = "solana-banks-server"
 version = "4.3.0-alpha.2"
 dependencies = [
- "agave-feature-set",
  "bincode",
  "crossbeam-channel",
  "futures 0.3.33",
@@ -6054,7 +6048,6 @@ dependencies = [
  "fnv",
  "rand 0.9.4",
  "serde",
- "solana-sanitize",
  "solana-time-utils",
  "wincode",
 ]
@@ -6140,7 +6133,6 @@ dependencies = [
  "solana-pubkey 4.2.0",
  "solana-sbpf",
  "solana-sdk-ids",
- "solana-svm-feature-set",
  "solana-svm-log-collector",
  "solana-svm-measure",
  "solana-svm-type-overrides",
@@ -6391,7 +6383,6 @@ dependencies = [
  "solana-compute-budget",
  "solana-compute-budget-interface",
  "solana-instruction",
- "solana-packet 4.2.0",
  "solana-pubkey 4.2.0",
  "solana-sdk-ids",
  "solana-svm-transaction",
@@ -6456,12 +6447,10 @@ name = "solana-core"
 version = "4.3.0-alpha.2"
 dependencies = [
  "agave-banking-stage-ingress-types",
- "agave-bls-cert-verify",
  "agave-bls-sigverify",
  "agave-feature-set",
  "agave-fs",
  "agave-logger",
- "agave-math-utils",
  "agave-scheduler-bindings",
  "agave-scheduling-utils",
  "agave-snapshots",
@@ -6476,7 +6465,6 @@ dependencies = [
  "assert_matches",
  "async-trait",
  "bincode",
- "bitvec",
  "bytes",
  "chrono",
  "crossbeam-channel",
@@ -6496,7 +6484,6 @@ dependencies = [
  "rayon",
  "rolling-file",
  "rts-alloc",
- "rustls",
  "serde",
  "serde_bytes",
  "shaq",
@@ -6510,7 +6497,6 @@ dependencies = [
  "solana-bls-signatures",
  "solana-client",
  "solana-clock",
- "solana-cluster-type",
  "solana-compute-budget-interface",
  "solana-connection-cache",
  "solana-cost-model",
@@ -7000,7 +6986,6 @@ dependencies = [
  "solana-bloom",
  "solana-clock",
  "solana-entry",
- "solana-epoch-schedule",
  "solana-hash 4.5.0",
  "solana-keypair",
  "solana-ledger",
@@ -7286,7 +7271,6 @@ dependencies = [
  "solana-storage-bigtable",
  "solana-storage-proto",
  "solana-streamer",
- "solana-svm",
  "solana-svm-timings",
  "solana-svm-transaction",
  "solana-system-interface 3.2.0",
@@ -7547,7 +7531,6 @@ dependencies = [
  "solana-system-transaction",
  "solana-time-utils",
  "solana-transaction",
- "solana-transaction-context",
  "solana-vote",
  "solana-vote-program",
  "wincode",
@@ -7734,7 +7717,6 @@ version = "4.3.0-alpha.2"
 dependencies = [
  "base64 0.22.1",
  "bincode",
- "cfg-if 1.0.4",
  "itertools 0.14.0",
  "log",
  "qualifier_attr",
@@ -7780,7 +7762,6 @@ version = "4.3.0-alpha.2"
 dependencies = [
  "agave-feature-set",
  "agave-logger",
- "assert_matches",
  "async-trait",
  "base64 0.22.1",
  "bincode",
@@ -7796,7 +7777,6 @@ dependencies = [
  "solana-banks-server",
  "solana-clock",
  "solana-cluster-type",
- "solana-commitment-config",
  "solana-compute-budget",
  "solana-epoch-rewards",
  "solana-epoch-schedule",
@@ -7805,9 +7785,6 @@ dependencies = [
  "solana-hash 4.5.0",
  "solana-instruction",
  "solana-keypair",
- "solana-loader-v3-interface",
- "solana-message",
- "solana-msg",
  "solana-native-token",
  "solana-poh-config",
  "solana-program-binaries",
@@ -7820,18 +7797,11 @@ dependencies = [
  "solana-sbpf",
  "solana-sdk-ids",
  "solana-signer",
- "solana-stake-history",
- "solana-stake-interface",
  "solana-svm-log-collector",
- "solana-system-interface 3.2.0",
  "solana-sysvar",
  "solana-sysvar-id",
- "solana-transaction",
  "solana-transaction-context",
- "solana-transaction-error",
  "solana-vote-program",
- "spl-generic-token",
- "spl-memo-interface",
  "thiserror 2.0.18",
  "tokio",
 ]
@@ -8222,7 +8192,6 @@ dependencies = [
  "solana-program-binaries",
  "solana-program-runtime",
  "solana-pubkey 4.2.0",
- "solana-rayon-threadlimit",
  "solana-rent",
  "solana-reward-info",
  "solana-runtime-transaction",
@@ -8260,7 +8229,6 @@ dependencies = [
  "solana-vote-program",
  "spl-generic-token",
  "static_assertions",
- "strum",
  "strum_macros",
  "tempfile",
  "thiserror 2.0.18",
@@ -9327,7 +9295,6 @@ name = "solana-storage-bigtable"
 version = "4.3.0-alpha.2"
 dependencies = [
  "agave-reserved-account-keys",
- "base64 0.22.1",
  "bincode",
  "bzip2",
  "flate2",
@@ -9337,7 +9304,6 @@ dependencies = [
  "hyper-util",
  "log",
  "prost",
- "prost-types",
  "serde",
  "smpl_jwt",
  "solana-clock",
@@ -9354,7 +9320,6 @@ dependencies = [
  "thiserror 2.0.18",
  "tokio",
  "tonic",
- "tonic-prost",
  "zstd",
 ]
 
@@ -9363,7 +9328,6 @@ name = "solana-storage-proto"
 version = "4.3.0-alpha.2"
 dependencies = [
  "bs58",
- "prost",
  "protobuf-src",
  "serde",
  "solana-account-decoder",
@@ -9446,7 +9410,6 @@ dependencies = [
  "solana-nonce-account",
  "solana-precompile-error",
  "solana-program-entrypoint",
- "solana-program-pack",
  "solana-program-runtime",
  "solana-pubkey 4.2.0",
  "solana-rent",
@@ -9462,7 +9425,6 @@ dependencies = [
  "solana-syscalls",
  "solana-system-interface 3.2.0",
  "solana-system-program",
- "solana-sysvar-id",
  "solana-transaction-context",
  "solana-transaction-error",
  "spl-generic-token",
@@ -9713,7 +9675,6 @@ dependencies = [
  "solana-keypair",
  "solana-ledger",
  "solana-loader-v3-interface",
- "solana-message",
  "solana-native-token",
  "solana-net-utils",
  "solana-program-binaries",
@@ -9804,7 +9765,6 @@ dependencies = [
  "solana-rpc-client",
  "solana-rpc-client-api",
  "solana-streamer",
- "solana-time-utils",
  "solana-tls-utils",
  "thiserror 2.0.18",
  "tokio",
@@ -9909,7 +9869,6 @@ name = "solana-transaction-status-client-types"
 version = "4.3.0-alpha.2"
 dependencies = [
  "base64 0.22.1",
- "bincode",
  "bs58",
  "serde",
  "serde_json",
@@ -9933,7 +9892,6 @@ dependencies = [
  "agave-feature-set",
  "agave-votor",
  "agave-votor-messages",
- "bytes",
  "crossbeam-channel",
  "itertools 0.14.0",
  "lazy-lru",
@@ -10001,7 +9959,6 @@ dependencies = [
 name = "solana-unified-scheduler-pool"
 version = "4.3.0-alpha.2"
 dependencies = [
- "agave-banking-stage-ingress-types",
  "assert_matches",
  "crossbeam-channel",
  "dashmap",
@@ -10010,13 +9967,9 @@ dependencies = [
  "log",
  "scopeguard",
  "solana-clock",
- "solana-cost-model",
- "solana-metrics",
- "solana-poh",
  "solana-pubkey 4.2.0",
  "solana-runtime",
  "solana-runtime-transaction",
- "solana-svm",
  "solana-svm-timings",
  "solana-transaction",
  "solana-transaction-error",
@@ -10105,7 +10058,6 @@ dependencies = [
 name = "solana-vote-program"
 version = "4.3.0-alpha.2"
 dependencies = [
- "agave-feature-set",
  "bincode",
  "log",
  "solana-account 4.3.1",
@@ -11016,17 +10968,6 @@ dependencies = [
  "proc-macro2",
  "quote",
  "syn 2.0.117",
-]
-
-[[package]]
-name = "tonic-prost"
-version = "0.14.6"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "50849f68853be452acf590cde0b146665b8d507b3b8af17261df47e02c209ea0"
-dependencies = [
- "bytes",
- "prost",
- "tonic",
 ]
 
 [[package]]
