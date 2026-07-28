@@ -141,7 +141,6 @@ pub fn add_program_to_program_cache(
         0, // deployment_slot
         0, // effective_slot
         elf,
-        elf.len(),
         #[cfg(feature = "metrics")]
         &mut LoadProgramMetrics::default(),
     )

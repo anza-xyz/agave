@@ -1087,7 +1087,6 @@ mod test_utils {
                     0,
                     effective_slot,
                     programdata,
-                    account.data().len(),
                     #[cfg(feature = "metrics")]
                     &mut LoadProgramMetrics::default(),
                 )

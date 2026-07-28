@@ -126,7 +126,6 @@ pub fn load_program_with_pubkey<CB: TransactionProcessingCallback>(
             0,
             DELAY_VISIBILITY_SLOT_OFFSET,
             program_account.data(),
-            program_account.data().len(),
             #[cfg(feature = "metrics")]
             &mut load_program_metrics,
         )
@@ -138,7 +137,6 @@ pub fn load_program_with_pubkey<CB: TransactionProcessingCallback>(
             0,
             DELAY_VISIBILITY_SLOT_OFFSET,
             program_account.data(),
-            program_account.data().len(),
             #[cfg(feature = "metrics")]
             &mut load_program_metrics,
         )
@@ -159,10 +157,6 @@ pub fn load_program_with_pubkey<CB: TransactionProcessingCallback>(
                     deployment_slot,
                     deployment_slot.saturating_add(DELAY_VISIBILITY_SLOT_OFFSET),
                     programdata,
-                    program_account
-                        .data()
-                        .len()
-                        .saturating_add(programdata_account.data().len()),
                     #[cfg(feature = "metrics")]
                     &mut load_program_metrics,
                 )
@@ -182,7 +176,6 @@ pub fn load_program_with_pubkey<CB: TransactionProcessingCallback>(
                         deployment_slot,
                         deployment_slot.saturating_add(DELAY_VISIBILITY_SLOT_OFFSET),
                         elf_bytes,
-                        program_account.data().len(),
                         #[cfg(feature = "metrics")]
                         &mut load_program_metrics,
                     )
@@ -480,7 +473,6 @@ mod tests {
         #[cfg(feature = "metrics")]
         let mut metrics = LoadProgramMetrics::default();
         let loader = bpf_loader_upgradeable::id();
-        let size = buffer.len();
         let slot: Slot = 2;
         let environment = ProgramRuntimeEnvironment::from(BuiltinProgram::new_mock());
 
@@ -490,7 +482,6 @@ mod tests {
             slot,
             slot.saturating_add(DELAY_VISIBILITY_SLOT_OFFSET),
             &buffer,
-            size,
             #[cfg(feature = "metrics")]
             &mut metrics,
         );
@@ -596,7 +587,6 @@ mod tests {
             0,
             DELAY_VISIBILITY_SLOT_OFFSET,
             account_data.data(),
-            account_data.data().len(),
             #[cfg(feature = "metrics")]
             &mut LoadProgramMetrics::default(),
         );
@@ -688,7 +678,6 @@ mod tests {
             0,
             DELAY_VISIBILITY_SLOT_OFFSET,
             account_data.data(),
-            account_data.data().len(),
             #[cfg(feature = "metrics")]
             &mut LoadProgramMetrics::default(),
         );

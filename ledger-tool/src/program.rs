@@ -277,7 +277,6 @@ fn load_program<'a>(
         program_id: program_id.to_string(),
         ..LoadProgramMetrics::default()
     };
-    let account_size = contents.len();
     let program_runtime_environment = create_program_runtime_environment(
         invoke_context.get_feature_set(),
         invoke_context.get_compute_budget(),
@@ -294,7 +293,6 @@ fn load_program<'a>(
             slot,
             slot.saturating_add(DELAY_VISIBILITY_SLOT_OFFSET),
             &contents,
-            account_size,
             &mut load_program_metrics,
         );
         match result {
