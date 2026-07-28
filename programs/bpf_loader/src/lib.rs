@@ -317,7 +317,6 @@ fn process_loader_upgradeable_instruction(
                 invoke_context,
                 &new_program_id,
                 &owner_id,
-                UpgradeableLoaderState::size_of_program().saturating_add(programdata_len),
                 buffer
                     .get_data()
                     .get(buffer_data_offset..)
@@ -482,7 +481,6 @@ fn process_loader_upgradeable_instruction(
                 ic_logger_msg!(log_collector, "Invalid ProgramData account");
                 return Err(InstructionError::InvalidAccountData);
             };
-            let programdata_len = programdata.get_data().len();
             drop(programdata);
 
             // Load and verify the program bits
@@ -491,7 +489,6 @@ fn process_loader_upgradeable_instruction(
                 invoke_context,
                 &new_program_id,
                 program_id,
-                UpgradeableLoaderState::size_of_program().saturating_add(programdata_len),
                 buffer
                     .get_data()
                     .get(buffer_data_offset..)
@@ -978,7 +975,6 @@ fn common_extend_program(
         invoke_context,
         &program_key,
         &program_id,
-        UpgradeableLoaderState::size_of_program().saturating_add(new_len),
         programdata_account
             .get_data()
             .get(programdata_data_offset..)
@@ -4049,7 +4045,6 @@ mod tests {
             invoke_context,
             &program_id,
             &bpf_loader_upgradeable::id(),
-            elf.len(),
             &elf,
             2_u64,
             true, // disable_sbpf_v0_v1_v2_deployment

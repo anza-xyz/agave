@@ -133,7 +133,6 @@ macro_rules! deploy_program {
     ($invoke_context:expr,
      $program_id:expr,
      $loader_key:expr,
-     $_account_size:expr,
      $programdata:expr,
      $deployment_slot:expr,
      $disable_sbpf_v0_v1_v2_deployment:expr $(,)?) => {
