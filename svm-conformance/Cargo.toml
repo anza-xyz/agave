@@ -19,6 +19,11 @@ path = "src/bin/test_exec_elf_loader.rs"
 required-features = ["cli", "ffi"]
 
 [[bin]]
+name = "test_exec_instr"
+path = "src/bin/test_exec_instr.rs"
+required-features = ["cli", "ffi"]
+
+[[bin]]
 name = "test_exec_vm_serialization"
 path = "src/bin/test_exec_vm_serialization.rs"
 required-features = ["cli", "ffi"]
