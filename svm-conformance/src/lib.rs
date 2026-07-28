@@ -5,3 +5,5 @@
 
 #[cfg(feature = "ffi")]
 pub mod elf_loader;
+#[cfg(feature = "ffi")]
+pub mod serialization;

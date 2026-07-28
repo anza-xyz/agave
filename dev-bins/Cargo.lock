@@ -8539,11 +8539,15 @@ dependencies = [
 name = "solana-svm-conformance"
 version = "4.3.0-alpha.2"
 dependencies = [
+ "bincode",
  "clap 4.6.1",
  "prost 0.11.9",
  "protosol",
  "solana-compute-budget",
  "solana-program-runtime",
+ "solana-pubkey 4.2.0",
+ "solana-rent",
+ "solana-sdk-ids",
  "solana-svm",
  "solana-syscalls",
 ]

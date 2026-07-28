@@ -44,5 +44,11 @@ solana-program-runtime = { workspace = true, optional = true }
 solana-svm = { workspace = true, optional = true }
 solana-syscalls = { workspace = true, optional = true }
 
+[dev-dependencies]
+bincode = { workspace = true }
+solana-pubkey = { workspace = true }
+solana-rent = { workspace = true }
+solana-sdk-ids = { workspace = true }
+
 [lints]
 workspace = true
