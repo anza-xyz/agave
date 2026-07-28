@@ -87,12 +87,12 @@ serial_test = { workspace = true }
 solana-core = { path = "../core", features = ["agave-unstable-api", "dev-context-only-utils"] }
 solana-download-utils = { path = "../download-utils", features = ["agave-unstable-api"] }
 solana-genesis-utils = { path = "../genesis-utils", features = ["agave-unstable-api"] }
+solana-hard-forks = { workspace = true }
 solana-ledger = { path = "../ledger", features = ["agave-unstable-api", "dev-context-only-utils"] }
 solana-local-cluster = { path = ".", features = ["agave-unstable-api", "dev-context-only-utils"] }
-solana-runtime = { path = "../runtime", features = ["agave-unstable-api", "dev-context-only-utils"] }
-solana-hard-forks = { workspace = true }
 solana-pubsub-client = { workspace = true }
 solana-rpc-client-api = { workspace = true }
+solana-runtime = { path = "../runtime", features = ["agave-unstable-api", "dev-context-only-utils"] }
 solana-sdk-ids = { workspace = true }
 solana-slot-hashes = { workspace = true }
 solana-system-interface = { workspace = true }

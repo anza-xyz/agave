@@ -19,15 +19,8 @@ agave-unstable-api = []
 [dev-dependencies]
 agave-logger = { path = "../logger", features = ["agave-unstable-api"] }
 async-trait = { workspace = true }
-log = { workspace = true }
-solana-net-utils = { path = "../net-utils", features = ["agave-unstable-api"] }
-solana-packet = { workspace = true }
-solana-rpc = { workspace = true }
-solana-runtime = { workspace = true }
-solana-test-validator = { path = "../test-validator", features = ["agave-unstable-api", "dev-context-only-utils"] }
-solana-tpu-client-next = { workspace = true, features = ["dev-context-only-utils"] }
-spl-memo-interface = { workspace = true }
 futures-util = { workspace = true }
+log = { workspace = true }
 serde_json = { workspace = true }
 solana-client = { workspace = true }
 solana-clock = { workspace = true }
@@ -36,15 +29,22 @@ solana-keypair = { workspace = true }
 solana-ledger = { workspace = true }
 solana-message = { workspace = true }
 solana-native-token = { workspace = true }
+solana-net-utils = { path = "../net-utils", features = ["agave-unstable-api"] }
+solana-packet = { workspace = true }
 solana-pubkey = { workspace = true }
 solana-pubsub-client = { workspace = true }
+solana-rpc = { workspace = true }
 solana-rpc-client = { workspace = true }
 solana-rpc-client-api = { workspace = true }
+solana-runtime = { workspace = true }
 solana-signer = { workspace = true }
 solana-system-interface = { workspace = true }
 solana-system-transaction = { workspace = true }
+solana-test-validator = { path = "../test-validator", features = ["agave-unstable-api", "dev-context-only-utils"] }
+solana-tpu-client-next = { workspace = true, features = ["dev-context-only-utils"] }
 solana-transaction-status = { workspace = true }
 solana-version = { workspace = true }
+spl-memo-interface = { workspace = true }
 test-case = { workspace = true }
 tokio = { workspace = true, features = ["full"] }
 tungstenite = { workspace = true, features = ["rustls-tls-webpki-roots"] }
