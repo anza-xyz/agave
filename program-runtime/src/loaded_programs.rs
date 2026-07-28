@@ -1052,6 +1052,10 @@ pub(crate) mod tests {
         effective_slot: Slot,
         stats: ProgramStatistics,
     ) -> Arc<ProgramCacheEntry> {
+        debug_assert_eq!(
+            effective_slot,
+            deployment_slot.saturating_add(DELAY_VISIBILITY_SLOT_OFFSET),
+        );
         Arc::new(ProgramCacheEntry {
             program: new_loaded_entry(get_mock_program_runtime_environment()),
             account_owner: ProgramCacheEntryOwner::LoaderV2,
@@ -1067,6 +1071,7 @@ pub(crate) mod tests {
         deployment_slot: Slot,
         effective_slot: Slot,
     ) -> Arc<ProgramCacheEntry> {
+        debug_assert_eq!(effective_slot, deployment_slot);
         Arc::new(ProgramCacheEntry {
             program: ProgramCacheEntryType::Builtin(BuiltinProgram::new_mock()),
             account_owner: ProgramCacheEntryOwner::NativeLoader,

@@ -261,6 +261,10 @@ impl ProgramCacheEntry {
         #[cfg(feature = "metrics")] metrics: &mut LoadProgramMetrics,
         reloading: bool,
     ) -> Result<Self, Box<dyn std::error::Error>> {
+        debug_assert_eq!(
+            effective_slot,
+            deployment_slot.saturating_add(DELAY_VISIBILITY_SLOT_OFFSET),
+        );
         let entry_stats = ProgramStatistics::default();
         #[cfg(feature = "metrics")]
         let load_elf_time = solana_svm_measure::measure::Measure::start("load_elf_time");
