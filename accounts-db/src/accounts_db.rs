@@ -1641,7 +1641,6 @@ impl AccountsDb {
                 .for_each(|dirty_store_chunk| {
                     dirty_store_chunk.iter().for_each(|(_slot, store)| {
                         store
-                            .accounts
                             .scan_accounts_without_data(|_offset, account| {
                                 let pubkey = *account.pubkey();
                                 let is_zero_lamport = account.is_zero_lamport();

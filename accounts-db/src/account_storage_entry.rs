@@ -1,7 +1,7 @@
 use {
     crate::{
         account_info::Offset,
-        account_storage::stored_account_info::StoredAccountInfo,
+        account_storage::stored_account_info::{StoredAccountInfo, StoredAccountInfoWithoutData},
         accounts_db::AccountsFileId,
         accounts_file::{AccountsFile, AccountsFileError, AccountsFileProvider},
         obsolete_accounts::ObsoleteAccounts,
@@ -317,6 +317,26 @@ impl AccountStorageEntry {
         })?;
         Ok(num_excluded)
     }
+
+    /// Iterate over the alive accounts in this storage without reading data, excluding obsolete
+    /// accounts and tombstones. The return value is the number of values excluded from the scan.
+    pub(crate) fn scan_accounts_without_data(
+        &self,
+        mut callback: impl for<'local> FnMut(Offset, StoredAccountInfoWithoutData<'local>),
+    ) -> Result<u64, AccountsFileError> {
+        let excluded_offsets = self.excluded_offsets();
+        let mut num_excluded = 0;
+        self.accounts
+            .scan_accounts_without_data(|offset, account| {
+                if excluded_offsets.contains(&offset) {
+                    num_excluded += 1;
+                    return;
+                }
+                callback(offset, account);
+            })?;
+        Ok(num_excluded)
+    }
+
     /// Returns the path to the underlying accounts storage file
     pub fn path(&self) -> &Path {
         self.accounts.path()
@@ -344,8 +364,8 @@ mod tests {
         solana_pubkey::Pubkey,
     };
 
-    /// scan_accounts visits every account except those marked obsolete or recorded as a tombstone,
-    /// and returns the number of accounts it excluded.
+    /// scan_accounts and scan_accounts_without_data each visit every account except those marked
+    /// obsolete or recorded as a tombstone, and return the number of accounts excluded.
     #[test]
     fn test_scan_accounts_excludes_obsolete_and_tombstones() {
         let slot = 0;
@@ -399,6 +419,16 @@ mod tests {
             .iter()
             .map(|&i| (offsets[i], accounts[i].0))
             .collect();
+        assert_eq!(visited, expected);
+
+        // scan_accounts_without_data excludes the same offsets from the same storage.
+        let mut visited = Vec::new();
+        let num_excluded = storage
+            .scan_accounts_without_data(|offset, account| {
+                visited.push((offset, *account.pubkey()));
+            })
+            .unwrap();
+        assert_eq!(num_excluded, 2);
         assert_eq!(visited, expected);
     }
 }
