@@ -480,7 +480,10 @@ fn recv_inputs(
 mod tests {
     use {
         super::*,
-        agave_votor::consensus_pool::certificate_builder::CertificateBuilder,
+        agave_bls_cert_verify::cert_verify::{
+            test_create_base2_certificate, test_create_base2_unverified_certificate,
+            test_create_base3_certificate,
+        },
         agave_votor_messages::{
             VerifiedVoterSlotsReceiver,
             certificate::{Certificate, CertificateType},
@@ -492,7 +495,7 @@ mod tests {
         },
         bitvec::prelude::{BitVec, Lsb0},
         crossbeam_channel::{Receiver, TryRecvError, bounded},
-        solana_bls_signatures::{BLS_SIGNATURE_AFFINE_SIZE, Signature},
+        solana_bls_signatures::{BLS_SIGNATURE_AFFINE_SIZE, Keypair as BLSKeypair, Signature},
         solana_epoch_schedule::EpochSchedule,
         solana_gossip::contact_info::ContactInfo,
         solana_hash::Hash,
@@ -621,6 +624,13 @@ mod tests {
                 _bank_forks: bank_forks,
             }
         }
+
+        fn bls_keypairs(&self) -> Vec<BLSKeypair> {
+            self.validator_keypairs
+                .iter()
+                .map(|k| k.bls_keypair.clone())
+                .collect()
+        }
     }
 
     fn create_signed_vote_message(
@@ -653,41 +663,6 @@ mod tests {
         }
     }
 
-    fn create_signed_certificate_message(
-        shred_version: u16,
-        validator_keypairs: &[ValidatorVoteKeypairs],
-        root_bank: &Bank,
-        cert_type: CertificateType,
-        ranks: &[usize],
-    ) -> Certificate {
-        let mut builder = CertificateBuilder::new(cert_type);
-        // Assumes Base2 encoding (single vote type) for simplicity in this helper.
-        let vote = cert_type.to_source_vote();
-        let vote_messages: Vec<VoteMessage> = ranks
-            .iter()
-            .map(|&rank| {
-                create_signed_vote_message(root_bank, validator_keypairs, shred_version, vote, rank)
-            })
-            .collect();
-
-        builder
-            .aggregate(&vote_messages)
-            .expect("Failed to aggregate votes");
-        builder.build().expect("Failed to build certificate")
-    }
-
-    fn unverified_certificate(
-        certificate: Certificate,
-        shred_version: u16,
-    ) -> UnverifiedCertificate {
-        UnverifiedCertificate {
-            cert_type: certificate.cert_type,
-            signature: certificate.signature,
-            bitmap: certificate.bitmap,
-            shred_version,
-        }
-    }
-
     fn expect_no_receive<T: std::fmt::Debug>(receiver: &Receiver<T>) {
         match receiver.try_recv().unwrap_err() {
             TryRecvError::Empty => (),
@@ -716,23 +691,22 @@ mod tests {
             slot: 1,
             block_id: Hash::new_unique(),
         };
-        let certificate = create_signed_certificate_message(
+        let certificate = test_create_base2_unverified_certificate(
+            &ctx.bls_keypairs(),
             shred_version,
-            &ctx.validator_keypairs,
-            &ctx.verifier.sharable_banks.root(),
             CertificateType::FinalizeFast(block),
             &[0, 1, 2, 3, 4, 5, 6, 7],
         );
-        let certificate = (2, unverified_certificate(certificate, shred_version));
+        let slot = 2;
 
         ctx.verifier
-            .verify_and_send_inputs(vec![], vec![certificate.clone()])
+            .verify_and_send_inputs(vec![], vec![(slot, certificate.clone())])
             .unwrap();
         expect_no_receive(&ctx.pool_receiver);
 
         ctx.verifier.migration_status.enable_alpenglow_for_tests();
         ctx.verifier
-            .verify_and_send_inputs(vec![], vec![certificate])
+            .verify_and_send_inputs(vec![], vec![(slot, certificate)])
             .unwrap();
         let SigVerifiedBatch::Certificates(certs) = ctx.pool_receiver.try_recv().unwrap() else {
             panic!("expected a certificate batch");
@@ -749,21 +723,20 @@ mod tests {
             slot: 1,
             block_id: Hash::new_unique(),
         };
-        let certificate = create_signed_certificate_message(
+        let certificate = test_create_base2_unverified_certificate(
+            &ctx.bls_keypairs(),
             shred_version,
-            &ctx.validator_keypairs,
-            &ctx.verifier.sharable_banks.root(),
             CertificateType::FinalizeFast(block),
             &[0, 1, 2, 3, 4, 5, 6, 7],
         );
-        let certificate = (6, unverified_certificate(certificate, shred_version));
+        let slot = 6;
         let root_bank =
             Bank::new_from_parent(ctx.verifier.sharable_banks.root(), SlotLeader::default(), 5);
         ctx.verifier.migration_status.enable_alpenglow_for_tests();
 
         let extracted_msgs =
             ctx.verifier
-                .extract_and_filter_msgs(vec![], vec![certificate], &root_bank);
+                .extract_and_filter_msgs(vec![], vec![(slot, certificate)], &root_bank);
         assert!(extracted_msgs.certs.is_empty());
         assert!(extracted_msgs.votes.is_empty());
         assert_eq!(ctx.verifier.stats.num_old_certs_received.0, 1);
@@ -783,10 +756,9 @@ mod tests {
             Vote::new_finalization_vote(5),
             vote_rank1,
         );
-        let cert = create_signed_certificate_message(
+        let cert = test_create_base2_certificate(
+            &ctx.bls_keypairs(),
             ctx.verifier.cluster_info.my_shred_version(),
-            &ctx.validator_keypairs,
-            &ctx.verifier.sharable_banks.root(),
             cert_type,
             &cert_ranks,
         );
@@ -1384,10 +1356,9 @@ mod tests {
             slot: 10,
             block_id: Hash::new_unique(),
         });
-        let cert = create_signed_certificate_message(
+        let cert = test_create_base2_certificate(
+            &ctx.bls_keypairs(),
             ctx.verifier.cluster_info.my_shred_version(),
-            &ctx.validator_keypairs,
-            &ctx.verifier.sharable_banks.root(),
             cert_type,
             &(0..num_signers).collect::<Vec<_>>(),
         );
@@ -1417,10 +1388,9 @@ mod tests {
             slot: 10,
             block_id: Hash::new_unique(),
         });
-        let cert = create_signed_certificate_message(
+        let cert = test_create_base2_certificate(
+            &ctx.bls_keypairs(),
             ctx.verifier.cluster_info.my_shred_version(),
-            &ctx.validator_keypairs,
-            &ctx.verifier.sharable_banks.root(),
             cert_type,
             &(0..num_signers).collect::<Vec<_>>(),
         );
@@ -1450,33 +1420,14 @@ mod tests {
             slot,
             block_id: block_hash,
         };
-        let notarize_vote = Vote::new_notarization_vote(block);
-        let notarize_fallback_vote = Vote::new_notarization_fallback_vote(block);
-        let mut all_vote_messages = Vec::new();
-        (0..4).for_each(|i| {
-            all_vote_messages.push(create_signed_vote_message(
-                &ctx.verifier.sharable_banks.root(),
-                &ctx.validator_keypairs,
-                ctx.verifier.cluster_info.my_shred_version(),
-                notarize_vote,
-                i,
-            ))
-        });
-        (4..7).for_each(|i| {
-            all_vote_messages.push(create_signed_vote_message(
-                &ctx.verifier.sharable_banks.root(),
-                &ctx.validator_keypairs,
-                ctx.verifier.cluster_info.my_shred_version(),
-                notarize_fallback_vote,
-                i,
-            ))
-        });
         let cert_type = CertificateType::NotarizeFallback(block);
-        let mut builder = CertificateBuilder::new(cert_type);
-        builder
-            .aggregate(&all_vote_messages)
-            .expect("Failed to aggregate votes");
-        let cert = builder.build().expect("Failed to build certificate");
+        let cert = test_create_base3_certificate(
+            &ctx.bls_keypairs(),
+            ctx.verifier.cluster_info.my_shred_version(),
+            cert_type,
+            &[0, 1, 2, 3],
+            &[4, 5, 6],
+        );
         let consensus_message = ConsensusMessage::Certificate(cert);
         let packet_batches = messages_to_batches(
             &[(consensus_message, Pubkey::new_unique())],
@@ -1496,40 +1447,20 @@ mod tests {
     #[test]
     fn test_verify_certificate_base3_just_enough_stake() {
         let mut ctx = TestContext::new();
-
         let slot = 20;
         let block_hash = Hash::new_unique();
         let block = Block {
             slot,
             block_id: block_hash,
         };
-        let notarize_vote = Vote::new_notarization_vote(block);
-        let notarize_fallback_vote = Vote::new_notarization_fallback_vote(block);
-        let mut all_vote_messages = Vec::new();
-        (0..4).for_each(|i| {
-            all_vote_messages.push(create_signed_vote_message(
-                &ctx.verifier.sharable_banks.root(),
-                &ctx.validator_keypairs,
-                ctx.verifier.cluster_info.my_shred_version(),
-                notarize_vote,
-                i,
-            ))
-        });
-        (4..6).for_each(|i| {
-            all_vote_messages.push(create_signed_vote_message(
-                &ctx.verifier.sharable_banks.root(),
-                &ctx.validator_keypairs,
-                ctx.verifier.cluster_info.my_shred_version(),
-                notarize_fallback_vote,
-                i,
-            ))
-        });
         let cert_type = CertificateType::NotarizeFallback(block);
-        let mut builder = CertificateBuilder::new(cert_type);
-        builder
-            .aggregate(&all_vote_messages)
-            .expect("Failed to aggregate votes");
-        let cert = builder.build().expect("Failed to build certificate");
+        let cert = test_create_base3_certificate(
+            &ctx.bls_keypairs(),
+            ctx.verifier.cluster_info.my_shred_version(),
+            cert_type,
+            &[0, 1, 2, 3],
+            &[4, 5],
+        );
         let consensus_message = ConsensusMessage::Certificate(cert);
         let packet_batches = messages_to_batches(
             &[(consensus_message, Pubkey::new_unique())],
@@ -1603,7 +1534,7 @@ mod tests {
         for (i, validator_keypair) in ctx.validator_keypairs.iter().enumerate().take(num_votes) {
             let rank = i as u16;
             let bls_keypair = &validator_keypair.bls_keypair;
-            let signature: Signature = bls_keypair.sign(&vote_payload).into();
+            let signature = bls_keypair.sign(&vote_payload).into();
             let consensus_message = ConsensusMessage::Vote(VoteMessage {
                 vote,
                 signature,
@@ -1623,28 +1554,12 @@ mod tests {
             slot: 10,
             block_id: Hash::new_unique(),
         });
-        let cert_original_vote = Vote::new_notarization_vote(cert_type.to_block().unwrap());
-        let cert_payload = get_vote_payload_to_sign(
-            cert_original_vote,
+        let cert = test_create_base2_certificate(
+            &ctx.bls_keypairs(),
             ctx.verifier.cluster_info.my_shred_version(),
+            cert_type,
+            &(0..num_signers).into_iter().collect::<Vec<_>>(),
         );
-
-        let cert_vote_messages: Vec<VoteMessage> = (0..num_signers)
-            .map(|i| {
-                let signature = ctx.validator_keypairs[i].bls_keypair.sign(&cert_payload);
-                VoteMessage {
-                    vote: cert_original_vote,
-                    signature: signature.into(),
-                    rank: i as u16,
-                    stake: NonZero::new(123).unwrap(),
-                }
-            })
-            .collect();
-        let mut builder = CertificateBuilder::new(cert_type);
-        builder
-            .aggregate(&cert_vote_messages)
-            .expect("Failed to aggregate votes for certificate");
-        let cert = builder.build().expect("Failed to build certificate");
         let consensus_message_cert = ConsensusMessage::Certificate(cert);
         packets.push(message_to_packet(
             &consensus_message_cert,
@@ -1796,10 +1711,12 @@ mod tests {
         expect_no_receive(&message_receiver);
         assert_eq!(sig_verifier.stats.num_old_votes_received.0, 1);
 
-        let cert = create_signed_certificate_message(
+        let cert = test_create_base2_certificate(
+            &validator_keypairs
+                .iter()
+                .map(|k| k.bls_keypair.clone())
+                .collect::<Vec<_>>(),
             sig_verifier.cluster_info.my_shred_version(),
-            &validator_keypairs,
-            &sig_verifier.sharable_banks.root(),
             CertificateType::Finalize(3),
             &[0], // Signer rank 0
         );
@@ -1830,26 +1747,12 @@ mod tests {
             block_id: block_hash,
         };
         let cert_type = CertificateType::Notarize(block);
-        let original_vote = Vote::new_notarization_vote(block);
-        let signed_payload =
-            get_vote_payload_to_sign(original_vote, ctx.verifier.cluster_info.my_shred_version());
-        let mut vote_messages: Vec<VoteMessage> = (0..num_signers)
-            .map(|i| {
-                let signature = ctx.validator_keypairs[i].bls_keypair.sign(&signed_payload);
-                VoteMessage {
-                    vote: original_vote,
-                    signature: signature.into(),
-                    rank: i as u16,
-                    stake: NonZero::new(123).unwrap(),
-                }
-            })
-            .collect();
-
-        let mut builder1 = CertificateBuilder::new(cert_type);
-        builder1
-            .aggregate(&vote_messages)
-            .expect("Failed to aggregate votes");
-        let cert1 = builder1.build().expect("Failed to build certificate");
+        let cert1 = test_create_base2_certificate(
+            &ctx.bls_keypairs(),
+            ctx.verifier.cluster_info.my_shred_version(),
+            cert_type,
+            &(0..num_signers).into_iter().collect::<Vec<_>>(),
+        );
         let consensus_message1 = ConsensusMessage::Certificate(cert1);
         let packet_batches1 = messages_to_batches(
             &[(consensus_message1, Pubkey::new_unique())],
@@ -1864,12 +1767,12 @@ mod tests {
         assert_eq!(ctx.verifier.stats.num_verified_certs_received.0, 0);
         assert_eq!(ctx.verifier.stats.cert_stats.certs_to_sig_verify.0, 1);
 
-        vote_messages.pop(); // Remove one signature
-        let mut builder2 = CertificateBuilder::new(cert_type);
-        builder2
-            .aggregate(&vote_messages)
-            .expect("Failed to aggregate votes");
-        let cert2 = builder2.build().expect("Failed to build certificate");
+        let cert2 = test_create_base2_certificate(
+            &ctx.bls_keypairs(),
+            ctx.verifier.cluster_info.my_shred_version(),
+            cert_type,
+            &(0..num_signers - 1).into_iter().collect::<Vec<_>>(),
+        );
         let consensus_message2 = ConsensusMessage::Certificate(cert2);
         let packet_batches2 = messages_to_batches(
             &[(consensus_message2, Pubkey::new_unique())],
@@ -1893,17 +1796,15 @@ mod tests {
             slot: 10,
             block_id: Hash::new_unique(),
         });
-        let cert1 = create_signed_certificate_message(
+        let cert1 = test_create_base2_certificate(
+            &ctx.bls_keypairs(),
             ctx.verifier.cluster_info.my_shred_version(),
-            &ctx.validator_keypairs,
-            &ctx.verifier.sharable_banks.root(),
             cert_type,
             &(0..7).collect::<Vec<_>>(),
         );
-        let cert2 = create_signed_certificate_message(
+        let cert2 = test_create_base2_certificate(
+            &ctx.bls_keypairs(),
             ctx.verifier.cluster_info.my_shred_version(),
-            &ctx.validator_keypairs,
-            &ctx.verifier.sharable_banks.root(),
             cert_type,
             &(1..8).collect::<Vec<_>>(),
         );
@@ -1953,10 +1854,9 @@ mod tests {
             signature: Signature([0; BLS_SIGNATURE_AFFINE_SIZE]),
             bitmap: encode_base2(&bitmap).unwrap(),
         };
-        let valid_cert = create_signed_certificate_message(
+        let valid_cert = test_create_base2_certificate(
+            &ctx.bls_keypairs(),
             ctx.verifier.cluster_info.my_shred_version(),
-            &ctx.validator_keypairs,
-            &ctx.verifier.sharable_banks.root(),
             cert_type,
             &(0..num_signers).collect::<Vec<_>>(),
         );
@@ -2013,10 +1913,9 @@ mod tests {
             Vote::new_skip_vote(42),
             rank,
         ));
-        let cert_message = ConsensusMessage::Certificate(create_signed_certificate_message(
+        let cert_message = ConsensusMessage::Certificate(test_create_base2_certificate(
+            &ctx.bls_keypairs(),
             ctx.verifier.cluster_info.my_shred_version(),
-            &ctx.validator_keypairs,
-            &ctx.verifier.sharable_banks.root(),
             CertificateType::Notarize(Block {
                 slot: 43,
                 block_id: Hash::new_unique(),
@@ -2113,10 +2012,9 @@ mod tests {
                     slot,
                     block_id: Hash::new_unique(),
                 });
-                let mut cert = create_signed_certificate_message(
+                let mut cert = test_create_base2_certificate(
+                    &ctx.bls_keypairs(),
                     ctx.verifier.cluster_info.my_shred_version(),
-                    &ctx.validator_keypairs,
-                    &ctx.verifier.sharable_banks.root(),
                     cert_type,
                     &(0..7).collect::<Vec<_>>(),
                 );
@@ -2161,12 +2059,11 @@ mod tests {
     fn generated_certs_are_filtered() {
         let mut ctx = TestContext::new();
         let slot = 1235;
-        let cert_type = CertificateType::Skip(slot);
+        let cert_type = CertificateType::Finalize(slot);
         ctx.generated_cert_types.insert_cert(cert_type);
-        let cert = create_signed_certificate_message(
+        let cert = test_create_base2_certificate(
+            &ctx.bls_keypairs(),
             ctx.verifier.cluster_info.my_shred_version(),
-            &ctx.validator_keypairs,
-            &ctx.verifier.sharable_banks.root(),
             cert_type,
             &(0..ctx.validator_keypairs.len()).collect::<Vec<usize>>(),
         );
@@ -2185,11 +2082,10 @@ mod tests {
     fn msgs_too_far_in_future_are_dropped() {
         let mut ctx = TestContext::new();
         let slot = ctx.verifier.sharable_banks.root().slot() + NUM_SLOTS_FOR_VERIFY + 1;
-        let cert_type = CertificateType::Skip(slot);
-        let cert = create_signed_certificate_message(
+        let cert_type = CertificateType::Finalize(slot);
+        let cert = test_create_base2_certificate(
+            &ctx.bls_keypairs(),
             ctx.verifier.cluster_info.my_shred_version(),
-            &ctx.validator_keypairs,
-            &ctx.verifier.sharable_banks.root(),
             cert_type,
             &(0..ctx.validator_keypairs.len()).collect::<Vec<usize>>(),
         );

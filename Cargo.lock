@@ -74,7 +74,6 @@ name = "agave-bls-cert-verify"
 version = "4.3.0-alpha.2"
 dependencies = [
  "agave-bls-cert-verify",
- "agave-votor",
  "agave-votor-messages",
  "bitvec",
  "criterion",
@@ -96,7 +95,6 @@ dependencies = [
  "agave-bls-sigverify",
  "agave-logger",
  "agave-math-utils",
- "agave-votor",
  "agave-votor-messages",
  "bincode",
  "bitvec",

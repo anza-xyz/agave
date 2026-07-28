@@ -175,7 +175,6 @@ dependencies = [
  "agave-logger",
  "agave-reserved-account-keys",
  "agave-snapshots",
- "agave-votor",
  "assert_cmd",
  "bincode",
  "chrono",

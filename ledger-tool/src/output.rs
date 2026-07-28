@@ -3,7 +3,6 @@ use {
         error::{LedgerToolError, Result},
         ledger_utils::get_program_ids,
     },
-    agave_votor::consensus_pool::certificate_builder::MAXIMUM_VALIDATORS,
     itertools::Either,
     pretty_hex::PrettyHex,
     serde::{
@@ -49,6 +48,12 @@ use {
         sync::Arc,
     },
 };
+
+/// Maximum number of validators in a certificate.
+///
+/// There are around 1500 validators currently. For a clean power-of-two
+/// implementation, we should choose either 2048 or 4096.
+const MAXIMUM_VALIDATORS: usize = 4096;
 
 #[derive(Serialize, Debug, Default)]
 #[serde(rename_all = "camelCase")]

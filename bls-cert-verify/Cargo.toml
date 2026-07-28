@@ -30,7 +30,6 @@ wincode = { workspace = true }
 
 [dev-dependencies]
 agave-bls-cert-verify = { path = ".", features = ["agave-unstable-api", "dev-context-only-utils"] }
-agave-votor = { path = "../votor", features = ["agave-unstable-api"] }
 criterion = { workspace = true }
 rand = { workspace = true }
 solana-hash = { workspace = true }
