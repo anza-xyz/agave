@@ -159,6 +159,7 @@ fn get_first_error<T, Tx: SVMTransaction>(
 fn create_thread_pool(num_threads: usize) -> ThreadPool {
     rayon::ThreadPoolBuilder::new()
         .num_threads(num_threads)
+        .stack_size(8 * 1024 * 1024)
         .thread_name(|i| format!("solReplayTx{i:02}"))
         .build()
         .expect("new rayon threadpool")

@@ -888,6 +888,7 @@ impl ReplayStage {
             // Thread pool to replay multiple transactions within one block in parallel
             let replay_tx_thread_pool = rayon::ThreadPoolBuilder::new()
                 .num_threads(replay_transactions_threads.get())
+                .stack_size(8 * 1024 * 1024)
                 .thread_name(|i| format!("solReplayTx{i:02}"))
                 .build()
                 .expect("new rayon threadpool");
