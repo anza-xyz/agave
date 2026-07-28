@@ -6092,7 +6092,6 @@ impl AccountsDb {
                 let store_id = storage.id();
                 let slot = storage.slot();
                 storage
-                    .accounts
                     .scan_accounts_without_data(|offset, account| {
                         let key = account.pubkey();
                         self.accounts_index.get_and_then(key, |entry| {
