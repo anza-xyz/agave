@@ -32,7 +32,7 @@ pub fn serialized_error_code<T: serde::Serialize>(error: &T) -> u32 {
 }
 
 /// A VM `program_result` mapped into the fields a conformance fixture compares.
-pub(crate) struct UnpackedResult {
+pub struct UnpackedResult {
     /// Error number, or `0` on success.
     pub error: i64,
     /// Which error taxonomy `error` belongs to (`ERR_KIND_*`).
@@ -97,7 +97,7 @@ impl UnpackedResult {
 }
 
 /// Map a VM `program_result` to its [`UnpackedResult`].
-pub(crate) fn unpack_stable_result(program_result: StableResult<u64, EbpfError>) -> UnpackedResult {
+pub fn unpack_stable_result(program_result: StableResult<u64, EbpfError>) -> UnpackedResult {
     match program_result {
         StableResult::Ok(r0) => UnpackedResult::ok(r0),
         StableResult::Err(ebpf_err) => UnpackedResult::from_ebpf_err(ebpf_err),

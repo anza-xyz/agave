@@ -17,8 +17,6 @@ pub mod programs;
 #[cfg(feature = "conformance")]
 pub mod serialization;
 pub mod setup;
-#[cfg(feature = "conformance")]
-pub mod syscall;
 pub mod transaction_address_loader;
 pub mod transaction_meta;
 pub mod txn;

@@ -1,17 +1,6 @@
 //! VM syscall conformance harness.
 
 use {
-    crate::conformance::{
-        callback::ConformanceCallback,
-        err::{UnpackedResult, unpack_stable_result},
-        instr::context::InstrContext,
-        programs::{fill_program_cache_from_accounts, new_program_cache_with_builtins},
-        serialization::{SerializedParameters, push_and_serialize_parameters},
-        setup::{
-            InvokeContextFields, compute_budget, prepare_invoke_context_fields, program_loader_key,
-            program_runtime_environments, sysvar_cache_from_accounts,
-        },
-    },
     prost::Message,
     protosol::protos::{
         InputDataRegion as ProtoInputDataRegion, SyscallContext as ProtoSyscallContext,
@@ -32,6 +21,17 @@ use {
         },
     },
     solana_pubkey::Pubkey,
+    solana_svm::conformance::{
+        callback::ConformanceCallback,
+        err::{UnpackedResult, unpack_stable_result},
+        instr::context::InstrContext,
+        programs::{fill_program_cache_from_accounts, new_program_cache_with_builtins},
+        serialization::{SerializedParameters, push_and_serialize_parameters},
+        setup::{
+            InvokeContextFields, compute_budget, prepare_invoke_context_fields, program_loader_key,
+            program_runtime_environments, sysvar_cache_from_accounts,
+        },
+    },
     std::{ffi::c_int, sync::Arc},
 };
 

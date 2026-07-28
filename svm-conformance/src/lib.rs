@@ -7,3 +7,5 @@
 pub mod elf_loader;
 #[cfg(feature = "ffi")]
 pub mod serialization;
+#[cfg(feature = "ffi")]
+pub mod syscall;
