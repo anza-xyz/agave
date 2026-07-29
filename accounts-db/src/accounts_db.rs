@@ -46,9 +46,9 @@ use {
         accounts_file::{AccountsFile, AccountsFileProvider},
         accounts_hash::{AccountLtHash, AccountsLtHash, ZERO_LAMPORT_ACCOUNT_LT_HASH},
         accounts_index::{
-            AccountSecondaryIndexes, AccountsIndex, AccountsIndexScanResult, IndexKey,
-            ReclaimsSlotList, ReclaimsWithNewestSlot, RefCount, ScanFilter, SlotList, Startup,
-            UpsertReclaim, in_mem_accounts_index::StartupStats,
+            AccountSecondaryIndexes, AccountsIndex, IndexKey, ReclaimsSlotList,
+            ReclaimsWithNewestSlot, RefCount, ScanFilter, SlotList, Startup, UpsertReclaim,
+            in_mem_accounts_index::StartupStats,
         },
         accounts_scan::{ScanConfig, ScanError, ScanGuard, ScanResult, ScanTracker},
         accounts_update_notifier_interface::{AccountForGeyser, AccountsUpdateNotifier},
@@ -2005,9 +2005,7 @@ impl AccountsDb {
                             if !useless {
                                 useful += 1;
                             }
-                            AccountsIndexScanResult::OnlyKeepInMemoryIfDirty
                         },
-                        None,
                         if candidate_info.might_contain_zero_lamport_entry {
                             ScanFilter::All
                         } else {
@@ -2484,9 +2482,7 @@ impl AccountsDb {
                     do_populate_accounts_for_shrink(ref_count, &slot_list);
                 }
                 index += 1;
-                AccountsIndexScanResult::OnlyKeepInMemoryIfDirty
             },
-            None,
             self.scan_filter_for_shrinking,
         );
         assert_eq!(index, std::cmp::min(accounts.len(), count));
@@ -6334,9 +6330,7 @@ impl AccountsDb {
                         });
                     });
                 }
-                AccountsIndexScanResult::OnlyKeepInMemoryIfDirty
             },
-            None,
             ScanFilter::All,
         );
         (
