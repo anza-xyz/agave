@@ -290,7 +290,7 @@ impl AccountStorageEntry {
 
     /// Collect the offsets that should be excluded from scans
     fn excluded_offsets(&self) -> IntSet<Offset> {
-        let mut offsets: IntSet<Offset> = self
+        let mut offsets: IntSet<_> = self
             .obsolete_accounts_read_lock()
             .filter_obsolete_accounts(None)
             .map(|(offset, _)| offset)
@@ -358,10 +358,8 @@ impl AccountStorageEntry {
 #[cfg(test)]
 mod tests {
     use {
-        super::*,
-        crate::{accounts_db::get_temp_accounts_paths, append_vec::new_scan_accounts_reader},
-        solana_account::AccountSharedData,
-        solana_pubkey::Pubkey,
+        super::*, crate::append_vec::new_scan_accounts_reader, solana_account::AccountSharedData,
+        solana_pubkey::Pubkey, std::iter, tempfile::TempDir,
     };
 
     /// scan_accounts and scan_accounts_without_data each visit every account except those marked
@@ -369,9 +367,9 @@ mod tests {
     #[test]
     fn test_scan_accounts_excludes_obsolete_and_tombstones() {
         let slot = 0;
-        let (_temp_dirs, paths) = get_temp_accounts_paths(1).unwrap();
+        let temp_dir = TempDir::new().unwrap();
         let storage = AccountStorageEntry::new(
-            &paths[0],
+            temp_dir.path(),
             slot,
             0,
             1024 * 1024,
@@ -379,14 +377,14 @@ mod tests {
         );
 
         // Write five accounts and capture their offsets.
-        let accounts: Vec<_> = (0..5)
-            .map(|_| {
-                (
-                    Pubkey::new_unique(),
-                    AccountSharedData::new(1, 10, &Pubkey::default()),
-                )
-            })
-            .collect();
+        let accounts: Vec<_> = iter::repeat_with(|| {
+            (
+                Pubkey::new_unique(),
+                AccountSharedData::new(1, 10, &Pubkey::default()),
+            )
+        })
+        .take(5)
+        .collect();
         let offsets = storage
             .accounts
             .write_accounts(&(slot, &accounts[..]))
@@ -401,7 +399,7 @@ mod tests {
             .obsolete_accounts()
             .write()
             .unwrap()
-            .mark_accounts_obsolete(std::iter::once((obsolete_offset, data_lens[0])), slot);
+            .mark_accounts_obsolete(iter::once((obsolete_offset, data_lens[0])), slot);
         storage.batch_insert_tombstone_offsets([tombstone_offset]);
 
         // Scan and collect the accounts that were visited, in offset order.
