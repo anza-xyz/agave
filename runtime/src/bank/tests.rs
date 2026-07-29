@@ -10884,11 +10884,11 @@ fn test_feature_activation_loaded_programs_cache_preparation_phase() {
         assert_eq!(slot_versions.len(), 2);
         assert_eq!(
             slot_versions[0].program.get_environment().unwrap(),
-            &upcoming_env,
+            &current_env,
         );
         assert_eq!(
             slot_versions[1].program.get_environment().unwrap(),
-            &current_env,
+            &upcoming_env,
         );
     }
 

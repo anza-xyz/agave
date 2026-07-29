@@ -420,9 +420,8 @@ impl<FG: ForkGraph> ProgramCache<FG> {
             IndexImplementation::V1 { entries, .. } => {
                 let slot_versions = &mut entries.entry(key).or_default();
                 let insertion_point = slot_versions.binary_search_by(|at| {
-                    at.effective_slot
-                        .cmp(&entry.effective_slot)
-                        .then(at.deployment_slot.cmp(&entry.deployment_slot))
+                    at.deployment_slot
+                        .cmp(&entry.deployment_slot)
                         .then(at.account_owner.cmp(&entry.account_owner))
                         .then(
                             // This `.then()` has no effect during normal operation.
@@ -1438,7 +1437,7 @@ pub(crate) mod tests {
     fn test_fuzz_assign_program_order() {
         use rand::prelude::SliceRandom;
         const EXPECTED_ENTRIES: [(u64, bool); 5] =
-            [(1, true), (5, false), (5, true), (9, true), (10, false)];
+            [(1, true), (3, false), (5, true), (9, true), (10, false)];
         let mut rng = rand::rng();
         let program_id = Pubkey::new_unique();
         let env = get_mock_program_runtime_environment();
