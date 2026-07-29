@@ -333,26 +333,42 @@ impl ProgramCacheForTxBatch {
         // First lookup the cache of the programs modified by the current
         // transaction. If not found, lookup the cache of the cache of the
         // programs that are loaded for the transaction batch.
-        self.modified_entries
-            .get(key)
-            .or_else(|| self.entries.get(key))
-            .map(|entry| {
-                if !self.remove_delayed_visibility_slots
-                    && entry.is_implicit_delay_visibility_tombstone(self.slot)
-                {
-                    // Found a program entry on the current fork, but it's not effective
-                    // yet. It indicates that the program has delayed visibility. Return
-                    // the tombstone to reflect that.
-                    Arc::new(ProgramCacheEntry::new_tombstone_with_stats(
-                        entry.deployment_slot,
-                        entry.account_owner,
-                        ProgramCacheEntryType::DelayVisibility,
-                        Arc::clone(&entry.stats),
-                    ))
-                } else {
-                    entry.clone()
-                }
-            })
+        if let Some(entry) = self.modified_entries.get(key) {
+            // A program modified by the current transaction is not usable for
+            // the remainder of the transaction.
+            //
+            // When delayed visibility slots are enabled (ie. the feature to
+            // *remove* delayed visibility slots is *inactive*), this rule is
+            // enforced by the entry not being effective until the next slot
+            // (`deployment_slot` and `effective_slot` fields).
+            //
+            // However, when delayed visibility slots are disabled (ie. the
+            // feature is *active*), the entry becomes effective immediately,
+            // so being modified is what hides it, until the next transaction
+            // merges it.
+            let not_visible_yet = if self.remove_delayed_visibility_slots {
+                !entry.is_tombstone()
+            } else {
+                entry.is_implicit_delay_visibility_tombstone(self.slot)
+            };
+            return Some(if not_visible_yet {
+                new_delay_visibility_tombstone(entry)
+            } else {
+                entry.clone()
+            });
+        }
+        self.entries.get(key).map(|entry| {
+            if !self.remove_delayed_visibility_slots
+                && entry.is_implicit_delay_visibility_tombstone(self.slot)
+            {
+                // Found a program entry on the current fork, but it's not effective
+                // yet. It indicates that the program has delayed visibility. Return
+                // the tombstone to reflect that.
+                new_delay_visibility_tombstone(entry)
+            } else {
+                entry.clone()
+            }
+        })
     }
 
     pub fn slot(&self) -> Slot {
@@ -373,6 +389,20 @@ impl ProgramCacheForTxBatch {
     pub fn is_empty(&self) -> bool {
         self.entries.is_empty()
     }
+}
+
+// Tombstone reported for a program which is not visible to the caller yet.
+//
+// It is never stored, only handed out by the lookups in place of the entry it
+// shadows. The statistics are shared with that entry so that usage still
+// accrues to the program.
+fn new_delay_visibility_tombstone(entry: &Arc<ProgramCacheEntry>) -> Arc<ProgramCacheEntry> {
+    Arc::new(ProgramCacheEntry::new_tombstone_with_stats(
+        entry.deployment_slot,
+        entry.account_owner,
+        ProgramCacheEntryType::DelayVisibility,
+        Arc::clone(&entry.stats),
+    ))
 }
 
 #[derive(Clone, PartialEq, Debug)]
@@ -716,12 +746,7 @@ impl<FG: ForkGraph> ProgramCache<FG> {
                                     // Found a program entry on the current fork, but it's not effective
                                     // yet. It indicates that the program has delayed visibility. Return
                                     // the tombstone to reflect that.
-                                    Arc::new(ProgramCacheEntry::new_tombstone_with_stats(
-                                        entry.deployment_slot,
-                                        entry.account_owner,
-                                        ProgramCacheEntryType::DelayVisibility,
-                                        Arc::clone(&entry.stats),
-                                    ))
+                                    new_delay_visibility_tombstone(entry)
                                 } else {
                                     continue;
                                 };
@@ -2171,12 +2196,22 @@ pub(crate) mod tests {
 
     #[test_case(false; "delay_visibility_enforced")]
     #[test_case(true; "delay_visibility_removed")]
-    fn test_find_delay_visibility(remove_delayed_visibility_slots: bool) {
-        // Mirrors a program (re)deployed earlier in the same batch, which is
-        // buffered in `modified_entries` before being merged.
+    fn test_find_modified_by_current_transaction(remove_delayed_visibility_slots: bool) {
+        // A program (re)deployed by the current transaction is buffered in `modified_entries`,
+        // and stays hidden for the remainder of that transaction either way.
         let program = Pubkey::new_unique();
         let mut extracted = new_extracted(10, remove_delayed_visibility_slots);
         extracted.store_modified_entry(program, new_test_entry(10, 11));
+
+        let entry = extracted.find(&program).expect("Did not find the program");
+        assert_eq!(entry.deployment_slot, 10);
+        assert_matches!(entry.program, ProgramCacheEntryType::DelayVisibility);
+        assert!(entry.is_tombstone());
+
+        // Once merged it is no longer modified by the current transaction, so it is visible in
+        // its deployment slot as soon as delayed visibility is removed.
+        extracted.merge(&extracted.modified_entries.clone());
+        extracted.drain_modified_entries();
 
         let entry = extracted.find(&program).expect("Did not find the program");
         assert_eq!(entry.deployment_slot, 10);

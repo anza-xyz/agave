@@ -2977,6 +2977,160 @@ fn program_cache_loaderv3_update_tombstone(
     assert_eq!(env.is_program_blocked(&program_id), program_blocked);
 }
 
+#[test_case(false; "delay_visibility_enforced")]
+#[test_case(true; "delay_visibility_removed")]
+fn program_cache_loaderv3_upgrade_in_same_transaction(remove_delayed_visibility_slots: bool) {
+    // A program upgraded by a transaction stays invisible for the remainder of that transaction,
+    // whether or not delayed visibility applies. The transaction therefore fails and rolls back,
+    // which also means the buffer survives it.
+    let mut test_entry = SvmTestEntry::default();
+    test_entry.feature_set.remove_delayed_visibility_slots = remove_delayed_visibility_slots;
+
+    let program_name = "hello-solana";
+    let program_id = program_address(program_name);
+
+    let fee_payer_keypair = Keypair::new();
+    let fee_payer = fee_payer_keypair.pubkey();
+
+    let mut fee_payer_data = AccountSharedData::default();
+    fee_payer_data.set_lamports(LAMPORTS_PER_SOL);
+    // the only transaction in this test rolls back, so nothing else normalizes this
+    fee_payer_data.set_rent_epoch(u64::MAX);
+    test_entry.add_initial_account(fee_payer, &fee_payer_data);
+
+    test_entry
+        .initial_programs
+        .push((program_name.to_string(), DEPLOYMENT_SLOT, Some(fee_payer)));
+
+    let buffer_address = Pubkey::new_unique();
+    {
+        let mut data = bincode::serialize(&UpgradeableLoaderState::Buffer {
+            authority_address: Some(fee_payer),
+        })
+        .unwrap();
+        let mut program_bytecode = load_program(program_name.to_string());
+        data.append(&mut program_bytecode);
+
+        let buffer_account = AccountSharedData::create_from_existing_shared_data(
+            LAMPORTS_PER_SOL,
+            Arc::new(data),
+            bpf_loader_upgradeable::id(),
+            true,
+            u64::MAX,
+        );
+
+        test_entry.add_initial_account(buffer_address, &buffer_account);
+    }
+
+    // upgrade the program and then invoke it, in one transaction
+    test_entry.push_transaction_with_status(
+        Transaction::new_signed_with_payer(
+            &[
+                loaderv3_instruction::upgrade(
+                    &program_id,
+                    &buffer_address,
+                    &fee_payer,
+                    &Pubkey::new_unique(),
+                ),
+                Instruction::new_with_bytes(program_id, &[], vec![]),
+            ],
+            Some(&fee_payer),
+            &[&fee_payer_keypair],
+            Hash::default(),
+        ),
+        ExecutionStatus::ExecutedFailed,
+    );
+
+    test_entry.decrease_expected_lamports(&fee_payer, LAMPORTS_PER_SIGNATURE);
+
+    SvmTestEnvironment::create(test_entry).execute();
+}
+
+#[test_case(false; "delay_visibility_enforced")]
+#[test_case(true; "delay_visibility_removed")]
+fn program_cache_loaderv3_upgrade_in_prior_transaction(remove_delayed_visibility_slots: bool) {
+    // A program upgraded by an earlier transaction is invocable by a later one in the same slot,
+    // once delayed visibility no longer shadows it for the rest of that slot.
+    let mut test_entry = SvmTestEntry::default();
+    test_entry.feature_set.remove_delayed_visibility_slots = remove_delayed_visibility_slots;
+
+    let invoke_status = if remove_delayed_visibility_slots {
+        ExecutionStatus::Succeeded
+    } else {
+        ExecutionStatus::ExecutedFailed
+    };
+
+    let program_name = "hello-solana";
+    let program_id = program_address(program_name);
+
+    let fee_payer_keypair = Keypair::new();
+    let fee_payer = fee_payer_keypair.pubkey();
+
+    let mut fee_payer_data = AccountSharedData::default();
+    fee_payer_data.set_lamports(LAMPORTS_PER_SOL);
+    test_entry.add_initial_account(fee_payer, &fee_payer_data);
+
+    test_entry
+        .initial_programs
+        .push((program_name.to_string(), DEPLOYMENT_SLOT, Some(fee_payer)));
+
+    let buffer_address = Pubkey::new_unique();
+    {
+        let mut data = bincode::serialize(&UpgradeableLoaderState::Buffer {
+            authority_address: Some(fee_payer),
+        })
+        .unwrap();
+        let mut program_bytecode = load_program(program_name.to_string());
+        data.append(&mut program_bytecode);
+
+        let buffer_account = AccountSharedData::create_from_existing_shared_data(
+            LAMPORTS_PER_SOL,
+            Arc::new(data),
+            bpf_loader_upgradeable::id(),
+            true,
+            u64::MAX,
+        );
+
+        test_entry.add_initial_account(buffer_address, &buffer_account);
+        test_entry.drop_expected_account(buffer_address);
+    }
+
+    // upgrade the program in one transaction, then invoke it in the next
+    test_entry.push_transaction(Transaction::new_signed_with_payer(
+        &[loaderv3_instruction::upgrade(
+            &program_id,
+            &buffer_address,
+            &fee_payer,
+            &Pubkey::new_unique(),
+        )],
+        Some(&fee_payer),
+        &[&fee_payer_keypair],
+        Hash::default(),
+    ));
+
+    test_entry.push_transaction_with_status(
+        Transaction::new_signed_with_payer(
+            &[Instruction::new_with_bytes(program_id, &[], vec![])],
+            Some(&fee_payer),
+            &[&fee_payer_keypair],
+            Hash::default(),
+        ),
+        invoke_status,
+    );
+
+    if !remove_delayed_visibility_slots {
+        // the invocation must fail because the program is shadowed, not for some other reason
+        test_entry.transaction_batch[1]
+            .asserts
+            .logs
+            .push("Program is not deployed".to_string());
+    }
+
+    test_entry.decrease_expected_lamports(&fee_payer, LAMPORTS_PER_SIGNATURE * 2);
+
+    SvmTestEnvironment::create(test_entry).execute();
+}
+
 #[test_case(false, false; "upgrade::scan_only")]
 #[test_case(true, false; "upgrade::invoke")]
 #[test_case(false, true; "upgrade::scan_only::delay_visibility_removed")]
