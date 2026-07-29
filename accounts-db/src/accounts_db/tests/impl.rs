@@ -1128,7 +1128,13 @@ fn test_clean_reclaim_tombstones_zero_lamport_single_ref() {
 
     // The storage still holds a live account, so it is queued for shrink to reclaim
     // the tombstone bytes
-    assert!(accounts.shrink_candidate_slots.lock().unwrap().contains(&11));
+    assert!(
+        accounts
+            .shrink_candidate_slots
+            .lock()
+            .unwrap()
+            .contains(&11)
+    );
 }
 
 #[test]
