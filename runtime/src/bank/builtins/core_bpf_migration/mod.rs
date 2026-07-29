@@ -139,6 +139,8 @@ impl Bank {
         // Set up the two `LoadedProgramsForTxBatch` instances, as if
         // processing a new transaction batch.
         let mut program_cache_for_tx_batch = ProgramCacheForTxBatch::new(self.slot);
+        program_cache_for_tx_batch.remove_delayed_visibility_slots =
+            self.feature_set.snapshot().remove_delayed_visibility_slots;
         let program_runtime_environment = self
             .transaction_processor
             .program_runtime_environment_for_epoch(self.epoch);

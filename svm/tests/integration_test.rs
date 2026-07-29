@@ -367,7 +367,12 @@ impl SvmTestEnvironment<'_> {
         // in a later batch, the same loaderv3 program will have a DelayedVisibility tombstone
         // a new loaderv1/v2 account will have a FailedVerification tombstone
         // and a closed loaderv3 program or any loaderv3 buffer will have a Closed tombstone
-        program_cache_entry.effective_slot > EXECUTION_SLOT || program_cache_entry.is_tombstone()
+        //
+        // with `remove_delayed_visibility_slots` active, an entry that is not effective yet is
+        // still usable, so only tombstones block the program
+        let not_effective_yet = !self.test_entry.feature_set.remove_delayed_visibility_slots
+            && program_cache_entry.effective_slot > EXECUTION_SLOT;
+        not_effective_yet || program_cache_entry.is_tombstone()
     }
 }
 
@@ -2848,12 +2853,30 @@ fn program_cache_create_account() {
     }
 }
 
-#[test_case(false, false; "close::scan_only")]
-#[test_case(false, true; "close::invoke")]
-#[test_case(true, false; "upgrade::scan_only")]
-#[test_case(true, true; "upgrade::invoke")]
-fn program_cache_loaderv3_update_tombstone(upgrade_program: bool, invoke_changed_program: bool) {
+#[test_case(false, false, false; "close::scan_only")]
+#[test_case(false, true, false; "close::invoke")]
+#[test_case(true, false, false; "upgrade::scan_only")]
+#[test_case(true, true, false; "upgrade::invoke")]
+#[test_case(false, false, true; "close::scan_only::delay_visibility_removed")]
+#[test_case(false, true, true; "close::invoke::delay_visibility_removed")]
+#[test_case(true, false, true; "upgrade::scan_only::delay_visibility_removed")]
+#[test_case(true, true, true; "upgrade::invoke::delay_visibility_removed")]
+fn program_cache_loaderv3_update_tombstone(
+    upgrade_program: bool,
+    invoke_changed_program: bool,
+    remove_delayed_visibility_slots: bool,
+) {
     let mut test_entry = SvmTestEntry::default();
+    test_entry.feature_set.remove_delayed_visibility_slots = remove_delayed_visibility_slots;
+
+    // A close always tombstones the program. An upgrade only blocks it while delayed visibility
+    // is enforced; without it the new version is usable in the same slot.
+    let program_blocked = !upgrade_program || !remove_delayed_visibility_slots;
+    let invoke_status = if program_blocked {
+        ExecutionStatus::ExecutedFailed
+    } else {
+        ExecutionStatus::Succeeded
+    };
 
     let program_name = "hello-solana";
     let program_id = program_address(program_name);
@@ -2922,14 +2945,11 @@ fn program_cache_loaderv3_update_tombstone(upgrade_program: bool, invoke_changed
         Hash::default(),
     );
 
-    // attempt to invoke the program, which must fail
+    // attempt to invoke the program, which must fail while the program is blocked
     // this ensures the local program cache reflects the change of state
     // we have cases without this so we can assert the cache *before* the invoke contains the tombstone
     if invoke_changed_program {
-        test_entry.push_transaction_with_status(
-            invoke_transaction.clone(),
-            ExecutionStatus::ExecutedFailed,
-        );
+        test_entry.push_transaction_with_status(invoke_transaction.clone(), invoke_status);
 
         test_entry.decrease_expected_lamports(&fee_payer, LAMPORTS_PER_SIGNATURE);
     }
@@ -2938,28 +2958,43 @@ fn program_cache_loaderv3_update_tombstone(upgrade_program: bool, invoke_changed
 
     // test in same entry as program change
     env.execute();
-    assert!(env.is_program_blocked(&program_id));
+    assert_eq!(env.is_program_blocked(&program_id), program_blocked);
 
     let mut test_entry = SvmTestEntry {
         initial_accounts: env.test_entry.final_accounts.clone(),
         final_accounts: env.test_entry.final_accounts.clone(),
         ..SvmTestEntry::default()
     };
+    test_entry.feature_set.remove_delayed_visibility_slots = remove_delayed_visibility_slots;
 
-    test_entry.push_transaction_with_status(invoke_transaction, ExecutionStatus::ExecutedFailed);
+    test_entry.push_transaction_with_status(invoke_transaction, invoke_status);
 
     test_entry.decrease_expected_lamports(&fee_payer, LAMPORTS_PER_SIGNATURE);
 
     // test in different entry same slot
     env.test_entry = test_entry;
     env.execute();
-    assert!(env.is_program_blocked(&program_id));
+    assert_eq!(env.is_program_blocked(&program_id), program_blocked);
 }
 
-#[test_case(false; "upgrade::scan_only")]
-#[test_case(true; "upgrade::invoke")]
-fn program_cache_loaderv3_buffer_swap(invoke_changed_program: bool) {
+#[test_case(false, false; "upgrade::scan_only")]
+#[test_case(true, false; "upgrade::invoke")]
+#[test_case(false, true; "upgrade::scan_only::delay_visibility_removed")]
+#[test_case(true, true; "upgrade::invoke::delay_visibility_removed")]
+fn program_cache_loaderv3_buffer_swap(
+    invoke_changed_program: bool,
+    remove_delayed_visibility_slots: bool,
+) {
     let mut test_entry = SvmTestEntry::default();
+    test_entry.feature_set.remove_delayed_visibility_slots = remove_delayed_visibility_slots;
+
+    // The redeployed program is only blocked while delayed visibility is enforced.
+    let program_blocked = !remove_delayed_visibility_slots;
+    let invoke_status = if program_blocked {
+        ExecutionStatus::ExecutedFailed
+    } else {
+        ExecutionStatus::Succeeded
+    };
 
     let program_name = "hello-solana";
 
@@ -3058,10 +3093,7 @@ fn program_cache_loaderv3_buffer_swap(invoke_changed_program: bool) {
     );
 
     if invoke_changed_program {
-        test_entry.push_transaction_with_status(
-            invoke_transaction.clone(),
-            ExecutionStatus::ExecutedFailed,
-        );
+        test_entry.push_transaction_with_status(invoke_transaction.clone(), invoke_status);
 
         test_entry.decrease_expected_lamports(&fee_payer, LAMPORTS_PER_SIGNATURE);
     }
@@ -3070,27 +3102,38 @@ fn program_cache_loaderv3_buffer_swap(invoke_changed_program: bool) {
 
     // test in same entry as program change
     env.execute();
-    assert!(env.is_program_blocked(&target));
+    assert_eq!(env.is_program_blocked(&target), program_blocked);
 
     let mut test_entry = SvmTestEntry {
         initial_accounts: env.test_entry.final_accounts.clone(),
         final_accounts: env.test_entry.final_accounts.clone(),
         ..SvmTestEntry::default()
     };
+    test_entry.feature_set.remove_delayed_visibility_slots = remove_delayed_visibility_slots;
 
-    test_entry.push_transaction_with_status(invoke_transaction, ExecutionStatus::ExecutedFailed);
+    test_entry.push_transaction_with_status(invoke_transaction, invoke_status);
 
     test_entry.decrease_expected_lamports(&fee_payer, LAMPORTS_PER_SIGNATURE);
 
     // test in different entry same slot
     env.test_entry = test_entry;
     env.execute();
-    assert!(env.is_program_blocked(&target));
+    assert_eq!(env.is_program_blocked(&target), program_blocked);
 }
 
-#[test]
-fn program_cache_stats() {
+#[test_case(false; "delay_visibility_enforced")]
+#[test_case(true; "delay_visibility_removed")]
+fn program_cache_stats(remove_delayed_visibility_slots: bool) {
     let mut test_entry = SvmTestEntry::default();
+    test_entry.feature_set.remove_delayed_visibility_slots = remove_delayed_visibility_slots;
+
+    // The upgraded program only blocks execution while delayed visibility is enforced. Either way
+    // the invocation counts as a use, so the usage counters asserted below are unaffected.
+    let post_upgrade_invoke_status = if remove_delayed_visibility_slots {
+        ExecutionStatus::Succeeded
+    } else {
+        ExecutionStatus::ExecutedFailed
+    };
 
     let program_name = "hello-solana";
     let noop_program = program_address(program_name);
@@ -3259,8 +3302,10 @@ fn program_cache_stats() {
         final_accounts: env.test_entry.final_accounts.clone(),
         ..SvmTestEntry::default()
     };
+    test_entry.feature_set.remove_delayed_visibility_slots = remove_delayed_visibility_slots;
 
-    // upgrade the program. this blocks execution but does not create a tombstone
+    // upgrade the program. this blocks execution (unless delayed visibility was removed) but does
+    // not create a tombstone
     // the main thing we are testing is the tx counter is ported across upgrades
     //
     // note the upgrade transaction actually counts as a usage, per the existing rules
@@ -3282,7 +3327,7 @@ fn program_cache_stats() {
 
     test_entry.push_transaction_with_status(
         make_transaction(slice::from_ref(&successful_noop_instruction)),
-        ExecutionStatus::ExecutedFailed,
+        post_upgrade_invoke_status,
     );
     noop_tx_usage += 1;
 
@@ -3308,16 +3353,17 @@ fn program_cache_stats() {
         "noop_tx_usage matches"
     );
 
-    // third batch, this creates a delayed visibility tombstone
+    // third batch, this creates a delayed visibility tombstone unless the feature removed it
     let mut test_entry = SvmTestEntry {
         initial_accounts: env.test_entry.final_accounts.clone(),
         final_accounts: env.test_entry.final_accounts.clone(),
         ..SvmTestEntry::default()
     };
+    test_entry.feature_set.remove_delayed_visibility_slots = remove_delayed_visibility_slots;
 
     test_entry.push_transaction_with_status(
         make_transaction(slice::from_ref(&successful_noop_instruction)),
-        ExecutionStatus::ExecutedFailed,
+        post_upgrade_invoke_status,
     );
     noop_tx_usage += 1;
 

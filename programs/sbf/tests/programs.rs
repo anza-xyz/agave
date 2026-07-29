@@ -44,6 +44,7 @@ use {
         genesis_utils::{
             GenesisConfigInfo, bootstrap_validator_stake_lamports, create_genesis_config,
             create_genesis_config_with_leader, create_genesis_config_with_leader_ex,
+            deactivate_features,
         },
         loader_utils::{create_program, load_upgradeable_buffer},
     },
@@ -2029,10 +2030,15 @@ fn test_program_sbf_invoke_in_same_tx_as_deployment() {
     agave_logger::setup();
 
     let GenesisConfigInfo {
-        genesis_config,
+        mut genesis_config,
         mint_keypair,
         ..
     } = create_genesis_config(50);
+    // This test asserts that a deployment is invisible within its own slot.
+    deactivate_features(
+        &mut genesis_config,
+        &vec![feature_set::remove_delayed_visibility_slots::id()],
+    );
     let (bank, bank_forks) = Bank::new_with_bank_forks_for_tests(&genesis_config);
     let mut bank_client = BankClient::new_shared(bank.clone());
 
@@ -2119,10 +2125,15 @@ fn test_program_sbf_invoke_in_same_tx_as_redeployment() {
     agave_logger::setup();
 
     let GenesisConfigInfo {
-        genesis_config,
+        mut genesis_config,
         mint_keypair,
         ..
     } = create_genesis_config(50);
+    // This test asserts that a redeployment is invisible within its own slot.
+    deactivate_features(
+        &mut genesis_config,
+        &vec![feature_set::remove_delayed_visibility_slots::id()],
+    );
     let (bank, bank_forks) = Bank::new_with_bank_forks_for_tests(&genesis_config);
     let mut bank_client = BankClient::new_shared(bank.clone());
 

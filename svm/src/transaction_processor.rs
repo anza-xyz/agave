@@ -447,6 +447,8 @@ impl<FG: ForkGraph> TransactionBatchProcessor<FG> {
         // User-deployed programs are loaded per-transaction via replenish_program_cache
         // in the transaction loop below.
         let mut program_cache_for_tx_batch = self.builtin_program_cache.read().unwrap().clone();
+        program_cache_for_tx_batch.remove_delayed_visibility_slots =
+            environment.feature_set.remove_delayed_visibility_slots;
 
         if program_cache_for_tx_batch.hit_max_limit {
             return LoadAndExecuteSanitizedTransactionsOutput {
@@ -948,7 +950,11 @@ impl<FG: ForkGraph> TransactionBatchProcessor<FG> {
                     // This branch is taken when there is an error in assigning a program to a
                     // cache slot. It is not possible to mock this error for SVM unit
                     // tests purposes.
+                    let remove_delayed_visibility_slots =
+                        program_cache_for_tx_batch.remove_delayed_visibility_slots;
                     *program_cache_for_tx_batch = ProgramCacheForTxBatch::new(self.slot);
+                    program_cache_for_tx_batch.remove_delayed_visibility_slots =
+                        remove_delayed_visibility_slots;
                     program_cache_for_tx_batch.hit_max_limit = true;
                     return;
                 }
