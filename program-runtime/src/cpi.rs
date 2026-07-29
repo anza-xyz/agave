@@ -165,6 +165,10 @@ fn check_authorized_program(
         || bpf_loader::check_id(program_id)
         || bpf_loader_deprecated::check_id(program_id)
         || (solana_sdk_ids::bpf_loader_upgradeable::check_id(program_id)
+            // The loader itself rejects a caller operating on its own program.
+            && !invoke_context
+                .get_feature_set()
+                .loader_v3_relax_cpi_constraints
             && !(bpf_loader_upgradeable::is_upgrade_instruction(instruction_data)
                 || bpf_loader_upgradeable::is_set_authority_instruction(instruction_data)
                 || (invoke_context
