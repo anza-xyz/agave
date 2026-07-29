@@ -137,7 +137,6 @@ use {
         reward_certificate::{NotarRewardCertificate, SkipRewardCertificate},
         unverified_vote_message::UnverifiedCertificate,
     },
-    bytes::Bytes,
     solana_bls_signatures::{
         BlsError, Signature as BLSSignature, SignatureCompressed as BLSSignatureCompressed,
         signature::AsSignatureAffine,
@@ -575,37 +574,24 @@ unsafe impl<C: Config> SchemaWrite<C> for BlockComponent {
     }
 }
 
-/// Errors from [`BlockComponent::from_bytes`].
-#[derive(Debug, thiserror::Error)]
-pub enum BlockComponentParseError {
-    #[error("failed to parse entry batch: {0}")]
-    EntryBatch(#[from] crate::parse::EntryParseError),
-    #[error("failed to parse block marker: {0}")]
-    BlockMarker(#[from] wincode::ReadError),
-    #[error("too many entries: {count} >= {max}")]
-    TooManyEntries { count: usize, max: usize },
-}
+unsafe impl<'de, C: Config> SchemaRead<'de, C> for BlockComponent {
+    type Dst = Self;
 
-impl BlockComponent {
-    /// Parses a serialized `BlockComponent` from `payload`.
-    ///
-    /// This is the read-side counterpart of the `SchemaWrite` impl above.
-    /// There is no `SchemaRead`: entry batches contain transaction views that
-    /// must be carved directly out of `payload` (see [`crate::parse`]).
-    /// Trailing bytes are tolerated, like `wincode::deserialize`.
-    pub fn from_bytes(payload: &Bytes) -> Result<Self, BlockComponentParseError> {
-        let (entries, consumed_len) = crate::parse::entries_from_bytes_prefix(payload)?;
+    fn read(mut reader: impl Reader<'de>, dst: &mut MaybeUninit<Self::Dst>) -> ReadResult<()> {
+        let entries =
+            <WincodeVec<Entry, MaxDataShredsLen> as SchemaRead<'de, C>>::get(reader.by_ref())?;
+
         if entries.is_empty() {
-            let marker = wincode::deserialize::<VersionedBlockMarker>(&payload[consumed_len..])?;
-            Ok(Self::BlockMarker(marker))
+            dst.write(Self::BlockMarker(<VersionedBlockMarker as SchemaRead<
+                C,
+            >>::get(reader)?));
         } else if entries.len() >= Self::MAX_ENTRIES {
-            Err(BlockComponentParseError::TooManyEntries {
-                count: entries.len(),
-                max: Self::MAX_ENTRIES,
-            })
+            return Err(wincode::ReadError::Custom("Too many entries"));
         } else {
-            Ok(Self::EntryBatch(entries))
+            dst.write(Self::EntryBatch(entries));
         }
+
+        Ok(())
     }
 }
 
@@ -617,11 +603,11 @@ pub fn genesis_certificate_from_shred(
     if !BlockComponent::infer_is_block_marker(payload).unwrap_or(false) {
         return None;
     }
-    let VersionedBlockMarker::V1(marker) = wincode::config::deserialize_exact(
-        payload.get(BlockComponent::ENTRY_COUNT_SIZE..)?,
-        packet_config(),
-    )
-    .ok()?;
+    let BlockComponent::BlockMarker(VersionedBlockMarker::V1(marker)) =
+        wincode::config::deserialize_exact(payload, packet_config()).ok()?
+    else {
+        return None;
+    };
     let BlockMarkerV1::GenesisCertificate(marker) = marker else {
         return None;
     };
@@ -864,13 +850,13 @@ mod tests {
         );
 
         let comp = BlockComponent::new_entry_batch(mock_entries(5)).unwrap();
-        let bytes = Bytes::from(wincode::serialize(&comp).unwrap());
-        let deser = BlockComponent::from_bytes(&bytes).unwrap();
+        let bytes = wincode::serialize(&comp).unwrap();
+        let deser: BlockComponent = wincode::deserialize(&bytes).unwrap();
         assert_eq!(comp, deser);
 
         let comp = BlockComponent::new_block_marker(marker);
-        let bytes = Bytes::from(wincode::serialize(&comp).unwrap());
-        let deser = BlockComponent::from_bytes(&bytes).unwrap();
+        let bytes = wincode::serialize(&comp).unwrap();
+        let deser: BlockComponent = wincode::deserialize(&bytes).unwrap();
         assert_eq!(comp, deser);
     }
 
@@ -922,8 +908,8 @@ mod tests {
         let num_entries = DEFAULT_PREALLOCATION_SIZE_LIMIT / std::mem::size_of::<Entry>() + 1;
 
         let comp = BlockComponent::new_entry_batch(mock_entries(num_entries)).unwrap();
-        let bytes = Bytes::from(wincode::serialize(&comp).unwrap());
-        let deser = BlockComponent::from_bytes(&bytes).unwrap();
+        let bytes = wincode::serialize(&comp).unwrap();
+        let deser: BlockComponent = wincode::deserialize(&bytes).unwrap();
         assert_eq!(comp, deser);
     }
 }

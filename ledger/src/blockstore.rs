@@ -49,7 +49,8 @@ use {
             VersionedUpdateParent, finalization_certificates_from_footer,
             genesis_certificate_from_shred,
         },
-        entry::{Entry, create_ticks, versioned_transaction_from_view},
+        entry::{Entry, create_ticks},
+        entry_view::{BlockComponentView, block_component_view_from_bytes},
     },
     solana_genesis_config::{DEFAULT_GENESIS_ARCHIVE, DEFAULT_GENESIS_FILE, GenesisConfig},
     solana_hash::{HASH_BYTES, Hash},
@@ -516,7 +517,7 @@ impl ParentInfo {
             return None;
         }
 
-        let component = BlockComponent::from_bytes(&Bytes::copy_from_slice(payload)).ok()?;
+        let component: BlockComponent = wincode::deserialize(payload).ok()?;
         let VersionedBlockMarker::V1(marker) = component.as_marker()?;
         let VersionedBlockHeader::V1(header) = marker.as_block_header()?;
 
@@ -1225,7 +1226,7 @@ impl Blockstore {
             return None;
         }
 
-        let component = BlockComponent::from_bytes(&Bytes::copy_from_slice(payload)).ok()?;
+        let component: BlockComponent = wincode::deserialize(payload).ok()?;
         let VersionedBlockMarker::V1(marker) = component.as_marker()?;
         let VersionedUpdateParent::V1(update_parent) = marker.as_update_parent()?;
 
@@ -4132,7 +4133,6 @@ impl Blockstore {
             .flatten()
             .flat_map(|entry| entry.transactions)
             .map(|transaction| {
-                let transaction = versioned_transaction_from_view(&transaction);
                 if let Err(err) = transaction.sanitize() {
                     warn!(
                         "Blockstore::get_complete_block_with_components sanitize failed: {err:?}, \
@@ -4509,7 +4509,6 @@ impl Blockstore {
             .flat_map(|entry| entry.transactions)
             .enumerate()
             .map(|(index, transaction)| {
-                let transaction = versioned_transaction_from_view(&transaction);
                 if let Err(err) = transaction.sanitize() {
                     warn!(
                         "Blockstore::find_transaction_in_slot sanitize failed: {err:?}, slot: \
@@ -4832,6 +4831,53 @@ impl Blockstore {
         Ok((entries, num_shreds, slot_meta.is_full()))
     }
 
+    /// Replay-side counterpart of [`Self::get_slot_components_with_shred_info`]:
+    /// the same slot data, with entry batches parsed into
+    /// [`BlockComponentView`]s whose transactions are zero-copy views into the
+    /// deshredded payloads.
+    pub fn get_slot_component_views_with_shred_info(
+        &self,
+        slot: Slot,
+        start_index: u64,
+        allow_dead_slots: bool,
+    ) -> Result<(Vec<BlockComponentView>, Vec<Range<u32>>, bool)> {
+        let Some((completed_ranges, slot_meta, _)) =
+            self.get_slot_data_with_shred_info_common(slot, start_index, allow_dead_slots)?
+        else {
+            return Ok((vec![], vec![], false));
+        };
+
+        let component_views =
+            self.get_slot_component_views_in_block(slot, &completed_ranges, Some(&slot_meta))?;
+        debug_assert_eq!(completed_ranges.len(), component_views.len());
+        Ok((component_views, completed_ranges, slot_meta.is_full()))
+    }
+
+    /// Replay-side counterpart of [`Self::get_slot_components_in_block`];
+    /// malformed payloads fail identically to the wincode `BlockComponent`
+    /// decode.
+    fn get_slot_component_views_in_block(
+        &self,
+        slot: Slot,
+        completed_ranges: &CompletedRanges,
+        slot_meta: Option<&SlotMeta>,
+    ) -> Result<Vec<BlockComponentView>> {
+        self.get_slot_data_in_block(slot, completed_ranges, slot_meta, |payload| {
+            let payload = Bytes::from(payload);
+            block_component_view_from_bytes(&payload)
+                .map(|component_view| vec![component_view])
+                .map_err(|e| {
+                    if BlockComponent::infer_is_empty_entry_batch(&payload) {
+                        BlockstoreError::BlockAborted(slot)
+                    } else {
+                        BlockstoreError::InvalidShredData(format!(
+                            "could not reconstruct block component: {e}"
+                        ))
+                    }
+                })
+        })
+    }
+
     /// Returns the components vector for the slot starting with `shred_start_index`, the number of
     /// shreds that comprise the components vector, and whether the slot is full (consumed all
     /// shreds).
@@ -4878,7 +4924,6 @@ impl Blockstore {
                 if let Ok(entries) = self.get_slot_entries(slot, 0) {
                     entries.into_par_iter().for_each(|entry| {
                         entry.transactions.into_iter().for_each(|tx| {
-                            let tx = versioned_transaction_from_view(&tx);
                             if let Some(lookups) = tx.message.address_table_lookups() {
                                 add_to_set(
                                     &lookup_tables,
@@ -5041,8 +5086,7 @@ impl Blockstore {
         slot_meta: Option<&SlotMeta>,
     ) -> Result<Vec<BlockComponent>> {
         self.get_slot_data_in_block(slot, completed_ranges, slot_meta, |payload| {
-            let payload = Bytes::from(payload);
-            BlockComponent::from_bytes(&payload)
+            wincode::deserialize(&payload)
                 .map(|component| vec![component])
                 .map_err(|e| {
                     if BlockComponent::infer_is_empty_entry_batch(&payload) {
@@ -5065,8 +5109,7 @@ impl Blockstore {
         slot_meta: Option<&SlotMeta>,
     ) -> Result<Vec<Entry>> {
         self.get_slot_data_in_block(slot, completed_ranges, slot_meta, |payload| {
-            let payload = Bytes::from(payload);
-            BlockComponent::from_bytes(&payload)
+            wincode::deserialize(&payload)
                 .map(|component| match component {
                     BlockComponent::BlockMarker(_) => vec![],
                     BlockComponent::EntryBatch(entries) => entries,

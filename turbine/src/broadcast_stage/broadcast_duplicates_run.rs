@@ -126,7 +126,7 @@ impl BroadcastRun for BroadcastDuplicatesRun {
         // Update the recent blockhash based on transactions in the entries
         for entry in entries.iter() {
             if !entry.transactions.is_empty() {
-                self.recent_blockhash = Some(*entry.transactions[0].recent_blockhash());
+                self.recent_blockhash = Some(*entry.transactions[0].message.recent_blockhash());
                 break;
             }
         }

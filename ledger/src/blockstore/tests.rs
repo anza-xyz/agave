@@ -10,7 +10,7 @@ use {
     },
     assert_matches::assert_matches,
     rand::{rng, seq::SliceRandom},
-    solana_entry::entry::{next_entry_mut, versioned_transaction_from_view},
+    solana_entry::entry::next_entry_mut,
     solana_genesis_utils::{MAX_GENESIS_ARCHIVE_UNPACKED_SIZE, open_genesis_config},
     solana_hash::Hash,
     solana_message::{compiled_instruction::CompiledInstruction, v0::LoadedAddresses},
@@ -2790,7 +2790,6 @@ fn test_get_rooted_block() {
         .cloned()
         .flat_map(|entry| entry.transactions)
         .map(|transaction| {
-            let transaction = versioned_transaction_from_view(&transaction);
             let mut pre_balances: Vec<u64> = vec![];
             let mut post_balances: Vec<u64> = vec![];
             for i in 0..transaction.message.static_account_keys().len() {
@@ -3712,7 +3711,6 @@ fn test_get_rooted_transaction() {
         .cloned()
         .flat_map(|entry| entry.transactions)
         .map(|transaction| {
-            let transaction = versioned_transaction_from_view(&transaction);
             let mut pre_balances: Vec<u64> = vec![];
             let mut post_balances: Vec<u64> = vec![];
             for i in 0..transaction.message.static_account_keys().len() {
@@ -3838,7 +3836,6 @@ fn test_get_complete_transaction() {
         .cloned()
         .flat_map(|entry| entry.transactions)
         .map(|transaction| {
-            let transaction = versioned_transaction_from_view(&transaction);
             let mut pre_balances: Vec<u64> = vec![];
             let mut post_balances: Vec<u64> = vec![];
             for i in 0..transaction.message.static_account_keys().len() {
@@ -4080,12 +4077,13 @@ fn test_get_confirmed_signatures_for_address2() {
         let mut counter = 0;
         for entry in entries.into_iter() {
             for transaction in entry.transactions {
-                assert_eq!(transaction.signatures().len(), 1);
+                assert_eq!(transaction.signatures.len(), 1);
                 blockstore
                     .write_transaction_status(
                         slot,
-                        transaction.signatures()[0],
+                        transaction.signatures[0],
                         transaction
+                            .message
                             .static_account_keys()
                             .iter()
                             .map(|key| (key, true)),
@@ -4108,12 +4106,13 @@ fn test_get_confirmed_signatures_for_address2() {
         let mut counter = 0;
         for entry in entries.into_iter() {
             for transaction in entry.transactions {
-                assert_eq!(transaction.signatures().len(), 1);
+                assert_eq!(transaction.signatures.len(), 1);
                 blockstore
                     .write_transaction_status(
                         slot,
-                        transaction.signatures()[0],
+                        transaction.signatures[0],
                         transaction
+                            .message
                             .static_account_keys()
                             .iter()
                             .map(|key| (key, true)),

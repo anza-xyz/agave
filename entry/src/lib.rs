@@ -3,5 +3,5 @@
 pub mod block_component;
 pub mod entry;
 pub mod entry_or_marker;
-pub mod parse;
+pub mod entry_view;
 pub mod poh;

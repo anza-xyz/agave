@@ -26,7 +26,7 @@ use {
     solana_clock::{BankId, Slot},
     solana_entry::{
         block_component::{BlockFooterV1, VersionedBlockMarker},
-        entry::{Entry, transaction_view_from_versioned_transaction},
+        entry::Entry,
         entry_or_marker::EntryOrMarker,
         poh::Poh,
     },
@@ -386,14 +386,7 @@ impl PohRecorder {
                             Entry {
                                 num_hashes: entry.num_hashes,
                                 hash: entry.hash,
-                                // Bridge: banking still records
-                                // `VersionedTransaction`s; reserialize them
-                                // into views until byte payloads are threaded
-                                // through the record path.
-                                transactions: transactions
-                                    .iter()
-                                    .map(transaction_view_from_versioned_transaction)
-                                    .collect(),
+                                transactions,
                             }
                             .into(),
                             tick_height,

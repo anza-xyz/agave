@@ -40,7 +40,10 @@ fn build_unverified_signatures(num_transactions: usize) -> UnverifiedSignatures 
     };
 
     validate_and_hash_transactions(
-        entries,
+        entries
+            .iter()
+            .map(solana_entry::entry_view::EntryView::from)
+            .collect(),
         num_transactions,
         &thread_pool,
         validate_transaction,

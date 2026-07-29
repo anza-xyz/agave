@@ -20,8 +20,9 @@ use {
     },
     solana_clock::{BankId, Slot},
     solana_entry::{
-        block_component::{BlockComponent, VersionedBlockMarker},
+        block_component::VersionedBlockMarker,
         entry::{self, Entry, EntrySlice, EntryType, create_ticks},
+        entry_view::{BlockComponentView, EntryView},
     },
     solana_genesis_config::GenesisConfig,
     solana_hash::Hash,
@@ -243,7 +244,7 @@ fn schedule_entries_for_tests(bank: &BankWithScheduler, entries: Vec<Entry>) -> 
         entries,
         unverified_signatures,
     } = entry::validate_and_hash_transactions(
-        entries,
+        entries.iter().map(EntryView::from).collect(),
         num_txs,
         &replay_tx_thread_pool,
         validate_and_hash_transaction,
@@ -614,7 +615,7 @@ pub fn process_blockstore_from_root(
 #[cfg_attr(feature = "dev-context-only-utils", qualifiers(pub))]
 fn verify_ticks(
     bank: &Bank,
-    entries: &[Entry],
+    entries: &[EntryView],
     slot_full: bool,
     tick_hash_count: &mut u64,
     migration_status: &MigrationStatus,
@@ -1239,7 +1240,7 @@ pub fn confirm_slot(
     let (slot_components, completed_ranges, slot_full) = {
         let mut load_elapsed = Measure::start("load_elapsed");
         let load_result = blockstore
-            .get_slot_components_with_shred_info(slot, progress.num_shreds, allow_dead_slots)
+            .get_slot_component_views_with_shred_info(slot, progress.num_shreds, allow_dead_slots)
             .map_err(BlockstoreProcessorError::FailedToLoadEntries);
         load_elapsed.stop();
         if load_result.is_err() {
@@ -1282,7 +1283,7 @@ pub fn confirm_slot(
     // Find the index of the last EntryBatch in slot_components
     let last_entry_batch_index = slot_components
         .iter()
-        .rposition(|bc| matches!(bc, BlockComponent::EntryBatch(_)));
+        .rposition(|bc| matches!(bc, BlockComponentView::EntryBatch(_)));
 
     for (ix, (completed_range, component)) in
         completed_ranges.iter().zip(slot_components).enumerate()
@@ -1291,7 +1292,7 @@ pub fn confirm_slot(
         let is_final = slot_full && ix == completed_ranges.len() - 1;
 
         match component {
-            BlockComponent::EntryBatch(entries) => {
+            BlockComponentView::EntryBatch(entries) => {
                 let slot_full = slot_full && ix == last_entry_batch_index.unwrap();
 
                 // Skip block component validation for genesis block. Slot 0 is handled specially,
@@ -1319,7 +1320,7 @@ pub fn confirm_slot(
                     migration_status,
                 )?;
             }
-            BlockComponent::BlockMarker(marker) => {
+            BlockComponentView::BlockMarker(marker) => {
                 let block_footer = match &marker {
                     VersionedBlockMarker::V1(marker) => marker.as_block_footer().cloned(),
                 };
@@ -1386,7 +1387,7 @@ pub fn confirm_slot(
 fn confirm_slot_entries(
     bank: &BankWithScheduler,
     replay_tx_thread_pool: &ThreadPool,
-    slot_entries_load_result: (Vec<Entry>, u64, bool),
+    slot_entries_load_result: (Vec<EntryView>, u64, bool),
     timing: &mut ConfirmationTiming,
     progress: &mut ConfirmationProgress,
     skip_verification: bool,
@@ -1468,7 +1469,7 @@ fn confirm_slot_entries(
     let last_entry_hash = entries.last().map(|e| e.hash);
     if !skip_verification {
         let start_hash = progress.last_entry;
-        let verify_entries = entry::entries_to_verification_data(&entries);
+        let verify_entries = entry::entry_views_to_verification_data(&entries);
         progress.async_verification().spawn(
             replay_tx_thread_pool,
             poh_verify_elapsed,
@@ -2383,7 +2384,7 @@ pub mod tests {
                 BlockComponent, BlockFooterV1, BlockHeaderV1, VersionedBlockFooter,
                 VersionedBlockMarker,
             },
-            entry::{create_ticks, next_entry, next_entry_mut, versioned_transaction_from_view},
+            entry::{create_ticks, next_entry, next_entry_mut},
         },
         solana_epoch_schedule::EpochSchedule,
         solana_hash::Hash,
@@ -3548,16 +3549,8 @@ pub mod tests {
         assert_eq!(bank.get_balance(&keypair4.pubkey()), 4);
 
         // Check all accounts are unlocked
-        let txs1 = entry_1_to_mint
-            .transactions
-            .iter()
-            .map(versioned_transaction_from_view)
-            .collect::<Vec<_>>();
-        let txs2 = entry_2_to_3_mint_to_1
-            .transactions
-            .iter()
-            .map(versioned_transaction_from_view)
-            .collect::<Vec<_>>();
+        let txs1 = entry_1_to_mint.transactions;
+        let txs2 = entry_2_to_3_mint_to_1.transactions;
         let batch1 = bank.prepare_entry_batch(txs1).unwrap();
         for result in batch1.lock_results() {
             assert!(result.is_ok());
@@ -4931,7 +4924,11 @@ pub mod tests {
         let result = confirm_slot_entries(
             &bank,
             &replay_tx_thread_pool,
-            (slot_entries, 0, slot_full),
+            (
+                slot_entries.iter().map(EntryView::from).collect(),
+                0,
+                slot_full,
+            ),
             &mut ConfirmationTiming::default(),
             progress,
             false,

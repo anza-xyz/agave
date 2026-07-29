@@ -3,7 +3,7 @@
 use {
     bencher::{Bencher, benchmark_group, benchmark_main},
     rand::Rng,
-    solana_entry::entry::{Entry, create_ticks, transaction_view_from_versioned_transaction},
+    solana_entry::entry::{Entry, create_ticks},
     solana_epoch_schedule::{EpochSchedule, MINIMUM_SLOTS_PER_EPOCH},
     solana_hash::Hash,
     solana_keypair::Keypair,
@@ -41,10 +41,7 @@ fn make_test_entry(txs_per_entry: u64) -> Entry {
     Entry {
         num_hashes: 100_000,
         hash: Hash::default(),
-        transactions: vec![
-            transaction_view_from_versioned_transaction(&test_tx::test_tx().into());
-            txs_per_entry as usize
-        ],
+        transactions: vec![test_tx::test_tx().into(); txs_per_entry as usize],
     }
 }
 fn make_large_unchained_entries(txs_per_entry: u64, num_entries: u64) -> Vec<Entry> {

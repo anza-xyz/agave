@@ -17,7 +17,6 @@ use {
     solana_clap_utils::input_validators::is_slot,
     solana_cli_output::OutputFormat,
     solana_clock::{Slot, UnixTimestamp},
-    solana_entry::entry::versioned_transaction_from_view,
     solana_hash::Hash,
     solana_ledger::{
         ancestor_iterator::AncestorIterator,
@@ -172,10 +171,8 @@ fn slot_contains_nonvote_tx(blockstore: &Blockstore, slot: Slot) -> bool {
     entries
         .iter()
         .flat_map(|entry| entry.transactions.iter())
-        .map(versioned_transaction_from_view)
-        .any(|transaction| {
-            get_program_ids(&transaction).any(|program_id| *program_id != solana_vote_program::id())
-        })
+        .flat_map(get_program_ids)
+        .any(|program_id| *program_id != solana_vote_program::id())
 }
 
 type OptimisticSlotInfo = (Slot, Option<(Hash, UnixTimestamp)>, bool);

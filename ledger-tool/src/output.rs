@@ -16,12 +16,9 @@ use {
         display::writeln_transaction,
     },
     solana_clock::{Slot, UnixTimestamp},
-    solana_entry::{
-        block_component::{
-            BlockComponent, BlockFooterV1, BlockMarkerV1, VersionedBlockFooter,
-            VersionedBlockHeader, VersionedBlockMarker, VersionedUpdateParent,
-        },
-        entry::versioned_transaction_from_view,
+    solana_entry::block_component::{
+        BlockComponent, BlockFooterV1, BlockMarkerV1, VersionedBlockFooter, VersionedBlockHeader,
+        VersionedBlockMarker, VersionedUpdateParent,
     },
     solana_hash::Hash,
     solana_ledger::{
@@ -924,12 +921,7 @@ pub fn output_slot(
                                     starting_transaction_index,
                                 };
                                 starting_transaction_index += entry.transactions.len();
-                                transactions.extend(
-                                    entry
-                                        .transactions
-                                        .iter()
-                                        .map(versioned_transaction_from_view),
-                                );
+                                transactions.extend(entry.transactions);
                                 entry_summary
                             })
                             .collect();
