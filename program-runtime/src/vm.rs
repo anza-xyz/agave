@@ -220,23 +220,6 @@ pub fn execute<'a, 'b: 'a>(
         )?;
     serialize_time.stop();
 
-    // save the account addresses so in case we hit an AccessViolation error we
-    // can map to a more specific error
-    let account_region_addrs = accounts_metadata
-        .iter()
-        .map(|m| {
-            let vm_end = m
-                .vm_data_addr
-                .saturating_add(m.original_data_len as u64)
-                .saturating_add(if !is_loader_deprecated {
-                    MAX_PERMITTED_DATA_INCREASE as u64
-                } else {
-                    0
-                });
-            m.vm_data_addr..vm_end
-        })
-        .collect::<Vec<_>>();
-
     #[cfg(feature = "sbpf-debugger")]
     let (debug_port, debug_metadata) = if invoke_context.debug_port.is_some() {
         (
@@ -396,11 +379,24 @@ pub fn execute<'a, 'b: 'a>(
                         // If virtual_address_space_adjustments is enabled and a program tries to write to a readonly
                         // region we'll get a memory access violation. Map it to a more specific
                         // error so it's easier for developers to see what happened.
-                        if let Some((instruction_account_index, vm_addr_range)) =
-                            account_region_addrs
-                                .iter()
-                                .enumerate()
-                                .find(|(_, vm_addr_range)| vm_addr_range.contains(&vm_addr))
+                        let account_data_increase = if is_loader_deprecated {
+                            0
+                        } else {
+                            MAX_PERMITTED_DATA_INCREASE as u64
+                        };
+                        if let Some((instruction_account_index, metadata)) = invoke_context
+                            .memory_contexts
+                            .memory_context_abi_v1()?
+                            .accounts_metadata
+                            .iter()
+                            .enumerate()
+                            .find(|(_, metadata)| {
+                                let vm_data_end = metadata
+                                    .vm_data_addr
+                                    .saturating_add(metadata.original_data_len as u64)
+                                    .saturating_add(account_data_increase);
+                                (metadata.vm_data_addr..vm_data_end).contains(&vm_addr)
+                            })
                         {
                             let transaction_context = &invoke_context.transaction_context;
                             let instruction_context =
@@ -408,12 +404,16 @@ pub fn execute<'a, 'b: 'a>(
                             let account = instruction_context.try_borrow_instruction_account(
                                 instruction_account_index as IndexOfAccount,
                             )?;
-                            if vm_addr.saturating_add(len) <= vm_addr_range.end {
+                            let vm_data_end = metadata
+                                .vm_data_addr
+                                .saturating_add(metadata.original_data_len as u64)
+                                .saturating_add(account_data_increase);
+                            if vm_addr.saturating_add(len) <= vm_data_end {
                                 // The access was within the range of the accounts address space,
                                 // but it might not be within the range of the actual data.
                                 let is_access_outside_of_data = vm_addr
                                     .saturating_add(len)
-                                    .saturating_sub(vm_addr_range.start)
+                                    .saturating_sub(metadata.vm_data_addr)
                                     as usize
                                     > account.get_data().len();
                                 error = EbpfError::SyscallError(Box::new(match access_type {
