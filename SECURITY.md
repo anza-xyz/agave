@@ -191,6 +191,9 @@ the no-Alpenglow code path remain in scope
 * Loader V4 (the `loader-v4` crate and associated code paths). Loader V4 is
 being removed from the codebase and its feature ID has been stubbed out. Bugs
 relating to Loader V4 functionality are disqualified from reports and bounties.
+* Issues affecting the virtual machine interpreter. The interpreter performance is not
+presently suitable for production environments, so it is safe to address any security
+vulnerabilies or inconsistencies with jit behavior in public issues
 
 ### Eligibility:
 * Vulnerabilities must have been committed to the master branch for at least
