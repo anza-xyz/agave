@@ -1451,15 +1451,25 @@ pub(crate) mod tests {
             entries.shuffle(&mut rng);
             let mut cache = ProgramCache::<TestForkGraph>::new(0);
             for (deployment_slot, delay_visibility) in entries {
-                let entry = Arc::new(ProgramCacheEntry {
-                    program: new_loaded_entry(ProgramRuntimeEnvironment::from(
-                        BuiltinProgram::new_mock(),
-                    )), // Assign them different environments
-                    account_owner: ProgramCacheEntryOwner::LoaderV2,
-                    deployment_slot,
-                    effective_slot: deployment_slot.saturating_add(delay_visibility as u64),
-                    stats: Arc::default(),
-                    latest_access_slot: AtomicU64::new(deployment_slot),
+                let entry = Arc::new(if delay_visibility {
+                    ProgramCacheEntry {
+                        program: new_loaded_entry(ProgramRuntimeEnvironment::from(
+                            BuiltinProgram::new_mock(),
+                        )), // Assign them different environments
+                        account_owner: ProgramCacheEntryOwner::LoaderV2,
+                        deployment_slot,
+                        effective_slot: deployment_slot.saturating_add(delay_visibility as u64),
+                        stats: Arc::default(),
+                        latest_access_slot: AtomicU64::new(deployment_slot),
+                    }
+                } else {
+                    ProgramCacheEntry::new_tombstone(
+                        deployment_slot,
+                        ProgramCacheEntryOwner::LoaderV2,
+                        ProgramCacheEntryType::FailedVerification(ProgramRuntimeEnvironment::from(
+                            BuiltinProgram::new_mock(),
+                        )), // Assign them different environments
+                    )
                 });
                 assert!(!cache.assign_program(&env, program_id, deployment_slot, entry));
             }
