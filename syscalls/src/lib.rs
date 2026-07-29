@@ -6814,8 +6814,8 @@ mod tests {
     #[test]
     fn test_syscall_bls12_381_g1_add() {
         use {
-            solana_define_syscall::curve_constants::{BLS12_381_G1_BE, BLS12_381_G1_LE},
             solana_curve25519::curve_syscall_traits::ADD,
+            solana_define_syscall::curve_constants::{BLS12_381_G1_BE, BLS12_381_G1_LE},
         };
 
         let config = Config::default();
@@ -6934,8 +6934,8 @@ mod tests {
     #[test]
     fn test_syscall_bls12_381_g1_sub() {
         use {
-            solana_define_syscall::curve_constants::{BLS12_381_G1_BE, BLS12_381_G1_LE},
             solana_curve25519::curve_syscall_traits::SUB,
+            solana_define_syscall::curve_constants::{BLS12_381_G1_BE, BLS12_381_G1_LE},
         };
 
         let config = Config::default();
@@ -7057,8 +7057,8 @@ mod tests {
     #[test]
     fn test_syscall_bls12_381_g1_mul() {
         use {
-            solana_define_syscall::curve_constants::{BLS12_381_G1_BE, BLS12_381_G1_LE},
             solana_curve25519::curve_syscall_traits::MUL,
+            solana_define_syscall::curve_constants::{BLS12_381_G1_BE, BLS12_381_G1_LE},
         };
 
         let config = Config::default();
@@ -7173,8 +7173,8 @@ mod tests {
     #[test]
     fn test_syscall_bls12_381_g2_add() {
         use {
-            solana_define_syscall::curve_constants::{BLS12_381_G2_BE, BLS12_381_G2_LE},
             solana_curve25519::curve_syscall_traits::ADD,
+            solana_define_syscall::curve_constants::{BLS12_381_G2_BE, BLS12_381_G2_LE},
         };
 
         let config = Config::default();
@@ -7325,8 +7325,8 @@ mod tests {
     #[test]
     fn test_syscall_bls12_381_g2_sub() {
         use {
-            solana_define_syscall::curve_constants::{BLS12_381_G2_BE, BLS12_381_G2_LE},
             solana_curve25519::curve_syscall_traits::SUB,
+            solana_define_syscall::curve_constants::{BLS12_381_G2_BE, BLS12_381_G2_LE},
         };
 
         let config = Config::default();
@@ -7480,8 +7480,8 @@ mod tests {
     #[test]
     fn test_syscall_bls12_381_g2_mul() {
         use {
-            solana_define_syscall::curve_constants::{BLS12_381_G2_BE, BLS12_381_G2_LE},
             solana_curve25519::curve_syscall_traits::MUL,
+            solana_define_syscall::curve_constants::{BLS12_381_G2_BE, BLS12_381_G2_LE},
         };
 
         let config = Config::default();
