@@ -1568,6 +1568,7 @@ mod tests {
             11,
             4,
         );
+        let num_transaction_accounts = usize::from(transaction_context.get_number_of_accounts());
 
         // Four top level instructions
         for i in 0..4 {
@@ -1576,7 +1577,7 @@ mod tests {
                     i,
                     0,
                     vec![],
-                    vec![u16::MAX; 256],
+                    vec![u16::MAX; num_transaction_accounts],
                     Cow::Owned(vec![i as u8]),
                     None,
                 )
@@ -1795,7 +1796,7 @@ mod tests {
             header: MessageHeader::default(),
             instructions: vec![CompiledInstruction {
                 program_id_index: 0,
-                accounts: vec![2],
+                accounts: vec![1],
                 data: vec![],
             }],
             recent_blockhash: Hash::default(),
@@ -1811,8 +1812,6 @@ mod tests {
             false,
         );
 
-        let mut account_data = AccountSharedData::default();
-        account_data.set_owner(bpf_loader::id());
         let loaded_transaction = LoadedTransaction {
             accounts: vec![
                 (key1, AccountSharedData::default()),
