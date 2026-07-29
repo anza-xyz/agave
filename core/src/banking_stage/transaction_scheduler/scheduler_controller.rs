@@ -534,7 +534,7 @@ mod tests {
         super::*,
         crate::banking_stage::{
             TransactionViewReceiveAndBuffer,
-            consumer::{RetryableIndex, TARGET_NUM_TRANSACTIONS_PER_BATCH},
+            consumer::RetryableIndex,
             scheduler_messages::{ConsumeWork, FinishedConsumeWork, TransactionBatchId},
             tests::create_slow_genesis_config,
             transaction_scheduler::greedy_scheduler::{GreedyScheduler, GreedySchedulerConfig},
@@ -554,7 +554,9 @@ mod tests {
         solana_nonce::{self as nonce, state::DurableNonce},
         solana_poh::poh_recorder::{LeaderState, SharedLeaderState},
         solana_pubkey::Pubkey,
-        solana_runtime::{bank::Bank, bank_forks::BankForks},
+        solana_runtime::{
+            bank::Bank, bank_forks::BankForks, transaction_batch::TARGET_NUM_TRANSACTIONS_PER_BATCH,
+        },
         solana_runtime_transaction::transaction_meta::TransactionMeta,
         solana_sdk_ids::system_program,
         solana_signer::Signer,

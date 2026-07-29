@@ -17,7 +17,7 @@ use {
             Bank, LoadAndExecuteTransactionsOutput, ProcessedTransactionCounts,
             entry_bytes_budget::EntryBytesReserveError,
         },
-        transaction_batch::TransactionBatch,
+        transaction_batch::{TARGET_NUM_TRANSACTIONS_PER_BATCH, TransactionBatch},
     },
     solana_runtime_transaction::transaction_with_meta::TransactionWithMeta,
     solana_svm::{
@@ -32,9 +32,6 @@ use {
     solana_vote::vote_parser,
     std::num::Saturating,
 };
-
-/// Consumer will create chunks of transactions from buffer with up to this size.
-pub const TARGET_NUM_TRANSACTIONS_PER_BATCH: usize = 64;
 
 pub(crate) const ENTRY_OVERHEAD_BYTES: u64 = 48;
 
