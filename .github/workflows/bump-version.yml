@@ -51,10 +51,7 @@ jobs:
           cargo install toml-cli --locked
 
           # install xtask
-          cargo install \
-            --git https://github.com/anza-xyz/xtask \
-            --rev 930e3baec27a17cb4491b5585515b33f94dbd039 \
-            --bin xtask
+          cargo install anza-xtask@0.2.0 --locked
 
       - name: Process
         id: process
@@ -62,28 +59,9 @@ jobs:
           BASE_REF: ${{ github.ref }}
           BUMP_LEVEL: ${{ inputs.level }}
         run: |
-          old_version="$(toml get --raw Cargo.toml workspace.package.version)"
-
-          xtask bump-version "$BUMP_LEVEL"
+          cargo anza-xtask bump-version "$BUMP_LEVEL"
 
           new_version="$(toml get --raw Cargo.toml workspace.package.version)"
-
-          added="$(git diff | grep -E -v '^(\+\+\+|---) ' | grep -E '^\+' | grep -cF "${new_version}\"")"
-          removed="$(git diff | grep -E -v '^(\+\+\+|---) ' | grep -E '^-' | grep -cF "${old_version}\"")"
-          stray="$(git diff | grep -E -v '^(\+\+\+|---) ' | grep -E '^[+-]' | grep -vF "${new_version}\"" | grep -vF "${old_version}\"" || true)"
-
-          echo "version lines added (${new_version}): $added"
-          echo "version lines removed (${old_version}): $removed"
-
-          if [[ -n "$stray" ]]; then
-            echo "Error: bump diff contains non-version changes:" >&2
-            echo "$stray" >&2
-            exit 1
-          fi
-          if [[ "$added" -eq 0 || "$added" -ne "$removed" ]]; then
-            echo "Error: version line count mismatch (added=$added removed=$removed)" >&2
-            exit 1
-          fi
 
           git checkout -b version-bump-$new_version
           git commit -am "Bump version to $new_version"
