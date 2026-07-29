@@ -202,6 +202,20 @@ pub struct SVMTransactionExecutionCost {
     pub bls12_381_one_pair_cost: u64,
     /// Incremental number of compute units consumed per pair in a bls12_381 pairing.
     pub bls12_381_additional_pair_cost: u64,
+    /// Number of compute units consumed to add two secp256r1 points
+    pub secp256r1_add_cost: u64,
+    /// Number of compute units consumed to subtract two secp256r1 points
+    pub secp256r1_subtract_cost: u64,
+    /// Number of compute units consumed to multiply a secp256r1 point
+    pub secp256r1_multiply_cost: u64,
+    /// Number of compute units consumed for a multiscalar multiplication (msm) of secp256r1 points.
+    pub secp256r1_msm_base_cost: u64,
+    /// Number of compute units consumed for a multiscalar multiplication (msm) of secp256r1 points.
+    pub secp256r1_msm_incremental_cost: u64,
+    /// Number of compute units consumed to validate a secp256r1 point.
+    pub secp256r1_validate_cost: u64,
+    /// Number of compute units consumed to decompress a secp256r1 point.
+    pub secp256r1_decompress_cost: u64,
 }
 
 impl Default for SVMTransactionExecutionCost {
@@ -258,6 +272,13 @@ impl Default for SVMTransactionExecutionCost {
             bls12_381_g2_validate_cost: 1_968,
             bls12_381_one_pair_cost: 25_445,
             bls12_381_additional_pair_cost: 13_023,
+            secp256r1_add_cost: 100_000, // TODO: update these after benchmark
+            secp256r1_subtract_cost: 100_000,
+            secp256r1_multiply_cost: 100_000,
+            secp256r1_msm_base_cost: 100_000,
+            secp256r1_msm_incremental_cost: 100_000,
+            secp256r1_validate_cost: 100_000,
+            secp256r1_decompress_cost: 100_000,
         }
     }
 }

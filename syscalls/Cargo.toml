@@ -49,6 +49,7 @@ solana-pubkey = { workspace = true }
 solana-sbpf = { workspace = true, features = ["jit"] }
 solana-sdk-ids = { workspace = true }
 solana-secp256k1-recover = { workspace = true }
+solana-secp256r1 = { workspace = true }
 solana-sha256-hasher = { workspace = true }
 solana-sha512-hasher = { workspace = true, features = ["sha2"] }
 solana-stable-layout = { workspace = true }
