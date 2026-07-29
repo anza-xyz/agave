@@ -622,10 +622,10 @@ fn test_process_set_root_command_requires_matching_frozen_bank() {
     let my_pubkey = Pubkey::new_unique();
 
     let missing_command = SetRootCommand {
-        parent_slot: 2,
-        new_root: 2,
-        block_id: Hash::new_unique(),
-        highest_super_majority_root: Some(2),
+        new_root: Block {
+            slot: 2,
+            block_id: Hash::new_unique(),
+        },
     };
     ReplayStage::process_set_root_command(
         missing_command,
@@ -637,10 +637,10 @@ fn test_process_set_root_command_requires_matching_frozen_bank() {
     assert!(!blockstore.is_root(2));
 
     let mismatched_command = SetRootCommand {
-        parent_slot: 1,
-        new_root: 1,
-        block_id: Hash::new_unique(),
-        highest_super_majority_root: Some(1),
+        new_root: Block {
+            slot: 1,
+            block_id: Hash::new_unique(),
+        },
     };
     ReplayStage::process_set_root_command(
         mismatched_command,
@@ -656,10 +656,10 @@ fn test_process_set_root_command_requires_matching_frozen_bank() {
     unfrozen_bank.set_block_id(Some(unfrozen_block_id));
     bank_forks.write().unwrap().insert(unfrozen_bank);
     let unfrozen_command = SetRootCommand {
-        parent_slot: 2,
-        new_root: 2,
-        block_id: unfrozen_block_id,
-        highest_super_majority_root: Some(2),
+        new_root: Block {
+            slot: 2,
+            block_id: unfrozen_block_id,
+        },
     };
     ReplayStage::process_set_root_command(
         unfrozen_command,
@@ -672,10 +672,7 @@ fn test_process_set_root_command_requires_matching_frozen_bank() {
 
     let block_id = bank_forks.read().unwrap().block_id(1).unwrap();
     let matching_command = SetRootCommand {
-        parent_slot: 1,
-        new_root: 1,
-        block_id,
-        highest_super_majority_root: Some(1),
+        new_root: Block { slot: 1, block_id },
     };
     ReplayStage::process_set_root_command(
         matching_command,

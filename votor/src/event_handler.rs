@@ -1047,18 +1047,13 @@ mod tests {
             Ok(self.bank_forks.write().unwrap().insert(bank))
         }
 
-        fn enqueue_set_root(
-            &self,
-            parent_slot: Slot,
-            new_root: Slot,
-            _block_id: Hash,
-            highest_super_majority_root: Option<Slot>,
-        ) {
+        fn enqueue_set_root(&self, new_root: Block) {
+            let new_root = new_root.slot;
             root_utils::check_and_handle_new_root(
-                parent_slot,
+                new_root,
                 new_root,
                 None,
-                highest_super_majority_root,
+                Some(new_root),
                 &None,
                 &self.drop_bank_sender,
                 &self.blockstore,

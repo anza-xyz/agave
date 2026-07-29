@@ -56,12 +56,7 @@ pub(crate) fn set_root(
     });
     *received_shred = received_shred.split_off(&new_root_slot);
 
-    rctx.bank_forks_controller.enqueue_set_root(
-        new_root_slot,
-        new_root_slot,
-        new_root.block_id,
-        Some(new_root_slot),
-    );
+    rctx.bank_forks_controller.enqueue_set_root(new_root);
 
     if let Err(e) = ctx.blockstore.insert_optimistic_slot(
         new_root_slot,
