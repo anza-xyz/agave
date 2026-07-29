@@ -299,22 +299,6 @@ impl HasherImpl for Sha512Hasher {
     }
 }
 
-// NOTE: These constants are temporarily defined here and will be
-// moved to a dedicated crate in the future.
-mod bls12_381_curve_id {
-    /// Curve ID for BLS12-381 pairing operations
-    pub(crate) const BLS12_381_LE: u64 = 4;
-    pub(crate) const BLS12_381_BE: u64 = 4 | 0x80;
-
-    /// Curve ID for BLS12-381 G1 group operations
-    pub(crate) const BLS12_381_G1_LE: u64 = 5;
-    pub(crate) const BLS12_381_G1_BE: u64 = 5 | 0x80;
-
-    /// Curve ID for BLS12-381 G2 group operations
-    pub(crate) const BLS12_381_G2_LE: u64 = 6;
-    pub(crate) const BLS12_381_G2_BE: u64 = 6 | 0x80;
-}
-
 // NOTE: This macro name is checked by gen-syscall-list to create the list of
 // syscalls. If this macro name is changed, or if a new one is added, then
 // gen-syscall-list/build.rs must also be updated.
@@ -1012,8 +996,8 @@ declare_builtin_function!(
         _arg5: u64,
     ) -> Result<u64, Error> {
         use {
-            crate::bls12_381_curve_id::*,
-            solana_curve25519::{curve_syscall_traits::*, edwards, ristretto},
+            solana_curve25519::{edwards, ristretto},
+            solana_define_syscall::curve_constants::*,
         };
 
         // SIMD-0388: BLS12-381 syscalls
@@ -1147,11 +1131,11 @@ declare_builtin_function!(
         _arg5: u64,
     ) -> Result<u64, Error> {
         use {
-            crate::bls12_381_curve_id::*,
             solana_bls12_381_syscall::{
                 PodG1Compressed as PodBLSG1Compressed, PodG1Point as PodBLSG1Point,
                 PodG2Compressed as PodBLSG2Compressed, PodG2Point as PodBLSG2Point,
             },
+            solana_define_syscall::curve_constants::*,
         };
 
         let check_aligned = invoke_context.get_check_aligned();
@@ -1247,16 +1231,15 @@ declare_builtin_function!(
         result_point_addr: u64,
     ) -> Result<u64, Error> {
         use {
-            crate::bls12_381_curve_id::*,
             solana_bls12_381_syscall::{
                 PodG1Point as PodBLSG1Point, PodG2Point as PodBLSG2Point, PodScalar as PodBLSScalar,
             },
             solana_curve25519::{
-                curve_syscall_traits::*,
                 edwards::{self, PodEdwardsPoint},
                 ristretto::{self, PodRistrettoPoint},
                 scalar,
             },
+            solana_define_syscall::curve_constants::*,
         };
 
         if !invoke_context.get_feature_set().enable_bls12_381_syscall
@@ -1271,7 +1254,7 @@ declare_builtin_function!(
         let check_aligned = invoke_context.get_check_aligned();
         match curve_id {
             CURVE25519_EDWARDS => match group_op {
-                ADD => {
+                GROUP_OP_ADD => {
                     let cost = invoke_context
                         .get_execution_cost()
                         .curve25519_edwards_add_cost;
@@ -1301,7 +1284,7 @@ declare_builtin_function!(
                         Ok(1)
                     }
                 }
-                SUB => {
+                GROUP_OP_SUB => {
                     let cost = invoke_context
                         .get_execution_cost()
                         .curve25519_edwards_subtract_cost;
@@ -1331,7 +1314,7 @@ declare_builtin_function!(
                         Ok(1)
                     }
                 }
-                MUL => {
+                GROUP_OP_MUL => {
                     let cost = invoke_context
                         .get_execution_cost()
                         .curve25519_edwards_multiply_cost;
@@ -1371,7 +1354,7 @@ declare_builtin_function!(
             },
 
             CURVE25519_RISTRETTO => match group_op {
-                ADD => {
+                GROUP_OP_ADD => {
                     let cost = invoke_context
                         .get_execution_cost()
                         .curve25519_ristretto_add_cost;
@@ -1401,7 +1384,7 @@ declare_builtin_function!(
                         Ok(1)
                     }
                 }
-                SUB => {
+                GROUP_OP_SUB => {
                     let cost = invoke_context
                         .get_execution_cost()
                         .curve25519_ristretto_subtract_cost;
@@ -1433,7 +1416,7 @@ declare_builtin_function!(
                         Ok(1)
                     }
                 }
-                MUL => {
+                GROUP_OP_MUL => {
                     let cost = invoke_context
                         .get_execution_cost()
                         .curve25519_ristretto_multiply_cost;
@@ -1480,7 +1463,7 @@ declare_builtin_function!(
                 };
 
                 match group_op {
-                    ADD => {
+                    GROUP_OP_ADD => {
                         let cost = invoke_context.get_execution_cost().bls12_381_g1_add_cost;
                         invoke_context.compute_meter.consume_checked(cost)?;
 
@@ -1515,7 +1498,7 @@ declare_builtin_function!(
                             Ok(1)
                         }
                     }
-                    SUB => {
+                    GROUP_OP_SUB => {
                         let cost = invoke_context
                             .get_execution_cost()
                             .bls12_381_g1_subtract_cost;
@@ -1552,7 +1535,7 @@ declare_builtin_function!(
                             Ok(1)
                         }
                     }
-                    MUL => {
+                    GROUP_OP_MUL => {
                         let cost = invoke_context
                             .get_execution_cost()
                             .bls12_381_g1_multiply_cost;
@@ -1602,7 +1585,7 @@ declare_builtin_function!(
                 };
 
                 match group_op {
-                    ADD => {
+                    GROUP_OP_ADD => {
                         let cost = invoke_context.get_execution_cost().bls12_381_g2_add_cost;
                         invoke_context.compute_meter.consume_checked(cost)?;
 
@@ -1637,7 +1620,7 @@ declare_builtin_function!(
                             Ok(1)
                         }
                     }
-                    SUB => {
+                    GROUP_OP_SUB => {
                         let cost = invoke_context
                             .get_execution_cost()
                             .bls12_381_g2_subtract_cost;
@@ -1674,7 +1657,7 @@ declare_builtin_function!(
                             Ok(1)
                         }
                     }
-                    MUL => {
+                    GROUP_OP_MUL => {
                         let cost = invoke_context
                             .get_execution_cost()
                             .bls12_381_g2_multiply_cost;
@@ -1740,11 +1723,13 @@ declare_builtin_function!(
         points_len: u64,
         result_point_addr: u64,
     ) -> Result<u64, Error> {
-        use solana_curve25519::{
-            curve_syscall_traits::*,
-            edwards::{self, PodEdwardsPoint},
-            ristretto::{self, PodRistrettoPoint},
-            scalar,
+        use {
+            solana_curve25519::{
+                edwards::{self, PodEdwardsPoint},
+                ristretto::{self, PodRistrettoPoint},
+                scalar,
+            },
+            solana_define_syscall::curve_constants::*,
         };
 
         if points_len > 512 {
@@ -1861,7 +1846,7 @@ declare_builtin_function!(
         result_addr: u64,
     ) -> Result<u64, Error> {
         use {
-            crate::bls12_381_curve_id::*,
+            solana_define_syscall::curve_constants::*,
             solana_bls12_381_syscall::{
                 PodG1Point as PodBLSG1Point, PodG2Point as PodBLSG2Point,
                 PodGtElement as PodBLSGtElement,
@@ -6829,7 +6814,7 @@ mod tests {
     #[test]
     fn test_syscall_bls12_381_g1_add() {
         use {
-            crate::bls12_381_curve_id::{BLS12_381_G1_BE, BLS12_381_G1_LE},
+            solana_define_syscall::curve_constants::{BLS12_381_G1_BE, BLS12_381_G1_LE},
             solana_curve25519::curve_syscall_traits::ADD,
         };
 
@@ -6949,7 +6934,7 @@ mod tests {
     #[test]
     fn test_syscall_bls12_381_g1_sub() {
         use {
-            crate::bls12_381_curve_id::{BLS12_381_G1_BE, BLS12_381_G1_LE},
+            solana_define_syscall::curve_constants::{BLS12_381_G1_BE, BLS12_381_G1_LE},
             solana_curve25519::curve_syscall_traits::SUB,
         };
 
@@ -7072,7 +7057,7 @@ mod tests {
     #[test]
     fn test_syscall_bls12_381_g1_mul() {
         use {
-            crate::bls12_381_curve_id::{BLS12_381_G1_BE, BLS12_381_G1_LE},
+            solana_define_syscall::curve_constants::{BLS12_381_G1_BE, BLS12_381_G1_LE},
             solana_curve25519::curve_syscall_traits::MUL,
         };
 
@@ -7188,7 +7173,7 @@ mod tests {
     #[test]
     fn test_syscall_bls12_381_g2_add() {
         use {
-            crate::bls12_381_curve_id::{BLS12_381_G2_BE, BLS12_381_G2_LE},
+            solana_define_syscall::curve_constants::{BLS12_381_G2_BE, BLS12_381_G2_LE},
             solana_curve25519::curve_syscall_traits::ADD,
         };
 
@@ -7340,7 +7325,7 @@ mod tests {
     #[test]
     fn test_syscall_bls12_381_g2_sub() {
         use {
-            crate::bls12_381_curve_id::{BLS12_381_G2_BE, BLS12_381_G2_LE},
+            solana_define_syscall::curve_constants::{BLS12_381_G2_BE, BLS12_381_G2_LE},
             solana_curve25519::curve_syscall_traits::SUB,
         };
 
@@ -7495,7 +7480,7 @@ mod tests {
     #[test]
     fn test_syscall_bls12_381_g2_mul() {
         use {
-            crate::bls12_381_curve_id::{BLS12_381_G2_BE, BLS12_381_G2_LE},
+            solana_define_syscall::curve_constants::{BLS12_381_G2_BE, BLS12_381_G2_LE},
             solana_curve25519::curve_syscall_traits::MUL,
         };
 
@@ -7631,7 +7616,7 @@ mod tests {
 
     #[test]
     fn test_syscall_bls12_381_pairing_be() {
-        use crate::bls12_381_curve_id::BLS12_381_BE;
+        use solana_define_syscall::curve_constants::BLS12_381_BE;
 
         let config = Config::default();
         let feature_set = SVMFeatureSet {
@@ -7738,7 +7723,7 @@ mod tests {
 
     #[test]
     fn test_syscall_bls12_381_pairing_le() {
-        use crate::bls12_381_curve_id::BLS12_381_LE;
+        use solana_define_syscall::curve_constants::BLS12_381_LE;
 
         let config = Config::default();
         let feature_set = SVMFeatureSet {
@@ -7845,7 +7830,7 @@ mod tests {
 
     #[test]
     fn test_syscall_bls12_381_decompress_g1() {
-        use crate::bls12_381_curve_id::{BLS12_381_G1_BE, BLS12_381_G1_LE};
+        use solana_define_syscall::curve_constants::{BLS12_381_G1_BE, BLS12_381_G1_LE};
 
         let config = Config::default();
         let feature_set = SVMFeatureSet {
@@ -7941,7 +7926,7 @@ mod tests {
 
     #[test]
     fn test_syscall_bls12_381_decompress_g2() {
-        use crate::bls12_381_curve_id::{BLS12_381_G2_BE, BLS12_381_G2_LE};
+        use solana_define_syscall::curve_constants::{BLS12_381_G2_BE, BLS12_381_G2_LE};
 
         let config = Config::default();
         let feature_set = SVMFeatureSet {
@@ -8053,7 +8038,7 @@ mod tests {
 
     #[test]
     fn test_syscall_bls12_381_validate_g1() {
-        use crate::bls12_381_curve_id::{BLS12_381_G1_BE, BLS12_381_G1_LE};
+        use solana_define_syscall::curve_constants::{BLS12_381_G1_BE, BLS12_381_G1_LE};
 
         let config = Config::default();
         let feature_set = SVMFeatureSet {
@@ -8130,7 +8115,7 @@ mod tests {
 
     #[test]
     fn test_syscall_bls12_381_validate_g2() {
-        use crate::bls12_381_curve_id::{BLS12_381_G2_BE, BLS12_381_G2_LE};
+        use solana_define_syscall::curve_constants::{BLS12_381_G2_BE, BLS12_381_G2_LE};
 
         let config = Config::default();
         let feature_set = SVMFeatureSet {

@@ -38,6 +38,7 @@ solana-bn254 = { workspace = true }
 solana-clock = { workspace = true }
 solana-cpi = { workspace = true }
 solana-curve25519 = { workspace = true }
+solana-define-syscall = { workspace = true }
 solana-hash = { workspace = true, features = ["wincode"] }
 solana-hash-512 = { workspace = true }
 solana-instruction = { workspace = true }
