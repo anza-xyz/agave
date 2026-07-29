@@ -32,7 +32,7 @@ use {
         ancestors::Ancestors,
         blockhash_queue::BlockhashQueue,
     },
-    solana_clock::{DEFAULT_HASHES_PER_TICK, DEFAULT_TICKS_PER_SLOT, Epoch, Slot},
+    solana_clock::{BankId, DEFAULT_HASHES_PER_TICK, DEFAULT_TICKS_PER_SLOT, Epoch, Slot},
     solana_epoch_schedule::EpochSchedule,
     solana_fee_calculator::FeeRateGovernor,
     solana_hard_forks::HardForks,
@@ -402,6 +402,7 @@ fn build_root_bank(root_slot: Slot, feature_set: FeatureSet) -> Arc<Bank> {
     let rent_account = AccountSharedData::new_data(1, &Rent::default(), &sysvar::id()).unwrap();
     accounts.store_accounts_seq(
         (parent_slot, &[(sysvar::rent::id(), rent_account)][..]),
+        BankId::default(),
         None,
         &Ancestors::default(),
     );
