@@ -271,8 +271,6 @@ impl<T: IndexValue, U: DiskIndexValue + From<T> + Into<T>> InMemAccountsIndex<T,
         // return true if item should be added to in_mem cache
         callback: impl for<'a> FnOnce(Option<&AccountMapEntry<T>>) -> (bool, RT),
     ) -> RT {
-        // SAFETY: The entry Arc is not passed to `callback`, so
-        // it cannot live beyond this function call.
         self.get_only_in_mem(pubkey, true, |entry| {
             if let Some(entry) = entry {
                 callback(Some(entry)).1
