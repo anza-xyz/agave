@@ -1412,6 +1412,7 @@ mod tests {
             &self,
             _parent_slot: Slot,
             new_root: Slot,
+            _block_id: Hash,
             highest_super_majority_root: Option<Slot>,
         ) {
             // Test code only so we allow writing bank forks directly.

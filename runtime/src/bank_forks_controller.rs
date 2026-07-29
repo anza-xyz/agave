@@ -1,8 +1,9 @@
 use {
-    crate::{bank::Bank, installed_scheduler_pool::BankWithScheduler},
+    crate::{bank::Bank, bank_forks::BankForks, installed_scheduler_pool::BankWithScheduler},
     crossbeam_channel::{Receiver, RecvTimeoutError, Sender, bounded},
     log::warn,
     solana_clock::Slot,
+    solana_hash::Hash,
     solana_metrics::datapoint_info,
     std::{
         fmt,
@@ -33,10 +34,22 @@ pub enum BankForksCommand {
     },
 }
 
+#[derive(Clone, Copy, Debug)]
 pub struct SetRootCommand {
     pub parent_slot: Slot,
     pub new_root: Slot,
+    pub block_id: Hash,
     pub highest_super_majority_root: Option<Slot>,
+}
+
+impl SetRootCommand {
+    /// Whether the requested root still identifies a frozen bank newer than the applied root.
+    pub fn matches_frozen_bank(&self, bank_forks: &BankForks) -> bool {
+        self.new_root > bank_forks.root()
+            && bank_forks
+                .get(self.new_root)
+                .is_some_and(|bank| bank.is_frozen() && bank.block_id() == Some(self.block_id))
+    }
 }
 
 impl BankForksCommand {
@@ -64,6 +77,7 @@ pub trait BankForksController: Send + Sync {
         &self,
         parent_slot: Slot,
         new_root: Slot,
+        block_id: Hash,
         highest_super_majority_root: Option<Slot>,
     );
 
@@ -161,12 +175,14 @@ impl BankForksController for BankForksControllerHandle {
         &self,
         parent_slot: Slot,
         new_root: Slot,
+        block_id: Hash,
         highest_super_majority_root: Option<Slot>,
     ) {
         let total_start = Instant::now();
         let command = SetRootCommand {
             parent_slot,
             new_root,
+            block_id,
             highest_super_majority_root,
         };
 
@@ -236,13 +252,16 @@ mod tests {
     fn test_bank_forks_controller_keeps_highest_pending_set_root() {
         let (controller, receiver) = BankForksControllerHandle::new();
 
-        controller.enqueue_set_root(5, 5, Some(5));
-        controller.enqueue_set_root(3, 3, Some(3));
-        assert_eq!(receiver.take_set_root_command().unwrap().new_root, 5);
+        let block_id_5 = Hash::new_unique();
+        controller.enqueue_set_root(5, 5, block_id_5, Some(5));
+        controller.enqueue_set_root(3, 3, Hash::new_unique(), Some(3));
+        let command = receiver.take_set_root_command().unwrap();
+        assert_eq!(command.new_root, 5);
+        assert_eq!(command.block_id, block_id_5);
         assert!(receiver.take_set_root_command().is_none());
 
-        controller.enqueue_set_root(3, 3, Some(3));
-        controller.enqueue_set_root(5, 5, Some(5));
+        controller.enqueue_set_root(3, 3, Hash::new_unique(), Some(3));
+        controller.enqueue_set_root(5, 5, block_id_5, Some(5));
         assert_eq!(receiver.take_set_root_command().unwrap().new_root, 5);
     }
 
@@ -250,21 +269,63 @@ mod tests {
     fn test_bank_forks_controller_signals_pending_set_root() {
         let (controller, receiver) = BankForksControllerHandle::new();
 
-        controller.enqueue_set_root(1, 1, Some(1));
+        controller.enqueue_set_root(1, 1, Hash::new_unique(), Some(1));
         receiver
             .set_root_signal_receiver()
             .recv_timeout(Duration::from_secs(1))
             .unwrap();
         assert_eq!(receiver.take_set_root_command().unwrap().new_root, 1);
 
-        controller.enqueue_set_root(2, 2, Some(2));
-        controller.enqueue_set_root(3, 3, Some(3));
+        controller.enqueue_set_root(2, 2, Hash::new_unique(), Some(2));
+        controller.enqueue_set_root(3, 3, Hash::new_unique(), Some(3));
         receiver
             .set_root_signal_receiver()
             .recv_timeout(Duration::from_secs(1))
             .unwrap();
         assert!(receiver.set_root_signal_receiver().try_recv().is_err());
         assert_eq!(receiver.take_set_root_command().unwrap().new_root, 3);
+    }
+
+    #[test]
+    fn test_set_root_command_matches_frozen_bank() {
+        let genesis = create_genesis_config(10_000);
+        let bank_forks = BankForks::new_rw_arc(Bank::new_for_tests(&genesis.genesis_config));
+        let parent_bank = bank_forks.read().unwrap().root_bank();
+        let bank = Bank::new_from_parent(parent_bank, SlotLeader::default(), 1);
+        let block_id = Hash::new_unique();
+        bank.set_block_id(Some(block_id));
+        let bank = bank_forks
+            .write()
+            .unwrap()
+            .insert(bank)
+            .clone_without_scheduler();
+        let command = SetRootCommand {
+            parent_slot: 1,
+            new_root: 1,
+            block_id,
+            highest_super_majority_root: Some(1),
+        };
+
+        assert!(!command.matches_frozen_bank(&bank_forks.read().unwrap()));
+        bank.freeze();
+        assert!(command.matches_frozen_bank(&bank_forks.read().unwrap()));
+
+        let mismatched_command = SetRootCommand {
+            block_id: Hash::new_unique(),
+            ..command
+        };
+        assert!(!mismatched_command.matches_frozen_bank(&bank_forks.read().unwrap()));
+
+        let missing_command = SetRootCommand {
+            parent_slot: 2,
+            new_root: 2,
+            block_id: Hash::new_unique(),
+            highest_super_majority_root: Some(2),
+        };
+        assert!(!missing_command.matches_frozen_bank(&bank_forks.read().unwrap()));
+
+        bank_forks.write().unwrap().set_root(1, None, None);
+        assert!(!command.matches_frozen_bank(&bank_forks.read().unwrap()));
     }
 
     #[test]
@@ -321,12 +382,14 @@ mod tests {
 
         let parent_bank = bank_forks.read().unwrap().root_bank();
         let bank = Bank::new_from_parent(parent_bank, SlotLeader::default(), 1);
+        let block_id = Hash::new_unique();
+        bank.set_block_id(Some(block_id));
         bank.freeze();
         let inserted_bank = controller.insert_bank(bank).unwrap();
         assert_eq!(inserted_bank.slot(), 1);
         assert!(bank_forks.read().unwrap().get(1).is_some());
 
-        controller.enqueue_set_root(1, 1, None);
+        controller.enqueue_set_root(1, 1, block_id, None);
         assert_eq!(root_receiver.recv().unwrap(), 1);
         assert_eq!(bank_forks.read().unwrap().root(), 1);
 

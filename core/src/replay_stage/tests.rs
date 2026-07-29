@@ -603,6 +603,91 @@ fn test_handle_new_root() {
 }
 
 #[test]
+fn test_process_set_root_command_requires_matching_frozen_bank() {
+    let (mut vote_simulator, blockstore) = setup_forks_from_tree(tr(0) / tr(1), 1, None);
+    let bank_forks = vote_simulator.bank_forks.clone();
+    let blockstore = Arc::new(blockstore);
+    let root_bank = bank_forks.read().unwrap().root_bank();
+    let leader_schedule_cache = Arc::new(LeaderScheduleCache::new_from_bank(&root_bank));
+    let (drop_bank_sender, _drop_bank_receiver) = bounded(1024);
+    let context = ProcessBankForksContext {
+        bank_forks: bank_forks.clone(),
+        blockstore: blockstore.clone(),
+        snapshot_controller: None,
+        bank_notification_sender: None,
+        rpc_subscriptions: None,
+        drop_bank_sender,
+        leader_schedule_cache,
+    };
+    let my_pubkey = Pubkey::new_unique();
+
+    let missing_command = SetRootCommand {
+        parent_slot: 2,
+        new_root: 2,
+        block_id: Hash::new_unique(),
+        highest_super_majority_root: Some(2),
+    };
+    ReplayStage::process_set_root_command(
+        missing_command,
+        &context,
+        &my_pubkey,
+        &mut vote_simulator.progress,
+    );
+    assert_eq!(bank_forks.read().unwrap().root(), 0);
+    assert!(!blockstore.is_root(2));
+
+    let mismatched_command = SetRootCommand {
+        parent_slot: 1,
+        new_root: 1,
+        block_id: Hash::new_unique(),
+        highest_super_majority_root: Some(1),
+    };
+    ReplayStage::process_set_root_command(
+        mismatched_command,
+        &context,
+        &my_pubkey,
+        &mut vote_simulator.progress,
+    );
+    assert_eq!(bank_forks.read().unwrap().root(), 0);
+    assert!(!blockstore.is_root(1));
+
+    let unfrozen_block_id = Hash::new_unique();
+    let unfrozen_bank = Bank::new_from_parent(root_bank, SlotLeader::default(), 2);
+    unfrozen_bank.set_block_id(Some(unfrozen_block_id));
+    bank_forks.write().unwrap().insert(unfrozen_bank);
+    let unfrozen_command = SetRootCommand {
+        parent_slot: 2,
+        new_root: 2,
+        block_id: unfrozen_block_id,
+        highest_super_majority_root: Some(2),
+    };
+    ReplayStage::process_set_root_command(
+        unfrozen_command,
+        &context,
+        &my_pubkey,
+        &mut vote_simulator.progress,
+    );
+    assert_eq!(bank_forks.read().unwrap().root(), 0);
+    assert!(!blockstore.is_root(2));
+
+    let block_id = bank_forks.read().unwrap().block_id(1).unwrap();
+    let matching_command = SetRootCommand {
+        parent_slot: 1,
+        new_root: 1,
+        block_id,
+        highest_super_majority_root: Some(1),
+    };
+    ReplayStage::process_set_root_command(
+        matching_command,
+        &context,
+        &my_pubkey,
+        &mut vote_simulator.progress,
+    );
+    assert_eq!(bank_forks.read().unwrap().root(), 1);
+    assert!(blockstore.is_root(1));
+}
+
+#[test]
 fn test_handle_new_root_ahead_of_highest_super_majority_root() {
     let genesis_config = create_genesis_config(10_000).genesis_config;
     let bank0 = Bank::new_for_tests(&genesis_config);

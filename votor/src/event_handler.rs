@@ -869,7 +869,7 @@ impl EventHandler {
     ) {
         let bank_forks_r = ctx.bank_forks.read().unwrap();
         let old_root = bank_forks_r.root().max(vctx.vote_history.root());
-        let Some(new_root) = finalized_blocks
+        let Some((new_root, bank_hash)) = finalized_blocks
             .iter()
             .filter_map(|&block| {
                 let bank = bank_forks_r.get(block.slot)?;
@@ -897,9 +897,9 @@ impl EventHandler {
                     && vctx.vote_history.voted(block.slot)
                     && bank.is_frozen()
                     && bank.block_id().is_some_and(|bid| bid == block.block_id))
-                .then_some(block.slot)
+                .then_some((block, bank.hash()))
             })
-            .max()
+            .max_by_key(|(block, _)| block.slot)
         else {
             // No rootable banks
             return;
@@ -908,6 +908,7 @@ impl EventHandler {
         root_utils::set_root(
             my_pubkey,
             new_root,
+            bank_hash,
             ctx,
             vctx,
             rctx,
@@ -915,7 +916,7 @@ impl EventHandler {
             finalized_blocks,
             received_shred,
         );
-        stats.set_root(new_root);
+        stats.set_root(new_root.slot);
     }
 
     pub(crate) fn join(self) -> thread::Result<()> {
@@ -1050,6 +1051,7 @@ mod tests {
             &self,
             parent_slot: Slot,
             new_root: Slot,
+            _block_id: Hash,
             highest_super_majority_root: Option<Slot>,
         ) {
             root_utils::check_and_handle_new_root(
