@@ -11,11 +11,7 @@ source "$here/rust-version.sh" nightly
 
 packages=$(cargo +"$rust_nightly" metadata --no-deps --format-version=1 | jq -r '.packages[] | select(.features | has("frozen-abi")) | .name')
 for package in $packages; do
-  features=frozen-abi
-  if [[ $package == agave-votor-messages || $package == agave-votor ]]; then
-    features+=,agave-unstable-api
-  fi
-  cmd="cargo +$rust_nightly test -p $package --features $features --lib -- test_abi_digest test_api_digest --nocapture"
+  cmd="cargo +$rust_nightly test -p $package --features frozen-abi,agave-unstable-api --lib -- test_abi_digest test_api_digest --nocapture"
   echo "--- $cmd"
   $cmd
 done
