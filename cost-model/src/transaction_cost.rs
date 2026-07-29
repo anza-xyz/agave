@@ -15,22 +15,7 @@ pub struct TransactionCost<'a, Tx> {
     pub allocated_accounts_data_size: u64,
 }
 
-/// Backward-compatible alias for callers that still name the old inner type.
-pub type UsageCostDetails<'a, Tx> = TransactionCost<'a, Tx>;
-
 impl<'a, Tx> TransactionCost<'a, Tx> {
-    pub fn new(usage_cost: UsageCostDetails<'a, Tx>) -> Self {
-        usage_cost
-    }
-
-    pub fn usage_cost_details(&self) -> &UsageCostDetails<'a, Tx> {
-        self
-    }
-
-    pub fn usage_cost_details_mut(&mut self) -> &mut UsageCostDetails<'a, Tx> {
-        self
-    }
-
     pub fn sum(&self) -> u64 {
         self.signature_cost
             .saturating_add(self.write_lock_cost)
