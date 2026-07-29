@@ -5177,6 +5177,12 @@ impl AccountsDb {
                 if remaining_accounts == 0 {
                     self.dirty_stores.insert(slot, store);
                     dead_slots.insert(slot);
+                } else if remaining_accounts == store.num_tombstones()
+                    && self.can_purge_zero_lamport_single_ref_after_shrink(slot)
+                {
+                    // Every remaining account is a tombstone and the slot is older than
+                    // the latest full snapshot slot, safe to remove
+                    dead_slots.insert(slot);
                 } else if self.is_shrinking_productive(&store)
                     && self.is_candidate_for_shrink(&store)
                 {
