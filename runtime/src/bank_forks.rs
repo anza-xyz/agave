@@ -1067,6 +1067,15 @@ mod tests {
         assert!(!migration_status.is_full_alpenglow_epoch());
 
         let root_bank = make_root_bank_for_migration_status_test(
+            ff_activation_slot + MIGRATION_SLOT_OFFSET,
+            Some(ff_activation_slot),
+            Some(genesis_cert.clone()),
+        );
+        let migration_status = BankForks::initialize_migration_status(&root_bank);
+        assert!(migration_status.is_alpenglow_enabled());
+        assert!(!migration_status.is_full_alpenglow_epoch());
+
+        let root_bank = make_root_bank_for_migration_status_test(
             64,
             Some(ff_activation_slot),
             Some(genesis_cert),
