@@ -23,7 +23,7 @@ use {
         },
         reward_info::RewardInfo,
         stake_account::StakeAccount,
-        stake_delegation::delegation_effective_stake,
+        stake_delegation::{delegation_activation_status, delegation_effective_stake},
         stakes::Stakes,
     },
     log::{debug, info},
@@ -653,12 +653,24 @@ impl Bank {
             // Even if the vote account doesn't exist, there might still be a
             // need to adjust the stake delegation
             if adjust_delegations_for_rent {
-                if delegation_may_need_adjustment(
-                    stake.delegation.stake,
-                    stake.delegation.stake,
-                    current_lamports,
-                    minimum_lamports,
-                ) {
+                let has_activating_or_effective = {
+                    let status = delegation_activation_status(
+                        &stake.delegation,
+                        rewarded_epoch,
+                        stake_history,
+                        new_rate_activation_epoch,
+                        use_fixed_point_stake_math,
+                    );
+                    status.effective > 0 || status.activating > 0
+                };
+                if has_activating_or_effective
+                    && delegation_may_need_adjustment(
+                        stake.delegation.stake,
+                        stake.delegation.stake,
+                        current_lamports,
+                        minimum_lamports,
+                    )
+                {
                     debug!(
                         "delegation for stake {stake_pubkey} may be adjusted at distribution, \
                          unless lamports are transferred before distribution block"
