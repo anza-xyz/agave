@@ -4,6 +4,7 @@
 use {
     crate::{
         commitment::{CommitmentType, update_commitment_cache},
+        common::{blocking_send, nonblocking_send},
         event::{
             CompletedBlock, LatestSwitchRequest, RepairEvent, RepairEventSender, SwitchBankEvent,
             VotorEvent, VotorEventReceiver,
@@ -23,7 +24,7 @@ use {
         consensus_message::Block, metric_types::ConsensusMetricsEvent, migration::MigrationStatus,
         vote::Vote,
     },
-    crossbeam_channel::{RecvError, SendError, TrySendError, select},
+    crossbeam_channel::select,
     parking_lot::RwLock,
     solana_clock::Slot,
     solana_hash::Hash,
@@ -70,15 +71,10 @@ pub(crate) struct EventHandlerContext {
 
 #[derive(Debug, Error)]
 enum EventLoopError {
-    #[error("Receiver is disconnected")]
-    ReceiverDisconnected(#[from] RecvError),
-
-    #[error("Sender is disconnected")]
-    SenderDisconnected(#[from] SendError<()>),
-
+    #[error("Channel {0} disconnected")]
+    ChannelDisconnected(&'static str),
     #[error("Error generating and inserting vote")]
     VotingError(#[from] VoteError),
-
     #[error("Set identity error")]
     SetIdentityError(#[from] VoteHistoryError),
 }
@@ -163,10 +159,12 @@ impl EventHandler {
             let mut receive_event_time = Measure::start("receive_event");
             let event = select! {
                 recv(event_receiver) -> msg => {
-                    msg?
+                    msg
                 },
                 default(Duration::from_secs(1))  => continue
             };
+            let event =
+                event.map_err(|_| EventLoopError::ChannelDisconnected("votor_event_receiver"))?;
             receive_event_time.stop();
             local_context.stats.receive_event_time_us = local_context
                 .stats
@@ -197,15 +195,13 @@ impl EventHandler {
             let mut send_votes_batch_time = Measure::start("send_votes_batch");
             for vote in votes {
                 local_context.stats.incr_vote(&vote);
-                match vctx.bls_sender.try_send(vote) {
-                    Ok(_) => (),
-                    Err(TrySendError::Full(_)) => {
-                        warn!("Vote propagation is backed up, skipping send");
-                    }
-                    Err(TrySendError::Disconnected(_)) => {
-                        return Err(EventLoopError::ReceiverDisconnected(RecvError));
-                    }
-                }
+                nonblocking_send(
+                    &local_context.my_pubkey,
+                    &vctx.bls_sender,
+                    vote,
+                    "bls_sender",
+                )
+                .map_err(EventLoopError::ChannelDisconnected)?;
             }
             send_votes_batch_time.stop();
             local_context.stats.send_votes_batch_time_us = local_context
@@ -268,14 +264,6 @@ impl EventHandler {
         local_context: &mut LocalContext,
     ) -> Result<Vec<BLSOp>, EventLoopError> {
         let mut votes = vec![];
-        let &mut LocalContext {
-            ref mut my_pubkey,
-            ref mut pending_blocks,
-            ref mut finalized_blocks,
-            ref mut received_shred,
-            ref mut stats,
-            ref mut standstill_slot,
-        } = local_context;
         match event {
             // Block has completed replay
             VotorEvent::Block(CompletedBlock { slot, bank }) => {
@@ -291,35 +279,48 @@ impl EventHandler {
                         slot,
                     });
                 }
-                vctx.consensus_metrics_sender
-                    .send((now, consensus_metrics_events))
-                    .map_err(|_| SendError(()))?;
+                nonblocking_send(
+                    &local_context.my_pubkey,
+                    &vctx.consensus_metrics_sender,
+                    (now, consensus_metrics_events),
+                    "consensus_metrics_sender",
+                )
+                .map_err(EventLoopError::ChannelDisconnected)?;
                 let (block, parent_block) = Self::get_block_parent_block(&bank);
-                info!("{my_pubkey}: Block {block:?} parent {parent_block:?}");
+                info!(
+                    "{}: Block {block:?} parent {parent_block:?}",
+                    local_context.my_pubkey
+                );
                 if Self::try_notar(
-                    my_pubkey,
+                    &local_context.my_pubkey,
                     block,
                     parent_block,
-                    pending_blocks,
+                    &mut local_context.pending_blocks,
                     vctx,
                     &mut votes,
                 )? {
-                    Self::check_pending_blocks(my_pubkey, pending_blocks, vctx, &mut votes)?;
+                    Self::check_pending_blocks(
+                        &local_context.my_pubkey,
+                        &mut local_context.pending_blocks,
+                        vctx,
+                        &mut votes,
+                    )?;
                 } else if !vctx.vote_history.voted(slot) {
-                    pending_blocks
+                    local_context
+                        .pending_blocks
                         .entry(slot)
                         .or_default()
                         .push((block, parent_block));
                 }
                 Self::check_rootable_blocks_and_bank_hash_mismatches(
-                    my_pubkey,
+                    &local_context.my_pubkey,
                     ctx,
                     vctx,
                     rctx,
-                    pending_blocks,
-                    finalized_blocks,
-                    received_shred,
-                    stats,
+                    &mut local_context.pending_blocks,
+                    &mut local_context.finalized_blocks,
+                    &mut local_context.received_shred,
+                    &mut local_context.stats,
                 );
                 if let Some(parent_block) =
                     Self::add_missing_parent_ready(block, ctx, vctx, local_context)
@@ -338,30 +339,37 @@ impl EventHandler {
 
             // Block has received a notarization certificate
             VotorEvent::BlockNotarized(block) => {
-                info!("{my_pubkey}: Block Notarized {block:?}");
+                info!("{}: Block Notarized {block:?}", local_context.my_pubkey);
                 vctx.vote_history.add_block_notarized(block);
-                Self::try_final(my_pubkey, block, vctx, &mut votes)?;
-                request_repair(&ctx.repair_event_sender, *my_pubkey, block)?;
+                Self::try_final(&local_context.my_pubkey, block, vctx, &mut votes)?;
+                request_repair(&ctx.repair_event_sender, &local_context.my_pubkey, block)?;
             }
 
             VotorEvent::BlockNotarFallback(block) => {
-                info!("{my_pubkey}: Block notar-fallback {block:?}");
-                request_repair(&ctx.repair_event_sender, *my_pubkey, block)?;
+                info!(
+                    "{}: Block notar-fallback {block:?}",
+                    local_context.my_pubkey
+                );
+                request_repair(&ctx.repair_event_sender, &local_context.my_pubkey, block)?;
             }
 
             VotorEvent::FirstShred(slot) => {
-                info!("{my_pubkey}: First shred {slot}");
-                received_shred.insert(slot);
+                info!("{}: First shred {slot}", local_context.my_pubkey);
+                local_context.received_shred.insert(slot);
             }
 
             // Received a parent ready notification for `slot`
             VotorEvent::ParentReady { slot, parent_block } => {
-                vctx.consensus_metrics_sender
-                    .send((
+                nonblocking_send(
+                    &local_context.my_pubkey,
+                    &vctx.consensus_metrics_sender,
+                    (
                         Instant::now(),
                         vec![ConsensusMetricsEvent::StartOfSlot { slot }],
-                    ))
-                    .map_err(|_| SendError(()))?;
+                    ),
+                    "consensus_metrics_sender",
+                )
+                .map_err(EventLoopError::ChannelDisconnected)?;
                 Self::handle_parent_ready_event(
                     slot,
                     parent_block,
@@ -374,36 +382,40 @@ impl EventHandler {
             }
 
             VotorEvent::TimeoutCrashedLeader(slot) => {
-                info!("{my_pubkey}: TimeoutCrashedLeader {slot}");
-                if vctx.vote_history.voted(slot) || received_shred.contains(&slot) {
+                info!("{}: TimeoutCrashedLeader {slot}", local_context.my_pubkey);
+                if vctx.vote_history.voted(slot) || local_context.received_shred.contains(&slot) {
                     return Ok(votes);
                 }
-                Self::try_skip_window(my_pubkey, slot, vctx, &mut votes)?;
+                Self::try_skip_window(&local_context.my_pubkey, slot, vctx, &mut votes)?;
             }
 
             // Skip timer for the slot has fired
             VotorEvent::Timeout(slot) => {
-                info!("{my_pubkey}: Timeout {slot}");
+                info!("{}: Timeout {slot}", local_context.my_pubkey);
                 if slot != last_of_consecutive_leader_slots(slot) {
-                    vctx.consensus_metrics_sender
-                        .send((
+                    nonblocking_send(
+                        &local_context.my_pubkey,
+                        &vctx.consensus_metrics_sender,
+                        (
                             Instant::now(),
                             vec![ConsensusMetricsEvent::StartOfSlot {
                                 slot: slot.saturating_add(1),
                             }],
-                        ))
-                        .map_err(|_| SendError(()))?;
+                        ),
+                        "consensus_metrics_sender",
+                    )
+                    .map_err(EventLoopError::ChannelDisconnected)?;
                 }
                 if vctx.vote_history.voted(slot) {
                     return Ok(votes);
                 }
-                Self::try_skip_window(my_pubkey, slot, vctx, &mut votes)?;
+                Self::try_skip_window(&local_context.my_pubkey, slot, vctx, &mut votes)?;
             }
 
             // We have observed the safe to notar condition, and can send a notar fallback vote
             VotorEvent::SafeToNotar(block) => {
-                info!("{my_pubkey}: SafeToNotar {block:?}");
-                Self::try_skip_window(my_pubkey, block.slot, vctx, &mut votes)?;
+                info!("{}: SafeToNotar {block:?}", local_context.my_pubkey);
+                Self::try_skip_window(&local_context.my_pubkey, block.slot, vctx, &mut votes)?;
                 if vctx.vote_history.its_over(block.slot)
                     || vctx
                         .vote_history
@@ -411,7 +423,10 @@ impl EventHandler {
                 {
                     return Ok(votes);
                 }
-                info!("{my_pubkey}: Voting notarize-fallback for {block:?}");
+                info!(
+                    "{}: Voting notarize-fallback for {block:?}",
+                    local_context.my_pubkey
+                );
                 if let Some(bls_op) = insert_vote_and_create_bls_message(
                     Vote::new_notarization_fallback_vote(block),
                     vctx,
@@ -422,12 +437,15 @@ impl EventHandler {
 
             // We have observed the safe to skip condition, and can send a skip fallback vote
             VotorEvent::SafeToSkip(slot) => {
-                info!("{my_pubkey}: SafeToSkip {slot}");
-                Self::try_skip_window(my_pubkey, slot, vctx, &mut votes)?;
+                info!("{}: SafeToSkip {slot}", local_context.my_pubkey);
+                Self::try_skip_window(&local_context.my_pubkey, slot, vctx, &mut votes)?;
                 if vctx.vote_history.its_over(slot) || vctx.vote_history.voted_skip_fallback(slot) {
                     return Ok(votes);
                 }
-                info!("{my_pubkey}: Voting skip-fallback for {slot}");
+                info!(
+                    "{}: Voting skip-fallback for {slot}",
+                    local_context.my_pubkey
+                );
                 if let Some(bls_op) =
                     insert_vote_and_create_bls_message(Vote::new_skip_fallback_vote(slot), vctx)?
                 {
@@ -437,35 +455,44 @@ impl EventHandler {
 
             // It is time to produce our leader window
             VotorEvent::ProduceWindow(window_info) => {
-                info!("{my_pubkey}: ProduceWindow {window_info:?}");
-                ctx.leader_window_info_sender.send(window_info).unwrap();
+                info!("{}: ProduceWindow {window_info:?}", local_context.my_pubkey);
+                nonblocking_send(
+                    &local_context.my_pubkey,
+                    &ctx.leader_window_info_sender,
+                    window_info,
+                    "leader_window_info_sender",
+                )
+                .map_err(EventLoopError::ChannelDisconnected)?;
             }
 
             // We have finalized this block consider it for rooting
             VotorEvent::Finalized(block, is_fast_finalization) => {
-                info!("{my_pubkey}: Finalized {block:?} fast: {is_fast_finalization}");
-                finalized_blocks.insert(block);
-                request_repair(&ctx.repair_event_sender, *my_pubkey, block)?;
+                info!(
+                    "{}: Finalized {block:?} fast: {is_fast_finalization}",
+                    local_context.my_pubkey
+                );
+                local_context.finalized_blocks.insert(block);
+                request_repair(&ctx.repair_event_sender, &local_context.my_pubkey, block)?;
 
                 Self::check_rootable_blocks_and_bank_hash_mismatches(
-                    my_pubkey,
+                    &local_context.my_pubkey,
                     ctx,
                     vctx,
                     rctx,
-                    pending_blocks,
-                    finalized_blocks,
-                    received_shred,
-                    stats,
+                    &mut local_context.pending_blocks,
+                    &mut local_context.finalized_blocks,
+                    &mut local_context.received_shred,
+                    &mut local_context.stats,
                 );
 
-                if let Some(slot) = *standstill_slot
+                if let Some(slot) = local_context.standstill_slot
                     && block.slot > slot
                 {
-                    *standstill_slot = None;
+                    local_context.standstill_slot = None;
                     info!(
-                        "{my_pubkey}: Standstill initially detected at slot={slot} has ended at \
-                         slot={}. Ending timeout extension",
-                        block.slot
+                        "{}: Standstill initially detected at slot={slot} has ended at slot={}. \
+                         Ending timeout extension",
+                        local_context.my_pubkey, block.slot
                     );
                 }
 
@@ -482,44 +509,57 @@ impl EventHandler {
                         &mut votes,
                     )?;
                 }
-                vctx.consensus_metrics_sender
-                    .send((
+                nonblocking_send(
+                    &local_context.my_pubkey,
+                    &vctx.consensus_metrics_sender,
+                    (
                         Instant::now(),
                         vec![ConsensusMetricsEvent::SlotFinalized { slot: block.slot }],
-                    ))
-                    .map_err(|_| SendError(()))?;
+                    ),
+                    "consensus_metrics_sender",
+                )
+                .map_err(EventLoopError::ChannelDisconnected)?;
             }
 
             // We have not observed a finalization certificate in a while, refresh our votes
             VotorEvent::Standstill(highest_finalized_slot) => {
-                info!("{my_pubkey}: Standstill {highest_finalized_slot}");
+                info!(
+                    "{}: Standstill {highest_finalized_slot}",
+                    local_context.my_pubkey
+                );
                 // Record the highest finalized slot for dynamic timeout extension.
-                match *standstill_slot {
+                match local_context.standstill_slot {
                     Some(old_slot) => {
                         debug_assert_eq!(highest_finalized_slot, old_slot);
                         if highest_finalized_slot != old_slot {
                             warn!(
-                                "{my_pubkey}: Standstill for slot {highest_finalized_slot}
-                                 issued while standstill for slot {old_slot} active."
+                                "{}: Standstill for slot {highest_finalized_slot}
+                                 issued while standstill for slot {old_slot} active.",
+                                local_context.my_pubkey
                             );
                         }
                     }
                     None => {
-                        *standstill_slot = Some(highest_finalized_slot);
+                        local_context.standstill_slot = Some(highest_finalized_slot);
                         info!(
-                            "{my_pubkey}: Extending timeouts starting at slot \
-                             {highest_finalized_slot}"
+                            "{}: Extending timeouts starting at slot {highest_finalized_slot}",
+                            local_context.my_pubkey
                         );
                     }
                 }
                 // certs refresh happens in ConsensusPoolService
-                Self::refresh_votes(my_pubkey, highest_finalized_slot, vctx, &mut votes)?;
+                Self::refresh_votes(
+                    &local_context.my_pubkey,
+                    highest_finalized_slot,
+                    vctx,
+                    &mut votes,
+                )?;
             }
 
             // Operator called set identity make sure that our keypair is updated for voting
             VotorEvent::SetIdentity => {
-                info!("{my_pubkey}: SetIdentity");
-                if let Err(e) = Self::handle_set_identity(my_pubkey, ctx, vctx) {
+                info!("{}: SetIdentity", local_context.my_pubkey);
+                if let Err(e) = Self::handle_set_identity(&mut local_context.my_pubkey, ctx, vctx) {
                     error!(
                         "Unable to load new vote history when attempting to change identity from \
                          {} to {} in voting loop, Exiting: {}",
@@ -529,7 +569,7 @@ impl EventHandler {
                     );
                     return Err(EventLoopError::SetIdentityError(e));
                 }
-                Self::send_vote_history_to_consensus_pool(my_pubkey, vctx)?;
+                Self::send_vote_history_to_consensus_pool(&local_context.my_pubkey, vctx)?;
             }
         }
         Ok(votes)
@@ -926,26 +966,12 @@ impl EventHandler {
 /// Sends a repair event to the block ID repair service.
 fn request_repair(
     sender: &RepairEventSender,
-    my_pubkey: Pubkey,
+    my_pubkey: &Pubkey,
     block: Block,
 ) -> Result<(), EventLoopError> {
     let event = RepairEvent::FetchBlock { block };
-    match sender.try_send(event) {
-        Ok(()) => Ok(()),
-        Err(TrySendError::Full(event)) => {
-            error!(
-                "{my_pubkey}: Repair event channel is full, this should not happen. Blocking to \
-                 send event for slot {}",
-                block.slot
-            );
-            sender
-                .send(event)
-                .map_err(|_| EventLoopError::SenderDisconnected(SendError(())))
-        }
-        Err(TrySendError::Disconnected(_)) => {
-            Err(EventLoopError::SenderDisconnected(SendError(())))
-        }
-    }
+    blocking_send(my_pubkey, sender, event, "repair_event_sender")
+        .map_err(EventLoopError::ChannelDisconnected)
 }
 
 /// Updates the latest switch-bank request for replay to consume.
