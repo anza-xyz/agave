@@ -3308,14 +3308,14 @@ mod tests {
 
     #[test]
     fn test_verify_fec_set_root_rejects_empty_proof() {
-        let block_id = Hash::new_unique();
+        let block_id = BlockId::new_unique();
         let request = BlockIdRepairType::FecSetRoot {
             slot: 100,
             block_id,
             fec_set_index: 0,
         };
         let response = BlockIdRepairResponse::FecSetRoot {
-            fec_set_root: block_id,
+            fec_set_root: block_id.into_hash(),
             fec_set_proof: vec![],
         };
 
