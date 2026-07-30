@@ -147,7 +147,6 @@ solana-signature = { workspace = true, features = ["rand"] }
 solana-unified-scheduler-pool = { path = "../unified-scheduler-pool", features = ["agave-unstable-api", "dev-context-only-utils"] }
 solana-vote = { path = "../vote", features = ["agave-unstable-api", "dev-context-only-utils"] }
 spl-generic-token = { workspace = true }
-spl-pod = { workspace = true }
 test-case = { workspace = true }
 
 [[bench]]
