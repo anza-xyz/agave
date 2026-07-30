@@ -533,6 +533,7 @@ dependencies = [
  "solana-frozen-abi",
  "solana-frozen-abi-macro",
  "solana-hash 4.5.0",
+ "solana-leader-schedule",
  "solana-pubkey 4.2.0",
  "solana-short-vec",
  "solana-signer-store",

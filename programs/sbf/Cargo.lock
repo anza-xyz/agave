@@ -428,6 +428,7 @@ dependencies = [
  "solana-clock",
  "solana-epoch-schedule",
  "solana-hash 4.5.0",
+ "solana-leader-schedule",
  "solana-pubkey 4.2.0",
  "solana-short-vec",
  "solana-signer-store",
