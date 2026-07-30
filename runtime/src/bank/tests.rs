@@ -18,12 +18,14 @@ use {
             minimum_vote_account_balance_for_vat,
         },
         runtime_config::RuntimeConfig,
-        serde_snapshot::{bank_to_stream, fields_from_stream},
+        serde_snapshot::fields_from_stream,
         slot_params::{
             DEFAULT_MAX_ENTRY_BYTES_PER_SLOT, LEGACY_HASHES_PER_TICK, LEGACY_SLOT_PARAMS,
             SLOT_PARAMS_200MS, SLOT_PARAMS_250MS, SLOT_PARAMS_300MS, SLOT_PARAMS_350MS, SlotParams,
             slot_time_feature_gates, slot_time_feature_ids,
         },
+        snapshot_bank_utils::{bank_from_snapshot_archives, bank_to_full_snapshot_archive},
+        snapshot_utils::create_tmp_accounts_dir_for_tests,
         stake_delegation::effective_stake,
         stake_history::StakeHistory,
         stake_utils,
@@ -35,6 +37,7 @@ use {
     },
     agave_feature_set::{self as feature_set, FeatureSet},
     agave_reserved_account_keys::ReservedAccount,
+    agave_snapshots::snapshot_config::SnapshotConfig,
     ahash::AHashMap,
     assert_matches::assert_matches,
     crossbeam_channel::{TrySendError, bounded},
@@ -5638,32 +5641,54 @@ fn test_bank_hash_deterministic_with_stakes_cache() {
         }
     }
 
-    // Round-trip the real bank snapshot wire format. In particular, this checks the exact-size
-    // iterator contract used by wincode when stake removals are pending.
+    // Round-trip a full snapshot. In particular, this checks the exact-size iterator contract used
+    // by wincode when stake removals are pending, then reconstructs both AccountsDb and the bank.
     let expected_stake_delegations = {
         let stakes = bank0.stakes_cache.stakes();
         stakes.stake_delegations().len()
     };
+    while !bank0.is_complete() {
+        bank0.register_default_tick_for_test();
+    }
     bank0.set_block_id(Some(Hash::from([7u8; 32])));
-    let mut snapshot_stream = std::io::BufWriter::new(Vec::new());
-    bank_to_stream(&mut snapshot_stream, &bank0, &[]).unwrap();
-    let snapshot_bytes = snapshot_stream.into_inner().unwrap();
-    let (snapshot_fields, _) =
-        fields_from_stream(&mut std::io::BufReader::new(Cursor::new(snapshot_bytes))).unwrap();
+    let leader_for_snapshot_restore = *bank0.leader();
+
+    let bank_snapshots_dir = tempfile::TempDir::new().unwrap();
+    let full_snapshot_archives_dir = tempfile::TempDir::new().unwrap();
+    let incremental_snapshot_archives_dir = tempfile::TempDir::new().unwrap();
+    let snapshot_config = SnapshotConfig {
+        bank_snapshots_dir: bank_snapshots_dir.path().to_path_buf(),
+        full_snapshot_archives_dir: full_snapshot_archives_dir.path().to_path_buf(),
+        incremental_snapshot_archives_dir: incremental_snapshot_archives_dir.path().to_path_buf(),
+        use_direct_io: false,
+        use_registered_io_uring_buffers: false,
+        ..SnapshotConfig::default()
+    };
+    let full_snapshot_archive_info =
+        bank_to_full_snapshot_archive(&snapshot_config, &bank0).unwrap();
+    let (_accounts_tempdir, accounts_dir) = create_tmp_accounts_dir_for_tests();
+    let bank0 = bank_from_snapshot_archives(
+        &[accounts_dir],
+        &full_snapshot_archive_info,
+        None,
+        &snapshot_config,
+        &genesis_config,
+        &RuntimeConfig::default(),
+        None,
+        Some(leader_for_snapshot_restore),
+        None,
+        false,
+        false,
+        false,
+        ACCOUNTS_DB_CONFIG_FOR_TESTING,
+        None,
+        Arc::default(),
+    )
+    .unwrap();
     assert_eq!(
-        snapshot_fields.stakes.stake_delegations.len(),
+        bank0.stakes_cache.stakes().stake_delegations().len(),
         expected_stake_delegations,
-        "snapshot roundtrip must preserve the number of stake delegations",
-    );
-    let restored_stakes =
-        Stakes::load_from_deserialized_delegations(snapshot_fields.stakes, |pubkey| {
-            bank0.get_account(pubkey)
-        })
-        .unwrap();
-    bank0.stakes_cache = StakesCache::new(restored_stakes);
-    bank0.stakes_cache.refresh_delegated_stakes(
-        bank0.new_warmup_cooldown_rate_epoch(),
-        bank0.use_fixed_point_stake_math(),
+        "snapshot restore must preserve the number of stake delegations",
     );
 
     // Cross two epoch boundaries and root the first after distributing partitioned epoch rewards.
@@ -5720,8 +5745,8 @@ fn test_bank_hash_deterministic_with_stakes_cache() {
     assert_eq!(
         bank2.hash().as_bytes(),
         &[
-            86, 205, 172, 21, 39, 187, 21, 151, 201, 56, 22, 172, 139, 53, 77, 130, 14, 146, 1,
-            218, 250, 142, 9, 250, 247, 196, 50, 85, 43, 193, 19, 227
+            171, 65, 6, 116, 198, 156, 195, 69, 136, 82, 14, 146, 21, 199, 76, 160, 58, 231, 235,
+            98, 78, 45, 223, 98, 181, 212, 19, 177, 230, 140, 186, 183
         ]
     );
 }
