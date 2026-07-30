@@ -5764,8 +5764,8 @@ fn test_bank_hash_deterministic_with_stakes_cache() {
     assert_eq!(
         bank2.hash().as_bytes(),
         &[
-            233, 55, 199, 160, 194, 251, 254, 70, 64, 2, 179, 214, 72, 202, 142, 29, 97, 226, 165,
-            246, 71, 91, 12, 129, 110, 141, 183, 247, 129, 3, 195, 252
+            64, 149, 17, 3, 95, 249, 165, 176, 26, 178, 110, 74, 90, 177, 111, 129, 157, 165, 159,
+            137, 7, 249, 45, 141, 67, 161, 152, 76, 175, 210, 78, 254
         ]
     );
 }
@@ -7167,6 +7167,163 @@ fn test_rent_feature_gates_epoch_transition() {
             "rent sysvar should be updated after activation"
         );
     }
+}
+
+#[test]
+fn test_double_disinflation_rate_epoch_transition() {
+    let (genesis_config, _mint_keypair) = create_genesis_config(1_000_000);
+    let (mut bank, bank_forks) = Bank::new_with_bank_forks_for_tests(&genesis_config);
+
+    let feature_id = feature_set::double_disinflation_rate::id();
+    assert!(
+        !bank.feature_set.is_active(&feature_id),
+        "feature should be inactive before activation"
+    );
+
+    // Advance an epoch so the re-anchor happens at a non-zero `year`.
+    goto_end_of_slot(bank.clone());
+    bank = new_from_parent_next_epoch(bank, &bank_forks, 1);
+
+    let old_inflation = *bank.inflation.read().unwrap();
+
+    let feature_account_balance =
+        std::cmp::max(genesis_config.rent.minimum_balance(Feature::size_of()), 1);
+    bank.store_account(
+        &feature_id,
+        &feature::create_account(&Feature { activated_at: None }, feature_account_balance),
+    );
+
+    // Cross the epoch boundary to apply feature activation.
+    goto_end_of_slot(bank.clone());
+    let parent = bank;
+    let bank = new_from_parent_next_epoch(parent.clone(), &bank_forks, 1);
+    assert!(
+        bank.feature_set.is_active(&feature_id),
+        "feature should be active after epoch transition"
+    );
+
+    // The re-anchor must not leak through the fork-shared inflation lock: the
+    // parent keeps the pre-activation schedule, and a sibling boundary bank
+    // must anchor off the pre-activation schedule, not the first child's.
+    let parent_inflation = *parent.inflation.read().unwrap();
+    assert_eq!(
+        parent_inflation.taper.to_bits(),
+        old_inflation.taper.to_bits()
+    );
+    assert_eq!(
+        parent_inflation.initial.to_bits(),
+        old_inflation.initial.to_bits()
+    );
+    let sibling = Bank::new_from_parent(parent, SlotLeader::default(), bank.slot() + 1);
+    let sibling_inflation = *sibling.inflation.read().unwrap();
+    let bank_inflation = *bank.inflation.read().unwrap();
+    assert_eq!(
+        sibling_inflation.taper.to_bits(),
+        bank_inflation.taper.to_bits()
+    );
+    assert_eq!(
+        sibling_inflation.initial.to_bits(),
+        bank_inflation.initial.to_bits()
+    );
+
+    let year = bank.slot_in_year_for_inflation();
+    assert!(year > 0.0);
+    let taper = feature_set::double_disinflation_rate::TAPER;
+    let anchor_rate = old_inflation.total(year);
+    let inflation = *bank.inflation.read().unwrap();
+    assert_eq!(inflation.taper.to_bits(), taper.to_bits());
+    assert_eq!(
+        inflation.initial.to_bits(),
+        (anchor_rate / (1.0 - taper).powf(year)).to_bits(),
+        "initial should be re-anchored so the curve passes through the old rate"
+    );
+    assert_eq!(
+        inflation.terminal.to_bits(),
+        old_inflation.terminal.to_bits()
+    );
+    assert_eq!(
+        inflation.foundation.to_bits(),
+        old_inflation.foundation.to_bits()
+    );
+    assert_eq!(
+        inflation.foundation_term.to_bits(),
+        old_inflation.foundation_term.to_bits()
+    );
+
+    // The re-anchored curve matches the old rate at the activation boundary
+    // (up to f64 division/multiplication round-trip) and decays faster after.
+    assert!((inflation.total(year) - anchor_rate).abs() <= anchor_rate * f64::EPSILON);
+    assert!(inflation.total(year + 1.0) < old_inflation.total(year + 1.0));
+
+    // The re-anchored schedule survives crossing another epoch boundary.
+    goto_end_of_slot(bank.clone());
+    let bank = new_from_parent_next_epoch(bank, &bank_forks, 1);
+    let later_inflation = *bank.inflation.read().unwrap();
+    assert_eq!(later_inflation.taper.to_bits(), inflation.taper.to_bits());
+    assert_eq!(
+        later_inflation.initial.to_bits(),
+        inflation.initial.to_bits()
+    );
+}
+
+#[test]
+fn test_double_disinflation_re_anchor_conformance() {
+    let taper = feature_set::double_disinflation_rate::TAPER;
+    let old = Inflation::full();
+    for year in [0.5, 2.0, 5.5, 8.0] {
+        let anchor = old.total(year);
+        let mut re_anchored = old;
+        re_anchored.taper = taper;
+        re_anchored.initial = anchor / (1.0 - taper).powf(year);
+        // Continuous at the boundary (up to f64 divide/multiply round-trip),
+        // strictly faster decay beyond it, never below the terminal floor.
+        assert!((re_anchored.total(year) - anchor).abs() <= anchor * f64::EPSILON);
+        assert!(re_anchored.total(year + 1.0) < old.total(year + 1.0));
+        assert!(re_anchored.total(year + 1.0) >= old.terminal);
+    }
+
+    // Activation after the old schedule has already reached the terminal
+    // floor: the re-anchored curve must stay at the floor.
+    let year = 50.0;
+    let anchor = old.total(year);
+    assert_eq!(anchor.to_bits(), old.terminal.to_bits());
+    let mut re_anchored = old;
+    re_anchored.taper = taper;
+    re_anchored.initial = anchor / (1.0 - taper).powf(year);
+    assert!((re_anchored.total(year) - old.terminal).abs() <= old.terminal * f64::EPSILON);
+    assert_eq!(
+        re_anchored.total(year + 1.0).to_bits(),
+        old.terminal.to_bits()
+    );
+}
+
+#[test]
+fn test_double_disinflation_rate_active_at_genesis() {
+    let (mut genesis_config, _mint_keypair) = create_genesis_config(1_000_000);
+    let old_inflation = genesis_config.inflation;
+    activate_feature(
+        &mut genesis_config,
+        feature_set::double_disinflation_rate::id(),
+    );
+
+    let bank = Bank::new_for_tests(&genesis_config);
+    assert!(
+        bank.feature_set
+            .is_active(&feature_set::double_disinflation_rate::id())
+    );
+
+    // The doubled taper applies from genesis; `year` is zero there, so the
+    // re-anchor leaves `initial` at the genesis rate.
+    let inflation = bank.inflation();
+    assert_eq!(
+        inflation.taper.to_bits(),
+        feature_set::double_disinflation_rate::TAPER.to_bits()
+    );
+    assert_eq!(inflation.initial.to_bits(), old_inflation.initial.to_bits());
+    assert_eq!(
+        inflation.terminal.to_bits(),
+        old_inflation.terminal.to_bits()
+    );
 }
 
 #[test]
