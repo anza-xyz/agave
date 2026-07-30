@@ -118,19 +118,19 @@ serde = { version = "1.0.112", features = ["derive"] }
 serde_json = "1.0.151"
 solana-account-info = "=3.1.1"
 solana-account-view = "=2.0.0"
-solana-address = "=2.6.1"
+solana-address = "=2.7.0"
 solana-big-mod-exp = "4.0.0"
 solana-blake3-hasher = { version = "=3.1.0", features = ["blake3"] }
 solana-bn254 = "=3.2.1"
-solana-clock = { version = "=3.1.1", features = ["serde", "sysvar"] }
+solana-clock = { version = "=3.2.0", features = ["serde", "sysvar"] }
 solana-compute-budget = { path = "../../compute-budget", version = "=4.3.0-alpha.2" }
 solana-compute-budget-instruction = { path = "../../compute-budget-instruction", version = "=4.3.0-alpha.2" }
 solana-cpi = "=3.1.0"
 solana-curve25519 = "=4.0.1"
 solana-define-syscall = "=3.0.0"
 solana-fee = { path = "../../fee", version = "=4.3.0-alpha.2" }
-solana-hash = { version = "=4.5.0", features = ["bytemuck", "serde", "std"] }
-solana-instruction = "=3.4.0"
+solana-hash = { version = "=4.6.0", features = ["bytemuck", "serde", "std"] }
+solana-instruction = "=3.5.0"
 solana-instructions-sysvar = "=4.0.0"
 solana-keccak-hasher = { version = "=3.1.0", features = ["sha3"] }
 solana-msg = "=3.1.0"
@@ -141,7 +141,7 @@ solana-program-entrypoint = "=3.1.1"
 solana-program-error = "=3.0.1"
 solana-program-memory = "=3.1.0"
 solana-program-runtime = { path = "../../program-runtime", version = "=4.3.0-alpha.2" }
-solana-pubkey = { version = "=4.2.0", default-features = false }
+solana-pubkey = { version = "=4.3.0", default-features = false }
 solana-runtime = { path = "../../runtime", version = "=4.3.0-alpha.2" }
 solana-runtime-transaction = { path = "../../runtime-transaction", version = "=4.3.0-alpha.2" }
 solana-sbf-rust-128bit-dep = { path = "rust/128bit_dep", version = "=4.3.0-alpha.2" }
@@ -155,17 +155,17 @@ solana-sbf-rust-realloc-invoke-dep = { path = "rust/realloc_invoke_dep", version
 solana-sdk-ids = "=3.1.0"
 solana-secp256k1-recover = "=3.2.0"
 solana-sha256-hasher = { version = "=3.1.0", features = ["sha2"] }
-solana-stake-history = "=1.0.0"
+solana-stake-history = "=1.1.0"
 solana-svm = { path = "../../svm", version = "=4.3.0-alpha.2" }
 solana-svm-feature-set = { path = "../../svm-feature-set", version = "=4.3.0-alpha.2" }
 solana-svm-timings = { path = "../../svm-timings", version = "=4.3.0-alpha.2" }
-solana-svm-transaction = "=4.2.0"
+solana-svm-transaction = "=4.3.0"
 solana-svm-type-overrides = { path = "../../svm-type-overrides", version = "=4.3.0-alpha.2" }
-solana-system-interface = { version = "=3.2", features = ["bincode"] }
-solana-sysvar = "=4.1.0"
+solana-system-interface = { version = "=3.3.0", features = ["bincode"] }
+solana-sysvar = "=4.2.0"
 solana-test-validator = { path = "../../test-validator", version = "=4.3.0-alpha.2" }
 solana-vote = { path = "../../vote", version = "=4.3.0-alpha.2" }
-solana-vote-interface = "6.0.3"
+solana-vote-interface = "6.1.0"
 solana-vote-program = { path = "../../programs/vote", version = "=4.3.0-alpha.2" }
 test-case = "3.3.1"
 thiserror = "2.0"
