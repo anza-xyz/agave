@@ -9,7 +9,7 @@ use {
             partitioned_epoch_rewards::EpochRewardPhase,
         },
         stake_account::StakeAccount,
-        stake_delegation::delegation_effective_stake,
+        stake_delegation::{delegation_activation_status, delegation_effective_stake},
     },
     log::error,
     serde::{Deserialize, Serialize},
@@ -271,16 +271,29 @@ impl Bank {
             let minimum_balance = rent.minimum_balance(account.data().len());
             // The rewarded epoch is right before the distribution epoch
             let rewarded_epoch = distribution_epoch.saturating_sub(1);
-            // The entry in `partitioned_stake_reward` contains the rewards,
-            // calculated during the calculation phase
-            let delegation_with_rewards = new_stake.delegation.stake;
-            adjust_delegation_for_rent(
-                &mut new_stake.delegation,
+
+            let status = delegation_activation_status(
+                &new_stake.delegation,
                 rewarded_epoch,
-                delegation_with_rewards,
-                account.lamports(),
-                minimum_balance,
+                stake_history,
+                new_warmup_cooldown_rate_epoch,
+                use_fixed_point_stake_math,
             );
+
+            // We do not adjust fully inactive stakes; their delegated stake values
+            // are meaningless, and their deactivation epochs are already in the past.
+            if status.effective > 0 || status.activating > 0 {
+                // The entry in `partitioned_stake_reward` contains the rewards,
+                // calculated during the calculation phase
+                let delegation_with_rewards = new_stake.delegation.stake;
+                adjust_delegation_for_rent(
+                    &mut new_stake.delegation,
+                    rewarded_epoch,
+                    delegation_with_rewards,
+                    account.lamports(),
+                    minimum_balance,
+                );
+            }
         } else {
             let expected_delegation = stake
                 .delegation
@@ -1032,6 +1045,113 @@ mod tests {
             expected_stake_reward
         );
         drop(stakes_cache);
+    }
+
+    #[test_case(55_555, 0, 0, u64::MAX, true ; "active_rewrite_to_zero")]
+    #[test_case(55_555, 0, 1, u64::MAX, true ; "activating_rewrite_to_zero")]
+    #[test_case(55_555, 100, 0, u64::MAX, true ; "active_reduce_stays_active")]
+    #[test_case(55_555, 100, 1, u64::MAX, true ; "activating_reduce_stays_active")]
+    #[test_case(0, 5, 0, 0, false ; "inactive_extra_ignore")]
+    #[test_case(1, 1, 0, 0, false ; "inactive_equal_ignore")]
+    #[test_case(1, 0, 0, 0, false ; "inactive_short_to_zero_ignore")]
+    #[test_case(2, 1, 0, 0, false ; "inactive_short_to_one_ignore")]
+    fn test_adjust_delegation_skips_inactive_stakes(
+        starting_delegation: u64,
+        non_rent_lamports: u64,
+        activation_epoch: Epoch,
+        deactivation_epoch: Epoch,
+        force_rewrite: bool,
+    ) {
+        let (genesis_config, _mint_keypair) = create_genesis_config(1_000_000 * LAMPORTS_PER_SOL);
+        let bank = Bank::new_for_tests(&genesis_config);
+        let mut stake_history = StakeHistory::default();
+        stake_history.add(
+            0,
+            StakeHistoryEntry {
+                effective: 1_000_000 * LAMPORTS_PER_SOL,
+                activating: LAMPORTS_PER_SOL,
+                deactivating: LAMPORTS_PER_SOL,
+            },
+        );
+        let distribution_epoch = bank.epoch + 2;
+        let new_warmup_cooldown_rate_epoch = bank.new_warmup_cooldown_rate_epoch();
+        let rent = bank.rent_collector.rent.clone();
+        let rent_exempt_reserve = rent.minimum_balance(StakeStateV2::size_of());
+        let voter_pubkey = Pubkey::new_unique();
+        let stake_pubkey = Pubkey::new_unique();
+
+        let old_stake = Stake {
+            delegation: Delegation {
+                voter_pubkey,
+                stake: starting_delegation,
+                activation_epoch,
+                deactivation_epoch,
+                ..Delegation::default()
+            },
+            credits_observed: 0,
+        };
+        let mut account = AccountSharedData::new(
+            rent_exempt_reserve + non_rent_lamports,
+            StakeStateV2::size_of(),
+            &solana_stake_interface::program::id(),
+        );
+        account
+            .set_state(&StakeStateV2::Stake(
+                Meta::default(),
+                old_stake,
+                StakeFlags::default(),
+            ))
+            .unwrap();
+        bank.store_account(&stake_pubkey, &account);
+
+        let partitioned_stake_reward = PartitionedStakeReward {
+            stake_pubkey,
+            inflation: InflationReward {
+                stake: old_stake,
+                stake_reward: 0,
+                commission_bps: Some(0),
+            },
+            block_reward: 0,
+        };
+        let stakes_cache = bank.stakes_cache.stakes();
+        let stake_reward = Bank::build_updated_stake_reward(
+            distribution_epoch,
+            &stake_history,
+            new_warmup_cooldown_rate_epoch,
+            stakes_cache.stake_delegations(),
+            &partitioned_stake_reward,
+            &rent,
+            true, // adjust_delegations_for_rent (SIMD-0392)
+            true, // use_fixed_point_stake_math
+        )
+        .unwrap();
+
+        let Ok(StakeStateV2::Stake(_, stake, _)) = stake_reward
+            .stake_account
+            .deserialize_data::<StakeStateV2>()
+        else {
+            panic!("expected Stake state");
+        };
+
+        if force_rewrite {
+            // activating / active delegation is reduced if lacking lamports,
+            // and deactivated if delegation would become zero
+            let new_delegation = starting_delegation.min(non_rent_lamports);
+            let new_deactivation_epoch = if new_delegation == 0 {
+                distribution_epoch - 1
+            } else {
+                // sanity
+                assert_eq!(deactivation_epoch, u64::MAX);
+                deactivation_epoch
+            };
+
+            assert_eq!(stake.delegation.stake, new_delegation);
+            assert_eq!(stake.delegation.deactivation_epoch, new_deactivation_epoch);
+        } else {
+            // inactive stake is untouched
+            assert_eq!(stake.delegation.stake, starting_delegation);
+            assert_eq!(stake.delegation.deactivation_epoch, deactivation_epoch);
+        }
     }
 
     #[test]
