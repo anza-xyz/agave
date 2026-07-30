@@ -1278,12 +1278,12 @@ mod tests {
         solana_rent::Rent,
         solana_sdk_ids::incinerator,
         solana_signer::Signer,
-        solana_stake_history::StakeHistoryEntry,
+        solana_stake_history::{StakeHistory, StakeHistoryEntry},
         solana_stake_interface::{
             stake_flags::StakeFlags,
             state::{Authorized, Delegation, Meta, Stake, StakeStateV2},
         },
-        solana_vote::vote_account::VoteAccount,
+        solana_vote::vote_account::{VoteAccount, VoteAccounts, VoteAccountsHashMap},
         solana_vote_interface::state::{
             BLS_PUBLIC_KEY_COMPRESSED_SIZE, VoteInitV2, VoteStateV4, VoteStateVersions,
         },
@@ -1299,6 +1299,120 @@ mod tests {
         RewardEpochDelegatedStakes {
             epoch,
             delegated_stakes: HashMap::default(),
+        }
+    }
+
+    #[test_case(55_555, 0, 0, u64::MAX, true ; "active_rewrite_to_zero")]
+    #[test_case(55_555, 0, 1, u64::MAX, true ; "activating_rewrite_to_zero")]
+    #[test_case(55_555, 100, 0, u64::MAX, true ; "active_reduce_stays_active")]
+    #[test_case(55_555, 100, 1, u64::MAX, true ; "activating_reduce_stays_active")]
+    #[test_case(0, 5, 0, 0, false ; "inactive_extra_ignore")]
+    #[test_case(1, 1, 0, 0, false ; "inactive_equal_ignore")]
+    #[test_case(1, 0, 0, 0, false ; "inactive_short_to_zero_ignore")]
+    #[test_case(2, 1, 0, 0, false ; "inactive_short_to_one_ignore")]
+    fn test_redeem_delegation_rewards_excludes_inactive_from_partition(
+        starting_delegation: u64,
+        non_rent_lamports: u64,
+        activation_epoch: Epoch,
+        deactivation_epoch: Epoch,
+        force_rewrite: bool,
+    ) {
+        let (genesis_config, _mint_keypair) = create_genesis_config(1_000_000 * LAMPORTS_PER_SOL);
+        let bank = Bank::new_for_tests(&genesis_config);
+        let mut stake_history = StakeHistory::default();
+        stake_history.add(
+            0,
+            StakeHistoryEntry {
+                effective: 1_000_000 * LAMPORTS_PER_SOL,
+                activating: LAMPORTS_PER_SOL,
+                deactivating: LAMPORTS_PER_SOL,
+            },
+        );
+        let rewarded_epoch = 1;
+        let rent_exempt_reserve = bank
+            .rent_collector
+            .rent
+            .minimum_balance(StakeStateV2::size_of());
+
+        let ((vote_pubkey, vote_account_data), _) =
+            create_staked_node_accounts(10_000, &bank.rent_collector.rent);
+
+        // observe exact vote credits so stake earns no rewards
+        // PER inclusion is then solely determined by `needs_adjustment`
+        let vote_credits = VoteStateV4::deserialize(vote_account_data.data(), &vote_pubkey)
+            .unwrap()
+            .credits();
+
+        let stake = Stake {
+            delegation: Delegation {
+                voter_pubkey: vote_pubkey,
+                stake: starting_delegation,
+                activation_epoch,
+                deactivation_epoch,
+                ..Delegation::default()
+            },
+            credits_observed: vote_credits,
+        };
+        let mut account = AccountSharedData::new(
+            rent_exempt_reserve + non_rent_lamports,
+            StakeStateV2::size_of(),
+            &solana_stake_interface::program::id(),
+        );
+        account
+            .set_state(&StakeStateV2::Stake(
+                Meta::default(),
+                stake,
+                StakeFlags::default(),
+            ))
+            .unwrap();
+        let stake_account = StakeAccount::try_from(account).unwrap();
+        let stake_pubkey = Pubkey::new_unique();
+        let point_value = PointValue {
+            rewards: 1_000_000_000,
+            points: 1,
+        };
+
+        // there are two distinct paths that can hit `delegation_may_need_adjustment()`:
+        // * vote account: standard rewards path
+        // * no vote account: early exit that goes to adjustment-detection directly
+        for has_vote_account in [true, false] {
+            let mut vote_accounts_map = VoteAccountsHashMap::default();
+            if has_vote_account {
+                vote_accounts_map.insert(
+                    vote_pubkey,
+                    (0, VoteAccount::try_from(vote_account_data.clone()).unwrap()),
+                );
+            }
+            let distribution_epoch_vote_accounts = VoteAccounts::from(Arc::new(vote_accounts_map));
+            let cached_vote_accounts = CachedVoteAccounts {
+                snapshot_epoch_vote_accounts: None,
+                rewarded_epoch_vote_accounts: None,
+                distribution_epoch_vote_accounts: &distribution_epoch_vote_accounts,
+            };
+
+            let maybe_reward = bank.redeem_delegation_rewards(
+                rewarded_epoch,
+                &stake_pubkey,
+                &stake_account,
+                &point_value,
+                &stake_history,
+                &cached_vote_accounts,
+                null_tracer(),
+                None,  // new_rate_activation_epoch
+                false, // delay_commission_updates
+                true,  // commission_rate_in_basis_points
+                true,  // adjust_delegations_for_rent (SIMD-0392)
+                &AlpenglowEpochType::Tower,
+                false, // custom_commission_collector
+                true,  // use_fixed_point_stake_math
+            );
+
+            // `Some`: included in PER, `None`: excluded
+            assert_eq!(
+                maybe_reward.is_some(),
+                force_rewrite,
+                "has_vote_account={has_vote_account}"
+            );
         }
     }
 
