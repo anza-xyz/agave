@@ -1383,41 +1383,44 @@ fn test_reclaiming_last_live_account_purges_tombstone_only_storage() {
     let accounts = AccountsDb::default_for_tests();
     let tombstone_pubkey = Pubkey::new_unique();
     let live_pubkey = Pubkey::new_unique();
+    let slot = 1;
     let account = AccountSharedData::new(1, 0, &Pubkey::default());
 
-    // Slot 1: both accounts stored and flushed
+    // slot: both accounts stored and flushed
     accounts.store_for_tests((
-        1,
+        slot,
         [(&tombstone_pubkey, &account), (&live_pubkey, &account)].as_slice(),
     ));
-    accounts.add_root_and_flush_write_cache(1);
+    accounts.add_root_and_flush_write_cache(slot);
 
     // Turn tombstone_pubkey's account into a tombstone, as shrink's carry-forward leaves
     // it: index entry removed, offset recorded in the storage's tombstone set
-    let storage = accounts.get_and_assert_single_storage(1);
+    let storage = accounts.get_and_assert_single_storage(slot);
     let account_offset = accounts
         .accounts_index
         .get_with_and_then(
             &tombstone_pubkey,
-            &Ancestors::from(vec![1]),
+            &Ancestors::from(vec![slot]),
             false,
             |(_slot, account_info)| account_info.offset(),
         )
         .unwrap();
     accounts.accounts_index.purge_exact(
         &tombstone_pubkey,
-        [1].into_iter().collect::<HashSet<_>>(),
+        HashSet::from([slot]),
         &mut ReclaimsSlotList::new(),
     );
     storage.batch_insert_tombstone_offsets(iter::once(account_offset));
     assert_eq!(storage.num_tombstones(), 1);
 
-    // Slot 2: a newer version of the live account. Its flush reclaims the slot 1 entry,
-    // leaving only the snapshot-covered tombstone, so the storage is dead
-    accounts.set_latest_full_snapshot_slot(1);
-    accounts.store_for_tests((2, [(&live_pubkey, &account)].as_slice()));
-    accounts.add_root_and_flush_write_cache(2);
-    assert!(accounts.storage.get_slot_storage_entry(1).is_none());
+    // Set the snapshot so the tombstone can be removed
+    accounts.set_latest_full_snapshot_slot(slot);
+
+    // slot + 1: a newer version of the live account. Its flush reclaims the entry at
+    // slot, leaving only the snapshot-covered tombstone, so the storage is dead
+    accounts.store_for_tests((slot + 1, [(&live_pubkey, &account)].as_slice()));
+    accounts.add_root_and_flush_write_cache(slot + 1);
+    assert!(accounts.storage.get_slot_storage_entry(slot).is_none());
 }
 
 #[test]
