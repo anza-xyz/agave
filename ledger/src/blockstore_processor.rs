@@ -30,7 +30,7 @@ use {
     solana_metrics::datapoint_error,
     solana_pubkey::Pubkey,
     solana_runtime::{
-        bank::Bank,
+        bank::{Bank, NewBankOptions},
         bank_forks::BankForks,
         block_component_processor::BlockComponentProcessorError,
         commitment::VOTE_THRESHOLD_SIZE,
@@ -1799,12 +1799,15 @@ fn process_next_slots(
                 }
             }
 
-            let next_bank = Bank::new_from_parent(
+            let next_bank = Bank::new_from_parent_with_options(
                 bank.clone(),
                 leader_schedule_cache
                     .slot_leader_at(*next_slot, Some(bank))
                     .unwrap(),
                 *next_slot,
+                NewBankOptions {
+                    vote_only_bank: migration_status.should_bank_be_vote_only(*next_slot),
+                },
             );
             set_alpenglow_ticks(&next_bank, migration_status);
             trace!(
@@ -5865,6 +5868,138 @@ pub mod tests {
             assert!(bank.get_account(&first_alpenglow_key).is_none());
             assert!(bank.get_account(&pending_key).is_none());
         }
+    }
+
+    #[test]
+    fn test_process_next_slots_sets_vote_only_bank_during_migration() {
+        let ledger_path = get_tmp_ledger_path_auto_delete!();
+        let blockstore = Blockstore::open(ledger_path.path()).unwrap();
+
+        let GenesisConfigInfo { genesis_config, .. } = create_genesis_config(10_000);
+        let bank_forks = BankForks::new_rw_arc(Bank::new_for_tests(&genesis_config));
+        let bank0 = bank_forks.read().unwrap().get(0).unwrap();
+        let leader_schedule_cache = LeaderScheduleCache::new_from_bank(&bank0);
+
+        let migration_status = MigrationStatus::default();
+        let migration_slot = migration_status.record_feature_activation(0);
+        let pre_migration_slot = migration_slot.checked_sub(1).unwrap();
+        let child_slots = [pre_migration_slot, migration_slot, migration_slot + 1];
+
+        let mut parent_meta = SlotMeta::new(0, None);
+        parent_meta.next_slots = child_slots.as_slice().into();
+        for slot in child_slots {
+            let mut meta = SlotMeta::new(slot, Some(0));
+            meta.consumed = 1;
+            meta.received = 1;
+            meta.last_index = Some(0);
+            blockstore.put_meta(slot, &meta).unwrap();
+        }
+
+        let mut pending_slots = Vec::new();
+        process_next_slots(
+            &bank0,
+            &parent_meta,
+            &blockstore,
+            &leader_schedule_cache,
+            &mut pending_slots,
+            &ProcessOptions::default(),
+            &migration_status,
+        )
+        .unwrap();
+
+        pending_slots.sort_by_key(|(_, bank, _)| bank.slot());
+        assert_eq!(
+            pending_slots
+                .iter()
+                .map(|(_, bank, _)| (bank.slot(), bank.vote_only_bank()))
+                .collect::<Vec<_>>(),
+            vec![
+                (pre_migration_slot, false),
+                (migration_slot, true),
+                (migration_slot + 1, true),
+            ]
+        );
+    }
+
+    #[test]
+    fn test_startup_replay_rejects_user_transactions_in_vote_only_bank() {
+        let GenesisConfigInfo {
+            mut genesis_config,
+            mint_keypair,
+            ..
+        } = create_genesis_config(10_000);
+        let ticks_per_slot = 1;
+        genesis_config.ticks_per_slot = ticks_per_slot;
+        genesis_utils::activate_feature(&mut genesis_config, agave_feature_set::alpenglow::id());
+
+        let (ledger_path, blockhash) = create_new_tmp_ledger_auto_delete!(&genesis_config);
+        let blockstore = Blockstore::open(ledger_path.path()).unwrap();
+        let bank_forks = BankForks::new_rw_arc(Bank::new_for_tests(&genesis_config));
+        let migration_status = bank_forks.read().unwrap().migration_status();
+        let migration_slot = migration_status.migration_slot().unwrap();
+
+        let user_entry = next_entry(
+            &blockhash,
+            1,
+            vec![system_transaction::transfer(
+                &mint_keypair,
+                &Pubkey::new_unique(),
+                1,
+                blockhash,
+            )],
+        );
+        let tick_entries = create_ticks(migration_slot * ticks_per_slot, 0, user_entry.hash);
+        blockstore
+            .write_entries(
+                migration_slot,
+                0,
+                0,
+                ticks_per_slot,
+                Some(0),
+                true,
+                &Arc::new(Keypair::new()),
+                std::iter::once(user_entry).chain(tick_entries).collect(),
+                0,
+            )
+            .unwrap();
+
+        let opts = ProcessOptions {
+            run_verification: true,
+            // Surface the per-fork error instead of continuing past the dead slot.
+            abort_on_invalid_block: true,
+            ..ProcessOptions::default()
+        };
+        let bank0 = bank_forks.read().unwrap().get_with_scheduler(0).unwrap();
+        let replay_tx_thread_pool = create_thread_pool(1);
+        process_bank_0(
+            &bank0,
+            compute_shred_version(&genesis_config.hash(), None),
+            &blockstore,
+            &replay_tx_thread_pool,
+            &opts,
+            None,
+            None,
+            &migration_status,
+        )
+        .unwrap();
+        let leader_schedule_cache = LeaderScheduleCache::new_from_bank(&bank0);
+
+        assert_matches!(
+            process_blockstore_from_root(
+                &blockstore,
+                &bank_forks,
+                compute_shred_version(&genesis_config.hash(), None),
+                &leader_schedule_cache,
+                &opts,
+                None,
+                None,
+                None,
+            ),
+            Err(BlockstoreProcessorError::UserTransactionsInVoteOnlyBank(slot))
+                if slot == migration_slot
+        );
+        assert!(blockstore.is_dead(migration_slot));
+        assert_eq!(frozen_bank_slots(&bank_forks.read().unwrap()), vec![0]);
     }
 
     #[test]
