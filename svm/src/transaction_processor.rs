@@ -8,7 +8,9 @@ use {
         },
         account_overrides::AccountOverrides,
         nonce_info::NonceInfo,
-        program_loader::{filter_executable_program_accounts, load_program_with_pubkey},
+        program_loader::{
+            filter_executable_program_accounts, load_program_with_pubkey, replenish_program_cache,
+        },
         rollback_accounts::RollbackAccounts,
         transaction_account_state_info::{
             TransactionAccountStateInfo, get_uninitialized_accounts_size, verify_changes,
@@ -902,80 +904,24 @@ impl<FG: ForkGraph> TransactionBatchProcessor<FG> {
     fn replenish_program_cache<CB: TransactionProcessingCallback>(
         &self,
         account_loader: &AccountLoader<CB>,
-        mut missing_programs: Vec<ProgramToLoad>,
+        missing_programs: Vec<ProgramToLoad>,
         program_runtime_environment_for_execution: &ProgramRuntimeEnvironment,
         program_cache_for_tx_batch: &mut ProgramCacheForTxBatch,
         execute_timings: &mut ExecuteTimings,
         limit_to_load_programs: bool,
         increment_usage_counter: bool,
     ) {
-        if missing_programs.is_empty() {
-            // Nothing to load, so skip the global cache and fork graph locks.
-            // Program-cache hit/miss counters are unchanged for empty work.
-            return;
-        }
-        let mut count_hits_and_misses = true;
-        loop {
-            // Lock the global cache.
-            let global_program_cache = self.global_program_cache.read().unwrap();
-            // Figure out which program needs to be loaded next.
-            let program_to_load = global_program_cache.extract(
-                &mut missing_programs,
-                program_cache_for_tx_batch,
-                program_runtime_environment_for_execution,
-                increment_usage_counter,
-                count_hits_and_misses,
-            );
-            count_hits_and_misses = false;
-            let task_waiter = Arc::clone(&global_program_cache.loading_task_waiter);
-            let task_cookie = task_waiter.cookie();
-            // Unlock the global cache again.
-            drop(global_program_cache);
-
-            let program_to_store = program_to_load.map(|key| {
-                // Load, verify and compile one program.
-                let (program, last_modification_slot) = load_program_with_pubkey(
-                    account_loader,
-                    program_runtime_environment_for_execution,
-                    &key,
-                    self.slot,
-                    execute_timings,
-                )
-                .expect("called load_program_with_pubkey() with nonexistent account");
-                (key, program, last_modification_slot)
-            });
-
-            if let Some((key, program, last_modification_slot)) = program_to_store {
-                program_cache_for_tx_batch.loaded_missing = true;
-                let mut global_program_cache = self.global_program_cache.write().unwrap();
-                // Submit our last completed loading task.
-                if global_program_cache.finish_cooperative_loading_task(
-                    program_runtime_environment_for_execution,
-                    self.slot,
-                    key,
-                    last_modification_slot,
-                    program,
-                ) && limit_to_load_programs
-                {
-                    // This branch is taken when there is an error in assigning a program to a
-                    // cache slot. It is not possible to mock this error for SVM unit
-                    // tests purposes.
-                    *program_cache_for_tx_batch = ProgramCacheForTxBatch::new(self.slot);
-                    program_cache_for_tx_batch.hit_max_limit = true;
-                    return;
-                }
-            } else if missing_programs.is_empty() {
-                break;
-            } else {
-                // Remember: there are multiple transaction processor threads running concurrently
-                // and those other threads may be loading this or other programs.
-                //
-                // So, sleep until some other thread submits a program with their
-                // `finish_cooperative_loading_task` call. We'll then wake up and try to load the
-                // missing programs inside the tx batch again.
-                let _new_cookie = task_waiter.wait(task_cookie);
-            }
-        }
+        replenish_program_cache(
+            &self.global_program_cache,
+            account_loader,
+            self.slot,
+            program_runtime_environment_for_execution,
+            missing_programs,
+            program_cache_for_tx_batch,
+            execute_timings,
+            limit_to_load_programs,
+            increment_usage_counter,
+        )
     }
 
     /// Similar to replenish_program_cache() but only used in Bank::prepare_program_cache_for_upcoming_feature_set().

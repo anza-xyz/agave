@@ -8,8 +8,8 @@ use {
     solana_loader_v4_interface::state::{LoaderV4State, LoaderV4Status},
     solana_program_runtime::{
         loaded_programs::{
-            ProgramCacheForTxBatch, ProgramCacheMatchCriteria, ProgramRuntimeEnvironment,
-            ProgramToLoad,
+            ForkGraph, ProgramCache, ProgramCacheForTxBatch, ProgramCacheMatchCriteria,
+            ProgramRuntimeEnvironment, ProgramToLoad,
         },
         program_cache_entry::{ProgramCacheEntry, ProgramCacheEntryOwner, ProgramCacheEntryType},
     },
@@ -17,7 +17,7 @@ use {
     solana_sdk_ids::{bpf_loader, bpf_loader_deprecated, bpf_loader_upgradeable, loader_v4},
     solana_svm_callback::TransactionProcessingCallback,
     solana_svm_timings::ExecuteTimings,
-    solana_svm_type_overrides::sync::Arc,
+    solana_svm_type_overrides::sync::{Arc, RwLock},
     solana_transaction_error::{TransactionError, TransactionResult},
     std::sync::atomic::Ordering,
 };
@@ -273,6 +273,89 @@ pub fn filter_executable_program_accounts<'a, CB: TransactionProcessingCallback>
         }
     }
     result
+}
+
+/// Cooperatively load each of `missing_programs` from the global program cache
+/// into `program_cache_for_tx_batch`, compiling any that are not resident yet.
+#[allow(clippy::too_many_arguments)]
+pub fn replenish_program_cache<CB: TransactionProcessingCallback, FG: ForkGraph>(
+    global_program_cache: &RwLock<ProgramCache<FG>>,
+    callbacks: &CB,
+    slot: Slot,
+    program_runtime_environment_for_execution: &ProgramRuntimeEnvironment,
+    mut missing_programs: Vec<ProgramToLoad>,
+    program_cache_for_tx_batch: &mut ProgramCacheForTxBatch,
+    execute_timings: &mut ExecuteTimings,
+    limit_to_load_programs: bool,
+    increment_usage_counter: bool,
+) {
+    if missing_programs.is_empty() {
+        // Nothing to load, so skip the global cache and fork graph locks.
+        // Program-cache hit/miss counters are unchanged for empty work.
+        return;
+    }
+    let mut count_hits_and_misses = true;
+    loop {
+        // Lock the global cache.
+        let global_cache = global_program_cache.read().unwrap();
+        // Figure out which program needs to be loaded next.
+        let program_to_load = global_cache.extract(
+            &mut missing_programs,
+            program_cache_for_tx_batch,
+            program_runtime_environment_for_execution,
+            increment_usage_counter,
+            count_hits_and_misses,
+        );
+        count_hits_and_misses = false;
+        let task_waiter = Arc::clone(&global_cache.loading_task_waiter);
+        let task_cookie = task_waiter.cookie();
+        // Unlock the global cache again.
+        drop(global_cache);
+
+        let program_to_store = program_to_load.map(|key| {
+            // Load, verify and compile one program.
+            let (program, last_modification_slot) = load_program_with_pubkey(
+                callbacks,
+                program_runtime_environment_for_execution,
+                &key,
+                slot,
+                execute_timings,
+            )
+            .expect("called load_program_with_pubkey() with nonexistent account");
+            (key, program, last_modification_slot)
+        });
+
+        if let Some((key, program, last_modification_slot)) = program_to_store {
+            program_cache_for_tx_batch.loaded_missing = true;
+            let mut global_cache = global_program_cache.write().unwrap();
+            // Submit our last completed loading task.
+            if global_cache.finish_cooperative_loading_task(
+                program_runtime_environment_for_execution,
+                slot,
+                key,
+                last_modification_slot,
+                program,
+            ) && limit_to_load_programs
+            {
+                // This branch is taken when there is an error in assigning a program to a
+                // cache slot. It is not possible to mock this error for SVM unit
+                // tests purposes.
+                *program_cache_for_tx_batch = ProgramCacheForTxBatch::new(slot);
+                program_cache_for_tx_batch.hit_max_limit = true;
+                return;
+            }
+        } else if missing_programs.is_empty() {
+            break;
+        } else {
+            // Remember: there are multiple transaction processor threads running concurrently
+            // and those other threads may be loading this or other programs.
+            //
+            // So, sleep until some other thread submits a program with their
+            // `finish_cooperative_loading_task` call. We'll then wake up and try to load the
+            // missing programs inside the tx batch again.
+            let _new_cookie = task_waiter.wait(task_cookie);
+        }
+    }
 }
 
 // Plucked from the now-removed Loader V4 program library.
