@@ -9,7 +9,8 @@ use {
         account_overrides::AccountOverrides,
         nonce_info::NonceInfo,
         program_loader::{
-            filter_executable_program_accounts, load_program_with_pubkey, replenish_program_cache,
+            ProgramLoader, filter_executable_program_accounts, load_program_with_pubkey,
+            replenish_program_cache,
         },
         rollback_accounts::RollbackAccounts,
         transaction_account_state_info::{
@@ -254,12 +255,6 @@ impl<FG: ForkGraph> Default for TransactionBatchProcessor<FG> {
         }
     }
 }
-
-/// TODO: Replaced in a later commit by a loader that extracts from the global
-/// program cache on demand. For now the batch-local cache is still provisioned
-/// up front, so nothing is loaded during execution.
-struct PlaceholderProgramLoader;
-impl ProgramCacheCallback for PlaceholderProgramLoader {}
 
 impl<FG: ForkGraph> TransactionBatchProcessor<FG> {
     /// Create a new, uninitialized `TransactionBatchProcessor`.
@@ -582,8 +577,22 @@ impl<FG: ForkGraph> TransactionBatchProcessor<FG> {
                         };
                     }
 
+                    // Anything the batch-local cache is still missing gets loaded
+                    // through this, as it is invoked.
+                    let program_loader = ProgramLoader::new(
+                        &self.global_program_cache,
+                        &account_loader,
+                        self.slot,
+                        environment
+                            .program_runtime_environments
+                            .get_env_for_execution(),
+                        config.check_program_deployment_slot,
+                        config.limit_to_load_programs,
+                    );
+
                     let executed_tx = self.execute_loaded_transaction(
                         callbacks,
+                        &program_loader,
                         tx,
                         &sysvar_cache,
                         loaded_transaction,
@@ -593,6 +602,22 @@ impl<FG: ForkGraph> TransactionBatchProcessor<FG> {
                         environment,
                         config,
                     );
+
+                    execute_timings.accumulate(&program_loader.take_timings());
+                    program_cache_for_tx_batch.loaded_missing |= program_loader.loaded_missing();
+
+                    if program_loader.hit_max_limit() {
+                        return LoadAndExecuteSanitizedTransactionsOutput {
+                            error_metrics,
+                            execute_timings,
+                            processing_results: (0..sanitized_txs.len())
+                                .map(|_| Err(TransactionError::ProgramCacheHitMaxLimit))
+                                .collect(),
+                            // If we abort the batch and balance recording is enabled, no balances should be
+                            // collected. If this is a leader thread, no batch will be committed.
+                            balance_collector: None,
+                        };
+                    }
 
                     match (
                         &executed_tx.execution_details.status,
@@ -986,6 +1011,7 @@ impl<FG: ForkGraph> TransactionBatchProcessor<FG> {
     fn execute_loaded_transaction<CB: InvokeContextCallback>(
         &self,
         callback: &CB,
+        program_cache_callback: &dyn ProgramCacheCallback,
         tx: &impl SVMTransaction,
         sysvar_cache: &SysvarCache,
         mut loaded_transaction: LoadedTransaction,
@@ -1053,7 +1079,7 @@ impl<FG: ForkGraph> TransactionBatchProcessor<FG> {
                 environment.blockhash_lamports_per_signature,
                 environment.alpenglow_migration_succeeded,
                 callback,
-                &PlaceholderProgramLoader,
+                program_cache_callback,
                 &environment.feature_set,
                 &environment.program_runtime_environments,
                 sysvar_cache,
@@ -1362,6 +1388,7 @@ mod tests {
         solana_message::{LegacyMessage, Message, MessageHeader, SanitizedMessage},
         solana_nonce as nonce,
         solana_program_runtime::{
+            callback::NoOpProgramCacheCallback,
             execution_budget::{
                 SVMTransactionExecutionAndFeeBudgetLimits, SVMTransactionExecutionBudget,
             },
@@ -1695,6 +1722,7 @@ mod tests {
 
         let executed_tx = batch_processor.execute_loaded_transaction(
             &mock_bank,
+            &NoOpProgramCacheCallback,
             &sanitized_transaction,
             &sysvar_cache,
             loaded_transaction.clone(),
@@ -1710,6 +1738,7 @@ mod tests {
 
         let executed_tx = batch_processor.execute_loaded_transaction(
             &mock_bank,
+            &NoOpProgramCacheCallback,
             &sanitized_transaction,
             &sysvar_cache,
             loaded_transaction.clone(),
@@ -1728,6 +1757,7 @@ mod tests {
 
         let executed_tx = batch_processor.execute_loaded_transaction(
             &mock_bank,
+            &NoOpProgramCacheCallback,
             &sanitized_transaction,
             &sysvar_cache,
             loaded_transaction,
@@ -1794,6 +1824,7 @@ mod tests {
 
         let _ = batch_processor.execute_loaded_transaction(
             &mock_bank,
+            &NoOpProgramCacheCallback,
             &sanitized_transaction,
             &sysvar_cache,
             loaded_transaction,

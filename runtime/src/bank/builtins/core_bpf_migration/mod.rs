@@ -200,6 +200,9 @@ impl Bank {
             deploy_program(
                 dummy_invoke_context.get_log_collector(),
                 &mut load_program_metrics,
+                // Preserves the pre-existing behaviour of not inheriting the
+                // replaced program's usage stats.
+                None,
                 dummy_invoke_context.program_cache_for_tx_batch,
                 ProgramRuntimeEnvironment::clone(&program_runtime_environment),
                 false, // disable_sbpf_v0_v1_v2_deployment // explicitly continue to allow them for core program migrations

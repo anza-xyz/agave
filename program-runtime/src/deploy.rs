@@ -50,6 +50,7 @@ fn morph_into_deployment_environment(
 pub fn deploy_program(
     log_collector: Option<Rc<RefCell<LogCollector>>>,
     #[cfg(feature = "metrics")] load_program_metrics: &mut LoadProgramMetrics,
+    old_entry: Option<Arc<ProgramCacheEntry>>,
     program_cache_for_tx_batch: &mut ProgramCacheForTxBatch,
     program_runtime_environment: ProgramRuntimeEnvironment,
     disable_sbpf_v0_v1_v2_deployment: bool,
@@ -116,7 +117,7 @@ pub fn deploy_program(
         ic_logger_msg!(log_collector, "{}", err);
         InstructionError::InvalidAccountData
     })?;
-    if let Some(old_entry) = program_cache_for_tx_batch.find(program_id) {
+    if let Some(old_entry) = old_entry {
         executor.stats.merge_from(&old_entry.stats);
     }
     #[cfg(feature = "metrics")]
@@ -141,10 +142,16 @@ macro_rules! deploy_program {
         );
         #[cfg(feature = "metrics")]
         let mut load_program_metrics = $crate::program_metrics::LoadProgramMetrics::default();
+        // Resolve the old entry first, so its usage stats survive the redeploy.
+        let old_entry = $invoke_context
+            .program_cache_for_tx_batch
+            .find($program_id)
+            .or_else(|| $invoke_context.environment_config.load_program($program_id));
         $crate::deploy::deploy_program(
             $invoke_context.get_log_collector(),
             #[cfg(feature = "metrics")]
             &mut load_program_metrics,
+            old_entry,
             $invoke_context.program_cache_for_tx_batch,
             $invoke_context
                 .get_program_runtime_environment_for_deployment()

@@ -1,6 +1,3 @@
-// TODO: Remove once `ProgramLoader` is hooked up to transaction processing.
-#![expect(dead_code)]
-
 #[cfg(feature = "metrics")]
 use solana_program_runtime::program_metrics::LoadProgramMetrics;
 use {
