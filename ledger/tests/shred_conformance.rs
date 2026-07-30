@@ -1,7 +1,7 @@
 #![cfg(feature = "conformance")]
 
 use {
-    prost_011::Message,
+    prost::Message,
     protosol::protos::{BlockParseResult, ShredParseContext, ShredParseEffects, ShredParseFixture},
     solana_entry::entry::Entry,
     solana_hash::Hash,

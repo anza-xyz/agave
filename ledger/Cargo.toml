@@ -29,7 +29,6 @@ frozen-abi = [
 agave-unstable-api = []
 conformance = [
     "agave-unstable-api",
-    "dep:prost-011",
     "dep:protosol",
     "dep:solana-fee-calculator",
     "dep:solana-hard-forks",
@@ -68,7 +67,6 @@ num_cpus = { workspace = true }
 num_enum = { workspace = true }
 parking_lot = { workspace = true }
 prost = { workspace = true }
-prost-011 = { package = "prost", version = "0.11", optional = true }
 protosol = { workspace = true, optional = true }
 qualifier_attr = { workspace = true }
 rand = { workspace = true }

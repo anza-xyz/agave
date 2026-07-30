@@ -64,7 +64,7 @@ use {
     },
 };
 #[cfg(not(test))]
-use {prost_011::Message, std::ffi::c_int};
+use {prost::Message, std::ffi::c_int};
 
 /// # Safety
 ///
