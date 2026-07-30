@@ -36,6 +36,7 @@ use {
     },
     solana_nonce_account::verify_nonce_account,
     solana_program_runtime::{
+        callback::ProgramCacheCallback,
         execution_budget::{
             SVMTransactionExecutionAndFeeBudgetLimits, SVMTransactionExecutionCost,
         },
@@ -251,6 +252,12 @@ impl<FG: ForkGraph> Default for TransactionBatchProcessor<FG> {
         }
     }
 }
+
+/// TODO: Replaced in a later commit by a loader that extracts from the global
+/// program cache on demand. For now the batch-local cache is still provisioned
+/// up front, so nothing is loaded during execution.
+struct PlaceholderProgramLoader;
+impl ProgramCacheCallback for PlaceholderProgramLoader {}
 
 impl<FG: ForkGraph> TransactionBatchProcessor<FG> {
     /// Create a new, uninitialized `TransactionBatchProcessor`.
@@ -1100,6 +1107,7 @@ impl<FG: ForkGraph> TransactionBatchProcessor<FG> {
                 environment.blockhash_lamports_per_signature,
                 environment.alpenglow_migration_succeeded,
                 callback,
+                &PlaceholderProgramLoader,
                 &environment.feature_set,
                 &environment.program_runtime_environments,
                 sysvar_cache,

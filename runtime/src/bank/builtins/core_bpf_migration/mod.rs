@@ -15,6 +15,7 @@ use {
     solana_instruction::error::InstructionError,
     solana_loader_v3_interface::state::UpgradeableLoaderState,
     solana_program_runtime::{
+        callback::ProgramCacheCallback,
         deploy::deploy_program,
         invoke_context::{EnvironmentConfig, InvokeContext},
         loaded_programs::{
@@ -169,6 +170,9 @@ impl Bank {
 
             struct MockCallback {}
             impl InvokeContextCallback for MockCallback {}
+            // Migration deploys through `deploy_program` directly, so nothing here
+            // needs to resolve a program on the fly.
+            impl ProgramCacheCallback for MockCallback {}
             let feature_set = self.feature_set.runtime_features();
             let program_runtime_environments = ProgramRuntimeEnvironments::new(
                 ProgramRuntimeEnvironment::clone(&program_runtime_environment),
@@ -181,6 +185,7 @@ impl Bank {
                     Hash::default(),
                     0,
                     false,
+                    &MockCallback {},
                     &MockCallback {},
                     &feature_set,
                     &program_runtime_environments,

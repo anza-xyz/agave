@@ -17,6 +17,7 @@ use {
     solana_instruction::Instruction,
     solana_message::SanitizedMessage,
     solana_program_runtime::{
+        callback::NoOpProgramCacheCallback,
         execution_budget::{SVMTransactionExecutionBudget, SVMTransactionExecutionCost},
         invoke_context::{EnvironmentConfig, mock_compile_message},
         loaded_programs::{ProgramRuntimeEnvironment, ProgramRuntimeEnvironments},
@@ -70,6 +71,8 @@ pub fn prepare_invoke_context_fields<'a, C: InvokeContextCallback>(
         blockhash_lamports_per_signature,
         false,
         callback,
+        // Conformance harnesses run everything through the batch cache.
+        &NoOpProgramCacheCallback,
         &instr_context.feature_set,
         program_runtime_environments,
         sysvar_cache,
@@ -107,6 +110,8 @@ pub(crate) fn prepare_transaction_invoke_context_fields<'a, 'b, C: InvokeContext
         nonce_fields.blockhash_lamports_per_signature,
         false,
         callback,
+        // Conformance harnesses run everything through the batch cache.
+        &NoOpProgramCacheCallback,
         feature_set,
         program_runtime_environments,
         sysvar_cache,
