@@ -599,11 +599,12 @@ impl Tvu {
             vote_connection_cache.clone(),
         );
 
+        let sharable_banks = bank_forks.read().unwrap().sharable_banks();
         let bls_voting_service = BLSVotingService::new(
             bls_receiver,
             cluster_info.clone(),
             bls_connection_cache,
-            bank_forks.clone(),
+            sharable_banks,
             highest_finalized,
             voting_service_test_override,
         );

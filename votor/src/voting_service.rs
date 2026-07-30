@@ -1,5 +1,5 @@
 use {
-    crate::staked_validators_cache::StakedValidatorsCache,
+    crate::validator_addrs::ValidatorAddrs,
     agave_votor_messages::{
         certificate::Certificate, consensus_message::VoteMessage,
         wire::VersionedWireConsensusMessage,
@@ -11,7 +11,7 @@ use {
     solana_gossip::cluster_info::ClusterInfo,
     solana_pubkey::Pubkey,
     solana_runtime::{
-        bank_forks::BankForks, validated_block_finalization::ValidatedBlockFinalizationCert,
+        bank_forks::SharableBanks, validated_block_finalization::ValidatedBlockFinalizationCert,
     },
     solana_transaction_error::TransportError,
     std::{
@@ -23,12 +23,6 @@ use {
         time::{Duration, Instant},
     },
 };
-
-const STAKED_VALIDATORS_CACHE_TTL_S: u64 = 5;
-/// Target number of epochs to keep in the staked validators cache. Due to lazy-lru eviction
-/// semantics, the cache may hold up to `2 * STAKED_VALIDATORS_CACHE_NUM_EPOCH_TARGET` entries
-/// before evicting down to this target.
-const STAKED_VALIDATORS_CACHE_NUM_EPOCH_TARGET: usize = 3;
 
 /// The maximum amount of packets per second we expect from an honest node
 pub const VOTOR_RATE_LIMIT_PPS: u64 = 50;
@@ -256,7 +250,7 @@ impl VotingService {
         bls_receiver: Receiver<BLSOp>,
         cluster_info: Arc<ClusterInfo>,
         connection_cache: Arc<ConnectionCache>,
-        bank_forks: Arc<RwLock<BankForks>>,
+        sharable_banks: SharableBanks,
         highest_finalized: Arc<RwLock<Option<ValidatedBlockFinalizationCert>>>,
         test_override: Option<VotingServiceOverride>,
     ) -> Self {
@@ -272,11 +266,9 @@ impl VotingService {
         let thread_hdl = Builder::new()
             .name("solVotorVoteSvc".to_string())
             .spawn(move || {
-                let mut staked_validators_cache = StakedValidatorsCache::new(
-                    bank_forks.clone(),
-                    Duration::from_secs(STAKED_VALIDATORS_CACHE_TTL_S),
-                    STAKED_VALIDATORS_CACHE_NUM_EPOCH_TARGET,
-                    false,
+                let mut validator_addrs = ValidatorAddrs::new(
+                    sharable_banks,
+                    cluster_info.clone(),
                     alpenglow_port_override,
                 );
 
@@ -288,7 +280,7 @@ impl VotingService {
                         &cluster_info,
                         &connection_cache,
                         &additional_listeners,
-                        &mut staked_validators_cache,
+                        &mut validator_addrs,
                     );
 
                     let bls_op = match bls_receiver.recv_timeout(STANDSTILL_REFRESH_INTERVAL) {
@@ -301,7 +293,7 @@ impl VotingService {
                         bls_op,
                         &connection_cache,
                         &additional_listeners,
-                        &mut staked_validators_cache,
+                        &mut validator_addrs,
                         &mut standstill_queue,
                     );
                 }
@@ -318,7 +310,7 @@ impl VotingService {
         cluster_info: &ClusterInfo,
         connection_cache: &ConnectionCache,
         additional_listeners: &[SocketAddr],
-        staked_validators_cache: &mut StakedValidatorsCache,
+        validator_addrs: &mut ValidatorAddrs,
     ) {
         if !standstill_queue.should_refresh() {
             return;
@@ -351,11 +343,10 @@ impl VotingService {
                     cluster_info.my_shred_version(),
                 );
                 Self::broadcast_consensus_message(
-                    cluster_info,
                     &message,
                     connection_cache,
                     additional_listeners,
-                    staked_validators_cache,
+                    validator_addrs,
                 );
                 num_sent_messages = num_sent_messages.saturating_add(1);
             }
@@ -365,11 +356,10 @@ impl VotingService {
         let remaining_budget = STANDSTILL_REFRESH_BATCH_SIZE.saturating_sub(num_sent_messages);
         standstill_queue.for_next_n_messages(remaining_budget, |message| {
             Self::broadcast_consensus_message(
-                cluster_info,
                 message,
                 connection_cache,
                 additional_listeners,
-                staked_validators_cache,
+                validator_addrs,
             );
         });
 
@@ -377,11 +367,10 @@ impl VotingService {
     }
 
     fn broadcast_consensus_message(
-        cluster_info: &ClusterInfo,
         message: &VersionedWireConsensusMessage,
         connection_cache: &ConnectionCache,
         additional_listeners: &[SocketAddr],
-        staked_validators_cache: &mut StakedValidatorsCache,
+        validator_addrs: &mut ValidatorAddrs,
     ) {
         let buf = match wincode::serialize(message) {
             Ok(buf) => buf,
@@ -391,8 +380,7 @@ impl VotingService {
             }
         };
 
-        let (staked_validator_alpenglow_sockets, _) = staked_validators_cache
-            .get_staked_validators_by_slot(message.slot(), cluster_info, Instant::now());
+        let staked_validator_alpenglow_sockets = validator_addrs.get_validators(message.slot());
         let sockets = additional_listeners
             .iter()
             .chain(staked_validator_alpenglow_sockets.iter());
@@ -412,7 +400,7 @@ impl VotingService {
         bls_op: BLSOp,
         connection_cache: &ConnectionCache,
         additional_listeners: &[SocketAddr],
-        staked_validators_cache: &mut StakedValidatorsCache,
+        validator_addrs: &mut ValidatorAddrs,
         standstill_queue: &mut StandstillRefreshQueue,
     ) {
         match bls_op {
@@ -422,11 +410,10 @@ impl VotingService {
                     cluster_info.my_shred_version(),
                 );
                 Self::broadcast_consensus_message(
-                    cluster_info,
                     &msg,
                     connection_cache,
                     additional_listeners,
-                    staked_validators_cache,
+                    validator_addrs,
                 );
             }
             BLSOp::PushCertificates { certificates } => {
@@ -436,11 +423,10 @@ impl VotingService {
                         cluster_info.my_shred_version(),
                     );
                     Self::broadcast_consensus_message(
-                        cluster_info,
                         &msg,
                         connection_cache,
                         additional_listeners,
-                        staked_validators_cache,
+                        validator_addrs,
                     );
                 }
             }
@@ -622,6 +608,7 @@ mod tests {
         );
         let bank0 = Bank::new_for_tests(&genesis.genesis_config);
         let bank_forks = BankForks::new_rw_arc(bank0);
+        let sharable_banks = bank_forks.read().unwrap().sharable_banks();
         let keypair = Keypair::new();
         let contact_info = ContactInfo::new_localhost(&keypair.pubkey(), 0);
         let cluster_info = Arc::new(ClusterInfo::new(
@@ -638,7 +625,7 @@ mod tests {
                     "TestAlpenglowConnectionCache",
                     10,
                 )),
-                bank_forks,
+                sharable_banks,
                 Arc::new(RwLock::new(None)),
                 Some(VotingServiceOverride {
                     additional_listeners: vec![listener],
