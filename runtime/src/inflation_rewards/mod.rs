@@ -108,11 +108,18 @@ fn redeem_stake_rewards<'a>(
         ));
     }
 
-    let rewarded_epoch = calculation_environment.rewarded_epoch;
-    let stake_history = calculation_environment.stake_history;
-    let new_rate_activation_epoch = calculation_environment.new_rate_activation_epoch;
-    let use_fixed_point_stake_math = calculation_environment.use_fixed_point_stake_math;
     let adjust_delegations_for_rent = calculation_environment.adjust_delegations_for_rent;
+
+    let has_activating_or_effective = {
+        let status = delegation_activation_status(
+            &stake.delegation,
+            calculation_environment.rewarded_epoch,
+            calculation_environment.stake_history,
+            calculation_environment.new_rate_activation_epoch,
+            calculation_environment.use_fixed_point_stake_math,
+        );
+        status.effective > 0 || status.activating > 0
+    };
 
     let maybe_rewards = calculate_stake_rewards(
         stake,
@@ -138,16 +145,6 @@ fn redeem_stake_rewards<'a>(
 
     let staker_rewards = maybe_rewards.map(|x| x.0).unwrap_or(0);
     if adjust_delegations_for_rent {
-        let has_activating_or_effective = {
-            let status = delegation_activation_status(
-                &stake.delegation,
-                rewarded_epoch,
-                stake_history,
-                new_rate_activation_epoch,
-                use_fixed_point_stake_math,
-            );
-            status.effective > 0 || status.activating > 0
-        };
         let new_delegation_with_rewards = stake.delegation.stake.saturating_add(staker_rewards);
         let needs_adjustment = has_activating_or_effective
             && delegation_may_need_adjustment(
