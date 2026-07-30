@@ -123,7 +123,7 @@ solana-runtime-transaction = { path = "../runtime-transaction", version = "=4.3.
 solana-sbpf = { version = "=0.22.0", default-features = false }
 solana-sdk-ids = "3.1.0"
 solana-shred-version = "3.0.1"
-solana-signature = { version = "3.4.1", default-features = false }
+solana-signature = { version = "3.5.0", default-features = false }
 solana-signer = "3.0.1"
 solana-signer-store = "0.1.0"
 solana-stake-interface = "4.3.0"
