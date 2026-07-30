@@ -22,7 +22,10 @@ use {
     solana_pubkey::Pubkey,
     solana_runtime::bank::Bank,
     solana_streamer::nonblocking::simple_qos::SimpleQosBanlist,
-    std::collections::{HashMap, HashSet},
+    std::{
+        collections::{HashMap, HashSet},
+        time::Instant,
+    },
     thiserror::Error,
 };
 
@@ -41,7 +44,9 @@ enum CertVerifyError {
 
 struct CertVerifyOutcome {
     verified_cert: Option<Certificate>,
-    failures: Vec<(CertVerifyError, Pubkey)>,
+    local_stats: SigVerifyCertStats,
+    num_attempted: usize,
+    newly_banned: Vec<Pubkey>,
 }
 
 /// Verifies certificates and sends the verified certificates to the consensus pool.
@@ -58,8 +63,9 @@ pub(super) fn verify_and_send_certificates(
     root_bank: &Bank,
     channel_to_pool: &Sender<SigVerifiedBatch>,
     banlist: &SimpleQosBanlist,
+    locally_banned: &HashMap<Pubkey, Instant>,
     thread_pool: &ThreadPool,
-) -> Result<SigVerifyCertStats, SigVerifyCertError> {
+) -> Result<(SigVerifyCertStats, Vec<Pubkey>), SigVerifyCertError> {
     for cert_type in cert_groups.keys() {
         debug_assert!(!verified_certs_set.contains(cert_type));
     }
@@ -67,15 +73,16 @@ pub(super) fn verify_and_send_certificates(
     let mut stats = SigVerifyCertStats::default();
 
     if cert_groups.is_empty() {
-        return Ok(stats);
+        return Ok((stats, vec![]));
     }
 
-    let messages = verify_certs(
+    let (messages, newly_banned) = verify_certs(
         cert_groups,
         root_bank,
         verified_certs_set,
         &mut stats,
         banlist,
+        locally_banned,
         thread_pool,
     );
     stats.sig_verified_certs += messages.len() as u64;
@@ -85,7 +92,7 @@ pub(super) fn verify_and_send_certificates(
     stats
         .fn_verify_and_send_certs_stats
         .add_sample(measure.as_us());
-    Ok(stats)
+    Ok((stats, newly_banned))
 }
 
 /// Verifies certificates in `cert_groups`, stores a local copy, and prepares them for forwarding.
@@ -99,31 +106,27 @@ fn verify_certs(
     verified_certs_set: &mut HashSet<CertificateType>,
     stats: &mut SigVerifyCertStats,
     banlist: &SimpleQosBanlist,
+    locally_banned: &HashMap<Pubkey, Instant>,
     thread_pool: &ThreadPool,
-) -> SigVerifiedBatch {
+) -> (SigVerifiedBatch, Vec<Pubkey>) {
     let verified = thread_pool.install(|| {
         cert_groups
             .into_par_iter()
             .map(|(_, certs)| {
                 let num_certs = certs.len();
-                (num_certs, verify_cert_group(certs, root_bank))
+                (num_certs, verify_cert_group(certs, root_bank, locally_banned, banlist))
             })
             .collect::<Vec<_>>()
     });
 
     let mut certs = Vec::new();
+    let mut newly_banned = Vec::new();
     for (num_certs, outcome) in verified {
-        let num_certs_attempted = if outcome.verified_cert.is_some() {
-            outcome.failures.len().saturating_add(1)
-        } else {
-            outcome.failures.len()
-        };
-        stats.certs_to_sig_verify += num_certs_attempted as u64;
-        stats.redundant_certs_skipped += num_certs.saturating_sub(num_certs_attempted) as u64;
-
-        for (err, sender_identity_pubkey) in outcome.failures {
-            handle_cert_verify_error(err, sender_identity_pubkey, stats, banlist);
-        }
+        stats.certs_to_sig_verify += outcome.num_attempted as u64;
+        stats.redundant_certs_skipped +=
+            num_certs.saturating_sub(outcome.num_attempted) as u64;
+        stats.merge(outcome.local_stats);
+        newly_banned.extend(outcome.newly_banned);
 
         if let Some(cert) = outcome.verified_cert {
             if verified_certs_set.insert(cert.cert_type) {
@@ -134,27 +137,55 @@ fn verify_certs(
         }
     }
 
-    SigVerifiedBatch::Certificates(certs)
+    (SigVerifiedBatch::Certificates(certs), newly_banned)
 }
 
-fn verify_cert_group(certs: Vec<CertPayload>, root_bank: &Bank) -> CertVerifyOutcome {
-    let mut failures = Vec::new();
+fn verify_cert_group(
+    certs: Vec<CertPayload>,
+    root_bank: &Bank,
+    locally_banned: &HashMap<Pubkey, Instant>,
+    banlist: &SimpleQosBanlist,
+) -> CertVerifyOutcome {
+    let mut local_stats = SigVerifyCertStats::default();
+    let mut num_attempted = 0;
+    let mut newly_banned = Vec::new();
+    // Tracks senders that failed earlier in this same group so we skip their duplicates.
+    let mut intra_group_banned = HashSet::new();
 
     for cert_payload in certs {
+        if locally_banned.contains_key(&cert_payload.sender_identity_pubkey)
+            || intra_group_banned.contains(&cert_payload.sender_identity_pubkey)
+        {
+            continue;
+        }
+        num_attempted += 1;
         match verify_cert(cert_payload.cert, root_bank) {
             Ok(cert) => {
                 return CertVerifyOutcome {
                     verified_cert: Some(cert),
-                    failures,
+                    local_stats,
+                    num_attempted,
+                    newly_banned,
                 };
             }
-            Err(err) => failures.push((err, cert_payload.sender_identity_pubkey)),
+            Err(err) => {
+                intra_group_banned.insert(cert_payload.sender_identity_pubkey);
+                newly_banned.push(cert_payload.sender_identity_pubkey);
+                handle_cert_verify_error(
+                    err,
+                    cert_payload.sender_identity_pubkey,
+                    &mut local_stats,
+                    banlist,
+                );
+            }
         }
     }
 
     CertVerifyOutcome {
         verified_cert: None,
-        failures,
+        local_stats,
+        num_attempted,
+        newly_banned,
     }
 }
 
