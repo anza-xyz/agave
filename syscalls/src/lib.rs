@@ -2487,7 +2487,6 @@ declare_builtin_function!(
             .consume_checked(cost.to_owned())?;
 
         let check_aligned = invoke_context.get_check_aligned();
-        let poseidon_enforce_padding = invoke_context.get_feature_set().poseidon_enforce_padding;
         let memory_mapping = invoke_context.memory_contexts.memory_mapping_mut()?;
         {
             // Just a check that this will map later for error compatibility with old code.
