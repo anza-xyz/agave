@@ -3088,7 +3088,6 @@ fn program_cache_loaderv3_buffer_swap(invoke_changed_program: bool) {
     assert!(env.is_program_blocked(&target));
 }
 
-#[ignore] // TODO: Ignored until later commit, now that both extractions are running.
 #[test]
 fn program_cache_stats() {
     let mut test_entry = SvmTestEntry::default();
@@ -3186,7 +3185,9 @@ fn program_cache_stats() {
         ]),
         ExecutionStatus::ExecutedFailed,
     );
-    noop_tx_usage += 1;
+    // The transfer fails at the first instruction, so the noop that follows is
+    // never reached. Programs are loaded as they are invoked, so an unreached
+    // instruction does not count as a use.
     system_tx_usage += 1;
 
     // load failure/fee-only does not touch the program cache
