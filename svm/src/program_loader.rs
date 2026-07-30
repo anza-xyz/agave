@@ -1,3 +1,6 @@
+// TODO: Remove once `ProgramLoader` is hooked up to transaction processing.
+#![expect(dead_code)]
+
 #[cfg(feature = "metrics")]
 use solana_program_runtime::program_metrics::LoadProgramMetrics;
 use {
@@ -7,6 +10,7 @@ use {
     solana_loader_v3_interface::state::UpgradeableLoaderState,
     solana_loader_v4_interface::state::{LoaderV4State, LoaderV4Status},
     solana_program_runtime::{
+        callback::ProgramCacheCallback,
         loaded_programs::{
             ForkGraph, ProgramCache, ProgramCacheForTxBatch, ProgramCacheMatchCriteria,
             ProgramRuntimeEnvironment, ProgramToLoad,
@@ -16,10 +20,15 @@ use {
     solana_pubkey::Pubkey,
     solana_sdk_ids::{bpf_loader, bpf_loader_deprecated, bpf_loader_upgradeable, loader_v4},
     solana_svm_callback::TransactionProcessingCallback,
-    solana_svm_timings::ExecuteTimings,
+    solana_svm_measure::measure_us,
+    solana_svm_timings::{ExecuteTimingType, ExecuteTimings},
     solana_svm_type_overrides::sync::{Arc, RwLock},
     solana_transaction_error::{TransactionError, TransactionResult},
-    std::sync::atomic::Ordering,
+    std::{
+        cell::{Cell, RefCell},
+        collections::HashSet,
+        sync::atomic::Ordering,
+    },
 };
 
 #[derive(Debug)]
@@ -29,6 +38,118 @@ pub(crate) enum ProgramAccountLoadResult {
     ProgramOfLoaderV2(AccountSharedData),
     ProgramOfLoaderV3(AccountSharedData, AccountSharedData, Slot),
     ProgramOfLoaderV4(AccountSharedData, Slot),
+}
+
+/// A [ProgramCacheCallback] that extracts one program at a time from the global
+/// program cache, as each is invoked, instead of provisioning the batch-local
+/// cache up front.
+///
+/// Scoped to a single transaction. Loads happen through `&self`, so their
+/// side effects are staged and drained afterwards.
+pub(crate) struct ProgramLoader<'a, CB: TransactionProcessingCallback, FG: ForkGraph> {
+    global_program_cache: &'a RwLock<ProgramCache<FG>>,
+    callbacks: &'a CB,
+    slot: Slot,
+    program_runtime_environment_for_execution: &'a ProgramRuntimeEnvironment,
+    check_program_deployment_slot: bool,
+    limit_to_load_programs: bool,
+    loaded_missing: Cell<bool>,
+    hit_max_limit: Cell<bool>,
+    timings: RefCell<ExecuteTimings>,
+    /// Programs already counted against this transaction, so that a program
+    /// invoked more than once is only counted once.
+    counted: RefCell<HashSet<Pubkey>>,
+}
+
+impl<'a, CB: TransactionProcessingCallback, FG: ForkGraph> ProgramLoader<'a, CB, FG> {
+    pub(crate) fn new(
+        global_program_cache: &'a RwLock<ProgramCache<FG>>,
+        callbacks: &'a CB,
+        slot: Slot,
+        program_runtime_environment_for_execution: &'a ProgramRuntimeEnvironment,
+        check_program_deployment_slot: bool,
+        limit_to_load_programs: bool,
+    ) -> Self {
+        Self {
+            global_program_cache,
+            callbacks,
+            slot,
+            program_runtime_environment_for_execution,
+            check_program_deployment_slot,
+            limit_to_load_programs,
+            loaded_missing: Cell::new(false),
+            hit_max_limit: Cell::new(false),
+            timings: RefCell::new(ExecuteTimings::default()),
+            counted: RefCell::new(HashSet::new()),
+        }
+    }
+
+    pub(crate) fn loaded_missing(&self) -> bool {
+        self.loaded_missing.get()
+    }
+
+    pub(crate) fn hit_max_limit(&self) -> bool {
+        self.hit_max_limit.get()
+    }
+
+    pub(crate) fn take_timings(&self) -> ExecuteTimings {
+        self.timings.take()
+    }
+}
+
+impl<CB: TransactionProcessingCallback, FG: ForkGraph> ProgramCacheCallback
+    for ProgramLoader<'_, CB, FG>
+{
+    fn load_program(&self, program_id: &Pubkey) -> Option<Arc<ProgramCacheEntry>> {
+        // A scratch view to extract through, since the batch-local cache is
+        // already mutably borrowed at this point.
+        let mut extracted = ProgramCacheForTxBatch::new(self.slot);
+
+        let (missing_programs, filter_executable_us) =
+            measure_us!(filter_executable_program_accounts(
+                self.callbacks,
+                &extracted,
+                std::iter::once(program_id),
+                self.check_program_deployment_slot,
+            ));
+        let mut timings = self.timings.borrow_mut();
+        timings
+            .saturating_add_in_place(ExecuteTimingType::FilterExecutableUs, filter_executable_us);
+
+        // The account is absent, or is not owned by a loader.
+        if missing_programs.is_empty() {
+            return None;
+        }
+
+        let ((), program_cache_us) = measure_us!(replenish_program_cache(
+            self.global_program_cache,
+            self.callbacks,
+            self.slot,
+            self.program_runtime_environment_for_execution,
+            missing_programs,
+            &mut extracted,
+            &mut timings,
+            self.limit_to_load_programs,
+            /* increment_usage_counter */ true,
+        ));
+        timings.saturating_add_in_place(ExecuteTimingType::ProgramCacheUs, program_cache_us);
+
+        self.loaded_missing
+            .set(self.loaded_missing.get() | extracted.loaded_missing);
+        self.hit_max_limit
+            .set(self.hit_max_limit.get() | extracted.hit_max_limit);
+
+        // `extract` already counted this load.
+        self.counted.borrow_mut().insert(*program_id);
+
+        extracted.find(program_id)
+    }
+
+    fn record_program_use(&self, program_id: &Pubkey, entry: &Arc<ProgramCacheEntry>) {
+        if self.counted.borrow_mut().insert(*program_id) {
+            entry.stats.uses.fetch_add(1, Ordering::Relaxed);
+        }
+    }
 }
 
 pub(crate) fn load_program_accounts<CB: TransactionProcessingCallback>(
