@@ -254,7 +254,6 @@ impl<'a> ShrinkCollectRefs<'a> for ShrinkCollectAliveSeparatedByRefs<'a> {
 pub(crate) struct ShrinkCollect<'a, T: ShrinkCollectRefs<'a>> {
     pub(crate) slot: Slot,
     pub(crate) written_bytes: u64,
-    pub(crate) pubkeys_to_unref: Vec<&'a Pubkey>,
     pub(crate) zero_lamport_single_ref_pubkeys: Vec<&'a Pubkey>,
     pub(crate) alive_accounts: T,
     /// Zero-lamport accounts written to the new storage as tombstones rather than live accounts.
@@ -271,9 +270,6 @@ pub(crate) struct ShrinkCollect<'a, T: ShrinkCollectRefs<'a>> {
 struct LoadAccountsIndexForShrink<'a, T: ShrinkCollectRefs<'a>> {
     /// all alive accounts
     alive_accounts: T,
-    /// pubkeys that are going to be unref'd in the accounts index after we are
-    /// done with shrinking, because they are dead
-    pubkeys_to_unref: Vec<&'a Pubkey>,
     /// pubkeys that are the last remaining zero lamport instance of an account
     zero_lamport_single_ref_pubkeys: Vec<&'a Pubkey>,
     /// accounts that are zero lamport but not indexed
@@ -2426,7 +2422,6 @@ impl AccountsDb {
 
     /// load the account index entry for the first `count` items in `accounts`
     /// store a reference to all alive accounts in `alive_accounts`
-    /// store all pubkeys dead in `slot_to_shrink` in `pubkeys_to_unref`
     /// return sum of account size for all alive accounts
     fn load_accounts_index_for_shrink<'a, T: ShrinkCollectRefs<'a>>(
         &self,
@@ -2438,12 +2433,10 @@ impl AccountsDb {
             self.can_purge_zero_lamport_single_ref_after_shrink(slot_to_shrink);
         let count = accounts.len();
         let mut alive_accounts = T::with_capacity(count, slot_to_shrink);
-        let mut pubkeys_to_unref = Vec::with_capacity(count);
         let mut zero_lamport_single_ref_pubkeys = Vec::with_capacity(count);
         let mut tombstones = Vec::new();
 
         let mut alive = 0;
-        let mut dead = 0;
         let mut index = 0;
         let mut index_scan_returned_some_count = 0;
         let mut index_scan_returned_none_count = 0;
@@ -2476,16 +2469,9 @@ impl AccountsDb {
                         *slot == slot_to_shrink
                     });
 
-                    if !is_alive {
-                        // This pubkey was found in the storage, but no longer exists in the index.
-                        // It would have had a ref to the storage from the initial store, but it will
-                        // not exist in the re-written slot. Unref it to keep the index consistent with
-                        // rewriting the storage entries.
-                        pubkeys_to_unref.push(pubkey);
-                        dead += 1;
-                    } else {
-                        do_populate_accounts_for_shrink(ref_count, slot_list);
-                    }
+                    // All obsolete and tombstones have been filtered. Account MUST be alive in this slot
+                    assert!(is_alive);
+                    do_populate_accounts_for_shrink(ref_count, slot_list);
                 } else {
                     index_scan_returned_none_count += 1;
                     // getting None here means the account is 'normal' and was written to disk. This means it must have ref_count=1 and
@@ -2511,11 +2497,9 @@ impl AccountsDb {
             .index_scan_returned_none
             .fetch_add(index_scan_returned_none_count, Ordering::Relaxed);
         stats.alive_accounts.fetch_add(alive, Ordering::Relaxed);
-        stats.dead_accounts.fetch_add(dead, Ordering::Relaxed);
 
         LoadAccountsIndexForShrink {
             alive_accounts,
-            pubkeys_to_unref,
             zero_lamport_single_ref_pubkeys,
             tombstones,
             all_are_zero_lamports,
@@ -2627,7 +2611,6 @@ impl AccountsDb {
         let shrink_collect = Mutex::new(ShrinkCollect {
             slot,
             written_bytes: *written_bytes,
-            pubkeys_to_unref: Vec::with_capacity(len),
             zero_lamport_single_ref_pubkeys: Vec::new(),
             alive_accounts: T::with_capacity(len, slot),
             tombstones_to_carry_forward,
@@ -2649,7 +2632,6 @@ impl AccountsDb {
                 .for_each(|stored_accounts| {
                     let LoadAccountsIndexForShrink {
                         alive_accounts,
-                        mut pubkeys_to_unref,
                         all_are_zero_lamports,
                         mut zero_lamport_single_ref_pubkeys,
                         mut tombstones,
@@ -2658,9 +2640,6 @@ impl AccountsDb {
                     // collect
                     let mut shrink_collect = shrink_collect.lock().unwrap();
                     shrink_collect.alive_accounts.collect(alive_accounts);
-                    shrink_collect
-                        .pubkeys_to_unref
-                        .append(&mut pubkeys_to_unref);
                     shrink_collect
                         .zero_lamport_single_ref_pubkeys
                         .append(&mut zero_lamport_single_ref_pubkeys);
@@ -2755,19 +2734,11 @@ impl AccountsDb {
         let dead_storages = self.mark_dirty_dead_stores(
             shrink_collect.slot,
             // If all accounts are zero lamports, then we want to mark the entire OLD append vec as dirty.
-            // otherwise, we'll call 'add_uncleaned_pubkeys_after_shrink' just on the unref'd keys below.
             shrink_collect.all_are_zero_lamports,
             shrink_in_progress,
             shrink_can_be_active,
         );
         let dead_storages_len = dead_storages.len();
-
-        if !shrink_collect.all_are_zero_lamports {
-            self.add_uncleaned_pubkeys_after_shrink(
-                shrink_collect.slot,
-                shrink_collect.pubkeys_to_unref.iter().cloned().cloned(),
-            );
-        }
 
         let (_, drop_storage_entries_elapsed) = measure_us!(drop(dead_storages));
         time.stop();
@@ -2781,47 +2752,6 @@ impl AccountsDb {
         stats
             .remove_old_stores_shrink_us
             .fetch_add(time.as_us(), Ordering::Relaxed);
-    }
-
-    pub(crate) fn unref_shrunk_dead_accounts<'a>(
-        &self,
-        pubkeys: impl Iterator<Item = &'a Pubkey>,
-        slot: Slot,
-    ) {
-        self.accounts_index.scan(
-            pubkeys,
-            |pubkey, slot_refs| {
-                match slot_refs {
-                    Some((slot_list, ref_count)) => {
-                        // Let's handle the special case - after unref, the result is a single ref zero lamport account.
-                        if slot_list.len() == 1
-                            && ref_count == 2
-                            && let Some((slot_alive, acct_info)) = slot_list.first()
-                            && acct_info.is_zero_lamport()
-                        {
-                            self.zero_lamport_single_ref_found(*slot_alive, acct_info.offset());
-                        }
-                    }
-                    None => {
-                        // We also expect that the accounts index must contain an
-                        // entry for `pubkey`. Log a warning for now. In future,
-                        // we will panic when this happens.
-                        warn!(
-                            "pubkey {pubkey} in slot {slot} was NOT found in accounts index \
-                             during shrink"
-                        );
-                        datapoint_warn!(
-                            "accounts_db-shink_pubkey_missing_from_index",
-                            ("store_slot", slot, i64),
-                            ("pubkey", pubkey.to_string(), String),
-                        );
-                    }
-                }
-                AccountsIndexScanResult::Unref
-            },
-            None,
-            ScanFilter::All,
-        );
     }
 
     /// This function handles the case when zero lamport single ref accounts are found during shrink.
@@ -2923,8 +2853,6 @@ impl AccountsDb {
                 .fetch_add(1, Ordering::Relaxed);
             return;
         }
-
-        self.unref_shrunk_dead_accounts(shrink_collect.pubkeys_to_unref.iter().cloned(), slot);
 
         let total_accounts_after_shrink = shrink_collect.alive_accounts.len();
         debug!(
@@ -3190,36 +3118,6 @@ impl AccountsDb {
             .select_slots_us
             .fetch_add(select_slots_us, Ordering::Relaxed);
         self.combine_ancient_slots_packed(sorted_slots, can_randomly_shrink);
-    }
-
-    /// add all 'pubkeys' into the set of pubkeys that are 'uncleaned', associated with 'slot'
-    /// clean will visit these pubkeys next time it runs
-    fn add_uncleaned_pubkeys_after_shrink(
-        &self,
-        slot: Slot,
-        pubkeys: impl Iterator<Item = Pubkey>,
-    ) {
-        /*
-        This is only called during 'shrink'-type operations.
-        Original accounts were separated into 'accounts' and 'pubkeys_to_unref'.
-        These sets correspond to 'alive' and 'dead'.
-        'alive' means this account in this slot is in the accounts index.
-        'dead' means this account in this slot is NOT in the accounts index.
-        If dead, nobody will care if this version of this account is not written into the newly shrunk append vec for this slot.
-        For all dead accounts, they were already unrefed and are now absent in the new append vec.
-        This means that another version of this pubkey could possibly now be cleaned since this one is now gone.
-        For example, a zero lamport account in a later slot can be removed if we just removed the only non-zero lamport account for that pubkey in this slot.
-        So, for all unrefed accounts, send them to clean to be revisited next time clean runs.
-        If an account is alive, then its status has not changed. It was previously alive in this slot. It is still alive in this slot.
-        Clean doesn't care about alive accounts that remain alive.
-        Except... A slightly different case is if ALL the alive accounts in this slot are zero lamport accounts, then it is possible that
-        this slot can be marked dead. So, if all alive accounts are zero lamports, we send the entire OLD/pre-shrunk append vec
-        to clean so that all the pubkeys are visited.
-        It is a performance optimization to not send the ENTIRE old/pre-shrunk append vec to clean in the normal case.
-        */
-
-        let mut uncleaned_pubkeys = self.uncleaned_pubkeys.entry(slot).or_default();
-        uncleaned_pubkeys.extend(pubkeys);
     }
 
     pub fn shrink_candidate_slots(&self, epoch_schedule: &EpochSchedule) -> usize {

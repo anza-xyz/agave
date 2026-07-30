@@ -8,6 +8,7 @@ repository = { workspace = true }
 homepage = { workspace = true }
 license = { workspace = true }
 edition = { workspace = true }
+rust-version = { workspace = true }
 
 [package.metadata.docs.rs]
 targets = ["x86_64-unknown-linux-gnu"]
@@ -48,7 +49,6 @@ frozen-abi = [
     "solana-inflation/frozen-abi",
     "solana-instruction/frozen-abi",
     "solana-instruction-error/frozen-abi",
-    "solana-perf/frozen-abi",
     "solana-program-runtime/frozen-abi",
     "solana-rent/frozen-abi",
     "solana-stake-interface/frozen-abi",
@@ -146,7 +146,6 @@ solana-native-token = { workspace = true }
 solana-nonce = { workspace = true }
 solana-nonce-account = { workspace = true, features = ["wincode"] }
 solana-packet = { workspace = true }
-solana-perf = { workspace = true }
 solana-poh-config = { workspace = true }
 solana-precompile-error = { workspace = true }
 solana-program-binaries = { workspace = true, optional = true }
@@ -202,7 +201,6 @@ agave-transaction-view = { workspace = true }
 bitvec = { workspace = true }
 criterion = { workspace = true }
 libsecp256k1 = { workspace = true }
-memoffset = { workspace = true }
 proptest = { workspace = true }
 solana-accounts-db = { path = "../accounts-db", features = ["agave-unstable-api", "dev-context-only-utils"] }
 solana-builtins = { path = "../builtins", features = ["agave-unstable-api", "dev-context-only-utils"] }

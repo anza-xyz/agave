@@ -338,6 +338,11 @@ impl RequestResponse for BlockIdRepairType {
                     fec_set_proof,
                 },
             ) => {
+                // The double-Merkle tree contains at least one FEC-set root and
+                // the parent-info leaf, so a valid proof cannot be empty.
+                if fec_set_proof.is_empty() {
+                    return false;
+                }
                 debug_assert_eq!(*fec_set_index as usize % DATA_SHREDS_PER_FEC_BLOCK, 0);
                 // Convert from shred-space to leaf-index
                 let leaf_index = *fec_set_index as usize / DATA_SHREDS_PER_FEC_BLOCK;
@@ -3299,5 +3304,21 @@ mod tests {
                 parent_proof: real_parent_proof.clone(),
             })
         );
+    }
+
+    #[test]
+    fn test_verify_fec_set_root_rejects_empty_proof() {
+        let block_id = Hash::new_unique();
+        let request = BlockIdRepairType::FecSetRoot {
+            slot: 100,
+            block_id,
+            fec_set_index: 0,
+        };
+        let response = BlockIdRepairResponse::FecSetRoot {
+            fec_set_root: block_id,
+            fec_set_proof: vec![],
+        };
+
+        assert!(!request.verify_response(&response));
     }
 }

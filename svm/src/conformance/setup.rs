@@ -34,18 +34,18 @@ use {
 };
 
 /// Fields required by `InvokeContext::new`.
-pub(crate) struct InvokeContextFields<'a, 'ix_data> {
-    pub(crate) sanitized_message: SanitizedMessage,
-    pub(crate) transaction_context: TransactionContext<'ix_data>,
-    pub(crate) environment_config: EnvironmentConfig<'a>,
-    pub(crate) log_collector: Rc<RefCell<LogCollector>>,
-    pub(crate) execution_budget: SVMTransactionExecutionBudget,
-    pub(crate) execution_cost: SVMTransactionExecutionCost,
+pub struct InvokeContextFields<'a, 'ix_data> {
+    pub sanitized_message: SanitizedMessage,
+    pub transaction_context: TransactionContext<'ix_data>,
+    pub environment_config: EnvironmentConfig<'a>,
+    pub log_collector: Rc<RefCell<LogCollector>>,
+    pub execution_budget: SVMTransactionExecutionBudget,
+    pub execution_cost: SVMTransactionExecutionCost,
 }
 
 /// Compile a sanitized transaction message then instantiate a transaction
 /// context as well as the remaining fields required by `InvokeContext::new`.
-pub(crate) fn prepare_invoke_context_fields<'a, C: InvokeContextCallback>(
+pub fn prepare_invoke_context_fields<'a, C: InvokeContextCallback>(
     instr_context: &'a InstrContext,
     callback: &'a C,
     loader_key: &Pubkey,
@@ -126,7 +126,7 @@ pub(crate) fn prepare_transaction_invoke_context_fields<'a, 'b, C: InvokeContext
 }
 
 // Create a compute budget from the given feature set.
-pub(crate) fn compute_budget(feature_set: &SVMFeatureSet) -> ComputeBudget {
+pub fn compute_budget(feature_set: &SVMFeatureSet) -> ComputeBudget {
     let simd_0268_active = feature_set.raise_cpi_nesting_limit_to_8;
     ComputeBudget::new_with_defaults(simd_0268_active)
 }
@@ -134,7 +134,7 @@ pub(crate) fn compute_budget(feature_set: &SVMFeatureSet) -> ComputeBudget {
 /// The loader that owns the program account in `accounts`, used as the program
 /// account's owner when compiling the transaction. `None` if the program
 /// account isn't present.
-pub(crate) fn program_loader_key(accounts: &[(Pubkey, Account)], program_id: &Pubkey) -> Pubkey {
+pub fn program_loader_key(accounts: &[(Pubkey, Account)], program_id: &Pubkey) -> Pubkey {
     accounts
         .iter()
         .find(|(key, _)| key == program_id)
@@ -197,7 +197,7 @@ pub fn sanitized_message_from_versioned_message(
 
 /// The paired (execution + deployment) program runtime environments for a
 /// harness invocation. Both halves share one environment.
-pub(crate) fn program_runtime_environments(
+pub fn program_runtime_environments(
     feature_set: &SVMFeatureSet,
     compute_budget: &ComputeBudget,
 ) -> ProgramRuntimeEnvironments {
@@ -226,7 +226,7 @@ pub(crate) fn recent_blockhash(sysvar_cache: &SysvarCache) -> (Hash, u64) {
 /// Build a sysvar cache populated from any sysvar accounts present in the
 /// input account set.
 #[cfg(any(feature = "conformance", test))]
-pub(crate) fn sysvar_cache_from_accounts(accounts: &[(Pubkey, Account)]) -> SysvarCache {
+pub fn sysvar_cache_from_accounts(accounts: &[(Pubkey, Account)]) -> SysvarCache {
     let mut cache = SysvarCache::default();
     cache.fill_missing_entries(|pubkey, set_sysvar| {
         if let Some(data) = sysvar_account_data(accounts, pubkey) {
