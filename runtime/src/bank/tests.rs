@@ -5590,6 +5590,25 @@ fn test_bank_hash_deterministic_with_stakes_cache() {
                         &stake_pubkey,
                         &removed_stake_account,
                     );
+                    let delegated_stake_after_removal = bank0
+                        .stakes_cache
+                        .stakes()
+                        .vote_accounts()
+                        .get_delegated_stake(&vote_pubkey);
+
+                    // Processing the invalid account again must not subtract the delegation twice.
+                    bank0.store_account_and_update_capitalization(
+                        &stake_pubkey,
+                        &removed_stake_account,
+                    );
+                    assert_eq!(
+                        bank0
+                            .stakes_cache
+                            .stakes()
+                            .vote_accounts()
+                            .get_delegated_stake(&vote_pubkey),
+                        delegated_stake_after_removal,
+                    );
                 }
                 1 => {
                     // Override a snapshot-backed delegation.
