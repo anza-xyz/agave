@@ -6,12 +6,11 @@ use {
     },
     agave_votor::aggregate_accumulator::AggregateAccumulatorError,
     agave_votor_messages::{
-        consensus_message::VoteMessage,
+        consensus_message::{BlockId, VoteMessage},
         reward_certificate::{BuildRewardCertsRespError, NotarRewardCertificate},
         sig_verified_messages::VoteAggregate,
     },
     solana_clock::Slot,
-    solana_hash::Hash,
     solana_pubkey::Pubkey,
     std::{cmp::Reverse, collections::HashMap},
 };
@@ -21,7 +20,7 @@ use {
 pub(super) struct NotarEntry {
     /// Different validators may vote for different block ids.
     /// This stores a [`PartialCert`] per block id observed.
-    partials: HashMap<Hash, PartialCert>,
+    partials: HashMap<BlockId, PartialCert>,
 }
 
 impl NotarEntry {
@@ -38,7 +37,7 @@ impl NotarEntry {
         &mut self,
         aggregate: VoteAggregate,
         vote_account_pubkeys: Vec<Pubkey>,
-        block_id: Hash,
+        block_id: BlockId,
         max_validators: usize,
     ) -> Result<(), AggregateAccumulatorError> {
         let partial = self
@@ -53,7 +52,7 @@ impl NotarEntry {
         &mut self,
         vote_msg: VoteMessage,
         vote_account_pubkey: Pubkey,
-        block_id: Hash,
+        block_id: BlockId,
         max_validators: usize,
     ) -> Result<(), AggregateAccumulatorError> {
         let partial = self
@@ -102,7 +101,6 @@ mod tests {
         },
         agave_votor_messages::{consensus_message::Block, vote::Vote},
         rand::Rng,
-        solana_hash::Hash,
     };
 
     #[test]
@@ -114,7 +112,7 @@ mod tests {
         let rank = 0;
         let mut entry = NotarEntry::new();
 
-        let blockid0 = Hash::new_unique();
+        let blockid0 = BlockId::new_unique();
         let block = Block {
             slot,
             block_id: blockid0,
@@ -139,8 +137,8 @@ mod tests {
         let mut entry = NotarEntry::new();
         assert_eq!(entry.clone().build_cert(slot).unwrap(), None);
 
-        let blockid0 = Hash::new_unique();
-        let blockid1 = Hash::new_unique();
+        let blockid0 = BlockId::new_unique();
+        let blockid1 = BlockId::new_unique();
 
         for rank in 0..2 {
             let notar = Vote::new_notarization_vote(Block {
@@ -179,7 +177,7 @@ mod tests {
         let keypairs = get_keypairs(max_validators, slot);
         let mut entry = NotarEntry::new();
 
-        let blockid0 = Hash::new_unique();
+        let blockid0 = BlockId::new_unique();
         let notar = Vote::new_notarization_vote(Block {
             slot,
             block_id: blockid0,
@@ -194,7 +192,7 @@ mod tests {
             .add_aggregate(aggregate, vote_account_pubkeys, blockid0, max_validators)
             .unwrap();
 
-        let blockid1 = Hash::new_unique();
+        let blockid1 = BlockId::new_unique();
         let notar = Vote::new_notarization_vote(Block {
             slot,
             block_id: blockid1,
@@ -209,7 +207,7 @@ mod tests {
             .add_aggregate(aggregate, vote_account_pubkeys, blockid1, max_validators)
             .unwrap();
 
-        let blockid2 = Hash::new_unique();
+        let blockid2 = BlockId::new_unique();
         let notar = Vote::new_notarization_vote(Block {
             slot,
             block_id: blockid2,

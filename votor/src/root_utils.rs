@@ -5,10 +5,9 @@ use {
         voting_utils::VotingContext,
         votor::SharedContext,
     },
-    agave_votor_messages::consensus_message::Block,
+    agave_votor_messages::consensus_message::{Block, BlockId},
     crossbeam_channel::Sender,
     solana_clock::Slot,
-    solana_hash::Hash,
     solana_ledger::{blockstore::Blockstore, leader_schedule_cache::LeaderScheduleCache},
     solana_pubkey::Pubkey,
     solana_rpc::{
@@ -48,9 +47,10 @@ pub(crate) fn set_root(
     info!("{my_pubkey}: setting root {new_root}");
     vctx.vote_history.set_root(new_root);
     *pending_blocks = pending_blocks.split_off(&new_root);
+    // TODO: setting this to random value seems problematic
     *finalized_blocks = finalized_blocks.split_off(&Block {
         slot: new_root,
-        block_id: Hash::default(),
+        block_id: BlockId::default(),
     });
     *received_shred = received_shred.split_off(&new_root);
 

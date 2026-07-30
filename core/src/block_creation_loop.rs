@@ -16,7 +16,7 @@ use {
     agave_bls_sigverify::rewards::RewardInput,
     agave_votor::event::LeaderWindowInfo,
     agave_votor_messages::{
-        consensus_message::Block,
+        consensus_message::{Block, BlockId},
         reward_certificate::{NotarRewardCertificate, SkipRewardCertificate},
     },
     crossbeam_channel::{Receiver, Sender, select_biased},
@@ -218,8 +218,8 @@ enum StartLeaderError {
     ParentBlockIdMismatch {
         leader_slot: Slot,
         parent_slot: Slot,
-        expected: Hash,
-        actual: Option<Hash>,
+        expected: BlockId,
+        actual: Option<BlockId>,
     },
 
     /// PoH recorder failed while starting or completing a leader block.
@@ -934,7 +934,7 @@ fn handle_parent_ready(
     let old_parent_slot = optimistic_parent_block.slot;
     let Block {
         slot: new_parent_slot,
-        block_id: new_parent_hash,
+        block_id,
     } = leader_window_info.parent_block;
 
     let bank = ctx
@@ -956,7 +956,7 @@ fn handle_parent_ready(
     let new_bank = start_leader_wait_for_parent_replay(
         slot,
         new_parent_slot,
-        Some(new_parent_hash),
+        Some(block_id),
         *block_timer,
         ctx,
     )
@@ -1035,7 +1035,7 @@ fn time_left(block_timer: Instant, timeout: Duration) -> Duration {
 fn start_leader_wait_for_parent_replay(
     slot: Slot,
     parent_slot: Slot,
-    parent_hash: Option<Hash>,
+    parent_block_id: Option<BlockId>,
     block_timer: Instant,
     ctx: &mut LeaderContext,
 ) -> Result<Arc<Bank>, StartLeaderError> {
@@ -1065,7 +1065,7 @@ fn start_leader_wait_for_parent_replay(
             ));
         }
 
-        match maybe_start_leader(slot, parent_slot, parent_hash, ctx) {
+        match maybe_start_leader(slot, parent_slot, parent_block_id, ctx) {
             Ok(()) => {
                 slot_delay_start.stop();
                 let _ = ctx
@@ -1171,7 +1171,7 @@ fn start_leader_wait_for_parent_replay(
 fn maybe_start_leader(
     slot: Slot,
     parent_slot: Slot,
-    parent_hash: Option<Hash>,
+    parent_block_id: Option<BlockId>,
     ctx: &mut LeaderContext,
 ) -> Result<(), StartLeaderError> {
     if ctx.bank_forks.read().unwrap().get(slot).is_some() {
@@ -1189,7 +1189,7 @@ fn maybe_start_leader(
         return Err(StartLeaderError::ReplayIsBehind(parent_slot, slot));
     }
 
-    if let Some(expected) = parent_hash.filter(|hash| *hash != Hash::default()) {
+    if let Some(expected) = parent_block_id.filter(|block_id| block_id != &BlockId::default()) {
         let actual = parent_bank.block_id();
         if actual != Some(expected) {
             return Err(StartLeaderError::ParentBlockIdMismatch {
@@ -1348,6 +1348,7 @@ mod tests {
         super::*,
         crate::banking_trace::BankingTracer,
         agave_banking_stage_ingress_types::BankingPacketReceiver,
+        agave_votor_messages::consensus_message::BlockId,
         crossbeam_channel::bounded,
         solana_bls_signatures::{BLS_SIGNATURE_AFFINE_SIZE, Signature as BLSSignature},
         solana_entry::{block_component::VersionedUpdateParent, entry_or_marker::EntryOrMarker},
@@ -1380,7 +1381,7 @@ mod tests {
     fn test_genesis_cert_block_marker() -> GenesisCertBlockMarker {
         GenesisCertBlockMarker {
             slot: Slot::MAX,
-            block_id: Hash::default(),
+            block_id: BlockId::default(),
             bls_signature: BLSSignature([0; BLS_SIGNATURE_AFFINE_SIZE]),
             bitmap: vec![],
         }
@@ -1441,10 +1442,7 @@ mod tests {
         LeaderWindowInfo {
             start_slot,
             end_slot: last_of_consecutive_leader_slots(start_slot),
-            parent_block: Block {
-                slot: parent_slot,
-                block_id: Hash::new_unique(),
-            },
+            parent_block: Block::new_unique(parent_slot),
             block_timer: Instant::now(),
         }
     }
@@ -1555,7 +1553,7 @@ mod tests {
                 0,
                 Block {
                     slot: 0,
-                    block_id: Hash::default(),
+                    block_id: BlockId::default(),
                 },
             ))),
             highest_finalized: Arc::new(RwLock::new(None)),
@@ -1673,7 +1671,7 @@ mod tests {
                 0,
                 Block {
                     slot: 0,
-                    block_id: Hash::default(),
+                    block_id: BlockId::default(),
                 },
             ))),
             highest_finalized: Arc::new(RwLock::new(None)),
@@ -1748,7 +1746,7 @@ mod tests {
                 2,
                 Block {
                     slot: 0,
-                    block_id: Hash::default(),
+                    block_id: BlockId::default(),
                 },
             ))),
             highest_finalized: Arc::new(RwLock::new(None)),
@@ -1797,7 +1795,7 @@ mod tests {
         let my_pubkey = Pubkey::new_unique();
         let genesis = create_genesis_config_with_leader(10_000, &my_pubkey, 1_000);
         let root_bank = Bank::new_for_tests(&genesis.genesis_config);
-        root_bank.set_block_id(Some(Hash::new_unique()));
+        root_bank.set_block_id(Some(BlockId::new_unique()));
         root_bank.freeze();
         let bank_forks = BankForks::new_rw_arc(root_bank);
         let root_bank = bank_forks.read().unwrap().root_bank();
@@ -1805,7 +1803,7 @@ mod tests {
         let leader_schedule_cache = fixed_leader_schedule(my_pubkey, &root_bank);
 
         let new_parent_slot = 1;
-        let new_parent_hash = Hash::new_unique();
+        let new_parent_hash = BlockId::new_unique();
         let new_parent = Bank::new_from_parent_with_bank_forks(
             &bank_forks,
             root_bank.clone(),
@@ -1816,7 +1814,7 @@ mod tests {
         new_parent.set_block_id(Some(new_parent_hash));
 
         let optimistic_parent_slot = 3;
-        let optimistic_parent_hash = Hash::new_unique();
+        let optimistic_parent_hash = BlockId::new_unique();
         let optimistic_parent = Bank::new_from_parent_with_bank_forks(
             &bank_forks,
             root_bank.clone(),

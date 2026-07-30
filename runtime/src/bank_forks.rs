@@ -9,7 +9,7 @@ use {
         snapshot_controller::SnapshotController,
     },
     agave_feature_set,
-    agave_votor_messages::migration::MigrationStatus,
+    agave_votor_messages::{consensus_message::BlockId, migration::MigrationStatus},
     arc_swap::ArcSwap,
     log::*,
     solana_clock::{BankId, Slot},
@@ -258,7 +258,7 @@ impl BankForks {
         self.get(slot).map(|bank| bank.hash())
     }
 
-    pub fn block_id(&self, slot: Slot) -> Option<Hash> {
+    pub fn block_id(&self, slot: Slot) -> Option<BlockId> {
         self.get(slot).and_then(|bank| bank.block_id())
     }
 
@@ -1033,7 +1033,7 @@ mod tests {
         let genesis_cert = GenesisCert {
             block: Block {
                 slot: 1,
-                block_id: Hash::default(),
+                block_id: BlockId::default(),
             },
             signature: CertSignature {
                 signature: BLSSignature([0; BLS_SIGNATURE_AFFINE_SIZE]),
@@ -1118,7 +1118,7 @@ mod tests {
         let genesis_cert = GenesisCert {
             block: Block {
                 slot: 1,
-                block_id: Hash::new_unique(),
+                block_id: BlockId::new_unique(),
             },
             signature: CertSignature {
                 signature: BLSSignature([0; BLS_SIGNATURE_AFFINE_SIZE]),

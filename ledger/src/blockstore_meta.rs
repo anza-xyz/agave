@@ -7,6 +7,7 @@ use {
             merkle_tree::{SIZE_OF_MERKLE_PROOF_ENTRY, get_proof_size},
         },
     },
+    agave_votor_messages::consensus_message::BlockId,
     bitflags::bitflags,
     smallvec::SmallVec,
     solana_clock::{Slot, UnixTimestamp},
@@ -196,8 +197,8 @@ pub struct SlotMetaV3 {
     ///
     /// Populated by the block header initially, then replaced if an UpdateParent
     /// marker changes the replay parent for this slot.
-    #[wincode(with = "wincode_compat::DefaultOnEmptyRead<Hash>")]
-    pub parent_block_id: Hash,
+    #[wincode(with = "wincode_compat::DefaultOnEmptyRead<BlockId>")]
+    pub parent_block_id: BlockId,
     /// Shred/FEC-set index where replay should start for this slot.
     ///
     /// A value of zero means replay starts from the block header. A non-zero
@@ -416,7 +417,7 @@ pub struct DuplicateSlotProof {
 #[derive(Debug, Copy, Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub enum BlockLocation {
     Original,
-    Alternate { block_id: Hash },
+    Alternate { block_id: BlockId },
 }
 
 impl BlockLocation {
@@ -425,14 +426,16 @@ impl BlockLocation {
         if block_id == Hash::default() {
             Self::Original
         } else {
-            Self::Alternate { block_id }
+            Self::Alternate {
+                block_id: BlockId::from(block_id),
+            }
         }
     }
 
-    pub(crate) fn as_bytes(&self) -> [u8; HASH_BYTES] {
+    pub(crate) fn into_bytes(self) -> [u8; HASH_BYTES] {
         match self {
             BlockLocation::Original => Hash::default().to_bytes(),
-            BlockLocation::Alternate { block_id } => block_id.to_bytes(),
+            BlockLocation::Alternate { block_id } => block_id.into_bytes(),
         }
     }
 }
@@ -1133,7 +1136,7 @@ mod test {
                     next_slots: next_slots.into(),
                     connected_flags: ConnectedFlags::from_bits_truncate(connected_flags),
                     completed_data_indexes: completed_data_indexes.into_iter().collect(),
-                    parent_block_id: Hash::new_from_array(parent_block_id),
+                    parent_block_id: BlockId::from(Hash::new_from_array(parent_block_id)),
                     replay_fec_set_index,
                 },
             )

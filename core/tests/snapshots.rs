@@ -6,6 +6,7 @@ use {
         SnapshotInterval, SnapshotKind, paths as snapshot_paths,
         snapshot_archive_info::FullSnapshotArchiveInfo, snapshot_config::SnapshotConfig,
     },
+    agave_votor_messages::consensus_message::BlockId,
     crossbeam_channel::bounded,
     itertools::Itertools,
     log::{info, trace},
@@ -14,7 +15,6 @@ use {
     solana_core::snapshot_packager_service::SnapshotPackagerService,
     solana_genesis_config::GenesisConfig,
     solana_gossip::{cluster_info::ClusterInfo, contact_info::ContactInfo},
-    solana_hash::Hash,
     solana_keypair::Keypair,
     solana_net_utils::SocketAddrSpace,
     solana_runtime::{
@@ -196,7 +196,7 @@ where
                 bank.fill_bank_with_ticks_for_tests();
             }
             if bank.block_id().is_none() {
-                bank.set_block_id(Some(Hash::default()));
+                bank.set_block_id(Some(BlockId::default()));
             }
             bank_forks.read().unwrap().prune_program_cache(bank.slot());
             // set_root should send a snapshot request
@@ -435,7 +435,7 @@ fn test_bank_forks_incremental_snapshot() {
             assert_eq!(bank.process_transaction(&tx), Ok(()));
 
             bank.fill_bank_with_ticks_for_tests();
-            bank.set_block_id(Some(Hash::default()));
+            bank.set_block_id(Some(BlockId::default()));
 
             bank_scheduler
         };
@@ -668,7 +668,7 @@ fn test_snapshots_with_background_services() {
             assert_eq!(bank.process_transaction(&tx), Ok(()));
 
             bank.fill_bank_with_ticks_for_tests();
-            bank.set_block_id(Some(Hash::default()));
+            bank.set_block_id(Some(BlockId::default()));
         }
 
         // Call `BankForks::set_root()` to cause snapshots to be taken
@@ -823,7 +823,7 @@ fn test_fastboot_snapshots_teardown(exit_backpressure: bool) {
         assert_eq!(bank.process_transaction(&tx), Ok(()));
 
         bank.fill_bank_with_ticks_for_tests();
-        bank.set_block_id(Some(Hash::default()));
+        bank.set_block_id(Some(BlockId::default()));
 
         // Inject a fastboot snapshot at a specific slot
         if slot % FASTBOOT_SNAPSHOT_INTERVAL_SLOTS == 0 {

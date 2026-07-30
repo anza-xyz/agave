@@ -69,6 +69,7 @@ wincode = { workspace = true }
 zstd = { workspace = true }
 
 [dev-dependencies]
+agave-votor-messages = { workspace = true }
 solana-hash = { workspace = true }
 solana-keypair = { workspace = true }
 solana-pubkey = { workspace = true, features = ["rand"] }

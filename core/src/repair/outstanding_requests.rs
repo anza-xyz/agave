@@ -123,7 +123,7 @@ pub(crate) mod tests {
     use {
         super::*,
         crate::repair::{request_response::RequestResponse, serve_repair::ShredRepairType},
-        solana_hash::Hash,
+        agave_votor_messages::consensus_message::BlockId,
         solana_keypair::Keypair,
         solana_ledger::{blockstore_meta::BlockLocation, shred::Shredder},
         solana_time_utils::timestamp,
@@ -280,7 +280,7 @@ pub(crate) mod tests {
             expected_response: 42,
             num_expected_responses: 1,
         };
-        let block_id = Hash::new_unique();
+        let block_id = BlockId::new_unique();
         let nonce = outstanding_requests.add_request_with_metadata(
             request,
             now,

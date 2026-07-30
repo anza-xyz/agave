@@ -10,7 +10,10 @@ use {
             writeln_transaction,
         },
     },
-    agave_votor_messages::{migration::AG_MIGRATION_EPOCH_CREDIT, wire::WireBlockCertMessage},
+    agave_votor_messages::{
+        consensus_message::BlockId, migration::AG_MIGRATION_EPOCH_CREDIT,
+        wire::WireBlockCertMessage,
+    },
     base64::{Engine, prelude::BASE64_STANDARD},
     bitvec::vec::BitVec,
     chrono::{Local, TimeZone, Utc},
@@ -2104,7 +2107,7 @@ pub struct CliAgGenesisInfoPayload {
     /// Slot in which migration to alpenglow happened.
     pub slot: Slot,
     /// Hash of the block in which migration to alpenglow happened.
-    pub block_id: Hash,
+    pub block_id: BlockId,
     /// Bitvec of validators that signed the block.
     pub bitvec: BitVec<u8>,
     /// The aggregate signature of the validators.

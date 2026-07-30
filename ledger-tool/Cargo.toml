@@ -99,6 +99,7 @@ jemallocator = { workspace = true }
 signal-hook = { workspace = true }
 
 [dev-dependencies]
+agave-votor-messages = { workspace = true }
 assert_cmd = { workspace = true }
 solana-bls-signatures = { workspace = true }
 tempfile = { workspace = true }

@@ -854,7 +854,7 @@ impl Column for columns::DoubleMerkleMeta {
         debug_assert_eq!(std::mem::size_of::<Slot>(), 8);
         convert_column_index_to_key_bytes!(Key,
             ..8 => &slot.to_be_bytes(),
-            8.. => &location.as_bytes()
+            8.. => &location.into_bytes()
         )
     }
 
@@ -887,8 +887,8 @@ mod tests {
     use {
         super::*,
         crate::blockstore_meta::{CompletedDataIndexes, ConnectedFlags},
+        agave_votor_messages::consensus_message::BlockId,
         smallvec::smallvec,
-        solana_hash::Hash,
         wincode,
     };
 
@@ -904,7 +904,7 @@ mod tests {
             next_slots: smallvec![43, 44],
             connected_flags: ConnectedFlags::CONNECTED | ConnectedFlags::PARENT_CONNECTED,
             completed_data_indexes: [0u32, 5, 10].into_iter().collect(),
-            parent_block_id: Hash::new_unique(),
+            parent_block_id: BlockId::new_unique(),
             replay_fec_set_index: 7,
         };
 
@@ -959,7 +959,7 @@ mod tests {
         };
         let v2_bytes = wincode::serialize(&v2).unwrap();
         let deserialized = wincode::deserialize::<blockstore_meta::SlotMeta>(&v2_bytes).unwrap();
-        assert_eq!(deserialized.parent_block_id, Hash::default());
+        assert_eq!(deserialized.parent_block_id, BlockId::default());
         assert_eq!(deserialized.replay_fec_set_index, 0);
 
         let v3 = blockstore_meta::SlotMeta {
@@ -972,7 +972,7 @@ mod tests {
             next_slots: smallvec![],
             connected_flags: ConnectedFlags::empty(),
             completed_data_indexes: CompletedDataIndexes::default(),
-            parent_block_id: Hash::new_unique(),
+            parent_block_id: BlockId::new_unique(),
             replay_fec_set_index: 7,
         };
         let v3_bytes = wincode::serialize(&v3).unwrap();

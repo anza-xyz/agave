@@ -2,7 +2,7 @@ use {
     super::*,
     crate::cluster_nodes::ClusterNodesCache,
     agave_votor::event::VotorEventSender,
-    agave_votor_messages::migration::MigrationStatus,
+    agave_votor_messages::{consensus_message::BlockId, migration::MigrationStatus},
     crossbeam_channel::Sender,
     itertools::Itertools,
     solana_entry::{block_component::BlockComponent, entry::Entry},
@@ -323,7 +323,7 @@ impl BroadcastRun for BroadcastDuplicatesRun {
                 &self.migration_status,
                 &self.votor_event_sender,
                 bank,
-                self.chained_merkle_root,
+                BlockId::from(self.chained_merkle_root),
             )?;
         }
         Ok(())

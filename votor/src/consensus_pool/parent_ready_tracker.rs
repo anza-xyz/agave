@@ -285,10 +285,7 @@ impl ParentReadyTracker {
 
 #[cfg(test)]
 mod tests {
-    use {
-        super::*, crate::tests::get_cluster_info, itertools::Itertools, solana_hash::Hash,
-        solana_keypair::Keypair,
-    };
+    use {super::*, crate::tests::get_cluster_info, itertools::Itertools, solana_keypair::Keypair};
 
     fn root_parent_ready(root_block: Block) -> ParentReady {
         (root_block.slot.saturating_add(1), root_block)
@@ -306,10 +303,7 @@ mod tests {
         let mut events = vec![];
 
         for i in 1..2 * NUM_CONSECUTIVE_LEADER_SLOTS.get() as Slot {
-            let block = Block {
-                slot: i,
-                block_id: Hash::new_unique(),
-            };
+            let block = Block::new_unique(i);
             tracker.add_new_notar_fallback_or_stronger(block, &mut events);
             assert_eq!(tracker.highest_parent_ready(), i + 1);
             assert!(tracker.parent_ready(i + 1, block));
@@ -322,10 +316,7 @@ mod tests {
         let genesis = Block::default();
         let mut tracker = new_tracker(cluster_info, genesis);
         let mut events = vec![];
-        let block = Block {
-            slot: 1,
-            block_id: Hash::new_unique(),
-        };
+        let block = Block::new_unique(1);
 
         tracker.add_new_notar_fallback_or_stronger(block, &mut events);
         tracker.add_new_skip(1, &mut events);
@@ -343,10 +334,7 @@ mod tests {
         let genesis = Block::default();
         let mut tracker = new_tracker(cluster_info, genesis);
         let mut events = vec![];
-        let block = Block {
-            slot: 1,
-            block_id: Hash::new_unique(),
-        };
+        let block = Block::new_unique(1);
 
         tracker.add_new_skip(3, &mut events);
         tracker.add_new_skip(2, &mut events);
@@ -364,10 +352,7 @@ mod tests {
     fn snapshot_wfsm() {
         let cluster_info = get_cluster_info(Keypair::new());
         let root_slot = 2147;
-        let root_block = Block {
-            slot: root_slot,
-            block_id: Hash::new_unique(),
-        };
+        let root_block = Block::new_unique(root_slot);
         let mut tracker = new_tracker(cluster_info, root_block);
         let mut events = vec![];
 
@@ -385,10 +370,7 @@ mod tests {
         assert!(tracker.parent_ready(root_slot + 3, root_block));
         assert_eq!(tracker.highest_parent_ready(), root_slot + 3);
 
-        let block = Block {
-            slot: root_slot + 4,
-            block_id: Hash::new_unique(),
-        };
+        let block = Block::new_unique(root_slot + 4);
         tracker.add_new_notar_fallback_or_stronger(block, &mut events);
         assert!(tracker.parent_ready(root_slot + 3, root_block));
         assert!(tracker.parent_ready(root_slot + 5, block));
@@ -400,10 +382,7 @@ mod tests {
         let cluster_info = get_cluster_info(Keypair::new());
         let startup_root = Block::default();
         let root_slot = 63;
-        let migration_genesis = Block {
-            slot: root_slot,
-            block_id: Hash::new_unique(),
-        };
+        let migration_genesis = Block::new_unique(root_slot);
         let mut tracker = new_tracker(cluster_info, startup_root);
         let mut events = vec![];
 
@@ -433,10 +412,7 @@ mod tests {
     fn restored_parent_ready() {
         let cluster_info = get_cluster_info(Keypair::new());
         let root_slot = 4;
-        let restored = Block {
-            slot: 13,
-            block_id: Hash::new_unique(),
-        };
+        let restored = Block::new_unique(13);
         let tracker = ParentReadyTracker::new(cluster_info, root_slot, (16, restored));
 
         assert!(tracker.parent_ready(16, restored));
@@ -482,13 +458,7 @@ mod tests {
             BlockProductionParent::ParentNotReady
         );
 
-        tracker.add_new_notar_fallback_or_stronger(
-            Block {
-                slot: 4,
-                block_id: Hash::new_unique(),
-            },
-            &mut events,
-        );
+        tracker.add_new_notar_fallback_or_stronger(Block::new_unique(4), &mut events);
         assert_eq!(tracker.highest_parent_ready(), 5);
         assert_eq!(
             tracker.block_production_parent(4),
@@ -499,13 +469,7 @@ mod tests {
             tracker.block_production_parent(8),
             BlockProductionParent::ParentNotReady
         );
-        tracker.add_new_notar_fallback_or_stronger(
-            Block {
-                slot: 64,
-                block_id: Hash::new_unique(),
-            },
-            &mut events,
-        );
+        tracker.add_new_notar_fallback_or_stronger(Block::new_unique(64), &mut events);
         assert_eq!(tracker.highest_parent_ready(), 65);
         assert_eq!(
             tracker.block_production_parent(8),
@@ -522,13 +486,7 @@ mod tests {
 
         for i in 1..=10 {
             tracker.add_new_skip(i, &mut vec![]);
-            tracker.add_new_notar_fallback_or_stronger(
-                Block {
-                    slot: i,
-                    block_id: Hash::new_unique(),
-                },
-                &mut vec![],
-            );
+            tracker.add_new_notar_fallback_or_stronger(Block::new_unique(i), &mut vec![]);
         }
 
         tracker.add_new_skip(11, &mut events);

@@ -20,7 +20,9 @@ use {
         tower1_14_11::Tower1_14_11,
     },
     crate::{consensus::progress_map::LockoutInterval, replay_stage::DUPLICATE_THRESHOLD},
-    agave_votor_messages::{fraction::Fraction, migration::GENESIS_VOTE_THRESHOLD},
+    agave_votor_messages::{
+        consensus_message::BlockId, fraction::Fraction, migration::GENESIS_VOTE_THRESHOLD,
+    },
     chrono::prelude::*,
     solana_clock::{Slot, UnixTimestamp},
     solana_hash::Hash,
@@ -678,19 +680,19 @@ impl Tower {
             // Note: since the new shred format is yet to be rolled out to all clusters,
             // this can also happen for non-leader banks. Once rolled out we can assert
             // here that this is our leader bank.
-            Hash::default()
+            BlockId::default()
         });
         self.record_bank_vote_and_update_lockouts(bank.slot(), bank.hash(), block_id)
     }
 
     /// If we've recently updated the vote state by applying a new vote
     /// or syncing from a bank, generate the proper last_vote.
-    pub(crate) fn update_last_vote_from_vote_state(&mut self, vote_hash: Hash, block_id: Hash) {
+    pub(crate) fn update_last_vote_from_vote_state(&mut self, vote_hash: Hash, block_id: BlockId) {
         let mut new_vote = VoteTransaction::from(TowerSync::new(
             self.vote_state.votes.clone(),
             self.vote_state.root_slot,
             vote_hash,
-            block_id,
+            block_id.into_hash(),
         ));
 
         new_vote.set_timestamp(self.maybe_timestamp(self.last_voted_slot().unwrap_or_default()));
@@ -701,7 +703,7 @@ impl Tower {
         &mut self,
         vote_slot: Slot,
         vote_hash: Hash,
-        block_id: Hash,
+        block_id: BlockId,
     ) -> Option<Slot> {
         if let Some(last_voted_slot) = self.vote_state.last_voted_slot()
             && vote_slot <= last_voted_slot
@@ -736,7 +738,7 @@ impl Tower {
 
     #[cfg(feature = "dev-context-only-utils")]
     pub fn record_vote(&mut self, slot: Slot, hash: Hash) -> Option<Slot> {
-        self.record_bank_vote_and_update_lockouts(slot, hash, Hash::default())
+        self.record_bank_vote_and_update_lockouts(slot, hash, BlockId::default())
     }
 
     #[cfg(feature = "dev-context-only-utils")]
