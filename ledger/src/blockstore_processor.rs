@@ -206,6 +206,21 @@ fn schedule_entries_for_tests(bank: &BankWithScheduler, entries: Vec<Entry>) -> 
 fn process_entries(bank: &BankWithScheduler, entries: Vec<ReplayEntry>) -> Result<()> {
     let mut tick_hashes = vec![];
 
+    let max_transactions_per_entry = entries
+        .iter()
+        .map(|replay_entry| {
+            let entry = &replay_entry.entry;
+
+            match entry {
+                EntryType::Tick(_) => 0,
+                EntryType::Transactions(transactions) => transactions.len(),
+            }
+        })
+        .max()
+        .unwrap_or(0); // AHashSet::with_capacity(0) does 0 allocation
+
+    let mut entry_message_hashes = AHashSet::with_capacity(max_transactions_per_entry);
+
     for ReplayEntry {
         entry,
         starting_index,
@@ -220,9 +235,13 @@ fn process_entries(bank: &BankWithScheduler, entries: Vec<ReplayEntry>) -> Resul
                 }
             }
             EntryType::Transactions(transactions) => {
-                if transactions.is_empty() {
-                    continue;
-                }
+                // An entry carrying no transactions is a tick, enforced at the only place
+                // `EntryType` is built from an `Entry`
+                // (`solana_entry::entry::validate_and_hash_entry_transactions`).
+                debug_assert!(
+                    !transactions.is_empty(),
+                    "transaction entry with no transactions"
+                );
 
                 // Any bank replaying transactions must have a scheduler installed. Slot 0 -
                 // the only bank replayed before the scheduler pool is installed - is tick-only,
@@ -235,6 +254,7 @@ fn process_entries(bank: &BankWithScheduler, entries: Vec<ReplayEntry>) -> Resul
                 validate_entry_transactions(
                     &transactions,
                     bank.get_transaction_account_lock_limit(),
+                    &mut entry_message_hashes,
                 )?;
 
                 let indexes = starting_index..starting_index + transactions.len();
@@ -259,12 +279,13 @@ fn process_entries(bank: &BankWithScheduler, entries: Vec<ReplayEntry>) -> Resul
 fn validate_entry_transactions(
     transactions: &[RuntimeTransaction<SanitizedTransaction>],
     tx_account_lock_limit: usize,
+    entry_message_hashes: &mut AHashSet<Hash>,
 ) -> Result<()> {
-    let mut batch_message_hashes = AHashSet::with_capacity(transactions.len());
+    entry_message_hashes.clear();
 
     for transaction in transactions {
         validate_account_locks(transaction.account_keys(), tx_account_lock_limit)?;
-        if !batch_message_hashes.insert(transaction.message_hash()) {
+        if !entry_message_hashes.insert(*transaction.message_hash()) {
             return Err(TransactionError::AlreadyProcessed);
         }
     }
@@ -5942,7 +5963,10 @@ pub mod tests {
                 hash,
             )),
         ];
-        assert_eq!(validate_entry_transactions(&txs, 10), Ok(()));
+        assert_eq!(
+            validate_entry_transactions(&txs, 10, &mut AHashSet::new()),
+            Ok(())
+        );
     }
 
     #[test]
@@ -5957,7 +5981,7 @@ pub mod tests {
         )];
         // transfer touches >1 account; limit of 1 must reject
         assert_eq!(
-            validate_entry_transactions(&txs, 1),
+            validate_entry_transactions(&txs, 1, &mut AHashSet::new()),
             Err(TransactionError::TooManyAccountLocks)
         );
     }
@@ -5986,8 +6010,22 @@ pub mod tests {
             Transaction::new(&[&payer], message, Hash::new_unique()),
         )];
         assert_eq!(
-            validate_entry_transactions(&txs, 10),
+            validate_entry_transactions(&txs, 10, &mut AHashSet::new()),
             Err(TransactionError::AccountLoadedTwice)
+        );
+    }
+
+    #[test]
+    fn test_validate_entry_transactions_clears_dirty_hash_set() {
+        let payer = Keypair::new();
+        let entry = vec![RuntimeTransaction::from_transaction_for_tests(
+            system_transaction::transfer(&payer, &Pubkey::new_unique(), 1, Hash::new_unique()),
+        )];
+
+        let mut entry_message_hashes = AHashSet::from_iter([*entry[0].message_hash()]);
+        assert_eq!(
+            validate_entry_transactions(&entry, 10, &mut entry_message_hashes),
+            Ok(())
         );
     }
 
@@ -6001,7 +6039,7 @@ pub mod tests {
             RuntimeTransaction::from_transaction_for_tests(tx),
         ];
         assert_eq!(
-            validate_entry_transactions(&txs, 10),
+            validate_entry_transactions(&txs, 10, &mut AHashSet::new()),
             Err(TransactionError::AlreadyProcessed)
         );
     }
