@@ -161,8 +161,6 @@ pub struct ProgramCacheEntry {
     pub account_owner: ProgramCacheEntryOwner,
     /// Slot in which the program was (re)deployed
     pub deployment_slot: Slot,
-    /// Slot in which this entry will become active (can be in the future)
-    pub effective_slot: Slot,
     /// How often this entry was used by a transaction
     pub stats: Arc<ProgramStatistics>,
     pub latest_access_slot: AtomicU64,
@@ -188,8 +186,7 @@ impl std::fmt::Debug for ProgramCacheEntry {
 #[cfg(feature = "dev-context-only-utils")]
 impl PartialEq for ProgramCacheEntry {
     fn eq(&self, other: &Self) -> bool {
-        self.effective_slot() == other.effective_slot()
-            && self.deployment_slot == other.deployment_slot
+        self.deployment_slot == other.deployment_slot
             && self.account_owner == other.account_owner
             && self.is_tombstone() == other.is_tombstone()
     }
@@ -201,7 +198,7 @@ impl ProgramCacheEntry {
         loader_key: &Pubkey,
         program_runtime_environment: ProgramRuntimeEnvironment,
         deployment_slot: Slot,
-        effective_slot: Slot,
+        _effective_slot: Slot,
         elf_bytes: &[u8],
         #[cfg(feature = "metrics")] metrics: &mut LoadProgramMetrics,
     ) -> Result<Self, Box<dyn std::error::Error>> {
@@ -209,7 +206,7 @@ impl ProgramCacheEntry {
             loader_key,
             program_runtime_environment,
             deployment_slot,
-            effective_slot,
+            _effective_slot,
             elf_bytes,
             #[cfg(feature = "metrics")]
             metrics,
@@ -229,7 +226,7 @@ impl ProgramCacheEntry {
         loader_key: &Pubkey,
         program_runtime_environment: ProgramRuntimeEnvironment,
         deployment_slot: Slot,
-        effective_slot: Slot,
+        _effective_slot: Slot,
         elf_bytes: &[u8],
         #[cfg(feature = "metrics")] metrics: &mut LoadProgramMetrics,
     ) -> Result<Self, Box<dyn std::error::Error>> {
@@ -237,7 +234,7 @@ impl ProgramCacheEntry {
             loader_key,
             program_runtime_environment,
             deployment_slot,
-            effective_slot,
+            _effective_slot,
             elf_bytes,
             #[cfg(feature = "metrics")]
             metrics,
@@ -249,13 +246,13 @@ impl ProgramCacheEntry {
         loader_key: &Pubkey,
         program_runtime_environment: ProgramRuntimeEnvironment,
         deployment_slot: Slot,
-        effective_slot: Slot,
+        _effective_slot: Slot,
         elf_bytes: &[u8],
         #[cfg(feature = "metrics")] metrics: &mut LoadProgramMetrics,
         reloading: bool,
     ) -> Result<Self, Box<dyn std::error::Error>> {
         debug_assert_eq!(
-            effective_slot,
+            _effective_slot,
             deployment_slot.saturating_add(DELAY_VISIBILITY_SLOT_OFFSET),
         );
         let entry_stats = ProgramStatistics::default();
@@ -293,7 +290,6 @@ impl ProgramCacheEntry {
         Ok(Self {
             deployment_slot,
             account_owner: ProgramCacheEntryOwner::try_from(loader_key).unwrap(),
-            effective_slot,
             program: ProgramCacheEntryType::Loaded(executable),
             stats: entry_stats.into(),
             latest_access_slot: AtomicU64::new(0),
@@ -315,7 +311,6 @@ impl ProgramCacheEntry {
             program: ProgramCacheEntryType::Unloaded(environment),
             account_owner: self.account_owner,
             deployment_slot: self.deployment_slot,
-            effective_slot: self.effective_slot,
             stats: Arc::clone(&self.stats),
             latest_access_slot: AtomicU64::new(self.latest_access_slot.load(Ordering::Relaxed)),
         })
@@ -334,7 +329,6 @@ impl ProgramCacheEntry {
         Self {
             deployment_slot,
             account_owner: ProgramCacheEntryOwner::NativeLoader,
-            effective_slot: deployment_slot,
             program: ProgramCacheEntryType::Builtin(program),
             stats: Arc::default(),
             latest_access_slot: AtomicU64::new(0),
@@ -359,7 +353,6 @@ impl ProgramCacheEntry {
             program: reason,
             account_owner,
             deployment_slot: slot,
-            effective_slot: slot,
             stats,
             latest_access_slot: AtomicU64::new(0),
         };
@@ -390,8 +383,7 @@ impl ProgramCacheEntry {
             | ProgramCacheEntryType::DelayVisibility
             | ProgramCacheEntryType::FailedVerification(_)
             | ProgramCacheEntryType::Builtin(_) => self.deployment_slot,
-            ProgramCacheEntryType::Unloaded(_)
-            | ProgramCacheEntryType::Loaded(_) => self
+            ProgramCacheEntryType::Unloaded(_) | ProgramCacheEntryType::Loaded(_) => self
                 .deployment_slot
                 .saturating_add(DELAY_VISIBILITY_SLOT_OFFSET),
         }

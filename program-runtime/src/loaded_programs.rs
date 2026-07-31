@@ -1033,10 +1033,10 @@ pub(crate) mod tests {
         test_case::{test_case, test_matrix},
     };
 
-    fn new_test_entry(deployment_slot: Slot, effective_slot: Slot) -> Arc<ProgramCacheEntry> {
+    fn new_test_entry(deployment_slot: Slot, _effective_slot: Slot) -> Arc<ProgramCacheEntry> {
         new_test_entry_with_usage(
             deployment_slot,
-            effective_slot,
+            _effective_slot,
             ProgramStatistics::default(),
         )
     }
@@ -1053,18 +1053,17 @@ pub(crate) mod tests {
 
     pub(crate) fn new_test_entry_with_usage(
         deployment_slot: Slot,
-        effective_slot: Slot,
+        _effective_slot: Slot,
         stats: ProgramStatistics,
     ) -> Arc<ProgramCacheEntry> {
         debug_assert_eq!(
-            effective_slot,
+            _effective_slot,
             deployment_slot.saturating_add(DELAY_VISIBILITY_SLOT_OFFSET),
         );
         Arc::new(ProgramCacheEntry {
             program: new_loaded_entry(get_mock_program_runtime_environment()),
             account_owner: ProgramCacheEntryOwner::LoaderV2,
             deployment_slot,
-            effective_slot,
             stats: Arc::new(stats),
             latest_access_slot: AtomicU64::new(deployment_slot),
         })
@@ -1072,14 +1071,13 @@ pub(crate) mod tests {
 
     fn new_test_builtin_entry(
         deployment_slot: Slot,
-        effective_slot: Slot,
+        _effective_slot: Slot,
     ) -> Arc<ProgramCacheEntry> {
-        debug_assert_eq!(effective_slot, deployment_slot);
+        debug_assert_eq!(_effective_slot, deployment_slot);
         Arc::new(ProgramCacheEntry {
             program: ProgramCacheEntryType::Builtin(BuiltinProgram::new_mock()),
             account_owner: ProgramCacheEntryOwner::NativeLoader,
             deployment_slot,
-            effective_slot,
             stats: Arc::default(),
             latest_access_slot: AtomicU64::default(),
         })
@@ -1458,7 +1456,6 @@ pub(crate) mod tests {
                         )), // Assign them different environments
                         account_owner: ProgramCacheEntryOwner::LoaderV2,
                         deployment_slot,
-                        effective_slot: deployment_slot.saturating_add(delay_visibility as u64),
                         stats: Arc::default(),
                         latest_access_slot: AtomicU64::new(deployment_slot),
                     }
@@ -1532,7 +1529,6 @@ pub(crate) mod tests {
                 program: old,
                 account_owner: ProgramCacheEntryOwner::LoaderV2,
                 deployment_slot: 10,
-                effective_slot: 11,
                 stats: Arc::default(),
                 latest_access_slot: AtomicU64::default(),
             }),
@@ -1545,7 +1541,6 @@ pub(crate) mod tests {
                 program: new,
                 account_owner: ProgramCacheEntryOwner::LoaderV2,
                 deployment_slot: 10,
-                effective_slot: 11,
                 stats: Arc::default(),
                 latest_access_slot: AtomicU64::default(),
             }),
@@ -1580,7 +1575,6 @@ pub(crate) mod tests {
                 program: old,
                 account_owner: ProgramCacheEntryOwner::LoaderV2,
                 deployment_slot: 10,
-                effective_slot: 11,
                 stats: Arc::default(),
                 latest_access_slot: AtomicU64::default(),
             }),
@@ -1593,7 +1587,6 @@ pub(crate) mod tests {
                 program: new,
                 account_owner: ProgramCacheEntryOwner::LoaderV2,
                 deployment_slot: 10,
-                effective_slot: 11,
                 stats: Arc::default(),
                 latest_access_slot: AtomicU64::default(),
             }),
@@ -1609,7 +1602,6 @@ pub(crate) mod tests {
             program: ProgramCacheEntryType::Closed,
             account_owner: ProgramCacheEntryOwner::LoaderV2,
             deployment_slot: 9,
-            effective_slot: 9,
             stats: Arc::default(),
             latest_access_slot: AtomicU64::default(),
         });
@@ -1617,7 +1609,6 @@ pub(crate) mod tests {
             program: ProgramCacheEntryType::Closed,
             account_owner: ProgramCacheEntryOwner::LoaderV2,
             deployment_slot: 10,
-            effective_slot: 10,
             stats: Arc::default(),
             latest_access_slot: AtomicU64::default(),
         });
@@ -1625,7 +1616,6 @@ pub(crate) mod tests {
             program: ProgramCacheEntryType::Unloaded(get_mock_program_runtime_environment()),
             account_owner: ProgramCacheEntryOwner::LoaderV2,
             deployment_slot: 10,
-            effective_slot: 11,
             stats: Arc::default(),
             latest_access_slot: AtomicU64::default(),
         });
@@ -1635,7 +1625,6 @@ pub(crate) mod tests {
             )),
             account_owner: ProgramCacheEntryOwner::LoaderV2,
             deployment_slot: 10,
-            effective_slot: 11,
             stats: Arc::default(),
             latest_access_slot: AtomicU64::default(),
         });
@@ -1794,7 +1783,6 @@ pub(crate) mod tests {
         let updated_program = Arc::new(ProgramCacheEntry {
             program: new_loaded_entry(new_env.clone()),
             deployment_slot: 20,
-            effective_slot: 21,
             ..Default::default()
         });
         cache.assign_program(&env, program1, 20, updated_program.clone());
@@ -1822,25 +1810,21 @@ pub(crate) mod tests {
         let old_program_old_env = Arc::new(ProgramCacheEntry {
             program: new_loaded_entry(env.clone()),
             deployment_slot: 10,
-            effective_slot: 11,
             ..Default::default()
         });
         let old_program_new_env = Arc::new(ProgramCacheEntry {
             program: new_loaded_entry(new_env.clone()),
             deployment_slot: 10,
-            effective_slot: 11,
             ..Default::default()
         });
         let new_program_old_env = Arc::new(ProgramCacheEntry {
             program: new_loaded_entry(env.clone()),
             deployment_slot: 20,
-            effective_slot: 21,
             ..Default::default()
         });
         let new_program_new_env = Arc::new(ProgramCacheEntry {
             program: new_loaded_entry(new_env.clone()),
             deployment_slot: 20,
-            effective_slot: 21,
             ..Default::default()
         });
         cache.assign_program(&env, program1, 10, old_program_old_env.clone());
@@ -2379,7 +2363,6 @@ pub(crate) mod tests {
                 program: program_cache_entry_type,
                 account_owner: ProgramCacheEntryOwner::LoaderV2,
                 deployment_slot: 0,
-                effective_slot: 0,
                 stats: Arc::default(),
                 latest_access_slot: AtomicU64::default(),
             });
