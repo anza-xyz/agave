@@ -47,7 +47,6 @@ use {
     solana_svm_feature_set::SVMFeatureSet,
     solana_svm_log_collector::{ic_logger_msg, ic_msg},
     solana_svm_type_overrides::sync::Arc,
-    solana_sysvar::SysvarSerialize,
     solana_transaction_context::vm_slice::VmSlice,
     std::{
         alloc::Layout,
@@ -2871,7 +2870,7 @@ mod tests {
         super::*,
         assert_matches::assert_matches,
         core::slice,
-        solana_account::{AccountSharedData, create_account_shared_data_for_test},
+        solana_account::{AccountSharedData, WritableAccount},
         solana_account_info::AccountInfo,
         solana_clock::Clock,
         solana_epoch_rewards::EpochRewards,
@@ -2914,11 +2913,14 @@ mod tests {
         test_case::test_case,
     };
 
-    fn create_stake_history_account_for_test(stake_history: &StakeHistory) -> AccountSharedData {
-        let data_len = STAKE_HISTORY_ACCOUNT_SIZE
-            .max(bincode::serialized_size(stake_history).unwrap() as usize);
+    fn create_account_shared_data_for_test<T>(value: &T, data_len: usize) -> AccountSharedData
+    where
+        T: wincode::Serialize<Src = T>,
+    {
+        let serialized_len = wincode::serialized_size(value).unwrap() as usize;
+        let data_len = data_len.max(serialized_len);
         let mut account = AccountSharedData::new(1, data_len, &sysvar::id());
-        account.serialize_data(stake_history).unwrap();
+        wincode::serialize_into(account.data_as_mut_slice(), value).unwrap();
         account
     }
 
@@ -4356,27 +4358,30 @@ mod tests {
         let transaction_accounts = vec![
             (
                 sysvar::clock::id(),
-                create_account_shared_data_for_test(&src_clock),
+                create_account_shared_data_for_test(&src_clock, solana_clock::SIZE),
             ),
             (
                 sysvar::epoch_schedule::id(),
-                create_account_shared_data_for_test(&src_epochschedule),
+                create_account_shared_data_for_test(
+                    &src_epochschedule,
+                    solana_epoch_schedule::SIZE,
+                ),
             ),
             (
                 sysvar::fees::id(),
-                create_account_shared_data_for_test(&src_fees),
+                create_account_shared_data_for_test(&src_fees, solana_sysvar::fees::SIZE),
             ),
             (
                 sysvar::rent::id(),
-                create_account_shared_data_for_test(&src_rent),
+                create_account_shared_data_for_test(&src_rent, solana_sysvar::rent::SIZE),
             ),
             (
                 sysvar::epoch_rewards::id(),
-                create_account_shared_data_for_test(&src_rewards),
+                create_account_shared_data_for_test(&src_rewards, solana_epoch_rewards::SIZE),
             ),
             (
                 sysvar::last_restart_slot::id(),
-                create_account_shared_data_for_test(&src_restart),
+                create_account_shared_data_for_test(&src_restart, solana_last_restart_slot::SIZE),
             ),
         ];
         with_mock_invoke_context!(invoke_context, transaction_context, transaction_accounts);
@@ -4386,7 +4391,7 @@ mod tests {
             let mut got_clock_obj = Clock::default();
             let got_clock_obj_va = 0x100000000;
 
-            let mut got_clock_buf = vec![0; Clock::size_of()];
+            let mut got_clock_buf = vec![0; solana_clock::SIZE];
             let got_clock_buf_va = 0x200000000;
             let clock_id_va = 0x300000000;
             let clock_id = Clock::id().to_bytes();
@@ -4425,7 +4430,7 @@ mod tests {
                 clock_id_va,
                 got_clock_buf_va,
                 0,
-                Clock::size_of() as u64,
+                solana_clock::SIZE as u64,
                 0,
             );
             assert_eq!(result.unwrap(), 0);
@@ -4441,7 +4446,7 @@ mod tests {
             let mut got_epochschedule_obj = EpochSchedule::default();
             let got_epochschedule_obj_va = 0x100000000;
 
-            let mut got_epochschedule_buf = vec![0; EpochSchedule::size_of()];
+            let mut got_epochschedule_buf = vec![0; solana_epoch_schedule::SIZE];
             let got_epochschedule_buf_va = 0x200000000;
             let epochschedule_id_va = 0x300000000;
             let epochschedule_id = EpochSchedule::id().to_bytes();
@@ -4496,7 +4501,7 @@ mod tests {
                 epochschedule_id_va,
                 got_epochschedule_buf_va,
                 0,
-                EpochSchedule::size_of() as u64,
+                solana_epoch_schedule::SIZE as u64,
                 0,
             );
             assert_eq!(result.unwrap(), 0);
@@ -4546,7 +4551,7 @@ mod tests {
             let mut got_rent_obj = create_filled_type::<Rent>(true);
             let got_rent_obj_va = 0x100000000;
 
-            let mut got_rent_buf = vec![0; Rent::size_of()];
+            let mut got_rent_buf = vec![0; solana_sysvar::rent::SIZE];
             let got_rent_buf_va = 0x200000000;
             let rent_id_va = 0x300000000;
             let rent_id = Rent::id().to_bytes();
@@ -4583,7 +4588,7 @@ mod tests {
                 rent_id_va,
                 got_rent_buf_va,
                 0,
-                Rent::size_of() as u64,
+                solana_sysvar::rent::SIZE as u64,
                 0,
             );
             assert_eq!(result.unwrap(), 0);
@@ -4601,7 +4606,7 @@ mod tests {
             let mut got_rewards_obj = create_filled_type::<EpochRewards>(true);
             let got_rewards_obj_va = 0x100000000;
 
-            let mut got_rewards_buf = vec![0; EpochRewards::size_of()];
+            let mut got_rewards_buf = vec![0; solana_epoch_rewards::SIZE];
             let got_rewards_buf_va = 0x200000000;
             let rewards_id_va = 0x300000000;
             let rewards_id = EpochRewards::id().to_bytes();
@@ -4649,7 +4654,7 @@ mod tests {
                 rewards_id_va,
                 got_rewards_buf_va,
                 0,
-                EpochRewards::size_of() as u64,
+                solana_epoch_rewards::SIZE as u64,
                 0,
             );
             assert_eq!(result.unwrap(), 0);
@@ -4667,7 +4672,7 @@ mod tests {
             let mut got_restart_obj = LastRestartSlot::default();
             let got_restart_obj_va = 0x100000000;
 
-            let mut got_restart_buf = vec![0; LastRestartSlot::size_of()];
+            let mut got_restart_buf = vec![0; solana_last_restart_slot::SIZE];
             let got_restart_buf_va = 0x200000000;
             let restart_id_va = 0x300000000;
             let restart_id = LastRestartSlot::id().to_bytes();
@@ -4708,7 +4713,7 @@ mod tests {
                 restart_id_va,
                 got_restart_buf_va,
                 0,
-                LastRestartSlot::size_of() as u64,
+                solana_last_restart_slot::SIZE as u64,
                 0,
             );
             assert_eq!(result.unwrap(), 0);
@@ -4752,7 +4757,7 @@ mod tests {
 
         let transaction_accounts = vec![(
             sysvar::stake_history::id(),
-            create_stake_history_account_for_test(&src_history),
+            create_account_shared_data_for_test(&src_history, STAKE_HISTORY_ACCOUNT_SIZE),
         )];
         with_mock_invoke_context!(invoke_context, transaction_context, transaction_accounts);
 
@@ -4811,17 +4816,17 @@ mod tests {
 
         let src_hashes = src_hashes;
 
-        let mut src_hashes_buf = vec![0; SlotHashes::size_of()];
+        let mut src_hashes_buf = vec![0; solana_slot_hashes::SIZE];
         wincode::serialize_into(&mut src_hashes_buf, &src_hashes).unwrap();
 
         let transaction_accounts = vec![(
             sysvar::slot_hashes::id(),
-            create_account_shared_data_for_test(&src_hashes),
+            create_account_shared_data_for_test(&src_hashes, solana_slot_hashes::SIZE),
         )];
         with_mock_invoke_context!(invoke_context, transaction_context, transaction_accounts);
 
         {
-            let mut got_hashes_buf = vec![0; SlotHashes::size_of()];
+            let mut got_hashes_buf = vec![0; solana_slot_hashes::SIZE];
             let got_hashes_buf_va = 0x100000000;
             let hashes_id_va = 0x200000000;
             let hashes_id = SlotHashes::id().to_bytes();
@@ -4846,7 +4851,7 @@ mod tests {
                 hashes_id_va,
                 got_hashes_buf_va,
                 0,
-                SlotHashes::size_of() as u64,
+                solana_slot_hashes::SIZE as u64,
                 0,
             );
             assert_eq!(result.unwrap(), 0);
@@ -4870,16 +4875,16 @@ mod tests {
         let clock_id_va = 0x300000000;
         let clock_id = Clock::id().to_bytes();
 
-        let mut got_clock_buf_rw = vec![0; Clock::size_of()];
+        let mut got_clock_buf_rw = vec![0; solana_clock::SIZE];
         let got_clock_buf_rw_va = 0x400000000;
 
-        let got_clock_buf_ro = vec![0; Clock::size_of()];
+        let got_clock_buf_ro = [0; solana_clock::SIZE];
         let got_clock_buf_ro_va = 0x500000000;
 
         let access_violation_err =
             std::mem::discriminant(&EbpfError::AccessViolation(AccessType::Load, 0, 0, ""));
 
-        let got_clock_empty = vec![0; Clock::size_of()];
+        let got_clock_empty = vec![0; solana_clock::SIZE];
 
         {
             // start without the clock sysvar because we expect to hit specific errors before loading it
@@ -4906,7 +4911,7 @@ mod tests {
                 clock_id_va + 1,
                 got_clock_buf_rw_va,
                 0,
-                Clock::size_of() as u64,
+                solana_clock::SIZE as u64,
                 0,
             )
             .unwrap_err();
@@ -4923,7 +4928,7 @@ mod tests {
                 clock_id_va,
                 got_clock_buf_rw_va + 1,
                 0,
-                Clock::size_of() as u64,
+                solana_clock::SIZE as u64,
                 0,
             )
             .unwrap_err();
@@ -4939,7 +4944,7 @@ mod tests {
                 clock_id_va,
                 got_clock_buf_ro_va,
                 0,
-                Clock::size_of() as u64,
+                solana_clock::SIZE as u64,
                 0,
             )
             .unwrap_err();
@@ -4955,8 +4960,8 @@ mod tests {
                 &mut invoke_context,
                 clock_id_va,
                 got_clock_buf_rw_va,
-                u64::MAX - Clock::size_of() as u64 / 2,
-                Clock::size_of() as u64,
+                u64::MAX - solana_clock::SIZE as u64 / 2,
+                solana_clock::SIZE as u64,
                 0,
             )
             .unwrap_err();
@@ -4976,7 +4981,7 @@ mod tests {
                 clock_id_va,
                 got_clock_buf_rw_va,
                 0,
-                Clock::size_of() as u64,
+                solana_clock::SIZE as u64,
                 0,
             )
             .unwrap();
@@ -4988,7 +4993,7 @@ mod tests {
         {
             let transaction_accounts = vec![(
                 sysvar::clock::id(),
-                create_account_shared_data_for_test(&src_clock),
+                create_account_shared_data_for_test(&src_clock, solana_clock::SIZE),
             )];
             let memory_mapping = unsafe {
                 MemoryMapping::new(
@@ -5013,7 +5018,7 @@ mod tests {
                 clock_id_va,
                 got_clock_buf_rw_va,
                 1,
-                Clock::size_of() as u64,
+                solana_clock::SIZE as u64,
                 0,
             )
             .unwrap();
@@ -5027,7 +5032,7 @@ mod tests {
                 clock_id_va,
                 got_clock_buf_rw_va,
                 0,
-                Clock::size_of() as u64,
+                solana_clock::SIZE as u64,
                 0,
             )
             .unwrap();
