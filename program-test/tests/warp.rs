@@ -1,10 +1,12 @@
 #![allow(clippy::arithmetic_side_effects)]
 
 mod setup;
+mod shared;
 
 use {
     bincode::deserialize,
     setup::{setup_stake, setup_vote},
+    shared::from_account_info,
     solana_account_info::{AccountInfo, next_account_info},
     solana_banks_client::BanksClient,
     solana_clock::Clock,
@@ -19,7 +21,7 @@ use {
         instruction as stake_instruction,
         state::{StakeActivationStatus, StakeStateV2},
     },
-    solana_sysvar::{SysvarSerialize, clock},
+    solana_sysvar::clock,
     solana_transaction::Transaction,
     solana_transaction_error::TransactionError,
     std::{convert::TryInto, slice},
@@ -35,7 +37,7 @@ fn process_instruction(
 ) -> ProgramResult {
     let account_info_iter = &mut accounts.iter();
     let clock_info = next_account_info(account_info_iter)?;
-    let clock = &Clock::from_account_info(clock_info)?;
+    let clock = from_account_info::<Clock>(clock_info)?;
     let expected_slot = u64::from_le_bytes(input.try_into().unwrap());
     if clock.slot == expected_slot {
         Ok(())
