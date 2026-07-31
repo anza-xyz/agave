@@ -5,7 +5,10 @@ mod stats;
 mod timers;
 
 use {
-    crate::{common::DELTA_TIMEOUT, event::VotorEvent},
+    crate::{
+        common::{DELTA_TIMEOUT, blocking_send},
+        event::VotorEvent,
+    },
     agave_votor_messages::migration::MigrationStatus,
     crossbeam_channel::Sender,
     parking_lot::RwLock as PlRwLock,
@@ -36,26 +39,31 @@ impl TimerManager {
         exit: Arc<AtomicBool>,
         migration_status: Arc<MigrationStatus>,
     ) -> Self {
-        let timers = Arc::new(PlRwLock::new(Timers::new(DELTA_TIMEOUT, event_sender)));
+        let timers = Arc::new(PlRwLock::new(Timers::new(DELTA_TIMEOUT)));
         let handle = {
             let timers = Arc::clone(&timers);
             thread::spawn(move || {
                 let _ = migration_status.wait_for_migration_or_exit(exit.as_ref());
                 while !exit.load(Ordering::Relaxed) {
-                    let my_pubkey = cluster_info.id();
-                    let duration = match timers.write().progress(&my_pubkey, Instant::now()) {
-                        Err(channel_name) => {
+                    let (duration, events) = timers.write().progress(Instant::now());
+                    let my_pubkey = &cluster_info.id();
+                    for event in events {
+                        if let Err(channel_name) =
+                            blocking_send(my_pubkey, &event_sender, event, "votor_event_sender")
+                        {
                             warn!("{my_pubkey}: {channel_name} disconnected. Exiting");
                             exit.store(true, Ordering::Relaxed);
-                            break;
+                            return;
                         }
-                        Ok(None) => {
+                    }
+                    let duration = match duration {
+                        None => {
                             // No active timers, sleep for an arbitrary amount.
                             // This should be smaller than the minimum amount
                             // of time any newly added timers would take to expire.
                             Duration::from_millis(100)
                         }
-                        Ok(Some(next_fire)) => next_fire.duration_since(Instant::now()),
+                        Some(next_fire) => next_fire.duration_since(Instant::now()),
                     };
                     thread::park_timeout(duration);
                 }
