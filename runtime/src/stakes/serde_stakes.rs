@@ -4,8 +4,7 @@ use qualifier_attr::qualifiers;
 use wincode::SchemaWrite;
 use {
     super::{StakeAccount, Stakes},
-    crate::stake_history::StakeHistory,
-    imbl::HashMap as ImblHashMap,
+    crate::{stake_history::StakeHistory, stakes::StakeDelegationsMaps},
     serde::{Deserialize, Serialize, Serializer, ser::SerializeMap},
     solana_clock::Epoch,
     solana_pubkey::Pubkey,
@@ -153,7 +152,7 @@ struct SerdeStakeAccountsToStakeFormat {
 }
 
 #[cfg_attr(feature = "frozen-abi", derive(AbiExample))]
-struct SerdeStakeAccountMapToDelegationFormat(ImblHashMap<Pubkey, StakeAccount>);
+struct SerdeStakeAccountMapToDelegationFormat(StakeDelegationsMaps<StakeAccount>);
 impl Serialize for SerdeStakeAccountMapToDelegationFormat {
     fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
     where
@@ -168,7 +167,7 @@ impl Serialize for SerdeStakeAccountMapToDelegationFormat {
 }
 
 #[cfg_attr(feature = "frozen-abi", derive(AbiExample))]
-struct SerdeStakeAccountMapToStakeFormat(ImblHashMap<Pubkey, StakeAccount>);
+struct SerdeStakeAccountMapToStakeFormat(StakeDelegationsMaps<StakeAccount>);
 impl Serialize for SerdeStakeAccountMapToStakeFormat {
     fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
     where

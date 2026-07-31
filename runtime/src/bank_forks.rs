@@ -499,6 +499,8 @@ impl BankForks {
             {
                 self.migration_status.alpenglow_rooted_new_epoch(new_epoch);
             }
+
+            root_bank.update_stake_delegations_snapshot();
         }
         let root_tx_count = root_bank
             .parents_iter()

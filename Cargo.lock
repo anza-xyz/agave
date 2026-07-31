@@ -3986,6 +3986,8 @@ dependencies = [
  "equivalent",
  "hashbrown 0.17.0",
  "rayon",
+ "serde",
+ "serde_core",
 ]
 
 [[package]]
@@ -10190,6 +10192,7 @@ dependencies = [
  "crossbeam-utils",
  "dashmap",
  "imbl",
+ "indexmap 2.14.0",
  "itertools 0.14.0",
  "libc",
  "libsecp256k1",
@@ -10252,6 +10255,7 @@ dependencies = [
  "solana-message",
  "solana-metrics",
  "solana-native-token",
+ "solana-nohash-hasher",
  "solana-nonce",
  "solana-nonce-account",
  "solana-packet 4.2.0",
@@ -13326,6 +13330,7 @@ checksum = "66d967db7705dc29120bb6e8ce5b5a2e27734ed5976d1c904e95bd238d1c3c5a"
 dependencies = [
  "bv",
  "bytes",
+ "indexmap 2.14.0",
  "pastey",
  "proc-macro2",
  "quote",

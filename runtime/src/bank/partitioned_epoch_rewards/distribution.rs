@@ -10,6 +10,7 @@ use {
         },
         stake_account::StakeAccount,
         stake_delegation::delegation_effective_stake,
+        stakes::StakeDelegationsMaps,
     },
     log::error,
     serde::{Deserialize, Serialize},
@@ -17,7 +18,6 @@ use {
     solana_accounts_db::stake_rewards::{StakeReward, StakeRewardInfo},
     solana_clock::Epoch,
     solana_measure::measure_us,
-    solana_pubkey::Pubkey,
     solana_rent::Rent,
     solana_reward_info::RewardType,
     solana_stake_history::StakeHistory,
@@ -240,7 +240,7 @@ impl Bank {
         distribution_epoch: u64,
         stake_history: &StakeHistory,
         new_warmup_cooldown_rate_epoch: Option<Epoch>,
-        stakes_cache_accounts: &imbl::HashMap<Pubkey, StakeAccount<Delegation>>,
+        stakes_cache_accounts: &StakeDelegationsMaps<StakeAccount<Delegation>>,
         partitioned_stake_reward: &PartitionedStakeReward,
         rent: &Rent,
         adjust_delegations_for_rent: bool,
@@ -449,6 +449,7 @@ mod tests {
         solana_epoch_schedule::EpochSchedule,
         solana_hash::Hash,
         solana_native_token::LAMPORTS_PER_SOL,
+        solana_pubkey::Pubkey,
         solana_reward_info::RewardType,
         solana_stake_history::StakeHistoryEntry,
         solana_stake_interface::{
@@ -814,23 +815,24 @@ mod tests {
             },
             block_reward,
         };
-        let stakes_cache = bank.stakes_cache.stakes();
-        let stakes_cache_accounts = stakes_cache.stake_delegations();
-        assert_eq!(
-            Bank::build_updated_stake_reward(
-                distribution_epoch,
-                &stake_history,
-                new_warmup_cooldown_rate_epoch,
-                stakes_cache_accounts,
-                &partitioned_stake_reward,
-                &rent,
-                adjust_delegations_for_rent,
-                true,
-            )
-            .unwrap_err(),
-            DistributionError::AccountNotFound
-        );
-        drop(stakes_cache);
+        {
+            let stakes_cache = bank.stakes_cache.stakes();
+            let stakes_cache_accounts = stakes_cache.stake_delegations();
+            assert_eq!(
+                Bank::build_updated_stake_reward(
+                    distribution_epoch,
+                    &stake_history,
+                    new_warmup_cooldown_rate_epoch,
+                    stakes_cache_accounts,
+                    &partitioned_stake_reward,
+                    &rent,
+                    adjust_delegations_for_rent,
+                    true,
+                )
+                .unwrap_err(),
+                DistributionError::AccountNotFound
+            );
+        }
 
         let overflowing_account = Pubkey::new_unique();
         let mut stake_account = AccountSharedData::new(
@@ -855,23 +857,24 @@ mod tests {
             },
             block_reward,
         };
-        let stakes_cache = bank.stakes_cache.stakes();
-        let stakes_cache_accounts = stakes_cache.stake_delegations();
-        assert_eq!(
-            Bank::build_updated_stake_reward(
-                distribution_epoch,
-                &stake_history,
-                new_warmup_cooldown_rate_epoch,
-                stakes_cache_accounts,
-                &partitioned_stake_reward,
-                &rent,
-                adjust_delegations_for_rent,
-                true,
-            )
-            .unwrap_err(),
-            DistributionError::ArithmeticOverflow
-        );
-        drop(stakes_cache);
+        {
+            let stakes_cache = bank.stakes_cache.stakes();
+            let stakes_cache_accounts = stakes_cache.stake_delegations();
+            assert_eq!(
+                Bank::build_updated_stake_reward(
+                    distribution_epoch,
+                    &stake_history,
+                    new_warmup_cooldown_rate_epoch,
+                    stakes_cache_accounts,
+                    &partitioned_stake_reward,
+                    &rent,
+                    adjust_delegations_for_rent,
+                    true,
+                )
+                .unwrap_err(),
+                DistributionError::ArithmeticOverflow
+            );
+        }
 
         let successful_account = Pubkey::new_unique();
         let starting_stake = new_stake.delegation.stake - stake_reward;
@@ -906,47 +909,48 @@ mod tests {
             },
             block_reward,
         };
-        let stakes_cache = bank.stakes_cache.stakes();
-        let stakes_cache_accounts = stakes_cache.stake_delegations();
-        let expected_lamports = starting_lamports + stake_reward + block_reward;
-        let mut expected_stake_account = AccountSharedData::new(
-            expected_lamports,
-            StakeStateV2::size_of(),
-            &solana_stake_interface::program::id(),
-        );
-        expected_stake_account
-            .set_state(&StakeStateV2::Stake(
-                Meta::default(),
-                new_stake,
-                StakeFlags::default(),
-            ))
-            .unwrap();
+        {
+            let stakes_cache = bank.stakes_cache.stakes();
+            let stakes_cache_accounts = stakes_cache.stake_delegations();
+            let expected_lamports = starting_lamports + stake_reward + block_reward;
+            let mut expected_stake_account = AccountSharedData::new(
+                expected_lamports,
+                StakeStateV2::size_of(),
+                &solana_stake_interface::program::id(),
+            );
+            expected_stake_account
+                .set_state(&StakeStateV2::Stake(
+                    Meta::default(),
+                    new_stake,
+                    StakeFlags::default(),
+                ))
+                .unwrap();
 
-        let expected_stake_reward = StakeReward {
-            stake_pubkey: successful_account,
-            stake_account: expected_stake_account,
-            stake_reward_info: StakeRewardInfo {
-                reward_type: RewardType::Staking,
-                lamports: (stake_reward + block_reward) as i64,
-                post_balance: expected_lamports,
-                commission_bps: Some(commission_bps),
-            },
-        };
-        assert_eq!(
-            Bank::build_updated_stake_reward(
-                distribution_epoch,
-                &stake_history,
-                new_warmup_cooldown_rate_epoch,
-                stakes_cache_accounts,
-                &partitioned_stake_reward,
-                &rent,
-                adjust_delegations_for_rent,
-                true,
-            )
-            .unwrap(),
-            expected_stake_reward
-        );
-        drop(stakes_cache);
+            let expected_stake_reward = StakeReward {
+                stake_pubkey: successful_account,
+                stake_account: expected_stake_account,
+                stake_reward_info: StakeRewardInfo {
+                    reward_type: RewardType::Staking,
+                    lamports: (stake_reward + block_reward) as i64,
+                    post_balance: expected_lamports,
+                    commission_bps: Some(commission_bps),
+                },
+            };
+            assert_eq!(
+                Bank::build_updated_stake_reward(
+                    distribution_epoch,
+                    &stake_history,
+                    new_warmup_cooldown_rate_epoch,
+                    stakes_cache_accounts,
+                    &partitioned_stake_reward,
+                    &rent,
+                    adjust_delegations_for_rent,
+                    true,
+                )
+                .unwrap(),
+                expected_stake_reward
+            );
+        }
 
         let deactivating_account = Pubkey::new_unique();
         let deactivating_stake = Stake {
@@ -991,6 +995,7 @@ mod tests {
             },
             block_reward: 0,
         };
+        bank.squash();
         let stakes_cache = bank.stakes_cache.stakes();
         let stakes_cache_accounts = stakes_cache.stake_delegations();
         let expected_lamports = starting_lamports + stake_reward;

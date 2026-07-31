@@ -1760,7 +1760,7 @@ impl Bank {
         // update vote accounts with warmed up stakes before saving a
         // snapshot of stakes in epoch stakes
         let stakes = self.stakes_cache.stakes();
-        let stake_delegations = stakes.stake_delegations_vec();
+        let stake_delegations = stakes.stake_delegations().indexed();
         let (
             (
                 stake_history,
@@ -5402,6 +5402,29 @@ impl Bank {
             ("slot", slot, i64),
             ("total_us", total_us, i64),
         );
+        let (snapshot_len, overrides_len, additions_len, removals_len) =
+            self.stakes_cache.stake_delegation_map_sizes();
+        datapoint_info!(
+            "bank-stake-delegations",
+            ("slot", slot, i64),
+            ("epoch", self.epoch(), i64),
+            ("snapshot_len", snapshot_len, i64),
+            (
+                "overlay_len",
+                overrides_len.saturating_add(additions_len),
+                i64
+            ),
+            ("overrides_len", overrides_len, i64),
+            ("additions_len", additions_len, i64),
+            ("removals_len", removals_len, i64),
+            (
+                "effective_len",
+                snapshot_len
+                    .saturating_add(additions_len)
+                    .saturating_sub(removals_len),
+                i64
+            ),
+        );
         info!(
             "bank frozen: {slot} hash: {hash} signature_count: {} last_blockhash: {} \
              capitalization: {}, accounts_lt_hash checksum: {accounts_lt_hash_checksum}, stats: \
@@ -5796,6 +5819,10 @@ impl Bank {
     pub fn vote_accounts(&self) -> Arc<VoteAccountsHashMap> {
         let stakes = self.stakes_cache.stakes();
         Arc::from(stakes.vote_accounts())
+    }
+
+    pub(crate) fn update_stake_delegations_snapshot(&self) {
+        self.stakes_cache.update_stake_delegations_snapshot();
     }
 
     /// Vote account for the given vote account pubkey.
