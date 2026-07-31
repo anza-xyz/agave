@@ -202,7 +202,13 @@ pub(crate) fn get_program_deployment_slot<CB: TransactionProcessingCallback>(
     loader: ProgramCacheEntryOwner,
 ) -> TransactionResult<Slot> {
     match loader {
-        ProgramCacheEntryOwner::LoaderV1 | ProgramCacheEntryOwner::LoaderV2 => Ok(0),
+        ProgramCacheEntryOwner::LoaderV1 | ProgramCacheEntryOwner::LoaderV2 => {
+            if program.data().is_empty() {
+                Err(TransactionError::ProgramAccountNotFound)
+            } else {
+                Ok(0)
+            }
+        }
         ProgramCacheEntryOwner::LoaderV3 => {
             if let Ok(UpgradeableLoaderState::Program {
                 programdata_address,
