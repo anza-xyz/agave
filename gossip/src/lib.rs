@@ -47,8 +47,6 @@ extern crate solana_frozen_abi_macro;
 #[macro_use]
 extern crate solana_metrics;
 
-// Internals exposed under `dev-context-only-utils` for out-of-crate conformance
-// harnesses (see the `agave-conformance` crate).
 #[cfg(feature = "dev-context-only-utils")]
 pub use protocol::{Ping, Protocol, PruneData, deserialize_protocol};
 

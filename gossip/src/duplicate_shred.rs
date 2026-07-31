@@ -63,8 +63,6 @@ impl DuplicateShred {
         self.chunk_index
     }
 
-    // Accessors exposed under `dev-context-only-utils` for the out-of-crate
-    // conformance harness (see the `agave-conformance` crate).
     #[cfg(any(test, feature = "dev-context-only-utils"))]
     #[cfg_attr(feature = "dev-context-only-utils", qualifiers(pub))]
     #[inline]

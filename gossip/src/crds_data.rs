@@ -314,8 +314,6 @@ pub struct LowestSlot {
 }
 
 impl LowestSlot {
-    // Accessors exposed under `dev-context-only-utils` for the out-of-crate
-    // conformance harness (see the `agave-conformance` crate).
     #[cfg(any(test, feature = "dev-context-only-utils"))]
     #[cfg_attr(feature = "dev-context-only-utils", qualifiers(pub))]
     pub(crate) fn wallclock(&self) -> u64 {
@@ -423,8 +421,6 @@ impl Vote {
         &self.transaction
     }
 
-    // Accessors exposed under `dev-context-only-utils` for the out-of-crate
-    // conformance harness (see the `agave-conformance` crate).
     #[cfg(any(test, feature = "dev-context-only-utils"))]
     #[cfg_attr(feature = "dev-context-only-utils", qualifiers(pub))]
     pub(crate) fn from(&self) -> &Pubkey {
