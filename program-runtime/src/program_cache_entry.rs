@@ -198,7 +198,6 @@ impl ProgramCacheEntry {
         loader_key: &Pubkey,
         program_runtime_environment: ProgramRuntimeEnvironment,
         deployment_slot: Slot,
-        _effective_slot: Slot,
         elf_bytes: &[u8],
         #[cfg(feature = "metrics")] metrics: &mut LoadProgramMetrics,
     ) -> Result<Self, Box<dyn std::error::Error>> {
@@ -206,7 +205,6 @@ impl ProgramCacheEntry {
             loader_key,
             program_runtime_environment,
             deployment_slot,
-            _effective_slot,
             elf_bytes,
             #[cfg(feature = "metrics")]
             metrics,
@@ -226,7 +224,6 @@ impl ProgramCacheEntry {
         loader_key: &Pubkey,
         program_runtime_environment: ProgramRuntimeEnvironment,
         deployment_slot: Slot,
-        _effective_slot: Slot,
         elf_bytes: &[u8],
         #[cfg(feature = "metrics")] metrics: &mut LoadProgramMetrics,
     ) -> Result<Self, Box<dyn std::error::Error>> {
@@ -234,7 +231,6 @@ impl ProgramCacheEntry {
             loader_key,
             program_runtime_environment,
             deployment_slot,
-            _effective_slot,
             elf_bytes,
             #[cfg(feature = "metrics")]
             metrics,
@@ -246,15 +242,10 @@ impl ProgramCacheEntry {
         loader_key: &Pubkey,
         program_runtime_environment: ProgramRuntimeEnvironment,
         deployment_slot: Slot,
-        _effective_slot: Slot,
         elf_bytes: &[u8],
         #[cfg(feature = "metrics")] metrics: &mut LoadProgramMetrics,
         reloading: bool,
     ) -> Result<Self, Box<dyn std::error::Error>> {
-        debug_assert_eq!(
-            _effective_slot,
-            deployment_slot.saturating_add(DELAY_VISIBILITY_SLOT_OFFSET),
-        );
         let entry_stats = ProgramStatistics::default();
         #[cfg(feature = "metrics")]
         let load_elf_time = solana_svm_measure::measure::Measure::start("load_elf_time");
@@ -460,7 +451,7 @@ mod tests {
             compilation_time_ema: AtomicU64::new(u64::MAX),
             ..Default::default()
         };
-        let program = new_test_entry_with_usage(0, 1, stats);
+        let program = new_test_entry_with_usage(0, stats);
         program.update_access_slot(1);
         assert!(
             dbg!(program.retention_score()) <= 129,
@@ -476,7 +467,7 @@ mod tests {
             compilation_time_ema: AtomicU64::new(1),
             ..Default::default()
         };
-        let program = new_test_entry_with_usage(10, 11, stats);
+        let program = new_test_entry_with_usage(10, stats);
         program.update_access_slot(15);
         let less_used_retention_score = program.retention_score();
         program.stats.uses.fetch_max(1024, Ordering::Relaxed);
@@ -499,7 +490,7 @@ mod tests {
             compilation_time_ema: AtomicU64::new(1000),
             ..Default::default()
         };
-        let program = new_test_entry_with_usage(10, 11, stats);
+        let program = new_test_entry_with_usage(10, stats);
         program.update_access_slot(15);
         let cheaper_to_compile_score = program.retention_score();
         program
@@ -526,7 +517,7 @@ mod tests {
             compilation_time_ema: AtomicU64::new(1000),
             ..Default::default()
         };
-        let program = new_test_entry_with_usage(10, 11, stats);
+        let program = new_test_entry_with_usage(10, stats);
         program.update_access_slot(15);
         let previous_score = program.retention_score();
         program

@@ -11,10 +11,7 @@ use {
             ProgramCacheForTxBatch, ProgramCacheMatchCriteria, ProgramRuntimeEnvironment,
             ProgramToLoad,
         },
-        program_cache_entry::{
-            DELAY_VISIBILITY_SLOT_OFFSET, ProgramCacheEntry, ProgramCacheEntryOwner,
-            ProgramCacheEntryType,
-        },
+        program_cache_entry::{ProgramCacheEntry, ProgramCacheEntryOwner, ProgramCacheEntryType},
     },
     solana_pubkey::Pubkey,
     solana_sdk_ids::{bpf_loader, bpf_loader_deprecated, bpf_loader_upgradeable, loader_v4},
@@ -124,7 +121,6 @@ pub fn load_program_with_pubkey<CB: TransactionProcessingCallback>(
             program_account.owner(),
             ProgramRuntimeEnvironment::clone(program_runtime_environment),
             0,
-            DELAY_VISIBILITY_SLOT_OFFSET,
             program_account.data(),
             #[cfg(feature = "metrics")]
             &mut load_program_metrics,
@@ -135,7 +131,6 @@ pub fn load_program_with_pubkey<CB: TransactionProcessingCallback>(
             program_account.owner(),
             ProgramRuntimeEnvironment::clone(program_runtime_environment),
             0,
-            DELAY_VISIBILITY_SLOT_OFFSET,
             program_account.data(),
             #[cfg(feature = "metrics")]
             &mut load_program_metrics,
@@ -155,7 +150,6 @@ pub fn load_program_with_pubkey<CB: TransactionProcessingCallback>(
                     program_account.owner(),
                     ProgramRuntimeEnvironment::clone(program_runtime_environment),
                     deployment_slot,
-                    deployment_slot.saturating_add(DELAY_VISIBILITY_SLOT_OFFSET),
                     programdata,
                     #[cfg(feature = "metrics")]
                     &mut load_program_metrics,
@@ -174,7 +168,6 @@ pub fn load_program_with_pubkey<CB: TransactionProcessingCallback>(
                         &loader_v4::id(),
                         ProgramRuntimeEnvironment::clone(program_runtime_environment),
                         deployment_slot,
-                        deployment_slot.saturating_add(DELAY_VISIBILITY_SLOT_OFFSET),
                         elf_bytes,
                         #[cfg(feature = "metrics")]
                         &mut load_program_metrics,
@@ -480,7 +473,6 @@ mod tests {
             &loader,
             ProgramRuntimeEnvironment::clone(&environment),
             slot,
-            slot.saturating_add(DELAY_VISIBILITY_SLOT_OFFSET),
             &buffer,
             #[cfg(feature = "metrics")]
             &mut metrics,
@@ -585,7 +577,6 @@ mod tests {
             account_data.owner(),
             ProgramRuntimeEnvironment::clone(&program_runtime_environment),
             0,
-            DELAY_VISIBILITY_SLOT_OFFSET,
             account_data.data(),
             #[cfg(feature = "metrics")]
             &mut LoadProgramMetrics::default(),
@@ -676,7 +667,6 @@ mod tests {
             account_data.owner(),
             ProgramRuntimeEnvironment::clone(&program_runtime_environment),
             0,
-            DELAY_VISIBILITY_SLOT_OFFSET,
             account_data.data(),
             #[cfg(feature = "metrics")]
             &mut LoadProgramMetrics::default(),
@@ -833,7 +823,6 @@ mod tests {
                     program: ProgramCacheEntryType::Builtin(BuiltinProgram::new_mock()),
                     account_owner: ProgramCacheEntryOwner::NativeLoader,
                     deployment_slot: 0,
-                    effective_slot: 0,
                     stats: Arc::default(),
                     latest_access_slot: AtomicU64::default(),
                 }),

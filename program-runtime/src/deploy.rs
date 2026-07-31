@@ -6,7 +6,7 @@ use {
     crate::{
         invoke_context::InvokeContext,
         loaded_programs::{ProgramCacheForTxBatch, ProgramRuntimeEnvironment},
-        program_cache_entry::{DELAY_VISIBILITY_SLOT_OFFSET, ProgramCacheEntry},
+        program_cache_entry::ProgramCacheEntry,
     },
     solana_clock::Slot,
     solana_instruction::error::InstructionError,
@@ -107,7 +107,6 @@ pub fn deploy_program(
             loader_key,
             program_runtime_environment,
             deployment_slot,
-            deployment_slot.saturating_add(DELAY_VISIBILITY_SLOT_OFFSET),
             programdata,
             #[cfg(feature = "metrics")]
             load_program_metrics,

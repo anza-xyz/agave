@@ -1035,7 +1035,6 @@ mod test_utils {
     use {
         super::*, solana_account::ReadableAccount,
         solana_program_runtime::loaded_programs::ProgramRuntimeEnvironment,
-        solana_program_runtime::program_cache_entry::DELAY_VISIBILITY_SLOT_OFFSET,
         solana_syscalls::create_program_runtime_environment,
     };
 
@@ -1076,12 +1075,10 @@ mod test_utils {
                     .data()
                     .get(programdata_data_offset.min(account.data().len())..)
                     .unwrap();
-                let effective_slot = DELAY_VISIBILITY_SLOT_OFFSET;
                 let loaded_program = ProgramCacheEntry::new(
                     owner,
                     ProgramRuntimeEnvironment::clone(&program_runtime_environment),
                     0,
-                    effective_slot,
                     programdata,
                     #[cfg(feature = "metrics")]
                     &mut LoadProgramMetrics::default(),
@@ -4100,7 +4097,6 @@ mod tests {
             program: ProgramCacheEntryType::Unloaded(env),
             account_owner: ProgramCacheEntryOwner::LoaderV2,
             deployment_slot: 0,
-            effective_slot: 0,
             stats: stats.into(),
             latest_access_slot: AtomicU64::new(0),
         };
@@ -4152,7 +4148,6 @@ mod tests {
             program: ProgramCacheEntryType::Unloaded(env),
             account_owner: ProgramCacheEntryOwner::LoaderV2,
             deployment_slot: 0,
-            effective_slot: 0,
             stats: stats.into(),
             latest_access_slot: AtomicU64::new(0),
         };
