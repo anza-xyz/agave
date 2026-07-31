@@ -194,20 +194,26 @@ impl BankForks {
     /// For use when we want to remove `slots` from `BankForks`. It's not safe to remove
     /// a bank if it's descendant(s) are still in BankForks.
     ///
-    /// Returns the supplied slots and any descendants that are still present in bank forks
-    pub fn slots_to_clear(&self, slots: impl IntoIterator<Item = Slot>) -> BTreeSet<Slot> {
+    /// Returns the supplied unrooted slots and all descendants that are still present in bank
+    /// forks as `slots_to_purge`, plus the subset that still has a bank as `banks_to_clear`.
+    pub fn slots_to_clear(
+        &self,
+        slots: impl IntoIterator<Item = Slot>,
+    ) -> (BTreeSet<Slot>, Vec<BankWithScheduler>) {
         let root = self.root();
-        let mut slots_to_clear = BTreeSet::new();
+        let mut slots_to_purge = BTreeSet::new();
+        let mut bank_slots_to_clear = BTreeSet::new();
 
-        for slot in slots.into_iter() {
+        for slot in slots {
             if slot <= root {
                 continue;
             }
+            slots_to_purge.insert(slot);
             if self.banks.contains_key(&slot) {
-                slots_to_clear.insert(slot);
+                bank_slots_to_clear.insert(slot);
             }
             if let Some(slot_descendants) = self.descendants.get(&slot) {
-                slots_to_clear.extend(
+                bank_slots_to_clear.extend(
                     slot_descendants
                         .iter()
                         .copied()
@@ -216,7 +222,15 @@ impl BankForks {
             }
         }
 
-        slots_to_clear
+        slots_to_purge.extend(&bank_slots_to_clear);
+        let banks_to_clear = bank_slots_to_clear
+            .into_iter()
+            .map(|slot| {
+                self.get_with_scheduler(slot)
+                    .expect("bank slot was present while collecting slots to clear")
+            })
+            .collect();
+        (slots_to_purge, banks_to_clear)
     }
 
     pub fn frozen_banks(&self) -> impl Iterator<Item = (Slot, Arc<Bank>)> + '_ {
@@ -553,6 +567,7 @@ impl BankForks {
         let set_root_start = Instant::now();
         let (removed_banks, set_root_metrics) =
             self.do_set_root_return_metrics(root, snapshot_controller, highest_super_majority_root);
+
         datapoint_info!(
             "bank-forks_set_root",
             (
@@ -1067,6 +1082,15 @@ mod tests {
         assert!(!migration_status.is_full_alpenglow_epoch());
 
         let root_bank = make_root_bank_for_migration_status_test(
+            ff_activation_slot + MIGRATION_SLOT_OFFSET,
+            Some(ff_activation_slot),
+            Some(genesis_cert.clone()),
+        );
+        let migration_status = BankForks::initialize_migration_status(&root_bank);
+        assert!(migration_status.is_alpenglow_enabled());
+        assert!(!migration_status.is_full_alpenglow_epoch());
+
+        let root_bank = make_root_bank_for_migration_status_test(
             64,
             Some(ff_activation_slot),
             Some(genesis_cert),
@@ -1161,17 +1185,43 @@ mod tests {
             &[(0, 1), (1, 2), (1, 3), (2, 4), (0, 5)],
         );
 
+        let slots = |slots: &[Slot]| {
+            let (slots_to_purge, banks_to_clear) = bank_forks
+                .read()
+                .unwrap()
+                .slots_to_clear(slots.iter().copied());
+            let bank_slots_to_clear = banks_to_clear
+                .iter()
+                .map(|bank| bank.slot())
+                .collect::<BTreeSet<_>>();
+            assert_eq!(banks_to_clear.len(), bank_slots_to_clear.len());
+            (slots_to_purge, bank_slots_to_clear)
+        };
         assert_eq!(
-            bank_forks.read().unwrap().slots_to_clear([2]),
-            [2, 4].into_iter().collect()
+            slots(&[2]),
+            ([2, 4].into_iter().collect(), [2, 4].into_iter().collect())
         );
         assert_eq!(
-            bank_forks.read().unwrap().slots_to_clear([1]),
-            [1, 2, 3, 4].into_iter().collect(),
+            slots(&[1]),
+            (
+                [1, 2, 3, 4].into_iter().collect(),
+                [1, 2, 3, 4].into_iter().collect(),
+            )
         );
         assert_eq!(
-            bank_forks.read().unwrap().slots_to_clear([0]),
-            BTreeSet::<Slot>::new()
+            slots(&[0]),
+            (BTreeSet::<Slot>::new(), BTreeSet::<Slot>::new())
+        );
+        assert_eq!(
+            slots(&[6]),
+            ([6].into_iter().collect(), BTreeSet::<Slot>::new())
+        );
+        assert_eq!(
+            slots(&[1, 2, 2, 3]),
+            (
+                [1, 2, 3, 4].into_iter().collect(),
+                [1, 2, 3, 4].into_iter().collect(),
+            )
         );
     }
 

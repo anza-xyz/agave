@@ -8,6 +8,7 @@ use {
     agave_votor_messages::consensus_message::{Block, BlockId},
     crossbeam_channel::Sender,
     solana_clock::Slot,
+    solana_hash::Hash,
     solana_ledger::{blockstore::Blockstore, leader_schedule_cache::LeaderScheduleCache},
     solana_pubkey::Pubkey,
     solana_rpc::{
@@ -36,7 +37,8 @@ pub(crate) struct RootContext {
 /// except the certificate pool
 pub(crate) fn set_root(
     my_pubkey: &Pubkey,
-    new_root: Slot,
+    new_root: Block,
+    bank_hash: Hash,
     ctx: &SharedContext,
     vctx: &mut VotingContext,
     rctx: &RootContext,
@@ -44,32 +46,32 @@ pub(crate) fn set_root(
     finalized_blocks: &mut BTreeSet<Block>,
     received_shred: &mut BTreeSet<Slot>,
 ) {
-    info!("{my_pubkey}: setting root {new_root}");
-    vctx.vote_history.set_root(new_root);
-    *pending_blocks = pending_blocks.split_off(&new_root);
-    // TODO: setting this to random value seems problematic
+    let new_root_slot = new_root.slot;
+    info!("{my_pubkey}: setting root {new_root:?}");
+    vctx.vote_history.set_root(new_root_slot);
+    *pending_blocks = pending_blocks.split_off(&new_root_slot);
     *finalized_blocks = finalized_blocks.split_off(&Block {
-        slot: new_root,
+        slot: new_root_slot,
         block_id: BlockId::default(),
     });
-    *received_shred = received_shred.split_off(&new_root);
+    *received_shred = received_shred.split_off(&new_root_slot);
 
-    rctx.bank_forks_controller
-        .enqueue_set_root(new_root, new_root, Some(new_root));
+    rctx.bank_forks_controller.enqueue_set_root(new_root);
 
-    // Distinguish between duplicate versions of same slot
-    let hash = ctx.bank_forks.read().unwrap().bank_hash(new_root).unwrap();
-    if let Err(e) =
-        ctx.blockstore
-            .insert_optimistic_slot(new_root, &hash, timestamp().try_into().unwrap())
-    {
-        error!("failed to record optimistic slot in blockstore: slot={new_root}: {e:?}");
+    if let Err(e) = ctx.blockstore.insert_optimistic_slot(
+        new_root_slot,
+        &bank_hash,
+        timestamp().try_into().unwrap(),
+    ) {
+        error!("failed to record optimistic slot in blockstore: slot={new_root_slot}: {e:?}");
     }
 
-    if let Err(err) =
-        update_commitment_cache(CommitmentType::Rooted, new_root, &vctx.commitment_sender)
-    {
-        warn!("failed to update Alpenglow rooted commitment for root {new_root}: {err}");
+    if let Err(err) = update_commitment_cache(
+        CommitmentType::Rooted,
+        new_root_slot,
+        &vctx.commitment_sender,
+    ) {
+        warn!("failed to update Alpenglow rooted commitment for root {new_root_slot}: {err}");
     }
 
     // It is critical to send the OC notification in order to keep compatibility with
@@ -81,9 +83,8 @@ pub(crate) fn set_root(
             .dependency_tracker
             .as_ref()
             .map(|s| s.get_current_declared_work());
-        // TODO: propagate error
         let _ = config.sender.send((
-            BankNotification::OptimisticallyConfirmed(new_root, hash),
+            BankNotification::OptimisticallyConfirmed(new_root_slot, bank_hash),
             dependency_work,
         ));
     }

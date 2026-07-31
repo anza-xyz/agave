@@ -186,20 +186,6 @@ pub fn default_num_flush_threads() -> NonZeroUsize {
     NonZeroUsize::new(std::cmp::max(2, num_cpus::get() / 4)).expect("non-zero system threads")
 }
 
-#[derive(Copy, Clone)]
-pub enum AccountsIndexScanResult {
-    /// if the entry is not in the in-memory index, do not add it unless the entry becomes dirty
-    OnlyKeepInMemoryIfDirty,
-    /// keep the entry in the in-memory index
-    KeepInMemory,
-    /// reduce refcount by 1
-    Unref,
-    /// reduce refcount by 1 and assert that ref_count = 0 after unref
-    UnrefAssert0,
-    /// reduce refcount by 1 and log if ref_count != 0 after unref
-    UnrefLog0,
-}
-
 #[derive(Debug)]
 /// T: account info type to interact in in-memory items
 /// U: account info type to be persisted to disk
@@ -493,30 +479,17 @@ impl<T: IndexValue, U: DiskIndexValue + From<T> + Into<T>> AccountsIndex<T, U> {
 
     /// Scan AccountsIndex for a given iterator of Pubkeys.
     ///
-    /// This fn takes 4 arguments.
+    /// This fn takes 3 arguments.
     ///  - an iterator of pubkeys to scan
     ///  - callback fn to run for each pubkey in the accounts index
-    ///  - avoid_callback_result. If it is Some(default), then callback is ignored and
-    ///    default is returned instead.
-    ///  - provide_entry_in_callback. If true, populate the ref of the Arc of the
-    ///    index entry to `callback` fn. Otherwise, provide None.
+    ///  - a ScanFilter to determine which accounts to scan
     ///
-    /// The `callback` fn must return `AccountsIndexScanResult`, which is
-    /// used to indicates whether the AccountIndex Entry should be added to
-    /// in-memory cache. The `callback` fn takes in 3 arguments:
+    /// The `callback` fn takes in 2 arguments:
     ///   - the first an immutable ref of the pubkey,
     ///   - the second an option of the SlotList and RefCount
-    ///   - the third an option of the AccountMapEntry, which is only populated
-    ///     when `provide_entry_in_callback` is true. Otherwise, it will be
-    ///     None.
-    pub(crate) fn scan<'a, F, I>(
-        &self,
-        pubkeys: I,
-        mut callback: F,
-        avoid_callback_result: Option<AccountsIndexScanResult>,
-        filter: ScanFilter,
-    ) where
-        F: FnMut(&'a Pubkey, Option<(&[SlotListItem<T>], RefCount)>) -> AccountsIndexScanResult,
+    pub(crate) fn scan<'a, F, I>(&self, pubkeys: I, mut callback: F, filter: ScanFilter)
+    where
+        F: FnMut(&'a Pubkey, Option<(&[SlotListItem<T>], RefCount)>),
         I: Iterator<Item = &'a Pubkey>,
     {
         let mut lock = None;
@@ -530,62 +503,17 @@ impl<T: IndexValue, U: DiskIndexValue + From<T> + Into<T>> AccountsIndex<T, U> {
             }
 
             let mut internal_callback = |entry: Option<&AccountMapEntry<T>>| {
-                let mut cache = false;
-                match entry {
-                    Some(locked_entry) => {
-                        let result = if let Some(result) = avoid_callback_result.as_ref() {
-                            *result
-                        } else {
-                            let slot_list = locked_entry.slot_list_read_lock();
-                            callback(pubkey, Some((slot_list.as_ref(), locked_entry.ref_count())))
-                        };
-                        cache = match result {
-                            AccountsIndexScanResult::Unref => {
-                                locked_entry.unref();
-                                true
-                            }
-                            AccountsIndexScanResult::UnrefAssert0 => {
-                                assert_eq!(
-                                    locked_entry.unref(),
-                                    1,
-                                    "ref count expected to be zero, but is {}! {pubkey}, {:?}",
-                                    locked_entry.ref_count(),
-                                    locked_entry.slot_list_read_lock(),
-                                );
-                                true
-                            }
-                            AccountsIndexScanResult::UnrefLog0 => {
-                                let old_ref = locked_entry.unref();
-                                if old_ref != 1 {
-                                    info!(
-                                        "Unexpected unref {pubkey} with {old_ref} {:?}, expect \
-                                         old_ref to be 1",
-                                        locked_entry.slot_list_read_lock()
-                                    );
-                                    datapoint_warn!(
-                                        "accounts_db-unexpected-unref-zero",
-                                        ("old_ref", old_ref, i64),
-                                        ("pubkey", pubkey.to_string(), String),
-                                    );
-                                }
-                                true
-                            }
-                            AccountsIndexScanResult::KeepInMemory => true,
-                            AccountsIndexScanResult::OnlyKeepInMemoryIfDirty => false,
-                        };
-                    }
-                    None => {
-                        avoid_callback_result.unwrap_or_else(|| callback(pubkey, None));
-                    }
+                if let Some(locked_entry) = entry {
+                    let slot_list = locked_entry.slot_list_read_lock();
+                    callback(pubkey, Some((slot_list.as_ref(), locked_entry.ref_count())));
+                } else {
+                    callback(pubkey, None);
                 }
-                (cache, ())
+                (false, ())
             };
 
             match filter {
                 ScanFilter::All => {
-                    // SAFETY: The caller must ensure that if `provide_entry_in_callback` is true, and
-                    // if it's possible for `callback` to clone the entry Arc, then it must also add
-                    // the entry to the in-mem cache if the entry is made dirty.
                     lock.as_ref()
                         .unwrap()
                         .get_internal_inner(pubkey, internal_callback);

@@ -43,12 +43,12 @@ use {
             StoreAccountsForFlushStats, StoreAccountsForShrinkStats, StoreAccountsForSquashStats,
             StoreAccountsUnfrozenStats, WriteAccountsToCacheStats,
         },
-        accounts_file::{AccountsFile, AccountsFileProvider},
+        accounts_file::AccountsFileProvider,
         accounts_hash::{AccountLtHash, AccountsLtHash, ZERO_LAMPORT_ACCOUNT_LT_HASH},
         accounts_index::{
-            AccountSecondaryIndexes, AccountsIndex, AccountsIndexScanResult, IndexKey,
-            ReclaimsSlotList, ReclaimsWithNewestSlot, RefCount, ScanFilter, SlotList, Startup,
-            UpsertReclaim, in_mem_accounts_index::StartupStats,
+            AccountSecondaryIndexes, AccountsIndex, IndexKey, ReclaimsSlotList,
+            ReclaimsWithNewestSlot, RefCount, ScanFilter, SlotList, Startup, UpsertReclaim,
+            in_mem_accounts_index::StartupStats,
         },
         accounts_scan::{ScanConfig, ScanError, ScanGuard, ScanResult, ScanTracker},
         accounts_update_notifier_interface::{AccountForGeyser, AccountsUpdateNotifier},
@@ -1637,7 +1637,6 @@ impl AccountsDb {
                 .for_each(|dirty_store_chunk| {
                     dirty_store_chunk.iter().for_each(|(_slot, store)| {
                         store
-                            .accounts
                             .scan_accounts_without_data(|_offset, account| {
                                 let pubkey = *account.pubkey();
                                 let is_zero_lamport = account.is_zero_lamport();
@@ -1777,25 +1776,8 @@ impl AccountsDb {
             || Box::new(append_vec::new_scan_accounts_reader()),
             |reader, storage| {
                 let slot = storage.slot();
-                // Obsolete accounts and tombstones are not tracked by the accounts index — obsolete
-                // accounts are skipped during index generation, and tombstones were removed from the
-                // index when shrink created them — so neither contributes to the index refcount.
-                // Skip them here too, otherwise we would count a physical copy the index never
-                // tracked and report a spurious mismatch.
-                let obsolete_accounts: IntSet<_> = storage
-                    .obsolete_accounts_read_lock()
-                    .filter_obsolete_accounts(None)
-                    .map(|(offset, _)| offset)
-                    .collect();
-                let tombstone_offsets = storage.tombstone_offsets_read_lock();
                 storage
-                    .accounts
-                    .scan_accounts(reader.as_mut(), |offset, account| {
-                        if obsolete_accounts.contains(&offset)
-                            || tombstone_offsets.contains(&offset)
-                        {
-                            return;
-                        }
+                    .scan_accounts(reader.as_mut(), |_offset, account| {
                         let pk = account.pubkey();
                         match pubkey_refcount.entry(*pk) {
                             dashmap::mapref::entry::Entry::Occupied(mut occupied_entry) => {
@@ -1808,7 +1790,7 @@ impl AccountsDb {
                             }
                         }
                     })
-                    .expect("must scan accounts storage")
+                    .expect("must scan accounts storage");
             },
         );
         let total = pubkey_refcount.len();
@@ -2005,9 +1987,7 @@ impl AccountsDb {
                             if !useless {
                                 useful += 1;
                             }
-                            AccountsIndexScanResult::OnlyKeepInMemoryIfDirty
                         },
-                        None,
                         if candidate_info.might_contain_zero_lamport_entry {
                             ScanFilter::All
                         } else {
@@ -2484,9 +2464,7 @@ impl AccountsDb {
                     do_populate_accounts_for_shrink(ref_count, &slot_list);
                 }
                 index += 1;
-                AccountsIndexScanResult::OnlyKeepInMemoryIfDirty
             },
-            None,
             self.scan_filter_for_shrinking,
         );
         assert_eq!(index, std::cmp::min(accounts.len(), count));
@@ -3482,7 +3460,7 @@ impl AccountsDb {
         &self,
         slot: Slot,
         cache_map_func: impl Fn(&LoadedAccount) -> Option<R> + Sync,
-        storage_fallback_func: impl Fn(&mut B, &AccountsFile) + Sync,
+        storage_fallback_func: impl Fn(&mut B, &AccountStorageEntry) + Sync,
     ) -> ScanStorageResult<R, B>
     where
         R: Send,
@@ -3532,7 +3510,7 @@ impl AccountsDb {
                 .storage
                 .get_slot_storage_entry_shrinking_in_progress_ok(slot)
             {
-                storage_fallback_func(&mut retval, &storage.accounts);
+                storage_fallback_func(&mut retval, &storage);
             }
 
             ScanStorageResult::Stored(retval)
@@ -4081,9 +4059,8 @@ impl AccountsDb {
             .get_slot_storage_entry_shrinking_in_progress_ok(remove_slot)
         {
             storage
-                .accounts
-                .scan_pubkeys(|pk| {
-                    stored_keys.insert((*pk, remove_slot));
+                .scan_accounts_without_data(|_offset, account| {
+                    stored_keys.insert((*account.pubkey(), remove_slot));
                 })
                 .expect("must scan accounts storage");
         }
@@ -4826,25 +4803,6 @@ impl AccountsDb {
             slot.saturating_add(offset as u64)
         } else {
             slot.saturating_sub(offset.unsigned_abs())
-        }
-    }
-
-    /// Returns all of the accounts' pubkeys for a given slot
-    pub fn get_pubkeys_for_slot(&self, slot: Slot) -> Vec<Pubkey> {
-        let scan_result = self.scan_cache_storage_fallback(
-            slot,
-            |loaded_account| Some(*loaded_account.pubkey()),
-            |accum: &mut HashSet<Pubkey>, storage| {
-                storage
-                    .scan_pubkeys(|pubkey| {
-                        accum.insert(*pubkey);
-                    })
-                    .expect("must scan accounts storage");
-            },
-        );
-        match scan_result {
-            ScanStorageResult::Cached(cached_result) => cached_result,
-            ScanStorageResult::Stored(stored_result) => stored_result.into_iter().collect(),
         }
     }
 
@@ -5769,26 +5727,8 @@ impl AccountsDb {
         // Since we scan the storage from oldest to newest, we can simply increment a local
         // counter per account and use that for the write version.
         let mut write_version_for_geyser = 0;
-
-        // Collect all the obsolete accounts in this storage into a hashset for fast lookup.
-        // Safe to pass in 'None' which will return all obsolete accounts in this Slot.
-        // Any accounts marked obsolete in a slot newer than the snapshot slot were filtered out
-        // when the obsolete account data was serialized to disk for fastboot
-        let obsolete_accounts: IntSet<_> = storage
-            .obsolete_accounts_read_lock()
-            .filter_obsolete_accounts(None)
-            .map(|(offset, _)| offset)
-            .collect();
-        let mut num_obsolete_accounts_skipped = 0;
-
-        storage
-            .accounts
+        let num_obsolete_accounts_skipped = storage
             .scan_accounts(reader, |offset, account| {
-                if obsolete_accounts.contains(&offset) {
-                    num_obsolete_accounts_skipped += 1;
-                    return;
-                }
-
                 let data_len = account.data.len();
                 stored_size_alive += storage.accounts.calculate_stored_size(data_len);
                 let is_account_zero_lamport = account.is_zero_lamport();
@@ -6026,7 +5966,6 @@ impl AccountsDb {
                 let store_id = storage.id();
                 let slot = storage.slot();
                 storage
-                    .accounts
                     .scan_accounts_without_data(|offset, account| {
                         let key = account.pubkey();
                         self.accounts_index.get_and_then(key, |entry| {
@@ -6334,9 +6273,7 @@ impl AccountsDb {
                         });
                     });
                 }
-                AccountsIndexScanResult::OnlyKeepInMemoryIfDirty
             },
-            None,
             ScanFilter::All,
         );
         (

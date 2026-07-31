@@ -311,6 +311,20 @@ mod tests {
     }
 
     #[test]
+    #[should_panic(
+        expected = "assertion failed: status.notar_fallbacks.len() <= MAX_NOTAR_FALLBACK_BLOCKS"
+    )]
+    fn test_too_many_notar_fallback_blocks() {
+        let cluster_info = get_cluster_info(Keypair::new());
+        let mut tracker = new_tracker(cluster_info, Block::default());
+        let mut events = vec![];
+
+        for _ in 0..=MAX_NOTAR_FALLBACK_BLOCKS {
+            tracker.add_new_notar_fallback_or_stronger(Block::new_unique(1), &mut events);
+        }
+    }
+
+    #[test]
     fn skips() {
         let cluster_info = get_cluster_info(Keypair::new());
         let genesis = Block::default();

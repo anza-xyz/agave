@@ -2487,7 +2487,6 @@ declare_builtin_function!(
             .consume_checked(cost.to_owned())?;
 
         let check_aligned = invoke_context.get_check_aligned();
-        let poseidon_enforce_padding = invoke_context.get_feature_set().poseidon_enforce_padding;
         let memory_mapping = invoke_context.memory_contexts.memory_mapping_mut()?;
         {
             // Just a check that this will map later for error compatibility with old code.
@@ -2505,11 +2504,7 @@ declare_builtin_function!(
             .map(|input| translate_vm_slice(input, memory_mapping, check_aligned))
             .collect::<Result<Vec<_>, Error>>()?;
 
-        let result = if poseidon_enforce_padding {
-            poseidon::hashv(parameters, endianness, inputs.as_slice())
-        } else {
-            poseidon::legacy::hashv(parameters, endianness, inputs.as_slice())
-        };
+        let result = poseidon::hashv(parameters, endianness, inputs.as_slice());
         let Ok(hash) = result else {
             return Ok(1);
         };

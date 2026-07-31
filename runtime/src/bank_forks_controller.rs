@@ -1,5 +1,6 @@
 use {
-    crate::{bank::Bank, installed_scheduler_pool::BankWithScheduler},
+    crate::{bank::Bank, bank_forks::BankForks, installed_scheduler_pool::BankWithScheduler},
+    agave_votor_messages::consensus_message::Block,
     crossbeam_channel::{Receiver, RecvTimeoutError, Sender, bounded},
     log::warn,
     solana_clock::Slot,
@@ -33,10 +34,19 @@ pub enum BankForksCommand {
     },
 }
 
+#[derive(Clone, Copy, Debug)]
 pub struct SetRootCommand {
-    pub parent_slot: Slot,
-    pub new_root: Slot,
-    pub highest_super_majority_root: Option<Slot>,
+    pub new_root: Block,
+}
+
+impl SetRootCommand {
+    /// Whether the requested root still identifies a frozen bank newer than the applied root.
+    pub fn matches_frozen_bank(&self, bank_forks: &BankForks) -> bool {
+        self.new_root.slot > bank_forks.root()
+            && bank_forks.get(self.new_root.slot).is_some_and(|bank| {
+                bank.is_frozen() && bank.block_id() == Some(self.new_root.block_id)
+            })
+    }
 }
 
 impl BankForksCommand {
@@ -60,12 +70,7 @@ impl fmt::Display for BankForksCommand {
 pub trait BankForksController: Send + Sync {
     fn insert_bank(&self, bank: Bank) -> Result<BankWithScheduler, BankForksControllerError>;
 
-    fn enqueue_set_root(
-        &self,
-        parent_slot: Slot,
-        new_root: Slot,
-        highest_super_majority_root: Option<Slot>,
-    );
+    fn enqueue_set_root(&self, new_root: Block);
 
     fn clear_bank(&self, slot: Slot) -> Result<(), BankForksControllerError>;
 }
@@ -157,25 +162,16 @@ impl BankForksController for BankForksControllerHandle {
         bank.ok_or(BankForksControllerError::UnableToInsertStaleBank(slot))
     }
 
-    fn enqueue_set_root(
-        &self,
-        parent_slot: Slot,
-        new_root: Slot,
-        highest_super_majority_root: Option<Slot>,
-    ) {
+    fn enqueue_set_root(&self, new_root: Block) {
         let total_start = Instant::now();
-        let command = SetRootCommand {
-            parent_slot,
-            new_root,
-            highest_super_majority_root,
-        };
+        let command = SetRootCommand { new_root };
 
         {
             let mut pending_set_root = self.pending_set_root.lock().unwrap();
             // Replay only needs to process the highest pending root.
             if pending_set_root
                 .as_ref()
-                .is_none_or(|pending| command.new_root > pending.new_root)
+                .is_none_or(|pending| command.new_root.slot > pending.new_root.slot)
             {
                 *pending_set_root = Some(command);
             }
@@ -187,7 +183,7 @@ impl BankForksController for BankForksControllerHandle {
         datapoint_info!(
             "bank_forks_controller-command",
             ("command", "set_root", String),
-            ("slot", new_root as i64, i64),
+            ("slot", new_root.slot as i64, i64),
             ("total_us", total_us, i64),
         );
     }
@@ -229,6 +225,7 @@ mod tests {
     use {
         super::*,
         crate::{bank::SlotLeader, bank_forks::BankForks, genesis_utils::create_genesis_config},
+        agave_votor_messages::consensus_message::BlockId,
         std::{thread, time::Duration},
     };
 
@@ -236,35 +233,85 @@ mod tests {
     fn test_bank_forks_controller_keeps_highest_pending_set_root() {
         let (controller, receiver) = BankForksControllerHandle::new();
 
-        controller.enqueue_set_root(5, 5, Some(5));
-        controller.enqueue_set_root(3, 3, Some(3));
-        assert_eq!(receiver.take_set_root_command().unwrap().new_root, 5);
+        let block_id_5 = BlockId::new_unique();
+        controller.enqueue_set_root(Block {
+            slot: 5,
+            block_id: block_id_5,
+        });
+        controller.enqueue_set_root(Block::new_unique(3));
+        let command = receiver.take_set_root_command().unwrap();
+        assert_eq!(command.new_root.slot, 5);
+        assert_eq!(command.new_root.block_id, block_id_5);
         assert!(receiver.take_set_root_command().is_none());
 
-        controller.enqueue_set_root(3, 3, Some(3));
-        controller.enqueue_set_root(5, 5, Some(5));
-        assert_eq!(receiver.take_set_root_command().unwrap().new_root, 5);
+        controller.enqueue_set_root(Block::new_unique(3));
+        controller.enqueue_set_root(Block {
+            slot: 5,
+            block_id: block_id_5,
+        });
+        assert_eq!(receiver.take_set_root_command().unwrap().new_root.slot, 5);
     }
 
     #[test]
     fn test_bank_forks_controller_signals_pending_set_root() {
         let (controller, receiver) = BankForksControllerHandle::new();
 
-        controller.enqueue_set_root(1, 1, Some(1));
+        controller.enqueue_set_root(Block::new_unique(1));
         receiver
             .set_root_signal_receiver()
             .recv_timeout(Duration::from_secs(1))
             .unwrap();
-        assert_eq!(receiver.take_set_root_command().unwrap().new_root, 1);
+        assert_eq!(receiver.take_set_root_command().unwrap().new_root.slot, 1);
 
-        controller.enqueue_set_root(2, 2, Some(2));
-        controller.enqueue_set_root(3, 3, Some(3));
+        controller.enqueue_set_root(Block::new_unique(2));
+        controller.enqueue_set_root(Block::new_unique(3));
         receiver
             .set_root_signal_receiver()
             .recv_timeout(Duration::from_secs(1))
             .unwrap();
         assert!(receiver.set_root_signal_receiver().try_recv().is_err());
-        assert_eq!(receiver.take_set_root_command().unwrap().new_root, 3);
+        assert_eq!(receiver.take_set_root_command().unwrap().new_root.slot, 3);
+    }
+
+    #[test]
+    fn test_set_root_command_matches_frozen_bank() {
+        let genesis = create_genesis_config(10_000);
+        let bank_forks = BankForks::new_rw_arc(Bank::new_for_tests(&genesis.genesis_config));
+        let parent_bank = bank_forks.read().unwrap().root_bank();
+        let bank = Bank::new_from_parent(parent_bank, SlotLeader::default(), 1);
+        let block_id = BlockId::new_unique();
+        bank.set_block_id(Some(block_id));
+        let bank = bank_forks
+            .write()
+            .unwrap()
+            .insert(bank)
+            .clone_without_scheduler();
+        let command = SetRootCommand {
+            new_root: Block { slot: 1, block_id },
+        };
+
+        assert!(!command.matches_frozen_bank(&bank_forks.read().unwrap()));
+        bank.freeze();
+        assert!(command.matches_frozen_bank(&bank_forks.read().unwrap()));
+
+        let mismatched_command = SetRootCommand {
+            new_root: Block {
+                block_id: BlockId::new_unique(),
+                ..command.new_root
+            },
+        };
+        assert!(!mismatched_command.matches_frozen_bank(&bank_forks.read().unwrap()));
+
+        let missing_command = SetRootCommand {
+            new_root: Block {
+                slot: 2,
+                block_id: BlockId::new_unique(),
+            },
+        };
+        assert!(!missing_command.matches_frozen_bank(&bank_forks.read().unwrap()));
+
+        bank_forks.write().unwrap().set_root(1, None, None);
+        assert!(!command.matches_frozen_bank(&bank_forks.read().unwrap()));
     }
 
     #[test]
@@ -277,11 +324,12 @@ mod tests {
         let replay_thread = thread::spawn(move || {
             loop {
                 if let Some(command) = receiver.take_set_root_command() {
+                    let new_root = command.new_root.slot;
                     {
                         let mut bank_forks = replay_bank_forks.write().unwrap();
-                        bank_forks.set_root(command.new_root, None, None);
+                        bank_forks.set_root(new_root, None, None);
                     }
-                    root_sender.send(command.new_root).unwrap();
+                    root_sender.send(new_root).unwrap();
                 }
                 let command = match receiver.receiver().recv_timeout(Duration::from_millis(10)) {
                     Ok(command) => command,
@@ -321,12 +369,14 @@ mod tests {
 
         let parent_bank = bank_forks.read().unwrap().root_bank();
         let bank = Bank::new_from_parent(parent_bank, SlotLeader::default(), 1);
+        let block_id = BlockId::new_unique();
+        bank.set_block_id(Some(block_id));
         bank.freeze();
         let inserted_bank = controller.insert_bank(bank).unwrap();
         assert_eq!(inserted_bank.slot(), 1);
         assert!(bank_forks.read().unwrap().get(1).is_some());
 
-        controller.enqueue_set_root(1, 1, None);
+        controller.enqueue_set_root(Block { slot: 1, block_id });
         assert_eq!(root_receiver.recv().unwrap(), 1);
         assert_eq!(bank_forks.read().unwrap().root(), 1);
 

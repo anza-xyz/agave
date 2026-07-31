@@ -2495,16 +2495,14 @@ impl ReplayStage {
             ancestor_slot = parent_slot;
         }
 
-        let slots_to_clear = bank_forks.read().unwrap().slots_to_clear(
-            blocks_to_switch
-                .iter()
-                .map(|(slot, _)| *slot)
-                .chain(original_dead_slots_to_clear.iter().copied()),
-        );
+        let slots_to_clear = blocks_to_switch
+            .iter()
+            .map(|(slot, _)| *slot)
+            .chain(original_dead_slots_to_clear.iter().copied());
 
-        info!("{my_pubkey}: Clearing banks for switching and descendants: {slots_to_clear:?}");
-        Self::clear_banks(
-            &slots_to_clear,
+        info!("{my_pubkey}: Clearing banks for switching: {slots_to_clear:?}");
+        Self::clear_slots(
+            slots_to_clear,
             bank_forks,
             progress,
             async_verification_freelist,
@@ -2529,19 +2527,22 @@ impl ReplayStage {
         Ok(())
     }
 
-    /// For slots to clear, clear the bank from progress, bank forks, and recycle the async verification
-    fn clear_banks(
-        slots_to_clear: &BTreeSet<Slot>,
+    /// Clear the requested slots and their descendants from progress, bank forks, and shared
+    /// caches. Requested slots are purged from shared caches even if their banks no longer exist.
+    fn clear_slots(
+        slots_to_clear: impl IntoIterator<Item = Slot>,
         bank_forks: &RwLock<BankForks>,
         progress: &mut ProgressMap,
         async_verification_freelist: &mut Vec<AsyncVerificationProgress>,
     ) {
-        if slots_to_clear.is_empty() {
+        let (slots_to_purge, banks_to_clear) =
+            bank_forks.read().unwrap().slots_to_clear(slots_to_clear);
+        if slots_to_purge.is_empty() {
             return;
         }
 
         // Wait for async verify to complete
-        for slot in slots_to_clear {
+        for slot in &slots_to_purge {
             if let Some(replay_progress) = progress.remove(slot) {
                 let mut w_replay_progress = replay_progress.replay_progress.write().unwrap();
                 let _ = w_replay_progress.wait_for_all_verification_results(&mut 0, &mut 0);
@@ -2552,49 +2553,48 @@ impl ReplayStage {
             }
         }
 
-        let banks_to_remove = {
-            let bank_forks = bank_forks.read().unwrap();
-            slots_to_clear
-                .iter()
-                .filter_map(|slot| bank_forks.get_with_scheduler(*slot))
-                .collect::<Vec<_>>()
-        };
-
         // Wait for any in progress execution
-        for bank in banks_to_remove {
+        for bank in banks_to_clear.iter() {
             let _ = bank.wait_for_completed_scheduler();
         }
+        let bank_slots_to_clear = banks_to_clear
+            .iter()
+            .map(|bank| bank.slot())
+            .collect::<BTreeSet<_>>();
 
-        // Dump the banks from bank forks
-        let (root_bank, slots_to_purge, removed_banks) = {
+        // Only dump banks that are still present. `slots_to_purge` can also contain slots that
+        // were already removed, but whose shared cache entries still need to be cleared before the
+        // slots are revived.
+        let (root_bank, slot_bank_ids_to_purge, removed_banks) = {
             let mut w_bank_forks = bank_forks.write().unwrap();
-            let slots_to_clear = slots_to_clear
-                .iter()
-                .copied()
-                .filter(|slot| w_bank_forks.get(*slot).is_some())
-                .collect::<BTreeSet<_>>();
-            if slots_to_clear.is_empty() {
-                return;
-            }
 
             let root_bank = w_bank_forks.root_bank();
-            let (slots_to_purge, removed_banks) =
-                w_bank_forks.dump_slots(slots_to_clear.iter(), false);
-            (root_bank, slots_to_purge, removed_banks)
+            let bank_slots_to_clear = bank_slots_to_clear
+                .into_iter()
+                .filter(|slot| w_bank_forks.get(*slot).is_some())
+                .collect::<BTreeSet<_>>();
+            let (slot_bank_ids_to_purge, removed_banks) =
+                w_bank_forks.dump_slots(bank_slots_to_clear.iter(), false);
+            (root_bank, slot_bank_ids_to_purge, removed_banks)
         };
 
         // Clear the accounts for these slots so that any ongoing RPC scans fail.
         // These have to be atomically cleared together in the same batch, in order
         // to prevent RPC from seeing inconsistent results in scans.
-        root_bank.remove_unrooted_slots(&slots_to_purge);
+        if !slot_bank_ids_to_purge.is_empty() {
+            root_bank.remove_unrooted_slots(&slot_bank_ids_to_purge);
+        }
 
         // Once the slots above have been purged, now it's safe to remove the banks from
         // BankForks, allowing the Bank::drop() purging to run and not race with the
         // `remove_unrooted_slots()` call.
+        drop(banks_to_clear);
         drop(removed_banks);
 
-        // Clear slot signatures from status cache and programs from program cache
-        for (slot, _) in slots_to_purge {
+        // Clear the shared caches even for requested slots whose banks were already removed.
+        // Those slots can be revived by an Alpenglow switch, and stale entries from the old block
+        // version must not affect replay of the new version.
+        for slot in slots_to_purge {
             root_bank.clear_slot_signatures(slot);
             root_bank.prune_program_cache_by_deployment_slot(slot);
         }
@@ -5166,16 +5166,21 @@ impl ReplayStage {
         my_pubkey: &Pubkey,
         progress: &mut ProgressMap,
     ) {
-        let SetRootCommand {
-            parent_slot,
-            new_root,
-            highest_super_majority_root,
-        } = command;
+        if !command.matches_frozen_bank(&context.bank_forks.read().unwrap()) {
+            warn!(
+                "{my_pubkey}: Ignoring stale SetRoot for slot {} block_id {}; the matching frozen \
+                 bank is no longer newer than the applied root",
+                command.new_root.slot, command.new_root.block_id,
+            );
+            return;
+        }
+
+        let new_root = command.new_root.slot;
         root_utils::check_and_handle_new_root(
-            parent_slot,
+            new_root,
             new_root,
             context.snapshot_controller.as_deref(),
-            highest_super_majority_root,
+            Some(new_root),
             &context.bank_notification_sender,
             &context.drop_bank_sender,
             &context.blockstore,
@@ -5227,8 +5232,8 @@ impl ReplayStage {
                 slot,
                 response_sender,
             } => {
-                Self::clear_banks(
-                    &BTreeSet::from([slot]),
+                Self::clear_slots(
+                    [slot],
                     &context.bank_forks,
                     progress,
                     async_verification_freelist,

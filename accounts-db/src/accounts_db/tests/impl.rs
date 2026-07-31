@@ -1,7 +1,7 @@
 use {
     super::*,
     crate::{
-        accounts_file::AccountsFileProvider,
+        accounts_file::{AccountsFile, AccountsFileProvider},
         accounts_index::{
             ACCOUNTS_INDEX_CONFIG_FOR_TESTING, AccountIndex, AccountSecondaryIndexesIncludeExclude,
             AccountsIndexConfig, IndexLimit, IndexLimitThreshold, test_utils::*,
@@ -6617,7 +6617,6 @@ fn populate_index(db: &AccountsDb, slots: Range<Slot>) {
         if let Some(storage) = db.get_storage_for_slot(slot) {
             let mut reader = crate::append_vec::new_scan_accounts_reader();
             storage
-                .accounts
                 .scan_accounts(&mut reader, |offset, account| {
                     let info = AccountInfo::new(
                         StorageLocation::AppendVec(storage.id(), offset),

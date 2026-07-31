@@ -603,6 +603,82 @@ fn test_handle_new_root() {
 }
 
 #[test]
+fn test_process_set_root_command_requires_matching_frozen_bank() {
+    let (mut vote_simulator, blockstore) = setup_forks_from_tree(tr(0) / tr(1), 1, None);
+    let bank_forks = vote_simulator.bank_forks.clone();
+    let blockstore = Arc::new(blockstore);
+    let root_bank = bank_forks.read().unwrap().root_bank();
+    let leader_schedule_cache = Arc::new(LeaderScheduleCache::new_from_bank(&root_bank));
+    let (drop_bank_sender, _drop_bank_receiver) = bounded(1024);
+    let context = ProcessBankForksContext {
+        bank_forks: bank_forks.clone(),
+        blockstore: blockstore.clone(),
+        snapshot_controller: None,
+        bank_notification_sender: None,
+        rpc_subscriptions: None,
+        drop_bank_sender,
+        leader_schedule_cache,
+    };
+    let my_pubkey = Pubkey::new_unique();
+
+    let missing_command = SetRootCommand {
+        new_root: Block::new_unique(2),
+    };
+    ReplayStage::process_set_root_command(
+        missing_command,
+        &context,
+        &my_pubkey,
+        &mut vote_simulator.progress,
+    );
+    assert_eq!(bank_forks.read().unwrap().root(), 0);
+    assert!(!blockstore.is_root(2));
+
+    let mismatched_command = SetRootCommand {
+        new_root: Block::new_unique(1),
+    };
+    ReplayStage::process_set_root_command(
+        mismatched_command,
+        &context,
+        &my_pubkey,
+        &mut vote_simulator.progress,
+    );
+    assert_eq!(bank_forks.read().unwrap().root(), 0);
+    assert!(!blockstore.is_root(1));
+
+    let unfrozen_block_id = BlockId::new_unique();
+    let unfrozen_bank = Bank::new_from_parent(root_bank, SlotLeader::default(), 2);
+    unfrozen_bank.set_block_id(Some(unfrozen_block_id));
+    bank_forks.write().unwrap().insert(unfrozen_bank);
+    let unfrozen_command = SetRootCommand {
+        new_root: Block {
+            slot: 2,
+            block_id: unfrozen_block_id,
+        },
+    };
+    ReplayStage::process_set_root_command(
+        unfrozen_command,
+        &context,
+        &my_pubkey,
+        &mut vote_simulator.progress,
+    );
+    assert_eq!(bank_forks.read().unwrap().root(), 0);
+    assert!(!blockstore.is_root(2));
+
+    let block_id = bank_forks.read().unwrap().block_id(1).unwrap();
+    let matching_command = SetRootCommand {
+        new_root: Block { slot: 1, block_id },
+    };
+    ReplayStage::process_set_root_command(
+        matching_command,
+        &context,
+        &my_pubkey,
+        &mut vote_simulator.progress,
+    );
+    assert_eq!(bank_forks.read().unwrap().root(), 1);
+    assert!(blockstore.is_root(1));
+}
+
+#[test]
 fn test_handle_new_root_ahead_of_highest_super_majority_root() {
     let genesis_config = create_genesis_config(10_000).genesis_config;
     let bank0 = Bank::new_for_tests(&genesis_config);
@@ -2576,6 +2652,39 @@ fn test_check_propagation_skip_propagation_check() {
         parent_slot,
         &progress_map,
     ));
+}
+
+#[test]
+fn test_clear_slots_clears_status_cache_for_removed_bank() {
+    let VoteSimulator {
+        bank_forks,
+        node_pubkeys,
+        validator_keypairs,
+        mut progress,
+        ..
+    } = VoteSimulator::new(1);
+    let bank0 = bank_forks.read().unwrap().get(0).unwrap();
+    let bank1 = Bank::new_from_parent(bank0, SlotLeader::default(), 1);
+    let sender = node_pubkeys[0];
+    let transfer_signature = bank1
+        .transfer(
+            1,
+            &validator_keypairs.get(&sender).unwrap().node_keypair,
+            &Pubkey::new_unique(),
+        )
+        .unwrap();
+    bank_forks.write().unwrap().insert(bank1);
+    let bank1 = bank_forks.read().unwrap().get(1).unwrap();
+    assert!(bank1.get_signature_status(&transfer_signature).is_some());
+
+    let removed_bank = bank_forks.write().unwrap().remove(1).unwrap();
+    drop(removed_bank);
+    assert!(bank_forks.read().unwrap().get(1).is_none());
+    assert!(bank1.get_signature_status(&transfer_signature).is_some());
+
+    ReplayStage::clear_slots([1], &bank_forks, &mut progress, &mut Vec::new());
+
+    assert!(bank1.get_signature_status(&transfer_signature).is_none());
 }
 
 #[test]

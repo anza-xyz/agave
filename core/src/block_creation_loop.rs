@@ -1409,17 +1409,13 @@ mod tests {
             Ok(self.bank_forks.write().unwrap().insert(bank))
         }
 
-        fn enqueue_set_root(
-            &self,
-            _parent_slot: Slot,
-            new_root: Slot,
-            highest_super_majority_root: Option<Slot>,
-        ) {
+        fn enqueue_set_root(&self, new_root: Block) {
+            let new_root = new_root.slot;
             // Test code only so we allow writing bank forks directly.
             self.bank_forks
                 .write()
                 .unwrap()
-                .set_root(new_root, None, highest_super_majority_root);
+                .set_root(new_root, None, Some(new_root));
         }
 
         fn clear_bank(&self, slot: Slot) -> Result<(), BankForksControllerError> {

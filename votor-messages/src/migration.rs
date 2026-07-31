@@ -389,7 +389,8 @@ impl MigrationStatus {
             }
             (Some(cert), Some(activation_slot)) => {
                 // Alpenglow is active, check if we're still in the mixed migration epoch
-                let migration_epoch = epoch_schedule.get_epoch(activation_slot);
+                let migration_epoch =
+                    epoch_schedule.get_epoch(activation_slot.saturating_add(MIGRATION_SLOT_OFFSET));
                 if root_epoch > migration_epoch {
                     MigrationPhase::FullAlpenglowEpoch {
                         full_alpenglow_epoch: migration_epoch.saturating_add(1),

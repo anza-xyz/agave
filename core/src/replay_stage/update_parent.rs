@@ -25,10 +25,7 @@ use {
         bank::Bank, bank_forks::BankForks, leader_schedule_utils::leader_slot_index,
         vote_sender_types::ReplayVoteSender,
     },
-    std::{
-        collections::BTreeSet,
-        sync::{Arc, RwLock},
-    },
+    std::sync::{Arc, RwLock},
 };
 
 /// Replay-start decision for a child bank discovered from blockstore metadata.
@@ -169,12 +166,7 @@ fn try_restart_slot_from_update_parent(
     if let Some(bank) = bank {
         send_invalid_bank(&bank, replay_vote_sender);
     }
-    ReplayStage::clear_banks(
-        &BTreeSet::from([slot]),
-        bank_forks,
-        progress,
-        async_verification_freelist,
-    );
+    ReplayStage::clear_slots([slot], bank_forks, progress, async_verification_freelist);
     true
 }
 
@@ -363,8 +355,8 @@ pub(super) fn handle_abandoned_bank(
 
     // Clear the bank from bank_forks. It will be recreated with the correct
     // parent by generate_new_bank_forks on the next iteration.
-    ReplayStage::clear_banks(
-        &BTreeSet::from([bank_slot]),
+    ReplayStage::clear_slots(
+        [bank_slot],
         bank_forks,
         progress,
         async_verification_freelist,

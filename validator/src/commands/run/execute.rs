@@ -55,7 +55,7 @@ use {
     solana_hash::Hash,
     solana_keypair::Keypair,
     solana_ledger::{
-        blockstore_cleanup_service::{DEFAULT_MAX_LEDGER_SHREDS, DEFAULT_MIN_MAX_LEDGER_SHREDS},
+        blockstore_options::BlockstoreCleanupStrategy,
         shred::filter::TurbineMode,
         use_snapshot_archives_at_startup::{self, UseSnapshotArchivesAtStartup},
     },
@@ -450,22 +450,7 @@ pub fn execute(
     let do_port_check = !matches.is_present("no_port_check");
 
     let ledger_path = run_args.ledger_path;
-
-    let max_ledger_shreds = if matches.is_present("limit_ledger_size") {
-        let limit_ledger_size = match matches.value_of("limit_ledger_size") {
-            Some(_) => value_t_or_exit!(matches, "limit_ledger_size", u64),
-            None => DEFAULT_MAX_LEDGER_SHREDS,
-        };
-        if limit_ledger_size < DEFAULT_MIN_MAX_LEDGER_SHREDS {
-            Err(format!(
-                "The provided --limit-ledger-size value was too small, the minimum value is \
-                 {DEFAULT_MIN_MAX_LEDGER_SHREDS}"
-            ))?;
-        }
-        Some(limit_ledger_size)
-    } else {
-        None
-    };
+    let blockstore_cleanup_strategy = BlockstoreCleanupStrategy::from_clap_arg_match(matches)?;
 
     let debug_keys: Option<Arc<HashSet<_>>> = if matches.is_present("debug_key") {
         Some(Arc::new(
@@ -811,7 +796,7 @@ pub fn execute(
         repair_whitelist,
         repair_handler_type: RepairHandlerType::default(),
         gossip_validators,
-        max_ledger_shreds,
+        blockstore_cleanup_strategy,
         blockstore_options: run_args.blockstore_options,
         run_verification: !matches.is_present("skip_startup_ledger_verification"),
         debug_keys,
