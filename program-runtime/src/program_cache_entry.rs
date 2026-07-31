@@ -361,19 +361,7 @@ impl ProgramCacheEntry {
     }
 
     pub(crate) fn is_implicit_delay_visibility_tombstone(&self, slot: Slot) -> bool {
-        match self.program {
-            ProgramCacheEntryType::Closed
-            | ProgramCacheEntryType::DelayVisibility
-            | ProgramCacheEntryType::FailedVerification(_)
-            | ProgramCacheEntryType::Builtin(_) => false,
-            ProgramCacheEntryType::Unloaded(_) | ProgramCacheEntryType::Loaded(_) => {
-                slot >= self.deployment_slot
-                    && slot
-                        < self
-                            .deployment_slot
-                            .saturating_add(DELAY_VISIBILITY_SLOT_OFFSET)
-            }
-        }
+        slot >= self.deployment_slot && slot < self.effective_slot()
     }
 
     pub fn effective_slot(&self) -> Slot {
