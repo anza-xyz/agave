@@ -230,8 +230,7 @@ pub(crate) fn get_program_deployment_slot<CB: TransactionProcessingCallback>(
     }
 }
 
-/// Appends to a set of executable program accounts (all accounts owned by any loader)
-/// for transactions with a valid blockhash or nonce.
+/// Returns the set of program accounts for a given batch of transactions.
 pub fn filter_executable_program_accounts<'a, CB: TransactionProcessingCallback>(
     callbacks: &CB,
     program_cache_for_tx_batch: &ProgramCacheForTxBatch,
@@ -256,11 +255,12 @@ pub fn filter_executable_program_accounts<'a, CB: TransactionProcessingCallback>
             } else {
                 continue;
             };
+            let Ok(deployment_slot) = get_program_deployment_slot(callbacks, &account, loader)
+            else {
+                continue;
+            };
             let match_criteria = if check_program_deployment_slot {
-                get_program_deployment_slot(callbacks, &account, loader)
-                    .map_or(ProgramCacheMatchCriteria::Tombstone, |slot| {
-                        ProgramCacheMatchCriteria::DeployedOnOrAfterSlot(slot)
-                    })
+                ProgramCacheMatchCriteria::DeployedOnOrAfterSlot(deployment_slot)
             } else {
                 ProgramCacheMatchCriteria::NoCriteria
             };
@@ -901,7 +901,7 @@ mod tests {
                 ProgramToLoad {
                     program_id: &program_ids[2],
                     loader: ProgramCacheEntryOwner::LoaderV3,
-                    match_criteria: ProgramCacheMatchCriteria::Tombstone,
+                    match_criteria: ProgramCacheMatchCriteria::NoCriteria,
                     last_modification_slot: 0,
                 },
             ]
