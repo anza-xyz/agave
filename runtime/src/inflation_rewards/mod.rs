@@ -11,7 +11,10 @@ use {
         stake_delegation::{delegation_activation_status, effective_stake},
     },
     solana_instruction::error::InstructionError,
-    solana_stake_interface::{error::StakeError, state::Stake},
+    solana_stake_interface::{
+        error::StakeError,
+        state::{Stake, StakeActivationStatus},
+    },
 };
 
 pub mod points;
@@ -110,16 +113,13 @@ fn redeem_stake_rewards<'a>(
 
     let adjust_delegations_for_rent = calculation_environment.adjust_delegations_for_rent;
 
-    let has_activating_or_effective = {
-        let status = delegation_activation_status(
-            &stake.delegation,
-            calculation_environment.rewarded_epoch,
-            calculation_environment.stake_history,
-            calculation_environment.new_rate_activation_epoch,
-            calculation_environment.use_fixed_point_stake_math,
-        );
-        status.effective > 0 || status.activating > 0
-    };
+    let status = delegation_activation_status(
+        &stake.delegation,
+        calculation_environment.rewarded_epoch,
+        calculation_environment.stake_history,
+        calculation_environment.new_rate_activation_epoch,
+        calculation_environment.use_fixed_point_stake_math,
+    );
 
     let maybe_rewards = calculate_stake_rewards(
         stake,
@@ -146,13 +146,13 @@ fn redeem_stake_rewards<'a>(
     let staker_rewards = maybe_rewards.map(|x| x.0).unwrap_or(0);
     if adjust_delegations_for_rent {
         let new_delegation_with_rewards = stake.delegation.stake.saturating_add(staker_rewards);
-        let needs_adjustment = has_activating_or_effective
-            && delegation_may_need_adjustment(
-                stake.delegation.stake,
-                new_delegation_with_rewards,
-                current_lamports.saturating_add(staker_rewards),
-                minimum_lamports,
-            );
+        let needs_adjustment = delegation_may_need_adjustment(
+            stake.delegation.stake,
+            new_delegation_with_rewards,
+            current_lamports.saturating_add(staker_rewards),
+            minimum_lamports,
+            status,
+        );
         // If `maybe_rewards.is_some()`, need to drive forward credits, even
         // if rewards are zero
         if needs_adjustment || maybe_rewards.is_some() {
@@ -179,7 +179,12 @@ pub(crate) fn delegation_may_need_adjustment(
     new_delegation_with_rewards: u64,
     lamports_with_rewards: u64,
     minimum_lamports: u64,
+    status: StakeActivationStatus,
 ) -> bool {
+    if status.effective == 0 && status.activating == 0 {
+        return false;
+    }
+
     let new_delegation = std::cmp::min(
         new_delegation_with_rewards,
         lamports_with_rewards.saturating_sub(minimum_lamports),
