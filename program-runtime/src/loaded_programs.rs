@@ -1030,7 +1030,7 @@ pub(crate) mod tests {
             atomic::{AtomicU64, Ordering},
         },
         std::{fs::File, io::Read, ops::ControlFlow},
-        test_case::{test_case, test_matrix},
+        test_case::test_matrix,
     };
 
     fn new_test_entry(deployment_slot: Slot, effective_slot: Slot) -> Arc<ProgramCacheEntry> {
