@@ -370,7 +370,6 @@ impl ProgramCacheForTxBatch {
 #[derive(Clone, PartialEq, Debug)]
 pub enum ProgramCacheMatchCriteria {
     DeployedOnOrAfterSlot(Slot),
-    Tombstone,
     NoCriteria,
 }
 
@@ -629,7 +628,6 @@ impl<FG: ForkGraph> ProgramCache<FG> {
             ProgramCacheMatchCriteria::DeployedOnOrAfterSlot(slot) => {
                 program.deployment_slot >= *slot
             }
-            ProgramCacheMatchCriteria::Tombstone => program.is_tombstone(),
             ProgramCacheMatchCriteria::NoCriteria => true,
         }
     }
@@ -2485,11 +2483,6 @@ pub(crate) mod tests {
 
         assert!(ProgramCache::<TestForkGraph>::matches_criteria(
             &tombstone,
-            &ProgramCacheMatchCriteria::Tombstone
-        ));
-
-        assert!(ProgramCache::<TestForkGraph>::matches_criteria(
-            &tombstone,
             &ProgramCacheMatchCriteria::DeployedOnOrAfterSlot(0)
         ));
 
@@ -2503,11 +2496,6 @@ pub(crate) mod tests {
         assert!(ProgramCache::<TestForkGraph>::matches_criteria(
             &program,
             &ProgramCacheMatchCriteria::NoCriteria
-        ));
-
-        assert!(!ProgramCache::<TestForkGraph>::matches_criteria(
-            &program,
-            &ProgramCacheMatchCriteria::Tombstone
         ));
 
         assert!(ProgramCache::<TestForkGraph>::matches_criteria(
@@ -2525,11 +2513,6 @@ pub(crate) mod tests {
         assert!(ProgramCache::<TestForkGraph>::matches_criteria(
             &program,
             &ProgramCacheMatchCriteria::NoCriteria
-        ));
-
-        assert!(!ProgramCache::<TestForkGraph>::matches_criteria(
-            &program,
-            &ProgramCacheMatchCriteria::Tombstone
         ));
 
         assert!(ProgramCache::<TestForkGraph>::matches_criteria(
