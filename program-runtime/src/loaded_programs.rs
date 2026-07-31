@@ -1542,17 +1542,15 @@ pub(crate) mod tests {
         );
     }
 
-    #[test_case(
-        ProgramCacheEntryType::Unloaded(ProgramRuntimeEnvironment::from(
-            BuiltinProgram::new_mock()
-        )),
-        new_loaded_entry(get_mock_program_runtime_environment())
-    )]
-    #[test_case(
-        ProgramCacheEntryType::Unloaded(ProgramRuntimeEnvironment::from(
-            BuiltinProgram::new_mock()
-        )),
-        ProgramCacheEntryType::FailedVerification(get_mock_program_runtime_environment())
+    #[test_matrix(
+        (
+            ProgramCacheEntryType::Closed,
+            ProgramCacheEntryType::Unloaded(get_mock_program_runtime_environment()),
+        ),
+        (
+            new_loaded_entry(get_mock_program_runtime_environment()),
+            ProgramCacheEntryType::FailedVerification(get_mock_program_runtime_environment()),
+        )
     )]
     #[test_case(
         ProgramCacheEntryType::Builtin(BuiltinProgram::new_mock()),
