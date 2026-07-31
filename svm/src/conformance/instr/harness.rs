@@ -167,6 +167,7 @@ pub fn execute_instr_proto(input: ProtoInstrContext) -> ProtoInstrEffects {
         let environments = program_runtime_environments(feature_set, &compute_budget);
 
         let mut cache = new_program_cache_with_builtins(slot);
+        cache.remove_delayed_visibility_slots = feature_set.remove_delayed_visibility_slots;
         fill_program_cache_from_accounts(
             &mut cache,
             environments.get_env_for_deployment(),

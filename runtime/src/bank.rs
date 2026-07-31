@@ -4037,10 +4037,17 @@ impl Bank {
 
         let (blockhash, blockhash_lamports_per_signature) =
             self.last_blockhash_and_lamports_per_signature();
-        let effective_epoch_of_deployments =
-            self.epoch_schedule().get_epoch(self.slot.saturating_add(
-                solana_program_runtime::program_cache_entry::DELAY_VISIBILITY_SLOT_OFFSET,
-            ));
+        // Without delayed visibility a program deployed in this slot also executes in this slot,
+        // so it has to be compiled for this slot's epoch rather than the next one's.
+        let delay_visibility_slot_offset =
+            if self.feature_set.snapshot().remove_delayed_visibility_slots {
+                0
+            } else {
+                solana_program_runtime::program_cache_entry::DELAY_VISIBILITY_SLOT_OFFSET
+            };
+        let effective_epoch_of_deployments = self
+            .epoch_schedule()
+            .get_epoch(self.slot.saturating_add(delay_visibility_slot_offset));
         let processing_environment = TransactionProcessingEnvironment {
             blockhash,
             blockhash_lamports_per_signature,

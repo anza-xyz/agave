@@ -67,7 +67,8 @@ impl From<ProgramCacheEntryOwner> for Pubkey {
 
     DelayVisibility is special in that it is never stored in the cache.
     It is only returned by ProgramCacheForTxBatch::find() when a Loaded entry
-    is encountered which is not effective yet.
+    is encountered which is not visible to the caller yet, either because it is
+    not effective yet, or because it was modified by the current transaction.
 
     Builtin re/deployment:
     - Empty => Builtin in TransactionBatchProcessor::add_builtin

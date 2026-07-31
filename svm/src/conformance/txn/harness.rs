@@ -229,6 +229,7 @@ pub fn execute_txn_proto(input: ProtoTxnContext) -> ProtoTxnResult {
         let accounts = context.accounts.clone();
 
         let mut cache = new_program_cache_with_builtins(slot);
+        cache.remove_delayed_visibility_slots = runtime_features.remove_delayed_visibility_slots;
         fill_program_cache_from_accounts(
             &mut cache,
             environments.get_env_for_execution(),

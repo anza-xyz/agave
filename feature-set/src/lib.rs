@@ -83,6 +83,7 @@ pub struct FeatureSnapshot {
     pub define_ltds_fee_only_semantics: bool,
     pub upgrade_bpf_stake_program_to_v5_1: bool,
     pub relax_fee_payer_constraint: bool,
+    pub remove_delayed_visibility_slots: bool,
 }
 
 impl From<&AHashMap<Pubkey, u64>> for FeatureSnapshot {
@@ -186,6 +187,7 @@ impl From<&AHashMap<Pubkey, u64>> for FeatureSnapshot {
             define_ltds_fee_only_semantics: is_active(&define_ltds_fee_only_semantics::ID),
             upgrade_bpf_stake_program_to_v5_1: is_active(&upgrade_bpf_stake_program_to_v5_1::ID),
             relax_fee_payer_constraint: is_active(&relax_fee_payer_constraint::ID),
+            remove_delayed_visibility_slots: is_active(&remove_delayed_visibility_slots::ID),
         }
     }
 }
@@ -347,6 +349,7 @@ impl FeatureSet {
             relax_post_exec_min_balance_check: snapshot.relax_post_exec_min_balance_check,
             define_ltds_fee_only_semantics: snapshot.define_ltds_fee_only_semantics,
             relax_fee_payer_constraint: snapshot.relax_fee_payer_constraint,
+            remove_delayed_visibility_slots: snapshot.remove_delayed_visibility_slots,
         }
     }
 }
@@ -1534,6 +1537,10 @@ pub mod relax_fee_payer_constraint {
     solana_pubkey::declare_id!("FEEXbxUuKobtrt1qNK5pjtzbPQhsppBTrNNG74xu4mai");
 }
 
+pub mod remove_delayed_visibility_slots {
+    solana_pubkey::declare_id!("RemoveDe1ayedVisibi1ity11111111111111111111");
+}
+
 pub static FEATURE_NAMES: LazyLock<AHashMap<Pubkey, &'static str>> = LazyLock::new(|| {
     [
         (secp256k1_program_enabled::id(), "secp256k1 program"),
@@ -2615,6 +2622,10 @@ pub static FEATURE_NAMES: LazyLock<AHashMap<Pubkey, &'static str>> = LazyLock::n
         (
             relax_fee_payer_constraint::id(),
             "SIMD-0290: Relax block constraint requiring valid fee-payer",
+        ),
+        (
+            remove_delayed_visibility_slots::id(),
+            "SIMD-XXXX: Remove Delayed Visibility Slots",
         ),
         /*************** ADD NEW FEATURES HERE ***************/
         /***** ADD NEW FEATURE BOOL TO `FeatureSnapshot` *****/

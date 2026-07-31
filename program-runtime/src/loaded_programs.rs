@@ -284,6 +284,11 @@ pub struct ProgramCacheForTxBatch {
     pub hit_max_limit: bool,
     pub loaded_missing: bool,
     pub merged_modified: bool,
+    /// Status of the `remove_delayed_visibility_slots` feature for this batch.
+    ///
+    /// When active, a program is visible in the slot it was deployed in, so the
+    /// implicit delay visibility tombstones are not applied.
+    pub remove_delayed_visibility_slots: bool,
 }
 
 impl ProgramCacheForTxBatch {
@@ -295,6 +300,7 @@ impl ProgramCacheForTxBatch {
             hit_max_limit: false,
             loaded_missing: false,
             merged_modified: false,
+            remove_delayed_visibility_slots: false,
         }
     }
 
@@ -327,24 +333,42 @@ impl ProgramCacheForTxBatch {
         // First lookup the cache of the programs modified by the current
         // transaction. If not found, lookup the cache of the cache of the
         // programs that are loaded for the transaction batch.
-        self.modified_entries
-            .get(key)
-            .or_else(|| self.entries.get(key))
-            .map(|entry| {
-                if entry.is_implicit_delay_visibility_tombstone(self.slot) {
-                    // Found a program entry on the current fork, but it's not effective
-                    // yet. It indicates that the program has delayed visibility. Return
-                    // the tombstone to reflect that.
-                    Arc::new(ProgramCacheEntry::new_tombstone_with_stats(
-                        entry.deployment_slot,
-                        entry.account_owner,
-                        ProgramCacheEntryType::DelayVisibility,
-                        Arc::clone(&entry.stats),
-                    ))
-                } else {
-                    entry.clone()
-                }
-            })
+        if let Some(entry) = self.modified_entries.get(key) {
+            // A program modified by the current transaction is not usable for
+            // the remainder of the transaction.
+            //
+            // When delayed visibility slots are enabled (ie. the feature to
+            // *remove* delayed visibility slots is *inactive*), this rule is
+            // enforced by the entry not being effective until the next slot
+            // (`deployment_slot` and `effective_slot` fields).
+            //
+            // However, when delayed visibility slots are disabled (ie. the
+            // feature is *active*), the entry becomes effective immediately,
+            // so being modified is what hides it, until the next transaction
+            // merges it.
+            let not_visible_yet = if self.remove_delayed_visibility_slots {
+                !entry.is_tombstone()
+            } else {
+                entry.is_implicit_delay_visibility_tombstone(self.slot)
+            };
+            return Some(if not_visible_yet {
+                new_delay_visibility_tombstone(entry)
+            } else {
+                entry.clone()
+            });
+        }
+        self.entries.get(key).map(|entry| {
+            if !self.remove_delayed_visibility_slots
+                && entry.is_implicit_delay_visibility_tombstone(self.slot)
+            {
+                // Found a program entry on the current fork, but it's not effective
+                // yet. It indicates that the program has delayed visibility. Return
+                // the tombstone to reflect that.
+                new_delay_visibility_tombstone(entry)
+            } else {
+                entry.clone()
+            }
+        })
     }
 
     pub fn slot(&self) -> Slot {
@@ -365,6 +389,20 @@ impl ProgramCacheForTxBatch {
     pub fn is_empty(&self) -> bool {
         self.entries.is_empty()
     }
+}
+
+// Tombstone reported for a program which is not visible to the caller yet.
+//
+// It is never stored, only handed out by the lookups in place of the entry it
+// shadows. The statistics are shared with that entry so that usage still
+// accrues to the program.
+fn new_delay_visibility_tombstone(entry: &Arc<ProgramCacheEntry>) -> Arc<ProgramCacheEntry> {
+    Arc::new(ProgramCacheEntry::new_tombstone_with_stats(
+        entry.deployment_slot,
+        entry.account_owner,
+        ProgramCacheEntryType::DelayVisibility,
+        Arc::clone(&entry.stats),
+    ))
 }
 
 #[derive(Clone, PartialEq, Debug)]
@@ -674,8 +712,9 @@ impl<FG: ForkGraph> ProgramCache<FG> {
                                     BlockRelation::Equal | BlockRelation::Ancestor
                                 );
                             if entry_in_same_branch {
-                                let entry_is_effective =
-                                    loaded_programs_for_tx_batch.slot >= entry.effective_slot;
+                                let entry_is_effective = loaded_programs_for_tx_batch
+                                    .remove_delayed_visibility_slots
+                                    || loaded_programs_for_tx_batch.slot >= entry.effective_slot;
                                 let entry_to_return = if entry_is_effective {
                                     if !Self::matches_environment(
                                         entry,
@@ -711,12 +750,7 @@ impl<FG: ForkGraph> ProgramCache<FG> {
                                     // Found a program entry on the current fork, but it's not effective
                                     // yet. It indicates that the program has delayed visibility. Return
                                     // the tombstone to reflect that.
-                                    Arc::new(ProgramCacheEntry::new_tombstone_with_stats(
-                                        entry.deployment_slot,
-                                        entry.account_owner,
-                                        ProgramCacheEntryType::DelayVisibility,
-                                        Arc::clone(&entry.stats),
-                                    ))
+                                    new_delay_visibility_tombstone(entry)
                                 } else {
                                     continue;
                                 };
@@ -1955,8 +1989,15 @@ pub(crate) mod tests {
         missing.iter().any(|entry| entry.program_id == program_id) == expected_result
     }
 
-    #[test]
-    fn test_fork_extract_and_prune() {
+    fn new_extracted(slot: Slot, remove_delayed_visibility_slots: bool) -> ProgramCacheForTxBatch {
+        let mut extracted = ProgramCacheForTxBatch::new(slot);
+        extracted.remove_delayed_visibility_slots = remove_delayed_visibility_slots;
+        extracted
+    }
+
+    #[test_case(false; "delay_visibility_enforced")]
+    #[test_case(true; "delay_visibility_removed")]
+    fn test_fork_extract_and_prune(remove_delayed_visibility_slots: bool) {
         let mut cache = ProgramCache::<TestForkGraphSpecific>::new(0);
         let env = get_mock_program_runtime_environment();
 
@@ -2031,7 +2072,7 @@ pub(crate) mod tests {
         let mut missing = get_entries_to_load(&cache, 22, keys);
         assert!(match_missing(&missing, &program2, false));
         assert!(match_missing(&missing, &program3, false));
-        let mut extracted = ProgramCacheForTxBatch::new(22);
+        let mut extracted = new_extracted(22, remove_delayed_visibility_slots);
         cache.extract(&mut missing, &mut extracted, &env, true, true);
         assert!(match_slot(&extracted, &program1, 20, 22));
         assert!(match_slot(&extracted, &program4, 0, 22));
@@ -2039,22 +2080,26 @@ pub(crate) mod tests {
         // Testing fork 0 - 5 - 11 - 15 - 16 with current slot at 15
         let mut missing = get_entries_to_load(&cache, 15, keys);
         assert!(match_missing(&missing, &program3, false));
-        let mut extracted = ProgramCacheForTxBatch::new(15);
+        let mut extracted = new_extracted(15, remove_delayed_visibility_slots);
         cache.extract(&mut missing, &mut extracted, &env, true, true);
         assert!(match_slot(&extracted, &program1, 0, 15));
         assert!(match_slot(&extracted, &program2, 11, 15));
-        // The effective slot of program4 deployed in slot 15 is 19. So it should not be usable in slot 16.
-        // A delay visibility tombstone should be returned here.
-        let tombstone = extracted
+        // The effective slot of program4 deployed in slot 15 is 16. So it should not be usable in
+        // slot 15 unless delayed visibility was removed.
+        let entry = extracted
             .find(&program4)
-            .expect("Failed to find the tombstone");
-        assert_matches!(tombstone.program, ProgramCacheEntryType::DelayVisibility);
-        assert_eq!(tombstone.deployment_slot, 15);
+            .expect("Failed to find the program");
+        assert_eq!(entry.deployment_slot, 15);
+        if remove_delayed_visibility_slots {
+            assert_matches!(entry.program, ProgramCacheEntryType::Loaded(_));
+        } else {
+            assert_matches!(entry.program, ProgramCacheEntryType::DelayVisibility);
+        }
 
         // Testing the same fork above, but current slot is now 18 (equal to effective slot of program4).
         let mut missing = get_entries_to_load(&cache, 18, keys);
         assert!(match_missing(&missing, &program3, false));
-        let mut extracted = ProgramCacheForTxBatch::new(18);
+        let mut extracted = new_extracted(18, remove_delayed_visibility_slots);
         cache.extract(&mut missing, &mut extracted, &env, true, true);
         assert!(match_slot(&extracted, &program1, 0, 18));
         assert!(match_slot(&extracted, &program2, 11, 18));
@@ -2064,7 +2109,7 @@ pub(crate) mod tests {
         // Testing the same fork above, but current slot is now 23 (future slot than effective slot of program4).
         let mut missing = get_entries_to_load(&cache, 23, keys);
         assert!(match_missing(&missing, &program3, false));
-        let mut extracted = ProgramCacheForTxBatch::new(23);
+        let mut extracted = new_extracted(23, remove_delayed_visibility_slots);
         cache.extract(&mut missing, &mut extracted, &env, true, true);
         assert!(match_slot(&extracted, &program1, 0, 23));
         assert!(match_slot(&extracted, &program2, 11, 23));
@@ -2074,15 +2119,20 @@ pub(crate) mod tests {
         // Testing fork 0 - 5 - 11 - 15 - 16 with current slot at 11
         let mut missing = get_entries_to_load(&cache, 11, keys);
         assert!(match_missing(&missing, &program3, false));
-        let mut extracted = ProgramCacheForTxBatch::new(11);
+        let mut extracted = new_extracted(11, remove_delayed_visibility_slots);
         cache.extract(&mut missing, &mut extracted, &env, true, true);
         assert!(match_slot(&extracted, &program1, 0, 11));
-        // program2 was updated at slot 11, but is not effective till slot 12. The result should contain a tombstone.
-        let tombstone = extracted
+        // program2 was updated at slot 11, but is not effective till slot 12. The result should
+        // contain a tombstone unless delayed visibility was removed.
+        let entry = extracted
             .find(&program2)
-            .expect("Failed to find the tombstone");
-        assert_matches!(tombstone.program, ProgramCacheEntryType::DelayVisibility);
-        assert_eq!(tombstone.deployment_slot, 11);
+            .expect("Failed to find the program");
+        assert_eq!(entry.deployment_slot, 11);
+        if remove_delayed_visibility_slots {
+            assert_matches!(entry.program, ProgramCacheEntryType::Loaded(_));
+        } else {
+            assert_matches!(entry.program, ProgramCacheEntryType::DelayVisibility);
+        }
         assert!(match_slot(&extracted, &program4, 5, 11));
 
         cache.prune(5, None, &fork_graph.read().unwrap());
@@ -2105,7 +2155,7 @@ pub(crate) mod tests {
         // Testing fork 11 - 15 - 16- 19 - 22 with root at 5 and current slot at 22
         let mut missing = get_entries_to_load(&cache, 21, keys);
         assert!(match_missing(&missing, &program3, false));
-        let mut extracted = ProgramCacheForTxBatch::new(21);
+        let mut extracted = new_extracted(21, remove_delayed_visibility_slots);
         cache.extract(&mut missing, &mut extracted, &env, true, true);
         // Since the fork was pruned, we should not find the entry deployed at slot 20.
         assert!(match_slot(&extracted, &program1, 0, 21));
@@ -2114,7 +2164,7 @@ pub(crate) mod tests {
 
         // Testing fork 0 - 5 - 11 - 25 - 27 with current slot at 27
         let mut missing = get_entries_to_load(&cache, 27, keys);
-        let mut extracted = ProgramCacheForTxBatch::new(27);
+        let mut extracted = new_extracted(27, remove_delayed_visibility_slots);
         cache.extract(&mut missing, &mut extracted, &env, true, true);
         assert!(match_slot(&extracted, &program1, 0, 27));
         assert!(match_slot(&extracted, &program2, 11, 27));
@@ -2141,11 +2191,41 @@ pub(crate) mod tests {
         // Testing fork 16, 19, 23, with root at 15, current slot at 23
         let mut missing = get_entries_to_load(&cache, 23, keys);
         assert!(match_missing(&missing, &program3, false));
-        let mut extracted = ProgramCacheForTxBatch::new(23);
+        let mut extracted = new_extracted(23, remove_delayed_visibility_slots);
         cache.extract(&mut missing, &mut extracted, &env, true, true);
         assert!(match_slot(&extracted, &program1, 0, 23));
         assert!(match_slot(&extracted, &program2, 11, 23));
         assert!(match_slot(&extracted, &program4, 15, 23));
+    }
+
+    #[test_case(false; "delay_visibility_enforced")]
+    #[test_case(true; "delay_visibility_removed")]
+    fn test_find_modified_by_current_transaction(remove_delayed_visibility_slots: bool) {
+        // A program (re)deployed by the current transaction is buffered in `modified_entries`,
+        // and stays hidden for the remainder of that transaction either way.
+        let program = Pubkey::new_unique();
+        let mut extracted = new_extracted(10, remove_delayed_visibility_slots);
+        extracted.store_modified_entry(program, new_test_entry(10, 11));
+
+        let entry = extracted.find(&program).expect("Did not find the program");
+        assert_eq!(entry.deployment_slot, 10);
+        assert_matches!(entry.program, ProgramCacheEntryType::DelayVisibility);
+        assert!(entry.is_tombstone());
+
+        // Once merged it is no longer modified by the current transaction, so it is visible in
+        // its deployment slot as soon as delayed visibility is removed.
+        extracted.merge(&extracted.modified_entries.clone());
+        extracted.drain_modified_entries();
+
+        let entry = extracted.find(&program).expect("Did not find the program");
+        assert_eq!(entry.deployment_slot, 10);
+        if remove_delayed_visibility_slots {
+            assert_matches!(entry.program, ProgramCacheEntryType::Loaded(_));
+            assert!(!entry.is_tombstone());
+        } else {
+            assert_matches!(entry.program, ProgramCacheEntryType::DelayVisibility);
+            assert!(entry.is_tombstone());
+        }
     }
 
     #[test]

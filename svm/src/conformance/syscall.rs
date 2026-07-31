@@ -72,6 +72,7 @@ pub fn execute_vm_syscall(input: ProtoSyscallContext) -> ProtoSyscallEffects {
             .map(|clock| clock.slot)
             .unwrap_or_default();
         let mut cache = new_program_cache_with_builtins(slot);
+        cache.remove_delayed_visibility_slots = feature_set.remove_delayed_visibility_slots;
         fill_program_cache_from_accounts(
             &mut cache,
             deployment_environment,
