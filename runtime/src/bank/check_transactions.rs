@@ -87,10 +87,13 @@ impl Bank {
             return Err(TransactionError::UnsupportedVersion);
         }
 
-        let hash_queue = self.blockhash_queue.read().unwrap();
-        let next_durable_nonce = hash_queue.next_durable_nonce();
-        let age_is_ok = hash_queue.is_hash_valid_for_age(tx.recent_blockhash(), max_age);
-        drop(hash_queue);
+        let (next_durable_nonce, age_is_ok) = {
+            let hash_queue = self.blockhash_queue.read().unwrap();
+            (
+                hash_queue.next_durable_nonce(),
+                hash_queue.is_hash_valid_for_age(tx.recent_blockhash(), max_age),
+            )
+        };
 
         self.check_transaction_age(
             tx,
@@ -157,14 +160,16 @@ impl Bank {
         strict_nonce_size_check: bool,
         error_counters: &mut TransactionErrorMetrics,
     ) -> Vec<TransactionCheckResult> {
-        let hash_queue = self.blockhash_queue.read().unwrap();
-        let next_durable_nonce = hash_queue.next_durable_nonce();
-        // Snapshot age checks so fee derivation and nonce loads below run unlocked.
-        let ages_ok: SmallVec<[bool; TARGET_NUM_TRANSACTIONS_PER_BATCH]> = sanitized_txs
-            .iter()
-            .map(|tx| hash_queue.is_hash_valid_for_age(tx.borrow().recent_blockhash(), max_age))
-            .collect();
-        drop(hash_queue);
+        let (next_durable_nonce, ages_ok) = {
+            let hash_queue = self.blockhash_queue.read().unwrap();
+            let next_durable_nonce = hash_queue.next_durable_nonce();
+            // Snapshot age checks so fee derivation and nonce loads below run unlocked.
+            let ages_ok: SmallVec<[bool; TARGET_NUM_TRANSACTIONS_PER_BATCH]> = sanitized_txs
+                .iter()
+                .map(|tx| hash_queue.is_hash_valid_for_age(tx.borrow().recent_blockhash(), max_age))
+                .collect();
+            (next_durable_nonce, ages_ok)
+        };
 
         let feature_set: &FeatureSet = &self.feature_set;
         let feature_snapshot = feature_set.snapshot();
