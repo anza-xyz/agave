@@ -18,6 +18,8 @@ and follows a [Backwards Compatibility Policy](https://docs.anza.xyz/backwards-c
 #### Changes
 * Added `RpcClient::get_latest_blockhash_with_commitment_and_context`, which returns the
   `getLatestBlockhash` response together with its context (notably `context.slot`).
+* Support the SPL Token-2022 permissioned burn extension in `jsonParsed` output
+  for accounts and instructions.
 ### Validator
 #### Breaking
 * XDP transmit in SKB (copy) mode is now enabled by default on Linux. The validator requires
