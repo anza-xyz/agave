@@ -17,6 +17,7 @@ use {
     solana_hash::Hash,
     solana_leader_schedule::SlotLeader,
     solana_ledger::genesis_utils::create_genesis_config,
+    solana_pubkey::Pubkey,
     solana_runtime::{
         bank::Bank, bank_forks::BankForks, genesis_utils::GenesisConfigInfo,
         installed_scheduler_pool::SchedulingContext,
@@ -151,6 +152,7 @@ fn test_scheduler_waited_by_drop_bank_service() {
             epoch_slots_frozen_slots,
         };
         ReplayStage::handle_new_root(
+            &Pubkey::new_unique(),
             root,
             &bank_forks,
             &mut progress,

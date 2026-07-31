@@ -5108,6 +5108,7 @@ impl ReplayStage {
     /// A wrapper around `root_utils::set_bank_forks_root` which additionally:
     /// - Executes `set_progress_and_tower_bft_root` to cleanup tower bft structs and the progress map
     pub fn handle_new_root(
+        my_pubkey: &Pubkey,
         new_root: Slot,
         bank_forks: &RwLock<BankForks>,
         progress: &mut ProgressMap,
@@ -5119,6 +5120,7 @@ impl ReplayStage {
         tbft_structs: &mut TowerBFTStructures,
     ) {
         root_utils::set_bank_forks_root(
+            my_pubkey,
             new_root,
             bank_forks,
             snapshot_controller,

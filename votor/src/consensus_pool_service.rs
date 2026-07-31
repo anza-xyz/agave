@@ -9,7 +9,7 @@ mod stats;
 
 use {
     crate::{
-        common::DELTA_STANDSTILL,
+        common::{DELTA_STANDSTILL, blocking_send},
         consensus_pool::{
             ConsensusPool,
             parent_ready_tracker::{BlockProductionParent, ParentReady},
@@ -99,16 +99,80 @@ pub(crate) struct ConsensusPoolContext {
     pub(crate) highest_finalized: Arc<RwLock<Option<ValidatedBlockFinalizationCert>>>,
 }
 
+impl ConsensusPoolContext {
+    fn new_consensus_pool(&self) -> ConsensusPool {
+        let initial_parent_ready = self.initial_parent_ready();
+        let root_bank = self.sharable_banks.root();
+        ConsensusPool::new(
+            self.cluster_info.clone(),
+            &root_bank,
+            self.generated_cert_types.clone(),
+            self.migration_status.clone(),
+            initial_parent_ready,
+        )
+    }
+
+    /// Finds the initial parent ready that we should use for instantiating the ConsensusPool or kicking off votor
+    /// The max of genesis block, root block, or the restored parent ready from vote history
+    fn initial_parent_ready(&self) -> ParentReady {
+        let root_bank = self.sharable_banks.root();
+        let root_block = root_block(&root_bank);
+        let genesis_block = self.migration_status.genesis_block();
+        Self::_initial_parent_ready(
+            genesis_block,
+            root_block,
+            self.vote_history_highest_parent_ready,
+        )
+    }
+
+    /// Pulled the implementation outside to enable testing.
+    fn _initial_parent_ready(
+        genesis_block: Option<Block>,
+        root_block: Block,
+        vote_history_highest_parent_ready: Option<(Slot, Block)>,
+    ) -> ParentReady {
+        let Some(genesis_block) = genesis_block else {
+            // Alpenglow is not yet enabled, start with just the root
+            return (root_block.slot.checked_add(1).unwrap(), root_block);
+        };
+
+        let initial_block = genesis_block.max(root_block);
+        let initial_parent_ready = (initial_block.slot.checked_add(1).unwrap(), initial_block);
+
+        if let Some(restored @ (restored_slot, _)) = vote_history_highest_parent_ready
+            && restored_slot > initial_parent_ready.0
+        {
+            restored
+        } else {
+            initial_parent_ready
+        }
+    }
+}
+
 pub(crate) struct ConsensusPoolService {
     t_consensus_pool_service: JoinHandle<()>,
 }
 
 impl ConsensusPoolService {
-    pub(crate) fn new(ctx: ConsensusPoolContext) -> Self {
+    pub(crate) fn new(mut ctx: ConsensusPoolContext) -> Self {
         let t_consensus_pool_service = Builder::new()
             .name("solVotorPoolSvc".to_string())
             .spawn(move || {
-                Self::main_loop(ctx);
+                // Unlike the other votor threads, consensus pool starts even before Alpenglow is enabled
+                // because it must track the genesis vote.
+                let mut consensus_pool = ctx.new_consensus_pool();
+                let mut stats = ConsensusPoolServiceStats::new();
+                if let Err(channel_name) =
+                    Self::main_loop(&mut ctx, &mut consensus_pool, &mut stats)
+                {
+                    info!(
+                        "{}: {channel_name} disconnected. Exiting",
+                        ctx.cluster_info.id()
+                    );
+                }
+                consensus_pool.do_report();
+                stats.do_report();
+                ctx.exit.store(true, Ordering::Relaxed);
                 info!("consensus pool service exited.");
             })
             .unwrap();
@@ -125,7 +189,7 @@ impl ConsensusPoolService {
         new_certificates_to_send: Vec<Arc<Certificate>>,
         standstill_timer: &mut Instant,
         stats: &mut ConsensusPoolServiceStats,
-    ) -> Result<(), ()> {
+    ) -> Result<(), &'static str> {
         // If we have a new finalized slot, update the root and send new certificates
         if new_finalized_slot.is_some() {
             // Reset standstill timer
@@ -152,7 +216,7 @@ impl ConsensusPoolService {
         ctx: &ConsensusPoolContext,
         op: BLSOp,
         stats: &mut ConsensusPoolServiceStats,
-    ) -> Result<(), ()> {
+    ) -> Result<(), &'static str> {
         let num_certs = Self::num_certificates(&op);
         if num_certs == 0 {
             return Ok(());
@@ -187,91 +251,34 @@ impl ConsensusPoolService {
         ctx: &ConsensusPoolContext,
         op: BLSOp,
         stats: &mut ConsensusPoolServiceStats,
-    ) -> Result<(), ()> {
+    ) -> Result<(), &'static str> {
+        let channel_name = "bls_sender";
         let num_certs = Self::num_certificates(&op);
-
         match ctx.bls_sender.try_send(op) {
             Ok(()) => {
                 stats.certificates_sent += num_certs;
                 Ok(())
             }
-            Err(TrySendError::Disconnected(_)) => Err(()),
             Err(TrySendError::Full(_)) => {
                 stats.certificates_dropped += num_certs;
-                warn!(
-                    "{}: channel is full, dropping {num_certs} certs",
-                    ctx.cluster_info.id()
-                );
+                let my_pubkey = ctx.cluster_info.id();
+                warn!("{my_pubkey}: channel \"{channel_name}\" is full, dropping msg");
                 Ok(())
             }
-        }
-    }
-
-    fn handle_channel_disconnected(ctx: &mut ConsensusPoolContext, channel_name: &str) {
-        info!(
-            "{}: {channel_name} disconnected. Exiting",
-            ctx.cluster_info.id()
-        );
-        ctx.exit.store(true, Ordering::Relaxed);
-    }
-
-    /// Finds the initial parent ready that we should use for instantiating the ConsensusPool or kicking off votor
-    /// The max of genesis block, root block, or the restored parent ready from vote history
-    fn initial_parent_ready(
-        genesis_block: Option<Block>,
-        root_block: Block,
-        vote_history_highest_parent_ready: Option<(Slot, Block)>,
-    ) -> ParentReady {
-        let Some(genesis_block) = genesis_block else {
-            // Alpenglow is not yet enabled, start with just the root
-            return (root_block.slot.checked_add(1).unwrap(), root_block);
-        };
-
-        let initial_block = genesis_block.max(root_block);
-        let initial_parent_ready = (initial_block.slot.checked_add(1).unwrap(), initial_block);
-
-        if let Some(restored @ (restored_slot, _)) = vote_history_highest_parent_ready
-            && restored_slot > initial_parent_ready.0
-        {
-            restored
-        } else {
-            initial_parent_ready
-        }
-    }
-
-    fn root_block(root_bank: &Bank) -> Block {
-        Block {
-            slot: root_bank.slot(),
-            block_id: root_bank
-                .block_id()
-                // Once SIMD-0333 is active we can hard unwrap here
-                .unwrap_or_default(),
+            Err(TrySendError::Disconnected(_)) => Err(channel_name),
         }
     }
 
     // Main loop for the consensus pool service
-    fn main_loop(mut ctx: ConsensusPoolContext) {
+    fn main_loop(
+        ctx: &mut ConsensusPoolContext,
+        consensus_pool: &mut ConsensusPool,
+        stats: &mut ConsensusPoolServiceStats,
+    ) -> Result<(), &'static str> {
         let mut events = vec![];
         let root_bank = ctx.sharable_banks.root();
 
-        let initial_parent_ready = Self::initial_parent_ready(
-            ctx.migration_status.genesis_block(),
-            Self::root_block(&root_bank),
-            ctx.vote_history_highest_parent_ready,
-        );
-
-        // Unlike the other votor threads, consensus pool starts even before Alpenglow is enabled
-        // because it must track the genesis vote.
-        let mut consensus_pool = ConsensusPool::new(
-            ctx.cluster_info.clone(),
-            &root_bank,
-            ctx.generated_cert_types.clone(),
-            ctx.migration_status.clone(),
-            initial_parent_ready,
-        );
-
         info!("{}: Certificate pool loop starting", ctx.cluster_info.id());
-        let mut stats = ConsensusPoolServiceStats::new();
         let mut highest_parent_ready = root_bank.slot();
 
         // Standstill tracking
@@ -285,17 +292,12 @@ impl ConsensusPoolService {
 
         // Ingest votes into consensus pool and notify voting loop of new events
         while !ctx.exit.load(Ordering::Relaxed) {
-            let root_bank = ctx.sharable_banks.root();
             // Kick off parent ready event, this either happens:
             // - When we first migrate to alpenglow from TowerBFT - kick off with genesis block
             // - If we startup post alpenglow migration - kick off with root block
             // - If restored vote history is farther ahead, resume from its highest parent-ready
             if !kick_off_parent_ready && ctx.migration_status.is_alpenglow_enabled() {
-                let (slot, parent_block) = Self::initial_parent_ready(
-                    ctx.migration_status.genesis_block(),
-                    Self::root_block(&root_bank),
-                    ctx.vote_history_highest_parent_ready,
-                );
+                let (slot, parent_block) = ctx.initial_parent_ready();
                 events.push(VotorEvent::ParentReady { slot, parent_block });
                 kick_off_parent_ready = true;
                 // Intentionally do not increment `highest_parent_ready` in case
@@ -304,10 +306,10 @@ impl ConsensusPoolService {
 
             Self::add_produce_block_event(
                 &mut highest_parent_ready,
-                &consensus_pool,
-                &mut ctx,
+                consensus_pool,
+                ctx,
                 &mut events,
-                &mut stats,
+                stats,
             );
 
             if standstill_timer.elapsed() > DELTA_STANDSTILL {
@@ -324,37 +326,26 @@ impl ConsensusPoolService {
                 }
                 stats.standstill = true;
                 standstill_timer = Instant::now();
-                match Self::send_certificates(
-                    &ctx,
+                Self::send_certificates(
+                    ctx,
                     BLSOp::RefreshCertificates {
                         certificates: consensus_pool.get_certs_for_standstill(),
                     },
-                    &mut stats,
-                ) {
-                    Ok(()) => (),
-                    Err(()) => {
-                        return Self::handle_channel_disconnected(&mut ctx, "bls_sender channel");
-                    }
-                }
+                    stats,
+                )?;
             }
 
             // Process pending safe-to-notar blocks for intrawindow slots
-            if let Err(()) = Self::process_pending_safe_to_notar(
-                &ctx,
-                &mut consensus_pool,
+            Self::process_pending_safe_to_notar(
+                ctx,
+                consensus_pool,
                 &mut pending_safe_to_notar,
                 &mut events,
-                &mut stats,
-            ) {
-                return Self::handle_channel_disconnected(&mut ctx, "repair_event_sender channel");
-            }
-
-            if events
-                .drain(..)
-                .try_for_each(|event| ctx.event_sender.send(event))
-                .is_err()
-            {
-                return Self::handle_channel_disconnected(&mut ctx, "event_sender channel");
+                stats,
+            )?;
+            let my_pubkey = ctx.cluster_info.id();
+            for event in events.drain(..) {
+                blocking_send(&my_pubkey, &ctx.event_sender, event, "event_sender")?;
             }
 
             let wait_timeout = if pending_safe_to_notar.is_empty() {
@@ -365,19 +356,18 @@ impl ConsensusPoolService {
                 Duration::from_millis(20)
             };
 
-            if let Err(()) = Self::receive_msgs(
-                &mut ctx,
-                &mut consensus_pool,
+            Self::receive_msgs(
+                ctx,
+                consensus_pool,
                 &mut events,
                 &mut standstill_timer,
-                &mut stats,
+                stats,
                 wait_timeout,
-            ) {
-                return;
-            }
+            )?;
             stats.maybe_report();
             consensus_pool.maybe_report();
         }
+        Ok(())
     }
 
     /// Adds a vote to the consensus pool.
@@ -492,7 +482,7 @@ impl ConsensusPoolService {
         pending_safe_to_notar: &mut HashSet<Block>,
         events: &mut Vec<VotorEvent>,
         stats: &mut ConsensusPoolServiceStats,
-    ) -> Result<(), ()> {
+    ) -> Result<(), &'static str> {
         // First, collect new pending blocks from the consensus pool and send them for repair
         for block in consensus_pool.take_pending_safe_to_notar() {
             if pending_safe_to_notar.contains(&block) {
@@ -513,7 +503,7 @@ impl ConsensusPoolService {
                     );
                     consensus_pool.add_to_pending_safe_to_notar(block);
                 }
-                Err(TrySendError::Disconnected(_)) => return Err(()),
+                Err(TrySendError::Disconnected(_)) => return Err("repair_event_sender"),
             }
         }
 
@@ -571,10 +561,9 @@ impl ConsensusPoolService {
         standstill_timer: &mut Instant,
         stats: &mut ConsensusPoolServiceStats,
         msg: Result<OwnMessage, RecvError>,
-    ) -> Result<(), ()> {
+    ) -> Result<(), &'static str> {
         let Ok(first) = msg else {
-            Self::handle_channel_disconnected(ctx, "own_message_receiver channel");
-            return Err(());
+            return Err("own_message_receiver");
         };
 
         let mut received_messages: usize = 0;
@@ -626,10 +615,9 @@ impl ConsensusPoolService {
         standstill_timer: &mut Instant,
         stats: &mut ConsensusPoolServiceStats,
         msg: Result<SigVerifiedBatch, RecvError>,
-    ) -> Result<(), ()> {
+    ) -> Result<(), &'static str> {
         let Ok(first) = msg else {
-            Self::handle_channel_disconnected(ctx, "consensus_message_receiver channel");
-            return Err(());
+            return Err("consensus_message_receiver");
         };
 
         let mut received_batches: usize = 0;
@@ -681,7 +669,7 @@ impl ConsensusPoolService {
         standstill_timer: &mut Instant,
         stats: &mut ConsensusPoolServiceStats,
         wait_timeout: Duration,
-    ) -> Result<(), ()> {
+    ) -> Result<(), &'static str> {
         select_biased! {
             recv(ctx.own_message_receiver) -> msg => {
                 Self::receive_own_msgs(ctx, consensus_pool, events, standstill_timer, stats,  msg)
@@ -691,6 +679,16 @@ impl ConsensusPoolService {
             }
             default(wait_timeout) => Ok(()),
         }
+    }
+}
+
+fn root_block(root_bank: &Bank) -> Block {
+    Block {
+        slot: root_bank.slot(),
+        block_id: root_bank
+            .block_id()
+            // Once SIMD-0333 is active we can hard unwrap here
+            .unwrap_or_default(),
     }
 }
 
@@ -760,22 +758,9 @@ mod tests {
             let leader_schedule_cache =
                 Arc::new(LeaderScheduleCache::new_from_bank(&sharable_banks.root()));
 
-            let root_bank = sharable_banks.root();
             let cluster_info = get_cluster_info(my_keypair.insecure_clone());
-            let root_block = Block {
-                slot: root_bank.slot(),
-                block_id: root_bank.block_id().unwrap_or_default(),
-            };
-            let initial_parent_ready = (root_bank.slot().checked_add(1).unwrap(), root_block);
             let generated_cert_types = Arc::new(GeneratedCertTypes::default());
             let migration_status = Arc::new(MigrationStatus::post_migration_status());
-            let consensus_pool = ConsensusPool::new(
-                cluster_info.clone(),
-                &root_bank,
-                generated_cert_types.clone(),
-                migration_status.clone(),
-                initial_parent_ready,
-            );
             let (consensus_message_sender, consensus_message_receiver) = unbounded();
             let (own_message_sender, own_message_receiver) = unbounded();
             let (event_sender, event_receiver) = unbounded();
@@ -797,6 +782,7 @@ mod tests {
                 repair_event_sender,
                 highest_finalized: Arc::new(RwLock::new(None)),
             };
+            let consensus_pool = ctx.new_consensus_pool();
 
             TestContext {
                 consensus_pool,
@@ -1114,9 +1100,13 @@ mod tests {
             },
         );
         ctx.ctx.vote_history_highest_parent_ready = Some(restored_parent_ready);
+        let mut consensus_pool = ctx.ctx.new_consensus_pool();
         let exit = ctx.ctx.exit.clone();
 
-        let handle = thread::spawn(move || ConsensusPoolService::main_loop(ctx.ctx));
+        let handle = thread::spawn(move || {
+            let mut stats = ConsensusPoolServiceStats::new();
+            let _ = ConsensusPoolService::main_loop(&mut ctx.ctx, &mut consensus_pool, &mut stats);
+        });
 
         let deadline = Instant::now() + Duration::from_secs(5);
         let mut saw_parent_ready = false;
@@ -1162,7 +1152,7 @@ mod tests {
             block_id: Hash::new_unique(),
         };
         assert_eq!(
-            ConsensusPoolService::initial_parent_ready(genesis_block, root_block, None),
+            ConsensusPoolContext::_initial_parent_ready(genesis_block, root_block, None),
             (13, root_block)
         );
 
@@ -1174,7 +1164,7 @@ mod tests {
             },
         );
         assert_eq!(
-            ConsensusPoolService::initial_parent_ready(genesis_block, root_block, Some(restored)),
+            ConsensusPoolContext::_initial_parent_ready(genesis_block, root_block, Some(restored)),
             restored
         );
 
@@ -1186,7 +1176,7 @@ mod tests {
             },
         );
         assert_eq!(
-            ConsensusPoolService::initial_parent_ready(genesis_block, root_block, Some(stale)),
+            ConsensusPoolContext::_initial_parent_ready(genesis_block, root_block, Some(stale)),
             (13, root_block)
         );
     }
@@ -1314,7 +1304,7 @@ mod tests {
             BLSOp::PushCertificates { certificates },
             &mut stats,
         );
-        assert_eq!(result.unwrap_err(), ());
+        result.unwrap_err();
     }
 
     #[test]

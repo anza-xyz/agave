@@ -549,6 +549,10 @@ impl ConsensusPool {
         self.stats.maybe_report();
     }
 
+    pub(crate) fn do_report(&mut self) {
+        self.stats.do_report();
+    }
+
     pub(crate) fn get_certs_for_standstill(&self) -> Vec<Arc<Certificate>> {
         let highest_slot = match &self.highest_finalized_slot_cert {
             Some(c) => c.slot().slot(),

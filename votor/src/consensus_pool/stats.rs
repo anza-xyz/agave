@@ -153,7 +153,7 @@ impl ConsensusPoolStats {
     }
 
     /// Reports the certificate related statistics.
-    fn report(&self) {
+    pub(super) fn do_report(&self) {
         let Self {
             conflicting_votes,
             event_safe_to_notarize,
@@ -192,7 +192,7 @@ impl ConsensusPoolStats {
 
     pub(super) fn maybe_report(&mut self) {
         if self.last_request_time.elapsed() >= STATS_REPORT_INTERVAL {
-            self.report();
+            self.do_report();
             *self = Self::default();
         }
     }

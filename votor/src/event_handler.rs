@@ -752,10 +752,11 @@ impl EventHandler {
             votes.push(bls_op);
         }
         update_commitment_cache(
+            my_pubkey,
             CommitmentType::Notarize,
             slot,
             &voting_context.commitment_sender,
-        )?;
+        );
         pending_blocks.remove(&slot);
 
         Self::try_final(my_pubkey, Block { slot, block_id }, voting_context, votes)?;
@@ -1114,11 +1115,6 @@ mod tests {
         let (leader_window_info_sender, leader_window_info_receiver) = bounded(1024);
         let (repair_event_sender, repair_event_receiver) = bounded(1024);
         let latest_switch_request = LatestSwitchRequest::default();
-        let timer_manager = Arc::new(PlRwLock::new(TimerManager::new(
-            event_sender,
-            exit,
-            Arc::new(MigrationStatus::default()),
-        )));
 
         // Create 10 node validatorvotekeypairs vec
         let validator_keypairs = (0..10)
@@ -1146,6 +1142,12 @@ mod tests {
             Arc::new(my_node_keypair.insecure_clone()),
             SocketAddrSpace::Unspecified,
         ));
+        let timer_manager = Arc::new(PlRwLock::new(TimerManager::new(
+            cluster_info.clone(),
+            event_sender,
+            exit,
+            Arc::new(MigrationStatus::default()),
+        )));
         let blockstore = Arc::new(
             Blockstore::open_with_options(
                 &get_tmp_ledger_path!(),

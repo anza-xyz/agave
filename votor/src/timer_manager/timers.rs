@@ -1,8 +1,9 @@
 use {
-    crate::{event::VotorEvent, timer_manager::stats::TimerManagerStats},
+    crate::{common::blocking_send, event::VotorEvent, timer_manager::stats::TimerManagerStats},
     crossbeam_channel::Sender,
     solana_clock::Slot,
     solana_leader_schedule::NUM_CONSECUTIVE_LEADER_SLOTS,
+    solana_pubkey::Pubkey,
     solana_runtime::leader_schedule_utils::last_of_consecutive_leader_slots,
     std::{
         cmp::Reverse,
@@ -230,7 +231,11 @@ impl Timers {
 
     /// Call to make progress on the timer states.  If there are still active
     /// timer states, returns when the earliest one might become ready.
-    pub(super) fn progress(&mut self, now: Instant) -> Option<Instant> {
+    pub(super) fn progress(
+        &mut self,
+        my_pubkey: &Pubkey,
+        now: Instant,
+    ) -> Result<Option<Instant>, &'static str> {
         assert_eq!(self.heap.len(), self.timers.len());
         let mut ret_timeout = None;
         loop {
@@ -247,7 +252,7 @@ impl Timers {
 
                     let mut timer = self.timers.remove(&slot).unwrap();
                     if let Some(event) = timer.progress(now) {
-                        self.event_sender.send(event).unwrap();
+                        blocking_send(my_pubkey, &self.event_sender, event, "event_sender")?;
                     }
                     if let Some(next_fire) = timer.next_fire() {
                         self.heap.push(Reverse((next_fire, slot)));
@@ -258,7 +263,7 @@ impl Timers {
                 }
             }
         }
-        ret_timeout
+        Ok(ret_timeout)
     }
 
     #[cfg(test)]
@@ -329,16 +334,17 @@ mod tests {
 
     #[test]
     fn timers_progress() {
+        let my_pubkey = Pubkey::new_unique();
         let one_micro = Duration::from_micros(1);
         let mut now = Instant::now();
         let (sender, receiver) = bounded(1024);
         let mut timers = Timers::new(one_micro, sender);
-        assert!(timers.progress(now).is_none());
+        assert!(timers.progress(&my_pubkey, now).unwrap().is_none());
         assert!(receiver.try_recv().unwrap_err().is_empty());
         let delta_block = Duration::from_millis(DEFAULT_MS_PER_SLOT);
 
         timers.set_timeouts(0, now, None, delta_block, delta_block);
-        while timers.progress(now).is_some() {
+        while timers.progress(&my_pubkey, now).unwrap().is_some() {
             now = now.checked_add(one_micro).unwrap();
         }
         let mut events = receiver.try_iter().collect::<Vec<_>>();

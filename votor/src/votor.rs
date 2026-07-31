@@ -220,6 +220,7 @@ impl Votor {
         };
 
         let timer_manager = Arc::new(PlRwLock::new(TimerManager::new(
+            cluster_info.clone(),
             event_sender.clone(),
             exit.clone(),
             migration_status.clone(),
