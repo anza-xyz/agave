@@ -960,14 +960,9 @@ impl DefaultTestArgs {
             rpc_port: 8899.to_string(),
             faucet_port: FAUCET_PORT.to_string(),
             dynamic_port_range: format!("{}-{}", VALIDATOR_PORT_RANGE.0, VALIDATOR_PORT_RANGE.1),
-            // 10,000 was derived empirically by watching the size of the
-            // rocksdb/ directory self-limit itself to the 40-150MB range when
-            // running `solana-test-validator`
-            //
-            // This value was later updated to 20,000 when --limit-ledger-size
-            // was replaced with --limit-blockstore-size because the new method
-            // counts data AND coding shreds
-            limit_blockstore_size: 20_000.to_string(),
+            // See comments in ledger/src/blockstore_cleanup_service.rs for more
+            // details, but 800k shreds is approximately 1 GB of space
+            limit_blockstore_size: 800_000.to_string(),
             faucet_sol: (1_000_000.).to_string(),
             faucet_time_slice_secs: (faucet::TIME_SLICE).to_string(),
         }
