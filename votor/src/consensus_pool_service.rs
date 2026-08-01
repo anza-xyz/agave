@@ -9,7 +9,7 @@ mod stats;
 
 use {
     crate::{
-        common::{DELTA_STANDSTILL, blocking_send},
+        common::DELTA_STANDSTILL,
         consensus_pool::{
             ConsensusPool,
             parent_ready_tracker::{BlockProductionParent, ParentReady},
@@ -26,7 +26,7 @@ use {
         sig_verified_messages::{SigVerifiedBatch, VoteAggregate},
         vote::Vote,
     },
-    crossbeam_channel::{Receiver, RecvError, Sender, TrySendError, select_biased},
+    crossbeam_channel::{Receiver, RecvError, Sender, TrySendError, select, select_biased},
     solana_clock::Slot,
     solana_gossip::cluster_info::ClusterInfo,
     solana_ledger::{blockstore::Blockstore, leader_schedule_cache::LeaderScheduleCache},
@@ -343,12 +343,19 @@ impl ConsensusPoolService {
                 &mut events,
                 stats,
             )?;
-            let my_pubkey = ctx.cluster_info.id();
-            for event in events.drain(..) {
-                blocking_send(&my_pubkey, &ctx.event_sender, event, "event_sender")?;
-            }
+            Self::send_events(
+                ctx,
+                consensus_pool,
+                &mut events,
+                &mut standstill_timer,
+                stats,
+            )?;
 
-            let wait_timeout = if pending_safe_to_notar.is_empty() {
+            let wait_timeout = if !events.is_empty() {
+                // Receiving own messages while sending can produce more events.
+                // Start the next iteration immediately so they are not delayed.
+                Duration::ZERO
+            } else if pending_safe_to_notar.is_empty() {
                 Duration::from_secs(1)
             } else {
                 // If there are pending blocks that are waiting for repair in order to emit
@@ -604,6 +611,46 @@ impl ConsensusPoolService {
         stats.received_own_messages += received_messages;
         if received_messages == MAX_MESSAGES_PER_RECEIVE {
             stats.own_message_receive_limit_reached += 1;
+        }
+        Ok(())
+    }
+
+    /// Send pending events while continuing to receive our own messages.
+    ///
+    /// The event handler sends votes back to this service through
+    /// `own_message_receiver`. If both bounded channels are full, blocking on
+    /// `event_sender` without receiving own messages would deadlock the two
+    /// services. Selecting over both operations keeps the critical event and
+    /// self-vote paths lossless while allowing either side to make progress.
+    fn send_events(
+        ctx: &mut ConsensusPoolContext,
+        consensus_pool: &mut ConsensusPool,
+        events: &mut Vec<VotorEvent>,
+        standstill_timer: &mut Instant,
+        stats: &mut ConsensusPoolServiceStats,
+    ) -> Result<(), &'static str> {
+        // Own messages received below can generate additional events. Leave
+        // those in `events` for the next main-loop iteration instead of
+        // extending the batch currently being sent.
+        for event in std::mem::take(events) {
+            loop {
+                select! {
+                    recv(ctx.own_message_receiver) -> msg => {
+                        Self::receive_own_msgs(
+                            ctx,
+                            consensus_pool,
+                            events,
+                            standstill_timer,
+                            stats,
+                            msg,
+                        )?;
+                    }
+                    send(ctx.event_sender, event.clone()) -> result => {
+                        result.map_err(|_| "event_sender")?;
+                        break;
+                    }
+                }
+            }
         }
         Ok(())
     }
@@ -1006,6 +1053,63 @@ mod tests {
         assert_eq!(stats.received_consensus_message_batches.0, 0);
         assert_eq!(stats.own_message_receive_limit_reached.0, 1);
         assert_eq!(stats.consensus_message_batch_receive_limit_reached.0, 0);
+    }
+
+    #[test]
+    fn test_send_events_receives_own_messages_under_backpressure() {
+        let mut ctx = TestContext::default();
+        let (own_message_sender, own_message_receiver) = bounded(1);
+        let (event_sender, event_receiver) = bounded(1);
+        ctx.own_message_sender = own_message_sender.clone();
+        ctx.ctx.own_message_receiver = own_message_receiver;
+        ctx.ctx.event_sender = event_sender.clone();
+        ctx.event_receiver = event_receiver.clone();
+
+        own_message_sender
+            .send(OwnMessage::Certificate(Certificate {
+                cert_type: CertificateType::Skip(1),
+                signature: BLSSignature([0; BLS_SIGNATURE_AFFINE_SIZE]),
+                bitmap: vec![],
+            }))
+            .unwrap();
+        event_sender.send(VotorEvent::Standstill(0)).unwrap();
+
+        // Model the event handler trying to send an own message before it can
+        // receive the event that is already filling its inbound channel.
+        let handler = thread::spawn(move || {
+            let own_message_result = own_message_sender.send_timeout(
+                OwnMessage::Certificate(Certificate {
+                    cert_type: CertificateType::Skip(2),
+                    signature: BLSSignature([0; BLS_SIGNATURE_AFFINE_SIZE]),
+                    bitmap: vec![],
+                }),
+                Duration::from_secs(1),
+            );
+            let first_event = event_receiver.recv_timeout(Duration::from_secs(1)).unwrap();
+            let second_event = event_receiver.recv_timeout(Duration::from_secs(1)).unwrap();
+            (own_message_result, first_event, second_event)
+        });
+
+        let mut events = vec![VotorEvent::Standstill(1)];
+        let mut standstill_timer = Instant::now();
+        let mut stats = ConsensusPoolServiceStats::new();
+        ConsensusPoolService::send_events(
+            &mut ctx.ctx,
+            &mut ctx.consensus_pool,
+            &mut events,
+            &mut standstill_timer,
+            &mut stats,
+        )
+        .unwrap();
+
+        let (own_message_result, first_event, second_event) = handler.join().unwrap();
+        assert!(
+            own_message_result.is_ok(),
+            "pool must receive own messages while its event send is backpressured"
+        );
+        assert!(matches!(first_event, VotorEvent::Standstill(0)));
+        assert!(matches!(second_event, VotorEvent::Standstill(1)));
+        assert!(stats.received_own_messages.0 >= 1);
     }
 
     #[test]
