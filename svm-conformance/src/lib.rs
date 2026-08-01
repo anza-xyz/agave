@@ -11,3 +11,5 @@ pub mod instr;
 pub mod serialization;
 #[cfg(feature = "ffi")]
 pub mod syscall;
+#[cfg(feature = "ffi")]
+pub mod txn;
