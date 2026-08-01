@@ -6,9 +6,15 @@ use {
         CalculatedStakePoints, CalculationEnvironment, DelegatedVoteState,
         InflationPointCalculationEvent, SkippedReason, calculate_stake_points_and_credits,
     },
-    crate::{alpenglow_epoch_type::AlpenglowEpochType, stake_delegation::effective_stake},
+    crate::{
+        alpenglow_epoch_type::AlpenglowEpochType,
+        stake_delegation::{delegation_activation_status, effective_stake},
+    },
     solana_instruction::error::InstructionError,
-    solana_stake_interface::{error::StakeError, state::Stake},
+    solana_stake_interface::{
+        error::StakeError,
+        state::{Stake, StakeActivationStatus},
+    },
 };
 
 pub mod points;
@@ -106,6 +112,15 @@ fn redeem_stake_rewards<'a>(
     }
 
     let adjust_delegations_for_rent = calculation_environment.adjust_delegations_for_rent;
+
+    let status = delegation_activation_status(
+        &stake.delegation,
+        calculation_environment.rewarded_epoch,
+        calculation_environment.stake_history,
+        calculation_environment.new_rate_activation_epoch,
+        calculation_environment.use_fixed_point_stake_math,
+    );
+
     let maybe_rewards = calculate_stake_rewards(
         stake,
         voter_commission_bps,
@@ -136,6 +151,7 @@ fn redeem_stake_rewards<'a>(
             new_delegation_with_rewards,
             current_lamports.saturating_add(staker_rewards),
             minimum_lamports,
+            status,
         );
         // If `maybe_rewards.is_some()`, need to drive forward credits, even
         // if rewards are zero
@@ -163,7 +179,12 @@ pub(crate) fn delegation_may_need_adjustment(
     new_delegation_with_rewards: u64,
     lamports_with_rewards: u64,
     minimum_lamports: u64,
+    status: StakeActivationStatus,
 ) -> bool {
+    if status.effective == 0 && status.activating == 0 {
+        return false;
+    }
+
     let new_delegation = std::cmp::min(
         new_delegation_with_rewards,
         lamports_with_rewards.saturating_sub(minimum_lamports),
