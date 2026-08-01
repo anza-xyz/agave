@@ -29,7 +29,7 @@ pub(in crate::parse_token) fn parse_permissioned_burn_instruction(
             Ok(ParsedInstructionEnum {
                 instruction_type: "initializePermissionedBurnConfig".to_string(),
                 info: json!({
-                    "mint": account_keys[account_indexes[0] as usize].to_string(),
+                    "mint": account_key(account_keys, account_indexes, 0, ParsableProgram::SplToken)?.to_string(),
                     "authority": authority.to_string(),
                 }),
             })
@@ -41,9 +41,9 @@ pub(in crate::parse_token) fn parse_permissioned_burn_instruction(
                     ParseInstructionError::InstructionNotParsable(ParsableProgram::SplToken)
                 })?;
             let mut value = json!({
-                "account": account_keys[account_indexes[0] as usize].to_string(),
-                "mint": account_keys[account_indexes[1] as usize].to_string(),
-                "permissionedBurnAuthority": account_keys[account_indexes[2] as usize].to_string(),
+                "account": account_key(account_keys, account_indexes, 0, ParsableProgram::SplToken)?.to_string(),
+                "mint": account_key(account_keys, account_indexes, 1, ParsableProgram::SplToken)?.to_string(),
+                "permissionedBurnAuthority": account_key(account_keys, account_indexes, 2, ParsableProgram::SplToken)?.to_string(),
                 "amount": u64::from(amount).to_string(),
             });
             let map = value.as_object_mut().unwrap();
@@ -68,9 +68,9 @@ pub(in crate::parse_token) fn parse_permissioned_burn_instruction(
                 })?;
             let additional_data = SplTokenAdditionalDataV2::with_decimals(decimals);
             let mut value = json!({
-                "account": account_keys[account_indexes[0] as usize].to_string(),
-                "mint": account_keys[account_indexes[1] as usize].to_string(),
-                "permissionedBurnAuthority": account_keys[account_indexes[2] as usize].to_string(),
+                "account": account_key(account_keys, account_indexes, 0, ParsableProgram::SplToken)?.to_string(),
+                "mint": account_key(account_keys, account_indexes, 1, ParsableProgram::SplToken)?.to_string(),
+                "permissionedBurnAuthority": account_key(account_keys, account_indexes, 2, ParsableProgram::SplToken)?.to_string(),
                 "tokenAmount": token_amount_to_ui_amount_v3(u64::from(amount), &additional_data),
             });
             let map = value.as_object_mut().unwrap();
@@ -94,8 +94,8 @@ pub(in crate::parse_token) fn parse_permissioned_burn_instruction(
                     ParseInstructionError::InstructionNotParsable(ParsableProgram::SplToken)
                 })?;
             let mut value = json!({
-                "account": account_keys[account_indexes[0] as usize].to_string(),
-                "mint": account_keys[account_indexes[1] as usize].to_string(),
+                "account": account_key(account_keys, account_indexes, 0, ParsableProgram::SplToken)?.to_string(),
+                "mint": account_key(account_keys, account_indexes, 1, ParsableProgram::SplToken)?.to_string(),
                 "newDecryptableAvailableBalance": burn_data.new_decryptable_available_balance.to_string(),
                 "equalityProofInstructionOffset": burn_data.equality_proof_instruction_offset,
                 "ciphertextValidityProofInstructionOffset": burn_data.ciphertext_validity_proof_instruction_offset,
@@ -115,7 +115,7 @@ pub(in crate::parse_token) fn parse_permissioned_burn_instruction(
             if has_sysvar && offset < account_indexes.len().saturating_sub(2) {
                 map.insert(
                     "instructionsSysvar".to_string(),
-                    json!(account_keys[account_indexes[offset] as usize].to_string()),
+                    json!(account_key(account_keys, account_indexes, offset, ParsableProgram::SplToken)?.to_string()),
                 );
                 offset += 1;
             }
@@ -125,7 +125,7 @@ pub(in crate::parse_token) fn parse_permissioned_burn_instruction(
             {
                 map.insert(
                     "equalityProofContextStateAccount".to_string(),
-                    json!(account_keys[account_indexes[offset] as usize].to_string()),
+                    json!(account_key(account_keys, account_indexes, offset, ParsableProgram::SplToken)?.to_string()),
                 );
                 offset += 1;
             }
@@ -135,7 +135,7 @@ pub(in crate::parse_token) fn parse_permissioned_burn_instruction(
             {
                 map.insert(
                     "ciphertextValidityProofContextStateAccount".to_string(),
-                    json!(account_keys[account_indexes[offset] as usize].to_string()),
+                    json!(account_key(account_keys, account_indexes, offset, ParsableProgram::SplToken)?.to_string()),
                 );
                 offset += 1;
             }
@@ -145,7 +145,7 @@ pub(in crate::parse_token) fn parse_permissioned_burn_instruction(
             {
                 map.insert(
                     "rangeProofContextStateAccount".to_string(),
-                    json!(account_keys[account_indexes[offset] as usize].to_string()),
+                    json!(account_key(account_keys, account_indexes, offset, ParsableProgram::SplToken)?.to_string()),
                 );
                 offset += 1;
             }
@@ -153,7 +153,7 @@ pub(in crate::parse_token) fn parse_permissioned_burn_instruction(
             if offset < account_indexes.len().saturating_sub(1) {
                 map.insert(
                     "permissionedBurnAuthority".to_string(),
-                    json!(account_keys[account_indexes[offset] as usize].to_string()),
+                    json!(account_key(account_keys, account_indexes, offset, ParsableProgram::SplToken)?.to_string()),
                 );
                 offset += 1;
             }
