@@ -247,6 +247,8 @@ pub const MAX_LEADER_SCHEDULE_STAKES: Epoch = 5;
 
 /// This will be guaranteed through the VAT rules,
 /// only the top 2000 validators by stake will be present in vote account structures.
+// This const is mirrored in agave-votor-transport crate, so if it is ever changed here
+// it must also be changed there as well.
 pub const MAX_ALPENGLOW_VOTE_ACCOUNTS: usize = 2000;
 
 /// Default 400ms-slot Validator Admission Ticket burn amount.
