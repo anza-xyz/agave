@@ -1,6 +1,6 @@
 use {
     crate::parse_instruction::{
-        ParsableProgram, ParseInstructionError, ParsedInstructionEnum, check_num_accounts,
+        ParsableProgram, ParseInstructionError, ParsedInstructionEnum, account_key, check_num_accounts,
     },
     extension::{
         confidential_mint_burn::*, confidential_transfer::*, confidential_transfer_fee::*,
@@ -49,10 +49,10 @@ pub fn parse_token(
             } => {
                 check_num_token_accounts(&instruction.accounts, 2)?;
                 let mut value = json!({
-                    "mint": account_keys[instruction.accounts[0] as usize].to_string(),
+                    "mint": account_key(account_keys, &instruction.accounts, 0, ParsableProgram::SplToken)?.to_string(),
                     "decimals": decimals,
                     "mintAuthority": mint_authority.to_string(),
-                    "rentSysvar": account_keys[instruction.accounts[1] as usize].to_string(),
+                    "rentSysvar": account_key(account_keys, &instruction.accounts, 1, ParsableProgram::SplToken)?.to_string(),
                 });
                 let map = value.as_object_mut().unwrap();
                 if let COption::Some(freeze_authority) = freeze_authority {
@@ -73,7 +73,7 @@ pub fn parse_token(
             } => {
                 check_num_token_accounts(&instruction.accounts, 1)?;
                 let mut value = json!({
-                    "mint": account_keys[instruction.accounts[0] as usize].to_string(),
+                    "mint": account_key(account_keys, &instruction.accounts, 0, ParsableProgram::SplToken)?.to_string(),
                     "decimals": decimals,
                     "mintAuthority": mint_authority.to_string(),
                 });
@@ -94,10 +94,10 @@ pub fn parse_token(
                 Ok(ParsedInstructionEnum {
                     instruction_type: "initializeAccount".to_string(),
                     info: json!({
-                        "account": account_keys[instruction.accounts[0] as usize].to_string(),
-                        "mint": account_keys[instruction.accounts[1] as usize].to_string(),
-                        "owner": account_keys[instruction.accounts[2] as usize].to_string(),
-                        "rentSysvar": account_keys[instruction.accounts[3] as usize].to_string(),
+                        "account": account_key(account_keys, &instruction.accounts, 0, ParsableProgram::SplToken)?.to_string(),
+                        "mint": account_key(account_keys, &instruction.accounts, 1, ParsableProgram::SplToken)?.to_string(),
+                        "owner": account_key(account_keys, &instruction.accounts, 2, ParsableProgram::SplToken)?.to_string(),
+                        "rentSysvar": account_key(account_keys, &instruction.accounts, 3, ParsableProgram::SplToken)?.to_string(),
                     }),
                 })
             }
@@ -106,10 +106,10 @@ pub fn parse_token(
                 Ok(ParsedInstructionEnum {
                     instruction_type: "initializeAccount2".to_string(),
                     info: json!({
-                        "account": account_keys[instruction.accounts[0] as usize].to_string(),
-                        "mint": account_keys[instruction.accounts[1] as usize].to_string(),
+                        "account": account_key(account_keys, &instruction.accounts, 0, ParsableProgram::SplToken)?.to_string(),
+                        "mint": account_key(account_keys, &instruction.accounts, 1, ParsableProgram::SplToken)?.to_string(),
                         "owner": owner.to_string(),
-                        "rentSysvar": account_keys[instruction.accounts[2] as usize].to_string(),
+                        "rentSysvar": account_key(account_keys, &instruction.accounts, 2, ParsableProgram::SplToken)?.to_string(),
                     }),
                 })
             }
@@ -118,23 +118,25 @@ pub fn parse_token(
                 Ok(ParsedInstructionEnum {
                     instruction_type: "initializeAccount3".to_string(),
                     info: json!({
-                        "account": account_keys[instruction.accounts[0] as usize].to_string(),
-                        "mint": account_keys[instruction.accounts[1] as usize].to_string(),
+                        "account": account_key(account_keys, &instruction.accounts, 0, ParsableProgram::SplToken)?.to_string(),
+                        "mint": account_key(account_keys, &instruction.accounts, 1, ParsableProgram::SplToken)?.to_string(),
                         "owner": owner.to_string(),
                     }),
                 })
             }
             TokenInstruction::InitializeMultisig { m } => {
                 check_num_token_accounts(&instruction.accounts, 3)?;
-                let mut signers: Vec<String> = vec![];
-                for i in instruction.accounts[2..].iter() {
-                    signers.push(account_keys[*i as usize].to_string());
-                }
+                let signers: Vec<String> = instruction
+                    .accounts
+                    .iter()
+                    .skip(2)
+                    .filter_map(|i| account_keys.get(*i as usize).map(ToString::to_string))
+                    .collect();
                 Ok(ParsedInstructionEnum {
                     instruction_type: "initializeMultisig".to_string(),
                     info: json!({
-                        "multisig": account_keys[instruction.accounts[0] as usize].to_string(),
-                        "rentSysvar": account_keys[instruction.accounts[1] as usize].to_string(),
+                        "multisig": account_key(account_keys, &instruction.accounts, 0, ParsableProgram::SplToken)?.to_string(),
+                        "rentSysvar": account_key(account_keys, &instruction.accounts, 1, ParsableProgram::SplToken)?.to_string(),
                         "signers": signers,
                         "m": m,
                     }),
@@ -142,14 +144,16 @@ pub fn parse_token(
             }
             TokenInstruction::InitializeMultisig2 { m } => {
                 check_num_token_accounts(&instruction.accounts, 2)?;
-                let mut signers: Vec<String> = vec![];
-                for i in instruction.accounts[1..].iter() {
-                    signers.push(account_keys[*i as usize].to_string());
-                }
+                let signers: Vec<String> = instruction
+                    .accounts
+                    .iter()
+                    .skip(1)
+                    .filter_map(|i| account_keys.get(*i as usize).map(ToString::to_string))
+                    .collect();
                 Ok(ParsedInstructionEnum {
                     instruction_type: "initializeMultisig2".to_string(),
                     info: json!({
-                        "multisig": account_keys[instruction.accounts[0] as usize].to_string(),
+                        "multisig": account_key(account_keys, &instruction.accounts, 0, ParsableProgram::SplToken)?.to_string(),
                         "signers": signers,
                         "m": m,
                     }),
@@ -159,8 +163,8 @@ pub fn parse_token(
             TokenInstruction::Transfer { amount } => {
                 check_num_token_accounts(&instruction.accounts, 3)?;
                 let mut value = json!({
-                    "source": account_keys[instruction.accounts[0] as usize].to_string(),
-                    "destination": account_keys[instruction.accounts[1] as usize].to_string(),
+                    "source": account_key(account_keys, &instruction.accounts, 0, ParsableProgram::SplToken)?.to_string(),
+                    "destination": account_key(account_keys, &instruction.accounts, 1, ParsableProgram::SplToken)?.to_string(),
                     "amount": amount.to_string(),
                 });
                 let map = value.as_object_mut().unwrap();
@@ -180,8 +184,8 @@ pub fn parse_token(
             TokenInstruction::Approve { amount } => {
                 check_num_token_accounts(&instruction.accounts, 3)?;
                 let mut value = json!({
-                    "source": account_keys[instruction.accounts[0] as usize].to_string(),
-                    "delegate": account_keys[instruction.accounts[1] as usize].to_string(),
+                    "source": account_key(account_keys, &instruction.accounts, 0, ParsableProgram::SplToken)?.to_string(),
+                    "delegate": account_key(account_keys, &instruction.accounts, 1, ParsableProgram::SplToken)?.to_string(),
                     "amount": amount.to_string(),
                 });
                 let map = value.as_object_mut().unwrap();
@@ -201,7 +205,7 @@ pub fn parse_token(
             TokenInstruction::Revoke => {
                 check_num_token_accounts(&instruction.accounts, 2)?;
                 let mut value = json!({
-                    "source": account_keys[instruction.accounts[0] as usize].to_string(),
+                    "source": account_key(account_keys, &instruction.accounts, 0, ParsableProgram::SplToken)?.to_string(),
                 });
                 let map = value.as_object_mut().unwrap();
                 parse_signers(
@@ -242,7 +246,7 @@ pub fn parse_token(
                     AuthorityType::AccountOwner | AuthorityType::CloseAccount => "account",
                 };
                 let mut value = json!({
-                    owned: account_keys[instruction.accounts[0] as usize].to_string(),
+                    owned: account_key(account_keys, &instruction.accounts, 0, ParsableProgram::SplToken)?.to_string(),
                     "authorityType": Into::<UiAuthorityType>::into(authority_type),
                     "newAuthority": map_coption_pubkey(new_authority),
                 });
@@ -263,8 +267,8 @@ pub fn parse_token(
             TokenInstruction::MintTo { amount } => {
                 check_num_token_accounts(&instruction.accounts, 3)?;
                 let mut value = json!({
-                    "mint": account_keys[instruction.accounts[0] as usize].to_string(),
-                    "account": account_keys[instruction.accounts[1] as usize].to_string(),
+                    "mint": account_key(account_keys, &instruction.accounts, 0, ParsableProgram::SplToken)?.to_string(),
+                    "account": account_key(account_keys, &instruction.accounts, 1, ParsableProgram::SplToken)?.to_string(),
                     "amount": amount.to_string(),
                 });
                 let map = value.as_object_mut().unwrap();
@@ -284,8 +288,8 @@ pub fn parse_token(
             TokenInstruction::Burn { amount } => {
                 check_num_token_accounts(&instruction.accounts, 3)?;
                 let mut value = json!({
-                    "account": account_keys[instruction.accounts[0] as usize].to_string(),
-                    "mint": account_keys[instruction.accounts[1] as usize].to_string(),
+                    "account": account_key(account_keys, &instruction.accounts, 0, ParsableProgram::SplToken)?.to_string(),
+                    "mint": account_key(account_keys, &instruction.accounts, 1, ParsableProgram::SplToken)?.to_string(),
                     "amount": amount.to_string(),
                 });
                 let map = value.as_object_mut().unwrap();
@@ -305,8 +309,8 @@ pub fn parse_token(
             TokenInstruction::CloseAccount => {
                 check_num_token_accounts(&instruction.accounts, 3)?;
                 let mut value = json!({
-                    "account": account_keys[instruction.accounts[0] as usize].to_string(),
-                    "destination": account_keys[instruction.accounts[1] as usize].to_string(),
+                    "account": account_key(account_keys, &instruction.accounts, 0, ParsableProgram::SplToken)?.to_string(),
+                    "destination": account_key(account_keys, &instruction.accounts, 1, ParsableProgram::SplToken)?.to_string(),
                 });
                 let map = value.as_object_mut().unwrap();
                 parse_signers(
@@ -325,8 +329,8 @@ pub fn parse_token(
             TokenInstruction::FreezeAccount => {
                 check_num_token_accounts(&instruction.accounts, 3)?;
                 let mut value = json!({
-                    "account": account_keys[instruction.accounts[0] as usize].to_string(),
-                    "mint": account_keys[instruction.accounts[1] as usize].to_string(),
+                    "account": account_key(account_keys, &instruction.accounts, 0, ParsableProgram::SplToken)?.to_string(),
+                    "mint": account_key(account_keys, &instruction.accounts, 1, ParsableProgram::SplToken)?.to_string(),
                 });
                 let map = value.as_object_mut().unwrap();
                 parse_signers(
@@ -345,8 +349,8 @@ pub fn parse_token(
             TokenInstruction::ThawAccount => {
                 check_num_token_accounts(&instruction.accounts, 3)?;
                 let mut value = json!({
-                    "account": account_keys[instruction.accounts[0] as usize].to_string(),
-                    "mint": account_keys[instruction.accounts[1] as usize].to_string(),
+                    "account": account_key(account_keys, &instruction.accounts, 0, ParsableProgram::SplToken)?.to_string(),
+                    "mint": account_key(account_keys, &instruction.accounts, 1, ParsableProgram::SplToken)?.to_string(),
                 });
                 let map = value.as_object_mut().unwrap();
                 parse_signers(
@@ -366,9 +370,9 @@ pub fn parse_token(
                 check_num_token_accounts(&instruction.accounts, 4)?;
                 let additional_data = SplTokenAdditionalDataV2::with_decimals(decimals);
                 let mut value = json!({
-                    "source": account_keys[instruction.accounts[0] as usize].to_string(),
-                    "mint": account_keys[instruction.accounts[1] as usize].to_string(),
-                    "destination": account_keys[instruction.accounts[2] as usize].to_string(),
+                    "source": account_key(account_keys, &instruction.accounts, 0, ParsableProgram::SplToken)?.to_string(),
+                    "mint": account_key(account_keys, &instruction.accounts, 1, ParsableProgram::SplToken)?.to_string(),
+                    "destination": account_key(account_keys, &instruction.accounts, 2, ParsableProgram::SplToken)?.to_string(),
                     "tokenAmount": token_amount_to_ui_amount_v3(amount, &additional_data),
                 });
                 let map = value.as_object_mut().unwrap();
@@ -389,9 +393,9 @@ pub fn parse_token(
                 check_num_token_accounts(&instruction.accounts, 4)?;
                 let additional_data = SplTokenAdditionalDataV2::with_decimals(decimals);
                 let mut value = json!({
-                    "source": account_keys[instruction.accounts[0] as usize].to_string(),
-                    "mint": account_keys[instruction.accounts[1] as usize].to_string(),
-                    "delegate": account_keys[instruction.accounts[2] as usize].to_string(),
+                    "source": account_key(account_keys, &instruction.accounts, 0, ParsableProgram::SplToken)?.to_string(),
+                    "mint": account_key(account_keys, &instruction.accounts, 1, ParsableProgram::SplToken)?.to_string(),
+                    "delegate": account_key(account_keys, &instruction.accounts, 2, ParsableProgram::SplToken)?.to_string(),
                     "tokenAmount": token_amount_to_ui_amount_v3(amount, &additional_data),
                 });
                 let map = value.as_object_mut().unwrap();
@@ -412,8 +416,8 @@ pub fn parse_token(
                 check_num_token_accounts(&instruction.accounts, 3)?;
                 let additional_data = SplTokenAdditionalDataV2::with_decimals(decimals);
                 let mut value = json!({
-                    "mint": account_keys[instruction.accounts[0] as usize].to_string(),
-                    "account": account_keys[instruction.accounts[1] as usize].to_string(),
+                    "mint": account_key(account_keys, &instruction.accounts, 0, ParsableProgram::SplToken)?.to_string(),
+                    "account": account_key(account_keys, &instruction.accounts, 1, ParsableProgram::SplToken)?.to_string(),
                     "tokenAmount": token_amount_to_ui_amount_v3(amount, &additional_data),
                 });
                 let map = value.as_object_mut().unwrap();
@@ -434,8 +438,8 @@ pub fn parse_token(
                 check_num_token_accounts(&instruction.accounts, 3)?;
                 let additional_data = SplTokenAdditionalDataV2::with_decimals(decimals);
                 let mut value = json!({
-                    "account": account_keys[instruction.accounts[0] as usize].to_string(),
-                    "mint": account_keys[instruction.accounts[1] as usize].to_string(),
+                    "account": account_key(account_keys, &instruction.accounts, 0, ParsableProgram::SplToken)?.to_string(),
+                    "mint": account_key(account_keys, &instruction.accounts, 1, ParsableProgram::SplToken)?.to_string(),
                     "tokenAmount": token_amount_to_ui_amount_v3(amount, &additional_data),
                 });
                 let map = value.as_object_mut().unwrap();
@@ -457,14 +461,14 @@ pub fn parse_token(
                 Ok(ParsedInstructionEnum {
                     instruction_type: "syncNative".to_string(),
                     info: json!({
-                        "account": account_keys[instruction.accounts[0] as usize].to_string(),
+                        "account": account_key(account_keys, &instruction.accounts, 0, ParsableProgram::SplToken)?.to_string(),
                     }),
                 })
             }
             TokenInstruction::GetAccountDataSize { extension_types } => {
                 check_num_token_accounts(&instruction.accounts, 1)?;
                 let mut value = json!({
-                    "mint": account_keys[instruction.accounts[0] as usize].to_string(),
+                    "mint": account_key(account_keys, &instruction.accounts, 0, ParsableProgram::SplToken)?.to_string(),
                 });
                 let map = value.as_object_mut().unwrap();
                 if !extension_types.is_empty() {
@@ -488,7 +492,7 @@ pub fn parse_token(
                 Ok(ParsedInstructionEnum {
                     instruction_type: "initializeImmutableOwner".to_string(),
                     info: json!({
-                        "account": account_keys[instruction.accounts[0] as usize].to_string(),
+                        "account": account_key(account_keys, &instruction.accounts, 0, ParsableProgram::SplToken)?.to_string(),
                     }),
                 })
             }
@@ -497,7 +501,7 @@ pub fn parse_token(
                 Ok(ParsedInstructionEnum {
                     instruction_type: "amountToUiAmount".to_string(),
                     info: json!({
-                        "mint": account_keys[instruction.accounts[0] as usize].to_string(),
+                        "mint": account_key(account_keys, &instruction.accounts, 0, ParsableProgram::SplToken)?.to_string(),
                         "amount": amount.to_string(),
                     }),
                 })
@@ -507,7 +511,7 @@ pub fn parse_token(
                 Ok(ParsedInstructionEnum {
                     instruction_type: "uiAmountToAmount".to_string(),
                     info: json!({
-                        "mint": account_keys[instruction.accounts[0] as usize].to_string(),
+                        "mint": account_key(account_keys, &instruction.accounts, 0, ParsableProgram::SplToken)?.to_string(),
                         "uiAmount": ui_amount,
                     }),
                 })
@@ -563,9 +567,9 @@ pub fn parse_token(
                 Ok(ParsedInstructionEnum {
                     instruction_type: "createNativeMint".to_string(),
                     info: json!({
-                        "payer": account_keys[instruction.accounts[0] as usize].to_string(),
-                        "nativeMint": account_keys[instruction.accounts[1] as usize].to_string(),
-                        "systemProgram": account_keys[instruction.accounts[2] as usize].to_string(),
+                        "payer": account_key(account_keys, &instruction.accounts, 0, ParsableProgram::SplToken)?.to_string(),
+                        "nativeMint": account_key(account_keys, &instruction.accounts, 1, ParsableProgram::SplToken)?.to_string(),
+                        "systemProgram": account_key(account_keys, &instruction.accounts, 2, ParsableProgram::SplToken)?.to_string(),
                     }),
                 })
             }
@@ -574,7 +578,7 @@ pub fn parse_token(
                 Ok(ParsedInstructionEnum {
                     instruction_type: "initializeNonTransferableMint".to_string(),
                     info: json!({
-                        "mint": account_keys[instruction.accounts[0] as usize].to_string(),
+                        "mint": account_key(account_keys, &instruction.accounts, 0, ParsableProgram::SplToken)?.to_string(),
                     }),
                 })
             }
@@ -636,8 +640,8 @@ pub fn parse_token(
             TokenInstruction::WithdrawExcessLamports => {
                 check_num_token_accounts(&instruction.accounts, 3)?;
                 let mut value = json!({
-                    "source": account_keys[instruction.accounts[0] as usize].to_string(),
-                    "destination": account_keys[instruction.accounts[1] as usize].to_string(),
+                    "source": account_key(account_keys, &instruction.accounts, 0, ParsableProgram::SplToken)?.to_string(),
+                    "destination": account_key(account_keys, &instruction.accounts, 1, ParsableProgram::SplToken)?.to_string(),
                 });
                 let map = value.as_object_mut().unwrap();
                 parse_signers(
@@ -709,8 +713,8 @@ pub fn parse_token(
             TokenInstruction::UnwrapLamports { amount } => {
                 check_num_token_accounts(&instruction.accounts, 3)?;
                 let mut value = json!({
-                    "source": account_keys[instruction.accounts[0] as usize].to_string(),
-                    "destination": account_keys[instruction.accounts[1] as usize].to_string(),
+                    "source": account_key(account_keys, &instruction.accounts, 0, ParsableProgram::SplToken)?.to_string(),
+                    "destination": account_key(account_keys, &instruction.accounts, 1, ParsableProgram::SplToken)?.to_string(),
                 });
                 let map = value.as_object_mut().unwrap();
                 if let COption::Some(amount) = amount {
@@ -942,21 +946,21 @@ fn parse_signers(
     owner_field_name: &str,
     multisig_field_name: &str,
 ) {
+    let owner = accounts
+        .get(last_nonsigner_index)
+        .and_then(|i| account_keys.get(*i as usize));
     if accounts.len() > last_nonsigner_index + 1 {
-        let mut signers: Vec<String> = vec![];
-        for i in accounts[last_nonsigner_index + 1..].iter() {
-            signers.push(account_keys[*i as usize].to_string());
+        let signers: Vec<String> = accounts
+            .iter()
+            .skip(last_nonsigner_index + 1)
+            .filter_map(|i| account_keys.get(*i as usize).map(ToString::to_string))
+            .collect();
+        if let Some(multisig) = owner {
+            map.insert(multisig_field_name.to_string(), json!(multisig.to_string()));
         }
-        map.insert(
-            multisig_field_name.to_string(),
-            json!(account_keys[accounts[last_nonsigner_index] as usize].to_string()),
-        );
         map.insert("signers".to_string(), json!(signers));
-    } else {
-        map.insert(
-            owner_field_name.to_string(),
-            json!(account_keys[accounts[last_nonsigner_index] as usize].to_string()),
-        );
+    } else if let Some(owner) = owner {
+        map.insert(owner_field_name.to_string(), json!(owner.to_string()));
     }
 }
 

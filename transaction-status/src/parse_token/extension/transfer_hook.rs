@@ -23,7 +23,7 @@ pub(in crate::parse_token) fn parse_transfer_hook_instruction(
                 ParseInstructionError::InstructionNotParsable(ParsableProgram::SplToken)
             })?;
             let mut value = json!({
-                "mint": account_keys[account_indexes[0] as usize].to_string(),
+                "mint": account_key(account_keys, account_indexes, 0, ParsableProgram::SplToken)?.to_string(),
             });
             let map = value.as_object_mut().unwrap();
             if let Some(authority) = Option::<Pubkey>::from(authority) {
@@ -44,7 +44,7 @@ pub(in crate::parse_token) fn parse_transfer_hook_instruction(
                 ParseInstructionError::InstructionNotParsable(ParsableProgram::SplToken)
             })?;
             let mut value = json!({
-                "mint": account_keys[account_indexes[0] as usize].to_string(),
+                "mint": account_key(account_keys, account_indexes, 0, ParsableProgram::SplToken)?.to_string(),
             });
             let map = value.as_object_mut().unwrap();
             if let Some(program_id) = Option::<Pubkey>::from(program_id) {
