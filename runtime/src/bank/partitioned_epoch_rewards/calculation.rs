@@ -22,10 +22,7 @@ use {
         },
         reward_info::RewardInfo,
         stake_account::StakeAccount,
-<<<<<<< HEAD
-=======
-        stake_delegation::{delegation_activation_status, delegation_effective_stake},
->>>>>>> fc32996ba (runtime: do not rewrite inactive stakes (#14213))
+        stake_delegation::delegation_activation_status,
         stakes::Stakes,
     },
     log::{debug, info},
@@ -1160,18 +1157,12 @@ mod tests {
         solana_rent::Rent,
         solana_sdk_ids::incinerator,
         solana_signer::Signer,
-<<<<<<< HEAD
-=======
-        solana_stake_history::{StakeHistory, StakeHistoryEntry},
->>>>>>> fc32996ba (runtime: do not rewrite inactive stakes (#14213))
         solana_stake_interface::{
             stake_flags::StakeFlags,
+            stake_history::{StakeHistory, StakeHistoryEntry},
             state::{Authorized, Delegation, Meta, Stake, StakeStateV2},
         },
-<<<<<<< HEAD
-=======
         solana_vote::vote_account::{VoteAccount, VoteAccounts, VoteAccountsHashMap},
->>>>>>> fc32996ba (runtime: do not rewrite inactive stakes (#14213))
         solana_vote_interface::state::{
             BLS_PUBLIC_KEY_COMPRESSED_SIZE, VoteInitV2, VoteStateV4, VoteStateVersions,
         },
