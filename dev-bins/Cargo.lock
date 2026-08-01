@@ -8538,10 +8538,14 @@ dependencies = [
 name = "solana-svm-conformance"
 version = "4.3.0-alpha.2"
 dependencies = [
+ "agave-precompiles",
  "bincode",
  "clap 4.6.1",
  "prost 0.11.9",
  "protosol",
+ "serde",
+ "solana-account 4.3.1",
+ "solana-clock",
  "solana-compute-budget",
  "solana-program-runtime",
  "solana-pubkey 4.2.0",
@@ -8549,6 +8553,8 @@ dependencies = [
  "solana-sdk-ids",
  "solana-svm",
  "solana-syscalls",
+ "solana-system-interface 3.2.0",
+ "solana-system-program",
 ]
 
 [[package]]
