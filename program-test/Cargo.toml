@@ -7,6 +7,12 @@ repository = { workspace = true }
 homepage = { workspace = true }
 license = { workspace = true }
 edition = { workspace = true }
+rust-version = { workspace = true }
+
+[package.metadata.docs.rs]
+targets = ["x86_64-unknown-linux-gnu"]
+all-features = true
+rustdoc-args = ["--cfg=docsrs"]
 
 [features]
 agave-unstable-api = []
@@ -54,9 +60,9 @@ solana-runtime = { workspace = true }
 solana-sbpf = { workspace = true }
 solana-sdk-ids = { workspace = true }
 solana-signer = { workspace = true }
+solana-stake-history = { workspace = true }
 solana-stake-interface = { workspace = true }
 solana-svm-log-collector = { workspace = true }
-solana-svm-timings = { workspace = true }
 solana-system-interface = { workspace = true }
 solana-sysvar = { workspace = true }
 solana-sysvar-id = { workspace = true }
@@ -65,6 +71,7 @@ solana-transaction-context = { workspace = true }
 solana-transaction-error = { workspace = true }
 solana-vote-program = { workspace = true }
 spl-generic-token = { workspace = true }
+spl-memo-interface = { workspace = true }
 thiserror = { workspace = true }
 tokio = { workspace = true, features = ["full"] }
 
@@ -73,3 +80,6 @@ solana-cpi = { workspace = true }
 solana-program = { workspace = true }
 solana-program-test = { path = ".", features = ["agave-unstable-api"] }
 test-case = { workspace = true }
+
+[lints]
+workspace = true

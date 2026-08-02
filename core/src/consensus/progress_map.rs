@@ -81,8 +81,17 @@ impl RetransmitInfo {
     }
 }
 
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub enum DeadSlotReason {
+    /// Dead and cannot be brought back to life by an `UpdateParent` marker.
+    Hard,
+    /// Replay execution failed, but an `UpdateParent` marker could still make
+    /// the failed prefix obsolete.
+    ReplayFailureBeforeUpdateParent,
+}
+
 pub struct ForkProgress {
-    pub is_dead: bool,
+    pub dead_reason: Option<DeadSlotReason>,
     pub fork_stats: ForkStats,
     pub propagated_stats: PropagatedStats,
     pub replay_stats: Arc<RwLock<ReplaySlotStats>>,
@@ -131,7 +140,7 @@ impl ForkProgress {
             .unwrap_or((false, 0, HashSet::new(), false, 0));
 
         Self {
-            is_dead: false,
+            dead_reason: None,
             fork_stats: ForkStats::default(),
             replay_stats: Arc::new(RwLock::new(ReplaySlotStats::default())),
             replay_progress: Arc::new(RwLock::new(
@@ -189,6 +198,10 @@ impl ForkProgress {
             new_progress.fork_stats.bank_hash = Some(bank.hash());
         }
         new_progress
+    }
+
+    pub fn mark_dead(&mut self, reason: DeadSlotReason) {
+        self.dead_reason = Some(reason);
     }
 }
 
@@ -274,6 +287,9 @@ impl PropagatedStats {
 #[derive(Default)]
 pub struct ProgressMap {
     progress_map: HashMap<Slot, ForkProgress>,
+    /// Tracks the number of times a slot was switched from an alternate location.
+    /// This persists even if the slot is removed from the progress_map due to a switch.
+    bank_switch_counts: HashMap<Slot, u64>,
 }
 
 impl std::ops::Deref for ProgressMap {
@@ -291,6 +307,12 @@ impl std::ops::DerefMut for ProgressMap {
 
 impl ProgressMap {
     pub fn insert(&mut self, slot: Slot, fork_progress: ForkProgress) {
+        let num_bank_switches = self.get_num_bank_switches(slot);
+        fork_progress
+            .replay_stats
+            .write()
+            .unwrap()
+            .num_bank_switches = num_bank_switches;
         self.progress_map.insert(slot, fork_progress);
     }
 
@@ -317,6 +339,15 @@ impl ProgressMap {
             .map(|fork_progress| &fork_progress.fork_stats)
     }
 
+    pub fn increment_num_bank_switches(&mut self, slot: Slot) {
+        let count = self.bank_switch_counts.entry(slot).or_insert(0);
+        *count = count.saturating_add(1);
+    }
+
+    pub fn get_num_bank_switches(&self, slot: Slot) -> u64 {
+        self.bank_switch_counts.get(&slot).cloned().unwrap_or(0)
+    }
+
     pub fn get_fork_stats_mut(&mut self, slot: Slot) -> Option<&mut ForkStats> {
         self.progress_map
             .get_mut(&slot)
@@ -338,7 +369,13 @@ impl ProgressMap {
     pub fn is_dead(&self, slot: Slot) -> Option<bool> {
         self.progress_map
             .get(&slot)
-            .map(|fork_progress| fork_progress.is_dead)
+            .map(|fork_progress| fork_progress.dead_reason.is_some())
+    }
+
+    pub fn dead_reason(&self, slot: Slot) -> Option<&DeadSlotReason> {
+        self.progress_map
+            .get(&slot)
+            .and_then(|fork_progress| fork_progress.dead_reason.as_ref())
     }
 
     pub fn get_hash(&self, slot: Slot) -> Option<Hash> {
@@ -411,6 +448,8 @@ impl ProgressMap {
 
     pub fn handle_new_root(&mut self, bank_forks: &BankForks) {
         self.progress_map
+            .retain(|k, _| bank_forks.get(*k).is_some());
+        self.bank_switch_counts
             .retain(|k, _| bank_forks.get(*k).is_some());
     }
 

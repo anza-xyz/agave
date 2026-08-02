@@ -10,7 +10,7 @@ use {
         iter::{IntoParallelIterator, IntoParallelRefIterator, ParallelIterator},
         prelude::ParallelSlice,
     },
-    solana_account::{ReadableAccount, state_traits::StateMut},
+    solana_account::ReadableAccount,
     solana_accounts_db::{
         account_storage_entry::AccountStorageEntry,
         accounts_db::{AccountsDb, GetUniqueAccountsResult, UpdateIndexThreadSelection},
@@ -78,10 +78,7 @@ impl<'a> SnapshotMinimizer<'a> {
             // Since the account state has changed, the accounts lt hash must be recalculated
             let new_accounts_lt_hash = minimizer
                 .accounts_db()
-                .calculate_accounts_lt_hash_at_startup_from_index(
-                    &minimizer.bank.ancestors,
-                    minimizer.bank.slot(),
-                );
+                .calculate_accounts_lt_hash_at_startup_from_index(&minimizer.bank.ancestors);
             bank.set_accounts_lt_hash_for_snapshot_minimizer(new_accounts_lt_hash);
         }
     }
@@ -179,7 +176,7 @@ impl<'a> SnapshotMinimizer<'a> {
             .filter_map(|account| {
                 if let Ok(UpgradeableLoaderState::Program {
                     programdata_address,
-                }) = account.state()
+                }) = bincode::deserialize(account.data())
                 {
                     Some(programdata_address)
                 } else {
@@ -309,17 +306,18 @@ impl<'a> SnapshotMinimizer<'a> {
 
         let mut shrink_in_progress = None;
         if total_bytes > 0 {
-            shrink_in_progress = Some(
-                self.accounts_db()
-                    .get_store_for_shrink(slot, total_bytes as u64),
-            );
+            shrink_in_progress = Some(self.accounts_db().get_store_for_shrink(
+                slot,
+                Arc::clone(storage),
+                total_bytes as u64,
+            ));
             let new_storage = shrink_in_progress.as_ref().unwrap().new_storage();
 
             let accounts = [(slot, &keep_accounts[..])];
             let storable_accounts =
                 StorableAccountsBySlot::new(slot, &accounts, self.accounts_db());
 
-            self.accounts_db().store_accounts_frozen(
+            self.accounts_db().store_accounts_for_shrink(
                 storable_accounts,
                 new_storage,
                 UpdateIndexThreadSelection::Inline,
@@ -583,6 +581,56 @@ mod tests {
         ); // snapshot slot is untouched, so still has all 300 accounts
     }
 
+    /// Purging an account from a filtered storage must decrement its ref count when the
+    /// account is still alive in a later slot.
+    #[test]
+    fn test_minimize_accounts_db_unrefs_multi_ref_accounts() {
+        let (genesis_config, _) = create_genesis_config(1_000_000);
+        let bank = Arc::new(Bank::new_for_tests(&genesis_config));
+        let accounts = &bank.accounts().accounts_db;
+
+        let pubkey_keep = Pubkey::new_unique();
+        let pubkey_multi = Pubkey::new_unique();
+        let account = AccountSharedData::new(223, 0, &Pubkey::default());
+
+        // pubkey_multi is stored in both slot 1 and slot 2; pubkey_keep keeps slot 1's
+        // storage out of the dead slot set
+        accounts.store_for_tests((
+            1,
+            [(&pubkey_keep, &account), (&pubkey_multi, &account)].as_slice(),
+        ));
+        accounts.add_root(1);
+        accounts.store_for_tests((2, [(&pubkey_multi, &account)].as_slice()));
+        accounts.add_root(2);
+        // Flush without clean so pubkey_multi keeps both slot list entries
+        accounts.flush_rooted_accounts_cache_without_clean();
+
+        assert_eq!(
+            accounts
+                .accounts_index
+                .ref_count_from_storage(&pubkey_multi),
+            2
+        );
+
+        let minimized_account_set = DashSet::new();
+        minimized_account_set.insert(pubkey_keep);
+        let minimizer = SnapshotMinimizer {
+            bank: &bank,
+            starting_slot: 2,
+            minimized_account_set,
+        };
+        minimizer.minimize_accounts_db();
+
+        // filter_storage purged (pubkey_multi, slot 1) from the index, decrementing its
+        // ref count; the other entry keeps it alive
+        assert_eq!(
+            accounts
+                .accounts_index
+                .ref_count_from_storage(&pubkey_multi),
+            1
+        );
+    }
+
     /// Ensure that minimized snapshots are loadable with and without
     /// recalculating the accounts lt hash.
     #[test_case(false)]
@@ -635,18 +683,16 @@ mod tests {
         );
 
         // take a snapshot of the minimized bank, then load it
-        let snapshot_config = SnapshotConfig::default();
         let bank_snapshots_dir = TempDir::new().unwrap();
         let snapshot_archives_dir = TempDir::new().unwrap();
-        let snapshot = snapshot_bank_utils::bank_to_full_snapshot_archive(
-            &bank_snapshots_dir,
-            &bank,
-            Some(snapshot_config.snapshot_version),
-            &snapshot_archives_dir,
-            &snapshot_archives_dir,
-            snapshot_config.archive_format,
-        )
-        .unwrap();
+        let snapshot_config = SnapshotConfig {
+            full_snapshot_archives_dir: snapshot_archives_dir.path().to_path_buf(),
+            incremental_snapshot_archives_dir: snapshot_archives_dir.path().to_path_buf(),
+            bank_snapshots_dir: bank_snapshots_dir.path().to_path_buf(),
+            ..SnapshotConfig::default()
+        };
+        let snapshot =
+            snapshot_bank_utils::bank_to_full_snapshot_archive(&snapshot_config, &bank).unwrap();
         let (_accounts_tempdir, accounts_dir) = snapshot_utils::create_tmp_accounts_dir_for_tests();
         let accounts_db_config = AccountsDbConfig {
             // must skip accounts verification if we did not recalculate the accounts lt hash
@@ -655,9 +701,9 @@ mod tests {
         };
         let roundtrip_bank = snapshot_bank_utils::bank_from_snapshot_archives(
             &[accounts_dir],
-            &bank_snapshots_dir,
             &snapshot,
             None,
+            &snapshot_config,
             &genesis_config_info.genesis_config,
             &RuntimeConfig::default(),
             None,

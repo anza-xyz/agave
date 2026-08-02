@@ -83,13 +83,13 @@ impl Bank {
             authority_address: buffer_authority,
         } = bincode::deserialize(&source.buffer_account.data()[..buffer_metadata_size])?
         {
-            if let Some(provided_authority) = upgrade_authority_address {
-                if upgrade_authority_address != buffer_authority {
-                    return Err(CoreBpfMigrationError::UpgradeAuthorityMismatch(
-                        provided_authority,
-                        buffer_authority,
-                    ));
-                }
+            if let Some(provided_authority) = upgrade_authority_address
+                && upgrade_authority_address != buffer_authority
+            {
+                return Err(CoreBpfMigrationError::UpgradeAuthorityMismatch(
+                    provided_authority,
+                    buffer_authority,
+                ));
             }
 
             let elf = &source.buffer_account.data()[buffer_metadata_size..];
@@ -134,7 +134,6 @@ impl Bank {
         program_id: &Pubkey,
         programdata: &[u8],
     ) -> Result<(), InstructionError> {
-        let data_len = programdata.len();
         let progradata_metadata_size = UpgradeableLoaderState::size_of_programdata_metadata();
         let elf = &programdata[progradata_metadata_size..];
         // Set up the two `LoadedProgramsForTxBatch` instances, as if
@@ -198,11 +197,9 @@ impl Bank {
                 &mut load_program_metrics,
                 dummy_invoke_context.program_cache_for_tx_batch,
                 ProgramRuntimeEnvironment::clone(&program_runtime_environment),
+                false, // disable_sbpf_v0_v1_v2_deployment // explicitly continue to allow them for core program migrations
                 program_id,
                 &bpf_loader_upgradeable::id(),
-                // The size of the program cache entry is the size of the program account
-                // + size of the program data account.
-                UpgradeableLoaderState::size_of_program().saturating_add(data_len),
                 elf,
                 self.slot,
             )?;
@@ -519,9 +516,7 @@ pub(crate) mod tests {
         agave_feature_set::FeatureSet,
         agave_snapshots::snapshot_config::SnapshotConfig,
         assert_matches::assert_matches,
-        solana_account::{
-            AccountSharedData, ReadableAccount, WritableAccount, state_traits::StateMut,
-        },
+        solana_account::{AccountSharedData, ReadableAccount, WritableAccount},
         solana_accounts_db::accounts_db::ACCOUNTS_DB_CONFIG_FOR_TESTING,
         solana_builtins::{
             BUILTINS,
@@ -538,10 +533,7 @@ pub(crate) mod tests {
         solana_native_token::LAMPORTS_PER_SOL,
         solana_program_runtime::{
             program_cache_entry::{ProgramCacheEntry, ProgramCacheEntryType},
-            solana_sbpf::{
-                self, memory_region::MemoryMapping, program::BuiltinFunctionDefinition,
-                vm::ContextObject,
-            },
+            solana_sbpf::{self, program::BuiltinFunctionDefinition, vm::ContextObject},
         },
         solana_pubkey::Pubkey,
         solana_sdk_ids::{bpf_loader, bpf_loader_upgradeable, native_loader, system_program},
@@ -561,7 +553,6 @@ pub(crate) mod tests {
             _: u64,
             _: u64,
             _: u64,
-            _: &mut MemoryMapping,
         ) -> Result<u64, Box<dyn std::error::Error>> {
             Ok(0)
         }
@@ -721,7 +712,8 @@ pub(crate) mod tests {
 
             // Program account has the correct state, with a pointer to its program
             // data address.
-            let program_account_state: UpgradeableLoaderState = program_account.state().unwrap();
+            let program_account_state: UpgradeableLoaderState =
+                bincode::deserialize(program_account.data()).unwrap();
             assert_eq!(
                 program_account_state,
                 UpgradeableLoaderState::Program {
@@ -781,12 +773,8 @@ pub(crate) mod tests {
                 .unwrap();
 
             // The target program entry should be updated.
-            assert_eq!(
-                target_entry.account_size,
-                program_account.data().len() + program_data_account.data().len()
-            );
             assert_eq!(target_entry.deployment_slot, migration_or_upgrade_slot);
-            assert_eq!(target_entry.effective_slot, migration_or_upgrade_slot + 1);
+            assert_eq!(target_entry.effective_slot(), migration_or_upgrade_slot + 1);
 
             // The target program entry should be a BPF program.
             assert_matches!(target_entry.program, ProgramCacheEntryType::Loaded(..));
@@ -811,7 +799,7 @@ pub(crate) mod tests {
             bank.add_builtin(
                 builtin_id,
                 builtin_name.as_str(),
-                ProgramCacheEntry::new_builtin(0, builtin_name.len(), NoopBuiltin::register),
+                ProgramCacheEntry::new_builtin(0, NoopBuiltin::register),
             );
             account
         };
@@ -947,7 +935,7 @@ pub(crate) mod tests {
             bank.add_builtin(
                 builtin_id,
                 builtin_name.as_str(),
-                ProgramCacheEntry::new_builtin(0, builtin_name.len(), NoopBuiltin::register),
+                ProgramCacheEntry::new_builtin(0, NoopBuiltin::register),
             );
             account
         };
@@ -997,7 +985,7 @@ pub(crate) mod tests {
             bank.add_builtin(
                 builtin_id,
                 builtin_name.as_str(),
-                ProgramCacheEntry::new_builtin(0, builtin_name.len(), NoopBuiltin::register),
+                ProgramCacheEntry::new_builtin(0, NoopBuiltin::register),
             );
             account
         };
@@ -1047,7 +1035,7 @@ pub(crate) mod tests {
             bank.add_builtin(
                 builtin_id,
                 builtin_name.as_str(),
-                ProgramCacheEntry::new_builtin(0, builtin_name.len(), NoopBuiltin::register),
+                ProgramCacheEntry::new_builtin(0, NoopBuiltin::register),
             );
             account
         };
@@ -1088,7 +1076,7 @@ pub(crate) mod tests {
         let program_data_address = get_program_data_address(&builtin_id);
         let program_data_account = bank.get_account(&program_data_address).unwrap();
         let program_data_account_state: UpgradeableLoaderState =
-            program_data_account.state().unwrap();
+            bincode::deserialize(program_data_account.data()).unwrap();
         assert_eq!(
             program_data_account_state,
             UpgradeableLoaderState::ProgramData {
@@ -1262,7 +1250,7 @@ pub(crate) mod tests {
         let program_data_address = get_program_data_address(&program_address);
         let program_data_account = bank.get_account(&program_data_address).unwrap();
         let program_data_account_state: UpgradeableLoaderState =
-            program_data_account.state().unwrap();
+            bincode::deserialize(program_data_account.data()).unwrap();
         assert_eq!(
             program_data_account_state,
             UpgradeableLoaderState::ProgramData {
@@ -1463,11 +1451,7 @@ pub(crate) mod tests {
         root_bank.add_builtin(
             cpi_program_id,
             cpi_program_name,
-            ProgramCacheEntry::new_builtin(
-                0,
-                cpi_program_name.len(),
-                cpi_mockup::Entrypoint::register,
-            ),
+            ProgramCacheEntry::new_builtin(0, cpi_mockup::Entrypoint::register),
         );
 
         let (builtin_id, config) = prototype.deconstruct();
@@ -2003,11 +1987,7 @@ pub(crate) mod tests {
         root_bank.add_builtin(
             cpi_program_id,
             cpi_program_name,
-            ProgramCacheEntry::new_builtin(
-                0,
-                cpi_program_name.len(),
-                cpi_mockup::Entrypoint::register,
-            ),
+            ProgramCacheEntry::new_builtin(0, cpi_mockup::Entrypoint::register),
         );
 
         // Add the feature to the bank's inactive feature set.
@@ -2174,24 +2154,22 @@ pub(crate) mod tests {
         let (_tmp_dir, accounts_dir) = create_tmp_accounts_dir_for_tests();
         let bank_snapshots_dir = tempfile::TempDir::new().unwrap();
         let snapshot_archives_dir = tempfile::TempDir::new().unwrap();
-        let snapshot_archive_format = SnapshotConfig::default().archive_format;
 
-        let full_snapshot_archive_info = bank_to_full_snapshot_archive(
-            bank_snapshots_dir.path(),
-            &bank,
-            None,
-            snapshot_archives_dir.path(),
-            snapshot_archives_dir.path(),
-            snapshot_archive_format,
-        )
-        .unwrap();
+        let snapshot_config = SnapshotConfig {
+            full_snapshot_archives_dir: snapshot_archives_dir.path().to_path_buf(),
+            incremental_snapshot_archives_dir: snapshot_archives_dir.path().to_path_buf(),
+            bank_snapshots_dir: bank_snapshots_dir.path().to_path_buf(),
+            ..SnapshotConfig::default()
+        };
+        let full_snapshot_archive_info =
+            bank_to_full_snapshot_archive(&snapshot_config, &bank).unwrap();
 
         // Restore the bank from the snapshot and run checks.
         let roundtrip_bank = bank_from_snapshot_archives(
             &[accounts_dir],
-            bank_snapshots_dir.path(),
             &full_snapshot_archive_info,
             None,
+            &snapshot_config,
             &genesis_config,
             &RuntimeConfig::default(),
             None,
@@ -2264,11 +2242,7 @@ pub(crate) mod tests {
         root_bank.add_builtin(
             cpi_program_id,
             cpi_program_name,
-            ProgramCacheEntry::new_builtin(
-                0,
-                cpi_program_name.len(),
-                cpi_mockup::Entrypoint::register,
-            ),
+            ProgramCacheEntry::new_builtin(0, cpi_mockup::Entrypoint::register),
         );
 
         // Add the feature to the bank's inactive feature set.
@@ -2329,11 +2303,7 @@ pub(crate) mod tests {
         root_bank.add_builtin(
             cpi_program_id,
             cpi_program_name,
-            ProgramCacheEntry::new_builtin(
-                0,
-                cpi_program_name.len(),
-                cpi_mockup::Entrypoint::register,
-            ),
+            ProgramCacheEntry::new_builtin(0, cpi_mockup::Entrypoint::register),
         );
 
         // Add the feature to the bank's inactive feature set.

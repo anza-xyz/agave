@@ -109,8 +109,10 @@ impl GeyserPluginService {
             .load()
             .deshred_transaction_notifications_enabled()
             || geyser_plugin_always_enabled;
-        let entry_notifications_enabled =
-            plugin_manager.load().entry_notifications_enabled() || geyser_plugin_always_enabled;
+        let entry_or_block_footer_notifications_enabled =
+            plugin_manager.load().entry_notifications_enabled()
+                || plugin_manager.load().block_footer_notifications_enabled()
+                || geyser_plugin_always_enabled;
 
         let accounts_update_notifier: Option<AccountsUpdateNotifier> =
             if account_data_notifications_enabled {
@@ -140,12 +142,13 @@ impl GeyserPluginService {
                 None
             };
 
-        let entry_notifier: Option<EntryNotifierArc> = if entry_notifications_enabled {
-            let entry_notifier = EntryNotifierImpl::new(plugin_manager.clone());
-            Some(Arc::new(entry_notifier))
-        } else {
-            None
-        };
+        let entry_notifier: Option<EntryNotifierArc> =
+            if entry_or_block_footer_notifications_enabled {
+                let entry_notifier = EntryNotifierImpl::new(plugin_manager.clone());
+                Some(Arc::new(entry_notifier))
+            } else {
+                None
+            };
 
         let (slot_status_observer, block_metadata_notifier, slot_status_notifier): (
             Option<SlotStatusObserver>,
@@ -154,7 +157,7 @@ impl GeyserPluginService {
         ) = if account_data_notifications_enabled
             || transaction_notifications_enabled
             || deshred_transaction_notifications_enabled
-            || entry_notifications_enabled
+            || entry_or_block_footer_notifications_enabled
         {
             let slot_status_notifier = SlotStatusNotifierImpl::new(plugin_manager.clone());
             let slot_status_notifier = Arc::new(RwLock::new(slot_status_notifier));
@@ -202,6 +205,15 @@ impl GeyserPluginService {
 
     pub fn get_accounts_update_notifier(&self) -> Option<AccountsUpdateNotifier> {
         self.accounts_update_notifier.clone()
+    }
+
+    /// Cloneable handle to the underlying plugin manager. Used by
+    /// startup wiring that needs to construct notifiers (e.g. the
+    /// contact info notifier) outside `GeyserPluginService::new`,
+    /// because they require resources (such as `ClusterInfo`) that are
+    /// not available at this point.
+    pub fn plugin_manager_handle(&self) -> Arc<ArcSwap<GeyserPluginManager>> {
+        self.plugin_manager.clone()
     }
 
     pub fn get_transaction_notifier(&self) -> Option<TransactionNotifierArc> {

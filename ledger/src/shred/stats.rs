@@ -34,8 +34,6 @@ pub struct ProcessShredsStats {
     num_data_shreds_hist: [usize; 5],
     // If the blockstore already has shreds for the broadcast slot.
     pub num_extant_slots: u64,
-    // When looking up chained merkle root from parent slot fails.
-    pub err_unknown_chained_merkle_root: u64,
     pub(crate) padding_bytes: usize,
     pub(crate) data_bytes: usize,
     pub(crate) num_entries: usize,
@@ -102,11 +100,6 @@ impl ProcessShredsStats {
             ("gen_coding_time", self.gen_coding_elapsed, i64),
             ("coding_send_time", self.coding_send_elapsed, i64),
             ("num_extant_slots", self.num_extant_slots, i64),
-            (
-                "err_unknown_chained_merkle_root",
-                self.err_unknown_chained_merkle_root,
-                i64
-            ),
             ("padding_bytes", self.padding_bytes, i64),
             ("data_bytes", self.data_bytes, i64),
             ("num_data_shreds_07", self.num_data_shreds_hist[0], i64),
@@ -240,7 +233,6 @@ impl AddAssign<ProcessShredsStats> for ProcessShredsStats {
             coalesce_exited_rcv_timeout,
             num_data_shreds_hist,
             num_extant_slots,
-            err_unknown_chained_merkle_root,
             padding_bytes,
             data_bytes,
             num_entries,
@@ -260,7 +252,6 @@ impl AddAssign<ProcessShredsStats> for ProcessShredsStats {
         self.coalesce_exited_slot_ended += coalesce_exited_slot_ended;
         self.coalesce_exited_rcv_timeout += coalesce_exited_rcv_timeout;
         self.num_extant_slots += num_extant_slots;
-        self.err_unknown_chained_merkle_root += err_unknown_chained_merkle_root;
         self.padding_bytes += padding_bytes;
         self.data_bytes += data_bytes;
         self.num_entries += num_entries;

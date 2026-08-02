@@ -294,7 +294,7 @@ pub enum CliCommand {
     },
     // Validator Info Commands
     GetValidatorInfo(Option<Pubkey>),
-    SetValidatorInfo {
+    PublishValidatorInfo {
         validator_info: Value,
         force_keybase: bool,
         info_pubkey: Option<Pubkey>,
@@ -449,6 +449,7 @@ pub enum CliCommand {
         signature: Signature,
         message: OffchainMessage,
     },
+    GetAgGenesisInfo,
 }
 
 #[derive(Debug, PartialEq)]
@@ -490,6 +491,8 @@ pub enum CliError {
     KeypairFileNotFound(String),
     #[error("Invalid signature")]
     InvalidSignature,
+    #[error("Invalid alpenglow genesis cert")]
+    InvalidAgGenesisCert,
 }
 
 impl From<Box<dyn error::Error>> for CliError {
@@ -617,6 +620,7 @@ pub fn parse_command(
         }
         ("epoch", Some(matches)) => parse_get_epoch(matches),
         ("epoch-info", Some(matches)) => parse_get_epoch_info(matches),
+        ("alpenglow-genesis-info", Some(matches)) => parse_get_ag_genesis_info(matches),
         ("feature", Some(matches)) => {
             parse_feature_subcommand(matches, default_signer, wallet_manager)
         }
@@ -726,7 +730,7 @@ pub fn parse_command(
         // Validator Info Commands
         ("validator-info", Some(matches)) => match matches.subcommand() {
             ("publish", Some(matches)) => {
-                parse_validator_info_command(matches, default_signer, wallet_manager)
+                parse_publish_validator_info_command(matches, default_signer, wallet_manager)
             }
             ("get", Some(matches)) => parse_get_validator_info_command(matches),
             _ => unreachable!(),
@@ -826,16 +830,16 @@ pub type ProcessResult = Result<String, Box<dyn std::error::Error>>;
 
 pub async fn process_command(config: &CliConfig<'_>) -> ProcessResult {
     if config.verbose && config.output_format == OutputFormat::DisplayVerbose {
-        println_name_value("RPC URL:", &config.json_rpc_url);
-        println_name_value("Default Signer Path:", &config.keypair_path);
+        println_name_value("RPC URL:", &config.json_rpc_url)?;
+        println_name_value("Default Signer Path:", &config.keypair_path)?;
         if config.keypair_path.starts_with("usb://") {
             let pubkey = config
                 .pubkey()
                 .map(|pubkey| format!("{pubkey:?}"))
                 .unwrap_or_else(|_| "Unavailable".to_string());
-            println_name_value("Pubkey:", &pubkey);
+            println_name_value("Pubkey:", &pubkey)?;
         }
-        println_name_value("Commitment:", &config.commitment.commitment.to_string());
+        println_name_value("Commitment:", &config.commitment.commitment.to_string())?;
     }
 
     let rpc_client = if let Some(rpc_client) = config.rpc_client.as_ref() {
@@ -1413,13 +1417,13 @@ pub async fn process_command(config: &CliConfig<'_>) -> ProcessResult {
             process_get_validator_info(&rpc_client, config, *info_pubkey).await
         }
         // Publish validator info
-        CliCommand::SetValidatorInfo {
+        CliCommand::PublishValidatorInfo {
             validator_info,
             force_keybase,
             info_pubkey,
             compute_unit_price,
         } => {
-            process_set_validator_info(
+            process_publish_validator_info(
                 &rpc_client,
                 config,
                 validator_info,
@@ -1726,6 +1730,7 @@ pub async fn process_command(config: &CliConfig<'_>) -> ProcessResult {
             signature,
             message,
         } => process_verify_offchain_signature(config, signer_pubkey, signature, message),
+        CliCommand::GetAgGenesisInfo => process_get_ag_genesis_info(&rpc_client, config).await,
     }
 }
 
@@ -1797,10 +1802,10 @@ where
     match result {
         Err(err) => {
             let maybe_tx_err = err.get_transaction_error();
-            if let Some(TransactionError::InstructionError(_, ix_error)) = maybe_tx_err {
-                if let Some(specific_error) = error_adapter(&ix_error) {
-                    return Err(specific_error.into());
-                }
+            if let Some(TransactionError::InstructionError(_, ix_error)) = maybe_tx_err
+                && let Some(specific_error) = error_adapter(&ix_error)
+            {
+                return Err(specific_error.into());
             }
             Err(err.into())
         }

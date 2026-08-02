@@ -5,6 +5,7 @@ use {
 };
 
 mod commands;
+mod github;
 
 #[derive(Parser)]
 #[command(name = "xtask", about = "Build tasks", version)]
@@ -28,6 +29,12 @@ enum Commands {
     Publish(xtask_shared::commands::publish::CommandArgs),
     #[command(about = "Generate Buildkite pipeline")]
     GeneratePipeline(commands::generate_pipeline::CommandArgs),
+    #[command(about = "Print release channel info")]
+    ChannelInfo(commands::channel_info::CommandArgs),
+    #[command(about = "Run XDP integration tests")]
+    XdpTest(commands::xdp_test::CommandArgs),
+    #[command(about = "Emit conformance fixture dispatch table as JSON")]
+    ConformanceTable(commands::conformance_table::CommandArgs),
 }
 
 #[derive(Args, Debug)]
@@ -77,6 +84,15 @@ async fn try_main(xtask: Xtask) -> Result<()> {
         }
         Commands::GeneratePipeline(args) => {
             commands::generate_pipeline::run(args).await?;
+        }
+        Commands::ChannelInfo(args) => {
+            commands::channel_info::run(args).await?;
+        }
+        Commands::XdpTest(args) => {
+            commands::xdp_test::run(args)?;
+        }
+        Commands::ConformanceTable(args) => {
+            commands::conformance_table::run(args).await?;
         }
     }
 

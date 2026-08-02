@@ -33,7 +33,7 @@ pub trait InvokeContextCallback {
 }
 
 /// Runtime callbacks for transaction processing.
-pub trait TransactionProcessingCallback: InvokeContextCallback {
+pub trait TransactionProcessingCallback {
     fn get_account_shared_data(&self, pubkey: &Pubkey) -> Option<(AccountSharedData, Slot)>;
 
     fn inspect_account(&self, _address: &Pubkey, _account_state: AccountState, _is_writable: bool) {

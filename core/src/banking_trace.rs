@@ -1,14 +1,13 @@
-#[cfg(feature = "dev-context-only-utils")]
-use qualifier_attr::qualifiers;
 use {
     agave_banking_stage_ingress_types::{BankingPacketBatch, BankingPacketReceiver},
     bincode::serialize_into,
     chrono::{DateTime, Local},
-    crossbeam_channel::{Receiver, SendError, Sender, TryRecvError, unbounded},
+    crossbeam_channel::{Receiver, SendError, TryRecvError, TrySendError, bounded},
     rolling_file::{RollingCondition, RollingConditionBasic, RollingFileAppender},
     serde::{Deserialize, Serialize},
     solana_clock::Slot,
     solana_hash::Hash,
+    solana_streamer::{evicting_sender::EvictingSender, streamer::ChannelSend},
     std::{
         fs::{create_dir_all, remove_dir_all},
         io::{self, Write},
@@ -22,6 +21,14 @@ use {
     },
     thiserror::Error,
 };
+
+/// Capacity of the vote channel between sigverify and the banking-stage.
+/// Sized to fit all votes from a reasonably sized cluster for 1 slot, + margin.
+const VOTE_CHANNEL_CAPACITY: usize = 1024 * 8;
+
+/// Capacity of the non-vote (transaction) channel between sigverify and the banking-stage.
+/// Larger than the vote channel to absorb bursty TPU load.
+const NON_VOTE_CHANNEL_CAPACITY: usize = 1024 * 16;
 
 pub type BankingPacketSender = TracedSender;
 pub type TracerThreadResult = Result<(), TraceError>;
@@ -48,37 +55,50 @@ const TRACE_FILE_ROTATE_COUNT: u64 = 14; // target 2 weeks retention under norma
 const TRACE_FILE_WRITE_INTERVAL_MS: u64 = 100;
 const BUF_WRITER_CAPACITY: usize = 10 * 1024 * 1024;
 pub const TRACE_FILE_DEFAULT_ROTATE_BYTE_THRESHOLD: u64 = 1024 * 1024 * 1024;
-pub const DISABLED_BAKING_TRACE_DIR: DirByteLimit = 0;
-pub const BANKING_TRACE_DIR_DEFAULT_BYTE_LIMIT: DirByteLimit =
-    TRACE_FILE_DEFAULT_ROTATE_BYTE_THRESHOLD * TRACE_FILE_ROTATE_COUNT;
 
-#[derive(Clone, Debug)]
+#[derive(Clone)]
 struct ActiveTracer {
-    trace_sender: Sender<TimedTracedEvent>,
+    trace_sender: EvictingSender<TimedTracedEvent>,
     exit: Arc<AtomicBool>,
 }
 
-#[derive(Debug)]
 pub struct BankingTracer {
     active_tracer: Option<ActiveTracer>,
 }
 
 #[cfg_attr(
     feature = "frozen-abi",
-    derive(AbiExample),
-    frozen_abi(digest = "DY2zjwewCSNansb5xwtoxkCcNuXbVmWZe3U9nNH2kzNz")
+    derive(AbiExample, StableAbi, StableAbiSample, PartialEq),
+    frozen_abi(
+        api_digest = "5jvhDLvSuAMKMHg8nSkmP57J5QitUcSRK2Ykg4FGCLzk",
+        abi_digest = "6WDJa7JLPQEZdP5iHBWpdkBF6cdVYXeW4swypaLmpLag",
+        test_roundtrip = "eq_and_wire",
+    )
 )]
 #[derive(Serialize, Deserialize, Debug)]
-pub struct TimedTracedEvent(pub std::time::SystemTime, pub TracedEvent);
+pub struct TimedTracedEvent(
+    #[cfg_attr(
+        feature = "frozen-abi",
+        stable_abi_sample(with = "SystemTime::UNIX_EPOCH + Duration::from_nanos(rng.next_u64())")
+    )]
+    pub SystemTime,
+    pub TracedEvent,
+);
 
-#[cfg_attr(feature = "frozen-abi", derive(AbiExample, AbiEnumVisitor))]
+#[cfg_attr(
+    feature = "frozen-abi",
+    derive(AbiExample, AbiEnumVisitor, StableAbi, StableAbiSample, PartialEq)
+)]
 #[derive(Serialize, Deserialize, Debug)]
 pub enum TracedEvent {
     PacketBatch(ChannelLabel, BankingPacketBatch),
     BlockAndBankHash(Slot, Hash, Hash),
 }
 
-#[cfg_attr(feature = "frozen-abi", derive(AbiExample, AbiEnumVisitor))]
+#[cfg_attr(
+    feature = "frozen-abi",
+    derive(AbiExample, AbiEnumVisitor, StableAbi, StableAbiSample, PartialEq)
+)]
 #[derive(Serialize, Deserialize, Debug, Clone, Copy)]
 pub enum ChannelLabel {
     NonVote,
@@ -190,36 +210,6 @@ pub struct Channels {
     pub gossip_vote_receiver: BankingPacketReceiver,
 }
 
-impl Channels {
-    #[cfg_attr(feature = "dev-context-only-utils", qualifiers(pub))]
-    fn sender_for_unified_scheduler(&self) -> &BankingPacketSender {
-        // Unified scheduler doesn't distinguish which kind of channels, so just pick the non-vote
-        // channel arbitrarily here for consistency with receiver_for_unified_scheduler().
-        //
-        // This method is only used internally by clone_is_unified_for_unified_scheduler() below or
-        // tests as a convenience method. So, while no apparent code-patch reaching here, banking
-        // packets can still be routed dynamically depending on the activation of unified scheduler
-        // as block production. That's because each TracedSender is passed to sources (i.e.
-        // non-vote, tpu-vote, gossip-vote) during the validator booting.
-        //
-        // So, while this method name is similar to receiver_for_unified_scheduler() due to being
-        // paired getters of the channel for unified scheduler, this method is used differently
-        // than receiver_for_unified_scheduler() below as hinted by different visibility under no
-        // DCOU: `private` v.s. `pub(crate)`.
-        &self.non_vote_sender
-    }
-
-    pub(crate) fn receiver_for_unified_scheduler(&self) -> &BankingPacketReceiver {
-        // Unified scheduler doesn't distinguish which kind of channels, so just pick the non-vote
-        // channel arbitrarily here for consistency with sender_for_unified_scheduler().
-        &self.non_vote_receiver
-    }
-
-    pub(crate) fn clone_is_unified_for_unified_scheduler(&self) -> Arc<AtomicBool> {
-        self.sender_for_unified_scheduler().is_unified.clone()
-    }
-}
-
 impl BankingTracer {
     pub fn new(
         maybe_config: Option<(&PathBuf, Arc<AtomicBool>, DirByteLimit)>,
@@ -235,7 +225,9 @@ impl BankingTracer {
                     ));
                 }
 
-                let (trace_sender, trace_receiver) = unbounded();
+                const TRACING_CHANNEL_CAPACITY: usize = 50_000;
+                let (trace_sender, trace_receiver) =
+                    EvictingSender::new_bounded(TRACING_CHANNEL_CAPACITY);
 
                 let file_appender = Self::create_file_appender(path, rotate_threshold_size)?;
 
@@ -272,37 +264,26 @@ impl BankingTracer {
     }
 
     fn trace_event(&self, on_trace: impl Fn() -> TimedTracedEvent) {
-        if let Some(ActiveTracer { trace_sender, exit }) = &self.active_tracer {
-            if !exit.load(Ordering::Relaxed) {
-                trace_sender
-                    .send(on_trace())
-                    .expect("active tracer thread unless exited");
-            }
+        if let Some(ActiveTracer { trace_sender, exit }) = &self.active_tracer
+            && !exit.load(Ordering::Relaxed)
+        {
+            // Ignore errors in sending to tracer - it is a non-critical component.
+            let _ = trace_sender.try_send(on_trace());
         }
     }
 
     pub fn create_channels(&self) -> Channels {
         let (non_vote_sender, non_vote_receiver) = self.create_channel_non_vote();
 
-        // non_vote_sender will conditionally be repurposed as the shared channel when unified
-        // scheduler supports block production. That's because unified scheduler doesn't
-        // distinguish sources of incoming messages and treats them as if they're coming from the
-        // single source. This is to reduce the number of recv operation per loop and load balance
-        // evenly as much as possible there.
-        let unified_sender = non_vote_sender.sender.clone();
-        let is_unified = non_vote_sender.is_unified.clone();
-
         let (tpu_vote_sender, tpu_vote_receiver) = Self::channel(
             ChannelLabel::TpuVote,
+            VOTE_CHANNEL_CAPACITY,
             self.active_tracer.as_ref().cloned(),
-            Some(unified_sender.clone()),
-            Some(is_unified.clone()),
         );
         let (gossip_vote_sender, gossip_vote_receiver) = Self::channel(
             ChannelLabel::GossipVote,
+            VOTE_CHANNEL_CAPACITY,
             self.active_tracer.as_ref().cloned(),
-            Some(unified_sender),
-            Some(is_unified),
         );
 
         Channels {
@@ -318,32 +299,24 @@ impl BankingTracer {
     pub fn create_channel_non_vote(&self) -> (BankingPacketSender, BankingPacketReceiver) {
         Self::channel(
             ChannelLabel::NonVote,
+            NON_VOTE_CHANNEL_CAPACITY,
             self.active_tracer.as_ref().cloned(),
-            None,
-            None,
         )
     }
 
     pub fn channel_for_test() -> (TracedSender, Receiver<BankingPacketBatch>) {
-        Self::channel(ChannelLabel::Dummy, None, None, None)
+        Self::channel(ChannelLabel::Dummy, VOTE_CHANNEL_CAPACITY, None)
     }
 
     fn channel(
         label: ChannelLabel,
+        capacity: usize,
         active_tracer: Option<ActiveTracer>,
-        unified_sender: Option<Sender<BankingPacketBatch>>,
-        is_unified: Option<Arc<AtomicBool>>,
     ) -> (TracedSender, Receiver<BankingPacketBatch>) {
-        let (sender, receiver) = unbounded();
+        let (sender, receiver) = bounded(capacity);
+        let evicting = EvictingSender::new(sender, receiver.clone());
 
-        // Prepare unified scheduler related values when not supplied
-        let unified_sender = unified_sender.unwrap_or_else(|| sender.clone());
-        let is_unified = is_unified.unwrap_or_default();
-
-        (
-            TracedSender::new(label, sender, unified_sender, is_unified, active_tracer),
-            receiver,
-        )
+        (TracedSender::new(label, evicting, active_tracer), receiver)
     }
 
     pub fn ensure_cleanup_path(path: &PathBuf) -> Result<(), io::Error> {
@@ -414,92 +387,48 @@ impl BankingTracer {
 /// and the flag are expected to be shared among all of traced sender instances, which will be used
 /// by the trio of sources respectively. This routing functionality is needed for unified scheduler
 /// and its runtime switching.
+#[derive(Clone)]
 pub struct TracedSender {
     label: ChannelLabel,
-    sender: Sender<BankingPacketBatch>,
-    unified_sender: Sender<BankingPacketBatch>,
-    is_unified: Arc<AtomicBool>,
+    sender: EvictingSender<BankingPacketBatch>,
     active_tracer: Option<ActiveTracer>,
 }
 
 impl TracedSender {
     fn new(
         label: ChannelLabel,
-        sender: Sender<BankingPacketBatch>,
-        unified_sender: Sender<BankingPacketBatch>,
-        is_unified: Arc<AtomicBool>,
+        sender: EvictingSender<BankingPacketBatch>,
         active_tracer: Option<ActiveTracer>,
     ) -> Self {
         Self {
             label,
             sender,
-            unified_sender,
-            is_unified,
             active_tracer,
         }
     }
 
-    fn current_sender(&self) -> &Sender<BankingPacketBatch> {
-        // Batches fed into `self.sender` could be indefinitely buffered in the channels except the
-        // traced sender used by the non-vote channel, if those batches are sent within the small
-        // time window of the case of block production method switching from the central scheduler
-        // to the unified scheduler (this doesn't happen in the opposite direction and any
-        // switching cases among central and external schedulers).
-        //
-        // That's because the newly running unified scheduler doesn't consume batches from the
-        // tpu-vote and gossip-vote channels. It does only from the unified (= actually non-vote)
-        // channel, which is now used by tpu-vote and gossip-vote traced senders _around same
-        // time_. This sender-side and receiver-side switching isn't synchronized to avoid any
-        // significant overhead (i.e. per batch locking). Also, the transition code doesn't try to
-        // ensure to empty those batches during switching, which is constrained to the best effort
-        // basis due to the lack of such synchronization. Thus, this omission is intentional not to
-        // introduce the DOS attack vector in switching by tx saturation from a remote attacker.
-        //
-        // However, this particularly lenient behavior won't pose any significant problem in
-        // practice. That's because any block production method is generally assumed to
-        // aggressively try to empty those channels continuously, regardless the awareness of any
-        // imminent leader slots according to the current leader schedule. Otherwise, low-staked
-        // validator nodes would be vulnerable to remotely-controllable unbounded memory growth
-        // during normal operation even with no switching whatsoever.
-        //
-        // Also, block production switching isn't a frequent operation and it can only be triggered
-        // by privileged validator operators. Reasonably, they won't do this during their leader
-        // slots, even if they're unaware of this implementation compromise.
-        //
-        // As an extra comment, those possibly quite old txes in the unconsumed batches should
-        // safely be discarded by the central scheduler, because it should be resilient against any
-        // untrusted input by nature, should the block production method be switched back to the
-        // central scheduler.
-        //
-        // All in all, the bottom line of the effective incurred overhead for supporting unified
-        // scheduler block production switching is a good and old atomic bool relaxed load per
-        // batch, whose cache line won't be invalidated at all, practically speaking.
-        if self.is_unified.load(Ordering::Relaxed) {
-            &self.unified_sender
-        } else {
-            &self.sender
+    /// Send a batch on the channel. This may evict an existing batch to make
+    /// room; in that case `Ok(n)` is returned where `n` is the number of
+    /// evicted packets. On channel disconnect returns `Err(SendError)`.
+    pub fn send(&self, batch: BankingPacketBatch) -> Result<usize, SendError<BankingPacketBatch>> {
+        if let Some(ActiveTracer { trace_sender, exit }) = &self.active_tracer
+            && !exit.load(Ordering::Relaxed)
+        {
+            // Ignore errors in sending to tracer - it is a non-critical component.
+            let _ = trace_sender.try_send(TimedTracedEvent(
+                SystemTime::now(),
+                TracedEvent::PacketBatch(self.label, BankingPacketBatch::clone(&batch)),
+            ));
         }
-    }
-
-    pub fn send(&self, batch: BankingPacketBatch) -> Result<(), SendError<BankingPacketBatch>> {
-        if let Some(ActiveTracer { trace_sender, exit }) = &self.active_tracer {
-            if !exit.load(Ordering::Relaxed) {
-                trace_sender
-                    .send(TimedTracedEvent(
-                        SystemTime::now(),
-                        TracedEvent::PacketBatch(self.label, BankingPacketBatch::clone(&batch)),
-                    ))
-                    .map_err(|err| {
-                        error!("unexpected error when tracing a banking event...: {err:?}");
-                        SendError(BankingPacketBatch::clone(&batch))
-                    })?;
-            }
+        match self.sender.try_send(batch) {
+            Ok(()) => Ok(0),
+            Err(TrySendError::Full(b)) => Ok(b.len()),
+            Err(TrySendError::Disconnected(b)) => Err(SendError(b)),
         }
-        self.current_sender().send(batch)
     }
 
     pub fn len(&self) -> usize {
-        self.current_sender().len()
+        self.sender.len()
     }
 
     pub fn is_empty(&self) -> bool {
@@ -510,13 +439,12 @@ impl TracedSender {
 #[cfg(any(test, feature = "dev-context-only-utils"))]
 pub mod for_test {
     use {
-        super::*,
-        solana_perf::{packet::to_packet_batches, test_tx::test_tx},
-        tempfile::TempDir,
+        super::*, agave_banking_stage_ingress_types::to_banking_packet_batch,
+        solana_perf::test_tx::test_tx, tempfile::TempDir,
     };
 
     pub fn sample_packet_batch() -> BankingPacketBatch {
-        BankingPacketBatch::new(to_packet_batches(&vec![test_tx(); 4], 10))
+        to_banking_packet_batch(&vec![test_tx(); 4])
     }
 
     pub fn drop_and_clean_temp_dir_unless_suppressed(temp_dir: TempDir) {
@@ -549,6 +477,7 @@ mod tests {
     use {
         super::*,
         bincode::ErrorKind::Io as BincodeIoError,
+        solana_perf::packet::BytesPacketBatch,
         std::{
             fs::File,
             io::{BufReader, ErrorKind::UnexpectedEof},
@@ -573,7 +502,9 @@ mod tests {
         });
 
         non_vote_sender
-            .send(BankingPacketBatch::new(vec![]))
+            .send(BankingPacketBatch::new(
+                solana_perf::packet::PacketBatch::Bytes(BytesPacketBatch::new()),
+            ))
             .unwrap();
         for_test::terminate_tracer(tracer, None, dummy_main_thread, non_vote_sender, None);
     }

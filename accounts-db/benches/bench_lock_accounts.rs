@@ -66,24 +66,19 @@ fn create_test_transactions(lock_count: usize, read_conflicts: bool) -> Vec<Sani
 fn bench_entry_lock_accounts(c: &mut Criterion) {
     let mut group = c.benchmark_group("bench_lock_accounts");
 
-    for (batch_size, lock_count, read_conflicts, relax_intrabatch_account_locks) in
-        iproduct!(BATCH_SIZES, LOCK_COUNTS, [false, true], [false, true])
+    for (batch_size, lock_count, read_conflicts) in
+        iproduct!(BATCH_SIZES, LOCK_COUNTS, [false, true])
     {
         let name = format!(
-            "batch_size_{batch_size}_locks_count_{lock_count}{}{}",
+            "batch_size_{batch_size}_locks_count_{lock_count}{}",
             if read_conflicts {
                 "_read_conflicts"
             } else {
                 ""
             },
-            if relax_intrabatch_account_locks {
-                "_simd83"
-            } else {
-                "_old"
-            },
         );
 
-        let accounts_db = AccountsDb::new_single_for_tests();
+        let accounts_db = AccountsDb::default_for_tests();
         let accounts = Accounts::new(Arc::new(accounts_db));
 
         let transactions = create_test_transactions(lock_count, read_conflicts);
@@ -98,7 +93,6 @@ fn bench_entry_lock_accounts(c: &mut Criterion) {
                         black_box(batch.iter()),
                         batch_results.clone(),
                         MAX_TX_ACCOUNT_LOCKS,
-                        relax_intrabatch_account_locks,
                     );
                     accounts.unlock_accounts(batch.iter().zip(&results));
                 }

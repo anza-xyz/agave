@@ -1,388 +1,475 @@
 use {
     super::Bank,
-    rayon::prelude::*,
-    solana_account::{AccountSharedData, accounts_equal},
-    solana_accounts_db::accounts_db::AccountsDb,
-    solana_hash::Hash,
+    crossbeam_utils::CachePadded,
+    rayon::{
+        ThreadPool, ThreadPoolBuilder,
+        iter::{IntoParallelIterator, ParallelIterator},
+    },
+    solana_account::{AccountSharedData, ReadableAccount},
+    solana_accounts_db::{accounts_db::AccountsDb, storable_accounts::StorableAccounts},
     solana_lattice_hash::lt_hash::LtHash,
-    solana_measure::{meas_dur, measure::Measure},
     solana_pubkey::Pubkey,
-    solana_svm_callback::AccountState,
     std::{
-        ops::AddAssign,
-        sync::atomic::{AtomicU64, Ordering},
-        time::Duration,
+        array, hint,
+        mem::size_of,
+        sync::{
+            Arc, LazyLock, Mutex,
+            atomic::{AtomicU64, AtomicUsize, Ordering},
+        },
+        time::Instant,
     },
 };
 
+/// Number of threads for the async accounts hasher thread pool.
+const NUM_ACCOUNTS_HASHER_THREADS: usize = 4;
+
+// Maximum size, in bytes, for the seen-accounts freelist.
+const MAX_BYTES_SEEN_ACCOUNTS_FREELIST: usize = 10_000_000;
+
 impl Bank {
-    /// Updates the accounts lt hash
+    /// Enqueues the accounts lt hash updates for `accounts` to the accounts hasher thread pool.
+    ///
+    /// This fn is meant to be called by on-chain events, e.g. transaction processing.
+    /// This fn deduplicates from `accounts`, keeping only the latest version of each account.
+    /// It also loads the previous version of each account inline, because we assume the previous
+    /// version of each account is still in the accounts write cache, and thus fast to load.
+    ///
+    /// For non-transaction processing callers, consider `enqueue_off_chain_accounts_lt_hash_updates()`.
+    pub fn enqueue_on_chain_accounts_lt_hash_updates<'a>(
+        &self,
+        accounts: &impl StorableAccounts<'a>,
+    ) {
+        if accounts.is_empty() {
+            return;
+        }
+
+        let seen_accounts_freelist = seen_accounts_freelist();
+        let mut seen_accounts = seen_accounts_freelist.try_pop().unwrap_or_default();
+        let async_progress = &self.accounts_lt_hash_async_progress;
+        let thread_pool = accounts_hasher_thread_pool();
+
+        // process accounts in reverse because we must only count the latest version of each account
+        for index in (0..accounts.len()).rev() {
+            let address = accounts.pubkey(index);
+            if !seen_accounts.insert(*address) {
+                // we've already enqueued a newer update for the same account; skip this one
+                continue;
+            }
+            let prev_account = self
+                .rc
+                .accounts
+                .load_with_fixed_root_do_not_populate_read_cache(&self.ancestors, address)
+                .map(|(account, _slot)| account);
+            let curr_account = accounts.account(index, |account| {
+                (account.lamports() != 0).then(|| account.take_account())
+            });
+            if prev_account.is_none() && curr_account.is_none() {
+                // the account was ephemeral; skip it
+            } else {
+                // the account was modified; enqueue this update
+                async_progress.spawn(
+                    thread_pool,
+                    AccountsLtHashUpdate {
+                        address: *address,
+                        prev_account,
+                        curr_account,
+                    },
+                );
+            }
+        }
+
+        // reclaim the seen accounts hashset
+        seen_accounts_freelist.try_push(seen_accounts);
+    }
+
+    /// Enqueues the accounts lt hash updates for `accounts` to the accounts hasher thread pool.
+    ///
+    /// This fn is meant to be called by off-chain events, meaning we know/control `accounts`.
+    /// Contrasting with `enqueue_on_chain_accounts_lt_hash_updates()`, this fn:
+    /// - Does not deduplicate accounts, requiring the caller to ensure there are no duplicates.
+    /// - Does not assume loading the previous version of accounts is fast,
+    ///   e.g. when storing stake accounts as part of partitioned epoch rewards.
+    ///
+    /// If Some, `thread_pool_for_hashing_accounts` will be used
+    /// to load the previous version of accounts in parallel.
+    pub fn enqueue_off_chain_accounts_lt_hash_updates<'a>(
+        &self,
+        accounts: &impl StorableAccounts<'a>,
+        thread_pool_for_loading_accounts: Option<&ThreadPool>,
+    ) {
+        if cfg!(debug_assertions) {
+            // if debug assertions are on, we will check for duplicates
+            use ahash::HashSetExt as _;
+            let mut seen_accounts = ahash::HashSet::with_capacity(accounts.len());
+            let mut duplicate_pubkeys = ahash::HashSet::with_capacity(0); // assume no duplicates
+            for index in 0..accounts.len() {
+                let pubkey = accounts.pubkey(index);
+                if !seen_accounts.insert(pubkey) {
+                    // we've already seen this account, so add it to the duplicates list
+                    duplicate_pubkeys.insert(pubkey);
+                }
+            }
+            if !duplicate_pubkeys.is_empty() {
+                let mut duplicate_accounts = ahash::HashMap::<_, Vec<_>>::default();
+                for duplicate_pubkey in duplicate_pubkeys {
+                    for index in 0..accounts.len() {
+                        let pubkey = accounts.pubkey(index);
+                        if pubkey == duplicate_pubkey {
+                            duplicate_accounts
+                                .entry(pubkey)
+                                .or_default()
+                                .push(accounts.account(index, |account| account.take_account()));
+                        }
+                    }
+                }
+                panic!("duplicate accounts were enqueued for hashing: {duplicate_accounts:?}");
+            }
+        }
+
+        let async_progress = &self.accounts_lt_hash_async_progress;
+        let thread_pool_for_hashing_accounts = accounts_hasher_thread_pool();
+
+        // A closure that does the loading and enqueueing, so code is shared
+        // whether using the thread_pool_for_loading_accounts or not.
+        let load_then_enqueue = |index| {
+            let address = accounts.pubkey(index);
+            let prev_account = self
+                .rc
+                .accounts
+                .load_with_fixed_root_do_not_populate_read_cache(&self.ancestors, address)
+                .map(|(account, _slot)| account);
+            let curr_account = accounts.account(index, |account| {
+                (account.lamports() != 0).then(|| account.take_account())
+            });
+            if prev_account.is_none() && curr_account.is_none() {
+                // the account was ephemeral; skip it
+            } else {
+                // the account was modified; enqueue this update
+                async_progress.spawn(
+                    thread_pool_for_hashing_accounts,
+                    AccountsLtHashUpdate {
+                        address: *address,
+                        prev_account,
+                        curr_account,
+                    },
+                );
+            }
+        };
+
+        if let Some(thread_pool_for_loading_accounts) = thread_pool_for_loading_accounts {
+            // The previous version of accounts must be loaded before subsequent account
+            // modifications occur, so ThreadPool::spawn() canot be used here.
+            thread_pool_for_loading_accounts.install(|| {
+                (0..accounts.len())
+                    .into_par_iter()
+                    .for_each(load_then_enqueue);
+            });
+        } else {
+            (0..accounts.len()).for_each(load_then_enqueue);
+        }
+    }
+
+    /// Updates the accounts lt hash.
     ///
     /// When freezing a bank, we compute and update the accounts lt hash.
     /// For each account modified in this bank, we:
     /// - mix out its previous state, and
     /// - mix in its current state
     ///
-    /// Since this function is non-idempotent, it should only be called once per bank.
-    pub fn update_accounts_lt_hash(&self) {
-        let delta_lt_hash = self.calculate_delta_lt_hash();
-        let mut accounts_lt_hash = self.accounts_lt_hash.lock().unwrap();
-        accounts_lt_hash.0.mix_in(&delta_lt_hash);
-    }
-
-    /// Calculates the lt hash *of only this slot*
-    ///
-    /// This can be thought of as akin to the accounts delta hash.
-    ///
-    /// For each account modified in this bank, we:
-    /// - mix out its previous state, and
-    /// - mix in its current state
-    ///
-    /// This function is idempotent, and may be called more than once.
-    fn calculate_delta_lt_hash(&self) -> LtHash {
-        let measure_total = Measure::start("");
-        let slot = self.slot();
-
-        // If we don't find the account in the cache, we need to go load it.
-        // We want the version of the account *before* it was written in this slot.
-        // Bank::ancestors *includes* this slot, so we need to remove it before loading.
-        let strictly_ancestors = {
-            let mut ancestors = self.ancestors.clone();
-            ancestors.remove(&self.slot());
-            ancestors
+    /// This function waits for any in-flight jobs on the accounts hasher threads,
+    /// computes their combined delta lt hash, then mixes it into the bank.
+    pub fn finish_accounts_lt_hash_updates(&self) {
+        let timer = Instant::now();
+        let num_jobs_total = {
+            let mut accounts_lt_hash = self.accounts_lt_hash.lock().unwrap();
+            self.accounts_lt_hash_async_progress
+                .finish(&mut accounts_lt_hash.0)
         };
+        let finish_time = timer.elapsed();
 
-        if slot == 0 {
-            // Slot 0 is special when calculating the accounts lt hash.
-            // Primordial accounts (those in genesis) that are modified by transaction processing
-            // in slot 0 will have Alive entries in the accounts lt hash cache.
-            // When calculating the accounts lt hash, if an account was initially alive, we mix
-            // *out* its previous lt hash value.  In slot 0, we haven't stored any previous lt hash
-            // values (since it is in the first slot), yet we'd still mix out these accounts!
-            // This produces the incorrect accounts lt hash.
-            // From the perspective of the accounts lt hash, in slot 0 we cannot have any accounts
-            // as previously alive.  So to work around this issue, we clear the cache.
-            // And since `strictly_ancestors` is empty, loading the previous version of the account
-            // from accounts db will return `None` (aka Dead), which is the correct behavior.
-            assert!(strictly_ancestors.is_empty());
-            self.cache_for_accounts_lt_hash.clear();
-        }
-
-        // Get all the accounts stored in this slot.
-        // Since this bank is in the middle of being frozen, it hasn't been rooted.
-        // That means the accounts should all be in the write cache, and loading will be fast.
-        let (accounts_curr, time_loading_accounts_curr) = meas_dur!({
-            self.rc
-                .accounts
-                .accounts_db
-                .get_pubkey_account_for_slot(slot)
-        });
-        let num_accounts_total = accounts_curr.len();
-
-        #[derive(Debug, Default)]
-        struct Stats {
-            num_cache_misses: usize,
-            num_accounts_unmodified: usize,
-            time_loading_accounts_prev: Duration,
-            time_comparing_accounts: Duration,
-            time_computing_hashes: Duration,
-            time_mixing_hashes: Duration,
-        }
-        impl AddAssign for Stats {
-            fn add_assign(&mut self, other: Self) {
-                self.num_cache_misses += other.num_cache_misses;
-                self.num_accounts_unmodified += other.num_accounts_unmodified;
-                self.time_loading_accounts_prev += other.time_loading_accounts_prev;
-                self.time_comparing_accounts += other.time_comparing_accounts;
-                self.time_computing_hashes += other.time_computing_hashes;
-                self.time_mixing_hashes += other.time_mixing_hashes;
-            }
-        }
-
-        let do_calculate_delta_lt_hash = || {
-            // Work on chunks of 128 pubkeys, which is 4 KiB.
-            // And 4 KiB is likely the smallest a real page size will be.
-            // And a single page is likely the smallest size a disk read will actually read.
-            // This can be tuned larger, but likely not smaller.
-            const CHUNK_SIZE: usize = 128;
-            accounts_curr
-                .par_iter()
-                .fold_chunks(
-                    CHUNK_SIZE,
-                    || (LtHash::identity(), Stats::default()),
-                    |mut accum, (pubkey, curr_account)| {
-                        // load the initial state of the account
-                        let (initial_state_of_account, measure_load) = meas_dur!({
-                            let cache_value = self
-                                .cache_for_accounts_lt_hash
-                                .get(pubkey)
-                                .map(|entry| entry.value().clone());
-                            match cache_value {
-                                Some(CacheValue::InspectAccount(initial_state_of_account)) => {
-                                    initial_state_of_account
-                                }
-                                Some(CacheValue::BankNew) | None => {
-                                    accum.1.num_cache_misses += 1;
-                                    // If the initial state of the account is not in the accounts
-                                    // lt hash cache, or is explicitly unknown, then it is likely
-                                    // this account was stored *outside* of transaction processing
-                                    // (e.g. creating a new bank).
-                                    // Do not populate the read cache, as this account likely will
-                                    // not be accessed again soon.
-                                    let account_slot = self
-                                        .rc
-                                        .accounts
-                                        .load_with_fixed_root_do_not_populate_read_cache(
-                                            &strictly_ancestors,
-                                            pubkey,
-                                        );
-                                    match account_slot {
-                                        Some((account, _slot)) => {
-                                            InitialStateOfAccount::Alive(account)
-                                        }
-                                        None => InitialStateOfAccount::Dead,
-                                    }
-                                }
-                            }
-                        });
-                        accum.1.time_loading_accounts_prev += measure_load;
-
-                        // mix out the previous version of the account
-                        match initial_state_of_account {
-                            InitialStateOfAccount::Dead => {
-                                // nothing to do here
-                            }
-                            InitialStateOfAccount::Alive(prev_account) => {
-                                let (are_accounts_equal, measure_is_equal) =
-                                    meas_dur!(accounts_equal(curr_account, &prev_account));
-                                accum.1.time_comparing_accounts += measure_is_equal;
-                                if are_accounts_equal {
-                                    // this account didn't actually change, so skip it for lt hashing
-                                    accum.1.num_accounts_unmodified += 1;
-                                    return accum;
-                                }
-                                let (prev_lt_hash, measure_hashing) =
-                                    meas_dur!(AccountsDb::lt_hash_account(&prev_account, pubkey));
-                                let (_, measure_mixing) =
-                                    meas_dur!(accum.0.mix_out(&prev_lt_hash.0));
-                                accum.1.time_computing_hashes += measure_hashing;
-                                accum.1.time_mixing_hashes += measure_mixing;
-                            }
-                        }
-
-                        // mix in the new version of the account
-                        let (curr_lt_hash, measure_hashing) =
-                            meas_dur!(AccountsDb::lt_hash_account(curr_account, pubkey));
-                        let (_, measure_mixing) = meas_dur!(accum.0.mix_in(&curr_lt_hash.0));
-                        accum.1.time_computing_hashes += measure_hashing;
-                        accum.1.time_mixing_hashes += measure_mixing;
-
-                        accum
-                    },
-                )
-                .reduce(
-                    || (LtHash::identity(), Stats::default()),
-                    |mut accum, elem| {
-                        accum.0.mix_in(&elem.0);
-                        accum.1 += elem.1;
-                        accum
-                    },
-                )
-        };
-        let (delta_lt_hash, stats) = self
-            .rc
-            .accounts
-            .accounts_db
-            .thread_pool_foreground
-            .install(do_calculate_delta_lt_hash);
-
-        let total_time = measure_total.end_as_duration();
-        let num_accounts_modified =
-            num_accounts_total.saturating_sub(stats.num_accounts_unmodified);
+        let seen_accounts_freelist_stats = seen_accounts_freelist().stats();
         datapoint_info!(
             "bank-accounts_lt_hash",
-            ("slot", slot, i64),
-            ("num_accounts_total", num_accounts_total, i64),
-            ("num_accounts_modified", num_accounts_modified, i64),
+            ("slot", self.slot(), i64),
+            ("num_jobs", num_jobs_total, i64),
+            ("finish_us", finish_time.as_micros(), i64),
             (
-                "num_accounts_unmodified",
-                stats.num_accounts_unmodified,
-                i64
-            ),
-            ("num_cache_misses", stats.num_cache_misses, i64),
-            ("total_us", total_time.as_micros(), i64),
-            (
-                "loading_accounts_curr_us",
-                time_loading_accounts_curr.as_micros(),
+                "seen_accounts_freelist_num_containers",
+                seen_accounts_freelist_stats.num_containers,
                 i64
             ),
             (
-                "par_loading_accounts_prev_us",
-                stats.time_loading_accounts_prev.as_micros(),
+                "seen_accounts_freelist_capacity_elems",
+                seen_accounts_freelist_stats.capacity_elems,
                 i64
             ),
             (
-                "par_comparing_accounts_us",
-                stats.time_comparing_accounts.as_micros(),
-                i64
-            ),
-            (
-                "par_computing_hashes_us",
-                stats.time_computing_hashes.as_micros(),
-                i64
-            ),
-            (
-                "par_mixing_hashes_us",
-                stats.time_mixing_hashes.as_micros(),
-                i64
-            ),
-            (
-                "num_inspect_account_hits",
-                self.stats_for_accounts_lt_hash
-                    .num_inspect_account_hits
-                    .load(Ordering::Relaxed),
-                i64
-            ),
-            (
-                "num_inspect_account_misses",
-                self.stats_for_accounts_lt_hash
-                    .num_inspect_account_misses
-                    .load(Ordering::Relaxed),
-                i64
-            ),
-            (
-                "num_inspect_account_after_frozen",
-                self.stats_for_accounts_lt_hash
-                    .num_inspect_account_after_frozen
-                    .load(Ordering::Relaxed),
-                i64
-            ),
-            (
-                "inspect_account_lookup_ns",
-                self.stats_for_accounts_lt_hash
-                    .inspect_account_lookup_time_ns
-                    .load(Ordering::Relaxed),
-                i64
-            ),
-            (
-                "inspect_account_insert_ns",
-                self.stats_for_accounts_lt_hash
-                    .inspect_account_insert_time_ns
-                    .load(Ordering::Relaxed),
+                "seen_accounts_freelist_capacity_bytes",
+                seen_accounts_freelist_stats.capacity_bytes,
                 i64
             ),
         );
+    }
+}
 
-        delta_lt_hash
+/// Struct for tracking progress of the asynchronous accounts lt hashing for a Bank.
+pub struct AccountsLtHashAsyncProgress {
+    // Note: use [Mutex<CachePadded<LtHash>>] and *not* [CachePadded<Mutex<LtHash>>].
+    // - In both ways each mutex is on its own separate cache line.
+    // - In both ways the size used for each element, including padding, is the same.
+    // - Only this way ensures that each LtHash is placed for aligned SIMD/AVX access.
+    //
+    // Here's the layout of [Mutex<CachePadded<LtHash>>; 2]
+    //
+    //  │element 0                         │element 1
+    //  │                                  │
+    //  ▼───────┬─────────┬────────────────▼───────┬─────────┬────────────────┐
+    //  │ Mutex │ padding │     LtHash     │ Mutex │ padding │     LtHash     │
+    //  ├───────┼─────────┼────────────────┼───────┼─────────┼────────────────┤
+    //  │       │         │                │       │         │                │
+    //  │0      │6        │128 <-- aligned │2176   │2182     │2304            │4352
+    //
+    //
+    // And here's the layout of [CachePadded<Mutex<LtHash>>; 2]
+    //
+    //  │element 0                         │element 1
+    //  │                                  │
+    //  ▼───────┬────────────────┬─────────▼───────┬────────────────┬─────────┐
+    //  │ Mutex │     LtHash     │ padding │ Mutex │     LtHash     │ padding │
+    //  ├───────┼────────────────┼─────────┼───────┼────────────────┼─────────┤
+    //  │       │                │         │       │                │         │
+    //  │0      │6 <-- unaligned │2054     │2176   │2182            │4230     │4352
+    //
+    accumulators: Arc<[Mutex<CachePadded<LtHash>>; NUM_ACCOUNTS_HASHER_THREADS]>,
+    num_jobs_pending: Arc<AtomicUsize>,
+    num_jobs_total: AtomicU64,
+}
+
+impl AccountsLtHashAsyncProgress {
+    /// Creates a new AccountsLtHashAsyncProgress variable, which is suitable for a new Bank.
+    pub fn new() -> Self {
+        Self {
+            accumulators: Arc::new(array::from_fn(|_| {
+                Mutex::new(CachePadded::new(LtHash::identity()))
+            })),
+            num_jobs_pending: Arc::new(AtomicUsize::new(0)),
+            num_jobs_total: AtomicU64::new(0),
+        }
     }
 
-    /// Caches initial state of writeable accounts
+    /// Enqueues `update` into `thread_pool` for asynchronous processing.
+    fn spawn(&self, thread_pool: &'static ThreadPool, update: AccountsLtHashUpdate) {
+        self.num_jobs_pending.fetch_add(1, Ordering::Relaxed);
+        self.num_jobs_total.fetch_add(1, Ordering::Relaxed);
+        thread_pool.spawn({
+            let accumulators = Arc::clone(&self.accumulators);
+            let num_jobs_pending = Arc::clone(&self.num_jobs_pending);
+            move || {
+                // SAFETY: We always call from the same/correct Rayon thread pool.
+                let worker_index = thread_pool.current_thread_index().unwrap();
+
+                // SAFETY: There are num_threads accumulators, and each
+                // thread's index shall always be in range 0..num_threads.
+                debug_assert!(worker_index < accumulators.len());
+                let accumulator = unsafe { accumulators.get_unchecked(worker_index) };
+
+                Self::process(&mut accumulator.lock().unwrap(), update);
+
+                // Decrementing the number of pending jobs MUST happen *after*
+                // accumulating the result.  This ensures `finish()` cannot
+                // observe zero pending jobs until all workers are done.
+                num_jobs_pending.fetch_sub(1, Ordering::Relaxed);
+            }
+        });
+    }
+
+    /// Waits for all pending jobs to complete, then mixes the results into `lt_hash`.
     ///
-    /// If a transaction account is writeable, cache its initial account state.
-    /// The initial state is needed when computing the accounts lt hash for the slot, and caching
-    /// the initial state saves us from having to look it up on disk later.
-    pub fn inspect_account_for_accounts_lt_hash(
-        &self,
-        address: &Pubkey,
-        account_state: &AccountState,
-        is_writable: bool,
-    ) {
-        if !is_writable {
-            // if the account is not writable, then it cannot be modified; nothing to do here
+    /// Returns the number of asynchronous jobs completed.
+    ///
+    /// Note: Since an LtHash is large, `lt_hash` is passed as an in-out parameter.
+    /// This it to avoid Rust compiler bug that fails to perform return value optimization.
+    fn finish(&self, lt_hash: &mut LtHash) -> u64 {
+        while self.num_jobs_pending.load(Ordering::Relaxed) > 0 {
+            // Spin, do not yield! This is called by Bank::freeze() and we want to be fast.
+            hint::spin_loop();
+        }
+
+        for thread_accumulator in self.accumulators.iter() {
+            lt_hash.mix_in(&thread_accumulator.lock().unwrap());
+        }
+        self.num_jobs_total.load(Ordering::Relaxed)
+    }
+
+    /// Processes `update` and mixes the result into `accum_lt_hash`.
+    ///
+    /// Note: Since an LtHash is large, `accum_lt_hash` is passed as an in-out parameter.
+    /// This it to avoid Rust compiler bug that fails to perform return value optimization.
+    fn process(accum_lt_hash: &mut LtHash, update: AccountsLtHashUpdate) {
+        let AccountsLtHashUpdate {
+            address,
+            prev_account,
+            curr_account,
+        } = update;
+        if let Some(prev_account) = prev_account {
+            let prev_lt_hash = AccountsDb::lt_hash_account(&prev_account, &address);
+            accum_lt_hash.mix_out(&prev_lt_hash.0);
+        }
+        if let Some(curr_account) = curr_account {
+            let curr_lt_hash = AccountsDb::lt_hash_account(&curr_account, &address);
+            accum_lt_hash.mix_in(&curr_lt_hash.0);
+        }
+    }
+}
+
+/// A single accounts lt hash update to process.
+#[derive(Debug)]
+struct AccountsLtHashUpdate {
+    address: Pubkey,
+    prev_account: Option<AccountSharedData>,
+    curr_account: Option<AccountSharedData>,
+}
+
+/// Get the freelist of hashsets to use for seen accounts.
+fn seen_accounts_freelist() -> &'static HashSetFreelist<Pubkey> {
+    // Derived empirically while observing an unstaked node on mnb.
+    // Should end up being the same number as replay threads.
+    const MAX_CONTAINERS: usize = 50;
+    static FREELIST: LazyLock<HashSetFreelist<Pubkey>> = LazyLock::new(|| {
+        HashSetFreelist::new(MAX_CONTAINERS, Some(MAX_BYTES_SEEN_ACCOUNTS_FREELIST))
+    });
+    &FREELIST
+}
+
+/// Freelist of containers, to avoid repeat allocations/deallocations.
+#[derive(Debug)]
+struct HashSetFreelist<T> {
+    /// the maximum number of containers this freelist will hold
+    max_containers: usize,
+
+    /// the maximum capacity, in elements, this freelist will hold
+    max_capacity: Option<usize>,
+
+    inner: Mutex<HashSetFreelistInner<T>>,
+}
+
+impl<T> HashSetFreelist<T> {
+    /// Creates a new, empty, freelist.
+    ///
+    /// max_containers:
+    /// * The maximum number of containers this freelist can hold.
+    ///
+    /// max_bytes:
+    /// * The maximum number of bytes this freelist can hold.
+    /// * This value corresponds to the total capacity across all the containers in the freelist.
+    /// * If `None`, there is no maximum.
+    fn new(max_containers: usize, max_bytes: Option<usize>) -> Self {
+        let max_capacity = max_bytes.map(|max_bytes| max_bytes / size_of::<T>());
+        Self {
+            max_containers,
+            max_capacity,
+            inner: Mutex::new(HashSetFreelistInner {
+                list: Vec::with_capacity(max_containers),
+                total_capacity: 0,
+            }),
+        }
+    }
+
+    /// Pushes `container` on to the freelist (IFF its capacity is greater than zero).
+    fn try_push(&self, mut container: ahash::HashSet<T>) {
+        // If the capacity is zero, then the container never allocated.
+        // In that case, don't waste time putting it back into the freelist,
+        // since there's nothing of value to reuse.
+        //
+        // Else, check if pushing the container would exceed the max capacity of the freelist.
+        // If so, also do not put it back into the freelist.
+        let capacity = container.capacity();
+        if capacity == 0 {
             return;
         }
 
-        // Only insert the account the *first* time we see it.
-        // We want to capture the value of the account *before* any modifications during this slot.
-        let (is_in_cache, lookup_time) =
-            meas_dur!(self.cache_for_accounts_lt_hash.contains_key(address));
-        if !is_in_cache {
-            // We need to check if the bank is frozen.  In order to do that safely, we
-            // must hold a read lock on Bank::hash to read the frozen state.
-            let freeze_guard = self.freeze_lock();
-            let is_frozen = *freeze_guard != Hash::default();
-            if is_frozen {
-                // If the bank is frozen, do not add this account to the cache.
-                // It is possible for the leader to be executing transactions after freeze has
-                // started, i.e. while any deferred changes to account state is finishing up.
-                // This means the transaction could load an account *after* it was modified by the
-                // deferred changes, which would be the wrong initial state of the account.
-                // Inserting the wrong initial state of an account into the cache will end up
-                // producing the wrong accounts lt hash.
-                self.stats_for_accounts_lt_hash
-                    .num_inspect_account_after_frozen
-                    .fetch_add(1, Ordering::Relaxed);
-                return;
-            }
-            let (_, insert_time) = meas_dur!({
-                self.cache_for_accounts_lt_hash
-                    .entry(*address)
-                    .or_insert_with(|| {
-                        let initial_state_of_account = match account_state {
-                            AccountState::Dead => InitialStateOfAccount::Dead,
-                            AccountState::Alive(account) => {
-                                InitialStateOfAccount::Alive((*account).clone())
-                            }
-                        };
-                        CacheValue::InspectAccount(initial_state_of_account)
-                    });
-            });
-            drop(freeze_guard);
+        // container must be empty to be reused, so do it here outside of the lock
+        container.clear();
 
-            self.stats_for_accounts_lt_hash
-                .num_inspect_account_misses
-                .fetch_add(1, Ordering::Relaxed);
-            self.stats_for_accounts_lt_hash
-                .inspect_account_insert_time_ns
-                // N.B. this needs to be nanoseconds because it can be so fast
-                .fetch_add(insert_time.as_nanos() as u64, Ordering::Relaxed);
-        } else {
-            // The account is already in the cache, so nothing to do here other than update stats.
-            self.stats_for_accounts_lt_hash
-                .num_inspect_account_hits
-                .fetch_add(1, Ordering::Relaxed);
+        let mut inner = self.inner.lock().unwrap();
+
+        if inner.list.len() >= self.max_containers {
+            // the num containers would exceed the max, do not push
+            return;
         }
 
-        self.stats_for_accounts_lt_hash
-            .inspect_account_lookup_time_ns
-            // N.B. this needs to be nanoseconds because it can be so fast
-            .fetch_add(lookup_time.as_nanos() as u64, Ordering::Relaxed);
+        let Some(new_total_capacity) = inner.total_capacity.checked_add(capacity) else {
+            // the new total capacity would overflow, do not push
+            return;
+        };
+
+        let max_capacity = self.max_capacity.unwrap_or(usize::MAX);
+        if new_total_capacity > max_capacity {
+            // the new total capacity would exceed the max, do not push
+            return;
+        }
+
+        inner.list.push(container);
+        inner.total_capacity = new_total_capacity;
+    }
+
+    /// Pops a container off the freelist and returns it.
+    ///
+    /// The returned container will always be empty.
+    fn try_pop(&self) -> Option<ahash::HashSet<T>> {
+        let mut inner = self.inner.lock().unwrap();
+        let container = inner.list.pop()?;
+        assert!(container.is_empty());
+        inner.total_capacity -= container.capacity();
+        Some(container)
+    }
+
+    /// Returns a snapshot of the freelist's stats.
+    fn stats(&self) -> FreelistStats {
+        let inner = self.inner.lock().unwrap();
+        let num_containers = inner.list.len();
+        let capacity_elems = inner.total_capacity;
+        drop(inner);
+        FreelistStats {
+            num_containers,
+            capacity_elems,
+            capacity_bytes: capacity_elems.saturating_mul(size_of::<T>()),
+        }
     }
 }
 
-/// Stats related to accounts lt hash
-#[derive(Debug, Default)]
-pub struct Stats {
-    /// the number of times the cache already contained the account being inspected
-    num_inspect_account_hits: AtomicU64,
-    /// the number of times the cache *did not* already contain the account being inspected
-    num_inspect_account_misses: AtomicU64,
-    /// the number of times an account was inspected after the bank was frozen
-    num_inspect_account_after_frozen: AtomicU64,
-    /// time spent checking if accounts are in the cache
-    inspect_account_lookup_time_ns: AtomicU64,
-    /// time spent inserting accounts into the cache
-    inspect_account_insert_time_ns: AtomicU64,
+/// The mutable state of a [`HashSetFreelist`], guarded by a single lock.
+#[derive(Debug)]
+struct HashSetFreelistInner<T> {
+    /// the containers available for reuse
+    list: Vec<ahash::HashSet<T>>,
+    /// the capacity, in elements, across all the containers in the freelist
+    total_capacity: usize,
 }
 
-/// The initial state of an account prior to being modified in this slot/transaction
-#[derive(Debug, Clone, PartialEq)]
-pub enum InitialStateOfAccount {
-    /// The account was initially dead
-    Dead,
-    /// The account was initially alive
-    Alive(AccountSharedData),
+/// A snapshot of a freelist's stats.
+#[derive(Debug, Eq, PartialEq)]
+struct FreelistStats {
+    /// the number of containers held by the freelist
+    num_containers: usize,
+    /// the capacity, in elements, across all the containers in the freelist
+    capacity_elems: usize,
+    /// the capacity, in bytes, across all the containers in the freelist
+    capacity_bytes: usize,
 }
 
-/// The value type for the accounts lt hash cache
-#[derive(Debug, Clone, PartialEq)]
-pub enum CacheValue {
-    /// The value was inserted by `inspect_account()`.
-    /// This means we will have the initial state of the account.
-    InspectAccount(InitialStateOfAccount),
-    /// The value was inserted by `Bank::new()`.
-    /// This means we will *not* have the initial state of the account.
-    BankNew,
+/// Returns the thread pool for asynchronous accounts hashing.
+///
+/// Note, the thread pool will be created on first call.
+fn accounts_hasher_thread_pool() -> &'static ThreadPool {
+    static THREAD_POOL: LazyLock<ThreadPool> = LazyLock::new(|| {
+        ThreadPoolBuilder::new()
+            .num_threads(NUM_ACCOUNTS_HASHER_THREADS)
+            .thread_name(|i| format!("solAcctsHashr{i:02}"))
+            .build()
+            .expect("new accounts hasher rayon threadpool")
+    });
+    &THREAD_POOL
 }
 
 #[cfg(test)]
@@ -395,7 +482,7 @@ mod tests {
         },
         agave_feature_set::FeatureSet,
         agave_snapshots::snapshot_config::SnapshotConfig,
-        solana_account::{ReadableAccount as _, WritableAccount as _},
+        ahash::HashSetExt as _,
         solana_accounts_db::{
             accounts_db::{ACCOUNTS_DB_CONFIG_FOR_TESTING, AccountsDbConfig},
             accounts_index::{ACCOUNTS_INDEX_CONFIG_FOR_TESTING, AccountsIndexConfig, IndexLimit},
@@ -403,13 +490,19 @@ mod tests {
         solana_cluster_type::ClusterType,
         solana_fee_calculator::FeeRateGovernor,
         solana_genesis_config::{self, GenesisConfig},
+        solana_hash::Hash,
         solana_keypair::Keypair,
         solana_leader_schedule::SlotLeader,
         solana_native_token::LAMPORTS_PER_SOL,
         solana_pubkey::{self as pubkey, Pubkey},
         solana_rent::Rent,
         solana_signer::Signer as _,
-        std::{cmp, iter, str::FromStr as _, sync::Arc},
+        std::{
+            cmp, iter,
+            str::FromStr as _,
+            sync::{Arc, Barrier},
+            thread,
+        },
         tempfile::TempDir,
         test_case::{test_case, test_matrix},
     };
@@ -495,7 +588,7 @@ mod tests {
         bank.transfer(amount, &mint_keypair, &keypair5.pubkey())
             .unwrap();
 
-        // manually freeze the bank to trigger update_accounts_lt_hash() to run
+        // manually freeze the bank to trigger updating the accounts lt hash
         bank.freeze();
         let prev_accounts_lt_hash = bank.accounts_lt_hash.lock().unwrap().clone();
 
@@ -550,10 +643,9 @@ mod tests {
         // store account 5 into this new bank, unchanged
         bank.store_account(&keypair5.pubkey(), prev_account5.as_ref().unwrap());
 
-        // freeze the bank to trigger update_accounts_lt_hash() to run
+        // freeze the bank to trigger updating the accounts lt hash
         bank.freeze();
 
-        let actual_delta_lt_hash = bank.calculate_delta_lt_hash();
         let post_accounts_lt_hash = bank.accounts_lt_hash.lock().unwrap().clone();
         let post_mint = bank.get_account_with_fixed_root(&mint_keypair.pubkey());
         let post_account1 = bank.get_account_with_fixed_root(&keypair1.pubkey());
@@ -574,21 +666,18 @@ mod tests {
             .map(|address| bank.get_account_with_fixed_root(address))
             .collect();
 
-        let mut expected_delta_lt_hash = LtHash::identity();
         let mut expected_accounts_lt_hash = prev_accounts_lt_hash;
         let mut updater =
             |address: &Pubkey, prev: Option<AccountSharedData>, post: Option<AccountSharedData>| {
                 // if there was an alive account, mix out
                 if let Some(prev) = prev {
                     let prev_lt_hash = AccountsDb::lt_hash_account(&prev, address);
-                    expected_delta_lt_hash.mix_out(&prev_lt_hash.0);
                     expected_accounts_lt_hash.0.mix_out(&prev_lt_hash.0);
                 }
 
                 // mix in the new one
                 let post = post.unwrap_or_default();
                 let post_lt_hash = AccountsDb::lt_hash_account(&post, address);
-                expected_delta_lt_hash.mix_in(&post_lt_hash.0);
                 expected_accounts_lt_hash.0.mix_in(&post_lt_hash.0);
             };
         updater(&mint_keypair.pubkey(), prev_mint, post_mint);
@@ -605,15 +694,7 @@ mod tests {
             );
         }
 
-        // now make sure the delta lt hashes match
-        let expected = expected_delta_lt_hash.checksum();
-        let actual = actual_delta_lt_hash.checksum();
-        assert_eq!(
-            expected, actual,
-            "delta_lt_hash, expected: {expected}, actual: {actual}",
-        );
-
-        // ...and the accounts lt hashes match too
+        // now make sure the accounts lt hashes match
         let expected = expected_accounts_lt_hash.0.checksum();
         let actual = post_accounts_lt_hash.0.checksum();
         assert_eq!(
@@ -626,7 +707,7 @@ mod tests {
     ///
     /// This test does a simple transfer in slot 0 so that a primordial account is modified.
     ///
-    /// See the comments in calculate_delta_lt_hash() for more information.
+    /// Slot 0 is special because primordial accounts have no previous accounts lt hash entry.
     #[test_case(Features::None; "no features")]
     #[test_case(Features::All; "all features")]
     fn test_slot0_accounts_lt_hash(features: Features) {
@@ -640,7 +721,7 @@ mod tests {
         bank.transfer(LAMPORTS_PER_SOL, &mint_keypair, &Pubkey::new_unique())
             .unwrap();
 
-        // manually freeze the bank to trigger update_accounts_lt_hash() to run
+        // manually freeze the bank to trigger updating the accounts lt hash
         bank.freeze();
         let actual_accounts_lt_hash = bank.accounts_lt_hash.lock().unwrap().clone();
 
@@ -649,116 +730,8 @@ mod tests {
             .rc
             .accounts
             .accounts_db
-            .calculate_accounts_lt_hash_at_startup_from_index(&bank.ancestors, bank.slot());
+            .calculate_accounts_lt_hash_at_startup_from_index(&bank.ancestors);
         assert_eq!(actual_accounts_lt_hash, calculated_accounts_lt_hash);
-    }
-
-    #[test_case(Features::None; "no features")]
-    #[test_case(Features::All; "all features")]
-    fn test_inspect_account_for_accounts_lt_hash(features: Features) {
-        let (genesis_config, _mint_keypair) = genesis_config_with(features);
-        let (bank, _bank_forks) = Bank::new_with_bank_forks_for_tests(&genesis_config);
-
-        // the cache should start off empty
-        assert_eq!(bank.cache_for_accounts_lt_hash.len(), 0);
-
-        // ensure non-writable accounts are *not* added to the cache
-        bank.inspect_account_for_accounts_lt_hash(
-            &Pubkey::new_unique(),
-            &AccountState::Dead,
-            false,
-        );
-        bank.inspect_account_for_accounts_lt_hash(
-            &Pubkey::new_unique(),
-            &AccountState::Alive(&AccountSharedData::default()),
-            false,
-        );
-        assert_eq!(bank.cache_for_accounts_lt_hash.len(), 0);
-
-        // ensure *new* accounts are added to the cache
-        let address = Pubkey::new_unique();
-        bank.inspect_account_for_accounts_lt_hash(&address, &AccountState::Dead, true);
-        assert_eq!(bank.cache_for_accounts_lt_hash.len(), 1);
-        assert!(bank.cache_for_accounts_lt_hash.contains_key(&address));
-
-        // ensure *existing* accounts are added to the cache
-        let address = Pubkey::new_unique();
-        let initial_lamports = 123;
-        let mut account = AccountSharedData::new(initial_lamports, 0, &Pubkey::default());
-        bank.inspect_account_for_accounts_lt_hash(&address, &AccountState::Alive(&account), true);
-        assert_eq!(bank.cache_for_accounts_lt_hash.len(), 2);
-        if let CacheValue::InspectAccount(InitialStateOfAccount::Alive(cached_account)) = bank
-            .cache_for_accounts_lt_hash
-            .get(&address)
-            .unwrap()
-            .value()
-        {
-            assert_eq!(*cached_account, account);
-        } else {
-            panic!("wrong initial state for account");
-        };
-
-        // ensure if an account is modified multiple times that we only cache the *first* one
-        let updated_lamports = account.lamports() + 1;
-        account.set_lamports(updated_lamports);
-        bank.inspect_account_for_accounts_lt_hash(&address, &AccountState::Alive(&account), true);
-        assert_eq!(bank.cache_for_accounts_lt_hash.len(), 2);
-        if let CacheValue::InspectAccount(InitialStateOfAccount::Alive(cached_account)) = bank
-            .cache_for_accounts_lt_hash
-            .get(&address)
-            .unwrap()
-            .value()
-        {
-            assert_eq!(cached_account.lamports(), initial_lamports);
-        } else {
-            panic!("wrong initial state for account");
-        };
-
-        // and ensure multiple updates are handled correctly when the account is initially dead
-        {
-            let address = Pubkey::new_unique();
-            bank.inspect_account_for_accounts_lt_hash(&address, &AccountState::Dead, true);
-            assert_eq!(bank.cache_for_accounts_lt_hash.len(), 3);
-            match bank
-                .cache_for_accounts_lt_hash
-                .get(&address)
-                .unwrap()
-                .value()
-            {
-                CacheValue::InspectAccount(InitialStateOfAccount::Dead) => {
-                    // this is expected, nothing to do here
-                }
-                _ => panic!("wrong initial state for account"),
-            };
-
-            bank.inspect_account_for_accounts_lt_hash(
-                &address,
-                &AccountState::Alive(&AccountSharedData::default()),
-                true,
-            );
-            assert_eq!(bank.cache_for_accounts_lt_hash.len(), 3);
-            match bank
-                .cache_for_accounts_lt_hash
-                .get(&address)
-                .unwrap()
-                .value()
-            {
-                CacheValue::InspectAccount(InitialStateOfAccount::Dead) => {
-                    // this is expected, nothing to do here
-                }
-                _ => panic!("wrong initial state for account"),
-            };
-        }
-
-        // ensure accounts are *not* added to the cache if the bank is frozen
-        // N.B. this test should remain *last*, as Bank::freeze() is not meant to be undone
-        bank.freeze();
-        let address = Pubkey::new_unique();
-        let num_cache_entries_prev = bank.cache_for_accounts_lt_hash.len();
-        bank.inspect_account_for_accounts_lt_hash(&address, &AccountState::Dead, true);
-        let num_cache_entries_curr = bank.cache_for_accounts_lt_hash.len();
-        assert_eq!(num_cache_entries_curr, num_cache_entries_prev);
-        assert!(!bank.cache_for_accounts_lt_hash.contains_key(&address));
     }
 
     #[test_case(Features::None; "no features")]
@@ -803,7 +776,7 @@ mod tests {
             .rc
             .accounts
             .accounts_db
-            .calculate_accounts_lt_hash_at_startup_from_index(&bank.ancestors, bank.slot());
+            .calculate_accounts_lt_hash_at_startup_from_index(&bank.ancestors);
         assert_eq!(expected_accounts_lt_hash, calculated_accounts_lt_hash);
     }
 
@@ -886,18 +859,16 @@ mod tests {
         bank.set_block_id(Some(Hash::default()));
 
         // verification happens at startup, so mimic the behavior by loading from a snapshot
-        let snapshot_config = SnapshotConfig::default();
         let bank_snapshots_dir = TempDir::new().unwrap();
         let snapshot_archives_dir = TempDir::new().unwrap();
-        let snapshot = snapshot_bank_utils::bank_to_full_snapshot_archive(
-            &bank_snapshots_dir,
-            &bank,
-            Some(snapshot_config.snapshot_version),
-            &snapshot_archives_dir,
-            &snapshot_archives_dir,
-            snapshot_config.archive_format,
-        )
-        .unwrap();
+        let snapshot_config = SnapshotConfig {
+            full_snapshot_archives_dir: snapshot_archives_dir.path().to_path_buf(),
+            incremental_snapshot_archives_dir: snapshot_archives_dir.path().to_path_buf(),
+            bank_snapshots_dir: bank_snapshots_dir.path().to_path_buf(),
+            ..SnapshotConfig::default()
+        };
+        let snapshot =
+            snapshot_bank_utils::bank_to_full_snapshot_archive(&snapshot_config, &bank).unwrap();
         let (_accounts_tempdir, accounts_dir) = snapshot_utils::create_tmp_accounts_dir_for_tests();
         let accounts_index_config = AccountsIndexConfig {
             index_limit: accounts_index_limit,
@@ -909,9 +880,9 @@ mod tests {
         };
         let roundtrip_bank = snapshot_bank_utils::bank_from_snapshot_archives(
             &[accounts_dir],
-            &bank_snapshots_dir,
             &snapshot,
             None,
+            &snapshot_config,
             &genesis_config,
             &RuntimeConfig::default(),
             None,
@@ -932,39 +903,6 @@ mod tests {
         assert!(roundtrip_bank.is_frozen());
 
         assert_eq!(roundtrip_bank, *bank);
-    }
-
-    /// Ensure that accounts written in Bank::new() are added to the accounts lt hash cache.
-    #[test_case(Features::None; "no features")]
-    #[test_case(Features::All; "all features")]
-    fn test_accounts_lt_hash_cache_values_from_bank_new(features: Features) {
-        let (genesis_config, _mint_keypair) = genesis_config_with(features);
-        let (mut bank, bank_forks) = Bank::new_with_bank_forks_for_tests(&genesis_config);
-
-        let slot = bank.slot() + 1;
-        bank =
-            Bank::new_from_parent_with_bank_forks(&bank_forks, bank, SlotLeader::default(), slot);
-
-        // These are the two accounts *currently* added to the bank during Bank::new().
-        // More accounts could be added later, so if the test fails, inspect the actual cache
-        // accounts and update the expected cache accounts as necessary.
-        let expected_cache = &[
-            (
-                Pubkey::from_str_const("SysvarC1ock11111111111111111111111111111111"),
-                CacheValue::BankNew,
-            ),
-            (
-                Pubkey::from_str_const("SysvarS1otHashes111111111111111111111111111"),
-                CacheValue::BankNew,
-            ),
-        ];
-        let mut actual_cache: Vec<_> = bank
-            .cache_for_accounts_lt_hash
-            .iter()
-            .map(|entry| (*entry.key(), entry.value().clone()))
-            .collect();
-        actual_cache.sort_unstable_by_key(|a| a.0);
-        assert_eq!(expected_cache, actual_cache.as_slice());
     }
 
     /// Ensure that the snapshot hash is correct
@@ -994,24 +932,22 @@ mod tests {
         }
         bank.set_block_id(Some(Hash::default()));
 
-        let snapshot_config = SnapshotConfig::default();
         let bank_snapshots_dir = TempDir::new().unwrap();
         let snapshot_archives_dir = TempDir::new().unwrap();
-        let snapshot = snapshot_bank_utils::bank_to_full_snapshot_archive(
-            &bank_snapshots_dir,
-            &bank,
-            Some(snapshot_config.snapshot_version),
-            &snapshot_archives_dir,
-            &snapshot_archives_dir,
-            snapshot_config.archive_format,
-        )
-        .unwrap();
+        let snapshot_config = SnapshotConfig {
+            full_snapshot_archives_dir: snapshot_archives_dir.path().to_path_buf(),
+            incremental_snapshot_archives_dir: snapshot_archives_dir.path().to_path_buf(),
+            bank_snapshots_dir: bank_snapshots_dir.path().to_path_buf(),
+            ..SnapshotConfig::default()
+        };
+        let snapshot =
+            snapshot_bank_utils::bank_to_full_snapshot_archive(&snapshot_config, &bank).unwrap();
         let (_accounts_tempdir, accounts_dir) = snapshot_utils::create_tmp_accounts_dir_for_tests();
         let roundtrip_bank = snapshot_bank_utils::bank_from_snapshot_archives(
             &[accounts_dir],
-            &bank_snapshots_dir,
             &snapshot,
             None,
+            &snapshot_config,
             &genesis_config,
             &RuntimeConfig::default(),
             None,
@@ -1027,5 +963,114 @@ mod tests {
         .unwrap();
 
         assert_eq!(roundtrip_bank, *bank);
+    }
+
+    /// Ensure enqueue_off_chain_accounts_lt_hash_updates() catches duplicates in debug mode.
+    #[should_panic(expected = "duplicate accounts were enqueued for hashing")]
+    #[test_case(Features::None; "no features")]
+    #[test_case(Features::All; "all features")]
+    fn test_enqueue_off_chain_accounts_lt_hash_updates_catches_duplicates(features: Features) {
+        use rand::seq::SliceRandom as _;
+        let (genesis_config, _) = genesis_config_with(features);
+        let bank = Bank::new_for_tests(&genesis_config);
+
+        let pubkey1 = pubkey::new_rand();
+        let pubkey2 = pubkey::new_rand();
+        let pubkey3 = pubkey::new_rand();
+
+        let mut accounts = [
+            // one version of pubkey1
+            (&pubkey1, &AccountSharedData::new(11, 0, &Pubkey::default())),
+            // two versions of pubkey2
+            (&pubkey2, &AccountSharedData::new(21, 0, &Pubkey::default())),
+            (&pubkey2, &AccountSharedData::new(22, 0, &Pubkey::default())),
+            // three versions of pubkey3
+            (&pubkey3, &AccountSharedData::new(31, 0, &Pubkey::default())),
+            (&pubkey3, &AccountSharedData::new(32, 0, &Pubkey::default())),
+            (&pubkey3, &AccountSharedData::new(33, 0, &Pubkey::default())),
+        ];
+        accounts.shuffle(&mut rand::rng());
+
+        bank.store_accounts((bank.slot(), accounts.as_slice()), None);
+    }
+
+    /// Ensure freelist respects max size.
+    #[test]
+    fn test_freelist_max_capacity() {
+        type Container = ahash::HashSet<u64>;
+
+        // This test uses a hashbrown container, which has some special power-of-two sizing plus
+        // a buffer.  So create the container first, and use that to derive the max capacity.
+        let container = Container::with_capacity(77);
+
+        let max_capacity = container.capacity();
+        let max_bytes = max_capacity * size_of::<u64>();
+        let mut freelist = HashSetFreelist::new(10, Some(max_bytes));
+
+        // pushing a container that is too big will not actually push
+        freelist.try_push(Container::with_capacity(max_capacity + 1));
+        let stats0 = freelist.stats();
+        assert_eq!(stats0.num_containers, 0);
+        assert_eq!(stats0.capacity_elems, 0);
+        assert_eq!(stats0.capacity_bytes, 0);
+
+        // pushing a container that is not too big will actually push
+        freelist.try_push(container);
+        let stats1 = freelist.stats();
+        assert_eq!(stats1.num_containers, 1);
+        assert_eq!(stats1.capacity_elems, max_capacity);
+        assert_eq!(stats1.capacity_bytes, max_bytes);
+
+        // pushing a container that would exceed capacity will not push
+        freelist.try_push(Container::with_capacity(1));
+        assert_eq!(freelist.stats(), stats1);
+
+        // ...but, if we remove the limit, push should work again
+        freelist.max_capacity = None;
+        let container = Container::with_capacity(1);
+        let container_capacity = container.capacity();
+        freelist.try_push(container);
+        let stats2 = freelist.stats();
+        assert_eq!(stats2.num_containers, 2);
+        assert_eq!(stats2.capacity_elems, max_capacity + container_capacity);
+        assert_eq!(
+            stats2.capacity_bytes,
+            max_bytes + container_capacity * size_of::<u64>(),
+        );
+    }
+
+    /// Ensure concurrent pushes do not exceed the freelist's max capacity.
+    #[test]
+    fn test_freelist_concurrent_push() {
+        // This test uses a hashbrown container, which has some special power-of-two sizing plus
+        // a buffer.  So create the container first, and use that to derive the max capacity.
+        let container = ahash::HashSet::<u64>::with_capacity(77);
+
+        let num_threads = 16;
+        let barrier = Arc::new(Barrier::new(num_threads));
+        let max_capacity = container.capacity();
+        let max_bytes = max_capacity * size_of::<u64>();
+        let freelist = Arc::new(HashSetFreelist::new(num_threads, Some(max_bytes)));
+
+        let threads: Vec<_> = iter::repeat_with(|| {
+            let container = container.clone();
+            let freelist = Arc::clone(&freelist);
+            let barrier = Arc::clone(&barrier);
+            thread::spawn(move || {
+                barrier.wait();
+                freelist.try_push(container);
+            })
+        })
+        .take(num_threads)
+        .collect();
+
+        for thread in threads {
+            thread.join().unwrap();
+        }
+
+        let stats = freelist.stats();
+        assert_eq!(stats.num_containers, 1);
+        assert_eq!(stats.capacity_elems, max_capacity);
+        assert_eq!(stats.capacity_bytes, max_bytes);
     }
 }

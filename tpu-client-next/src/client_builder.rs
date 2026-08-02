@@ -4,13 +4,13 @@
 //! leader window, it is desirable to cache them and orchestrate their usage which is implemented in
 //! [`ConnectionWorkersScheduler`]. [`ClientBuilder`] hides the complexity of creating scheduler and
 //! provides a simple but configurable way to create [`TransactionSender`] and [`Client`].
-//! [`TransactionSender`] is used to send transactions in batches while [`Client`] runs the
+//! [`TransactionSender`] is used to send transactions while [`Client`] runs the
 //! background tasks.
 //!
 //! # Example
 //!
 //! ```ignore
-//!  let builder = ClientBuilder::with_leader_updater(leader_updater)
+//!  let builder = ClientBuilder::new(leader_updater)
 //!        .cancel_token(cancel.child_token())
 //!        .bind_addr(SocketAddr::new(
 //!            IpAddr::V4(Ipv4Addr::LOCALHOST),
@@ -18,7 +18,7 @@
 //!        ))
 //!        .leader_send_fanout(1)
 //!        .identity(&identity_keypair)
-//!        .max_cache_size(128);
+//!        .max_cache_size(NonZeroUsize::new(128).unwrap())
 //!        .metric_reporter({
 //!            let successfully_sent = successfully_sent.clone();
 //!            |stats: Arc<SendTransactionStats>, cancel: CancellationToken| async move {
@@ -37,20 +37,21 @@
 //!    let (transaction_sender, client) = builder
 //!        .build::<NonblockingBroadcaster>()
 //!        .expect("Client should be built successfully.");
-//!    transaction_sender.send_transactions_in_batch(wire_transactions).await?;
+//!    let transaction = bytes::Bytes::from_static(b"wire transaction");
+//!    transaction_sender.send_transaction(transaction).await?;
 //! ```
 use {
     crate::{
         ConnectionWorkersScheduler, ConnectionWorkersSchedulerError, SendTransactionStats,
+        WireTransaction,
         connection_workers_scheduler::{
             BindTarget, ConnectionWorkersSchedulerConfig, Fanout, NonblockingBroadcaster,
             StakeIdentity, WorkersBroadcaster,
         },
         leader_updater::LeaderUpdater,
-        transaction_batch::TransactionBatch,
     },
     solana_keypair::Keypair,
-    std::{future::Future, net::UdpSocket, pin::Pin, sync::Arc},
+    std::{future::Future, net::UdpSocket, num::NonZeroUsize, pin::Pin, sync::Arc},
     thiserror::Error,
     tokio::{
         runtime,
@@ -60,9 +61,9 @@ use {
     tokio_util::sync::CancellationToken,
 };
 
-/// [`TransactionSender`] provides an interface to send transactions in batches.
+/// [`TransactionSender`] provides an interface to send transactions.
 #[derive(Clone)]
-pub struct TransactionSender(mpsc::Sender<TransactionBatch>);
+pub struct TransactionSender(mpsc::Sender<WireTransaction>);
 
 /// [`Client`] runs the background tasks required for sending transactions and update certificate
 /// used the endpoint.
@@ -79,11 +80,10 @@ pub struct ClientBuilder {
     leader_updater: Box<dyn LeaderUpdater>,
     bind_target: Option<BindTarget>,
     identity: Option<StakeIdentity>,
-    num_connections: usize,
+    num_connections: NonZeroUsize,
     leader_send_fanout: usize,
-    skip_check_transaction_age: bool,
     sender_channel_size: usize,
-    worker_channel_size: usize,
+    worker_channel_size: Option<usize>,
     max_reconnect_attempts: usize,
     broadcaster: Box<dyn WorkersBroadcaster>,
     report_fn: Option<ReportFn>,
@@ -99,11 +99,13 @@ impl ClientBuilder {
             leader_updater,
             bind_target: None,
             identity: None,
-            num_connections: 64,
+            num_connections: NonZeroUsize::new(64).unwrap(),
             leader_send_fanout: 2,
-            skip_check_transaction_age: true,
-            worker_channel_size: 2,
-            sender_channel_size: 64,
+            // These defaults were selected based on experiments that sustained up to 200k
+            // transactions per second.
+            sender_channel_size: 128,
+            // By default, use the same size for the worker channel.
+            worker_channel_size: None,
             max_reconnect_attempts: 2,
             broadcaster: Box::new(NonblockingBroadcaster),
             report_fn: None,
@@ -141,7 +143,7 @@ impl ClientBuilder {
     }
 
     /// Set the maximum number of cached connections.
-    pub fn max_cache_size(mut self, num_connections: usize) -> Self {
+    pub fn max_cache_size(mut self, num_connections: NonZeroUsize) -> Self {
         self.num_connections = num_connections;
         self
     }
@@ -160,9 +162,10 @@ impl ClientBuilder {
 
     /// Set the worker channel size.
     ///
-    /// See [`ConnectionWorkersSchedulerConfig::worker_channel_size`] for details.
+    /// By default, it will be set to the same value as `sender_channel_size`. See
+    /// [`ConnectionWorkersSchedulerConfig::worker_channel_size`] for details.
     pub fn worker_channel_size(mut self, size: usize) -> Self {
-        self.worker_channel_size = size;
+        self.worker_channel_size = Some(size);
         self
     }
 
@@ -215,8 +218,7 @@ impl ClientBuilder {
             bind,
             stake_identity: self.identity,
             num_connections: self.num_connections,
-            skip_check_transaction_age: self.skip_check_transaction_age,
-            worker_channel_size: self.worker_channel_size,
+            worker_channel_size: self.worker_channel_size.unwrap_or(self.sender_channel_size),
             max_reconnect_attempts: self.max_reconnect_attempts,
             // We open connection to one more leader in advance, which time-wise means ~1.6s
             leaders_fanout: Fanout {
@@ -267,28 +269,24 @@ pub type ReportFn = Box<
 >;
 
 impl TransactionSender {
-    pub async fn send_transactions_in_batch<T>(
-        &self,
-        wire_transactions: Vec<T>,
-    ) -> Result<(), ClientError>
+    /// Sends a transaction to the scheduler, waiting for channel capacity if necessary.
+    pub async fn send_transaction<T>(&self, transaction: T) -> Result<(), ClientError>
     where
-        T: AsRef<[u8]> + Send + 'static,
+        T: Into<WireTransaction>,
     {
         self.0
-            .send(TransactionBatch::new(wire_transactions))
+            .send(transaction.into())
             .await
             .map_err(ClientError::SendError)
     }
 
-    pub fn try_send_transactions_in_batch<T>(
-        &self,
-        wire_transactions: Vec<T>,
-    ) -> Result<(), ClientError>
+    /// Attempts to send a transaction to the scheduler without waiting for channel capacity.
+    pub fn try_send_transaction<T>(&self, transaction: T) -> Result<(), ClientError>
     where
-        T: AsRef<[u8]> + Send + 'static,
+        T: Into<WireTransaction>,
     {
         self.0
-            .try_send(TransactionBatch::new(wire_transactions))
+            .try_send(transaction.into())
             .map_err(ClientError::TrySendError)
     }
 }
@@ -338,10 +336,10 @@ pub enum ClientError {
     ConnectionWorkersSchedulerError(#[from] ConnectionWorkersSchedulerError),
 
     #[error(transparent)]
-    SendError(#[from] mpsc::error::SendError<TransactionBatch>),
+    SendError(#[from] mpsc::error::SendError<WireTransaction>),
 
     #[error(transparent)]
-    TrySendError(#[from] mpsc::error::TrySendError<TransactionBatch>),
+    TrySendError(#[from] mpsc::error::TrySendError<WireTransaction>),
 }
 
 /// Helper structure for graceful shutdown of spawned tasks.

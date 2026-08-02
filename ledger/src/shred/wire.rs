@@ -1,6 +1,8 @@
 // Helper methods to extract pieces of the shred from the payload without
 // deserializing the entire payload.
 #![deny(clippy::indexing_slicing)]
+#[cfg(feature = "dev-context-only-utils")]
+use qualifier_attr::qualifiers;
 use {
     crate::{
         blockstore_meta::ErasureConfig,
@@ -84,7 +86,7 @@ pub(super) fn get_shred_variant(shred: &[u8]) -> Result<ShredVariant, Error> {
 }
 
 #[inline]
-pub(super) fn get_shred_type(shred: &[u8]) -> Result<ShredType, Error> {
+pub fn get_shred_type(shred: &[u8]) -> Result<ShredType, Error> {
     get_shred_variant(shred).map(ShredType::from)
 }
 
@@ -114,7 +116,7 @@ pub fn get_fec_set_index(shred: &[u8]) -> Option<u32> {
 
 // The caller should verify first that the shred is data and not code!
 #[inline]
-pub(super) fn get_parent_offset(shred: &[u8]) -> Option<u16> {
+pub(crate) fn get_parent_offset(shred: &[u8]) -> Option<u16> {
     debug_assert_eq!(get_shred_type(shred).unwrap(), ShredType::Data);
     let bytes = <[u8; 2]>::try_from(shred.get(83..83 + 2)?).unwrap();
     Some(u16::from_le_bytes(bytes))
@@ -156,6 +158,7 @@ fn get_data_size(shred: &[u8]) -> Result<u16, Error> {
 }
 
 #[inline]
+#[cfg_attr(feature = "dev-context-only-utils", qualifiers(pub))]
 pub(crate) fn get_data(shred: &[u8]) -> Result<&[u8], Error> {
     match get_shred_variant(shred)? {
         ShredVariant::MerkleCode { .. } => Err(Error::InvalidShredType),
@@ -411,9 +414,7 @@ pub(crate) fn corrupt_packet<R: Rng>(
 mod tests {
     use {
         super::*,
-        crate::shred::{
-            SHREDS_PER_FEC_BLOCK, tests::make_merkle_shreds_for_tests, traits::ShredData,
-        },
+        crate::shred::{SHREDS_PER_FEC_BLOCK, make_merkle_shreds_for_tests, traits::ShredData},
         assert_matches::assert_matches,
         rand::Rng,
         solana_perf::packet::PacketFlags,

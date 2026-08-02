@@ -26,8 +26,6 @@ type CounterMap = HashMap<(&'static str, u64), CounterPoint>;
 pub enum MetricsError {
     #[error(transparent)]
     VarError(#[from] env::VarError),
-    #[error(transparent)]
-    ReqwestError(#[from] reqwest::Error),
     #[error("SOLANA_METRICS_CONFIG is invalid: '{0}'")]
     ConfigInvalid(String),
     #[error("SOLANA_METRICS_CONFIG is incomplete")]
@@ -92,7 +90,7 @@ impl InfluxDbMetricsWriter {
 
         let write_url = format!(
             "{}/write?db={}&u={}&p={}&precision=n",
-            &config.host, &config.db, &config.username, &config.password
+            config.host, config.db, config.username, config.password
         );
 
         Ok(write_url)
@@ -117,7 +115,7 @@ pub fn serialize_points(points: &Vec<DataPoint>, host_id: &str) -> String {
     }
     let mut line = String::with_capacity(len);
     for point in points {
-        let _ = write!(line, "{},host_id={}", &point.name, host_id);
+        let _ = write!(line, "{},host_id={}", point.name, host_id);
         for (name, value) in point.tags.iter() {
             let _ = write!(line, ",{name}={value}");
         }
@@ -489,18 +487,6 @@ pub fn metrics_config_sanity_check(cluster_type: ClusterType) -> Result<(), Metr
     let (host, db) = (&config.host, &config.db);
     let msg = format!("cluster_type={cluster_type:?} host={host} database={db}");
     Err(MetricsError::DbMismatch(msg))
-}
-
-pub fn query(q: &str) -> Result<String, MetricsError> {
-    let config = get_metrics_config()?;
-    let query_url = format!(
-        "{}/query?u={}&p={}&q={}",
-        &config.host, &config.username, &config.password, &q
-    );
-
-    let response = reqwest::blocking::get(query_url.as_str())?.text()?;
-
-    Ok(response)
 }
 
 /// Blocks until all pending points from previous calls to `submit` have been

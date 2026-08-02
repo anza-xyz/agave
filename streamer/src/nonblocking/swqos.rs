@@ -20,7 +20,6 @@ use {
         },
         streamer::StakedNodes,
     },
-    percentage::Percentage,
     quinn::{Connection, VarInt},
     solana_time_utils as timing,
     std::{
@@ -246,10 +245,9 @@ impl SwQos {
         stats: Arc<StreamerStats>,
     ) {
         if unstaked_connection_table.total_size >= max_unstaked_connections {
-            const PRUNE_TABLE_TO_PERCENTAGE: u8 = 90;
-            let max_percentage_full = Percentage::from(PRUNE_TABLE_TO_PERCENTAGE);
-
-            let max_connections = max_percentage_full.apply_to(max_unstaked_connections);
+            // Prune the connection table down to 90% capacity
+            const PRUNE_TABLE_RATIO: f64 = 0.90;
+            let max_connections = (PRUNE_TABLE_RATIO * (max_unstaked_connections as f64)) as usize;
             let num_pruned = unstaked_connection_table.prune_oldest(max_connections);
             stats
                 .num_evictions_unstaked

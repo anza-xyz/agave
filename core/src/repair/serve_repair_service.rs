@@ -1,35 +1,43 @@
 use {
-    crate::repair::{quic_endpoint::RemoteRequest, serve_repair::ServeRepair},
-    bytes::Bytes,
-    crossbeam_channel::{Receiver, Sender, unbounded},
+    crate::repair::serve_repair::ServeRepair,
+    crossbeam_channel::{Sender, bounded},
     solana_net_utils::SocketAddrSpace,
     solana_perf::{packet::PacketBatch, recycler::Recycler},
-    solana_streamer::streamer::{self, StreamerReceiveStats},
+    solana_streamer::{
+        evicting_sender::EvictingSender,
+        sendmmsg::{SendPktsError, batch_send},
+        streamer::{
+            self, PacketBatchReceiver, ResponseSender, StreamerReceiveStats,
+            filter_packets_by_socket_addr_space, responder_loop,
+        },
+    },
     std::{
-        net::{SocketAddr, UdpSocket},
+        net::UdpSocket,
         sync::{Arc, atomic::AtomicBool},
         thread::{self, Builder, JoinHandle},
         time::Duration,
     },
-    tokio::sync::mpsc::Sender as AsyncSender,
 };
 
 pub struct ServeRepairService {
     thread_hdls: Vec<JoinHandle<()>>,
 }
 
+/// Repair request channel size. Grossly overprovisioned compared to actual needs (~1024 would be sufficient).
+pub(crate) const REQUEST_CHANNEL_SIZE: usize = 4096;
+
+/// Repair response channel size. Grossly overprovisioned compared to actual needs (~256 would be sufficient).
+pub(crate) const RESPONSE_CHANNEL_SIZE: usize = REQUEST_CHANNEL_SIZE;
+
 impl ServeRepairService {
     pub(crate) fn new(
         serve_repair: ServeRepair,
-        remote_request_sender: Sender<RemoteRequest>,
-        remote_request_receiver: Receiver<RemoteRequest>,
-        repair_response_quic_sender: AsyncSender<(SocketAddr, Bytes)>,
         serve_repair_socket: UdpSocket,
         socket_addr_space: SocketAddrSpace,
         stats_reporter_sender: Sender<Box<dyn FnOnce() + Send>>,
         exit: Arc<AtomicBool>,
     ) -> Self {
-        let (request_sender, request_receiver) = unbounded();
+        let (request_sender, request_receiver) = EvictingSender::new_bounded(REQUEST_CHANNEL_SIZE);
         let serve_repair_socket = Arc::new(serve_repair_socket);
         let t_receiver = streamer::receiver(
             "solRcvrServeRep".to_string(),
@@ -42,26 +50,17 @@ impl ServeRepairService {
             false,                          // use_pinned_memory
             false,                          // is_staked_service
         );
-        let t_packet_adapter = Builder::new()
-            .name(String::from("solServRAdapt"))
-            .spawn(|| adapt_repair_requests_packets(request_receiver, remote_request_sender))
-            .unwrap();
-        let (response_sender, response_receiver) = unbounded();
-        let t_responder = streamer::responder(
+        let (response_sender, response_receiver) = bounded(RESPONSE_CHANNEL_SIZE);
+        let t_responder = responder(
             "Repair",
             serve_repair_socket,
             response_receiver,
             socket_addr_space,
             Some(stats_reporter_sender),
         );
-        let t_listen = serve_repair.listen(
-            remote_request_receiver,
-            response_sender,
-            repair_response_quic_sender,
-            exit,
-        );
+        let t_listen = serve_repair.listen(request_receiver, response_sender, exit);
 
-        let thread_hdls = vec![t_receiver, t_packet_adapter, t_responder, t_listen];
+        let thread_hdls = vec![t_receiver, t_responder, t_listen];
         Self { thread_hdls }
     }
 
@@ -70,24 +69,37 @@ impl ServeRepairService {
     }
 }
 
-// Adapts incoming UDP repair requests into RemoteRequest struct.
-pub(crate) fn adapt_repair_requests_packets(
-    packets_receiver: Receiver<PacketBatch>,
-    remote_request_sender: Sender<RemoteRequest>,
-) {
-    for packets in packets_receiver {
-        for packet in &packets {
-            let Some(bytes) = packet.data(..).map(Vec::from) else {
-                continue;
-            };
-            let request = RemoteRequest {
-                remote_pubkey: None,
-                remote_address: packet.meta().socket_addr(),
-                bytes: Bytes::from(bytes),
-            };
-            if remote_request_sender.send(request).is_err() {
-                return; // The receiver end of the channel is disconnected.
-            }
-        }
+fn responder(
+    name: &'static str,
+    sock: Arc<UdpSocket>,
+    r: PacketBatchReceiver,
+    socket_addr_space: SocketAddrSpace,
+    stats_reporter_sender: Option<Sender<Box<dyn FnOnce() + Send>>>,
+) -> JoinHandle<()> {
+    Builder::new()
+        .name(format!("solRspndr{name}"))
+        .spawn(move || {
+            responder_loop(
+                name,
+                r,
+                ServeRepairSocketProvider {
+                    socket: sock,
+                    socket_addr_space,
+                },
+                stats_reporter_sender,
+            );
+        })
+        .unwrap()
+}
+
+struct ServeRepairSocketProvider {
+    socket: Arc<UdpSocket>,
+    socket_addr_space: SocketAddrSpace,
+}
+
+impl ResponseSender for ServeRepairSocketProvider {
+    fn send_batch(&self, batch: PacketBatch) -> std::result::Result<(), SendPktsError> {
+        let packets = filter_packets_by_socket_addr_space(batch.iter(), &self.socket_addr_space);
+        batch_send(self.socket.as_ref(), packets.collect::<Vec<_>>())
     }
 }

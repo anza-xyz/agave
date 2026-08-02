@@ -18,6 +18,7 @@ use {
     slotmap::SlotMap,
     solana_fee::FeeFeatures,
     solana_pubkey::Pubkey,
+    solana_runtime_transaction::sanitize_config::sanitize_config,
     std::ptr::NonNull,
     thiserror::Error,
 };
@@ -75,11 +76,13 @@ where
 
             progress: ProgressMessage {
                 leader_state: 0,
+                current_slot_progress: 0,
+                epoch: 0,
                 current_slot: 0,
                 next_leader_slot: u64::MAX,
                 leader_range_end: u64::MAX,
                 remaining_cost_units: 0,
-                current_slot_progress: 0,
+                latest_blockhash: [0; 32],
             },
             runtime: RuntimeState {
                 feature_set: FeatureSet::all_enabled(),
@@ -162,7 +165,7 @@ where
         let tx = unsafe { TransactionPtr::from_raw_parts(ptr, tx.len()) };
 
         // Sanitize the transaction, drop it immediately if it fails sanitization.
-        match SanitizedTransactionView::try_new_sanitized(tx, true) {
+        match SanitizedTransactionView::try_new_sanitized(tx, &sanitize_config()) {
             Ok(tx) => {
                 let key = self.state.insert(TransactionState {
                     dead: false,
@@ -252,7 +255,7 @@ where
             };
 
             // Sanitize the transaction, drop it immediately if it fails sanitization.
-            let Ok(tx) = SanitizedTransactionView::try_new_sanitized(tx, true) else {
+            let Ok(tx) = SanitizedTransactionView::try_new_sanitized(tx, &sanitize_config()) else {
                 // SAFETY:
                 // - We own `tx` exclusively.
                 // - The previous `TransactionPtr` has been dropped by `try_new_sanitized`.

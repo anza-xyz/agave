@@ -113,6 +113,16 @@ impl GeyserPluginManager {
         false
     }
 
+    /// Check if there is any plugin interested in Alpenglow block footer data
+    pub fn block_footer_notifications_enabled(&self) -> bool {
+        for plugin in &self.plugins {
+            if plugin.block_footer_notifications_enabled() {
+                return true;
+            }
+        }
+        false
+    }
+
     /// Check if there is any plugin interested in deshred transaction data
     pub fn deshred_transaction_notifications_enabled(&self) -> bool {
         for plugin in &self.plugins {
@@ -509,7 +519,8 @@ mod tests {
             geyser_plugin_service::ARC_TRY_UNWRAP_ATTEMPT_SLEEP_DURATION,
         },
         agave_geyser_plugin_interface::geyser_plugin_interface::{
-            GeyserPlugin, ReplicaDeshredTransactionInfoVersions, Result as PluginResult,
+            GeyserPlugin, ReplicaDeshredTransactionInfo, ReplicaDeshredTransactionInfoVersions,
+            Result as PluginResult,
         },
         arc_swap::ArcSwap,
         libloading::Library,
@@ -594,6 +605,8 @@ mod tests {
     #[derive(Clone, Debug, PartialEq, Eq)]
     struct RecordedDeshredNotification {
         slot: Slot,
+        completed_data_set_starting_shred_index: u32,
+        completed_data_set_ending_shred_index_exclusive: u32,
         signature: Signature,
         is_vote: bool,
         transaction: VersionedTransaction,
@@ -618,12 +631,18 @@ mod tests {
             transaction: ReplicaDeshredTransactionInfoVersions,
             slot: Slot,
         ) -> PluginResult<()> {
-            let ReplicaDeshredTransactionInfoVersions::V0_0_1(transaction) = transaction;
+            let ReplicaDeshredTransactionInfoVersions::V0_0_2(transaction) = transaction else {
+                panic!("expected V0_0_2 deshred transaction info");
+            };
             self.notifications
                 .lock()
                 .unwrap()
                 .push(RecordedDeshredNotification {
                     slot,
+                    completed_data_set_starting_shred_index: transaction
+                        .completed_data_set_starting_shred_index,
+                    completed_data_set_ending_shred_index_exclusive: transaction
+                        .completed_data_set_ending_shred_index_exclusive,
                     signature: *transaction.signature,
                     is_vote: transaction.is_vote,
                     transaction: transaction.transaction.clone(),
@@ -820,6 +839,8 @@ mod tests {
 
         notifier.notify_deshred_transaction(
             11,
+            23,
+            31,
             &transaction.signatures[0],
             true,
             &transaction,
@@ -829,6 +850,14 @@ mod tests {
         let enabled_notifications = enabled_notifications.lock().unwrap().clone();
         assert_eq!(enabled_notifications.len(), 1);
         assert_eq!(enabled_notifications[0].slot, 11);
+        assert_eq!(
+            enabled_notifications[0].completed_data_set_starting_shred_index,
+            23
+        );
+        assert_eq!(
+            enabled_notifications[0].completed_data_set_ending_shred_index_exclusive,
+            31
+        );
         assert_eq!(
             enabled_notifications[0].signature,
             transaction.signatures[0]
@@ -840,6 +869,29 @@ mod tests {
             Some(loaded_addresses)
         );
         assert!(disabled_notifications.lock().unwrap().is_empty());
+    }
+
+    #[test]
+    #[should_panic(expected = "expected V0_0_2 deshred transaction info")]
+    fn test_deshred_test_plugin_panics_on_legacy_deshred_info_version() {
+        let plugin = DeshredTestPlugin {
+            name: DUMMY_NAME,
+            enabled: true,
+            alt_resolution_enabled: false,
+            notifications: Arc::new(Mutex::new(Vec::new())),
+        };
+        let transaction = sample_transaction();
+        let deshred_info = ReplicaDeshredTransactionInfo {
+            signature: &transaction.signatures[0],
+            is_vote: false,
+            transaction: &transaction,
+            loaded_addresses: None,
+        };
+
+        let _ = plugin.notify_deshred_transaction(
+            ReplicaDeshredTransactionInfoVersions::V0_0_1(&deshred_info),
+            11,
+        );
     }
 
     #[test]

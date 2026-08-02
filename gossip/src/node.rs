@@ -269,16 +269,10 @@ impl Node {
         let (_, repair) =
             bind_in_range_with_config(bind_ip_addr, port_range, socket_configs.read_write)
                 .expect("repair bind");
-        let (_, repair_quic) =
-            bind_in_range_with_config(bind_ip_addr, port_range, socket_configs.read_write)
-                .expect("repair_quic bind");
 
         let (serve_repair_port, serve_repair) =
             bind_in_range_with_config(bind_ip_addr, port_range, socket_configs.read_write)
                 .expect("serve_repair");
-        let (serve_repair_quic_port, serve_repair_quic) =
-            bind_in_range_with_config(bind_ip_addr, port_range, socket_configs.read_write)
-                .expect("serve_repair_quic");
 
         let (broadcast_port, mut broadcast) = multi_bind_in_range_with_config(
             bind_ip_addr,
@@ -301,13 +295,15 @@ impl Node {
         let (_, ancestor_hashes_requests) =
             bind_in_range_with_config(bind_ip_addr, port_range, socket_configs.read_write)
                 .expect("ancestor_hashes_requests bind");
-        let (_, ancestor_hashes_requests_quic) =
-            bind_in_range_with_config(bind_ip_addr, port_range, socket_configs.read_write)
-                .expect("ancestor_hashes_requests QUIC bind should succeed");
 
         let (alpenglow_port, alpenglow) =
             bind_in_range_with_config(bind_ip_addr, port_range, socket_configs.read_write)
                 .expect("Alpenglow port bind should succeed");
+
+        let (_, block_id_repair) =
+            bind_in_range_with_config(bind_ip_addr, port_range, socket_configs.read_write)
+                .expect("Block ID repair port bind should succeed");
+
         // These are "client" sockets, so they could use ephemeral ports, but we
         // force them into the provided port_range to simplify the operations.
 
@@ -397,25 +393,25 @@ impl Node {
             .unwrap();
         info.set_serve_repair(UDP, (advertised_ip, serve_repair_port))
             .unwrap();
+        // placeholder to prevent legacy agave nodes from assuming we do not have open repair ports
+        // see https://github.com/anza-xyz/agave/pull/10460#discussion_r3054463946 for context and
+        // cleanup timing.
+        info.set_serve_repair(QUIC, (advertised_ip, 1)).unwrap();
         info.set_alpenglow((advertised_ip, alpenglow_port)).unwrap();
-        info.set_serve_repair(QUIC, (advertised_ip, serve_repair_quic_port))
-            .unwrap();
 
         trace!("new ContactInfo: {info:?}");
         let sockets = Sockets {
-            alpenglow: Some(alpenglow),
+            alpenglow,
             gossip: gossip_sockets.into_iter().collect(),
             tvu: tvu_sockets,
             tpu_vote: tpu_vote_sockets,
             broadcast,
             repair,
-            repair_quic,
             retransmit_sockets,
             serve_repair,
-            serve_repair_quic,
             ip_echo: ip_echo_sockets.into_iter().next(),
             ancestor_hashes_requests,
-            ancestor_hashes_requests_quic,
+            block_id_repair,
             tpu_quic,
             tpu_forwards_quic,
             tpu_vote_quic,
@@ -425,7 +421,7 @@ impl Node {
             tpu_transaction_forwarding_clients,
             rpc_sts_client,
         };
-        info!("Bound all network sockets as follows: {:?}", &sockets);
+        info!("Bound all network sockets as follows: {sockets:?}");
         Node {
             info,
             sockets,

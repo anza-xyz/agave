@@ -1,7 +1,5 @@
 use {
-    crate::update_manifest::UpdateManifest,
     serde::{Deserialize, Serialize},
-    solana_pubkey::Pubkey,
     std::{
         fs::{File, create_dir_all},
         io::{self, Write},
@@ -15,28 +13,17 @@ pub enum ExplicitRelease {
     Channel(String),
 }
 
-#[derive(Serialize, Deserialize, Default, Debug, PartialEq, Eq)]
+#[derive(Serialize, Deserialize, Debug, PartialEq, Eq)]
 pub struct Config {
-    pub json_rpc_url: String,
-    pub update_manifest_pubkey: Pubkey,
-    pub current_update_manifest: Option<UpdateManifest>,
     pub update_poll_secs: u64,
-    pub explicit_release: Option<ExplicitRelease>,
+    pub explicit_release: ExplicitRelease,
     pub releases_dir: PathBuf,
     active_release_dir: PathBuf,
 }
 
 impl Config {
-    pub fn new(
-        data_dir: &str,
-        json_rpc_url: &str,
-        update_manifest_pubkey: &Pubkey,
-        explicit_release: Option<ExplicitRelease>,
-    ) -> Self {
+    pub fn new(data_dir: &str, explicit_release: ExplicitRelease) -> Self {
         Self {
-            json_rpc_url: json_rpc_url.to_string(),
-            update_manifest_pubkey: *update_manifest_pubkey,
-            current_update_manifest: None,
             update_poll_secs: 60 * 60, // check for updates once an hour
             explicit_release,
             releases_dir: PathBuf::from(data_dir).join("releases"),
@@ -99,12 +86,10 @@ mod test {
     #[test]
     fn test_save() {
         let root_dir = env::var("CARGO_MANIFEST_DIR").expect("$CARGO_MANIFEST_DIR");
-        let json_rpc_url = "https://api.mainnet-beta.solana.com";
-        let pubkey = Pubkey::default();
         let config_name = "config.yaml";
         let config_path = format!("{root_dir}/{config_name}");
 
-        let config = Config::new(&root_dir, json_rpc_url, &pubkey, None);
+        let config = Config::new(&root_dir, ExplicitRelease::Channel("stable".to_string()));
 
         assert_eq!(config.save(config_name), Ok(()));
         defer! {
@@ -115,43 +100,8 @@ mod test {
             read_to_string(&config_path).unwrap(),
             format!(
                 "---
-json_rpc_url: https://api.mainnet-beta.solana.com
-update_manifest_pubkey:
-- 0
-- 0
-- 0
-- 0
-- 0
-- 0
-- 0
-- 0
-- 0
-- 0
-- 0
-- 0
-- 0
-- 0
-- 0
-- 0
-- 0
-- 0
-- 0
-- 0
-- 0
-- 0
-- 0
-- 0
-- 0
-- 0
-- 0
-- 0
-- 0
-- 0
-- 0
-- 0
-current_update_manifest: null
 update_poll_secs: 3600
-explicit_release: null
+explicit_release: !Channel stable
 releases_dir: {root_dir}/releases
 active_release_dir: {root_dir}/active_release
 "

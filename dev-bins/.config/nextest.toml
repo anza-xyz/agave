@@ -11,7 +11,3 @@ retries = { backoff = "fixed", count = 3, delay = "1s" }
 
 [profile.ci.junit]
 path = "../junit.xml"
-
-[[profile.ci.overrides]]
-filter = "package(solana-bench-tps)"
-threads-required = "num-cpus"

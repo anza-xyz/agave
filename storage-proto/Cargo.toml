@@ -8,9 +8,12 @@ repository = { workspace = true }
 homepage = { workspace = true }
 license = { workspace = true }
 edition = { workspace = true }
+rust-version = { workspace = true }
 
 [package.metadata.docs.rs]
 targets = ["x86_64-unknown-linux-gnu"]
+all-features = true
+rustdoc-args = ["--cfg=docsrs"]
 
 [lib]
 crate-type = ["lib"]
@@ -20,7 +23,6 @@ name = "solana_storage_proto"
 agave-unstable-api = []
 
 [dependencies]
-bincode = { workspace = true }
 bs58 = { workspace = true }
 prost = { workspace = true }
 serde = { workspace = true }
@@ -32,9 +34,11 @@ solana-pubkey = { workspace = true }
 solana-serde = { workspace = true }
 solana-signature = { workspace = true, features = ["std"] }
 solana-transaction = { workspace = true }
-solana-transaction-context = { workspace = true, features = ["serde"] }
-solana-transaction-error = { workspace = true }
+solana-transaction-context = { workspace = true, features = ["serde", "wincode"] }
+solana-transaction-error = { workspace = true, features = ["wincode"] }
 solana-transaction-status = { workspace = true }
+thiserror = { workspace = true }
+wincode = { workspace = true }
 
 [build-dependencies]
 tonic-prost-build = { workspace = true }
@@ -47,3 +51,6 @@ protobuf-src = { workspace = true }
 [dev-dependencies]
 enum-iterator = { workspace = true }
 test-case = { workspace = true }
+
+[lints]
+workspace = true

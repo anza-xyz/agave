@@ -21,13 +21,3 @@ static MAX_RAYON_THREADS: std::sync::LazyLock<usize> = std::sync::LazyLock::new(
 pub fn get_thread_count() -> usize {
     *MAX_RAYON_THREADS
 }
-
-#[deprecated(
-    since = "3.0.0",
-    note = "The solana-rayon-threadlimit crate will be removed, use num_cpus::get() or something \
-            similar instead"
-)]
-pub fn get_max_thread_count() -> usize {
-    #[allow(deprecated)]
-    get_thread_count().saturating_mul(2)
-}

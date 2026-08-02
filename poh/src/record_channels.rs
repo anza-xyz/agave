@@ -91,11 +91,7 @@ impl RecordSender {
     }
 
     pub fn try_send(&self, record: Record) -> Result<Option<usize>, RecordSenderError> {
-        let num_transactions: usize = record
-            .transaction_batches
-            .iter()
-            .map(|batch| batch.len())
-            .sum();
+        let num_transactions = record.transactions.len();
         assert!(num_transactions > 0);
         loop {
             // Grab lock on `transaction_indexes` here to ensure we are sending
@@ -106,8 +102,7 @@ impl RecordSender {
                 .map(|transaction_indexes| transaction_indexes.lock().unwrap());
 
             // Get the current bank_id and allowed insertions.
-            // If the number of allowed insertions is less than the number of
-            // batches, the channel is full - just return immediately.
+            // If there are no allowed insertions, the channel is full - just return immediately.
             // If the `record`'s bank_id is different from the current bank_id,
             // return immediately.
             let current_bank_id_allowed_insertions =
@@ -123,14 +118,12 @@ impl RecordSender {
             if bank_id != record.bank_id {
                 return Err(RecordSenderError::InactiveBankId);
             }
-            if allowed_insertions < record.transaction_batches.len() as u64 {
+            if allowed_insertions == 0 {
                 return Err(RecordSenderError::Full);
             }
 
-            let new_bank_id_allowed_insertions = BankIdAllowedInsertions::encoded_value(
-                bank_id,
-                allowed_insertions.wrapping_sub(record.transaction_batches.len() as u64),
-            );
+            let new_bank_id_allowed_insertions =
+                BankIdAllowedInsertions::encoded_value(bank_id, allowed_insertions.wrapping_sub(1));
 
             // Increment this before CAS so the receiver can see this send is in-flight.
             self.active_senders.fetch_add(1, Ordering::AcqRel);
@@ -174,18 +167,29 @@ impl RecordSender {
 /// The receiver can shutdown the channel, preventing any further sends,
 /// and can restart the channel for a new bank id, re-enabling sends.
 pub struct RecordReceiver {
+    /// Maximum number of records that may be reserved for the active bank.
     capacity: u64,
+    /// Number of senders between reservation and channel insertion.
     active_senders: Arc<AtomicU64>,
+    /// Packed active bank id and remaining insertions, or disabled when shut down.
     bank_id_allowed_insertions: BankIdAllowedInsertions,
+    /// Bounded channel carrying reserved records.
     receiver: Receiver<Record>,
+    /// Optional monotonic transaction index shared with senders.
     transaction_indexes: Option<Arc<Mutex<usize>>>,
 }
 
 impl RecordReceiver {
+    /// Returns a reference to the inner receiver for use in `select!` macros.
+    /// After receiving from this, you must call `on_received_record` manually.
+    pub fn inner(&self) -> &Receiver<Record> {
+        &self.receiver
+    }
+
     /// Returns true if the channel should be shutdown.
     pub fn should_shutdown(&self, remaining_hashes_in_slot: u64, ticks_per_slot: u64) -> bool {
         // This channel must guarantee that all sent records are recorded.
-        // Each batch in a record consumes one hash in the PoH stream,
+        // Each record consumes one hash in the PoH stream,
         // each tick also consumes at least one hash in the PoH stream.
         // As a conservative estimate, we assume no ticks have been recorded.
         remaining_hashes_in_slot.saturating_sub(ticks_per_slot) <= self.capacity
@@ -228,9 +232,17 @@ impl RecordReceiver {
         drop(transaction_indexes_lock);
     }
 
-    /// Drain all available records from the channel with `try_recv` loop.
+    /// Drain all records that have been enqueued or reserved by active senders.
     pub fn drain(&self) -> impl Iterator<Item = Record> + '_ {
         core::iter::from_fn(|| self.try_recv().ok())
+    }
+
+    /// Drain all records that were already reserved by senders before shutdown.
+    ///
+    /// This names the shutdown use case explicitly, while sharing `try_recv()`'s
+    /// active-sender guarantee.
+    pub fn drain_after_shutdown(&self) -> impl Iterator<Item = Record> + '_ {
+        self.drain()
     }
 
     /// Channel is empty and there are no active threads attempting to send.
@@ -246,11 +258,15 @@ impl RecordReceiver {
     }
 
     /// Try to receive a record from the channel.
+    ///
+    /// If a sender has already reserved capacity for this bank, do not report
+    /// `Empty` until that sender either enqueues its record or fails. PoH uses
+    /// this to avoid hashing/ticking past a record that was already admitted.
     pub fn try_recv(&self) -> Result<Record, TryRecvError> {
         loop {
             match self.receiver.try_recv() {
                 Ok(record) => {
-                    self.on_received_record(record.transaction_batches.len() as u64);
+                    self.on_received_record();
                     return Ok(record);
                 }
 
@@ -266,7 +282,7 @@ impl RecordReceiver {
                     // and then dropped active_senders back to 0. Re-check once.
                     match self.receiver.try_recv() {
                         Ok(record) => {
-                            self.on_received_record(record.transaction_batches.len() as u64);
+                            self.on_received_record();
                             return Ok(record);
                         }
                         Err(TryRecvError::Empty) => return Err(TryRecvError::Empty),
@@ -282,25 +298,25 @@ impl RecordReceiver {
     /// Receive a record from the channel, waiting up to `duration`.
     pub fn recv_timeout(&self, duration: Duration) -> Result<Record, RecvTimeoutError> {
         let record = self.receiver.recv_timeout(duration)?;
-        self.on_received_record(record.transaction_batches.len() as u64);
+        self.on_received_record();
         Ok(record)
     }
 
-    fn on_received_record(&self, num_batches: u64) {
+    /// Notify that a record has been received.
+    /// Must be called after receiving a record from `inner()` directly.
+    pub fn on_received_record(&self) {
         // The record has been received and processed, so increment the number
         // of allowed insertions, so that new records can be sent.
         self.bank_id_allowed_insertions
             .0
-            .fetch_add(num_batches, Ordering::AcqRel);
+            .fetch_add(1, Ordering::AcqRel);
     }
 }
 
 /// Encoded u64 where the upper 54 bits are the bank_id and the lower 10 bits are
 /// the number of allowed insertions at the current time.
-/// The number of allowed insertions is based on the number of **batches** sent,
-/// not the number of [`Record`]. This is because each batch is a separate hash
-/// in the PoH stream, and we must guarantee enough space for each hash, if we
-/// allow a [`Record`] to be sent.
+/// Each [`Record`] is a separate hash in the PoH stream, so the number of allowed
+/// insertions guarantees enough space for every record that is sent.
 /// The allowed insertions uses 10 bits allowing up to 1023 insertions at a
 /// given time. This is for messages that have been sent but not yet processed
 /// by the receiver.
@@ -356,13 +372,11 @@ impl BankIdAllowedInsertions {
 mod tests {
     use {super::*, solana_hash::Hash, solana_transaction::versioned::VersionedTransaction};
 
-    pub(super) fn test_record(bank_id: BankId, num_batches: usize) -> Record {
+    pub(super) fn test_record(bank_id: BankId, num_transactions: usize) -> Record {
         Record {
             bank_id,
-            transaction_batches: (0..num_batches)
-                .map(|_| vec![VersionedTransaction::default()])
-                .collect(),
-            mixins: (0..num_batches).map(|_| Hash::default()).collect(),
+            transactions: vec![VersionedTransaction::default(); num_transactions],
+            mixin: Hash::default(),
         }
     }
 
@@ -385,28 +399,24 @@ mod tests {
             Err(RecordSenderError::InactiveBankId)
         ));
 
-        // Record for bank_id 1 with 1 batch succeeds.
+        // Record for bank_id 1 succeeds.
         assert!(matches!(sender.try_send(test_record(1, 1)), Ok(None)));
 
-        // Record for bank_id 1 with 1023 batches fails (channel full).
-        assert!(matches!(
-            sender.try_send(test_record(1, 1023)),
-            Err(RecordSenderError::Full)
-        ));
+        // Fill the rest of the channel.
+        for _ in 1..BankIdAllowedInsertions::MAX_ALLOWED_INSERTIONS {
+            assert!(matches!(sender.try_send(test_record(1, 1)), Ok(None)));
+        }
 
-        // Record for bank_id 1 with 1022 batches succeeds (channel now full).
-        assert!(matches!(sender.try_send(test_record(1, 1022)), Ok(None)));
-
-        // Record for bank_id 1 with 1 batch fails (channel full).
+        // Another record for bank_id 1 fails because the channel is full.
         assert!(matches!(
             sender.try_send(test_record(1, 1)),
             Err(RecordSenderError::Full)
         ));
 
-        // Receive 1 record.
-        assert!(receiver.try_recv().is_ok());
         assert!(!receiver.is_safe_to_restart());
-        assert!(receiver.try_recv().is_ok());
+        for _ in 0..BankIdAllowedInsertions::MAX_ALLOWED_INSERTIONS {
+            assert!(receiver.try_recv().is_ok());
+        }
         assert!(receiver.is_safe_to_restart());
     }
 
@@ -429,17 +439,11 @@ mod tests {
             Err(RecordSenderError::InactiveBankId)
         ));
 
-        // Record for bank_id 1 with 1 batch succeeds.
+        // Record for bank_id 1 with 1 transaction succeeds.
         assert!(matches!(sender.try_send(test_record(1, 1)), Ok(Some(0))));
 
-        // Record for bank_id 1 with 2 batches (3 transactions) succeeds.
-        let mut record = test_record(1, 2);
-        record
-            .transaction_batches
-            .last_mut()
-            .unwrap()
-            .push(VersionedTransaction::default());
-        assert!(matches!(sender.try_send(record), Ok(Some(1))));
+        // Record for bank_id 1 with 3 transactions succeeds.
+        assert!(matches!(sender.try_send(test_record(1, 3)), Ok(Some(1))));
 
         assert!(*sender.transaction_indexes.as_ref().unwrap().lock().unwrap() == 4);
     }
@@ -498,7 +502,7 @@ mod shuttle_tests {
     }
 
     #[test]
-    fn test_try_recv_not_sent_on_inner_channel_yet() {
+    fn test_try_recv_waits_active() {
         const NUM_TEST_RUNS: usize = 100_000;
         shuttle::check_random(
             || {
@@ -512,20 +516,42 @@ mod shuttle_tests {
                     });
                 }
 
-                // Snapshot active_senders *before* try_recv
                 let active_at_start = sender.active_senders.load(Ordering::Acquire);
-
-                // Perform try_recv
                 let result = receiver.try_recv();
-
-                // Only fail if it returned None *and* we know there was an active sender at start
                 if result.is_err() && active_at_start > 0 {
                     panic!(
-                        "try_recv returned None while a sender was active at start of call \
-                         (active_senders={})",
-                        active_at_start
+                        "try_recv returned Empty while a sender was active at start of call \
+                         (active_senders={active_at_start})"
                     );
                 }
+            },
+            NUM_TEST_RUNS,
+        )
+    }
+
+    #[test]
+    fn test_drain_shutdown_waits_active() {
+        const NUM_TEST_RUNS: usize = 100_000;
+        shuttle::check_random(
+            || {
+                let (sender, mut receiver) = record_channels(false);
+                receiver.restart(0);
+
+                // Model a sender that reserved capacity before shutdown but
+                // has not yet enqueued its record on the inner channel.
+                sender.active_senders.fetch_add(1, Ordering::AcqRel);
+                let active_senders = sender.active_senders.clone();
+                let inner_sender = sender.sender.clone();
+                shuttle::thread::spawn(move || {
+                    inner_sender.try_send(test_record(0, 1)).unwrap();
+                    active_senders.fetch_sub(1, Ordering::AcqRel);
+                });
+
+                receiver.shutdown();
+                let records: Vec<_> = receiver.drain_after_shutdown().collect();
+                assert_eq!(records.len(), 1);
+                assert_eq!(records[0].bank_id, 0);
+                assert!(receiver.is_safe_to_restart());
             },
             NUM_TEST_RUNS,
         )

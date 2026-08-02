@@ -132,13 +132,12 @@ impl<'a> ScanGuard<'a> {
             let max_root_inclusive = max_root_inclusive_fn();
             if let Some(min_ongoing_scan_root) =
                 ScanTracker::min_ongoing_scan_root_from_btree(&w_ongoing_scan_roots)
+                && min_ongoing_scan_root < max_root_inclusive
             {
-                if min_ongoing_scan_root < max_root_inclusive {
-                    let current = max_root_inclusive - min_ongoing_scan_root;
-                    scan_tracker
-                        .max_distance_to_min_scan_slot
-                        .fetch_max(current, Ordering::Relaxed);
-                }
+                let current = max_root_inclusive - min_ongoing_scan_root;
+                scan_tracker
+                    .max_distance_to_min_scan_slot
+                    .fetch_max(current, Ordering::Relaxed);
             }
             *w_ongoing_scan_roots.entry(max_root_inclusive).or_default() += 1;
             max_root_inclusive

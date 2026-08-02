@@ -8,6 +8,7 @@ repository = { workspace = true }
 homepage = { workspace = true }
 license = { workspace = true }
 edition = { workspace = true }
+rust-version = { workspace = true }
 
 [package.metadata.docs.rs]
 targets = ["x86_64-unknown-linux-gnu"]
@@ -24,3 +25,6 @@ solana-entry = { workspace = true }
 solana-measure = { workspace = true }
 solana-sha256-hasher = { workspace = true }
 solana-version = { workspace = true }
+
+[lints]
+workspace = true

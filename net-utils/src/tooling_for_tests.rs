@@ -32,10 +32,7 @@ impl Iterator for PcapReader {
 
     fn next(&mut self) -> Option<Self::Item> {
         loop {
-            let block = match self.reader.next_block() {
-                Some(block) => block.ok()?,
-                None => return None,
-            };
+            let block = self.reader.next_block()?.ok()?;
             let data = match block {
                 pcap_file::pcapng::Block::Packet(ref block) => {
                     &block.data[0..block.original_len as usize]

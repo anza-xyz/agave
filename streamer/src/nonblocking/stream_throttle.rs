@@ -3,7 +3,6 @@ use {
         nonblocking::{qos::OpaqueStreamerCounter, quic::ConnectionPeerType},
         quic::StreamerStats,
     },
-    percentage::Percentage,
     std::{
         sync::{
             Arc, RwLock,
@@ -16,8 +15,8 @@ use {
 
 /// Max TPS allowed for unstaked connection
 const MAX_UNSTAKED_TPS: u64 = 200;
-/// Expected % of max TPS to be consumed by unstaked connections
-const EXPECTED_UNSTAKED_STREAMS_PERCENT: u64 = 20;
+/// Expected fraction of max TPS to be consumed by unstaked connections
+const EXPECTED_UNSTAKED_STREAMS_RATIO: f64 = 0.20;
 
 pub const STREAM_THROTTLING_INTERVAL_MS: u64 = 100;
 pub const STREAM_THROTTLING_INTERVAL: Duration =
@@ -30,7 +29,7 @@ const STREAM_LOAD_EMA_INTERVAL_MS: u64 = 5;
 // before throttling activates.
 const STREAM_LOAD_EMA_INTERVAL_COUNT: u64 = 40;
 
-const STAKED_THROTTLING_ON_LOAD_THRESHOLD_PERCENT: u64 = 95;
+const STAKED_THROTTLING_ON_LOAD_THRESHOLD_RATIO: f64 = 0.95;
 
 pub(crate) struct StakedStreamLoadEMA {
     current_load_ema: AtomicU64,
@@ -53,7 +52,7 @@ impl StakedStreamLoadEMA {
         let allow_unstaked_streams = max_unstaked_connections > 0;
         let max_staked_load_in_ms = if allow_unstaked_streams {
             max_streams_per_ms
-                - Percentage::from(EXPECTED_UNSTAKED_STREAMS_PERCENT).apply_to(max_streams_per_ms)
+                - ((EXPECTED_UNSTAKED_STREAMS_RATIO * (max_streams_per_ms as f64)) as u64)
         } else {
             max_streams_per_ms
         };
@@ -68,9 +67,9 @@ impl StakedStreamLoadEMA {
             0
         };
 
-        let staked_throttling_on_load_threshold =
-            Percentage::from(STAKED_THROTTLING_ON_LOAD_THRESHOLD_PERCENT)
-                .apply_to(max_staked_load_in_ema_interval);
+        let staked_throttling_on_load_threshold = (STAKED_THROTTLING_ON_LOAD_THRESHOLD_RATIO
+            * (max_staked_load_in_ema_interval as f64))
+            as u64;
 
         Self {
             current_load_ema: AtomicU64::default(),

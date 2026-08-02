@@ -683,6 +683,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg(feature = "hidapi")]
     fn test_parse_status() {
         LedgerWallet::parse_status(APDU_SUCCESS_CODE).expect("unexpected result");
         if let RemoteWalletError::LedgerError(err) = LedgerWallet::parse_status(0x6985).unwrap_err()

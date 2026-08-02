@@ -14,3 +14,6 @@ crate-type = ["cdylib"]
 [dependencies]
 byteorder = { workspace = true }
 solana-program-entrypoint = { workspace = true }
+
+[lints]
+workspace = true

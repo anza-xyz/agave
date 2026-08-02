@@ -2,7 +2,7 @@
 use {
     crate::geyser_plugin_manager::GeyserPluginManager,
     agave_geyser_plugin_interface::geyser_plugin_interface::{
-        ReplicaDeshredTransactionInfo, ReplicaDeshredTransactionInfoVersions,
+        ReplicaDeshredTransactionInfoV2, ReplicaDeshredTransactionInfoVersions,
     },
     arc_swap::ArcSwap,
     log::*,
@@ -10,7 +10,6 @@ use {
     solana_ledger::deshred_transaction_notifier_interface::DeshredTransactionNotifier,
     solana_measure::measure::Measure,
     solana_message::v0::LoadedAddresses,
-    solana_metrics::*,
     solana_signature::Signature,
     solana_transaction::versioned::VersionedTransaction,
     std::sync::Arc,
@@ -29,6 +28,8 @@ impl DeshredTransactionNotifier for DeshredTransactionNotifierImpl {
     fn notify_deshred_transaction(
         &self,
         slot: Slot,
+        completed_data_set_starting_shred_index: u32,
+        completed_data_set_ending_shred_index_exclusive: u32,
         signature: &Signature,
         is_vote: bool,
         transaction: &VersionedTransaction,
@@ -42,11 +43,13 @@ impl DeshredTransactionNotifier for DeshredTransactionNotifierImpl {
 
         let mut measure =
             Measure::start("geyser-plugin-notify_plugins_of_deshred_transaction_info");
-        let transaction_info = ReplicaDeshredTransactionInfo {
+        let transaction_info = ReplicaDeshredTransactionInfoV2 {
             signature,
             is_vote,
             transaction,
             loaded_addresses,
+            completed_data_set_starting_shred_index,
+            completed_data_set_ending_shred_index_exclusive,
         };
 
         for plugin in plugin_manager.plugins.iter() {
@@ -54,7 +57,7 @@ impl DeshredTransactionNotifier for DeshredTransactionNotifierImpl {
                 continue;
             }
             match plugin.notify_deshred_transaction(
-                ReplicaDeshredTransactionInfoVersions::V0_0_1(&transaction_info),
+                ReplicaDeshredTransactionInfoVersions::V0_0_2(&transaction_info),
                 slot,
             ) {
                 Err(err) => {
@@ -73,12 +76,6 @@ impl DeshredTransactionNotifier for DeshredTransactionNotifierImpl {
             }
         }
         measure.stop();
-        inc_new_counter_debug!(
-            "geyser-plugin-notify_plugins_of_deshred_transaction_info-us",
-            measure.as_us() as usize,
-            10000,
-            10000
-        );
     }
 
     fn alt_resolution_enabled(&self) -> bool {

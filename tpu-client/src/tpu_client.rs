@@ -108,7 +108,7 @@ where
         transaction: &Transaction,
     ) -> TransportResult<()> {
         let wire_transaction =
-            Arc::new(bincode::serialize(&transaction).expect("should serialize transaction"));
+            Arc::new(wincode::serialize(&transaction).expect("should serialize transaction"));
 
         let leaders = self
             .tpu_client
@@ -145,7 +145,7 @@ where
     ) -> TransportResult<()> {
         let wire_transactions = transactions
             .into_par_iter()
-            .map(|tx| bincode::serialize(&tx).expect("serialize Transaction in send_batch"))
+            .map(|tx| wincode::serialize(&tx).expect("serialize Transaction in send_batch"))
             .collect::<Vec<_>>();
         self.invoke(
             self.tpu_client
@@ -215,6 +215,10 @@ where
         })
     }
 
+    #[deprecated(
+        since = "4.3.0",
+        note = "prefer send_and_confirm_transactions_in_parallel_v3"
+    )]
     #[cfg(feature = "spinner")]
     pub fn send_and_confirm_messages_with_spinner<T: Signers + ?Sized>(
         &self,
@@ -222,6 +226,7 @@ where
         signers: &T,
     ) -> Result<Vec<Option<TransactionError>>> {
         self.invoke(
+            #[allow(deprecated)]
             self.tpu_client
                 .send_and_confirm_messages_with_spinner(messages, signers),
         )
@@ -252,7 +257,7 @@ where
         transaction: VersionedTransaction,
     ) -> TransportResult<Signature> {
         let wire_transaction =
-            bincode::serialize(&transaction).expect("serialize Transaction in send_batch");
+            wincode::serialize(&transaction).expect("serialize Transaction in send_batch");
         self.send_wire_transaction(wire_transaction);
         Ok(transaction.signatures[0])
     }
@@ -263,7 +268,7 @@ where
     ) -> TransportResult<()> {
         let buffers = batch
             .into_par_iter()
-            .map(|tx| bincode::serialize(&tx).expect("serialize Transaction in send_batch"))
+            .map(|tx| wincode::serialize(&tx).expect("serialize Transaction in send_batch"))
             .collect::<Vec<_>>();
         self.try_send_wire_transaction_batch(buffers)?;
         Ok(())

@@ -1,6 +1,6 @@
 use {
     criterion::{Criterion, criterion_group, criterion_main},
-    rand::{CryptoRng, Rng, SeedableRng},
+    rand::SeedableRng,
     rand_chacha::ChaCha20Rng,
     solana_gossip::{
         contact_info::ContactInfo,
@@ -17,15 +17,13 @@ use {
     },
 };
 
-fn new_ping_cache(rng: &mut (impl Rng + CryptoRng)) -> PingCache<32> {
-    // Keep ttl/rate_limit_delay consistent with production defaults but smaller
-    // capacity for benchmarks.
+fn new_ping_cache() -> PingCache<32> {
+    // Keep ttl/outstanding-ping timeout consistent with production defaults but
+    // smaller capacity for benchmarks.
     PingCache::new(
-        rng,
-        Instant::now(),
         Duration::from_secs(1280),
-        Duration::from_secs(20),
-        /*cap=*/ 4096,
+        /*outstanding_ping_timeout_ms:*/ 1000..2000,
+        /*max_pings=*/ 4096,
     )
 }
 
@@ -44,7 +42,7 @@ fn bench_deferred_contact_info_insert_on_pong(c: &mut Criterion) {
 
     c.bench_function("bench_deferred_contact_info_insert_on_pong", |b| {
         b.iter(|| {
-            let mut ping_cache = new_ping_cache(&mut rng);
+            let mut ping_cache = new_ping_cache();
             let mut crds = Crds::default();
             let now = Instant::now();
 
@@ -94,7 +92,7 @@ fn bench_contact_info_insert_via_pull_after_refresh_delay(c: &mut Criterion) {
             b.iter_custom(|iters| {
                 let mut total = Duration::ZERO;
                 for _ in 0..iters {
-                    let mut ping_cache = new_ping_cache(&mut rng);
+                    let mut ping_cache = new_ping_cache();
                     let mut crds = Crds::default();
 
                     // Emulate old ingress behavior: ContactInfo is discarded and only a

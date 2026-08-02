@@ -35,15 +35,14 @@ impl SourceBuffer {
 
         // The buffer account should have the correct state.
         let buffer_metadata_size = UpgradeableLoaderState::size_of_buffer_metadata();
-        if buffer_account.data().len() >= buffer_metadata_size {
-            if let UpgradeableLoaderState::Buffer { .. } =
+        if buffer_account.data().len() >= buffer_metadata_size
+            && let UpgradeableLoaderState::Buffer { .. } =
                 bincode::deserialize(&buffer_account.data()[..buffer_metadata_size])?
-            {
-                return Ok(Self {
-                    buffer_address: *buffer_address,
-                    buffer_account,
-                });
-            }
+        {
+            return Ok(Self {
+                buffer_address: *buffer_address,
+                buffer_account,
+            });
         }
         Err(CoreBpfMigrationError::InvalidBufferAccount(*buffer_address))
     }

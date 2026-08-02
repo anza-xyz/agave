@@ -108,6 +108,10 @@ impl LoopMetrics {
 pub(crate) struct SlotMetrics {
     pub(crate) slot: Slot,
     pub(crate) attempt_start_leader_count: u64,
+    /// Indicates we have attempted fast leader handover
+    pub(crate) leader_handover_fast: bool,
+    /// Indicates we had to switch parent.
+    pub(crate) leader_handover_sad: bool,
     pub(crate) replay_is_behind_count: u64,
     pub(crate) already_have_bank_count: u64,
 
@@ -122,6 +126,8 @@ impl SlotMetrics {
             "slot-metrics",
             ("slot", self.slot, i64),
             ("attempt_count", self.attempt_start_leader_count, i64),
+            ("leader_handover_fast", self.leader_handover_fast, i64),
+            ("leader_handover_sad", self.leader_handover_sad, i64),
             ("replay_is_behind_count", self.replay_is_behind_count, i64),
             ("already_have_bank_count", self.already_have_bank_count, i64),
             (
@@ -178,8 +184,42 @@ impl SlotMetrics {
         );
     }
 
+    pub(crate) fn mark_leader_handover_fast(&mut self) {
+        self.leader_handover_fast = true;
+    }
+
+    pub(crate) fn mark_leader_handover_sad(&mut self) {
+        self.leader_handover_sad = true;
+    }
+
     pub(crate) fn reset(&mut self, slot: Slot) {
+        let same_slot = self.slot == slot;
+        let leader_handover_fast = same_slot && self.leader_handover_fast;
+        let leader_handover_sad = same_slot && self.leader_handover_sad;
         *self = Self::default();
+        self.leader_handover_fast = leader_handover_fast;
+        self.leader_handover_sad = leader_handover_sad;
         self.slot = slot;
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_slot_metrics_handover() {
+        let mut metrics = SlotMetrics::default();
+        metrics.reset(42);
+        metrics.mark_leader_handover_fast();
+        metrics.mark_leader_handover_sad();
+
+        metrics.reset(42);
+        assert!(metrics.leader_handover_fast);
+        assert!(metrics.leader_handover_sad);
+
+        metrics.reset(43);
+        assert!(!metrics.leader_handover_fast);
+        assert!(!metrics.leader_handover_sad);
     }
 }

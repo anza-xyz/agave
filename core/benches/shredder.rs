@@ -4,16 +4,38 @@ use {
     bencher::{Bencher, benchmark_group, benchmark_main},
     rand::Rng,
     solana_entry::entry::{Entry, create_ticks},
+    solana_epoch_schedule::{EpochSchedule, MINIMUM_SLOTS_PER_EPOCH},
     solana_hash::Hash,
     solana_keypair::Keypair,
-    solana_ledger::shred::{
-        CODING_SHREDS_PER_FEC_BLOCK, DATA_SHREDS_PER_FEC_BLOCK, ProcessShredsStats,
-        ReedSolomonCache, Shred, Shredder, get_data_shred_bytes_per_batch_typical,
-        max_entries_per_n_shred, max_ticks_per_n_shreds, recover,
+    solana_ledger::{
+        genesis_utils::create_genesis_config,
+        shred::{
+            CODING_SHREDS_PER_FEC_BLOCK, DATA_SHREDS_PER_FEC_BLOCK, ProcessShredsStats,
+            ReedSolomonCache, Shred, Shredder, filter::ShredRecoveryContext,
+            get_data_shred_bytes_per_batch_typical, max_entries_per_n_shred,
+            max_ticks_per_n_shreds,
+        },
     },
     solana_perf::test_tx,
-    std::hint::black_box,
+    solana_runtime::bank::Bank,
+    solana_streamer::evicting_sender::EvictingSender,
+    std::{hint::black_box, sync::Arc},
 };
+
+fn new_shred_recovery_context(shreds: &[Shred]) -> ShredRecoveryContext {
+    let mut genesis_config = create_genesis_config(1).genesis_config;
+    let shred_slot = shreds.first().map(Shred::slot).unwrap_or_default();
+    let slots_per_epoch = shred_slot.max(MINIMUM_SLOTS_PER_EPOCH);
+    genesis_config.epoch_schedule = EpochSchedule::custom(slots_per_epoch, slots_per_epoch, false);
+    let root_bank = Arc::new(Bank::new_for_tests(&genesis_config));
+    let (dummy_retransmit_sender, _) = EvictingSender::new_bounded(0);
+    ShredRecoveryContext::new(
+        ReedSolomonCache::default(),
+        dummy_retransmit_sender,
+        root_bank,
+        shreds.first().map(Shred::version).unwrap_or_default(),
+    )
+}
 
 fn make_test_entry(txs_per_entry: u64) -> Entry {
     Entry {
@@ -184,11 +206,19 @@ fn bench_shredder_decoding(bencher: &mut Bencher) {
         )
         .partition(Shred::is_data);
     coding_shreds.truncate(CODING_SHREDS_PER_FEC_BLOCK);
+    let mut shred_recovery_context = new_shred_recovery_context(&coding_shreds);
 
     bencher.iter(|| {
-        for shred in recover(coding_shreds.clone(), &reed_solomon_cache).unwrap() {
-            black_box(shred.unwrap());
-        }
+        let mut recovered_shreds = Vec::new();
+        let mut recovered_data_shreds = Vec::new();
+        shred_recovery_context
+            .recover(
+                coding_shreds.clone(),
+                &mut recovered_shreds,
+                &mut recovered_data_shreds,
+            )
+            .unwrap();
+        black_box((recovered_shreds, recovered_data_shreds));
     })
 }
 

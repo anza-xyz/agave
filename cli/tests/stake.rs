@@ -40,7 +40,7 @@ async fn test_stake_delegation_force() {
     let authorized_withdrawer = Keypair::new().pubkey();
     let faucet_addr = run_local_faucet_with_unique_port_for_tests(mint_keypair.insecure_clone());
     let slots_per_epoch = 32;
-    let test_validator = TestValidatorGenesis::default()
+    let test_validator = TestValidatorGenesis::default_for_tests()
         .fee_rate_governor(FeeRateGovernor::new(0, 0))
         .rent(Rent {
             lamports_per_byte: 1,

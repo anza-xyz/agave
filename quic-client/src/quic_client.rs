@@ -184,5 +184,13 @@ impl ClientConnection for QuicClientConnection {
 pub(crate) fn close_quic_connection(connection: Arc<QuicClient>) {
     // Close the connection and release resources
     trace!("Closing QUIC connection to {}", connection.server_addr());
-    RUNTIME.block_on(connection.close());
+    // Connection caches can be dropped by async callers, such as admin RPC set-identity;
+    // blocking on RUNTIME from a Tokio worker would panic.
+    if tokio::runtime::Handle::try_current().is_ok() {
+        let _handle = RUNTIME.spawn(async move {
+            connection.close().await;
+        });
+    } else {
+        RUNTIME.block_on(connection.close());
+    }
 }

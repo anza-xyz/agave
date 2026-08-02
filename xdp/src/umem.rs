@@ -1,6 +1,7 @@
 #![allow(clippy::arithmetic_side_effects)]
 
 use {
+    crossbeam_queue::ArrayQueue,
     libc::{_SC_PAGESIZE, munmap, sysconf},
     std::{
         ffi::c_void,
@@ -8,11 +9,14 @@ use {
         marker::PhantomData,
         ops::{Deref, DerefMut},
         ptr, slice,
+        sync::Arc,
     },
 };
 
-#[derive(Copy, Clone, Debug)]
+#[derive(Debug)]
 pub struct FrameOffset(pub(crate) usize);
+
+pub struct CompletedFrameOffset(pub(crate) FrameOffset);
 
 pub trait Frame {
     fn offset(&self) -> FrameOffset;
@@ -25,22 +29,84 @@ pub trait Frame {
 
 pub trait Umem {
     type Frame: Frame;
+
     fn as_ptr(&self) -> *const u8;
-    fn as_mut_ptr(&mut self) -> *mut u8;
     fn len(&self) -> usize;
     fn is_empty(&self) -> bool {
         self.len() == 0
     }
-    fn reserve(&mut self) -> Option<Self::Frame>;
-    fn release(&mut self, frame: FrameOffset);
+    fn reserve(&self) -> Option<Self::Frame>;
+    fn release(&self, frame: Self::Frame);
+    fn release_completed(&self, frame: CompletedFrameOffset);
     fn frame_size(&self) -> usize;
     fn capacity(&self) -> usize;
     fn available(&self) -> usize;
-    fn map_frame(&self, frame: &Self::Frame) -> &[u8] {
-        unsafe { slice::from_raw_parts(self.as_ptr().add(frame.offset().0), frame.len()) }
+    fn map_frame_mut(&self, frame: Self::Frame) -> MappedFrameMut<'_, Self::Frame>;
+}
+
+impl<U: Umem> Umem for Arc<U> {
+    type Frame = U::Frame;
+
+    fn as_ptr(&self) -> *const u8 {
+        self.as_ref().as_ptr()
     }
-    fn map_frame_mut(&mut self, frame: &Self::Frame) -> &mut [u8] {
-        unsafe { slice::from_raw_parts_mut(self.as_mut_ptr().add(frame.offset().0), frame.len()) }
+
+    fn len(&self) -> usize {
+        self.as_ref().len()
+    }
+
+    fn reserve(&self) -> Option<Self::Frame> {
+        self.as_ref().reserve()
+    }
+
+    fn release(&self, frame: Self::Frame) {
+        self.as_ref().release(frame);
+    }
+
+    fn release_completed(&self, frame: CompletedFrameOffset) {
+        self.as_ref().release_completed(frame);
+    }
+
+    fn frame_size(&self) -> usize {
+        self.as_ref().frame_size()
+    }
+
+    fn capacity(&self) -> usize {
+        self.as_ref().capacity()
+    }
+
+    fn available(&self) -> usize {
+        self.as_ref().available()
+    }
+
+    fn map_frame_mut(&self, frame: Self::Frame) -> MappedFrameMut<'_, Self::Frame> {
+        self.as_ref().map_frame_mut(frame)
+    }
+}
+
+pub struct MappedFrameMut<'a, F> {
+    frame: F,
+    bytes: &'a mut [u8],
+}
+
+impl<F> MappedFrameMut<'_, F> {
+    pub fn into_frame(self) -> F {
+        let Self { frame, bytes: _ } = self;
+        frame
+    }
+}
+
+impl<F> Deref for MappedFrameMut<'_, F> {
+    type Target = [u8];
+
+    fn deref(&self) -> &Self::Target {
+        self.bytes
+    }
+}
+
+impl<F> DerefMut for MappedFrameMut<'_, F> {
+    fn deref_mut(&mut self) -> &mut Self::Target {
+        self.bytes
     }
 }
 
@@ -65,21 +131,28 @@ impl Frame for SliceUmemFrame<'_> {
 }
 
 pub struct SliceUmem<'a> {
-    buffer: &'a mut [u8],
+    buffer: *mut u8,
+    buffer_len: usize,
     frame_size: u32,
-    available_frames: Vec<u64>,
-    capacity: usize,
+    available_frames: ArrayQueue<FrameOffset>,
+    _buffer: PhantomData<&'a mut [u8]>,
 }
+
+// Safety: `SliceUmem` retains the exclusive borrow of `buffer`, and frame tokens ensure that
+// concurrent mappings refer to non aliasing regions.
+unsafe impl Send for SliceUmem<'_> {}
+unsafe impl Sync for SliceUmem<'_> {}
 
 impl<'a> SliceUmem<'a> {
     pub fn new(buffer: &'a mut [u8], frame_size: u32) -> Result<Self, io::Error> {
         debug_assert!(frame_size.is_power_of_two());
         let capacity = buffer.len() / frame_size as usize;
         Ok(Self {
-            available_frames: Vec::from_iter(0..capacity as u64),
-            capacity,
+            buffer: buffer.as_mut_ptr(),
+            buffer_len: buffer.len(),
+            available_frames: available_frames(capacity, frame_size),
             frame_size,
-            buffer,
+            _buffer: PhantomData,
         })
     }
 }
@@ -88,42 +161,49 @@ impl<'a> Umem for SliceUmem<'a> {
     type Frame = SliceUmemFrame<'a>;
 
     fn as_ptr(&self) -> *const u8 {
-        self.buffer.as_ptr()
-    }
-
-    fn as_mut_ptr(&mut self) -> *mut u8 {
-        self.buffer.as_mut_ptr()
+        self.buffer.cast_const()
     }
 
     fn len(&self) -> usize {
-        self.buffer.len()
+        self.buffer_len
     }
 
     fn frame_size(&self) -> usize {
         self.frame_size as usize
     }
 
-    fn reserve(&mut self) -> Option<SliceUmemFrame<'a>> {
-        let index = self.available_frames.pop()?;
+    fn reserve(&self) -> Option<SliceUmemFrame<'a>> {
+        let FrameOffset(offset) = self.available_frames.pop()?;
 
         Some(SliceUmemFrame {
-            offset: index as usize * self.frame_size as usize,
+            offset,
             len: 0,
             _buf: PhantomData,
         })
     }
 
-    fn release(&mut self, frame: FrameOffset) {
-        let index = frame.0 / self.frame_size as usize;
-        self.available_frames.push(index as u64);
+    fn release(&self, frame: Self::Frame) {
+        push_available_frame(&self.available_frames, frame.offset());
+    }
+
+    fn release_completed(&self, frame: CompletedFrameOffset) {
+        push_available_frame(&self.available_frames, frame.0);
     }
 
     fn capacity(&self) -> usize {
-        self.capacity
+        self.available_frames.capacity()
     }
 
     fn available(&self) -> usize {
         self.available_frames.len()
+    }
+
+    fn map_frame_mut(&self, frame: Self::Frame) -> MappedFrameMut<'_, Self::Frame> {
+        // Safety: `frame` is the ownership token for a reserved UMEM slot. This method consumes
+        // it, so safe callers cannot map or release the same slot again while `bytes` is live.
+        let bytes =
+            unsafe { slice::from_raw_parts_mut(self.buffer.add(frame.offset().0), frame.len()) };
+        MappedFrameMut { frame, bytes }
     }
 }
 
@@ -146,66 +226,83 @@ impl Frame for OwnedUmemFrame {
     }
 }
 
-pub struct OwnedUmem<T: DerefMut<Target = [u8]>> {
-    owned: T,
+pub struct OwnedUmem {
+    memory: PageAlignedMemory,
     frame_size: u32,
-    available_frames: Vec<u64>,
-    capacity: usize,
+    available_frames: ArrayQueue<FrameOffset>,
 }
 
-impl<T: DerefMut<Target = [u8]>> OwnedUmem<T> {
-    pub fn new(owned: T, frame_size: u32) -> Result<Self, io::Error> {
+impl OwnedUmem {
+    pub fn new(memory: PageAlignedMemory, frame_size: u32) -> Result<Self, io::Error> {
         debug_assert!(frame_size.is_power_of_two());
-        let capacity = owned.len() / frame_size as usize;
+        let capacity = memory.len / frame_size as usize;
         Ok(Self {
-            owned,
+            memory,
             frame_size,
-            available_frames: Vec::from_iter(0..capacity as u64),
-            capacity,
+            available_frames: available_frames(capacity, frame_size),
         })
     }
 }
 
-impl<T: DerefMut<Target = [u8]>> Umem for OwnedUmem<T> {
+impl Umem for OwnedUmem {
     type Frame = OwnedUmemFrame;
 
     fn as_ptr(&self) -> *const u8 {
-        self.owned.as_ptr()
-    }
-
-    fn as_mut_ptr(&mut self) -> *mut u8 {
-        self.owned.as_mut_ptr()
+        self.memory.ptr.cast_const()
     }
 
     fn len(&self) -> usize {
-        self.owned.len()
+        self.memory.len
     }
 
     fn frame_size(&self) -> usize {
         self.frame_size as usize
     }
 
-    fn reserve(&mut self) -> Option<OwnedUmemFrame> {
-        let index = self.available_frames.pop()?;
+    fn reserve(&self) -> Option<OwnedUmemFrame> {
+        let FrameOffset(offset) = self.available_frames.pop()?;
 
-        Some(OwnedUmemFrame {
-            offset: index as usize * self.frame_size as usize,
-            len: 0,
-        })
+        Some(OwnedUmemFrame { offset, len: 0 })
     }
 
-    fn release(&mut self, frame: FrameOffset) {
-        let index = frame.0 / self.frame_size as usize;
-        self.available_frames.push(index as u64);
+    fn release(&self, frame: Self::Frame) {
+        push_available_frame(&self.available_frames, frame.offset());
+    }
+
+    fn release_completed(&self, frame: CompletedFrameOffset) {
+        push_available_frame(&self.available_frames, frame.0);
     }
 
     fn capacity(&self) -> usize {
-        self.capacity
+        self.available_frames.capacity()
     }
 
     fn available(&self) -> usize {
         self.available_frames.len()
     }
+
+    fn map_frame_mut(&self, frame: Self::Frame) -> MappedFrameMut<'_, Self::Frame> {
+        // Safety: `frame` is the ownership token for a reserved UMEM slot. This method consumes
+        // it, so safe callers cannot map or release the same slot again while `bytes` is live.
+        let bytes = unsafe {
+            slice::from_raw_parts_mut(self.memory.ptr.add(frame.offset().0), frame.len())
+        };
+        MappedFrameMut { frame, bytes }
+    }
+}
+
+fn available_frames(capacity: usize, frame_size: u32) -> ArrayQueue<FrameOffset> {
+    let available_frames = ArrayQueue::new(capacity);
+    for index in 0..capacity {
+        push_available_frame(&available_frames, FrameOffset(index * frame_size as usize));
+    }
+    available_frames
+}
+
+fn push_available_frame(available_frames: &ArrayQueue<FrameOffset>, offset: FrameOffset) {
+    available_frames
+        .push(offset)
+        .expect("available UMEM frame queue unexpectedly full");
 }
 
 #[derive(Debug)]
@@ -216,8 +313,10 @@ pub struct PageAlignedMemory {
     len: usize,
 }
 
-/// Safety: a `PageAlignedMemory` instance MUST only be resident in one thread at a time
+// Safety: `PageAlignedMemory` owns its mapping and may be moved between threads.
 unsafe impl Send for PageAlignedMemory {}
+// Safety: `PageAlignedMemory` doesn't expose interior mutability so it's safe to share between threads.
+unsafe impl Sync for PageAlignedMemory {}
 
 impl PageAlignedMemory {
     pub fn alloc(frame_size: usize, frame_count: usize) -> Result<Self, AllocError> {
@@ -292,5 +391,47 @@ impl Deref for PageAlignedMemory {
 impl DerefMut for PageAlignedMemory {
     fn deref_mut(&mut self) -> &mut Self::Target {
         unsafe { slice::from_raw_parts_mut(self.ptr, self.len) }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use {
+        crate::umem::{CompletedFrameOffset, Frame, SliceUmem, Umem},
+        std::slice,
+    };
+
+    #[test]
+    fn test_map_frame() {
+        let mut buffer = [0; 16];
+        let umem = SliceUmem::new(&mut buffer, 8).unwrap();
+        let mut frame = umem.reserve().unwrap();
+        let offset = frame.offset().0;
+
+        frame.set_len(4);
+        let mut mapped = umem.map_frame_mut(frame);
+        mapped.copy_from_slice(&[1, 2, 3, 4]);
+        let frame = mapped.into_frame();
+
+        // Safety: `offset` came from a reserved frame and `frame.len()` bytes were initialized
+        // through the mapping above.
+        let bytes = unsafe { slice::from_raw_parts(umem.as_ptr().add(offset), frame.len()) };
+        assert_eq!(bytes, &[1, 2, 3, 4]);
+
+        umem.release(frame);
+        assert_eq!(umem.available(), umem.capacity());
+    }
+
+    #[test]
+    fn test_completion() {
+        let mut buffer = [0; 16];
+        let umem = SliceUmem::new(&mut buffer, 8).unwrap();
+        let offset = {
+            let frame = umem.reserve().unwrap();
+            frame.offset()
+        };
+        umem.release_completed(CompletedFrameOffset(offset));
+
+        assert_eq!(umem.available(), umem.capacity());
     }
 }

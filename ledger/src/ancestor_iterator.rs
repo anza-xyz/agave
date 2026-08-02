@@ -121,11 +121,11 @@ mod tests {
         let blockstore = Blockstore::open(ledger_path.path()).unwrap();
 
         let (shreds, _) = make_slot_entries(0, 0, 42);
-        blockstore.insert_shreds(shreds, None, false).unwrap();
+        blockstore.insert_shreds(shreds, false).unwrap();
         let (shreds, _) = make_slot_entries(1, 0, 42);
-        blockstore.insert_shreds(shreds, None, false).unwrap();
+        blockstore.insert_shreds(shreds, false).unwrap();
         let (shreds, _) = make_slot_entries(2, 1, 42);
-        blockstore.insert_shreds(shreds, None, false).unwrap();
+        blockstore.insert_shreds(shreds, false).unwrap();
 
         assert_eq!(
             AncestorIterator::new(2, &blockstore).collect::<Vec<Slot>>(),

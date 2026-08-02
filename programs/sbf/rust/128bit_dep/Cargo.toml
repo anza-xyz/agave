@@ -9,3 +9,6 @@ license = { workspace = true }
 edition = { workspace = true }
 
 [dependencies]
+
+[lints]
+workspace = true

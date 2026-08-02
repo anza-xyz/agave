@@ -25,3 +25,6 @@ solana-accounts-db = { workspace = true, features = ["dev-context-only-utils"] }
 solana-pubkey = { workspace = true }
 solana-system-interface = { workspace = true }
 solana-version = { workspace = true }
+
+[lints]
+workspace = true

@@ -4,7 +4,7 @@
 use {
     super::{
         receive_and_buffer::{DisconnectedError, ReceiveAndBuffer},
-        scheduler::{PreLockFilterAction, Scheduler},
+        scheduler::Scheduler,
         scheduler_error::SchedulerError,
         scheduler_metrics::{SchedulerCountMetrics, SchedulerTimingMetrics, SchedulingDetails},
     },
@@ -12,7 +12,6 @@ use {
         banking_stage::{
             TOTAL_BUFFERED_PACKETS,
             consume_worker::ConsumeWorkerMetrics,
-            consumer::Consumer,
             decision_maker::{BufferedPacketsDecision, DecisionMaker},
             transaction_scheduler::{
                 receive_and_buffer::ReceivingStats, transaction_priority_id::TransactionPriorityId,
@@ -21,9 +20,11 @@ use {
         },
         validator::SchedulerPacing,
     },
+    agave_banking_stage_ingress_types::SchedulerPriorityFloor,
+    solana_clock::DEFAULT_MS_PER_SLOT,
     solana_cost_model::cost_tracker::SharedBlockCost,
     solana_measure::measure_us,
-    solana_runtime::{bank::Bank, bank_forks::SharableBanks},
+    solana_runtime::bank_forks::SharableBanks,
     solana_svm::transaction_error_metrics::TransactionErrorMetrics,
     std::{
         num::{NonZeroU64, Saturating},
@@ -36,6 +37,13 @@ use {
 };
 
 const CHECK_CHUNK: usize = 128;
+
+/// Publish the priority floor once the scheduler's retained transaction buffer is
+/// this full. Capacity is enforced on the buffer, not just the priority queue:
+/// scheduled transactions still occupy buffer space until workers finish them.
+const SATURATION_BUFFER_PCT: u8 = 99;
+/// Clear the priority floor once the retained buffer drains below this watermark.
+const DESATURATION_BUFFER_PCT: u8 = 95;
 
 #[derive(Clone)]
 pub struct SchedulerConfig {
@@ -52,8 +60,59 @@ impl Default for SchedulerConfig {
     }
 }
 
+const DEFAULT_SCHEDULER_PACING_NON_FILL_TIME_MILLIS: u64 = 50;
 pub(crate) const DEFAULT_SCHEDULER_PACING_FILL_TIME_MILLIS: NonZeroU64 =
-    NonZeroU64::new(350).unwrap();
+    NonZeroU64::new(DEFAULT_MS_PER_SLOT - DEFAULT_SCHEDULER_PACING_NON_FILL_TIME_MILLIS).unwrap();
+
+/// Detects saturation and publishes the priority floor for dropping low-priority transactions upstream.
+struct SaturationState {
+    priority_floor: Arc<SchedulerPriorityFloor>,
+    saturated: bool,
+    saturation_watermark: usize,
+    desaturation_watermark: usize,
+}
+
+impl SaturationState {
+    fn new(priority_floor: Arc<SchedulerPriorityFloor>, container_capacity: usize) -> Self {
+        let saturation_watermark =
+            container_capacity.saturating_mul(SATURATION_BUFFER_PCT as usize) / 100;
+        let desaturation_watermark =
+            container_capacity.saturating_mul(DESATURATION_BUFFER_PCT as usize) / 100;
+        Self {
+            priority_floor,
+            saturated: false,
+            saturation_watermark,
+            desaturation_watermark,
+        }
+    }
+
+    /// Update the saturation state.
+    fn update(&mut self, buffer_size: usize, num_dropped_on_capacity: usize) -> bool {
+        if self.saturated {
+            if buffer_size < self.desaturation_watermark && num_dropped_on_capacity == 0 {
+                self.saturated = false;
+            }
+        } else if buffer_size >= self.saturation_watermark || num_dropped_on_capacity > 0 {
+            self.saturated = true;
+        }
+
+        self.saturated
+    }
+
+    /// Publish the priority floor.
+    fn publish_floor(&self, floor: u64) {
+        self.priority_floor.set(floor);
+    }
+}
+
+impl Drop for SaturationState {
+    fn drop(&mut self) {
+        // The priority floor outlives individual scheduler controllers (it's
+        // shared with sigverify). Clear it on tear-down so a stale floor
+        // from this controller can't keep sigverify dropping packets.
+        self.priority_floor.clear();
+    }
+}
 
 /// Controls packet and transaction flow into scheduler, and scheduling execution.
 pub(crate) struct SchedulerController<R, S>
@@ -87,6 +146,8 @@ where
     recheck_cursor: Option<TransactionPriorityId>,
     /// Recheck IDs scratch space.
     recheck_chunk: Vec<TransactionPriorityId>,
+    /// Saturation detection and priority floor publication.
+    saturation_state: SaturationState,
 }
 
 impl<R, S> SchedulerController<R, S>
@@ -102,14 +163,18 @@ where
         sharable_banks: SharableBanks,
         scheduler: S,
         worker_metrics: Vec<Arc<ConsumeWorkerMetrics>>,
+        priority_floor: Arc<SchedulerPriorityFloor>,
     ) -> Self {
+        priority_floor.clear();
+        let container_capacity = TOTAL_BUFFERED_PACKETS;
+        let saturation_state = SaturationState::new(priority_floor, container_capacity);
         Self {
             exit,
             config,
             decision_maker,
             receive_and_buffer,
             sharable_banks,
-            container: R::Container::with_capacity(TOTAL_BUFFERED_PACKETS),
+            container: R::Container::with_capacity(container_capacity),
             scheduler,
             count_metrics: SchedulerCountMetrics::default(),
             timing_metrics: SchedulerTimingMetrics::default(),
@@ -117,6 +182,7 @@ where
             scheduling_details: SchedulingDetails::default(),
             recheck_cursor: None,
             recheck_chunk: Vec::with_capacity(CHECK_CHUNK),
+            saturation_state,
         }
     }
 
@@ -159,18 +225,21 @@ where
                     // If pacing_fill_time is greater than the bank's slot time,
                     // adjust the pacing_fill_time to be the slot time, and warn.
                     let fill_time = self.config.scheduler_pacing.fill_time();
-                    if let Some(pacing_fill_time) = fill_time.as_ref() {
-                        if pacing_fill_time.as_nanos() > b.ns_per_slot {
-                            warn!(
-                                "scheduler pacing config pacing_fill_time {:?} is greater than \
-                                 the bank's slot time {}, setting to slot time",
-                                pacing_fill_time, b.ns_per_slot,
-                            );
-                            self.config.scheduler_pacing = SchedulerPacing::FillTimeMillis(
-                                NonZeroU64::new(b.ns_per_slot as u64 / 1_000_000)
-                                    .unwrap_or(NonZeroU64::new(1).unwrap()),
-                            );
-                        }
+                    if let Some(pacing_fill_time) = fill_time.as_ref()
+                        && pacing_fill_time.as_nanos() > b.ns_per_slot
+                    {
+                        warn!(
+                            "scheduler pacing config pacing_fill_time {:?} is greater than the \
+                             bank's slot time {}, setting to slot time",
+                            pacing_fill_time, b.ns_per_slot,
+                        );
+                        self.config.scheduler_pacing = SchedulerPacing::FillTimeMillis(
+                            NonZeroU64::new(
+                                (b.ns_per_slot as u64 / 1_000_000)
+                                    .saturating_sub(DEFAULT_SCHEDULER_PACING_NON_FILL_TIME_MILLIS),
+                            )
+                            .unwrap_or(NonZeroU64::new(1).unwrap()),
+                        );
                     }
 
                     CostPacer {
@@ -190,7 +259,7 @@ where
                     timing_metrics.clean_time_us += clean_time_us;
                 });
             }
-            self.receive_and_buffer_packets(&decision).map_err(|_| {
+            let receiving_stats = self.receive_and_buffer_packets(&decision).map_err(|_| {
                 SchedulerError::DisconnectedRecvChannel("receive and buffer disconnected")
             })?;
             // Report metrics only if there is data.
@@ -200,6 +269,7 @@ where
             self.count_metrics.update(|count_metrics| {
                 count_metrics.update_priority_stats(priority_min_max);
             });
+            self.update_scheduler_priority_floor(receiving_stats.num_dropped_on_capacity);
             self.count_metrics
                 .maybe_report_and_reset_interval(should_report);
             self.timing_metrics
@@ -221,19 +291,14 @@ where
         now: &Instant,
     ) -> Result<usize, SchedulerError> {
         let scheduled = match decision {
-            BufferedPacketsDecision::Consume(bank) => {
+            BufferedPacketsDecision::Consume(_bank) => {
                 let scheduling_budget = cost_pacer
                     .expect("cost pacer must be set for Consume")
                     .scheduling_budget(now);
-                let (scheduling_summary, schedule_time_us) = measure_us!(self.scheduler.schedule(
-                    &mut self.container,
-                    scheduling_budget,
-                    bank.feature_set.snapshot().relax_intrabatch_account_locks,
-                    |txs, results| {
-                        Self::pre_graph_filter(txs, results, bank, bank.max_processing_age())
-                    },
-                    |_| PreLockFilterAction::AttemptToSchedule // no pre-lock filter for now
-                )?);
+                let (scheduling_summary, schedule_time_us) = measure_us!(
+                    self.scheduler
+                        .schedule(&mut self.container, scheduling_budget,)?
+                );
 
                 self.count_metrics.update(|count_metrics| {
                     count_metrics.num_scheduled += scheduling_summary.num_scheduled;
@@ -241,11 +306,9 @@ where
                         scheduling_summary.num_unschedulable_conflicts;
                     count_metrics.num_unschedulable_threads +=
                         scheduling_summary.num_unschedulable_threads;
-                    count_metrics.num_schedule_filtered_out += scheduling_summary.num_filtered_out;
                 });
 
                 self.timing_metrics.update(|timing_metrics| {
-                    timing_metrics.schedule_filter_time_us += scheduling_summary.filter_time_us;
                     timing_metrics.schedule_time_us += schedule_time_us;
                 });
                 self.scheduling_details.update(&scheduling_summary);
@@ -267,30 +330,25 @@ where
         Ok(scheduled)
     }
 
-    fn pre_graph_filter(
-        transactions: &[&R::Transaction],
-        results: &mut [bool],
-        bank: &Bank,
-        max_age: usize,
-    ) {
-        let lock_results = vec![Ok(()); transactions.len()];
-        let mut error_counters = TransactionErrorMetrics::default();
-        let check_results = bank.check_transactions::<R::Transaction>(
-            transactions,
-            &lock_results,
-            max_age,
-            &mut error_counters,
-        );
+    /// Update the scheduler priority floor.
+    ///
+    /// Semantics: when the retained scheduler buffer is nearly full, drop
+    /// arrivals that are at-or-below the current queue-min priority, i.e. no
+    /// better than what the bounded scheduler candidate set would evict.
+    fn update_scheduler_priority_floor(&mut self, num_dropped_on_capacity: usize) {
+        let buffer_size = self.container.buffer_size();
+        let saturated = self
+            .saturation_state
+            .update(buffer_size, num_dropped_on_capacity);
+        let priority_floor = if saturated {
+            self.container
+                .get_min_max_priority()
+                .map_or(0, |(min, _)| min)
+        } else {
+            0
+        };
 
-        for ((check_result, tx), result) in check_results
-            .into_iter()
-            .zip(transactions)
-            .zip(results.iter_mut())
-        {
-            *result = check_result
-                .and_then(|_| Consumer::check_fee_payer_unlocked(bank, *tx, &mut error_counters))
-                .is_ok();
-        }
+        self.saturation_state.publish_floor(priority_floor);
     }
 
     /// Clears the transaction state container.
@@ -350,12 +408,13 @@ where
 
             txs
         };
-        let lock_results = vec![Ok(()); txs.len()];
+        let lock_results = [const { Ok(()) }; CHECK_CHUNK];
         let mut error_counters = TransactionErrorMetrics::default();
         let results = bank.check_transactions::<R::Transaction>(
             &txs,
-            &lock_results,
+            &lock_results[..txs.len()],
             bank.max_processing_age(),
+            true,
             &mut error_counters,
         );
 
@@ -407,8 +466,11 @@ where
                 num_dropped_on_age,
                 num_dropped_on_already_processed,
                 num_dropped_on_fee_payer,
+                num_dropped_on_filter_key,
                 num_dropped_on_capacity,
+                num_dropped_on_nonce_dedup,
                 num_buffered,
+                num_evicted_on_nonce_dedup,
                 receive_time_us: _,
                 buffer_time_us: _,
             } = &receiving_stats;
@@ -423,8 +485,11 @@ where
             count_metrics.num_dropped_on_receive_already_processed +=
                 *num_dropped_on_already_processed;
             count_metrics.num_dropped_on_receive_fee_payer += *num_dropped_on_fee_payer;
+            count_metrics.num_dropped_on_filter_key += *num_dropped_on_filter_key;
             count_metrics.num_dropped_on_capacity += *num_dropped_on_capacity;
+            count_metrics.num_dropped_on_nonce_dedup += *num_dropped_on_nonce_dedup;
             count_metrics.num_buffered += *num_buffered;
+            count_metrics.num_evicted_on_nonce_dedup += *num_evicted_on_nonce_dedup;
         });
 
         self.timing_metrics.update(|timing_metrics| {
@@ -472,24 +537,26 @@ mod tests {
             consumer::{RetryableIndex, TARGET_NUM_TRANSACTIONS_PER_BATCH},
             scheduler_messages::{ConsumeWork, FinishedConsumeWork, TransactionBatchId},
             tests::create_slow_genesis_config,
-            transaction_scheduler::prio_graph_scheduler::{
-                PrioGraphScheduler, PrioGraphSchedulerConfig,
-            },
+            transaction_scheduler::greedy_scheduler::{GreedyScheduler, GreedySchedulerConfig},
         },
-        agave_banking_stage_ingress_types::{BankingPacketBatch, BankingPacketReceiver},
-        crossbeam_channel::{Receiver, Sender, unbounded},
+        agave_banking_stage_ingress_types::{
+            BankingPacketBatch, BankingPacketReceiver, to_banking_packet_batch,
+        },
+        crossbeam_channel::{Receiver, Sender, bounded},
         itertools::Itertools,
+        solana_account::AccountSharedData,
         solana_compute_budget_interface::ComputeBudgetInstruction,
         solana_fee_calculator::FeeRateGovernor,
         solana_hash::Hash,
         solana_keypair::Keypair,
         solana_ledger::genesis_utils::GenesisConfigInfo,
         solana_message::Message,
-        solana_perf::packet::{NUM_PACKETS, PacketBatch, to_packet_batches},
+        solana_nonce::{self as nonce, state::DurableNonce},
         solana_poh::poh_recorder::{LeaderState, SharedLeaderState},
         solana_pubkey::Pubkey,
         solana_runtime::{bank::Bank, bank_forks::BankForks},
-        solana_runtime_transaction::transaction_meta::StaticMeta,
+        solana_runtime_transaction::transaction_meta::TransactionMeta,
+        solana_sdk_ids::system_program,
         solana_signer::Signer,
         solana_system_interface::instruction as system_instruction,
         solana_transaction::Transaction,
@@ -497,7 +564,7 @@ mod tests {
     };
 
     fn create_channels<T>(num: usize) -> (Vec<Sender<T>>, Vec<Receiver<T>>) {
-        (0..num).map(|_| unbounded()).unzip()
+        (0..num).map(|_| bounded(1024)).unzip()
     }
 
     // Helper struct to create tests that hold channels, files, etc.
@@ -507,7 +574,7 @@ mod tests {
         #[allow(dead_code)]
         bank_forks: Arc<RwLock<BankForks>>,
         mint_keypair: Keypair,
-        banking_packet_sender: Sender<Arc<Vec<PacketBatch>>>,
+        banking_packet_sender: Sender<BankingPacketBatch>,
         shared_leader_state: SharedLeaderState,
         consume_work_receivers: Vec<Receiver<ConsumeWork<Tx>>>,
         finished_consume_work_sender: Sender<FinishedConsumeWork<Tx>>,
@@ -520,6 +587,7 @@ mod tests {
         TransactionViewReceiveAndBuffer {
             receiver,
             sharable_banks: bank_forks.read().unwrap().sharable_banks(),
+            filter_keys: Arc::default(),
         }
     }
 
@@ -529,7 +597,7 @@ mod tests {
         create_receive_and_buffer: impl FnOnce(BankingPacketReceiver, Arc<RwLock<BankForks>>) -> R,
     ) -> (
         TestFrame<R::Transaction>,
-        SchedulerController<R, PrioGraphScheduler<R::Transaction>>,
+        SchedulerController<R, GreedyScheduler<R::Transaction>>,
     ) {
         let GenesisConfigInfo {
             mut genesis_config,
@@ -543,12 +611,12 @@ mod tests {
 
         let decision_maker = DecisionMaker::new(shared_leader_state.clone());
 
-        let (banking_packet_sender, banking_packet_receiver) = unbounded();
+        let (banking_packet_sender, banking_packet_receiver) = bounded(1024);
         let receive_and_buffer =
             create_receive_and_buffer(banking_packet_receiver, bank_forks.clone());
 
         let (consume_work_senders, consume_work_receivers) = create_channels(num_threads);
-        let (finished_consume_work_sender, finished_consume_work_receiver) = unbounded();
+        let (finished_consume_work_sender, finished_consume_work_receiver) = bounded(1024);
 
         let test_frame = TestFrame {
             bank,
@@ -560,10 +628,10 @@ mod tests {
             finished_consume_work_sender,
         };
 
-        let scheduler = PrioGraphScheduler::new(
+        let scheduler = GreedyScheduler::new(
             consume_work_senders,
             finished_consume_work_receiver,
-            PrioGraphSchedulerConfig::default(),
+            GreedySchedulerConfig::default(),
         );
         let exit = Arc::new(AtomicBool::new(false));
         let scheduler_controller = SchedulerController::new(
@@ -574,6 +642,7 @@ mod tests {
             bank_forks.read().unwrap().sharable_banks(),
             scheduler,
             vec![], // no actual workers with metrics to report, this can be empty
+            Arc::new(SchedulerPriorityFloor::default()),
         );
 
         (test_frame, scheduler_controller)
@@ -605,8 +674,106 @@ mod tests {
         Transaction::new(&vec![from_keypair], message, recent_blockhash)
     }
 
-    fn to_banking_packet_batch(txs: &[Transaction]) -> BankingPacketBatch {
-        BankingPacketBatch::new(to_packet_batches(txs, NUM_PACKETS))
+    fn create_nonce_account_and_transaction(
+        bank: &Bank,
+        mint_keypair: &Keypair,
+    ) -> (Transaction, Pubkey) {
+        let nonce_pubkey = Pubkey::new_unique();
+        let nonce_data = nonce::state::Data::new(
+            mint_keypair.pubkey(),
+            DurableNonce::from_blockhash(&Hash::new_unique()),
+            5000,
+        );
+        let nonce_account = AccountSharedData::new_data(
+            bank.get_minimum_balance_for_rent_exemption(nonce::state::State::size()),
+            &nonce::versions::Versions::new(nonce::state::State::Initialized(nonce_data.clone())),
+            &system_program::id(),
+        )
+        .unwrap();
+        bank.store_account(&nonce_pubkey, &nonce_account);
+
+        let ixs = [
+            system_instruction::advance_nonce_account(&nonce_pubkey, &mint_keypair.pubkey()),
+            system_instruction::transfer(&mint_keypair.pubkey(), &Pubkey::new_unique(), 1),
+        ];
+        let message = Message::new(&ixs, Some(&mint_keypair.pubkey()));
+        let transaction = Transaction::new(&[mint_keypair], message, nonce_data.blockhash());
+        (transaction, nonce_pubkey)
+    }
+
+    // `clear_container()` removes nonce map entries with nonce transactions
+    #[test]
+    fn test_clear_container_clears_nonce_entry() {
+        let (mut test_frame, mut scheduler_controller) =
+            create_test_frame(1, test_create_transaction_view_receive_and_buffer);
+        let TestFrame {
+            bank,
+            mint_keypair,
+            banking_packet_sender,
+            ..
+        } = &mut test_frame;
+
+        let (transaction, nonce_pubkey) = create_nonce_account_and_transaction(bank, mint_keypair);
+        banking_packet_sender
+            .send(to_banking_packet_batch(&[transaction]))
+            .unwrap();
+        scheduler_controller
+            .receive_and_buffer_packets(&BufferedPacketsDecision::Hold)
+            .unwrap();
+
+        assert!(
+            scheduler_controller
+                .container
+                .get_nonce_transaction_priority_id(&nonce_pubkey)
+                .is_some()
+        );
+
+        scheduler_controller.clear_container();
+
+        assert!(
+            scheduler_controller
+                .container
+                .get_nonce_transaction_priority_id(&nonce_pubkey)
+                .is_none()
+        );
+    }
+
+    // `incremental_recheck()` removes nonce map entries with nonce transactions
+    #[test]
+    fn test_incremental_recheck_clears_nonce_entry() {
+        let (mut test_frame, mut scheduler_controller) =
+            create_test_frame(1, test_create_transaction_view_receive_and_buffer);
+        let TestFrame {
+            bank,
+            mint_keypair,
+            banking_packet_sender,
+            ..
+        } = &mut test_frame;
+
+        let (transaction, nonce_pubkey) = create_nonce_account_and_transaction(bank, mint_keypair);
+        banking_packet_sender
+            .send(to_banking_packet_batch(std::slice::from_ref(&transaction)))
+            .unwrap();
+        scheduler_controller
+            .receive_and_buffer_packets(&BufferedPacketsDecision::Hold)
+            .unwrap();
+
+        assert!(
+            scheduler_controller
+                .container
+                .get_nonce_transaction_priority_id(&nonce_pubkey)
+                .is_some()
+        );
+
+        bank.process_transaction(&transaction).unwrap();
+        scheduler_controller.incremental_recheck();
+
+        assert!(
+            scheduler_controller
+                .container
+                .get_nonce_transaction_priority_id(&nonce_pubkey)
+                .is_none()
+        );
     }
 
     // Helper function to let test receive and then schedule packets.
@@ -635,6 +802,10 @@ mod tests {
             .unwrap_or_default()
         {}
         let now = Instant::now();
+        let slot_time = decision
+            .bank()
+            .map(|bank| Duration::from_nanos_u128(bank.ns_per_slot))
+            .unwrap();
         assert!(
             scheduler_controller
                 .process_transactions(
@@ -642,8 +813,10 @@ mod tests {
                     Some(&CostPacer {
                         block_limit: u64::MAX,
                         shared_block_cost: SharedBlockCost::new(0),
-                        detection_time: now.checked_sub(Duration::from_millis(400)).unwrap(),
-                        fill_time: Some(Duration::from_millis(300)),
+                        detection_time: now.checked_sub(slot_time).unwrap(),
+                        fill_time: Some(slot_time.saturating_sub(Duration::from_millis(
+                            DEFAULT_SCHEDULER_PACING_NON_FILL_TIME_MILLIS
+                        ))),
                     }),
                     &now
                 )
@@ -784,16 +957,16 @@ mod tests {
 
         // We expect 2 batches to be scheduled
         test_receive_then_schedule(&mut scheduler_controller);
-        let consume_works = (0..2)
-            .map(|_| consume_work_receivers[0].try_recv().unwrap())
-            .collect_vec();
+        let consume_work = consume_work_receivers[0].try_recv().unwrap();
+        assert!(consume_work_receivers[0].try_recv().is_err());
 
-        let num_txs_per_batch = consume_works.iter().map(|cw| cw.ids.len()).collect_vec();
-        let message_hashes = consume_works
+        let num_txs_per_batch = consume_work.ids.len();
+        let message_hashes = consume_work
+            .transactions
             .iter()
-            .flat_map(|cw| cw.transactions.iter().map(|tx| tx.message_hash()))
+            .map(|tx| tx.message_hash())
             .collect_vec();
-        assert_eq!(num_txs_per_batch, vec![1; 2]);
+        assert_eq!(num_txs_per_batch, 2);
         assert_eq!(message_hashes, vec![&tx2_hash, &tx1_hash]);
     }
 
@@ -852,15 +1025,17 @@ mod tests {
             .send(to_banking_packet_batch(&txs2))
             .unwrap();
 
-        // We expect 4 batches to be scheduled
         test_receive_then_schedule(&mut scheduler_controller);
-        let consume_works = (0..4)
-            .map(|_| consume_work_receivers[0].try_recv().unwrap())
-            .collect_vec();
+        let consume_works = consume_work_receivers[0].try_iter().collect_vec();
 
         assert_eq!(
-            consume_works.iter().map(|cw| cw.ids.len()).collect_vec(),
-            vec![TARGET_NUM_TRANSACTIONS_PER_BATCH; 4]
+            consume_works.iter().map(|cw| cw.ids.len()).sum::<usize>(),
+            4 * TARGET_NUM_TRANSACTIONS_PER_BATCH
+        );
+        assert!(
+            consume_works
+                .iter()
+                .all(|cw| cw.ids.len() < TARGET_NUM_TRANSACTIONS_PER_BATCH)
         );
     }
 
@@ -1012,5 +1187,95 @@ mod tests {
             .map(|tx| tx.message_hash())
             .collect_vec();
         assert_eq!(message_hashes, vec![&tx1_hash]);
+    }
+}
+
+#[cfg(test)]
+mod saturation_state_tests {
+    use super::*;
+
+    fn saturation_watermark() -> usize {
+        TOTAL_BUFFERED_PACKETS.saturating_mul(SATURATION_BUFFER_PCT as usize) / 100
+    }
+
+    fn desaturation_watermark() -> usize {
+        TOTAL_BUFFERED_PACKETS.saturating_mul(DESATURATION_BUFFER_PCT as usize) / 100
+    }
+
+    fn make_state() -> (SaturationState, Arc<SchedulerPriorityFloor>) {
+        let priority_floor = Arc::new(SchedulerPriorityFloor::new());
+        let state = SaturationState::new(priority_floor.clone(), TOTAL_BUFFERED_PACKETS);
+        (state, priority_floor)
+    }
+
+    #[test]
+    fn starts_unsaturated() {
+        let (mut state, floor) = make_state();
+        assert!(!state.update(0, 0));
+        assert_eq!(floor.get(), 0);
+    }
+
+    #[test]
+    fn does_not_enter_when_buffer_below_saturation_watermark() {
+        let (mut state, floor) = make_state();
+        assert!(!state.update(saturation_watermark() - 1, 0));
+        assert_eq!(floor.get(), 0);
+    }
+
+    #[test]
+    fn enters_when_buffer_reaches_saturation_watermark() {
+        let (mut state, _floor) = make_state();
+        assert!(state.update(saturation_watermark(), 0));
+    }
+
+    #[test]
+    fn enters_on_capacity_drops_even_below_watermark() {
+        // Direct trigger: any on-capacity drop saturates regardless of
+        // buffer-watermark — invariant to future changes in the trim policy.
+        let (mut state, _floor) = make_state();
+        assert!(state.update(0, 1));
+    }
+
+    #[test]
+    fn publish_floor_writes_value() {
+        let (state, floor) = make_state();
+        state.publish_floor(42);
+        assert_eq!(floor.get(), 42);
+    }
+
+    #[test]
+    fn stays_saturated_at_desaturation_watermark() {
+        let (mut state, _floor) = make_state();
+        assert!(state.update(saturation_watermark(), 0));
+        assert!(state.update(desaturation_watermark(), 0));
+    }
+
+    #[test]
+    fn exits_when_buffer_drops_below_desaturation_watermark() {
+        let (mut state, _floor) = make_state();
+        assert!(state.update(saturation_watermark(), 0));
+        assert!(!state.update(desaturation_watermark() - 1, 0));
+    }
+
+    #[test]
+    fn stays_saturated_on_drops_even_below_desaturation_watermark() {
+        // Direct trigger keeps us saturated even if the buffer has drained,
+        // because drops in the same tick mean we still need backpressure.
+        let (mut state, _floor) = make_state();
+        assert!(state.update(saturation_watermark(), 0));
+        assert!(state.update(desaturation_watermark() - 1, 1));
+    }
+
+    #[test]
+    fn drop_clears_floor() {
+        // The floor outlives the controller (it's shared with sigverify), so
+        // tear-down must clear any stale value.
+        let floor = Arc::new(SchedulerPriorityFloor::new());
+        {
+            let state = SaturationState::new(floor.clone(), TOTAL_BUFFERED_PACKETS);
+            state.publish_floor(123);
+            assert_eq!(floor.get(), 123);
+        }
+        assert_eq!(floor.get(), 0);
     }
 }

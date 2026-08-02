@@ -7,10 +7,13 @@ authors = { workspace = true }
 repository = { workspace = true }
 homepage = { workspace = true }
 license = { workspace = true }
-edition = "2024"
+edition = { workspace = true }
+rust-version = { workspace = true }
 
 [package.metadata.docs.rs]
 targets = ["x86_64-unknown-linux-gnu"]
+all-features = true
+rustdoc-args = ["--cfg=docsrs"]
 
 [lib]
 name = "solana_net_utils"
@@ -21,6 +24,7 @@ dev-context-only-utils = ["dep:anyhow", "dep:pcap-file", "dep:hxdmp"]
 shuttle-test = ["dep:shuttle", "solana-svm-type-overrides/shuttle-test"]
 
 [dependencies]
+agave-xdp = { workspace = true }
 anyhow = { workspace = true, optional = true }
 bincode = { workspace = true }
 bytes = { workspace = true }

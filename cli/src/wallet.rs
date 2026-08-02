@@ -27,6 +27,7 @@ use {
         CliTransaction, CliTransactionConfirmation, OutputFormat, ReturnSignersConfig,
         display::{BuildBalanceMessageConfig, build_balance_message},
         return_signers_with_config,
+        stdout::writeln_stdout,
     },
     solana_commitment_config::CommitmentConfig,
     solana_message::Message,
@@ -761,23 +762,25 @@ pub async fn process_airdrop(
     } else {
         config.pubkey()?
     };
-    println!(
+    writeln_stdout(format_args!(
         "Requesting airdrop of {}",
         build_balance_message(lamports, false, true),
-    );
+    ))?;
 
     let pre_balance = rpc_client.get_balance(&pubkey).await?;
 
     let result = request_and_confirm_airdrop(rpc_client, config, &pubkey, lamports).await;
     if let Ok(signature) = result {
         let signature_cli_message = log_instruction_custom_error::<SystemError>(result, config)?;
-        println!("{signature_cli_message}");
+        writeln_stdout(format_args!("{signature_cli_message}"))?;
 
         let current_balance = rpc_client.get_balance(&pubkey).await?;
 
         if current_balance < pre_balance.saturating_add(lamports) {
-            println!("Balance unchanged");
-            println!("Run `solana confirm -v {signature:?}` for more info");
+            writeln_stdout(format_args!("Balance unchanged"))?;
+            writeln_stdout(format_args!(
+                "Run `solana confirm -v {signature:?}` for more info"
+            ))?;
             Ok("".to_string())
         } else {
             Ok(build_balance_message(current_balance, false, true))

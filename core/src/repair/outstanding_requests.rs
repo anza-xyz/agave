@@ -7,17 +7,28 @@ use {
 
 pub const DEFAULT_REQUEST_EXPIRATION_MS: u64 = 60_000;
 
-pub struct OutstandingRequests<T> {
-    requests: LruCache<Nonce, RequestStatus<T>>,
+pub struct OutstandingRequests<T, U = ()> {
+    requests: LruCache<Nonce, RequestStatus<T, U>>,
 }
 
-impl<T, S: ?Sized> OutstandingRequests<T>
+impl<T, S: ?Sized, U> OutstandingRequests<T, U>
 where
     T: RequestResponse<Response = S>,
 {
-    // Returns boolean indicating whether sufficient time has passed for a request with
-    // the given timestamp to be made
+    /// Add a request to the cache, returns the nonce to be sent with the repair request
+    /// and expected on the response.
     pub fn add_request(&mut self, request: T, now: u64) -> Nonce {
+        self.add_request_with_metadata(request, now, None)
+    }
+
+    /// Similar to `add_request` but additionally specifies an associated metadata
+    /// for the nonce that can be fetched with `fetch_metadata_for_nonce`.
+    pub fn add_request_with_metadata(
+        &mut self,
+        request: T,
+        now: u64,
+        metadata: Option<U>,
+    ) -> Nonce {
         let num_expected_responses = request.num_expected_responses();
         let nonce = rng().random_range(0..Nonce::MAX);
         self.requests.put(
@@ -26,49 +37,73 @@ where
                 expire_timestamp: now + DEFAULT_REQUEST_EXPIRATION_MS,
                 num_expected_responses,
                 request,
+                metadata,
             },
         );
         nonce
     }
 
+    /// Register a response to the request associated with `nonce`.
+    /// If there are no more expected responses to the request, return `None`
+    ///
+    /// Performs validation on the response, if:
+    /// - Request has expired
+    /// - Or validation fails
+    ///
+    /// Deletes the request from the cache
+    ///
+    /// Otherwise decrement the # of expected requests.
+    /// If the expected number of responses is now 0 and there is no metadata associated with the request,
+    /// delete the response.
+    ///
+    /// Finally return `success_fn(request)`
     pub fn register_response<R>(
         &mut self,
         nonce: u32,
         response: &S,
         now: u64,
-        // runs if the response was valid
         success_fn: impl Fn(&T) -> R,
     ) -> Option<R> {
-        let (response, should_delete) = self
-            .requests
-            .get_mut(&nonce)
-            .map(|status| {
-                if status.num_expected_responses > 0
-                    && now < status.expire_timestamp
-                    && status.request.verify_response(response)
-                {
-                    status.num_expected_responses -= 1;
-                    (
-                        Some(success_fn(&status.request)),
-                        status.num_expected_responses == 0,
-                    )
-                } else {
-                    (None, true)
-                }
-            })
-            .unwrap_or((None, false));
+        let mut should_delete = false;
+        let response = self.requests.get_mut(&nonce).and_then(|status| {
+            if status.num_expected_responses == 0 {
+                // No more expected responses
+                return None;
+            }
+
+            if now >= status.expire_timestamp || !status.request.verify_response(response) {
+                // Invalid/expired response should invalidate this nonce.
+                should_delete = true;
+                return None;
+            }
+
+            status.num_expected_responses -= 1;
+            if status.num_expected_responses == 0 && status.metadata.is_none() {
+                // No metadata, and no more expected responses safe to delete eagerly.
+                should_delete = true;
+            }
+            Some(success_fn(&status.request))
+        });
 
         if should_delete {
             self.requests
                 .pop(&nonce)
-                .expect("Delete must delete existing object");
+                .expect("request must exist when marked for deletion");
         }
-
         response
+    }
+
+    /// Fetches metadata associated with the nonce
+    pub fn fetch_metadata_for_nonce(&self, nonce: u32) -> Option<U>
+    where
+        U: Copy,
+    {
+        let status = self.requests.get(&nonce)?;
+        status.metadata
     }
 }
 
-impl<T> Default for OutstandingRequests<T> {
+impl<T, U> Default for OutstandingRequests<T, U> {
     fn default() -> Self {
         Self {
             requests: LruCache::new(16 * 1024),
@@ -76,23 +111,46 @@ impl<T> Default for OutstandingRequests<T> {
     }
 }
 
-pub struct RequestStatus<T> {
+pub struct RequestStatus<T, U> {
     expire_timestamp: u64,
     num_expected_responses: u32,
     request: T,
+    metadata: Option<U>,
 }
 
 #[cfg(test)]
 pub(crate) mod tests {
     use {
-        super::*, crate::repair::serve_repair::ShredRepairType, solana_keypair::Keypair,
-        solana_ledger::shred::Shredder, solana_time_utils::timestamp,
+        super::*,
+        crate::repair::{request_response::RequestResponse, serve_repair::ShredRepairType},
+        solana_hash::Hash,
+        solana_keypair::Keypair,
+        solana_ledger::{blockstore_meta::BlockLocation, shred::Shredder},
+        solana_time_utils::timestamp,
     };
+
+    #[derive(Clone, Copy)]
+    struct TestRequest {
+        expected_response: u8,
+        num_expected_responses: u32,
+    }
+
+    impl RequestResponse for TestRequest {
+        type Response = u8;
+
+        fn num_expected_responses(&self) -> u32 {
+            self.num_expected_responses
+        }
+
+        fn verify_response(&self, response: &Self::Response) -> bool {
+            self.expected_response == *response
+        }
+    }
 
     #[test]
     fn test_add_request() {
         let repair_type = ShredRepairType::Orphan(9);
-        let mut outstanding_requests = OutstandingRequests::default();
+        let mut outstanding_requests = OutstandingRequests::<ShredRepairType>::default();
         let nonce = outstanding_requests.add_request(repair_type, timestamp());
         let request_status = outstanding_requests.requests.get(&nonce).unwrap();
         assert_eq!(request_status.request, repair_type);
@@ -100,12 +158,13 @@ pub(crate) mod tests {
             request_status.num_expected_responses,
             repair_type.num_expected_responses()
         );
+        assert!(request_status.metadata.is_none());
     }
 
     #[test]
     fn test_timeout_expired_remove() {
         let repair_type = ShredRepairType::Orphan(9);
-        let mut outstanding_requests = OutstandingRequests::default();
+        let mut outstanding_requests = OutstandingRequests::<ShredRepairType>::default();
         let nonce = outstanding_requests.add_request(repair_type, timestamp());
         let keypair = Keypair::new();
         let shred = Shredder::single_shred_for_tests(0, &keypair);
@@ -113,8 +172,8 @@ pub(crate) mod tests {
         let expire_timestamp = outstanding_requests
             .requests
             .get(&nonce)
-            .unwrap()
-            .expire_timestamp;
+            .map(|status| status.expire_timestamp)
+            .unwrap();
 
         assert!(
             outstanding_requests
@@ -127,23 +186,23 @@ pub(crate) mod tests {
     #[test]
     fn test_register_response() {
         let repair_type = ShredRepairType::Orphan(9);
-        let mut outstanding_requests = OutstandingRequests::default();
+        let mut outstanding_requests = OutstandingRequests::<ShredRepairType>::default();
         let nonce = outstanding_requests.add_request(repair_type, timestamp());
         let keypair = Keypair::new();
         let shred = Shredder::single_shred_for_tests(0, &keypair);
         let mut expire_timestamp = outstanding_requests
             .requests
             .get(&nonce)
-            .unwrap()
-            .expire_timestamp;
+            .map(|status| status.expire_timestamp)
+            .unwrap();
         let mut num_expected_responses = outstanding_requests
             .requests
             .get(&nonce)
-            .unwrap()
-            .num_expected_responses;
+            .map(|status| status.num_expected_responses)
+            .unwrap();
         assert!(num_expected_responses > 1);
 
-        // Response that passes all checks should decrease num_expected_responses
+        // Response that passes all checks should decrease num_expected_responses.
         assert!(
             outstanding_requests
                 .register_response(nonce, shred.payload(), expire_timestamp - 1, |_| ())
@@ -159,7 +218,7 @@ pub(crate) mod tests {
             num_expected_responses
         );
 
-        // Response with incorrect nonce is ignored
+        // Response with incorrect nonce is ignored.
         assert!(
             outstanding_requests
                 .register_response(nonce + 1, shred.payload(), expire_timestamp - 1, |_| ())
@@ -180,7 +239,7 @@ pub(crate) mod tests {
         );
 
         // Response with timestamp over limit should remove status, preventing late
-        // responses from being accepted
+        // responses from being accepted.
         assert!(
             outstanding_requests
                 .register_response(nonce, shred.payload(), expire_timestamp, |_| ())
@@ -188,18 +247,19 @@ pub(crate) mod tests {
         );
         assert!(outstanding_requests.requests.get(&nonce).is_none());
 
-        // If number of outstanding requests hits zero, should also remove the entry
+        // If number of outstanding requests hits zero and there is no completion
+        // data, remove the entry.
         let nonce = outstanding_requests.add_request(repair_type, timestamp());
         expire_timestamp = outstanding_requests
             .requests
             .get(&nonce)
-            .unwrap()
-            .expire_timestamp;
+            .map(|status| status.expire_timestamp)
+            .unwrap();
         num_expected_responses = outstanding_requests
             .requests
             .get(&nonce)
-            .unwrap()
-            .num_expected_responses;
+            .map(|status| status.num_expected_responses)
+            .unwrap();
         assert!(num_expected_responses > 1);
         for _ in 0..num_expected_responses {
             assert!(outstanding_requests.requests.get(&nonce).is_some());
@@ -210,5 +270,45 @@ pub(crate) mod tests {
             );
         }
         assert!(outstanding_requests.requests.get(&nonce).is_none());
+    }
+
+    #[test]
+    fn test_fetch_metadata_for_registered_response_single_response_request() {
+        let mut outstanding_requests = OutstandingRequests::<TestRequest, BlockLocation>::default();
+        let now = timestamp();
+        let request = TestRequest {
+            expected_response: 42,
+            num_expected_responses: 1,
+        };
+        let block_id = Hash::new_unique();
+        let nonce = outstanding_requests.add_request_with_metadata(
+            request,
+            now,
+            Some(BlockLocation::Alternate { block_id }),
+        );
+
+        assert!(
+            outstanding_requests
+                .register_response(nonce, &42, now, |_| ())
+                .is_some()
+        );
+
+        // Duplicate responses should not remove metadata before consumption.
+        assert!(
+            outstanding_requests
+                .register_response(nonce, &42, now, |_| ())
+                .is_none()
+        );
+
+        assert_eq!(
+            outstanding_requests.fetch_metadata_for_nonce(nonce),
+            Some(BlockLocation::Alternate { block_id })
+        );
+        // Entry is lazily cleaned up by LRU, metadata still exists
+        assert!(outstanding_requests.requests.get(&nonce).is_some());
+        assert_eq!(
+            outstanding_requests.fetch_metadata_for_nonce(nonce),
+            Some(BlockLocation::Alternate { block_id })
+        );
     }
 }

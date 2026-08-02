@@ -5,7 +5,6 @@ use {
     solana_measure::measure::Measure,
     std::{
         fs::{OpenOptions, remove_file},
-        io::{Seek, SeekFrom, Write},
         num::NonZeroU64,
         path::{Path, PathBuf},
         sync::{
@@ -413,23 +412,15 @@ impl<O: BucketOccupied> BucketStorage<O> {
                 std::env::current_dir(),
             );
         }
-        let mut data = data.unwrap();
+        let data = data.unwrap();
 
         if create {
-            // Theoretical performance optimization: write a zero to the end of
-            // the file so that we won't have to resize it later, which may be
-            // expensive.
             //debug!("GROWING file {}", capacity * cell_size as u64);
-            data.seek(SeekFrom::Start(create_bytes - 1)).unwrap();
-            data.write_all(&[0]).unwrap();
-            data.rewind().unwrap();
-            measure_new_file.stop();
-            let measure_flush = Measure::start("measure_flush");
-            data.flush().unwrap(); // can we skip this?
-            stats
-                .flush_file_us
-                .fetch_add(measure_flush.end_as_us(), Ordering::Relaxed);
+            // Theoretical performance optimization: set the logical/inode size
+            // so that we don't have to resize it later, which may be expensive.
+            data.set_len(create_bytes).unwrap();
         }
+        measure_new_file.stop();
         let mut measure_mmap = Measure::start("measure_mmap");
         let mmap = unsafe { MmapMut::map_mut(&data) }.unwrap_or_else(|err| {
             panic!(
@@ -553,6 +544,7 @@ mod test {
             bucket_storage::BucketOccupied,
             index_entry::{BucketWithHeader, IndexBucket},
         },
+        std::io::Write as _,
         tempfile::tempdir,
     };
 
@@ -629,7 +621,6 @@ mod test {
             )
             .is_none()
         );
-        agave_logger::setup();
         for len in [0, 1, 47, 48, 49, 4097] {
             // create a zero len file. That will fail to load since it is too small.
             let path = tmpdir.path().join("small");

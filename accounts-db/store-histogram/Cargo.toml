@@ -8,6 +8,7 @@ repository = { workspace = true }
 homepage = { workspace = true }
 license = { workspace = true }
 edition = { workspace = true }
+rust-version = { workspace = true }
 
 [features]
 agave-unstable-api = []
@@ -16,3 +17,6 @@ dev-context-only-utils = []
 [dependencies]
 clap = { workspace = true }
 solana-version = { workspace = true }
+
+[lints]
+workspace = true

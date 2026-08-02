@@ -112,7 +112,7 @@ impl ProgramStatistics {
         let other_interpretations = other.interpreted_invocations.load(ord);
         let this_interpretations = self
             .interpreted_invocations
-            .fetch_add(other.interpreted_invocations.load(ord), ord);
+            .fetch_add(other_interpretations, ord);
         self.total_interpretation_time_us
             .fetch_add(other.total_interpretation_time_us.load(ord), ord);
         if let Some(comp_ema) = ProgramCacheStats::combined_ema::<

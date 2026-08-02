@@ -3,7 +3,9 @@
 pub mod error;
 pub mod thread_aware_account_locks;
 
+#[cfg(unix)]
 pub mod bridge;
+#[cfg(unix)]
 pub mod handshake;
 pub mod pubkeys_ptr;
 pub mod responses_region;

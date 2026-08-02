@@ -1,16 +1,18 @@
 use {
     crate::{
         ArchiveFormat, ArchiveFormatDecompressor,
+        error::SnapshotError,
         hardened_unpack::{self, UnpackError},
     },
     agave_fs::{FileInfo, buffered_reader, file_io::file_creator, io_setup::IoSetupState},
     bzip2::bufread::BzDecoder,
-    crossbeam_channel::Sender,
+    crossbeam_channel::{SendError, Sender},
     std::{
         fs,
         io::{self, BufRead, BufReader},
         path::{Path, PathBuf},
-        thread::{self, JoinHandle},
+        sync::OnceLock,
+        thread::{self, Scope, ScopedJoinHandle},
         time::Instant,
     },
 };
@@ -25,15 +27,18 @@ const MAX_SNAPSHOT_READER_BUF_SIZE: usize = 128 * 1024 * 1024;
 const MAX_UNPACK_WRITE_BUF_SIZE: usize = 512 * 1024 * 1024;
 
 /// Streams unpacked files across channel
-pub fn streaming_unarchive_snapshot(
+pub fn streaming_unarchive_snapshot<'scope, 'env: 'scope>(
+    scope: &'scope Scope<'scope, 'env>,
     file_sender: Sender<FileInfo>,
     account_paths: Vec<PathBuf>,
     ledger_dir: PathBuf,
     snapshot_archive_path: PathBuf,
     archive_format: ArchiveFormat,
-    io_setup: IoSetupState,
-) -> JoinHandle<Result<(), UnpackError>> {
+    io_setup: &'env IoSetupState,
+) -> ScopedJoinHandle<'scope, Result<(), SnapshotError>> {
     let do_unpack = move |archive_path: &Path| {
+        let first_failed_send = OnceLock::<PathBuf>::new();
+        let first_failed_send_ref = &first_failed_send;
         let (decompressor, file_creator) = {
             // Bound the buffers based on input archive size (decompression multiplies content size,
             // but buffering more than origin isn't necessary).
@@ -42,19 +47,19 @@ pub fn streaming_unarchive_snapshot(
             let write_buf_size = MAX_UNPACK_WRITE_BUF_SIZE.min(archive_size);
 
             let decompressor =
-                decompressed_tar_reader(archive_format, archive_path, read_buf_size, &io_setup)?;
+                decompressed_tar_reader(archive_format, archive_path, read_buf_size, io_setup)?;
             (
                 decompressor,
-                file_creator(write_buf_size, &io_setup, move |file_info| {
-                    let result = file_sender.send(file_info);
-                    if let Err(err) = result {
-                        panic!(
-                            "failed to send path '{}' from unpacker to rebuilder: {err}",
-                            err.0.path.display(),
-                        );
+                file_creator(write_buf_size, io_setup, move |file_info| {
+                    match file_sender.send(file_info) {
+                        // Channel owns the file now — don't pass it back for closing.
+                        Ok(()) => None,
+                        Err(SendError(FileInfo { file, path, .. })) => {
+                            let _ = first_failed_send_ref.set(path);
+                            // Hand the file back so the creator closes it.
+                            Some(file)
+                        }
                     }
-                    // Don't pass `File` back to file creator, so it's not closed (owned by channel now)
-                    None
                 })?,
             )
         };
@@ -65,13 +70,16 @@ pub fn streaming_unarchive_snapshot(
             ledger_dir.as_path(),
             &account_paths,
         )
+        .map(|()| first_failed_send.into_inner())
     };
-
     thread::Builder::new()
         .name("solTarUnpack".to_string())
-        .spawn(move || {
-            do_unpack(&snapshot_archive_path)
-                .map_err(|err| UnpackError::Unpack(Box::new(err), snapshot_archive_path))
+        .spawn_scoped(scope, move || -> Result<(), SnapshotError> {
+            match do_unpack(&snapshot_archive_path) {
+                Err(err) => Err(UnpackError::Unpack(Box::new(err), snapshot_archive_path).into()),
+                Ok(Some(path)) => Err(SnapshotError::CrossbeamSend(SendError(path))),
+                Ok(None) => Ok(()),
+            }
         })
         .unwrap()
 }

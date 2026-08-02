@@ -40,7 +40,7 @@ fn setup_read_bench(
         0,                      // version
     );
     blockstore
-        .insert_shreds(shreds, None, false)
+        .insert_shreds(shreds, false)
         .expect("Expected successful insertion of shreds into ledger");
 }
 
@@ -55,7 +55,7 @@ fn bench_write_shreds(bench: &mut Bencher) {
         Blockstore::open(ledger_path.path()).expect("Expected to be able to open database ledger");
     bench.iter(move || {
         let shreds = entries_to_test_shreds(&entries, 0, 0, true, 0);
-        blockstore.insert_shreds(shreds, None, false).unwrap();
+        blockstore.insert_shreds(shreds, false).unwrap();
     });
 }
 
@@ -123,7 +123,7 @@ fn bench_insert_data_shred(bench: &mut Bencher) {
     let entries = create_ticks(num_entries, 0, Hash::default());
     bench.iter(move || {
         let shreds = entries_to_test_shreds(&entries, 0, 0, true, 0);
-        blockstore.insert_shreds(shreds, None, false).unwrap();
+        blockstore.insert_shreds(shreds, false).unwrap();
     });
 }
 

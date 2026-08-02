@@ -85,8 +85,8 @@ pub fn acquire_language(matches: &ArgMatches) -> Language {
     let language_name = LANGUAGE_ARG.name;
     match matches.get_one::<String>(language_name).unwrap().as_str() {
         "english" => Language::English,
-        "chinese-simplified" => Language::ChineseSimplified,
-        "chinese-traditional" => Language::ChineseTraditional,
+        "chinese-simplified" => Language::SimplifiedChinese,
+        "chinese-traditional" => Language::TraditionalChinese,
         "japanese" => Language::Japanese,
         "spanish" => Language::Spanish,
         "korean" => Language::Korean,
@@ -101,8 +101,8 @@ pub fn try_get_language(matches: &ArgMatches) -> Result<Option<Language>, Box<dy
         .try_get_one::<String>(LANGUAGE_ARG.name)?
         .map(|language| match language.as_str() {
             "english" => Language::English,
-            "chinese-simplified" => Language::ChineseSimplified,
-            "chinese-traditional" => Language::ChineseTraditional,
+            "chinese-simplified" => Language::SimplifiedChinese,
+            "chinese-traditional" => Language::TraditionalChinese,
             "japanese" => Language::Japanese,
             "spanish" => Language::Spanish,
             "korean" => Language::Korean,
