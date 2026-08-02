@@ -1,4 +1,4 @@
-//! The `blockstore_cleanup_service` drops older ledger data to limit disk space usage.
+//! The `BlockstoreCleanupService` drops older ledger data to limit disk space usage.
 //! The service works by counting the number of live data shreds in the ledger; this
 //! can be done quickly and should have a fairly stable correlation to actual bytes.
 //! Once the shred count (and thus roughly the byte count) reaches a threshold,
@@ -155,7 +155,9 @@ impl BlockstoreCleanupService {
             live_files
                 .iter()
                 .for_each(|file_meta| match file_meta.column_family_name.as_str() {
-                    columns::ShredData::NAME => num_data_shreds += file_meta.num_entries,
+                    columns::ShredData::NAME | columns::AlternateShredData::NAME => {
+                        num_data_shreds += file_meta.num_entries
+                    }
                     columns::ShredCode::NAME => num_coding_shreds += file_meta.num_entries,
                     _ => {}
                 });
@@ -307,7 +309,14 @@ impl BlockstoreCleanupService {
 }
 #[cfg(test)]
 mod tests {
-    use {super::*, crate::blockstore::make_many_slot_entries};
+    use {
+        super::*,
+        crate::{
+            blockstore::make_many_slot_entries, blockstore_meta::BlockLocation,
+            get_tmp_ledger_path_auto_delete,
+        },
+        solana_hash::Hash,
+    };
 
     fn flush_blockstore_contents_to_disk(blockstore: Blockstore) -> Blockstore {
         // The maybe_generate_automatic_cleanup_request() routine uses a method
@@ -451,6 +460,77 @@ mod tests {
             );
             assert_eq!(receiver.try_recv().unwrap(), latest_root - 1);
         }
+    }
+
+    impl Blockstore {
+        fn insert_raw_coding_shred(&self, slot: Slot, index: u64, shred: &[u8]) {
+            self.code_shred_cf.put_bytes((slot, index), shred).unwrap();
+        }
+
+        fn insert_raw_data_shred_at_location(
+            &self,
+            slot: Slot,
+            location: BlockLocation,
+            index: u64,
+            shred: &[u8],
+        ) {
+            match location {
+                BlockLocation::Original => {
+                    self.data_shred_cf.put_bytes((slot, index), shred).unwrap();
+                }
+                BlockLocation::Alternate { block_id } => {
+                    self.alt_data_shred_cf
+                        .put_bytes((slot, block_id, index), shred)
+                        .unwrap();
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn test_cleanup_counts_all_shred_types() {
+        let ledger_path = get_tmp_ledger_path_auto_delete!();
+        let blockstore = Blockstore::open(ledger_path.path()).unwrap();
+        let (sender, receiver) = bounded(1);
+
+        // Shreds do not need to be well formed in order to be counted so
+        // bypass the normal insertion methods to keep things simple
+        let shred = vec![7; 10];
+        let num_shreds_per_slot = 10;
+
+        let orig_location = BlockLocation::Original;
+        let alt_location = BlockLocation::Alternate {
+            block_id: Hash::new_unique(),
+        };
+        for index in 0..num_shreds_per_slot {
+            // Regular data shreds in slot 2
+            blockstore.insert_raw_data_shred_at_location(2, orig_location, index, &shred);
+            // Coding shreds in slot 4
+            blockstore.insert_raw_coding_shred(4, index, &shred);
+            // Alternate data shreds in slot 6
+            blockstore.insert_raw_data_shred_at_location(6, alt_location, index, &shred);
+        }
+
+        // Initiate a flush so inserted shreds found by maybe_generate_automatic_cleanup_request()
+        let blockstore = flush_blockstore_contents_to_disk(blockstore);
+
+        let mut last_purge_slot = 0;
+        let purge_interval = 0;
+        // All shreds will be eligible to be cleaned
+        let latest_root = 10;
+        blockstore.set_roots(std::iter::once(&latest_root)).unwrap();
+        // Set the limit to one less than number of shreds
+        let limit = (num_shreds_per_slot * 3) - 1;
+        let cleanup_strategy = BlockstoreCleanupStrategy::CountDataAndCodingShreds(limit);
+        BlockstoreCleanupService::maybe_generate_automatic_cleanup_request(
+            &blockstore,
+            &sender,
+            cleanup_strategy,
+            &mut last_purge_slot,
+            purge_interval,
+        );
+        // If a request was generated, all shreds must have been counted
+        assert!(receiver.try_recv().is_ok());
     }
 
     #[test]

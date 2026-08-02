@@ -960,7 +960,7 @@ impl DefaultTestArgs {
             rpc_port: 8899.to_string(),
             faucet_port: FAUCET_PORT.to_string(),
             dynamic_port_range: format!("{}-{}", VALIDATOR_PORT_RANGE.0, VALIDATOR_PORT_RANGE.1),
-            // See comments in ledger/src/blockstore_cleanup_service.rs for more
+            // See comments in ledger/src/blockstore/cleanup_service.rs for more
             // details, but 800k shreds is approximately 1 GB of space
             limit_blockstore_size: 800_000.to_string(),
             faucet_sol: (1_000_000.).to_string(),

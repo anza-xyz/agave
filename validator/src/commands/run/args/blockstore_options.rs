@@ -6,7 +6,7 @@ use {
     clap::{Arg, ArgMatches, value_t},
     solana_clap_utils::{hidden_unless_forced, input_validators::is_parsable},
     solana_ledger::{
-        blockstore_cleanup_service::{
+        blockstore::{
             DEFAULT_MAX_BLOCKSTORE_SHREDS, DEFAULT_MIN_MAX_BLOCKSTORE_SHREDS,
             LEGACY_DEFAULT_MAX_LEDGER_SHREDS, LEGACY_DEFAULT_MIN_MAX_LEDGER_SHREDS,
         },

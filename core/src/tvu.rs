@@ -54,8 +54,10 @@ use {
     },
     solana_keypair::Keypair,
     solana_ledger::{
-        blockstore::{Blockstore, MAX_COMPLETED_SLOTS_IN_CHANNEL, UpdateParentReceiver},
-        blockstore_cleanup_service::BlockstoreCleanupService,
+        blockstore::{
+            Blockstore, BlockstoreCleanupService, MAX_COMPLETED_SLOTS_IN_CHANNEL,
+            UpdateParentReceiver,
+        },
         blockstore_options::BlockstoreCleanupStrategy,
         entry_notifier_service::EntryNotifierSender,
         leader_schedule_cache::LeaderScheduleCache,
