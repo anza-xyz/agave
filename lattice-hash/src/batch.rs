@@ -340,16 +340,26 @@ impl Accumulator {
         self.staging.clear();
     }
 
-    /// Flush any staged remainder and return the accumulated lattice hash.
-    pub fn into_lt_hash(mut self) -> LtHash {
+    /// Flush any staged remainder and return the accumulated lattice hash,
+    /// resetting the running value to [`LtHash::identity`] so the accumulator can
+    /// be reused (its SIMD staging buffers are retained). Unlike
+    /// [`into_lt_hash`](Self::into_lt_hash), this does not consume `self`.
+    pub fn take_lt_hash(&mut self) -> LtHash {
         debug_assert!(
             self.staging.cur_len() == 0 && !self.cur_spilled,
-            "into_lt_hash() called with an unfinished message in progress",
+            "take_lt_hash() called with an unfinished message in progress",
         );
         if !self.staging.is_empty() {
             self.flush();
         }
-        self.acc
+        core::mem::replace(&mut self.acc, LtHash::identity())
+    }
+
+    /// Flush any staged remainder and return the accumulated lattice hash,
+    /// consuming the accumulator. See [`take_lt_hash`](Self::take_lt_hash) to drain
+    /// a reusable accumulator behind a `&mut` instead.
+    pub fn into_lt_hash(mut self) -> LtHash {
+        self.take_lt_hash()
     }
 }
 
