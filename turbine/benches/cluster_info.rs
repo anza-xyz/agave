@@ -85,6 +85,7 @@ fn broadcast_shreds_bench(b: &mut Bencher) {
         broadcast_shreds(
             socket,
             &shreds,
+            &mut Vec::new(),
             &cluster_nodes_cache,
             &last_datapoint,
             &mut TransmitShredsStats::default(),

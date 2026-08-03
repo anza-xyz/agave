@@ -532,6 +532,7 @@ fn next_broadcast_leader_pubkey(
 pub fn broadcast_shreds(
     socket: BroadcastSocket,
     shreds: &[Shred],
+    xdp_packets: &mut Vec<(bytes::Bytes, SocketAddr)>,
     cluster_nodes_cache: &ClusterNodesCache<BroadcastStage>,
     last_datapoint_submit: &AtomicInterval,
     transmit_stats: &mut TransmitShredsStats,
@@ -600,12 +601,14 @@ pub fn broadcast_shreds(
             transmit_stats.send_mmsg_elapsed += send_mmsg_time.as_us();
         }
         BroadcastSocket::Xdp(s) => {
+            xdp_packets.clear();
+            xdp_packets.extend(packets.map(|(payload, addr)| (payload.bytes.clone(), addr)));
             shred_select.stop();
             transmit_stats.shred_select += shred_select.as_us();
             let mut send_xdp_time = Measure::start("send_xdp");
-            for (idx, (payload, addr)) in packets.enumerate() {
+            for (idx, (payload, addr)) in xdp_packets.drain(..).enumerate() {
                 num_packets += 1;
-                if let Err(e) = s.try_send(idx, addr, payload.bytes.clone()) {
+                if let Err(e) = s.try_send(idx, addr, payload) {
                     log::warn!("xdp channel full: {e:?}");
                     transmit_stats.dropped_packets_xdp += 1;
                     result = Err(Error::XdpChannelFull);
