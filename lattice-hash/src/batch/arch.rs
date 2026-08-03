@@ -219,14 +219,13 @@ unsafe fn compress_batch<L: Lanes>(bufs: &[&[u32]], lens: &[usize], acc: &mut Lt
     let load_m = |off: &[usize; MAX_LANES]| -> [L; NUM_BLOCK_WORDS] {
         let mut m = [zero; NUM_BLOCK_WORDS];
         for blk in 0..sub_blocks {
-            let mut rows = [zero; MAX_LANES];
-            for l in 0..n {
+            let tile = &mut m[blk * n..blk * n + n];
+            for (l, row) in tile.iter_mut().enumerate() {
                 // `off[l]` is a byte offset; `bufs[l]` is `&[u32]`
                 let base = off[l] / size_of::<u32>() + blk * n;
-                rows[l] = unsafe { L::load(bufs[l].as_ptr().add(base)) };
+                *row = unsafe { L::load(bufs[l][base..].as_ptr()) };
             }
-            unsafe { L::transpose(&mut rows[..n]) };
-            m[blk * n..blk * n + n].copy_from_slice(&rows[..n]);
+            unsafe { L::transpose(tile) };
         }
         m
     };
