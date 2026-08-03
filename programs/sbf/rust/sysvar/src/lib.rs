@@ -12,31 +12,39 @@ use {
     solana_sdk_ids::sysvar,
     solana_stake_history::{StakeHistory, StakeHistoryGetEntry, sysvar::StakeHistorySysvar},
     solana_sysvar::{
-        Sysvar, SysvarSerialize,
-        clock::Clock,
-        epoch_rewards::EpochRewards,
-        epoch_schedule::EpochSchedule,
-        rent::Rent,
-        slot_hashes::{PodSlotHashes, SlotHashes},
-        slot_history::SlotHistory,
+        Sysvar, clock::Clock, epoch_rewards::EpochRewards, epoch_schedule::EpochSchedule,
+        rent::Rent, slot_hashes::PodSlotHashes,
     },
+    solana_sysvar_id::SysvarId,
 };
 
-fn sol_get_sysvar<T>() -> Result<T, ProgramError>
+fn from_account_info<T>(account_info: &AccountInfo) -> Result<T, ProgramError>
 where
-    T: SysvarSerialize,
+    T: wincode::DeserializeOwned<Dst = T> + SysvarId,
+{
+    if !T::check_id(account_info.unsigned_key()) {
+        return Err(ProgramError::InvalidArgument);
+    }
+    wincode::deserialize(&account_info.data.borrow()).map_err(|_| ProgramError::InvalidArgument)
+}
+
+fn sol_get_sysvar<T>(data_len: usize) -> Result<T, ProgramError>
+where
+    T: wincode::DeserializeOwned<Dst = T> + SysvarId,
 {
     #[cfg(target_os = "solana")]
     {
-        let len = T::size_of();
-        let mut data = vec![0; len];
+        let mut data = vec![0; data_len];
 
-        solana_sysvar::get_sysvar(&mut data, &T::id(), 0, len as u64)?;
+        solana_sysvar::get_sysvar(&mut data, &T::id(), 0, data_len as u64)?;
 
-        bincode::deserialize(&data).map_err(|_| ProgramError::InvalidArgument)
+        wincode::deserialize(&data).map_err(|_| ProgramError::InvalidArgument)
     }
     #[cfg(not(target_os = "solana"))]
-    Err(ProgramError::UnsupportedSysvar)
+    {
+        let _ = data_len;
+        Err(ProgramError::UnsupportedSysvar)
+    }
 }
 
 solana_program_entrypoint::entrypoint_no_alloc!(process_instruction);
@@ -58,12 +66,12 @@ pub fn process_instruction(
             {
                 msg!("Clock identifier:");
                 sysvar::clock::id().log();
-                let clock = Clock::from_account_info(&accounts[2]).unwrap();
+                let clock = from_account_info::<Clock>(&accounts[2]).unwrap();
                 assert_ne!(clock, Clock::default());
                 let got_clock = Clock::get()?;
                 assert_eq!(clock, got_clock);
                 // Syscall `sol_get_sysvar`.
-                let sgs_clock = sol_get_sysvar::<Clock>()?;
+                let sgs_clock = sol_get_sysvar::<Clock>(solana_sysvar::clock::SIZE)?;
                 assert_eq!(clock, sgs_clock);
             }
 
@@ -71,11 +79,12 @@ pub fn process_instruction(
             {
                 msg!("EpochRewards identifier:");
                 sysvar::epoch_rewards::id().log();
-                let epoch_rewards = EpochRewards::from_account_info(&accounts[10]).unwrap();
+                let epoch_rewards = from_account_info::<EpochRewards>(&accounts[10]).unwrap();
                 let got_epoch_rewards = EpochRewards::get()?;
                 assert_eq!(epoch_rewards, got_epoch_rewards);
                 // Syscall `sol_get_sysvar`.
-                let sgs_epoch_rewards = sol_get_sysvar::<EpochRewards>()?;
+                let sgs_epoch_rewards =
+                    sol_get_sysvar::<EpochRewards>(solana_sysvar::epoch_rewards::SIZE)?;
                 assert_eq!(epoch_rewards, sgs_epoch_rewards);
             }
 
@@ -83,12 +92,13 @@ pub fn process_instruction(
             {
                 msg!("EpochSchedule identifier:");
                 sysvar::epoch_schedule::id().log();
-                let epoch_schedule = EpochSchedule::from_account_info(&accounts[3]).unwrap();
+                let epoch_schedule = from_account_info::<EpochSchedule>(&accounts[3]).unwrap();
                 assert_eq!(epoch_schedule, EpochSchedule::default());
                 let got_epoch_schedule = EpochSchedule::get()?;
                 assert_eq!(epoch_schedule, got_epoch_schedule);
                 // Syscall `sol_get_sysvar`.
-                let sgs_epoch_schedule = sol_get_sysvar::<EpochSchedule>()?;
+                let sgs_epoch_schedule =
+                    sol_get_sysvar::<EpochSchedule>(solana_sysvar::epoch_schedule::SIZE)?;
                 assert_eq!(epoch_schedule, sgs_epoch_schedule);
             }
 
@@ -98,7 +108,7 @@ pub fn process_instruction(
                 msg!("RecentBlockhashes identifier:");
                 sysvar::recent_blockhashes::id().log();
                 let recent_blockhashes =
-                    RecentBlockhashes::from_account_info(&accounts[5]).unwrap();
+                    from_account_info::<RecentBlockhashes>(&accounts[5]).unwrap();
                 assert_ne!(recent_blockhashes, RecentBlockhashes::default());
             }
 
@@ -106,22 +116,13 @@ pub fn process_instruction(
             {
                 msg!("Rent identifier:");
                 sysvar::rent::id().log();
-                let rent = Rent::from_account_info(&accounts[6]).unwrap();
+                let rent = from_account_info::<Rent>(&accounts[6]).unwrap();
                 let got_rent = Rent::get()?;
                 assert_eq!(rent, got_rent);
                 // Syscall `sol_get_sysvar`.
-                let sgs_rent = sol_get_sysvar::<Rent>()?;
+                let sgs_rent = sol_get_sysvar::<Rent>(solana_sysvar::rent::SIZE)?;
                 assert_eq!(rent, sgs_rent);
             }
-
-            // Slot History
-            // (Not fixed-size, but also not supported)
-            msg!("SlotHistory identifier:");
-            sysvar::slot_history::id().log();
-            assert_eq!(
-                Err(ProgramError::UnsupportedSysvar),
-                SlotHistory::from_account_info(&accounts[8])
-            );
 
             Ok(())
         }
@@ -162,14 +163,7 @@ pub fn process_instruction(
             {
                 msg!("StakeHistory identifier:");
                 sysvar::stake_history::id().log();
-                let _: StakeHistory =
-                    if sysvar::stake_history::check_id(accounts[9].unsigned_key()) {
-                        bincode::deserialize(&accounts[9].data.borrow())
-                            .map_err(|_| ProgramError::InvalidArgument)
-                    } else {
-                        Err(ProgramError::InvalidArgument)
-                    }
-                    .unwrap();
+                let _ = from_account_info::<StakeHistory>(&accounts[9]).unwrap();
                 // Syscall `sol_get_sysvar`.
                 let stake_history_sysvar = StakeHistorySysvar(1);
                 assert!(stake_history_sysvar.get_entry(0).is_some());
@@ -182,10 +176,6 @@ pub fn process_instruction(
             {
                 msg!("SlotHashes identifier:");
                 sysvar::slot_hashes::id().log();
-                assert_eq!(
-                    Err(ProgramError::UnsupportedSysvar),
-                    SlotHashes::from_account_info(&accounts[7])
-                );
                 // Syscall `sol_get_sysvar`.
                 let pod_slot_hashes = PodSlotHashes::fetch()?;
                 assert!(pod_slot_hashes.get(/* slot */ &0)?.is_some());

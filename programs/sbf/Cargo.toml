@@ -163,12 +163,14 @@ solana-svm-transaction = "=4.2.0"
 solana-svm-type-overrides = { path = "../../svm-type-overrides", version = "=4.3.0-alpha.2" }
 solana-system-interface = { version = "=3.2", features = ["bincode"] }
 solana-sysvar = "=4.1.0"
+solana-sysvar-id = "=3.1.0"
 solana-test-validator = { path = "../../test-validator", version = "=4.3.0-alpha.2" }
 solana-vote = { path = "../../vote", version = "=4.3.0-alpha.2" }
 solana-vote-interface = "6.0.3"
 solana-vote-program = { path = "../../programs/vote", version = "=4.3.0-alpha.2" }
 test-case = "3.3.1"
 thiserror = "2.0"
+wincode = { version = "0.5.5", default-features = false }
 
 [features]
 sbf_c = []

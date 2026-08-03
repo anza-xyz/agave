@@ -206,6 +206,7 @@ dependencies = [
  "solana-core",
  "solana-cost-model",
  "solana-entry",
+ "solana-epoch-schedule",
  "solana-feature-gate-interface",
  "solana-genesis-config",
  "solana-genesis-utils",

@@ -4,7 +4,7 @@ use {
     log::*,
     serde::{Deserialize, Serialize},
     serde_json::Result,
-    solana_account::{AccountSharedData, create_account_shared_data_for_test},
+    solana_account::{AccountSharedData, WritableAccount},
     solana_cli_output::{OutputFormat, QuietDisplay, VerboseDisplay},
     solana_clock::Slot,
     solana_ledger::blockstore_options::AccessType,
@@ -469,10 +469,14 @@ pub fn program(ledger_path: &Path, matches: &ArgMatches<'_>) {
         program_id, // ID of the loaded program. It can modify accounts with the same owner key
         AccountSharedData::new(0, 0, &loader_id),
     ));
-    transaction_accounts.push((
-        sysvar::epoch_schedule::id(),
-        create_account_shared_data_for_test(bank.epoch_schedule()),
-    ));
+    let mut epoch_schedule_account =
+        AccountSharedData::new(1, solana_epoch_schedule::SIZE, &sysvar::id());
+    wincode::serialize_into(
+        epoch_schedule_account.data_as_mut_slice(),
+        bank.epoch_schedule(),
+    )
+    .unwrap();
+    transaction_accounts.push((sysvar::epoch_schedule::id(), epoch_schedule_account));
     with_mock_invoke_context!(invoke_context, transaction_context, transaction_accounts);
 
     // Adding `DELAY_VISIBILITY_SLOT_OFFSET` to slots to accommodate for delay visibility of the program

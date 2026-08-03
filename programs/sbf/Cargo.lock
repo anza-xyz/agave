@@ -8979,6 +8979,7 @@ dependencies = [
  "solana-program-error",
  "solana-pubkey 4.2.0",
  "solana-sysvar",
+ "wincode",
 ]
 
 [[package]]
@@ -9009,7 +9010,6 @@ dependencies = [
 name = "solana-sbf-rust-sysvar"
 version = "4.3.0-alpha.2"
 dependencies = [
- "bincode",
  "solana-account-info",
  "solana-define-syscall 3.0.0",
  "solana-instruction",
@@ -9021,6 +9021,8 @@ dependencies = [
  "solana-sdk-ids",
  "solana-stake-history",
  "solana-sysvar",
+ "solana-sysvar-id",
+ "wincode",
 ]
 
 [[package]]

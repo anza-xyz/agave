@@ -1037,7 +1037,7 @@ pub fn mock_process_instruction_with_feature_set<
         .any(|(key, _)| *key == sysvar::epoch_schedule::id())
     {
         let mut account = AccountSharedData::new(1, solana_epoch_schedule::SIZE, &sysvar::id());
-        bincode::serialize_into(account.data_as_mut_slice(), &EpochSchedule::default()).unwrap();
+        wincode::serialize_into(account.data_as_mut_slice(), &EpochSchedule::default()).unwrap();
         accounts.push((sysvar::epoch_schedule::id(), account));
     }
 
