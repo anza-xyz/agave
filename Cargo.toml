@@ -327,7 +327,7 @@ rustls = { version = "0.23.42", features = ["std"], default-features = false }
 scopeguard = "1.2.0"
 semver = "1.0.28"
 seqlock = "0.2.0"
-serde = { version = "1.0.228", features = ["derive"] }
+serde = { version = "1.0.229", features = ["derive"] }
 serde-big-array = "0.5.1"
 serde_bytes = "0.11.19"
 serde_json = "1.0.151"
