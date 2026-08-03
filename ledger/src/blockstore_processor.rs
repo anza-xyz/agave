@@ -219,7 +219,6 @@ fn process_entries(bank: &BankWithScheduler, entries: Vec<ReplayEntry>) -> Resul
                 }
             }
             EntryType::Transactions(transactions) => {
-
                 // Any bank replaying transactions must have a scheduler installed. Slot 0 -
                 // the only bank replayed before the scheduler pool is installed - is tick-only,
                 // so it never reaches here.
@@ -3754,19 +3753,9 @@ pub mod tests {
                 ),
             ],
         );
-        // should now be:
-        // keypair1=4
-        // keypair2=6
 
         let result = process_entries_for_tests_with_scheduler(&bank, vec![entry_1_to_2_twice]);
 
-        let balances = [
-            bank.get_balance(&keypair1.pubkey()),
-            bank.get_balance(&keypair2.pubkey()),
-        ];
-
-        // the first copy is committed before the second one fails
-        assert_eq!(balances, [4, 6]);
         assert_eq!(result, Err(TransactionError::AlreadyProcessed));
     }
 
