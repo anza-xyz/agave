@@ -847,6 +847,27 @@ mod tests {
             );
         }
 
+        let programdata_address = Pubkey::new_unique();
+        let state = UpgradeableLoaderState::Program {
+            programdata_address,
+        };
+        let mut program = AccountSharedData::new(1, 1, &loader_ids[2]);
+        program.set_data(bincode::serialize(&state).unwrap());
+        mock_bank
+            .account_shared_data
+            .borrow_mut()
+            .insert(program_ids[2], (program, 0));
+        let state = UpgradeableLoaderState::ProgramData {
+            slot: 0,
+            upgrade_authority_address: None,
+        };
+        let mut programdata = AccountSharedData::new(1, 1, &loader_ids[2]);
+        programdata.set_data(bincode::serialize(&state).unwrap());
+        mock_bank
+            .account_shared_data
+            .borrow_mut()
+            .insert(programdata_address, (programdata, 0));
+
         let tx = Transaction::new_with_compiled_instructions(
             &[&feepayer],
             &[program_ids[1], program_ids[2], loader_ids[2]],
@@ -907,7 +928,7 @@ mod tests {
                 ProgramToLoad {
                     program_id: &program_ids[2],
                     loader: ProgramCacheEntryOwner::LoaderV3,
-                    match_criteria: ProgramCacheMatchCriteria::NoCriteria,
+                    match_criteria: ProgramCacheMatchCriteria::DeployedOnOrAfterSlot(0),
                     last_modification_slot: 0,
                 },
             ]
