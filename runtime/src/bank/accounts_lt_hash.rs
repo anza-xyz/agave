@@ -465,6 +465,7 @@ fn accounts_hasher_thread_pool() -> &'static ThreadPool {
     static THREAD_POOL: LazyLock<ThreadPool> = LazyLock::new(|| {
         ThreadPoolBuilder::new()
             .num_threads(NUM_ACCOUNTS_HASHER_THREADS)
+            .stack_size(8 * 1024 * 1024)
             .thread_name(|i| format!("solAcctsHashr{i:02}"))
             .build()
             .expect("new accounts hasher rayon threadpool")
