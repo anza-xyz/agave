@@ -543,7 +543,7 @@ pub struct XdpTransmitSetup {
     pub modules: XdpModules,
 }
 
-/// Per-module XDP sender positions. `None` means the module uses UDP.
+/// Per-module XDP sender positions. `None` means the module uses OS sockets.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct XdpModules {
     pub tpu: Option<Vec<usize>>,

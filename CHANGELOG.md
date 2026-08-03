@@ -39,8 +39,9 @@ still accepted for backwards compatibility but slated for full removal in the fu
   user file (which overrides the defaults section by section), then matching CLI flags (which
   override the file). It currently covers XDP transmit: `[interfaces.<nic>]` declares a NIC's
   `queue_to_cpu_mapping` and `zero_copy`, and each XDP-capable module (`tpu`, `turbine`, `repair`,
-  `gossip`) may set `use_xdp` and, under `[<module>.xdp].tx`, the interface and queues it transmits
-  over.
+  `gossip`) may set `use_xdp` and, under `[<module>.xdp].tx`, the queues it transmits over. All
+  modules share a single interface (referencing more than one is an error), and every declared
+  `[interfaces.<nic>]` must be referenced by some module's `tx`.
 * Validators running without `--full-rpc-api` and with snapshot generation disabled no longer
   store transaction signature keys in the status cache. Message hashes remain cached for duplicate
   transaction detection.

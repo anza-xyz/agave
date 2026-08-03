@@ -175,6 +175,12 @@ pub fn execute(
     #[cfg(target_os = "linux")]
     let xdp_transmit_config: Option<(XdpConfig, XdpModules)> =
         build_xdp_config(matches, &operation, &bind_addresses)?;
+    // The config file covers Linux-only settings and is not even parsed on other
+    // platforms; reject it rather than silently ignoring it.
+    #[cfg(not(target_os = "linux"))]
+    if matches.value_of("experimental_config_file").is_some() {
+        Err("--experimental-config-file is only supported on Linux".to_string())?;
+    }
 
     let dynamic_port_range =
         solana_net_utils::parse_port_range(matches.value_of("dynamic_port_range").unwrap())
@@ -1439,12 +1445,25 @@ fn build_xdp_config(
     let interface = cli_interface.map(str::to_string).or(file_interface);
     let zero_copy = cli_zero_copy || (!file_interface_overridden && file_zero_copy);
 
-    // Queue source precedence: CLI, file tx union, then auto-selection.
-    // File-sourced queues preserve per-module scoping; global sources do not.
+    // Queue source precedence: CLI CPU list, file tx union when the CLI did not
+    // select a different interface, then auto-selection. File-sourced queues
+    // preserve per-module scoping; global sources do not.
     let (queues, file_tx_mode): (Vec<QueueCpuBinding>, bool) = if let Some(cpu_str) = cli_cpu_cores
     {
-        let queues = parse_cpu_ranges(cpu_str)
-            .expect("clap validator already accepted this CPU list")
+        let cpus =
+            parse_cpu_ranges(cpu_str).expect("clap validator already accepted this CPU list");
+        // An empty (e.g. reversed) range would build a transmitter with no
+        // queues, panicking on the first send instead of failing here.
+        if cpus.is_empty() {
+            return Err(format!("--xdp-cpu-cores `{cpu_str}` selects no CPUs"));
+        }
+        if !file_queues.is_empty() {
+            warn!(
+                "--xdp-cpu-cores overrides the config file queue mapping; ignoring its queue ids \
+                 and per-module tx scoping"
+            );
+        }
+        let queues = cpus
             .into_iter()
             .enumerate()
             .map(|(queue, cpu)| QueueCpuBinding {
@@ -1486,14 +1505,8 @@ fn build_xdp_config(
         ));
     }
 
-    // Convert per-module config into sender positions (indices into `queues`),
-    // or None when the module does not use XDP. A disabled module gets no
-    // sender. An enabled module that named queues in `tx` is scoped to those; an
-    // enabled module with no `tx` (or when the queue source is the global
-    // --xdp-cpu-cores / auto-selected core) uses all queues. "All queues" here
-    // means the transmitter's entire queue set (`queues` — the union of every
-    // module's tx queues, or the CLI/auto queues), not all hardware queues the
-    // NIC has.
+    // Convert per-module config to sender positions. `None` uses OS sockets;
+    // unscoped modules use all configured XDP senders.
     let all_positions: Vec<usize> = (0..queues.len()).collect();
     let module_positions = |module: &config_file::ModuleXdp| -> Option<Vec<usize>> {
         if !module.enabled {
@@ -1556,6 +1569,20 @@ mod xdp_tests {
         let matches = app.get_matches_from(vec!["agave-validator", "--no-xdp"]);
         let result = build_xdp_config(&matches, &Operation::Run, &single_ip_bind());
         assert!(result.unwrap().is_none(), "--no-xdp must disable XDP");
+    }
+
+    #[test]
+    fn test_empty_cpu_range_is_error() {
+        // A reversed range parses to an empty CPU list; it must fail at startup
+        // rather than build a transmitter with no queues.
+        let default_args = DefaultArgs::default();
+        let app = add_args(clap::App::new("agave-validator"), &default_args);
+        let matches = app.get_matches_from(vec!["agave-validator", "--xdp-cpu-cores", "5-3"]);
+        let result = build_xdp_config(&matches, &Operation::Run, &single_ip_bind());
+        assert!(
+            result.unwrap_err().contains("selects no CPUs"),
+            "an empty CPU range must be a startup error"
+        );
     }
 
     #[test]
