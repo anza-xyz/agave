@@ -219,13 +219,6 @@ fn process_entries(bank: &BankWithScheduler, entries: Vec<ReplayEntry>) -> Resul
                 }
             }
             EntryType::Transactions(transactions) => {
-                // An entry carrying no transactions is a tick, enforced at the only place
-                // `EntryType` is built from an `Entry`
-                // (`solana_entry::entry::validate_and_hash_entry_transactions`).
-                debug_assert!(
-                    !transactions.is_empty(),
-                    "transaction entry with no transactions"
-                );
 
                 // Any bank replaying transactions must have a scheduler installed. Slot 0 -
                 // the only bank replayed before the scheduler pool is installed - is tick-only,
@@ -3740,11 +3733,9 @@ pub mod tests {
         assert_matches!(bank.transfer(5, &mint_keypair, &keypair1.pubkey()), Ok(_));
         assert_matches!(bank.transfer(5, &mint_keypair, &keypair2.pubkey()), Ok(_));
 
-        // one entry, two instances of the same transaction. this entry is invalid, but the
-        // duplicate no longer conflicts on account locks, so it is only caught by the status
-        // cache once the second copy executes - after the first has already been committed to
-        // this bank. Replay marks the slot dead on any error, so that intermediate state is
-        // discarded and never observable.
+        // The scheduler executes identical transactions sequentially. The first transfer commits,
+        // then the status cache rejects the second as already processed.
+
         let entry_1_to_2_twice = next_entry(
             &bank.last_blockhash(),
             1,
