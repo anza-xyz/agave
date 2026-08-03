@@ -9494,9 +9494,9 @@ dependencies = [
 
 [[package]]
 name = "solana-poh-config"
-version = "3.0.0"
+version = "3.1.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "2f1fef1f2ff2480fdbcc64bef5e3c47bec6e1647270db88b43f23e3a55f8d9cf"
+checksum = "0b2a84a6e76e6e4de709f3104113062e843add5f116cd61c218347a42681fa53"
 dependencies = [
  "serde",
  "serde_derive",
