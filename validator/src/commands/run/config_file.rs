@@ -1,13 +1,13 @@
 //! Parser for the validator's `--experimental-config-file` TOML file.
 //!
-//! Config is resolved as built-in defaults, then user TOML, then CLI overrides.
-//! The file currently covers XDP transmit settings. `[interfaces.<nic>]` maps
-//! hardware queues to CPU workers, and `[<module>.xdp].tx` selects which queues
-//! each XDP-enabled module uses.
+//! Built-in defaults are merged with user TOML, then the caller applies matching
+//! CLI overrides. The file currently covers XDP transmit settings.
+//! `[interfaces.<nic>]` maps hardware queues to CPU workers, and
+//! `[<module>.xdp].tx` selects which queues each XDP-enabled module uses.
 //!
 //! The runtime currently uses a single shared XDP transmitter, so enabled
 //! modules may reference only one interface. Its queue set is the union of
-//! module `tx` queues; with no explicit queue, startup falls back to
+//! enabled modules' `tx` queues; with no explicit queue, startup falls back to
 //! interface/CPU auto-selection. An enabled module that names no `tx` transmits
 //! over that whole shared queue set (the union above), not the NIC's full
 //! hardware queue set. Every declared `[interfaces.<nic>]` must be named by some
@@ -15,6 +15,7 @@
 
 use {
     agave_xdp::transmitter::QueueCpuBinding,
+    log::warn,
     serde::Deserialize,
     std::{
         collections::{BTreeMap, BTreeSet},
@@ -74,8 +75,8 @@ struct RawModuleXdp {
 
 /// A module's XDP transmit config: whether it uses XDP (`use_xdp`) and the
 /// hardware queue ids it transmits over (from `[<module>.xdp].tx`). `tx_queues`
-/// is empty when the module named no queues, which the caller treats as "all
-/// queues".
+/// is empty when an enabled module named no queues, which the caller treats as
+/// "all queues". Disabled modules also have an empty list but get no sender.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) struct ModuleXdp {
     pub enabled: bool,
@@ -91,12 +92,12 @@ pub(crate) struct XdpFileConfig {
     pub turbine: ModuleXdp,
     pub repair: ModuleXdp,
     pub gossip: ModuleXdp,
-    /// The single interface referenced by modules' `tx` maps, if any. `None`
-    /// means no interface was named; the caller auto-detects.
+    /// The single interface referenced by enabled modules' `tx` maps, if any.
+    /// `None` means no enabled module named an interface; the caller auto-detects.
     pub interface: Option<String>,
-    /// Union of all modules' `tx` queues, mapped to CPUs via the interface's
-    /// `queue_to_cpu_mapping`. Empty means no queues were named; the caller
-    /// auto-selects a CPU.
+    /// Union of enabled modules' `tx` queues, mapped to CPUs via the interface's
+    /// `queue_to_cpu_mapping`. Empty means no enabled module named queues; the
+    /// caller auto-selects a CPU.
     pub queues: Vec<QueueCpuBinding>,
     /// Zero-copy setting of the referenced interface (`false` when none).
     pub zero_copy: bool,
@@ -171,8 +172,8 @@ fn resolve_interface(name: &str, raw: &RawInterface) -> Result<ResolvedInterface
     })
 }
 
-/// Resolve one module's `use_xdp` and validated `tx` queue ids, tracking the
-/// single interface all modules must share.
+/// Resolve one module's `use_xdp` and, when enabled, validated `tx` queue ids,
+/// tracking the single interface all enabled modules must share.
 fn resolve_module(
     module: &str,
     block: &Option<RawModule>,
@@ -265,7 +266,19 @@ fn resolve(config: &RawConfig) -> Result<XdpFileConfig, String> {
     let repair = resolve_module("repair", &config.repair, &interfaces, &mut referenced_iface)?;
     let gossip = resolve_module("gossip", &config.gossip, &interfaces, &mut referenced_iface)?;
 
-    // The transmitter's queue set is the union of every module's tx queues.
+    // An interface referenced only by disabled modules passes the dangling
+    // check above but is dead at runtime; say so instead of silently falling
+    // back to auto-selection.
+    for name in interfaces.keys() {
+        if Some(name) != referenced_iface.as_ref() {
+            warn!(
+                "interface `{name}` is only referenced by disabled modules; its configuration is \
+                 unused"
+            );
+        }
+    }
+
+    // The transmitter's queue set is the union of enabled modules' tx queues.
     let used_queues: BTreeSet<u32> = [&tpu, &turbine, &repair, &gossip]
         .iter()
         .flat_map(|m| m.tx_queues.iter().copied())
@@ -440,10 +453,11 @@ mod tests {
 
     #[test]
     fn interface_referenced_only_by_disabled_module_is_ok() {
-        // Disabling the sole referencing module must not strand its interface.
+        // A disabled module's tx still keeps its interface from being treated
+        // as an unreferenced declaration, although the interface is unused.
         let c = resolve_with_user(
-            "[interfaces.\"eth0\"]\nqueue_to_cpu_mapping = [{ queue = 0, cpu = 8 }]\n\n\
-             [turbine]\nuse_xdp = false\n[turbine.xdp]\ntx = { eth0 = [0] }\n",
+            "[interfaces.\"eth0\"]\nqueue_to_cpu_mapping = [{ queue = 0, cpu = 8 \
+             }]\n\n[turbine]\nuse_xdp = false\n[turbine.xdp]\ntx = { eth0 = [0] }\n",
         )
         .unwrap();
         assert!(!c.turbine.enabled);
