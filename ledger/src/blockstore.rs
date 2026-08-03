@@ -4495,15 +4495,17 @@ impl Blockstore {
     /// Finds a transaction by signature in the given slot and returns it along with its index.
     ///
     /// The index represents the transaction's 0-based position in the flattened list of all
-    /// transactions across all entries in this slot. This matches the `transaction_index`
-    /// stored in `AddressSignatures` when `write_transaction_status` is called during block
-    /// processing.
+    /// transactions across the entries in this slot, starting at `replay_fec_set_index` when the
+    /// slot has an UpdateParent marker. This matches the `transaction_index` stored in
+    /// `AddressSignatures` when `write_transaction_status` is called during block processing.
     fn find_transaction_in_slot(
         &self,
         slot: Slot,
         signature: Signature,
     ) -> Result<Option<(VersionedTransaction, u32)>> {
-        let slot_entries = self.get_slot_entries(slot, 0)?;
+        let slot_meta = self.meta(slot)?.ok_or(BlockstoreError::SlotUnavailable)?;
+        let slot_entries =
+            self.get_slot_entries(slot, u64::from(slot_meta.replay_fec_set_index))?;
         Ok(slot_entries
             .into_iter()
             .flat_map(|entry| entry.transactions)

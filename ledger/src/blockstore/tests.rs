@@ -7140,6 +7140,46 @@ fn test_complete_block_skips_pre_update_parent_entries() {
 }
 
 #[test]
+fn test_get_transaction_uses_post_update_parent_indexes() {
+    let ledger_path = get_tmp_ledger_path_auto_delete!();
+    let blockstore = Blockstore::open(ledger_path.path()).unwrap();
+
+    let slot = 104;
+    let original_parent = 103;
+    let update_parent = 100;
+    let fixture =
+        insert_complete_update_parent_slot(&blockstore, slot, original_parent, update_parent);
+
+    for (expected_index, signature) in fixture.post_update_signatures.iter().copied().enumerate() {
+        let transaction = blockstore
+            .get_complete_transaction(signature, slot)
+            .unwrap()
+            .unwrap();
+        assert_eq!(transaction.index, expected_index as u32);
+    }
+
+    blockstore.set_roots([slot].iter()).unwrap();
+    for (expected_index, signature) in fixture.post_update_signatures.iter().copied().enumerate() {
+        let transaction = blockstore
+            .get_rooted_transaction(signature)
+            .unwrap()
+            .unwrap();
+        assert_eq!(transaction.index, expected_index as u32);
+    }
+}
+
+#[test]
+fn test_find_transaction_in_slot_requires_slot_meta() {
+    let ledger_path = get_tmp_ledger_path_auto_delete!();
+    let blockstore = Blockstore::open(ledger_path.path()).unwrap();
+
+    assert_matches!(
+        blockstore.find_transaction_in_slot(1, Signature::new_unique()),
+        Err(BlockstoreError::SlotUnavailable)
+    );
+}
+
+#[test]
 fn test_complete_block_with_components_skips_pre_update_parent_components() {
     let ledger_path = get_tmp_ledger_path_auto_delete!();
     let blockstore = Blockstore::open(ledger_path.path()).unwrap();
