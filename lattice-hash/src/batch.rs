@@ -32,16 +32,147 @@ const NUM_CHUNK_WORDS: usize = CHUNK_LEN / 4;
 /// Widest SIMD lane count (AVX512 width) = max messages staged per batch.
 const MAX_LANES: usize = 16;
 
-/// A batched [`LtHash::mix_in`]: group-adds the XOF of exactly `bufs.len()`
-/// messages into `acc`, reading each lane in place from `bufs[l]` (a `u32`
-/// buffer zero-padded to its block boundary) of real byte length `lens[l]`.
+/// One lane's staging buffer: a whole BLAKE3 chunk of `u32` words, zero-padded
+/// past the message. Fixed size so a batch of them is contiguous, fixed-stride
+/// storage the SIMD kernel can read in place.
+type LaneBuf = [u32; NUM_CHUNK_WORDS];
+
+/// A read-only, matched view of one full-or-partial batch's staged lanes: for
+/// each `l < len()`, `lanes[l]` is a zero-padded chunk buffer holding a message
+/// of real byte length `lengths[l]` (`<= CHUNK_LEN`). `lanes.len() ==
+/// lengths.len()`. Produced by [`Staging::batch`], consumed by the mix-in
+/// functions and the `blake3` fallback in [`Accumulator::flush`].
+#[derive(Clone, Copy)]
+struct Batch<'a> {
+    lanes: &'a [LaneBuf],
+    lengths: &'a [usize],
+}
+
+impl Batch<'_> {
+    fn len(&self) -> usize {
+        self.lanes.len()
+    }
+}
+
+/// The staged lanes of one pending batch and their metadata, kept together so the
+/// invariants the SIMD kernel relies on live in one place: one fixed-size buffer
+/// per lane, each committed message zero-padded through its final compression
+/// block and no longer than `CHUNK_LEN`, and `count` completed lanes whose
+/// `lengths` line up exactly. `count == lanes.len()` means the batch is full.
+struct Staging {
+    /// `num_available_lanes` contiguous, fixed-stride lane buffers.
+    lanes: Box<[LaneBuf]>,
+    /// Real byte length of each committed lane; only `lengths[..count]` is valid.
+    lengths: [usize; MAX_LANES],
+    /// Number of committed messages staged so far (the in-progress one is lane `count`).
+    count: usize,
+    /// Bytes written into the in-progress lane (`lanes[count]`) so far — the
+    /// current message's length before `finish_current`. `0` between messages.
+    cur_len: usize,
+}
+
+impl Staging {
+    fn new(num_available_lanes: usize) -> Self {
+        Self {
+            lanes: vec![[0u32; NUM_CHUNK_WORDS]; num_available_lanes].into_boxed_slice(),
+            lengths: [0; MAX_LANES],
+            count: 0,
+            cur_len: 0,
+        }
+    }
+
+    /// The in-progress (not yet committed) lane's buffer, as bytes.
+    fn current_lane(&self) -> &[u8] {
+        bytemuck::cast_slice(self.lanes[self.count].as_slice())
+    }
+
+    /// The in-progress lane's buffer, as writable bytes.
+    fn current_lane_mut(&mut self) -> &mut [u8] {
+        bytemuck::cast_slice_mut(self.lanes[self.count].as_mut_slice())
+    }
+
+    /// Bytes staged for the in-progress message so far (`0` between messages).
+    fn cur_len(&self) -> usize {
+        self.cur_len
+    }
+
+    /// The in-progress message's staged bytes.
+    fn staged_bytes(&self) -> &[u8] {
+        &self.current_lane()[..self.cur_len]
+    }
+
+    /// Append `bytes` to the in-progress lane, advancing the cursor; returns
+    /// `false` (writing nothing) if they wouldn't fit one chunk, so the caller can
+    /// route the message to the `blake3` fallback instead.
+    fn try_append(&mut self, bytes: &[u8]) -> bool {
+        // `saturating_add` so a huge `bytes` can't wrap the bound check.
+        let end = self.cur_len.saturating_add(bytes.len());
+        if end > CHUNK_LEN {
+            return false;
+        }
+        let start = self.cur_len;
+        self.current_lane_mut()[start..end].copy_from_slice(bytes);
+        self.cur_len = end;
+        true
+    }
+
+    /// Abandon the in-progress message's staged bytes — it spilled to the `blake3`
+    /// fallback — leaving the lane free for the next message.
+    fn discard_current(&mut self) {
+        self.cur_len = 0;
+    }
+
+    /// Zero-pad the in-progress message's final compression block, commit it, and
+    /// report whether the batch is now full. `max(1)` keeps an empty message as a
+    /// single zeroed root block (= blake3("")).
+    fn finish_current(&mut self) -> bool {
+        let len = self.cur_len;
+        let valid = len.max(1).next_multiple_of(BLOCK_LEN);
+        self.current_lane_mut()[len..valid].fill(0);
+        self.lengths[self.count] = len;
+        self.count = self.count.wrapping_add(1);
+        self.cur_len = 0;
+        self.count == self.lanes.len()
+    }
+
+    /// A matched view of the `count` completed lanes and their lengths.
+    fn batch(&self) -> Batch<'_> {
+        Batch {
+            lanes: &self.lanes[..self.count],
+            lengths: &self.lengths[..self.count],
+        }
+    }
+
+    fn is_empty(&self) -> bool {
+        self.count == 0
+    }
+
+    fn clear(&mut self) {
+        self.count = 0;
+    }
+}
+
+impl core::fmt::Debug for Staging {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        // Omit the large lane buffers; the committed lengths are the useful state.
+        let lengths = &self.lengths[..self.count];
+        f.debug_struct("Staging")
+            .field("count", &self.count)
+            .field("lengths", &lengths)
+            .field("cur_len", &self.cur_len)
+            .finish_non_exhaustive()
+    }
+}
+
+/// A batched [`LtHash::mix_in`]: group-adds the XOF of every message in `batch`
+/// into `acc`, reading each lane in place from its zero-padded buffer.
 /// Implemented by the SIMD backends in [`arch`]; the non-SIMD path hashes via the
 /// `blake3` crate directly (see [`Accumulator::flush`]).
 ///
 /// # Safety
 /// Caller must ensure the backend's target feature is available and uphold the
 /// buffer contract documented on `arch`'s `compress_batch`.
-type BatchMixInFn = unsafe fn(bufs: &[&[u32]], lens: &[usize], acc: &mut LtHash);
+type BatchMixInFn = unsafe fn(batch: Batch<'_>, acc: &mut LtHash);
 
 /// Streaming accumulator for the lattice hash of many messages.
 ///
@@ -59,13 +190,8 @@ type BatchMixInFn = unsafe fn(bufs: &[&[u32]], lens: &[usize], acc: &mut LtHash)
 pub struct Accumulator {
     /// The lattice hash being built; the mix-in functions group-add into its raw elements.
     acc: LtHash,
-    /// One contiguous allocation for all `num_available_lanes` lane buffers; lane
-    /// `l` occupies the sub-buffer `batch_buffer[l*NUM_CHUNK_WORDS .. (l+1)*NUM_CHUNK_WORDS]`,
-    /// zero-padded past its message.
-    batch_buffer: Box<[u32]>,
-    /// Real byte length of each pending message.
-    /// `batch_lens.len()` is the pending count; capacity is fixed at `num_available_lanes`.
-    batch_lens: Vec<usize>,
+    /// The pending batch's staged lane buffers and their metadata.
+    staging: Staging,
     /// Messages per full batch = SIMD lane count of the selected backend (1 when
     /// there is no SIMD backend). A batch flushes once this many messages are staged.
     num_available_lanes: usize,
@@ -74,9 +200,6 @@ pub struct Accumulator {
     /// Serial blake3-crate hasher: the fallback for a message that overflows one
     /// chunk (`> CHUNK_LEN`) and for the non-SIMD / partial-tail path in `flush`.
     serial_hasher: blake3::Hasher,
-    /// Bytes written into the in-progress message's lane buffer by `add_part` so
-    /// far, i.e. its length before `finish_message`. `0` when no message is in progress.
-    cur_len: usize,
     /// Set when the in-progress message overflowed one chunk and is being
     /// streamed into `serial_hasher` rather than staged for the SIMD batch;
     /// carries that state across the message's remaining `add_part`s until `finish_message`.
@@ -84,13 +207,12 @@ pub struct Accumulator {
 }
 
 impl core::fmt::Debug for Accumulator {
-    // Omits the large lane `batch_buffer` scratch (and the opaque hasher / fn ptr).
+    // Omits the opaque hasher / fn ptr; `Staging`'s own `Debug` drops its buffers.
     fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
         f.debug_struct("Accumulator")
             .field("acc", &self.acc)
             .field("num_available_lanes", &self.num_available_lanes)
-            .field("batch_lens", &self.batch_lens)
-            .field("cur_len", &self.cur_len)
+            .field("staging", &self.staging)
             .field("cur_spilled", &self.cur_spilled)
             .finish_non_exhaustive()
     }
@@ -114,18 +236,12 @@ impl Accumulator {
             (1, None)
         }
         let (num_available_lanes, batch_mix_in_fn) = select_mix_in_fn();
-        // usize needs to be `<= 16 * 256`
-        let batch_words = num_available_lanes
-            .checked_mul(NUM_CHUNK_WORDS)
-            .expect("batch buffer word count fits usize");
         Self {
             acc: LtHash::identity(),
-            batch_buffer: vec![0u32; batch_words].into_boxed_slice(),
-            batch_lens: Vec::with_capacity(num_available_lanes),
+            staging: Staging::new(num_available_lanes),
             num_available_lanes,
             batch_mix_in_fn,
             serial_hasher: blake3::Hasher::new(),
-            cur_len: 0,
             cur_spilled: false,
         }
     }
@@ -142,20 +258,10 @@ impl Accumulator {
             self.serial_hasher.update(bytes);
             return;
         }
-        // `saturating_add` so a huge `bytes` can't wrap the bound check; then this
-        // message is simply routed to the fallback below.
-        let end = self.cur_len.saturating_add(bytes.len());
-        if end <= CHUNK_LEN {
-            // Fits one chunk: write straight into the current lane buffer.
-            let start = self.batch_lens.len().wrapping_mul(NUM_CHUNK_WORDS);
-            let lane_bytes: &mut [u8] = bytemuck::cast_slice_mut(
-                &mut self.batch_buffer[start..start.wrapping_add(NUM_CHUNK_WORDS)],
-            );
-            lane_bytes[self.cur_len..end].copy_from_slice(bytes);
-            self.cur_len = end;
-        } else {
-            // Overflows one chunk: hand the bytes buffered so far, plus `bytes`, to
-            // the serial blake3 hasher; `finish_message` folds in the result.
+        // Stage into the current lane unless the message overflows one chunk; then
+        // hand the bytes buffered so far, plus `bytes`, to the serial blake3 hasher
+        // (`finish_message` folds in the result).
+        if !self.staging.try_append(bytes) {
             self.spill_current();
             self.serial_hasher.update(bytes);
         }
@@ -169,22 +275,11 @@ impl Accumulator {
         if self.cur_spilled {
             self.acc.mix_in(&LtHash::with(&self.serial_hasher));
             self.cur_spilled = false;
-            self.cur_len = 0;
             return;
         }
-        // Zero-pad the message's last block (`BLOCK_LEN` = 64, one BLAKE3
-        // compression block), stage its length, and flush once a full batch has
-        // accumulated. `max(1)` keeps an empty message as a single zeroed root
-        // block (= blake3("")).
-        let valid = self.cur_len.max(1).next_multiple_of(BLOCK_LEN);
-        let start = self.batch_lens.len().wrapping_mul(NUM_CHUNK_WORDS);
-        let lane_bytes: &mut [u8] = bytemuck::cast_slice_mut(
-            &mut self.batch_buffer[start..start.wrapping_add(NUM_CHUNK_WORDS)],
-        );
-        lane_bytes[self.cur_len..valid].fill(0);
-        self.batch_lens.push(self.cur_len);
-        self.cur_len = 0;
-        if self.batch_lens.len() == self.num_available_lanes {
+        // Commit the message (zero-pads its last compression block, stages the
+        // length) and flush once the batch is full.
+        if self.staging.finish_current() {
             self.flush();
         }
     }
@@ -213,10 +308,8 @@ impl Accumulator {
     /// the SIMD batch. Called by [`add_part`](Self::add_part) on overflow.
     fn spill_current(&mut self) {
         self.serial_hasher.reset();
-        let start = self.batch_lens.len().wrapping_mul(NUM_CHUNK_WORDS);
-        let lane_bytes: &[u8] =
-            bytemuck::cast_slice(&self.batch_buffer[start..start.wrapping_add(NUM_CHUNK_WORDS)]);
-        self.serial_hasher.update(&lane_bytes[..self.cur_len]);
+        self.serial_hasher.update(self.staging.staged_bytes());
+        self.staging.discard_current();
         self.cur_spilled = true;
     }
 
@@ -225,29 +318,18 @@ impl Accumulator {
     /// backend, or a partial tail that doesn't fill every lane — falls back to the
     /// `blake3` crate.
     fn flush(&mut self) {
-        let count = self.batch_lens.len();
+        let batch = self.staging.batch();
         if let Some(simd) = self
             .batch_mix_in_fn
-            .filter(|_| count == self.num_available_lanes)
+            .filter(|_| batch.len() == self.num_available_lanes)
         {
-            let mut bufs: [&[u32]; MAX_LANES] = [&[][..]; MAX_LANES];
-            for (b, lane_buf) in bufs
-                .iter_mut()
-                .zip(self.batch_buffer.chunks_exact(NUM_CHUNK_WORDS))
-            {
-                *b = lane_buf;
-            }
             // SAFETY: a SIMD backend exists only when its target feature was
             // detected, and `filter` guarantees a full batch
-            // (`count == num_available_lanes == L::N`).
-            unsafe { simd(&bufs[..count], self.batch_lens.as_slice(), &mut self.acc) };
+            // (`batch.len() == num_available_lanes == L::N`).
+            unsafe { simd(batch, &mut self.acc) };
         } else {
-            for (lane_buf, &len) in self
-                .batch_buffer
-                .chunks_exact(NUM_CHUNK_WORDS)
-                .zip(&self.batch_lens)
-            {
-                let bytes: &[u8] = bytemuck::cast_slice(lane_buf);
+            for (lane, &len) in batch.lanes.iter().zip(batch.lengths) {
+                let bytes: &[u8] = bytemuck::cast_slice(lane.as_slice());
                 // Reset before each message: the shared hasher may be dirty from a
                 // prior message, flush, or `> CHUNK_LEN` add.
                 self.serial_hasher.reset();
@@ -255,16 +337,16 @@ impl Accumulator {
                 self.acc.mix_in(&LtHash::with(&self.serial_hasher));
             }
         }
-        self.batch_lens.clear();
+        self.staging.clear();
     }
 
     /// Flush any staged remainder and return the accumulated lattice hash.
     pub fn into_lt_hash(mut self) -> LtHash {
         debug_assert!(
-            self.cur_len == 0 && !self.cur_spilled,
-            "into_lt_hash() called with an unfinish_messageted message in progress",
+            self.staging.cur_len() == 0 && !self.cur_spilled,
+            "into_lt_hash() called with an unfinished message in progress",
         );
-        if !self.batch_lens.is_empty() {
+        if !self.staging.is_empty() {
             self.flush();
         }
         self.acc

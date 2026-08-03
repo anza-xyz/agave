@@ -29,7 +29,7 @@
 #![allow(clippy::arithmetic_side_effects)]
 
 use {
-    super::{BLOCK_LEN, MAX_LANES},
+    super::{BLOCK_LEN, Batch, MAX_LANES},
     crate::lt_hash::LtHash,
     core::arch::x86_64::*,
 };
@@ -199,14 +199,13 @@ unsafe fn compress_pre<L: Lanes>(
 ///
 /// # Safety
 /// Must be called from a context where `L`'s target feature is enabled.
-/// `bufs.len()` and `lens.len()` must both equal `L::N`. Each `bufs[l]` must be
-/// zero-padded to its block boundary and hold at least `ceil(lens[l]/64)*16`
-/// `u32` words (i.e. `ceil(lens[l]/64)` full 64-byte blocks).
+/// `batch.len()` must equal `L::N`. Each `batch.lanes[l]` must be zero-padded to
+/// its block boundary and hold at least `ceil(batch.lengths[l]/64)*16` `u32`
+/// words (i.e. `ceil(batch.lengths[l]/64)` full 64-byte blocks).
 #[inline(always)]
-unsafe fn compress_batch<L: Lanes>(bufs: &[&[u32]], lens: &[usize], acc: &mut LtHash) {
+unsafe fn compress_batch<L: Lanes>(batch: Batch<'_>, acc: &mut LtHash) {
     let n = L::N;
-    debug_assert_eq!(bufs.len(), n);
-    debug_assert_eq!(lens.len(), n);
+    debug_assert_eq!(batch.len(), n);
     let sub_blocks = NUM_BLOCK_WORDS / n; // AVX2: 2 tiles of 8 words; AVX512: 1 tile of 16
 
     let zero = unsafe { L::splat(0) };
@@ -221,9 +220,9 @@ unsafe fn compress_batch<L: Lanes>(bufs: &[&[u32]], lens: &[usize], acc: &mut Lt
         for blk in 0..sub_blocks {
             let tile = &mut m[blk * n..blk * n + n];
             for (l, row) in tile.iter_mut().enumerate() {
-                // `off[l]` is a byte offset; `bufs[l]` is `&[u32]`
+                // `off[l]` is a byte offset; `batch.lanes[l]` is `&[u32]`
                 let base = off[l] / size_of::<u32>() + blk * n;
-                *row = unsafe { L::load(bufs[l][base..].as_ptr()) };
+                *row = unsafe { L::load(batch.lanes[l][base..].as_ptr()) };
             }
             unsafe { L::transpose(tile) };
         }
@@ -240,14 +239,14 @@ unsafe fn compress_batch<L: Lanes>(bufs: &[&[u32]], lens: &[usize], acc: &mut Lt
         let mut block_sz = [0u32; MAX_LANES];
         let mut active = [false; MAX_LANES];
         for l in 0..n {
-            let is_last = lens[l] <= off[l] + BLOCK_LEN;
+            let is_last = batch.lengths[l] <= off[l] + BLOCK_LEN;
             let is_first = off[l] == 0;
             let mut f = if is_last { ROOT | CHUNK_END } else { 0 };
             if is_first {
                 f |= CHUNK_START;
             }
             block_flags[l] = f;
-            block_sz[l] = (lens[l] - off[l]).min(BLOCK_LEN) as u32;
+            block_sz[l] = (batch.lengths[l] - off[l]).min(BLOCK_LEN) as u32;
             active[l] = !is_last;
         }
 
@@ -419,11 +418,11 @@ impl Lanes for __m256i {
 /// AVX2 (8-lane) batch.
 ///
 /// # Safety
-/// AVX2 must be available, and `bufs`/`lens` must satisfy the contract on
+/// AVX2 must be available, and `batch` must satisfy the contract on
 /// [`compress_batch`] (`len() == 8`, each buffer zero-padded to its blocks).
 #[target_feature(enable = "avx2")]
-pub unsafe fn mix_in_avx2(bufs: &[&[u32]], lens: &[usize], acc: &mut LtHash) {
-    unsafe { compress_batch::<__m256i>(bufs, lens, acc) }
+pub unsafe fn mix_in_avx2(batch: Batch<'_>, acc: &mut LtHash) {
+    unsafe { compress_batch::<__m256i>(batch, acc) }
 }
 
 // ---------------------------- AVX512 backend ----------------------------
@@ -567,11 +566,11 @@ impl Lanes for __m512i {
 /// AVX512 (16-lane) batch.
 ///
 /// # Safety
-/// AVX512F must be available, and `bufs`/`lens` must satisfy the contract on
+/// AVX512F must be available, and `batch` must satisfy the contract on
 /// [`compress_batch`] (`len() == 16`, each buffer zero-padded to its blocks).
 #[target_feature(enable = "avx512f")]
-pub unsafe fn mix_in_avx512(bufs: &[&[u32]], lens: &[usize], acc: &mut LtHash) {
-    unsafe { compress_batch::<__m512i>(bufs, lens, acc) }
+pub unsafe fn mix_in_avx512(batch: Batch<'_>, acc: &mut LtHash) {
+    unsafe { compress_batch::<__m512i>(batch, acc) }
 }
 
 #[cfg(test)]
@@ -580,26 +579,26 @@ mod tests {
         super::*,
         crate::{
             batch::{
-                BatchMixInFn, CHUNK_LEN, NUM_CHUNK_WORDS,
+                Batch, BatchMixInFn, CHUNK_LEN, LaneBuf, NUM_CHUNK_WORDS,
                 test_util::{expected_lthash, make_messages, random_messages, seeded_rng},
             },
             lt_hash::LtHash,
         },
     };
 
-    /// Zero-padded `u32` buffers + real lengths, as `Accumulator::add` builds them.
-    fn pad(msgs: &[&[u8]]) -> (Vec<Vec<u32>>, Vec<usize>) {
-        let bufs = msgs
+    /// Zero-padded lane buffers + real lengths, as `Accumulator` stages them.
+    fn pad(msgs: &[&[u8]]) -> (Vec<LaneBuf>, Vec<usize>) {
+        let lanes = msgs
             .iter()
             .map(|m| {
-                let mut buf = vec![0u32; NUM_CHUNK_WORDS];
-                let bytes: &mut [u8] = bytemuck::cast_slice_mut(&mut buf);
+                let mut buf = [0u32; NUM_CHUNK_WORDS];
+                let bytes: &mut [u8] = bytemuck::cast_slice_mut(buf.as_mut_slice());
                 bytes[..m.len()].copy_from_slice(m);
                 buf
             })
             .collect();
-        let lens = msgs.iter().map(|m| m.len()).collect();
-        (bufs, lens)
+        let lengths = msgs.iter().map(|m| m.len()).collect();
+        (lanes, lengths)
     }
 
     /// Run `mix` over `msgs` (one lane each) and check it equals the oracle both
@@ -610,17 +609,20 @@ mod tests {
     /// `mix`'s target feature must be available.
     unsafe fn check(mix: BatchMixInFn, msgs: &[Vec<u8>], ctx: &str) {
         let refs: Vec<&[u8]> = msgs.iter().map(|m| m.as_slice()).collect();
-        let (owned, lens) = pad(&refs);
-        let bufs: Vec<&[u32]> = owned.iter().map(|b| b.as_slice()).collect();
+        let (lanes, lengths) = pad(&refs);
+        let batch = Batch {
+            lanes: &lanes,
+            lengths: &lengths,
+        };
         let oracle = expected_lthash(&refs);
 
         let mut from_identity = LtHash::identity();
-        unsafe { mix(&bufs, &lens, &mut from_identity) };
+        unsafe { mix(batch, &mut from_identity) };
         assert_eq!(from_identity, oracle, "from identity [{ctx}]");
 
         let base = expected_lthash(&[b"preset accumulator contents".as_slice()]);
         let mut onto = base; // LtHash is `Copy` under cfg(test)
-        unsafe { mix(&bufs, &lens, &mut onto) };
+        unsafe { mix(batch, &mut onto) };
         let mut want = base;
         want.mix_in(&oracle);
         assert_eq!(onto, want, "onto non-identity [{ctx}]");
