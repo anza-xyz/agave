@@ -252,6 +252,7 @@ where
             }
 
             self.receive_completed()?;
+            let mut receiving_stats = self.drain_check_results(&decision);
             let _scheduled = self.process_transactions(&decision, cost_pacer.as_ref(), &now)?;
             if decision.bank().is_none() {
                 let (_, clean_time_us) = measure_us!(self.incremental_recheck());
@@ -259,9 +260,17 @@ where
                     timing_metrics.clean_time_us += clean_time_us;
                 });
             }
-            let receiving_stats = self.receive_and_buffer_packets(&decision).map_err(|_| {
-                SchedulerError::DisconnectedRecvChannel("receive and buffer disconnected")
-            })?;
+            receiving_stats.accumulate(self.receive_and_buffer_packets(&decision).map_err(
+                |err| match err {
+                    DisconnectedError::Receiver => {
+                        SchedulerError::DisconnectedRecvChannel("receive and buffer disconnected")
+                    }
+                    DisconnectedError::CheckWorker => {
+                        SchedulerError::DisconnectedSendChannel("check worker disconnected")
+                    }
+                },
+            )?);
+            self.update_receiving_metrics(&receiving_stats);
             // Report metrics only if there is data.
             // Reset intervals when appropriate, regardless of report.
             let should_report = self.count_metrics.interval_has_data();
@@ -452,10 +461,16 @@ where
         &mut self,
         decision: &BufferedPacketsDecision,
     ) -> Result<ReceivingStats, DisconnectedError> {
-        let receiving_stats = self
-            .receive_and_buffer
-            .receive_and_buffer_packets(&mut self.container, decision)?;
+        self.receive_and_buffer
+            .receive_and_buffer_packets(&mut self.container, decision)
+    }
 
+    fn drain_check_results(&mut self, decision: &BufferedPacketsDecision) -> ReceivingStats {
+        self.receive_and_buffer
+            .drain_check_results(&mut self.container, decision)
+    }
+
+    fn update_receiving_metrics(&mut self, receiving_stats: &ReceivingStats) {
         self.count_metrics.update(|count_metrics| {
             let ReceivingStats {
                 num_received,
@@ -496,8 +511,6 @@ where
             timing_metrics.receive_time_us += receiving_stats.receive_time_us;
             timing_metrics.buffer_time_us += receiving_stats.buffer_time_us;
         });
-
-        Ok(receiving_stats)
     }
 }
 
@@ -537,7 +550,10 @@ mod tests {
             consumer::{RetryableIndex, TARGET_NUM_TRANSACTIONS_PER_BATCH},
             scheduler_messages::{ConsumeWork, FinishedConsumeWork, TransactionBatchId},
             tests::create_slow_genesis_config,
-            transaction_scheduler::greedy_scheduler::{GreedyScheduler, GreedySchedulerConfig},
+            transaction_scheduler::{
+                check_worker::spawn_check_workers,
+                greedy_scheduler::{GreedyScheduler, GreedySchedulerConfig},
+            },
         },
         agave_banking_stage_ingress_types::{
             BankingPacketBatch, BankingPacketReceiver, to_banking_packet_batch,
@@ -560,7 +576,10 @@ mod tests {
         solana_signer::Signer,
         solana_system_interface::instruction as system_instruction,
         solana_transaction::Transaction,
-        std::sync::{Arc, RwLock},
+        std::{
+            num::NonZeroUsize,
+            sync::{Arc, RwLock},
+        },
     };
 
     fn create_channels<T>(num: usize) -> (Vec<Sender<T>>, Vec<Receiver<T>>) {
@@ -584,11 +603,16 @@ mod tests {
         receiver: BankingPacketReceiver,
         bank_forks: Arc<RwLock<BankForks>>,
     ) -> TransactionViewReceiveAndBuffer {
-        TransactionViewReceiveAndBuffer {
-            receiver,
-            sharable_banks: bank_forks.read().unwrap().sharable_banks(),
-            filter_keys: Arc::default(),
-        }
+        let (check_work_sender, check_work_receiver) = bounded(10_000);
+        let (check_result_sender, check_result_receiver) = bounded(10_000);
+        let _check_worker_handles = spawn_check_workers(
+            NonZeroUsize::new(1).unwrap(),
+            check_work_receiver,
+            check_result_sender,
+            bank_forks.read().unwrap().sharable_banks(),
+            Arc::default(),
+        );
+        TransactionViewReceiveAndBuffer::new(receiver, check_work_sender, check_result_receiver)
     }
 
     #[allow(clippy::type_complexity)]
@@ -717,9 +741,7 @@ mod tests {
         banking_packet_sender
             .send(to_banking_packet_batch(&[transaction]))
             .unwrap();
-        scheduler_controller
-            .receive_and_buffer_packets(&BufferedPacketsDecision::Hold)
-            .unwrap();
+        test_receive_all(&mut scheduler_controller, &BufferedPacketsDecision::Hold);
 
         assert!(
             scheduler_controller
@@ -754,9 +776,7 @@ mod tests {
         banking_packet_sender
             .send(to_banking_packet_batch(std::slice::from_ref(&transaction)))
             .unwrap();
-        scheduler_controller
-            .receive_and_buffer_packets(&BufferedPacketsDecision::Hold)
-            .unwrap();
+        test_receive_all(&mut scheduler_controller, &BufferedPacketsDecision::Hold);
 
         assert!(
             scheduler_controller
@@ -776,6 +796,52 @@ mod tests {
         );
     }
 
+    fn test_receive_all<R: ReceiveAndBuffer>(
+        scheduler_controller: &mut SchedulerController<R, impl Scheduler<R::Transaction>>,
+        decision: &BufferedPacketsDecision,
+    ) {
+        fn count_check_results(stats: &ReceivingStats) -> usize {
+            stats.num_dropped_without_parsing
+                + stats.num_dropped_on_parsing_and_sanitization
+                + stats.num_dropped_on_lock_validation
+                + stats.num_dropped_on_compute_budget
+                + stats.num_dropped_on_age
+                + stats.num_dropped_on_already_processed
+                + stats.num_dropped_on_fee_payer
+                + stats.num_dropped_on_filter_key
+                + stats.num_dropped_on_nonce_dedup
+                + stats.num_buffered
+        }
+
+        let deadline = Instant::now() + Duration::from_secs(5);
+        let mut num_received = 0;
+        let mut num_check_results = 0;
+        loop {
+            let check_result_stats = scheduler_controller.drain_check_results(decision);
+            let stats = scheduler_controller
+                .receive_and_buffer_packets(decision)
+                .unwrap();
+            if num_received == 0
+                && num_check_results == 0
+                && stats.num_received == 0
+                && count_check_results(&check_result_stats) == 0
+            {
+                return;
+            }
+            num_received += stats.num_received;
+            num_check_results += count_check_results(&check_result_stats);
+            if num_received > 0 && num_check_results == num_received {
+                return;
+            }
+
+            assert!(
+                Instant::now() < deadline,
+                "timed out waiting for check-worker results"
+            );
+            std::thread::yield_now();
+        }
+    }
+
     // Helper function to let test receive and then schedule packets.
     // The order of operations here is convenient for testing, but does not
     // match the order of operations in the actual scheduler.
@@ -792,15 +858,7 @@ mod tests {
         assert!(matches!(decision, BufferedPacketsDecision::Consume(_)));
         assert!(scheduler_controller.receive_completed().is_ok());
 
-        // Time is not a reliable way for deterministic testing.
-        // Loop here until no more packets are received, this avoids parallel
-        // tests from inconsistently timing out and not receiving
-        // from the channel.
-        while scheduler_controller
-            .receive_and_buffer_packets(&decision)
-            .map(|n| n.num_received > 0)
-            .unwrap_or_default()
-        {}
+        test_receive_all(scheduler_controller, &decision);
         let now = Instant::now();
         let slot_time = decision
             .bank()
