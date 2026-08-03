@@ -9,7 +9,6 @@ use {
     crossbeam_channel::{Receiver, RecvTimeoutError},
     packet_container::PacketContainer,
     solana_cost_model::cost_model::CostModel,
-    solana_fee_structure::FeeDetails,
     solana_gossip::{cluster_info::ClusterInfo, contact_info::Protocol, node::NodeMultihoming},
     solana_keypair::Keypair,
     solana_net_utils::{multihomed_sockets::BindIpAddrs, token_bucket::TokenBucket},
@@ -606,25 +605,25 @@ fn calculate_priority(
         .transaction_configuration(&bank.feature_set)
         .ok()?;
 
-    // Manually estimate fee here since currently interface doesn't allow a on SVM type.
     // Doesn't need to be 100% accurate so long as close and consistent.
-    let prioritization_fee = transaction_configuration.priority_fee_lamports;
-    let signature_details = transaction.signature_details();
-    let signature_fee = signature_details
-        .total_signatures()
-        .saturating_mul(bank.fee_structure().lamports_per_signature);
-    let fee_details = FeeDetails::new(signature_fee, prioritization_fee);
-
-    let reward = bank
-        .calculate_reward_and_burn_fee_details(&CollectorFeeDetails::from(fee_details))
-        .get_deposit();
-
-    let cost = CostModel::estimate_cost(
+    let cost = CostModel::calculate_requested_cost_units_from_meta(
         transaction,
-        transaction.program_instructions_iter(),
-        transaction.num_requested_write_locks(),
+        transaction_configuration.compute_unit_limit,
+        transaction_configuration.loaded_accounts_data_size_limit,
         &bank.feature_set,
     );
+    let fee_features = bank.fee_features();
+    let fee_details = solana_fee::calculate_fee_details(
+        transaction,
+        bank.fee_structure().lamports_per_signature,
+        transaction_configuration.priority_fee_lamports,
+        cost,
+        fee_features,
+    );
+
+    let reward = bank
+        .calculate_reward_and_burn_fee_details(&CollectorFeeDetails::from_fee_details(fee_details))
+        .get_deposit();
 
     // We need a multiplier here to avoid rounding down too aggressively.
     // For many transactions, the cost will be greater than the fees in terms of raw lamports.
@@ -635,7 +634,7 @@ fn calculate_priority(
     Some(
         MULTIPLIER
             .saturating_mul(reward)
-            .wrapping_div(cost.sum().saturating_add(1)),
+            .wrapping_div(cost.saturating_add(1)),
     )
 }
 

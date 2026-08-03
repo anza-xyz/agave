@@ -807,6 +807,7 @@ mod tests {
         solana_epoch_schedule::EpochSchedule,
         solana_keypair::Keypair,
         solana_leader_schedule::SlotLeader,
+        solana_pubkey::Pubkey,
         solana_rent::Rent,
         solana_runtime_transaction::runtime_transaction::RuntimeTransaction,
         solana_sdk_ids::system_program,
@@ -1109,9 +1110,10 @@ mod tests {
             genesis_config,
             mint_keypair,
             ..
-        } = create_genesis_config(10_000);
+        } = create_genesis_config_with_leader(100_000, &Pubkey::new_unique(), 1);
         let bank_forks = BankForks::new_rw_arc(Bank::new_for_tests(&genesis_config));
         let root_bank = bank_forks.read().unwrap().root_bank();
+        let leader = *root_bank.leader();
 
         let prefund_lamports = 100;
         root_bank
@@ -1138,7 +1140,7 @@ mod tests {
         assert_eq!(migration_status.migration_slot(), None);
 
         // Migration can still succeed
-        let mut bank = Bank::new_from_parent(root_bank, SlotLeader::default(), 10);
+        let mut bank = Bank::new_from_parent(root_bank, leader, 10);
         let genesis_cert = GenesisCert {
             block: Block {
                 slot: 1,

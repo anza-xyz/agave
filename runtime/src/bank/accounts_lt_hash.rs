@@ -497,6 +497,8 @@ mod tests {
         solana_pubkey::{self as pubkey, Pubkey},
         solana_rent::Rent,
         solana_signer::Signer as _,
+        solana_system_transaction,
+        solana_transaction::sanitized::SanitizedTransaction,
         std::{
             cmp, iter,
             str::FromStr as _,
@@ -788,9 +790,7 @@ mod tests {
         features: Features,
         accounts_index_limit: IndexLimit,
     ) {
-        let (mut genesis_config, mint_keypair) = genesis_config_with(features);
-        // This test requires zero fees so that we can easily transfer an account's entire balance.
-        genesis_config.fee_rate_governor = FeeRateGovernor::new(0, 0);
+        let (genesis_config, mint_keypair) = genesis_config_with(features);
         let (mut bank, bank_forks) = Bank::new_with_bank_forks_for_tests(&genesis_config);
 
         let amount = cmp::max(
@@ -842,13 +842,22 @@ mod tests {
                 assert_ne!(bank.get_balance(&account.pubkey()), 0);
             }
 
-            // then transfer *out* all the lamports from one of 'em
-            bank.transfer(
-                bank.get_balance(&accounts[i].pubkey()),
-                &accounts[i],
-                &pubkey::new_rand(),
-            )
-            .unwrap();
+            // Drain to zero, leaving enough for the fee: fee first, then transfer the rest.
+            let fee = {
+                let tx = SanitizedTransaction::from_transaction_for_tests(
+                    solana_system_transaction::transfer(
+                        &accounts[i],
+                        &pubkey::new_rand(),
+                        1,
+                        bank.last_blockhash(),
+                    ),
+                );
+                bank.get_fee_for_message(tx.message()).unwrap()
+            };
+            let balance = bank.get_balance(&accounts[i].pubkey());
+            assert!(balance > fee);
+            bank.transfer(balance - fee, &accounts[i], &pubkey::new_rand())
+                .unwrap();
             assert_eq!(bank.get_balance(&accounts[i].pubkey()), 0);
 
             // flush the write cache to disk to ensure the storages match the accounts written here

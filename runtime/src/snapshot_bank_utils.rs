@@ -867,6 +867,23 @@ mod tests {
         test_case::test_case,
     };
 
+    /// Transfer as much as possible from `from` to `to`, leaving only the tx fee.
+    fn drain_account(bank: &Bank, from: &Keypair, to: &Pubkey) {
+        let balance = bank.get_balance(&from.pubkey());
+        let blockhash = bank.last_blockhash();
+        let probe = SanitizedTransaction::from_transaction_for_tests(system_transaction::transfer(
+            from, to, balance, blockhash,
+        ));
+        let fee = bank.get_fee_for_message(probe.message()).unwrap();
+        assert!(
+            balance > fee,
+            "payer {} balance {balance} too low to cover fee {fee}",
+            from.pubkey()
+        );
+        bank.transfer(balance - fee, from, to).unwrap();
+        assert_eq!(bank.get_balance(&from.pubkey()), 0);
+    }
+
     fn snapshot_config_for_tests(
         bank_snapshots_dir: &TempDir,
         full_snapshot_archives_dir: &TempDir,
@@ -1486,7 +1503,7 @@ mod tests {
         );
 
         let GenesisConfigInfo {
-            mut genesis_config,
+            genesis_config,
             mint_keypair,
             ..
         } = create_genesis_config_with_leader(
@@ -1494,16 +1511,20 @@ mod tests {
             &Pubkey::new_unique(),
             1_000_000 * LAMPORTS_PER_SOL,
         );
-        // test expects 0 transaction fee
-        genesis_config.fee_rate_governor = solana_fee_calculator::FeeRateGovernor::new(0, 0);
 
         let lamports_to_transfer = 123_456 * LAMPORTS_PER_SOL;
+        // Extra headroom so intermediate payers can cover inclusion+resource fees.
+        let fee_headroom = 1_000_000;
         let (bank0, bank_forks) =
             Bank::new_with_paths_for_tests(&genesis_config, None, vec![accounts_dir.clone()], None)
                 .wrap_with_bank_forks_for_tests();
         let leader = *bank0.leader();
         bank0
-            .transfer(lamports_to_transfer, &mint_keypair, &key2.pubkey())
+            .transfer(
+                lamports_to_transfer + fee_headroom,
+                &mint_keypair,
+                &key2.pubkey(),
+            )
             .unwrap();
         bank0.fill_bank_with_ticks_for_tests();
 
@@ -1525,14 +1546,7 @@ mod tests {
         let zeroed_slot = full_snapshot_slot + 1;
         let bank2 =
             Bank::new_from_parent_with_bank_forks(bank_forks.as_ref(), bank1, leader, zeroed_slot);
-        bank2
-            .transfer(lamports_to_transfer, &key1, &key2.pubkey())
-            .unwrap();
-        assert_eq!(
-            bank2.get_balance(&key1.pubkey()),
-            0,
-            "Ensure Account1's balance is zero"
-        );
+        drain_account(&bank2, &key1, &key2.pubkey());
         bank2.fill_bank_with_ticks_for_tests();
         bank2.set_block_id(Some(Hash::default()));
         // root and flush so slot 2's storage holding the zero-lamport Account1 is written
@@ -1654,7 +1668,7 @@ mod tests {
         );
 
         let GenesisConfigInfo {
-            mut genesis_config,
+            genesis_config,
             mint_keypair,
             ..
         } = create_genesis_config_with_leader(
@@ -1662,16 +1676,19 @@ mod tests {
             &Pubkey::new_unique(),
             1_000_000 * LAMPORTS_PER_SOL,
         );
-        // test expects 0 transaction fee
-        genesis_config.fee_rate_governor = solana_fee_calculator::FeeRateGovernor::new(0, 0);
 
         let lamports_to_transfer = 123_456 * LAMPORTS_PER_SOL;
+        let fee_headroom = 1_000_000;
         let (bank0, bank_forks) =
             Bank::new_with_paths_for_tests(&genesis_config, None, vec![accounts_dir.clone()], None)
                 .wrap_with_bank_forks_for_tests();
         let leader = *bank0.leader();
         bank0
-            .transfer(lamports_to_transfer, &mint_keypair, &key2.pubkey())
+            .transfer(
+                lamports_to_transfer + fee_headroom,
+                &mint_keypair,
+                &key2.pubkey(),
+            )
             .unwrap();
         bank0.fill_bank_with_ticks_for_tests();
 
@@ -1689,26 +1706,7 @@ mod tests {
 
         let slot = slot + 1;
         let bank2 = Bank::new_from_parent_with_bank_forks(bank_forks.as_ref(), bank1, leader, slot);
-        let blockhash = bank2.last_blockhash();
-        let tx = SanitizedTransaction::from_transaction_for_tests(system_transaction::transfer(
-            &key1,
-            &key2.pubkey(),
-            lamports_to_transfer,
-            blockhash,
-        ));
-        let fee = bank2.get_fee_for_message(tx.message()).unwrap();
-        let tx = system_transaction::transfer(
-            &key1,
-            &key2.pubkey(),
-            lamports_to_transfer - fee,
-            blockhash,
-        );
-        bank2.process_transaction(&tx).unwrap();
-        assert_eq!(
-            bank2.get_balance(&key1.pubkey()),
-            0,
-            "Ensure Account1's balance is zero"
-        );
+        drain_account(&bank2, &key1, &key2.pubkey());
         bank2.fill_bank_with_ticks_for_tests();
         bank2.set_block_id(Some(Hash::default()));
 
@@ -2019,6 +2017,7 @@ mod tests {
         );
 
         let lamports_to_transfer = 123_456 * LAMPORTS_PER_SOL;
+        let fee_headroom = 1_000_000;
         let bank_test_config = BankTestConfig {
             accounts_db_config: ACCOUNTS_DB_CONFIG_FOR_TESTING,
         };
@@ -2030,7 +2029,11 @@ mod tests {
         let leader = *bank0.leader();
 
         bank0
-            .transfer(lamports_to_transfer, &mint_keypair, &key2.pubkey())
+            .transfer(
+                lamports_to_transfer + fee_headroom,
+                &mint_keypair,
+                &key2.pubkey(),
+            )
             .unwrap();
 
         bank0.fill_bank_with_ticks_for_tests();
@@ -2052,24 +2055,7 @@ mod tests {
 
         let slot = slot + 1;
         let bank2 = Bank::new_from_parent_with_bank_forks(bank_forks.as_ref(), bank1, leader, slot);
-        let blockhash = bank2.last_blockhash();
-        let tx = SanitizedTransaction::from_transaction_for_tests(system_transaction::transfer(
-            &key1,
-            &key2.pubkey(),
-            lamports_to_transfer,
-            blockhash,
-        ));
-
-        let fee = bank2.get_fee_for_message(tx.message()).unwrap();
-        bank2
-            .transfer(lamports_to_transfer - fee, &key1, &key2.pubkey())
-            .unwrap();
-
-        assert_eq!(
-            bank2.get_balance(&key1.pubkey()),
-            0,
-            "Ensure Account1's balance is zero"
-        );
+        drain_account(&bank2, &key1, &key2.pubkey());
         bank2.fill_bank_with_ticks_for_tests();
 
         let slot = slot + 1;
@@ -2147,7 +2133,7 @@ mod tests {
 
         let bank_snapshots_dir = tempfile::TempDir::new().unwrap();
         let GenesisConfigInfo {
-            mut genesis_config,
+            genesis_config,
             mint_keypair: mint,
             ..
         } = create_genesis_config_with_leader(
@@ -2155,9 +2141,6 @@ mod tests {
             &Pubkey::new_unique(),
             1_000_000 * LAMPORTS_PER_SOL,
         );
-
-        // Disable fees so fees don't need to be calculated
-        genesis_config.fee_rate_governor = solana_fee_calculator::FeeRateGovernor::new(0, 0);
 
         let lamports = 123_456 * LAMPORTS_PER_SOL;
 
@@ -2175,17 +2158,15 @@ mod tests {
         // In slot 1 transfer from key1 to key2, such that key1 becomes zero lamport
         let slot = 1;
         let bank1 = Bank::new_from_parent_with_bank_forks(bank_forks.as_ref(), bank0, leader, slot);
-        bank1.transfer(lamports, &key1, &key2.pubkey()).unwrap();
-        assert_eq!(bank1.get_balance(&key1.pubkey()), 0,);
+        drain_account(&bank1, &key1, &key2.pubkey());
         bank1.fill_bank_with_ticks_for_tests();
 
-        // In slot 2 transfer into key2 to mint such that key2 becomes zero lamport
+        // In slot 2 transfer from key2 to mint such that key2 becomes zero lamport
         let slot = slot + 1;
         let bank2 = Bank::new_from_parent_with_bank_forks(bank_forks.as_ref(), bank1, leader, slot);
-        bank2.transfer(lamports * 2, &key2, &mint.pubkey()).unwrap();
+        drain_account(&bank2, &key2, &mint.pubkey());
         bank2.fill_bank_with_ticks_for_tests();
         bank2.set_block_id(Some(Hash::default()));
-        assert_eq!(bank2.get_balance(&key2.pubkey()), 0);
 
         // Take a bank snapshot, passing `true` for `should_finalize`.
         // This ensures that `serialize_snapshot` performs all necessary steps to create
