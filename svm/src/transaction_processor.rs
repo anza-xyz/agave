@@ -10,7 +10,6 @@ use {
         nonce_info::NonceInfo,
         program_loader::{
             ProgramLoader, filter_executable_program_accounts, load_program_with_pubkey,
-            replenish_program_cache,
         },
         rollback_accounts::RollbackAccounts,
         transaction_account_state_info::{
@@ -880,30 +879,6 @@ impl<FG: ForkGraph> TransactionBatchProcessor<FG> {
         }
     }
 
-    #[cfg_attr(feature = "dev-context-only-utils", qualifiers(pub))]
-    fn replenish_program_cache<CB: TransactionProcessingCallback>(
-        &self,
-        account_loader: &AccountLoader<CB>,
-        missing_programs: Vec<ProgramToLoad>,
-        program_runtime_environment_for_execution: &ProgramRuntimeEnvironment,
-        program_cache_for_tx_batch: &mut ProgramCacheForTxBatch,
-        execute_timings: &mut ExecuteTimings,
-        limit_to_load_programs: bool,
-        increment_usage_counter: bool,
-    ) {
-        replenish_program_cache(
-            &self.global_program_cache,
-            account_loader,
-            self.slot,
-            program_runtime_environment_for_execution,
-            missing_programs,
-            program_cache_for_tx_batch,
-            execute_timings,
-            limit_to_load_programs,
-            increment_usage_counter,
-        )
-    }
-
     /// Similar to replenish_program_cache() but only used in Bank::prepare_program_cache_for_upcoming_feature_set().
     pub fn prepare_one_program_for_upcoming_feature_set<CB: TransactionProcessingCallback>(
         &self,
@@ -1330,6 +1305,7 @@ mod tests {
                 ValidatedTransactionDetails,
             },
             nonce_info::NonceInfo,
+            program_loader::replenish_program_cache,
             rent_calculator::RENT_EXEMPT_RENT_EPOCH,
             rollback_accounts::RollbackAccounts,
         },
@@ -1797,7 +1773,7 @@ mod tests {
     #[should_panic = "called load_program_with_pubkey() with nonexistent account"]
     fn test_replenish_program_cache_with_nonexistent_accounts() {
         let mock_bank = MockBankCallback::default();
-        let account_loader = (&mock_bank).into();
+        let account_loader: AccountLoader<_> = (&mock_bank).into();
         let fork_graph = Arc::new(RwLock::new(TestForkGraph {}));
         let batch_processor =
             TransactionBatchProcessor::new(0, 0, Arc::downgrade(&fork_graph), None);
@@ -1807,15 +1783,17 @@ mod tests {
 
         let mut program_cache_for_tx_batch = ProgramCacheForTxBatch::new(batch_processor.slot);
 
-        batch_processor.replenish_program_cache(
+        replenish_program_cache(
+            &batch_processor.global_program_cache,
             &account_loader,
+            batch_processor.slot,
+            &program_runtime_environment_for_execution,
             vec![ProgramToLoad {
                 program_id: &key,
                 loader: ProgramCacheEntryOwner::LoaderV3,
                 match_criteria: ProgramCacheMatchCriteria::NoCriteria,
                 last_modification_slot: 0,
             }],
-            &program_runtime_environment_for_execution,
             &mut program_cache_for_tx_batch,
             &mut ExecuteTimings::default(),
             true,
@@ -1840,21 +1818,23 @@ mod tests {
             .write()
             .unwrap()
             .insert(key, account_data);
-        let account_loader = (&mock_bank).into();
+        let account_loader: AccountLoader<_> = (&mock_bank).into();
 
         let mut loaded_missing = 0;
         for limit_to_load_programs in [false, true] {
             let mut program_cache_for_tx_batch = ProgramCacheForTxBatch::new(batch_processor.slot);
 
-            batch_processor.replenish_program_cache(
+            replenish_program_cache(
+                &batch_processor.global_program_cache,
                 &account_loader,
+                batch_processor.slot,
+                &program_runtime_environment_for_execution,
                 vec![ProgramToLoad {
                     program_id: &key,
                     loader: ProgramCacheEntryOwner::LoaderV2,
                     match_criteria: ProgramCacheMatchCriteria::NoCriteria,
                     last_modification_slot: 0,
                 }],
-                &program_runtime_environment_for_execution,
                 &mut program_cache_for_tx_batch,
                 &mut ExecuteTimings::default(),
                 limit_to_load_programs,

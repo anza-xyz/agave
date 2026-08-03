@@ -23,6 +23,7 @@ use {
     solana_pubkey::Pubkey,
     solana_svm::{
         account_loader::{AccountLoader, CheckedTransactionDetails, TransactionCheckResult},
+        program_loader::replenish_program_cache,
         transaction_processing_result::{
             ProcessedTransaction, TransactionProcessingResultExtensions,
         },
@@ -79,10 +80,12 @@ fn program_cache_execution(threads: usize) {
                 let mut result = ProgramCacheForTxBatch::new(processor.slot);
                 let program_runtime_environment_for_execution =
                     processor.program_runtime_environment_for_epoch(processor.epoch);
-                processor.replenish_program_cache(
+                replenish_program_cache(
+                    &processor.global_program_cache,
                     &account_loader,
-                    missing_programs,
+                    processor.slot,
                     &program_runtime_environment_for_execution,
+                    missing_programs,
                     &mut result,
                     &mut ExecuteTimings::default(),
                     true,
