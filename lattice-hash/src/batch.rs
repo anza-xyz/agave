@@ -176,8 +176,8 @@ type BatchMixInFn = unsafe fn(batch: Batch<'_>, acc: &mut LtHash);
 
 /// Streaming accumulator for the lattice hash of many messages.
 ///
-/// Feed each message either whole with [`add_message`](Self::add_message), or in parts with
-/// [`add_part`](Self::add_part) + [`finish_message`](Self::finish_message); each is group-added
+/// Feed each message either whole with [`add_message`](Self::add_message), or in
+/// parts with [`start_message`](Self::start_message); each is group-added
 /// (LtHash `mix_in`) into the running value. Small messages (`<= CHUNK_LEN`) are
 /// copied into owned, reusable staging and run through the widest SIMD mix-in
 /// function the CPU supports as soon as a full batch (`lanes` of them) accumulates; larger
@@ -202,7 +202,7 @@ pub struct Accumulator {
     serial_hasher: blake3::Hasher,
     /// Set when the in-progress message overflowed one chunk and is being
     /// streamed into `serial_hasher` rather than staged for the SIMD batch;
-    /// carries that state across the message's remaining `add_part`s until `finish_message`.
+    /// carries that state across the message's remaining parts until it is committed.
     cur_spilled: bool,
 }
 
@@ -246,52 +246,54 @@ impl Accumulator {
         }
     }
 
-    /// Append `bytes` to the message currently being built; call [`finish_message`] to
-    /// finish it. Feeding a message in parts lets the caller avoid assembling a
-    /// contiguous buffer — the parts are written straight into the SIMD lane
-    /// buffer, or, once a message passes [`CHUNK_LEN`], streamed into the `blake3`
-    /// fallback.
-    ///
-    /// [`finish_message`]: Self::finish_message
-    pub fn add_part(&mut self, bytes: &[u8]) {
+    /// Group-add the lattice hash of one whole `msg` into the running value. To
+    /// supply a message in pieces instead, use [`start_message`](Self::start_message).
+    pub fn add_message(&mut self, msg: &[u8]) {
+        self.stage_part(msg);
+        self.commit_message();
+    }
+
+    /// Begin a message assembled from parts, borrowing the accumulator until the
+    /// returned [`MessageBuilder`] is finished. Feed each piece with
+    /// [`add_part`](MessageBuilder::add_part) and commit with
+    /// [`finish`](MessageBuilder::finish); the exclusive borrow keeps any other
+    /// accumulator operation from interleaving mid-message.
+    pub fn start_message(&mut self) -> MessageBuilder<'_> {
+        MessageBuilder { acc: self }
+    }
+
+    /// Append `bytes` to the message currently being staged: written straight into
+    /// the SIMD lane buffer, or, once the message passes [`CHUNK_LEN`], streamed
+    /// into the `blake3` fallback (`commit_message` folds in the result).
+    fn stage_part(&mut self, bytes: &[u8]) {
         if self.cur_spilled {
             self.serial_hasher.update(bytes);
             return;
         }
-        // Stage into the current lane unless the message overflows one chunk; then
-        // hand the bytes buffered so far, plus `bytes`, to the serial blake3 hasher
-        // (`finish_message` folds in the result).
         if !self.staging.try_append(bytes) {
             self.spill_current();
             self.serial_hasher.update(bytes);
         }
     }
 
-    /// Finish the message built by [`add_part`], fold its lattice hash into the
-    /// running value, and start a fresh message.
-    ///
-    /// [`add_part`]: Self::add_part
-    pub fn finish_message(&mut self) {
+    /// Commit the staged message — group-add its lattice hash into the running
+    /// value and start a fresh message, flushing the SIMD batch once it fills.
+    fn commit_message(&mut self) {
         if self.cur_spilled {
             self.acc.mix_in(&LtHash::with(&self.serial_hasher));
             self.cur_spilled = false;
             return;
         }
-        // Commit the message (zero-pads its last compression block, stages the
-        // length) and flush once the batch is full.
         if self.staging.finish_current() {
             self.flush();
         }
     }
 
-    /// Group-add the lattice hash of one whole `msg` into the running value:
-    /// [`add_part`] then [`finish_message`].
-    ///
-    /// [`add_part`]: Self::add_part
-    /// [`finish_message`]: Self::finish_message
-    pub fn add_message(&mut self, msg: &[u8]) {
-        self.add_part(msg);
-        self.finish_message();
+    /// Abandon the in-progress message's staged bytes without folding it in, so the
+    /// next message starts clean — for an unfinished [`MessageBuilder`] on drop.
+    fn discard_message(&mut self) {
+        self.staging.discard_current();
+        self.cur_spilled = false;
     }
 
     /// Group-add a precomputed `LtHash` (e.g. one produced elsewhere, or another
@@ -305,7 +307,7 @@ impl Accumulator {
 
     /// Move the bytes buffered for the current message into `serial_hasher` and
     /// mark it spilled — its message exceeds one chunk, so it can't be staged for
-    /// the SIMD batch. Called by [`add_part`](Self::add_part) on overflow.
+    /// the SIMD batch. Called by [`stage_part`](Self::stage_part) on overflow.
     fn spill_current(&mut self) {
         self.serial_hasher.reset();
         self.serial_hasher.update(self.staging.staged_bytes());
@@ -360,6 +362,39 @@ impl Accumulator {
     /// a reusable accumulator behind a `&mut` instead.
     pub fn into_lt_hash(mut self) -> LtHash {
         self.take_lt_hash()
+    }
+}
+
+/// A message being assembled part-by-part, returned by
+/// [`Accumulator::start_message`]. Holds an exclusive borrow of the accumulator,
+/// so no other accumulator operation can run until this message is finished. Feed
+/// pieces with [`add_part`](Self::add_part), then [`finish`](Self::finish) to
+/// commit; dropping the builder without finishing discards the staged bytes.
+#[must_use = "a started message does nothing until `.finish()`; dropping it discards the message"]
+pub struct MessageBuilder<'a> {
+    acc: &'a mut Accumulator,
+}
+
+impl MessageBuilder<'_> {
+    /// Append `bytes` to the message being built.
+    pub fn add_part(&mut self, bytes: &[u8]) -> &mut Self {
+        self.acc.stage_part(bytes);
+        self
+    }
+
+    /// Commit the message: group-add its lattice hash into the accumulator's
+    /// running value.
+    pub fn finish(self) {
+        self.acc.commit_message();
+        // Committed — skip the discarding `Drop`.
+        core::mem::forget(self);
+    }
+}
+
+impl Drop for MessageBuilder<'_> {
+    fn drop(&mut self) {
+        // Unfinished: abandon the staged bytes so the next message starts clean.
+        self.acc.discard_message();
     }
 }
 
@@ -497,9 +532,9 @@ mod tests {
         assert_matches_oracle(&msgs, "boundary lengths");
     }
 
-    /// Feeding each message in parts via `add_part` + `finish_message` must equal the
-    /// oracle — including a message that overflows one chunk partway through its
-    /// parts (exercising the mid-stream spill).
+    /// Feeding each message in parts via [`Accumulator::start_message`] must equal
+    /// the oracle — including a message that overflows one chunk partway through
+    /// its parts (exercising the mid-stream spill).
     #[test]
     fn streaming_in_parts_matches_oracle() {
         let mut msgs = make_messages(20);
@@ -512,12 +547,35 @@ mod tests {
             // mid-message rather than only at an `add_part` that starts one.
             let a = m.len() / 3;
             let b = m.len() * 2 / 3;
-            streamed.add_part(&m[..a]);
-            streamed.add_part(&m[a..b]);
-            streamed.add_part(&m[b..]);
-            streamed.finish_message();
+            let mut msg = streamed.start_message();
+            msg.add_part(&m[..a]);
+            msg.add_part(&m[a..b]);
+            msg.add_part(&m[b..]);
+            msg.finish();
         }
         assert_eq!(streamed.into_lt_hash(), expected_lthash(&refs));
+    }
+
+    /// Dropping a builder without `finish` discards its staged bytes, for both the
+    /// staged (`<= CHUNK_LEN`) and spilled (`> CHUNK_LEN`) in-progress states.
+    #[test]
+    fn builder_drop_discards_unfinished() {
+        let msg = b"the message that is actually committed".as_slice();
+
+        let mut acc = Accumulator::new();
+        {
+            let mut abandoned = acc.start_message();
+            abandoned.add_part(b"staged but");
+            abandoned.add_part(b" never finished");
+        } // dropped without `finish` — nothing folded in
+        {
+            let mut spilled = acc.start_message();
+            spilled.add_part(&vec![7u8; CHUNK_LEN + 500]); // overflows → serial spill
+            spilled.add_part(b"more");
+        } // dropped mid-spill — must reset `cur_spilled` too
+        acc.add_message(msg);
+
+        assert_eq!(acc.into_lt_hash(), expected_lthash(&[msg]));
     }
 
     /// `mix_in` of a precomputed hash composes with added messages.
