@@ -1425,8 +1425,19 @@ fn build_xdp_config(
         .or_else(|| value_of(matches, "experimental_poh_pinned_cpu_core"))
         .or(poh_service::DEFAULT_PINNED_CPU_CORE);
 
+    let file_interface_overridden = match (cli_interface, file_interface.as_deref()) {
+        (Some(cli), Some(file)) => cli != file,
+        _ => false,
+    };
+    if file_interface_overridden {
+        warn!(
+            "--xdp-interface overrides the config file interface; ignoring config file XDP queues \
+             and zero_copy"
+        );
+    }
+
     let interface = cli_interface.map(str::to_string).or(file_interface);
-    let zero_copy = cli_zero_copy || file_zero_copy;
+    let zero_copy = cli_zero_copy || (!file_interface_overridden && file_zero_copy);
 
     // Queue source precedence: CLI, file tx union, then auto-selection.
     // File-sourced queues preserve per-module scoping; global sources do not.
@@ -1442,7 +1453,7 @@ fn build_xdp_config(
             })
             .collect();
         (queues, false)
-    } else if !file_queues.is_empty() {
+    } else if !file_interface_overridden && !file_queues.is_empty() {
         (file_queues, true)
     } else {
         let allowed = cpu_affinity(None).map_err(|e| {
@@ -1746,6 +1757,39 @@ mod xdp_tests {
         // (all of them, by default) uses all queues.
         assert_eq!(modules.turbine, Some(vec![0, 1]));
         assert_eq!(modules.tpu, Some(vec![0, 1]));
+    }
+
+    #[test]
+    fn test_cli_interface_override_ignores_config_file_interface_settings() {
+        let default_args = DefaultArgs::default();
+        let app = add_args(clap::App::new("agave-validator"), &default_args);
+        let file = write_config(
+            "[interfaces.\"eth0\"]\nzero_copy = true\nqueue_to_cpu_mapping = [{ queue = 7, cpu = \
+             3 }]\n\n[turbine.xdp]\ntx = { eth0 = [7] }\n",
+        );
+        let matches = app.get_matches_from(vec![
+            "agave-validator",
+            "--experimental-config-file",
+            file.path().to_str().unwrap(),
+            "--xdp-interface",
+            "eth1",
+        ]);
+        let (config, modules) = build_xdp_config(&matches, &Operation::Run, &single_ip_bind())
+            .unwrap()
+            .expect("XDP must be enabled");
+        assert_eq!(config.interface.as_deref(), Some("eth1"));
+        assert!(
+            !config.zero_copy,
+            "file zero_copy belongs to eth0 and must not apply to eth1"
+        );
+        assert_eq!(
+            config.queues[0].queue, 0,
+            "eth0's configured queue must be ignored for eth1"
+        );
+        // Without file-sourced queues, per-module tx scoping falls back to the
+        // selected global queue set.
+        assert_eq!(modules.turbine, Some(vec![0]));
+        assert_eq!(modules.tpu, Some(vec![0]));
     }
 
     #[test]
