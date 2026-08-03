@@ -532,7 +532,6 @@ fn next_broadcast_leader_pubkey(
 pub fn broadcast_shreds(
     socket: BroadcastSocket,
     shreds: &[Shred],
-    xdp_packets: &mut Vec<(bytes::Bytes, SocketAddr)>,
     cluster_nodes_cache: &ClusterNodesCache<BroadcastStage>,
     last_datapoint_submit: &AtomicInterval,
     transmit_stats: &mut TransmitShredsStats,
@@ -543,7 +542,6 @@ pub fn broadcast_shreds(
 ) -> Result<()> {
     let mut result = Ok(());
     // Compute destinations for each of the shreds to be sent
-    let mut shred_select = Measure::start("shred_select");
     let (root_bank, working_bank) = {
         let bank_forks = bank_forks.read().unwrap();
         (bank_forks.root_bank(), bank_forks.working_bank())
@@ -586,8 +584,6 @@ pub fn broadcast_shreds(
     match socket {
         BroadcastSocket::Udp(s) => {
             let packets: Vec<_> = packets.collect();
-            shred_select.stop();
-            transmit_stats.shred_select += shred_select.as_us();
             num_packets += packets.len();
             let mut send_mmsg_time = Measure::start("send_mmsg");
             match batch_send(s, packets) {
@@ -601,21 +597,14 @@ pub fn broadcast_shreds(
             transmit_stats.send_mmsg_elapsed += send_mmsg_time.as_us();
         }
         BroadcastSocket::Xdp(s) => {
-            xdp_packets.clear();
-            xdp_packets.extend(packets.map(|(payload, addr)| (payload.bytes.clone(), addr)));
-            shred_select.stop();
-            transmit_stats.shred_select += shred_select.as_us();
-            let mut send_xdp_time = Measure::start("send_xdp");
-            for (idx, (payload, addr)) in xdp_packets.drain(..).enumerate() {
+            for (idx, (payload, addr)) in packets.enumerate() {
                 num_packets += 1;
-                if let Err(e) = s.try_send(idx, addr, payload) {
+                if let Err(e) = s.try_send(idx, addr, payload.bytes.clone()) {
                     log::warn!("xdp channel full: {e:?}");
                     transmit_stats.dropped_packets_xdp += 1;
                     result = Err(Error::XdpChannelFull);
                 }
             }
-            send_xdp_time.stop();
-            transmit_stats.send_xdp_elapsed += send_xdp_time.as_us();
         }
     }
 
