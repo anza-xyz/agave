@@ -2360,7 +2360,7 @@ pub mod test {
         // If we now set a root that causes slot 112 to be purged from BankForks, then
         // the switch proof will now fail since that validator's vote can no longer be
         // included in the switching proof
-        vote_simulator.set_root(44);
+        vote_simulator.set_root(&Pubkey::new_unique(), 44);
         let ancestors = vote_simulator.bank_forks.read().unwrap().ancestors();
         let descendants = vote_simulator.bank_forks.read().unwrap().descendants();
         assert_eq!(
@@ -3192,7 +3192,7 @@ pub mod test {
 
         // prepend tower restart!
         let mut slot_history = SlotHistory::default();
-        vote_simulator.set_root(replayed_root_slot);
+        vote_simulator.set_root(&Pubkey::new_unique(), replayed_root_slot);
         let ancestors = vote_simulator.bank_forks.read().unwrap().ancestors();
         let descendants = vote_simulator.bank_forks.read().unwrap().descendants();
         for slot in &[0, 1, 2, 43, replayed_root_slot] {

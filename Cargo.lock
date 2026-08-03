@@ -511,7 +511,7 @@ dependencies = [
  "tempfile",
  "test-case",
  "thiserror 2.0.19",
- "tokio-util 0.7.18",
+ "tokio-util 0.7.19",
  "wincode",
 ]
 
@@ -3370,7 +3370,7 @@ dependencies = [
  "indexmap 2.14.0",
  "slab",
  "tokio",
- "tokio-util 0.7.18",
+ "tokio-util 0.7.19",
  "tracing",
 ]
 
@@ -3748,7 +3748,7 @@ dependencies = [
  "libc",
  "percent-encoding 2.3.2",
  "pin-project-lite",
- "socket2 0.6.5",
+ "socket2 0.5.10",
  "tokio",
  "tower-service",
  "tracing",
@@ -4861,6 +4861,17 @@ dependencies = [
 ]
 
 [[package]]
+name = "num-derive"
+version = "0.5.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "e4e98dc3b890f6c23a0f9d3d491a2823d0dea0fa656302a13dd225fa924112a8"
+dependencies = [
+ "proc-macro2",
+ "quote",
+ "syn 3.0.3",
+]
+
+[[package]]
 name = "num-integer"
 version = "0.1.46"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -5722,7 +5733,7 @@ dependencies = [
  "quinn-udp",
  "rustc-hash",
  "rustls",
- "socket2 0.6.5",
+ "socket2 0.5.10",
  "thiserror 2.0.19",
  "tokio",
  "tracing",
@@ -6277,7 +6288,7 @@ dependencies = [
  "errno",
  "libc",
  "linux-raw-sys 0.12.1",
- "windows-sys 0.61.0",
+ "windows-sys 0.52.0",
 ]
 
 [[package]]
@@ -7250,7 +7261,7 @@ dependencies = [
  "tarpc",
  "tokio",
  "tokio-serde",
- "tokio-util 0.7.18",
+ "tokio-util 0.7.19",
 ]
 
 [[package]]
@@ -7649,7 +7660,7 @@ dependencies = [
  "test-case",
  "thiserror 2.0.19",
  "tokio",
- "tokio-util 0.7.18",
+ "tokio-util 0.7.19",
  "wincode",
 ]
 
@@ -8099,7 +8110,7 @@ dependencies = [
  "tikv-jemalloc-ctl",
  "tikv-jemallocator",
  "tokio",
- "tokio-util 0.7.18",
+ "tokio-util 0.7.19",
  "trees",
  "wincode",
 ]
@@ -9180,7 +9191,7 @@ dependencies = [
  "strum",
  "tempfile",
  "tokio",
- "tokio-util 0.7.18",
+ "tokio-util 0.7.19",
  "wincode",
 ]
 
@@ -9826,7 +9837,7 @@ dependencies = [
  "solana-transaction-error",
  "thiserror 2.0.19",
  "tokio",
- "tokio-util 0.7.18",
+ "tokio-util 0.7.19",
 ]
 
 [[package]]
@@ -9848,7 +9859,7 @@ dependencies = [
  "hex",
  "hidapi",
  "log",
- "num-derive",
+ "num-derive 0.5.1",
  "num-traits",
  "parking_lot 0.12.3",
  "rusb",
@@ -9997,7 +10008,7 @@ dependencies = [
  "test-case",
  "thiserror 2.0.19",
  "tokio",
- "tokio-util 0.7.18",
+ "tokio-util 0.7.19",
  "wincode",
 ]
 
@@ -10159,7 +10170,7 @@ dependencies = [
  "solana-transaction",
  "solana-transaction-status",
  "tokio",
- "tokio-util 0.7.18",
+ "tokio-util 0.7.19",
 ]
 
 [[package]]
@@ -10193,7 +10204,7 @@ dependencies = [
  "libsecp256k1",
  "log",
  "mockall",
- "num-derive",
+ "num-derive 0.5.1",
  "num-traits",
  "proptest",
  "prost 0.11.9",
@@ -10472,7 +10483,7 @@ dependencies = [
  "solana-tls-utils",
  "solana-tpu-client-next",
  "tokio",
- "tokio-util 0.7.18",
+ "tokio-util 0.7.19",
 ]
 
 [[package]]
@@ -10585,7 +10596,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "36329bba208f0e41954389ae4ad5d973fe15952672cfd71a9b49deb7d2ecbc2f"
 dependencies = [
  "bitvec",
- "num-derive",
+ "num-derive 0.4.2",
  "num-traits",
 ]
 
@@ -10811,7 +10822,7 @@ dependencies = [
  "solana-transaction-error",
  "thiserror 2.0.19",
  "tokio",
- "tokio-util 0.7.18",
+ "tokio-util 0.7.19",
 ]
 
 [[package]]
@@ -11314,7 +11325,7 @@ dependencies = [
  "thiserror 2.0.19",
  "tokio",
  "tokio-stream",
- "tokio-util 0.7.18",
+ "tokio-util 0.7.19",
  "tracing",
 ]
 
@@ -11635,7 +11646,7 @@ dependencies = [
  "arbitrary",
  "bincode",
  "cfg_eval",
- "num-derive",
+ "num-derive 0.4.2",
  "num-traits",
  "rand 0.9.4",
  "serde",
@@ -11722,7 +11733,7 @@ checksum = "d8da7f01db2148a1dc16261ff1dc6f3930a1e255a33cece4f1b56658694f27f7"
 dependencies = [
  "bytemuck",
  "bytemuck_derive",
- "num-derive",
+ "num-derive 0.4.2",
  "num-traits",
  "solana-address 2.6.1",
  "solana-instruction",
@@ -11780,7 +11791,7 @@ dependencies = [
  "itertools 0.12.1",
  "js-sys",
  "merlin",
- "num-derive",
+ "num-derive 0.4.2",
  "num-traits",
  "rand 0.8.6",
  "serde",
@@ -11945,7 +11956,7 @@ checksum = "2f9c6e142cdf1e7e77f480053ec9f0ce989890768ddf91f619b50f39d1b456f5"
 dependencies = [
  "bytemuck",
  "bytemuck_derive",
- "num-derive",
+ "num-derive 0.4.2",
  "num-traits",
  "num_enum",
  "solana-program-error",
@@ -11965,7 +11976,7 @@ dependencies = [
  "arrayref",
  "bytemuck",
  "getrandom 0.2.15",
- "num-derive",
+ "num-derive 0.4.2",
  "num-traits",
  "num_enum",
  "solana-account-info",
@@ -12013,7 +12024,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "841cbd6f2322d02719be4da1affedbe6495b1048b7b985ec9796032564026e22"
 dependencies = [
  "bytemuck",
- "num-derive",
+ "num-derive 0.4.2",
  "num-traits",
  "num_enum",
  "solana-address 2.6.1",
@@ -12033,7 +12044,7 @@ checksum = "7143c4e676984047a400e2fbd7ac29a1659f2b1b52b897cfde19316b562e4589"
 dependencies = [
  "arrayref",
  "bytemuck",
- "num-derive",
+ "num-derive 0.4.2",
  "num-traits",
  "num_enum",
  "solana-instruction",
@@ -12052,7 +12063,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "3d3d96f175e7022ff200464dfa75a3708a4e9b70c83c4ecd04fe52ee479f4fef"
 dependencies = [
  "borsh",
- "num-derive",
+ "num-derive 0.4.2",
  "num-traits",
  "num_enum",
  "solana-address 2.6.1",
@@ -12072,7 +12083,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "2504631748c48d2a937414d64a12dcac4588d34bd07d355d648619c189d29435"
 dependencies = [
  "bytemuck",
- "num-derive",
+ "num-derive 0.4.2",
  "num-traits",
  "num_enum",
  "solana-account-info",
@@ -12295,7 +12306,7 @@ dependencies = [
  "getrandom 0.3.4",
  "once_cell",
  "rustix 1.1.4",
- "windows-sys 0.61.0",
+ "windows-sys 0.52.0",
 ]
 
 [[package]]
@@ -12615,15 +12626,16 @@ dependencies = [
 
 [[package]]
 name = "tokio-util"
-version = "0.7.18"
+version = "0.7.19"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "9ae9cec805b01e8fc3fd2fe289f89149a9b66dd16786abd8b19cfa7b48cb0098"
+checksum = "494815d09bf52b5548659851081238f0ca39ff638363907596da739561c62c52"
 dependencies = [
  "bytes",
  "futures-core",
  "futures-io",
  "futures-sink",
  "futures-util",
+ "libc",
  "pin-project-lite",
  "tokio",
 ]
@@ -12736,7 +12748,7 @@ dependencies = [
  "slab",
  "sync_wrapper",
  "tokio",
- "tokio-util 0.7.18",
+ "tokio-util 0.7.19",
  "tower-layer",
  "tower-service",
  "tracing",
@@ -12759,7 +12771,7 @@ dependencies = [
  "iri-string",
  "pin-project-lite",
  "tokio",
- "tokio-util 0.7.18",
+ "tokio-util 0.7.19",
  "tower",
  "tower-layer",
  "tower-service",

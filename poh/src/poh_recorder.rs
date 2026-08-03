@@ -484,7 +484,7 @@ impl PohRecorder {
         let _ = self.flush_cache(false, None);
     }
 
-    fn notify_replay_wakeup(&self) {
+    pub(crate) fn notify_replay_wakeup(&self) {
         if let Some(signal) = &self.clear_bank_signal {
             match signal.try_send(true) {
                 Ok(()) => {}
@@ -2054,7 +2054,10 @@ mod tests {
             Arc::new(AtomicBool::default()),
         );
         poh_recorder.set_bank_for_test(bank);
+        let shared_leader_state = poh_recorder.shared_leader_state();
+        assert!(shared_leader_state.load().working_bank().is_some());
         poh_recorder.clear_bank(true);
+        assert!(shared_leader_state.load().working_bank().is_none());
         assert!(receiver.try_recv().is_ok());
     }
 

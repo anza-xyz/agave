@@ -31,8 +31,9 @@ pub(crate) const DELTA_TIMEOUT: Duration = Duration::from_millis(400);
 /// Timeout for standstill detection mechanism.
 pub(crate) const DELTA_STANDSTILL: Duration = Duration::from_millis(10_000);
 
-/// Wrapper to do non-blocking send and drop msg if channel is full.  Returns Err(channel_name) on
-/// channel disconnect.
+/// Wrapper to do non-blocking send and drop msg if channel is full.
+/// Returns:
+/// - Err(channel_name) on channel disconnect.
 pub(crate) fn nonblocking_send<T>(
     my_pubkey: &Pubkey,
     sender: &Sender<T>,

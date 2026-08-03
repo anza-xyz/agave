@@ -555,6 +555,7 @@ fn test_handle_new_root() {
         epoch_slots_frozen_slots,
     };
     ReplayStage::handle_new_root(
+        &Pubkey::new_unique(),
         root,
         &bank_forks,
         &mut progress,
@@ -722,6 +723,7 @@ fn test_handle_new_root_ahead_of_highest_super_majority_root() {
         epoch_slots_frozen_slots: EpochSlotsFrozenSlots::default(),
     };
     ReplayStage::handle_new_root(
+        &Pubkey::new_unique(),
         root,
         &bank_forks,
         &mut progress,

@@ -54,7 +54,7 @@ impl ConsensusPoolServiceStats {
         }
     }
 
-    fn report(&self) {
+    pub(super) fn do_report(&self) {
         let &Self {
             add_message_failed: Saturating(add_message_failed),
             certificates_sent: Saturating(certificates_sent),
@@ -132,7 +132,7 @@ impl ConsensusPoolServiceStats {
 
     pub(super) fn maybe_report(&mut self) {
         if self.last_request_time.elapsed() >= STATS_REPORT_INTERVAL {
-            self.report();
+            self.do_report();
             *self = Self::new();
         }
     }

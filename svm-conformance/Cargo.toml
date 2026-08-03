@@ -23,6 +23,11 @@ name = "test_exec_vm_serialization"
 path = "src/bin/test_exec_vm_serialization.rs"
 required-features = ["cli", "ffi"]
 
+[[bin]]
+name = "test_exec_vm_syscall"
+path = "src/bin/test_exec_vm_syscall.rs"
+required-features = ["cli", "ffi"]
+
 [features]
 default = ["cli", "ffi"]
 agave-unstable-api = []
@@ -34,6 +39,7 @@ ffi = [
     "dep:protosol",
     "dep:solana-compute-budget",
     "dep:solana-program-runtime",
+    "dep:solana-pubkey",
     "dep:solana-svm",
     "dep:solana-syscalls",
     "solana-svm/conformance",
@@ -46,12 +52,12 @@ prost = { version = "0.11", optional = true }
 protosol = { version = "=10.1.0", optional = true }
 solana-compute-budget = { workspace = true, optional = true }
 solana-program-runtime = { workspace = true, optional = true }
+solana-pubkey = { workspace = true, optional = true }
 solana-svm = { workspace = true, optional = true }
 solana-syscalls = { workspace = true, optional = true }
 
 [dev-dependencies]
 bincode = { workspace = true }
-solana-pubkey = { workspace = true }
 solana-rent = { workspace = true }
 solana-sdk-ids = { workspace = true }
 

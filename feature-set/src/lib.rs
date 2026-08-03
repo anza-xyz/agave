@@ -1485,7 +1485,7 @@ pub mod enable_sha512_syscall {
 }
 
 pub mod relax_post_exec_min_balance_check {
-    solana_pubkey::declare_id!("DEJmsCntuYqbXtL5z5TxbaxJXFUJAFjf7TqWSF7YWjQg");
+    solana_pubkey::declare_id!("BY4JhHLahVzS9ynfDz4exzGPbVXhFmJvEyMWsXbDBqME");
 }
 
 pub mod enable_tx_v1 {

@@ -1,6 +1,7 @@
 use {
     crate::{
         commitment::{CommitmentType, update_commitment_cache},
+        common::nonblocking_send,
         event_handler::PendingBlocks,
         voting_utils::VotingContext,
         votor::SharedContext,
@@ -66,13 +67,12 @@ pub(crate) fn set_root(
         error!("failed to record optimistic slot in blockstore: slot={new_root_slot}: {e:?}");
     }
 
-    if let Err(err) = update_commitment_cache(
+    update_commitment_cache(
+        my_pubkey,
         CommitmentType::Rooted,
         new_root_slot,
         &vctx.commitment_sender,
-    ) {
-        warn!("failed to update Alpenglow rooted commitment for root {new_root_slot}: {err}");
-    }
+    );
 
     // It is critical to send the OC notification in order to keep compatibility with
     // the RPC API. Additionally the PrioritizationFeeCache relies on this notification
@@ -83,10 +83,17 @@ pub(crate) fn set_root(
             .dependency_tracker
             .as_ref()
             .map(|s| s.get_current_declared_work());
-        let _ = config.sender.send((
-            BankNotification::OptimisticallyConfirmed(new_root_slot, bank_hash),
-            dependency_work,
-        ));
+        if let Err(chanel_name) = nonblocking_send(
+            my_pubkey,
+            &config.sender,
+            (
+                BankNotification::OptimisticallyConfirmed(new_root_slot, bank_hash),
+                dependency_work,
+            ),
+            "bank_notification_sender",
+        ) {
+            info!("{my_pubkey}: channel {chanel_name} disconnected");
+        }
     }
 }
 
@@ -147,6 +154,7 @@ pub fn check_and_handle_new_root<CB>(
         .set_roots(rooted_slots.iter())
         .expect("Ledger set roots failed");
     set_bank_forks_root(
+        my_pubkey,
         new_root,
         bank_forks,
         snapshot_controller,
@@ -163,23 +171,30 @@ pub fn check_and_handle_new_root<CB>(
             .dependency_tracker
             .as_ref()
             .map(|s| s.get_current_declared_work());
-        sender
-            .sender
-            .send((BankNotification::NewRootBank(root_bank), dependency_work))
-            .unwrap_or_else(|err| warn!("bank_notification_sender failed: {err:?}"));
-
+        if let Err(channel_name) = nonblocking_send(
+            my_pubkey,
+            &sender.sender,
+            (BankNotification::NewRootBank(root_bank), dependency_work),
+            "bank_notification_sender",
+        ) {
+            info!("{my_pubkey} channel {channel_name} disconnected");
+        }
         if let Some((new_chain, oldest_parent)) = rooted_slot_notifications {
             let dependency_work = sender
                 .dependency_tracker
                 .as_ref()
                 .map(|s| s.get_current_declared_work());
-            sender
-                .sender
-                .send((
+            if let Err(channel_name) = nonblocking_send(
+                my_pubkey,
+                &sender.sender,
+                (
                     BankNotification::NewRootedChain(new_chain, oldest_parent),
                     dependency_work,
-                ))
-                .unwrap_or_else(|err| warn!("bank_notification_sender failed: {err:?}"));
+                ),
+                "bank_notification_sender",
+            ) {
+                info!("{my_pubkey} channel {channel_name} disconnected");
+            }
         }
     }
     info!("{my_pubkey}: new root {new_root}");
@@ -190,6 +205,7 @@ pub fn check_and_handle_new_root<CB>(
 /// - Prune bank forks and drop the removed banks
 /// - Calls the callback for use in replay stage and tests
 pub fn set_bank_forks_root<CB>(
+    my_pubkey: &Pubkey,
     new_root: Slot,
     bank_forks: &RwLock<BankForks>,
     snapshot_controller: Option<&SnapshotController>,
@@ -217,10 +233,14 @@ pub fn set_bank_forks_root<CB>(
         highest_super_majority_root,
     );
 
-    drop_bank_sender
-        .send(removed_banks)
-        .unwrap_or_else(|err| warn!("bank drop failed: {err:?}"));
-
+    if let Err(channel_name) = nonblocking_send(
+        my_pubkey,
+        drop_bank_sender,
+        removed_banks,
+        "drop_bank_sender",
+    ) {
+        info!("{my_pubkey} channel {channel_name} disconnected");
+    }
     let r_bank_forks = bank_forks.read().unwrap();
     callback(&r_bank_forks);
 }

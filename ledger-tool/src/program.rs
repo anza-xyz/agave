@@ -291,7 +291,6 @@ fn load_program<'a>(
             &loader_key,
             ProgramRuntimeEnvironment::clone(&program_runtime_environment),
             slot,
-            slot.saturating_add(DELAY_VISIBILITY_SLOT_OFFSET),
             &contents,
             &mut load_program_metrics,
         );

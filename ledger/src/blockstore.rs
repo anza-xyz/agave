@@ -99,6 +99,7 @@ use {
 };
 
 pub mod blockstore_purge;
+pub mod cleanup_service;
 pub mod column;
 pub mod error;
 pub use {
@@ -109,6 +110,7 @@ pub use {
         blockstore_metrics::{BlockstoreInsertionMetrics, BlockstoreSwitchBankMetrics},
     },
     blockstore_purge::PurgeType,
+    cleanup_service::*,
     rocksdb::properties as RocksProperties,
 };
 

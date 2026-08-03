@@ -902,6 +902,11 @@ impl<FG: ForkGraph> TransactionBatchProcessor<FG> {
         limit_to_load_programs: bool,
         increment_usage_counter: bool,
     ) {
+        if missing_programs.is_empty() {
+            // Nothing to load, so skip the global cache and fork graph locks.
+            // Program-cache hit/miss counters are unchanged for empty work.
+            return;
+        }
         let mut count_hits_and_misses = true;
         loop {
             // Lock the global cache.

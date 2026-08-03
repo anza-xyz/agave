@@ -1,6 +1,7 @@
 use {
     crate::{
-        commitment::{CommitmentAggregationData, CommitmentError},
+        commitment::CommitmentAggregationData,
+        common::{blocking_send, nonblocking_send},
         vote_history::{VoteHistory, VoteHistoryError},
         vote_history_storage::{SavedVoteHistory, SavedVoteHistoryVersions, VoteHistoryStorage},
         voting_service::BLSOp,
@@ -13,7 +14,7 @@ use {
         vote::Vote,
         wire::get_vote_payload_to_sign,
     },
-    crossbeam_channel::{SendError, Sender, TrySendError},
+    crossbeam_channel::Sender,
     solana_bls_signatures::{BlsError, keypair::Keypair as BLSKeypair},
     solana_clock::{Epoch, Slot},
     solana_gossip::cluster_info::ClusterInfo,
@@ -100,19 +101,10 @@ impl GenerateVoteTxResult {
 pub enum VoteError {
     #[error("Unable to generate bls vote message, transient error: {0:?}")]
     TransientError(Box<GenerateVoteTxResult>),
-
     #[error("Unable to generate bls vote message, configuration error: {0:?}")]
     InvalidConfig(Box<GenerateVoteTxResult>),
-
-    #[error("Unable to send to certificate pool")]
-    ConsensusPoolError(#[from] SendError<()>),
-
-    #[error("Channel to rewards container disconnected")]
-    RewardsChannelDisconnected,
-
-    #[error("Commitment sender error {0}")]
-    CommitmentSenderError(#[from] CommitmentError),
-
+    #[error("Channel \"{0}\" disconnected")]
+    ChannelDisconnected(&'static str),
     #[error("Saved vote history error {0}")]
     SavedVoteHistoryError(#[from] VoteHistoryError),
 }
@@ -329,11 +321,11 @@ pub(crate) fn create_and_send_own_vote_message(
         }
     };
 
-    let own_vote_msg = OwnMessage::Vote(vote_msg.clone());
-    context
-        .own_vote_sender
-        .send(own_vote_msg)
-        .map_err(|_| SendError(()))?;
+    let my_pubkey = &context.cluster_info.id();
+    let msg = OwnMessage::Vote(vote_msg.clone());
+    // TODO: this blocking send can lead to a deadlock.  We need to find a way to not block here.
+    blocking_send(my_pubkey, &context.own_vote_sender, msg, "own_vote_sender")
+        .map_err(VoteError::ChannelDisconnected)?;
 
     let root_slot = context.sharable_banks.root().slot();
     if rewards_wants_vote(
@@ -342,16 +334,14 @@ pub(crate) fn create_and_send_own_vote_message(
         root_slot,
         &vote_msg.vote,
     ) {
-        let reward_input = RewardInput::Own(vote_msg.clone());
-        match context.own_reward_sender.try_send(reward_input) {
-            Ok(()) => (),
-            Err(TrySendError::Full(_)) => {
-                warn!("Reward votes channel is full, dropping own vote {vote:?}");
-            }
-            Err(TrySendError::Disconnected(_)) => {
-                return Err(VoteError::RewardsChannelDisconnected);
-            }
-        }
+        let msg = RewardInput::Own(vote_msg.clone());
+        nonblocking_send(
+            my_pubkey,
+            &context.own_reward_sender,
+            msg,
+            "own_reward_sender",
+        )
+        .map_err(VoteError::ChannelDisconnected)?;
     }
     Ok(Some(vote_msg))
 }

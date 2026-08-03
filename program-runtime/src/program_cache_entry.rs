@@ -74,7 +74,7 @@ impl From<ProgramCacheEntryOwner> for Pubkey {
     - Builtin => Builtin in TransactionBatchProcessor::add_builtin
 
     Un/re/deployment (with delay and cooldown):
-    - Empty / Closed => Loaded in UpgradeableLoaderInstruction::DeployWithMaxDataLen
+    - Empty / Closed => Loaded / FailedVerification in UpgradeableLoaderInstruction::DeployWithMaxDataLen
     - Loaded / FailedVerification => Loaded in UpgradeableLoaderInstruction::Upgrade
     - Loaded / FailedVerification => Closed in UpgradeableLoaderInstruction::Close
 
@@ -161,8 +161,6 @@ pub struct ProgramCacheEntry {
     pub account_owner: ProgramCacheEntryOwner,
     /// Slot in which the program was (re)deployed
     pub deployment_slot: Slot,
-    /// Slot in which this entry will become active (can be in the future)
-    pub effective_slot: Slot,
     /// How often this entry was used by a transaction
     pub stats: Arc<ProgramStatistics>,
     pub latest_access_slot: AtomicU64,
@@ -188,8 +186,7 @@ impl std::fmt::Debug for ProgramCacheEntry {
 #[cfg(feature = "dev-context-only-utils")]
 impl PartialEq for ProgramCacheEntry {
     fn eq(&self, other: &Self) -> bool {
-        self.effective_slot == other.effective_slot
-            && self.deployment_slot == other.deployment_slot
+        self.deployment_slot == other.deployment_slot
             && self.account_owner == other.account_owner
             && self.is_tombstone() == other.is_tombstone()
     }
@@ -201,7 +198,6 @@ impl ProgramCacheEntry {
         loader_key: &Pubkey,
         program_runtime_environment: ProgramRuntimeEnvironment,
         deployment_slot: Slot,
-        effective_slot: Slot,
         elf_bytes: &[u8],
         #[cfg(feature = "metrics")] metrics: &mut LoadProgramMetrics,
     ) -> Result<Self, Box<dyn std::error::Error>> {
@@ -209,7 +205,6 @@ impl ProgramCacheEntry {
             loader_key,
             program_runtime_environment,
             deployment_slot,
-            effective_slot,
             elf_bytes,
             #[cfg(feature = "metrics")]
             metrics,
@@ -229,7 +224,6 @@ impl ProgramCacheEntry {
         loader_key: &Pubkey,
         program_runtime_environment: ProgramRuntimeEnvironment,
         deployment_slot: Slot,
-        effective_slot: Slot,
         elf_bytes: &[u8],
         #[cfg(feature = "metrics")] metrics: &mut LoadProgramMetrics,
     ) -> Result<Self, Box<dyn std::error::Error>> {
@@ -237,7 +231,6 @@ impl ProgramCacheEntry {
             loader_key,
             program_runtime_environment,
             deployment_slot,
-            effective_slot,
             elf_bytes,
             #[cfg(feature = "metrics")]
             metrics,
@@ -249,15 +242,10 @@ impl ProgramCacheEntry {
         loader_key: &Pubkey,
         program_runtime_environment: ProgramRuntimeEnvironment,
         deployment_slot: Slot,
-        effective_slot: Slot,
         elf_bytes: &[u8],
         #[cfg(feature = "metrics")] metrics: &mut LoadProgramMetrics,
         reloading: bool,
     ) -> Result<Self, Box<dyn std::error::Error>> {
-        debug_assert_eq!(
-            effective_slot,
-            deployment_slot.saturating_add(DELAY_VISIBILITY_SLOT_OFFSET),
-        );
         let entry_stats = ProgramStatistics::default();
         #[cfg(feature = "metrics")]
         let load_elf_time = solana_svm_measure::measure::Measure::start("load_elf_time");
@@ -293,7 +281,6 @@ impl ProgramCacheEntry {
         Ok(Self {
             deployment_slot,
             account_owner: ProgramCacheEntryOwner::try_from(loader_key).unwrap(),
-            effective_slot,
             program: ProgramCacheEntryType::Loaded(executable),
             stats: entry_stats.into(),
             latest_access_slot: AtomicU64::new(0),
@@ -315,7 +302,6 @@ impl ProgramCacheEntry {
             program: ProgramCacheEntryType::Unloaded(environment),
             account_owner: self.account_owner,
             deployment_slot: self.deployment_slot,
-            effective_slot: self.effective_slot,
             stats: Arc::clone(&self.stats),
             latest_access_slot: AtomicU64::new(self.latest_access_slot.load(Ordering::Relaxed)),
         })
@@ -334,7 +320,6 @@ impl ProgramCacheEntry {
         Self {
             deployment_slot,
             account_owner: ProgramCacheEntryOwner::NativeLoader,
-            effective_slot: deployment_slot,
             program: ProgramCacheEntryType::Builtin(program),
             stats: Arc::default(),
             latest_access_slot: AtomicU64::new(0),
@@ -359,7 +344,6 @@ impl ProgramCacheEntry {
             program: reason,
             account_owner,
             deployment_slot: slot,
-            effective_slot: slot,
             stats,
             latest_access_slot: AtomicU64::new(0),
         };
@@ -377,11 +361,19 @@ impl ProgramCacheEntry {
     }
 
     pub(crate) fn is_implicit_delay_visibility_tombstone(&self, slot: Slot) -> bool {
-        !matches!(self.program, ProgramCacheEntryType::Builtin(_))
-            && self.effective_slot.saturating_sub(self.deployment_slot)
-                == DELAY_VISIBILITY_SLOT_OFFSET
-            && slot >= self.deployment_slot
-            && slot < self.effective_slot
+        slot >= self.deployment_slot && slot < self.effective_slot()
+    }
+
+    pub fn effective_slot(&self) -> Slot {
+        match self.program {
+            ProgramCacheEntryType::Closed
+            | ProgramCacheEntryType::DelayVisibility
+            | ProgramCacheEntryType::FailedVerification(_)
+            | ProgramCacheEntryType::Builtin(_) => self.deployment_slot,
+            ProgramCacheEntryType::Unloaded(_) | ProgramCacheEntryType::Loaded(_) => self
+                .deployment_slot
+                .saturating_add(DELAY_VISIBILITY_SLOT_OFFSET),
+        }
     }
 
     pub fn update_access_slot(&self, slot: Slot) {
@@ -455,7 +447,7 @@ mod tests {
             compilation_time_ema: AtomicU64::new(u64::MAX),
             ..Default::default()
         };
-        let program = new_test_entry_with_usage(0, 1, stats);
+        let program = new_test_entry_with_usage(0, stats);
         program.update_access_slot(1);
         assert!(
             dbg!(program.retention_score()) <= 129,
@@ -471,7 +463,7 @@ mod tests {
             compilation_time_ema: AtomicU64::new(1),
             ..Default::default()
         };
-        let program = new_test_entry_with_usage(10, 11, stats);
+        let program = new_test_entry_with_usage(10, stats);
         program.update_access_slot(15);
         let less_used_retention_score = program.retention_score();
         program.stats.uses.fetch_max(1024, Ordering::Relaxed);
@@ -494,7 +486,7 @@ mod tests {
             compilation_time_ema: AtomicU64::new(1000),
             ..Default::default()
         };
-        let program = new_test_entry_with_usage(10, 11, stats);
+        let program = new_test_entry_with_usage(10, stats);
         program.update_access_slot(15);
         let cheaper_to_compile_score = program.retention_score();
         program
@@ -521,7 +513,7 @@ mod tests {
             compilation_time_ema: AtomicU64::new(1000),
             ..Default::default()
         };
-        let program = new_test_entry_with_usage(10, 11, stats);
+        let program = new_test_entry_with_usage(10, stats);
         program.update_access_slot(15);
         let previous_score = program.retention_score();
         program

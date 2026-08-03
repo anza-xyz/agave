@@ -367,7 +367,7 @@ impl SvmTestEnvironment<'_> {
         // in a later batch, the same loaderv3 program will have a DelayedVisibility tombstone
         // a new loaderv1/v2 account will have a FailedVerification tombstone
         // and a closed loaderv3 program or any loaderv3 buffer will have a Closed tombstone
-        program_cache_entry.effective_slot > EXECUTION_SLOT || program_cache_entry.is_tombstone()
+        program_cache_entry.effective_slot() > EXECUTION_SLOT || program_cache_entry.is_tombstone()
     }
 }
 

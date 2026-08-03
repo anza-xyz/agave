@@ -1,4 +1,7 @@
+mod shared;
+
 use {
+    shared::from_account_info,
     solana_account_info::AccountInfo,
     solana_clock::Slot,
     solana_instruction::{AccountMeta, Instruction},
@@ -8,10 +11,7 @@ use {
     solana_program_test::{ProgramTest, ProgramTestContext, processor},
     solana_pubkey::Pubkey,
     solana_signer::Signer,
-    solana_sysvar::{
-        SysvarSerialize,
-        last_restart_slot::{self, LastRestartSlot},
-    },
+    solana_sysvar::last_restart_slot::{self, LastRestartSlot},
     solana_transaction::Transaction,
 };
 
@@ -26,7 +26,7 @@ fn sysvar_last_restart_slot_process_instruction(
     let expected_last_hardfork_slot = u64::from_le_bytes(input[0..8].try_into().unwrap());
 
     let last_restart_slot_account = &accounts[0];
-    let slot_via_account = LastRestartSlot::from_account_info(last_restart_slot_account)?;
+    let slot_via_account = from_account_info::<LastRestartSlot>(last_restart_slot_account)?;
     msg!("slot via account: {:?}", slot_via_account);
 
     assert_eq!(

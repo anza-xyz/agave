@@ -10,10 +10,8 @@ use {
     base64::{Engine, prelude::BASE64_STANDARD},
     chrono_humanize::{Accuracy, HumanTime, Tense},
     log::*,
-    solana_account::{
-        Account, AccountSharedData, ReadableAccount, create_account_shared_data_for_test,
-        state_traits::StateMut,
-    },
+    serde::Serialize,
+    solana_account::{Account, AccountSharedData, ReadableAccount, state_traits::StateMut},
     solana_account_info::AccountInfo,
     solana_accounts_db::accounts_db::ACCOUNTS_DB_CONFIG_FOR_TESTING,
     solana_address::Address,
@@ -50,9 +48,10 @@ use {
         genesis_utils::{GenesisConfigInfo, create_genesis_config_with_leader_ex},
         runtime_config::RuntimeConfig,
     },
+    solana_sdk_ids::sysvar,
     solana_signer::Signer,
     solana_svm_log_collector::ic_msg,
-    solana_sysvar::{SysvarSerialize, last_restart_slot::LastRestartSlot},
+    solana_sysvar::last_restart_slot::LastRestartSlot,
     solana_sysvar_id::SysvarId,
     solana_vote_program::vote_state::{VoteStateV4, VoteStateVersions},
     std::{
@@ -247,14 +246,15 @@ macro_rules! processor {
     }};
 }
 
-fn get_sysvar<T: Default + SysvarSerialize + Sized + serde::de::DeserializeOwned + Clone>(
+fn get_sysvar<T: Clone>(
     sysvar: Result<Arc<T>, InstructionError>,
     var_addr: *mut u8,
+    sysvar_size: usize,
 ) -> u64 {
     let invoke_context = get_invoke_context();
     if invoke_context
         .compute_meter
-        .consume_checked(invoke_context.get_execution_cost().sysvar_base_cost + T::size_of() as u64)
+        .consume_checked(invoke_context.get_execution_cost().sysvar_base_cost + sysvar_size as u64)
         .is_err()
     {
         panic!("Exceeded compute budget");
@@ -320,7 +320,7 @@ pub fn sol_get_last_restart_slot(var_addr: *mut u8) -> u64 {
 struct SyscallStubs {}
 
 impl SyscallStubs {
-    fn fetch_and_write_sysvar<T: SysvarSerialize>(
+    fn fetch_and_write_sysvar<T: Serialize>(
         &self,
         var_addr: *mut u8,
         offset: u64,
@@ -506,6 +506,7 @@ impl solana_sysvar::program_stubs::SyscallStubs for SyscallStubs {
                 .sysvar_cache()
                 .get_clock(),
             var_addr,
+            solana_clock::SIZE,
         )
     }
 
@@ -516,6 +517,7 @@ impl solana_sysvar::program_stubs::SyscallStubs for SyscallStubs {
                 .sysvar_cache()
                 .get_epoch_schedule(),
             var_addr,
+            solana_epoch_schedule::SIZE,
         )
     }
 
@@ -526,6 +528,7 @@ impl solana_sysvar::program_stubs::SyscallStubs for SyscallStubs {
                 .sysvar_cache()
                 .get_epoch_rewards(),
             var_addr,
+            solana_epoch_rewards::SIZE,
         )
     }
 
@@ -537,6 +540,7 @@ impl solana_sysvar::program_stubs::SyscallStubs for SyscallStubs {
                 .sysvar_cache()
                 .get_fees(),
             var_addr,
+            solana_sysvar::fees::SIZE,
         )
     }
 
@@ -547,6 +551,7 @@ impl solana_sysvar::program_stubs::SyscallStubs for SyscallStubs {
                 .sysvar_cache()
                 .get_rent(),
             var_addr,
+            solana_rent::SIZE,
         )
     }
 
@@ -557,6 +562,7 @@ impl solana_sysvar::program_stubs::SyscallStubs for SyscallStubs {
                 .sysvar_cache()
                 .get_last_restart_slot(),
             var_addr,
+            solana_sysvar::last_restart_slot::SIZE,
         )
     }
 
@@ -622,6 +628,41 @@ impl solana_sysvar::program_stubs::SyscallStubs for SyscallStubs {
             _ => UNSUPPORTED_SYSVAR,
         }
     }
+}
+
+#[allow(deprecated)]
+fn canonical_sysvar_data_len(sysvar_id: &Pubkey) -> Option<usize> {
+    match *sysvar_id {
+        sysvar::clock::ID => Some(solana_clock::SIZE),
+        sysvar::epoch_rewards::ID => Some(solana_epoch_rewards::SIZE),
+        sysvar::epoch_schedule::ID => Some(solana_epoch_schedule::SIZE),
+        sysvar::fees::ID => Some(solana_sysvar::fees::SIZE),
+        sysvar::last_restart_slot::ID => Some(solana_sysvar::last_restart_slot::SIZE),
+        sysvar::recent_blockhashes::ID => Some(solana_sysvar::recent_blockhashes::SIZE),
+        sysvar::rent::ID => Some(solana_rent::SIZE),
+        sysvar::rewards::ID => Some(solana_sysvar::rewards::SIZE),
+        sysvar::slot_hashes::ID => Some(solana_sysvar::slot_hashes::SIZE),
+        sysvar::slot_history::ID => Some(solana_sysvar::slot_history::SIZE),
+        sysvar::stake_history::ID => Some(solana_sysvar::stake_history::SIZE),
+        _ => None,
+    }
+}
+
+// Preserve the canonical account size for built-in sysvars, but never allocate less than the
+// current serialized value requires. Unknown sysvar IDs have no canonical size, so they use the
+// serialized size directly.
+fn required_sysvar_data_len(sysvar_id: &Pubkey, serialized_len: usize) -> usize {
+    canonical_sysvar_data_len(sysvar_id)
+        .unwrap_or(serialized_len)
+        .max(serialized_len)
+}
+
+fn create_sysvar_account<T: SysvarId + Serialize>(sysvar: &T) -> Account {
+    let serialized_len = bincode::serialized_size(sysvar).unwrap() as usize;
+    let data_len = required_sysvar_data_len(&T::id(), serialized_len);
+    let mut account = Account::new(1, data_len, &sysvar::id());
+    bincode::serialize_into(account.data.as_mut_slice(), sysvar).unwrap();
+    account
 }
 
 pub fn find_file(filename: &str) -> Option<PathBuf> {
@@ -797,9 +838,8 @@ impl ProgramTest {
         );
     }
 
-    pub fn add_sysvar_account<S: SysvarSerialize>(&mut self, address: Pubkey, sysvar: &S) {
-        let account = create_account_shared_data_for_test(sysvar);
-        self.add_account(address, account.into());
+    pub fn add_sysvar_account<S: SysvarId + Serialize>(&mut self, address: Pubkey, sysvar: &S) {
+        self.add_account(address, create_sysvar_account(sysvar));
     }
 
     /// Add a BPF Upgradeable program to the test environment's genesis config.
@@ -1359,7 +1399,7 @@ impl ProgramTestContext {
     /// that would be difficult to replicate on a new test cluster. Beware
     /// that it can be used to create states that would not be reachable
     /// under normal conditions!
-    pub fn set_sysvar<T: SysvarId + SysvarSerialize>(&self, sysvar: &T) {
+    pub fn set_sysvar<T: SysvarId + Serialize>(&self, sysvar: &T) {
         let bank_forks = self.bank_forks.read().unwrap();
         let bank = bank_forks.working_bank();
         bank.set_sysvar_for_tests(sysvar);
