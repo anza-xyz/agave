@@ -3837,6 +3837,34 @@ mod tests {
             accounts.first().unwrap().data().len()
         );
 
+        // Case: close a program account with a non-writable program account
+        process_instruction(
+            &loader_id,
+            &instruction,
+            vec![
+                (programdata_address, programdata_account.clone()),
+                (recipient_address, recipient_account.clone()),
+                (authority_address, authority_account.clone()),
+                (program_address, program_account.clone()),
+                (sysvar::clock::id(), clock_account.clone()),
+            ],
+            vec![
+                AccountMeta {
+                    pubkey: programdata_address,
+                    is_signer: false,
+                    is_writable: true,
+                },
+                recipient_meta.clone(),
+                authority_meta.clone(),
+                AccountMeta {
+                    pubkey: program_address,
+                    is_signer: false,
+                    is_writable: false,
+                },
+            ],
+            Err(InstructionError::InvalidArgument),
+        );
+
         // Case: close a program account
         let accounts = process_instruction(
             &loader_id,
