@@ -33,7 +33,6 @@ agave-feature-set = { workspace = true }
 agave-reserved-account-keys = { workspace = true }
 agave-snapshots = { workspace = true }
 agave-votor-messages = { workspace = true }
-ahash = { workspace = true }
 anyhow = { workspace = true }
 assert_matches = { workspace = true }
 bitflags = { workspace = true }
