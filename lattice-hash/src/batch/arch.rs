@@ -214,13 +214,6 @@ unsafe fn compress_batch<L: Lanes>(bufs: &[&[u32]], lens: &[usize], acc: &mut Lt
     let mut h = iv;
     let mut off = [0usize; MAX_LANES];
 
-    // Build a lane vector from up to `N` per-lane u32 values (rest zero).
-    let lanes = |vals: &[u32]| -> L {
-        let mut t = [0u32; MAX_LANES];
-        t[..vals.len()].copy_from_slice(vals);
-        unsafe { L::load(t.as_ptr()) }
-    };
-
     // Load the current 64-byte block of every lane into SoA word vectors,
     // reading directly from the caller's zero-padded buffers.
     let load_m = |off: &[usize; MAX_LANES]| -> [L; NUM_BLOCK_WORDS] {
@@ -260,8 +253,10 @@ unsafe fn compress_batch<L: Lanes>(bufs: &[&[u32]], lens: &[usize], acc: &mut Lt
         }
 
         let m = load_m(&off);
-        let block_sz_v = lanes(&block_sz[..n]);
-        let block_flags_v = lanes(&block_flags[..n]);
+        // `block_sz`/`block_flags` are already `MAX_LANES`-wide with their first
+        // `n == L::N` entries set, and `load` reads exactly `L::N` lanes.
+        let block_sz_v = unsafe { L::load(block_sz.as_ptr()) };
+        let block_flags_v = unsafe { L::load(block_flags.as_ptr()) };
 
         if !active[..n].iter().any(|&a| a) {
             break (m, block_sz_v, block_flags_v);
