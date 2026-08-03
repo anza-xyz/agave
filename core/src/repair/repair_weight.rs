@@ -986,7 +986,7 @@ impl RepairWeight {
         }
 
         for (tree_root, _) in stake_weighted_trees.iter().skip(max_orphan_trees) {
-            if let Some(tree) = self.trees.remove(&tree_root) {
+            if let Some(tree) = self.trees.remove(tree_root) {
                 self.remove_tree_slots(&tree);
             }
         }
