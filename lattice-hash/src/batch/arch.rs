@@ -309,12 +309,13 @@ unsafe fn compress_batch<L: Lanes>(bufs: &[&[u32]], lens: &[usize], acc: &mut Lt
 
         let base = xof_block * (BLOCK_LEN / 2); // u16 element index
         for blk in 0..sub_blocks {
-            let mut cols = [zero; MAX_LANES];
-            cols[..n].copy_from_slice(&out_words[blk * n..blk * n + n]);
+            // Transpose this tile in place (`out_words` is rewritten next XOF
+            // iteration): `tile[l]` becomes lane `l`'s words.
+            let tile = &mut out_words[blk * n..blk * n + n];
             unsafe {
-                L::transpose(&mut cols[..n]); // cols[l] = lane l's words
-                let mut s = cols[0];
-                for &col in &cols[1..n] {
+                L::transpose(tile);
+                let mut s = tile[0];
+                for &col in &tile[1..n] {
                     s = swar_add_u16(s, col);
                 }
                 s.store(s_arr.as_mut_ptr());
