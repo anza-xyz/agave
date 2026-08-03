@@ -19,14 +19,15 @@
 #[cfg(target_arch = "x86_64")]
 mod arch;
 
-use crate::lt_hash::LtHash;
+use {
+    crate::lt_hash::LtHash,
+    blake3::{BLOCK_LEN, CHUNK_LEN},
+};
 
-/// Max input bytes that map to a single BLAKE3 chunk — the batch path. Larger
-/// messages need the full Merkle tree and take the `blake3`-crate fallback.
-const CHUNK_LEN: usize = 1024;
-/// Bytes in one BLAKE3 compression block.
-const BLOCK_LEN: usize = 64;
 /// `u32` words in one chunk-sized lane buffer (`CHUNK_LEN / 4` = 256).
+/// `CHUNK_LEN` (1024) is the max input that maps to a single BLAKE3 chunk — the
+/// batch path; larger messages need the full Merkle tree and take the
+/// `blake3`-crate fallback.
 const NUM_CHUNK_WORDS: usize = CHUNK_LEN / 4;
 /// Widest SIMD lane count (AVX512 width) = max messages staged per batch.
 const MAX_LANES: usize = 16;
@@ -171,9 +172,10 @@ impl Accumulator {
             self.cur_len = 0;
             return;
         }
-        // Zero-pad the message's last block, stage its length, and flush once a
-        // full batch has accumulated. `max(1)` keeps an empty message as a single
-        // zeroed root block (= blake3("")).
+        // Zero-pad the message's last block (`BLOCK_LEN` = 64, one BLAKE3
+        // compression block), stage its length, and flush once a full batch has
+        // accumulated. `max(1)` keeps an empty message as a single zeroed root
+        // block (= blake3("")).
         let valid = self.cur_len.max(1).next_multiple_of(BLOCK_LEN);
         let start = self.batch_lens.len().wrapping_mul(NUM_CHUNK_WORDS);
         let lane_bytes: &mut [u8] = bytemuck::cast_slice_mut(
