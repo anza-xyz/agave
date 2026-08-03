@@ -284,7 +284,6 @@ unsafe fn compress_batch<L: Lanes>(bufs: &[&[u32]], lens: &[usize], acc: &mut Lt
     // output-block counter; each pass yields one 64-byte output block, which we
     // transpose back to per-lane rows and SWAR-u16-reduce into `acc`.
     let mut out_words = [zero; NUM_BLOCK_WORDS];
-    let mut s_arr = [0u32; MAX_LANES];
     for xof_block in 0..NUM_XOF_BLOCKS {
         let counter = xof_block as u64;
         // XOF feed-forward keeps all 16 words (blake3's `compress_xof`):
@@ -318,12 +317,11 @@ unsafe fn compress_batch<L: Lanes>(bufs: &[&[u32]], lens: &[usize], acc: &mut Lt
                 for &col in &tile[1..n] {
                     s = swar_add_u16(s, col);
                 }
-                s.store(s_arr.as_mut_ptr());
-            }
-            for (j, packed) in s_arr[..n].iter().enumerate() {
-                let e = base + (blk * n + j) * 2;
-                acc.0[e] = acc.0[e].wrapping_add(*packed as u16);
-                acc.0[e + 1] = acc.0[e + 1].wrapping_add((*packed >> 16) as u16);
+                // `s`'s `n` u32 words are `2n` contiguous `u16` accumulator
+                // elements: load that region, SWAR-add the batch's sum, store back.
+                let start = base + blk * n * 2;
+                let acc_words = acc.0[start..start + 2 * n].as_mut_ptr().cast::<u32>();
+                swar_add_u16(L::load(acc_words), s).store(acc_words);
             }
         }
     }
