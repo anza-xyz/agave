@@ -6,12 +6,12 @@ use {
         keypair::Keypair as BLSKeypair, pubkey::PubkeyCompressed as BLSPubkeyCompressed,
     },
     solana_pubkey::Pubkey,
-    solana_vote::vote_account::{VoteAccount, VoteAccounts},
+    solana_vote::vote_account::{StakedNodesHashMap, VoteAccount, VoteAccounts},
     solana_vote_interface::{
         authorized_voters::AuthorizedVoters,
         state::{VoteStateV4, VoteStateVersions},
     },
-    std::{collections::HashMap, iter::repeat_with},
+    std::iter::repeat_with,
 };
 
 /// Creates a vote account
@@ -95,11 +95,11 @@ where
 }
 
 #[cfg(feature = "dev-context-only-utils")]
-pub fn staked_nodes<'a, I>(vote_accounts: I) -> HashMap<Pubkey, u64>
+pub fn staked_nodes<'a, I>(vote_accounts: I) -> StakedNodesHashMap
 where
     I: IntoIterator<Item = &'a (Pubkey, (u64, VoteAccount))>,
 {
-    let mut staked_nodes = HashMap::new();
+    let mut staked_nodes = StakedNodesHashMap::default();
     for (_, (stake, vote_account)) in vote_accounts
         .into_iter()
         .filter(|(_, (stake, _))| *stake != 0)

@@ -18,7 +18,7 @@ use {
     solana_streamer::{
         nonblocking::{quic::SpawnNonBlockingServerResult, swqos::SwQosConfig},
         quic::QuicStreamerConfig,
-        streamer::StakedNodes,
+        streamer::{StakedNodes, StakedNodesHashMap},
     },
     std::{
         collections::HashMap,
@@ -103,7 +103,7 @@ async fn main() -> anyhow::Result<()> {
 
     let staked_nodes = {
         let nodes = StakedNodes::new(
-            Arc::new(HashMap::new()),
+            Arc::new(StakedNodesHashMap::default()),
             load_staked_nodes_overrides(&cli.stake_amounts)?,
         );
         Arc::new(RwLock::new(nodes))

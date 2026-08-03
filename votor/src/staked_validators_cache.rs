@@ -3,7 +3,7 @@ use {
     lazy_lru::LruCache,
     solana_clock::{Epoch, Slot},
     solana_gossip::cluster_info::ClusterInfo,
-    solana_pubkey::Pubkey,
+    solana_pubkey::{Pubkey, PubkeyHasherBuilder},
     solana_runtime::bank_forks::BankForks,
     std::{
         collections::HashMap,
@@ -95,7 +95,7 @@ impl StakedValidatorsCache {
                     "StakedValidatorsCache::get: unknown Bank::epoch_staked_nodes for epoch: \
                      {epoch}"
                 );
-                Arc::<HashMap<Pubkey, u64>>::default()
+                Arc::<HashMap<Pubkey, u64, PubkeyHasherBuilder>>::default()
             });
 
         struct Node {

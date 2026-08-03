@@ -200,7 +200,7 @@ mod tests {
     #[test]
     fn test_leader_schedule_basic() {
         let num_keys = 10;
-        let vote_accounts_map: HashMap<_, _> = (0..num_keys)
+        let vote_accounts_map: VoteAccountsHashMap = (0..num_keys)
             .map(|i| {
                 (
                     solana_pubkey::new_rand(),
@@ -222,7 +222,7 @@ mod tests {
     #[test]
     fn test_repeated_leader_schedule() {
         let num_keys = 10;
-        let vote_accounts_map: HashMap<_, _> = (0..num_keys)
+        let vote_accounts_map: VoteAccountsHashMap = (0..num_keys)
             .map(|i| {
                 (
                     solana_pubkey::new_rand(),
@@ -250,7 +250,7 @@ mod tests {
     fn test_repeated_leader_schedule_specific() {
         let vote_key0 = solana_pubkey::new_rand();
         let vote_key1 = solana_pubkey::new_rand();
-        let vote_accounts_map: HashMap<_, _> = [
+        let vote_accounts_map: VoteAccountsHashMap = [
             (vote_key0, (2, VoteAccount::new_random())),
             (vote_key1, (1, VoteAccount::new_random())),
         ]

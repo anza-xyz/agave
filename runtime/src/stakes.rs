@@ -4,12 +4,12 @@
 use solana_frozen_abi::stable_abi::{context::SequenceLenMax, sample_collection_sized};
 use {
     crate::{
-        alpenglow_epoch_type::RewardEpochDelegatedStakes,
+        alpenglow_epoch_type::{DelegatedStakesMap, RewardEpochDelegatedStakes},
         stake_account,
         stake_delegation::{delegation_activation_status, delegation_effective_stake},
         stake_history::StakeHistory,
     },
-    imbl::HashMap as ImblHashMap,
+    imbl::{GenericHashMap as ImblHashMap, shared_ptr::DefaultSharedPtr},
     log::error,
     num_derive::ToPrimitive,
     rayon::{ThreadPool, prelude::*},
@@ -18,7 +18,7 @@ use {
     solana_accounts_db::utils::create_account_shared_data,
     solana_clock::Epoch,
     solana_leader_schedule::SlotLeader,
-    solana_pubkey::Pubkey,
+    solana_pubkey::{Pubkey, PubkeyHasherBuilder},
     solana_stake_interface::{
         program as stake_program,
         state::{Delegation, StakeActivationStatus},
@@ -69,7 +69,7 @@ pub enum InvalidCacheEntryReason {
 }
 
 type StakeAccount = stake_account::StakeAccount<Delegation>;
-pub(crate) type DelegatedStakes = ImblHashMap<Pubkey, u64>;
+pub(crate) type DelegatedStakes = ImblHashMap<Pubkey, u64, PubkeyHasherBuilder, DefaultSharedPtr>;
 
 #[cfg_attr(feature = "frozen-abi", derive(AbiExample))]
 #[derive(Default, Debug)]
@@ -184,6 +184,8 @@ impl StakesCache {
     }
 }
 
+pub type StakeDelegationsMap<T> = ImblHashMap<Pubkey, T, PubkeyHasherBuilder, DefaultSharedPtr>;
+
 /// The generic type T is either Delegation or StakeAccount.
 /// [`Stakes<Delegation>`] is equivalent to the old code and is used for backward
 /// compatibility in [`crate::bank::BankFieldsToDeserialize`].
@@ -213,8 +215,8 @@ pub struct Stakes<T: Clone> {
         feature = "frozen-abi",
         stable_abi_sample(with = "sample_collection_sized(rng, SequenceLenMax(1))")
     )]
-    #[wincode(with = "FromIntoIterator<ImblHashMap<Pubkey, T>, BincodeLen>")]
-    stake_delegations: ImblHashMap<Pubkey, T>,
+    #[wincode(with = "FromIntoIterator<StakeDelegationsMap<T>, BincodeLen>")]
+    stake_delegations: StakeDelegationsMap<T>,
 
     /// current effective stake delegated to each vote account pubkey
     #[cfg_attr(feature = "frozen-abi", stable_abi_sample(with = "Default::default()"))]
@@ -260,7 +262,7 @@ impl<T: Clone> Stakes<T> {
         &self.vote_accounts
     }
 
-    pub(crate) fn staked_nodes(&self) -> Arc<HashMap<Pubkey, u64>> {
+    pub(crate) fn staked_nodes(&self) -> Arc<HashMap<Pubkey, u64, PubkeyHasherBuilder>> {
         self.vote_accounts.staked_nodes()
     }
 
@@ -412,7 +414,7 @@ impl Stakes<StakeAccount> {
     pub fn new_for_tests(
         epoch: Epoch,
         vote_accounts: VoteAccounts,
-        stake_delegations: ImblHashMap<Pubkey, StakeAccount>,
+        stake_delegations: StakeDelegationsMap<StakeAccount>,
     ) -> Self {
         let stake_history = StakeHistory::default();
         let delegated_stakes =
@@ -450,7 +452,12 @@ impl Stakes<StakeAccount> {
             stake_delegations
                 .par_iter()
                 .fold(
-                    || (StakeActivationStatus::default(), HashMap::default()),
+                    || {
+                        (
+                            StakeActivationStatus::default(),
+                            DelegatedStakesMap::default(),
+                        )
+                    },
                     |(acc, mut delegated_stakes), (_stake_pubkey, stake_account)| {
                         let delegation = stake_account.delegation();
                         let activation_status = delegation_activation_status(
@@ -466,7 +473,12 @@ impl Stakes<StakeAccount> {
                     },
                 )
                 .reduce(
-                    || (StakeActivationStatus::default(), HashMap::default()),
+                    || {
+                        (
+                            StakeActivationStatus::default(),
+                            DelegatedStakesMap::default(),
+                        )
+                    },
                     |(activation_status_a, delegated_stakes_a),
                      (activation_status_b, delegated_stakes_b)| {
                         (
@@ -515,7 +527,7 @@ impl Stakes<StakeAccount> {
     }
 
     fn calculate_delegated_stakes(
-        stake_delegations: &ImblHashMap<Pubkey, StakeAccount>,
+        stake_delegations: &StakeDelegationsMap<StakeAccount>,
         epoch: Epoch,
         stake_history: &StakeHistory,
         new_rate_activation_epoch: Option<Epoch>,
@@ -670,7 +682,7 @@ impl Stakes<StakeAccount> {
     /// iterate over it with [`rayon`].
     ///
     /// [hamt]: https://en.wikipedia.org/wiki/Hash_array_mapped_trie
-    pub(crate) fn stake_delegations(&self) -> &ImblHashMap<Pubkey, StakeAccount> {
+    pub(crate) fn stake_delegations(&self) -> &StakeDelegationsMap<StakeAccount> {
         &self.stake_delegations
     }
 
@@ -741,9 +753,9 @@ impl_stake_format_conversion!(StakeAccount, Stake, |sa| *sa.stake());
 impl_stake_format_conversion!(Stake, Delegation, |stake| stake.delegation);
 
 fn merge_delegated_stakes(
-    mut stakes: HashMap</*voter:*/ Pubkey, /*stake:*/ u64>,
-    other: HashMap</*voter:*/ Pubkey, /*stake:*/ u64>,
-) -> HashMap</*voter:*/ Pubkey, /*stake:*/ u64> {
+    mut stakes: DelegatedStakesMap,
+    other: DelegatedStakesMap,
+) -> DelegatedStakesMap {
     if stakes.len() < other.len() {
         return merge_delegated_stakes(other, stakes);
     }

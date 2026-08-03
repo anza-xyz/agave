@@ -16,6 +16,7 @@ use {
         crds_gossip_push::CrdsGossipPush,
         crds_value::CrdsValue,
         duplicate_shred::{self, DuplicateShredIndex, MAX_DUPLICATE_SHREDS},
+        epoch_specs::StakedNodesHashMap,
         protocol::{Ping, PingCache},
     },
     rand::{CryptoRng, Rng},
@@ -31,6 +32,7 @@ use {
     std::{
         cmp,
         collections::{HashMap, HashSet},
+        hash::BuildHasher,
         net::SocketAddr,
         sync::{Mutex, RwLock},
         time::{Duration, Instant},
@@ -61,7 +63,7 @@ impl CrdsGossip {
         &self,
         self_pubkey: &Pubkey,
         origins: I, // Unique pubkeys of crds values' owners.
-        stakes: &HashMap<Pubkey, u64>,
+        stakes: &StakedNodesHashMap<impl BuildHasher>,
     ) -> HashMap</*gossip peer:*/ Pubkey, /*origins:*/ Vec<Pubkey>>
     where
         I: IntoIterator<Item = Pubkey>,
@@ -73,7 +75,7 @@ impl CrdsGossip {
         &self,
         pubkey: &Pubkey, // This node.
         now: u64,
-        stakes: &HashMap<Pubkey, u64>,
+        stakes: &StakedNodesHashMap<impl BuildHasher>,
         should_retain_crds_value: impl Fn(&CrdsValue) -> bool,
     ) -> (
         Vec<CrdsValue>, // unique CrdsValues pushed out to peers
@@ -162,7 +164,7 @@ impl CrdsGossip {
         origin: &[Pubkey],
         wallclock: u64,
         now: u64,
-        stakes: &HashMap<Pubkey, u64>,
+        stakes: &StakedNodesHashMap<impl BuildHasher>,
     ) -> Result<(), CrdsGossipError> {
         if now > wallclock.saturating_add(self.push.prune_timeout) {
             Err(CrdsGossipError::PruneMessageTimeout)
@@ -180,7 +182,7 @@ impl CrdsGossip {
         &self,
         self_keypair: &Keypair,
         self_shred_version: u16,
-        stakes: &HashMap<Pubkey, u64>,
+        stakes: &StakedNodesHashMap<impl BuildHasher>,
         gossip_validators: Option<&HashSet<Pubkey>>,
         ping_cache: &Mutex<PingCache>,
         pings: &mut Vec<(SocketAddr, Ping)>,
@@ -200,19 +202,19 @@ impl CrdsGossip {
 
     /// Generate a random request.
     #[allow(clippy::too_many_arguments)]
-    pub fn new_pull_request(
+    pub fn new_pull_request<S: BuildHasher>(
         &self,
         thread_pool: &ThreadPool,
         self_keypair: &Keypair,
         self_shred_version: u16,
         now: u64,
         gossip_validators: Option<&HashSet<Pubkey>>,
-        stakes: &HashMap<Pubkey, u64>,
+        stakes: &StakedNodesHashMap<S>,
         bloom_size: usize,
         ping_cache: &Mutex<PingCache>,
         pings: &mut Vec<(SocketAddr, Ping)>,
         socket_addr_space: &SocketAddrSpace,
-    ) -> Result<impl Iterator<Item = (SocketAddr, CrdsFilter)> + Clone + use<>, CrdsGossipError>
+    ) -> Result<impl Iterator<Item = (SocketAddr, CrdsFilter)> + Clone + use<S>, CrdsGossipError>
     {
         self.pull.new_pull_request(
             thread_pool,
@@ -251,7 +253,7 @@ impl CrdsGossip {
 
     pub fn filter_pull_responses(
         &self,
-        timeouts: &CrdsTimeouts,
+        timeouts: &CrdsTimeouts<impl BuildHasher>,
         response: Vec<CrdsValue>,
         now: u64,
         process_pull_stats: &mut ProcessPullStats,
@@ -283,12 +285,12 @@ impl CrdsGossip {
         );
     }
 
-    pub fn make_timeouts<'a>(
+    pub fn make_timeouts<'a, S: BuildHasher>(
         &self,
         self_pubkey: Pubkey,
-        stakes: &'a HashMap<Pubkey, u64>,
+        stakes: &'a StakedNodesHashMap<S>,
         epoch_duration: Duration,
-    ) -> CrdsTimeouts<'a> {
+    ) -> CrdsTimeouts<'a, S> {
         self.pull.make_timeouts(self_pubkey, stakes, epoch_duration)
     }
 
@@ -297,7 +299,7 @@ impl CrdsGossip {
         self_pubkey: &Pubkey,
         thread_pool: &ThreadPool,
         now: u64,
-        timeouts: &CrdsTimeouts,
+        timeouts: &CrdsTimeouts<impl BuildHasher + Sync>,
     ) -> usize {
         debug_assert_eq!(timeouts[self_pubkey], u64::MAX);
         debug_assert_ne!(timeouts[&Pubkey::default()], 0u64);
@@ -327,7 +329,7 @@ pub(crate) fn get_gossip_nodes<R: Rng>(
     verify_shred_version: impl Fn(/*shred_version:*/ u16) -> bool,
     crds: &RwLock<Crds>,
     gossip_validators: Option<&HashSet<Pubkey>>,
-    stakes: &HashMap<Pubkey, u64>,
+    stakes: &StakedNodesHashMap<impl BuildHasher>,
     socket_addr_space: &SocketAddrSpace,
 ) -> Vec<GossipStakePubkey> {
     // Exclude nodes which have not been active for this long.

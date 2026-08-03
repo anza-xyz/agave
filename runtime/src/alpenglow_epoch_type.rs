@@ -2,12 +2,14 @@ use {
     crate::bank::{Bank, MAX_ALPENGLOW_VOTE_ACCOUNTS},
     solana_account::{AccountSharedData, ReadableAccount},
     solana_clock::{Epoch, Slot},
-    solana_pubkey::Pubkey,
+    solana_pubkey::{Pubkey, PubkeyHasherBuilder},
     solana_sdk_ids::system_program,
     solana_vote::vote_account::VoteAccounts,
     std::{cmp::Ordering, collections::HashMap, sync::LazyLock},
     wincode::{SchemaRead, SchemaWrite},
 };
+
+pub(crate) type DelegatedStakesMap = HashMap<Pubkey, u64, PubkeyHasherBuilder>;
 
 /// For alpenglow rewards we only reward lamports earned in the previous epoch.
 /// For this prior epoch we need to know the delegated stake for each vote account.
@@ -16,7 +18,7 @@ use {
 #[derive(Debug)]
 pub(crate) struct RewardEpochDelegatedStakes {
     pub(crate) epoch: Epoch,
-    pub(crate) delegated_stakes: HashMap<Pubkey, u64>,
+    pub(crate) delegated_stakes: DelegatedStakesMap,
 }
 
 #[derive(Debug, SchemaRead, SchemaWrite)]

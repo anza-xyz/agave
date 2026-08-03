@@ -18,7 +18,7 @@ use {
             SocketProvider,
         },
     },
-    solana_pubkey::Pubkey,
+    solana_pubkey::{Pubkey, PubkeyHasherBuilder},
     std::{
         cmp::Reverse,
         collections::HashMap,
@@ -68,10 +68,12 @@ where
 
 pub(crate) const SOCKET_READ_TIMEOUT: Duration = Duration::from_secs(1);
 
+pub type StakedNodesHashMap = HashMap<Pubkey, u64, PubkeyHasherBuilder>;
+
 // Total stake and nodes => stake map
 #[derive(Default)]
 pub struct StakedNodes {
-    stakes: Arc<HashMap<Pubkey, u64>>,
+    stakes: Arc<StakedNodesHashMap>,
     overrides: HashMap<Pubkey, u64>,
     total_stake: u64,
 }
@@ -406,10 +408,7 @@ impl StreamerSendStats {
 }
 
 impl StakedNodes {
-    fn calculate_total_stake(
-        stakes: &HashMap<Pubkey, u64>,
-        overrides: &HashMap<Pubkey, u64>,
-    ) -> u64 {
+    fn calculate_total_stake(stakes: &StakedNodesHashMap, overrides: &HashMap<Pubkey, u64>) -> u64 {
         stakes
             .iter()
             .filter(|(pubkey, _)| !overrides.contains_key(pubkey))
@@ -418,7 +417,7 @@ impl StakedNodes {
             .sum()
     }
 
-    pub fn new(stakes: Arc<HashMap<Pubkey, u64>>, overrides: HashMap<Pubkey, u64>) -> Self {
+    pub fn new(stakes: Arc<StakedNodesHashMap>, overrides: HashMap<Pubkey, u64>) -> Self {
         let total_stake = Self::calculate_total_stake(&stakes, &overrides);
         Self {
             stakes,

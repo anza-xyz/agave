@@ -5,6 +5,7 @@ use {
     crate::repair::standard_repair_handler::StandardRepairHandler,
     solana_ledger::{blockstore::Blockstore, get_tmp_ledger_path_auto_delete},
     solana_runtime::bank_forks::BankForks,
+    std::collections::HashMap,
 };
 use {
     crate::{
@@ -61,9 +62,10 @@ use {
         streamer::PacketBatchSender,
     },
     solana_time_utils::timestamp,
+    solana_vote::vote_account::StakedNodesHashMap,
     std::{
         cmp::Reverse,
-        collections::{HashMap, HashSet},
+        collections::HashSet,
         net::{SocketAddr, UdpSocket},
         ops::Range,
         sync::{
@@ -801,7 +803,7 @@ impl ServeRepair {
 
     fn stake_weighted_repair_peer_weights(
         repair_peers: &[ContactInfo],
-        staked_nodes: &HashMap<Pubkey, u64>,
+        staked_nodes: &StakedNodesHashMap,
     ) -> Vec<u64> {
         repair_peers
             .iter()
@@ -1052,7 +1054,7 @@ impl ServeRepair {
 
     fn decode_request(
         remote_request: BytesPacket,
-        epoch_staked_nodes: &Option<Arc<HashMap<Pubkey, u64>>>,
+        epoch_staked_nodes: &Option<Arc<StakedNodesHashMap>>,
         whitelist: &HashSet<Pubkey>,
         my_id: &Pubkey,
         socket_addr_space: &SocketAddrSpace,
@@ -1115,7 +1117,7 @@ impl ServeRepair {
 
     fn decode_requests(
         requests: Vec<BytesPacket>,
-        epoch_staked_nodes: &Option<Arc<HashMap<Pubkey, u64>>>,
+        epoch_staked_nodes: &Option<Arc<StakedNodesHashMap>>,
         whitelist: &HashSet<Pubkey>,
         my_id: &Pubkey,
         socket_addr_space: &SocketAddrSpace,

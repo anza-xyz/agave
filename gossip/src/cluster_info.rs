@@ -29,7 +29,7 @@ use {
         crds_value::{CrdsValue, CrdsValueLabel},
         duplicate_shred::DuplicateShred,
         epoch_slots::EpochSlots,
-        epoch_specs::EpochSpecs,
+        epoch_specs::{EpochSpecs, StakedNodesHashMap},
         gossip_error::GossipError,
         ping_pong::Pong,
         protocol::{
@@ -78,6 +78,7 @@ use {
         collections::{HashMap, HashSet},
         fmt::Debug,
         fs::{self, File},
+        hash::BuildHasher,
         io::{BufReader, BufWriter, Write},
         iter::repeat,
         net::{IpAddr, Ipv4Addr, SocketAddr, TcpListener, UdpSocket},
@@ -271,7 +272,7 @@ impl ClusterInfo {
     fn refresh_push_active_set(
         &self,
         recycler: &PacketBatchRecycler,
-        stakes: &HashMap<Pubkey, u64>,
+        stakes: &StakedNodesHashMap<impl BuildHasher>,
         gossip_validators: Option<&HashSet<Pubkey>>,
         sender: &impl ChannelSend<PacketBatch>,
     ) {
@@ -1268,12 +1269,12 @@ impl ClusterInfo {
         Either::Right(pulls.chain(repeat(entrypoint).zip(filters)))
     }
 
-    fn new_pull_requests(
+    fn new_pull_requests<S: BuildHasher>(
         &self,
         thread_pool: &ThreadPool,
         gossip_validators: Option<&HashSet<Pubkey>>,
-        stakes: &HashMap<Pubkey, u64>,
-    ) -> impl Iterator<Item = (SocketAddr, Protocol)> + use<> {
+        stakes: &StakedNodesHashMap<S>,
+    ) -> impl Iterator<Item = (SocketAddr, Protocol)> + use<S> {
         let now = timestamp();
         let keypair = self.keypair();
         let mut contact_info = self.my_contact_info();
@@ -1321,10 +1322,10 @@ impl ClusterInfo {
             }
         }
     }
-    fn new_push_requests(
+    fn new_push_requests<S: BuildHasher>(
         &self,
-        stakes: &HashMap<Pubkey, u64>,
-    ) -> impl Iterator<Item = (SocketAddr, Protocol)> + use<> {
+        stakes: &StakedNodesHashMap<S>,
+    ) -> impl Iterator<Item = (SocketAddr, Protocol)> + use<S> {
         let self_id = self.id();
         let is_full_alpenglow_epoch = self.is_full_alpenglow_epoch();
         let (entries, push_messages, num_pushes) = {
@@ -1375,13 +1376,13 @@ impl ClusterInfo {
     }
 
     // Generate new push and pull requests
-    fn generate_new_gossip_requests(
+    fn generate_new_gossip_requests<S: BuildHasher>(
         &self,
         thread_pool: &ThreadPool,
         gossip_validators: Option<&HashSet<Pubkey>>,
-        stakes: &HashMap<Pubkey, u64>,
+        stakes: &StakedNodesHashMap<S>,
         generate_pull_requests: bool,
-    ) -> impl Iterator<Item = (SocketAddr, Protocol)> + use<> {
+    ) -> impl Iterator<Item = (SocketAddr, Protocol)> + use<S> {
         self.trim_crds_table(CRDS_UNIQUE_PUBKEY_CAPACITY, stakes);
         // This will flush local pending push messages before generating
         // pull-request bloom filters, preventing pull responses to return the
@@ -1402,7 +1403,7 @@ impl ClusterInfo {
         thread_pool: &ThreadPool,
         gossip_validators: Option<&HashSet<Pubkey>>,
         recycler: &PacketBatchRecycler,
-        stakes: &HashMap<Pubkey, u64>,
+        stakes: &StakedNodesHashMap<impl BuildHasher>,
         sender: &impl ChannelSend<PacketBatch>,
         generate_pull_requests: bool,
     ) -> Result<(), GossipError> {
@@ -1456,7 +1457,7 @@ impl ClusterInfo {
         &self,
         thread_pool: &ThreadPool,
         epoch_duration: Duration,
-        stakes: &HashMap<Pubkey, u64>,
+        stakes: &StakedNodesHashMap,
     ) {
         let self_pubkey = self.id();
         let timeouts = self
@@ -1472,7 +1473,7 @@ impl ClusterInfo {
 
     // Trims the CRDS table by dropping all values associated with the pubkeys
     // with the lowest stake, so that the number of unique pubkeys are bounded.
-    fn trim_crds_table(&self, cap: usize, stakes: &HashMap<Pubkey, u64>) {
+    fn trim_crds_table(&self, cap: usize, stakes: &StakedNodesHashMap<impl BuildHasher>) {
         if !self.gossip.crds.read().unwrap().should_trim(cap) {
             return;
         }
@@ -1581,7 +1582,11 @@ impl ClusterInfo {
             .unwrap()
     }
 
-    fn handle_batch_prune_messages(&self, messages: Vec<PruneData>, stakes: &HashMap<Pubkey, u64>) {
+    fn handle_batch_prune_messages(
+        &self,
+        messages: Vec<PruneData>,
+        stakes: &StakedNodesHashMap<impl BuildHasher>,
+    ) {
         let _st = ScopedTimer::from(&self.stats.handle_batch_prune_messages_time);
         if messages.is_empty() {
             return;
@@ -1631,7 +1636,7 @@ impl ClusterInfo {
         &self,
         requests: Vec<PullRequest>,
         recycler: &PacketBatchRecycler,
-        stakes: &HashMap<Pubkey, u64>,
+        stakes: &StakedNodesHashMap<impl BuildHasher>,
         response_sender: &impl ChannelSend<PacketBatch>,
     ) {
         let _st = ScopedTimer::from(&self.stats.handle_batch_pull_requests_time);
@@ -1726,7 +1731,7 @@ impl ClusterInfo {
         &self,
         recycler: &PacketBatchRecycler,
         mut requests: Vec<PullRequest>,
-        stakes: &HashMap<Pubkey, u64>,
+        stakes: &StakedNodesHashMap<impl BuildHasher>,
     ) -> RecycledPacketBatch {
         const DEFAULT_EPOCH_DURATION_MS: u64 = DEFAULT_SLOTS_PER_EPOCH * DEFAULT_MS_PER_SLOT;
         let output_size_limit =
@@ -1827,7 +1832,7 @@ impl ClusterInfo {
     fn handle_batch_pull_responses(
         &self,
         responses: Vec<CrdsValue>,
-        stakes: &HashMap<Pubkey, u64>,
+        stakes: &StakedNodesHashMap<impl BuildHasher>,
         epoch_duration: Duration,
     ) {
         let _st = ScopedTimer::from(&self.stats.handle_batch_pull_responses_time);
@@ -1844,7 +1849,7 @@ impl ClusterInfo {
     fn handle_pull_response(
         &self,
         crds_values: Vec<CrdsValue>,
-        timeouts: &CrdsTimeouts,
+        timeouts: &CrdsTimeouts<impl BuildHasher>,
     ) -> (usize, usize, usize) {
         let len = crds_values.len();
         let mut pull_stats = ProcessPullStats::default();
@@ -1919,7 +1924,7 @@ impl ClusterInfo {
         messages: Vec<(Pubkey, Vec<CrdsValue>)>,
         thread_pool: &ThreadPool,
         recycler: &PacketBatchRecycler,
-        stakes: &HashMap<Pubkey, u64>,
+        stakes: &StakedNodesHashMap<impl BuildHasher>,
         response_sender: &impl ChannelSend<PacketBatch>,
     ) {
         let _st = ScopedTimer::from(&self.stats.handle_batch_push_messages_time);
@@ -1953,7 +1958,7 @@ impl ClusterInfo {
         thread_pool: &ThreadPool,
         // Unique origin pubkeys of upserted CRDS values from push messages.
         origins: impl IntoIterator<Item = Pubkey>,
-        stakes: &HashMap<Pubkey, u64>,
+        stakes: &StakedNodesHashMap<impl BuildHasher>,
     ) -> Vec<(SocketAddr, Protocol /*::PruneMessage*/)> {
         let _st = ScopedTimer::from(&self.stats.generate_prune_messages);
         let self_keypair = self.keypair();
@@ -2018,7 +2023,7 @@ impl ClusterInfo {
         thread_pool: &ThreadPool,
         recycler: &PacketBatchRecycler,
         response_sender: &impl ChannelSend<PacketBatch>,
-        stakes: &HashMap<Pubkey, u64>,
+        stakes: &StakedNodesHashMap<impl BuildHasher>,
         epoch_duration: Duration,
         should_check_duplicate_instance: bool,
     ) -> Result<(), GossipError> {
@@ -2175,7 +2180,7 @@ impl ClusterInfo {
             .add_relaxed(num_packets as u64);
         fn verify_packet(
             packet: PacketRef,
-            stakes: &HashMap<Pubkey, u64>,
+            stakes: &StakedNodesHashMap<impl BuildHasher>,
             stats: &GossipStats,
             sigverify_cache: &SigVerifyCache,
             is_full_alpenglow_epoch: bool,
@@ -2691,7 +2696,7 @@ mod tests {
             &self,
             thread_pool: &ThreadPool,
             gossip_validators: Option<&HashSet<Pubkey>>,
-            stakes: &HashMap<Pubkey, u64>,
+            stakes: &StakedNodesHashMap<impl BuildHasher>,
         ) -> (
             Vec<(SocketAddr, Ping)>,     // Ping packets
             Vec<(SocketAddr, Protocol)>, // Pull requests

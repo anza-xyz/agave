@@ -3,9 +3,9 @@ use {
     rand::Rng,
     solana_account::AccountSharedData,
     solana_pubkey::Pubkey,
-    solana_vote::vote_account::{VoteAccount, VoteAccounts},
+    solana_vote::vote_account::{VoteAccount, VoteAccounts, VoteAccountsHashMap},
     solana_vote_interface::state::{VoteInit, VoteStateV4, VoteStateVersions},
-    std::{collections::HashMap, sync::Arc},
+    std::sync::Arc,
 };
 
 fn new_rand_vote_account<R: Rng>(
@@ -60,7 +60,7 @@ fn bench_vote_account_try_from(b: &mut Bencher) {
 
 fn bench_staked_nodes_compute(b: &mut Bencher) {
     let mut rng = rand::rng();
-    let mut vote_accounts_map = HashMap::new();
+    let mut vote_accounts_map = VoteAccountsHashMap::default();
 
     // Create a scenario with ~400 vote accounts
     // Each vote account has one node_pubkey and receives delegated stake

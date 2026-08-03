@@ -2,13 +2,12 @@ use {
     solana_clock::{DEFAULT_MS_PER_SLOT, Epoch},
     solana_epoch_schedule::EpochSchedule,
     solana_gossip::epoch_specs::EpochSpecs as EpochSpecsTrait,
-    solana_pubkey::Pubkey,
     solana_runtime::{
         bank::Bank,
         bank_forks::{BankForks, SharableBanks},
     },
+    solana_vote::vote_account::StakedNodesHashMap,
     std::{
-        collections::HashMap,
         sync::{Arc, RwLock},
         time::Duration,
     },
@@ -18,7 +17,7 @@ use {
 struct EpochSpecsCache {
     epoch: Epoch,
     epoch_schedule: EpochSchedule,
-    current_epoch_staked_nodes: Arc<HashMap<Pubkey, u64>>,
+    current_epoch_staked_nodes: Arc<StakedNodesHashMap>,
     epoch_duration: Duration,
     slots_in_epoch: u64,
 }
@@ -29,7 +28,7 @@ pub struct EpochSpecs {
     cache: EpochSpecsCache,
 }
 impl EpochSpecsTrait for EpochSpecs {
-    fn current_epoch_staked_nodes(&mut self) -> Arc<HashMap<Pubkey, u64>> {
+    fn current_epoch_staked_nodes(&mut self) -> Arc<StakedNodesHashMap> {
         let cache = &mut self.cache;
         Self::maybe_refresh_cache(cache, &self.sharable_banks);
         Arc::clone(&cache.current_epoch_staked_nodes)

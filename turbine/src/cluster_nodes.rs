@@ -20,7 +20,7 @@ use {
     solana_ledger::shred::{ShredId, filter::check_feature_activation_from_bank},
     solana_native_token::LAMPORTS_PER_SOL,
     solana_net_utils::SocketAddrSpace,
-    solana_pubkey::Pubkey,
+    solana_pubkey::{Pubkey, PubkeyHasherBuilder},
     solana_runtime::bank::Bank,
     solana_signer::Signer,
     solana_time_utils::timestamp,
@@ -29,6 +29,7 @@ use {
         cell::RefCell,
         cmp::Ordering,
         collections::{HashMap, HashSet},
+        hash::BuildHasher,
         iter::repeat_with,
         marker::PhantomData,
         net::SocketAddr,
@@ -245,7 +246,7 @@ impl ClusterNodes<BroadcastStage> {
     pub fn new(
         cluster_info: &ClusterInfo,
         cluster_type: ClusterType,
-        stakes: &HashMap<Pubkey, u64>,
+        stakes: &HashMap<Pubkey, u64, impl BuildHasher>,
         use_cha_cha_8: bool,
     ) -> Self {
         new_cluster_nodes(cluster_info, cluster_type, stakes, use_cha_cha_8)
@@ -342,7 +343,7 @@ impl ClusterNodes<RetransmitStage> {
 pub fn new_cluster_nodes<T: 'static>(
     cluster_info: &ClusterInfo,
     cluster_type: ClusterType,
-    stakes: &HashMap<Pubkey, u64>,
+    stakes: &HashMap<Pubkey, u64, impl BuildHasher>,
     use_cha_cha_8: bool,
 ) -> ClusterNodes<T> {
     let self_pubkey = cluster_info.id();
@@ -373,7 +374,7 @@ pub fn new_cluster_nodes<T: 'static>(
 fn get_nodes(
     cluster_info: &ClusterInfo,
     cluster_type: ClusterType,
-    stakes: &HashMap<Pubkey, u64>,
+    stakes: &HashMap<Pubkey, u64, impl BuildHasher>,
 ) -> Vec<Node> {
     let self_pubkey = cluster_info.id();
     let should_dedup_tvu_addrs = match cluster_type {
@@ -610,7 +611,7 @@ impl<T: 'static> ClusterNodesCache<T> {
                          {epoch}, slot: {shred_slot}"
                     );
                     inc_new_counter_error!("cluster_nodes-unknown_epoch_staked_nodes", 1);
-                    Arc::<HashMap<Pubkey, /*stake:*/ u64>>::default()
+                    Arc::<HashMap<Pubkey, /*stake:*/ u64, PubkeyHasherBuilder>>::default()
                 });
             let nodes = new_cluster_nodes::<T>(
                 cluster_info,
