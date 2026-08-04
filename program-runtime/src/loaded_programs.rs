@@ -445,11 +445,6 @@ impl<FG: ForkGraph> ProgramCache<FG> {
                                 ProgramCacheEntryType::Builtin(_),
                                 ProgramCacheEntryType::Builtin(_),
                             )
-                            | (ProgramCacheEntryType::Closed, ProgramCacheEntryType::Loaded(_))
-                            | (
-                                ProgramCacheEntryType::Closed,
-                                ProgramCacheEntryType::FailedVerification(_),
-                            )
                             | (
                                 ProgramCacheEntryType::Unloaded(_),
                                 ProgramCacheEntryType::Loaded(_),
@@ -1465,6 +1460,7 @@ pub(crate) mod tests {
     #[test_matrix(
         (
             ProgramCacheEntryType::FailedVerification(get_mock_program_runtime_environment()),
+            ProgramCacheEntryType::Closed,
             new_loaded_entry(get_mock_program_runtime_environment()),
         ),
         (
@@ -1476,10 +1472,7 @@ pub(crate) mod tests {
         )
     )]
     #[test_matrix(
-        (
-            ProgramCacheEntryType::Closed,
-            ProgramCacheEntryType::Unloaded(get_mock_program_runtime_environment()),
-        ),
+        ProgramCacheEntryType::Unloaded(get_mock_program_runtime_environment()),
         (
             ProgramCacheEntryType::Closed,
             ProgramCacheEntryType::Unloaded(get_mock_program_runtime_environment()),
@@ -1527,10 +1520,7 @@ pub(crate) mod tests {
     }
 
     #[test_matrix(
-        (
-            ProgramCacheEntryType::Closed,
-            ProgramCacheEntryType::Unloaded(get_mock_program_runtime_environment()),
-        ),
+        ProgramCacheEntryType::Unloaded(get_mock_program_runtime_environment()),
         (
             new_loaded_entry(get_mock_program_runtime_environment()),
             ProgramCacheEntryType::FailedVerification(get_mock_program_runtime_environment()),
