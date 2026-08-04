@@ -1,11 +1,11 @@
 use {
-    crate::weighted_shuffle::WeightedShuffle,
+    crate::{epoch_specs::StakedNodesHashMap, weighted_shuffle::WeightedShuffle},
     indexmap::IndexMap,
     rand::Rng,
     solana_bloom::bloom::{Bloom, ConcurrentBloom},
     solana_native_token::LAMPORTS_PER_SOL,
     solana_pubkey::Pubkey,
-    std::collections::HashMap,
+    std::hash::BuildHasher,
 };
 
 const NUM_PUSH_ACTIVE_SET_ENTRIES: usize = 25;
@@ -25,12 +25,12 @@ struct PushActiveSetEntry(IndexMap</*node:*/ Pubkey, /*origins:*/ ConcurrentBloo
 impl PushActiveSet {
     const MIN_NUM_BLOOM_ITEMS: usize = crate::cluster_info::CRDS_UNIQUE_PUBKEY_CAPACITY;
 
-    pub(crate) fn get_nodes<'a>(
+    pub(crate) fn get_nodes<'a, S: BuildHasher>(
         &'a self,
         pubkey: &'a Pubkey, // This node.
         origin: &'a Pubkey, // CRDS value owner.
-        stakes: &HashMap<Pubkey, u64>,
-    ) -> impl Iterator<Item = &'a Pubkey> + 'a + use<'a> {
+        stakes: &StakedNodesHashMap<S>,
+    ) -> impl Iterator<Item = &'a Pubkey> + 'a + use<'a, S> {
         let stake = stakes.get(pubkey).min(stakes.get(origin));
         self.get_entry(stake).get_nodes(pubkey, origin)
     }
@@ -42,7 +42,7 @@ impl PushActiveSet {
         pubkey: &Pubkey,    // This node.
         node: &Pubkey,      // Gossip node.
         origins: &[Pubkey], // CRDS value owners.
-        stakes: &HashMap<Pubkey, u64>,
+        stakes: &StakedNodesHashMap<impl BuildHasher>,
     ) {
         let stake = stakes.get(pubkey);
         for origin in origins {
@@ -208,7 +208,8 @@ mod tests {
             .take(20)
             .zip(addrs.iter().copied())
             .collect();
-        let mut stakes: HashMap<_, _> = nodes.iter().map(|&(stake, addr)| (addr, stake)).collect();
+        let mut stakes: StakedNodesHashMap =
+            nodes.iter().map(|&(stake, addr)| (addr, stake)).collect();
         stakes.insert(pubkey, random_u64_range(&mut rng, 1..MAX_STAKE));
         let mut active_set = PushActiveSet::default();
         assert!(active_set.0.iter().all(|entry| entry.0.is_empty()));

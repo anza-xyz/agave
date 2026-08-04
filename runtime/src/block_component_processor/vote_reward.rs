@@ -6,7 +6,7 @@ use {
     solana_account::{AccountSharedData, ReadableAccount, WritableAccount},
     solana_clock::{Epoch, Slot},
     solana_pubkey::Pubkey,
-    solana_vote::vote_account::VoteAccount,
+    solana_vote::vote_account::VoteAccountsHashMap,
     solana_vote_interface::state::{
         BlockTimestamp, LandedVote, Lockout, MAX_EPOCH_CREDITS_HISTORY,
     },
@@ -85,10 +85,7 @@ struct VoteState {
 }
 
 impl VoteState {
-    fn try_new(
-        vote_accounts: &HashMap<Pubkey, (u64, VoteAccount)>,
-        vote_pubkey: Pubkey,
-    ) -> Option<Self> {
+    fn try_new(vote_accounts: &VoteAccountsHashMap, vote_pubkey: Pubkey) -> Option<Self> {
         let Some((_, account)) = vote_accounts.get(&vote_pubkey) else {
             info!("did not find vote account for vote_pubkey={vote_pubkey}");
             return None;
@@ -172,7 +169,7 @@ struct RewardState<'a> {
     /// The pubkey of the validator that will receive the leader rewards.
     leader_vote_pubkey: Pubkey,
     /// Vote accounts at reward slot.
-    accounts: &'a HashMap<Pubkey, (u64, VoteAccount)>,
+    accounts: &'a VoteAccountsHashMap,
     /// Total stake at `reward_slot`.
     total_stake: u64,
     /// inflation state at `reward_slot`.
@@ -377,7 +374,7 @@ fn allocate_updated_accounts(
 fn update_accounts(
     reward_state: &Option<RewardState>,
     final_cert_state: &Option<FinalCertState>,
-    vote_accounts: &HashMap<Pubkey, (u64, VoteAccount)>,
+    vote_accounts: &VoteAccountsHashMap,
     mut updated_accounts: HashMap<Pubkey, VoteState>,
     validators: impl Iterator<Item = Pubkey>,
 ) -> Result<Vec<(Pubkey, AccountSharedData)>, CalcVoteRewardUpdateVoteStatesError> {

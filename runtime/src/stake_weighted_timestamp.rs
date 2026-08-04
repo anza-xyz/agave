@@ -6,6 +6,7 @@ use {
     std::{
         borrow::Borrow,
         collections::{BTreeMap, HashMap},
+        hash::BuildHasher,
         time::Duration,
     },
 };
@@ -23,9 +24,9 @@ pub(crate) struct MaxAllowableDrift {
     pub slow: u32, // Max allowable drift percentage slower than poh estimate
 }
 
-pub(crate) fn calculate_stake_weighted_timestamp<I, K, V, T>(
+pub(crate) fn calculate_stake_weighted_timestamp<I, K, V, T, S>(
     unique_timestamps: I,
-    stakes: &HashMap<Pubkey, (u64, T /*Account|VoteAccount*/)>,
+    stakes: &HashMap<Pubkey, (u64, T /*Account|VoteAccount*/), S>,
     slot: Slot,
     elapsed_slot_duration: impl Fn(Slot, Slot) -> Duration,
     epoch_start_timestamp: Option<(Slot, UnixTimestamp)>,
@@ -35,6 +36,7 @@ where
     I: IntoIterator<Item = (K, V)>,
     K: Borrow<Pubkey>,
     V: Borrow<(Slot, UnixTimestamp)>,
+    S: BuildHasher,
 {
     let mut stake_per_timestamp: BTreeMap<UnixTimestamp, u128> = BTreeMap::new();
     let mut total_stake: u128 = 0;

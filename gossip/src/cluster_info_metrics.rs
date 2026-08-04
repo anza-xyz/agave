@@ -1,5 +1,8 @@
 use {
-    crate::{crds_gossip::CrdsGossip, crds_value::CrdsValue, protocol::Protocol},
+    crate::{
+        crds_gossip::CrdsGossip, crds_value::CrdsValue, epoch_specs::StakedNodesHashMap,
+        protocol::Protocol,
+    },
     itertools::Itertools,
     solana_clock::Slot,
     solana_measure::measure::Measure,
@@ -8,6 +11,7 @@ use {
     std::{
         cmp::Reverse,
         collections::HashMap,
+        hash::BuildHasher,
         ops::{Deref, DerefMut},
         sync::atomic::{AtomicU64, Ordering},
         time::Instant,
@@ -210,7 +214,7 @@ impl GossipStats {
 pub(crate) fn submit_gossip_stats(
     stats: &GossipStats,
     gossip: &CrdsGossip,
-    stakes: &HashMap<Pubkey, u64>,
+    stakes: &StakedNodesHashMap<impl BuildHasher>,
 ) {
     let (crds_stats, table_size, num_nodes, num_pubkeys, purged_values_size, failed_inserts_size) = {
         let gossip_crds = gossip.crds.read().unwrap();

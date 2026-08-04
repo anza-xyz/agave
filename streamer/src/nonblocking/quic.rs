@@ -1131,13 +1131,16 @@ impl Future for EndpointAccept<'_> {
 pub mod test {
     use {
         super::*,
-        crate::nonblocking::{
-            qos::NullStreamerCounter,
-            swqos::SwQosConfig,
-            testing_utilities::{
-                SpawnTestServerResult, check_multiple_streams, get_client_config,
-                make_client_endpoint, setup_quic_server, spawn_stake_weighted_qos_server,
+        crate::{
+            nonblocking::{
+                qos::NullStreamerCounter,
+                swqos::SwQosConfig,
+                testing_utilities::{
+                    SpawnTestServerResult, check_multiple_streams, get_client_config,
+                    make_client_endpoint, setup_quic_server, spawn_stake_weighted_qos_server,
+                },
             },
+            streamer::StakedNodesHashMap,
         },
         assert_matches::assert_matches,
         crossbeam_channel::{Receiver, bounded},
@@ -1499,7 +1502,7 @@ pub mod test {
         agave_logger::setup();
 
         let client_keypair = Keypair::new();
-        let stakes = HashMap::from([(client_keypair.pubkey(), 100_000)]);
+        let stakes: StakedNodesHashMap = [(client_keypair.pubkey(), 100_000)].into_iter().collect();
         let staked_nodes = StakedNodes::new(
             Arc::new(stakes),
             HashMap::<Pubkey, u64>::default(), // overrides
@@ -1535,7 +1538,7 @@ pub mod test {
         agave_logger::setup();
 
         let client_keypair = Keypair::new();
-        let stakes = HashMap::from([(client_keypair.pubkey(), 0)]);
+        let stakes: StakedNodesHashMap = [(client_keypair.pubkey(), 0)].into_iter().collect();
         let staked_nodes = StakedNodes::new(
             Arc::new(stakes),
             HashMap::<Pubkey, u64>::default(), // overrides

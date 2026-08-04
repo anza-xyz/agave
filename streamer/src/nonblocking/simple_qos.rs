@@ -435,7 +435,7 @@ mod tests {
                 testing_utilities::get_client_config,
             },
             quic::{QuicStreamerConfig, StreamerStats, configure_server},
-            streamer::StakedNodes,
+            streamer::{StakedNodes, StakedNodesHashMap},
         },
         quinn::Endpoint,
         solana_keypair::{Keypair, Signer},
@@ -509,7 +509,7 @@ mod tests {
         client_keypair: &Keypair,
         stake_amount: u64,
     ) -> Arc<RwLock<StakedNodes>> {
-        let mut stakes = HashMap::new();
+        let mut stakes = StakedNodesHashMap::default();
         stakes.insert(server_keypair.pubkey(), stake_amount);
         stakes.insert(client_keypair.pubkey(), stake_amount);
 
@@ -916,7 +916,7 @@ mod tests {
         let client_keypair2 = Keypair::new();
         let stake_amount = 50_000_000; // 50M lamports
 
-        let mut stakes = HashMap::new();
+        let mut stakes = StakedNodesHashMap::default();
         stakes.insert(server_keypair1.pubkey(), stake_amount);
         stakes.insert(client_keypair1.pubkey(), stake_amount);
         stakes.insert(server_keypair2.pubkey(), stake_amount);
@@ -987,7 +987,7 @@ mod tests {
         let high_stake = 100_000_000; // 100M lamports
         let low_stake = 10_000_000; // 10M lamports
 
-        let mut stakes = HashMap::new();
+        let mut stakes = StakedNodesHashMap::default();
         stakes.insert(server_keypair1.pubkey(), high_stake);
         stakes.insert(client_keypair1.pubkey(), high_stake);
         stakes.insert(server_keypair2.pubkey(), low_stake);

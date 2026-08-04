@@ -13,7 +13,7 @@ use {
     serde::{Deserialize, Deserializer, Serialize, ser::Serializer},
     solana_account::{AccountSharedData, ReadableAccount},
     solana_instruction::error::InstructionError,
-    solana_pubkey::Pubkey,
+    solana_pubkey::{Pubkey, PubkeyHasherBuilder},
     solana_transaction::SchemaWrite,
     std::{
         cmp::Ordering,
@@ -57,7 +57,12 @@ struct VoteAccountInner {
     vote_state_view: VoteStateView,
 }
 
-pub type VoteAccountsHashMap = HashMap<Pubkey, (/*stake:*/ u64, VoteAccount)>;
+pub type VoteAccountsHashMap = HashMap<Pubkey, (/*stake:*/ u64, VoteAccount), PubkeyHasherBuilder>;
+pub type StakedNodesHashMap = HashMap<
+    Pubkey, // VoteAccount.vote_state.node_pubkey.
+    u64,    // Total stake across all vote-accounts.
+    PubkeyHasherBuilder,
+>;
 #[cfg_attr(feature = "frozen-abi", derive(AbiExample, StableAbi, StableAbiSample))]
 #[derive(Debug, Serialize, Deserialize, SchemaRead, SchemaWrite)]
 #[cfg_attr(
@@ -70,14 +75,7 @@ pub struct VoteAccounts {
     #[cfg_attr(feature = "frozen-abi", stable_abi_sample(with = "Default::default()"))]
     #[serde(skip)]
     #[wincode(skip)]
-    staked_nodes: OnceLock<
-        Arc<
-            HashMap<
-                Pubkey, // VoteAccount.vote_state.node_pubkey.
-                u64,    // Total stake across all vote-accounts.
-            >,
-        >,
-    >,
+    staked_nodes: OnceLock<Arc<StakedNodesHashMap>>,
 }
 
 impl Clone for VoteAccounts {
@@ -173,7 +171,7 @@ impl VoteAccounts {
         self.vote_accounts.is_empty()
     }
 
-    pub fn staked_nodes(&self) -> Arc<HashMap</*node_pubkey:*/ Pubkey, /*stake:*/ u64>> {
+    pub fn staked_nodes(&self) -> Arc<StakedNodesHashMap> {
         self.staked_nodes
             .get_or_init(|| {
                 // Count non-zero stake accounts for optimal capacity allocation
@@ -183,7 +181,10 @@ impl VoteAccounts {
                     .filter(|(stake, _)| *stake != 0)
                     .count();
 
-                let mut staked_nodes = HashMap::with_capacity(non_zero_count);
+                let mut staked_nodes = StakedNodesHashMap::with_capacity_and_hasher(
+                    non_zero_count,
+                    PubkeyHasherBuilder::default(),
+                );
 
                 for (stake, vote_account) in self.vote_accounts.values() {
                     if *stake != 0 {
@@ -243,8 +244,10 @@ impl VoteAccounts {
             entries_to_sort.retain(|(_, _, stake)| *stake > floor_stake);
         }
 
-        let mut top_entries: HashMap<Pubkey, (u64, VoteAccount)> =
-            HashMap::with_capacity(entries_to_sort.len());
+        let mut top_entries = VoteAccountsHashMap::with_capacity_and_hasher(
+            entries_to_sort.len(),
+            PubkeyHasherBuilder::default(),
+        );
         top_entries.extend(
             entries_to_sort
                 .into_iter()
@@ -376,7 +379,7 @@ impl VoteAccounts {
     }
 
     fn do_add_node_stake(
-        staked_nodes: &mut Arc<HashMap<Pubkey, u64>>,
+        staked_nodes: &mut Arc<StakedNodesHashMap>,
         stake: u64,
         node_pubkey: Pubkey,
     ) {
@@ -399,7 +402,7 @@ impl VoteAccounts {
     }
 
     fn do_sub_node_stake(
-        staked_nodes: &mut Arc<HashMap<Pubkey, u64>>,
+        staked_nodes: &mut Arc<StakedNodesHashMap>,
         stake: u64,
         node_pubkey: &Pubkey,
     ) {

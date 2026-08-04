@@ -1,5 +1,5 @@
 #[cfg(feature = "dev-context-only-utils")]
-use qualifier_attr::qualifiers;
+use {crate::stakes::StakeDelegationsMap, qualifier_attr::qualifiers};
 use {
     crate::{stake_history::StakeHistory, stakes::SerdeStakesToStakeFormat},
     serde::{
@@ -12,7 +12,7 @@ use {
     solana_clock::Epoch,
     solana_pubkey::Pubkey,
     solana_stake_interface::state::Stake,
-    solana_vote::vote_account::{VoteAccounts, VoteAccountsHashMap},
+    solana_vote::vote_account::{StakedNodesHashMap, VoteAccounts, VoteAccountsHashMap},
     solana_vote_interface::state::BLS_PUBLIC_KEY_COMPRESSED_SIZE,
     std::{
         collections::HashMap,
@@ -291,7 +291,7 @@ impl VersionedEpochStakes {
             SerdeStakesToStakeFormat::Account(crate::stakes::Stakes::new_for_tests(
                 0,
                 solana_vote::vote_account::VoteAccounts::from(Arc::new(vote_accounts_hash_map)),
-                imbl::HashMap::default(),
+                StakeDelegationsMap::default(),
             )),
             leader_schedule_epoch,
         )
@@ -417,7 +417,7 @@ impl EpochStakes {
     pub fn vote_accounts(&self) -> &VoteAccounts {
         &self.vote_accounts
     }
-    pub fn staked_nodes(&self) -> Arc<HashMap<Pubkey, u64>> {
+    pub fn staked_nodes(&self) -> Arc<StakedNodesHashMap> {
         self.vote_accounts.staked_nodes()
     }
 }
@@ -859,7 +859,7 @@ pub(crate) mod tests {
             ))
             .unwrap()
         };
-        let epoch_vote_accounts = VoteAccountsHashMap::from([
+        let epoch_vote_accounts = VoteAccountsHashMap::from_iter([
             (
                 duplicate_bls_vote_pubkey,
                 (
@@ -981,7 +981,7 @@ pub(crate) mod tests {
         let ((vote_pubkey, vote_account), (stake_pubkey, stake_account)) =
             crate::stakes::tests::create_staked_node_accounts(123, &rent);
         let vote_account = VoteAccount::try_from(vote_account).unwrap();
-        let vote_accounts = VoteAccounts::from(Arc::new(HashMap::from([(
+        let vote_accounts = VoteAccounts::from(Arc::new(VoteAccountsHashMap::from_iter([(
             vote_pubkey,
             (delegated_amount, vote_account),
         )])));
@@ -989,7 +989,7 @@ pub(crate) mod tests {
         let stakes = Stakes::new_for_tests(
             epoch,
             vote_accounts,
-            imbl::HashMap::from_iter([(stake_pubkey, stake_account)]),
+            StakeDelegationsMap::from_iter([(stake_pubkey, stake_account)]),
         );
 
         // ensure stake delegations start off *not* empty

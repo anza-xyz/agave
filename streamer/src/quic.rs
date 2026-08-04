@@ -718,11 +718,14 @@ pub fn spawn_simple_qos_server(
 mod test {
     use {
         super::*,
-        crate::nonblocking::{
-            quic::test::*,
-            testing_utilities::{
-                check_multiple_streams, make_client_endpoint, make_client_endpoint_with_bind_ip,
+        crate::{
+            nonblocking::{
+                quic::test::*,
+                testing_utilities::{
+                    check_multiple_streams, make_client_endpoint, make_client_endpoint_with_bind_ip,
+                },
             },
+            streamer::StakedNodesHashMap,
         },
         crossbeam_channel::{Receiver, bounded},
         solana_net_utils::sockets::bind_to_localhost_unique,
@@ -898,10 +901,12 @@ mod test {
         let client_keypair = Keypair::new();
         let rich_node_keypair = Keypair::new();
 
-        let stakes = HashMap::from([
+        let stakes: StakedNodesHashMap = [
             (client_keypair.pubkey(), 1_000), // very small staked node
             (rich_node_keypair.pubkey(), 1_000_000_000),
-        ]);
+        ]
+        .into_iter()
+        .collect();
         let staked_nodes = StakedNodes::new(
             Arc::new(stakes),
             HashMap::<Pubkey, u64>::default(), // overrides
@@ -939,7 +944,7 @@ mod test {
         agave_logger::setup();
         let client_keypair = Keypair::new();
         let staked_nodes = Arc::new(RwLock::new(StakedNodes::new(
-            Arc::new(HashMap::from([(client_keypair.pubkey(), 1_000)])),
+            Arc::new([(client_keypair.pubkey(), 1_000)].into_iter().collect()),
             HashMap::<Pubkey, u64>::default(),
         )));
 

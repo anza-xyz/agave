@@ -190,7 +190,7 @@ use {
     },
     solana_transaction_error::{TransactionError, TransactionResult as Result},
     solana_vote::{
-        vote_account::{VoteAccount, VoteAccounts, VoteAccountsHashMap},
+        vote_account::{StakedNodesHashMap, VoteAccount, VoteAccounts, VoteAccountsHashMap},
         vote_parser,
     },
     solana_vote_interface::state::VoteStateV4,
@@ -5846,12 +5846,12 @@ impl Bank {
     }
 
     /// Returns a mapping from validator [`Pubkey`] to stake in Lamports for the current Bank::epoch.
-    pub fn current_epoch_staked_nodes(&self) -> Arc<HashMap<Pubkey, u64>> {
+    pub fn current_epoch_staked_nodes(&self) -> Arc<StakedNodesHashMap> {
         self.current_epoch_stakes().stakes().staked_nodes()
     }
 
     /// Returns a mapping from validator [`Pubkey`] to stake in Lamports for the given epoch.
-    pub fn epoch_staked_nodes(&self, epoch: Epoch) -> Option<Arc<HashMap<Pubkey, u64>>> {
+    pub fn epoch_staked_nodes(&self, epoch: Epoch) -> Option<Arc<StakedNodesHashMap>> {
         Some(self.epoch_stakes.get(&epoch)?.stakes().staked_nodes())
     }
 

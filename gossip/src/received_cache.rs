@@ -1,8 +1,9 @@
 use {
+    crate::epoch_specs::StakedNodesHashMap,
     itertools::Itertools,
     lazy_lru::LruCache,
     solana_pubkey::Pubkey,
-    std::{cmp::Reverse, collections::HashMap},
+    std::{cmp::Reverse, collections::HashMap, hash::BuildHasher},
 };
 
 // For each origin, tracks which nodes have sent messages from that origin and
@@ -34,14 +35,14 @@ impl ReceivedCache {
         }
     }
 
-    pub(crate) fn prune(
+    pub(crate) fn prune<S: BuildHasher>(
         &mut self,
         pubkey: &Pubkey, // This node.
         origin: Pubkey,  // CRDS value owner.
         stake_threshold: f64,
         min_ingress_nodes: usize,
-        stakes: &HashMap<Pubkey, u64>,
-    ) -> impl Iterator<Item = Pubkey> + use<> {
+        stakes: &StakedNodesHashMap<S>,
+    ) -> impl Iterator<Item = Pubkey> + use<S> {
         match self.0.get_mut(&origin) {
             None => None,
             Some(entry) if entry.num_upserts < Self::MIN_NUM_UPSERTS => None,
@@ -86,14 +87,14 @@ impl ReceivedCacheEntry {
         }
     }
 
-    fn prune(
+    fn prune<S: BuildHasher>(
         self,
         pubkey: &Pubkey, // This node.
         origin: &Pubkey, // CRDS value owner.
         stake_threshold: f64,
         min_ingress_nodes: usize,
-        stakes: &HashMap<Pubkey, u64>,
-    ) -> impl Iterator<Item = Pubkey> + use<> {
+        stakes: &StakedNodesHashMap<S>,
+    ) -> impl Iterator<Item = Pubkey> + use<S> {
         debug_assert!((0.0..=1.0).contains(&stake_threshold));
         debug_assert!(self.num_upserts >= ReceivedCache::MIN_NUM_UPSERTS);
         // Enforce a minimum aggregate ingress stake; see:
@@ -160,7 +161,7 @@ mod tests {
         .into_iter()
         .collect();
         assert_eq!(cache.0.get(&origin).unwrap().nodes, scores);
-        let stakes = [
+        let stakes: StakedNodesHashMap = [
             (nodes[0], 6),
             (nodes[1], 1),
             (nodes[2], 5),

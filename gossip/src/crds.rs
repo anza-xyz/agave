@@ -35,6 +35,7 @@ use {
         crds_gossip_pull::CrdsTimeouts,
         crds_shards::CrdsShards,
         crds_value::{CrdsValue, CrdsValueLabel},
+        epoch_specs::StakedNodesHashMap,
     },
     assert_matches::debug_assert_matches,
     indexmap::{
@@ -50,6 +51,7 @@ use {
     std::{
         cmp::Ordering,
         collections::{BTreeMap, HashMap, HashSet, VecDeque, hash_map},
+        hash::BuildHasher,
         ops::{Bound, Index, IndexMut},
         sync::Mutex,
     },
@@ -550,7 +552,7 @@ impl Crds {
         &self,
         thread_pool: &ThreadPool,
         now: u64,
-        timeouts: &CrdsTimeouts,
+        timeouts: &CrdsTimeouts<impl BuildHasher + Sync>,
     ) -> Vec<CrdsValueLabel> {
         // Given an index of all crd values associated with a pubkey,
         // returns crds labels of old values to be evicted.
@@ -684,7 +686,7 @@ impl Crds {
         // Set of pubkeys to never drop.
         // e.g. known validators, self pubkey, entrypoints, ...
         keep: &HashSet<Pubkey>,
-        stakes: &HashMap<Pubkey, u64>,
+        stakes: &StakedNodesHashMap<impl BuildHasher>,
         now: u64,
     ) -> usize {
         if self.should_trim(cap) {
@@ -701,7 +703,7 @@ impl Crds {
         &mut self,
         size: usize,
         keep: &HashSet<Pubkey>,
-        stakes: &HashMap<Pubkey, u64>,
+        stakes: &StakedNodesHashMap<impl BuildHasher>,
         now: u64,
     ) -> usize {
         if stakes.values().all(|&stake| stake == 0) {
@@ -1508,7 +1510,7 @@ mod tests {
         }
         let mut rng = rng();
         let keypairs: Vec<_> = repeat_with(Keypair::new).take(64).collect();
-        let stakes = keypairs
+        let stakes: StakedNodesHashMap = keypairs
             .iter()
             .map(|k| (k.pubkey(), rng.random_range(0..1000)))
             .collect();

@@ -12219,7 +12219,7 @@ fn test_bank_epoch_stakes() {
                     .unwrap();
                     (authorized_voter, (stake_coefficient, vote_account))
                 })
-                .collect::<HashMap<_, _>>(),
+                .collect::<VoteAccountsHashMap>(),
             1,
         )
     };
@@ -13112,7 +13112,7 @@ fn test_new_for_block_tests_with_vote_account() {
 
     let bank_rc = BankRc::new(accounts);
 
-    let vote_accounts_map = HashMap::from([(vote_pubkey, (1_000_000, vote_acct))]);
+    let vote_accounts_map = VoteAccountsHashMap::from_iter([(vote_pubkey, (1_000_000, vote_acct))]);
     let mut epoch_stakes = HashMap::new();
     for key in [epoch, epoch.saturating_add(1)] {
         epoch_stakes.insert(

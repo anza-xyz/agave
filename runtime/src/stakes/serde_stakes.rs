@@ -3,15 +3,14 @@ use qualifier_attr::qualifiers;
 #[cfg(feature = "frozen-abi")]
 use wincode::SchemaWrite;
 use {
-    super::{StakeAccount, Stakes},
+    super::{StakeAccount, StakeDelegationsMap, Stakes},
     crate::stake_history::StakeHistory,
-    imbl::HashMap as ImblHashMap,
     serde::{Deserialize, Serialize, Serializer, ser::SerializeMap},
     solana_clock::Epoch,
     solana_pubkey::Pubkey,
     solana_stake_interface::state::{Delegation, Stake},
-    solana_vote::vote_account::VoteAccounts,
-    std::{collections::HashMap, sync::Arc},
+    solana_vote::vote_account::{StakedNodesHashMap, VoteAccounts},
+    std::sync::Arc,
     wincode::SchemaRead,
 };
 
@@ -33,7 +32,7 @@ impl SerdeStakesToStakeFormat {
         }
     }
 
-    pub fn staked_nodes(&self) -> Arc<HashMap<Pubkey, u64>> {
+    pub fn staked_nodes(&self) -> Arc<StakedNodesHashMap> {
         match self {
             Self::Stake(stakes) => stakes.staked_nodes(),
             Self::Account(stakes) => stakes.staked_nodes(),
@@ -153,7 +152,7 @@ struct SerdeStakeAccountsToStakeFormat {
 }
 
 #[cfg_attr(feature = "frozen-abi", derive(AbiExample))]
-struct SerdeStakeAccountMapToDelegationFormat(ImblHashMap<Pubkey, StakeAccount>);
+struct SerdeStakeAccountMapToDelegationFormat(StakeDelegationsMap<StakeAccount>);
 impl Serialize for SerdeStakeAccountMapToDelegationFormat {
     fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
     where
@@ -168,7 +167,7 @@ impl Serialize for SerdeStakeAccountMapToDelegationFormat {
 }
 
 #[cfg_attr(feature = "frozen-abi", derive(AbiExample))]
-struct SerdeStakeAccountMapToStakeFormat(ImblHashMap<Pubkey, StakeAccount>);
+struct SerdeStakeAccountMapToStakeFormat(StakeDelegationsMap<StakeAccount>);
 impl Serialize for SerdeStakeAccountMapToStakeFormat {
     fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
     where

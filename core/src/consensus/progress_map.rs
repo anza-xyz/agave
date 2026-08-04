@@ -502,7 +502,7 @@ mod test {
         let vote_account_pubkeys: Vec<_> = std::iter::repeat_with(solana_pubkey::new_rand)
             .take(num_vote_accounts)
             .collect();
-        let epoch_vote_accounts: HashMap<_, _> = vote_account_pubkeys
+        let epoch_vote_accounts: VoteAccountsHashMap = vote_account_pubkeys
             .iter()
             .skip(num_vote_accounts - staked_vote_accounts)
             .map(|pubkey| (*pubkey, (1, VoteAccount::new_random())))
@@ -544,7 +544,7 @@ mod test {
         let vote_account_pubkeys: Vec<_> = std::iter::repeat_with(solana_pubkey::new_rand)
             .take(num_vote_accounts)
             .collect();
-        let epoch_vote_accounts: HashMap<_, _> = vote_account_pubkeys
+        let epoch_vote_accounts: VoteAccountsHashMap = vote_account_pubkeys
             .iter()
             .skip(num_vote_accounts - staked_vote_accounts)
             .map(|pubkey| (*pubkey, (1, VoteAccount::new_random())))

@@ -226,7 +226,7 @@ mod tests {
         super::*,
         crate::{
             duplicate_shred::{from_shred, tests::new_rand_shred},
-            epoch_specs::TestEpochSpecs,
+            epoch_specs::{StakedNodesHashMap, TestEpochSpecs},
             protocol::DUPLICATE_SHRED_MAX_PAYLOAD_SIZE,
         },
         crossbeam_channel::bounded,
@@ -312,7 +312,7 @@ mod tests {
             .working_bank()
             .get_slots_in_epoch(0);
         let epoch_specs = TestEpochSpecs {
-            staked_nodes: Arc::new(HashMap::new()),
+            staked_nodes: Arc::new(StakedNodesHashMap::default()),
             epoch_duration: Duration::from_millis(slots_in_epoch * 400),
             slots_in_epoch,
         };
@@ -418,7 +418,7 @@ mod tests {
             .working_bank()
             .get_slots_in_epoch(0);
         let epoch_specs = TestEpochSpecs {
-            staked_nodes: Arc::new(HashMap::new()),
+            staked_nodes: Arc::new(StakedNodesHashMap::default()),
             epoch_duration: Duration::from_millis(slots_in_epoch * 400),
             slots_in_epoch,
         };

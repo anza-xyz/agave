@@ -11,6 +11,8 @@
 //! with random hash functions.  So each subsequent request will have a different distribution
 //! of false positives.
 
+#[cfg(test)]
+use std::collections::HashMap;
 use {
     crate::{
         cluster_info_metrics::GossipStats,
@@ -19,6 +21,7 @@ use {
         crds_gossip,
         crds_gossip_error::CrdsGossipError,
         crds_value::CrdsValue,
+        epoch_specs::StakedNodesHashMap,
         protocol::{Ping, PingCache},
     },
     itertools::Itertools,
@@ -37,8 +40,9 @@ use {
     solana_pubkey::Pubkey,
     solana_signer::Signer,
     std::{
-        collections::{HashMap, HashSet, VecDeque},
+        collections::{HashSet, VecDeque},
         convert::TryInto,
+        hash::BuildHasher,
         iter::{repeat, repeat_with},
         net::SocketAddr,
         ops::Index,
@@ -275,7 +279,7 @@ impl Default for CrdsGossipPull {
 impl CrdsGossipPull {
     /// Generate a random request
     #[allow(clippy::too_many_arguments)]
-    pub(crate) fn new_pull_request(
+    pub(crate) fn new_pull_request<S: BuildHasher>(
         &self,
         thread_pool: &ThreadPool,
         crds: &RwLock<Crds>,
@@ -283,12 +287,12 @@ impl CrdsGossipPull {
         self_shred_version: u16,
         now: u64,
         gossip_validators: Option<&HashSet<Pubkey>>,
-        stakes: &HashMap<Pubkey, u64>,
+        stakes: &StakedNodesHashMap<S>,
         bloom_size: usize,
         ping_cache: &Mutex<PingCache>,
         pings: &mut Vec<(SocketAddr, Ping)>,
         socket_addr_space: &SocketAddrSpace,
-    ) -> Result<impl Iterator<Item = (SocketAddr, CrdsFilter)> + Clone + use<>, CrdsGossipError>
+    ) -> Result<impl Iterator<Item = (SocketAddr, CrdsFilter)> + Clone + use<S>, CrdsGossipError>
     {
         let mut rng = rand::rng();
         // Active and valid gossip nodes with matching shred-version.
@@ -367,7 +371,7 @@ impl CrdsGossipPull {
     pub(crate) fn filter_pull_responses(
         &self,
         crds: &RwLock<Crds>,
-        timeouts: &CrdsTimeouts,
+        timeouts: &CrdsTimeouts<impl BuildHasher>,
         responses: Vec<CrdsValue>,
         now: u64,
         stats: &mut ProcessPullStats,
@@ -556,12 +560,12 @@ impl CrdsGossipPull {
         ret
     }
 
-    pub(crate) fn make_timeouts<'a>(
+    pub(crate) fn make_timeouts<'a, S: BuildHasher>(
         &self,
         self_pubkey: Pubkey,
-        stakes: &'a HashMap<Pubkey, u64>,
+        stakes: &'a StakedNodesHashMap<S>,
         epoch_duration: Duration,
-    ) -> CrdsTimeouts<'a> {
+    ) -> CrdsTimeouts<'a, S> {
         CrdsTimeouts::new(self_pubkey, self.crds_timeout, epoch_duration, stakes)
     }
 
@@ -570,7 +574,7 @@ impl CrdsGossipPull {
         thread_pool: &ThreadPool,
         crds: &RwLock<Crds>,
         now: u64,
-        timeouts: &CrdsTimeouts,
+        timeouts: &CrdsTimeouts<impl BuildHasher + Sync>,
     ) -> usize {
         let mut crds = crds.write().unwrap();
         let labels = crds.find_old_labels(thread_pool, now, timeouts);
@@ -581,19 +585,19 @@ impl CrdsGossipPull {
     }
 }
 
-pub struct CrdsTimeouts<'a> {
+pub struct CrdsTimeouts<'a, S = solana_pubkey::PubkeyHasherBuilder> {
     pubkey: Pubkey,
-    stakes: &'a HashMap<Pubkey, /*lamports:*/ u64>,
+    stakes: &'a StakedNodesHashMap<S>,
     default_timeout: u64,
     extended_timeout: u64,
 }
 
-impl<'a> CrdsTimeouts<'a> {
+impl<'a, S: BuildHasher> CrdsTimeouts<'a, S> {
     pub fn new(
         pubkey: Pubkey,
         default_timeout: u64,
         epoch_duration: Duration,
-        stakes: &'a HashMap<Pubkey, u64>,
+        stakes: &'a StakedNodesHashMap<S>,
     ) -> Self {
         let extended_timeout = default_timeout.max(epoch_duration.as_millis() as u64);
         let default_timeout = if stakes.values().all(|&stake| stake == 0u64) {
@@ -610,7 +614,7 @@ impl<'a> CrdsTimeouts<'a> {
     }
 }
 
-impl Index<&Pubkey> for CrdsTimeouts<'_> {
+impl<S: BuildHasher> Index<&Pubkey> for CrdsTimeouts<'_, S> {
     type Output = u64;
 
     fn index(&self, pubkey: &Pubkey) -> &Self::Output {
@@ -708,7 +712,7 @@ pub(crate) mod tests {
             self_shred_version: u16,
             now: u64,
             gossip_validators: Option<&HashSet<Pubkey>>,
-            stakes: &HashMap<Pubkey, u64>,
+            stakes: &StakedNodesHashMap<impl BuildHasher>,
             bloom_size: usize,
             ping_cache: &Mutex<PingCache>,
             pings: &mut Vec<(SocketAddr, Ping)>,
