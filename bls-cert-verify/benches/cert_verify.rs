@@ -1,10 +1,9 @@
 use {
     agave_bls_cert_verify::cert_verify::{
-        aggregate_pubkeys, collect_pubkeys, test_create_base2_unverified_certificate,
-        test_create_base3_unverified_certificate, verify_certificate,
+        test_create_base2_unverified_certificate, test_create_base3_unverified_certificate,
+        verify_certificate,
     },
     agave_votor_messages::{certificate::CertificateType, consensus_message::Block},
-    bitvec::vec::BitVec,
     criterion::{BatchSize, BenchmarkId, Criterion, criterion_group, criterion_main},
     rand::Rng,
     solana_bls_signatures::{
@@ -62,31 +61,6 @@ fn bench_verify_cert(c: &mut Criterion) {
             shred_version,
             cert_type,
             &(0..num_signers_base2).collect::<Vec<_>>(),
-        );
-
-        // Collect pubkeys
-        let mut ranks_bitvec = BitVec::<u8>::with_capacity(size);
-        ranks_bitvec.resize(size, false);
-        for i in 0..num_signers_base2 {
-            ranks_bitvec.set(i, true);
-        }
-        group.bench_with_input(
-            BenchmarkId::new("Component_Collect_Pubkeys", size),
-            &size,
-            |b, &_| {
-                b.iter(|| {
-                    collect_pubkeys(&ranks_bitvec, |rank| pubkeys_ref.get(rank).cloned()).unwrap()
-                })
-            },
-        );
-
-        // Pubkey Aggregation
-        let pre_collected_pubkeys =
-            collect_pubkeys(&ranks_bitvec, |rank| pubkeys_ref.get(rank).cloned()).unwrap();
-        group.bench_with_input(
-            BenchmarkId::new("Component_Aggregate_Pubkeys", size),
-            &size,
-            |b, &_| b.iter(|| aggregate_pubkeys(&pre_collected_pubkeys).unwrap()),
         );
 
         group.bench_with_input(

@@ -1,6 +1,6 @@
 use {
     crate::bank::Bank,
-    agave_bls_cert_verify::cert_verify::{Error as BlsCertVerifyError, verify_base2},
+    agave_bls_cert_verify::cert_verify::{Error as BlsCertVerifyError, verify_base2_cert},
     agave_votor_messages::{
         consensus_message::Block,
         reward_certificate::{NUM_SLOTS_FOR_REWARD, NotarRewardCertificate, SkipRewardCertificate},
@@ -108,7 +108,7 @@ impl ValidatedRewardCert {
         if let Some(skip) = skip {
             let vote = Vote::new_skip_vote(skip.slot);
             let payload = get_vote_payload_to_sign(vote, shred_version);
-            verify_base2(
+            verify_base2_cert(
                 &payload,
                 &skip.signature,
                 skip.to_bitmap(),
@@ -122,7 +122,7 @@ impl ValidatedRewardCert {
                 block_id: notar.block_id,
             });
             let payload = get_vote_payload_to_sign(vote, shred_version);
-            verify_base2(
+            verify_base2_cert(
                 &payload,
                 &notar.signature,
                 notar.bitmap(),

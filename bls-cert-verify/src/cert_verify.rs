@@ -1,6 +1,14 @@
+#[cfg(feature = "dev-context-only-utils")]
+use {
+    agave_votor_messages::wire::get_vote_payload_to_sign,
+    qualifier_attr::qualifiers,
+    solana_bls_signatures::Keypair as BLSKeypair,
+    solana_signer_store::{encode_base2, encode_base3},
+};
 use {
     agave_votor_messages::{
-        certificate::Certificate, fraction::Fraction,
+        certificate::{Certificate, CertificateType},
+        fraction::Fraction,
         unverified_vote_message::UnverifiedCertificate,
     },
     bitvec::vec::BitVec,
@@ -15,13 +23,8 @@ use {
     std::num::NonZero,
     thiserror::Error,
 };
-#[cfg(feature = "dev-context-only-utils")]
-use {
-    agave_votor_messages::{certificate::CertificateType, wire::get_vote_payload_to_sign},
-    qualifier_attr::qualifiers,
-    solana_bls_signatures::Keypair as BLSKeypair,
-    solana_signer_store::{encode_base2, encode_base3},
-};
+
+type VerifiedPubkey = PopVerified<BlsPubkeyAffine>;
 
 /// Minimum size of the rayon thread pool required for this crate to use the thread pool.
 ///  Otherwise, the operations will be done sequentially on the current thread.
@@ -76,39 +79,32 @@ pub fn verify_certificate(
     cert: UnverifiedCertificate,
     max_validators: usize,
     total_stake: NonZero<u64>,
-    mut rank_map: impl FnMut(usize) -> Option<(NonZero<u64>, PopVerified<BlsPubkeyAffine>)>,
+    rank_map: impl FnMut(usize) -> Option<(NonZero<u64>, VerifiedPubkey)>,
 ) -> Result<Certificate, Error> {
-    let mut aggregate_stake = 0u64;
-
-    // Wrap the `rank_map` to accumulate stake as a side-effect
-    let accumulating_rank_map = |ind: usize| {
-        rank_map(ind).map(|(stake, pubkey)| {
-            aggregate_stake = aggregate_stake.saturating_add(stake.get());
-            pubkey
-        })
-    };
-
     let (primary_payload, fallback_payload) = cert.get_vote_payload();
 
     if let Some(fallback_payload) = fallback_payload {
         verify_base3(
+            &cert.cert_type,
             &primary_payload,
             &fallback_payload,
             &cert.signature,
             &cert.bitmap,
             max_validators,
-            accumulating_rank_map,
+            total_stake,
+            rank_map,
         )
     } else {
-        verify_base2(
+        verify_base2_cert_and_stake(
+            &cert.cert_type,
             &primary_payload,
             &cert.signature,
             &cert.bitmap,
             max_validators,
-            accumulating_rank_map,
+            total_stake,
+            rank_map,
         )
     }?;
-    verify_stake(&cert, aggregate_stake, total_stake)?;
     Ok(Certificate {
         cert_type: cert.cert_type,
         signature: cert.signature,
@@ -116,22 +112,28 @@ pub fn verify_certificate(
     })
 }
 
-fn verify_stake(
-    cert: &UnverifiedCertificate,
-    aggregate_stake: u64,
-    total_stake: NonZero<u64>,
+/// Verifies a signature of a base2 certificate and does NOT verify the stake threshold.
+///
+/// Provides virtually the same functionality as `verify_certificate` except does not check if the
+/// stake threshold is met.
+pub fn verify_base2_cert<S: AsSignatureAffine>(
+    payload: &[u8],
+    signature: &S,
+    ranks: &[u8],
+    max_validators: usize,
+    mut rank_map: impl FnMut(usize) -> Option<VerifiedPubkey>,
 ) -> Result<(), Error> {
-    let required_fraction = cert.cert_type.threshold();
-    let cert_fraction = Fraction::new(aggregate_stake, total_stake);
-    if cert_fraction >= required_fraction {
-        Ok(())
-    } else {
-        Err(Error::NotEnoughStake {
-            aggregate_stake,
-            cert_fraction,
-            required_fraction,
-        })
-    }
+    let ranks = decode(ranks, max_validators).map_err(Error::Decode)?;
+    let ranks = match ranks {
+        Decoded::Base2(ranks) => ranks,
+        Decoded::Base3(_, _) => return Err(Error::WrongEncoding),
+    };
+    let pubkeys = ranks
+        .iter_ones()
+        .map(|rank| rank_map(rank).ok_or(Error::MissingRank))
+        .collect::<Result<Vec<_>, _>>()?;
+    let agg_pubkey = aggregate_pubkeys(&pubkeys)?;
+    Ok(agg_pubkey.verify_signature(signature, payload)?)
 }
 
 /// Verifies a signature for a single payload signed by a set of validators.
@@ -139,28 +141,21 @@ fn verify_stake(
 /// This function handles the "Base2" case where all participating validators have signed
 /// the exact same payload. This is the standard verification path and covers virtually all
 /// cases in practice.
-pub fn verify_base2<S: AsSignatureAffine>(
+fn verify_base2_cert_and_stake<S: AsSignatureAffine>(
+    cert_type: &CertificateType,
     payload: &[u8],
     signature: &S,
     ranks: &[u8],
     max_validators: usize,
-    rank_map: impl FnMut(usize) -> Option<PopVerified<BlsPubkeyAffine>>,
+    total_stake: NonZero<u64>,
+    rank_map: impl FnMut(usize) -> Option<(NonZero<u64>, VerifiedPubkey)>,
 ) -> Result<(), Error> {
     let ranks = decode(ranks, max_validators).map_err(Error::Decode)?;
     let ranks = match ranks {
         Decoded::Base2(ranks) => ranks,
         Decoded::Base3(_, _) => return Err(Error::WrongEncoding),
     };
-    verify_single_vote_signature(payload, signature, &ranks, rank_map)
-}
-
-fn verify_single_vote_signature<S: AsSignatureAffine>(
-    payload: &[u8],
-    signature: &S,
-    ranks: &BitVec<u8>,
-    rank_map: impl FnMut(usize) -> Option<PopVerified<BlsPubkeyAffine>>,
-) -> Result<(), Error> {
-    let pubkeys = collect_pubkeys(ranks, rank_map)?;
+    let pubkeys = verify_base2_stake_get_pubkeys(cert_type, &ranks, total_stake, rank_map)?;
     let agg_pubkey = aggregate_pubkeys(&pubkeys)?;
     Ok(agg_pubkey.verify_signature(signature, payload)?)
 }
@@ -172,24 +167,31 @@ fn verify_single_vote_signature<S: AsSignatureAffine>(
 /// only in rare edge cases where a fallback vote is required.
 #[cfg_attr(feature = "dev-context-only-utils", qualifiers(pub))]
 fn verify_base3(
+    cert_type: &CertificateType,
     payload: &[u8],
     fallback_payload: &[u8],
     signature: &BlsSignature,
     ranks: &[u8],
     max_validators: usize,
-    mut rank_map: impl FnMut(usize) -> Option<PopVerified<BlsPubkeyAffine>>,
+    total_stake: NonZero<u64>,
+    rank_map: impl FnMut(usize) -> Option<(NonZero<u64>, VerifiedPubkey)>,
 ) -> Result<(), Error> {
     let ranks = decode(ranks, max_validators).map_err(Error::Decode)?;
     match ranks {
-        Decoded::Base2(ranks) => verify_single_vote_signature(payload, signature, &ranks, rank_map),
+        Decoded::Base2(ranks) => {
+            let pubkeys = verify_base2_stake_get_pubkeys(cert_type, &ranks, total_stake, rank_map)?;
+            let agg_pubkey = aggregate_pubkeys(&pubkeys)?;
+            Ok(agg_pubkey.verify_signature(signature, payload)?)
+        }
         Decoded::Base3(ranks, fallback_ranks) => {
             check_disjoint(&ranks, &fallback_ranks)?;
-
-            // Must run sequentially because `rank_map` captures `total_stake` (FnMut).
-            // We pass a mutable reference for the first call so we can reuse the
-            // closure for the second.
-            let primary_pubkeys = collect_pubkeys(&ranks, &mut rank_map)?;
-            let fallback_pubkeys = collect_pubkeys(&fallback_ranks, rank_map)?;
+            let (primary_pubkeys, fallback_pubkeys) = verify_base3_stake_get_pubkeys(
+                cert_type,
+                &ranks,
+                &fallback_ranks,
+                total_stake,
+                rank_map,
+            )?;
 
             if primary_pubkeys.is_empty() {
                 let agg_pubkey = aggregate_pubkeys(&fallback_pubkeys)?;
@@ -231,29 +233,16 @@ fn verify_base3(
     }
 }
 
-/// Aggregates a slice of public keys into a single projective public key.
 #[cfg_attr(feature = "dev-context-only-utils", qualifiers(pub))]
+/// Aggregates a slice of public keys into a single projective public key.
 fn aggregate_pubkeys(
-    pubkeys: &[PopVerified<BlsPubkeyAffine>],
+    pubkeys: &[VerifiedPubkey],
 ) -> Result<AggregatePubkey<PubkeyProjective>, Error> {
     if rayon::current_num_threads() < THREAD_POOL_THRESHOLD {
         PubkeyProjective::aggregate(pubkeys.iter()).map_err(Error::VerifySig)
     } else {
         PubkeyProjective::par_aggregate(pubkeys.par_iter()).map_err(Error::VerifySig)
     }
-}
-
-/// Collects public keys sequentially based on the provided ranks bitmap.
-pub fn collect_pubkeys(
-    ranks: &BitVec<u8>,
-    mut rank_map: impl FnMut(usize) -> Option<PopVerified<BlsPubkeyAffine>>,
-) -> Result<Vec<PopVerified<BlsPubkeyAffine>>, Error> {
-    let mut pubkeys = Vec::with_capacity(ranks.count_ones());
-    for rank in ranks.iter_ones() {
-        let pubkey = rank_map(rank).ok_or(Error::MissingRank)?;
-        pubkeys.push(pubkey);
-    }
-    Ok(pubkeys)
 }
 
 /// Ensures that no validator appears in both the primary and fallback bitmaps.
@@ -269,6 +258,69 @@ fn check_disjoint(ranks: &BitVec<u8>, fallback_ranks: &BitVec<u8>) -> Result<(),
         return Err(Error::BitmapOverlap);
     }
     Ok(())
+}
+
+fn verify_base2_stake_get_pubkeys(
+    cert_type: &CertificateType,
+    ranks: &BitVec<u8>,
+    total_stake: NonZero<u64>,
+    mut rank_map: impl FnMut(usize) -> Option<(NonZero<u64>, VerifiedPubkey)>,
+) -> Result<Vec<VerifiedPubkey>, Error> {
+    let mut aggregate_stake = 0u64;
+    let mut rank_map = |ind: usize| {
+        rank_map(ind).map(|(stake, pubkey)| {
+            aggregate_stake = aggregate_stake.saturating_add(stake.get());
+            pubkey
+        })
+    };
+    let pubkeys = ranks
+        .iter_ones()
+        .map(|rank| rank_map(rank).ok_or(Error::MissingRank))
+        .collect::<Result<_, _>>()?;
+    let required_fraction = cert_type.threshold();
+    let cert_fraction = Fraction::new(aggregate_stake, total_stake);
+    if cert_fraction < required_fraction {
+        return Err(Error::NotEnoughStake {
+            aggregate_stake,
+            cert_fraction,
+            required_fraction,
+        });
+    }
+    Ok(pubkeys)
+}
+
+fn verify_base3_stake_get_pubkeys(
+    cert_type: &CertificateType,
+    primary: &BitVec<u8>,
+    fallback: &BitVec<u8>,
+    total_stake: NonZero<u64>,
+    mut rank_map: impl FnMut(usize) -> Option<(NonZero<u64>, VerifiedPubkey)>,
+) -> Result<(Vec<VerifiedPubkey>, Vec<VerifiedPubkey>), Error> {
+    let mut aggregate_stake = 0u64;
+    let mut rank_map = |ind: usize| {
+        rank_map(ind).map(|(stake, pubkey)| {
+            aggregate_stake = aggregate_stake.saturating_add(stake.get());
+            pubkey
+        })
+    };
+    let primary_pubkeys = primary
+        .iter_ones()
+        .map(|rank| rank_map(rank).ok_or(Error::MissingRank))
+        .collect::<Result<_, _>>()?;
+    let fallback_pubkeys = fallback
+        .iter_ones()
+        .map(|rank| rank_map(rank).ok_or(Error::MissingRank))
+        .collect::<Result<_, _>>()?;
+    let required_fraction = cert_type.threshold();
+    let cert_fraction = Fraction::new(aggregate_stake, total_stake);
+    if cert_fraction < required_fraction {
+        return Err(Error::NotEnoughStake {
+            aggregate_stake,
+            cert_fraction,
+            required_fraction,
+        });
+    }
+    Ok((primary_pubkeys, fallback_pubkeys))
 }
 
 #[cfg(feature = "dev-context-only-utils")]
@@ -653,7 +705,7 @@ mod test {
     /// Uniform `rank_map` over `keypairs`, each with `STAKE_PER_VALIDATOR` stake.
     fn rank_map(
         keypairs: &[BLSKeypair],
-    ) -> impl FnMut(usize) -> Option<(NonZero<u64>, PopVerified<BlsPubkeyAffine>)> + '_ {
+    ) -> impl FnMut(usize) -> Option<(NonZero<u64>, VerifiedPubkey)> + '_ {
         move |rank| {
             keypairs
                 .get(rank)
@@ -768,12 +820,12 @@ mod test {
             shred_version,
         );
 
-        // An empty signer set cannot produce a valid aggregate signature.
-        assert_eq!(
-            verify_certificate(cert, 10, NonZero::new(10).unwrap(), rank_map(&keypairs))
-                .unwrap_err(),
-            Error::VerifySig(BlsError::EmptyAggregation)
-        );
+        let err = verify_certificate(cert, 10, NonZero::new(10).unwrap(), rank_map(&keypairs))
+            .unwrap_err();
+        match err {
+            Error::NotEnoughStake { .. } => (),
+            rest => panic!("unexpected error {rest:?}"),
+        }
     }
 
     /// A Base3-encoded bitmap supplied for a certificate type that is verified as
