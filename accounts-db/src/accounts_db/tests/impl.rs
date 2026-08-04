@@ -1352,12 +1352,10 @@ fn test_shrink_zero_lamport_single_ref_account() {
 
         // for testing, we need to cause shrink to think this will be productive.
         // The zero lamport account isn't dead, but it can become dead inside shrink.
-        accounts
-            .storage
-            .get_slot_storage_entry(slot)
-            .unwrap()
+        let storage = accounts.storage.get_slot_storage_entry(slot).unwrap();
+        storage
             .num_alive_bytes
-            .fetch_sub(AppendVec::calculate_stored_size(0), Ordering::Release);
+            .fetch_sub(storage.accounts.calculate_stored_size(0), Ordering::Release);
 
         if let Some(latest_full_snapshot_slot) = latest_full_snapshot_slot {
             accounts.set_latest_full_snapshot_slot(latest_full_snapshot_slot);
