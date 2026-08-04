@@ -93,11 +93,12 @@ pub(super) fn verify_and_send_votes(
     banlist: &SimpleQosBanlist,
     thread_pool: &ThreadPool,
     channels: &SigVerifierChannels,
-) -> Result<SigVerifyVoteStats, SigVerifyVoteError> {
+) -> Result<(SigVerifyVoteStats, Vec<Pubkey>), SigVerifyVoteError> {
     let mut measure = Measure::start("verify_and_send_votes");
     let mut stats = SigVerifyVoteStats::default();
+    let mut newly_banned = Vec::new();
     if unverified_votes.is_empty() {
-        return Ok(stats);
+        return Ok((stats, newly_banned));
     }
     stats
         .distinct_votes_stats
@@ -109,7 +110,7 @@ pub(super) fn verify_and_send_votes(
         let vote_epoch = root_bank.epoch_schedule().get_epoch(vote_slot);
         let rank_map = rank_map_cache.get(&vote_epoch).unwrap();
         let max_validators = rank_map.len();
-        let verified_votes = verify_votes(
+        let (verified_votes, newly_banned_for_group) = verify_votes(
             max_validators,
             vote_payload_to_sign,
             unverified_votes,
@@ -117,6 +118,7 @@ pub(super) fn verify_and_send_votes(
             banlist,
             thread_pool,
         );
+        newly_banned.extend(newly_banned_for_group);
 
         let (sig_verified_batch, msgs_for_repair, msg_for_reward, msg_for_metrics) =
             process_verified_votes(verified_votes, root_bank, cluster_info, leader_schedule);
@@ -131,7 +133,7 @@ pub(super) fn verify_and_send_votes(
     stats
         .fn_verify_and_send_votes_stats
         .add_sample(measure.as_us());
-    Ok(stats)
+    Ok((stats, newly_banned))
 }
 
 /// If the vote is relevant to repair, then adds it to the [`msgs_for_repair`] so it can eventually
@@ -214,7 +216,7 @@ fn verify_votes(
     stats: &mut SigVerifyVoteStats,
     banlist: &SimpleQosBanlist,
     thread_pool: &ThreadPool,
-) -> Vec<VerifiedVotePayload> {
+) -> (Vec<VerifiedVotePayload>, Vec<Pubkey>) {
     // Try optimistic verification - fast to verify, but cannot identify invalid votes
     let res = verify_votes_optimistic(vote_payload_to_sign, &unverified_votes, stats, thread_pool);
 
@@ -234,10 +236,13 @@ fn verify_votes(
                 .into_iter()
                 .map(|v| v.sender_vote_account_pubkey)
                 .collect();
-            vec![VerifiedVotePayload {
-                vote_aggregate,
-                sender_vote_account_pubkeys,
-            }]
+            (
+                vec![VerifiedVotePayload {
+                    vote_aggregate,
+                    sender_vote_account_pubkeys,
+                }],
+                vec![],
+            )
         }
         Either::Right(prepared_hash_msg) => {
             // Fallback to individual verification
@@ -250,6 +255,7 @@ fn verify_votes(
                     thread_pool
                 ));
             stats.num_individual_verified += verified_votes.len() as u64;
+            let mut newly_banned = Vec::new();
             for (sender_identity_pubkey, error) in invalid_remote_pubkeys {
                 stats.banning_validator += 1;
                 if banlist.ban(sender_identity_pubkey, BAN_TIMEOUT) {
@@ -260,9 +266,10 @@ fn verify_votes(
                          verification {error:?}"
                     );
                 }
+                newly_banned.push(sender_identity_pubkey);
             }
             stats.fn_verify_individual_votes_stats.add_sample(time_us);
-            verified_votes
+            (verified_votes, newly_banned)
         }
     }
 }

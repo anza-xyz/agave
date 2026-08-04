@@ -40,7 +40,7 @@ use {
             atomic::{AtomicBool, Ordering},
         },
         thread::{self, Builder},
-        time::Duration,
+        time::{Duration, Instant},
     },
 };
 
@@ -117,6 +117,8 @@ struct SigVerifier {
     generated_cert_types: Arc<GeneratedCertTypes>,
     vote_pool: VotePool,
     rank_map_cache: HashMap<Epoch, Arc<BLSPubkeyToRankMap>>,
+    /// Senders banned locally due to invalid certs/votes, replacing banlist.is_banned() reads.
+    locally_banned: HashMap<Pubkey, Instant>,
 }
 
 impl SigVerifier {
@@ -151,6 +153,7 @@ impl SigVerifier {
             thread_pool,
             generated_cert_types,
             rank_map_cache: HashMap::new(),
+            locally_banned: HashMap::new(),
         }
     }
 
@@ -225,13 +228,19 @@ impl SigVerifier {
                     &root_bank,
                     &self.channels.channel_to_pool,
                     &self.banlist,
+                    &self.locally_banned,
                     &self.thread_pool,
                 )
             },
         );
 
-        let vote_stats = votes_result?;
-        let cert_stats = certs_result?;
+        let (vote_stats, newly_banned_votes) = votes_result?;
+        let (cert_stats, newly_banned_certs) = certs_result?;
+
+        let now = Instant::now();
+        for pubkey in newly_banned_votes.into_iter().chain(newly_banned_certs) {
+            self.locally_banned.insert(pubkey, now);
+        }
 
         self.stats.vote_stats.merge(vote_stats);
         self.stats.cert_stats.merge(cert_stats);
@@ -245,6 +254,8 @@ impl SigVerifier {
             self.last_checked_root_slot = root_slot;
             self.verified_certs.retain(|cert| cert.slot() >= root_slot);
             self.vote_pool.prune(root_slot);
+            self.locally_banned
+                .retain(|_, banned_at| banned_at.elapsed() < BAN_TIMEOUT);
         }
         if self.last_checked_root_epoch < root_epoch {
             self.last_checked_root_epoch = root_epoch;
@@ -268,6 +279,11 @@ impl SigVerifier {
             self.stats.num_generated_certs_received += 1;
             return;
         }
+
+        if self.locally_banned.contains_key(&sender_identity_pubkey) {
+            return;
+        }
+
         cert_groups
             .entry(cert.cert_type)
             .or_default()
@@ -294,16 +310,18 @@ impl SigVerifier {
                 self.stats.num_discarded_pkts += 1;
                 continue;
             }
+            let Some(sender_identity_pubkey) = packet.meta().remote_pubkey() else {
+                self.stats.num_malformed_pkts += 1;
+                continue;
+            };
+            if self.locally_banned.contains_key(&sender_identity_pubkey) {
+                continue;
+            }
             let Ok(msg) = VersionedWireConsensusMessage::deserialize_with_expected_shred_version(
                 packet.data(..).unwrap_or_default(),
                 packet_config(),
                 my_shred_version,
             ) else {
-                self.stats.num_malformed_pkts += 1;
-                continue;
-            };
-            let Some(sender_identity_pubkey) = packet.meta().remote_pubkey() else {
-                debug_assert!(false, "BLS packet missing remote pubkey");
                 self.stats.num_malformed_pkts += 1;
                 continue;
             };
@@ -440,6 +458,8 @@ impl SigVerifier {
                          vote"
                     );
                 }
+                self.locally_banned
+                    .insert(sender_identity_pubkey, Instant::now());
                 None
             }
         }
@@ -2123,5 +2143,59 @@ mod tests {
             })
             .collect();
         vec![BytesPacketBatch::from(packets).into()]
+    }
+
+    #[test]
+    fn test_intra_batch_banlisting_skips_remaining_certs_after_first_failure() {
+        const N: usize = 50;
+        let mut ctx = TestContext::new();
+        let shred_version = ctx.verifier.cluster_info.my_shred_version();
+
+        // A structurally valid Finalize cert (valid bitmap / signers / stake) whose aggregate
+        // signature is replaced with a well-formed but WRONG signature. Verification therefore
+        // performs the full work -- decode the bitmap, aggregate all signer pubkeys, run the
+        // pairing -- and only then fails with CertVerifyFailed.
+        let mut invalid_cert = create_signed_certificate_message(
+            shred_version,
+            &ctx.validator_keypairs,
+            &ctx.verifier.sharable_banks.root(),
+            CertificateType::Finalize(4),
+            &[0, 2, 3, 4, 5, 7, 8, 9],
+        );
+        invalid_cert.signature = ctx.validator_keypairs[0]
+            .bls_keypair
+            .sign(b"not the certificate payload")
+            .into();
+
+        // One attacker identity sends N copies of the invalid cert in a single batch.
+        let attacker = Pubkey::new_unique();
+        let messages: Vec<(ConsensusMessage, Pubkey)> = (0..N)
+            .map(|_| {
+                (
+                    ConsensusMessage::Certificate(invalid_cert.clone()),
+                    attacker,
+                )
+            })
+            .collect();
+        let batches = messages_to_batches(&messages, shred_version);
+
+        assert!(!ctx.banlist.is_banned(&attacker));
+        ctx.verifier.verify_and_send_batches(batches).unwrap();
+
+        // Only 1 BLS pairing happened -- the fix worked.
+        assert_eq!(ctx.verifier.stats.cert_stats.certs_to_sig_verify.0, 1);
+        assert_eq!(
+            ctx.verifier.stats.cert_stats.certificate_verification_failed.0,
+            1
+        );
+        // N-1 certs were skipped via the intra-group local set inside verify_cert_group
+        // after the first failure -- no BLS work done for them.
+        assert_eq!(
+            ctx.verifier.stats.cert_stats.redundant_certs_skipped.0,
+            (N - 1) as u64
+        );
+        assert_eq!(ctx.verifier.stats.cert_stats.already_banned.0, 0);
+        assert!(ctx.banlist.is_banned(&attacker));
+        expect_no_receive(&ctx.pool_receiver);
     }
 }
