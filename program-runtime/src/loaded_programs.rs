@@ -697,9 +697,7 @@ impl<FG: ForkGraph> ProgramCache<FG> {
                                     ) {
                                         break;
                                     }
-                                    if let ProgramCacheEntryType::Unloaded(_environment) =
-                                        &entry.program
-                                    {
+                                    if entry.program.is_unloaded() {
                                         break;
                                     }
                                     entry.clone()
