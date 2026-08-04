@@ -74,7 +74,7 @@ impl From<ProgramCacheEntryOwner> for Pubkey {
     - Builtin => Builtin in TransactionBatchProcessor::add_builtin
 
     Un/re/deployment (with delay and cooldown):
-    - Empty => Loaded / FailedVerification in UpgradeableLoaderInstruction::DeployWithMaxDataLen
+    - Empty / Closed => Unloaded in UpgradeableLoaderInstruction::DeployWithMaxDataLen
     - Loaded / FailedVerification => Loaded in UpgradeableLoaderInstruction::Upgrade
     - Loaded / FailedVerification => Closed in UpgradeableLoaderInstruction::Close
 
