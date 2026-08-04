@@ -5,7 +5,7 @@ use {
         program_cache_entry::{
             ProgramCacheEntry, ProgramCacheEntryOwner, ProgramCacheEntryType, retention_score,
         },
-        program_metrics::{EMA_SCALE, ProgramCacheStats},
+        program_metrics::{EMA_SCALE, ProgramCacheStats, ProgramStatistics},
     },
     log::error,
     solana_clock::{Epoch, Slot},
@@ -649,6 +649,10 @@ impl<FG: ForkGraph> ProgramCache<FG> {
     }
 
     /// Find the entry at `program_id` visible in `slot`.
+    ///
+    /// `reject_unloaded` decides whether an entry whose binary has been evicted
+    /// still counts. Callers that only read metadata off the entry can accept
+    /// one; callers that need to run it cannot.
     #[allow(clippy::too_many_arguments)]
     fn find_visible_entry<'a>(
         entries: &'a HashMap<Pubkey, Vec<Arc<ProgramCacheEntry>>>,
@@ -659,6 +663,7 @@ impl<FG: ForkGraph> ProgramCache<FG> {
         match_criteria: &ProgramCacheMatchCriteria,
         slot: Slot,
         program_runtime_environment_for_execution: &ProgramRuntimeEnvironment,
+        reject_unloaded: bool,
     ) -> Option<&'a Arc<ProgramCacheEntry>> {
         let second_level = entries.get(program_id)?;
         let mut filter_by_deployment_slot = None;
@@ -695,7 +700,7 @@ impl<FG: ForkGraph> ProgramCache<FG> {
                     // other deployment slot while searching further.
                     Probe::SkipToDeploymentSlot(entry.deployment_slot)
                 } else if !Self::matches_criteria(entry, match_criteria)
-                    || entry.program.is_unloaded()
+                    || (reject_unloaded && entry.program.is_unloaded())
                 {
                     Probe::Abort
                 } else {
@@ -714,6 +719,37 @@ impl<FG: ForkGraph> ProgramCache<FG> {
             }
         }
         None
+    }
+
+    /// Usage statistics of the program visible at `program_id` in `slot`, or
+    /// `None` if the cache holds no visible entry for it.
+    ///
+    /// Unlike [`Self::extract`], this never schedules a cooperative loading
+    /// task. Statistics are tracked separately from the binary, so an unloaded
+    /// entry still carries the ones we are after and there is no reason to
+    /// rebuild it.
+    pub fn get_entry_stats(
+        &self,
+        program_id: &Pubkey,
+        loader: ProgramCacheEntryOwner,
+        slot: Slot,
+        program_runtime_environment: &ProgramRuntimeEnvironment,
+    ) -> Option<Arc<ProgramStatistics>> {
+        let fork_graph = self.fork_graph.as_ref()?.upgrade()?;
+        let locked_fork_graph = fork_graph.read().unwrap();
+        let IndexImplementation::V1 { entries, .. } = &self.index;
+        Self::find_visible_entry(
+            entries,
+            &locked_fork_graph,
+            self.latest_root_slot,
+            program_id,
+            loader,
+            &ProgramCacheMatchCriteria::NoCriteria,
+            slot,
+            program_runtime_environment,
+            /* reject_unloaded */ false,
+        )
+        .map(|entry| Arc::clone(&entry.stats))
     }
 
     /// Extracts a subset of the programs relevant to a transaction batch
@@ -746,6 +782,7 @@ impl<FG: ForkGraph> ProgramCache<FG> {
                         &program_to_load.match_criteria,
                         batch_slot,
                         program_runtime_environment_for_execution,
+                        /* reject_unloaded */ true,
                     ) {
                         let entry_to_return = if batch_slot >= entry.effective_slot() {
                             entry.clone()
