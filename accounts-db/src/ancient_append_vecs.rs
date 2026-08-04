@@ -3011,7 +3011,6 @@ mod tests {
                     create_db_with_storages_and_index(true /*alive*/, 1, data_sizes[1]);
                 create_storages_and_update_index(
                     &db,
-                    None,
                     slot1 + 1,
                     1,
                     true,
@@ -3512,7 +3511,7 @@ mod tests {
         let db = AccountsDb::default_for_tests();
         let initial_slot = 0;
         // create append vecs that we'll fill the recycler with when we pack them into 1 packed append vec
-        create_storages_and_update_index(&db, None, initial_slot, MAX_RECYCLE_STORES, true, None);
+        create_storages_and_update_index(&db, initial_slot, MAX_RECYCLE_STORES, true, None);
         let max_slot_inclusive = initial_slot + (MAX_RECYCLE_STORES as Slot) - 1;
         let range = initial_slot..(max_slot_inclusive + 1);
         // storages with Arc::strong_count > 1 cannot be pulled out of the
@@ -3530,7 +3529,7 @@ mod tests {
             let mut storages = vec![];
             // build an ancient append vec at slot 'ancient_slot'
             let ancient_slot = starting_slot;
-            create_storages_and_update_index(&db, None, ancient_slot, num_normal_slots, true, None);
+            create_storages_and_update_index(&db, ancient_slot, num_normal_slots, true, None);
             let max_slot_inclusive = ancient_slot + (num_normal_slots as Slot);
             let range = ancient_slot..(max_slot_inclusive + 1);
             storages.extend(
@@ -3561,7 +3560,7 @@ mod tests {
 
             // create a 2nd ancient append vec at 'next_slot'
             let next_slot = max_slot_inclusive + 1;
-            create_storages_and_update_index(&db, None, next_slot, num_normal_slots, true, None);
+            create_storages_and_update_index(&db, next_slot, num_normal_slots, true, None);
             let max_slot_inclusive = next_slot + (num_normal_slots as Slot);
             let range_all = ancient_slot..(max_slot_inclusive + 1);
             let range = next_slot..(max_slot_inclusive + 1);
@@ -3789,7 +3788,7 @@ mod tests {
         let (db, slot1) =
             create_db_with_storages_and_index(true /*alive*/, num_slots, Some(data_size));
         let non_ancient_slot = slot1 + (2 * tuning.max_ancient_slots) as u64;
-        create_storages_and_update_index(&db, None, non_ancient_slot, 1, true, Some(data_size));
+        create_storages_and_update_index(&db, non_ancient_slot, 1, true, Some(data_size));
         let mut slot_vec = (slot1..(slot1 + num_slots as Slot)).collect::<Vec<_>>();
         slot_vec.push(non_ancient_slot);
         for slot in &slot_vec {

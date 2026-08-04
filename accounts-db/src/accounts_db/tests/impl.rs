@@ -6563,7 +6563,6 @@ pub(crate) fn remove_account_for_tests(storage: &AccountStorageEntry, num_bytes:
 
 pub(crate) fn create_storages_and_update_index(
     db: &AccountsDb,
-    tf: Option<&TempFile>,
     starting_slot: Slot,
     num_slots: usize,
     alive: bool,
@@ -6573,10 +6572,7 @@ pub(crate) fn create_storages_and_update_index(
         return;
     }
 
-    let local_tf = (tf.is_none()).then(|| {
-        crate::append_vec::test_utils::get_append_vec_path("create_storages_and_update_index")
-    });
-    let tf = tf.unwrap_or_else(|| local_tf.as_ref().unwrap());
+    let tf = crate::append_vec::test_utils::get_append_vec_path("create_storages_and_update_index");
 
     let starting_id = db
         .storage
@@ -6589,7 +6585,7 @@ pub(crate) fn create_storages_and_update_index(
         let pubkey1 = solana_pubkey::new_rand();
         let slot = starting_slot + i as Slot;
         let storage =
-            sample_storage_with_entries_id(tf, slot, &pubkey1, id, alive, account_data_size);
+            sample_storage_with_entries_id(&tf, slot, &pubkey1, id, alive, account_data_size);
         db.storage.insert(Arc::clone(&storage));
     }
 
@@ -6615,7 +6611,7 @@ pub(crate) fn create_db_with_storages_and_index(
     // verify we create an ancient appendvec that has alive accounts and does not have dead accounts
 
     let slot1 = 1;
-    create_storages_and_update_index(&db, None, slot1, num_slots, alive, account_data_size);
+    create_storages_and_update_index(&db, slot1, num_slots, alive, account_data_size);
 
     let slot1 = slot1 as Slot;
     (db, slot1)
