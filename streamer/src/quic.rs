@@ -4,7 +4,8 @@ use {
             qos::{ConnectionContext, QosController},
             quic::{ALPN_TPU_PROTOCOL_ID, DEFAULT_WAIT_FOR_CHUNK_TIMEOUT},
             simple_qos::{SimpleQos, SimpleQosBanlist, SimpleQosConfig},
-            swqos::{SwQos, SwQosConfig},
+            swqos::{SwQos, SwQosSleepConfig},
+            swqos_max_streams::{SwQosMaxStreams, SwQosMaxStreamsConfig},
         },
         quic_socket::QuicSocket,
         streamer::StakedNodes,
@@ -214,6 +215,7 @@ pub struct StreamerStats {
     pub(crate) stream_load_ema: AtomicUsize,
     pub(crate) stream_load_ema_overflow: AtomicUsize,
     pub(crate) stream_load_capacity_overflow: AtomicUsize,
+    pub(crate) unstaked_connections_parked: AtomicUsize,
     pub(crate) total_staked_packets_sent_for_batching: AtomicUsize,
     pub(crate) total_unstaked_packets_sent_for_batching: AtomicUsize,
     pub(crate) throttled_staked_streams: AtomicUsize,
@@ -232,6 +234,8 @@ pub struct StreamerStats {
     pub(crate) outstanding_incoming_connection_attempts: AtomicUsize,
     pub(crate) total_incoming_connection_attempts: AtomicUsize,
     pub(crate) quic_endpoints_count: AtomicUsize,
+    /// Streams accepted while the system was saturated (staked peers).
+    pub(crate) saturated_staked_streams: AtomicUsize,
 }
 
 impl StreamerStats {
@@ -543,6 +547,16 @@ impl StreamerStats {
                     .swap(0, Ordering::Relaxed),
                 i64
             ),
+            (
+                "unstaked_connections_parked",
+                self.unstaked_connections_parked.swap(0, Ordering::Relaxed),
+                i64
+            ),
+            (
+                "saturated_staked_streams",
+                self.saturated_staked_streams.swap(0, Ordering::Relaxed),
+                i64
+            ),
         );
     }
 }
@@ -556,6 +570,25 @@ pub struct QuicStreamerConfig {
     pub stream_receive_window_size: u32,
     /// Maximum total bytes allowed per stream (hard cap).
     pub max_stream_data_bytes: u32,
+}
+
+#[derive(Clone)]
+pub enum SwQosConfig {
+    Sleep(SwQosSleepConfig),
+    MaxStreams(SwQosMaxStreamsConfig),
+}
+
+impl Default for SwQosConfig {
+    fn default() -> Self {
+        SwQosConfig::Sleep(SwQosSleepConfig::default())
+    }
+}
+
+impl SwQosConfig {
+    #[cfg(feature = "dev-context-only-utils")]
+    pub fn default_for_tests() -> Self {
+        SwQosConfig::Sleep(SwQosSleepConfig::default_for_tests())
+    }
 }
 
 #[derive(Clone)]
@@ -659,18 +692,36 @@ pub fn spawn_stake_weighted_qos_server(
     cancel: CancellationToken,
 ) -> Result<SpawnServerResult, QuicServerError> {
     let stats = Arc::<StreamerStats>::default();
-    let swqos = SwQos::new(qos_config, stats.clone(), staked_nodes, cancel.clone());
-    spawn_runtime_and_server(
-        thread_name,
-        metrics_name,
-        stats,
-        sockets,
-        keypair,
-        packet_sender,
-        quic_server_params,
-        swqos,
-        cancel,
-    )
+    match qos_config {
+        SwQosConfig::Sleep(config) => {
+            let qos = SwQos::new(config, stats.clone(), staked_nodes, cancel.clone());
+            spawn_runtime_and_server(
+                thread_name,
+                metrics_name,
+                stats,
+                sockets,
+                keypair,
+                packet_sender,
+                quic_server_params,
+                qos,
+                cancel,
+            )
+        }
+        SwQosConfig::MaxStreams(config) => {
+            let qos = SwQosMaxStreams::new(config, stats.clone(), staked_nodes, cancel.clone());
+            spawn_runtime_and_server(
+                thread_name,
+                metrics_name,
+                stats,
+                sockets,
+                keypair,
+                packet_sender,
+                quic_server_params,
+                qos,
+                cancel,
+            )
+        }
+    }
 }
 
 /// Spawns a tokio runtime and a streamer instance inside it.
@@ -865,10 +916,10 @@ mod test {
             QuicStreamerConfig {
                 ..QuicStreamerConfig::default_for_tests()
             },
-            SwQosConfig {
+            SwQosConfig::Sleep(SwQosSleepConfig {
                 max_connections_per_unstaked_peer: 2,
                 ..Default::default()
-            },
+            }),
             cancel.clone(),
         )
         .unwrap();
@@ -1057,10 +1108,10 @@ mod test {
             QuicStreamerConfig {
                 ..QuicStreamerConfig::default_for_tests()
             },
-            SwQosConfig {
+            SwQosConfig::Sleep(SwQosSleepConfig {
                 max_unstaked_connections: 0,
                 ..Default::default()
-            },
+            }),
             cancel.clone(),
         )
         .unwrap();
