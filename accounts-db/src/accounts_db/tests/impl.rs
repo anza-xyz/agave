@@ -218,34 +218,20 @@ pub(crate) fn append_single_account_with_default_hash(
 }
 
 fn sample_storage_with_entries_id(
-    tf: &TempFile,
+    accounts_db: &AccountsDb,
     slot: Slot,
     pubkey: &Pubkey,
-    id: AccountsFileId,
     mark_alive: bool,
     account_data_size: Option<u64>,
-) -> Arc<AccountStorageEntry> {
-    let (_temp_dirs, paths) = get_temp_accounts_paths(1).unwrap();
-    let file_size = account_data_size.unwrap_or(123);
-    let size_aligned = AppendVec::calculate_stored_size(file_size as usize);
-    let mut storage = AccountStorageEntry::new(
-        &paths[0],
-        slot,
-        id,
-        size_aligned as u64,
-        AccountsFileProvider::AppendVec,
-    );
-    let av = AccountsFile::AppendVec(AppendVec::new(&tf.path, (1024 * 1024).max(size_aligned)));
-    storage.accounts = av;
+) -> AccountStorageEntry {
+    let account_data_size = account_data_size.unwrap_or(48);
+    let file_size = account_data_size + 1_000_000;
+    let storage = accounts_db.create_store(slot, file_size);
 
-    let account = AccountSharedData::new(
-        1,
-        account_data_size.unwrap_or(48) as usize,
-        &Pubkey::default(),
-    );
+    let account = AccountSharedData::new(1, account_data_size as usize, &Pubkey::default());
     append_single_account_with_default_hash(&storage, pubkey, &account, mark_alive, None);
 
-    Arc::new(storage)
+    storage
 }
 
 #[test]
@@ -6563,21 +6549,11 @@ pub(crate) fn create_storages_and_update_index(
         return;
     }
 
-    let tf = crate::append_vec::test_utils::get_append_vec_path("create_storages_and_update_index");
-
-    let starting_id = db
-        .storage
-        .iter()
-        .map(|storage| storage.1.id())
-        .max()
-        .unwrap_or(999);
     for i in 0..num_slots {
-        let id = starting_id + (i as AccountsFileId);
-        let pubkey1 = solana_pubkey::new_rand();
+        let pubkey = solana_pubkey::new_rand();
         let slot = starting_slot + i as Slot;
-        let storage =
-            sample_storage_with_entries_id(&tf, slot, &pubkey1, id, alive, account_data_size);
-        db.storage.insert(Arc::clone(&storage));
+        let storage = sample_storage_with_entries_id(db, slot, &pubkey, alive, account_data_size);
+        db.storage.insert(Arc::new(storage));
     }
 
     let storage = db.get_storage_for_slot(starting_slot).unwrap();
