@@ -648,6 +648,7 @@ impl<FG: ForkGraph> ProgramCache<FG> {
         let fork_graph = self.fork_graph.as_ref().unwrap().upgrade().unwrap();
         let locked_fork_graph = fork_graph.read().unwrap();
         let mut cooperative_loading_task = None;
+        let batch_slot = loaded_programs_for_tx_batch.slot;
         match &self.index {
             IndexImplementation::V1 {
                 entries,
@@ -667,15 +668,12 @@ impl<FG: ForkGraph> ProgramCache<FG> {
                             let entry_in_same_branch = entry.deployment_slot
                                 <= self.latest_root_slot
                                 || matches!(
-                                    locked_fork_graph.relationship(
-                                        entry.deployment_slot,
-                                        loaded_programs_for_tx_batch.slot
-                                    ),
+                                    locked_fork_graph
+                                        .relationship(entry.deployment_slot, batch_slot),
                                     BlockRelation::Equal | BlockRelation::Ancestor
                                 );
                             if entry_in_same_branch {
-                                let entry_is_effective =
-                                    loaded_programs_for_tx_batch.slot >= entry.effective_slot();
+                                let entry_is_effective = batch_slot >= entry.effective_slot();
                                 let entry_to_return = if entry_is_effective {
                                     if !Self::matches_environment(
                                         entry,
@@ -705,9 +703,7 @@ impl<FG: ForkGraph> ProgramCache<FG> {
                                         break;
                                     }
                                     entry.clone()
-                                } else if entry.is_implicit_delay_visibility_tombstone(
-                                    loaded_programs_for_tx_batch.slot,
-                                ) {
+                                } else if entry.is_implicit_delay_visibility_tombstone(batch_slot) {
                                     // Found a program entry on the current fork, but it's not effective
                                     // yet. It indicates that the program has delayed visibility. Return
                                     // the tombstone to reflect that.
@@ -720,8 +716,7 @@ impl<FG: ForkGraph> ProgramCache<FG> {
                                 } else {
                                     continue;
                                 };
-                                entry_to_return
-                                    .update_access_slot(loaded_programs_for_tx_batch.slot);
+                                entry_to_return.update_access_slot(batch_slot);
                                 if increment_usage_counter {
                                     entry_to_return.stats.uses.fetch_add(1, Ordering::Relaxed);
                                 }
@@ -736,10 +731,7 @@ impl<FG: ForkGraph> ProgramCache<FG> {
                         let mut loading_entries = loading_entries.lock().unwrap();
                         let entry = loading_entries.entry(*program_to_load.program_id);
                         if let Entry::Vacant(entry) = entry {
-                            entry.insert((
-                                loaded_programs_for_tx_batch.slot,
-                                thread::current().id(),
-                            ));
+                            entry.insert((batch_slot, thread::current().id()));
                             cooperative_loading_task = Some(*program_to_load.program_id);
                         }
                     }
