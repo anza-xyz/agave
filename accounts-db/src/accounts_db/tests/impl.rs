@@ -217,20 +217,6 @@ pub(crate) fn append_single_account_with_default_hash(
     }
 }
 
-fn append_sample_data_to_storage(
-    storage: &AccountStorageEntry,
-    pubkey: &Pubkey,
-    mark_alive: bool,
-    account_data_size: Option<u64>,
-) {
-    let acc = AccountSharedData::new(
-        1,
-        account_data_size.unwrap_or(48) as usize,
-        AccountSharedData::default().owner(),
-    );
-    append_single_account_with_default_hash(storage, pubkey, &acc, mark_alive, None);
-}
-
 fn sample_storage_with_entries_id(
     tf: &TempFile,
     slot: Slot,
@@ -242,7 +228,7 @@ fn sample_storage_with_entries_id(
     let (_temp_dirs, paths) = get_temp_accounts_paths(1).unwrap();
     let file_size = account_data_size.unwrap_or(123);
     let size_aligned = AppendVec::calculate_stored_size(file_size as usize);
-    let mut data = AccountStorageEntry::new(
+    let mut storage = AccountStorageEntry::new(
         &paths[0],
         slot,
         id,
@@ -250,11 +236,16 @@ fn sample_storage_with_entries_id(
         AccountsFileProvider::AppendVec,
     );
     let av = AccountsFile::AppendVec(AppendVec::new(&tf.path, (1024 * 1024).max(size_aligned)));
-    data.accounts = av;
+    storage.accounts = av;
 
-    let arc = Arc::new(data);
-    append_sample_data_to_storage(&arc, pubkey, mark_alive, account_data_size);
-    arc
+    let account = AccountSharedData::new(
+        1,
+        account_data_size.unwrap_or(48) as usize,
+        &Pubkey::default(),
+    );
+    append_single_account_with_default_hash(&storage, pubkey, &account, mark_alive, None);
+
+    Arc::new(storage)
 }
 
 #[test]
