@@ -34,6 +34,7 @@ use {
     agave_votor::{
         event::{LatestSwitchRequest, LeaderWindowInfo, VotorEventReceiver, VotorEventSender},
         peer_list_updater::PeerListService,
+        slot_clock::SharedAlpenglowSlotClock,
         vote_history::VoteHistory,
         vote_history_storage::VoteHistoryStorage,
         voting_service::{VOTOR_RATE_LIMIT_PPS, VotingService as BLSVotingService},
@@ -181,6 +182,7 @@ impl Default for TvuConfig {
 
 /// Shared state from validator necessary to instantiate votor and related services
 pub struct AlpenglowInitializationState {
+    pub alpenglow_slot_clock: SharedAlpenglowSlotClock,
     // Shared with block creation loop
     pub leader_window_info_sender: Sender<LeaderWindowInfo>,
     pub optimistic_parent_sender: Sender<LeaderWindowInfo>,
@@ -270,6 +272,7 @@ impl Tvu {
         } = sockets;
 
         let AlpenglowInitializationState {
+            alpenglow_slot_clock,
             leader_window_info_sender,
             optimistic_parent_sender,
             optimistic_parent_receiver,
@@ -532,6 +535,7 @@ impl Tvu {
             bank_forks: bank_forks.clone(),
             cluster_info: cluster_info.clone(),
             leader_schedule_cache: leader_schedule_cache.clone(),
+            alpenglow_slot_clock,
             consensus_metrics_sender,
             highest_finalized: highest_finalized.clone(),
             bank_forks_controller,
@@ -910,6 +914,7 @@ pub mod tests {
             None, // slot_status_notifier
             Arc::new(connection_cache),
             AlpenglowInitializationState {
+                alpenglow_slot_clock: SharedAlpenglowSlotClock::default(),
                 leader_window_info_sender,
                 optimistic_parent_sender,
                 optimistic_parent_receiver,
