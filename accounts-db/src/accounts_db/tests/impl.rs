@@ -231,17 +231,16 @@ fn append_sample_data_to_storage(
     append_single_account_with_default_hash(storage, pubkey, &acc, mark_alive, None);
 }
 
-fn sample_storage_with_entries_id_fill_percentage(
+fn sample_storage_with_entries_id(
     tf: &TempFile,
     slot: Slot,
     pubkey: &Pubkey,
     id: AccountsFileId,
     mark_alive: bool,
     account_data_size: Option<u64>,
-    fill_percentage: u64,
 ) -> Arc<AccountStorageEntry> {
     let (_temp_dirs, paths) = get_temp_accounts_paths(1).unwrap();
-    let file_size = account_data_size.unwrap_or(123) * 100 / fill_percentage;
+    let file_size = account_data_size.unwrap_or(123);
     let size_aligned = AppendVec::calculate_stored_size(file_size as usize);
     let mut data = AccountStorageEntry::new(
         &paths[0],
@@ -256,25 +255,6 @@ fn sample_storage_with_entries_id_fill_percentage(
     let arc = Arc::new(data);
     append_sample_data_to_storage(&arc, pubkey, mark_alive, account_data_size);
     arc
-}
-
-fn sample_storage_with_entries_id(
-    tf: &TempFile,
-    slot: Slot,
-    pubkey: &Pubkey,
-    id: AccountsFileId,
-    mark_alive: bool,
-    account_data_size: Option<u64>,
-) -> Arc<AccountStorageEntry> {
-    sample_storage_with_entries_id_fill_percentage(
-        tf,
-        slot,
-        pubkey,
-        id,
-        mark_alive,
-        account_data_size,
-        100,
-    )
 }
 
 #[test]
