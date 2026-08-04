@@ -674,19 +674,10 @@ impl<FG: ForkGraph> ProgramCache<FG> {
                                 );
                             if entry_in_same_branch {
                                 let entry_is_effective = batch_slot >= entry.effective_slot();
-                                let entry_to_return = if !entry_is_effective {
+                                if !entry_is_effective {
                                     if !entry.is_implicit_delay_visibility_tombstone(batch_slot) {
                                         continue;
                                     }
-                                    // Found a program entry on the current fork, but it's not effective
-                                    // yet. It indicates that the program has delayed visibility. Return
-                                    // the tombstone to reflect that.
-                                    Arc::new(ProgramCacheEntry::new_tombstone_with_stats(
-                                        entry.deployment_slot,
-                                        entry.account_owner,
-                                        ProgramCacheEntryType::DelayVisibility,
-                                        Arc::clone(&entry.stats),
-                                    ))
                                 } else {
                                     if !Self::matches_environment(
                                         entry,
@@ -711,7 +702,19 @@ impl<FG: ForkGraph> ProgramCache<FG> {
                                     {
                                         break;
                                     }
+                                }
+                                let entry_to_return = if entry_is_effective {
                                     entry.clone()
+                                } else {
+                                    // Found a program entry on the current fork, but it's not effective
+                                    // yet. It indicates that the program has delayed visibility. Return
+                                    // the tombstone to reflect that.
+                                    Arc::new(ProgramCacheEntry::new_tombstone_with_stats(
+                                        entry.deployment_slot,
+                                        entry.account_owner,
+                                        ProgramCacheEntryType::DelayVisibility,
+                                        Arc::clone(&entry.stats),
+                                    ))
                                 };
                                 entry_to_return.update_access_slot(batch_slot);
                                 if increment_usage_counter {
