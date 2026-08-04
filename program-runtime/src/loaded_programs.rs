@@ -634,6 +634,63 @@ impl<FG: ForkGraph> ProgramCache<FG> {
         }
     }
 
+    /// Find the entry at `program_id` visible in `slot`.
+    #[allow(clippy::too_many_arguments)]
+    fn find_visible_entry<'a>(
+        entries: &'a HashMap<Pubkey, Vec<Arc<ProgramCacheEntry>>>,
+        locked_fork_graph: &FG,
+        latest_root_slot: Slot,
+        program_id: &Pubkey,
+        loader: ProgramCacheEntryOwner,
+        match_criteria: &ProgramCacheMatchCriteria,
+        slot: Slot,
+        program_runtime_environment_for_execution: &ProgramRuntimeEnvironment,
+    ) -> Option<&'a Arc<ProgramCacheEntry>> {
+        let second_level = entries.get(program_id)?;
+        let mut filter_by_deployment_slot = None;
+        for entry in second_level.iter().rev() {
+            let required_deployment_slot =
+                filter_by_deployment_slot.unwrap_or(entry.deployment_slot);
+            if required_deployment_slot != entry.deployment_slot || loader != entry.account_owner {
+                continue;
+            }
+            let entry_in_same_branch = entry.deployment_slot <= latest_root_slot
+                || matches!(
+                    locked_fork_graph.relationship(entry.deployment_slot, slot),
+                    BlockRelation::Equal | BlockRelation::Ancestor
+                );
+            if entry_in_same_branch {
+                let entry_is_effective = slot >= entry.effective_slot();
+                if !entry_is_effective {
+                    if !entry.is_implicit_delay_visibility_tombstone(slot) {
+                        continue;
+                    }
+                } else {
+                    if !Self::matches_environment(entry, program_runtime_environment_for_execution)
+                    {
+                        // We found an entry that would work, had its environment matched
+                        // the one we're planning to use for this slot.
+                        //
+                        // At this point we know that whatever the "current version" of
+                        // program is, it must have had a deployment slot equal to the
+                        // program we're looking at in this iteration. We just have to find
+                        // one with the correct environment and can skip entries for any
+                        // other deployment slot while searching further.
+                        filter_by_deployment_slot =
+                            filter_by_deployment_slot.or(Some(entry.deployment_slot));
+                        continue;
+                    }
+                    if !Self::matches_criteria(entry, match_criteria) || entry.program.is_unloaded()
+                    {
+                        break;
+                    }
+                }
+                return Some(entry);
+            }
+        }
+        None
+    }
+
     /// Extracts a subset of the programs relevant to a transaction batch
     /// and returns which program accounts the accounts DB needs to load.
     pub fn extract(
@@ -655,77 +712,37 @@ impl<FG: ForkGraph> ProgramCache<FG> {
                 loading_entries,
             } => {
                 search_for.retain(|program_to_load| {
-                    if let Some(second_level) = entries.get(program_to_load.program_id) {
-                        let mut filter_by_deployment_slot = None;
-                        for entry in second_level.iter().rev() {
-                            let required_deployment_slot =
-                                filter_by_deployment_slot.unwrap_or(entry.deployment_slot);
-                            if required_deployment_slot != entry.deployment_slot
-                                || program_to_load.loader != entry.account_owner
-                            {
-                                continue;
-                            }
-                            let entry_in_same_branch = entry.deployment_slot
-                                <= self.latest_root_slot
-                                || matches!(
-                                    locked_fork_graph
-                                        .relationship(entry.deployment_slot, batch_slot),
-                                    BlockRelation::Equal | BlockRelation::Ancestor
-                                );
-                            if entry_in_same_branch {
-                                let entry_is_effective = batch_slot >= entry.effective_slot();
-                                if !entry_is_effective {
-                                    if !entry.is_implicit_delay_visibility_tombstone(batch_slot) {
-                                        continue;
-                                    }
-                                } else {
-                                    if !Self::matches_environment(
-                                        entry,
-                                        program_runtime_environment_for_execution,
-                                    ) {
-                                        // We found an entry that would work, had its environment matched
-                                        // the one we're planning to use for this slot.
-                                        //
-                                        // At this point we know that whatever the "current version" of
-                                        // program is, it must have had a deployment slot equal to the
-                                        // program we're looking at in this iteration. We just have to find
-                                        // one with the correct environment and can skip entries for any
-                                        // other deployment slot while searching further.
-                                        filter_by_deployment_slot = filter_by_deployment_slot
-                                            .or(Some(entry.deployment_slot));
-                                        continue;
-                                    }
-                                    if !Self::matches_criteria(
-                                        entry,
-                                        &program_to_load.match_criteria,
-                                    ) || entry.program.is_unloaded()
-                                    {
-                                        break;
-                                    }
-                                }
-                                let entry_to_return = if entry_is_effective {
-                                    entry.clone()
-                                } else {
-                                    // Found a program entry on the current fork, but it's not effective
-                                    // yet. It indicates that the program has delayed visibility. Return
-                                    // the tombstone to reflect that.
-                                    Arc::new(ProgramCacheEntry::new_tombstone_with_stats(
-                                        entry.deployment_slot,
-                                        entry.account_owner,
-                                        ProgramCacheEntryType::DelayVisibility,
-                                        Arc::clone(&entry.stats),
-                                    ))
-                                };
-                                entry_to_return.update_access_slot(batch_slot);
-                                if increment_usage_counter {
-                                    entry_to_return.stats.uses.fetch_add(1, Ordering::Relaxed);
-                                }
-                                loaded_programs_for_tx_batch
-                                    .entries
-                                    .insert(*program_to_load.program_id, entry_to_return);
-                                return false;
-                            }
+                    if let Some(entry) = Self::find_visible_entry(
+                        entries,
+                        &locked_fork_graph,
+                        self.latest_root_slot,
+                        program_to_load.program_id,
+                        program_to_load.loader,
+                        &program_to_load.match_criteria,
+                        batch_slot,
+                        program_runtime_environment_for_execution,
+                    ) {
+                        let entry_to_return = if batch_slot >= entry.effective_slot() {
+                            entry.clone()
+                        } else {
+                            // Found a program entry on the current fork, but it's not effective
+                            // yet. It indicates that the program has delayed visibility. Return
+                            // the tombstone to reflect that.
+                            Arc::new(ProgramCacheEntry::new_tombstone_with_stats(
+                                entry.deployment_slot,
+                                entry.account_owner,
+                                ProgramCacheEntryType::DelayVisibility,
+                                Arc::clone(&entry.stats),
+                            ))
+                        };
+                        entry_to_return.update_access_slot(batch_slot);
+                        if increment_usage_counter {
+                            entry_to_return.stats.uses.fetch_add(1, Ordering::Relaxed);
                         }
+                        loaded_programs_for_tx_batch
+                            .entries
+                            .insert(*program_to_load.program_id, entry_to_return);
+                        return false;
                     }
                     if cooperative_loading_task.is_none() {
                         let mut loading_entries = loading_entries.lock().unwrap();
