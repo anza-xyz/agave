@@ -222,6 +222,17 @@ enum StartLeaderError {
         actual: Option<Hash>,
     },
 
+    /// The frozen parent bank has not been shredded yet (no block_id assigned).
+    /// Starting our next block on it would let production outrun shredding.
+    #[error(
+        "Parent block not shredded yet for leader slot {leader_slot}: parent slot {parent_slot} \
+         has no block_id"
+    )]
+    ParentBlockNotShredded {
+        leader_slot: Slot,
+        parent_slot: Slot,
+    },
+
     /// PoH recorder failed while starting or completing a leader block.
     #[error("PoH recorder failed: {0}")]
     PohRecorder(#[from] PohRecorderError),
@@ -1149,6 +1160,34 @@ fn start_leader_wait_for_parent_replay(
                     .replay_is_behind_wait_elapsed_hist
                     .increment(wait_start.as_us());
             }
+            Err(StartLeaderError::ParentBlockNotShredded { parent_slot, .. }) => {
+                trace!(
+                    "{my_pubkey}: Attempting to produce slot {slot}, however parent {parent_slot} \
+                     is not shredded yet (no block_id); waiting for shredding to catch up"
+                );
+                let mut wait_start = Measure::start("parent_block_not_shredded");
+                // block_id is set on the broadcast thread after freeze and has no
+                // dedicated notification, so poll on a short bounded wait.
+                let wait_timeout = time_left(block_timer, timeout).min(Duration::from_millis(100));
+                if !wait_timeout.is_zero() {
+                    let highest_frozen_slot = ctx
+                        .replay_highest_frozen
+                        .highest_frozen_slot
+                        .lock()
+                        .unwrap();
+                    let _unused = ctx
+                        .replay_highest_frozen
+                        .freeze_notification
+                        .wait_timeout(highest_frozen_slot, wait_timeout)
+                        .unwrap();
+                }
+                wait_start.stop();
+                ctx.slot_metrics.replay_is_behind_cumulative_wait_elapsed += wait_start.as_us();
+                let _ = ctx
+                    .slot_metrics
+                    .replay_is_behind_wait_elapsed_hist
+                    .increment(wait_start.as_us());
+            }
             Err(e) => return Err(e),
         }
     }
@@ -1158,6 +1197,13 @@ fn start_leader_wait_for_parent_replay(
     );
     Err(StartLeaderError::ReplayIsBehind(parent_slot, slot))
 }
+
+/// Maximum number of consecutive leader blocks that may be produced but not yet
+/// shredded (no block_id assigned) before production waits for shredding to catch
+/// up. Provides pipeline slack so steady-state shredding imposes no per-slot
+/// wait, while bounding the lag well below the point where banks would be pruned
+/// before broadcast reaches them. Tunable.
+const MAX_UNSHREDDED_LEADER_BLOCKS_IN_FLIGHT: usize = 8;
 
 /// Checks if we are set to produce a leader block for `slot`:
 /// - Is the highest notarization/finalized slot from `consensus_pool` frozen
@@ -1187,6 +1233,37 @@ fn maybe_start_leader(
     if !parent_bank.is_frozen() {
         ctx.slot_metrics.replay_is_behind_count += 1;
         return Err(StartLeaderError::ReplayIsBehind(parent_slot, slot));
+    }
+
+    // Backpressure: bound how far block production may run ahead of shredding.
+    // A bank's block_id is assigned once the block is shredded (on the broadcast
+    // thread); within a leader window the parent is our own just-produced block
+    // (parent_hash is None), so nothing otherwise stops the leader from outrunning
+    // its own shredding. If it runs far enough ahead, banks get pruned before
+    // broadcast reaches them and are never shredded, yet replay still
+    // freezes+roots them -> rooted banks with no block_id that later panic
+    // ("block id must be set") at snapshot/consensus time.
+    //
+    // Allow up to MAX_UNSHREDDED_LEADER_BLOCKS_IN_FLIGHT un-shredded ancestors in
+    // flight (pipeline slack, so steady-state shredding imposes no per-slot wait),
+    // but no more. Count consecutive not-yet-shredded ancestors starting at the
+    // parent; if we already have that many in flight, wait for shredding to catch
+    // up before starting another.
+    let mut unshredded_in_flight = 0usize;
+    let mut ancestor = Some(Arc::clone(&parent_bank));
+    while let Some(bank) = ancestor {
+        if bank.block_id().is_some() {
+            break;
+        }
+        unshredded_in_flight += 1;
+        if unshredded_in_flight >= MAX_UNSHREDDED_LEADER_BLOCKS_IN_FLIGHT {
+            ctx.slot_metrics.replay_is_behind_count += 1;
+            return Err(StartLeaderError::ParentBlockNotShredded {
+                leader_slot: slot,
+                parent_slot,
+            });
+        }
+        ancestor = bank.parent();
     }
 
     if let Some(expected) = parent_hash.filter(|hash| *hash != Hash::default()) {
