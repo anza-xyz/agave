@@ -6453,7 +6453,28 @@ fn test_combine_ancient_slots_empty() {
 
 #[test]
 fn test_combine_ancient_slots_simple() {
-    _ = get_one_ancient_append_vec_and_others(0);
+    let accounts_db = AccountsDb::new_for_tests_with_config(Vec::new(), DEFAULT_ACCOUNTS_DB_CONFIG);
+
+    let slot = 42;
+    let pubkey = Pubkey::new_unique();
+    let account = AccountSharedData::new(123, 0, &Pubkey::default());
+    accounts_db.store_for_tests((slot, [(&pubkey, &account)].as_slice()));
+    accounts_db.add_root_and_flush_write_cache(slot);
+
+    let storage_pre = accounts_db.get_storage_for_slot(slot).unwrap();
+    let unique_accounts_pre = accounts_db.get_unique_accounts_from_storage(&storage_pre);
+    assert_eq!(unique_accounts_pre.stored_accounts.len(), 1);
+
+    accounts_db.combine_ancient_slots_packed(vec![slot], false);
+
+    let storage_post = accounts_db.get_storage_for_slot(slot).unwrap();
+    let unique_accounts_post = accounts_db.get_unique_accounts_from_storage(&storage_post);
+
+    assert!(unique_accounts_post.written_bytes <= unique_accounts_pre.written_bytes);
+    assert_eq!(
+        unique_accounts_post.stored_accounts.len(),
+        unique_accounts_pre.stored_accounts.len(),
+    );
 }
 
 fn get_all_accounts_from_storages<'a>(
@@ -6639,41 +6660,6 @@ pub(crate) fn create_db_with_storages_and_index(
 
     let slot1 = slot1 as Slot;
     (db, slot1)
-}
-
-fn get_one_ancient_append_vec_and_others_with_account_size(
-    num_normal_slots: usize,
-    account_data_size: Option<u64>,
-) -> (AccountsDb, Slot) {
-    // We used to test 'alive = false' with the old shrinking algorithm, but
-    // not any more with the new shrinking algorithm. 'alive = false' means
-    // that we will have account entries that's in the storages but not in
-    // accounts-db index. This violate the assumption in accounts-db, which
-    // the new shrinking algorithm now depends on. Therefore, we don't test
-    // 'alive = false'.
-    let alive = true;
-    let (db, slot1) =
-        create_db_with_storages_and_index(alive, num_normal_slots + 1, account_data_size);
-    let storage = db.get_storage_for_slot(slot1).unwrap();
-    let created_accounts = db.get_unique_accounts_from_storage(&storage);
-
-    db.combine_ancient_slots_packed(vec![slot1], false);
-    let after_store = db.get_storage_for_slot(slot1).unwrap();
-    let GetUniqueAccountsResult {
-        stored_accounts: after_stored_accounts,
-        written_bytes: after_written_bytes,
-        ..
-    } = db.get_unique_accounts_from_storage(&after_store);
-    assert!(created_accounts.written_bytes <= after_written_bytes);
-    assert_eq!(created_accounts.stored_accounts.len(), 1);
-    // always 1 account: either we leave the append vec alone if it is all dead
-    // or we create a new one and copy into it if account is alive
-    assert_eq!(after_stored_accounts.len(), 1);
-    (db, slot1)
-}
-
-fn get_one_ancient_append_vec_and_others(num_normal_slots: usize) -> (AccountsDb, Slot) {
-    get_one_ancient_append_vec_and_others_with_account_size(num_normal_slots, None)
 }
 
 /// Ensure the calculating capitalization produces the correct value
