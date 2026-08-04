@@ -676,8 +676,7 @@ fn convert_packet_to_vote_message(
     };
     let bank = bank_forks.read().unwrap().root_bank();
     let rank_map = bank.get_rank_map(vote_msg.vote.slot())?;
-    let sender_entry = rank_map.node_pubkey_to_stake_entry(&sender)?;
-    let rank = *rank_map.get_rank_for_vote_pubkey(&sender_entry.vote_account_pubkey)?;
+    let (rank, sender_entry) = rank_map.get_ranked_entry_for_node(&sender)?;
     Some(VoteMessage {
         vote: vote_msg.vote,
         signature: vote_msg.signature,

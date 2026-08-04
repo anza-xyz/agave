@@ -53,8 +53,8 @@ pub struct BLSPubkeyToRankMap {
     vote_pubkey_to_rank: HashMap<Pubkey, u16>,
     /// a mapping from rank to [`BLSPubkeyStakeEntry`].
     sorted_pubkeys: Vec<BLSPubkeyStakeEntry>,
-    /// a mapping from node identity pubkey to [`BLSPubkeyStakeEntry`].
-    node_pubkey_map: HashMap<Pubkey, BLSPubkeyStakeEntry>,
+    /// a mapping from the node identity pubkey to the node's rank.
+    node_pubkey_to_rank: HashMap<Pubkey, u16>,
     /// Total stake delegated to this validator.
     total_stake: NonZero<u64>,
 }
@@ -68,7 +68,7 @@ impl solana_frozen_abi::abi_example::AbiExample for BLSPubkeyToRankMap {
             vote_pubkey_to_rank: HashMap::new(),
             sorted_pubkeys: Vec::new(),
             total_stake: NonZero::new(1).unwrap(),
-            node_pubkey_map: HashMap::new(),
+            node_pubkey_to_rank: HashMap::new(),
         }
     }
 }
@@ -138,19 +138,21 @@ impl BLSPubkeyToRankMap {
         let mut sorted_pubkeys = Vec::with_capacity(keys_stake_entry_with_compressed.len());
         let mut vote_pubkey_to_rank_map =
             HashMap::with_capacity(keys_stake_entry_with_compressed.len());
-        let mut node_pubkey_map = HashMap::with_capacity(keys_stake_entry_with_compressed.len());
+        let mut node_pubkey_to_rank =
+            HashMap::with_capacity(keys_stake_entry_with_compressed.len());
         for (rank, (entry, _bls_pubkey_compressed)) in
             keys_stake_entry_with_compressed.into_iter().enumerate()
         {
-            vote_pubkey_to_rank_map.insert(entry.vote_account_pubkey, rank as u16);
-            node_pubkey_map.insert(entry.node_pubkey, entry.clone());
+            let rank = u16::try_from(rank).expect("BLS validator rank must fit in u16");
+            vote_pubkey_to_rank_map.insert(entry.vote_account_pubkey, rank);
+            node_pubkey_to_rank.insert(entry.node_pubkey, rank);
             sorted_pubkeys.push(entry);
         }
         Self {
             vote_pubkey_to_rank: vote_pubkey_to_rank_map,
             sorted_pubkeys,
             total_stake,
-            node_pubkey_map,
+            node_pubkey_to_rank,
         }
     }
 
@@ -174,8 +176,15 @@ impl BLSPubkeyToRankMap {
         self.sorted_pubkeys.get(index)
     }
 
-    pub fn node_pubkey_to_stake_entry(&self, node_pubkey: &Pubkey) -> Option<&BLSPubkeyStakeEntry> {
-        self.node_pubkey_map.get(node_pubkey)
+    /// Returns a node's rank and its canonical stake entry.
+    #[inline]
+    pub fn get_ranked_entry_for_node(
+        &self,
+        node_pubkey: &Pubkey,
+    ) -> Option<(u16, &BLSPubkeyStakeEntry)> {
+        let rank = *self.node_pubkey_to_rank.get(node_pubkey)?;
+        let entry = self.sorted_pubkeys.get(usize::from(rank))?;
+        Some((rank, entry))
     }
 }
 
@@ -786,6 +795,27 @@ pub(crate) mod tests {
             bls_pubkey_to_rank_map.total_stake().get(),
             expected_total_stake
         );
+        for expected_rank in 0..bls_pubkey_to_rank_map.len() {
+            let expected_entry = bls_pubkey_to_rank_map
+                .get_pubkey_stake_entry(expected_rank)
+                .unwrap();
+            let (rank, entry) = bls_pubkey_to_rank_map
+                .get_ranked_entry_for_node(&expected_entry.node_pubkey)
+                .unwrap();
+            assert_eq!(usize::from(rank), expected_rank);
+            assert!(std::ptr::eq(entry, expected_entry));
+            assert_eq!(
+                bls_pubkey_to_rank_map
+                    .get_rank_for_vote_pubkey(&entry.vote_account_pubkey)
+                    .copied(),
+                Some(rank)
+            );
+        }
+        assert!(
+            bls_pubkey_to_rank_map
+                .get_ranked_entry_for_node(&Pubkey::new_unique())
+                .is_none()
+        );
 
         // Convert it to versioned and back, we should get the same rank map
         let mut bank_epoch_stakes = HashMap::new();
@@ -950,6 +980,25 @@ pub(crate) mod tests {
             duplicate_node_vote_pubkey_2,
         ] {
             assert!(rank_map.get_rank_for_vote_pubkey(&vote_pubkey).is_none());
+        }
+        assert!(
+            rank_map
+                .get_ranked_entry_for_node(&duplicate_node_pubkey)
+                .is_none()
+        );
+        for node_pubkey in [
+            shared_voter_node_pubkey,
+            shared_voter_node_pubkey_2,
+            unique_node_pubkey,
+        ] {
+            let (rank, entry) = rank_map.get_ranked_entry_for_node(&node_pubkey).unwrap();
+            assert_eq!(entry.node_pubkey, node_pubkey);
+            assert_eq!(
+                rank_map
+                    .get_rank_for_vote_pubkey(&entry.vote_account_pubkey)
+                    .copied(),
+                Some(rank)
+            );
         }
         assert!(rank_map.get_pubkey_stake_entry(rank_map.len()).is_none());
     }

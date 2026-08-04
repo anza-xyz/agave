@@ -413,13 +413,12 @@ impl SigVerifier {
                 entry.insert(rank_map.clone())
             }
         };
-        let entry = rank_map
-            .node_pubkey_to_stake_entry(&sender_identity_pubkey)
+        let (rank, entry) = rank_map
+            .get_ranked_entry_for_node(&sender_identity_pubkey)
             .or_else(|| {
                 self.stats.discard_vote_invalid_rank += 1;
                 None
             })?;
-        let &rank = rank_map.get_rank_for_vote_pubkey(&entry.vote_account_pubkey)?;
         match self.vote_pool.try_add_vote(&msg, rank, rank_map.len()) {
             Ok(()) => Some(UnverifiedVotePayload {
                 vote_message: msg,
