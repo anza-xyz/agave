@@ -230,6 +230,20 @@ pub(crate) enum IndexImplementation {
     },
 }
 
+/// Outcome of inspecting one candidate entry in
+/// [`ProgramCache::find_visible_entry`].
+enum Probe {
+    /// Stop scanning and yield this entry.
+    Accept,
+    /// Ignore this entry and continue with the next-oldest deployment.
+    Skip,
+    /// Ignore this entry, and consider only entries deployed in the given slot
+    /// from here on.
+    SkipToDeploymentSlot(Slot),
+    /// Abandon the scan without a match.
+    Abort,
+}
+
 /// This structure is the global cache of loaded, verified and compiled programs.
 ///
 /// It ...
@@ -661,31 +675,42 @@ impl<FG: ForkGraph> ProgramCache<FG> {
                 );
             if entry_in_same_branch {
                 let entry_is_effective = slot >= entry.effective_slot();
-                if !entry_is_effective {
-                    if !entry.is_implicit_delay_visibility_tombstone(slot) {
-                        continue;
+                let probe = if !entry_is_effective {
+                    if entry.is_implicit_delay_visibility_tombstone(slot) {
+                        Probe::Accept
+                    } else {
+                        Probe::Skip
                     }
+                } else if !Self::matches_environment(
+                    entry,
+                    program_runtime_environment_for_execution,
+                ) {
+                    // We found an entry that would work, had its environment matched
+                    // the one we're planning to use for this slot.
+                    //
+                    // At this point we know that whatever the "current version" of
+                    // program is, it must have had a deployment slot equal to the
+                    // program we're looking at in this iteration. We just have to find
+                    // one with the correct environment and can skip entries for any
+                    // other deployment slot while searching further.
+                    Probe::SkipToDeploymentSlot(entry.deployment_slot)
+                } else if !Self::matches_criteria(entry, match_criteria)
+                    || entry.program.is_unloaded()
+                {
+                    Probe::Abort
                 } else {
-                    if !Self::matches_environment(entry, program_runtime_environment_for_execution)
-                    {
-                        // We found an entry that would work, had its environment matched
-                        // the one we're planning to use for this slot.
-                        //
-                        // At this point we know that whatever the "current version" of
-                        // program is, it must have had a deployment slot equal to the
-                        // program we're looking at in this iteration. We just have to find
-                        // one with the correct environment and can skip entries for any
-                        // other deployment slot while searching further.
+                    Probe::Accept
+                };
+                match probe {
+                    Probe::Accept => return Some(entry),
+                    Probe::Skip => continue,
+                    Probe::SkipToDeploymentSlot(deployment_slot) => {
                         filter_by_deployment_slot =
-                            filter_by_deployment_slot.or(Some(entry.deployment_slot));
+                            filter_by_deployment_slot.or(Some(deployment_slot));
                         continue;
                     }
-                    if !Self::matches_criteria(entry, match_criteria) || entry.program.is_unloaded()
-                    {
-                        break;
-                    }
+                    Probe::Abort => break,
                 }
-                return Some(entry);
             }
         }
         None
