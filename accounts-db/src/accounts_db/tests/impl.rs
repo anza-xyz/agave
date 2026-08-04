@@ -109,26 +109,18 @@ fn test_generate_index_duplicates_within_slot() {
 
     let pubkey = Pubkey::from([1; 32]);
 
-    let append_vec = db.create_store(slot0, 1000);
+    let store = db.create_store(slot0, 1000);
 
-    let mut account_small = AccountSharedData::default();
-    account_small.set_data(vec![1]);
-    account_small.set_lamports(1);
-    let mut account_big = AccountSharedData::default();
-    account_big.set_data(vec![5; 10]);
-    account_big.set_lamports(2);
-    assert_ne!(
-        AppendVec::calculate_stored_size(account_big.data().len()),
-        AppendVec::calculate_stored_size(account_small.data().len()),
-    );
+    let account_small = AccountSharedData::new(1, 1, &Pubkey::default());
+    let account_big = AccountSharedData::new(2, 10, &Pubkey::default());
     // same account twice with different data lens
     // Rules are the last one of each pubkey is the one that ends up in the index.
-    let data = vec![(&pubkey, &account_big), (&pubkey, &account_small)];
+    let data = [(&pubkey, &account_big), (&pubkey, &account_small)];
     let storable_accounts = (slot0, &data[..]);
 
-    // construct append vec with account to generate an index from
-    append_vec.accounts.write_accounts(&storable_accounts);
-    db.storage.insert(Arc::new(append_vec));
+    // construct store with account to generate an index from
+    store.accounts.write_accounts(&storable_accounts);
+    db.storage.insert(Arc::new(store));
 
     assert!(!db.accounts_index.contains(&pubkey));
     let storage = db.get_storage_for_slot(slot0).unwrap();
