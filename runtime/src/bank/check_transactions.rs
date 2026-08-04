@@ -173,10 +173,18 @@ impl Bank {
                         .borrow()
                         .transaction_configuration(feature_set)
                         .map(|config| {
+                            let requested_cost_units =
+                                solana_cost_model::cost_model::CostModel::calculate_requested_cost_units_from_meta(
+                                    tx.borrow(),
+                                    config.compute_unit_limit,
+                                    config.loaded_accounts_data_size_limit,
+                                    feature_set,
+                                );
                             let fee_details = calculate_fee_details(
                                 tx.borrow(),
                                 self.fee_structure.lamports_per_signature,
                                 config.priority_fee_lamports,
+                                requested_cost_units,
                                 fee_features,
                             );
                             if let Some(compute_budget) = self.compute_budget {

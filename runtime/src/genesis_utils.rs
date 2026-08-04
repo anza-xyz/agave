@@ -44,8 +44,9 @@ use {
     std::{borrow::Borrow, sync::Arc},
 };
 
-// Default amount received by the validator
-const VALIDATOR_LAMPORTS: u64 = 890_880;
+// Default amount received by the validator identity (fee payer for vote txs).
+// Sized for SIMD-0553 inclusion+resource fees across multi-slot test epochs.
+const VALIDATOR_LAMPORTS: u64 = 10 * LAMPORTS_PER_SOL;
 const MINT_KEYPAIR_SEED: [u8; 32] = [
     0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25,
     26, 27, 28, 29, 30, 31,

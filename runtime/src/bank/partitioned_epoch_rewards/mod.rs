@@ -1089,7 +1089,7 @@ mod tests {
             mint_keypair,
             ..
         } = create_genesis_config_with_vote_accounts(
-            1_000_000_000,
+            10_000_000_000,
             &validator_keypairs,
             vec![1_000_000_000; 1],
         );

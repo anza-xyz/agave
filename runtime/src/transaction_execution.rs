@@ -298,6 +298,7 @@ mod tests {
         },
         solana_hash::Hash,
         solana_keypair::Keypair,
+        solana_native_token::LAMPORTS_PER_SOL,
         solana_pubkey::Pubkey,
         solana_runtime_transaction::runtime_transaction::RuntimeTransaction,
         solana_signer::Signer as _,
@@ -314,7 +315,7 @@ mod tests {
             genesis_config,
             mint_keypair,
             ..
-        } = create_genesis_config_with_leader(500, &dummy_leader_pubkey, 100);
+        } = create_genesis_config_with_leader(LAMPORTS_PER_SOL, &dummy_leader_pubkey, 100);
         let bank = Bank::new_for_tests(&genesis_config);
 
         let tx =
@@ -413,7 +414,7 @@ mod tests {
             genesis_config,
             mint_keypair,
             ..
-        } = create_genesis_config_with_leader(500, &dummy_leader_pubkey, 100);
+        } = create_genesis_config_with_leader(LAMPORTS_PER_SOL, &dummy_leader_pubkey, 100);
         let bank = Bank::new_for_tests(&genesis_config);
         let (bank, _bank_forks) = bank.wrap_with_bank_forks_for_tests();
         let bank = Arc::new(bank);
@@ -435,7 +436,7 @@ mod tests {
                     solana_system_transaction::transfer(
                         &mint_keypair,
                         &pubkey,
-                        100000000,
+                        LAMPORTS_PER_SOL + 1, // more than mint balance
                         genesis_config.hash(),
                     ),
                 ),

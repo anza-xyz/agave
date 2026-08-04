@@ -51,6 +51,81 @@ impl CostModel {
         )
     }
 
+    /// Requested cost units for fee calculation (SIMD-0553) using cached
+    /// [`TransactionMeta`] fields (signature details, instruction data length).
+    ///
+    /// Prefer this over [`Self::calculate_requested_cost_units`] whenever a
+    /// `RuntimeTransaction` (or other meta-bearing tx) is available, so fee
+    /// paths do not re-walk instructions.
+    pub fn calculate_requested_cost_units_from_meta(
+        transaction: &(impl TransactionMeta + SVMStaticMessage),
+        compute_unit_limit: u32,
+        loaded_accounts_data_size_limit: u32,
+        feature_set: &FeatureSet,
+    ) -> u64 {
+        let signature_cost = Self::get_signature_cost(transaction);
+        let write_lock_cost = Self::get_write_lock_cost(transaction.num_write_locks());
+        let data_bytes_cost = Self::get_instructions_data_cost(transaction);
+        let programs_execution_cost = u64::from(compute_unit_limit);
+        let loaded_accounts_data_size_cost = Self::calculate_loaded_accounts_data_size_cost(
+            loaded_accounts_data_size_limit,
+            feature_set,
+        );
+
+        signature_cost
+            .saturating_add(write_lock_cost)
+            .saturating_add(u64::from(data_bytes_cost))
+            .saturating_add(programs_execution_cost)
+            .saturating_add(loaded_accounts_data_size_cost)
+    }
+
+    /// Requested cost units for fee calculation (SIMD-0553) from a message only.
+    ///
+    /// Use for message-only paths such as `get_fee_for_message`. When
+    /// [`TransactionMeta`] is available, prefer
+    /// [`Self::calculate_requested_cost_units_from_meta`].
+    pub fn calculate_requested_cost_units(
+        message: &impl SVMStaticMessage,
+        compute_unit_limit: u32,
+        loaded_accounts_data_size_limit: u32,
+        feature_set: &FeatureSet,
+    ) -> u64 {
+        let signature_cost = message
+            .num_transaction_signatures()
+            .saturating_mul(SIGNATURE_COST)
+            .saturating_add(
+                message
+                    .num_secp256k1_signatures()
+                    .saturating_mul(SECP256K1_VERIFY_COST),
+            )
+            .saturating_add(
+                message
+                    .num_ed25519_signatures()
+                    .saturating_mul(ED25519_VERIFY_STRICT_COST),
+            )
+            .saturating_add(
+                message
+                    .num_secp256r1_signatures()
+                    .saturating_mul(SECP256R1_VERIFY_COST),
+            );
+        let write_lock_cost = Self::get_write_lock_cost(message.num_write_locks());
+        let instruction_data_len = message
+            .instructions_iter()
+            .fold(0u16, |acc, ix| acc.saturating_add(ix.data.len() as u16));
+        let data_bytes_cost = instruction_data_len / (INSTRUCTION_DATA_BYTES_COST as u16);
+        let programs_execution_cost = u64::from(compute_unit_limit);
+        let loaded_accounts_data_size_cost = Self::calculate_loaded_accounts_data_size_cost(
+            loaded_accounts_data_size_limit,
+            feature_set,
+        );
+
+        signature_cost
+            .saturating_add(write_lock_cost)
+            .saturating_add(u64::from(data_bytes_cost))
+            .saturating_add(programs_execution_cost)
+            .saturating_add(loaded_accounts_data_size_cost)
+    }
+
     // Calculate executed transaction CU cost, with actual execution and loaded accounts size
     // costs.
     pub fn calculate_cost_for_executed_transaction<'a, Tx: TransactionMeta + SVMStaticMessage>(
@@ -72,30 +147,6 @@ impl CostModel {
             actual_programs_execution_cost,
             loaded_accounts_data_size_cost,
             instructions_data_cost,
-            feature_set,
-        )
-    }
-
-    /// Return an estimated total cost for a transaction given its':
-    /// - `meta` - transaction meta
-    /// - `instructions` - transaction instructions
-    /// - `num_write_locks` - number of requested write locks
-    pub fn estimate_cost<'a, Tx: TransactionMeta>(
-        transaction: &'a Tx,
-        instructions: impl Iterator<Item = (&'a Pubkey, SVMInstruction<'a>)>,
-        num_write_locks: u64,
-        feature_set: &FeatureSet,
-    ) -> TransactionCost<'a, Tx> {
-        let (programs_execution_cost, loaded_accounts_data_size_cost) =
-            Self::get_estimated_execution_cost(transaction, feature_set);
-        let data_bytes_cost = Self::get_instructions_data_cost(transaction);
-        Self::calculate_transaction_cost(
-            transaction,
-            instructions,
-            num_write_locks,
-            programs_execution_cost,
-            loaded_accounts_data_size_cost,
-            data_bytes_cost,
             feature_set,
         )
     }

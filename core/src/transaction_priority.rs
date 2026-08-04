@@ -34,21 +34,21 @@ pub(crate) fn calculate_priority_and_cost<Tx: TransactionMeta + SVMStaticMessage
     transaction: &Tx,
     transaction_configuration: &TransactionConfiguration,
 ) -> (u64, u64) {
-    let cost = CostModel::calculate_cost_for_executed_transaction(
+    let cost = CostModel::calculate_requested_cost_units_from_meta(
         transaction,
-        u64::from(transaction_configuration.compute_unit_limit),
+        transaction_configuration.compute_unit_limit,
         transaction_configuration.loaded_accounts_data_size_limit,
         &bank.feature_set,
-    )
-    .sum();
+    );
     let fee_details = solana_fee::calculate_fee_details(
         transaction,
         bank.fee_structure().lamports_per_signature,
         transaction_configuration.priority_fee_lamports,
+        cost,
         bank.fee_features(),
     );
     let reward = bank
-        .calculate_reward_and_burn_fee_details(&CollectorFeeDetails::from(fee_details))
+        .calculate_reward_and_burn_fee_details(&CollectorFeeDetails::from_fee_details(fee_details))
         .get_deposit();
 
     // We need a multiplier here to avoid rounding down too aggressively.

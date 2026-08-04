@@ -713,11 +713,23 @@ impl Consumer {
         error_counters: &mut TransactionErrorMetrics,
     ) -> Result<(), TransactionError> {
         let fee_payer = transaction.fee_payer();
+        // we recompute configuration & cost in case we got a new bank + feature set
+        //
+        // in theory we could cache feature set u32 and only recompute if it differs,
+        // which would save this entire re-parsing >99.999% of the time.
         let transaction_configuration = transaction.transaction_configuration(&bank.feature_set)?;
+        let requested_cost_units =
+            solana_cost_model::cost_model::CostModel::calculate_requested_cost_units_from_meta(
+                transaction,
+                transaction_configuration.compute_unit_limit,
+                transaction_configuration.loaded_accounts_data_size_limit,
+                &bank.feature_set,
+            );
         let fee = solana_fee::calculate_fee(
             transaction,
             bank.fee_structure().lamports_per_signature,
             transaction_configuration.priority_fee_lamports,
+            requested_cost_units,
             bank.fee_features(),
         );
         let (mut fee_payer_account, _slot) = bank

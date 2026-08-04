@@ -81,16 +81,26 @@ impl Bank {
         transaction: &impl TransactionWithMeta,
         transaction_configuration: &TransactionConfiguration,
     ) -> u64 {
+        let requested_cost_units =
+            solana_cost_model::cost_model::CostModel::calculate_requested_cost_units_from_meta(
+                transaction,
+                transaction_configuration.compute_unit_limit,
+                transaction_configuration.loaded_accounts_data_size_limit,
+                &self.feature_set,
+            );
         let fee_details = solana_fee::calculate_fee_details(
             transaction,
             self.fee_structure().lamports_per_signature,
             transaction_configuration.priority_fee_lamports,
+            requested_cost_units,
             self.fee_features(),
         );
         let FeeDistribution {
             deposit: reward,
             burn: _,
-        } = self.calculate_reward_and_burn_fee_details(&CollectorFeeDetails::from(fee_details));
+        } = self.calculate_reward_and_burn_fee_details(&CollectorFeeDetails::from_fee_details(
+            fee_details,
+        ));
         reward
     }
 
@@ -98,11 +108,20 @@ impl Bank {
         &self,
         fee_details: &CollectorFeeDetails,
     ) -> FeeDistribution {
-        let burn = fee_details.transaction_fee * self.burn_percent() / 100;
-        let deposit = fee_details
-            .priority_fee
-            .saturating_add(fee_details.transaction_fee.saturating_sub(burn));
-        FeeDistribution { deposit, burn }
+        if self.fee_features().is_resource_fee_active() {
+            FeeDistribution {
+                deposit: fee_details
+                    .transaction_fee
+                    .saturating_add(fee_details.priority_fee),
+                burn: fee_details.resource_fee,
+            }
+        } else {
+            let burn = fee_details.transaction_fee * self.burn_percent() / 100;
+            let deposit = fee_details
+                .priority_fee
+                .saturating_add(fee_details.transaction_fee.saturating_sub(burn));
+            FeeDistribution { deposit, burn }
+        }
     }
 
     const fn burn_percent(&self) -> u64 {
@@ -681,9 +700,11 @@ pub mod tests {
         bank.collector_fee_details = RwLock::new(CollectorFeeDetails {
             transaction_fee,
             priority_fee,
+            resource_fee: 0,
         });
-        let expected_burn = transaction_fee * bank.burn_percent() / 100;
-        let expected_rewards = transaction_fee - expected_burn + priority_fee;
+        // SIMD-0553: burn 100% of resource fee; leader gets inclusion + priority.
+        let expected_burn = 0;
+        let expected_rewards = transaction_fee + priority_fee;
 
         let collector_id = *bank.leader_id();
 
@@ -720,6 +741,41 @@ pub mod tests {
     }
 
     #[test]
+    fn test_distribute_transaction_fee_details_resource_fee() {
+        let initial_balance = 1000;
+        let genesis = create_genesis_config_with_leader(0, &pubkey::new_rand(), initial_balance);
+        let mut bank = Bank::new_for_tests(&genesis.genesis_config);
+
+        let inclusion_fee = solana_fee::BASE_INCLUSION_FEE;
+        let resource_fee = 500;
+        let priority_fee = 200;
+        bank.collector_fee_details = RwLock::new(CollectorFeeDetails {
+            transaction_fee: inclusion_fee,
+            priority_fee,
+            resource_fee,
+        });
+
+        // SIMD-0553: burn 100% of resource fee; leader gets inclusion + priority.
+        let expected_burn = resource_fee;
+        let expected_rewards = inclusion_fee + priority_fee;
+
+        let collector_id = *bank.leader_id();
+        let initial_capitalization = bank.capitalization();
+        let initial_collector_balance = bank.get_balance(&collector_id);
+        bank.distribute_transaction_fee_details();
+        let new_collector_balance = bank.get_balance(&collector_id);
+
+        assert_eq!(
+            initial_collector_balance + expected_rewards,
+            new_collector_balance
+        );
+        assert_eq!(
+            initial_capitalization - expected_burn,
+            bank.capitalization()
+        );
+    }
+
+    #[test]
     fn test_distribute_transaction_fee_details_zero() {
         let genesis = create_genesis_config(0);
         let bank = Bank::new_for_tests(&genesis.genesis_config);
@@ -752,6 +808,7 @@ pub mod tests {
         bank.collector_fee_details = RwLock::new(CollectorFeeDetails {
             transaction_fee,
             priority_fee,
+            resource_fee: 0,
         });
 
         let collector_id = *bank.leader_id();

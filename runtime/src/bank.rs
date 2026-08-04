@@ -288,8 +288,11 @@ impl AddAssign for SquashTiming {
 
 #[derive(Clone, Debug, Default, PartialEq)]
 pub struct CollectorFeeDetails {
+    /// Legacy: signature fees. SIMD-0553: base inclusion fees only.
     transaction_fee: u64,
     priority_fee: u64,
+    /// SIMD-0553 resource fees (100% burned). Zero when resource fee is inactive.
+    resource_fee: u64,
 }
 
 impl CollectorFeeDetails {
@@ -300,23 +303,33 @@ impl CollectorFeeDetails {
         self.priority_fee = self
             .priority_fee
             .saturating_add(fee_details.prioritization_fee());
+        self.resource_fee = self.resource_fee.saturating_add(fee_details.resource_fee());
+    }
+
+    pub(crate) fn accumulate_collector(&mut self, other: &Self) {
+        self.transaction_fee = self.transaction_fee.saturating_add(other.transaction_fee);
+        self.priority_fee = self.priority_fee.saturating_add(other.priority_fee);
+        self.resource_fee = self.resource_fee.saturating_add(other.resource_fee);
+    }
+
+    pub fn from_fee_details(fee_details: FeeDetails) -> Self {
+        let mut collector = Self::default();
+        collector.accumulate(&fee_details);
+        collector
     }
 
     pub fn total_transaction_fee(&self) -> u64 {
-        self.transaction_fee.saturating_add(self.priority_fee)
+        self.transaction_fee
+            .saturating_add(self.priority_fee)
+            .saturating_add(self.resource_fee)
     }
 
     pub fn total_priority_fee(&self) -> u64 {
         self.priority_fee
     }
-}
 
-impl From<FeeDetails> for CollectorFeeDetails {
-    fn from(fee_details: FeeDetails) -> Self {
-        CollectorFeeDetails {
-            transaction_fee: fee_details.transaction_fee(),
-            priority_fee: fee_details.prioritization_fee(),
-        }
+    pub fn total_resource_fee(&self) -> u64 {
+        self.resource_fee
     }
 }
 
@@ -3335,7 +3348,12 @@ impl Bank {
 
     /// Convert Agave's active feature set into the fee crate's narrowed feature view.
     pub fn fee_features(&self) -> FeeFeatures {
-        FeeFeatures {}
+        let snapshot = self.feature_set.snapshot();
+        FeeFeatures {
+            resource_fee_burn_1_10: snapshot.resource_fee_burn_1_10,
+            resource_fee_burn_1_4: snapshot.resource_fee_burn_1_4,
+            resource_fee_burn_1_2: snapshot.resource_fee_burn_1_2,
+        }
     }
 
     pub fn get_lamports_per_signature_for_blockhash(&self, hash: &Hash) -> Option<u64> {
@@ -3356,10 +3374,18 @@ impl Bank {
         let transaction_configuration =
             TransactionConfiguration::try_from_sanitized_message(message, &self.feature_set)
                 .ok()?;
+        let requested_cost_units =
+            solana_cost_model::cost_model::CostModel::calculate_requested_cost_units(
+                message,
+                transaction_configuration.compute_unit_limit,
+                transaction_configuration.loaded_accounts_data_size_limit,
+                &self.feature_set,
+            );
         Some(solana_fee::calculate_fee(
             message,
             self.fee_structure().lamports_per_signature,
             transaction_configuration.priority_fee_lamports,
+            requested_cost_units,
             self.fee_features(),
         ))
     }
@@ -4290,7 +4316,7 @@ impl Bank {
         &self,
         processing_results: &[TransactionProcessingResult],
     ) {
-        let mut accumulated_fee_details = FeeDetails::default();
+        let mut accumulated_fee_details = CollectorFeeDetails::default();
 
         processing_results.iter().for_each(|processing_result| {
             if let Ok(processed_tx) = processing_result {
@@ -4301,7 +4327,7 @@ impl Bank {
         self.collector_fee_details
             .write()
             .unwrap()
-            .accumulate(&accumulated_fee_details);
+            .accumulate_collector(&accumulated_fee_details);
     }
 
     fn update_bank_hash_stats<'a>(&self, accounts: &impl StorableAccounts<'a>) {

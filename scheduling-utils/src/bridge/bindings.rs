@@ -86,7 +86,12 @@ where
             },
             runtime: RuntimeState {
                 feature_set: FeatureSet::all_enabled(),
-                fee_features: FeeFeatures {},
+                // TODO...
+                fee_features: FeeFeatures {
+                    resource_fee_burn_1_10: false,
+                    resource_fee_burn_1_4: false,
+                    resource_fee_burn_1_2: false,
+                },
                 lamports_per_signature: 5000,
                 burn_percent: 50,
             },

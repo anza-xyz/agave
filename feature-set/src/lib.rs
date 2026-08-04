@@ -83,6 +83,9 @@ pub struct FeatureSnapshot {
     pub define_ltds_fee_only_semantics: bool,
     pub upgrade_bpf_stake_program_to_v5_1: bool,
     pub relax_fee_payer_constraint: bool,
+    pub resource_fee_burn_1_10: bool,
+    pub resource_fee_burn_1_4: bool,
+    pub resource_fee_burn_1_2: bool,
 }
 
 impl From<&AHashMap<Pubkey, u64>> for FeatureSnapshot {
@@ -186,6 +189,9 @@ impl From<&AHashMap<Pubkey, u64>> for FeatureSnapshot {
             define_ltds_fee_only_semantics: is_active(&define_ltds_fee_only_semantics::ID),
             upgrade_bpf_stake_program_to_v5_1: is_active(&upgrade_bpf_stake_program_to_v5_1::ID),
             relax_fee_payer_constraint: is_active(&relax_fee_payer_constraint::ID),
+            resource_fee_burn_1_10: is_active(&resource_fee_burn_1_10::ID),
+            resource_fee_burn_1_4: is_active(&resource_fee_burn_1_4::ID),
+            resource_fee_burn_1_2: is_active(&resource_fee_burn_1_2::ID),
         }
     }
 }
@@ -1534,6 +1540,18 @@ pub mod relax_fee_payer_constraint {
     solana_pubkey::declare_id!("FEEXbxUuKobtrt1qNK5pjtzbPQhsppBTrNNG74xu4mai");
 }
 
+pub mod resource_fee_burn_1_10 {
+    solana_pubkey::declare_id!("BurnUeW8qFgJm3Y4uroMvqEQDrYWbhv7p231hHbrq8LV");
+}
+
+pub mod resource_fee_burn_1_4 {
+    solana_pubkey::declare_id!("Burn2YJ9k9wTcyQCEMztMsbnBReV3FzXpW1aBB7MhwuY");
+}
+
+pub mod resource_fee_burn_1_2 {
+    solana_pubkey::declare_id!("BurnSoLN7d4ASk4zVVxTg4ob3C8z71dN6cr8YsyEnaZ6");
+}
+
 pub static FEATURE_NAMES: LazyLock<AHashMap<Pubkey, &'static str>> = LazyLock::new(|| {
     [
         (secp256k1_program_enabled::id(), "secp256k1 program"),
@@ -2615,6 +2633,18 @@ pub static FEATURE_NAMES: LazyLock<AHashMap<Pubkey, &'static str>> = LazyLock::n
         (
             relax_fee_payer_constraint::id(),
             "SIMD-0290: Relax block constraint requiring valid fee-payer",
+        ),
+        (
+            resource_fee_burn_1_10::id(),
+            "SIMD-0553: Resource fee burn at 1/10 lamports per cost unit",
+        ),
+        (
+            resource_fee_burn_1_4::id(),
+            "SIMD-0553: Resource fee burn at 1/4 lamports per cost unit",
+        ),
+        (
+            resource_fee_burn_1_2::id(),
+            "SIMD-0553: Resource fee burn at 1/2 lamports per cost unit",
         ),
         /*************** ADD NEW FEATURES HERE ***************/
         /***** ADD NEW FEATURE BOOL TO `FeatureSnapshot` *****/
