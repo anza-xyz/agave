@@ -3,13 +3,14 @@ use {
     crate::geyser_plugin_manager::GeyserPluginManager,
     agave_geyser_plugin_interface::geyser_plugin_interface::{
         ReplicaBlockFooterInfo, ReplicaBlockFooterInfoVersions, ReplicaEntryInfoV2,
-        ReplicaEntryInfoVersions,
+        ReplicaEntryInfoVersions, ReplicaEntryUpdateParentInfo,
+        ReplicaEntryUpdateParentInfoVersions,
     },
     arc_swap::ArcSwap,
     log::*,
     solana_clock::{BankId, Slot},
     solana_entry::{block_component::VersionedBlockFooter, entry::EntrySummary},
-    solana_ledger::entry_notifier_interface::EntryNotifier,
+    solana_ledger::entry_notifier_interface::{EntryNotifier, EntryUpdateParentInfo},
     std::sync::Arc,
 };
 
@@ -87,6 +88,28 @@ impl EntryNotifier for EntryNotifierImpl {
             }
         }
     }
+
+    fn notify_entry_update_parent(&self, update_parent: &EntryUpdateParentInfo) {
+        let plugin_manager = self.plugin_manager.load();
+        let update_parent_info = ReplicaEntryUpdateParentInfo {
+            slot: update_parent.slot,
+            cleared_bank_id: update_parent.cleared_bank_id,
+            parent_slot: update_parent.parent_slot,
+            parent_block_id: &update_parent.parent_block_id,
+        };
+        for plugin in plugin_manager.plugins.iter() {
+            if plugin.entry_notifications_enabled()
+                && let Err(err) = plugin.notify_entry_update_parent(
+                    ReplicaEntryUpdateParentInfoVersions::V0_0_1(&update_parent_info),
+                )
+            {
+                error!(
+                    "Failed to notify entry UpdateParent, error: ({err}) to plugin {}",
+                    plugin.name()
+                );
+            }
+        }
+    }
 }
 
 impl EntryNotifierImpl {
@@ -125,6 +148,7 @@ mod tests {
     };
 
     type EntryUpdate = (Slot, BankId, usize, usize);
+    type EntryUpdateParent = (Slot, BankId, Slot, Hash);
     type BlockFooterUpdate = (Slot, BankId, VersionedBlockFooter);
 
     #[derive(Debug)]
@@ -132,6 +156,7 @@ mod tests {
         entry_notifications_enabled: bool,
         block_footer_notifications_enabled: bool,
         entry_updates: Arc<Mutex<Vec<EntryUpdate>>>,
+        update_parents: Arc<Mutex<Vec<EntryUpdateParent>>>,
         block_footer_updates: Arc<Mutex<Vec<BlockFooterUpdate>>>,
     }
 
@@ -171,6 +196,20 @@ mod tests {
             Ok(())
         }
 
+        fn notify_entry_update_parent(
+            &self,
+            update_parent: ReplicaEntryUpdateParentInfoVersions,
+        ) -> Result<()> {
+            let ReplicaEntryUpdateParentInfoVersions::V0_0_1(update_parent) = update_parent;
+            self.update_parents.lock().unwrap().push((
+                update_parent.slot,
+                update_parent.cleared_bank_id,
+                update_parent.parent_slot,
+                *update_parent.parent_block_id,
+            ));
+            Ok(())
+        }
+
         fn entry_notifications_enabled(&self) -> bool {
             self.entry_notifications_enabled
         }
@@ -194,10 +233,12 @@ mod tests {
     }
 
     #[test]
-    fn test_notify_entry_and_block_footer_independently() {
+    fn test_notify_entry_update_parent_and_block_footer_independently() {
         let entry_plugin_entry_updates = Arc::new(Mutex::new(Vec::new()));
+        let entry_plugin_update_parents = Arc::new(Mutex::new(Vec::new()));
         let entry_plugin_block_footer_updates = Arc::new(Mutex::new(Vec::new()));
         let block_footer_plugin_entry_updates = Arc::new(Mutex::new(Vec::new()));
+        let block_footer_plugin_update_parents = Arc::new(Mutex::new(Vec::new()));
         let block_footer_plugin_block_footer_updates = Arc::new(Mutex::new(Vec::new()));
         let plugin_manager = Arc::new(ArcSwap::from(Arc::new(GeyserPluginManager {
             plugins: vec![
@@ -205,12 +246,14 @@ mod tests {
                     entry_notifications_enabled: true,
                     block_footer_notifications_enabled: false,
                     entry_updates: entry_plugin_entry_updates.clone(),
+                    update_parents: entry_plugin_update_parents.clone(),
                     block_footer_updates: entry_plugin_block_footer_updates.clone(),
                 }),
                 loaded_test_plugin(TestEntryPlugin {
                     entry_notifications_enabled: false,
                     block_footer_notifications_enabled: true,
                     entry_updates: block_footer_plugin_entry_updates.clone(),
+                    update_parents: block_footer_plugin_update_parents.clone(),
                     block_footer_updates: block_footer_plugin_block_footer_updates.clone(),
                 }),
             ],
@@ -229,16 +272,33 @@ mod tests {
             skip_reward_cert: None,
             notar_reward_cert: None,
         });
+        let parent_block_id = Hash::new_unique();
 
         notifier.notify_entry(42, 9, 3, &entry, 7);
+        notifier.notify_entry_update_parent(&EntryUpdateParentInfo {
+            slot: 42,
+            cleared_bank_id: 9,
+            parent_slot: 40,
+            parent_block_id,
+        });
         notifier.notify_block_footer(42, 9, &block_footer);
 
         assert_eq!(
             *entry_plugin_entry_updates.lock().unwrap(),
             vec![(42, 9, 3, 7)]
         );
+        assert_eq!(
+            *entry_plugin_update_parents.lock().unwrap(),
+            vec![(42, 9, 40, parent_block_id)]
+        );
         assert!(entry_plugin_block_footer_updates.lock().unwrap().is_empty());
         assert!(block_footer_plugin_entry_updates.lock().unwrap().is_empty());
+        assert!(
+            block_footer_plugin_update_parents
+                .lock()
+                .unwrap()
+                .is_empty()
+        );
         assert_eq!(
             *block_footer_plugin_block_footer_updates.lock().unwrap(),
             vec![(42, 9, block_footer)]

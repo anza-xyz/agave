@@ -55,6 +55,9 @@ still accepted for backwards compatibility but slated for full removal in the fu
   `GeyserPlugin::block_footer_notifications_enabled`; plugins can opt in to receive the complete
   versioned Alpenglow block footer, slot, and bank ID in entry order independently of entry
   notifications.
+* Added `GeyserPlugin::notify_entry_update_parent` and
+  `GeyserPlugin::notify_deshred_update_parent` so plugins can discard earlier notifications after
+  an UpdateParent marker.
 ### SDK
 #### Breaking
 * solana-program-test: syscall getters (e.g. `Rent::get()`, `Clock::get()`) and `solana_sysvar::get_sysvar()` now return

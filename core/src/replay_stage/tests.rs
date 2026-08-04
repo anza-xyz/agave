@@ -44,6 +44,7 @@ use {
             BlockstoreError, UpdateParentSignal, entries_to_test_shreds, make_slot_entries,
         },
         create_new_tmp_ledger,
+        entry_notifier_service::EntryNotification,
         genesis_utils::{create_genesis_config, create_genesis_config_with_leader},
         get_tmp_ledger_path, get_tmp_ledger_path_auto_delete,
         shred::{ProcessShredsStats, ReedSolomonCache, Shred, Shredder},
@@ -1337,14 +1338,16 @@ fn test_abandon_invalidates() {
     );
 
     let (replay_vote_sender, replay_vote_receiver) = bounded(1024);
-    let process_active_banks_context = ProcessActiveBanksContext::new_for_tests(
+    let mut process_active_banks_context = ProcessActiveBanksContext::new_for_tests(
         bank_forks.clone(),
         blockstore,
         replay_vote_sender,
     );
+    let (entry_notification_sender, entry_notification_receiver) = bounded(1);
+    process_active_banks_context.entry_notification_sender = Some(entry_notification_sender);
     let update_parent = VersionedUpdateParent::V1(solana_entry::block_component::UpdateParentV1 {
         new_parent_slot: 0,
-        new_parent_block_id: Hash::default(),
+        new_parent_block_id: parent_block_id,
     });
     let replay_result = ReplaySlotFromBlockstore {
         is_slot_dead: false,
@@ -1375,6 +1378,15 @@ fn test_abandon_invalidates() {
             replay_slot: slot,
         })
     );
+    let EntryNotification::UpdateParent(update_parent) =
+        entry_notification_receiver.try_recv().unwrap()
+    else {
+        panic!("expected UpdateParent entry notification");
+    };
+    assert_eq!(update_parent.slot, slot);
+    assert_eq!(update_parent.cleared_bank_id, bank.bank_id());
+    assert_eq!(update_parent.parent_slot, 0);
+    assert_eq!(update_parent.parent_block_id, parent_block_id);
 }
 
 // Given a shred and a fatal expected error, check that replaying that shred causes causes the fork to be
@@ -3092,6 +3104,7 @@ fn test_update_parent_restart() {
 
     let cleared_bank_id = bank_forks.read().unwrap().get(4).unwrap().bank_id();
     let (replay_vote_sender, replay_vote_receiver) = bounded(1024);
+    let (entry_notification_sender, entry_notification_receiver) = bounded(1);
     let mut async_verification_freelist = Vec::new();
     handle_update_parent_interrupts(
         &Pubkey::new_unique(),
@@ -3102,6 +3115,7 @@ fn test_update_parent_restart() {
         &rx,
         &replay_vote_sender,
         &post_migration_status_for_tests(),
+        Some(&entry_notification_sender),
     );
 
     assert!(progress.get(&4).is_none()); // cleared: 5 < 32
@@ -3114,6 +3128,16 @@ fn test_update_parent_restart() {
         })
     );
     assert!(replay_vote_receiver.try_recv().is_err());
+    let EntryNotification::UpdateParent(update_parent) =
+        entry_notification_receiver.try_recv().unwrap()
+    else {
+        panic!("expected UpdateParent entry notification");
+    };
+    let slot_meta = blockstore.meta(4).unwrap().unwrap();
+    assert_eq!(update_parent.slot, 4);
+    assert_eq!(update_parent.cleared_bank_id, cleared_bank_id);
+    assert_eq!(update_parent.parent_slot, slot_meta.parent_slot.unwrap());
+    assert_eq!(update_parent.parent_block_id, slot_meta.parent_block_id);
 }
 
 #[test]
@@ -3233,6 +3257,7 @@ fn test_update_parent_tower_gated() {
         &rx,
         &replay_vote_sender,
         &MigrationStatus::default(),
+        None,
     );
 
     assert!(progress.get(&slot).is_some());
@@ -3277,6 +3302,7 @@ fn test_update_parent_interrupt_ignores_non_first_leader_window_slot() {
         &rx,
         &replay_vote_sender,
         &post_migration_status_for_tests(),
+        None,
     );
 
     assert!(progress.get(&slot).is_some());
@@ -3324,6 +3350,7 @@ fn test_update_parent_keeps_hard() {
         &rx,
         &replay_vote_sender,
         &post_migration_status_for_tests(),
+        None,
     );
 
     assert!(blockstore.is_dead(slot));
@@ -3544,6 +3571,7 @@ fn test_soft_dead_restarts() {
         &mut async_verification_freelist,
         &replay_vote_sender,
         &post_migration_status_for_tests(),
+        None,
     );
 
     assert!(!blockstore.is_dead(slot));
@@ -3587,6 +3615,7 @@ fn test_full_soft_dead_hardens() {
         &mut async_verification_freelist,
         &replay_vote_sender,
         &post_migration_status_for_tests(),
+        None,
     );
 
     assert!(blockstore.is_dead(slot));

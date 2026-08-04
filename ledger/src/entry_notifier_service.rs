@@ -1,5 +1,5 @@
 use {
-    crate::entry_notifier_interface::EntryNotifierArc,
+    crate::entry_notifier_interface::{EntryNotifierArc, EntryUpdateParentInfo},
     crossbeam_channel::{Receiver, RecvTimeoutError, Sender, unbounded},
     solana_clock::{BankId, Slot},
     solana_entry::{block_component::VersionedBlockFooter, entry::EntrySummary},
@@ -26,6 +26,7 @@ pub enum EntryNotification {
         bank_id: BankId,
         block_footer: Box<VersionedBlockFooter>,
     },
+    UpdateParent(EntryUpdateParentInfo),
 }
 
 pub type EntryNotifierSender = Sender<EntryNotification>;
@@ -86,6 +87,9 @@ impl EntryNotifierService {
                 bank_id,
                 block_footer,
             } => entry_notifier.notify_block_footer(slot, bank_id, block_footer.as_ref()),
+            EntryNotification::UpdateParent(update_parent) => {
+                entry_notifier.notify_entry_update_parent(&update_parent)
+            }
         }
         Ok(())
     }
@@ -123,6 +127,7 @@ mod tests {
             bank_id: BankId,
             block_footer: Box<VersionedBlockFooter>,
         },
+        UpdateParent(Slot, BankId, Slot, Hash),
     }
 
     #[derive(Default)]
@@ -159,10 +164,19 @@ mod tests {
                 block_footer: Box::new(block_footer.clone()),
             });
         }
+
+        fn notify_entry_update_parent(&self, update_parent: &EntryUpdateParentInfo) {
+            self.events.lock().unwrap().push(TestEvent::UpdateParent(
+                update_parent.slot,
+                update_parent.cleared_bank_id,
+                update_parent.parent_slot,
+                update_parent.parent_block_id,
+            ));
+        }
     }
 
     #[test]
-    fn test_forwards_entry_and_block_footer_in_order() {
+    fn test_forwards_entry_notifications_in_order() {
         let (sender, receiver) = unbounded();
         let notifier = Arc::new(TestEntryNotifier::default());
         let block_footer = VersionedBlockFooter::V1(BlockFooterV1 {
@@ -173,6 +187,7 @@ mod tests {
             skip_reward_cert: None,
             notar_reward_cert: None,
         });
+        let parent_block_id = Hash::new_unique();
 
         sender
             .send(EntryNotification::Entry {
@@ -188,6 +203,14 @@ mod tests {
             })
             .unwrap();
         sender
+            .send(EntryNotification::UpdateParent(EntryUpdateParentInfo {
+                slot: 42,
+                cleared_bank_id: 9,
+                parent_slot: 40,
+                parent_block_id,
+            }))
+            .unwrap();
+        sender
             .send(EntryNotification::BlockFooter {
                 slot: 42,
                 bank_id: 9,
@@ -195,6 +218,7 @@ mod tests {
             })
             .unwrap();
 
+        EntryNotifierService::notify(&receiver, notifier.clone()).unwrap();
         EntryNotifierService::notify(&receiver, notifier.clone()).unwrap();
         EntryNotifierService::notify(&receiver, notifier.clone()).unwrap();
 
@@ -207,6 +231,7 @@ mod tests {
                     index: 3,
                     starting_transaction_index: 7,
                 },
+                TestEvent::UpdateParent(42, 9, 40, parent_block_id),
                 TestEvent::BlockFooter {
                     slot: 42,
                     bank_id: 9,

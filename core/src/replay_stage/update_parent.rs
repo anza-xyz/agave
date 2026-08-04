@@ -17,8 +17,10 @@ use {
     solana_entry::block_component::VersionedUpdateParent,
     solana_ledger::{
         blockstore::{Blockstore, UpdateParentReceiver},
-        blockstore_meta::SlotMeta,
+        blockstore_meta::{SlotMeta, UpdateParentInfo},
         blockstore_processor::AsyncVerificationProgress,
+        entry_notifier_interface::EntryUpdateParentInfo,
+        entry_notifier_service::{EntryNotification, EntryNotifierSender},
     },
     solana_pubkey::Pubkey,
     solana_runtime::{
@@ -97,8 +99,20 @@ pub(super) fn child_bank_replay_start(
     ChildBankReplayStart::FromUpdateParent(num_shreds)
 }
 
+fn notify_entry_update_parent(
+    sender: Option<&EntryNotifierSender>,
+    update_parent: EntryUpdateParentInfo,
+) {
+    if let Some(sender) = sender
+        && let Err(err) = sender.send(EntryNotification::UpdateParent(update_parent))
+    {
+        warn!("UpdateParent entry notification send failed: {err:?}");
+    }
+}
+
 /// Clear an in-progress bank so the next replay iteration recreates it from
 /// the current UpdateParent parent and FEC-set offset recorded in `SlotMeta`.
+#[allow(clippy::too_many_arguments)]
 fn try_restart_slot_from_update_parent(
     my_pubkey: &Pubkey,
     blockstore: &Blockstore,
@@ -109,6 +123,7 @@ fn try_restart_slot_from_update_parent(
     replay_vote_sender: &ReplayVoteSender,
     migration_status: &MigrationStatus,
     source: &str,
+    entry_notification_sender: Option<&EntryNotifierSender>,
 ) -> bool {
     if !migration_status.should_allow_block_markers(slot) {
         return false;
@@ -163,10 +178,24 @@ fn try_restart_slot_from_update_parent(
         "{my_pubkey}: restarting slot {slot} from replay_fec_set_index {replay_fec_set_index} via \
          {source} (was at {current_num_shreds} shreds)",
     );
-    if let Some(bank) = bank {
+    let cleared_bank_id = bank.map(|bank| {
         send_invalid_bank(&bank, replay_vote_sender);
-    }
+        bank.bank_id()
+    });
     ReplayStage::clear_slots([slot], bank_forks, progress, async_verification_freelist);
+    if let Some(cleared_bank_id) = cleared_bank_id {
+        let update_parent = UpdateParentInfo::from_slot_meta(slot, &slot_meta)
+            .expect("UpdateParent metadata must include a parent slot");
+        notify_entry_update_parent(
+            entry_notification_sender,
+            EntryUpdateParentInfo {
+                slot,
+                cleared_bank_id,
+                parent_slot: update_parent.parent_slot,
+                parent_block_id: update_parent.parent_block_id,
+            },
+        );
+    }
     true
 }
 
@@ -175,6 +204,7 @@ fn try_restart_slot_from_update_parent(
 /// If an UpdateParent marker is now visible in SlotMeta, replay is restarted
 /// from the marker's FEC set. If the slot completes without a marker, the
 /// soft-dead state is promoted to a durable hard-dead slot.
+#[allow(clippy::too_many_arguments)]
 pub(super) fn process_soft_dead_slots(
     my_pubkey: &Pubkey,
     blockstore: &Arc<Blockstore>,
@@ -185,6 +215,7 @@ pub(super) fn process_soft_dead_slots(
     async_verification_freelist: &mut Vec<AsyncVerificationProgress>,
     replay_vote_sender: &ReplayVoteSender,
     migration_status: &MigrationStatus,
+    entry_notification_sender: Option<&EntryNotifierSender>,
 ) {
     let soft_dead_slots = progress
         .iter()
@@ -222,6 +253,7 @@ pub(super) fn process_soft_dead_slots(
                 replay_vote_sender,
                 migration_status,
                 "soft-dead scan",
+                entry_notification_sender,
             );
             continue;
         }
@@ -268,6 +300,7 @@ pub(super) fn handle_update_parent_interrupts(
     update_parent_receiver: &UpdateParentReceiver,
     replay_vote_sender: &ReplayVoteSender,
     migration_status: &MigrationStatus,
+    entry_notification_sender: Option<&EntryNotifierSender>,
 ) {
     while let Ok(signal) = update_parent_receiver.try_recv() {
         try_restart_slot_from_update_parent(
@@ -280,6 +313,7 @@ pub(super) fn handle_update_parent_interrupts(
             replay_vote_sender,
             migration_status,
             "UpdateParent signal",
+            entry_notification_sender,
         );
     }
 }
@@ -306,8 +340,11 @@ pub(super) fn handle_abandoned_bank(
     // recreated with the correct parent by generate_new_bank_forks, which
     // reads slot meta to determine both the new parent and the correct
     // replay offset (replay_fec_set_index).
-    let new_parent_slot = match &update_parent {
-        VersionedUpdateParent::V1(x) => x.new_parent_slot,
+    let (new_parent_slot, new_parent_block_id) = match update_parent {
+        VersionedUpdateParent::V1(update_parent) => (
+            update_parent.new_parent_slot,
+            update_parent.new_parent_block_id,
+        ),
     };
 
     datapoint_info!(
@@ -360,5 +397,16 @@ pub(super) fn handle_abandoned_bank(
         bank_forks,
         progress,
         async_verification_freelist,
+    );
+    notify_entry_update_parent(
+        process_active_banks_context
+            .entry_notification_sender
+            .as_ref(),
+        EntryUpdateParentInfo {
+            slot: bank_slot,
+            cleared_bank_id: bank.bank_id(),
+            parent_slot: new_parent_slot,
+            parent_block_id: new_parent_block_id,
+        },
     );
 }

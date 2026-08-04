@@ -977,6 +977,7 @@ impl ReplayStage {
                     &update_parent_receiver,
                     &replay_vote_sender,
                     migration_status.as_ref(),
+                    entry_notification_sender.as_ref(),
                 );
 
                 let mut generate_new_bank_forks_time =
@@ -1068,6 +1069,7 @@ impl ReplayStage {
                         &mut async_verification_freelist,
                         &replay_vote_sender,
                         migration_status.as_ref(),
+                        entry_notification_sender.as_ref(),
                     );
                     Self::alpenglow_handle_newly_frozen_banks(
                         &new_frozen_slots,

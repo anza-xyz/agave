@@ -26,7 +26,12 @@ use {
     },
     solana_gossip::cluster_info::ClusterInfo,
     solana_hash::Hash,
-    solana_ledger::{blockstore::Blockstore, leader_schedule_cache::LeaderScheduleCache},
+    solana_ledger::{
+        blockstore::Blockstore,
+        entry_notifier_interface::EntryUpdateParentInfo,
+        entry_notifier_service::{EntryNotification, EntryNotifierSender},
+        leader_schedule_cache::LeaderScheduleCache,
+    },
     solana_measure::measure::Measure,
     solana_perf::packet::{BytesPacket, Meta, PacketBatch, bytes::Bytes},
     solana_poh::{
@@ -133,6 +138,7 @@ pub struct BlockCreationLoopConfig {
     // Notifiers
     pub banking_tracer: Arc<BankingTracer>,
     pub slot_status_notifier: Option<SlotStatusNotifier>,
+    pub entry_notification_sender: Option<EntryNotifierSender>,
 
     // Receivers / notifications from banking stage / replay / votor
     pub leader_window_info_receiver: Receiver<LeaderWindowInfo>,
@@ -167,6 +173,7 @@ struct LeaderContext {
     bank_forks_controller: Arc<dyn BankForksController>,
     rpc_subscriptions: Option<Arc<RpcSubscriptions>>,
     slot_status_notifier: Option<SlotStatusNotifier>,
+    entry_notification_sender: Option<EntryNotifierSender>,
     banking_tracer: Arc<BankingTracer>,
     replay_highest_frozen: Arc<ReplayHighestFrozen>,
     reward_certs_requestor: CertsRequestor,
@@ -244,6 +251,7 @@ fn start_loop(config: BlockCreationLoopConfig, reward_certs_requestor: CertsRequ
         rpc_subscriptions,
         banking_tracer,
         slot_status_notifier,
+        entry_notification_sender,
         record_receiver_receiver,
         leader_window_info_receiver,
         replay_highest_frozen,
@@ -296,6 +304,7 @@ fn start_loop(config: BlockCreationLoopConfig, reward_certs_requestor: CertsRequ
         bank_forks_controller,
         rpc_subscriptions,
         slot_status_notifier,
+        entry_notification_sender,
         banking_tracer,
         replay_highest_frozen,
         reward_certs_requestor,
@@ -946,11 +955,23 @@ fn handle_parent_ready(
             old_parent_slot,
             new_parent_slot,
         ))?;
+    let cleared_bank_id = bank.bank_id();
     bank.wait_for_inflight_commits();
     ctx.bank_forks_controller
         .clear_bank(slot)
         .map_err(|_| PohRecorderError::ResetBankError(old_parent_slot, new_parent_slot))?;
     ctx.poh_recorder.write().unwrap().clear_bank(true);
+
+    if let Some(sender) = &ctx.entry_notification_sender
+        && let Err(err) = sender.send(EntryNotification::UpdateParent(EntryUpdateParentInfo {
+            slot,
+            cleared_bank_id,
+            parent_slot: new_parent_slot,
+            parent_block_id: new_parent_hash,
+        }))
+    {
+        warn!("UpdateParent entry notification send failed: {err:?}");
+    }
 
     // Create the new bank before re-injecting transactions to avoid racing.
     let new_bank = start_leader_wait_for_parent_replay(
@@ -1563,6 +1584,7 @@ mod tests {
             bank_forks_controller,
             rpc_subscriptions: None,
             slot_status_notifier: None,
+            entry_notification_sender: None,
             banking_tracer: BankingTracer::new_disabled(),
             replay_highest_frozen: Arc::new(ReplayHighestFrozen::default()),
             reward_certs_requestor,
@@ -1681,6 +1703,7 @@ mod tests {
             bank_forks_controller,
             rpc_subscriptions: None,
             slot_status_notifier: None,
+            entry_notification_sender: None,
             banking_tracer: BankingTracer::new_disabled(),
             replay_highest_frozen: Arc::new(ReplayHighestFrozen::default()),
             reward_certs_requestor,
@@ -1756,6 +1779,7 @@ mod tests {
             bank_forks_controller,
             rpc_subscriptions: None,
             slot_status_notifier: None,
+            entry_notification_sender: None,
             banking_tracer: BankingTracer::new_disabled(),
             replay_highest_frozen: Arc::new(ReplayHighestFrozen::default()),
             reward_certs_requestor,
@@ -1843,6 +1867,7 @@ mod tests {
         let (banking_stage_sender, banking_stage_receiver) = BankingTracer::channel_for_test();
         let bank_forks_controller = test_bank_forks_controller(bank_forks.clone());
         let (reward_certs_requestor, _receiver) = CertsRequestor::new();
+        let (entry_notification_sender, entry_notification_receiver) = bounded(1);
 
         let mut ctx = LeaderContext {
             exit,
@@ -1865,6 +1890,7 @@ mod tests {
             bank_forks_controller,
             rpc_subscriptions: None,
             slot_status_notifier: None,
+            entry_notification_sender: Some(entry_notification_sender),
             banking_tracer: BankingTracer::new_disabled(),
             replay_highest_frozen: Arc::new(ReplayHighestFrozen::default()),
             reward_certs_requestor,
@@ -1912,6 +1938,20 @@ mod tests {
 
         assert_eq!(new_bank.slot(), leader_slot);
         assert_eq!(new_bank.parent_slot(), new_parent_slot);
+        let EntryNotification::UpdateParent(update_parent) =
+            entry_notification_receiver.try_recv().unwrap()
+        else {
+            panic!("expected UpdateParent entry notification");
+        };
+        assert_eq!(
+            update_parent,
+            EntryUpdateParentInfo {
+                slot: leader_slot,
+                cleared_bank_id: optimistic_bank_id,
+                parent_slot: new_parent_slot,
+                parent_block_id: new_parent_hash,
+            }
+        );
         assert_eq!(
             ctx.bank_forks
                 .read()

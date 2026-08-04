@@ -209,6 +209,27 @@ pub struct SlotMetaV3 {
 
 pub type SlotMeta = SlotMetaV3;
 
+#[derive(Debug, Eq, PartialEq)]
+pub struct UpdateParentInfo {
+    pub slot: Slot,
+    pub update_parent_fec_set_index: u32,
+    pub parent_slot: Slot,
+    pub parent_block_id: Hash,
+}
+
+impl UpdateParentInfo {
+    pub fn from_slot_meta(slot: Slot, slot_meta: &SlotMeta) -> Option<Self> {
+        Some(Self {
+            slot,
+            update_parent_fec_set_index: slot_meta
+                .has_update_parent()
+                .then_some(slot_meta.replay_fec_set_index)?,
+            parent_slot: slot_meta.parent_slot?,
+            parent_block_id: slot_meta.parent_block_id,
+        })
+    }
+}
+
 /// Lighter-weight version of [`SlotMeta`] containing just the set
 /// of fields needed for repair.
 ///

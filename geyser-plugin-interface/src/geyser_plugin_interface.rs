@@ -297,6 +297,52 @@ pub enum ReplicaEntryInfoVersions<'a> {
     V0_0_2(&'a ReplicaEntryInfoV2<'a>),
 }
 
+/// Information about a bank cleared by an Alpenglow UpdateParent marker.
+#[derive(Clone, Debug)]
+#[repr(C)]
+pub struct ReplicaEntryUpdateParentInfo<'a> {
+    /// The slot of the cleared bank.
+    pub slot: Slot,
+
+    /// The bank cleared after processing the UpdateParent marker.
+    pub cleared_bank_id: BankId,
+
+    /// The parent slot selected by the UpdateParent marker.
+    pub parent_slot: Slot,
+
+    /// The parent block ID selected by the UpdateParent marker.
+    pub parent_block_id: &'a Hash,
+}
+
+/// A wrapper to future-proof ReplicaEntryUpdateParentInfo handling.
+#[repr(u32)]
+pub enum ReplicaEntryUpdateParentInfoVersions<'a> {
+    V0_0_1(&'a ReplicaEntryUpdateParentInfo<'a>),
+}
+
+/// Information about an Alpenglow UpdateParent marker in the deshred stream.
+#[derive(Clone, Debug)]
+#[repr(C)]
+pub struct ReplicaDeshredUpdateParentInfo<'a> {
+    /// The slot containing the UpdateParent marker.
+    pub slot: Slot,
+
+    /// The FEC set index of the UpdateParent marker.
+    pub update_parent_fec_set_index: u32,
+
+    /// The parent slot selected by the UpdateParent marker.
+    pub parent_slot: Slot,
+
+    /// The parent block ID selected by the UpdateParent marker.
+    pub parent_block_id: &'a Hash,
+}
+
+/// A wrapper to future-proof ReplicaDeshredUpdateParentInfo handling.
+#[repr(u32)]
+pub enum ReplicaDeshredUpdateParentInfoVersions<'a> {
+    V0_0_1(&'a ReplicaDeshredUpdateParentInfo<'a>),
+}
+
 /// Information about an Alpenglow block footer.
 #[derive(Clone, Debug)]
 #[repr(C)]
@@ -884,5 +930,27 @@ pub trait GeyserPlugin: Any + Send + Sync + std::fmt::Debug {
     /// that only need the raw transaction should leave this disabled.
     fn deshred_transaction_alt_resolution_enabled(&self) -> bool {
         false
+    }
+
+    /// Called when an Alpenglow UpdateParent marker clears a bank.
+    /// Entry notifications may race with this callback; plugins should use the
+    /// cleared bank ID to reconcile them. The replacement bank ID is reported
+    /// separately through `SlotStatus::CreatedBank`.
+    #[allow(unused_variables)]
+    fn notify_entry_update_parent(
+        &self,
+        update_parent: ReplicaEntryUpdateParentInfoVersions,
+    ) -> Result<()> {
+        Ok(())
+    }
+
+    /// Called before deshred transaction notifications from the completed data
+    /// set beginning at the UpdateParent FEC-set boundary.
+    #[allow(unused_variables)]
+    fn notify_deshred_update_parent(
+        &self,
+        update_parent: ReplicaDeshredUpdateParentInfoVersions,
+    ) -> Result<()> {
+        Ok(())
     }
 }
