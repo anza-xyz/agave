@@ -186,7 +186,7 @@ mod tests {
         crate::genesis_utils::{
             ValidatorVoteKeypairs, create_genesis_config_with_alpenglow_vote_accounts,
         },
-        agave_votor_messages::consensus_message::VoteMessage,
+        agave_votor_messages::consensus_message::{BlockId, VoteMessage},
         bitvec::vec::BitVec,
         rand::Rng,
         solana_bls_signatures::{
@@ -194,7 +194,6 @@ mod tests {
             SignatureCompressed as BlsSignatureCompressed, SignatureProjective,
             pubkey::PubkeyCompressed as BLSPubkeyCompressed,
         },
-        solana_hash::Hash,
         solana_leader_schedule::SlotLeader,
         solana_signer_store::encode_base2,
         std::{collections::HashMap, num::NonZero},
@@ -275,7 +274,7 @@ mod tests {
             })
             .collect::<Vec<_>>();
 
-        let block_id = Hash::new_unique();
+        let block_id = BlockId::new_unique();
         let notar_vote = Vote::new_notarization_vote(Block {
             slot: reward_slot,
             block_id,

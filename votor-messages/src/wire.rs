@@ -346,7 +346,7 @@ impl WireConsensusMessageV1 {
         SchemaRead
     ),
     frozen_abi(
-        digest = "DjdpNzNd3eQ569wuRQq7cKAsj791nkjbbhcqWa7TQeKj",
+        digest = "EyA8zecEGTjWKtHrDSbRUBiJDr56BiRpHexuJ7v8R5Cf",
         abi_digest = "ErGjoTr18hn3dvPVA7jFgK5WLwb4jgx7a39Yn8dSzB2K",
         abi_serializer = "wincode",
         test_roundtrip = "eq_and_wire",
@@ -435,7 +435,7 @@ impl VersionedWireConsensusMessage {
     feature = "frozen-abi",
     derive(AbiExample, AbiEnumVisitor, StableAbi, StableAbiSample, Serialize),
     frozen_abi(
-        digest = "AKMt6bqYRf1xh7tWg4eAgG7jNN1qtUvNVPb5XZn9vjtV",
+        digest = "G1UoPK71wFrUezcKNtZmJzdNJBnT1Ug2xBZ7B6Drkd3w",
         abi_digest = "2aBMTuPyDgGSYeYX1aBbXURgA4qqr92Eh9yiTeHX6qZq",
         abi_serializer = "wincode",
         test_roundtrip = "eq_and_wire",

@@ -781,6 +781,7 @@ mod tests {
             bank_forks::BankForks,
             genesis_utils::{activate_all_features_alpenglow, create_genesis_config},
         },
+        agave_votor_messages::consensus_message::BlockId,
         rand::Rng,
         solana_bls_signatures::{BLS_SIGNATURE_AFFINE_SIZE, Signature as BLSSignature},
         solana_clock::DEFAULT_MS_PER_SLOT,
@@ -826,7 +827,7 @@ mod tests {
     fn test_genesis_cert_marker() -> GenesisCertBlockMarker {
         GenesisCertBlockMarker {
             slot: 0,
-            block_id: Hash::default(),
+            block_id: BlockId::default(),
             bls_signature: BLSSignature([0; BLS_SIGNATURE_AFFINE_SIZE]),
             bitmap: vec![],
         }
@@ -839,7 +840,7 @@ mod tests {
 
         let genesis_block = Block {
             slot: genesis_slot,
-            block_id: Hash::default(),
+            block_id: BlockId::default(),
         };
         migration_status.set_genesis_block(genesis_block);
         let cert = Arc::new(GenesisCert {
@@ -929,7 +930,7 @@ mod tests {
 
         let header = VersionedBlockMarker::from_block_header(BlockHeaderV1 {
             parent_slot: 0,
-            parent_block_id: Hash::default(),
+            parent_block_id: BlockId::default(),
         });
         processor
             .on_marker(
@@ -973,7 +974,7 @@ mod tests {
 
         let header = VersionedBlockMarker::from_block_header(BlockHeaderV1 {
             parent_slot: 0,
-            parent_block_id: Hash::default(),
+            parent_block_id: BlockId::default(),
         });
         processor
             .on_marker(
@@ -1034,7 +1035,7 @@ mod tests {
         let migration_status = post_migration_status_with_genesis_slot(1);
         let (genesis_bank, bank_forks) = create_test_bank();
         let parent = create_child_bank(&bank_forks, &genesis_bank, 1);
-        let parent_block_id = Hash::new_unique();
+        let parent_block_id = BlockId::new_unique();
         parent.set_block_id(Some(parent_block_id));
         let bank = create_child_bank(&bank_forks, &parent, 2);
         let genesis_marker = GenesisCertBlockMarker {
@@ -1065,7 +1066,7 @@ mod tests {
         let mut processor = BlockComponentProcessor::default();
         let header = VersionedBlockHeader::V1(BlockHeaderV1 {
             parent_slot: 0,
-            parent_block_id: Hash::default(),
+            parent_block_id: BlockId::new_unique(),
         });
 
         // First header should succeed
@@ -1158,7 +1159,7 @@ mod tests {
         let mut processor = BlockComponentProcessor::default();
         let header = VersionedBlockHeader::V1(BlockHeaderV1 {
             parent_slot: 0,
-            parent_block_id: Hash::default(),
+            parent_block_id: BlockId::new_unique(),
         });
 
         processor.on_header(&header, 0).unwrap();
@@ -1173,7 +1174,7 @@ mod tests {
         let mut processor = BlockComponentProcessor::default();
         let header = VersionedBlockHeader::V1(BlockHeaderV1 {
             parent_slot: 2,
-            parent_block_id: Hash::default(),
+            parent_block_id: BlockId::new_unique(),
         });
 
         assert!(matches!(
@@ -1191,7 +1192,7 @@ mod tests {
         let mut processor = BlockComponentProcessor::default();
         let marker = VersionedBlockMarker::from_block_header(BlockHeaderV1 {
             parent_slot: 0,
-            parent_block_id: Hash::default(),
+            parent_block_id: BlockId::new_unique(),
         });
 
         let (parent, bank_forks) = create_test_bank();
@@ -1221,7 +1222,7 @@ mod tests {
         let mut processor = BlockComponentProcessor::default();
         let marker = VersionedBlockMarker::from_block_header(BlockHeaderV1 {
             parent_slot: 7, // mismatches bank.parent_slot() below (0)
-            parent_block_id: Hash::default(),
+            parent_block_id: BlockId::new_unique(),
         });
 
         let (parent, bank_forks) = create_test_bank();
@@ -1301,7 +1302,7 @@ mod tests {
         // Process header
         let header = VersionedBlockHeader::V1(BlockHeaderV1 {
             parent_slot: 0,
-            parent_block_id: Hash::default(),
+            parent_block_id: BlockId::new_unique(),
         });
         processor.on_header(&header, bank.parent_slot()).unwrap();
 
@@ -1379,7 +1380,7 @@ mod tests {
         // Try to process a block header marker pre-migration - should fail
         let marker = VersionedBlockMarker::from_block_header(BlockHeaderV1 {
             parent_slot: 0,
-            parent_block_id: Hash::default(),
+            parent_block_id: BlockId::new_unique(),
         });
 
         let err = processor
@@ -1434,7 +1435,7 @@ mod tests {
 
         let update_parent_marker = VersionedBlockMarker::from_update_parent(UpdateParentV1 {
             new_parent_slot: 0,
-            new_parent_block_id: Hash::default(),
+            new_parent_block_id: BlockId::new_unique(),
         });
 
         let mut processor = BlockComponentProcessor::default();
@@ -1479,7 +1480,7 @@ mod tests {
         // Process header marker
         let header_marker = VersionedBlockMarker::from_block_header(BlockHeaderV1 {
             parent_slot: 0,
-            parent_block_id: Hash::default(),
+            parent_block_id: BlockId::new_unique(),
         });
         processor
             .on_marker(
@@ -1879,7 +1880,7 @@ mod tests {
         let mut processor = BlockComponentProcessor::default();
         let update_parent = VersionedUpdateParent::V1(UpdateParentV1 {
             new_parent_slot: 0,
-            new_parent_block_id: Hash::default(),
+            new_parent_block_id: BlockId::new_unique(),
         });
 
         assert!(matches!(
@@ -1894,7 +1895,7 @@ mod tests {
         let mut processor = BlockComponentProcessor::default();
         let update_parent = VersionedUpdateParent::V1(UpdateParentV1 {
             new_parent_slot: 0,
-            new_parent_block_id: Hash::default(),
+            new_parent_block_id: BlockId::new_unique(),
         });
 
         assert!(matches!(
@@ -1909,7 +1910,7 @@ mod tests {
         let mut processor = BlockComponentProcessor::default();
         let update_parent = VersionedUpdateParent::V1(UpdateParentV1 {
             new_parent_slot: 0,
-            new_parent_block_id: Hash::default(),
+            new_parent_block_id: BlockId::new_unique(),
         });
 
         processor.on_update_parent(4, &update_parent, true).unwrap();
@@ -1928,7 +1929,7 @@ mod tests {
             .on_header(
                 &VersionedBlockHeader::V1(BlockHeaderV1 {
                     parent_slot: 0,
-                    parent_block_id: Hash::default(),
+                    parent_block_id: BlockId::new_unique(),
                 }),
                 0,
             )
@@ -1936,7 +1937,7 @@ mod tests {
 
         let update_parent = VersionedUpdateParent::V1(UpdateParentV1 {
             new_parent_slot: 0,
-            new_parent_block_id: Hash::default(),
+            new_parent_block_id: BlockId::new_unique(),
         });
 
         assert!(matches!(
@@ -1950,7 +1951,7 @@ mod tests {
         let mut processor = processor_after_footer();
         let update_parent = VersionedUpdateParent::V1(UpdateParentV1 {
             new_parent_slot: 0,
-            new_parent_block_id: Hash::default(),
+            new_parent_block_id: BlockId::new_unique(),
         });
 
         assert_matches!(
@@ -1964,7 +1965,7 @@ mod tests {
         let mut processor = BlockComponentProcessor::default();
         let update_parent = VersionedUpdateParent::V1(UpdateParentV1 {
             new_parent_slot: 0,
-            new_parent_block_id: Hash::default(),
+            new_parent_block_id: BlockId::new_unique(),
         });
 
         // First should succeed
@@ -1985,7 +1986,7 @@ mod tests {
                 4,
                 &VersionedUpdateParent::V1(UpdateParentV1 {
                     new_parent_slot: 0,
-                    new_parent_block_id: Hash::default(),
+                    new_parent_block_id: BlockId::new_unique(),
                 }),
                 true,
             )
@@ -1993,7 +1994,7 @@ mod tests {
 
         let header = VersionedBlockHeader::V1(BlockHeaderV1 {
             parent_slot: 0,
-            parent_block_id: Hash::default(),
+            parent_block_id: BlockId::new_unique(),
         });
 
         assert!(matches!(
@@ -2016,7 +2017,7 @@ mod tests {
                 slot,
                 &VersionedUpdateParent::V1(UpdateParentV1 {
                     new_parent_slot: 0,
-                    new_parent_block_id: Hash::default(),
+                    new_parent_block_id: BlockId::new_unique(),
                 }),
                 true,
             )

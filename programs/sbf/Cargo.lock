@@ -94,7 +94,6 @@ dependencies = [
  "solana-bls-signatures",
  "solana-clock",
  "solana-gossip",
- "solana-hash 4.5.0",
  "solana-ledger",
  "solana-measure",
  "solana-metrics",

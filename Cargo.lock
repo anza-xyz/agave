@@ -81,7 +81,6 @@ dependencies = [
  "rand 0.9.4",
  "rayon",
  "solana-bls-signatures",
- "solana-hash 4.5.0",
  "solana-signer-store",
  "thiserror 2.0.19",
  "wincode",
@@ -110,7 +109,6 @@ dependencies = [
  "solana-epoch-schedule",
  "solana-genesis-config",
  "solana-gossip",
- "solana-hash 4.5.0",
  "solana-keypair",
  "solana-ledger",
  "solana-measure",
@@ -10719,6 +10717,7 @@ name = "solana-storage-bigtable"
 version = "4.3.0-alpha.2"
 dependencies = [
  "agave-reserved-account-keys",
+ "agave-votor-messages",
  "base64 0.22.1",
  "bincode",
  "bzip2",

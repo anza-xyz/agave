@@ -727,9 +727,9 @@ pub mod tests {
             vote_history::VoteHistory,
             vote_history_storage::NullVoteHistoryStorage,
         },
+        agave_votor_messages::consensus_message::BlockId,
         serial_test::serial,
         solana_gossip::{cluster_info::ClusterInfo, node::Node},
-        solana_hash::Hash,
         solana_keypair::Keypair,
         solana_ledger::{
             blockstore::BlockstoreSignals,
@@ -822,7 +822,7 @@ pub mod tests {
             0,
             Block {
                 slot: 0,
-                block_id: Hash::default(),
+                block_id: BlockId::default(),
             },
         )));
         let (votor_event_sender, votor_event_receiver): (VotorEventSender, VotorEventReceiver) =

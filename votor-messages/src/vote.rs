@@ -1,5 +1,8 @@
 //! Vote data types for use by clients
-use {crate::consensus_message::Block, solana_clock::Slot, solana_hash::Hash};
+use {
+    crate::consensus_message::{Block, BlockId},
+    solana_clock::Slot,
+};
 
 /// Enum that clients can use to parse and create the vote
 /// structures expected by the program
@@ -80,7 +83,7 @@ impl Vote {
     }
 
     /// The block id associated with the block which was voted for
-    pub fn block_id(&self) -> Option<&Hash> {
+    pub fn block_id(&self) -> Option<&BlockId> {
         match self {
             Self::Notarize(vote) => Some(&vote.block.block_id),
             Self::NotarizeFallback(vote) => Some(&vote.block.block_id),

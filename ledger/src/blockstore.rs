@@ -27,7 +27,8 @@ use {
     },
     agave_snapshots::unpack_genesis_archive,
     agave_votor_messages::{
-        migration::MigrationStatus, unverified_vote_message::UnverifiedCertificate,
+        consensus_message::BlockId, migration::MigrationStatus,
+        unverified_vote_message::UnverifiedCertificate,
     },
     assert_matches::{assert_matches, debug_assert_matches},
     crossbeam_channel::{Receiver, Sender, TrySendError, bounded},
@@ -483,7 +484,7 @@ pub(crate) struct ParentInfo {
     /// Parent slot to expose through SlotMeta and replay.
     pub(crate) parent_slot: Slot,
     /// Parent block id paired with `parent_slot`.
-    pub(crate) parent_block_id: Hash,
+    pub(crate) parent_block_id: BlockId,
     /// Zero for the block header parent; non-zero when populated by UpdateParent.
     pub(crate) replay_fec_set_index: u32,
 }
@@ -498,7 +499,7 @@ impl ParentInfo {
             parent_block_id: slot_meta.parent_block_id,
             replay_fec_set_index: slot_meta.replay_fec_set_index,
         };
-        (parent_info.has_update_parent() || parent_info.parent_block_id != Hash::default())
+        (parent_info.has_update_parent() || parent_info.parent_block_id != BlockId::default())
             .then_some(parent_info)
     }
 
@@ -584,7 +585,7 @@ impl ParentInfo {
     }
 
     /// Parent slot and block id as a single comparable value.
-    fn block(&self) -> (Slot, Hash) {
+    fn block(&self) -> (Slot, BlockId) {
         (self.parent_slot, self.parent_block_id)
     }
 
@@ -856,12 +857,12 @@ impl Blockstore {
 
     /// Checks all available block versions, if we have a *complete* block for
     /// `block_id`, returns the location where it is stored
-    fn get_block_location(&self, slot: Slot, block_id: Hash) -> Result<Option<BlockLocation>> {
+    fn get_block_location(&self, slot: Slot, block_id: BlockId) -> Result<Option<BlockLocation>> {
         for location in [
             BlockLocation::Original,
             BlockLocation::Alternate { block_id },
         ] {
-            if self.get_double_merkle_root(slot, location)? == Some(block_id) {
+            if self.get_double_merkle_root(slot, location)? == Some(block_id.into_hash()) {
                 return Ok(Some(location));
             }
         }
@@ -873,7 +874,7 @@ impl Blockstore {
     pub fn get_slot_meta_for_block_id(
         &self,
         slot: Slot,
-        block_id: Hash,
+        block_id: BlockId,
     ) -> Result<Option<(SlotMeta, BlockLocation)>> {
         let _lock = self.switch_block_lock.lock();
         let Some(location) = self.get_block_location(slot, block_id)? else {
@@ -903,7 +904,9 @@ impl Blockstore {
     fn meta_from_location(&self, slot: Slot, location: BlockLocation) -> Result<Option<SlotMeta>> {
         match location {
             BlockLocation::Original => self.meta_cf.get(slot),
-            BlockLocation::Alternate { block_id } => self.alt_meta_cf.get((slot, block_id)),
+            BlockLocation::Alternate { block_id } => {
+                self.alt_meta_cf.get((slot, block_id.into_hash()))
+            }
         }
     }
 
@@ -919,7 +922,7 @@ impl Blockstore {
             BlockLocation::Original => self.meta_cf.put_in_batch(write_batch, slot, meta),
             BlockLocation::Alternate { block_id } => {
                 self.alt_meta_cf
-                    .put_in_batch(write_batch, (slot, block_id), meta)
+                    .put_in_batch(write_batch, (slot, block_id.into_hash()), meta)
             }
         }
     }
@@ -930,16 +933,16 @@ impl Blockstore {
     pub fn insert_shred_index_for_alternate_block(
         &self,
         slot: Slot,
-        block_id: Hash,
+        block_id: BlockId,
         shred_index: u32,
     ) -> Result<()> {
         use crate::blockstore_meta::Index;
         let mut index = self
             .alt_index_cf
-            .get((slot, block_id))?
+            .get((slot, block_id.into_hash()))?
             .unwrap_or_else(|| Index::new(slot));
         index.data_mut().insert(shred_index as u64);
-        self.alt_index_cf.put((slot, block_id), &index)
+        self.alt_index_cf.put((slot, block_id.into_hash()), &index)
     }
 
     /// Test helper: directly set the double merkle root for a slot/location.
@@ -1028,7 +1031,7 @@ impl Blockstore {
             BlockLocation::Alternate { block_id } => {
                 let (slot, fec_set_index) = erasure_set.store_key();
                 self.alt_merkle_root_meta_cf
-                    .get((slot, block_id, fec_set_index))
+                    .get((slot, block_id.into_hash(), fec_set_index))
             }
         }
     }
@@ -1050,7 +1053,7 @@ impl Blockstore {
             ),
             BlockLocation::Alternate { block_id } => self.alt_merkle_root_meta_cf.put_in_batch(
                 write_batch,
-                (slot, block_id, fec_set_index),
+                (slot, block_id.into_hash(), fec_set_index),
                 merkle_root_meta,
             ),
         }
@@ -1064,7 +1067,7 @@ impl Blockstore {
     pub fn get_parent_repair_metadata(
         &self,
         slot: Slot,
-        block_id: Hash,
+        block_id: BlockId,
     ) -> Result<Option<(DoubleMerkleMeta, SlotMeta)>> {
         let lock = self.switch_block_lock.lock();
         let Some((double_merkle_meta, location)) =
@@ -1086,7 +1089,7 @@ impl Blockstore {
     pub fn get_fec_set_root_repair_metadata(
         &self,
         slot: Slot,
-        block_id: Hash,
+        block_id: BlockId,
         fec_set_index: u32,
     ) -> Result<Option<(DoubleMerkleMeta, MerkleRootMeta)>> {
         let lock = self.switch_block_lock.lock();
@@ -1109,7 +1112,7 @@ impl Blockstore {
     fn get_double_merkle_meta_with_proofs_locked(
         &self,
         slot: Slot,
-        block_id: Hash,
+        block_id: BlockId,
         _switch_block_lock: &SwitchBlockGuard<'_>,
     ) -> Result<Option<(DoubleMerkleMeta, BlockLocation)>> {
         // Find which column this block resides in (if any)
@@ -1129,7 +1132,7 @@ impl Blockstore {
                 .put((slot, location), &double_merkle_meta)?;
         }
 
-        if double_merkle_meta.double_merkle_root == block_id {
+        if double_merkle_meta.double_merkle_root == block_id.into_hash() {
             Ok(Some((double_merkle_meta, location)))
         } else {
             Ok(None)
@@ -1990,7 +1993,7 @@ impl Blockstore {
             // leaf to be hashed with itself during tree construction).
             .chain(std::iter::once(Ok(hashv(&[
                 &parent_slot.to_le_bytes(),
-                parent_block_id.as_ref(),
+                parent_block_id.as_bytes(),
                 &fec_set_count.to_le_bytes(),
             ]))));
 
@@ -2066,7 +2069,7 @@ impl Blockstore {
         slot: Slot,
         location: BlockLocation,
         slot_metas: Option<&HashMap<(BlockLocation, Slot), SlotMetaWorkingSetEntry>>,
-    ) -> Result<Option<(Option<Slot>, Hash)>> {
+    ) -> Result<Option<(Option<Slot>, BlockId)>> {
         if let Some(working_entry) = slot_metas.and_then(|sm| sm.get(&(location, slot))) {
             // First check the tracker if available
             let entry = RefCell::borrow(&*working_entry.new_slot_meta);
@@ -2466,7 +2469,9 @@ impl Blockstore {
         // 1. Backup the original block if needed
         let mut backup_measure = Measure::start("switch_block_from_alternate_backup");
         if let Some(dmr) = self.get_double_merkle_root(slot, BlockLocation::Original)? {
-            let backup_location = BlockLocation::Alternate { block_id: dmr };
+            let backup_location = BlockLocation::Alternate {
+                block_id: BlockId::from(dmr),
+            };
             if self
                 .get_double_merkle_root(slot, backup_location)?
                 .is_none()
@@ -3561,12 +3566,13 @@ impl Blockstore {
         &self,
         slot: Slot,
         migration_status: &MigrationStatus,
-    ) -> Result<Option<Hash>> {
-        if migration_status.should_use_double_merkle_block_id(slot) {
+    ) -> Result<Option<BlockId>> {
+        let block_id = if migration_status.should_use_double_merkle_block_id(slot) {
             self.get_double_merkle_root(slot, BlockLocation::Original)
         } else {
             self.get_last_shred_merkle_root(slot)
-        }
+        };
+        block_id.map(|b| b.map(BlockId::from))
     }
 
     pub fn get_data_shreds_for_slot(&self, slot: Slot, start_index: u64) -> Result<Vec<Shred>> {
@@ -3637,7 +3643,8 @@ impl Blockstore {
         match location {
             BlockLocation::Original => self.get_data_shred(slot, index),
             BlockLocation::Alternate { block_id } => {
-                self.alt_data_shred_cf.get_bytes((slot, block_id, index))
+                self.alt_data_shred_cf
+                    .get_bytes((slot, block_id.into_hash(), index))
             }
         }
     }
@@ -3647,7 +3654,7 @@ impl Blockstore {
         &self,
         slot: Slot,
         index: u64,
-        block_id: Hash,
+        block_id: BlockId,
     ) -> Result<Option<Vec<u8>>> {
         let _lock = self.switch_block_lock.lock();
         let Some(location) = self.get_block_location(slot, block_id)? else {
@@ -3657,10 +3664,15 @@ impl Blockstore {
     }
 
     /// Returns true if an alternate data shred for `block_id` has been stored.
-    pub fn has_alternate_data_shred(&self, slot: Slot, index: u64, block_id: Hash) -> Result<bool> {
+    pub fn has_alternate_data_shred(
+        &self,
+        slot: Slot,
+        index: u64,
+        block_id: BlockId,
+    ) -> Result<bool> {
         Ok(self
             .alt_index_cf
-            .get((slot, block_id))?
+            .get((slot, block_id.into_hash()))?
             .map(|index_meta| index_meta.data().contains(index))
             .unwrap_or(false))
     }
@@ -3696,11 +3708,11 @@ impl Blockstore {
                 let iter = self
                     .alt_data_shred_cf
                     .iter(IteratorMode::From(
-                        (slot, block_id, start_index),
+                        (slot, block_id.into_hash(), start_index),
                         IteratorDirection::Forward,
                     ))?
                     .take_while(move |((shred_slot, shred_block_id, _), _)| {
-                        *shred_slot == slot && *shred_block_id == block_id
+                        *shred_slot == slot && *shred_block_id == block_id.into_hash()
                     })
                     .map(|(_, bytes)| bytes);
                 Box::new(iter)
@@ -3736,7 +3748,7 @@ impl Blockstore {
             BlockLocation::Alternate { block_id } => {
                 self.alt_data_shred_cf.put_bytes_in_batch(
                     write_batch,
-                    (slot, block_id, index),
+                    (slot, block_id.into_hash(), index),
                     shred,
                 );
             }
@@ -3857,7 +3869,9 @@ impl Blockstore {
     ) -> Result<Option<Index>> {
         match location {
             BlockLocation::Original => self.get_index(slot),
-            BlockLocation::Alternate { block_id } => self.alt_index_cf.get((slot, block_id)),
+            BlockLocation::Alternate { block_id } => {
+                self.alt_index_cf.get((slot, block_id.into_hash()))
+            }
         }
     }
 
@@ -3873,7 +3887,7 @@ impl Blockstore {
             BlockLocation::Original => self.index_cf.put_in_batch(write_batch, slot, index),
             BlockLocation::Alternate { block_id } => {
                 self.alt_index_cf
-                    .put_in_batch(write_batch, (slot, block_id), index)
+                    .put_in_batch(write_batch, (slot, block_id.into_hash()), index)
             }
         }
     }

@@ -85,6 +85,7 @@ use {
     agave_snapshots::snapshot_hash::SnapshotHash,
     agave_votor_messages::{
         certificate::{CertSignature, Certificate, GenesisCert},
+        consensus_message::BlockId,
         migration::GENESIS_CERTIFICATE_ACCOUNT,
         unverified_vote_message::UnverifiedCertificate,
         wire::{WireBlockCertMessage, WireCertSignature},
@@ -540,7 +541,7 @@ pub struct BankFieldsToDeserialize {
     pub(crate) accounts_data_len: u64,
     pub(crate) accounts_lt_hash: AccountsLtHash,
     pub(crate) bank_hash_stats: BankHashStats,
-    pub(crate) block_id: Option<Hash>, // Option wrapper can be removed in version after v4.1
+    pub(crate) block_id: Option<BlockId>, // Option wrapper can be removed in version after v4.1
 }
 
 #[cfg(feature = "dev-context-only-utils")]
@@ -580,7 +581,7 @@ impl Default for BankFieldsToDeserialize {
             accounts_data_len: u64::default(),
             accounts_lt_hash: AccountsLtHash(LtHash::identity()),
             bank_hash_stats: BankHashStats::default(),
-            block_id: Option::<Hash>::default(),
+            block_id: Option::<BlockId>::default(),
         }
     }
 }
@@ -621,7 +622,7 @@ pub struct BankFieldsToSerialize {
     pub accounts_data_len: u64,
     pub versioned_epoch_stakes: HashMap<u64, VersionedEpochStakes>,
     pub accounts_lt_hash: AccountsLtHash,
-    pub block_id: Hash,
+    pub block_id: BlockId,
 }
 
 // Can't derive PartialEq because RwLock doesn't implement PartialEq
@@ -782,7 +783,7 @@ impl BankFieldsToSerialize {
             accounts_data_len: u64::default(),
             versioned_epoch_stakes: HashMap::default(),
             accounts_lt_hash: AccountsLtHash(LtHash([0x7E57; LtHash::NUM_ELEMENTS])),
-            block_id: Hash::default(),
+            block_id: BlockId::default(),
         }
     }
 }
@@ -1046,7 +1047,7 @@ pub struct Bank {
     /// The unique identifier for the corresponding block for this bank.
     /// None for banks that have not yet completed replay or for leader banks as we cannot populate block_id
     /// until bankless leader. Can be computed directly from shreds without needing to execute transactions.
-    block_id: RwLock<Option<Hash>>,
+    block_id: RwLock<Option<BlockId>>,
 
     /// Expected bank hash provided by block footer (if any). Set when processing footer; verified
     /// later when the bank is frozen.
@@ -6517,15 +6518,15 @@ impl Bank {
         &self.fee_structure
     }
 
-    pub fn parent_block_id(&self) -> Option<Hash> {
+    pub fn parent_block_id(&self) -> Option<BlockId> {
         self.parent().and_then(|p| p.block_id())
     }
 
-    pub fn block_id(&self) -> Option<Hash> {
+    pub fn block_id(&self) -> Option<BlockId> {
         *self.block_id.read().unwrap()
     }
 
-    pub fn set_block_id(&self, block_id: Option<Hash>) {
+    pub fn set_block_id(&self, block_id: Option<BlockId>) {
         let mut block_id_w = self.block_id.write().unwrap();
         debug_assert!(block_id_w.is_none() || *block_id_w == block_id);
         *block_id_w = block_id
@@ -6650,7 +6651,7 @@ impl Bank {
             // as parent's block id is not available for the calculation below.
             // Must freeze() to ensure bank hash has been calculated.
             bank.freeze();
-            bank.set_block_id(Some(bank.hash()));
+            bank.set_block_id(Some(BlockId::from(bank.hash())));
             return;
         };
 
@@ -6663,8 +6664,8 @@ impl Bank {
         // must freeze() to ensure bank hash has been calculated
         bank.freeze();
         let block_id =
-            solana_sha256_hasher::hashv(&[parent_block_id.as_ref(), bank.hash().as_ref()]);
-        bank.set_block_id(Some(block_id));
+            solana_sha256_hasher::hashv(&[parent_block_id.as_bytes(), bank.hash().as_bytes()]);
+        bank.set_block_id(Some(BlockId::from(block_id)));
     }
 
     pub(crate) fn get_alpenglow_migration_slot(&self) -> Option<Slot> {

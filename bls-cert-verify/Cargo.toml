@@ -33,7 +33,6 @@ wincode = { workspace = true }
 agave-bls-cert-verify = { path = ".", features = ["agave-unstable-api", "dev-context-only-utils"] }
 criterion = { workspace = true }
 rand = { workspace = true }
-solana-hash = { workspace = true }
 
 [[bench]]
 name = "cert_verify"

@@ -364,10 +364,9 @@ mod tests {
     use {
         super::*,
         crate::vote_history_storage::NullVoteHistoryStorage,
-        agave_votor_messages::consensus_message::Block,
+        agave_votor_messages::consensus_message::{Block, BlockId},
         crossbeam_channel::{Receiver, bounded},
         solana_gossip::contact_info::ContactInfo,
-        solana_hash::Hash,
         solana_net_utils::SocketAddrSpace,
         solana_runtime::{
             bank::{Bank, SlotLeader},
@@ -479,7 +478,7 @@ mod tests {
         .unwrap();
 
         // Generate a normal notarization vote and check it's sent out correctly.
-        let block_id = Hash::new_unique();
+        let block_id = BlockId::new_unique();
         let vote_slot = 2;
         let block = Block {
             slot: vote_slot,
@@ -612,10 +611,7 @@ mod tests {
 
         // Wrong identity keypair should return HotSpare based on rank_map.node_pubkey.
         let wrong_identity_keypair = Arc::new(Keypair::new());
-        let vote = Vote::new_notarization_vote(Block {
-            slot: 6,
-            block_id: Hash::new_unique(),
-        });
+        let vote = Vote::new_notarization_vote(Block::new_unique(6));
         assert!(matches!(
             generate_vote_tx(
                 vote,
@@ -644,10 +640,7 @@ mod tests {
 
         // Wrong vote account pubkey
         voting_context.vote_account_pubkey = Pubkey::new_unique();
-        let vote = Vote::new_notarization_vote(Block {
-            slot: 7,
-            block_id: Hash::new_unique(),
-        });
+        let vote = Vote::new_notarization_vote(Block::new_unique(7));
         assert!(
             generate_refresh_vote_message(vote, &mut voting_context)
                 .unwrap()
@@ -677,10 +670,7 @@ mod tests {
             setup_voting_context_and_bank_forks(own_vote_sender, &validator_keypairs, my_index);
 
         // If we try to vote for a slot in the future, we should panic
-        let vote = Vote::new_notarization_vote(Block {
-            slot: 1_000_000_000,
-            block_id: Hash::new_unique(),
-        });
+        let vote = Vote::new_notarization_vote(Block::new_unique(1_000_000_000));
         let _ = insert_vote_and_create_bls_message(vote, &mut voting_context);
     }
 
@@ -736,10 +726,7 @@ mod tests {
             .root()
             .epoch_schedule()
             .get_first_slot_in_epoch(1);
-        let vote = Vote::new_notarization_vote(Block {
-            slot: first_slot_in_epoch_1,
-            block_id: Hash::new_unique(),
-        });
+        let vote = Vote::new_notarization_vote(Block::new_unique(first_slot_in_epoch_1));
         assert!(
             insert_vote_and_create_bls_message(vote, &mut voting_context)
                 .unwrap()
@@ -752,10 +739,7 @@ mod tests {
             .root()
             .epoch_schedule()
             .get_first_slot_in_epoch(2);
-        let vote = Vote::new_notarization_vote(Block {
-            slot: first_slot_in_epoch_2,
-            block_id: Hash::new_unique(),
-        });
+        let vote = Vote::new_notarization_vote(Block::new_unique(first_slot_in_epoch_2));
         assert!(
             insert_vote_and_create_bls_message(vote, &mut voting_context)
                 .unwrap()

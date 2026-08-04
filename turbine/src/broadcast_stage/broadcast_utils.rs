@@ -1,7 +1,7 @@
 use {
     super::{Error, Result},
     agave_votor::event::{CompletedBlock, VotorEvent, VotorEventSender},
-    agave_votor_messages::migration::MigrationStatus,
+    agave_votor_messages::{consensus_message::BlockId, migration::MigrationStatus},
     crossbeam_channel::Receiver,
     solana_clock::Slot,
     solana_entry::{block_component::BlockComponent, entry::Entry, entry_or_marker::EntryOrMarker},
@@ -236,7 +236,7 @@ pub(super) fn set_block_id_and_send(
     migration_status: &MigrationStatus,
     votor_event_sender: &VotorEventSender,
     bank: Arc<Bank>,
-    block_id: Hash,
+    block_id: BlockId,
 ) -> Result<()> {
     bank.set_block_id(Some(block_id));
     if bank.is_frozen() && migration_status.should_send_votor_event(bank.slot()) {
@@ -447,7 +447,7 @@ mod tests {
         let marker = solana_entry::block_component::VersionedBlockMarker::from_block_header(
             solana_entry::block_component::BlockHeaderV1 {
                 parent_slot: 0,
-                parent_block_id: Hash::default(),
+                parent_block_id: BlockId::default(),
             },
         );
         s.send((bank1.clone(), (EntryOrMarker::Marker(marker), max_tick)))
@@ -483,7 +483,7 @@ mod tests {
         let marker = solana_entry::block_component::VersionedBlockMarker::from_block_header(
             solana_entry::block_component::BlockHeaderV1 {
                 parent_slot: 0,
-                parent_block_id: Hash::default(),
+                parent_block_id: BlockId::default(),
             },
         );
         s.send((bank1.clone(), (EntryOrMarker::Marker(marker), 2)))
@@ -549,7 +549,7 @@ mod tests {
         let marker = solana_entry::block_component::VersionedBlockMarker::from_block_header(
             solana_entry::block_component::BlockHeaderV1 {
                 parent_slot: 1,
-                parent_block_id: Hash::default(),
+                parent_block_id: BlockId::default(),
             },
         );
         s.send((bank2.clone(), (EntryOrMarker::Marker(marker), 3)))

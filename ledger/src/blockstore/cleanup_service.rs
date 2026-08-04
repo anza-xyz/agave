@@ -315,7 +315,7 @@ mod tests {
             blockstore::make_many_slot_entries, blockstore_meta::BlockLocation,
             get_tmp_ledger_path_auto_delete,
         },
-        solana_hash::Hash,
+        agave_votor_messages::consensus_message::BlockId,
     };
 
     fn flush_blockstore_contents_to_disk(blockstore: Blockstore) -> Blockstore {
@@ -480,7 +480,7 @@ mod tests {
                 }
                 BlockLocation::Alternate { block_id } => {
                     self.alt_data_shred_cf
-                        .put_bytes((slot, block_id, index), shred)
+                        .put_bytes((slot, block_id.into_hash(), index), shred)
                         .unwrap();
                 }
             }
@@ -500,7 +500,7 @@ mod tests {
 
         let orig_location = BlockLocation::Original;
         let alt_location = BlockLocation::Alternate {
-            block_id: Hash::new_unique(),
+            block_id: BlockId::new_unique(),
         };
         for index in 0..num_shreds_per_slot {
             // Regular data shreds in slot 2

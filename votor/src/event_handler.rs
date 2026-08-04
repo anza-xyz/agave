@@ -21,13 +21,14 @@ use {
         votor::SharedContext,
     },
     agave_votor_messages::{
-        consensus_message::Block, metric_types::ConsensusMetricsEvent, migration::MigrationStatus,
+        consensus_message::{Block, BlockId},
+        metric_types::ConsensusMetricsEvent,
+        migration::MigrationStatus,
         vote::Vote,
     },
     crossbeam_channel::select,
     parking_lot::RwLock,
     solana_clock::Slot,
-    solana_hash::Hash,
     solana_measure::measure::Measure,
     solana_pubkey::Pubkey,
     solana_runtime::{
@@ -695,7 +696,7 @@ impl EventHandler {
             // id to snapshots, which can allow us to remove this and update
             // the default case in parent ready tracker.
             trace!("Using default block id for {slot} parent {parent_slot}");
-            Hash::default()
+            BlockId::default()
         });
         let parent_block = Block {
             slot: parent_slot,
@@ -1408,7 +1409,7 @@ mod tests {
 
         fn create_block_only(&mut self, slot: Slot, parent_bank: Arc<Bank>) -> Arc<Bank> {
             let bank = Bank::new_from_parent(parent_bank, SlotLeader::new_unique(), slot);
-            bank.set_block_id(Some(Hash::new_unique()));
+            bank.set_block_id(Some(BlockId::new_unique()));
             bank.freeze();
             let mut bank_forks_w = self.bank_forks.write().unwrap();
             bank_forks_w.insert(bank);
@@ -1593,14 +1594,14 @@ mod tests {
             slot,
             Block {
                 slot: parent_slot,
-                block_id: Hash::default(),
+                block_id: BlockId::default(),
             },
         );
         test_context.check_parent_ready_slot((
             slot,
             Block {
                 slot: parent_slot,
-                block_id: Hash::default(),
+                block_id: BlockId::default(),
             },
         ));
         let root_bank = test_context
@@ -1669,10 +1670,7 @@ mod tests {
     fn test_restored_parent_ready_sets_timeout() {
         let mut test_context = setup();
         let slot = 4;
-        let parent_block = Block {
-            slot: 3,
-            block_id: Hash::new_unique(),
-        };
+        let parent_block = Block::new_unique(3);
 
         assert!(
             test_context
@@ -1707,14 +1705,14 @@ mod tests {
             1,
             Block {
                 slot: 0,
-                block_id: Hash::default(),
+                block_id: BlockId::default(),
             },
         );
         test_context.check_parent_ready_slot((
             1,
             Block {
                 slot: 0,
-                block_id: Hash::default(),
+                block_id: BlockId::default(),
             },
         ));
         test_context.check_for_vote(&Vote::new_notarization_vote(Block {
@@ -1830,7 +1828,7 @@ mod tests {
             1,
             Block {
                 slot: 0,
-                block_id: Hash::default(),
+                block_id: BlockId::default(),
             },
         );
 
@@ -1838,7 +1836,7 @@ mod tests {
             1,
             Block {
                 slot: 0,
-                block_id: Hash::default(),
+                block_id: BlockId::default(),
             },
         ));
         test_context.check_for_vote(&Vote::new_notarization_vote(Block {
@@ -1848,7 +1846,7 @@ mod tests {
         test_context.check_for_commitment(CommitmentType::Notarize, 1);
 
         // Now we got safe_to_notar event for slot 1 and a different block id
-        let block_id_1_1 = Hash::new_unique();
+        let block_id_1_1 = BlockId::new_unique();
         test_context.send_safe_to_notar_event(Block {
             slot: 1,
             block_id: block_id_1_1,
@@ -1866,7 +1864,7 @@ mod tests {
         // In this test you can trigger this any number of times, but the white paper
         // proved we can only get up to 3 different block ids on a slot, and our
         // certificate pool implementation checks that.
-        let block_id_1_2 = Hash::new_unique();
+        let block_id_1_2 = BlockId::new_unique();
         test_context.send_safe_to_notar_event(Block {
             slot: 1,
             block_id: block_id_1_2,
@@ -1903,7 +1901,7 @@ mod tests {
             1,
             Block {
                 slot: 0,
-                block_id: Hash::default(),
+                block_id: BlockId::default(),
             },
         );
 
@@ -1911,7 +1909,7 @@ mod tests {
             1,
             Block {
                 slot: 0,
-                block_id: Hash::default(),
+                block_id: BlockId::default(),
             },
         ));
         test_context.check_for_vote(&Vote::new_notarization_vote(Block {
@@ -1943,7 +1941,7 @@ mod tests {
             3,
             Block {
                 slot: 0,
-                block_id: Hash::default(),
+                block_id: BlockId::default(),
             },
         );
 
@@ -1956,12 +1954,12 @@ mod tests {
             received_leader_window_info.parent_block,
             Block {
                 slot: 0,
-                block_id: Hash::default()
+                block_id: BlockId::default()
             }
         );
 
         // Suddenly I found out I produced block 1 already, send new produce window event
-        let block_id_1 = Hash::new_unique();
+        let block_id_1 = BlockId::new_unique();
         test_context.send_produce_window_event(
             2,
             3,
@@ -2000,7 +1998,7 @@ mod tests {
             1,
             Block {
                 slot: 0,
-                block_id: Hash::default(),
+                block_id: BlockId::default(),
             },
         );
 
@@ -2008,7 +2006,7 @@ mod tests {
             1,
             Block {
                 slot: 0,
-                block_id: Hash::default(),
+                block_id: BlockId::default(),
             },
         ));
         test_context.check_for_vote(&Vote::new_notarization_vote(Block {
@@ -2044,8 +2042,8 @@ mod tests {
             .root();
         let bank = test_context.create_block_only(1, root_bank);
         let block_id = bank.block_id().unwrap();
-        let expected_hash = Hash::new_unique();
-        bank.set_expected_bank_hash(expected_hash);
+        let expected_hash = BlockId::new_unique();
+        bank.set_expected_bank_hash(expected_hash.into_hash());
 
         test_context.send_finalized_event(Block { slot: 1, block_id }, true);
     }
@@ -2060,9 +2058,9 @@ mod tests {
             .sharable_banks()
             .root();
         let bank = test_context.create_block_only(1, root_bank);
-        let expected_hash = Hash::new_unique();
-        bank.set_expected_bank_hash(expected_hash);
-        let finalized_block_id = Hash::new_unique();
+        let expected_hash = BlockId::new_unique();
+        bank.set_expected_bank_hash(expected_hash.into_hash());
+        let finalized_block_id = BlockId::new_unique();
 
         test_context.send_finalized_event(
             Block {
@@ -2181,7 +2179,7 @@ mod tests {
             1,
             Block {
                 slot: 0,
-                block_id: Hash::default(),
+                block_id: BlockId::default(),
             },
         );
 
@@ -2225,10 +2223,7 @@ mod tests {
     #[test]
     fn test_startup_replays_vote_history_to_consensus_pool() {
         let mut test_context = setup();
-        let notarize_vote = Vote::new_notarization_vote(Block {
-            slot: 1,
-            block_id: Hash::new_unique(),
-        });
+        let notarize_vote = Vote::new_notarization_vote(Block::new_unique(1));
         let skip_vote = Vote::new_skip_vote(2);
         let fallback_vote = Vote::new_skip_fallback_vote(2);
         test_context
@@ -2279,7 +2274,7 @@ mod tests {
             1,
             Block {
                 slot: 0,
-                block_id: Hash::default(),
+                block_id: BlockId::default(),
             },
         );
 
@@ -2302,7 +2297,7 @@ mod tests {
             slot,
             Block {
                 slot: 0,
-                block_id: Hash::default(),
+                block_id: BlockId::default(),
             },
         );
         test_context.check_for_vote(&Vote::new_notarization_vote(Block {
@@ -2329,10 +2324,7 @@ mod tests {
             .store(&SavedVoteHistoryVersions::from(saved_vote_history))
             .unwrap();
 
-        let restored_vote = Vote::new_notarization_vote(Block {
-            slot: 1,
-            block_id: Hash::new_unique(),
-        });
+        let restored_vote = Vote::new_notarization_vote(Block::new_unique(1));
         let mut old_vote_history = VoteHistory::new(old_identity.pubkey(), 0);
         old_vote_history.add_vote(restored_vote);
         let saved_vote_history = SavedVoteHistory::new(&old_vote_history, &old_identity).unwrap();
@@ -2377,7 +2369,7 @@ mod tests {
             1,
             Block {
                 slot: 0,
-                block_id: Hash::default(),
+                block_id: BlockId::default(),
             },
         );
         test_context.check_for_vote(&Vote::new_notarization_vote(Block {

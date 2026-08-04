@@ -18,6 +18,7 @@ use {
     },
     agave_fs::FileInfo,
     agave_snapshots::error::SnapshotError,
+    agave_votor_messages::consensus_message::BlockId,
     bincode::{self, Error, config::Options},
     log::*,
     serde::{Deserialize, Serialize},
@@ -508,8 +509,8 @@ struct ExtraFieldsToDeserialize {
     #[wincode(with = "wincode_compat::DefaultOnEmptyRead<Option<SerdeAccountsLtHash>>")]
     accounts_lt_hash: Option<SerdeAccountsLtHash>,
     #[serde(deserialize_with = "default_on_eof")]
-    #[wincode(with = "wincode_compat::DefaultOnEmptyRead<Option<Hash>>")]
-    block_id: Option<Hash>,
+    #[wincode(with = "wincode_compat::DefaultOnEmptyRead<Option<BlockId>>")]
+    block_id: Option<BlockId>,
 }
 
 /// Extra fields that are serialized at the end of snapshots.
@@ -537,7 +538,7 @@ pub struct ExtraFieldsToSerialize {
     pub unused_epoch_accounts_hash: Option<Hash>,
     pub versioned_epoch_stakes: HashMap<u64, VersionedEpochStakes>,
     pub accounts_lt_hash: Option<SerdeAccountsLtHash>,
-    pub block_id: Option<Hash>,
+    pub block_id: Option<BlockId>,
 }
 
 /// Deserializable counterpart of [`SerializableBankSnapshot`], read as one struct (wincode reads

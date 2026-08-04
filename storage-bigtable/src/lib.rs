@@ -1416,6 +1416,7 @@ impl LedgerStorage {
 mod test {
     use {
         super::*,
+        agave_votor_messages::consensus_message::BlockId,
         solana_entry::block_component::{BlockFooterV1, BlockHeaderV1},
         solana_hash::Hash,
     };
@@ -1426,7 +1427,7 @@ mod test {
         let block_markers = vec![
             VersionedBlockMarker::from_block_header(BlockHeaderV1 {
                 parent_slot: slot - 1,
-                parent_block_id: Hash::new_unique(),
+                parent_block_id: BlockId::new_unique(),
             }),
             VersionedBlockMarker::from_block_footer(BlockFooterV1 {
                 bank_hash: Hash::new_unique(),

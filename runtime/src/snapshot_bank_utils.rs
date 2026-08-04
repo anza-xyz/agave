@@ -846,12 +846,12 @@ mod tests {
         agave_snapshots::{
             SnapshotVersion, error::VerifySlotDeltasError, paths::get_bank_snapshot_dir,
         },
+        agave_votor_messages::consensus_message::BlockId,
         semver::Version,
         solana_accounts_db::{
             accounts_db::{ACCOUNTS_DB_CONFIG_FOR_TESTING, AccountsFileId},
             accounts_file::AccountsFile,
         },
-        solana_hash::Hash,
         solana_keypair::Keypair,
         solana_native_token::LAMPORTS_PER_SOL,
         solana_pubkey::Pubkey,
@@ -900,7 +900,7 @@ mod tests {
                 slot,
             );
             bank.fill_bank_with_ticks_for_tests();
-            bank.set_block_id(Some(Hash::default()));
+            bank.set_block_id(Some(BlockId::default()));
 
             create_bank_snapshot_from_bank(
                 &bank_snapshots_dir,
@@ -963,7 +963,7 @@ mod tests {
         let original_bank = Bank::new_for_tests(&genesis_config);
 
         original_bank.fill_bank_with_ticks_for_tests();
-        original_bank.set_block_id(Some(Hash::default()));
+        original_bank.set_block_id(Some(BlockId::default()));
 
         let (_tmp_dir, accounts_dir) = create_tmp_accounts_dir_for_tests();
         let bank_snapshots_dir = tempfile::TempDir::new().unwrap();
@@ -1045,7 +1045,7 @@ mod tests {
             .unwrap();
 
         bank1.fill_bank_with_ticks_for_tests();
-        bank1.set_block_id(Some(Hash::default()));
+        bank1.set_block_id(Some(BlockId::default()));
 
         let (_tmp_dir, accounts_dir) = create_tmp_accounts_dir_for_tests();
         let bank_snapshots_dir = tempfile::TempDir::new().unwrap();
@@ -1146,7 +1146,7 @@ mod tests {
             .transfer(LAMPORTS_PER_SOL, &mint_keypair, &key1.pubkey())
             .unwrap();
         bank4.fill_bank_with_ticks_for_tests();
-        bank4.set_block_id(Some(Hash::default()));
+        bank4.set_block_id(Some(BlockId::default()));
 
         let (_tmp_dir, accounts_dir) = create_tmp_accounts_dir_for_tests();
         let bank_snapshots_dir = tempfile::TempDir::new().unwrap();
@@ -1233,7 +1233,7 @@ mod tests {
             .transfer(5 * LAMPORTS_PER_SOL, &mint_keypair, &key5.pubkey())
             .unwrap();
         bank1.fill_bank_with_ticks_for_tests();
-        bank1.set_block_id(Some(Hash::default()));
+        bank1.set_block_id(Some(BlockId::default()));
 
         let (_tmp_dir, accounts_dir) = create_tmp_accounts_dir_for_tests();
         let bank_snapshots_dir = tempfile::TempDir::new().unwrap();
@@ -1269,7 +1269,7 @@ mod tests {
             .transfer(LAMPORTS_PER_SOL, &mint_keypair, &key1.pubkey())
             .unwrap();
         bank4.fill_bank_with_ticks_for_tests();
-        bank4.set_block_id(Some(Hash::default()));
+        bank4.set_block_id(Some(BlockId::default()));
 
         let incremental_snapshot_archive_info =
             bank_to_incremental_snapshot_archive(&snapshot_config, &bank4, full_snapshot_slot)
@@ -1337,7 +1337,7 @@ mod tests {
             .transfer(3 * LAMPORTS_PER_SOL, &mint_keypair, &key3.pubkey())
             .unwrap();
         bank1.fill_bank_with_ticks_for_tests();
-        bank1.set_block_id(Some(Hash::default()));
+        bank1.set_block_id(Some(BlockId::default()));
 
         let (_tmp_dir, accounts_dir) = create_tmp_accounts_dir_for_tests();
         let bank_snapshots_dir = tempfile::TempDir::new().unwrap();
@@ -1372,7 +1372,7 @@ mod tests {
             .transfer(3 * LAMPORTS_PER_SOL, &mint_keypair, &key3.pubkey())
             .unwrap();
         bank4.fill_bank_with_ticks_for_tests();
-        bank4.set_block_id(Some(Hash::default()));
+        bank4.set_block_id(Some(BlockId::default()));
 
         bank_to_incremental_snapshot_archive(&snapshot_config, &bank4, full_snapshot_slot).unwrap();
 
@@ -1400,7 +1400,7 @@ mod tests {
         let genesis_config = GenesisConfig::default();
         let bank = Bank::new_for_tests(&genesis_config);
         bank.fill_bank_with_ticks_for_tests();
-        bank.set_block_id(Some(Hash::default()));
+        bank.set_block_id(Some(BlockId::default()));
 
         // freeze the bank before mucking with capitalization, since
         // freezing also changes capitalization (fees, incinerator, etc).
@@ -1518,7 +1518,7 @@ mod tests {
             .transfer(lamports_to_transfer, &key2, &key1.pubkey())
             .unwrap();
         bank1.fill_bank_with_ticks_for_tests();
-        bank1.set_block_id(Some(Hash::default()));
+        bank1.set_block_id(Some(BlockId::default()));
         let full_snapshot_archive_info =
             bank_to_full_snapshot_archive(&snapshot_config, &bank1).unwrap();
 
@@ -1534,7 +1534,7 @@ mod tests {
             "Ensure Account1's balance is zero"
         );
         bank2.fill_bank_with_ticks_for_tests();
-        bank2.set_block_id(Some(Hash::default()));
+        bank2.set_block_id(Some(BlockId::default()));
         // root and flush so slot 2's storage holding the zero-lamport Account1 is written
         bank2.squash();
         bank2.force_flush_accounts_cache();
@@ -1545,7 +1545,7 @@ mod tests {
             .transfer(lamports_to_transfer, &mint_keypair, &key2.pubkey())
             .unwrap();
         bank3.fill_bank_with_ticks_for_tests();
-        bank3.set_block_id(Some(Hash::default()));
+        bank3.set_block_id(Some(BlockId::default()));
 
         // flush and clean so slot 1's funded Account1 is removed, leaving the zero-lamport account
         // at slot 2 as the lone reference
@@ -1681,7 +1681,7 @@ mod tests {
             .transfer(lamports_to_transfer, &key2, &key1.pubkey())
             .unwrap();
         bank1.fill_bank_with_ticks_for_tests();
-        bank1.set_block_id(Some(Hash::default()));
+        bank1.set_block_id(Some(BlockId::default()));
 
         let full_snapshot_slot = slot;
         let full_snapshot_archive_info =
@@ -1710,7 +1710,7 @@ mod tests {
             "Ensure Account1's balance is zero"
         );
         bank2.fill_bank_with_ticks_for_tests();
-        bank2.set_block_id(Some(Hash::default()));
+        bank2.set_block_id(Some(BlockId::default()));
 
         // Take an incremental snapshot and then do a roundtrip on the bank and ensure it
         // deserializes correctly.
@@ -1759,7 +1759,7 @@ mod tests {
             bank4.get_account_modified_slot(&key1.pubkey()).is_none(),
             "Ensure Account1 has been cleaned and purged from AccountsDb"
         );
-        bank4.set_block_id(Some(Hash::default()));
+        bank4.set_block_id(Some(BlockId::default()));
 
         // Take an incremental snapshot and then do a roundtrip on the bank and ensure it
         // deserializes correctly
@@ -1817,7 +1817,7 @@ mod tests {
         let slot = 1;
         let bank1 = Bank::new_from_parent_with_bank_forks(bank_forks.as_ref(), bank0, leader, slot);
         bank1.fill_bank_with_ticks_for_tests();
-        bank1.set_block_id(Some(Hash::default()));
+        bank1.set_block_id(Some(BlockId::default()));
 
         let all_snapshots_dir = tempfile::TempDir::new().unwrap();
 
@@ -1832,7 +1832,7 @@ mod tests {
             .transfer(LAMPORTS_PER_SOL, &mint_keypair, &key1.pubkey())
             .unwrap();
         bank2.fill_bank_with_ticks_for_tests();
-        bank2.set_block_id(Some(Hash::default()));
+        bank2.set_block_id(Some(BlockId::default()));
 
         bank_to_incremental_snapshot_archive(&snapshot_config, &bank2, full_snapshot_slot).unwrap();
 
@@ -1845,7 +1845,7 @@ mod tests {
     fn test_bank_snapshot_dir_storages_list() {
         let bank = Bank::new_for_tests(&GenesisConfig::default());
         bank.fill_bank_with_ticks_for_tests();
-        bank.set_block_id(Some(Hash::default()));
+        bank.set_block_id(Some(BlockId::default()));
 
         let bank_snapshots_dir = tempfile::TempDir::new().unwrap();
         create_bank_snapshot_from_bank(
@@ -2079,7 +2079,7 @@ mod tests {
             .transfer(lamports_to_transfer, &mint_keypair, &key2.pubkey())
             .unwrap();
         bank3.fill_bank_with_ticks_for_tests();
-        bank3.set_block_id(Some(Hash::default()));
+        bank3.set_block_id(Some(BlockId::default()));
 
         assert!(
             bank3.get_account_modified_slot(&key1.pubkey()).is_none(),
@@ -2184,7 +2184,7 @@ mod tests {
         let bank2 = Bank::new_from_parent_with_bank_forks(bank_forks.as_ref(), bank1, leader, slot);
         bank2.transfer(lamports * 2, &key2, &mint.pubkey()).unwrap();
         bank2.fill_bank_with_ticks_for_tests();
-        bank2.set_block_id(Some(Hash::default()));
+        bank2.set_block_id(Some(BlockId::default()));
         assert_eq!(bank2.get_balance(&key2.pubkey()), 0);
 
         // Take a bank snapshot, passing `true` for `should_finalize`.
@@ -2268,7 +2268,7 @@ mod tests {
         let bank_snapshots_dir = tempfile::TempDir::new().unwrap();
         let bank = Bank::new_for_tests(&genesis_config);
         bank.fill_bank_with_ticks_for_tests();
-        bank.set_block_id(Some(Hash::default()));
+        bank.set_block_id(Some(BlockId::default()));
 
         // Take a bank snapshot, passing `true` for `should_finalize`.
         // This ensures that `serialize_snapshot` performs all necessary steps to create
@@ -2329,7 +2329,7 @@ mod tests {
         let bank_snapshots_dir = tempfile::TempDir::new().unwrap();
         let bank = Bank::new_for_tests(&genesis_config);
         bank.fill_bank_with_ticks_for_tests();
-        bank.set_block_id(Some(Hash::default()));
+        bank.set_block_id(Some(BlockId::default()));
 
         create_bank_snapshot_from_bank(
             &bank_snapshots_dir,
@@ -2408,7 +2408,7 @@ mod tests {
         let bank_snapshots_dir = tempfile::TempDir::new().unwrap();
         let bank = Bank::new_for_tests(&genesis_config);
         bank.fill_bank_with_ticks_for_tests();
-        bank.set_block_id(Some(Hash::default()));
+        bank.set_block_id(Some(BlockId::default()));
 
         // freeze the bank before mucking with capitalization, since
         // freezing also changes capitalization (fees, incinerator, etc).

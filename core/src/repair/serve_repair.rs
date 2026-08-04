@@ -18,7 +18,10 @@ use {
             result::{Error, RepairVerifyError, Result},
         },
     },
-    agave_votor_messages::{consensus_message::Block, migration::MigrationStatus},
+    agave_votor_messages::{
+        consensus_message::{Block, BlockId},
+        migration::MigrationStatus,
+    },
     crossbeam_channel::{Receiver, RecvTimeoutError},
     lazy_lru::LruCache,
     rand::{
@@ -119,7 +122,7 @@ pub enum ShredRepairType {
         index: u32,
         fec_set_merkle_root: Hash,
         // Double merkle block id
-        block_id: Hash,
+        block_id: BlockId,
     },
 }
 
@@ -133,7 +136,7 @@ impl ShredRepairType {
         }
     }
 
-    pub fn block_id(&self) -> Option<Hash> {
+    pub fn block_id(&self) -> Option<BlockId> {
         match self {
             ShredRepairType::ShredForBlockId { block_id, .. } => Some(*block_id),
             ShredRepairType::Orphan(_)
@@ -224,12 +227,12 @@ impl RequestResponse for AncestorHashesRepairType {
 pub enum BlockIdRepairType {
     ParentAndFecSetCount {
         slot: Slot,
-        block_id: Hash,
+        block_id: BlockId,
     },
 
     FecSetRoot {
         slot: Slot,
-        block_id: Hash,
+        block_id: BlockId,
         fec_set_index: u32,
     },
 }
@@ -260,7 +263,7 @@ impl BlockIdRepairType {
 pub enum BlockIdRepairResponse {
     ParentFecSetCount {
         fec_set_count: u32,
-        parent_info: (Slot, Hash),
+        parent_info: (Slot, BlockId),
         parent_proof: Vec<u8>,
     },
 
@@ -312,14 +315,14 @@ impl RequestResponse for BlockIdRepairType {
 
                 let parent_info_leaf = hashv(&[
                     &parent_slot.to_le_bytes(),
-                    parent_block_id.as_ref(),
+                    parent_block_id.as_bytes(),
                     &fec_set_count.to_le_bytes(),
                 ]);
                 merkle_tree::verify_merkle_proof(
                     parent_info_leaf,
                     *fec_set_count as usize,
                     parent_proof,
-                    *block_id,
+                    block_id.into_hash(),
                 )
                 .is_ok()
             }
@@ -347,7 +350,7 @@ impl RequestResponse for BlockIdRepairType {
                     *fec_set_root,
                     leaf_index,
                     fec_set_proof,
-                    *block_id,
+                    block_id.into_hash(),
                 )
                 .is_ok()
             }
@@ -455,7 +458,7 @@ type PingCache = ping_pong::PingCache<REPAIR_PING_TOKEN_SIZE>;
         AbiEnumVisitor, AbiExample, StableAbi, Deserialize, Serialize, PartialEq,
     ),
     frozen_abi(
-        api_digest = "2j14Ywc3jWmohnXsEuMUQRPLf7JmxAVKvXKeKpYuzg7S",
+        api_digest = "AQ7SuJvPVSbFmSweb5BKicGtbocMnZYocTYfhDjT3Xya",
         abi_digest = "D5RRQygn3D6ux1TYxeyXdksWD2KGA8PYi315hXP3JJ7c",
         abi_serializer = ["bincode", "wincode"],
         test_roundtrip = "eq_and_wire",
@@ -492,19 +495,19 @@ pub enum RepairProtocol {
     ParentAndFecSetCount {
         header: RepairRequestHeader,
         slot: Slot,
-        block_id: Hash,
+        block_id: BlockId,
     },
     FecSetRoot {
         header: RepairRequestHeader,
         slot: Slot,
-        block_id: Hash,
+        block_id: BlockId,
         fec_set_index: u32,
     },
     WindowIndexForBlockId {
         header: RepairRequestHeader,
         slot: Slot,
         shred_index: u32,
-        block_id: Hash,
+        block_id: BlockId,
     },
 }
 
@@ -546,19 +549,19 @@ impl solana_frozen_abi::rand::prelude::Distribution<RepairProtocol>
             12 => RepairProtocol::ParentAndFecSetCount {
                 header: rng.random(),
                 slot: rng.random(),
-                block_id: Hash::new_from_array(rng.random::<[u8; HASH_BYTES]>()),
+                block_id: BlockId::new(rng.random::<[u8; HASH_BYTES]>()),
             },
             13 => RepairProtocol::FecSetRoot {
                 header: rng.random(),
                 slot: rng.random(),
-                block_id: Hash::new_from_array(rng.random::<[u8; HASH_BYTES]>()),
+                block_id: BlockId::new(rng.random::<[u8; HASH_BYTES]>()),
                 fec_set_index: rng.random(),
             },
             14 => RepairProtocol::WindowIndexForBlockId {
                 header: rng.random(),
                 slot: rng.random(),
                 shred_index: rng.random(),
-                block_id: Hash::new_from_array(rng.random::<[u8; HASH_BYTES]>()),
+                block_id: BlockId::new(rng.random::<[u8; HASH_BYTES]>()),
             },
             _ => unreachable!(),
         }
@@ -2050,7 +2053,7 @@ mod tests {
             REPAIR_PING_CACHE_CAPACITY,
         );
         let slot = 42;
-        let block_id = Hash::new_unique();
+        let block_id = BlockId::new_unique();
         let header = |nonce| {
             RepairRequestHeader::new(
                 remote_keypair.pubkey(),
@@ -2986,7 +2989,7 @@ mod tests {
                 &repair_info,
                 BlockIdRepairType::ParentAndFecSetCount {
                     slot,
-                    block_id: Hash::new_unique(),
+                    block_id: BlockId::new_unique(),
                 },
                 &mut peers_cache,
                 &mut outstanding_block_id_requests,
@@ -3172,7 +3175,7 @@ mod tests {
             slot,
             index,
             fec_set_merkle_root: merkle_root,
-            block_id: Hash::new_unique(),
+            block_id: BlockId::new_unique(),
         };
         assert!(request.verify_response(shred.payload()));
         // bad fec set root
@@ -3180,7 +3183,7 @@ mod tests {
             slot,
             index,
             fec_set_merkle_root: Hash::new_unique(),
-            block_id: Hash::new_unique(),
+            block_id: BlockId::new_unique(),
         };
         assert!(!request.verify_response(shred.payload()));
         // coding shred
@@ -3258,12 +3261,12 @@ mod tests {
     #[test]
     fn test_verify_fec_set_count_non_malleable() {
         let parent_slot = 99u64;
-        let parent_block_id = Hash::new_unique();
+        let parent_block_id = BlockId::new_unique();
         let fec_set_count: u32 = 2; // even => total leaves = 3, last leaf duplicated
         let fec_set_roots: Vec<Hash> = (0..fec_set_count).map(|_| Hash::new_unique()).collect();
         let real_parent_leaf = hashv(&[
             &parent_slot.to_le_bytes(),
-            parent_block_id.as_ref(),
+            parent_block_id.as_bytes(),
             &fec_set_count.to_le_bytes(),
         ]);
         let mut leaves: Vec<Hash> = fec_set_roots;
@@ -3279,7 +3282,7 @@ mod tests {
 
         let request = BlockIdRepairType::ParentAndFecSetCount {
             slot: 100,
-            block_id,
+            block_id: BlockId::from(block_id),
         };
 
         // honest response verifies
@@ -3305,14 +3308,14 @@ mod tests {
 
     #[test]
     fn test_verify_fec_set_root_rejects_empty_proof() {
-        let block_id = Hash::new_unique();
+        let block_id = BlockId::new_unique();
         let request = BlockIdRepairType::FecSetRoot {
             slot: 100,
             block_id,
             fec_set_index: 0,
         };
         let response = BlockIdRepairResponse::FecSetRoot {
-            fec_set_root: block_id,
+            fec_set_root: block_id.into_hash(),
             fec_set_proof: vec![],
         };
 
