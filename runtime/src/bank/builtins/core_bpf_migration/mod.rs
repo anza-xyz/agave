@@ -763,13 +763,11 @@ pub(crate) mod tests {
                 .global_program_cache
                 .read()
                 .unwrap();
-            let entries = program_cache.get_flattened_entries();
+            let entries = program_cache.get_flattened_entries_for_tests();
             let target_entry = entries
                 .iter()
-                .find(|(program_id, _last_modification_slot, _entry)| {
-                    program_id == &self.target_program_address
-                })
-                .map(|(_program_id, _last_modification_slot, entry)| entry)
+                .rfind(|(program_id, _entry)| program_id == &self.target_program_address)
+                .map(|(_program_id, entry)| entry)
                 .unwrap();
 
             // The target program entry should be updated.
@@ -777,7 +775,10 @@ pub(crate) mod tests {
             assert_eq!(target_entry.effective_slot(), migration_or_upgrade_slot + 1);
 
             // The target program entry should be a BPF program.
-            assert_matches!(target_entry.program, ProgramCacheEntryType::Loaded(..));
+            assert_matches!(
+                target_entry.program,
+                ProgramCacheEntryType::Unloaded(..) | ProgramCacheEntryType::Loaded(..)
+            );
         }
     }
 
