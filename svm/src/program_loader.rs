@@ -13,6 +13,7 @@ use {
             ProgramRuntimeEnvironment, ProgramToLoad,
         },
         program_cache_entry::{ProgramCacheEntry, ProgramCacheEntryOwner, ProgramCacheEntryType},
+        program_metrics::ProgramStatistics,
     },
     solana_pubkey::Pubkey,
     solana_sdk_ids::{bpf_loader, bpf_loader_deprecated, bpf_loader_upgradeable, loader_v4},
@@ -146,6 +147,20 @@ impl<CB: TransactionProcessingCallback, FG: ForkGraph> ProgramCacheCallback
         if self.counted.borrow_mut().insert(*program_id) {
             entry.stats.uses.fetch_add(1, Ordering::Relaxed);
         }
+    }
+
+    fn get_program_stats(
+        &self,
+        program_id: &Pubkey,
+        loader_key: &Pubkey,
+    ) -> Option<Arc<ProgramStatistics>> {
+        let loader = ProgramCacheEntryOwner::try_from(loader_key).ok()?;
+        self.global_program_cache.read().unwrap().get_entry_stats(
+            program_id,
+            loader,
+            self.slot,
+            self.program_runtime_environment_for_execution,
+        )
     }
 }
 

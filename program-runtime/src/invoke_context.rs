@@ -7,6 +7,7 @@ use {
         },
         memory_context::{MemoryContext, MemoryContexts},
         program_cache_entry::{ProgramCacheEntry, ProgramCacheEntryType},
+        program_metrics::ProgramStatistics,
         stable_log,
         sysvar_cache::SysvarCache,
     },
@@ -206,6 +207,17 @@ impl<'a> EnvironmentConfig<'a> {
     pub fn record_program_use(&self, program_id: &Pubkey, entry: &Arc<ProgramCacheEntry>) {
         self.program_cache_callback
             .record_program_use(program_id, entry)
+    }
+
+    /// Obtain usage statistics recorded for `program_id`, without loading or
+    /// compiling its binary.
+    pub fn get_program_stats(
+        &self,
+        program_id: &Pubkey,
+        loader_key: &Pubkey,
+    ) -> Option<Arc<ProgramStatistics>> {
+        self.program_cache_callback
+            .get_program_stats(program_id, loader_key)
     }
 }
 
