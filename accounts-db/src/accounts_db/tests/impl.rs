@@ -1,12 +1,12 @@
 use {
     super::*,
     crate::{
-        accounts_file::{AccountsFile, AccountsFileProvider},
+        accounts_file::AccountsFileProvider,
         accounts_index::{
             ACCOUNTS_INDEX_CONFIG_FOR_TESTING, AccountIndex, AccountSecondaryIndexesIncludeExclude,
             AccountsIndexConfig, IndexLimit, IndexLimitThreshold, test_utils::*,
         },
-        append_vec::{AppendVec, STORE_META_OVERHEAD, test_utils::TempFile},
+        append_vec::{AppendVec, STORE_META_OVERHEAD},
     },
     itertools::Itertools as _,
     rand::{prelude::SliceRandom as _, rng},
