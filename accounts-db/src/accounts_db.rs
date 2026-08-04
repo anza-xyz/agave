@@ -1188,7 +1188,7 @@ impl AccountsDb {
         clean_rooted.stop();
         if removed_from_index {
             self.clean_accounts_stats
-                .removed_from_index
+                .num_accounts_removed_from_index
                 .fetch_add(1, Ordering::Relaxed);
             self.purge_secondary_indexes_for_dead_keys(iter::once(pubkey));
         }
@@ -2202,9 +2202,9 @@ impl AccountsDb {
                 i64
             ),
             (
-                "removed_from_index",
+                "num_accounts_removed_from_index",
                 self.clean_accounts_stats
-                    .removed_from_index
+                    .num_accounts_removed_from_index
                     .swap(0, Ordering::Relaxed),
                 i64
             ),

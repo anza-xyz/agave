@@ -302,7 +302,7 @@ pub struct CleanAccountsStats {
     pub remove_dead_accounts_shrink_us: AtomicU64,
     pub get_account_sizes_us: AtomicU64,
     pub slots_cleaned: AtomicU64,
-    pub removed_from_index: AtomicU64,
+    pub num_accounts_removed_from_index: AtomicU64,
 }
 
 impl CleanAccountsStats {
