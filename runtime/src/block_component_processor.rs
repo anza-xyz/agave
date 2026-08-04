@@ -11,14 +11,14 @@ use {
         validated_reward_certificate::{Error as ValidatedRewardCertError, ValidatedRewardCert},
     },
     agave_votor_messages::{
-        certificate::{CertSignature, CertificateType, GenesisCert},
+        certificate::{CertSignature, Certificate, CertificateType, GenesisCert},
         consensus_message::Block,
         migration::MigrationStatus,
-        own_message::OwnMessage,
         unverified_vote_message::UnverifiedCertificate,
     },
-    crossbeam_channel::Sender,
+    crossbeam_channel::{Sender, TrySendError},
     log::*,
+    smallvec::{SmallVec, smallvec},
     solana_clock::Slot,
     solana_entry::{
         block_component::{
@@ -394,7 +394,7 @@ impl BlockComponentProcessor {
         shred_version: u16,
         marker: VersionedBlockMarker,
         allow_initial_update_parent: bool,
-        finalization_cert_sender: Option<&Sender<OwnMessage>>,
+        finalization_cert_sender: Option<&Sender<SmallVec<[Certificate; 2]>>>,
         migration_status: &MigrationStatus,
     ) -> Result<(), BlockComponentProcessorError> {
         let slot = bank.slot();
@@ -425,6 +425,7 @@ impl BlockComponentProcessor {
 
             // Everything else is only valid once migration is complete
             BlockMarkerV1::BlockFooter(footer) if markers_fully_enabled => self.on_footer(
+                &migration_status.my_pubkey(),
                 bank,
                 parent_bank,
                 shred_version,
@@ -571,11 +572,12 @@ impl BlockComponentProcessor {
 
     fn on_footer(
         &mut self,
+        my_pubkey: &Pubkey,
         bank: Arc<Bank>,
         parent_bank: Arc<Bank>,
         shred_version: u16,
         footer: VersionedBlockFooter,
-        finalization_cert_sender: Option<&Sender<OwnMessage>>,
+        finalization_cert_sender: Option<&Sender<SmallVec<[Certificate; 2]>>>,
     ) -> Result<(), BlockComponentProcessorError> {
         self.stage.on_footer()?;
 
@@ -633,18 +635,20 @@ impl BlockComponentProcessor {
         if let Some((finalize_cert, notarize_cert)) = pool_input
             && let Some(sender) = finalization_cert_sender
         {
-            if let Some(notarize_cert) = notarize_cert {
-                let cert = OwnMessage::Certificate(notarize_cert);
-                // TODO blocking send.
-                let _ = sender
-                    .send(cert)
-                    .inspect_err(|_| info!("ConsensusMessage sender disconnected"));
+            let channel_name = "finalization_cert_sender";
+            let certs = match notarize_cert {
+                None => smallvec![finalize_cert],
+                Some(c) => smallvec![finalize_cert, c],
+            };
+            match sender.try_send(certs) {
+                Ok(()) => (),
+                Err(TrySendError::Full(_)) => {
+                    warn!("{my_pubkey}: channel \"{channel_name}\" is full, dropping msg")
+                }
+                Err(TrySendError::Disconnected(_)) => {
+                    warn!("{my_pubkey}: channel \"{channel_name}\" disconnected")
+                }
             }
-            let cert = OwnMessage::Certificate(finalize_cert);
-            // TODO blocking send.
-            let _ = sender
-                .send(cert)
-                .inspect_err(|_| info!("ConsensusMessage sender disconnected"));
         }
 
         Ok(())
@@ -1081,6 +1085,7 @@ mod tests {
 
     #[test]
     fn test_multiple_footers_error() {
+        let my_pubkey = Pubkey::new_unique();
         let mut processor = processor_after_header();
 
         let (parent, bank_forks) = create_test_bank();
@@ -1103,6 +1108,7 @@ mod tests {
         // First footer should succeed
         processor
             .on_footer(
+                &my_pubkey,
                 bank.clone(),
                 parent.clone(),
                 shred_version,
@@ -1113,7 +1119,7 @@ mod tests {
 
         // Second footer should fail
         let err = processor
-            .on_footer(bank, parent, shred_version, footer, None)
+            .on_footer(&my_pubkey, bank, parent, shred_version, footer, None)
             .unwrap_err();
         assert!(matches!(
             err,
@@ -1123,6 +1129,7 @@ mod tests {
 
     #[test]
     fn test_on_footer_sets_timestamp() {
+        let my_pubkey = Pubkey::new_unique();
         let mut processor = processor_after_header();
 
         let (parent, bank_forks) = create_test_bank();
@@ -1144,7 +1151,14 @@ mod tests {
         });
 
         processor
-            .on_footer(bank.clone(), parent, shred_version, footer, None)
+            .on_footer(
+                &my_pubkey,
+                bank.clone(),
+                parent,
+                shred_version,
+                footer,
+                None,
+            )
             .unwrap();
 
         assert_eq!(processor.stage, BlockComponentStage::AcceptingAlpentick);
@@ -1320,7 +1334,14 @@ mod tests {
             notar_reward_cert: None,
         });
         processor
-            .on_footer(bank.clone(), parent.clone(), shred_version, footer, None)
+            .on_footer(
+                &migration_status.my_pubkey(),
+                bank.clone(),
+                parent.clone(),
+                shred_version,
+                footer,
+                None,
+            )
             .unwrap();
 
         // Verify clock sysvar was updated
@@ -1537,6 +1558,7 @@ mod tests {
 
     #[test]
     fn test_footer_without_header_errors() {
+        let my_pubkey = Pubkey::new_unique();
         let mut processor = BlockComponentProcessor::default();
         let (parent, bank_forks) = create_test_bank();
         let bank = create_child_bank(&bank_forks, &parent, 1);
@@ -1553,7 +1575,7 @@ mod tests {
 
         // Try to process footer without header - should fail
         let err = processor
-            .on_footer(bank, parent, shred_version, footer, None)
+            .on_footer(&my_pubkey, bank, parent, shred_version, footer, None)
             .unwrap_err();
         assert!(matches!(
             err,
@@ -1614,6 +1636,7 @@ mod tests {
 
     #[test]
     fn test_footer_sets_epoch_start_timestamp_on_epoch_change() {
+        let my_pubkey = Pubkey::new_unique();
         let mut processor = processor_after_header();
         let shred_version = rand::rng().random();
 
@@ -1663,7 +1686,14 @@ mod tests {
         });
 
         processor
-            .on_footer(bank.clone(), parent, shred_version, footer, None)
+            .on_footer(
+                &my_pubkey,
+                bank.clone(),
+                parent,
+                shred_version,
+                footer,
+                None,
+            )
             .unwrap();
 
         // Verify clock sysvar was updated
@@ -1679,6 +1709,7 @@ mod tests {
         timestamp_fn: impl FnOnce(i64, i64, i64) -> i64,
         should_pass: bool,
     ) {
+        let my_pubkey = Pubkey::new_unique();
         let mut processor = processor_after_header();
         let shred_version = rand::rng().random();
 
@@ -1707,7 +1738,7 @@ mod tests {
             notar_reward_cert: None,
         });
 
-        let result = processor.on_footer(bank, parent, shred_version, footer, None);
+        let result = processor.on_footer(&my_pubkey, bank, parent, shred_version, footer, None);
         if should_pass {
             result.unwrap();
         } else {
@@ -1759,6 +1790,7 @@ mod tests {
 
     #[test]
     fn test_clock_bounds_without_parent_nanosecond_clock_rejects_out_of_bounds() {
+        let my_pubkey = Pubkey::new_unique();
         let mut processor = processor_after_header();
         let shred_version = rand::rng().random();
 
@@ -1785,7 +1817,7 @@ mod tests {
 
         assert!(matches!(
             processor
-                .on_footer(bank, parent, shred_version, footer, None)
+                .on_footer(&my_pubkey, bank, parent, shred_version, footer, None)
                 .unwrap_err(),
             BlockComponentProcessorError::NanosecondClockOutOfBounds
         ));
@@ -1793,6 +1825,7 @@ mod tests {
 
     #[test]
     fn test_clock_bounds_rejects_timestamp_above_i64() {
+        let my_pubkey = Pubkey::new_unique();
         let mut processor = processor_after_header();
         let shred_version = rand::rng().random();
 
@@ -1812,7 +1845,7 @@ mod tests {
 
         assert!(matches!(
             processor
-                .on_footer(bank, parent, shred_version, footer, None)
+                .on_footer(&my_pubkey, bank, parent, shred_version, footer, None)
                 .unwrap_err(),
             BlockComponentProcessorError::NanosecondClockOutOfBounds
         ));
@@ -2036,7 +2069,14 @@ mod tests {
             notar_reward_cert: None,
         });
         processor
-            .on_footer(bank, parent, shred_version, footer, None)
+            .on_footer(
+                &migration_status.my_pubkey(),
+                bank,
+                parent,
+                shred_version,
+                footer,
+                None,
+            )
             .unwrap();
 
         let good_alpentick = alpentick(1);

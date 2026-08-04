@@ -46,6 +46,7 @@ log = { workspace = true }
 parking_lot = { workspace = true }
 serde = { workspace = true, optional = true }
 serde_bytes = { workspace = true, optional = true }
+smallvec = { workspace = true }
 solana-bls-signatures = { workspace = true, features = ["solana-signer-derive"] }
 solana-client = { workspace = true }
 solana-clock = { workspace = true }

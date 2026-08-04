@@ -1001,7 +1001,6 @@ mod tests {
         agave_votor_messages::{
             consensus_message::{BLS_KEYPAIR_DERIVE_SEED, VoteMessage},
             metric_types::ConsensusMetricsEventReceiver,
-            own_message::OwnMessage,
             wire::get_vote_payload_to_sign,
         },
         crossbeam_channel::{Receiver, Sender, TryRecvError, bounded},
@@ -1025,6 +1024,7 @@ mod tests {
             },
             installed_scheduler_pool::BankWithScheduler,
         },
+        solana_streamer::evicting_sender::EvictingSender,
         std::{
             collections::HashMap,
             fs::remove_file,
@@ -1038,7 +1038,7 @@ mod tests {
     struct EventHandlerTestContext {
         bls_receiver: Receiver<BLSOp>,
         commitment_receiver: Receiver<CommitmentAggregationData>,
-        own_vote_receiver: Receiver<OwnMessage>,
+        own_vote_receiver: Receiver<VoteMessage>,
         #[allow(dead_code)] // Keep receiver alive to prevent SenderDisconnected errors
         own_reward_aggregates_receiver: Receiver<RewardInput>,
         bank_forks: Arc<RwLock<BankForks>>,
@@ -1106,7 +1106,7 @@ mod tests {
     fn setup() -> EventHandlerTestContext {
         let (bls_sender, bls_receiver) = bounded(1024);
         let (commitment_sender, commitment_receiver) = bounded(1024);
-        let (own_vote_sender, own_vote_receiver) = bounded(1024);
+        let (own_vote_sender, own_vote_receiver) = EvictingSender::new_bounded(1024);
         let (reward_aggregates_sender, reward_aggregates_receiver) = bounded(1024);
         let (drop_bank_sender, drop_bank_receiver) = bounded(1024);
         let exit = Arc::new(AtomicBool::new(false));
@@ -1481,28 +1481,20 @@ mod tests {
             });
             assert!(found, "Did not find expected vote: {expected_message:?}");
             // Also check own_vote_receiver
-            let own_msg = self.own_vote_receiver.try_recv().unwrap();
-            let OwnMessage::Vote(own_vote_msg) = own_msg else {
-                panic!("wrong msg type");
-            };
+            let own_vote_msg = self.own_vote_receiver.try_recv().unwrap();
             assert_eq!(own_vote_msg, expected_message);
         }
 
         fn check_for_own_vote(&self, expected_vote: &Vote) {
             let expected_message = self.expected_vote_message(expected_vote);
-            let own_msg = self.own_vote_receiver.try_recv().unwrap();
-            let OwnMessage::Vote(own_vote_msg) = own_msg else {
-                panic!("wrong msg type");
-            };
+            let own_vote_msg = self.own_vote_receiver.try_recv().unwrap();
             assert_eq!(own_vote_msg, expected_message);
         }
 
         fn check_for_own_votes(&self, expected_votes: &[Vote]) {
             let mut received_messages = Vec::with_capacity(expected_votes.len());
             for _ in expected_votes {
-                let OwnMessage::Vote(vote_msg) = self.own_vote_receiver.try_recv().unwrap() else {
-                    panic!("expected own vote");
-                };
+                let vote_msg = self.own_vote_receiver.try_recv().unwrap();
                 received_messages.push(vote_msg.clone());
             }
 

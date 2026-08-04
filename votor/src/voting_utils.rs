@@ -1,7 +1,7 @@
 use {
     crate::{
         commitment::CommitmentAggregationData,
-        common::{blocking_send, nonblocking_send},
+        common::nonblocking_send,
         vote_history::{VoteHistory, VoteHistoryError},
         vote_history_storage::{SavedVoteHistory, SavedVoteHistoryVersions, VoteHistoryStorage},
         voting_service::BLSOp,
@@ -10,11 +10,10 @@ use {
     agave_votor_messages::{
         consensus_message::{BLS_KEYPAIR_DERIVE_SEED, VoteMessage},
         metric_types::ConsensusMetricsEventSender,
-        own_message::OwnMessage,
         vote::Vote,
         wire::get_vote_payload_to_sign,
     },
-    crossbeam_channel::Sender,
+    crossbeam_channel::{Sender, TrySendError},
     solana_bls_signatures::{BlsError, keypair::Keypair as BLSKeypair},
     solana_clock::{Epoch, Slot},
     solana_gossip::cluster_info::ClusterInfo,
@@ -23,6 +22,7 @@ use {
     solana_pubkey::Pubkey,
     solana_runtime::{bank::Bank, bank_forks::SharableBanks, epoch_stakes::BLSPubkeyStakeEntry},
     solana_signer::Signer,
+    solana_streamer::{evicting_sender::EvictingSender, streamer::ChannelSend},
     solana_transaction::Transaction,
     std::{
         collections::{HashMap, hash_map::Entry},
@@ -120,7 +120,7 @@ pub(crate) struct VotingContext {
     pub(crate) vote_history_storage: Arc<dyn VoteHistoryStorage>,
     // The BLS keypair should always change with authorized_voter_keypairs.
     pub(crate) derived_bls_keypairs: HashMap<Pubkey, Arc<BLSKeypair>>,
-    pub(crate) own_vote_sender: Sender<OwnMessage>,
+    pub(crate) own_vote_sender: EvictingSender<VoteMessage>,
     pub(crate) own_reward_sender: Sender<RewardInput>,
     pub(crate) bls_sender: Sender<BLSOp>,
     pub(crate) commitment_sender: Sender<CommitmentAggregationData>,
@@ -321,11 +321,17 @@ pub(crate) fn create_and_send_own_vote_message(
         }
     };
 
+    let channel_name = "own_vote_sender";
     let my_pubkey = &context.cluster_info.id();
-    let msg = OwnMessage::Vote(vote_msg.clone());
-    // TODO: this blocking send can lead to a deadlock.  We need to find a way to not block here.
-    blocking_send(my_pubkey, &context.own_vote_sender, msg, "own_vote_sender")
-        .map_err(VoteError::ChannelDisconnected)?;
+    match context.own_vote_sender.try_send(vote_msg.clone()) {
+        Ok(()) => (),
+        Err(TrySendError::Full(_)) => {
+            warn!("{my_pubkey}: evicting channel \"{channel_name}\" was full, dropped old vote");
+        }
+        Err(TrySendError::Disconnected(_)) => {
+            return Err(VoteError::ChannelDisconnected(channel_name));
+        }
+    }
 
     let root_slot = context.sharable_banks.root().slot();
     if rewards_wants_vote(
@@ -399,7 +405,7 @@ mod tests {
     }
 
     fn setup_voting_context_and_bank_forks(
-        own_vote_sender: Sender<OwnMessage>,
+        own_vote_sender: EvictingSender<VoteMessage>,
         validator_keypairs: &[ValidatorVoteKeypairs],
         my_index: usize,
     ) -> (VotingContext, Receiver<RewardInput>) {
@@ -413,7 +419,7 @@ mod tests {
     }
 
     fn setup_voting_context_and_bank_forks_with_forks(
-        own_vote_sender: Sender<OwnMessage>,
+        own_vote_sender: EvictingSender<VoteMessage>,
         validator_keypairs: &[ValidatorVoteKeypairs],
         my_index: usize,
     ) -> (VotingContext, Arc<RwLock<BankForks>>, Receiver<RewardInput>) {
@@ -464,7 +470,7 @@ mod tests {
 
     #[test]
     fn test_generate_own_vote_message() {
-        let (own_vote_sender, own_vote_receiver) = bounded(1024);
+        let (own_vote_sender, own_vote_receiver) = EvictingSender::new_bounded(1024);
         // Create 10 node validatorvotekeypairs vec
         let validator_keypairs = (0..10)
             .map(|_| ValidatorVoteKeypairs::new(Keypair::new(), Keypair::new(), Keypair::new()))
@@ -504,10 +510,7 @@ mod tests {
         }
 
         // Check that own vote sender receives the vote
-        let received_message = own_vote_receiver.recv().unwrap();
-        let OwnMessage::Vote(own_vote_msg) = received_message else {
-            panic!("wrong msg type");
-        };
+        let own_vote_msg = own_vote_receiver.recv().unwrap();
         assert_eq!(own_vote_msg, expected_message);
 
         // Check that the reward service receives the vote.
@@ -533,7 +536,7 @@ mod tests {
 
     #[test]
     fn test_wait_to_vote_slot() {
-        let (own_vote_sender, _own_vote_receiver) = bounded(1024);
+        let (own_vote_sender, _own_vote_receiver) = EvictingSender::new_bounded(1024);
         // Create 10 node validatorvotekeypairs vec
         let validator_keypairs = (0..10)
             .map(|_| ValidatorVoteKeypairs::new(Keypair::new(), Keypair::new(), Keypair::new()))
@@ -562,7 +565,7 @@ mod tests {
 
     #[test]
     fn test_non_voting_node() {
-        let (own_vote_sender, _own_vote_receiver) = bounded(1024);
+        let (own_vote_sender, _own_vote_receiver) = EvictingSender::new_bounded(1024);
         // Create 10 node validatorvotekeypairs vec
         let validator_keypairs = (0..10)
             .map(|_| ValidatorVoteKeypairs::new(Keypair::new(), Keypair::new(), Keypair::new()))
@@ -601,7 +604,7 @@ mod tests {
 
     #[test]
     fn test_wrong_identity_keypair() {
-        let (own_vote_sender, _own_vote_receiver) = bounded(1024);
+        let (own_vote_sender, _own_vote_receiver) = EvictingSender::new_bounded(1024);
         // Create 10 node validatorvotekeypairs vec
         let validator_keypairs = (0..10)
             .map(|_| ValidatorVoteKeypairs::new(Keypair::new(), Keypair::new(), Keypair::new()))
@@ -633,7 +636,7 @@ mod tests {
 
     #[test]
     fn test_wrong_vote_account_pubkey() {
-        let (own_vote_sender, _own_vote_receiver) = bounded(1024);
+        let (own_vote_sender, _own_vote_receiver) = EvictingSender::new_bounded(1024);
         // Create 10 node validatorvotekeypairs vec
         let validator_keypairs = (0..10)
             .map(|_| ValidatorVoteKeypairs::new(Keypair::new(), Keypair::new(), Keypair::new()))
@@ -667,7 +670,7 @@ mod tests {
     #[should_panic(expected = "could not find rank map for slot 1000000000")]
     fn test_panic_on_future_slot() {
         agave_logger::setup();
-        let (own_vote_sender, _own_vote_receiver) = bounded(1024);
+        let (own_vote_sender, _own_vote_receiver) = EvictingSender::new_bounded(1024);
         // Create 10 node validatorvotekeypairs vec
         let validator_keypairs = (0..10)
             .map(|_| ValidatorVoteKeypairs::new(Keypair::new(), Keypair::new(), Keypair::new()))
@@ -687,7 +690,7 @@ mod tests {
     #[test]
     fn test_zero_staked_validator_fails_voting() {
         agave_logger::setup();
-        let (own_vote_sender, _own_vote_receiver) = bounded(1024);
+        let (own_vote_sender, _own_vote_receiver) = EvictingSender::new_bounded(10_000);
         // Create 10 node validatorvotekeypairs vec
         let validator_keypairs = (0..10)
             .map(|_| ValidatorVoteKeypairs::new(Keypair::new(), Keypair::new(), Keypair::new()))

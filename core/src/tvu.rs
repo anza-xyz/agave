@@ -501,7 +501,9 @@ impl Tvu {
                 block_commitment_cache.clone(),
                 rpc_subscriptions.clone(),
             );
-        let (own_message_sender, own_message_receiver) = bounded(MAX_ALPENGLOW_PACKET_NUM);
+        let (own_votes_sender, own_votes_receiver) =
+            EvictingSender::new_bounded(MAX_ALPENGLOW_PACKET_NUM);
+        let (footer_certs_sender, footer_certs_receiver) = bounded(MAX_ALPENGLOW_PACKET_NUM);
 
         let votor_config = VotorConfig {
             exit: exit.clone(),
@@ -525,12 +527,13 @@ impl Tvu {
             highest_parent_ready,
             event_sender: votor_event_sender.clone(),
             latest_switch_request: latest_switch_request.clone(),
-            own_vote_sender: own_message_sender.clone(),
+            own_vote_sender: own_votes_sender.clone(),
             own_reward_aggregates_sender: reward_aggregates_sender.clone(),
             repair_event_sender,
             event_receiver: votor_event_receiver,
             consensus_message_receiver,
-            own_message_receiver,
+            own_votes_receiver,
+            footer_certs_receiver,
             consensus_metrics_receiver,
         };
         let votor = Votor::new(votor_config);
@@ -552,7 +555,8 @@ impl Tvu {
             block_metadata_notifier,
             dumped_slots_sender,
             votor_event_sender,
-            own_message_sender,
+            own_votes_sender,
+            footer_certs_sender,
             optimistic_parent_sender,
             lockouts_sender,
         };

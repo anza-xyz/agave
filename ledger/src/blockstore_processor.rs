@@ -8,7 +8,7 @@ use {
         use_snapshot_archives_at_startup::UseSnapshotArchivesAtStartup,
     },
     ExecuteTimingType::{NumExecuteBatches, TotalBatchesLen},
-    agave_votor_messages::{migration::MigrationStatus, own_message::OwnMessage},
+    agave_votor_messages::{certificate::Certificate, migration::MigrationStatus},
     ahash::AHashSet,
     chrono_humanize::{Accuracy, HumanTime, Tense},
     crossbeam_channel::{Receiver, Sender},
@@ -16,6 +16,7 @@ use {
     log::*,
     rayon::ThreadPool,
     scopeguard::defer,
+    smallvec::SmallVec,
     solana_accounts_db::{
         account_locks::validate_account_locks, accounts_db::AccountsDbConfig,
         accounts_update_notifier_interface::AccountsUpdateNotifier,
@@ -1126,7 +1127,7 @@ pub fn confirm_slot(
     skip_verification: bool,
     entry_notification_sender: Option<&EntryNotifierSender>,
     replay_vote_sender: Option<&ReplayVoteSender>,
-    finalization_cert_sender: Option<&Sender<OwnMessage>>,
+    finalization_cert_sender: Option<&Sender<SmallVec<[Certificate; 2]>>>,
     allow_dead_slots: bool,
     migration_status: &MigrationStatus,
 ) -> result::Result<(), BlockstoreProcessorError> {

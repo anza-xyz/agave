@@ -42,14 +42,15 @@ use {
         voting_utils::{self, GenerateVoteTxResult},
     },
     agave_votor_messages::{
-        consensus_message::Block,
+        certificate::Certificate,
+        consensus_message::{Block, VoteMessage},
         migration::{GENESIS_VOTE_REFRESH, MigrationStatus},
-        own_message::OwnMessage,
         vote::Vote,
     },
     crossbeam_channel::{Receiver, Sender, TryRecvError, TrySendError, select},
     itertools::Itertools,
     rayon::{ThreadPool, prelude::*},
+    smallvec::SmallVec,
     solana_accounts_db::contains::Contains,
     solana_clock::{BankId, Slot},
     solana_geyser_plugin_manager::block_metadata_notifier_interface::BlockMetadataNotifierArc,
@@ -94,6 +95,7 @@ use {
         vote_sender_types::{ReplayVoteMessage, ReplayVoteSender},
     },
     solana_signer::Signer,
+    solana_streamer::{evicting_sender::EvictingSender, streamer::ChannelSend},
     solana_time_utils::timestamp,
     solana_transaction::Transaction,
     solana_vote::vote_transaction::VoteTransaction,
@@ -458,7 +460,8 @@ pub struct ReplaySenders {
     pub block_metadata_notifier: Option<BlockMetadataNotifierArc>,
     pub dumped_slots_sender: Sender<Vec<(u64, Hash)>>,
     pub votor_event_sender: VotorEventSender,
-    pub own_message_sender: Sender<OwnMessage>,
+    pub own_votes_sender: EvictingSender<VoteMessage>,
+    pub footer_certs_sender: Sender<SmallVec<[Certificate; 2]>>,
     pub optimistic_parent_sender: Sender<LeaderWindowInfo>,
     pub lockouts_sender: Sender<TowerCommitmentAggregationData>,
 }
@@ -777,9 +780,10 @@ impl ReplayStage {
             block_metadata_notifier,
             dumped_slots_sender,
             votor_event_sender,
-            own_message_sender,
             optimistic_parent_sender,
             lockouts_sender,
+            own_votes_sender,
+            footer_certs_sender,
         } = senders;
 
         let ReplayReceivers {
@@ -1014,7 +1018,7 @@ impl ReplayStage {
                     &my_pubkey,
                     &vote_account,
                     &mut replay_timing,
-                    &own_message_sender,
+                    &footer_certs_sender,
                 );
                 let did_complete_bank = !new_frozen_slots.is_empty();
                 replay_active_banks_time.stop();
@@ -1228,7 +1232,7 @@ impl ReplayStage {
                             vote_account,
                             &identity_keypair,
                             &authorized_voter_keypairs,
-                            &own_message_sender,
+                            &own_votes_sender,
                             &bls_sender,
                         )
                     {
@@ -1755,7 +1759,7 @@ impl ReplayStage {
         vote_account: Pubkey,
         identity_keypair: &Arc<Keypair>,
         authorized_voter_keypairs: &Arc<std::sync::RwLock<Vec<Arc<Keypair>>>>,
-        own_message_sender: &Sender<OwnMessage>,
+        own_vote_sender: &EvictingSender<VoteMessage>,
         bls_sender: &Sender<BLSOp>,
     ) -> bool {
         let Some(block) = migration_status.eligible_genesis_block() else {
@@ -1781,7 +1785,7 @@ impl ReplayStage {
                     identity_keypair.pubkey()
                 );
                 // Unlikely that these channels are backed up, but even so we have refresh logic on the genesis vote
-                let _ = own_message_sender.try_send(OwnMessage::Vote(vote_msg.clone()));
+                let _ = own_vote_sender.try_send(vote_msg.clone());
                 let _ = bls_sender.try_send(BLSOp::PushVote {
                     vote: Arc::new(vote_msg),
                 });
@@ -3000,7 +3004,7 @@ impl ReplayStage {
         bank: &BankWithScheduler,
         replay_stats: &RwLock<ReplaySlotStats>,
         replay_progress: &RwLock<ConfirmationProgress>,
-        finalization_cert_sender: &Sender<OwnMessage>,
+        finalization_cert_sender: &Sender<SmallVec<[Certificate; 2]>>,
     ) -> result::Result<usize, BlockstoreProcessorError> {
         let mut w_replay_stats = replay_stats.write().unwrap();
         let mut w_replay_progress = replay_progress.write().unwrap();
@@ -3670,7 +3674,7 @@ impl ReplayStage {
         process_active_banks_context: &ProcessActiveBanksContext,
         bank_replay_result_tracker: BankReplayResultTracker,
         my_pubkey: &Pubkey,
-        finalization_cert_sender: &Sender<OwnMessage>,
+        finalization_cert_sender: &Sender<SmallVec<[Certificate; 2]>>,
     ) -> (ReplaySlotFromBlockstore, Option<u64>) {
         let BankReplayResultTracker {
             mut replay_result,
@@ -3746,7 +3750,7 @@ impl ReplayStage {
         bank_replay_result_trackers: Vec<BankReplayResultTracker>,
         replay_timing: &mut ReplayLoopTiming,
         my_pubkey: &Pubkey,
-        finalization_cert_sender: &Sender<OwnMessage>,
+        finalization_cert_sender: &Sender<SmallVec<[Certificate; 2]>>,
     ) -> Vec<ReplaySlotFromBlockstore> {
         match &process_active_banks_context.replay_mode {
             // Skip the overhead of the threadpool if there is only one bank to play
@@ -4280,7 +4284,7 @@ impl ReplayStage {
         my_pubkey: &Pubkey,
         vote_account: &Pubkey,
         replay_timing: &mut ReplayLoopTiming,
-        finalization_cert_sender: &Sender<OwnMessage>,
+        finalization_cert_sender: &Sender<SmallVec<[Certificate; 2]>>,
     ) -> Vec<Slot> /* completed slots */ {
         let bank_replay_result_trackers = Self::prepare_active_banks_for_replay(
             process_active_banks_context,
