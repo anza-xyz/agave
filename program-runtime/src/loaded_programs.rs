@@ -694,10 +694,8 @@ impl<FG: ForkGraph> ProgramCache<FG> {
                                     if !Self::matches_criteria(
                                         entry,
                                         &program_to_load.match_criteria,
-                                    ) {
-                                        break;
-                                    }
-                                    if entry.program.is_unloaded() {
+                                    ) || entry.program.is_unloaded()
+                                    {
                                         break;
                                     }
                                     entry.clone()
