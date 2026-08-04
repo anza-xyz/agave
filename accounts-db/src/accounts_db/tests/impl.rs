@@ -217,23 +217,6 @@ pub(crate) fn append_single_account_with_default_hash(
     }
 }
 
-fn sample_storage_with_entries_id(
-    accounts_db: &AccountsDb,
-    slot: Slot,
-    pubkey: &Pubkey,
-    mark_alive: bool,
-    account_data_size: Option<u64>,
-) -> AccountStorageEntry {
-    let account_data_size = account_data_size.unwrap_or(48);
-    let file_size = account_data_size + 1_000_000;
-    let storage = accounts_db.create_store(slot, file_size);
-
-    let account = AccountSharedData::new(1, account_data_size as usize, &Pubkey::default());
-    append_single_account_with_default_hash(&storage, pubkey, &account, mark_alive, None);
-
-    storage
-}
-
 #[test]
 fn test_accountsdb_add_root() {
     let db = AccountsDb::new_for_tests_with_config(Vec::new(), DEFAULT_ACCOUNTS_DB_CONFIG);
@@ -6549,10 +6532,14 @@ pub(crate) fn create_storages_and_update_index(
         return;
     }
 
+    let account_data_size = account_data_size.unwrap_or(48);
+    let file_size = account_data_size + 1_000_000;
     for i in 0..num_slots {
-        let pubkey = solana_pubkey::new_rand();
         let slot = starting_slot + i as Slot;
-        let storage = sample_storage_with_entries_id(db, slot, &pubkey, alive, account_data_size);
+        let storage = db.create_store(slot, file_size);
+        let pubkey = solana_pubkey::new_rand();
+        let account = AccountSharedData::new(1, account_data_size as usize, &Pubkey::default());
+        append_single_account_with_default_hash(&storage, &pubkey, &account, alive, None);
         db.storage.insert(Arc::new(storage));
     }
 
