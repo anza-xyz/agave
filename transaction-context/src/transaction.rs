@@ -267,6 +267,13 @@ impl<'ix_data> TransactionContext<'ix_data> {
         self.get_instruction_context_at_index_in_trace(index_in_trace)
     }
 
+    /// Returns a view on the caller, or `None` for a top-level instruction.
+    pub fn get_caller_instruction_context(&self) -> Option<InstructionContext<'_, '_>> {
+        let caller_level = self.get_instruction_stack_height().checked_sub(2)?;
+        self.get_instruction_context_at_nesting_level(caller_level)
+            .ok()
+    }
+
     /// Returns a view on the next instruction. This function assumes it has already been
     /// configured with the correct values in `prepare_next_instruction` or
     /// `prepare_next_top_level_instruction`
@@ -1454,5 +1461,111 @@ mod tests {
             transaction_context.get_current_instruction_index().unwrap(),
             1
         );
+    }
+
+    #[test]
+    fn test_get_caller_instruction_context() {
+        let caller_program_id = Pubkey::new_unique();
+        let transaction_accounts = vec![
+            (caller_program_id, AccountSharedData::default()),
+            (Pubkey::new_unique(), AccountSharedData::default()),
+        ];
+        let mut transaction_context =
+            TransactionContext::new(transaction_accounts, Rent::default(), 20, 20, 1);
+
+        // Empty instruction stack
+        assert!(
+            transaction_context
+                .get_caller_instruction_context()
+                .is_none()
+        );
+
+        // Top-level instruction
+        transaction_context
+            .configure_top_level_instruction_for_tests(0, vec![], vec![])
+            .unwrap();
+        transaction_context.push().unwrap();
+        assert!(
+            transaction_context
+                .get_caller_instruction_context()
+                .is_none()
+        );
+
+        // Invoked via CPI
+        transaction_context
+            .configure_next_cpi_for_tests(1, vec![], vec![])
+            .unwrap();
+        transaction_context.push().unwrap();
+        assert_eq!(
+            transaction_context
+                .get_caller_instruction_context()
+                .unwrap()
+                .get_program_key()
+                .unwrap(),
+            &caller_program_id,
+        );
+
+        // Back at the top level after the CPI returns
+        transaction_context.pop().unwrap();
+        assert!(
+            transaction_context
+                .get_caller_instruction_context()
+                .is_none()
+        );
+    }
+
+    #[test]
+    fn test_get_caller_instruction_context_nested() {
+        // SIMD-0268 raises the stack depth to 9: a top-level instruction plus 8 CPIs.
+        const STACK_CAPACITY: usize = 9;
+
+        let program_ids = (0..STACK_CAPACITY)
+            .map(|_| Pubkey::new_unique())
+            .collect::<Vec<_>>();
+        let transaction_accounts = program_ids
+            .iter()
+            .map(|program_id| (*program_id, AccountSharedData::default()))
+            .collect::<Vec<_>>();
+        let mut transaction_context =
+            TransactionContext::new(transaction_accounts, Rent::default(), STACK_CAPACITY, 20, 1);
+
+        transaction_context
+            .configure_top_level_instruction_for_tests(0, vec![], vec![])
+            .unwrap();
+        transaction_context.push().unwrap();
+        assert!(
+            transaction_context
+                .get_caller_instruction_context()
+                .is_none()
+        );
+
+        // Descending: each level is invoked by the program one level above it.
+        for level in 1..STACK_CAPACITY {
+            transaction_context
+                .configure_next_cpi_for_tests(level as IndexOfAccount, vec![], vec![])
+                .unwrap();
+            transaction_context.push().unwrap();
+            assert_eq!(
+                transaction_context
+                    .get_caller_instruction_context()
+                    .unwrap()
+                    .get_program_key()
+                    .unwrap(),
+                program_ids.get(level.saturating_sub(1)).unwrap(),
+            );
+        }
+
+        // Ascending: unwinding restores the caller of each remaining level.
+        for level in (1..STACK_CAPACITY).rev() {
+            transaction_context.pop().unwrap();
+            assert_eq!(
+                transaction_context
+                    .get_caller_instruction_context()
+                    .map(|instruction_context| *instruction_context.get_program_key().unwrap()),
+                level
+                    .checked_sub(2)
+                    .map(|index| *program_ids.get(index).unwrap()),
+            );
+        }
     }
 }

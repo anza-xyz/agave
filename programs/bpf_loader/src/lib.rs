@@ -157,6 +157,7 @@ fn process_loader_upgradeable_instruction(
     match limited_deserialize(instruction_data, solana_packet::PACKET_DATA_SIZE as u64)? {
         UpgradeableLoaderInstruction::InitializeBuffer => {
             instruction_context.check_number_of_instruction_accounts(2)?;
+            check_caller_is_not_target_program(invoke_context, 0)?;
             let mut buffer = instruction_context.try_borrow_instruction_account(0)?;
 
             if UpgradeableLoaderState::Uninitialized != buffer.get_state()? {
@@ -172,6 +173,7 @@ fn process_loader_upgradeable_instruction(
         }
         UpgradeableLoaderInstruction::Write { offset, bytes } => {
             instruction_context.check_number_of_instruction_accounts(2)?;
+            check_caller_is_not_target_program(invoke_context, 0)?;
             let buffer = instruction_context.try_borrow_instruction_account(0)?;
 
             if let UpgradeableLoaderState::Buffer { authority_address } = buffer.get_state()? {
@@ -201,6 +203,7 @@ fn process_loader_upgradeable_instruction(
         }
         UpgradeableLoaderInstruction::DeployWithMaxDataLen { max_data_len } => {
             instruction_context.check_number_of_instruction_accounts(4)?;
+            check_caller_is_not_target_program(invoke_context, 2)?;
             let payer_key = *instruction_context.get_key_of_instruction_account(0)?;
             let programdata_key = *instruction_context.get_key_of_instruction_account(1)?;
             let rent =
@@ -788,6 +791,7 @@ fn process_loader_upgradeable_instruction(
             }
         }
         UpgradeableLoaderInstruction::ExtendProgram { additional_bytes } => {
+            check_caller_is_not_target_program(invoke_context, 1)?;
             common_extend_program(invoke_context, additional_bytes, false)?;
         }
     }
@@ -1027,6 +1031,37 @@ fn common_close_account(
     Ok(())
 }
 
+/// Rejects a CPI whose caller is the account it is about to operate on, which
+/// would let a program modify itself while it is executing.
+fn check_caller_is_not_target_program(
+    invoke_context: &InvokeContext,
+    target_account_index: IndexOfAccount,
+) -> Result<(), InstructionError> {
+    if !invoke_context
+        .get_feature_set()
+        .loader_v3_relax_cpi_constraints
+    {
+        return Ok(());
+    }
+    let transaction_context = &invoke_context.transaction_context;
+    let Some(caller_instruction_context) = transaction_context.get_caller_instruction_context()
+    else {
+        return Ok(());
+    };
+    let caller_program_id = caller_instruction_context.get_program_key()?;
+    let target_key = transaction_context
+        .get_current_instruction_context()?
+        .get_key_of_instruction_account(target_account_index)?;
+    if caller_program_id == target_key {
+        ic_msg!(
+            invoke_context,
+            "Program {caller_program_id} cannot modify itself"
+        );
+        return Err(InstructionError::InvalidArgument);
+    }
+    Ok(())
+}
+
 #[cfg_attr(feature = "svm-internal", qualifiers(pub))]
 mod test_utils {
     #[cfg(all(feature = "svm-internal", feature = "metrics"))]
@@ -1110,13 +1145,17 @@ mod tests {
         solana_program_runtime::{
             invoke_context::mock_process_instruction, loaded_programs::ProgramRuntimeEnvironment,
             program_metrics::ProgramStatistics, vm::calculate_heap_cost, with_mock_invoke_context,
+            with_mock_invoke_context_with_feature_set,
         },
         solana_pubkey::Pubkey,
         solana_rent::Rent,
         solana_sbpf::program::{BuiltinFunctionDefinition, BuiltinProgram},
         solana_sdk_ids::{system_program, sysvar},
+        solana_svm_feature_set::SVMFeatureSet,
         solana_svm_type_overrides::sync::atomic::{AtomicU64, Ordering},
+        solana_transaction_context::instruction_accounts::InstructionAccount,
         std::{fs::File, io::Read, ops::Range},
+        test_case::test_case,
     };
 
     // 10 iterations is intentionally low: `mock_process_instruction` runs on a
@@ -4199,5 +4238,122 @@ mod tests {
 
         assert_eq!(program2.deployment_slot, 2);
         assert_eq!(program2.stats.uses.load(Ordering::Relaxed), 0);
+    }
+
+    /// Invokes the loader via CPI from a caller program, with the account at
+    /// `target_account_index` pointing at either the caller itself or an
+    /// unrelated account. `num_instruction_accounts` is the instruction's
+    /// required account count, since that check runs first. The accounts
+    /// themselves are deliberate nonsense: the self-reference check runs
+    /// before any of them are borrowed or validated.
+    fn process_upgradeable_instruction_via_cpi(
+        instruction: &UpgradeableLoaderInstruction,
+        target_account_index: IndexOfAccount,
+        num_instruction_accounts: IndexOfAccount,
+        relax_cpi_constraints: bool,
+        target_is_caller: bool,
+    ) -> Result<(), InstructionError> {
+        const CALLER_INDEX: IndexOfAccount = 0;
+        const LOADER_INDEX: IndexOfAccount = 1;
+        const FILLER_INDEX: IndexOfAccount = 2;
+
+        let mut program_account = AccountSharedData::new(1, 0, &native_loader::id());
+        program_account.set_executable(true);
+        let transaction_accounts = vec![
+            (Pubkey::new_unique(), program_account.clone()),
+            (bpf_loader_upgradeable::id(), program_account),
+            (Pubkey::new_unique(), AccountSharedData::default()),
+        ];
+        let feature_set = &SVMFeatureSet {
+            loader_v3_relax_cpi_constraints: relax_cpi_constraints,
+            ..SVMFeatureSet::default()
+        };
+        with_mock_invoke_context_with_feature_set!(
+            invoke_context,
+            transaction_context,
+            feature_set,
+            transaction_accounts
+        );
+
+        // Top-level instruction, executed by the caller program.
+        invoke_context
+            .transaction_context
+            .configure_top_level_instruction_for_tests(CALLER_INDEX, vec![], vec![])
+            .unwrap();
+        invoke_context.push().unwrap();
+
+        // The caller CPIs into the loader.
+        let target_index = if target_is_caller {
+            CALLER_INDEX
+        } else {
+            FILLER_INDEX
+        };
+        let instruction_accounts = (0..num_instruction_accounts)
+            .map(|index| {
+                let index_in_transaction = if index == target_account_index {
+                    target_index
+                } else {
+                    FILLER_INDEX
+                };
+                InstructionAccount::new(index_in_transaction, false, false)
+            })
+            .collect::<Vec<_>>();
+        invoke_context
+            .transaction_context
+            .configure_next_cpi_for_tests(
+                LOADER_INDEX,
+                instruction_accounts,
+                bincode::serialize(instruction).unwrap(),
+            )
+            .unwrap();
+        invoke_context.push().unwrap();
+
+        process_loader_upgradeable_instruction(&mut invoke_context)
+    }
+
+    #[test_case(UpgradeableLoaderInstruction::InitializeBuffer, 0, 2)]
+    #[test_case(UpgradeableLoaderInstruction::Write { offset: 0, bytes: vec![] }, 0, 2)]
+    #[test_case(UpgradeableLoaderInstruction::DeployWithMaxDataLen { max_data_len: 0 }, 2, 4)]
+    #[test_case(UpgradeableLoaderInstruction::ExtendProgram { additional_bytes: 0 }, 1, 2)]
+    fn test_cpi_caller_cannot_be_target_program(
+        instruction: UpgradeableLoaderInstruction,
+        target_account_index: IndexOfAccount,
+        num_instruction_accounts: IndexOfAccount,
+    ) {
+        // A program operating on itself is rejected.
+        assert_eq!(
+            process_upgradeable_instruction_via_cpi(
+                &instruction,
+                target_account_index,
+                num_instruction_accounts,
+                true,
+                true
+            ),
+            Err(InstructionError::InvalidArgument),
+        );
+
+        // Operating on an unrelated account is not.
+        assert_ne!(
+            process_upgradeable_instruction_via_cpi(
+                &instruction,
+                target_account_index,
+                num_instruction_accounts,
+                true,
+                false
+            ),
+            Err(InstructionError::InvalidArgument),
+        );
+
+        // Neither is a program operating on itself without the feature.
+        assert_ne!(
+            process_upgradeable_instruction_via_cpi(
+                &instruction,
+                target_account_index,
+                num_instruction_accounts,
+                false,
+                true
+            ),
+            Err(InstructionError::InvalidArgument),
+        );
     }
 }

@@ -86,6 +86,11 @@ use {
     },
     std::{fs::File, io::Read, path::PathBuf},
 };
+#[cfg(all(feature = "sbf_rust", feature = "sbpf-v3"))]
+use {
+    solana_loader_v3_interface::instruction::MINIMUM_EXTEND_PROGRAM_BYTES,
+    solana_runtime::genesis_utils::deactivate_features, test_case::test_case,
+};
 
 #[cfg(any(feature = "sbf_c", feature = "sbf_rust"))]
 fn load_program_elf(program_name: &str) -> Vec<u8> {
@@ -2579,6 +2584,79 @@ fn test_program_sbf_upgrade_via_cpi() {
     assert_eq!(
         result.unwrap_err().unwrap(),
         TransactionError::InstructionError(0, InstructionError::Custom(43))
+    );
+}
+
+#[test_case(true; "relax_cpi_constraints")]
+#[test_case(false; "no_relax_cpi_constraints")]
+#[cfg(all(feature = "sbf_rust", feature = "sbpf-v3"))]
+fn test_program_sbf_extend_program_via_cpi(relax_cpi_constraints: bool) {
+    agave_logger::setup();
+
+    let GenesisConfigInfo {
+        mut genesis_config,
+        mint_keypair,
+        ..
+    } = create_genesis_config(100_000_000_000);
+    if !relax_cpi_constraints {
+        deactivate_features(
+            &mut genesis_config,
+            &vec![feature_set::loader_v3_relax_cpi_constraints::id()],
+        );
+    }
+
+    let (bank, bank_forks) = Bank::new_with_bank_forks_for_tests(&genesis_config);
+    let mut bank_client = BankClient::new_shared(bank);
+
+    let authority_keypair = Keypair::new();
+    let (_bank, invoke_and_return) = load_upgradeable_program_and_advance_slot(
+        &mut bank_client,
+        &bank_forks,
+        &mint_keypair,
+        &authority_keypair,
+        "solana_sbf_rust_invoke_and_return",
+    );
+
+    let authority_keypair = Keypair::new();
+    let (_bank, program_id) = load_upgradeable_program_and_advance_slot(
+        &mut bank_client,
+        &bank_forks,
+        &mint_keypair,
+        &authority_keypair,
+        "solana_sbf_rust_noop",
+    );
+
+    let extend_via_cpi = |target_program_id: &Pubkey| {
+        let mut instruction = loader_v3_instruction::extend_program(
+            target_program_id,
+            Some(&mint_keypair.pubkey()),
+            MINIMUM_EXTEND_PROGRAM_BYTES,
+        );
+        instruction.program_id = invoke_and_return;
+        instruction
+            .accounts
+            .insert(0, AccountMeta::new(bpf_loader_upgradeable::id(), false));
+        let message = Message::new(&[instruction], Some(&mint_keypair.pubkey()));
+        bank_client.send_and_confirm_message(&[&mint_keypair], message)
+    };
+
+    if !relax_cpi_constraints {
+        // The CPI allowlist rejects ExtendProgram before the loader ever runs.
+        assert_eq!(
+            extend_via_cpi(&program_id).unwrap_err().unwrap(),
+            TransactionError::InstructionError(0, InstructionError::ProgramFailedToComplete),
+        );
+        return;
+    }
+
+    // Extending another program is allowed.
+    extend_via_cpi(&program_id).unwrap();
+
+    // Extending the calling program itself is rejected, now by the loader
+    // rather than by the CPI allowlist.
+    assert_eq!(
+        extend_via_cpi(&invoke_and_return).unwrap_err().unwrap(),
+        TransactionError::InstructionError(0, InstructionError::InvalidArgument),
     );
 }
 
