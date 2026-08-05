@@ -22,7 +22,11 @@ rm -rf config/run/init-completed config/ledger
 # Also the banking_tracer thread needs some extra time to flush due to
 # unsynchronized and buffered IO.
 validator_timeout="${SOLANA_VALIDATOR_EXIT_TIMEOUT:-120}"
+<<<<<<< HEAD
 SOLANA_RUN_SH_VALIDATOR_ARGS="${SOLANA_RUN_SH_VALIDATOR_ARGS} --full-snapshot-interval-slots 200" \
+=======
+SOLANA_RUN_SH_VALIDATOR_ARGS="${SOLANA_RUN_SH_VALIDATOR_ARGS} --full-snapshot-interval-slots 200 --incremental-snapshot-interval-slots 100 --enable-banking-trace $((1024 * 1024 * 1024))" \
+>>>>>>> ece1fbd56 (ci/run-sanity: Sets both full and incremental snapshot intervals (#14352))
   SOLANA_VALIDATOR_EXIT_TIMEOUT="$validator_timeout" \
   timeout "$validator_timeout" ./scripts/run.sh &
 
