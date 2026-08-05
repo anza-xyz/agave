@@ -223,6 +223,9 @@ pub struct RpcSignaturesForAddressConfig {
     pub before: Option<String>, // Signature as base-58 string
     pub until: Option<String>,  // Signature as base-58 string
     pub limit: Option<usize>,
+    /// If true, wrap the response in `{ context: { slot, ... }, value: ... }`.
+    /// If false or omitted, return the legacy response shape for backwards compatibility.
+    pub with_context: Option<bool>,
     #[serde(flatten)]
     pub commitment: Option<CommitmentConfig>,
     pub min_context_slot: Option<Slot>,
@@ -309,6 +312,9 @@ pub struct RpcTransactionConfig {
     #[serde(flatten)]
     pub commitment: Option<CommitmentConfig>,
     pub max_supported_transaction_version: Option<u8>,
+    /// If true, wrap the response in `{ context: { slot, ... }, value: ... }`.
+    /// If false or omitted, return the legacy response shape for backwards compatibility.
+    pub with_context: Option<bool>,
 }
 
 impl EncodingConfig for RpcTransactionConfig {
