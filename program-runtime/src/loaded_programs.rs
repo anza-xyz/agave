@@ -8,6 +8,7 @@ use {
         program_metrics::{EMA_SCALE, ProgramCacheStats},
     },
     log::error,
+    smallvec::SmallVec,
     solana_clock::{Epoch, Slot},
     solana_pubkey::Pubkey,
     solana_sbpf::program::BuiltinProgram,
@@ -21,6 +22,8 @@ use {
         sync::Weak,
     },
 };
+
+type ProgramCacheEntryVersions = SmallVec<[Arc<ProgramCacheEntry>; 2]>;
 
 #[repr(transparent)]
 #[derive(Clone, Debug)]
@@ -217,7 +220,7 @@ pub(crate) enum IndexImplementation {
         ///
         /// - the first level is for the address at which programs are deployed
         /// - the second level for the slot (and thus also fork), sorted by slot number.
-        entries: HashMap<Pubkey, Vec<Arc<ProgramCacheEntry>>>,
+        entries: HashMap<Pubkey, ProgramCacheEntryVersions>,
         /// The entries that are getting loaded and have not yet finished loading.
         ///
         /// The key is the program address, the value is a tuple of the slot in which the program is
@@ -519,44 +522,44 @@ impl<FG: ForkGraph> ProgramCache<FG> {
                     // Remove entries un/re/deployed on orphan forks
                     let mut first_ancestor_found = false;
                     let mut first_ancestor_env = None;
-                    *second_level = second_level
-                        .iter()
-                        .rev()
-                        .filter(|entry| {
-                            let relation =
-                                fork_graph.relationship(entry.deployment_slot, new_root_slot);
-                            if entry.deployment_slot >= new_root_slot {
-                                matches!(relation, BlockRelation::Equal | BlockRelation::Descendant)
-                            } else if matches!(relation, BlockRelation::Ancestor)
-                                || entry.deployment_slot <= self.latest_root_slot
-                            {
-                                if !first_ancestor_found {
-                                    first_ancestor_found = true;
-                                    first_ancestor_env = entry.program.get_environment();
-                                    return true;
-                                }
-                                // Do not prune the entry if the runtime environment of the entry is
-                                // different than the entry that was previously found (stored in
-                                // first_ancestor_env). Different environment indicates that this entry
-                                // might belong to an older epoch that had a different environment (e.g.
-                                // different feature set). Once the root moves to the new/current epoch,
-                                // the entry will get pruned. But, until then the entry might still be
-                                // getting used by an older slot.
-                                if let Some(entry_env) = entry.program.get_environment()
-                                    && let Some(env) = first_ancestor_env
-                                    && entry_env != env
-                                {
-                                    return true;
-                                }
-                                self.stats.prunes_orphan.fetch_add(1, Ordering::Relaxed);
-                                false
-                            } else {
-                                self.stats.prunes_orphan.fetch_add(1, Ordering::Relaxed);
-                                false
+                    // Scan newest to oldest while compacting in place, then restore the sort order.
+                    second_level.reverse();
+                    second_level.retain(|entry| {
+                        let relation =
+                            fork_graph.relationship(entry.deployment_slot, new_root_slot);
+                        if entry.deployment_slot >= new_root_slot {
+                            matches!(relation, BlockRelation::Equal | BlockRelation::Descendant)
+                        } else if matches!(relation, BlockRelation::Ancestor)
+                            || entry.deployment_slot <= self.latest_root_slot
+                        {
+                            if !first_ancestor_found {
+                                first_ancestor_found = true;
+                                first_ancestor_env = entry
+                                    .program
+                                    .get_environment()
+                                    .map(|environment| Arc::as_ptr(&environment.0));
+                                return true;
                             }
-                        })
-                        .cloned()
-                        .collect();
+                            // Do not prune the entry if the runtime environment of the entry is
+                            // different than the entry that was previously found (stored in
+                            // first_ancestor_env). Different environment indicates that this entry
+                            // might belong to an older epoch that had a different environment (e.g.
+                            // different feature set). Once the root moves to the new/current epoch,
+                            // the entry will get pruned. But, until then the entry might still be
+                            // getting used by an older slot.
+                            if let Some(entry_env) = entry.program.get_environment()
+                                && let Some(env) = first_ancestor_env
+                                && !std::ptr::eq(Arc::as_ptr(&entry_env.0), env)
+                            {
+                                return true;
+                            }
+                            self.stats.prunes_orphan.fetch_add(1, Ordering::Relaxed);
+                            false
+                        } else {
+                            self.stats.prunes_orphan.fetch_add(1, Ordering::Relaxed);
+                            false
+                        }
+                    });
                     second_level.reverse();
                     // Remove or adjust entries with outdated environment of previous feature set
                     if let Some(new_environment) = new_environment.as_ref() {
