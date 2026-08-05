@@ -284,15 +284,6 @@ impl ProgramCacheEntry {
         account_owner: ProgramCacheEntryOwner,
         reason: ProgramCacheEntryType,
     ) -> Self {
-        Self::new_tombstone_or_unloaded_with_stats(slot, account_owner, reason, Arc::default())
-    }
-
-    pub fn new_tombstone_or_unloaded_with_stats(
-        slot: Slot,
-        account_owner: ProgramCacheEntryOwner,
-        reason: ProgramCacheEntryType,
-        stats: Arc<ProgramStatistics>,
-    ) -> Self {
         debug_assert!(matches!(
             reason,
             ProgramCacheEntryType::FailedVerification(_)
@@ -302,6 +293,20 @@ impl ProgramCacheEntry {
         ));
         Self {
             program: reason,
+            account_owner,
+            deployment_slot: slot,
+            stats: Arc::default(),
+            latest_access_slot: AtomicU64::new(0),
+        }
+    }
+
+    pub fn new_delay_visibility_tombstone(
+        slot: Slot,
+        account_owner: ProgramCacheEntryOwner,
+        stats: Arc<ProgramStatistics>,
+    ) -> Self {
+        Self {
+            program: ProgramCacheEntryType::DelayVisibility,
             account_owner,
             deployment_slot: slot,
             stats,

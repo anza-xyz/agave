@@ -335,10 +335,9 @@ impl ProgramCacheForTxBatch {
                     // Found a program entry on the current fork, but it's not effective
                     // yet. It indicates that the program has delayed visibility. Return
                     // the tombstone to reflect that.
-                    Arc::new(ProgramCacheEntry::new_tombstone_or_unloaded_with_stats(
+                    Arc::new(ProgramCacheEntry::new_delay_visibility_tombstone(
                         entry.deployment_slot,
                         entry.account_owner,
-                        ProgramCacheEntryType::DelayVisibility,
                         Arc::clone(&entry.stats),
                     ))
                 } else {
@@ -707,14 +706,11 @@ impl<FG: ForkGraph> ProgramCache<FG> {
                                     // Found a program entry on the current fork, but it's not effective
                                     // yet. It indicates that the program has delayed visibility. Return
                                     // the tombstone to reflect that.
-                                    Arc::new(
-                                        ProgramCacheEntry::new_tombstone_or_unloaded_with_stats(
-                                            entry.deployment_slot,
-                                            entry.account_owner,
-                                            ProgramCacheEntryType::DelayVisibility,
-                                            Arc::clone(&entry.stats),
-                                        ),
-                                    )
+                                    Arc::new(ProgramCacheEntry::new_delay_visibility_tombstone(
+                                        entry.deployment_slot,
+                                        entry.account_owner,
+                                        Arc::clone(&entry.stats),
+                                    ))
                                 } else {
                                     continue;
                                 };
