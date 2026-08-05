@@ -50,7 +50,6 @@ use {
     solana_sdk_ids::sysvar::{self as sysvar, clock},
     solana_sdk_ids::{bpf_loader, bpf_loader_deprecated, bpf_loader_upgradeable},
     solana_signer::Signer,
-    solana_svm::conformance::setup::sysvar_cache_from_accounts,
     solana_svm::{
         transaction_commit_result::{CommittedTransaction, TransactionCommitResult},
         transaction_processor::ExecutionRecordingConfig,
@@ -70,26 +69,30 @@ use {
     },
     test_case::test_matrix,
 };
-#[cfg(all(feature = "sbf_rust", feature = "sbpf-v3"))]
-use {
-    agave_reserved_account_keys::ReservedAccountKeys,
-    solana_message::SanitizedMessage,
-    solana_svm::conformance::txn::{context::TxnContext, harness::execute_txn},
-};
 #[cfg(any(feature = "sbf_c", feature = "sbf_rust"))]
 use {
+    agave_reserved_account_keys::ReservedAccountKeys,
     solana_account::Account,
-    solana_program_runtime::{loaded_programs::ProgramCacheForTxBatch, sysvar_cache::SysvarCache},
+    solana_message::SanitizedMessage,
+    solana_program_runtime::sysvar_cache::SysvarCache,
     solana_sdk_ids::sysvar::rent,
     solana_svm::conformance::{
         instr::{context::InstrContext, harness::execute_instr},
         programs::{
             add_program_to_program_cache, keyed_account_for_bpf_loader_program,
-            keyed_account_for_bpf_loader_upgradeable_program, keyed_account_for_system_program,
-            new_program_cache_with_builtins,
+            keyed_account_for_system_program, new_program_cache_with_builtins,
         },
     },
     std::{fs::File, io::Read, path::PathBuf},
+};
+#[cfg(all(feature = "sbf_rust", feature = "sbpf-v3"))]
+use {
+    solana_program_runtime::loaded_programs::ProgramCacheForTxBatch,
+    solana_svm::conformance::{
+        programs::keyed_account_for_bpf_loader_upgradeable_program,
+        setup::sysvar_cache_from_accounts,
+        txn::{context::TxnContext, harness::execute_txn},
+    },
 };
 
 #[cfg(any(feature = "sbf_c", feature = "sbf_rust"))]
