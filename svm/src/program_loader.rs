@@ -121,7 +121,7 @@ pub fn load_program_with_pubkey<CB: TransactionProcessingCallback>(
             ))
         }
 
-        ProgramAccountLoadResult::ProgramOfLoaderV1(program_account) => ProgramCacheEntry::new(
+        ProgramAccountLoadResult::ProgramOfLoaderV1(program_account) => ProgramCacheEntry::load(
             program_account.owner(),
             ProgramRuntimeEnvironment::clone(program_runtime_environment),
             0,
@@ -131,7 +131,7 @@ pub fn load_program_with_pubkey<CB: TransactionProcessingCallback>(
         )
         .map_err(|_| (0, ProgramCacheEntryOwner::LoaderV1)),
 
-        ProgramAccountLoadResult::ProgramOfLoaderV2(program_account) => ProgramCacheEntry::new(
+        ProgramAccountLoadResult::ProgramOfLoaderV2(program_account) => ProgramCacheEntry::load(
             program_account.owner(),
             ProgramRuntimeEnvironment::clone(program_runtime_environment),
             0,
@@ -150,7 +150,7 @@ pub fn load_program_with_pubkey<CB: TransactionProcessingCallback>(
             .get(UpgradeableLoaderState::size_of_programdata_metadata()..)
             .ok_or(())
             .and_then(|programdata| {
-                ProgramCacheEntry::new(
+                ProgramCacheEntry::load(
                     program_account.owner(),
                     ProgramRuntimeEnvironment::clone(program_runtime_environment),
                     deployment_slot,
@@ -168,7 +168,7 @@ pub fn load_program_with_pubkey<CB: TransactionProcessingCallback>(
                 .get(LoaderV4State::program_data_offset()..)
                 .ok_or(())
                 .and_then(|elf_bytes| {
-                    ProgramCacheEntry::new(
+                    ProgramCacheEntry::load(
                         &loader_v4::id(),
                         ProgramRuntimeEnvironment::clone(program_runtime_environment),
                         deployment_slot,
@@ -473,7 +473,7 @@ mod tests {
         let slot: Slot = 2;
         let environment = ProgramRuntimeEnvironment::from(BuiltinProgram::new_mock());
 
-        let result = ProgramCacheEntry::new(
+        let result = ProgramCacheEntry::load(
             &loader,
             ProgramRuntimeEnvironment::clone(&environment),
             slot,
@@ -577,7 +577,7 @@ mod tests {
         );
 
         let program_runtime_environment = get_mock_program_runtime_environment();
-        let expected = ProgramCacheEntry::new(
+        let expected = ProgramCacheEntry::load(
             account_data.owner(),
             ProgramRuntimeEnvironment::clone(&program_runtime_environment),
             0,
@@ -667,7 +667,7 @@ mod tests {
             .set_data(data[UpgradeableLoaderState::size_of_programdata_metadata()..].to_vec());
 
         let program_runtime_environment = get_mock_program_runtime_environment();
-        let expected = ProgramCacheEntry::new(
+        let expected = ProgramCacheEntry::load(
             account_data.owner(),
             ProgramRuntimeEnvironment::clone(&program_runtime_environment),
             0,

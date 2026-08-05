@@ -287,7 +287,7 @@ fn load_program<'a>(
     // Allowing mut here, since it may be needed for jit compile, which is under a config flag
     #[allow(unused_mut)]
     let mut verified_executable = if is_elf {
-        let result = ProgramCacheEntry::new(
+        let result = ProgramCacheEntry::load(
             &loader_key,
             ProgramRuntimeEnvironment::clone(&program_runtime_environment),
             slot,

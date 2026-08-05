@@ -194,7 +194,7 @@ impl PartialEq for ProgramCacheEntry {
 
 impl ProgramCacheEntry {
     /// Creates a loaded user program
-    pub fn new(
+    pub fn load(
         loader_key: &Pubkey,
         program_runtime_environment: ProgramRuntimeEnvironment,
         deployment_slot: Slot,

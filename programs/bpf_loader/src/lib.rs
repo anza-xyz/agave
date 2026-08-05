@@ -1075,7 +1075,7 @@ mod test_utils {
                     .data()
                     .get(programdata_data_offset.min(account.data().len())..)
                     .unwrap();
-                let loaded_program = ProgramCacheEntry::new(
+                let loaded_program = ProgramCacheEntry::load(
                     owner,
                     ProgramRuntimeEnvironment::clone(&program_runtime_environment),
                     0,
