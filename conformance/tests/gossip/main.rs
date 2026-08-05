@@ -1,4 +1,4 @@
-#![cfg(feature = "conformance")]
+#![cfg(feature = "ffi")]
 
 //! Gossip conformance tests and fixture generation.
 
@@ -11,7 +11,7 @@ use protosol::protos::{GossipEffects, gossip_msg};
 pub(crate) const MAX_WALLCLOCK: u64 = 1_000_000_000_000_000;
 
 pub(crate) fn get_effects(input: &[u8]) -> GossipEffects {
-    solana_gossip::gossip_decode_to_effects(input)
+    agave_conformance::gossip::gossip_decode_to_effects(input)
 }
 
 pub(crate) fn check(input: &[u8], expect_valid: bool) {
