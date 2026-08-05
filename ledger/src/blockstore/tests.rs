@@ -6979,7 +6979,8 @@ fn write_transaction_statuses_for_entries(
     entries
         .iter()
         .flat_map(|entry| entry.transactions.iter())
-        .map(|transaction| {
+        .enumerate()
+        .map(|(transaction_index, transaction)| {
             let signature = transaction.signatures[0];
             let account_count = transaction.message.static_account_keys().len();
             let status = TransactionStatusMeta {
@@ -6996,11 +6997,19 @@ fn write_transaction_statuses_for_entries(
                 return_data: Some(TransactionReturnData::default()),
                 compute_units_consumed: Some(12345),
                 cost_units: Some(6789),
-            }
-            .into();
+            };
             blockstore
-                .transaction_status_cf
-                .put_protobuf((signature, slot), &status)
+                .write_transaction_status(
+                    slot,
+                    signature,
+                    transaction
+                        .message
+                        .static_account_keys()
+                        .iter()
+                        .map(|key| (key, true)),
+                    status,
+                    transaction_index,
+                )
                 .unwrap();
             signature
         })
@@ -7010,6 +7019,7 @@ fn write_transaction_statuses_for_entries(
 struct UpdateParentSlotFixture {
     previous_blockhash: String,
     post_update_blockhash: String,
+    post_update_address: Pubkey,
     pre_update_signatures: Vec<Signature>,
     post_update_signatures: Vec<Signature>,
     post_update_starting_transaction_indexes: Vec<usize>,
@@ -7041,6 +7051,9 @@ fn insert_complete_update_parent_slot(
 
     let pre_update_entries = make_slot_entries_with_transactions(1);
     let post_update_entries = make_slot_entries_with_transactions(2);
+    let post_update_address = post_update_entries[0].transactions[0]
+        .message
+        .static_account_keys()[0];
     let pre_update_signatures = transaction_signatures(&pre_update_entries);
     let post_update_signatures =
         write_transaction_statuses_for_entries(blockstore, slot, &post_update_entries);
@@ -7086,6 +7099,7 @@ fn insert_complete_update_parent_slot(
     UpdateParentSlotFixture {
         previous_blockhash,
         post_update_blockhash,
+        post_update_address,
         pre_update_signatures,
         post_update_signatures,
         post_update_starting_transaction_indexes,
@@ -7166,6 +7180,39 @@ fn test_get_transaction_uses_post_update_parent_indexes() {
             .unwrap();
         assert_eq!(transaction.index, expected_index as u32);
     }
+}
+
+#[test]
+fn test_purge_update_parent_transaction_indexes() {
+    let ledger_path = get_tmp_ledger_path_auto_delete!();
+    let blockstore = Blockstore::open(ledger_path.path()).unwrap();
+
+    let slot = 104;
+    let fixture = insert_complete_update_parent_slot(&blockstore, slot, 103, 100);
+    let address_signature = (
+        fixture.post_update_address,
+        slot,
+        0,
+        fixture.post_update_signatures[0],
+    );
+    assert!(
+        blockstore
+            .address_signatures_cf
+            .get(address_signature)
+            .unwrap()
+            .is_some()
+    );
+
+    blockstore
+        .purge_slots(slot, slot, PurgeType::Exact)
+        .unwrap();
+    assert!(
+        blockstore
+            .address_signatures_cf
+            .get(address_signature)
+            .unwrap()
+            .is_none()
+    );
 }
 
 #[test]
