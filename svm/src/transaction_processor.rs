@@ -8,7 +8,9 @@ use {
         },
         account_overrides::AccountOverrides,
         nonce_info::NonceInfo,
-        program_loader::{filter_executable_program_accounts, load_program_with_pubkey},
+        program_loader::{
+            ProgramLoader, filter_executable_program_accounts, load_program_with_pubkey,
+        },
         rollback_accounts::RollbackAccounts,
         transaction_account_state_info::{
             TransactionAccountStateInfo, get_uninitialized_accounts_size, verify_changes,
@@ -36,6 +38,7 @@ use {
     },
     solana_nonce_account::verify_nonce_account,
     solana_program_runtime::{
+        callback::ProgramCacheCallback,
         execution_budget::{
             SVMTransactionExecutionAndFeeBudgetLimits, SVMTransactionExecutionCost,
         },
@@ -530,37 +533,34 @@ impl<FG: ForkGraph> TransactionBatchProcessor<FG> {
 
                 // Transaction is able to be executed
                 TransactionLoadResult::Loaded(loaded_transaction) => {
-                    let (missing_programs, filter_executable_us) =
-                        measure_us!(filter_executable_program_accounts(
-                            &account_loader,
-                            &program_cache_for_tx_batch,
-                            tx.account_keys().iter(),
-                            config.check_program_deployment_slot,
-                        ));
-                    execute_timings.saturating_add_in_place(
-                        ExecuteTimingType::FilterExecutableUs,
-                        filter_executable_us,
+                    let program_loader = ProgramLoader::new(
+                        &self.global_program_cache,
+                        &account_loader,
+                        self.slot,
+                        environment
+                            .program_runtime_environments
+                            .get_env_for_execution(),
+                        config.check_program_deployment_slot,
+                        config.limit_to_load_programs,
                     );
 
-                    let ((), program_cache_us) = measure_us!({
-                        self.replenish_program_cache(
-                            &account_loader,
-                            missing_programs,
-                            environment
-                                .program_runtime_environments
-                                .get_env_for_execution(),
-                            &mut program_cache_for_tx_batch,
-                            &mut execute_timings,
-                            config.limit_to_load_programs,
-                            true, // increment_usage_counter
-                        );
-                    });
-                    execute_timings.saturating_add_in_place(
-                        ExecuteTimingType::ProgramCacheUs,
-                        program_cache_us,
+                    let executed_tx = self.execute_loaded_transaction(
+                        callbacks,
+                        &program_loader,
+                        tx,
+                        &sysvar_cache,
+                        loaded_transaction,
+                        &mut execute_timings,
+                        &mut error_metrics,
+                        &mut program_cache_for_tx_batch,
+                        environment,
+                        config,
                     );
 
-                    if program_cache_for_tx_batch.hit_max_limit {
+                    execute_timings.accumulate(&program_loader.take_timings());
+                    program_cache_for_tx_batch.loaded_missing |= program_loader.loaded_missing();
+
+                    if program_loader.hit_max_limit() {
                         return LoadAndExecuteSanitizedTransactionsOutput {
                             error_metrics,
                             execute_timings,
@@ -572,18 +572,6 @@ impl<FG: ForkGraph> TransactionBatchProcessor<FG> {
                             balance_collector: None,
                         };
                     }
-
-                    let executed_tx = self.execute_loaded_transaction(
-                        callbacks,
-                        tx,
-                        &sysvar_cache,
-                        loaded_transaction,
-                        &mut execute_timings,
-                        &mut error_metrics,
-                        &mut program_cache_for_tx_batch,
-                        environment,
-                        config,
-                    );
 
                     match (
                         &executed_tx.execution_details.status,
@@ -891,86 +879,6 @@ impl<FG: ForkGraph> TransactionBatchProcessor<FG> {
         }
     }
 
-    #[cfg_attr(feature = "dev-context-only-utils", qualifiers(pub))]
-    fn replenish_program_cache<CB: TransactionProcessingCallback>(
-        &self,
-        account_loader: &AccountLoader<CB>,
-        mut missing_programs: Vec<ProgramToLoad>,
-        program_runtime_environment_for_execution: &ProgramRuntimeEnvironment,
-        program_cache_for_tx_batch: &mut ProgramCacheForTxBatch,
-        execute_timings: &mut ExecuteTimings,
-        limit_to_load_programs: bool,
-        increment_usage_counter: bool,
-    ) {
-        if missing_programs.is_empty() {
-            // Nothing to load, so skip the global cache and fork graph locks.
-            // Program-cache hit/miss counters are unchanged for empty work.
-            return;
-        }
-        let mut count_hits_and_misses = true;
-        loop {
-            // Lock the global cache.
-            let global_program_cache = self.global_program_cache.read().unwrap();
-            // Figure out which program needs to be loaded next.
-            let program_to_load = global_program_cache.extract(
-                &mut missing_programs,
-                program_cache_for_tx_batch,
-                program_runtime_environment_for_execution,
-                increment_usage_counter,
-                count_hits_and_misses,
-            );
-            count_hits_and_misses = false;
-            let task_waiter = Arc::clone(&global_program_cache.loading_task_waiter);
-            let task_cookie = task_waiter.cookie();
-            // Unlock the global cache again.
-            drop(global_program_cache);
-
-            let program_to_store = program_to_load.map(|key| {
-                // Load, verify and compile one program.
-                let (program, last_modification_slot) = load_program_with_pubkey(
-                    account_loader,
-                    program_runtime_environment_for_execution,
-                    &key,
-                    self.slot,
-                    execute_timings,
-                )
-                .expect("called load_program_with_pubkey() with nonexistent account");
-                (key, program, last_modification_slot)
-            });
-
-            if let Some((key, program, last_modification_slot)) = program_to_store {
-                program_cache_for_tx_batch.loaded_missing = true;
-                let mut global_program_cache = self.global_program_cache.write().unwrap();
-                // Submit our last completed loading task.
-                if global_program_cache.finish_cooperative_loading_task(
-                    program_runtime_environment_for_execution,
-                    self.slot,
-                    key,
-                    last_modification_slot,
-                    program,
-                ) && limit_to_load_programs
-                {
-                    // This branch is taken when there is an error in assigning a program to a
-                    // cache slot. It is not possible to mock this error for SVM unit
-                    // tests purposes.
-                    *program_cache_for_tx_batch = ProgramCacheForTxBatch::new(self.slot);
-                    program_cache_for_tx_batch.hit_max_limit = true;
-                    return;
-                }
-            } else if missing_programs.is_empty() {
-                break;
-            } else {
-                // Remember: there are multiple transaction processor threads running concurrently
-                // and those other threads may be loading this or other programs.
-                //
-                // So, sleep until some other thread submits a program with their
-                // `finish_cooperative_loading_task` call. We'll then wake up and try to load the
-                // missing programs inside the tx batch again.
-                let _new_cookie = task_waiter.wait(task_cookie);
-            }
-        }
-    }
-
     /// Similar to replenish_program_cache() but only used in Bank::prepare_program_cache_for_upcoming_feature_set().
     pub fn prepare_one_program_for_upcoming_feature_set<CB: TransactionProcessingCallback>(
         &self,
@@ -1033,6 +941,7 @@ impl<FG: ForkGraph> TransactionBatchProcessor<FG> {
     fn execute_loaded_transaction<CB: InvokeContextCallback>(
         &self,
         callback: &CB,
+        program_cache_callback: &dyn ProgramCacheCallback,
         tx: &impl SVMTransaction,
         sysvar_cache: &SysvarCache,
         mut loaded_transaction: LoadedTransaction,
@@ -1100,6 +1009,7 @@ impl<FG: ForkGraph> TransactionBatchProcessor<FG> {
                 environment.blockhash_lamports_per_signature,
                 environment.alpenglow_migration_succeeded,
                 callback,
+                program_cache_callback,
                 &environment.feature_set,
                 &environment.program_runtime_environments,
                 sysvar_cache,
@@ -1395,6 +1305,7 @@ mod tests {
                 ValidatedTransactionDetails,
             },
             nonce_info::NonceInfo,
+            program_loader::replenish_program_cache,
             rent_calculator::RENT_EXEMPT_RENT_EPOCH,
             rollback_accounts::RollbackAccounts,
         },
@@ -1408,6 +1319,7 @@ mod tests {
         solana_message::{LegacyMessage, Message, MessageHeader, SanitizedMessage},
         solana_nonce as nonce,
         solana_program_runtime::{
+            callback::NoOpProgramCacheCallback,
             execution_budget::{
                 SVMTransactionExecutionAndFeeBudgetLimits, SVMTransactionExecutionBudget,
             },
@@ -1742,6 +1654,7 @@ mod tests {
 
         let executed_tx = batch_processor.execute_loaded_transaction(
             &mock_bank,
+            &NoOpProgramCacheCallback,
             &sanitized_transaction,
             &sysvar_cache,
             loaded_transaction.clone(),
@@ -1757,6 +1670,7 @@ mod tests {
 
         let executed_tx = batch_processor.execute_loaded_transaction(
             &mock_bank,
+            &NoOpProgramCacheCallback,
             &sanitized_transaction,
             &sysvar_cache,
             loaded_transaction.clone(),
@@ -1775,6 +1689,7 @@ mod tests {
 
         let executed_tx = batch_processor.execute_loaded_transaction(
             &mock_bank,
+            &NoOpProgramCacheCallback,
             &sanitized_transaction,
             &sysvar_cache,
             loaded_transaction,
@@ -1839,6 +1754,7 @@ mod tests {
 
         let _ = batch_processor.execute_loaded_transaction(
             &mock_bank,
+            &NoOpProgramCacheCallback,
             &sanitized_transaction,
             &sysvar_cache,
             loaded_transaction,
@@ -1856,7 +1772,7 @@ mod tests {
     #[should_panic = "called load_program_with_pubkey() with nonexistent account"]
     fn test_replenish_program_cache_with_nonexistent_accounts() {
         let mock_bank = MockBankCallback::default();
-        let account_loader = (&mock_bank).into();
+        let account_loader: AccountLoader<_> = (&mock_bank).into();
         let fork_graph = Arc::new(RwLock::new(TestForkGraph {}));
         let batch_processor =
             TransactionBatchProcessor::new(0, 0, Arc::downgrade(&fork_graph), None);
@@ -1866,15 +1782,17 @@ mod tests {
 
         let mut program_cache_for_tx_batch = ProgramCacheForTxBatch::new(batch_processor.slot);
 
-        batch_processor.replenish_program_cache(
+        replenish_program_cache(
+            &batch_processor.global_program_cache,
             &account_loader,
+            batch_processor.slot,
+            &program_runtime_environment_for_execution,
             vec![ProgramToLoad {
                 program_id: &key,
                 loader: ProgramCacheEntryOwner::LoaderV3,
                 match_criteria: ProgramCacheMatchCriteria::NoCriteria,
                 last_modification_slot: 0,
             }],
-            &program_runtime_environment_for_execution,
             &mut program_cache_for_tx_batch,
             &mut ExecuteTimings::default(),
             true,
@@ -1899,21 +1817,23 @@ mod tests {
             .write()
             .unwrap()
             .insert(key, account_data);
-        let account_loader = (&mock_bank).into();
+        let account_loader: AccountLoader<_> = (&mock_bank).into();
 
         let mut loaded_missing = 0;
         for limit_to_load_programs in [false, true] {
             let mut program_cache_for_tx_batch = ProgramCacheForTxBatch::new(batch_processor.slot);
 
-            batch_processor.replenish_program_cache(
+            replenish_program_cache(
+                &batch_processor.global_program_cache,
                 &account_loader,
+                batch_processor.slot,
+                &program_runtime_environment_for_execution,
                 vec![ProgramToLoad {
                     program_id: &key,
                     loader: ProgramCacheEntryOwner::LoaderV2,
                     match_criteria: ProgramCacheMatchCriteria::NoCriteria,
                     last_modification_slot: 0,
                 }],
-                &program_runtime_environment_for_execution,
                 &mut program_cache_for_tx_batch,
                 &mut ExecuteTimings::default(),
                 limit_to_load_programs,
