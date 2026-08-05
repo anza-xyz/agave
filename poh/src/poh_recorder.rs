@@ -40,6 +40,7 @@ use {
         bank::{Bank, BankId},
         block_component_processor::BankFooterError,
         installed_scheduler_pool::BankWithScheduler,
+        transaction_execution::TransactionStatusSenderError,
         validated_reward_certificate::Error as ValidatedRewardCertError,
     },
     solana_transaction::versioned::VersionedTransaction,
@@ -117,6 +118,9 @@ pub enum PohRecorderError {
 
     #[error("couldn't reschedule pre-UpdateParent transactions for slot {0}")]
     RescheduleTransactionsError(Slot),
+
+    #[error("failed to enqueue transaction-history purge for slot {0}: {1}")]
+    PurgeTransactionHistory(Slot, #[source] TransactionStatusSenderError),
 
     #[error("leader window moved past slot {0}")]
     WindowMovedOn(Slot),

@@ -26,10 +26,11 @@ use {
     },
     solana_svm_timings::{ExecuteTimingType, ExecuteTimings},
     solana_svm_transaction::{svm_message::SVMMessage, svm_transaction::SVMTransaction},
-    solana_transaction::sanitized::SanitizedTransaction,
+    solana_transaction::{sanitized::SanitizedTransaction, versioned::VersionedTransaction},
     solana_transaction_error::TransactionResult,
     solana_transaction_status::token_balances::TransactionTokenBalancesSet,
-    std::{borrow::Cow, sync::Arc},
+    std::{borrow::Cow, sync::Arc, time::Instant},
+    thiserror::Error,
 };
 
 type WorkSequence = u64;
@@ -51,6 +52,45 @@ pub struct TransactionStatusBatch {
 pub enum TransactionStatusMessage {
     Batch((TransactionStatusBatch, Option<WorkSequence>)),
     Freeze(Arc<Bank>),
+    PurgeTransactionHistory {
+        slot: Slot,
+        source: TransactionHistoryPurgeSource,
+        purge_input: TransactionHistoryPurgeInput,
+        requested_at: Instant,
+        done_sender: Option<crossbeam_channel::Sender<()>>,
+    },
+}
+
+/// Data used to reconstruct the transaction-history keys removed by a purge.
+#[derive(Debug)]
+pub enum TransactionHistoryPurgeInput {
+    ReplayStage,
+    SwitchBank,
+    Leader(Arc<Vec<VersionedTransaction>>),
+}
+
+/// The validator path that requested transaction-history cleanup for a slot.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum TransactionHistoryPurgeSource {
+    LeaderWindow,
+    SoftDeadSlot,
+    UpdateParentSignal,
+    AbandonedBank,
+    SwitchBank,
+    StartupReplay,
+}
+
+impl TransactionHistoryPurgeSource {
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::LeaderWindow => "leader_window",
+            Self::SoftDeadSlot => "soft_dead_slot",
+            Self::UpdateParentSignal => "update_parent_signal",
+            Self::AbandonedBank => "abandoned_bank",
+            Self::SwitchBank => "switch_bank",
+            Self::StartupReplay => "startup_replay",
+        }
+    }
 }
 
 pub struct TransactionBatchWithIndexes<'a, 'b, Tx: SVMMessage> {
@@ -213,6 +253,12 @@ fn do_get_first_error<T, Tx: SVMTransaction>(
     first_err
 }
 
+#[derive(Debug, Error)]
+pub enum TransactionStatusSenderError {
+    #[error("transaction status service disconnected")]
+    Disconnected,
+}
+
 #[derive(Clone, Debug)]
 pub struct TransactionStatusSender {
     pub sender: crossbeam_channel::Sender<TransactionStatusMessage>,
@@ -261,6 +307,38 @@ impl TransactionStatusSender {
             let slot = bank.slot();
             warn!("Slot {slot} transaction_status send freeze message failed: {e:?}");
         }
+    }
+
+    /// Requests removal of transaction history for `slot`, optionally waiting
+    /// until TransactionStatusService has finished processing the request.
+    pub fn send_purge_transaction_history_for_slot(
+        &self,
+        slot: Slot,
+        source: TransactionHistoryPurgeSource,
+        purge_input: TransactionHistoryPurgeInput,
+        wait_until_finished: bool,
+    ) -> Result<(), TransactionStatusSenderError> {
+        let (done_sender, done_receiver) = if wait_until_finished {
+            let (done_sender, done_receiver) = crossbeam_channel::bounded(1);
+            (Some(done_sender), Some(done_receiver))
+        } else {
+            (None, None)
+        };
+        self.sender
+            .send(TransactionStatusMessage::PurgeTransactionHistory {
+                slot,
+                source,
+                purge_input,
+                requested_at: Instant::now(),
+                done_sender,
+            })
+            .map_err(|_| TransactionStatusSenderError::Disconnected)?;
+        if let Some(done_receiver) = done_receiver {
+            done_receiver
+                .recv()
+                .map_err(|_| TransactionStatusSenderError::Disconnected)?;
+        }
+        Ok(())
     }
 }
 

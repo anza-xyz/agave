@@ -131,6 +131,8 @@ fn is_update_parent_recoverable_replay_error(err: &BlockstoreProcessorError) -> 
         | BlockstoreProcessorError::FailedToReplayBank0
         | BlockstoreProcessorError::NoValidForksFound
         | BlockstoreProcessorError::InvalidHardFork(_)
+        | BlockstoreProcessorError::FailedToRequestTransactionHistoryPurge(..)
+        | BlockstoreProcessorError::FailedToPurgeTransactionHistory(..)
         | BlockstoreProcessorError::BankHashMismatch(..)
         | BlockstoreProcessorError::RootBankWithMismatchedCapitalization(_) => false,
     }
