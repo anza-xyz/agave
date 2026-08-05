@@ -13,6 +13,7 @@ use {
     agave_votor_messages::{
         VerifiedVoterSlotsSender,
         certificate::CertificateType,
+        consensus_message::Block,
         metric_types::ConsensusMetricsEventSender,
         migration::MigrationStatus,
         sig_verified_messages::SigVerifiedBatch,
@@ -36,7 +37,7 @@ use {
         cmp,
         collections::{HashMap, HashSet, hash_map::Entry},
         sync::{
-            Arc,
+            Arc, RwLock,
             atomic::{AtomicBool, Ordering},
         },
         thread::{self, Builder},
@@ -44,14 +45,21 @@ use {
     },
 };
 
-/// If a cert or vote is so many slots in the future relative to the root slot, it is considered
+/// If a certificate is so many slots in the future relative to the root slot, it is considered
 /// invalid and discarded.
-///
-/// This also sets an upper bound on how much storage the various structs in this module require.
 ///
 /// At 200ms slot times, 30K slots is 100mins.  We do not expect a node to catch up if it has
 /// fallen so far behind.
 pub const NUM_SLOTS_FOR_VERIFY: Slot = 30_000;
+
+/// Votes further ahead of the highest ParentReady slot are discarded to bound vote tracking
+/// memory while still allowing enough lookahead to maintain liveness.
+const MAX_VOTE_SLOT_DISTANCE_FROM_PARENT_READY: Slot = 40;
+
+fn max_admitted_vote_slot(root_slot: Slot, highest_parent_ready_slot: Slot) -> Slot {
+    cmp::max(root_slot, highest_parent_ready_slot)
+        .saturating_add(MAX_VOTE_SLOT_DISTANCE_FROM_PARENT_READY)
+}
 
 /// If we receive an invalid certificate or vote, we ban its attributed sender. For certificates
 /// received from blockstore, that sender is the scheduled leader for the carrier slot. We ban the
@@ -65,6 +73,7 @@ pub struct SigVerifierContext {
     /// Sends peer ban commands to the transport endpoint.
     pub ban_sender: BanSender,
     pub sharable_banks: SharableBanks,
+    pub highest_parent_ready: Arc<RwLock<(Slot, Block)>>,
     pub cluster_info: Arc<ClusterInfo>,
     pub leader_schedule: Arc<LeaderScheduleCache>,
     pub num_threads: usize,
@@ -105,6 +114,7 @@ struct SigVerifier {
     channels: SigVerifierChannels,
     /// Container to look up root banks from.
     sharable_banks: SharableBanks,
+    highest_parent_ready: Arc<RwLock<(Slot, Block)>>,
     stats: SigVerifierStats,
     /// Set of recently verified certs to avoid duplicate work.
     verified_certs: HashSet<CertificateType>,
@@ -126,6 +136,7 @@ impl SigVerifier {
             migration_status,
             ban_sender,
             sharable_banks,
+            highest_parent_ready,
             cluster_info,
             leader_schedule,
             num_threads,
@@ -142,6 +153,7 @@ impl SigVerifier {
             ban_sender,
             channels,
             sharable_banks,
+            highest_parent_ready,
             stats: SigVerifierStats::new(root_slot),
             verified_certs: HashSet::new(),
             vote_pool: VotePool::default(),
@@ -288,6 +300,8 @@ impl SigVerifier {
         root_bank: &Bank,
     ) -> ExtractedMsgs {
         let root_slot = root_bank.slot();
+        let highest_parent_ready_slot = self.highest_parent_ready.read().unwrap().0;
+        let max_vote_slot = max_admitted_vote_slot(root_slot, highest_parent_ready_slot);
         let mut cert_groups = HashMap::<CertificateType, Vec<CertPayload>>::new();
         let mut votes: HashMap<VotePayloadToSign, Vec<UnverifiedVotePayload>> = HashMap::new();
         let mut num_pkts = 0u64;
@@ -311,9 +325,12 @@ impl SigVerifier {
 
             match decoded_msg {
                 DecodedWireConsensusMessage::Vote(unverified_vote) => {
-                    if let Some(payload) =
-                        self.keep_vote(unverified_vote, sender_identity_pubkey, root_bank)
-                    {
+                    if let Some(payload) = self.keep_vote(
+                        unverified_vote,
+                        sender_identity_pubkey,
+                        root_bank,
+                        max_vote_slot,
+                    ) {
                         let vote_payload_to_sign = VotePayloadToSign::new_from_vote(
                             payload.vote_message.vote,
                             payload.vote_message.shred_version,
@@ -371,6 +388,7 @@ impl SigVerifier {
         msg: UnverifiedVoteMessage,
         sender_identity_pubkey: Pubkey,
         root_bank: &Bank,
+        max_vote_slot: Slot,
     ) -> Option<UnverifiedVotePayload> {
         // votes from self take a different pathway.
         if sender_identity_pubkey == self.cluster_info.id() {
@@ -378,7 +396,7 @@ impl SigVerifier {
         }
         let root_slot = root_bank.slot();
         let vote_slot = msg.vote.slot();
-        if vote_slot > root_slot.saturating_add(NUM_SLOTS_FOR_VERIFY) {
+        if vote_slot > max_vote_slot {
             self.stats.vote_too_far_in_future += 1;
             return None;
         }
@@ -598,11 +616,19 @@ mod tests {
 
             let generated_cert_types = Arc::new(GeneratedCertTypes::default());
             let (ban_sender, ban_receiver) = stub_ban_channel_for_tests(1024);
+            let highest_parent_ready = Arc::new(RwLock::new((
+                NUM_SLOTS_FOR_VERIFY,
+                Block {
+                    slot: NUM_SLOTS_FOR_VERIFY.saturating_sub(1),
+                    block_id: Hash::default(),
+                },
+            )));
             let verifier = SigVerifier::new(
                 SigVerifierContext {
                     migration_status: Arc::new(MigrationStatus::default()),
                     ban_sender,
                     sharable_banks,
+                    highest_parent_ready,
                     cluster_info,
                     leader_schedule,
                     num_threads: 4,
@@ -1629,6 +1655,7 @@ mod tests {
                 migration_status: Arc::new(MigrationStatus::default()),
                 ban_sender,
                 sharable_banks,
+                highest_parent_ready: Arc::new(RwLock::default()),
                 cluster_info,
                 leader_schedule,
                 num_threads: 4,
@@ -2030,7 +2057,91 @@ mod tests {
     }
 
     #[test]
-    fn msgs_too_far_in_future_are_dropped() {
+    fn votes_are_bounded_by_highest_parent_ready() {
+        let mut ctx = TestContext::new();
+        let highest_parent_ready_slot = 100;
+        *ctx.verifier.highest_parent_ready.write().unwrap() = (
+            highest_parent_ready_slot,
+            // The ParentReady target slot, rather than the parent block's slot, sets the bound.
+            Block {
+                slot: 7,
+                block_id: Hash::new_unique(),
+            },
+        );
+        let max_vote_slot = highest_parent_ready_slot + MAX_VOTE_SLOT_DISTANCE_FROM_PARENT_READY;
+        let first_rejected_vote_slot = max_vote_slot + 1;
+
+        let accepted_vote_rank = 0;
+        let accepted_vote = ConsensusMessage::Vote(create_signed_vote_message(
+            &ctx.verifier.sharable_banks.root(),
+            &ctx.validator_keypairs,
+            ctx.verifier.cluster_info.my_shred_version(),
+            Vote::new_finalization_vote(max_vote_slot),
+            accepted_vote_rank,
+        ));
+        let rejected_vote_rank = 1;
+        let rejected_vote = ConsensusMessage::Vote(create_signed_vote_message(
+            &ctx.verifier.sharable_banks.root(),
+            &ctx.validator_keypairs,
+            ctx.verifier.cluster_info.my_shred_version(),
+            Vote::new_skip_vote(first_rejected_vote_slot),
+            rejected_vote_rank,
+        ));
+
+        // Certificates retain the root-relative bound and are not limited by ParentReady.
+        let cert_type = CertificateType::Finalize(first_rejected_vote_slot);
+        let cert = test_create_base2_certificate(
+            &ctx.bls_keypairs(),
+            ctx.verifier.cluster_info.my_shred_version(),
+            cert_type,
+            &(0..ctx.validator_keypairs.len()).collect::<Vec<usize>>(),
+        );
+        let cert = ConsensusMessage::Certificate(cert);
+        let datagrams = messages_to_datagrams(
+            &[
+                (
+                    accepted_vote,
+                    ctx.validator_keypairs[accepted_vote_rank]
+                        .node_keypair
+                        .pubkey(),
+                ),
+                (
+                    rejected_vote,
+                    ctx.validator_keypairs[rejected_vote_rank]
+                        .node_keypair
+                        .pubkey(),
+                ),
+                (cert, Pubkey::new_unique()),
+            ],
+            ctx.verifier.cluster_info.my_shred_version(),
+        );
+        ctx.verifier.verify_and_send_datagrams(datagrams).unwrap();
+
+        assert_eq!(ctx.verifier.stats.vote_too_far_in_future.0, 1);
+        assert_eq!(ctx.verifier.stats.vote_stats.pool_sent.0, 1);
+        assert_eq!(ctx.verifier.stats.cert_stats.too_far_in_future.0, 0);
+        assert_eq!(ctx.verifier.stats.cert_stats.pool_sent.0, 1);
+        assert_eq!(ctx.pool_receiver.try_iter().count(), 2);
+        assert_eq!(
+            ctx.repair_receiver.try_recv().unwrap(),
+            (
+                ctx.validator_keypairs[accepted_vote_rank]
+                    .vote_keypair
+                    .pubkey(),
+                vec![max_vote_slot],
+            )
+        );
+        expect_no_receive(&ctx.repair_receiver);
+    }
+
+    #[test]
+    fn max_admitted_vote_slot_handles_startup_and_overflow() {
+        assert_eq!(max_admitted_vote_slot(500, 0), 540);
+        assert_eq!(max_admitted_vote_slot(0, Slot::MAX), Slot::MAX);
+    }
+
+    #[test]
+    fn certs_too_far_in_future_are_dropped() {
         let mut ctx = TestContext::new();
         let slot = ctx.verifier.sharable_banks.root().slot() + NUM_SLOTS_FOR_VERIFY + 1;
         let cert_type = CertificateType::Finalize(slot);
@@ -2041,24 +2152,14 @@ mod tests {
             &(0..ctx.validator_keypairs.len()).collect::<Vec<usize>>(),
         );
         let cert = ConsensusMessage::Certificate(cert);
-        let rank = 0;
-        let vote = ConsensusMessage::Vote(create_signed_vote_message(
-            &ctx.verifier.sharable_banks.root(),
-            &ctx.validator_keypairs,
-            ctx.verifier.cluster_info.my_shred_version(),
-            Vote::new_skip_vote(slot),
-            rank,
-        ));
         let datagrams = messages_to_datagrams(
-            &[
-                (cert, Pubkey::new_unique()),
-                (vote, ctx.validator_keypairs[rank].node_keypair.pubkey()),
-            ],
+            &[(cert, Pubkey::new_unique())],
             ctx.verifier.cluster_info.my_shred_version(),
         );
         ctx.verifier.verify_and_send_datagrams(datagrams).unwrap();
+
         assert_eq!(ctx.verifier.stats.cert_stats.too_far_in_future.0, 1);
-        assert_eq!(ctx.verifier.stats.vote_too_far_in_future.0, 1);
+        expect_no_receive(&ctx.pool_receiver);
     }
 
     fn messages_to_datagrams(

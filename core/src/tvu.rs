@@ -352,6 +352,7 @@ impl Tvu {
                 migration_status: migration_status.clone(),
                 ban_sender: votor_ban_sender,
                 sharable_banks,
+                highest_parent_ready: highest_parent_ready.clone(),
                 cluster_info: cluster_info.clone(),
                 leader_schedule: leader_schedule_cache.clone(),
                 num_threads: tvu_config.bls_sigverify_threads.get(),
