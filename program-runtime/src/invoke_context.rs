@@ -1,23 +1,13 @@
-#[cfg(feature = "dev-context-only-utils")]
-use {
-    crate::program_cache_entry::ProgramCacheEntry,
-    qualifier_attr::qualifiers,
-    solana_account::{AccountSharedData, WritableAccount},
-    solana_epoch_schedule::EpochSchedule,
-    solana_instruction::AccountMeta,
-    solana_message::{LegacyMessage, Message, SanitizedMessage},
-    solana_sdk_ids::sysvar,
-    solana_transaction_context::transaction_accounts::KeyedAccountSharedData,
-    std::collections::{HashMap, HashSet},
-};
 use {
     crate::{
+        callback::ProgramCacheCallback,
         execution_budget::{SVMTransactionExecutionBudget, SVMTransactionExecutionCost},
         loaded_programs::{
             ProgramCacheForTxBatch, ProgramRuntimeEnvironment, ProgramRuntimeEnvironments,
         },
         memory_context::{MemoryContext, MemoryContexts},
-        program_cache_entry::ProgramCacheEntryType,
+        program_cache_entry::{ProgramCacheEntry, ProgramCacheEntryType},
+        program_metrics::ProgramStatistics,
         stable_log,
         sysvar_cache::SysvarCache,
     },
@@ -55,6 +45,17 @@ use {
         rc::Rc,
         time::Duration,
     },
+};
+#[cfg(feature = "dev-context-only-utils")]
+use {
+    qualifier_attr::qualifiers,
+    solana_account::{AccountSharedData, WritableAccount},
+    solana_epoch_schedule::EpochSchedule,
+    solana_instruction::AccountMeta,
+    solana_message::{LegacyMessage, Message, SanitizedMessage},
+    solana_sdk_ids::sysvar,
+    solana_transaction_context::transaction_accounts::KeyedAccountSharedData,
+    std::collections::{HashMap, HashSet},
 };
 
 pub type BuiltinFunctionRegisterer =
@@ -163,6 +164,7 @@ pub struct EnvironmentConfig<'a> {
     pub blockhash_lamports_per_signature: u64,
     alpenglow_migration_succeeded: bool,
     epoch_stake_callback: &'a dyn InvokeContextCallback,
+    program_cache_callback: &'a dyn ProgramCacheCallback,
     feature_set: &'a SVMFeatureSet,
     program_runtime_environments: &'a ProgramRuntimeEnvironments,
     sysvar_cache: &'a SysvarCache,
@@ -173,6 +175,7 @@ impl<'a> EnvironmentConfig<'a> {
         blockhash_lamports_per_signature: u64,
         alpenglow_migration_succeeded: bool,
         epoch_stake_callback: &'a dyn InvokeContextCallback,
+        program_cache_callback: &'a dyn ProgramCacheCallback,
         feature_set: &'a SVMFeatureSet,
         program_runtime_environments: &'a ProgramRuntimeEnvironments,
         sysvar_cache: &'a SysvarCache,
@@ -182,6 +185,7 @@ impl<'a> EnvironmentConfig<'a> {
             blockhash_lamports_per_signature,
             alpenglow_migration_succeeded,
             epoch_stake_callback,
+            program_cache_callback,
             feature_set,
             program_runtime_environments,
             sysvar_cache,
@@ -191,6 +195,29 @@ impl<'a> EnvironmentConfig<'a> {
     /// Get cached sysvars
     pub fn sysvar_cache(&self) -> &SysvarCache {
         self.sysvar_cache
+    }
+
+    /// Resolve a program entry, loading it from the global program cache on the
+    /// fly if the batch-local cache does not already hold it.
+    pub fn load_program(&self, program_id: &Pubkey) -> Option<Arc<ProgramCacheEntry>> {
+        self.program_cache_callback.load_program(program_id)
+    }
+
+    /// Record that `program_id` was invoked, for usage accounting.
+    pub fn record_program_use(&self, program_id: &Pubkey, entry: &Arc<ProgramCacheEntry>) {
+        self.program_cache_callback
+            .record_program_use(program_id, entry)
+    }
+
+    /// Obtain usage statistics recorded for `program_id`, without loading or
+    /// compiling its binary.
+    pub fn get_program_stats(
+        &self,
+        program_id: &Pubkey,
+        loader_key: &Pubkey,
+    ) -> Option<Arc<ProgramStatistics>> {
+        self.program_cache_callback
+            .get_program_stats(program_id, loader_key)
     }
 }
 
@@ -630,6 +657,25 @@ impl<'a, 'ix_data> InvokeContext<'a, 'ix_data> {
             .and(self.pop())
     }
 
+    /// Resolve a program entry, loading it from the global program cache on the
+    /// fly if the batch-local cache does not already hold it.
+    pub fn load_program(&mut self, program_id: &Pubkey) -> Option<Arc<ProgramCacheEntry>> {
+        self.program_cache_for_tx_batch
+            .find(program_id)
+            .inspect(|entry| {
+                self.environment_config
+                    .record_program_use(program_id, entry);
+            })
+            .or_else(|| {
+                self.environment_config
+                    .load_program(program_id)
+                    .inspect(|entry| {
+                        self.program_cache_for_tx_batch
+                            .replenish(*program_id, Arc::clone(entry));
+                    })
+            })
+    }
+
     /// Calls the instruction's program entrypoint method
     fn process_executable_chain(
         &mut self,
@@ -639,9 +685,11 @@ impl<'a, 'ix_data> InvokeContext<'a, 'ix_data> {
         let instruction_context = self.transaction_context.get_current_instruction_context()?;
         let process_executable_chain_time = Measure::start("process_executable_chain_time");
 
+        let mut program_is_builtin = false;
         let builtin_id = {
             let owner_id = instruction_context.get_program_owner()?;
             if native_loader::check_id(&owner_id) {
+                program_is_builtin = true;
                 *instruction_context.get_program_key()?
             } else if bpf_loader_deprecated::check_id(&owner_id)
                 || bpf_loader::check_id(&owner_id)
@@ -660,6 +708,12 @@ impl<'a, 'ix_data> InvokeContext<'a, 'ix_data> {
             .program_cache_for_tx_batch
             .find(&builtin_id)
             .ok_or(InstructionError::UnsupportedProgramId)?;
+        if program_is_builtin {
+            // Otherwise `builtin_id` is the loader dispatching a BPF program,
+            // which is not itself the program being invoked.
+            self.environment_config
+                .record_program_use(&builtin_id, &entry);
+        }
         let function = match &entry.program {
             ProgramCacheEntryType::Builtin(program) => program
                 .get_function_registry()
@@ -864,6 +918,7 @@ macro_rules! with_mock_invoke_context_with_feature_set {
             solana_svm_log_collector::LogCollector,
             $crate::{
                 __private::{Hash, ReadableAccount, Rent, TransactionContext},
+                callback::NoOpProgramCacheCallback,
                 execution_budget::{SVMTransactionExecutionBudget, SVMTransactionExecutionCost},
                 invoke_context::{EnvironmentConfig, InvokeContext},
                 loaded_programs::{ProgramCacheForTxBatch, ProgramRuntimeEnvironments},
@@ -898,6 +953,7 @@ macro_rules! with_mock_invoke_context_with_feature_set {
             0,
             false,
             &MockInvokeContextCallback {},
+            &NoOpProgramCacheCallback,
             $feature_set,
             &program_runtime_environments,
             &sysvar_cache,
@@ -1135,9 +1191,12 @@ pub fn mock_process_instruction<F: FnMut(&mut InvokeContext), G: FnMut(&mut Invo
 mod tests {
     use {
         super::*,
-        crate::execution_budget::{
-            DEFAULT_INSTRUCTION_COMPUTE_UNIT_LIMIT, MAX_INSTRUCTION_STACK_DEPTH,
-            MAX_INSTRUCTION_STACK_DEPTH_SIMD_0268,
+        crate::{
+            callback::NoOpProgramCacheCallback,
+            execution_budget::{
+                DEFAULT_INSTRUCTION_COMPUTE_UNIT_LIMIT, MAX_INSTRUCTION_STACK_DEPTH,
+                MAX_INSTRUCTION_STACK_DEPTH_SIMD_0268,
+            },
         },
         openssl::{
             ec::{EcGroup, EcKey},
@@ -2182,6 +2241,7 @@ mod tests {
             0,
             false,
             &MockCallback {},
+            &NoOpProgramCacheCallback,
             &feature_set,
             &program_runtime_environments,
             &sysvar_cache,
@@ -2234,6 +2294,7 @@ mod tests {
             0,
             false,
             &MockCallback {},
+            &NoOpProgramCacheCallback,
             &feature_set,
             &program_runtime_environments,
             &sysvar_cache,
@@ -2272,6 +2333,7 @@ mod tests {
             0,
             false,
             &MockCallback {},
+            &NoOpProgramCacheCallback,
             &feature_set,
             &program_runtime_environments,
             &sysvar_cache,
@@ -2398,6 +2460,7 @@ mod tests {
             0,
             false,
             &MockCallback {},
+            &NoOpProgramCacheCallback,
             &feature_set,
             &program_runtime_environments,
             &sysvar_cache,
@@ -2429,6 +2492,7 @@ mod tests {
             0,
             false,
             &MockCallback {},
+            &NoOpProgramCacheCallback,
             &feature_set,
             &program_runtime_environments,
             &sysvar_cache,
@@ -2465,6 +2529,7 @@ mod tests {
             0,
             false,
             &MockCallback {},
+            &NoOpProgramCacheCallback,
             &feature_set,
             &program_runtime_environments,
             &sysvar_cache,
@@ -2622,6 +2687,7 @@ mod tests {
             0,
             false,
             &MockCallback {},
+            &NoOpProgramCacheCallback,
             &feature_set,
             &program_runtime_environments,
             &sysvar_cache,

@@ -15,6 +15,7 @@ use {
     solana_instruction::error::InstructionError,
     solana_loader_v3_interface::state::UpgradeableLoaderState,
     solana_program_runtime::{
+        callback::ProgramCacheCallback,
         deploy::deploy_program,
         invoke_context::{EnvironmentConfig, InvokeContext},
         loaded_programs::{
@@ -169,6 +170,9 @@ impl Bank {
 
             struct MockCallback {}
             impl InvokeContextCallback for MockCallback {}
+            // Migration deploys through `deploy_program` directly, so nothing here
+            // needs to resolve a program on the fly.
+            impl ProgramCacheCallback for MockCallback {}
             let feature_set = self.feature_set.runtime_features();
             let program_runtime_environments = ProgramRuntimeEnvironments::new(
                 ProgramRuntimeEnvironment::clone(&program_runtime_environment),
@@ -181,6 +185,7 @@ impl Bank {
                     Hash::default(),
                     0,
                     false,
+                    &MockCallback {},
                     &MockCallback {},
                     &feature_set,
                     &program_runtime_environments,
@@ -195,6 +200,9 @@ impl Bank {
             deploy_program(
                 dummy_invoke_context.get_log_collector(),
                 &mut load_program_metrics,
+                // Preserves the pre-existing behaviour of not inheriting the
+                // replaced program's usage stats.
+                None,
                 dummy_invoke_context.program_cache_for_tx_batch,
                 ProgramRuntimeEnvironment::clone(&program_runtime_environment),
                 false, // disable_sbpf_v0_v1_v2_deployment // explicitly continue to allow them for core program migrations
