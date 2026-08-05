@@ -749,9 +749,10 @@ mod tests {
         accounts.store_for_tests((slot, [(&rewritten_pubkey, &open_account)].as_slice()));
         accounts.add_root_and_flush_write_cache(slot);
 
-        // The flushes above left tombstone_slot's storage holding only the uncovered
-        // tombstone; clean and shrink leave it untouched, so it enters minimize as a
-        // tombstone-only storage
+        // The flushes above left tombstone_slot's storage holding only a tombstone
+        // not covered by the full snapshot so clean and shrink leave it untouched.
+        // When minimize is called, it is a tombstone-only storage which should be
+        // removed as a dead slot
         accounts.clean_accounts_for_tests();
         accounts.shrink_all_slots(false, None);
         assert!(!accounts.contains(&zero_lamport_pubkey));

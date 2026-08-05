@@ -5341,7 +5341,7 @@ impl AccountsDb {
         let mut num_reclaims = 0;
         let mut num_obsolete_slots_removed = 0;
         let mut num_obsolete_bytes_removed = 0;
-        let mut flushed_slot_purged = false;
+        let mut is_slot_dead = false;
         if !reclaims.is_empty() {
             num_reclaims = reclaims.iter().map(|r| r.len() as u64).sum();
             let purge_stats = PurgeStats::default();
@@ -5350,7 +5350,7 @@ impl AccountsDb {
                 &purge_stats,
                 MarkAccountsObsolete::Yes(slot),
             );
-            flushed_slot_purged = dead_slots.contains(&slot);
+            is_slot_dead = dead_slots.contains(&slot);
             num_obsolete_slots_removed =
                 purge_stats.num_stored_slots_removed.load(Ordering::Relaxed) as u64;
             num_obsolete_bytes_removed = purge_stats
@@ -5361,8 +5361,8 @@ impl AccountsDb {
 
         // Handling reclaims purges the flushed storage when every flushed account became a
         // tombstone covered by the latest full snapshot. Otherwise the storage must still
-        // exist, and just one AppendVec is enough to hold all the data for the slot.
-        if !flushed_slot_purged {
+        // exist, and just one storage is enough to hold all the data for the slot.
+        if !is_slot_dead {
             assert!(self.storage.get_slot_storage_entry(slot).is_some());
             self.reopen_storage_as_readonly_shrinking_in_progress_ok(slot);
         }
