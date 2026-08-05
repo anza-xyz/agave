@@ -1,6 +1,6 @@
-#![feature(test)]
 
-extern crate test;
+
+
 
 use {
     solana_core::{
@@ -16,11 +16,11 @@ use {
         sync::Arc,
     },
     tempfile::TempDir,
-    test::Bencher,
+    Bencher,
     trees::tr,
 };
 
-#[bench]
+
 fn bench_save_tower(bench: &mut Bencher) {
     let dir = TempDir::new().unwrap();
 
@@ -43,7 +43,7 @@ fn bench_save_tower(bench: &mut Bencher) {
     });
 }
 
-#[bench]
+
 #[ignore]
 fn bench_generate_ancestors_descendants(bench: &mut Bencher) {
     let vote_account_pubkey = &Pubkey::default();
@@ -79,3 +79,6 @@ fn bench_generate_ancestors_descendants(bench: &mut Bencher) {
         }
     });
 }
+
+benchmark_group!(benches, bench_save_tower, bench_generate_ancestors_descendants);
+benchmark_main!(benches);

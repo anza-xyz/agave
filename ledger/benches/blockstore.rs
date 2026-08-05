@@ -1,6 +1,6 @@
 #![allow(clippy::arithmetic_side_effects)]
-#![feature(test)]
-extern crate test;
+
+
 
 use {
     rand::Rng,
@@ -14,7 +14,7 @@ use {
     solana_pubkey::Pubkey,
     solana_signature::Signature,
     solana_transaction_status::TransactionStatusMeta,
-    test::Bencher,
+    Bencher,
 };
 
 // Insert some shreds into the ledger in preparation for read benchmarks
@@ -45,7 +45,7 @@ fn setup_read_bench(
 }
 
 // Write shreds to the ledger
-#[bench]
+
 #[ignore]
 fn bench_write_shreds(bench: &mut Bencher) {
     let ledger_path = get_tmp_ledger_path_auto_delete!();
@@ -59,7 +59,7 @@ fn bench_write_shreds(bench: &mut Bencher) {
     });
 }
 
-#[bench]
+
 #[ignore]
 fn bench_read_sequential(bench: &mut Bencher) {
     let ledger_path = get_tmp_ledger_path_auto_delete!();
@@ -84,7 +84,7 @@ fn bench_read_sequential(bench: &mut Bencher) {
     });
 }
 
-#[bench]
+
 #[ignore]
 fn bench_read_random(bench: &mut Bencher) {
     let ledger_path = get_tmp_ledger_path_auto_delete!();
@@ -113,7 +113,7 @@ fn bench_read_random(bench: &mut Bencher) {
     });
 }
 
-#[bench]
+
 #[ignore]
 fn bench_insert_data_shred(bench: &mut Bencher) {
     let ledger_path = get_tmp_ledger_path_auto_delete!();
@@ -127,7 +127,7 @@ fn bench_insert_data_shred(bench: &mut Bencher) {
     });
 }
 
-#[bench]
+
 #[ignore]
 fn bench_write_transaction_memos(b: &mut Bencher) {
     let ledger_path = get_tmp_ledger_path_auto_delete!();
@@ -147,7 +147,7 @@ fn bench_write_transaction_memos(b: &mut Bencher) {
     });
 }
 
-#[bench]
+
 #[ignore]
 fn bench_add_transaction_memos_to_batch(b: &mut Bencher) {
     let ledger_path = get_tmp_ledger_path_auto_delete!();
@@ -172,7 +172,7 @@ fn bench_add_transaction_memos_to_batch(b: &mut Bencher) {
     });
 }
 
-#[bench]
+
 #[ignore]
 fn bench_write_transaction_status(b: &mut Bencher) {
     let ledger_path = get_tmp_ledger_path_auto_delete!();
@@ -206,7 +206,7 @@ fn bench_write_transaction_status(b: &mut Bencher) {
     });
 }
 
-#[bench]
+
 #[ignore]
 fn bench_add_transaction_status_to_batch(b: &mut Bencher) {
     let ledger_path = get_tmp_ledger_path_auto_delete!();
@@ -244,3 +244,6 @@ fn bench_add_transaction_status_to_batch(b: &mut Bencher) {
         blockstore.write_batch(status_batch).unwrap();
     });
 }
+
+benchmark_group!(benches, bench_write_shreds, bench_read_sequential, bench_read_random, bench_insert_data_shred, bench_write_transaction_memos, bench_add_transaction_memos_to_batch, bench_write_transaction_status, bench_add_transaction_status_to_batch);
+benchmark_main!(benches);

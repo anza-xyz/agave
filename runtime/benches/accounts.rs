@@ -1,7 +1,7 @@
-#![feature(test)]
+
 #![allow(clippy::arithmetic_side_effects)]
 
-extern crate test;
+
 
 use {
     solana_account::{AccountSharedData, ReadableAccount},
@@ -11,7 +11,7 @@ use {
     solana_pubkey::Pubkey,
     solana_runtime::bank::*,
     std::{path::PathBuf, sync::Arc},
-    test::Bencher,
+    Bencher,
 };
 
 fn deposit_many(bank: &Bank, pubkeys: &mut Vec<Pubkey>, num: usize) -> Result<(), LamportsError> {
@@ -27,7 +27,7 @@ fn deposit_many(bank: &Bank, pubkeys: &mut Vec<Pubkey>, num: usize) -> Result<()
     Ok(())
 }
 
-#[bench]
+
 fn bench_accounts_create(bencher: &mut Bencher) {
     let (genesis_config, _) = create_genesis_config(10_000);
     let bank0 = Bank::new_with_paths_for_benches(&genesis_config, vec![PathBuf::from("bench_a0")]);
@@ -37,7 +37,7 @@ fn bench_accounts_create(bencher: &mut Bencher) {
     });
 }
 
-#[bench]
+
 fn bench_accounts_squash(bencher: &mut Bencher) {
     let (genesis_config, _) = create_genesis_config(100_000);
     let prev_bank =
@@ -63,3 +63,6 @@ fn bench_accounts_squash(bencher: &mut Bencher) {
         prev_bank = next_bank;
     });
 }
+
+benchmark_group!(benches, bench_accounts_create, bench_accounts_squash);
+benchmark_main!(benches);

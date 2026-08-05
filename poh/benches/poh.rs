@@ -1,7 +1,7 @@
 // This bench attempts to justify the value of `solana_core::poh_service::NUM_HASHES_PER_BATCH`
 
-#![feature(test)]
-extern crate test;
+
+
 
 use {
     solana_entry::poh::Poh,
@@ -22,7 +22,7 @@ use {
         Arc, Mutex,
         atomic::{AtomicBool, Ordering},
     },
-    test::Bencher,
+    Bencher,
 };
 
 #[cfg(not(any(target_env = "msvc", target_os = "freebsd")))]
@@ -31,7 +31,7 @@ static GLOBAL: jemallocator::Jemalloc = jemallocator::Jemalloc;
 
 const NUM_HASHES: u64 = 30_000; // Should require ~10ms on a 2017 MacBook Pro
 
-#[bench]
+
 // No locking.  Fastest.
 fn bench_poh_hash(bencher: &mut Bencher) {
     let mut poh = Poh::new(Hash::default(), None);
@@ -40,7 +40,7 @@ fn bench_poh_hash(bencher: &mut Bencher) {
     })
 }
 
-#[bench]
+
 // Lock on each iteration.  Slowest.
 fn bench_arc_mutex_poh_hash(bencher: &mut Bencher) {
     let poh = Arc::new(Mutex::new(Poh::new(Hash::default(), None)));
@@ -51,7 +51,7 @@ fn bench_arc_mutex_poh_hash(bencher: &mut Bencher) {
     })
 }
 
-#[bench]
+
 // Acquire lock every NUM_HASHES_PER_BATCH iterations.
 // Speed should be close to bench_poh_hash() if NUM_HASHES_PER_BATCH is set well.
 fn bench_arc_mutex_poh_batched_hash(bencher: &mut Bencher) {
@@ -72,7 +72,7 @@ fn bench_arc_mutex_poh_batched_hash(bencher: &mut Bencher) {
     })
 }
 
-#[bench]
+
 // Worst case transaction record delay due to batch hashing at NUM_HASHES_PER_BATCH
 fn bench_poh_lock_time_per_batch(bencher: &mut Bencher) {
     let mut poh = Poh::new(Hash::default(), None);
@@ -81,7 +81,7 @@ fn bench_poh_lock_time_per_batch(bencher: &mut Bencher) {
     })
 }
 
-#[bench]
+
 fn bench_poh_recorder_record(bencher: &mut Bencher) {
     let ledger_path = get_tmp_ledger_path_auto_delete!();
     let blockstore =
@@ -128,7 +128,7 @@ fn bench_poh_recorder_record(bencher: &mut Bencher) {
     poh_recorder.tick();
 }
 
-#[bench]
+
 fn bench_poh_recorder_set_bank(bencher: &mut Bencher) {
     let ledger_path = get_tmp_ledger_path_auto_delete!();
     let blockstore =
@@ -154,3 +154,6 @@ fn bench_poh_recorder_set_bank(bencher: &mut Bencher) {
         poh_recorder.clear_bank_for_test();
     });
 }
+
+benchmark_group!(benches, bench_poh_hash, bench_arc_mutex_poh_hash, bench_arc_mutex_poh_batched_hash, bench_poh_lock_time_per_batch, bench_poh_recorder_record, bench_poh_recorder_set_bank);
+benchmark_main!(benches);

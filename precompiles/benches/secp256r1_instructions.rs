@@ -1,6 +1,6 @@
-#![feature(test)]
 
-extern crate test;
+
+
 use {
     agave_feature_set::FeatureSet,
     agave_precompiles::secp256r1::verify,
@@ -12,7 +12,7 @@ use {
     rand::Rng,
     solana_instruction::Instruction,
     solana_secp256r1_program::{new_secp256r1_instruction_with_signature, sign_message},
-    test::Bencher,
+    Bencher,
 };
 
 // 5k transactions should be enough for benching loop
@@ -48,7 +48,7 @@ fn create_test_instructions(message_length: u16) -> Vec<Instruction> {
         .collect()
 }
 
-#[bench]
+
 fn bench_secp256r1_len_032(b: &mut Bencher) {
     let feature_set = FeatureSet::all_enabled();
     let ixs = create_test_instructions(32);
@@ -59,7 +59,7 @@ fn bench_secp256r1_len_032(b: &mut Bencher) {
     });
 }
 
-#[bench]
+
 fn bench_secp256r1_len_256(b: &mut Bencher) {
     let feature_set = FeatureSet::all_enabled();
     let ixs = create_test_instructions(256);
@@ -70,7 +70,7 @@ fn bench_secp256r1_len_256(b: &mut Bencher) {
     });
 }
 
-#[bench]
+
 fn bench_secp256r1_len_32k(b: &mut Bencher) {
     let feature_set = FeatureSet::all_enabled();
     let ixs = create_test_instructions(32 * 1024);
@@ -81,7 +81,7 @@ fn bench_secp256r1_len_32k(b: &mut Bencher) {
     });
 }
 
-#[bench]
+
 fn bench_secp256r1_len_max(b: &mut Bencher) {
     let required_extra_space = 113_u16; // len for pubkey, sig, and offsets
     let feature_set = FeatureSet::all_enabled();
@@ -92,3 +92,6 @@ fn bench_secp256r1_len_max(b: &mut Bencher) {
         verify(&instruction.data, &[&instruction.data], &feature_set).unwrap();
     });
 }
+
+benchmark_group!(benches, bench_secp256r1_len_032, bench_secp256r1_len_256, bench_secp256r1_len_32k, bench_secp256r1_len_max);
+benchmark_main!(benches);
