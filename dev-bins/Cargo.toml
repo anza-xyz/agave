@@ -170,6 +170,12 @@ debug = "line-tables-only"
 [profile.dev.package.curve25519-dalek]
 opt-level = 3
 
+# solana-signature >=3.5.0 verifies via solana-ed25519, which vendors the
+# curve25519 field arithmetic instead of depending on the curve25519-dalek
+# package, so the override above no longer covers signature verification.
+[profile.dev.package.solana-ed25519]
+opt-level = 3
+
 [profile.full-dev]
 inherits = "dev"
 debug = "full"
