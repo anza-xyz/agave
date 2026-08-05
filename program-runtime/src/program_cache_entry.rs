@@ -149,7 +149,7 @@ impl ProgramCacheEntryType {
         }
     }
 
-    /// Returns `true` if the program's binary has been evicted.
+    /// Returns `true` if this entry is in the `Unloaded` state (verified, but executable not currently resident/compiled).
     pub fn is_unloaded(&self) -> bool {
         matches!(self, ProgramCacheEntryType::Unloaded(_))
     }
