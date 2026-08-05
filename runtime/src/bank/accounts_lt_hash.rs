@@ -7,7 +7,7 @@ use {
     },
     solana_account::{AccountSharedData, ReadableAccount},
     solana_accounts_db::{accounts_db::AccountsDb, storable_accounts::StorableAccounts},
-    solana_lattice_hash::lt_hash::LtHash,
+    solana_lattice_hash::{batch::Accumulator, lt_hash::LtHash},
     solana_pubkey::Pubkey,
     std::{
         array, hint,
@@ -22,6 +22,15 @@ use {
 
 /// Number of threads for the async accounts hasher thread pool.
 const NUM_ACCOUNTS_HASHER_THREADS: usize = 4;
+
+/// Number of account updates processed per asynchronous hashing job.
+///
+/// Batching updates into chunks amortizes the per-job spawn/lock overhead (there
+/// can be tens of thousands of account updates per slot) while keeping enough
+/// jobs in flight to fill the hasher thread pool. It also lets each worker's
+/// persistent batched accumulator stage many messages per job, so the BLAKE3
+/// SIMD batch kernel stays saturated.
+const HASHING_CHUNK_SIZE: usize = 64;
 
 // Maximum size, in bytes, for the seen-accounts freelist.
 const MAX_BYTES_SEEN_ACCOUNTS_FREELIST: usize = 10_000_000;
@@ -49,6 +58,7 @@ impl Bank {
         let thread_pool = accounts_hasher_thread_pool();
 
         // process accounts in reverse because we must only count the latest version of each account
+        let mut chunk = Vec::with_capacity(HASHING_CHUNK_SIZE);
         for index in (0..accounts.len()).rev() {
             let address = accounts.pubkey(index);
             if !seen_accounts.insert(*address) {
@@ -66,17 +76,21 @@ impl Bank {
             if prev_account.is_none() && curr_account.is_none() {
                 // the account was ephemeral; skip it
             } else {
-                // the account was modified; enqueue this update
-                async_progress.spawn(
-                    thread_pool,
-                    AccountsLtHashUpdate {
-                        address: *address,
-                        prev_account,
-                        curr_account,
-                    },
-                );
+                // the account was modified; buffer this update and enqueue a full chunk
+                chunk.push(AccountsLtHashUpdate {
+                    address: *address,
+                    prev_account,
+                    curr_account,
+                });
+                if chunk.len() >= HASHING_CHUNK_SIZE {
+                    let full =
+                        std::mem::replace(&mut chunk, Vec::with_capacity(HASHING_CHUNK_SIZE));
+                    async_progress.spawn_chunk(thread_pool, full);
+                }
             }
         }
+        // enqueue the trailing partial chunk (spawn_chunk is a no-op if empty)
+        async_progress.spawn_chunk(thread_pool, chunk);
 
         // reclaim the seen accounts hashset
         seen_accounts_freelist.try_push(seen_accounts);
@@ -129,9 +143,9 @@ impl Bank {
         let async_progress = &self.accounts_lt_hash_async_progress;
         let thread_pool_for_hashing_accounts = accounts_hasher_thread_pool();
 
-        // A closure that does the loading and enqueueing, so code is shared
-        // whether using the thread_pool_for_loading_accounts or not.
-        let load_then_enqueue = |index| {
+        // A closure that loads the previous version and builds the update, so code
+        // is shared whether using the thread_pool_for_loading_accounts or not.
+        let load_update = |index| {
             let address = accounts.pubkey(index);
             let prev_account = self
                 .rc
@@ -143,30 +157,33 @@ impl Bank {
             });
             if prev_account.is_none() && curr_account.is_none() {
                 // the account was ephemeral; skip it
+                None
             } else {
-                // the account was modified; enqueue this update
-                async_progress.spawn(
-                    thread_pool_for_hashing_accounts,
-                    AccountsLtHashUpdate {
-                        address: *address,
-                        prev_account,
-                        curr_account,
-                    },
-                );
+                // the account was modified; build this update
+                Some(AccountsLtHashUpdate {
+                    address: *address,
+                    prev_account,
+                    curr_account,
+                })
             }
         };
 
-        if let Some(thread_pool_for_loading_accounts) = thread_pool_for_loading_accounts {
-            // The previous version of accounts must be loaded before subsequent account
-            // modifications occur, so ThreadPool::spawn() canot be used here.
-            thread_pool_for_loading_accounts.install(|| {
-                (0..accounts.len())
-                    .into_par_iter()
-                    .for_each(load_then_enqueue);
-            });
-        } else {
-            (0..accounts.len()).for_each(load_then_enqueue);
-        }
+        // The previous version of accounts must be loaded before subsequent account
+        // modifications occur, so the loads are done here (not on the async hashing
+        // pool). Only the hashing itself is enqueued asynchronously, below.
+        let updates: Vec<AccountsLtHashUpdate> =
+            if let Some(thread_pool_for_loading_accounts) = thread_pool_for_loading_accounts {
+                thread_pool_for_loading_accounts.install(|| {
+                    (0..accounts.len())
+                        .into_par_iter()
+                        .filter_map(load_update)
+                        .collect()
+                })
+            } else {
+                (0..accounts.len()).filter_map(load_update).collect()
+            };
+
+        async_progress.spawn_updates(thread_pool_for_hashing_accounts, updates);
     }
 
     /// Updates the accounts lt hash.
@@ -212,36 +229,65 @@ impl Bank {
     }
 }
 
+/// A single hasher worker's pair of persistent batched lattice-hash accumulators.
+///
+/// The BLAKE3 batch kernel only reaches its SIMD width once several single-chunk
+/// messages are staged, so each worker keeps a *persistent* accumulator that
+/// stages account preimages across many jobs and flushes a full SIMD batch as
+/// soon as one fills; only the final partial batch of each worker (drained at
+/// `finish()`) falls back to the serial path.
+///
+/// Because the batch API only group-*adds*, previous-version accounts (which must
+/// be mixed *out*) are staged in a separate `minus` accumulator. Group-add is a
+/// commutative group, so folding `Σ curr − Σ prev` into the bank at `finish()` is
+/// bit-for-bit identical to the previous per-account `mix_in`/`mix_out`.
+#[derive(Debug)]
+struct ThreadAcc {
+    /// Current-version accounts, mixed *in* to the bank hash.
+    plus: Accumulator,
+    /// Previous-version accounts, mixed *out* of the bank hash.
+    minus: Accumulator,
+}
+
+impl ThreadAcc {
+    fn new() -> Self {
+        Self {
+            plus: Accumulator::new(),
+            minus: Accumulator::new(),
+        }
+    }
+
+    /// Stages `update`'s previous and current account versions into the `minus`
+    /// and `plus` accumulators respectively.
+    fn process(&mut self, update: AccountsLtHashUpdate) {
+        let AccountsLtHashUpdate {
+            address,
+            prev_account,
+            curr_account,
+        } = update;
+        if let Some(prev_account) = prev_account {
+            AccountsDb::add_account_to_lt_hash(&mut self.minus, &prev_account, &address);
+        }
+        if let Some(curr_account) = curr_account {
+            AccountsDb::add_account_to_lt_hash(&mut self.plus, &curr_account, &address);
+        }
+    }
+}
+
 /// Struct for tracking progress of the asynchronous accounts lt hashing for a Bank.
 pub struct AccountsLtHashAsyncProgress {
-    // Note: use [Mutex<CachePadded<LtHash>>] and *not* [CachePadded<Mutex<LtHash>>].
-    // - In both ways each mutex is on its own separate cache line.
-    // - In both ways the size used for each element, including padding, is the same.
-    // - Only this way ensures that each LtHash is placed for aligned SIMD/AVX access.
-    //
-    // Here's the layout of [Mutex<CachePadded<LtHash>>; 2]
-    //
-    //  │element 0                         │element 1
-    //  │                                  │
-    //  ▼───────┬─────────┬────────────────▼───────┬─────────┬────────────────┐
-    //  │ Mutex │ padding │     LtHash     │ Mutex │ padding │     LtHash     │
-    //  ├───────┼─────────┼────────────────┼───────┼─────────┼────────────────┤
-    //  │       │         │                │       │         │                │
-    //  │0      │6        │128 <-- aligned │2176   │2182     │2304            │4352
-    //
-    //
-    // And here's the layout of [CachePadded<Mutex<LtHash>>; 2]
-    //
-    //  │element 0                         │element 1
-    //  │                                  │
-    //  ▼───────┬────────────────┬─────────▼───────┬────────────────┬─────────┐
-    //  │ Mutex │     LtHash     │ padding │ Mutex │     LtHash     │ padding │
-    //  ├───────┼────────────────┼─────────┼───────┼────────────────┼─────────┤
-    //  │       │                │         │       │                │         │
-    //  │0      │6 <-- unaligned │2054     │2176   │2182            │4230     │4352
-    //
-    accumulators: Arc<[Mutex<CachePadded<LtHash>>; NUM_ACCOUNTS_HASHER_THREADS]>,
+    // One accumulator pair per hasher worker thread. A running job only ever
+    // touches its own worker's accumulator (selected by `current_thread_index()`),
+    // so the Mutex is uncontended -- it exists only to share the array across
+    // threads and to reduce at `finish()`. `CachePadded<Mutex<..>>` keeps each
+    // worker's lock word on its own cache line to avoid false sharing between
+    // workers. (Unlike the previous one-at-a-time `LtHash`, the batched
+    // accumulator needs no SIMD alignment: the batch kernel reduces into its
+    // running value with scalar adds.)
+    accumulators: Arc<[CachePadded<Mutex<ThreadAcc>>; NUM_ACCOUNTS_HASHER_THREADS]>,
+    /// Number of asynchronous hashing jobs (chunks) not yet completed.
     num_jobs_pending: Arc<AtomicUsize>,
+    /// Total number of account updates enqueued (for metrics).
     num_jobs_total: AtomicU64,
 }
 
@@ -250,17 +296,23 @@ impl AccountsLtHashAsyncProgress {
     pub fn new() -> Self {
         Self {
             accumulators: Arc::new(array::from_fn(|_| {
-                Mutex::new(CachePadded::new(LtHash::identity()))
+                CachePadded::new(Mutex::new(ThreadAcc::new()))
             })),
             num_jobs_pending: Arc::new(AtomicUsize::new(0)),
             num_jobs_total: AtomicU64::new(0),
         }
     }
 
-    /// Enqueues `update` into `thread_pool` for asynchronous processing.
-    fn spawn(&self, thread_pool: &'static ThreadPool, update: AccountsLtHashUpdate) {
+    /// Enqueues a chunk of `updates` onto `thread_pool` for asynchronous
+    /// processing. The whole chunk is staged into a single worker's accumulator.
+    /// A no-op if `updates` is empty.
+    fn spawn_chunk(&self, thread_pool: &'static ThreadPool, updates: Vec<AccountsLtHashUpdate>) {
+        if updates.is_empty() {
+            return;
+        }
         self.num_jobs_pending.fetch_add(1, Ordering::Relaxed);
-        self.num_jobs_total.fetch_add(1, Ordering::Relaxed);
+        self.num_jobs_total
+            .fetch_add(updates.len() as u64, Ordering::Relaxed);
         thread_pool.spawn({
             let accumulators = Arc::clone(&self.accumulators);
             let num_jobs_pending = Arc::clone(&self.num_jobs_pending);
@@ -273,7 +325,12 @@ impl AccountsLtHashAsyncProgress {
                 debug_assert!(worker_index < accumulators.len());
                 let accumulator = unsafe { accumulators.get_unchecked(worker_index) };
 
-                Self::process(&mut accumulator.lock().unwrap(), update);
+                {
+                    let mut accumulator = accumulator.lock().unwrap();
+                    for update in updates {
+                        accumulator.process(update);
+                    }
+                }
 
                 // Decrementing the number of pending jobs MUST happen *after*
                 // accumulating the result.  This ensures `finish()` cannot
@@ -283,9 +340,21 @@ impl AccountsLtHashAsyncProgress {
         });
     }
 
+    /// Enqueues all of `updates`, split into chunks of at most `HASHING_CHUNK_SIZE`.
+    fn spawn_updates(&self, thread_pool: &'static ThreadPool, updates: Vec<AccountsLtHashUpdate>) {
+        let mut updates = updates.into_iter();
+        loop {
+            let chunk: Vec<_> = updates.by_ref().take(HASHING_CHUNK_SIZE).collect();
+            if chunk.is_empty() {
+                break;
+            }
+            self.spawn_chunk(thread_pool, chunk);
+        }
+    }
+
     /// Waits for all pending jobs to complete, then mixes the results into `lt_hash`.
     ///
-    /// Returns the number of asynchronous jobs completed.
+    /// Returns the total number of account updates processed.
     ///
     /// Note: Since an LtHash is large, `lt_hash` is passed as an in-out parameter.
     /// This it to avoid Rust compiler bug that fails to perform return value optimization.
@@ -296,29 +365,12 @@ impl AccountsLtHashAsyncProgress {
         }
 
         for thread_accumulator in self.accumulators.iter() {
-            lt_hash.mix_in(&thread_accumulator.lock().unwrap());
+            let mut thread_accumulator = thread_accumulator.lock().unwrap();
+            // fold this worker's delta, Σ curr − Σ prev, into the bank hash
+            lt_hash.mix_in(&thread_accumulator.plus.take_lt_hash());
+            lt_hash.mix_out(&thread_accumulator.minus.take_lt_hash());
         }
         self.num_jobs_total.load(Ordering::Relaxed)
-    }
-
-    /// Processes `update` and mixes the result into `accum_lt_hash`.
-    ///
-    /// Note: Since an LtHash is large, `accum_lt_hash` is passed as an in-out parameter.
-    /// This it to avoid Rust compiler bug that fails to perform return value optimization.
-    fn process(accum_lt_hash: &mut LtHash, update: AccountsLtHashUpdate) {
-        let AccountsLtHashUpdate {
-            address,
-            prev_account,
-            curr_account,
-        } = update;
-        if let Some(prev_account) = prev_account {
-            let prev_lt_hash = AccountsDb::lt_hash_account(&prev_account, &address);
-            accum_lt_hash.mix_out(&prev_lt_hash.0);
-        }
-        if let Some(curr_account) = curr_account {
-            let curr_lt_hash = AccountsDb::lt_hash_account(&curr_account, &address);
-            accum_lt_hash.mix_in(&curr_lt_hash.0);
-        }
     }
 }
 

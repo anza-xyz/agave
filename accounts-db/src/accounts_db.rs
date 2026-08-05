@@ -75,7 +75,7 @@ use {
     solana_account::{Account, AccountSharedData, ReadableAccount},
     solana_clock::{BankId, Epoch, Slot},
     solana_epoch_schedule::EpochSchedule,
-    solana_lattice_hash::lt_hash::LtHash,
+    solana_lattice_hash::{batch::Accumulator as LtHashAccumulator, lt_hash::LtHash},
     solana_measure::{measure::Measure, measure_us},
     solana_nohash_hasher::{BuildNoHashHasher, IntMap, IntSet},
     solana_pubkey::{Pubkey, PubkeyHasherBuilder},
@@ -4146,10 +4146,48 @@ impl AccountsDb {
         AccountLtHash(lt_hash)
     }
 
+    /// Group-adds `account`'s lattice hash into `accumulator` as a single batched
+    /// message (folded in via `mix_in` once the batch flushes).
+    ///
+    /// This is the batched counterpart of [`Self::lt_hash_account`]: it produces
+    /// the identical per-account preimage (see [`Self::write_account_hash_input`]),
+    /// so the resulting `LtHash` is bit-for-bit identical to hashing the account
+    /// one-at-a-time and `mix_in`-ing it. Zero-lamport accounts contribute the
+    /// identity, so they are skipped (matching `lt_hash_account`).
+    ///
+    /// To *subtract* an account (the `mix_out` of a previous version), feed it
+    /// into a separate accumulator and `mix_out` that accumulator's final hash.
+    pub fn add_account_to_lt_hash(
+        accumulator: &mut LtHashAccumulator,
+        account: &impl ReadableAccount,
+        pubkey: &Pubkey,
+    ) {
+        if account.lamports() == 0 {
+            return;
+        }
+        Self::write_account_hash_input(account, pubkey, |bytes| accumulator.add_part(bytes));
+        accumulator.finish_message();
+    }
+
     /// Hashes `account` and returns the underlying Hasher
     fn hash_account_helper(account: &impl ReadableAccount, pubkey: &Pubkey) -> blake3::Hasher {
         let mut hasher = blake3::Hasher::new();
+        Self::write_account_hash_input(account, pubkey, |bytes| {
+            hasher.update(bytes);
+        });
+        hasher
+    }
 
+    /// Writes the (consensus-critical) lattice-hash preimage of `account` to
+    /// `write`, as the sequence of byte slices to hash. This is the single source
+    /// of truth for the preimage layout, shared by the one-at-a-time hasher
+    /// ([`Self::hash_account_helper`]) and the batched accumulator
+    /// ([`Self::add_account_to_lt_hash`]) so the two can never diverge.
+    fn write_account_hash_input(
+        account: &impl ReadableAccount,
+        pubkey: &Pubkey,
+        mut write: impl FnMut(&[u8]),
+    ) {
         // allocate a buffer on the stack that's big enough
         // to hold a token account or a stake account
         const META_SIZE: usize = 8 /* lamports */ + 1 /* executable */ + 32 /* owner */ + 32 /* pubkey */;
@@ -4162,12 +4200,12 @@ impl AccountsDb {
 
         let data = account.data();
         if data.len() > DATA_SIZE {
-            // For larger accounts whose data can't fit into the buffer, update the hash now.
-            hasher.update(&buffer);
+            // For larger accounts whose data can't fit into the buffer, write it now.
+            write(&buffer);
             buffer.clear();
 
-            // hash account's data
-            hasher.update(data);
+            // write account's data
+            write(data);
         } else {
             // For small accounts whose data can fit into the buffer, append it to the buffer.
             buffer.extend_from_slice(data);
@@ -4177,9 +4215,7 @@ impl AccountsDb {
         buffer.push(account.executable().into());
         buffer.extend_from_slice(account.owner().as_ref());
         buffer.extend_from_slice(pubkey.as_ref());
-        hasher.update(&buffer);
-
-        hasher
+        write(&buffer);
     }
 
     pub fn mark_slot_frozen(&self, slot: Slot) {
