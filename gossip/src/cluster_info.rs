@@ -131,6 +131,7 @@ const GOSSIP_PULL_SCAN_BUDGET_CACHE_CAPACITY: usize = GOSSIP_PING_CACHE_CAPACITY
 const GOSSIP_PULL_SCAN_BUDGET_CAPACITY: u64 = 16 * crds_gossip_pull::MIN_NUM_BLOOM_ITEMS as u64;
 const GOSSIP_PULL_SCAN_BUDGET_REFILL_PER_SEC: u64 =
     4 * crds_gossip_pull::MIN_NUM_BLOOM_ITEMS as u64;
+const GOSSIP_PULL_SCAN_BUDGET_MIN_BLOOM_HASH_COUNT: u64 = 8;
 const GOSSIP_PULL_SCAN_BUDGET_SHARD_COUNT: usize = 64;
 
 #[inline]
@@ -138,7 +139,7 @@ fn pull_request_scan_cost(scan_entries: usize, bloom_hash_count: usize) -> u64 {
     let scan_entries = u64::try_from(scan_entries).unwrap_or(u64::MAX).max(1);
     let bloom_hash_count = u64::try_from(bloom_hash_count)
         .unwrap_or(u64::MAX)
-        .max(crds_gossip_pull::KEYS as u64);
+        .max(GOSSIP_PULL_SCAN_BUDGET_MIN_BLOOM_HASH_COUNT);
     scan_entries.saturating_mul(bloom_hash_count)
 }
 
