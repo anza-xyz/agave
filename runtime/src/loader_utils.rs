@@ -158,6 +158,7 @@ pub fn load_upgradeable_program(
                     .unwrap(),
             ),
             program.len() * 2,
+            false,
         )
         .unwrap(),
         Some(&from_keypair.pubkey()),
@@ -237,6 +238,7 @@ pub fn upgrade_program<T: Client>(
             &buffer_keypair.pubkey(),
             &authority_keypair.pubkey(),
             &payer_keypair.pubkey(),
+            false,
         )],
         Some(&payer_keypair.pubkey()),
     );

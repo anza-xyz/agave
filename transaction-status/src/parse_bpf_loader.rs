@@ -92,7 +92,7 @@ pub fn parse_bpf_upgradeable_loader(
                 }),
             })
         }
-        UpgradeableLoaderInstruction::DeployWithMaxDataLen { max_data_len } => {
+        UpgradeableLoaderInstruction::DeployWithMaxDataLen { max_data_len, .. } => {
             check_num_bpf_upgradeable_loader_accounts(&instruction.accounts, 8)?;
             Ok(ParsedInstructionEnum {
                 instruction_type: "deployWithMaxDataLen".to_string(),
@@ -109,7 +109,7 @@ pub fn parse_bpf_upgradeable_loader(
                 }),
             })
         }
-        UpgradeableLoaderInstruction::Upgrade => {
+        UpgradeableLoaderInstruction::Upgrade { .. } => {
             check_num_bpf_upgradeable_loader_accounts(&instruction.accounts, 7)?;
             Ok(ParsedInstructionEnum {
                 instruction_type: "upgrade".to_string(),
@@ -150,7 +150,7 @@ pub fn parse_bpf_upgradeable_loader(
                 }),
             })
         }
-        UpgradeableLoaderInstruction::Close => {
+        UpgradeableLoaderInstruction::Close { .. } => {
             check_num_bpf_upgradeable_loader_accounts(&instruction.accounts, 3)?;
             Ok(ParsedInstructionEnum {
                 instruction_type: "close".to_string(),
@@ -428,6 +428,7 @@ mod test {
             &upgrade_authority_address,
             55,
             max_data_len,
+            false,
         )
         .unwrap();
         let mut message = Message::new(&instructions, None);
@@ -483,6 +484,7 @@ mod test {
             &buffer_address,
             &authority_address,
             &spill_address,
+            false,
         );
         let mut message = Message::new(&[instruction], None);
         assert_eq!(
@@ -722,8 +724,12 @@ mod test {
         let close_address = Pubkey::new_unique();
         let recipient_address = Pubkey::new_unique();
         let authority_address = Pubkey::new_unique();
-        let instruction =
-            bpf_loader_upgradeable::close(&close_address, &recipient_address, &authority_address);
+        let instruction = bpf_loader_upgradeable::close(
+            &close_address,
+            &recipient_address,
+            &authority_address,
+            false,
+        );
         let mut message = Message::new(&[instruction], None);
         assert_eq!(
             parse_bpf_upgradeable_loader(
@@ -767,6 +773,7 @@ mod test {
             &recipient_address,
             Some(&authority_address),
             Some(&program_address),
+            false,
         );
         let mut message = Message::new(&[instruction], None);
         assert_eq!(
