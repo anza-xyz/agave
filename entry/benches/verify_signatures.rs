@@ -1,17 +1,17 @@
 use {
     agave_reserved_account_keys::ReservedAccountKeys,
     criterion::{Criterion, Throughput, criterion_group, criterion_main},
-    solana_entry::entry::{Entry, UnverifiedSignatures, validate_and_hash_transactions},
+    solana_entry::entry::{
+        Entry, EntryTransaction, EntryView, UnverifiedSignatures, validate_and_hash_transactions,
+        versioned_transaction_from_view,
+    },
     solana_hash::Hash,
     solana_keypair::Keypair,
     solana_message::SimpleAddressLoader,
     solana_runtime_transaction::runtime_transaction::RuntimeTransaction,
     solana_signer::Signer,
     solana_system_transaction::transfer,
-    solana_transaction::{
-        sanitized::{MessageHash, SanitizedTransaction},
-        versioned::VersionedTransaction,
-    },
+    solana_transaction::sanitized::{MessageHash, SanitizedTransaction},
     solana_transaction_error::TransactionResult as Result,
     std::hint::black_box,
 };
@@ -23,16 +23,21 @@ fn build_unverified_signatures(num_transactions: usize) -> UnverifiedSignatures 
     let transactions = (0..num_transactions)
         .map(|lamports| transfer(&keypair, &keypair.pubkey(), lamports as u64, hash))
         .collect();
-    let entries = vec![Entry::new(&hash, 0, transactions)];
+    let entries = vec![
+        EntryView::try_from(Entry::new(&hash, 0, transactions))
+            .expect("benchmark transactions must convert to transaction views"),
+    ];
 
-    let validate_transaction = move |versioned_tx: VersionedTransaction,
-                                     message_bytes: &[u8]|
+    let validate_transaction = move |transaction_view: EntryTransaction|
           -> Result<RuntimeTransaction<SanitizedTransaction>> {
+        let message_hash = solana_message::VersionedMessage::hash_raw_message(
+            transaction_view.message_data(),
+        );
+        let versioned_tx = versioned_transaction_from_view(&transaction_view)
+            .expect("benchmark transaction view must decode");
         RuntimeTransaction::try_create(
             versioned_tx,
-            MessageHash::Precomputed(solana_message::VersionedMessage::hash_raw_message(
-                message_bytes,
-            )),
+            MessageHash::Precomputed(message_hash),
             None,
             SimpleAddressLoader::Disabled,
             &ReservedAccountKeys::empty_key_set(),

@@ -102,8 +102,10 @@ use {
     solana_clock::{Epoch, Slot},
     solana_hash::Hash,
     solana_pubkey::Pubkey,
-    solana_runtime_transaction::runtime_transaction::RuntimeTransaction,
-    solana_transaction::sanitized::SanitizedTransaction,
+    solana_runtime_transaction::{
+        runtime_transaction::RuntimeTransactionView, transaction_meta::TransactionMeta,
+    },
+    solana_svm_transaction::svm_message::SVMMessage,
     static_assertions::const_assert_eq,
     std::{
         cmp::Ordering,
@@ -443,7 +445,7 @@ mod utils {
 type LockResult = Result<(), ()>;
 const_assert_eq!(mem::size_of::<LockResult>(), 1);
 
-/// Something to be scheduled; usually a wrapper of [`SanitizedTransaction`].
+/// Something to be scheduled; usually a [`RuntimeTransactionView`].
 pub type Task = Arc<TaskInner>;
 const_assert_eq!(mem::size_of::<Task>(), 8);
 
@@ -463,7 +465,7 @@ const_assert_eq!(mem::size_of::<BlockedUsageCountToken>(), 0);
 /// Internal scheduling data about a particular task.
 #[derive(Debug)]
 pub struct TaskInner {
-    transaction: RuntimeTransaction<SanitizedTransaction>,
+    transaction: RuntimeTransactionView,
     /// For block verification, the index of a transaction in ledger entries. Carrying this along
     /// with the transaction is needed to properly record the execution result of it.
     /// For block production, the priority of a transaction for reordering with
@@ -505,7 +507,7 @@ impl TaskInner {
         self.alt_invalidation_slot
     }
 
-    pub fn transaction(&self) -> &RuntimeTransaction<SanitizedTransaction> {
+    pub fn transaction(&self) -> &RuntimeTransactionView {
         &self.transaction
     }
 
@@ -563,7 +565,7 @@ impl TaskInner {
             })
     }
 
-    pub fn into_transaction(self: Task) -> RuntimeTransaction<SanitizedTransaction> {
+    pub fn into_transaction(self: Task) -> RuntimeTransactionView {
         Task::into_inner(self).unwrap().transaction
     }
 }
@@ -1275,7 +1277,7 @@ impl SchedulingStateMachine {
         }
     }
 
-    /// Creates a new task with [`RuntimeTransaction<SanitizedTransaction>`] with all of
+    /// Creates a new task with [`RuntimeTransactionView`] with all of
     /// its corresponding [`UsageQueue`]s preloaded.
     ///
     /// Closure (`usage_queue_loader`) is used to delegate the (possibly multi-threaded)
@@ -1289,7 +1291,7 @@ impl SchedulingStateMachine {
     /// after created, if `has_no_active_task()` is `true`. Also note that this is desired for
     /// separation of concern.
     pub fn create_task(
-        transaction: RuntimeTransaction<SanitizedTransaction>,
+        transaction: RuntimeTransactionView,
         task_id: OrderedTaskId,
         usage_queue_loader: &mut impl FnMut(Pubkey) -> UsageQueue,
     ) -> Task {
@@ -1304,7 +1306,7 @@ impl SchedulingStateMachine {
     }
 
     pub fn create_block_production_task(
-        transaction: RuntimeTransaction<SanitizedTransaction>,
+        transaction: RuntimeTransactionView,
         task_id: OrderedTaskId,
         consumed_block_size: BlockSize,
         sanitized_epoch: Epoch,
@@ -1322,7 +1324,7 @@ impl SchedulingStateMachine {
     }
 
     fn do_create_task(
-        transaction: RuntimeTransaction<SanitizedTransaction>,
+        transaction: RuntimeTransactionView,
         task_id: OrderedTaskId,
         consumed_block_size: BlockSize,
         sanitized_epoch: Epoch,
@@ -1359,14 +1361,13 @@ impl SchedulingStateMachine {
         // This redundancy is known. It was just left as-is out of abundance
         // of caution.
         let lock_contexts = transaction
-            .message()
             .account_keys()
             .iter()
             .enumerate()
             .map(|(task_id, address)| {
                 LockContext::new(
                     usage_queue_loader(*address),
-                    if transaction.message().is_writable(task_id) {
+                    if transaction.is_writable(task_id) {
                         RequestedUsage::Writable
                     } else {
                         RequestedUsage::Readonly
@@ -1511,7 +1512,8 @@ mod tests {
         solana_instruction::{AccountMeta, Instruction},
         solana_message::Message,
         solana_pubkey::Pubkey,
-        solana_transaction::{Transaction, sanitized::SanitizedTransaction},
+        solana_svm_transaction::svm_message::SVMStaticMessage,
+        solana_transaction::Transaction,
         std::{
             cell::RefCell,
             collections::HashMap,
@@ -1521,22 +1523,20 @@ mod tests {
         test_case::test_matrix,
     };
 
-    fn simplest_transaction() -> RuntimeTransaction<SanitizedTransaction> {
+    fn simplest_transaction() -> RuntimeTransactionView {
         let message = Message::new(&[], Some(&Pubkey::new_unique()));
         let unsigned = Transaction::new_unsigned(message);
-        RuntimeTransaction::from_transaction_for_tests(unsigned)
+        RuntimeTransactionView::from_transaction_for_view_tests(unsigned)
     }
 
-    fn transaction_with_readonly_address(
-        address: Pubkey,
-    ) -> RuntimeTransaction<SanitizedTransaction> {
+    fn transaction_with_readonly_address(address: Pubkey) -> RuntimeTransactionView {
         transaction_with_readonly_address_with_payer(address, &Pubkey::new_unique())
     }
 
     fn transaction_with_readonly_address_with_payer(
         address: Pubkey,
         payer: &Pubkey,
-    ) -> RuntimeTransaction<SanitizedTransaction> {
+    ) -> RuntimeTransactionView {
         let instruction = Instruction {
             program_id: Pubkey::default(),
             accounts: vec![AccountMeta::new_readonly(address, false)],
@@ -1544,19 +1544,17 @@ mod tests {
         };
         let message = Message::new(&[instruction], Some(payer));
         let unsigned = Transaction::new_unsigned(message);
-        RuntimeTransaction::from_transaction_for_tests(unsigned)
+        RuntimeTransactionView::from_transaction_for_view_tests(unsigned)
     }
 
-    fn transaction_with_writable_address(
-        address: Pubkey,
-    ) -> RuntimeTransaction<SanitizedTransaction> {
+    fn transaction_with_writable_address(address: Pubkey) -> RuntimeTransactionView {
         transaction_with_writable_address_with_payer(address, &Pubkey::new_unique())
     }
 
     fn transaction_with_writable_address_with_payer(
         address: Pubkey,
         payer: &Pubkey,
-    ) -> RuntimeTransaction<SanitizedTransaction> {
+    ) -> RuntimeTransactionView {
         let instruction = Instruction {
             program_id: Pubkey::default(),
             accounts: vec![AccountMeta::new(address, false)],
@@ -1564,7 +1562,7 @@ mod tests {
         };
         let message = Message::new(&[instruction], Some(payer));
         let unsigned = Transaction::new_unsigned(message);
-        RuntimeTransaction::from_transaction_for_tests(unsigned)
+        RuntimeTransactionView::from_transaction_for_view_tests(unsigned)
     }
 
     fn create_address_loader(
@@ -1627,12 +1625,12 @@ mod tests {
     #[test_matrix([Capability::FifoQueueing, Capability::PriorityQueueing])]
     fn test_create_task(capability: Capability) {
         let sanitized = simplest_transaction();
-        let signature = *sanitized.signature();
+        let signature = sanitized.signatures()[0];
         let task = SchedulingStateMachine::create_task(sanitized, 3, &mut |_| {
             UsageQueue::new(&capability)
         });
         assert_eq!(task.task_id(), 3);
-        assert_eq!(task.transaction().signature(), &signature);
+        assert_eq!(task.transaction().signatures()[0], signature);
     }
 
     #[test_matrix([Capability::FifoQueueing, Capability::PriorityQueueing])]
@@ -2008,7 +2006,7 @@ mod tests {
             });
         // task2's fee payer should have been locked already even if task2 is blocked still via the
         // above the schedule_task(task2) call
-        let fee_payer = task2.transaction().message().fee_payer();
+        let fee_payer = task2.transaction().fee_payer();
         let usage_queue = usage_queues.get(fee_payer).unwrap();
         usage_queue
             .0

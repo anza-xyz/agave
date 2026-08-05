@@ -25,7 +25,7 @@ use {
             BlockFooterV1, BlockMarkerV1, GenesisCertBlockMarker, VersionedBlockFooter,
             VersionedBlockHeader, VersionedBlockMarker, VersionedUpdateParent,
         },
-        entry::Entry,
+        entry::EntryView,
     },
     solana_hash::Hash,
     solana_pubkey::Pubkey,
@@ -361,7 +361,7 @@ impl BlockComponentProcessor {
         &mut self,
         migration_status: &MigrationStatus,
         slot: Slot,
-        entries: &[Entry],
+        entries: &[EntryView],
         is_final_component: bool,
     ) -> Result<(), BlockComponentProcessorError> {
         if !migration_status.should_allow_block_markers(slot) {
@@ -788,11 +788,8 @@ mod tests {
         rand::Rng,
         solana_bls_signatures::{BLS_SIGNATURE_AFFINE_SIZE, Signature as BLSSignature},
         solana_clock::DEFAULT_MS_PER_SLOT,
-        solana_entry::{
-            block_component::{
-                BlockFooterV1, BlockHeaderV1, UpdateParentV1, VersionedUpdateParent,
-            },
-            entry::Entry,
+        solana_entry::block_component::{
+            BlockFooterV1, BlockHeaderV1, UpdateParentV1, VersionedUpdateParent,
         },
         solana_hash::Hash,
         std::{
@@ -880,8 +877,12 @@ mod tests {
         }
     }
 
-    fn alpentick(num_hashes: u64) -> [Entry; 1] {
-        [Entry::new(&Hash::default(), num_hashes, vec![])]
+    fn alpentick(num_hashes: u64) -> [EntryView; 1] {
+        [EntryView {
+            num_hashes,
+            hash: Hash::default(),
+            transactions: vec![],
+        }]
     }
 
     #[test]

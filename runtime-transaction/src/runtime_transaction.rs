@@ -12,6 +12,8 @@
 use {
     crate::transaction_meta::{CachedTransactionMeta, TransactionConfiguration, TransactionMeta},
     agave_feature_set::FeatureSet,
+    agave_transaction_view::resolved_transaction_view::ResolvedTransactionView,
+    bytes::Bytes,
     core::ops::Deref,
     solana_compute_budget_instruction::compute_budget_instruction_details::*,
     solana_hash::Hash,
@@ -38,6 +40,12 @@ pub struct RuntimeTransaction<T> {
     // during message state transition
     meta: CachedTransactionMeta,
 }
+
+/// Runtime transaction backed by a parsed and resolved transaction view.
+///
+/// Replay and standard block production use the default [`Bytes`] backing.
+/// Callers with a different byte owner can select it through `D`.
+pub type RuntimeTransactionView<D = Bytes> = RuntimeTransaction<ResolvedTransactionView<D>>;
 
 impl<T> RuntimeTransaction<T> {
     pub fn into_inner_transaction(self) -> T {

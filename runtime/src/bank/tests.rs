@@ -110,6 +110,7 @@ use {
     solana_pubkey::Pubkey,
     solana_rent::{DEFAULT_LAMPORTS_PER_BYTE, Rent},
     solana_reward_info::RewardType,
+    solana_runtime_transaction::transaction_meta::TransactionMeta,
     solana_sdk_ids::{
         bpf_loader, bpf_loader_upgradeable, ed25519_program, incinerator, native_loader,
         secp256k1_program,
@@ -9580,6 +9581,56 @@ fn test_verify_transactions_packet_data_size() {
             bank.verify_transaction(tx.into(), TransactionVerificationMode::FullVerification)
                 .is_ok(),
         );
+    }
+}
+
+#[test]
+fn test_verify_transaction_view_matches_owned_transaction() {
+    let GenesisConfigInfo {
+        genesis_config,
+        mint_keypair,
+        ..
+    } = create_genesis_config_with_leader(42, &solana_pubkey::new_rand(), 42);
+    let bank = Bank::new_for_tests(&genesis_config);
+    let legacy_transaction = VersionedTransaction::from(system_transaction::transfer(
+        &mint_keypair,
+        &Pubkey::new_unique(),
+        1,
+        genesis_config.hash(),
+    ));
+    let instruction =
+        system_instruction::transfer(&mint_keypair.pubkey(), &Pubkey::new_unique(), 1);
+    let v0_message = v0::Message::try_compile(
+        &mint_keypair.pubkey(),
+        &[instruction],
+        &[],
+        genesis_config.hash(),
+    )
+    .unwrap();
+    let v0_transaction =
+        VersionedTransaction::try_new(VersionedMessage::V0(v0_message), &[&mint_keypair]).unwrap();
+
+    for transaction in [legacy_transaction, v0_transaction] {
+        let owned = bank.verify_transaction(
+            transaction.clone(),
+            TransactionVerificationMode::FullVerification,
+        );
+        let bytes = Bytes::from(wincode::serialize(&transaction).unwrap());
+        let view = UnsanitizedTransactionView::try_new_unsanitized(bytes).unwrap();
+        let viewed =
+            bank.verify_transaction_view(view, TransactionVerificationMode::FullVerification);
+
+        match (owned, viewed) {
+            (Ok(owned), Ok(viewed)) => {
+                assert_eq!(viewed.message_hash(), owned.message_hash());
+                assert_eq!(
+                    viewed.to_versioned_transaction(),
+                    owned.to_versioned_transaction()
+                );
+            }
+            (Err(owned), Err(viewed)) => assert_eq!(viewed, owned),
+            (owned, viewed) => panic!("owned/view verification mismatch: {owned:?} vs {viewed:?}"),
+        }
     }
 }
 

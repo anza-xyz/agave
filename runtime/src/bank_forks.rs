@@ -808,10 +808,9 @@ mod tests {
         solana_keypair::Keypair,
         solana_leader_schedule::SlotLeader,
         solana_rent::Rent,
-        solana_runtime_transaction::runtime_transaction::RuntimeTransaction,
+        solana_runtime_transaction::runtime_transaction::RuntimeTransactionView,
         solana_sdk_ids::system_program,
         solana_signer::Signer,
-        solana_transaction::sanitized::SanitizedTransaction,
         solana_transaction_error::TransactionError,
         solana_unified_scheduler_logic::OrderedTaskId,
         solana_vote_program::vote_state::BlockTimestamp,
@@ -843,7 +842,7 @@ mod tests {
 
         fn schedule_execution(
             &self,
-            _transaction: RuntimeTransaction<SanitizedTransaction>,
+            _transaction: RuntimeTransactionView,
             _task_id: OrderedTaskId,
         ) -> ScheduleResult {
             Ok(())

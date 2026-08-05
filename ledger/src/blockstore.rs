@@ -30,6 +30,7 @@ use {
         migration::MigrationStatus, unverified_vote_message::UnverifiedCertificate,
     },
     assert_matches::{assert_matches, debug_assert_matches},
+    bytes::Bytes,
     crossbeam_channel::{Receiver, Sender, TrySendError, bounded},
     dashmap::DashSet,
     itertools::Itertools,
@@ -44,8 +45,8 @@ use {
     solana_clock::{Slot, UnixTimestamp},
     solana_entry::{
         block_component::{
-            BlockComponent, VersionedBlockFooter, VersionedBlockHeader, VersionedBlockMarker,
-            VersionedUpdateParent, finalization_certificates_from_footer,
+            BlockComponent, BlockComponentView, VersionedBlockFooter, VersionedBlockHeader,
+            VersionedBlockMarker, VersionedUpdateParent, finalization_certificates_from_footer,
             genesis_certificate_from_shred,
         },
         entry::{Entry, create_ticks},
@@ -4852,6 +4853,26 @@ impl Blockstore {
         Ok((components, completed_ranges, slot_meta.is_full()))
     }
 
+    /// Replay-only counterpart to `get_slot_components_with_shred_info` that retains each
+    /// transaction as a zero-copy view into the deshredded bytes.
+    pub fn get_slot_component_views_with_shred_info(
+        &self,
+        slot: Slot,
+        start_index: u64,
+        allow_dead_slots: bool,
+    ) -> Result<(Vec<BlockComponentView>, Vec<Range<u32>>, bool)> {
+        let Some((completed_ranges, slot_meta, _)) =
+            self.get_slot_data_with_shred_info_common(slot, start_index, allow_dead_slots)?
+        else {
+            return Ok((vec![], vec![], false));
+        };
+
+        let components =
+            self.get_slot_component_views_in_block(slot, &completed_ranges, Some(&slot_meta))?;
+        debug_assert_eq!(completed_ranges.len(), components.len());
+        Ok((components, completed_ranges, slot_meta.is_full()))
+    }
+
     /// Gets accounts used in transactions in the slot range [starting_slot, ending_slot].
     /// Additionally returns a bool indicating if the set may be incomplete.
     /// Used by ledger-tool to create a minimized snapshot
@@ -5047,6 +5068,28 @@ impl Blockstore {
                     } else {
                         BlockstoreError::InvalidShredData(format!(
                             "could not reconstruct block component: {e}"
+                        ))
+                    }
+                })
+        })
+    }
+
+    fn get_slot_component_views_in_block(
+        &self,
+        slot: Slot,
+        completed_ranges: &CompletedRanges,
+        slot_meta: Option<&SlotMeta>,
+    ) -> Result<Vec<BlockComponentView>> {
+        self.get_slot_data_in_block(slot, completed_ranges, slot_meta, |payload| {
+            let is_empty_entry_batch = BlockComponent::infer_is_empty_entry_batch(&payload);
+            BlockComponentView::from_bytes(&Bytes::from(payload))
+                .map(|component| vec![component])
+                .map_err(|error| {
+                    if is_empty_entry_batch {
+                        BlockstoreError::BlockAborted(slot)
+                    } else {
+                        BlockstoreError::InvalidShredData(format!(
+                            "could not reconstruct block component view: {error}"
                         ))
                     }
                 })

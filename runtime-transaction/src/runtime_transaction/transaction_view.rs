@@ -142,6 +142,30 @@ impl<D: TransactionData> RuntimeTransaction<ResolvedTransactionView<D>> {
     }
 }
 
+#[cfg(feature = "dev-context-only-utils")]
+impl RuntimeTransaction<ResolvedTransactionView<bytes::Bytes>> {
+    pub fn from_transaction_for_view_tests(transaction: solana_transaction::Transaction) -> Self {
+        let bytes = bytes::Bytes::from(
+            wincode::serialize(&VersionedTransaction::from(transaction))
+                .expect("test transaction must serialize"),
+        );
+        let transaction =
+            agave_transaction_view::transaction_view::UnsanitizedTransactionView::try_new_unsanitized(
+                bytes,
+            )
+            .expect("test transaction must parse")
+            .sanitize(&crate::sanitize_config::sanitize_config())
+            .expect("test transaction must sanitize");
+        let transaction = RuntimeTransaction::<SanitizedTransactionView<_>>::try_new(
+            transaction,
+            MessageHash::Compute,
+            None,
+        )
+        .expect("test transaction metadata must be valid");
+        Self::try_new(transaction, None, &HashSet::new()).expect("test transaction must resolve")
+    }
+}
+
 impl<D: TransactionData> TransactionWithMeta for RuntimeTransaction<ResolvedTransactionView<D>> {
     fn as_sanitized_transaction(&self) -> Cow<'_, SanitizedTransaction> {
         let VersionedTransaction {

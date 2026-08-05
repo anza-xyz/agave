@@ -24,6 +24,7 @@ solana-clock = { workspace = true }
 solana-hash = { workspace = true }
 solana-pubkey = { workspace = true }
 solana-runtime-transaction = { workspace = true }
+solana-svm-transaction = { workspace = true }
 solana-transaction = { workspace = true }
 static_assertions = { workspace = true }
 

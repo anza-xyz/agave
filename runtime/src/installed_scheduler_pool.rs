@@ -4,7 +4,7 @@
 //! [BankWithScheduler], which can be used by `ReplayStage` and `BankingStage` for transaction
 //! execution. After use, the scheduler will be returned to the pool.
 //!
-//! [InstalledScheduler] can be fed with [SanitizedTransaction]s. Then, it schedules those
+//! [InstalledScheduler] can be fed with [RuntimeTransactionView]s. Then, it schedules those
 //! executions and commits those results into the associated _bank_.
 //!
 //! It's generally assumed that each [InstalledScheduler] is backed by multiple threads for
@@ -25,9 +25,8 @@ use {
     log::*,
     solana_clock::Slot,
     solana_hash::Hash,
-    solana_runtime_transaction::runtime_transaction::RuntimeTransaction,
+    solana_runtime_transaction::runtime_transaction::RuntimeTransactionView,
     solana_svm_timings::ExecuteTimings,
-    solana_transaction::sanitized::SanitizedTransaction,
     solana_transaction_error::{TransactionError, TransactionResult as Result},
     solana_unified_scheduler_logic::OrderedTaskId,
     std::{
@@ -129,7 +128,7 @@ pub trait InstalledScheduler: Send + Sync + Debug + 'static {
     /// having &mut.
     fn schedule_execution(
         &self,
-        transaction: RuntimeTransaction<SanitizedTransaction>,
+        transaction: RuntimeTransactionView,
         task_id: OrderedTaskId,
     ) -> ScheduleResult;
 
@@ -438,7 +437,7 @@ impl BankWithScheduler {
     pub fn schedule_transaction_executions(
         &self,
         transaction_with_task_ids: impl ExactSizeIterator<
-            Item = (RuntimeTransaction<SanitizedTransaction>, OrderedTaskId),
+            Item = (RuntimeTransactionView, OrderedTaskId),
         >,
     ) -> Result<()> {
         trace!(
@@ -853,12 +852,13 @@ mod tests {
             mint_keypair,
             ..
         } = create_genesis_config(10_000);
-        let tx0 = RuntimeTransaction::from_transaction_for_tests(system_transaction::transfer(
-            &mint_keypair,
-            &solana_pubkey::new_rand(),
-            2,
-            genesis_config.hash(),
-        ));
+        let tx0 =
+            RuntimeTransactionView::from_transaction_for_view_tests(system_transaction::transfer(
+                &mint_keypair,
+                &solana_pubkey::new_rand(),
+                2,
+                genesis_config.hash(),
+            ));
         let bank = Arc::new(Bank::new_for_tests(&genesis_config));
         let mocked_scheduler = setup_mocked_scheduler_with_extra(
             bank.clone(),

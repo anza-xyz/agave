@@ -83,6 +83,10 @@ use {
     agave_precompiles::{get_precompile, get_precompiles, is_precompile},
     agave_reserved_account_keys::ReservedAccountKeys,
     agave_snapshots::snapshot_hash::SnapshotHash,
+    agave_transaction_view::{
+        transaction_version::TransactionVersion as ViewTransactionVersion,
+        transaction_view::{SanitizedTransactionView, UnsanitizedTransactionView},
+    },
     agave_votor_messages::{
         certificate::{CertSignature, Certificate, GenesisCert},
         migration::GENESIS_CERTIFICATE_ACCOUNT,
@@ -90,6 +94,7 @@ use {
         wire::{WireBlockCertMessage, WireCertSignature},
     },
     ahash::AHashSet,
+    bytes::Bytes,
     log::*,
     partitioned_epoch_rewards::PartitionedRewardsCalculation,
     rayon::ThreadPool,
@@ -145,7 +150,9 @@ use {
     solana_pubkey::Pubkey,
     solana_rent::Rent,
     solana_runtime_transaction::{
-        runtime_transaction::RuntimeTransaction, transaction_meta::TransactionConfiguration,
+        runtime_transaction::{RuntimeTransaction, RuntimeTransactionView},
+        sanitize_config::sanitize_config,
+        transaction_meta::TransactionConfiguration,
         transaction_with_meta::TransactionWithMeta,
     },
     solana_sdk_ids::{bpf_loader_upgradeable, incinerator, native_loader, system_program},
@@ -5572,6 +5579,62 @@ impl Bank {
         }?;
 
         Ok(sanitized_tx)
+    }
+
+    /// Verify and resolve a byte-backed transaction for execution.
+    ///
+    /// This is the replay counterpart of banking stage's transaction-view
+    /// preparation and returns the same concrete runtime transaction type.
+    pub fn verify_transaction_view(
+        &self,
+        transaction: UnsanitizedTransactionView<Bytes>,
+        verification_mode: TransactionVerificationMode,
+    ) -> Result<RuntimeTransactionView> {
+        if !self.feature_set.snapshot().enable_tx_v1
+            && matches!(transaction.version(), ViewTransactionVersion::V1)
+        {
+            return Err(TransactionError::UnsupportedVersion);
+        }
+
+        if verification_mode == TransactionVerificationMode::FullVerification {
+            let message = transaction.message_data();
+            let signatures = transaction.signatures();
+            let signer_keys = transaction
+                .static_account_keys()
+                .iter()
+                .take(signatures.len());
+            if !signatures
+                .iter()
+                .zip(signer_keys)
+                .all(|(signature, signer)| signature.verify(signer.as_ref(), message))
+            {
+                return Err(TransactionError::SignatureFailure);
+            }
+        }
+
+        let message_hash = VersionedMessage::hash_raw_message(transaction.message_data());
+        let transaction = transaction
+            .sanitize(&sanitize_config())
+            .map_err(|_| TransactionError::SanitizeFailure)?;
+        let transaction = RuntimeTransaction::<SanitizedTransactionView<_>>::try_new(
+            transaction,
+            MessageHash::Precomputed(message_hash),
+            None,
+        )?;
+
+        let loaded_addresses = match transaction.version() {
+            ViewTransactionVersion::Legacy | ViewTransactionVersion::V1 => None,
+            ViewTransactionVersion::V0 => Some(
+                self.load_addresses_from_ref(transaction.address_table_lookup_iter())?
+                    .0,
+            ),
+        };
+
+        RuntimeTransactionView::try_new(
+            transaction,
+            loaded_addresses,
+            self.get_reserved_account_keys(),
+        )
     }
 
     /// Checks if the transaction violates the bank's reserved keys.

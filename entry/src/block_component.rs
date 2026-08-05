@@ -130,13 +130,14 @@
 /// └─────────────────────────────────────────┘
 /// ```
 use {
-    crate::entry::{Entry, MaxDataShredsLen},
+    crate::entry::{Entry, EntryView, MaxDataShredsLen},
     agave_votor_messages::{
         certificate::{CertSignature, CertificateType, GenesisCert},
         consensus_message::Block,
         reward_certificate::{NotarRewardCertificate, SkipRewardCertificate},
         unverified_vote_message::UnverifiedCertificate,
     },
+    bytes::Bytes,
     solana_bls_signatures::{
         BlsError, Signature as BLSSignature, SignatureCompressed as BLSSignatureCompressed,
         signature::AsSignatureAffine,
@@ -592,6 +593,46 @@ unsafe impl<'de, C: Config> SchemaRead<'de, C> for BlockComponent {
         }
 
         Ok(())
+    }
+}
+
+/// Replay representation of a block component.
+///
+/// Unlike [`BlockComponent`], this type is not a wire format and intentionally has no
+/// `SchemaRead` implementation. Replay constructs it directly from the deshredded bytes.
+#[derive(Debug)]
+#[allow(clippy::large_enum_variant)]
+pub enum BlockComponentView {
+    EntryBatch(Vec<EntryView>),
+    BlockMarker(VersionedBlockMarker),
+}
+
+#[derive(Debug, thiserror::Error)]
+pub enum BlockComponentParseError {
+    #[error("failed to parse entry batch: {0}")]
+    EntryBatch(#[from] crate::parse::EntryParseError),
+    #[error("failed to parse block marker: {0}")]
+    BlockMarker(#[from] wincode::ReadError),
+    #[error("too many entries: {count} >= {max}")]
+    TooManyEntries { count: usize, max: usize },
+}
+
+impl BlockComponentView {
+    /// Parses a block component while retaining transaction bytes in zero-copy views.
+    pub fn from_bytes(payload: &Bytes) -> Result<Self, BlockComponentParseError> {
+        let (entries, consumed_len) = crate::parse::entries_from_bytes_prefix(payload)?;
+        if entries.is_empty() {
+            Ok(Self::BlockMarker(wincode::deserialize(
+                &payload[consumed_len..],
+            )?))
+        } else if entries.len() >= BlockComponent::MAX_ENTRIES {
+            Err(BlockComponentParseError::TooManyEntries {
+                count: entries.len(),
+                max: BlockComponent::MAX_ENTRIES,
+            })
+        } else {
+            Ok(Self::EntryBatch(entries))
+        }
     }
 }
 

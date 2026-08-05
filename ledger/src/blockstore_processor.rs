@@ -22,8 +22,8 @@ use {
     },
     solana_clock::{BankId, Slot},
     solana_entry::{
-        block_component::{BlockComponent, VersionedBlockMarker},
-        entry::{self, Entry, EntrySlice, EntryType, create_ticks},
+        block_component::{BlockComponentView, VersionedBlockMarker},
+        entry::{self, Entry, EntrySlice, EntryType, EntryView, create_ticks},
     },
     solana_genesis_config::GenesisConfig,
     solana_hash::Hash,
@@ -42,14 +42,11 @@ use {
         transaction_execution::TransactionStatusSender,
         vote_sender_types::{ReplayVoteMessage, ReplayVoteSender},
     },
-    solana_runtime_transaction::runtime_transaction::RuntimeTransaction,
+    solana_runtime_transaction::runtime_transaction::RuntimeTransactionView,
     solana_shred_version::compute_shred_version,
     solana_svm_timings::{ExecuteTimingType, ExecuteTimings, report_execute_timings},
     solana_svm_transaction::svm_message::SVMMessage,
-    solana_transaction::{
-        TransactionVerificationMode, sanitized::SanitizedTransaction,
-        versioned::VersionedTransaction,
-    },
+    solana_transaction::TransactionVerificationMode,
     solana_transaction_error::{TransactionError, TransactionResult as Result},
     solana_vote::{vote_account::VoteAccountsHashMap, vote_parser::is_valid_vote_only_transaction},
     std::{
@@ -68,7 +65,7 @@ use {
 use {qualifier_attr::qualifiers, solana_runtime::bank::HashOverrides};
 
 struct ReplayEntry {
-    entry: EntryType<RuntimeTransaction<SanitizedTransaction>>,
+    entry: EntryType<RuntimeTransactionView>,
     starting_index: usize,
 }
 
@@ -158,17 +155,16 @@ pub fn process_entries_for_tests(bank: &BankWithScheduler, entries: Vec<Entry>) 
 }
 
 fn schedule_entries_for_tests(bank: &BankWithScheduler, entries: Vec<Entry>) -> Result<()> {
+    let entries = entries
+        .into_iter()
+        .map(EntryView::try_from)
+        .collect::<std::result::Result<Vec<_>, _>>()
+        .map_err(|_| TransactionError::SanitizeFailure)?;
     let replay_tx_thread_pool = create_thread_pool(1);
     let validate_and_hash_transaction = {
         let bank = bank.clone_with_scheduler();
-        move |versioned_tx: VersionedTransaction,
-              serialized_message: &[u8]|
-              -> Result<RuntimeTransaction<SanitizedTransaction>> {
-            bank.verify_transaction_with_serialized_message(
-                versioned_tx,
-                serialized_message,
-                TransactionVerificationMode::HashOnly,
-            )
+        move |transaction_view| {
+            bank.verify_transaction_view(transaction_view, TransactionVerificationMode::HashOnly)
         }
     };
 
@@ -249,7 +245,7 @@ fn process_entries(bank: &BankWithScheduler, entries: Vec<ReplayEntry>) -> Resul
 /// Validate an entry's transactions before scheduling: each transaction's account
 /// locks (count and duplicates). Does not take account locks - the unified scheduler orders conflicts.
 fn validate_entry_transactions(
-    transactions: &[RuntimeTransaction<SanitizedTransaction>],
+    transactions: &[impl SVMMessage],
     tx_account_lock_limit: usize,
 ) -> Result<()> {
     for transaction in transactions {
@@ -498,7 +494,7 @@ pub fn process_blockstore_from_root(
 #[cfg_attr(feature = "dev-context-only-utils", qualifiers(pub))]
 fn verify_ticks(
     bank: &Bank,
-    entries: &[Entry],
+    entries: &[EntryView],
     slot_full: bool,
     tick_hash_count: &mut u64,
     migration_status: &MigrationStatus,
@@ -1123,7 +1119,7 @@ pub fn confirm_slot(
     let (slot_components, completed_ranges, slot_full) = {
         let mut load_elapsed = Measure::start("load_elapsed");
         let load_result = blockstore
-            .get_slot_components_with_shred_info(slot, progress.num_shreds, allow_dead_slots)
+            .get_slot_component_views_with_shred_info(slot, progress.num_shreds, allow_dead_slots)
             .map_err(BlockstoreProcessorError::FailedToLoadEntries);
         load_elapsed.stop();
         if load_result.is_err() {
@@ -1166,7 +1162,7 @@ pub fn confirm_slot(
     // Find the index of the last EntryBatch in slot_components
     let last_entry_batch_index = slot_components
         .iter()
-        .rposition(|bc| matches!(bc, BlockComponent::EntryBatch(_)));
+        .rposition(|bc| matches!(bc, BlockComponentView::EntryBatch(_)));
 
     for (ix, (completed_range, component)) in
         completed_ranges.iter().zip(slot_components).enumerate()
@@ -1175,7 +1171,7 @@ pub fn confirm_slot(
         let is_final = slot_full && ix == completed_ranges.len() - 1;
 
         match component {
-            BlockComponent::EntryBatch(entries) => {
+            BlockComponentView::EntryBatch(entries) => {
                 let slot_full = slot_full && ix == last_entry_batch_index.unwrap();
 
                 // Skip block component validation for genesis block. Slot 0 is handled specially,
@@ -1203,7 +1199,7 @@ pub fn confirm_slot(
                     migration_status,
                 )?;
             }
-            BlockComponent::BlockMarker(marker) => {
+            BlockComponentView::BlockMarker(marker) => {
                 let block_footer = match &marker {
                     VersionedBlockMarker::V1(marker) => marker.as_block_footer().cloned(),
                 };
@@ -1270,7 +1266,7 @@ pub fn confirm_slot(
 fn confirm_slot_entries(
     bank: &BankWithScheduler,
     replay_tx_thread_pool: &ThreadPool,
-    slot_entries_load_result: (Vec<Entry>, u64, bool),
+    slot_entries_load_result: (Vec<EntryView>, u64, bool),
     timing: &mut ConfirmationTiming,
     progress: &mut ConfirmationProgress,
     skip_verification: bool,
@@ -1382,12 +1378,8 @@ fn confirm_slot_entries(
 
     let validate_and_hash_transaction = {
         let bank = bank.clone_with_scheduler();
-        move |versioned_tx: VersionedTransaction, serialized_message: &[u8]| {
-            bank.verify_transaction_with_serialized_message(
-                versioned_tx,
-                serialized_message,
-                TransactionVerificationMode::HashOnly,
-            )
+        move |transaction_view| {
+            bank.verify_transaction_view(transaction_view, TransactionVerificationMode::HashOnly)
         }
     };
 
@@ -2294,6 +2286,7 @@ pub mod tests {
             },
             transaction_execution::TransactionStatusMessage,
         },
+        solana_runtime_transaction::runtime_transaction::RuntimeTransaction,
         solana_signer::Signer,
         solana_system_interface::error::SystemError,
         solana_system_transaction as system_transaction,
@@ -3403,8 +3396,8 @@ pub mod tests {
         assert_eq!(bank.get_balance(&keypair4.pubkey()), 4);
 
         // Check all accounts are unlocked
-        let txs1 = entry_1_to_mint.transactions;
-        let txs2 = entry_2_to_3_mint_to_1.transactions;
+        let txs1 = entry_1_to_mint.transactions.clone();
+        let txs2 = entry_2_to_3_mint_to_1.transactions.clone();
         let batch1 = bank.prepare_entry_batch(txs1).unwrap();
         for result in batch1.lock_results() {
             assert!(result.is_ok());
@@ -4764,6 +4757,11 @@ pub mod tests {
         slot_full: bool,
         progress: &mut ConfirmationProgress,
     ) -> result::Result<(), BlockstoreProcessorError> {
+        let slot_entries = slot_entries
+            .into_iter()
+            .map(EntryView::try_from)
+            .collect::<std::result::Result<Vec<_>, _>>()
+            .map_err(|_| TransactionError::SanitizeFailure)?;
         let bank = take_bank_with_scheduler_for_tests(pool, bank.clone());
         let replay_tx_thread_pool = create_thread_pool(1);
         let result = confirm_slot_entries(
@@ -4803,7 +4801,7 @@ pub mod tests {
     fn create_test_transactions(
         mint_keypair: &Keypair,
         genesis_hash: &Hash,
-    ) -> Vec<RuntimeTransaction<SanitizedTransaction>> {
+    ) -> Vec<RuntimeTransactionView> {
         let pubkey = solana_pubkey::new_rand();
         let keypair2 = Keypair::new();
         let pubkey2 = solana_pubkey::new_rand();
@@ -4811,19 +4809,19 @@ pub mod tests {
         let pubkey3 = solana_pubkey::new_rand();
 
         vec![
-            RuntimeTransaction::from_transaction_for_tests(system_transaction::transfer(
+            RuntimeTransactionView::from_transaction_for_view_tests(system_transaction::transfer(
                 mint_keypair,
                 &pubkey,
                 1,
                 *genesis_hash,
             )),
-            RuntimeTransaction::from_transaction_for_tests(system_transaction::transfer(
+            RuntimeTransactionView::from_transaction_for_view_tests(system_transaction::transfer(
                 &keypair2,
                 &pubkey2,
                 1,
                 *genesis_hash,
             )),
-            RuntimeTransaction::from_transaction_for_tests(system_transaction::transfer(
+            RuntimeTransactionView::from_transaction_for_view_tests(system_transaction::transfer(
                 &keypair3,
                 &pubkey3,
                 1,
