@@ -2,10 +2,10 @@
 //!
 //! Background: agave's accounts lattice hash computes, for every account, a
 //! 2048-byte BLAKE3 XOF and folds it (16-bit wrapping group-add) into a running
-//! [`crate::lt_hash::LtHash`].  Done one account at a time (the `blake3` crate's
-//! `into_lt_hash_xof`), the single-chunk input compression of a small account wastes
-//! all but one SIMD lane, and every account round-trips a 2048-byte buffer
-//! through memory plus a scalar `mix_in` loop.
+//! [`crate::lt_hash::LtHash`].  Done one account at a time (via [`LtHash::with`],
+//! which finalizes blake3's XOF), the single-chunk input compression of a small
+//! account wastes all but one SIMD lane, and every account round-trips a
+//! 2048-byte buffer through memory plus a scalar `mix_in` loop.
 //!
 //! Firedancer's `fd_blake3_lthash_batch{8,16}` instead hash N independent
 //! messages (one per SIMD lane, each <= 1 chunk), expand each to 2048 bytes, and
@@ -14,7 +14,7 @@
 //! Layout:
 //!  - `arch`: stable `core::arch` SIMD backends (AVX2 = 8 lanes, AVX512 = 16),
 //!  - here: runtime dispatch, the non-SIMD `blake3`-crate fallback, and the
-//!    public [`Accumulator`]/[`accumulate`] API.
+//!    public [`Accumulator`] API.
 
 #[cfg(target_arch = "x86_64")]
 mod arch;
