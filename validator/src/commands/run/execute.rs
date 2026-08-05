@@ -568,30 +568,35 @@ pub fn execute(
         value_t!(matches, "accounts_index_limit", String).unwrap_or_else(|err| err.exit());
     let index_limit = {
         enum CliIndexLimit {
-            // deprecated in v4.1.0
-            Minimal,
             Unlimited,
             Threshold(u64),
         }
-        let cli_index_limit = match accounts_index_limit.as_str() {
-            "minimal" => {
-                warn!("Using `minimal` for `--accounts-index-limit` is deprecated.");
-                CliIndexLimit::Minimal
-            }
-            "unlimited" => CliIndexLimit::Unlimited,
-            "25GB" => CliIndexLimit::Threshold(25_000_000_000),
-            "50GB" => CliIndexLimit::Threshold(50_000_000_000),
-            "100GB" => CliIndexLimit::Threshold(100_000_000_000),
-            "200GB" => CliIndexLimit::Threshold(200_000_000_000),
-            "400GB" => CliIndexLimit::Threshold(400_000_000_000),
-            "800GB" => CliIndexLimit::Threshold(800_000_000_000),
-            x => {
-                // clap will enforce only the above values are possible
-                unreachable!("invalid value given to `--accounts-index-limit`: '{x}'")
+        // Note: need to still handle --enable-accounts-disk-index until it is removed
+        let cli_index_limit = if matches.is_present("enable_accounts_disk_index") {
+            CliIndexLimit::Threshold(25_000_000_000)
+        } else {
+            match accounts_index_limit.as_str() {
+                "minimal" => {
+                    warn!(
+                        "Using `minimal` for `--accounts-index-limit` is deprecated. Using 25GB \
+                         instead."
+                    );
+                    CliIndexLimit::Threshold(25_000_000_000)
+                }
+                "unlimited" => CliIndexLimit::Unlimited,
+                "25GB" => CliIndexLimit::Threshold(25_000_000_000),
+                "50GB" => CliIndexLimit::Threshold(50_000_000_000),
+                "100GB" => CliIndexLimit::Threshold(100_000_000_000),
+                "200GB" => CliIndexLimit::Threshold(200_000_000_000),
+                "400GB" => CliIndexLimit::Threshold(400_000_000_000),
+                "800GB" => CliIndexLimit::Threshold(800_000_000_000),
+                x => {
+                    // clap will enforce only the above values are possible
+                    unreachable!("invalid value given to `--accounts-index-limit`: '{x}'")
+                }
             }
         };
         match cli_index_limit {
-            CliIndexLimit::Minimal => IndexLimit::Minimal,
             CliIndexLimit::Unlimited => IndexLimit::InMemOnly,
             CliIndexLimit::Threshold(num_bytes) => IndexLimit::Threshold(IndexLimitThreshold {
                 num_bytes,
@@ -599,12 +604,6 @@ pub fn execute(
                 num_entries_to_evict: DEFAULT_NUM_ENTRIES_TO_EVICT,
             }),
         }
-    };
-    // Note: need to still handle --enable-accounts-disk-index until it is removed
-    let index_limit = if matches.is_present("enable_accounts_disk_index") {
-        IndexLimit::Minimal
-    } else {
-        index_limit
     };
 
     let mut accounts_index_config = AccountsIndexConfig {

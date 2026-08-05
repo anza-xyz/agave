@@ -33,6 +33,7 @@ still accepted for backwards compatibility but slated for full removal in the fu
   that value for `--limit-blockstore-size`.
   * `--limit-blockstore-size` may occupy more disk footprint at steady state with current cluster
   activity; however, disk usage should be more stable during abnormal cluster activity.
+* Using the deprecated `minimal` for `--accounts-index-limit` now defaults to 25GB
 #### Changes
 * Validators running without `--full-rpc-api` and with snapshot generation disabled no longer
   store transaction signature keys in the status cache. Message hashes remain cached for duplicate
