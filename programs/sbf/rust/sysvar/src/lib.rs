@@ -124,6 +124,24 @@ pub fn process_instruction(
                 assert_eq!(rent, sgs_rent);
             }
 
+            // Slot History
+            {
+                msg!("SlotHistory identifier:");
+                sysvar::slot_history::id().log();
+                // SlotHistory exceeds the default SBF heap, so inspecting without deserializing.
+                // Its final `u64` field is `next_slot`.
+                assert_eq!(accounts[8].data_len(), solana_sysvar::slot_history::SIZE);
+                let data = accounts[8].data.borrow();
+                let next_slot = u64::from_le_bytes(*data.last_chunk().unwrap());
+                assert_eq!(next_slot, Clock::get()?.slot);
+                // Slot History is not stored in the runtime sysvar cache, so syscall
+                // `sol_get_sysvar` does not support it.
+                assert_eq!(
+                    Err(ProgramError::UnsupportedSysvar),
+                    sol_get_sysvar::<SlotHistory>(1)
+                );
+            }
+
             Ok(())
         }
         Some(&1) => {
