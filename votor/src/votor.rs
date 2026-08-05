@@ -81,6 +81,7 @@ use {
     solana_rpc::optimistically_confirmed_bank_tracker::BankNotificationSenderConfig,
     solana_runtime::{
         bank_forks::BankForks, bank_forks_controller::BankForksController,
+        transaction_execution::TransactionStatusSender,
         validated_block_finalization::ValidatedBlockFinalizationCert,
     },
     solana_streamer::evicting_sender::EvictingSender,
@@ -138,6 +139,7 @@ pub struct VotorConfig {
     pub bls_sender: Sender<BLSOp>,
     pub commitment_sender: Sender<CommitmentAggregationData>,
     pub bank_notification_sender: Option<BankNotificationSenderConfig>,
+    pub transaction_status_sender: Option<TransactionStatusSender>,
     pub leader_window_info_sender: Sender<LeaderWindowInfo>,
     pub highest_parent_ready: Arc<RwLock<(Slot, Block)>>,
     pub event_sender: VotorEventSender,
@@ -192,6 +194,7 @@ impl Votor {
             bls_sender,
             commitment_sender,
             bank_notification_sender,
+            transaction_status_sender,
             leader_window_info_sender,
             highest_parent_ready,
             event_sender,
@@ -250,6 +253,7 @@ impl Votor {
         let root_context = RootContext {
             bank_notification_sender,
             bank_forks_controller,
+            transaction_status_sender,
         };
 
         let timer_manager = Arc::new(PlRwLock::new(TimerManager::new(

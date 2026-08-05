@@ -1242,6 +1242,7 @@ mod tests {
         let root_context = RootContext {
             bank_notification_sender: None,
             bank_forks_controller,
+            transaction_status_sender: None,
         };
 
         let local_context = LocalContext {
