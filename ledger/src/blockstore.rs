@@ -441,6 +441,7 @@ pub struct Blockstore {
     blocktime_cf: LedgerColumn<cf::Blocktime>,
     rewards_cf: LedgerColumn<cf::Rewards>,
     transaction_status_cf: LedgerColumn<cf::TransactionStatus>,
+    transaction_history_safe_root_cf: LedgerColumn<cf::TransactionHistorySafeRoot>,
     transaction_memos_cf: LedgerColumn<cf::TransactionMemos>,
     address_signatures_cf: LedgerColumn<cf::AddressSignatures>,
     perf_samples_cf: LedgerColumn<cf::PerfSamples>,
@@ -762,6 +763,7 @@ impl Blockstore {
         let blocktime_cf = db.column();
         let rewards_cf = db.column();
         let transaction_status_cf = db.column();
+        let transaction_history_safe_root_cf = db.column();
         let transaction_memos_cf = db.column();
         let address_signatures_cf = db.column();
         let perf_samples_cf = db.column();
@@ -799,6 +801,7 @@ impl Blockstore {
             roots_cf,
             transaction_memos_cf,
             transaction_status_cf,
+            transaction_history_safe_root_cf,
             alt_meta_cf,
             alt_index_cf,
             alt_data_shred_cf,
@@ -1662,6 +1665,8 @@ impl Blockstore {
         self.blocktime_cf.submit_rocksdb_cf_metrics();
         self.rewards_cf.submit_rocksdb_cf_metrics();
         self.transaction_status_cf.submit_rocksdb_cf_metrics();
+        self.transaction_history_safe_root_cf
+            .submit_rocksdb_cf_metrics();
         self.transaction_memos_cf.submit_rocksdb_cf_metrics();
         self.address_signatures_cf.submit_rocksdb_cf_metrics();
         self.perf_samples_cf.submit_rocksdb_cf_metrics();
@@ -4172,6 +4177,20 @@ impl Blockstore {
         self.block_height_cf.put(slot, &block_height)
     }
 
+    pub fn transaction_history_safe_root(&self) -> Result<Option<Slot>> {
+        self.transaction_history_safe_root_cf.get(0)
+    }
+
+    pub fn set_transaction_history_safe_root(&self, slot: Slot) -> Result<()> {
+        if self
+            .transaction_history_safe_root()?
+            .is_some_and(|safe_root| safe_root >= slot)
+        {
+            return Ok(());
+        }
+        self.transaction_history_safe_root_cf.put(0, &slot)
+    }
+
     /// The first complete block that is available in the Blockstore ledger
     pub fn get_first_available_block(&self) -> Result<Slot> {
         let mut root_iterator = self.rooted_slot_iterator(self.lowest_slot_with_genesis())?;
@@ -5213,7 +5232,7 @@ impl Blockstore {
     fn get_slot_data_in_block<T>(
         &self,
         slot: Slot,
-        completed_ranges: &CompletedRanges,
+        completed_ranges: &[Range<u32>],
         slot_meta: Option<&SlotMeta>,
         mut deserialize: impl FnMut(Vec<u8>) -> Result<Vec<T>>,
     ) -> Result<Vec<T>> {
@@ -5275,7 +5294,7 @@ impl Blockstore {
     fn get_slot_components_in_block(
         &self,
         slot: Slot,
-        completed_ranges: &CompletedRanges,
+        completed_ranges: &[Range<u32>],
         slot_meta: Option<&SlotMeta>,
     ) -> Result<Vec<BlockComponent>> {
         self.get_slot_data_in_block(slot, completed_ranges, slot_meta, |payload| {
@@ -5296,7 +5315,7 @@ impl Blockstore {
     fn get_slot_component_views_in_block(
         &self,
         slot: Slot,
-        completed_ranges: &CompletedRanges,
+        completed_ranges: &[Range<u32>],
         slot_meta: Option<&SlotMeta>,
     ) -> Result<Vec<ParsedBlockComponent>> {
         self.get_slot_data_in_block(slot, completed_ranges, slot_meta, |payload| {
@@ -5321,7 +5340,7 @@ impl Blockstore {
     fn get_slot_entries_in_block(
         &self,
         slot: Slot,
-        completed_ranges: &CompletedRanges,
+        completed_ranges: &[Range<u32>],
         slot_meta: Option<&SlotMeta>,
     ) -> Result<Vec<Entry>> {
         self.get_slot_data_in_block(slot, completed_ranges, slot_meta, |payload| {
@@ -5345,7 +5364,7 @@ impl Blockstore {
     fn get_slot_entry_views_in_block(
         &self,
         slot: Slot,
-        completed_ranges: &CompletedRanges,
+        completed_ranges: &[Range<u32>],
         slot_meta: Option<&SlotMeta>,
     ) -> Result<Vec<EntryView<Bytes>>> {
         self.get_slot_data_in_block(slot, completed_ranges, slot_meta, |payload| {
@@ -5374,7 +5393,7 @@ impl Blockstore {
         range: Range<u32>,
         slot_meta: Option<&SlotMeta>,
     ) -> Result<Vec<Entry>> {
-        self.get_slot_entries_in_block(slot, &vec![range], slot_meta)
+        self.get_slot_entries_in_block(slot, std::slice::from_ref(&range), slot_meta)
     }
 
     /// Returns a mapping from each elements of `slots` to a list of the
@@ -6367,9 +6386,12 @@ impl Blockstore {
         let Some(footer_fec_start) = final_fec_start.checked_sub(fec_set_size) else {
             return Ok(vec![]);
         };
-        let completed_ranges = std::iter::once(footer_fec_start..final_fec_start).collect();
-        let components =
-            self.get_slot_components_in_block(slot, &completed_ranges, /*slot_meta:*/ None)?;
+        let completed_range = footer_fec_start..final_fec_start;
+        let components = self.get_slot_components_in_block(
+            slot,
+            std::slice::from_ref(&completed_range),
+            /*slot_meta:*/ None,
+        )?;
         let [BlockComponent::BlockMarker(VersionedBlockMarker::V1(marker))] = components.as_slice()
         else {
             return Ok(vec![]);
