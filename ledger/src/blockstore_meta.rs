@@ -15,7 +15,7 @@ use {
         fmt::{self, Debug, Display},
         ops::{Range, RangeBounds},
     },
-    wincode::{SchemaRead, SchemaWrite},
+    wincode::{SchemaRead, SchemaWrite, adapter::DefaultOnEmptyRead},
 };
 
 bitflags! {
@@ -196,14 +196,14 @@ pub struct SlotMetaV3 {
     ///
     /// Populated by the block header initially, then replaced if an UpdateParent
     /// marker changes the replay parent for this slot.
-    #[wincode(with = "wincode_compat::DefaultOnEmptyRead<Hash>")]
+    #[wincode(with = "DefaultOnEmptyRead<Hash>")]
     pub parent_block_id: Hash,
     /// Shred/FEC-set index where replay should start for this slot.
     ///
     /// A value of zero means replay starts from the block header. A non-zero
     /// value means an UpdateParent marker was observed and replay must skip the
     /// optimistic-parent prefix before this FEC set.
-    #[wincode(with = "wincode_compat::DefaultOnEmptyRead<u32>")]
+    #[wincode(with = "DefaultOnEmptyRead<u32>")]
     pub replay_fec_set_index: u32,
 }
 
@@ -253,11 +253,11 @@ pub struct SlotMetaRepair {
 mod wincode_compat {
     use {
         super::*,
-        std::{marker::PhantomData, mem::MaybeUninit},
+        std::mem::MaybeUninit,
         wincode::{
-            ReadError, ReadResult, WriteResult,
+            ReadResult, WriteResult,
             config::ConfigCore,
-            io::{ReadError as IoReadError, Reader, Writer},
+            io::{Reader, Writer},
         },
     };
 
@@ -286,49 +286,6 @@ mod wincode_compat {
 
         fn write(writer: impl Writer, src: &Self::Src) -> WriteResult<()> {
             <Slot as SchemaWrite<C>>::write(writer, &src.unwrap_or(Slot::MAX))
-        }
-    }
-
-    /// Deserializes using `T` normally, but returns `T::Dst::default()` if the
-    /// reader is exhausted (EOF). Useful for backward compatibility when
-    /// trailing fields are appended to persisted structs.
-    pub(crate) struct DefaultOnEmptyRead<T>(PhantomData<T>);
-
-    // TYPE_META intentionally left dynamic: decoding may read either 0 bytes
-    // (EOF fallback) or the full encoded representation.
-    unsafe impl<'de, C: ConfigCore, T> SchemaRead<'de, C> for DefaultOnEmptyRead<T>
-    where
-        T: SchemaRead<'de, C>,
-        T::Dst: Default,
-    {
-        type Dst = T::Dst;
-
-        fn read(reader: impl Reader<'de>, dst: &mut MaybeUninit<Self::Dst>) -> ReadResult<()> {
-            match <T as SchemaRead<'de, C>>::read(reader, dst) {
-                Ok(()) => Ok(()),
-                Err(ReadError::Io(IoReadError::ReadSizeLimit(_))) => {
-                    dst.write(Self::Dst::default());
-                    Ok(())
-                }
-                Err(e) => Err(e),
-            }
-        }
-    }
-
-    unsafe impl<C: ConfigCore, T> SchemaWrite<C> for DefaultOnEmptyRead<T>
-    where
-        T: SchemaWrite<C>,
-    {
-        type Src = T::Src;
-
-        const TYPE_META: wincode::TypeMeta = T::TYPE_META;
-
-        fn size_of(src: &Self::Src) -> WriteResult<usize> {
-            <T as SchemaWrite<C>>::size_of(src)
-        }
-
-        fn write(writer: impl Writer, src: &Self::Src) -> WriteResult<()> {
-            <T as SchemaWrite<C>>::write(writer, src)
         }
     }
 }
