@@ -4876,7 +4876,10 @@ impl Blockstore {
         (starting_slot..=ending_slot)
             .into_par_iter()
             .for_each(|slot| {
-                if let Ok(entries) = self.get_slot_entries(slot, 0) {
+                if let Ok(Some(slot_meta)) = self.meta(slot)
+                    && let Ok(entries) =
+                        self.get_slot_entries(slot, u64::from(slot_meta.replay_fec_set_index))
+                {
                     entries.into_par_iter().for_each(|entry| {
                         entry.transactions.into_iter().for_each(|tx| {
                             if let Some(lookups) = tx.message.address_table_lookups() {
