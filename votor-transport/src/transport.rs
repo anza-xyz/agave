@@ -18,7 +18,7 @@ use {
 pub(crate) const MAX_IDLE_TIMEOUT: Duration = Duration::from_secs(5);
 /// QUIC keep-alive heartbeat. Must be << `MAX_IDLE_TIMEOUT` to avoid
 /// connections dying when no vote traffic is available.
-const KEEP_ALIVE_INTERVAL: Duration = Duration::from_secs(2);
+pub(crate) const KEEP_ALIVE_INTERVAL: Duration = Duration::from_secs(2);
 /// MTU used for all datagrams. Path-MTU discovery is disabled, so the initial
 /// and minimum MTU are the same; 1280 is the QUIC-spec floor.
 const DATAGRAM_MTU: u16 = 1280;
