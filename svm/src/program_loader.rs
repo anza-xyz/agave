@@ -11,7 +11,7 @@ use {
             ProgramCacheForTxBatch, ProgramCacheMatchCriteria, ProgramRuntimeEnvironment,
             ProgramToLoad,
         },
-        program_cache_entry::{ProgramCacheEntry, ProgramCacheEntryOwner, ProgramCacheEntryType},
+        program_cache_entry::{ProgramCacheEntry, ProgramCacheEntryOwner},
     },
     solana_pubkey::Pubkey,
     solana_sdk_ids::{bpf_loader, bpf_loader_deprecated, bpf_loader_upgradeable, loader_v4},
@@ -114,11 +114,7 @@ pub fn load_program_with_pubkey<CB: TransactionProcessingCallback>(
     let (load_result, last_modification_slot) = load_program_accounts(callbacks, pubkey)?;
     let loaded_program = match load_result {
         ProgramAccountLoadResult::InvalidAccountData(owner) => {
-            Ok(ProgramCacheEntry::new_tombstone_or_unloaded(
-                current_slot,
-                owner,
-                ProgramCacheEntryType::Closed,
-            ))
+            Ok(ProgramCacheEntry::new_closed_tombstone(current_slot, owner))
         }
 
         ProgramAccountLoadResult::ProgramOfLoaderV1(program_account) => ProgramCacheEntry::load(
@@ -183,11 +179,7 @@ pub fn load_program_with_pubkey<CB: TransactionProcessingCallback>(
     }
     .unwrap_or_else(|(deployment_slot, owner)| {
         let env = ProgramRuntimeEnvironment::clone(program_runtime_environment);
-        ProgramCacheEntry::new_tombstone_or_unloaded(
-            deployment_slot,
-            owner,
-            ProgramCacheEntryType::FailedVerification(env),
-        )
+        ProgramCacheEntry::new_failed_verification_tombstone(deployment_slot, owner, env)
     });
 
     #[cfg(feature = "metrics")]
@@ -308,6 +300,7 @@ mod tests {
                 BlockRelation, ForkGraph, ProgramRuntimeEnvironment,
                 get_mock_program_runtime_environment,
             },
+            program_cache_entry::ProgramCacheEntryType,
             solana_sbpf::program::BuiltinProgram,
         },
         solana_sdk_ids::{bpf_loader, bpf_loader_upgradeable, native_loader},
@@ -521,12 +514,10 @@ mod tests {
             &mut ExecuteTimings::default(),
         );
 
-        let loaded_program = ProgramCacheEntry::new_tombstone_or_unloaded(
+        let loaded_program = ProgramCacheEntry::new_failed_verification_tombstone(
             0, // Slot 0
             ProgramCacheEntryOwner::LoaderV3,
-            ProgramCacheEntryType::FailedVerification(
-                batch_processor.program_runtime_environment_for_epoch(20),
-            ),
+            batch_processor.program_runtime_environment_for_epoch(20),
         );
         assert_eq!(result.unwrap(), (Arc::new(loaded_program), 0));
     }
@@ -551,12 +542,10 @@ mod tests {
             200,
             &mut ExecuteTimings::default(),
         );
-        let loaded_program = ProgramCacheEntry::new_tombstone_or_unloaded(
+        let loaded_program = ProgramCacheEntry::new_failed_verification_tombstone(
             0,
             ProgramCacheEntryOwner::LoaderV2,
-            ProgramCacheEntryType::FailedVerification(
-                batch_processor.program_runtime_environment_for_epoch(20),
-            ),
+            batch_processor.program_runtime_environment_for_epoch(20),
         );
         assert_eq!(result.unwrap(), (Arc::new(loaded_program), 0));
 
@@ -627,12 +616,10 @@ mod tests {
             0,
             &mut ExecuteTimings::default(),
         );
-        let loaded_program = ProgramCacheEntry::new_tombstone_or_unloaded(
+        let loaded_program = ProgramCacheEntry::new_failed_verification_tombstone(
             0,
             ProgramCacheEntryOwner::LoaderV3,
-            ProgramCacheEntryType::FailedVerification(
-                batch_processor.program_runtime_environment_for_epoch(0),
-            ),
+            batch_processor.program_runtime_environment_for_epoch(0),
         );
         assert_eq!(result.unwrap(), (Arc::new(loaded_program), 0));
 

@@ -6,7 +6,7 @@ use {
     crate::{
         invoke_context::InvokeContext,
         loaded_programs::{ProgramCacheForTxBatch, ProgramRuntimeEnvironment},
-        program_cache_entry::{ProgramCacheEntry, ProgramCacheEntryOwner, ProgramCacheEntryType},
+        program_cache_entry::{ProgramCacheEntry, ProgramCacheEntryOwner},
     },
     solana_clock::Slot,
     solana_instruction::error::InstructionError,
@@ -101,11 +101,11 @@ pub fn deploy_program(
         load_program_metrics.verify_code_us = verify_code_time.as_us();
     }
     // Insert but with program_runtime_environment
-    let program_cache_entry = ProgramCacheEntry::new_tombstone_or_unloaded(
+    let program_cache_entry = ProgramCacheEntry::new_unloaded(
         deployment_slot,
         ProgramCacheEntryOwner::try_from(loader_key)
             .map_err(|_| InstructionError::InvalidAccountData)?,
-        ProgramCacheEntryType::Unloaded(program_runtime_environment),
+        program_runtime_environment,
     );
     if let Some(old_entry) = program_cache_for_tx_batch.find(program_id) {
         program_cache_entry.stats.merge_from(&old_entry.stats);

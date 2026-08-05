@@ -240,6 +240,20 @@ impl ProgramCacheEntry {
         })
     }
 
+    pub fn new_unloaded(
+        deployment_slot: Slot,
+        account_owner: ProgramCacheEntryOwner,
+        program_runtime_environment: ProgramRuntimeEnvironment,
+    ) -> Self {
+        Self {
+            program: ProgramCacheEntryType::Unloaded(program_runtime_environment),
+            account_owner,
+            deployment_slot,
+            stats: Arc::default(),
+            latest_access_slot: AtomicU64::new(0),
+        }
+    }
+
     pub fn to_unloaded_in_env(&self, environment: ProgramRuntimeEnvironment) -> Option<Self> {
         match &self.program {
             ProgramCacheEntryType::Loaded(_)
@@ -279,36 +293,42 @@ impl ProgramCacheEntry {
         }
     }
 
-    pub fn new_tombstone_or_unloaded(
-        slot: Slot,
+    pub fn new_failed_verification_tombstone(
+        deployment_slot: Slot,
         account_owner: ProgramCacheEntryOwner,
-        reason: ProgramCacheEntryType,
+        program_runtime_environment: ProgramRuntimeEnvironment,
     ) -> Self {
-        debug_assert!(matches!(
-            reason,
-            ProgramCacheEntryType::FailedVerification(_)
-                | ProgramCacheEntryType::Closed
-                | ProgramCacheEntryType::DelayVisibility
-                | ProgramCacheEntryType::Unloaded(_)
-        ));
         Self {
-            program: reason,
+            program: ProgramCacheEntryType::FailedVerification(program_runtime_environment),
             account_owner,
-            deployment_slot: slot,
+            deployment_slot,
+            stats: Arc::default(),
+            latest_access_slot: AtomicU64::new(0),
+        }
+    }
+
+    pub fn new_closed_tombstone(
+        deployment_slot: Slot,
+        account_owner: ProgramCacheEntryOwner,
+    ) -> Self {
+        Self {
+            program: ProgramCacheEntryType::Closed,
+            account_owner,
+            deployment_slot,
             stats: Arc::default(),
             latest_access_slot: AtomicU64::new(0),
         }
     }
 
     pub fn new_delay_visibility_tombstone(
-        slot: Slot,
+        deployment_slot: Slot,
         account_owner: ProgramCacheEntryOwner,
         stats: Arc<ProgramStatistics>,
     ) -> Self {
         Self {
             program: ProgramCacheEntryType::DelayVisibility,
             account_owner,
-            deployment_slot: slot,
+            deployment_slot,
             stats,
             latest_access_slot: AtomicU64::new(0),
         }
