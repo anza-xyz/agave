@@ -9,8 +9,8 @@ use {
 pub enum BlockstoreError {
     #[error("shred for index exists")]
     ShredForIndexExists,
-    #[error("invalid shred data")]
-    InvalidShredData(bincode::Error),
+    #[error("invalid shred data: {0}")]
+    InvalidShredData(String),
     #[error("RocksDB error: {0}")]
     RocksDb(#[from] rocksdb::Error),
     #[error("slot is not rooted")]
@@ -21,10 +21,10 @@ pub enum BlockstoreError {
     DeadSlot,
     #[error("io error: {0}")]
     Io(#[from] std::io::Error),
-    #[error("deserialization error: {0}")]
-    Deserialize(#[from] wincode::ReadError),
-    #[error("serialization error: {0}")]
-    Serialize(#[from] bincode::Error),
+    #[error("deserialization wincode error: {0}")]
+    WincodeRead(#[from] wincode::ReadError),
+    #[error("serialization wincode error: {0}")]
+    WincodeWrite(#[from] wincode::WriteError),
     #[error("fs extra error: {0}")]
     FsExtraError(#[from] fs_extra::error::Error),
     #[error("slot cleaned up")]
@@ -77,6 +77,44 @@ pub enum BlockstoreError {
     },
     #[error(transparent)]
     ManualPurge(#[from] BlockstoreManualPurgeError),
+    #[error("update parent matches block header for slot {0}")]
+    UpdateParentMatchesBlockHeader(Slot),
+    #[error("update parent slot greater than block header for slot {0}")]
+    UpdateParentSlotGreaterThanBlockHeader(Slot),
+    #[error(
+        "update parent {update_parent_slot} is greater than shred parent {shred_parent_slot} for \
+         slot {slot}"
+    )]
+    UpdateParentSlotGreaterThanShredParent {
+        slot: Slot,
+        update_parent_slot: Slot,
+        shred_parent_slot: Slot,
+    },
+    #[error("update parent is only valid in the first slot of a leader window for slot {0}")]
+    UpdateParentNotFirstInLeaderWindow(Slot),
+    #[error("unexpected block component")]
+    UnexpectedBlockComponent,
+    #[error("multiple update parents for slot {0}")]
+    MultipleUpdateParents(Slot),
+    #[error("block component mismatch for slot {0}")]
+    BlockComponentMismatch(Slot),
+    #[error("invalid parent info for slot {slot}: parent {parent_slot}, max root {root}")]
+    InvalidParentInfo {
+        slot: Slot,
+        parent_slot: Slot,
+        root: Slot,
+    },
+    #[error(
+        "block header parent {block_header_parent_slot} does not match shred parent \
+         {shred_parent_slot} for slot {slot}"
+    )]
+    BlockHeaderParentMismatch {
+        slot: Slot,
+        block_header_parent_slot: Slot,
+        shred_parent_slot: Slot,
+    },
+    #[error("Block in slot {0} was aborted as leader sent an empty entry batch")]
+    BlockAborted(Slot),
 }
 pub type Result<T> = std::result::Result<T, BlockstoreError>;
 
@@ -85,8 +123,8 @@ pub enum BlockstoreManualPurgeError {
     #[error("purge request sender is unavailable")]
     SenderUnavailable,
 
-    #[error("purge request for slot {request_slot} is newer than the latest root {max_root}")]
-    SlotNewerThanRoot { request_slot: Slot, max_root: Slot },
+    #[error("purge request for slot {request_slot} must be less than the latest root {max_root}")]
+    SlotGreaterThanOrEqualToRoot { request_slot: Slot, max_root: Slot },
 
     #[error("purge request try send error")]
     TrySend,

@@ -28,7 +28,7 @@ We envision the following applications for SVM
     The SVM is currently viewed as realizing two stages of the
     Transaction Engine Execution pipeline as described in Solana
     Architecture documentation
-    [https://docs.solana.com/validator/runtime#execution](https://docs.solana.com/validator/runtime#execution),
+    [https://docs.anza.xyz/validator/runtime#execution](https://docs.anza.xyz/validator/runtime#execution),
     namely ‘load accounts’ and ‘execute’ stages.
 
 - **SVM Rollups**

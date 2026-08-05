@@ -48,6 +48,14 @@ pub struct SnapshotConfig {
     /// Maximum number of incremental snapshot archives to retain
     /// NOTE: Incremental snapshots will only be kept for the latest full snapshot
     pub maximum_incremental_snapshot_archives_to_retain: NonZeroUsize,
+
+    /// Use `O_DIRECT` flag for IO operations.
+    pub use_direct_io: bool,
+
+    /// Whether to register buffers as *fixed* in io_uring for IO operations.
+    ///
+    /// Requires memlock ulimit higher than sum of buffer sizes registered at the same time.
+    pub use_registered_io_uring_buffers: bool,
 }
 
 impl Default for SnapshotConfig {
@@ -70,6 +78,8 @@ impl Default for SnapshotConfig {
             maximum_full_snapshot_archives_to_retain: DEFAULT_MAX_FULL_SNAPSHOT_ARCHIVES_TO_RETAIN,
             maximum_incremental_snapshot_archives_to_retain:
                 DEFAULT_MAX_INCREMENTAL_SNAPSHOT_ARCHIVES_TO_RETAIN,
+            use_direct_io: true,
+            use_registered_io_uring_buffers: true,
         }
     }
 }

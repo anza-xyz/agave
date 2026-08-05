@@ -6,6 +6,7 @@ authors = { workspace = true }
 repository = { workspace = true }
 license = { workspace = true }
 edition = { workspace = true }
+rust-version = { workspace = true }
 
 [features]
 agave-unstable-api = []
@@ -23,4 +24,8 @@ solana-signer = { workspace = true }
 solana-system-interface = { workspace = true }
 solana-transaction = { workspace = true }
 solana-transaction-error = { workspace = true }
+solana-zk-elgamal-proof-interface = { workspace = true }
 solana-zk-sdk = { workspace = true }
+
+[lints]
+workspace = true

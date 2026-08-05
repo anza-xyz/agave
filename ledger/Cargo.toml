@@ -8,9 +8,12 @@ repository = { workspace = true }
 homepage = { workspace = true }
 license = { workspace = true }
 edition = { workspace = true }
+rust-version = { workspace = true }
 
 [package.metadata.docs.rs]
 targets = ["x86_64-unknown-linux-gnu"]
+all-features = true
+rustdoc-args = ["--cfg=docsrs"]
 
 [lib]
 crate-type = ["lib"]
@@ -32,11 +35,10 @@ agave-snapshots = { workspace = true }
 agave-votor-messages = { workspace = true }
 anyhow = { workspace = true }
 assert_matches = { workspace = true }
-bincode = { workspace = true }
-bitflags = { workspace = true, features = ["serde"] }
+bitflags = { workspace = true }
 bytes = { workspace = true }
 bzip2 = { workspace = true }
-chrono = { workspace = true, features = ["default", "serde"] }
+chrono = { workspace = true, features = ["default"] }
 chrono-humanize = { workspace = true }
 crossbeam-channel = { workspace = true }
 dashmap = { workspace = true, features = ["rayon", "raw-api"] }
@@ -50,6 +52,7 @@ lru = { workspace = true }
 mockall = { workspace = true }
 num_cpus = { workspace = true }
 num_enum = { workspace = true }
+parking_lot = { workspace = true }
 prost = { workspace = true }
 qualifier_attr = { workspace = true }
 rand = { workspace = true }
@@ -58,11 +61,10 @@ rayon = { workspace = true }
 reed-solomon-erasure = { workspace = true, features = ["simd-accel"] }
 scopeguard = { workspace = true }
 serde = { workspace = true }
-serde_bytes = { workspace = true }
+smallvec = { workspace = true }
 solana-account = { workspace = true }
-solana-account-decoder = { workspace = true }
 solana-accounts-db = { workspace = true }
-solana-address-lookup-table-interface = { workspace = true }
+solana-address-lookup-table-interface = { workspace = true, features = ["wincode"] }
 solana-clock = { workspace = true }
 solana-cost-model = { workspace = true }
 solana-entry = { workspace = true }
@@ -88,15 +90,14 @@ solana-nohash-hasher = { workspace = true }
 solana-packet = { workspace = true }
 solana-perf = { workspace = true }
 solana-program-runtime = { workspace = true, features = ["metrics"] }
-solana-pubkey = { workspace = true }
-solana-rayon-threadlimit = { workspace = true }
+solana-pubkey = { workspace = true, features = ["wincode"] }
 solana-runtime = { workspace = true }
 solana-runtime-transaction = { workspace = true }
 solana-sha256-hasher = { workspace = true }
 solana-shred-version = { workspace = true }
 solana-signature = { workspace = true, features = ["wincode"] }
 solana-signer = { workspace = true }
-solana-stake-interface = { workspace = true }
+solana-stake-interface = { workspace = true, features = ["wincode"] }
 solana-storage-bigtable = { workspace = true }
 solana-storage-proto = { workspace = true }
 solana-streamer = { workspace = true }
@@ -120,7 +121,7 @@ thiserror = { workspace = true }
 tokio = { workspace = true, features = ["full"] }
 tokio-stream = { workspace = true }
 trees = { workspace = true }
-wincode = { workspace = true, features = ["bytes"] }
+wincode = { workspace = true, features = ["bytes", "smallvec"] }
 
 [dependencies.rocksdb]
 # Avoid the vendored bzip2 within rocksdb-sys that can cause linker conflicts
@@ -134,9 +135,7 @@ agave-logger = { path = "../logger", features = ["agave-unstable-api"] }
 bs58 = { workspace = true }
 criterion = { workspace = true }
 proptest = { workspace = true }
-solana-account-decoder = { path = "../account-decoder", features = ["agave-unstable-api"] }
 solana-bls-signatures = { workspace = true }
-# See order-crates-for-publishing.py for using this unusual `path = "."`
 solana-ledger = { path = ".", features = ["dev-context-only-utils", "agave-unstable-api"] }
 solana-net-utils = { path = "../net-utils", features = ["agave-unstable-api", "dev-context-only-utils"] }
 solana-perf = { path = "../perf", features = ["agave-unstable-api", "dev-context-only-utils"] }
@@ -144,9 +143,9 @@ solana-program-option = { workspace = true }
 solana-program-pack = { workspace = true }
 solana-runtime = { path = "../runtime", features = ["agave-unstable-api", "dev-context-only-utils"] }
 solana-signature = { workspace = true, features = ["rand"] }
+solana-unified-scheduler-pool = { path = "../unified-scheduler-pool", features = ["agave-unstable-api", "dev-context-only-utils"] }
 solana-vote = { path = "../vote", features = ["agave-unstable-api", "dev-context-only-utils"] }
 spl-generic-token = { workspace = true }
-spl-pod = { workspace = true }
 test-case = { workspace = true }
 
 [[bench]]

@@ -14,6 +14,10 @@ Provide a helpful title, detailed description of the vulnerability and an exploi
 proof-of-concept. Speculative submissions without proof-of-concept will be closed
 with no further consideration.
 
+Create one GHSA per finding. GHSAs reporting multiple findings will be closed as
+invalid. Such reports will not be eligible for bug bounties and will not hold a
+position in duplicate report standings.
+
 For vulnerabilities regarding SPL programs, please refer to the repositories
 and their associated security policy within the [solana-program organization](https://github.com/solana-program).
 
@@ -159,6 +163,10 @@ not limited to;
   * Any and all web properties (See domain ToC page for contact)
   * [SPL member projects](https://github.com/solana-program) (See repo security tab)
   * [Solana SDK crates](https://github.com/anza-xyz/solana-sdk) (See security tab)
+* Findings that require a Geyser plugin or `scheduler-bindings` external
+process to violate interface requirements. These integrations are operator-trusted
+components, and validator crashes or other instability caused by non-conforming
+implementations are out of scope.
 * Issues that have been previously disclosed in a public venue
 * Issues that affect node stability during the bootstrap phase and can be trivially
 mitigated by configuration adjustments. The bootstrap phase is defined as the time
@@ -167,7 +175,10 @@ snapshot slot or genesis.
 * Issues involving maliciously crafted snapshots. Snapshots have historically been
 considered trust on first use and have many shortcomings with respect to consistency
 and verifiability as a result. An effort to improve this situation is actively underway
-* For the RPC DoS category, the following classes of issue are out of scope
+* The in-built RPC service is not intended to be directly exposed to untrusted clients.
+Any environments which require features like authentication and rate-limiting _*MUST*_ be
+deployed behind a reverse proxy or similar. For the RPC DoS category, the following
+classes of issue are out of scope
   * Those requiring a call rate greater than once per `CLUSTER_SLOT_TIME_TARGET / 2`
   * Those requiring calls from multiple clients
   * Those impacting getProgramAccounts, et al. without secondary indexes enabled and/or
@@ -177,9 +188,22 @@ Alpenglow logic from a feature fork to agave master is currently underway. As
 such there are many partially migrated changes isolated to a few areas. These
 are disqualified from reports and bounties. Bugs in integration logic that impact
 the no-Alpenglow code path remain in scope
+* Loader V4 (the `loader-v4` crate and associated code paths). Loader V4 is
+being removed from the codebase and its feature ID has been stubbed out. Bugs
+relating to Loader V4 functionality are disqualified from reports and bounties.
+* Issues affecting the virtual machine interpreter. The interpreter performance is not
+presently suitable for production environments, so it is safe to address any security
+vulnerabilies or inconsistencies with jit behavior in public issues
 
 ### Eligibility:
+* Vulnerabilities must have been committed to the master branch for at least
+one week in order to be eligible for a bounty
+  * In the master branch, vulnerabilities that have been resolved or
+  acknowledged within one week are ineligible for bounty
+  * In the stable and beta branches, vulnerabilities are eligible for bounty
+  upon merge
 * Submissions _MUST_ include an exploit proof-of-concept to be considered eligible
+* Only reports describing a [single finding](#reporting) will be considered eligible
 * The participant submitting the bug report shall follow the process outlined within this document
 * Valid exploits can be eligible even if they are not successfully executed on a public cluster
 * Multiple submissions for the same class of exploit are still eligible for compensation, though may be compensated at a lower rate, however these will be assessed on a case-by-case basis

@@ -7,6 +7,7 @@ use {
     solana_keypair::Keypair,
     solana_ledger::{
         genesis_utils::{GenesisConfigInfo, create_genesis_config},
+        leader_schedule_cache::LeaderScheduleCache,
         shred::{ProcessShredsStats, ReedSolomonCache, Shredder},
     },
     solana_net_utils::{SocketAddrSpace, sockets::bind_to_localhost_unique},
@@ -39,6 +40,7 @@ fn broadcast_shreds_bench(b: &mut Bencher) {
     let bank = Bank::new_for_benches(&genesis_config);
     let bank_forks = BankForks::new_rw_arc(bank);
     let root_bank = bank_forks.read().unwrap().root_bank();
+    let leader_schedule_cache = LeaderScheduleCache::new_from_bank(&root_bank);
 
     const NUM_SHREDS: usize = 32;
 
@@ -88,6 +90,7 @@ fn broadcast_shreds_bench(b: &mut Bencher) {
             &mut TransmitShredsStats::default(),
             &cluster_info,
             &bank_forks,
+            &leader_schedule_cache,
             &SocketAddrSpace::Unspecified,
         )
         .unwrap();

@@ -199,16 +199,16 @@ fn create_account_allow_prefund(
         let mut to = instruction_context.try_borrow_instruction_account(to_account_index)?;
         allocate_and_assign(&mut to, to_address, space, owner, signers, invoke_context)?;
     }
-    if let Some((from_account_index, lamports)) = from_and_lamports {
-        if lamports > 0 {
-            transfer(
-                from_account_index,
-                to_account_index,
-                lamports,
-                invoke_context,
-                instruction_context,
-            )?;
-        }
+    if let Some((from_account_index, lamports)) = from_and_lamports
+        && lamports > 0
+    {
+        transfer(
+            from_account_index,
+            to_account_index,
+            lamports,
+            invoke_context,
+            instruction_context,
+        )?;
     }
     Ok(())
 }

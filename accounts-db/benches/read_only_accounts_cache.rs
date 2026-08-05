@@ -65,6 +65,7 @@ fn bench_read_only_accounts_cache(c: &mut Criterion) {
             AccountsDb::DEFAULT_MAX_READ_ONLY_CACHE_DATA_SIZE_LO,
             AccountsDb::DEFAULT_MAX_READ_ONLY_CACHE_DATA_SIZE_HI,
             AccountsDb::DEFAULT_READ_ONLY_CACHE_EVICT_SAMPLE_SIZE,
+            AccountsDb::DEFAULT_READ_ONLY_CACHE_NUM_SHARDS,
         ));
 
         for (pubkey, account) in accounts.iter() {
@@ -185,6 +186,7 @@ fn bench_read_only_accounts_cache_eviction(
             max_data_size_lo,
             max_data_size_hi,
             AccountsDb::DEFAULT_READ_ONLY_CACHE_EVICT_SAMPLE_SIZE,
+            AccountsDb::DEFAULT_READ_ONLY_CACHE_NUM_SHARDS,
         ));
 
         // Fill up the cache.

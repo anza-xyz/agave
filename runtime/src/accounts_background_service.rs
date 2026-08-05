@@ -34,7 +34,12 @@ use {
     },
 };
 
-const INTERVAL_MS: u64 = 100;
+/// Limit the maximum frequency that the ABS main loop can run.
+/// If the loop ran for less than this duration, sleep the remainder.
+/// E.g. with a min interval of 100 millis, the loop will run a maximum
+/// of 10 times per second.  Lower frequency is allowed, and occurs
+/// when longer-running tasks are triggered.
+const MIN_LOOP_INTERVAL: Duration = Duration::from_millis(100);
 // Set the clean interval duration to be approximately how long before the next incremental
 // snapshot request is received, plus some buffer.  The default incremental snapshot interval is
 // 100 slots, which ends up being 40 seconds plus buffer.
@@ -565,8 +570,12 @@ impl AccountsBackgroundService {
                                 previous_shrink_time = Instant::now();
                             }
                         }
-                        stats.record_and_maybe_submit(start_time.elapsed());
-                        sleep(Duration::from_millis(INTERVAL_MS));
+
+                        let loop_dur = start_time.elapsed();
+                        stats.record_and_maybe_submit(loop_dur);
+                        if let Some(sleep_dur) = MIN_LOOP_INTERVAL.checked_sub(loop_dur) {
+                            sleep(sleep_dur);
+                        }
                     }
                     info!("AccountsBackgroundService has stopped");
                     is_running.store(false, Ordering::Relaxed);
@@ -719,7 +728,7 @@ fn cmp_snapshot_request_kinds_by_priority(
 mod test {
     use {
         super::*, crate::genesis_utils::create_genesis_config,
-        agave_snapshots::snapshot_config::SnapshotConfig, crossbeam_channel::unbounded,
+        agave_snapshots::snapshot_config::SnapshotConfig, crossbeam_channel::bounded,
         solana_account::AccountSharedData, solana_epoch_schedule::EpochSchedule,
         solana_leader_schedule::SlotLeader, solana_pubkey::Pubkey,
     };
@@ -728,7 +737,7 @@ mod test {
     fn test_accounts_background_service_remove_dead_slots() {
         let genesis = create_genesis_config(10);
         let bank0 = Arc::new(Bank::new_for_tests(&genesis.genesis_config));
-        let (pruned_banks_sender, pruned_banks_receiver) = unbounded();
+        let (pruned_banks_sender, pruned_banks_receiver) = bounded(1024);
         let pruned_banks_request_handler = PrunedBanksRequestHandler {
             pruned_banks_receiver,
         };
@@ -768,7 +777,7 @@ mod test {
         let snapshot_config = SnapshotConfig::default();
 
         let pending_snapshot_packages = Arc::new(Mutex::new(PendingSnapshotPackages::default()));
-        let (snapshot_request_sender, snapshot_request_receiver) = crossbeam_channel::unbounded();
+        let (snapshot_request_sender, snapshot_request_receiver) = bounded(1024);
         let snapshot_controller = Arc::new(SnapshotController::new(
             snapshot_request_sender.clone(),
             snapshot_config,
@@ -908,7 +917,7 @@ mod test {
     /// Ensure that we can prune banks with the same slot (if they were on different forks)
     #[test]
     fn test_pruned_banks_request_handler_handle_request() {
-        let (pruned_banks_sender, pruned_banks_receiver) = crossbeam_channel::unbounded();
+        let (pruned_banks_sender, pruned_banks_receiver) = bounded(1024);
         let pruned_banks_request_handler = PrunedBanksRequestHandler {
             pruned_banks_receiver,
         };

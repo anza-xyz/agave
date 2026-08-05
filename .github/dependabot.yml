@@ -8,6 +8,16 @@ updates:
       time: "08:00"
       timezone: Etc/UTC
     open-pull-requests-limit: 6
+    cooldown:
+      default-days: 7
+      # crates published by anza-team bypass the cooldown
+      exclude:
+        - "solana-*"
+        - "agave-*"
+        - "spl-*"
+        - "rts-alloc"
+        - "shaq"
+        - "wincode"
 
   # split from root directory schedule to avoid duplicate checks
   - package-ecosystem: cargo
@@ -20,20 +30,16 @@ updates:
       time: "14:00"
       timezone: Etc/UTC
     open-pull-requests-limit: 6
-
-  - package-ecosystem: "npm"
-    directory: "/docs"
-    schedule:
-      interval: weekly
-      time: "08:00"
-      timezone: Etc/UTC
-    open-pull-requests-limit: 3
     cooldown:
       default-days: 7
-    groups:
-      docs-dependencies:
-        patterns:
-          - "*"
+      # crates published by anza-team bypass the cooldown
+      exclude:
+        - "solana-*"
+        - "agave-*"
+        - "spl-*"
+        - "rts-alloc"
+        - "shaq"
+        - "wincode"
 
   - package-ecosystem: "github-actions"
     directory: "/"
@@ -42,3 +48,5 @@ updates:
       time: "08:00"
       timezone: Etc/UTC
     open-pull-requests-limit: 3
+    cooldown:
+      default-days: 7

@@ -1,9 +1,10 @@
 use {
-    crate::blockstore_options::LedgerColumnOptions,
+    crate::{blockstore_meta::BlockLocation, blockstore_options::LedgerColumnOptions},
     rocksdb::{
         PerfContext,
         perf::{PerfMetric, PerfStatsLevel, set_perf_stats},
     },
+    solana_clock::Slot,
     solana_metrics::datapoint_info,
     solana_time_utils::timestamp,
     std::{
@@ -43,10 +44,36 @@ pub struct BlockstoreInsertionMetrics {
     pub num_coding_shreds_inserted: usize,
 }
 
-impl BlockstoreInsertionMetrics {
-    pub fn report_metrics(&self, metric_name: &'static str) {
+#[derive(Default)]
+pub struct BlockstoreSwitchBankMetrics {
+    pub total_elapsed_us: u64,
+    pub lock_elapsed_us: u64,
+    pub backup_elapsed_us: u64,
+    pub purge_elapsed_us: u64,
+    pub copy_elapsed_us: u64,
+}
+
+impl BlockstoreSwitchBankMetrics {
+    pub fn report_metrics(self, slot: Slot, from_location: BlockLocation) {
         datapoint_info!(
-            metric_name,
+            "blockstore_switch_bank",
+            "from_location" => from_location.to_string(),
+            ("slot", slot as i64, i64),
+            ("total_elapsed_us", self.total_elapsed_us as i64, i64),
+            ("lock_elapsed_us", self.lock_elapsed_us as i64, i64),
+            ("backup_elapsed_us", self.backup_elapsed_us as i64, i64),
+            ("purge_elapsed_us", self.purge_elapsed_us as i64, i64),
+            ("copy_elapsed_us", self.copy_elapsed_us as i64, i64),
+        );
+    }
+}
+
+impl BlockstoreInsertionMetrics {
+    const NAME: &str = "blockstore-insert-shreds";
+
+    pub fn report_metrics(&self) {
+        datapoint_info!(
+            Self::NAME,
             ("num_shreds", self.num_shreds as i64, i64),
             ("total_elapsed_us", self.total_elapsed_us as i64, i64),
             (

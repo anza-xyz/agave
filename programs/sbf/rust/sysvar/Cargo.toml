@@ -12,7 +12,6 @@ edition = { workspace = true }
 crate-type = ["cdylib"]
 
 [dependencies]
-bincode = { workspace = true }
 solana-account-info = { workspace = true }
 solana-define-syscall = { workspace = true }
 solana-instruction = { workspace = true }
@@ -22,8 +21,10 @@ solana-program-entrypoint = { workspace = true }
 solana-program-error = { workspace = true }
 solana-pubkey = { workspace = true }
 solana-sdk-ids = { workspace = true }
-solana-stake-interface = { workspace = true, features = ["sysvar"] }
-solana-sysvar = { workspace = true, features = ["bincode"] }
+solana-stake-history = { workspace = true }
+solana-sysvar = { workspace = true, features = ["bytemuck", "wincode"] }
+solana-sysvar-id = { workspace = true }
+wincode = { workspace = true }
 
 [lints]
 workspace = true

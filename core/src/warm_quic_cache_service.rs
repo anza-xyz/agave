@@ -35,17 +35,16 @@ impl WarmQuicCacheService {
         contact_info_selector: impl ContactInfoQuery<Option<SocketAddr>>,
         log_context: &str,
     ) {
-        if let Some(connection_cache) = cache {
-            if let Some(Some(addr)) =
+        if let Some(connection_cache) = cache
+            && let Some(Some(addr)) =
                 cluster_info.lookup_contact_info(leader_pubkey, contact_info_selector)
-            {
-                let conn = connection_cache.get_connection(&addr);
-                if let Err(err) = conn.send_data(&[]) {
-                    warn!(
-                        "Failed to warmup QUIC connection to the leader {leader_pubkey:?} at \
-                         {addr:?}, Context: {log_context}, Error: {err:?}"
-                    );
-                }
+        {
+            let conn = connection_cache.get_connection(&addr);
+            if let Err(err) = conn.send_data(&[]) {
+                warn!(
+                    "Failed to warmup QUIC connection to the leader {leader_pubkey:?} at \
+                     {addr:?}, Context: {log_context}, Error: {err:?}"
+                );
             }
         }
     }
@@ -75,26 +74,26 @@ impl WarmQuicCacheService {
                         .read()
                         .unwrap()
                         .leader_after_n_slots((CACHE_OFFSET_SLOT + slot_jitter) as u64);
-                    if let Some(leader_pubkey) = leader_pubkey {
-                        if maybe_last_leader != Some(leader_pubkey) {
-                            maybe_last_leader = Some(leader_pubkey);
-                            // Warm cache for regular transactions
-                            Self::warmup_connection(
-                                tpu_connection_cache.as_deref(),
-                                &cluster_info,
-                                &leader_pubkey,
-                                |node| node.tpu(Protocol::QUIC),
-                                "tpu",
-                            );
-                            // Warm cache for vote
-                            Self::warmup_connection(
-                                vote_connection_cache.as_deref(),
-                                &cluster_info,
-                                &leader_pubkey,
-                                |node| node.tpu_vote(Protocol::QUIC),
-                                "vote",
-                            );
-                        }
+                    if let Some(leader_pubkey) = leader_pubkey
+                        && maybe_last_leader != Some(leader_pubkey)
+                    {
+                        maybe_last_leader = Some(leader_pubkey);
+                        // Warm cache for regular transactions
+                        Self::warmup_connection(
+                            tpu_connection_cache.as_deref(),
+                            &cluster_info,
+                            &leader_pubkey,
+                            |node| node.tpu(Protocol::QUIC),
+                            "tpu",
+                        );
+                        // Warm cache for vote
+                        Self::warmup_connection(
+                            vote_connection_cache.as_deref(),
+                            &cluster_info,
+                            &leader_pubkey,
+                            |node| node.tpu_vote(Protocol::QUIC),
+                            "vote",
+                        );
                     }
                     sleep(Duration::from_millis(200));
                 }

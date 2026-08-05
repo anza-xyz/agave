@@ -7,12 +7,13 @@ use {
     solana_program_runtime::{declare_process_instruction, invoke_context::InvokeContext},
     solana_sdk_ids::system_program,
     solana_svm_log_collector::ic_msg,
-    solana_zk_sdk::zk_elgamal_proof_program::{
+    solana_zk_elgamal_proof_interface::{
         id,
         instruction::ProofInstruction,
         proof_data::*,
         state::{ProofContextState, ProofContextStateMeta},
     },
+    solana_zk_sdk::zk_elgamal_proof_program::VerifyZkProof,
     std::result::Result,
 };
 
@@ -34,7 +35,7 @@ const INSTRUCTION_DATA_LENGTH_WITH_PROOF_ACCOUNT: usize = 5;
 
 fn process_verify_proof<T, U>(invoke_context: &mut InvokeContext) -> Result<(), InstructionError>
 where
-    T: Pod + ZkProofData<U>,
+    T: Pod + ZkProofData<U> + VerifyZkProof,
     U: Pod,
 {
     let transaction_context = &invoke_context.transaction_context;

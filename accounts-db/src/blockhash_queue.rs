@@ -5,12 +5,15 @@ use {
     solana_clock::MAX_RECENT_BLOCKHASHES,
     solana_fee_calculator::FeeCalculator,
     solana_hash::Hash,
+    solana_nonce::state::DurableNonce,
     solana_time_utils::timestamp,
     std::collections::HashMap,
+    wincode::{SchemaRead, SchemaWrite},
 };
 
-#[cfg_attr(feature = "frozen-abi", derive(AbiExample))]
-#[derive(Debug, PartialEq, Eq, Clone, Serialize, Deserialize)]
+#[repr(C)]
+#[cfg_attr(feature = "frozen-abi", derive(AbiExample, StableAbi, StableAbiSample))]
+#[derive(Debug, PartialEq, Eq, Clone, Serialize, Deserialize, SchemaRead, SchemaWrite)]
 pub struct HashInfo {
     fee_calculator: FeeCalculator,
     hash_index: u64,
@@ -26,13 +29,15 @@ impl HashInfo {
 /// Low memory overhead, so can be cloned for every checkpoint
 #[cfg_attr(
     feature = "frozen-abi",
-    derive(AbiExample, StableAbi),
+    derive(AbiExample, StableAbi, StableAbiSample),
     frozen_abi(
-        api_digest = "DZVVXt4saSgH1CWGrzBcX2sq5yswCuRqGx1Y1ZehtWT6",
-        abi_digest = "CGD97vsYSQpPbYkzYnHmrwRZc4BbHqTEvP5vz4jg8jzU"
+        api_digest = "6dJKUuLbK5FVbUvNf7YwaGxJDkBTWvV9vfXevAFkHR5u",
+        abi_digest = "5ojmBDhhu9AjKUc1LSHhZfXF6KeicvZpKP6XdLNaFAdy",
+        abi_serializer = ["bincode", "wincode"],
+        test_roundtrip = "eq_and_wire"
     )
 )]
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, SchemaRead, SchemaWrite)]
 pub struct BlockhashQueue {
     /// index of last hash to be registered
     last_hash_index: u64,
@@ -40,10 +45,16 @@ pub struct BlockhashQueue {
     /// last hash to be registered
     last_hash: Option<Hash>,
 
-    hashes: HashMap<Hash, HashInfo, ahash::RandomState>,
+    hashes: HashMap<Hash, HashInfo, solana_hash::HashHasherBuilder>,
 
     /// hashes older than `max_age` will be dropped from the queue
     max_age: usize,
+
+    /// durable nonce value for the last hash
+    #[cfg_attr(feature = "frozen-abi", stable_abi_sample(with = "Default::default()"))]
+    #[serde(skip)]
+    #[wincode(skip)]
+    durable_nonce: Option<DurableNonce>,
 }
 
 impl Default for BlockhashQueue {
@@ -59,11 +70,22 @@ impl BlockhashQueue {
             last_hash_index: 0,
             last_hash: None,
             max_age,
+            durable_nonce: None,
         }
     }
 
     pub fn last_hash(&self) -> Hash {
         self.last_hash.expect("no hash has been set")
+    }
+
+    pub fn next_durable_nonce(&self) -> DurableNonce {
+        self.durable_nonce.expect("no hash has been set")
+    }
+
+    pub fn refresh_durable_nonce(&mut self) {
+        self.durable_nonce = self
+            .last_hash
+            .map(|hash| DurableNonce::from_blockhash(&hash));
     }
 
     pub fn get_lamports_per_signature(&self, hash: &Hash) -> Option<u64> {
@@ -102,6 +124,7 @@ impl BlockhashQueue {
         );
 
         self.last_hash = Some(*hash);
+        self.refresh_durable_nonce();
     }
 
     fn is_hash_index_valid(last_hash_index: u64, max_age: usize, hash_index: u64) -> bool {
@@ -121,6 +144,7 @@ impl BlockhashQueue {
         );
 
         self.last_hash = Some(*hash);
+        self.refresh_durable_nonce();
     }
 
     fn purge(&mut self) {
@@ -158,37 +182,6 @@ impl BlockhashQueue {
     }
 }
 
-#[cfg(feature = "frozen-abi")]
-impl solana_frozen_abi::rand::prelude::Distribution<BlockhashQueue>
-    for solana_frozen_abi::rand::distr::StandardUniform
-{
-    fn sample<R: solana_frozen_abi::rand::Rng + ?Sized>(&self, rng: &mut R) -> BlockhashQueue {
-        let seed1: u64 = rng.random();
-        let seed2: u64 = rng.random();
-        let seed3: u64 = rng.random();
-        let seed4: u64 = rng.random();
-
-        let mut hashes =
-            HashMap::with_hasher(ahash::RandomState::with_seeds(seed1, seed2, seed3, seed4));
-        hashes.insert(
-            Hash::new_from_array(rng.random()),
-            HashInfo {
-                fee_calculator: FeeCalculator {
-                    lamports_per_signature: rng.random(),
-                },
-                hash_index: rng.random(),
-                timestamp: rng.random(),
-            },
-        );
-
-        BlockhashQueue {
-            last_hash_index: rng.random(),
-            last_hash: Some(Hash::new_from_array(rng.random())),
-            hashes,
-            max_age: rng.random_range(0..MAX_RECENT_BLOCKHASHES),
-        }
-    }
-}
 #[cfg(test)]
 mod tests {
     #[allow(deprecated)]
@@ -207,6 +200,25 @@ mod tests {
         hash_queue.register_hash(&last_hash, 0);
         assert!(hash_queue.is_hash_valid_for_age(&last_hash, max_age));
         assert_eq!(hash_queue.last_hash_index, 1);
+    }
+
+    #[test]
+    fn test_next_durable_nonce() {
+        let mut hash_queue = BlockhashQueue::new(100);
+
+        let hash0 = Hash::new_unique();
+        hash_queue.genesis_hash(&hash0, 0);
+        assert_eq!(
+            hash_queue.next_durable_nonce(),
+            DurableNonce::from_blockhash(&hash0)
+        );
+
+        let hash1 = Hash::new_unique();
+        hash_queue.register_hash(&hash1, 0);
+        assert_eq!(
+            hash_queue.next_durable_nonce(),
+            DurableNonce::from_blockhash(&hash1)
+        );
     }
 
     #[test]

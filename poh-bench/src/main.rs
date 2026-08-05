@@ -1,10 +1,7 @@
 #![allow(clippy::arithmetic_side_effects)]
-#[cfg(any(target_arch = "x86", target_arch = "x86_64"))]
-use solana_entry::entry::{self, EntrySlice, create_ticks, init_poh};
-#[cfg(not(any(target_arch = "x86", target_arch = "x86_64")))]
-use solana_entry::entry::{EntrySlice, create_ticks, init_poh};
 use {
     clap::{Arg, Command, crate_description, crate_name},
+    solana_entry::entry::{EntrySlice, create_ticks},
     solana_measure::measure::Measure,
     solana_sha256_hasher::hash,
 };
@@ -72,7 +69,6 @@ fn main() {
         .thread_name(|i| format!("solPohBench{i:02}"))
         .build()
         .expect("new rayon threadpool");
-    init_poh();
     while num_entries <= max_num_entries as usize {
         let mut time = Measure::start("time");
         for _ in 0..iterations {
@@ -88,46 +84,6 @@ fn main() {
             num_entries,
             time.as_us() / iterations as u64
         );
-
-        // A target_arch check is required here since calling
-        // is_x86_feature_detected from a non-x86_64 arch results in a build
-        // error.
-        #[cfg(any(target_arch = "x86", target_arch = "x86_64"))]
-        {
-            if is_x86_feature_detected!("avx2") && entry::api().is_some() {
-                let mut time = Measure::start("time");
-                for _ in 0..iterations {
-                    assert!(thread_pool.install(|| {
-                        ticks[..num_entries]
-                            .verify_cpu_x86_simd(&start_hash, 8)
-                            .status()
-                    }));
-                }
-                time.stop();
-                println!(
-                    "{},cpu_simd_avx2,{}",
-                    num_entries,
-                    time.as_us() / iterations as u64
-                );
-            }
-
-            if is_x86_feature_detected!("avx512f") && entry::api().is_some() {
-                let mut time = Measure::start("time");
-                for _ in 0..iterations {
-                    assert!(thread_pool.install(|| {
-                        ticks[..num_entries]
-                            .verify_cpu_x86_simd(&start_hash, 16)
-                            .status()
-                    }));
-                }
-                time.stop();
-                println!(
-                    "{},cpu_simd_avx512,{}",
-                    num_entries,
-                    time.as_us() / iterations as u64
-                );
-            }
-        }
 
         println!();
         num_entries *= 2;

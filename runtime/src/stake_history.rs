@@ -1,19 +1,20 @@
 //! This module implements clone-on-write semantics for the SDK's `StakeHistory` to reduce
 //! unnecessary cloning of the underlying vector.
-pub use solana_stake_interface::stake_history::StakeHistoryGetEntry;
+pub use solana_stake_history::StakeHistoryGetEntry;
 use {
     serde::{Deserialize, Serialize},
     solana_clock::Epoch,
-    solana_stake_interface::stake_history::{self, StakeHistoryEntry},
+    solana_stake_history::StakeHistoryEntry,
     std::{
         ops::{Deref, DerefMut},
         sync::Arc,
     },
+    wincode::{SchemaRead, SchemaWrite},
 };
 
 /// The SDK's stake history with clone-on-write semantics
-#[cfg_attr(feature = "frozen-abi", derive(AbiExample))]
-#[derive(Default, Clone, PartialEq, Eq, Debug, Deserialize, Serialize)]
+#[cfg_attr(feature = "frozen-abi", derive(AbiExample, StableAbi, StableAbiSample))]
+#[derive(Default, Clone, PartialEq, Eq, Debug, Deserialize, Serialize, SchemaRead, SchemaWrite)]
 pub struct StakeHistory(Arc<StakeHistoryInner>);
 
 impl Deref for StakeHistory {
@@ -30,7 +31,7 @@ impl DerefMut for StakeHistory {
 }
 
 /// The inner type, which is the SDK's stake history
-type StakeHistoryInner = stake_history::StakeHistory;
+type StakeHistoryInner = solana_stake_history::StakeHistory;
 
 impl StakeHistoryGetEntry for StakeHistory {
     fn get_entry(&self, epoch: Epoch) -> Option<StakeHistoryEntry> {
@@ -40,7 +41,7 @@ impl StakeHistoryGetEntry for StakeHistory {
 
 #[cfg(test)]
 mod tests {
-    use {super::*, solana_stake_interface::stake_history::StakeHistoryEntry};
+    use super::*;
 
     fn rand_stake_history_entry() -> StakeHistoryEntry {
         StakeHistoryEntry {

@@ -3,27 +3,17 @@ use {
         self, DATA_SHREDS_PER_FEC_BLOCK, Error, ProcessShredsStats, Shred, ShredData, ShredFlags,
     },
     lazy_lru::LruCache,
-    rayon::ThreadPool,
     reed_solomon_erasure::{Error::TooFewDataShards, galois_8::ReedSolomon},
     solana_clock::Slot,
     solana_entry::{block_component::BlockComponent, entry::Entry},
     solana_hash::Hash,
     solana_keypair::Keypair,
-    solana_rayon_threadlimit::get_thread_count,
     std::{
         fmt::Debug,
         sync::{Arc, OnceLock, RwLock},
         time::Instant,
     },
 };
-
-static PAR_THREAD_POOL: std::sync::LazyLock<ThreadPool> = std::sync::LazyLock::new(|| {
-    rayon::ThreadPoolBuilder::new()
-        .num_threads(get_thread_count())
-        .thread_name(|i| format!("solShredder{i:02}"))
-        .build()
-        .unwrap()
-});
 
 // Arc<...> wrapper so that cache entries can be initialized without locking
 // the entire cache.
@@ -134,9 +124,7 @@ impl Shredder {
         reed_solomon_cache: &ReedSolomonCache,
         stats: &mut ProcessShredsStats,
     ) -> Result<impl Iterator<Item = Shred> + use<>, Error> {
-        let thread_pool: &ThreadPool = &PAR_THREAD_POOL;
         let shreds = shred::merkle::make_shreds_from_data(
-            thread_pool,
             keypair,
             chained_merkle_root,
             data,
@@ -226,10 +214,10 @@ impl Shredder {
                     shred::layout::get_index(shred)
                         .ok_or_else(|| Error::InvalidPayloadSize(shred.len()))?,
                 );
-                if let Some(prev) = prev {
-                    if prev.checked_add(1) != index {
-                        return Err(Error::from(TooFewDataShards));
-                    }
+                if let Some(prev) = prev
+                    && prev.checked_add(1) != index
+                {
+                    return Err(Error::from(TooFewDataShards));
                 }
                 data.extend_from_slice(shred::layout::get_data(shred)?);
                 let flags = shred::layout::get_flags(shred)?;

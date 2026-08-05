@@ -6,7 +6,7 @@ use {
     },
     arc_swap::ArcSwap,
     log::*,
-    solana_clock::Slot,
+    solana_clock::{BankId, Slot},
     solana_hash::Hash,
     solana_rpc::transaction_notifier_interface::TransactionNotifier,
     solana_signature::Signature,
@@ -27,6 +27,7 @@ impl TransactionNotifier for TransactionNotifierImpl {
     fn notify_transaction(
         &self,
         slot: Slot,
+        bank_id: BankId,
         index: usize,
         signature: &Signature,
         message_hash: &Hash,
@@ -53,9 +54,10 @@ impl TransactionNotifier for TransactionNotifierImpl {
             if !plugin.transaction_notifications_enabled() {
                 continue;
             }
-            match plugin.notify_transaction(
+            match plugin.notify_transaction_for_bank(
                 ReplicaTransactionInfoVersions::V0_0_3(&transaction_log_info),
                 slot,
+                bank_id,
             ) {
                 Err(err) => {
                     error!(

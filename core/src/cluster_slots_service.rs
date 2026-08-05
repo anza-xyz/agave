@@ -145,7 +145,8 @@ impl ClusterSlotsService {
                 process_cluster_slots_updates_elapsed.as_us(),
             );
 
-            if last_stats.elapsed().as_secs() > 2 {
+            const REPORT_INTERVAL: Duration = Duration::from_secs(2);
+            if last_stats.elapsed() > REPORT_INTERVAL {
                 datapoint_info!(
                     "cluster_slots_service-timing",
                     (

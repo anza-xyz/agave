@@ -5,9 +5,15 @@ use {
     },
     clap::{Arg, ArgMatches, value_t},
     solana_clap_utils::{hidden_unless_forced, input_validators::is_parsable},
-    solana_ledger::blockstore_options::{
-        AccessType, BlockstoreCompressionType, BlockstoreOptions, BlockstoreRecoveryMode,
-        LedgerColumnOptions,
+    solana_ledger::{
+        blockstore::{
+            DEFAULT_MAX_BLOCKSTORE_SHREDS, DEFAULT_MIN_MAX_BLOCKSTORE_SHREDS,
+            LEGACY_DEFAULT_MAX_LEDGER_SHREDS, LEGACY_DEFAULT_MIN_MAX_LEDGER_SHREDS,
+        },
+        blockstore_options::{
+            AccessType, BlockstoreCleanupStrategy, BlockstoreCompressionType, BlockstoreOptions,
+            BlockstoreRecoveryMode, LedgerColumnOptions,
+        },
     },
     std::{num::NonZeroUsize, sync::LazyLock},
 };
@@ -131,15 +137,63 @@ pub(crate) fn args<'a, 'b>() -> Vec<Arg<'a, 'b>> {
                 "Controls how RocksDB compacts shreds. *WARNING*: You will lose your Blockstore \
                  data when you switch between options.",
             ),
-        Arg::with_name("limit_ledger_size")
-            .long("limit-ledger-size")
+        Arg::with_name("limit_blockstore_size")
+            .long("limit-blockstore-size")
             .value_name("SHRED_COUNT")
+            // .default_value() intentionally not used here! This flag can be
+            // passed with or without a value
             .takes_value(true)
             .min_values(0)
             .max_values(1)
-            /* .default_value() intentionally not used here! */
-            .help("Keep this amount of shreds in root slots."),
+            .help(
+                "Limit the number of total shreds that the Blockstore retains. Once the \
+                 Blockstore reaches this capacity, shreds will be purged in a FIFO (oldest slots \
+                 first) manner.",
+            ),
     ]
+}
+
+impl FromClapArgMatches for BlockstoreCleanupStrategy {
+    fn from_clap_arg_match(matches: &ArgMatches) -> Result<Self> {
+        // `.conflicts_with()` is used to ensure only one of these can be set
+        if matches.is_present("limit_blockstore_size") {
+            let limit = match matches.value_of("limit_blockstore_size") {
+                Some(_) => {
+                    let limit = value_t!(matches, "limit_blockstore_size", u64)?;
+                    if limit < DEFAULT_MIN_MAX_BLOCKSTORE_SHREDS {
+                        return Err(crate::commands::Error::Dynamic(
+                            Box::<dyn std::error::Error>::from(format!(
+                                "The provided --limit-blockstore-size value is too small, the \
+                                 minimum value is {DEFAULT_MIN_MAX_BLOCKSTORE_SHREDS}"
+                            )),
+                        ));
+                    }
+                    limit
+                }
+                None => DEFAULT_MAX_BLOCKSTORE_SHREDS,
+            };
+            Ok(BlockstoreCleanupStrategy::CountDataAndCodingShreds(limit))
+        } else if matches.is_present("limit_ledger_size") {
+            let limit = match matches.value_of("limit_ledger_size") {
+                Some(_) => {
+                    let limit = value_t!(matches, "limit_ledger_size", u64)?;
+                    if limit < LEGACY_DEFAULT_MIN_MAX_LEDGER_SHREDS {
+                        return Err(crate::commands::Error::Dynamic(
+                            Box::<dyn std::error::Error>::from(format!(
+                                "The provided --limit-ledger-size value is too small, the minimum \
+                                 value is {LEGACY_DEFAULT_MIN_MAX_LEDGER_SHREDS}"
+                            )),
+                        ));
+                    }
+                    limit
+                }
+                None => LEGACY_DEFAULT_MAX_LEDGER_SHREDS,
+            };
+            Ok(BlockstoreCleanupStrategy::CountDataShreds(limit))
+        } else {
+            Ok(BlockstoreCleanupStrategy::None)
+        }
+    }
 }
 
 #[cfg(test)]

@@ -7,7 +7,13 @@ repository = { workspace = true }
 homepage = { workspace = true }
 license = { workspace = true }
 edition = { workspace = true }
+rust-version = { workspace = true }
 include = ["Cargo.toml", "src/**", "README", "agave-xdp-prog"]
+
+[package.metadata.docs.rs]
+targets = ["x86_64-unknown-linux-gnu"]
+all-features = true
+rustdoc-args = ["--cfg=docsrs"]
 
 [[bin]]
 name = "agave-xdp-prog"
@@ -20,9 +26,6 @@ agave-unstable-api = []
 
 [target.'cfg(target_arch = "bpf")'.dependencies]
 aya-ebpf = { workspace = true }
-
-[target.'cfg(target_os = "linux")'.dependencies]
-aya = { workspace = true }
 
 [lints]
 workspace = true

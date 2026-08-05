@@ -88,6 +88,7 @@ pub struct SpawnServerResult {
 #[allow(clippy::field_reassign_with_default)] // https://github.com/rust-lang/rust-clippy/issues/6527
 pub(crate) fn configure_server(
     identity_keypair: &Keypair,
+    quic_server_params: &QuicStreamerConfig,
 ) -> Result<(ServerConfig, String), QuicServerError> {
     let (cert, priv_key) = new_dummy_x509_certificate(identity_keypair);
     let cert_chain_pem_parts = vec![Pem {
@@ -111,10 +112,7 @@ pub(crate) fn configure_server(
 
     // Set STREAM_MAX_DATA to fit at most 1 transaction.
     // This should match the maximal TX size.
-    config.stream_receive_window((PACKET_DATA_SIZE as u32).into());
-    // set the receive window really small initially to prevent the fresh connections
-    // from slamming us with traffic.
-    config.receive_window((PACKET_DATA_SIZE as u32).into());
+    config.stream_receive_window((quic_server_params.stream_receive_window_size).into());
     // disable uni_streams until handshake is complete
     config.max_concurrent_uni_streams(0u32.into());
     config.receive_window(CONNECTION_RECEIVE_WINDOW_BYTES);
@@ -155,11 +153,12 @@ pub enum QuicServerError {
 
 pub struct EndpointKeyUpdater {
     endpoints: Vec<Endpoint>,
+    quic_server_params: QuicStreamerConfig,
 }
 
 impl NotifyKeyUpdate for EndpointKeyUpdater {
     fn update_key(&self, key: &Keypair) -> Result<(), Box<dyn std::error::Error>> {
-        let (config, _) = configure_server(key)?;
+        let (config, _) = configure_server(key, &self.quic_server_params)?;
         for endpoint in &self.endpoints {
             endpoint.set_server_config(Some(config.clone()));
         }
@@ -553,6 +552,10 @@ pub struct QuicStreamerConfig {
     pub max_connections_per_ipaddr_per_min: u64,
     pub wait_for_chunk_timeout: Duration,
     pub num_threads: NonZeroUsize,
+    /// Per-stream QUIC receive window (flow control limit).
+    pub stream_receive_window_size: u32,
+    /// Maximum total bytes allowed per stream (hard cap).
+    pub max_stream_data_bytes: u32,
 }
 
 #[derive(Clone)]
@@ -573,6 +576,8 @@ impl Default for QuicStreamerConfig {
             max_connections_per_ipaddr_per_min: DEFAULT_MAX_CONNECTIONS_PER_IPADDR_PER_MINUTE,
             wait_for_chunk_timeout: DEFAULT_WAIT_FOR_CHUNK_TIMEOUT,
             num_threads: NonZeroUsize::new(num_cpus::get().min(1)).expect("1 is non-zero"),
+            stream_receive_window_size: PACKET_DATA_SIZE as u32,
+            max_stream_data_bytes: PACKET_DATA_SIZE as u32,
         }
     }
 }
@@ -616,7 +621,7 @@ where
             sockets,
             keypair,
             packet_sender,
-            quic_server_params,
+            quic_server_params.clone(),
             qos,
             cancel,
         )
@@ -631,6 +636,7 @@ where
         .unwrap();
     let updater = EndpointKeyUpdater {
         endpoints: result.endpoints.clone(),
+        quic_server_params,
     };
     Ok(SpawnServerResult {
         endpoints: result.endpoints,
@@ -718,7 +724,7 @@ mod test {
                 check_multiple_streams, make_client_endpoint, make_client_endpoint_with_bind_ip,
             },
         },
-        crossbeam_channel::{Receiver, unbounded},
+        crossbeam_channel::{Receiver, bounded},
         solana_net_utils::sockets::bind_to_localhost_unique,
         solana_pubkey::Pubkey,
         solana_signer::Signer,
@@ -749,7 +755,7 @@ mod test {
         Arc<SimpleQosBanlist>,
     ) {
         let s = bind_to_localhost_unique().expect("should bind");
-        let (sender, receiver) = unbounded();
+        let (sender, receiver) = bounded(1024);
         let keypair = Keypair::new();
         let server_address = s.local_addr().unwrap();
         let cancel = CancellationToken::new();
@@ -785,7 +791,7 @@ mod test {
 
         let server_params = QuicStreamerConfig::default_for_tests();
         let s = bind_to_localhost_unique().expect("should bind");
-        let (sender, receiver) = unbounded();
+        let (sender, receiver) = bounded(1024);
         let keypair = Keypair::new();
         let server_address = s.local_addr().unwrap();
         let cancel = CancellationToken::new();
@@ -840,7 +846,7 @@ mod test {
     fn test_quic_server_multiple_streams() {
         agave_logger::setup();
         let s = bind_to_localhost_unique().expect("should bind");
-        let (sender, receiver) = unbounded();
+        let (sender, receiver) = bounded(1024);
         let keypair = Keypair::new();
         let server_address = s.local_addr().unwrap();
         let staked_nodes = Arc::new(RwLock::new(StakedNodes::default()));
@@ -1010,11 +1016,11 @@ mod test {
             .await;
 
             // Rejection can happen at handshake or when opening streams.
-            if let Ok(connection) = post_ban {
-                if let Ok(mut stream) = connection.open_uni().await {
-                    let _ = stream.write_all(&[7u8]).await;
-                    let _ = stream.finish();
-                }
+            if let Ok(connection) = post_ban
+                && let Ok(mut stream) = connection.open_uni().await
+            {
+                let _ = stream.write_all(&[7u8]).await;
+                let _ = stream.finish();
             }
 
             // Ensure nothing from the post-ban attempt made it through.
@@ -1032,7 +1038,7 @@ mod test {
     fn test_quic_server_unstaked_node_connect_failure() {
         agave_logger::setup();
         let s = bind_to_localhost_unique().expect("should bind");
-        let (sender, _) = unbounded();
+        let (sender, _) = bounded(1024);
         let keypair = Keypair::new();
         let server_address = s.local_addr().unwrap();
         let staked_nodes = Arc::new(RwLock::new(StakedNodes::default()));

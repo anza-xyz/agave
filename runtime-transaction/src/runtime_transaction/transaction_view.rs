@@ -2,7 +2,10 @@ use {
     super::{ComputeBudgetInstructionDetails, RuntimeTransaction},
     crate::{
         instruction_meta::InstructionMeta,
-        transaction_meta::{CachedTransactionMeta, TransactionMeta},
+        transaction_meta::{
+            CachedTransactionMeta, TransactionConfiguration, TransactionMeta,
+            VersionedTransactionConfiguration,
+        },
         transaction_with_meta::TransactionWithMeta,
     },
     agave_transaction_view::{
@@ -16,6 +19,7 @@ use {
         v0::{LoadedAddresses, LoadedMessage, MessageAddressTableLookup},
         v1,
     },
+    solana_program_entrypoint::HEAP_LENGTH,
     solana_pubkey::Pubkey,
     solana_svm_transaction::svm_message::SVMMessage,
     solana_transaction::{
@@ -87,14 +91,31 @@ where
         precompile_signature_details.num_ed25519_instruction_signatures,
         precompile_signature_details.num_secp256r1_instruction_signatures,
     );
-    let compute_budget_instruction_details =
-        ComputeBudgetInstructionDetails::try_from(transaction.program_instructions_iter())?;
+    let versioned_transaction_config =
+        if let Some(transaction_config_view) = transaction.transaction_config() {
+            // NOTE: only txv1 has `transaction_config_view`, which must have been validated for
+            // SanitizedTransactionView.
+            VersionedTransactionConfiguration::V1(TransactionConfiguration {
+                priority_fee_lamports: transaction_config_view.priority_fee_lamports().unwrap_or(0),
+                compute_unit_limit: transaction_config_view.compute_unit_limit().unwrap_or(0),
+                loaded_accounts_data_size_limit: transaction_config_view
+                    .loaded_accounts_data_size_limit()
+                    .unwrap_or(0),
+                updated_heap_bytes: transaction_config_view
+                    .requested_heap_size()
+                    .unwrap_or(HEAP_LENGTH as u32),
+            })
+        } else {
+            VersionedTransactionConfiguration::LegacyAndV0(
+                ComputeBudgetInstructionDetails::try_from(transaction.program_instructions_iter())?,
+            )
+        };
 
     Ok(CachedTransactionMeta {
         message_hash,
         is_simple_vote_transaction: is_simple_vote_tx,
         signature_details,
-        compute_budget_instruction_details,
+        versioned_transaction_config,
         instruction_data_len,
     })
 }
@@ -116,14 +137,8 @@ impl<D: TransactionData> RuntimeTransaction<ResolvedTransactionView<D>> {
         let transaction =
             ResolvedTransactionView::try_new(transaction, loaded_addresses, reserved_account_keys)
                 .map_err(|_| TransactionError::SanitizeFailure)?;
-        let mut tx = Self { transaction, meta };
-        tx.load_dynamic_metadata()?;
-
+        let tx = Self { transaction, meta };
         Ok(tx)
-    }
-
-    fn load_dynamic_metadata(&mut self) -> Result<()> {
-        Ok(())
     }
 }
 
@@ -143,11 +158,29 @@ impl<D: TransactionData> TransactionWithMeta for RuntimeTransaction<ResolvedTran
                 message: Cow::Owned(message),
                 is_writable_account_cache,
             }),
-            VersionedMessage::V0(message) => SanitizedMessage::V0(LoadedMessage {
-                message: Cow::Owned(message),
-                loaded_addresses: Cow::Owned(self.loaded_addresses().unwrap().clone()),
-                is_writable_account_cache,
-            }),
+            VersionedMessage::V0(message) => {
+                // transaction-view does not expose its loaded-address source. Reconstruct the
+                // legacy representation from the resolved account keys, whose layout is static,
+                // writable loaded, then readonly loaded.
+                let mut loaded_account_keys = self
+                    .account_keys()
+                    .iter()
+                    .skip(self.static_account_keys().len())
+                    .copied();
+                let loaded_addresses = LoadedAddresses {
+                    writable: loaded_account_keys
+                        .by_ref()
+                        .take(usize::from(self.total_writable_lookup_accounts()))
+                        .collect(),
+                    readonly: loaded_account_keys.collect(),
+                };
+
+                SanitizedMessage::V0(LoadedMessage {
+                    message: Cow::Owned(message),
+                    loaded_addresses: Cow::Owned(loaded_addresses),
+                    is_writable_account_cache,
+                })
+            }
             VersionedMessage::V1(message) => SanitizedMessage::V1(v1::CachedMessage {
                 message: Cow::Owned(message),
                 is_writable_account_cache,
@@ -241,6 +274,7 @@ impl<D: TransactionData> TransactionWithMeta for RuntimeTransaction<ResolvedTran
 mod tests {
     use {
         super::*,
+        crate::sanitize_config::sanitize_config,
         agave_reserved_account_keys::ReservedAccountKeys,
         solana_hash::Hash,
         solana_keypair::Keypair,
@@ -260,12 +294,15 @@ mod tests {
                 1,
                 Hash::new_unique(),
             ));
-            bincode::serialize(&transaction).unwrap()
+            wincode::serialize(&transaction).unwrap()
         };
 
         let hash = Hash::new_unique();
-        let transaction =
-            SanitizedTransactionView::try_new_sanitized(&serialized_transaction[..], true).unwrap();
+        let transaction = SanitizedTransactionView::try_new_sanitized(
+            &serialized_transaction[..],
+            &sanitize_config(),
+        )
+        .unwrap();
         let static_runtime_transaction =
             RuntimeTransaction::<SanitizedTransactionView<_>>::try_new(
                 transaction,
@@ -296,9 +333,10 @@ mod tests {
             loaded_addresses: Option<LoadedAddresses>,
             reserved_account_keys: &HashSet<Pubkey>,
         ) {
-            let bytes = bincode::serialize(&original_transaction).unwrap();
+            let bytes = wincode::serialize(&original_transaction).unwrap();
             let transaction_view =
-                SanitizedTransactionView::try_new_sanitized(&bytes[..], true).unwrap();
+                SanitizedTransactionView::try_new_sanitized(&bytes[..], &sanitize_config())
+                    .unwrap();
             let runtime_transaction = RuntimeTransaction::<SanitizedTransactionView<_>>::try_new(
                 transaction_view,
                 MessageHash::Compute,
@@ -363,9 +401,10 @@ mod tests {
             reserved_account_keys: &HashSet<Pubkey>,
         ) {
             let bytes =
-                bincode::serialize(&original_transaction.to_versioned_transaction()).unwrap();
+                wincode::serialize(&original_transaction.to_versioned_transaction()).unwrap();
             let transaction_view =
-                SanitizedTransactionView::try_new_sanitized(&bytes[..], true).unwrap();
+                SanitizedTransactionView::try_new_sanitized(&bytes[..], &sanitize_config())
+                    .unwrap();
             let runtime_transaction = RuntimeTransaction::<SanitizedTransactionView<_>>::try_new(
                 transaction_view,
                 MessageHash::Compute,
@@ -445,15 +484,18 @@ mod tests {
     #[test]
     fn test_serialized_size() {
         let serialized_transaction =
-            bincode::serialize(&VersionedTransaction::from(system_transaction::transfer(
+            wincode::serialize(&VersionedTransaction::from(system_transaction::transfer(
                 &Keypair::new(),
                 &Pubkey::new_unique(),
                 1,
                 Hash::new_unique(),
             )))
             .unwrap();
-        let transaction_view =
-            SanitizedTransactionView::try_new_sanitized(&serialized_transaction[..], true).unwrap();
+        let transaction_view = SanitizedTransactionView::try_new_sanitized(
+            &serialized_transaction[..],
+            &sanitize_config(),
+        )
+        .unwrap();
         let runtime_transaction = RuntimeTransaction::<SanitizedTransactionView<_>>::try_new(
             transaction_view,
             MessageHash::Compute,

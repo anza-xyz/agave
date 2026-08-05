@@ -275,7 +275,6 @@ mod tests {
 
     #[test]
     fn bucket_map_test_update_to_0_len() {
-        agave_logger::setup();
         let key = Pubkey::new_unique();
         let config = BucketMapConfig::new(1 << 1);
         let index = BucketMap::new(config);
@@ -390,7 +389,6 @@ mod tests {
     #[test]
     fn hashmap_compare() {
         use std::sync::Mutex;
-        agave_logger::setup();
         for mut use_batch_insert in [true, false] {
             let maps = (0..2)
                 .map(|max_buckets_pow2| {

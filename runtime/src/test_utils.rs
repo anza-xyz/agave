@@ -26,7 +26,7 @@ pub fn new_rand_vote_account<R: Rng>(
     let mut account = AccountSharedData::new(rng.random(), VoteStateV4::size_of(), &owner);
 
     let bls_pubkey_compressed = set_bls_pubkey.then(|| {
-        let bls_pubkey: BLSPubkeyCompressed = BLSKeypair::new().public.into();
+        let bls_pubkey: BLSPubkeyCompressed = (*BLSKeypair::new().public).into();
         let bls_pubkey_buffer = bincode::serialize(&bls_pubkey).unwrap();
         bls_pubkey_buffer.try_into().unwrap()
     });

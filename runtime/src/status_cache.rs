@@ -1,21 +1,18 @@
 #[cfg(feature = "shuttle-test")]
 use shuttle::sync::{Arc, Mutex};
+#[cfg(not(feature = "shuttle-test"))]
+use std::sync::{Arc, Mutex};
 use {
-    ahash::{HashMap, HashMapExt as _},
     log::*,
     serde::Serialize,
+    smallvec::SmallVec,
     solana_accounts_db::ancestors::Ancestors,
     solana_clock::{MAX_RECENT_BLOCKHASHES, Slot},
     solana_hash::Hash,
     std::{
-        collections::{HashSet, hash_map::Entry},
+        collections::{HashMap, HashSet, hash_map::Entry},
         num::{NonZero, NonZeroUsize},
     },
-};
-#[cfg(not(feature = "shuttle-test"))]
-use {
-    rand::{Rng, rng},
-    std::sync::{Arc, Mutex},
 };
 
 // The maximum number of entries to store in the cache. This is the same as the number of recent
@@ -27,7 +24,7 @@ const MAX_ROOT_ENTRIES: usize = MAX_RECENT_BLOCKHASHES;
 const CACHED_KEY_SIZE: usize = 20;
 
 // Store forks in a single chunk of memory to avoid another hash lookup.
-pub type ForkStatus<T> = Vec<(Slot, T)>;
+pub type ForkStatus<T> = SmallVec<[(Slot, T); 1]>;
 
 // The type of the key used in the cache.
 pub(crate) type KeySlice = [u8; CACHED_KEY_SIZE];
@@ -35,11 +32,12 @@ pub(crate) type KeySlice = [u8; CACHED_KEY_SIZE];
 type KeyMap<T> = HashMap<KeySlice, ForkStatus<T>>;
 
 // Map of Hash and status
-pub type Status<T> = Arc<Mutex<HashMap<Hash, (usize, Vec<(KeySlice, T)>)>>>;
+pub type Status<T> =
+    Arc<Mutex<HashMap<Hash, (usize, Vec<(KeySlice, T)>), solana_hash::HashHasherBuilder>>>;
 
 // A Map of hash + the highest fork it's been observed on along with
 // the key offset and a Map of the key slice + Fork status for that key
-type KeyStatusMap<T> = HashMap<Hash, (Slot, usize, KeyMap<T>)>;
+type KeyStatusMap<T> = HashMap<Hash, (Slot, usize, KeyMap<T>), solana_hash::HashHasherBuilder>;
 
 // The type used for StatusCache::slot_deltas. See the field definition for more details.
 type SlotDeltaMap<T> = HashMap<Slot, Status<T>>;
@@ -86,6 +84,7 @@ impl<T: Serialize + Clone> StatusCache<T> {
         let slot_deltas = self.slot_deltas.remove(&slot);
         if let Some(slot_deltas) = slot_deltas {
             let slot_deltas = slot_deltas.lock().unwrap();
+            let mut warned = false;
             for (blockhash, (_, key_list)) in slot_deltas.iter() {
                 // Any blockhash that exists in self.slot_deltas must also exist
                 // in self.cache, because in self.purge_roots(), when an entry
@@ -101,11 +100,32 @@ impl<T: Serialize + Clone> StatusCache<T> {
                             if key_list.is_empty() {
                                 o_key_list.remove_entry();
                             }
-                        } else {
-                            panic!(
-                                "Map for key must exist if key exists in self.slot_deltas, slot: \
-                                 {slot}"
-                            )
+                        } else if !warned {
+                            // On invalid blocks, we can have:
+                            //
+                            // slot_deltas[slot_1][blockhash] => [
+                            //     (signature, tx1_result), // dup
+                            //     (signature, tx2_result), // dup
+                            // ];
+                            // cache[blockhash][signature] => [
+                            //     (slot_1, tx1_result), // dup
+                            //     (slot_1, tx2_result), // dup
+                            // ];
+                            //
+                            // this can happen because tx execution and signature verification run
+                            // in parallel, so tx1 and tx2 can finish executing and get inserted
+                            // into the cache before their signatures are verified.
+                            //
+                            // This is an invalid condition that we eventually detect and mark the
+                            // slot as dead. If clear_slot_entries() is called on such a slot,
+                            // iterating on the first element of slot_deltas[slot_1][blockhash] will
+                            // (correctly) remove the whole cache[blockhash][signature] entry, and
+                            // then on the 2nd element we get here.
+                            warn!(
+                                "signature found more than once in the same slot, this means \
+                                 we're clearing a dead slot: {slot}"
+                            );
+                            warned = true;
                         }
                     }
 
@@ -153,16 +173,10 @@ impl<T: Serialize + Clone> StatusCache<T> {
         key: K,
         ancestors: &Ancestors,
     ) -> Option<(Slot, T)> {
-        let keys: Vec<_> = self.cache.keys().copied().collect();
-
-        for blockhash in keys.iter() {
+        self.cache.keys().find_map(|blockhash| {
             trace!("get_status_any_blockhash: trying {blockhash}");
-            let status = self.get_status(&key, blockhash, ancestors);
-            if status.is_some() {
-                return status;
-            }
-        }
-        None
+            self.get_status(&key, blockhash, ancestors)
+        })
     }
 
     /// Add a known root fork.
@@ -171,6 +185,11 @@ impl<T: Serialize + Clone> StatusCache<T> {
     /// keys are cleared.
     pub fn add_root(&mut self, fork: Slot) {
         self.roots.insert(fork);
+        self.purge_roots();
+    }
+
+    pub fn add_roots<I: IntoIterator<Item = Slot>>(&mut self, forks: I) {
+        self.roots.extend(forks);
         self.purge_roots();
     }
 
@@ -198,15 +217,10 @@ impl<T: Serialize + Clone> StatusCache<T> {
         let max_key_index = key.as_ref().len().saturating_sub(CACHED_KEY_SIZE + 1);
 
         // Get the cache entry for this blockhash.
-        let (max_slot, key_index, hash_map) =
-            self.cache.entry(*transaction_blockhash).or_insert_with(|| {
-                // DFS tests need deterministic behavior
-                #[cfg(feature = "shuttle-test")]
-                let key_index = 0;
-                #[cfg(not(feature = "shuttle-test"))]
-                let key_index = rng().random_range(0..max_key_index + 1);
-                (slot, key_index, HashMap::new())
-            });
+        let (max_slot, key_index, hash_map) = self
+            .cache
+            .entry(*transaction_blockhash)
+            .or_insert_with(|| (slot, 0, HashMap::new()));
 
         // Update the max slot observed to contain txs using this blockhash.
         *max_slot = std::cmp::max(slot, *max_slot);
@@ -225,12 +239,20 @@ impl<T: Serialize + Clone> StatusCache<T> {
     }
 
     pub fn purge_roots(&mut self) {
-        while self.roots.len() > self.max_root_entries() {
-            if let Some(min) = self.roots.iter().min().cloned() {
-                self.roots.remove(&min);
-                self.cache.retain(|_, (fork, _, _)| *fork > min);
-                self.slot_deltas.retain(|slot, _| *slot > min);
-            }
+        let max_root_entries = self.max_root_entries();
+        if self.roots.len() > max_root_entries {
+            let num_roots_to_purge = self.roots.len() - max_root_entries;
+            let mut roots = self
+                .roots
+                .iter()
+                .copied()
+                .collect::<SmallVec<[Slot; 0x200]>>();
+            let (_, cutoff, _) = roots.select_nth_unstable(num_roots_to_purge - 1);
+            let cutoff = *cutoff;
+
+            self.roots.retain(|root| *root > cutoff);
+            self.cache.retain(|_, (fork, _, _)| *fork > cutoff);
+            self.slot_deltas.retain(|slot, _| *slot > cutoff);
         }
     }
 
@@ -346,17 +368,17 @@ mod tests {
                     .all(|(hash, (slot, key_index, hash_map))| {
                         if let Some((other_slot, other_key_index, other_hash_map)) =
                             other.cache.get(hash)
+                            && slot == other_slot
+                            && key_index == other_key_index
                         {
-                            if slot == other_slot && key_index == other_key_index {
-                                return hash_map.iter().all(|(slice, fork_map)| {
-                                    if let Some(other_fork_map) = other_hash_map.get(slice) {
-                                        // all this work just to compare the highest forks in the fork map
-                                        // per entry
-                                        return fork_map.last() == other_fork_map.last();
-                                    }
-                                    false
-                                });
-                            }
+                            return hash_map.iter().all(|(slice, fork_map)| {
+                                if let Some(other_fork_map) = other_hash_map.get(slice) {
+                                    // all this work just to compare the highest forks in the fork map
+                                    // per entry
+                                    return fork_map.last() == other_fork_map.last();
+                                }
+                                false
+                            });
                         }
                         false
                     })
@@ -647,6 +669,19 @@ mod tests {
                 .is_none()
         );
         assert!(status_cache.cache.is_empty());
+    }
+
+    #[test]
+    fn test_clear_invalid_slot_signatures() {
+        let mut status_cache = BankStatusCache::default();
+        let blockhash = hash(Hash::default().as_ref());
+        let sig = Signature::default();
+        status_cache.insert(&blockhash, sig, 0, ());
+        // Insert the same signature for the same blockhash and slot twice to
+        // model dead slots with duplicate signatures
+        status_cache.insert(&blockhash, sig, 0, ());
+        // ensure that clear_slot_entries() doesn't panic
+        status_cache.clear_slot_entries(0);
     }
 
     // Status cache uses a random key offset for each blockhash. Ensure that shorter

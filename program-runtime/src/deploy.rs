@@ -6,14 +6,14 @@ use {
     crate::{
         invoke_context::InvokeContext,
         loaded_programs::{ProgramCacheForTxBatch, ProgramRuntimeEnvironment},
-        program_cache_entry::{DELAY_VISIBILITY_SLOT_OFFSET, ProgramCacheEntry},
+        program_cache_entry::{ProgramCacheEntry, ProgramCacheEntryOwner},
     },
     solana_clock::Slot,
     solana_instruction::error::InstructionError,
     solana_pubkey::Pubkey,
     solana_sbpf::{
         elf::{ElfError, Executable},
-        program::BuiltinProgram,
+        program::{BuiltinProgram, SBPFVersion},
         verifier::RequisiteVerifier,
     },
     solana_svm_log_collector::{LogCollector, ic_logger_msg},
@@ -23,13 +23,13 @@ use {
 
 fn morph_into_deployment_environment(
     from: ProgramRuntimeEnvironment,
+    disable_sbpf_v0_v1_v2_deployment: bool,
 ) -> Result<BuiltinProgram<InvokeContext<'static, 'static>>, ElfError> {
     let mut config = (*from).get_config().clone();
     config.reject_broken_elfs = true;
-    // Once the tests are being build using a toolchain which supports the newer SBPF versions,
-    // the deployment of older versions will be disabled:
-    // config.enabled_sbpf_versions =
-    //     *config.enabled_sbpf_versions.end()..=*config.enabled_sbpf_versions.end();
+    if disable_sbpf_v0_v1_v2_deployment {
+        config.enabled_sbpf_versions = SBPFVersion::V3..=*config.enabled_sbpf_versions.end();
+    }
 
     let mut result = BuiltinProgram::new_loader(config);
 
@@ -46,14 +46,15 @@ fn morph_into_deployment_environment(
 /// Directly deploy a program using a provided invoke context.
 /// This function should only be invoked from the runtime, since it does not
 /// provide any account loads or checks.
+#[allow(clippy::too_many_arguments)]
 pub fn deploy_program(
     log_collector: Option<Rc<RefCell<LogCollector>>>,
     #[cfg(feature = "metrics")] load_program_metrics: &mut LoadProgramMetrics,
     program_cache_for_tx_batch: &mut ProgramCacheForTxBatch,
     program_runtime_environment: ProgramRuntimeEnvironment,
+    disable_sbpf_v0_v1_v2_deployment: bool,
     program_id: &Pubkey,
     loader_key: &Pubkey,
-    account_size: usize,
     programdata: &[u8],
     deployment_slot: Slot,
 ) -> Result<(), InstructionError> {
@@ -61,6 +62,7 @@ pub fn deploy_program(
     let mut register_syscalls_time = Measure::start("register_syscalls_time");
     let deployment_program_runtime_environment = morph_into_deployment_environment(
         ProgramRuntimeEnvironment::clone(&program_runtime_environment),
+        disable_sbpf_v0_v1_v2_deployment,
     )
     .map_err(|e| {
         ic_logger_msg!(log_collector, "Failed to register syscalls: {}", e);
@@ -98,38 +100,32 @@ pub fn deploy_program(
         verify_code_time.stop();
         load_program_metrics.verify_code_us = verify_code_time.as_us();
     }
-    // Reload but with program_runtime_environment
-    let executor = unsafe {
-        // SAFETY: The executable has been verified just above.
-        ProgramCacheEntry::reload(
-            loader_key,
-            program_runtime_environment,
-            deployment_slot,
-            deployment_slot.saturating_add(DELAY_VISIBILITY_SLOT_OFFSET),
-            programdata,
-            account_size,
-            #[cfg(feature = "metrics")]
-            load_program_metrics,
-        )
-    }
-    .map_err(|err| {
-        ic_logger_msg!(log_collector, "{}", err);
-        InstructionError::InvalidAccountData
-    })?;
+    // Insert but with program_runtime_environment
+    let program_cache_entry = ProgramCacheEntry::new_unloaded(
+        deployment_slot,
+        ProgramCacheEntryOwner::try_from(loader_key)
+            .map_err(|_| InstructionError::InvalidAccountData)?,
+        program_runtime_environment,
+    );
     if let Some(old_entry) = program_cache_for_tx_batch.find(program_id) {
-        executor.stats.merge_from(&old_entry.stats);
+        program_cache_entry.stats.merge_from(&old_entry.stats);
     }
     #[cfg(feature = "metrics")]
     {
         load_program_metrics.program_id = program_id.to_string();
     }
-    program_cache_for_tx_batch.store_modified_entry(*program_id, Arc::new(executor));
+    program_cache_for_tx_batch.store_modified_entry(*program_id, Arc::new(program_cache_entry));
     Ok(())
 }
 
 #[macro_export]
 macro_rules! deploy_program {
-    ($invoke_context:expr, $program_id:expr, $loader_key:expr, $account_size:expr, $programdata:expr, $deployment_slot:expr $(,)?) => {
+    ($invoke_context:expr,
+     $program_id:expr,
+     $loader_key:expr,
+     $programdata:expr,
+     $deployment_slot:expr,
+     $disable_sbpf_v0_v1_v2_deployment:expr $(,)?) => {
         assert_eq!(
             $deployment_slot,
             $invoke_context.program_cache_for_tx_batch.slot()
@@ -144,9 +140,9 @@ macro_rules! deploy_program {
             $invoke_context
                 .get_program_runtime_environment_for_deployment()
                 .clone(),
+            $disable_sbpf_v0_v1_v2_deployment,
             $program_id,
             $loader_key,
-            $account_size,
             $programdata,
             $deployment_slot,
         )?;

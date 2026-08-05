@@ -1,0 +1,411 @@
+use {
+    crate::{bank::Bank, bank_forks::BankForks, installed_scheduler_pool::BankWithScheduler},
+    agave_votor_messages::consensus_message::Block,
+    crossbeam_channel::{Receiver, RecvTimeoutError, Sender, bounded},
+    log::warn,
+    solana_clock::Slot,
+    solana_metrics::datapoint_info,
+    std::{
+        fmt,
+        sync::{Arc, Mutex},
+        time::{Duration, Instant},
+    },
+    thiserror::Error,
+};
+
+const CHANNEL_SIZE: usize = 16;
+
+#[derive(Debug, Error)]
+pub enum BankForksControllerError {
+    #[error("bank forks controller is disconnected")]
+    Disconnected,
+    #[error("bank to insert for slot {0} was stale, failed to insert")]
+    UnableToInsertStaleBank(Slot),
+}
+
+pub enum BankForksCommand {
+    InsertBank {
+        bank: Box<Bank>,
+        response_sender: Sender<Option<BankWithScheduler>>,
+    },
+    ClearBank {
+        slot: Slot,
+        response_sender: Sender<()>,
+    },
+}
+
+#[derive(Clone, Copy, Debug)]
+pub struct SetRootCommand {
+    pub new_root: Block,
+}
+
+impl SetRootCommand {
+    /// Whether the requested root still identifies a frozen bank newer than the applied root.
+    pub fn matches_frozen_bank(&self, bank_forks: &BankForks) -> bool {
+        self.new_root.slot > bank_forks.root()
+            && bank_forks.get(self.new_root.slot).is_some_and(|bank| {
+                bank.is_frozen() && bank.block_id() == Some(self.new_root.block_id)
+            })
+    }
+}
+
+impl BankForksCommand {
+    fn metric_slot(&self) -> Slot {
+        match self {
+            Self::InsertBank { bank, .. } => bank.slot(),
+            Self::ClearBank { slot, .. } => *slot,
+        }
+    }
+}
+
+impl fmt::Display for BankForksCommand {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::InsertBank { .. } => write!(f, "insert_bank"),
+            Self::ClearBank { .. } => write!(f, "clear_bank"),
+        }
+    }
+}
+
+pub trait BankForksController: Send + Sync {
+    fn insert_bank(&self, bank: Bank) -> Result<BankWithScheduler, BankForksControllerError>;
+
+    fn enqueue_set_root(&self, new_root: Block);
+
+    fn clear_bank(&self, slot: Slot) -> Result<(), BankForksControllerError>;
+}
+
+/// Handle used by non-replay threads to serialize BankForks writes onto ReplayStage.
+#[derive(Clone)]
+pub struct BankForksControllerHandle {
+    sender: Sender<BankForksCommand>,
+    pending_set_root: Arc<Mutex<Option<SetRootCommand>>>,
+    set_root_signal_sender: Sender<()>,
+}
+
+impl BankForksControllerHandle {
+    pub fn new() -> (Self, BankForksCommandReceiver) {
+        let (sender, receiver) = bounded(CHANNEL_SIZE);
+        let (set_root_signal_sender, set_root_signal_receiver) = bounded(1);
+        let pending_set_root = Arc::new(Mutex::new(None));
+        (
+            Self {
+                sender,
+                pending_set_root: pending_set_root.clone(),
+                set_root_signal_sender,
+            },
+            BankForksCommandReceiver {
+                receiver,
+                pending_set_root,
+                set_root_signal_receiver,
+            },
+        )
+    }
+
+    fn send_command<T>(
+        &self,
+        command: BankForksCommand,
+        response_receiver: Receiver<T>,
+    ) -> Result<T, BankForksControllerError> {
+        let command_name = command.to_string();
+        let slot = command.metric_slot();
+        let queue_len_before_send = self.sender.len();
+        let total_start = Instant::now();
+        let send_start = Instant::now();
+        if self.sender.send(command).is_err() {
+            return Err(BankForksControllerError::Disconnected);
+        }
+        let send_us = send_start.elapsed().as_micros() as i64;
+
+        let response_wait_start = Instant::now();
+        let response = loop {
+            match response_receiver.recv_timeout(Duration::from_millis(100)) {
+                Ok(response) => break response,
+                Err(RecvTimeoutError::Disconnected) => {
+                    return Err(BankForksControllerError::Disconnected);
+                }
+                Err(RecvTimeoutError::Timeout) => (),
+            }
+            warn!(
+                "Replay is stuck, waiting for {}ms no response to {command_name} for {slot}",
+                response_wait_start.elapsed().as_millis()
+            );
+        };
+
+        let response_wait_us = response_wait_start.elapsed().as_micros() as i64;
+        let total_us = total_start.elapsed().as_micros() as i64;
+        datapoint_info!(
+            "bank_forks_controller-command",
+            ("command", command_name, String),
+            ("slot", slot as i64, i64),
+            ("queue_len_before_send", queue_len_before_send as i64, i64),
+            ("send_us", send_us, i64),
+            ("response_wait_us", response_wait_us, i64),
+            ("total_us", total_us, i64),
+        );
+
+        Ok(response)
+    }
+}
+
+impl BankForksController for BankForksControllerHandle {
+    fn insert_bank(&self, bank: Bank) -> Result<BankWithScheduler, BankForksControllerError> {
+        let slot = bank.slot();
+        let (response_sender, response_receiver) = bounded(1);
+        let bank = self.send_command(
+            BankForksCommand::InsertBank {
+                bank: Box::new(bank),
+                response_sender,
+            },
+            response_receiver,
+        )?;
+        bank.ok_or(BankForksControllerError::UnableToInsertStaleBank(slot))
+    }
+
+    fn enqueue_set_root(&self, new_root: Block) {
+        let total_start = Instant::now();
+        let command = SetRootCommand { new_root };
+
+        {
+            let mut pending_set_root = self.pending_set_root.lock().unwrap();
+            // Replay only needs to process the highest pending root.
+            if pending_set_root
+                .as_ref()
+                .is_none_or(|pending| command.new_root.slot > pending.new_root.slot)
+            {
+                *pending_set_root = Some(command);
+            }
+        }
+        let _ = self.set_root_signal_sender.try_send(());
+
+        let total_us = total_start.elapsed().as_micros() as i64;
+
+        datapoint_info!(
+            "bank_forks_controller-command",
+            ("command", "set_root", String),
+            ("slot", new_root.slot as i64, i64),
+            ("total_us", total_us, i64),
+        );
+    }
+
+    fn clear_bank(&self, slot: Slot) -> Result<(), BankForksControllerError> {
+        let (response_sender, response_receiver) = bounded(1);
+        self.send_command(
+            BankForksCommand::ClearBank {
+                slot,
+                response_sender,
+            },
+            response_receiver,
+        )
+    }
+}
+
+pub struct BankForksCommandReceiver {
+    receiver: Receiver<BankForksCommand>,
+    pending_set_root: Arc<Mutex<Option<SetRootCommand>>>,
+    set_root_signal_receiver: Receiver<()>,
+}
+
+impl BankForksCommandReceiver {
+    pub fn receiver(&self) -> &Receiver<BankForksCommand> {
+        &self.receiver
+    }
+
+    pub fn set_root_signal_receiver(&self) -> &Receiver<()> {
+        &self.set_root_signal_receiver
+    }
+
+    pub fn take_set_root_command(&self) -> Option<SetRootCommand> {
+        self.pending_set_root.lock().unwrap().take()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use {
+        super::*,
+        crate::{bank::SlotLeader, bank_forks::BankForks, genesis_utils::create_genesis_config},
+        solana_hash::Hash,
+        std::{thread, time::Duration},
+    };
+
+    #[test]
+    fn test_bank_forks_controller_keeps_highest_pending_set_root() {
+        let (controller, receiver) = BankForksControllerHandle::new();
+
+        let block_id_5 = Hash::new_unique();
+        controller.enqueue_set_root(Block {
+            slot: 5,
+            block_id: block_id_5,
+        });
+        controller.enqueue_set_root(Block {
+            slot: 3,
+            block_id: Hash::new_unique(),
+        });
+        let command = receiver.take_set_root_command().unwrap();
+        assert_eq!(command.new_root.slot, 5);
+        assert_eq!(command.new_root.block_id, block_id_5);
+        assert!(receiver.take_set_root_command().is_none());
+
+        controller.enqueue_set_root(Block {
+            slot: 3,
+            block_id: Hash::new_unique(),
+        });
+        controller.enqueue_set_root(Block {
+            slot: 5,
+            block_id: block_id_5,
+        });
+        assert_eq!(receiver.take_set_root_command().unwrap().new_root.slot, 5);
+    }
+
+    #[test]
+    fn test_bank_forks_controller_signals_pending_set_root() {
+        let (controller, receiver) = BankForksControllerHandle::new();
+
+        controller.enqueue_set_root(Block {
+            slot: 1,
+            block_id: Hash::new_unique(),
+        });
+        receiver
+            .set_root_signal_receiver()
+            .recv_timeout(Duration::from_secs(1))
+            .unwrap();
+        assert_eq!(receiver.take_set_root_command().unwrap().new_root.slot, 1);
+
+        controller.enqueue_set_root(Block {
+            slot: 2,
+            block_id: Hash::new_unique(),
+        });
+        controller.enqueue_set_root(Block {
+            slot: 3,
+            block_id: Hash::new_unique(),
+        });
+        receiver
+            .set_root_signal_receiver()
+            .recv_timeout(Duration::from_secs(1))
+            .unwrap();
+        assert!(receiver.set_root_signal_receiver().try_recv().is_err());
+        assert_eq!(receiver.take_set_root_command().unwrap().new_root.slot, 3);
+    }
+
+    #[test]
+    fn test_set_root_command_matches_frozen_bank() {
+        let genesis = create_genesis_config(10_000);
+        let bank_forks = BankForks::new_rw_arc(Bank::new_for_tests(&genesis.genesis_config));
+        let parent_bank = bank_forks.read().unwrap().root_bank();
+        let bank = Bank::new_from_parent(parent_bank, SlotLeader::default(), 1);
+        let block_id = Hash::new_unique();
+        bank.set_block_id(Some(block_id));
+        let bank = bank_forks
+            .write()
+            .unwrap()
+            .insert(bank)
+            .clone_without_scheduler();
+        let command = SetRootCommand {
+            new_root: Block { slot: 1, block_id },
+        };
+
+        assert!(!command.matches_frozen_bank(&bank_forks.read().unwrap()));
+        bank.freeze();
+        assert!(command.matches_frozen_bank(&bank_forks.read().unwrap()));
+
+        let mismatched_command = SetRootCommand {
+            new_root: Block {
+                block_id: Hash::new_unique(),
+                ..command.new_root
+            },
+        };
+        assert!(!mismatched_command.matches_frozen_bank(&bank_forks.read().unwrap()));
+
+        let missing_command = SetRootCommand {
+            new_root: Block {
+                slot: 2,
+                block_id: Hash::new_unique(),
+            },
+        };
+        assert!(!missing_command.matches_frozen_bank(&bank_forks.read().unwrap()));
+
+        bank_forks.write().unwrap().set_root(1, None, None);
+        assert!(!command.matches_frozen_bank(&bank_forks.read().unwrap()));
+    }
+
+    #[test]
+    fn test_bank_forks_controller_insert_and_set_root() {
+        let genesis = create_genesis_config(10_000);
+        let bank_forks = BankForks::new_rw_arc(Bank::new_for_tests(&genesis.genesis_config));
+        let (controller, receiver) = BankForksControllerHandle::new();
+        let replay_bank_forks = bank_forks.clone();
+        let (root_sender, root_receiver) = bounded(1);
+        let replay_thread = thread::spawn(move || {
+            loop {
+                if let Some(command) = receiver.take_set_root_command() {
+                    let new_root = command.new_root.slot;
+                    {
+                        let mut bank_forks = replay_bank_forks.write().unwrap();
+                        bank_forks.set_root(new_root, None, None);
+                    }
+                    root_sender.send(new_root).unwrap();
+                }
+                let command = match receiver.receiver().recv_timeout(Duration::from_millis(10)) {
+                    Ok(command) => command,
+                    Err(RecvTimeoutError::Timeout) => continue,
+                    Err(RecvTimeoutError::Disconnected) => break,
+                };
+                match command {
+                    BankForksCommand::InsertBank {
+                        bank,
+                        response_sender,
+                    } => {
+                        let bank = {
+                            let mut bank_forks = replay_bank_forks.write().unwrap();
+                            bank_forks.insert(*bank)
+                        };
+                        response_sender.send(Some(bank)).unwrap();
+                    }
+                    BankForksCommand::ClearBank {
+                        slot,
+                        response_sender,
+                    } => {
+                        let bank_to_clear =
+                            replay_bank_forks.read().unwrap().get_with_scheduler(slot);
+                        if let Some(bank) = bank_to_clear {
+                            let _ = bank.wait_for_completed_scheduler();
+                        }
+
+                        {
+                            let mut bank_forks = replay_bank_forks.write().unwrap();
+                            bank_forks.clear_bank(slot, false);
+                        }
+                        response_sender.send(()).unwrap();
+                    }
+                }
+            }
+        });
+
+        let parent_bank = bank_forks.read().unwrap().root_bank();
+        let bank = Bank::new_from_parent(parent_bank, SlotLeader::default(), 1);
+        let block_id = Hash::new_unique();
+        bank.set_block_id(Some(block_id));
+        bank.freeze();
+        let inserted_bank = controller.insert_bank(bank).unwrap();
+        assert_eq!(inserted_bank.slot(), 1);
+        assert!(bank_forks.read().unwrap().get(1).is_some());
+
+        controller.enqueue_set_root(Block { slot: 1, block_id });
+        assert_eq!(root_receiver.recv().unwrap(), 1);
+        assert_eq!(bank_forks.read().unwrap().root(), 1);
+
+        let parent_bank = bank_forks.read().unwrap().root_bank();
+        let bank = Bank::new_from_parent(parent_bank, SlotLeader::default(), 2);
+        bank.freeze();
+        let inserted_bank = controller.insert_bank(bank).unwrap();
+        assert_eq!(inserted_bank.slot(), 2);
+        assert!(bank_forks.read().unwrap().get(2).is_some());
+
+        controller.clear_bank(2).unwrap();
+        assert!(bank_forks.read().unwrap().get(2).is_none());
+
+        drop(controller);
+        replay_thread.join().unwrap();
+    }
+}

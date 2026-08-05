@@ -81,7 +81,7 @@ while IFS= read -r line; do
     echo "datapoint: $datapoint"
 
     if [[ -z "$DRY_RUN" ]]; then
-      curl -s -X POST "${INFLUX_HOST}/write?db=${INFLUX_DB}" --data-binary "$datapoint"
+      curl -s -X POST "${INFLUX_HOST}/write?db=${INFLUX_DB}" -u "${INFLUX_USER}:${INFLUX_PASSWORD}" --data-binary "$datapoint"
     fi
   fi
 

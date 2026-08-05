@@ -10,7 +10,7 @@ use {
     solana_accounts_db::accounts_update_notifier_interface::{
         AccountForGeyser, AccountsUpdateNotifierInterface,
     },
-    solana_clock::Slot,
+    solana_clock::{BankId, Slot},
     solana_pubkey::Pubkey,
     solana_transaction::sanitized::SanitizedTransaction,
     std::sync::Arc,
@@ -29,6 +29,7 @@ impl AccountsUpdateNotifierInterface for AccountsUpdateNotifierImpl {
     fn notify_account_update(
         &self,
         slot: Slot,
+        bank_id: BankId,
         account: &AccountSharedData,
         txn: &Option<&SanitizedTransaction>,
         pubkey: &Pubkey,
@@ -36,7 +37,7 @@ impl AccountsUpdateNotifierInterface for AccountsUpdateNotifierImpl {
     ) {
         let account_info =
             self.accountinfo_from_shared_account_data(account, txn, pubkey, write_version);
-        self.notify_plugins_of_account_update(account_info, slot, false);
+        self.notify_plugins_of_account_update_for_bank(account_info, slot, bank_id);
     }
 
     fn notify_account_restore_from_snapshot(
@@ -47,7 +48,7 @@ impl AccountsUpdateNotifierInterface for AccountsUpdateNotifierImpl {
     ) {
         let mut account = self.accountinfo_from_account_for_geyser(account);
         account.write_version = write_version;
-        self.notify_plugins_of_account_update(account, slot, true);
+        self.notify_plugins_of_account_update_from_snapshot(account, slot);
     }
 
     fn notify_end_of_restore_from_snapshot(&self) {
@@ -122,11 +123,10 @@ impl AccountsUpdateNotifierImpl {
         }
     }
 
-    fn notify_plugins_of_account_update(
+    fn notify_plugins_of_account_update_from_snapshot(
         &self,
         account: ReplicaAccountInfoV3,
         slot: Slot,
-        is_startup: bool,
     ) {
         let plugin_manager = self.plugin_manager.load();
 
@@ -137,10 +137,49 @@ impl AccountsUpdateNotifierImpl {
             if !plugin.account_data_notifications_enabled() {
                 continue;
             }
-            match plugin.update_account(
+            match plugin
+                .update_account_from_snapshot(ReplicaAccountInfoVersions::V0_0_3(&account), slot)
+            {
+                Err(err) => {
+                    error!(
+                        "Failed to update account {} at slot {}, error: {} to plugin {}",
+                        bs58::encode(account.pubkey).into_string(),
+                        slot,
+                        err,
+                        plugin.name()
+                    )
+                }
+                Ok(_) => {
+                    trace!(
+                        "Successfully updated account {} at slot {} to plugin {}",
+                        bs58::encode(account.pubkey).into_string(),
+                        slot,
+                        plugin.name()
+                    );
+                }
+            }
+        }
+    }
+
+    fn notify_plugins_of_account_update_for_bank(
+        &self,
+        account: ReplicaAccountInfoV3,
+        slot: Slot,
+        bank_id: BankId,
+    ) {
+        let plugin_manager = self.plugin_manager.load();
+
+        if plugin_manager.plugins.is_empty() {
+            return;
+        }
+        for plugin in plugin_manager.plugins.iter() {
+            if !plugin.account_data_notifications_enabled() {
+                continue;
+            }
+            match plugin.update_account_for_bank(
                 ReplicaAccountInfoVersions::V0_0_3(&account),
                 slot,
-                is_startup,
+                bank_id,
             ) {
                 Err(err) => {
                     error!(
@@ -176,7 +215,7 @@ mod tests {
         libloading::Library,
         solana_accounts_db::accounts_update_notifier_interface::AccountsUpdateNotifierInterface,
         std::sync::{
-            Arc,
+            Arc, Mutex,
             atomic::{AtomicUsize, Ordering},
         },
     };
@@ -186,6 +225,7 @@ mod tests {
         name: &'static str,
         account_updates_enabled: bool,
         account_update_count: Arc<AtomicUsize>,
+        account_update_bank_ids: Arc<Mutex<Vec<BankId>>>,
     }
 
     impl GeyserPlugin for TestAccountPlugin {
@@ -193,12 +233,28 @@ mod tests {
             self.name
         }
 
-        fn update_account(
+        fn update_account_for_bank(
             &self,
-            _account: ReplicaAccountInfoVersions,
+            account: ReplicaAccountInfoVersions,
             _slot: Slot,
-            _is_startup: bool,
+            bank_id: BankId,
         ) -> agave_geyser_plugin_interface::geyser_plugin_interface::Result<()> {
+            let ReplicaAccountInfoVersions::V0_0_3(_account) = account else {
+                panic!("expected V0_0_3 account info");
+            };
+            self.account_update_bank_ids.lock().unwrap().push(bank_id);
+            self.account_update_count.fetch_add(1, Ordering::Relaxed);
+            Ok(())
+        }
+
+        fn update_account_from_snapshot(
+            &self,
+            account: ReplicaAccountInfoVersions,
+            _slot: Slot,
+        ) -> agave_geyser_plugin_interface::geyser_plugin_interface::Result<()> {
+            let ReplicaAccountInfoVersions::V0_0_3(_account) = account else {
+                panic!("expected V0_0_3 account info");
+            };
             self.account_update_count.fetch_add(1, Ordering::Relaxed);
             Ok(())
         }
@@ -225,27 +281,68 @@ mod tests {
     fn test_notify_account_update_skips_plugins_with_account_notifications_disabled() {
         let enabled_count = Arc::new(AtomicUsize::new(0));
         let disabled_count = Arc::new(AtomicUsize::new(0));
+        let enabled_bank_ids = Arc::new(Mutex::new(Vec::new()));
+        let disabled_bank_ids = Arc::new(Mutex::new(Vec::new()));
         let plugin_manager = Arc::new(ArcSwap::from(Arc::new(GeyserPluginManager {
             plugins: vec![
                 loaded_test_plugin(TestAccountPlugin {
                     name: "enabled",
                     account_updates_enabled: true,
                     account_update_count: enabled_count.clone(),
+                    account_update_bank_ids: enabled_bank_ids.clone(),
                 }),
                 loaded_test_plugin(TestAccountPlugin {
                     name: "disabled",
                     account_updates_enabled: false,
                     account_update_count: disabled_count.clone(),
+                    account_update_bank_ids: disabled_bank_ids.clone(),
                 }),
             ],
         })));
         let notifier = AccountsUpdateNotifierImpl::new(plugin_manager, false);
         let account = AccountSharedData::new(1, 0, &Pubkey::new_unique());
         let pubkey = Pubkey::new_unique();
+        let bank_id = 9;
 
-        notifier.notify_account_update(42, &account, &None, &pubkey, 7);
+        notifier.notify_account_update(42, bank_id, &account, &None, &pubkey, 7);
 
         assert_eq!(enabled_count.load(Ordering::Relaxed), 1);
         assert_eq!(disabled_count.load(Ordering::Relaxed), 0);
+        assert_eq!(*enabled_bank_ids.lock().unwrap(), vec![bank_id]);
+        assert!(disabled_bank_ids.lock().unwrap().is_empty());
+    }
+
+    #[test]
+    fn test_notify_account_restore_from_snapshot_has_no_bank_id() {
+        let account_update_count = Arc::new(AtomicUsize::new(0));
+        let account_update_bank_ids = Arc::new(Mutex::new(Vec::new()));
+        let plugin_manager = Arc::new(ArcSwap::from(Arc::new(GeyserPluginManager {
+            plugins: vec![loaded_test_plugin(TestAccountPlugin {
+                name: "enabled",
+                account_updates_enabled: true,
+                account_update_count: account_update_count.clone(),
+                account_update_bank_ids: account_update_bank_ids.clone(),
+            })],
+        })));
+        let notifier = AccountsUpdateNotifierImpl::new(plugin_manager, true);
+        let pubkey = Pubkey::new_unique();
+        let owner = Pubkey::new_unique();
+        let data = [1, 2, 3];
+        let account = AccountForGeyser {
+            pubkey: &pubkey,
+            lamports: 1,
+            owner: &owner,
+            executable: false,
+            rent_epoch: 0,
+            data: &data,
+        };
+
+        notifier.notify_account_restore_from_snapshot(42, 7, &account);
+
+        assert_eq!(account_update_count.load(Ordering::Relaxed), 1);
+        assert_eq!(
+            *account_update_bank_ids.lock().unwrap(),
+            Vec::<BankId>::new()
+        );
     }
 }

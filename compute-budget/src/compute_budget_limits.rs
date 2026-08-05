@@ -48,7 +48,7 @@ impl ComputeBudgetLimits {
                 heap_size: self.updated_heap_bytes,
                 ..SVMTransactionExecutionBudget::new_with_defaults(simd_0268_active)
             },
-            loaded_accounts_data_size_limit,
+            loaded_accounts_data_size_limit: loaded_accounts_data_size_limit.get(),
             fee_details,
         }
     }

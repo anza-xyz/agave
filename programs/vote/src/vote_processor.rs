@@ -80,6 +80,22 @@ fn should_reject_legacy_vote_instructions(invoke_context: &InvokeContext) -> boo
         || invoke_context.is_alpenglow_migration_succeeded()
 }
 
+fn read_new_collector_account<'a, 'b>(
+    instruction_context: &'a InstructionContext<'a, 'b>,
+    vote_account: &BorrowedInstructionAccount,
+    index: u16,
+) -> Result<NewCommissionCollector<'a, 'b>, InstructionError>
+where
+    'a: 'b,
+{
+    if instruction_context.get_key_of_instruction_account(index)? == vote_account.get_key() {
+        Ok(NewCommissionCollector::VoteAccount)
+    } else {
+        let collector_account = instruction_context.try_borrow_instruction_account(index)?;
+        Ok(NewCommissionCollector::NewAccount(collector_account))
+    }
+}
+
 // Citing `runtime/src/block_cost_limit.rs`, vote has statically defined 2100
 // units; can consume based on instructions in the future like `bpf_loader` does.
 pub const DEFAULT_COMPUTE_UNITS: u64 = 2_100;
@@ -319,23 +335,27 @@ declare_process_instruction!(Entrypoint, DEFAULT_COMPUTE_UNITS, |invoke_context|
             if !is_init_account_v2_enabled {
                 return Err(InstructionError::InvalidInstructionData);
             }
-            let rent = invoke_context
-                .environment_config
-                .sysvar_cache()
-                .get_rent()?;
-            if !rent.is_exempt(me.get_lamports(), me.get_data().len()) {
-                return Err(InstructionError::InsufficientFunds);
-            }
-            let clock = invoke_context
-                .environment_config
-                .sysvar_cache()
-                .get_clock()?;
+
+            instruction_context.check_number_of_instruction_accounts(4)?;
+
+            let inflation_rewards_collector =
+                read_new_collector_account(&instruction_context, &me, 2)?;
+
+            let block_revenue_collector = read_new_collector_account(&instruction_context, &me, 3)?;
+
+            let sysvar_cache = invoke_context.environment_config.sysvar_cache();
+            let clock = sysvar_cache.get_clock()?;
+            let rent = sysvar_cache.get_rent()?;
+
             vote_state::initialize_account_v2(
                 &mut me,
                 target_version,
                 &vote_init_v2,
+                inflation_rewards_collector,
+                block_revenue_collector,
                 &signers,
                 &clock,
+                &rent,
                 consume_pop_compute_units,
             )
         }
@@ -369,14 +389,8 @@ declare_process_instruction!(Entrypoint, DEFAULT_COMPUTE_UNITS, |invoke_context|
                 return Err(InstructionError::InvalidInstructionData);
             }
 
-            let new_collector = if instruction_context.get_key_of_instruction_account(1)?
-                == me.get_key()
-            {
-                NewCommissionCollector::VoteAccount
-            } else {
-                let collector_account = instruction_context.try_borrow_instruction_account(1)?;
-                NewCommissionCollector::NewAccount(collector_account)
-            };
+            instruction_context.check_number_of_instruction_accounts(3)?;
+            let new_collector = read_new_collector_account(&instruction_context, &me, 1)?;
 
             let rent = invoke_context
                 .environment_config
@@ -408,7 +422,7 @@ declare_process_instruction!(Entrypoint, DEFAULT_COMPUTE_UNITS, |invoke_context|
 
             instruction_context.check_number_of_instruction_accounts(2)?;
             drop(me);
-            vote_state::deposit_delegator_rewards(invoke_context, deposit)
+            vote_state::deposit_delegator_rewards(invoke_context, 0, 1, deposit, &signers)
         }
     }
 });
@@ -430,7 +444,7 @@ mod tests {
                 self, Lockout, TowerSync, Vote, VoteAuthorize, VoteAuthorizeCheckedWithSeedArgs,
                 VoteAuthorizeWithSeedArgs, VoteInit, VoteInitV2, VoteStateUpdate, VoteStateV3,
                 VoteStateV4, VoteStateVersions, create_bls_pubkey_and_proof_of_possession,
-                handler::{VoteStateHandle, VoteStateHandler},
+                handler::VoteStateHandler,
             },
         },
         bincode::serialize,
@@ -562,7 +576,6 @@ mod tests {
                     solana_sdk_ids::system_program::id(),
                     Arc::new(ProgramCacheEntry::new_builtin(
                         0,
-                        0,
                         solana_system_program::system_processor::Entrypoint::register,
                     )),
                 );
@@ -683,7 +696,7 @@ mod tests {
             0,
             &vote_pubkey,
             0,
-            &vote_pubkey,
+            &node_pubkey,
             balance,
         );
 
@@ -776,7 +789,7 @@ mod tests {
             0,
             authorized_withdrawer,
             0,
-            authorized_withdrawer,
+            &node_pubkey,
             100,
         )
     }
@@ -807,7 +820,7 @@ mod tests {
             0,
             &authorized_withdrawer,
             0,
-            &authorized_withdrawer,
+            &node_pubkey,
             100,
         );
 
@@ -1044,7 +1057,11 @@ mod tests {
         let (bls_pubkey, bls_proof_of_possession) =
             create_bls_pubkey_and_proof_of_possession(&vote_pubkey);
         let inflation_rewards_collector = solana_pubkey::new_rand();
+        let inflation_rewards_collector_account =
+            AccountSharedData::new(0, 0, &solana_sdk_ids::system_program::id());
         let block_revenue_collector = solana_pubkey::new_rand();
+        let block_revenue_collector_account =
+            AccountSharedData::new(0, 0, &solana_sdk_ids::system_program::id());
         let inflation_rewards_commission_bps = 1_234;
         let block_revenue_commission_bps = 5_678;
         let instruction_data = serialize(&VoteInstruction::InitializeAccountV2(VoteInitV2 {
@@ -1054,9 +1071,7 @@ mod tests {
             authorized_voter_bls_proof_of_possession: bls_proof_of_possession,
             authorized_withdrawer,
             inflation_rewards_commission_bps,
-            inflation_rewards_collector,
             block_revenue_commission_bps,
-            block_revenue_collector,
         }))
         .unwrap();
         let mut instruction_accounts = vec![
@@ -1066,19 +1081,19 @@ mod tests {
                 is_writable: true,
             },
             AccountMeta {
-                pubkey: sysvar::rent::id(),
-                is_signer: false,
-                is_writable: false,
-            },
-            AccountMeta {
-                pubkey: sysvar::clock::id(),
-                is_signer: false,
-                is_writable: false,
-            },
-            AccountMeta {
                 pubkey: node_pubkey,
                 is_signer: true,
                 is_writable: false,
+            },
+            AccountMeta {
+                pubkey: inflation_rewards_collector,
+                is_signer: false,
+                is_writable: true,
+            },
+            AccountMeta {
+                pubkey: block_revenue_collector,
+                is_signer: false,
+                is_writable: true,
             },
         ];
 
@@ -1104,9 +1119,14 @@ mod tests {
                 &instruction_data,
                 vec![
                     (vote_pubkey, vote_account),
+                    (node_pubkey, node_account),
+                    (
+                        inflation_rewards_collector,
+                        inflation_rewards_collector_account,
+                    ),
+                    (block_revenue_collector, block_revenue_collector_account),
                     (sysvar::rent::id(), create_default_rent_account()),
                     (sysvar::clock::id(), create_default_clock_account()),
-                    (node_pubkey, node_account),
                 ],
                 instruction_accounts.clone(),
                 Err(InstructionError::InvalidInstructionData),
@@ -1114,40 +1134,62 @@ mod tests {
             return;
         }
 
+        // Verify every field in the V4 state matches VoteInitV2 and the
+        // collector accounts.
+        let assert_v4_fields =
+            |vote_account: &AccountSharedData,
+             expected_inflation_rewards_collector: Pubkey,
+             expected_block_revenue_collector: Pubkey| {
+                let v4 = deserialize_vote_state_for_test(vote_account.data(), &vote_pubkey);
+                let v4 = v4.as_ref_v4();
+                assert_eq!(v4.node_pubkey, node_pubkey);
+                assert_eq!(v4.authorized_withdrawer, authorized_withdrawer);
+                assert_eq!(v4.bls_pubkey_compressed, Some(bls_pubkey));
+                assert_eq!(
+                    v4.inflation_rewards_commission_bps,
+                    inflation_rewards_commission_bps
+                );
+                assert_eq!(
+                    v4.inflation_rewards_collector,
+                    expected_inflation_rewards_collector
+                );
+                assert_eq!(
+                    v4.block_revenue_commission_bps,
+                    block_revenue_commission_bps
+                );
+                assert_eq!(v4.block_revenue_collector, expected_block_revenue_collector);
+                assert_eq!(v4.pending_delegator_rewards, 0);
+                assert!(v4.votes.is_empty());
+                assert!(v4.epoch_credits.is_empty());
+                assert_eq!(v4.root_slot, None);
+            };
+
         let accounts = process_instruction_with_cu_check(
             features,
             &instruction_data,
             vec![
                 (vote_pubkey, vote_account.clone()),
+                (node_pubkey, node_account.clone()),
+                (
+                    inflation_rewards_collector,
+                    inflation_rewards_collector_account.clone(),
+                ),
+                (
+                    block_revenue_collector,
+                    block_revenue_collector_account.clone(),
+                ),
                 (sysvar::rent::id(), create_default_rent_account()),
                 (sysvar::clock::id(), create_default_clock_account()),
-                (node_pubkey, node_account.clone()),
             ],
             instruction_accounts.clone(),
             Ok(()),
             DEFAULT_COMPUTE_UNITS + BLS_PROOF_OF_POSSESSION_VERIFICATION_COMPUTE_UNITS,
         );
-
-        // Verify every field in the V4 state matches VoteInitV2.
-        let v4 = deserialize_vote_state_for_test(accounts[0].data(), &vote_pubkey);
-        let v4 = v4.as_ref_v4();
-        assert_eq!(v4.node_pubkey, node_pubkey);
-        assert_eq!(v4.authorized_withdrawer, authorized_withdrawer);
-        assert_eq!(v4.bls_pubkey_compressed, Some(bls_pubkey));
-        assert_eq!(
-            v4.inflation_rewards_commission_bps,
-            inflation_rewards_commission_bps
+        assert_v4_fields(
+            &accounts[0],
+            inflation_rewards_collector,
+            block_revenue_collector,
         );
-        assert_eq!(v4.inflation_rewards_collector, inflation_rewards_collector);
-        assert_eq!(
-            v4.block_revenue_commission_bps,
-            block_revenue_commission_bps
-        );
-        assert_eq!(v4.block_revenue_collector, block_revenue_collector);
-        assert_eq!(v4.pending_delegator_rewards, 0);
-        assert!(v4.votes.is_empty());
-        assert!(v4.epoch_credits.is_empty());
-        assert_eq!(v4.root_slot, None);
 
         // reinit should fail
         process_instruction(
@@ -1155,9 +1197,17 @@ mod tests {
             &instruction_data,
             vec![
                 (vote_pubkey, accounts[0].clone()),
+                (node_pubkey, accounts[1].clone()),
+                (
+                    inflation_rewards_collector,
+                    inflation_rewards_collector_account.clone(),
+                ),
+                (
+                    block_revenue_collector,
+                    block_revenue_collector_account.clone(),
+                ),
                 (sysvar::rent::id(), create_default_rent_account()),
                 (sysvar::clock::id(), create_default_clock_account()),
-                (node_pubkey, accounts[3].clone()),
             ],
             instruction_accounts.clone(),
             Err(InstructionError::AccountAlreadyInitialized),
@@ -1172,28 +1222,82 @@ mod tests {
                     vote_pubkey,
                     AccountSharedData::new(100, 2 * vote_state_size_of(), &id()),
                 ),
+                (node_pubkey, node_account.clone()),
+                (
+                    inflation_rewards_collector,
+                    inflation_rewards_collector_account.clone(),
+                ),
+                (
+                    block_revenue_collector,
+                    block_revenue_collector_account.clone(),
+                ),
                 (sysvar::rent::id(), create_default_rent_account()),
                 (sysvar::clock::id(), create_default_clock_account()),
-                (node_pubkey, node_account.clone()),
             ],
             instruction_accounts.clone(),
             Err(InstructionError::InvalidAccountData),
         );
 
         // init should fail, node_pubkey didn't sign the transaction
-        instruction_accounts[3].is_signer = false;
+        instruction_accounts[1].is_signer = false;
         process_instruction(
             features,
             &instruction_data,
             vec![
-                (vote_pubkey, vote_account),
+                (vote_pubkey, vote_account.clone()),
+                (node_pubkey, node_account.clone()),
+                (
+                    inflation_rewards_collector,
+                    inflation_rewards_collector_account.clone(),
+                ),
+                (
+                    block_revenue_collector,
+                    block_revenue_collector_account.clone(),
+                ),
                 (sysvar::rent::id(), create_default_rent_account()),
                 (sysvar::clock::id(), create_default_clock_account()),
-                (node_pubkey, node_account),
             ],
             instruction_accounts.clone(),
             Err(InstructionError::MissingRequiredSignature),
         );
+        instruction_accounts[1].is_signer = true;
+
+        // init should fail, fewer than 4 instruction accounts
+        process_instruction(
+            features,
+            &instruction_data,
+            vec![
+                (vote_pubkey, vote_account.clone()),
+                (node_pubkey, node_account.clone()),
+                (
+                    inflation_rewards_collector,
+                    inflation_rewards_collector_account.clone(),
+                ),
+                (sysvar::rent::id(), create_default_rent_account()),
+                (sysvar::clock::id(), create_default_clock_account()),
+            ],
+            instruction_accounts[..3].to_vec(),
+            Err(InstructionError::MissingAccount),
+        );
+
+        // init should pass with both collectors aliased to the vote account.
+        let mut aliased_instruction_accounts = instruction_accounts.clone();
+        aliased_instruction_accounts[2].pubkey = vote_pubkey;
+        aliased_instruction_accounts[3].pubkey = vote_pubkey;
+        let accounts = process_instruction_with_cu_check(
+            features,
+            &instruction_data,
+            vec![
+                (vote_pubkey, vote_account),
+                (node_pubkey, node_account),
+                (sysvar::rent::id(), create_default_rent_account()),
+                (sysvar::clock::id(), create_default_clock_account()),
+            ],
+            aliased_instruction_accounts,
+            Ok(()),
+            DEFAULT_COMPUTE_UNITS + BLS_PROOF_OF_POSSESSION_VERIFICATION_COMPUTE_UNITS,
+        );
+        assert_v4_fields(&accounts[0], vote_pubkey, vote_pubkey);
     }
 
     #[test]
@@ -1202,6 +1306,12 @@ mod tests {
         let vote_account = AccountSharedData::new(100, VoteStateV4::size_of(), &id());
         let node_pubkey = solana_pubkey::new_rand();
         let node_account = AccountSharedData::default();
+        let inflation_rewards_collector = solana_pubkey::new_rand();
+        let inflation_rewards_collector_account =
+            AccountSharedData::new(0, 0, &solana_sdk_ids::system_program::id());
+        let block_revenue_collector = solana_pubkey::new_rand();
+        let block_revenue_collector_account =
+            AccountSharedData::new(0, 0, &solana_sdk_ids::system_program::id());
         let instruction_with_bad_pop =
             serialize(&VoteInstruction::InitializeAccountV2(VoteInitV2 {
                 node_pubkey,
@@ -1220,19 +1330,19 @@ mod tests {
                 is_writable: true,
             },
             AccountMeta {
-                pubkey: sysvar::rent::id(),
-                is_signer: false,
-                is_writable: false,
-            },
-            AccountMeta {
-                pubkey: sysvar::clock::id(),
-                is_signer: false,
-                is_writable: false,
-            },
-            AccountMeta {
                 pubkey: node_pubkey,
                 is_signer: true,
                 is_writable: false,
+            },
+            AccountMeta {
+                pubkey: inflation_rewards_collector,
+                is_signer: false,
+                is_writable: true,
+            },
+            AccountMeta {
+                pubkey: block_revenue_collector,
+                is_signer: false,
+                is_writable: true,
             },
         ];
         process_instruction_with_cu_check(
@@ -1240,9 +1350,17 @@ mod tests {
             &instruction_with_bad_pop,
             vec![
                 (vote_pubkey, vote_account),
+                (node_pubkey, node_account),
+                (
+                    inflation_rewards_collector,
+                    inflation_rewards_collector_account.clone(),
+                ),
+                (
+                    block_revenue_collector,
+                    block_revenue_collector_account.clone(),
+                ),
                 (sysvar::rent::id(), create_default_rent_account()),
                 (sysvar::clock::id(), create_default_clock_account()),
-                (node_pubkey, node_account),
             ],
             instruction_accounts,
             Err(InstructionError::InvalidArgument),
@@ -1736,6 +1854,80 @@ mod tests {
             vote_pubkey
         );
 
+        // Should pass - all three accounts can alias.
+        let aliased_vote_account =
+            create_test_account_with_provided_authorized(&vote_pubkey, &vote_pubkey);
+        let aliased_original_inflation_collector =
+            get_commission_collector(&aliased_vote_account, CommissionKind::InflationRewards);
+        let aliased_original_block_revenue_collector =
+            get_commission_collector(&aliased_vote_account, CommissionKind::BlockRevenue);
+        let aliased_transaction_accounts = vec![
+            (vote_pubkey, aliased_vote_account),
+            (
+                sysvar::rent::id(),
+                account::create_account_shared_data_for_test(&rent),
+            ),
+        ];
+        let aliased_instruction_accounts = vec![
+            AccountMeta {
+                pubkey: vote_pubkey, // Vote account
+                is_signer: false,
+                is_writable: true,
+            },
+            AccountMeta {
+                pubkey: vote_pubkey, // New collector
+                is_signer: false,
+                is_writable: true,
+            },
+            AccountMeta {
+                pubkey: vote_pubkey, // Authorized withdrawer
+                is_signer: true,     // (Signer)
+                is_writable: false,
+            },
+        ];
+
+        // InflationRewards (triple alias)
+        let instruction_data = serialize(&VoteInstruction::UpdateCommissionCollector(
+            CommissionKind::InflationRewards,
+        ))
+        .unwrap();
+        let accounts = process_instruction(
+            features,
+            &instruction_data,
+            aliased_transaction_accounts.clone(),
+            aliased_instruction_accounts.clone(),
+            Ok(()),
+        );
+        assert_eq!(
+            get_commission_collector(&accounts[0], CommissionKind::InflationRewards),
+            vote_pubkey
+        );
+        assert_eq!(
+            get_commission_collector(&accounts[0], CommissionKind::BlockRevenue),
+            aliased_original_block_revenue_collector, // Unchanged
+        );
+
+        // BlockRevenue (triple alias)
+        let instruction_data = serialize(&VoteInstruction::UpdateCommissionCollector(
+            CommissionKind::BlockRevenue,
+        ))
+        .unwrap();
+        let accounts = process_instruction(
+            features,
+            &instruction_data,
+            aliased_transaction_accounts,
+            aliased_instruction_accounts,
+            Ok(()),
+        );
+        assert_eq!(
+            get_commission_collector(&accounts[0], CommissionKind::InflationRewards),
+            aliased_original_inflation_collector, // Unchanged
+        );
+        assert_eq!(
+            get_commission_collector(&accounts[0], CommissionKind::BlockRevenue),
+            vote_pubkey
+        );
+
         // Should fail - SIMD-0232 disabled.
         let instruction_data = serialize(&VoteInstruction::UpdateCommissionCollector(
             CommissionKind::InflationRewards,
@@ -1753,7 +1945,29 @@ mod tests {
         );
         assert_eq!(
             get_commission_collector(&accounts[0], CommissionKind::InflationRewards),
-            original_inflation_collector
+            original_inflation_collector, // Unchanged
+        );
+        assert_eq!(
+            get_commission_collector(&accounts[0], CommissionKind::BlockRevenue),
+            original_block_revenue_collector, // Unchanged
+        );
+
+        // Should fail - fewer than 3 account inputs (SIMD-0232).
+        let too_few_instruction_accounts = vec![AccountMeta {
+            pubkey: vote_pubkey,
+            is_signer: false,
+            is_writable: true,
+        }];
+        let accounts = process_instruction(
+            features,
+            &instruction_data,
+            transaction_accounts.clone(),
+            too_few_instruction_accounts,
+            Err(InstructionError::MissingAccount),
+        );
+        assert_eq!(
+            get_commission_collector(&accounts[0], CommissionKind::InflationRewards),
+            original_inflation_collector, // Unchanged
         );
         assert_eq!(
             get_commission_collector(&accounts[0], CommissionKind::BlockRevenue),
@@ -2525,6 +2739,133 @@ mod tests {
         );
     }
 
+    // Tests (and essentially documents) BLS pubkey rotation characteristics
+    // by testing the end-to-end behavior of `Authorize::VoterWithBls` in the
+    // program.
+    //
+    // All rotations reuse the existing authorized voter to simulate an
+    // operator's desire to only change their BLS pubkey.
+    //
+    // TL;DR: Since authorized voter rotations are capped at once per epoch,
+    // so too are BLS pubkey rotations.
+    #[test]
+    fn test_bls_pubkey_rotation() {
+        let features = VoteProgramFeatures {
+            bls_pubkey_management_in_vote_account: true,
+            ..Default::default()
+        };
+
+        // Start out with no BLS pubkey set.
+        // Authorized voter is already set to vote pubkey.
+        let (vote_pubkey, vote_account) = create_test_account_no_bls_key();
+        let authorized_voter = vote_pubkey;
+
+        // Two distinct BLS keypairs for rotation.
+        let (bls_1, pop_1) = create_bls_pubkey_and_proof_of_possession(&vote_pubkey);
+        let (bls_2, pop_2) = create_bls_pubkey_and_proof_of_possession(&vote_pubkey);
+
+        let ix_accounts = vec![
+            AccountMeta {
+                pubkey: vote_pubkey,
+                is_signer: true,
+                is_writable: true,
+            },
+            AccountMeta {
+                pubkey: sysvar::clock::id(),
+                is_signer: false,
+                is_writable: false,
+            },
+        ];
+
+        // Epoch: 1
+        // Leader Schedule Epoch: 2
+        //   Rotation schedules for target epoch 3
+        //   BLS pubkey is set immediately
+        let clock_epoch_1 = account::create_account_shared_data_for_test(&Clock {
+            epoch: 1,
+            leader_schedule_epoch: 2,
+            ..Clock::default()
+        });
+        let accounts = process_instruction_with_cu_check(
+            features,
+            &serialize(&VoteInstruction::Authorize(
+                authorized_voter,
+                VoteAuthorize::VoterWithBLS(VoterWithBLSArgs {
+                    bls_pubkey: bls_1,
+                    bls_proof_of_possession: pop_1,
+                }),
+            ))
+            .unwrap(),
+            vec![
+                (vote_pubkey, vote_account),
+                (sysvar::clock::id(), clock_epoch_1.clone()),
+            ],
+            ix_accounts.clone(),
+            Ok(()),
+            DEFAULT_COMPUTE_UNITS + BLS_PROOF_OF_POSSESSION_VERIFICATION_COMPUTE_UNITS,
+        );
+        let v4 = deserialize_vote_state_for_test(accounts[0].data(), &vote_pubkey);
+        assert_eq!(v4.as_ref_v4().bls_pubkey_compressed, Some(bls_1));
+
+        // == Same epoch again ==
+        // Epoch: 1
+        // Leader Schedule Epoch: 2
+        //   Rotation fails with `TooSoonToReauthorize`
+        //   BLS pubkey is NOT set
+        //   34,500 CUs still charged
+        let accounts = process_instruction_with_cu_check(
+            features,
+            &serialize(&VoteInstruction::Authorize(
+                authorized_voter,
+                VoteAuthorize::VoterWithBLS(VoterWithBLSArgs {
+                    bls_pubkey: bls_2,
+                    bls_proof_of_possession: pop_2,
+                }),
+            ))
+            .unwrap(),
+            vec![
+                (vote_pubkey, accounts[0].clone()),
+                (sysvar::clock::id(), clock_epoch_1),
+            ],
+            ix_accounts.clone(),
+            Err(VoteError::TooSoonToReauthorize.into()),
+            DEFAULT_COMPUTE_UNITS + BLS_PROOF_OF_POSSESSION_VERIFICATION_COMPUTE_UNITS,
+        );
+        let v4 = deserialize_vote_state_for_test(accounts[0].data(), &vote_pubkey);
+        assert_eq!(v4.as_ref_v4().bls_pubkey_compressed, Some(bls_1)); // <-- Still BLS key 1
+
+        // == New epoch ==
+        // Epoch: 2
+        // Leader Schedule Epoch: 3
+        //   Rotation schedules for target epoch 4
+        //   BLS pubkey is set immediately
+        let clock_epoch_2 = account::create_account_shared_data_for_test(&Clock {
+            epoch: 2,
+            leader_schedule_epoch: 3,
+            ..Clock::default()
+        });
+        let accounts = process_instruction_with_cu_check(
+            features,
+            &serialize(&VoteInstruction::Authorize(
+                authorized_voter,
+                VoteAuthorize::VoterWithBLS(VoterWithBLSArgs {
+                    bls_pubkey: bls_2,
+                    bls_proof_of_possession: pop_2,
+                }),
+            ))
+            .unwrap(),
+            vec![
+                (vote_pubkey, accounts[0].clone()),
+                (sysvar::clock::id(), clock_epoch_2),
+            ],
+            ix_accounts.clone(),
+            Ok(()),
+            DEFAULT_COMPUTE_UNITS + BLS_PROOF_OF_POSSESSION_VERIFICATION_COMPUTE_UNITS,
+        );
+        let v4 = deserialize_vote_state_for_test(accounts[0].data(), &vote_pubkey);
+        assert_eq!(v4.as_ref_v4().bls_pubkey_compressed, Some(bls_2)); // <-- Now BLS key 2
+    }
+
     #[test]
     fn test_authorize_withdrawer() {
         let (vote_pubkey, vote_account) = create_test_account();
@@ -2958,9 +3299,7 @@ mod tests {
         vote_account.set_data_from_slice(&data);
 
         let authorized_withdrawer = solana_pubkey::new_rand();
-        let features = VoteProgramFeatures {
-            ..Default::default()
-        };
+        let features = VoteProgramFeatures::all_enabled();
 
         // Authorize should fail.
         process_instruction(
@@ -3037,7 +3376,7 @@ mod tests {
             features,
             &serialize(&VoteInstruction::InitializeAccount(vote_init)).unwrap(),
             vec![
-                (vote_pubkey, vote_account),
+                (vote_pubkey, vote_account.clone()),
                 (sysvar::rent::id(), create_default_rent_account()),
                 (sysvar::clock::id(), create_default_clock_account()),
                 (new_node, AccountSharedData::default()),
@@ -3073,6 +3412,77 @@ mod tests {
         let vote_state = deserialize_vote_state_for_test(accounts[0].data(), &vote_pubkey);
         assert_eq!(*vote_state.node_pubkey(), new_node);
         assert_eq!(vote_state.commission(), 5);
+
+        // InitializeAccountV2 should also work for the escape hatch.
+        let new_node = solana_pubkey::new_rand();
+        let (bls_pubkey, bls_proof_of_possession) =
+            create_bls_pubkey_and_proof_of_possession(&vote_pubkey);
+        let inflation_rewards_collector = solana_pubkey::new_rand();
+        let block_revenue_collector = solana_pubkey::new_rand();
+        let vote_init_v2 = VoteInitV2 {
+            node_pubkey: new_node,
+            authorized_voter: solana_pubkey::new_rand(),
+            authorized_voter_bls_pubkey: bls_pubkey,
+            authorized_voter_bls_proof_of_possession: bls_proof_of_possession,
+            authorized_withdrawer: solana_pubkey::new_rand(),
+            inflation_rewards_commission_bps: 1_234,
+            block_revenue_commission_bps: 5_678,
+        };
+
+        let collector_account = AccountSharedData::new(
+            rent.minimum_balance(0),
+            0,
+            &solana_sdk_ids::system_program::id(),
+        );
+
+        let accounts = process_instruction_with_cu_check(
+            features,
+            &serialize(&VoteInstruction::InitializeAccountV2(vote_init_v2)).unwrap(),
+            vec![
+                (vote_pubkey, vote_account),
+                (new_node, AccountSharedData::default()),
+                (inflation_rewards_collector, collector_account.clone()),
+                (block_revenue_collector, collector_account),
+                (sysvar::rent::id(), create_default_rent_account()),
+                (sysvar::clock::id(), create_default_clock_account()),
+            ],
+            vec![
+                AccountMeta {
+                    pubkey: vote_pubkey,
+                    is_signer: false,
+                    is_writable: true,
+                },
+                AccountMeta {
+                    pubkey: new_node,
+                    is_signer: true,
+                    is_writable: false,
+                },
+                AccountMeta {
+                    pubkey: inflation_rewards_collector,
+                    is_signer: false,
+                    is_writable: true,
+                },
+                AccountMeta {
+                    pubkey: block_revenue_collector,
+                    is_signer: false,
+                    is_writable: true,
+                },
+            ],
+            Ok(()),
+            DEFAULT_COMPUTE_UNITS + BLS_PROOF_OF_POSSESSION_VERIFICATION_COMPUTE_UNITS,
+        );
+
+        // Verify re-initialized as V4 with the v2-specific fields.
+        let versioned: VoteStateVersions = accounts[0].state().unwrap();
+        assert!(matches!(versioned, VoteStateVersions::V4(_)));
+        let vote_state = deserialize_vote_state_for_test(accounts[0].data(), &vote_pubkey);
+        let v4 = vote_state.as_ref_v4();
+        assert_eq!(v4.node_pubkey, new_node);
+        assert_eq!(v4.bls_pubkey_compressed, Some(bls_pubkey));
+        assert_eq!(v4.inflation_rewards_commission_bps, 1_234);
+        assert_eq!(v4.block_revenue_commission_bps, 5_678);
+        assert_eq!(v4.inflation_rewards_collector, inflation_rewards_collector);
+        assert_eq!(v4.block_revenue_collector, block_revenue_collector);
     }
 
     fn perform_authorize_with_seed_test(
@@ -4642,6 +5052,26 @@ mod tests {
                 },
             ],
             Err(InstructionError::InvalidArgument),
+            DEPOSIT_DELEGATOR_REWARDS_COMPUTE_UNITS,
+        );
+
+        // Fail - source account has fewer lamports than the deposit.
+        let underfunded_source_account =
+            AccountSharedData::new(deposit_amount - 1, 0, &solana_sdk_ids::system_program::id());
+        process_instruction_with_cu_check(
+            VoteProgramFeatures::all_enabled(),
+            &instruction_data,
+            vec![
+                (vote_pubkey, vote_account_v4.clone()),
+                (source_pubkey, underfunded_source_account),
+                (
+                    solana_sdk_ids::system_program::id(),
+                    AccountSharedData::new(0, 0, &solana_sdk_ids::native_loader::id()),
+                ),
+            ],
+            instruction_accounts.clone(),
+            // SystemError::ResultWithNegativeLamports.
+            Err(InstructionError::Custom(1)),
             DEPOSIT_DELEGATOR_REWARDS_COMPUTE_UNITS,
         );
 

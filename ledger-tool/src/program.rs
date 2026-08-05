@@ -4,17 +4,16 @@ use {
     log::*,
     serde::{Deserialize, Serialize},
     serde_json::Result,
-    solana_account::{
-        AccountSharedData, create_account_shared_data_for_test, state_traits::StateMut,
-    },
+    solana_account::{AccountSharedData, WritableAccount},
     solana_cli_output::{OutputFormat, QuietDisplay, VerboseDisplay},
     solana_clock::Slot,
     solana_ledger::blockstore_options::AccessType,
     solana_loader_v3_interface::state::UpgradeableLoaderState,
     solana_program_runtime::{
         create_vm,
-        invoke_context::{BpfAllocator, InvokeContext, MemoryContext},
+        invoke_context::{BpfAllocator, InvokeContext},
         loaded_programs::ProgramRuntimeEnvironment,
+        memory_context::MemoryContext,
         program_cache_entry::{
             DELAY_VISIBILITY_SLOT_OFFSET, ProgramCacheEntry, ProgramCacheEntryType,
         },
@@ -26,7 +25,7 @@ use {
     solana_runtime::bank::Bank,
     solana_sbpf::{
         assembler::assemble,
-        ebpf::MM_INPUT_START,
+        ebpf::{MM_HEAP_START, MM_INPUT_START, MM_RODATA_START, MM_STACK_START},
         elf::Executable,
         memory_region::{MemoryMapping, MemoryRegion},
         static_analysis::Analysis,
@@ -74,9 +73,9 @@ fn load_accounts(path: &Path) -> Result<Input> {
     let file = File::open(path).unwrap();
     let input: Input = serde_json::from_reader(file)?;
     info!("Program input:");
-    info!("program_id: {}", &input.program_id);
-    info!("accounts {:?}", &input.accounts);
-    info!("instruction_data {:?}", &input.instruction_data);
+    info!("program_id: {}", input.program_id);
+    info!("accounts {:?}", input.accounts);
+    info!("instruction_data {:?}", input.instruction_data);
     info!("----------------------------------------");
     Ok(input)
 }
@@ -94,8 +93,8 @@ fn load_blockstore(ledger_path: &Path, arg_matches: &ArgMatches<'_>) -> Arc<Bank
         process_options,
         None,
     );
-    let bank = bank_forks.read().unwrap().working_bank();
-    bank
+
+    bank_forks.read().unwrap().working_bank()
 }
 
 pub trait ProgramSubCommand {
@@ -278,7 +277,6 @@ fn load_program<'a>(
         program_id: program_id.to_string(),
         ..LoadProgramMetrics::default()
     };
-    let account_size = contents.len();
     let program_runtime_environment = create_program_runtime_environment(
         invoke_context.get_feature_set(),
         invoke_context.get_compute_budget(),
@@ -289,13 +287,11 @@ fn load_program<'a>(
     // Allowing mut here, since it may be needed for jit compile, which is under a config flag
     #[allow(unused_mut)]
     let mut verified_executable = if is_elf {
-        let result = ProgramCacheEntry::new(
+        let result = ProgramCacheEntry::load(
             &loader_key,
             ProgramRuntimeEnvironment::clone(&program_runtime_environment),
             slot,
-            slot.saturating_add(DELAY_VISIBILITY_SLOT_OFFSET),
             &contents,
-            account_size,
             &mut load_program_metrics,
         );
         match result {
@@ -411,18 +407,17 @@ pub fn program(ledger_path: &Path, matches: &ArgMatches<'_>) {
                     let space = data.len();
                     let account = if let Some(account) = bank.get_account_with_fixed_root(&pubkey) {
                         let owner = *account.owner();
-                        if bpf_loader_upgradeable::check_id(&owner) {
-                            if let Ok(UpgradeableLoaderState::Program {
+                        if bpf_loader_upgradeable::check_id(&owner)
+                            && let Ok(UpgradeableLoaderState::Program {
                                 programdata_address,
-                            }) = account.state()
+                            }) = bincode::deserialize(account.data())
+                        {
+                            debug!("Program data address {programdata_address}");
+                            if bank
+                                .get_account_with_fixed_root(&programdata_address)
+                                .is_some()
                             {
-                                debug!("Program data address {programdata_address}");
-                                if bank
-                                    .get_account_with_fixed_root(&programdata_address)
-                                    .is_some()
-                                {
-                                    cached_account_keys.push(pubkey);
-                                }
+                                cached_account_keys.push(pubkey);
                             }
                         }
                         // Override account data and lamports from input file if provided
@@ -474,10 +469,14 @@ pub fn program(ledger_path: &Path, matches: &ArgMatches<'_>) {
         program_id, // ID of the loaded program. It can modify accounts with the same owner key
         AccountSharedData::new(0, 0, &loader_id),
     ));
-    transaction_accounts.push((
-        sysvar::epoch_schedule::id(),
-        create_account_shared_data_for_test(bank.epoch_schedule()),
-    ));
+    let mut epoch_schedule_account =
+        AccountSharedData::new(1, solana_epoch_schedule::SIZE, &sysvar::id());
+    wincode::serialize_into(
+        epoch_schedule_account.data_as_mut_slice(),
+        bank.epoch_schedule(),
+    )
+    .unwrap();
+    transaction_accounts.push((sysvar::epoch_schedule::id(), epoch_schedule_account));
     with_mock_invoke_context!(invoke_context, transaction_context, transaction_accounts);
 
     // Adding `DELAY_VISIBILITY_SLOT_OFFSET` to slots to accommodate for delay visibility of the program
@@ -514,10 +513,14 @@ pub fn program(ledger_path: &Path, matches: &ArgMatches<'_>) {
         )
         .unwrap();
 
-    let regions = vec![MemoryRegion::default(); 3]
-        .into_iter()
-        .chain(regions)
-        .collect();
+    let regions = [
+        MemoryRegion::new_empty(MM_RODATA_START),
+        MemoryRegion::new_empty(MM_STACK_START),
+        MemoryRegion::new_empty(MM_HEAP_START),
+    ]
+    .into_iter()
+    .chain(regions)
+    .collect();
     let program = matches.value_of("PROGRAM").unwrap();
     let verified_executable = load_program(Path::new(program), program_id, &invoke_context);
 
@@ -526,27 +529,31 @@ pub fn program(ledger_path: &Path, matches: &ArgMatches<'_>) {
         .get_feature_set()
         .virtual_address_space_adjustments;
     let account_data_direct_mapping = invoke_context.get_feature_set().account_data_direct_mapping;
-    let memory_mapping = MemoryMapping::new_uninitialized(
-        regions,
-        verified_executable.get_config(),
-        verified_executable.get_sbpf_version(),
-        invoke_context.transaction_context.access_violation_handler(
-            virtual_address_space_adjustments,
-            account_data_direct_mapping,
-        ),
-    );
+    let memory_mapping = unsafe {
+        MemoryMapping::new_uninitialized(
+            regions,
+            verified_executable.get_config(),
+            verified_executable.get_sbpf_version(),
+            invoke_context.transaction_context.access_violation_handler(
+                virtual_address_space_adjustments,
+                account_data_direct_mapping,
+            ),
+        )
+    };
 
     invoke_context
         .memory_contexts
-        .set_memory_context(MemoryContext::new(
+        .set_memory_context_abi_v1(MemoryContext::new(
             BpfAllocator::new(heap_size as u64),
             account_lengths,
             memory_mapping,
         ))
         .unwrap();
 
-    create_vm!(vm, &verified_executable, &mut invoke_context,);
-    let (mut vm, _, _) = vm.unwrap();
+    let (mut vm, _stack, _heap) = unsafe {
+        create_vm!(vm, &verified_executable, &mut invoke_context,);
+        vm.unwrap()
+    };
     let start_time = Instant::now();
 
     let mode = matches.value_of("mode").unwrap();

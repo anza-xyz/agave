@@ -25,6 +25,10 @@ impl Counter {
     pub(crate) fn add_relaxed(&self, x: u64) {
         self.0.fetch_add(x, Ordering::Relaxed);
     }
+    #[cfg(test)]
+    pub(crate) fn load_relaxed(&self) -> u64 {
+        self.0.load(Ordering::Relaxed)
+    }
     fn clear(&self) -> u64 {
         self.0.swap(0, Ordering::Relaxed)
     }
@@ -148,6 +152,7 @@ pub struct GossipStats {
     pub(crate) prune_received_cache: Counter,
     pub(crate) pull_from_entrypoint_count: Counter,
     pub(crate) pull_request_ping_pong_check_failed_count: Counter,
+    pub(crate) pull_request_scan_budget_exhausted: Counter,
     pub(crate) purge: Counter,
     pub(crate) purge_count: Counter,
     pub(crate) push_fanout_num_entries: Counter,
@@ -354,6 +359,11 @@ pub(crate) fn submit_gossip_stats(
         (
             "pull_request_ping_pong_check_failed_count",
             stats.pull_request_ping_pong_check_failed_count.clear(),
+            i64
+        ),
+        (
+            "pull_request_scan_budget_exhausted",
+            stats.pull_request_scan_budget_exhausted.clear(),
             i64
         ),
         (

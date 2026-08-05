@@ -1,3 +1,5 @@
+#[cfg(feature = "dev-context-only-utils")]
+use qualifier_attr::qualifiers;
 use {
     crate::{stake_history::StakeHistory, stakes::SerdeStakesToStakeFormat},
     serde::{
@@ -5,7 +7,7 @@ use {
         de::{SeqAccess, Visitor},
     },
     solana_bls_signatures::pubkey::{
-        PubkeyAffine as BLSPubkeyAffine, PubkeyCompressed as BLSPubkeyCompressed,
+        PopVerified, PubkeyAffine as BLSPubkeyAffine, PubkeyCompressed as BLSPubkeyCompressed,
     },
     solana_clock::Epoch,
     solana_pubkey::Pubkey,
@@ -15,8 +17,11 @@ use {
     std::{
         collections::HashMap,
         fmt,
+        mem::MaybeUninit,
+        num::NonZero,
         sync::{Arc, OnceLock},
     },
+    wincode::{ReadResult, SchemaRead, SchemaWrite, WriteResult, config::Config, io::Reader},
 };
 
 pub type NodeIdToVoteAccounts = HashMap<Pubkey, NodeVoteAccounts>;
@@ -32,9 +37,9 @@ pub struct BLSPubkeyStakeEntry {
     /// The identity of the validator specified in the vote account
     pub node_pubkey: Pubkey,
     /// The bls pubkey of the validator specified in the vote account
-    pub bls_pubkey: BLSPubkeyAffine,
+    pub bls_pubkey: PopVerified<BLSPubkeyAffine>,
     /// The stake of the validator
-    pub stake: u64,
+    pub stake: NonZero<u64>,
 }
 
 /// Container to store a mapping from validator [`BLSPubkeyAffine`] to rank.
@@ -44,9 +49,14 @@ pub struct BLSPubkeyStakeEntry {
 #[derive(Clone, Debug)]
 #[cfg_attr(feature = "dev-context-only-utils", derive(PartialEq))]
 pub struct BLSPubkeyToRankMap {
-    rank_map: HashMap<BLSPubkeyCompressed, u16>,
+    /// stores a mapping from the vote account pubkey to the node's rank.
     vote_pubkey_to_rank: HashMap<Pubkey, u16>,
+    /// a mapping from rank to [`BLSPubkeyStakeEntry`].
     sorted_pubkeys: Vec<BLSPubkeyStakeEntry>,
+    /// a mapping from the node identity pubkey to the node's rank.
+    node_pubkey_to_rank: HashMap<Pubkey, u16>,
+    /// Total stake delegated to this validator.
+    total_stake: NonZero<u64>,
 }
 
 // We cannot auto derive `AbiExample` for `BLSPubkeyToRankMap` because
@@ -55,50 +65,68 @@ pub struct BLSPubkeyToRankMap {
 impl solana_frozen_abi::abi_example::AbiExample for BLSPubkeyToRankMap {
     fn example() -> Self {
         Self {
-            rank_map: HashMap::new(),
             vote_pubkey_to_rank: HashMap::new(),
             sorted_pubkeys: Vec::new(),
+            total_stake: NonZero::new(1).unwrap(),
+            node_pubkey_to_rank: HashMap::new(),
         }
     }
 }
 
 pub(crate) fn bls_pubkey_compressed_bytes_to_bls_pubkey(
     bls_pubkey_compressed_bytes: [u8; BLS_PUBLIC_KEY_COMPRESSED_SIZE],
-) -> Option<(BLSPubkeyCompressed, BLSPubkeyAffine)> {
+) -> Option<(BLSPubkeyCompressed, PopVerified<BLSPubkeyAffine>)> {
     let bls_pubkey_compressed: BLSPubkeyCompressed =
-        bincode::deserialize(&bls_pubkey_compressed_bytes).ok()?;
+        wincode::deserialize(&bls_pubkey_compressed_bytes).ok()?;
     let bls_pubkey_affine = BLSPubkeyAffine::try_from(bls_pubkey_compressed).ok()?;
-    Some((bls_pubkey_compressed, bls_pubkey_affine))
+    // It is safe to use `new_unchecked` here because data coming from the vote
+    // state has already had its PoP verified.
+    let bls_pubkey_pop_verified = unsafe { PopVerified::new_unchecked(bls_pubkey_affine) };
+    Some((bls_pubkey_compressed, bls_pubkey_pop_verified))
 }
 
 impl BLSPubkeyToRankMap {
     pub fn new(epoch_vote_accounts_hash_map: &VoteAccountsHashMap) -> Self {
+        let mut candidates = Vec::with_capacity(epoch_vote_accounts_hash_map.len());
+        let mut bls_pubkey_counts = HashMap::new();
+        let mut node_pubkey_counts = HashMap::new();
+        for (&vote_account_pubkey, (stake, account)) in epoch_vote_accounts_hash_map {
+            let Some(stake) = NonZero::new(*stake) else {
+                continue;
+            };
+            let node_pubkey = *account.vote_state_view().node_pubkey();
+            let Some((bls_pubkey_compressed, bls_pubkey)) = account
+                .vote_state_view()
+                .bls_pubkey_compressed()
+                .and_then(bls_pubkey_compressed_bytes_to_bls_pubkey)
+            else {
+                continue;
+            };
+            let entry = BLSPubkeyStakeEntry {
+                vote_account_pubkey,
+                node_pubkey,
+                bls_pubkey,
+                stake,
+            };
+            *bls_pubkey_counts.entry(bls_pubkey_compressed).or_insert(0) += 1;
+            *node_pubkey_counts.entry(node_pubkey).or_insert(0) += 1;
+            candidates.push((entry, bls_pubkey_compressed));
+        }
         let mut keys_stake_entry_with_compressed: Vec<(BLSPubkeyStakeEntry, BLSPubkeyCompressed)> =
-            epoch_vote_accounts_hash_map
-                .iter()
-                .filter_map(|(&vote_account_pubkey, (stake, account))| {
-                    if *stake > 0 {
-                        let node_pubkey = *account.vote_state_view().node_pubkey();
-                        account
-                            .vote_state_view()
-                            .bls_pubkey_compressed()
-                            .and_then(bls_pubkey_compressed_bytes_to_bls_pubkey)
-                            .map(|(bls_pubkey_compressed, bls_pubkey)| {
-                                (
-                                    BLSPubkeyStakeEntry {
-                                        vote_account_pubkey,
-                                        node_pubkey,
-                                        bls_pubkey,
-                                        stake: *stake,
-                                    },
-                                    bls_pubkey_compressed,
-                                )
-                            })
-                    } else {
-                        None
-                    }
+            candidates
+                .into_iter()
+                .filter_map(|(entry, bls_pubkey_compressed)| {
+                    (bls_pubkey_counts[&bls_pubkey_compressed] == 1
+                        && node_pubkey_counts[&entry.node_pubkey] == 1)
+                        .then_some((entry, bls_pubkey_compressed))
                 })
                 .collect();
+        let total_stake = keys_stake_entry_with_compressed
+            .iter()
+            .fold(0u64, |stake, (entry, _)| {
+                stake.saturating_add(entry.stake.get())
+            });
+        let total_stake = NonZero::new(total_stake).expect("total stakes should not be 0");
         keys_stake_entry_with_compressed.sort_by(
             |(a_entry, a_pubkey_compressed), (b_entry, b_pubkey_compressed)| {
                 b_entry
@@ -108,35 +136,36 @@ impl BLSPubkeyToRankMap {
             },
         );
         let mut sorted_pubkeys = Vec::with_capacity(keys_stake_entry_with_compressed.len());
-        let mut bls_pubkey_to_rank_map =
-            HashMap::with_capacity(keys_stake_entry_with_compressed.len());
         let mut vote_pubkey_to_rank_map =
             HashMap::with_capacity(keys_stake_entry_with_compressed.len());
-        for (rank, (entry, bls_pubkey_compressed)) in
+        let mut node_pubkey_to_rank =
+            HashMap::with_capacity(keys_stake_entry_with_compressed.len());
+        for (rank, (entry, _bls_pubkey_compressed)) in
             keys_stake_entry_with_compressed.into_iter().enumerate()
         {
-            vote_pubkey_to_rank_map.insert(entry.vote_account_pubkey, rank as u16);
-            bls_pubkey_to_rank_map.insert(bls_pubkey_compressed, rank as u16);
+            let rank = u16::try_from(rank).expect("BLS validator rank must fit in u16");
+            vote_pubkey_to_rank_map.insert(entry.vote_account_pubkey, rank);
+            node_pubkey_to_rank.insert(entry.node_pubkey, rank);
             sorted_pubkeys.push(entry);
         }
         Self {
-            rank_map: bls_pubkey_to_rank_map,
             vote_pubkey_to_rank: vote_pubkey_to_rank_map,
             sorted_pubkeys,
+            total_stake,
+            node_pubkey_to_rank,
         }
     }
 
     pub fn is_empty(&self) -> bool {
-        self.rank_map.is_empty()
+        self.sorted_pubkeys.is_empty()
     }
 
     pub fn len(&self) -> usize {
-        self.rank_map.len()
+        self.sorted_pubkeys.len()
     }
 
-    pub fn get_rank(&self, bls_pubkey: &BLSPubkeyAffine) -> Option<&u16> {
-        let bls_pubkey_compressed = BLSPubkeyCompressed(bls_pubkey.to_bytes_compressed());
-        self.rank_map.get(&bls_pubkey_compressed)
+    pub fn total_stake(&self) -> NonZero<u64> {
+        self.total_stake
     }
 
     pub fn get_rank_for_vote_pubkey(&self, vote_pubkey: &Pubkey) -> Option<&u16> {
@@ -146,10 +175,21 @@ impl BLSPubkeyToRankMap {
     pub fn get_pubkey_stake_entry(&self, index: usize) -> Option<&BLSPubkeyStakeEntry> {
         self.sorted_pubkeys.get(index)
     }
+
+    /// Returns a node's rank and its canonical stake entry.
+    #[inline]
+    pub fn get_ranked_entry_for_node(
+        &self,
+        node_pubkey: &Pubkey,
+    ) -> Option<(u16, &BLSPubkeyStakeEntry)> {
+        let rank = *self.node_pubkey_to_rank.get(node_pubkey)?;
+        let entry = self.sorted_pubkeys.get(usize::from(rank))?;
+        Some((rank, entry))
+    }
 }
 
-#[cfg_attr(feature = "frozen-abi", derive(AbiExample))]
-#[derive(Clone, Serialize, Debug, Deserialize, Default, PartialEq, Eq)]
+#[cfg_attr(feature = "frozen-abi", derive(AbiExample, StableAbi, StableAbiSample))]
+#[derive(Clone, Serialize, Debug, Deserialize, Default, PartialEq, Eq, SchemaRead, SchemaWrite)]
 pub struct NodeVoteAccounts {
     pub vote_accounts: Vec<Pubkey>,
     pub total_stake: u64,
@@ -159,9 +199,18 @@ pub struct NodeVoteAccounts {
 ///
 /// Its bincode serializaiton format is identical as `VersionedEpochStakes`, but allows faster
 /// deserialization by ignoring serialized stake delegations entirely.
-#[derive(Clone, Debug, Deserialize)]
+#[cfg_attr(
+    feature = "frozen-abi",
+    derive(Serialize, SchemaWrite, AbiEnumVisitor, StableAbi, StableAbiSample)
+)]
+#[derive(Clone, Debug, Deserialize, SchemaRead)]
+#[cfg_attr(feature = "dev-context-only-utils", qualifiers(pub))]
 pub(crate) enum DeserializableVersionedEpochStakes {
     Current {
+        #[cfg_attr(
+            feature = "frozen-abi",
+            stable_abi_sample(with = "stable_abi_sample_deserializable_epoch_stakes(rng)")
+        )]
         stakes: DeserializableEpochStakes,
         total_stake: u64,
         node_id_to_vote_accounts: NodeIdToVoteAccounts,
@@ -169,8 +218,30 @@ pub(crate) enum DeserializableVersionedEpochStakes {
     },
 }
 
-#[derive(Clone, Debug, Serialize)]
-#[cfg_attr(feature = "frozen-abi", derive(AbiExample, AbiEnumVisitor))]
+/// Draws in `EpochStakes` declaration order (`epoch` first, not wire order) so the sample matches
+/// the serialize side; the serializer injects empty `stake_delegations`/zero `unused`, mirrored here.
+#[cfg(feature = "frozen-abi")]
+fn stable_abi_sample_deserializable_epoch_stakes(
+    rng: &mut (impl solana_frozen_abi::rand::RngCore + ?Sized),
+) -> DeserializableEpochStakes {
+    use solana_frozen_abi::stable_abi::StableAbi;
+    let epoch = Epoch::random(rng);
+    let vote_accounts = VoteAccounts::random(rng);
+    let stake_history = StakeHistory::random(rng);
+    DeserializableEpochStakes {
+        vote_accounts,
+        _stake_delegations: Vec::new(),
+        _unused: 0,
+        epoch,
+        stake_history,
+    }
+}
+
+#[derive(Clone, Debug, Serialize, SchemaWrite)]
+#[cfg_attr(
+    feature = "frozen-abi",
+    derive(AbiExample, AbiEnumVisitor, StableAbi, StableAbiSample)
+)]
 #[cfg_attr(feature = "dev-context-only-utils", derive(PartialEq))]
 pub enum VersionedEpochStakes {
     Current {
@@ -179,7 +250,9 @@ pub enum VersionedEpochStakes {
         total_stake: u64,
         node_id_to_vote_accounts: Arc<NodeIdToVoteAccounts>,
         epoch_authorized_voters: Arc<EpochAuthorizedVoters>,
+        #[cfg_attr(feature = "frozen-abi", stable_abi_sample(with = "Default::default()"))]
         #[serde(skip)]
+        #[wincode(skip)]
         bls_pubkey_to_rank_map: OnceLock<Arc<BLSPubkeyToRankMap>>,
     },
 }
@@ -203,6 +276,7 @@ impl From<DeserializableVersionedEpochStakes> for VersionedEpochStakes {
 }
 
 impl VersionedEpochStakes {
+    #[cfg_attr(feature = "dev-context-only-utils", qualifiers(pub))]
     pub(crate) fn new(stakes: SerdeStakesToStakeFormat, leader_schedule_epoch: Epoch) -> Self {
         let stakes = EpochStakes::from(stakes);
         let epoch_vote_accounts = stakes.vote_accounts();
@@ -340,7 +414,7 @@ impl VersionedEpochStakes {
 
 /// The current version of epoch stakes
 #[derive(Clone, Debug, Default)]
-#[cfg_attr(feature = "frozen-abi", derive(AbiExample))]
+#[cfg_attr(feature = "frozen-abi", derive(AbiExample, StableAbi, StableAbiSample))]
 #[cfg_attr(feature = "dev-context-only-utils", derive(PartialEq))]
 pub struct EpochStakes {
     epoch: Epoch,
@@ -359,29 +433,50 @@ impl EpochStakes {
 
 /// Customization of EpochStakes for snapshot serialization.
 ///
-/// Needed because snapshots require additional fields no longer present in EpochStakes.
+/// Needed because snapshots require additional fields no longer present in EpochStakes: the
+/// fields are reordered relative to `EpochStakes` and an always-empty `stake_delegations` list
+/// plus an unused `u64` are injected to match the historical wire format.
+#[derive(Serialize, SchemaWrite)]
+struct SerializableEpochStakes<'a> {
+    vote_accounts: &'a VoteAccounts,
+    stake_delegations: Vec<(Pubkey, Stake)>,
+    unused: u64,
+    epoch: Epoch,
+    stake_history: &'a StakeHistory,
+}
+
+impl<'a> From<&'a EpochStakes> for SerializableEpochStakes<'a> {
+    fn from(epoch_stakes: &'a EpochStakes) -> Self {
+        Self {
+            vote_accounts: &epoch_stakes.vote_accounts,
+            stake_delegations: Vec::new(), // do not serialize any stake delegations
+            unused: 0,
+            epoch: epoch_stakes.epoch,
+            stake_history: &epoch_stakes.stake_history,
+        }
+    }
+}
+
 impl Serialize for EpochStakes {
     fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
     where
         S: Serializer,
     {
-        #[derive(Serialize)]
-        struct SerializableEpochStakes<'a> {
-            vote_accounts: &'a VoteAccounts,
-            stake_delegations: Vec<(Pubkey, Stake)>,
-            unused: u64,
-            epoch: Epoch,
-            stake_history: &'a StakeHistory,
-        }
+        SerializableEpochStakes::from(self).serialize(serializer)
+    }
+}
 
-        SerializableEpochStakes {
-            vote_accounts: &self.vote_accounts,
-            stake_delegations: Vec::new(), // do not serialize any stake delegations
-            unused: 0,
-            epoch: self.epoch,
-            stake_history: &self.stake_history,
-        }
-        .serialize(serializer)
+// Mirror the `Serialize` impl above for wincode by delegating to the same `SerializableEpochStakes`
+// wire layout, so the snapshot bytes match bincode.
+unsafe impl<C: wincode::config::Config> SchemaWrite<C> for EpochStakes {
+    type Src = Self;
+
+    fn size_of(src: &Self::Src) -> WriteResult<usize> {
+        <SerializableEpochStakes<'_> as SchemaWrite<C>>::size_of(&src.into())
+    }
+
+    fn write(writer: impl wincode::io::Writer, src: &Self::Src) -> WriteResult<()> {
+        <SerializableEpochStakes<'_> as SchemaWrite<C>>::write(writer, &src.into())
     }
 }
 
@@ -402,14 +497,50 @@ impl From<SerdeStakesToStakeFormat> for EpochStakes {
 /// Customization of EpochStakes for snapshot deserialization.
 ///
 /// Needed because snapshots contain additional fields no longer present in EpochStakes.
-#[derive(Clone, Debug, Deserialize)]
+// Sampling is overridden at the parent (`DeserializableVersionedEpochStakes::Current.stakes`), so
+// no StableAbi/StableAbiSample is needed here.
+#[cfg_attr(feature = "frozen-abi", derive(Serialize, SchemaWrite))]
+#[derive(Clone, Debug, Deserialize, SchemaRead)]
+#[cfg_attr(feature = "dev-context-only-utils", qualifiers(pub))]
 pub(crate) struct DeserializableEpochStakes {
     vote_accounts: VoteAccounts,
+    // Read-and-discarded (always empty); the serialize side writes it empty too.
     #[serde(deserialize_with = "deserialize_and_ignore_stake_delegations")]
-    _stake_delegations: (),
+    #[wincode(with = "IgnoredStakeDelegations")]
+    _stake_delegations: Vec<(Pubkey, Stake)>,
     _unused: u64,
     epoch: Epoch,
     stake_history: StakeHistory,
+}
+
+/// wincode `with` schema for the ignored stake delegations: reads and discards the wire's
+/// length-prefixed `Vec<(Pubkey, Stake)>`, yielding an empty `Vec`; writes it back through `Vec`
+/// (always empty, matching the serialize side).
+struct IgnoredStakeDelegations;
+
+unsafe impl<'de, C: Config> SchemaRead<'de, C> for IgnoredStakeDelegations {
+    type Dst = Vec<(Pubkey, Stake)>;
+
+    fn read(reader: impl Reader<'de>, dst: &mut MaybeUninit<Self::Dst>) -> ReadResult<()> {
+        <Vec<(Pubkey, Stake)> as SchemaRead<'de, C>>::get(reader)?;
+        dst.write(Vec::new());
+        Ok(())
+    }
+}
+
+#[cfg(feature = "frozen-abi")]
+unsafe impl<C: Config> SchemaWrite<C> for IgnoredStakeDelegations {
+    type Src = Vec<(Pubkey, Stake)>;
+
+    const TYPE_META: wincode::TypeMeta = <Vec<(Pubkey, Stake)> as SchemaWrite<C>>::TYPE_META;
+
+    fn size_of(src: &Self::Src) -> WriteResult<usize> {
+        <Vec<(Pubkey, Stake)> as SchemaWrite<C>>::size_of(src)
+    }
+
+    fn write(writer: impl wincode::io::Writer, src: &Self::Src) -> WriteResult<()> {
+        <Vec<(Pubkey, Stake)> as SchemaWrite<C>>::write(writer, src)
+    }
 }
 
 impl From<DeserializableEpochStakes> for EpochStakes {
@@ -432,14 +563,16 @@ impl From<DeserializableEpochStakes> for EpochStakes {
 /// Snapshot epoch stakes contain delegations, but the main EpochStakes no longer uses them.
 /// This fn does custom deserialization to visit-and-ignore the delegations,
 /// avoiding the need to construct an expensive imbl::HashMap.
-fn deserialize_and_ignore_stake_delegations<'de, D>(deserializer: D) -> Result<(), D::Error>
+fn deserialize_and_ignore_stake_delegations<'de, D>(
+    deserializer: D,
+) -> Result<Vec<(Pubkey, Stake)>, D::Error>
 where
     D: Deserializer<'de>,
 {
     struct IgnoredStakeDelegationsVisitor;
 
     impl<'de> Visitor<'de> for IgnoredStakeDelegationsVisitor {
-        type Value = ();
+        type Value = Vec<(Pubkey, Stake)>;
 
         fn expecting(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
             formatter.write_str("a sequence of serialized stake delegations")
@@ -452,7 +585,7 @@ where
             while seq.next_element::<(Pubkey, Stake)>()?.is_some() {
                 // nothing to do here, ignore the delegations
             }
-            Ok(())
+            Ok(Vec::new())
         }
     }
 
@@ -463,7 +596,9 @@ where
 pub(crate) mod tests {
     use {
         super::*,
-        crate::{stake_account::StakeAccount, stakes::Stakes},
+        crate::{
+            serde_snapshot::deserialize_wincode_from, stake_account::StakeAccount, stakes::Stakes,
+        },
         solana_account::AccountSharedData,
         solana_bls_signatures::keypair::Keypair as BLSKeypair,
         solana_rent::Rent,
@@ -493,9 +628,9 @@ pub(crate) mod tests {
                     iter::repeat_with(|| {
                         let authorized_voter = solana_pubkey::new_rand();
                         let bls_pubkey_compressed: BLSPubkeyCompressed =
-                            BLSKeypair::new().public.into();
+                            (*BLSKeypair::new().public).into();
                         let bls_pubkey_compressed_serialized =
-                            bincode::serialize(&bls_pubkey_compressed)
+                            wincode::serialize(&bls_pubkey_compressed)
                                 .unwrap()
                                 .try_into()
                                 .unwrap();
@@ -556,8 +691,8 @@ pub(crate) mod tests {
             new_vote_accounts(num_nodes, num_vote_accounts_per_node, is_alpenglow);
 
         let expected_authorized_voters: HashMap<_, _> = vote_accounts_map
-            .iter()
-            .flat_map(|(_, vote_accounts)| {
+            .values()
+            .flat_map(|vote_accounts| {
                 vote_accounts
                     .iter()
                     .map(|v| (v.vote_account, v.authorized_voter))
@@ -636,14 +771,13 @@ pub(crate) mod tests {
         }
     }
 
-    #[test_case(1; "single_vote_account")]
-    #[test_case(2; "multiple_vote_accounts")]
-    fn test_bls_pubkey_rank_map(num_vote_accounts_per_node: usize) {
+    #[test]
+    fn test_bls_pubkey_rank_map() {
         agave_logger::setup();
         let num_nodes = 10;
-        let num_vote_accounts = num_nodes * num_vote_accounts_per_node;
+        let num_vote_accounts = num_nodes;
 
-        let vote_accounts_map = new_vote_accounts(num_nodes, num_vote_accounts_per_node, true);
+        let vote_accounts_map = new_vote_accounts(num_nodes, 1, true);
         let node_id_to_stake_map = vote_accounts_map
             .keys()
             .enumerate()
@@ -654,26 +788,34 @@ pub(crate) mod tests {
         });
         let epoch_stakes = VersionedEpochStakes::new_for_tests(epoch_vote_accounts.clone(), 0);
         let bls_pubkey_to_rank_map = epoch_stakes.bls_pubkey_to_rank_map();
-        assert_eq!(bls_pubkey_to_rank_map.len(), num_vote_accounts);
-        for (vote_account_pubkey, (stake, vote_account)) in epoch_vote_accounts {
-            let vote_state_view = vote_account.vote_state_view();
-            let (_comp, bls_pubkey) = bls_pubkey_compressed_bytes_to_bls_pubkey(
-                vote_state_view.bls_pubkey_compressed().unwrap(),
-            )
-            .unwrap();
-            let node_pubkey = *vote_state_view.node_pubkey();
-            let index = bls_pubkey_to_rank_map.get_rank(&bls_pubkey).unwrap();
-            assert!(index >= &0 && index < &(num_vote_accounts as u16));
+        let expected_num_vote_accounts = num_vote_accounts;
+        assert_eq!(bls_pubkey_to_rank_map.len(), expected_num_vote_accounts);
+        let expected_total_stake = epoch_stakes.total_stake();
+        assert_eq!(
+            bls_pubkey_to_rank_map.total_stake().get(),
+            expected_total_stake
+        );
+        for expected_rank in 0..bls_pubkey_to_rank_map.len() {
+            let expected_entry = bls_pubkey_to_rank_map
+                .get_pubkey_stake_entry(expected_rank)
+                .unwrap();
+            let (rank, entry) = bls_pubkey_to_rank_map
+                .get_ranked_entry_for_node(&expected_entry.node_pubkey)
+                .unwrap();
+            assert_eq!(usize::from(rank), expected_rank);
+            assert!(std::ptr::eq(entry, expected_entry));
             assert_eq!(
-                bls_pubkey_to_rank_map.get_pubkey_stake_entry(*index as usize),
-                Some(&BLSPubkeyStakeEntry {
-                    vote_account_pubkey,
-                    node_pubkey,
-                    bls_pubkey,
-                    stake,
-                })
+                bls_pubkey_to_rank_map
+                    .get_rank_for_vote_pubkey(&entry.vote_account_pubkey)
+                    .copied(),
+                Some(rank)
             );
         }
+        assert!(
+            bls_pubkey_to_rank_map
+                .get_ranked_entry_for_node(&Pubkey::new_unique())
+                .is_none()
+        );
 
         // Convert it to versioned and back, we should get the same rank map
         let mut bank_epoch_stakes = HashMap::new();
@@ -683,6 +825,182 @@ pub(crate) mod tests {
             .expect("Epoch stakes should exist");
         let bls_pubkey_to_rank_map2 = epoch_stakes.bls_pubkey_to_rank_map();
         assert_eq!(bls_pubkey_to_rank_map2, bls_pubkey_to_rank_map);
+    }
+
+    #[test]
+    #[should_panic(expected = "total stakes should not be 0")]
+    fn test_multiple_vote_accounts_panics() {
+        agave_logger::setup();
+        let num_nodes = 10;
+
+        let vote_accounts_map = new_vote_accounts(num_nodes, 2, true);
+        let node_id_to_stake_map = vote_accounts_map
+            .keys()
+            .enumerate()
+            .map(|(index, node_id)| (*node_id, ((index + 1) * 100) as u64))
+            .collect::<HashMap<_, _>>();
+        let epoch_vote_accounts = new_epoch_vote_accounts(&vote_accounts_map, |node_id| {
+            *node_id_to_stake_map.get(node_id).unwrap()
+        });
+        let epoch_stakes = VersionedEpochStakes::new_for_tests(epoch_vote_accounts.clone(), 0);
+        epoch_stakes.bls_pubkey_to_rank_map();
+    }
+
+    #[test]
+    fn test_bls_pubkey_rank_map_excludes_duplicate_bls_and_identity() {
+        let new_bls_pubkey = || {
+            let compressed: BLSPubkeyCompressed = (*BLSKeypair::new().public).into();
+            wincode::serialize(&compressed).unwrap().try_into().unwrap()
+        };
+
+        let duplicate_bls_pubkey_serialized = new_bls_pubkey();
+        let duplicate_node_bls_pubkey_serialized = new_bls_pubkey();
+        let duplicate_node_bls_pubkey_serialized_2 = new_bls_pubkey();
+        let shared_voter_bls_pubkey_serialized = new_bls_pubkey();
+        let shared_voter_bls_pubkey_serialized_2 = new_bls_pubkey();
+        let unique_bls_pubkey_serialized = new_bls_pubkey();
+
+        let duplicate_bls_vote_pubkey = Pubkey::new_unique();
+        let duplicate_bls_vote_pubkey_2 = Pubkey::new_unique();
+        let duplicate_node_vote_pubkey = Pubkey::new_unique();
+        let duplicate_node_vote_pubkey_2 = Pubkey::new_unique();
+        let shared_voter_vote_pubkey = Pubkey::new_unique();
+        let shared_voter_vote_pubkey_2 = Pubkey::new_unique();
+        let unique_vote_pubkey = Pubkey::new_unique();
+
+        let duplicate_node_pubkey = Pubkey::new_unique();
+        let shared_authorized_voter = Pubkey::new_unique();
+        let shared_voter_node_pubkey = Pubkey::new_unique();
+        let shared_voter_node_pubkey_2 = Pubkey::new_unique();
+        let unique_node_pubkey = Pubkey::new_unique();
+        let unique_voter = Pubkey::new_unique();
+
+        let account = |node_pubkey, authorized_voter, bls_pubkey| {
+            VoteAccount::try_from(create_v4_account_with_authorized(
+                &node_pubkey,
+                &authorized_voter,
+                bls_pubkey,
+                &node_pubkey,
+                0,
+                &node_pubkey,
+                0,
+                &node_pubkey,
+                100,
+            ))
+            .unwrap()
+        };
+        let epoch_vote_accounts = VoteAccountsHashMap::from([
+            (
+                duplicate_bls_vote_pubkey,
+                (
+                    100,
+                    account(
+                        Pubkey::new_unique(),
+                        Pubkey::new_unique(),
+                        duplicate_bls_pubkey_serialized,
+                    ),
+                ),
+            ),
+            (
+                duplicate_bls_vote_pubkey_2,
+                (
+                    100,
+                    account(
+                        Pubkey::new_unique(),
+                        Pubkey::new_unique(),
+                        duplicate_bls_pubkey_serialized,
+                    ),
+                ),
+            ),
+            (
+                duplicate_node_vote_pubkey,
+                (
+                    100,
+                    account(
+                        duplicate_node_pubkey,
+                        Pubkey::new_unique(),
+                        duplicate_node_bls_pubkey_serialized,
+                    ),
+                ),
+            ),
+            (
+                duplicate_node_vote_pubkey_2,
+                (
+                    100,
+                    account(
+                        duplicate_node_pubkey,
+                        Pubkey::new_unique(),
+                        duplicate_node_bls_pubkey_serialized_2,
+                    ),
+                ),
+            ),
+            (
+                shared_voter_vote_pubkey,
+                (
+                    100,
+                    account(
+                        shared_voter_node_pubkey,
+                        shared_authorized_voter,
+                        shared_voter_bls_pubkey_serialized,
+                    ),
+                ),
+            ),
+            (
+                shared_voter_vote_pubkey_2,
+                (
+                    100,
+                    account(
+                        shared_voter_node_pubkey_2,
+                        shared_authorized_voter,
+                        shared_voter_bls_pubkey_serialized_2,
+                    ),
+                ),
+            ),
+            (
+                unique_vote_pubkey,
+                (
+                    50,
+                    account(
+                        unique_node_pubkey,
+                        unique_voter,
+                        unique_bls_pubkey_serialized,
+                    ),
+                ),
+            ),
+        ]);
+
+        let rank_map = BLSPubkeyToRankMap::new(&epoch_vote_accounts);
+
+        assert_eq!(rank_map.len(), 3);
+        assert_eq!(rank_map.total_stake().get(), 250);
+        for vote_pubkey in [
+            duplicate_bls_vote_pubkey,
+            duplicate_bls_vote_pubkey_2,
+            duplicate_node_vote_pubkey,
+            duplicate_node_vote_pubkey_2,
+        ] {
+            assert!(rank_map.get_rank_for_vote_pubkey(&vote_pubkey).is_none());
+        }
+        assert!(
+            rank_map
+                .get_ranked_entry_for_node(&duplicate_node_pubkey)
+                .is_none()
+        );
+        for node_pubkey in [
+            shared_voter_node_pubkey,
+            shared_voter_node_pubkey_2,
+            unique_node_pubkey,
+        ] {
+            let (rank, entry) = rank_map.get_ranked_entry_for_node(&node_pubkey).unwrap();
+            assert_eq!(entry.node_pubkey, node_pubkey);
+            assert_eq!(
+                rank_map
+                    .get_rank_for_vote_pubkey(&entry.vote_account_pubkey)
+                    .copied(),
+                Some(rank)
+            );
+        }
+        assert!(rank_map.get_pubkey_stake_entry(rank_map.len()).is_none());
     }
 
     #[test]
@@ -761,9 +1079,11 @@ pub(crate) mod tests {
         }
 
         let deserialized_epoch_stakes: VersionedEpochStakes =
-            bincode::deserialize::<DeserializableVersionedEpochStakes>(&serialized_bytes)
-                .unwrap()
-                .into();
+            deserialize_wincode_from::<_, DeserializableVersionedEpochStakes>(
+                std::io::Cursor::new(&serialized_bytes),
+            )
+            .unwrap()
+            .into();
         assert_eq!(
             deserialized_epoch_stakes
                 .stakes()

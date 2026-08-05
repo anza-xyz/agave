@@ -1,5 +1,7 @@
 //! The `poh_service` module implements a service that records the passing of
 //! "ticks", a measure of time in the PoH stream
+#[cfg(target_os = "linux")]
+use agave_cpu_utils::{CpuId, set_cpu_affinity};
 use {
     crate::{
         poh_controller::{PohServiceMessage, PohServiceMessageGuard, PohServiceMessageReceiver},
@@ -37,7 +39,10 @@ const TARGET_HASH_BATCH_TIME_US: u64 = 50;
 pub const DEFAULT_HASHES_PER_BATCH: u64 =
     TARGET_HASH_BATCH_TIME_US * DEFAULT_HASHES_PER_SECOND / 1_000_000;
 
-pub const DEFAULT_PINNED_CPU_CORE: usize = 0;
+#[cfg(target_os = "linux")]
+pub const DEFAULT_PINNED_CPU_CORE: Option<usize> = Some(0);
+#[cfg(not(target_os = "linux"))]
+pub const DEFAULT_PINNED_CPU_CORE: Option<usize> = None;
 
 const TARGET_SLOT_ADJUSTMENT_NS: u64 = 50_000_000;
 
@@ -100,14 +105,17 @@ impl PohService {
         poh_config: &PohConfig,
         poh_exit: Arc<AtomicBool>,
         ticks_per_slot: u64,
-        pinned_cpu_core: usize,
+        pinned_cpu_core: Option<usize>,
         hashes_per_batch: u64,
         mut record_receiver: RecordReceiver,
         poh_service_receiver: PohServiceMessageReceiver,
         migration_status: Arc<MigrationStatus>,
         record_receiver_sender: Sender<RecordReceiver>,
     ) -> Self {
+        migration_status.set_poh_service_started();
         let poh_config = poh_config.clone();
+        #[cfg(not(target_os = "linux"))]
+        let _ = pinned_cpu_core;
         let tick_producer = Builder::new()
             .name("solPohTickProd".to_string())
             .spawn(move || {
@@ -143,11 +151,18 @@ impl PohService {
                         )
                     }
                 } else {
-                    // PoH service runs in a tight loop, generating hashes as fast as possible.
-                    // Let's dedicate one of the CPU cores to this thread so that it can gain
-                    // from cache performance.
-                    if let Some(cores) = core_affinity::get_core_ids() {
-                        core_affinity::set_for_current(cores[pinned_cpu_core]);
+                    #[cfg(target_os = "linux")]
+                    if let Some(pinned_cpu_core) = pinned_cpu_core {
+                        // PoH service runs in a tight loop, generating hashes as fast as possible.
+                        // Let's dedicate one of the CPU cores to this thread so that it can gain
+                        // from cache performance.
+                        let pinned_cpu = CpuId::new(pinned_cpu_core).unwrap();
+                        set_cpu_affinity(None, [pinned_cpu]).unwrap_or_else(|e| {
+                            panic!(
+                                "Failed to set CPU affinity for POH service to CPU \
+                                 {pinned_cpu_core}: {e:?}. This is critical for performance."
+                            )
+                        });
                     }
                     Self::tick_producer(
                         poh_recorder,
@@ -300,8 +315,8 @@ impl PohService {
         if let Ok(record) = record {
             match poh_recorder.write().unwrap().record(
                 record.bank_id,
-                record.mixins,
-                record.transaction_batches,
+                record.mixin,
+                record.transactions,
             ) {
                 Ok(record_summary) => {
                     if record_receiver
@@ -424,6 +439,13 @@ impl PohService {
             .unwrap_or(false)
     }
 
+    /// Returns the target PoH time if it is still in the future, or `None` if it
+    /// has already been reached.
+    fn poh_wait_target(poh: &Poh, target_ns_per_tick: u64, now: Instant) -> Option<Instant> {
+        let target = poh.target_poh_time(target_ns_per_tick);
+        (target > now).then_some(target)
+    }
+
     // returns true if we need to tick
     fn record_or_hash(
         next_record: &mut Option<Record>,
@@ -447,8 +469,8 @@ impl PohService {
                 loop {
                     match poh_recorder_l.record(
                         record.bank_id,
-                        record.mixins,
-                        std::mem::take(&mut record.transaction_batches),
+                        record.mixin,
+                        std::mem::take(&mut record.transactions),
                     ) {
                         Ok(record_summary) => {
                             if record_receiver.should_shutdown(
@@ -482,10 +504,31 @@ impl PohService {
                 lock_time.stop();
                 timing.total_lock_time_ns += lock_time.as_ns();
                 loop {
+                    // Records take priority over pacing. Processing them may move PoH ahead of
+                    // wall clock, so re-evaluate the current progress before every hash batch.
+                    if let Ok(record) = record_receiver.try_recv() {
+                        *next_record = Some(record);
+                        break;
+                    }
+
+                    let wait_start = Instant::now();
+                    if let Some(ideal_time) =
+                        Self::poh_wait_target(&poh_l, target_ns_per_tick, wait_start)
+                    {
+                        drop(poh_l);
+                        while ideal_time > Instant::now() {
+                            if let Ok(record) = record_receiver.try_recv() {
+                                *next_record = Some(record);
+                                break;
+                            }
+                        }
+                        timing.total_sleep_us += wait_start.elapsed().as_micros() as u64;
+                        break;
+                    }
+
                     timing.num_hashes += hashes_per_batch;
                     let mut hash_time = Measure::start("hash");
                     let should_tick = poh_l.hash(hashes_per_batch);
-                    let ideal_time = poh_l.target_poh_time(target_ns_per_tick);
                     hash_time.stop();
 
                     // shutdown if another batch would push us over the shutdown threshold.
@@ -503,31 +546,6 @@ impl PohService {
                         // nothing else can be done. tick required.
                         return true;
                     }
-                    // check to see if a record request has been sent
-                    if let Ok(record) = record_receiver.try_recv() {
-                        // remember the record we just received as the next record to occur
-                        *next_record = Some(record);
-                        break;
-                    }
-                    // check to see if we need to wait to catch up to ideal
-                    let wait_start = Instant::now();
-                    if ideal_time <= wait_start {
-                        // no, keep hashing. We still hold the lock.
-                        continue;
-                    }
-
-                    // busy wait, polling for new records and after dropping poh lock (reset can occur, for example)
-                    drop(poh_l);
-                    while ideal_time > Instant::now() {
-                        // check to see if a record request has been sent
-                        if let Ok(record) = record_receiver.try_recv() {
-                            // remember the record we just received as the next record to occur
-                            *next_record = Some(record);
-                            break;
-                        }
-                    }
-                    timing.total_sleep_us += wait_start.elapsed().as_micros() as u64;
-                    break;
                 }
             }
         };
@@ -602,14 +620,14 @@ impl PohService {
                 }
             }
 
-            if let Some(service_message) = service_message {
-                if !should_exit {
-                    Self::handle_service_message(&poh_recorder, service_message, record_receiver);
-                    target_ns_per_tick = Self::target_tick_ns_adjusted(
-                        ticks_per_slot,
-                        Self::target_tick_ns_reconciled(&poh_recorder, poh_config),
-                    );
-                }
+            if let Some(service_message) = service_message
+                && !should_exit
+            {
+                Self::handle_service_message(&poh_recorder, service_message, record_receiver);
+                target_ns_per_tick = Self::target_tick_ns_adjusted(
+                    ticks_per_slot,
+                    Self::target_tick_ns_reconciled(&poh_recorder, poh_config),
+                );
             }
 
             // If exit signal is set and there are no more records to process, exit.
@@ -672,6 +690,10 @@ impl PohService {
                 }
             }
         }
+        // Publish the final PoH state and clear the pending-message count before waking replay.
+        // A full bounded wakeup channel means replay already has a wakeup queued.
+        drop(service_message);
+        recorder.notify_replay_wakeup();
     }
 
     /// If we have a service message and there are no more records to process,
@@ -706,10 +728,45 @@ mod tests {
             leader_schedule_cache::LeaderScheduleCache,
         },
         solana_perf::test_tx::test_tx,
-        solana_runtime::bank::Bank,
+        solana_runtime::{bank::Bank, installed_scheduler_pool::BankWithScheduler},
         solana_transaction::versioned::VersionedTransaction,
         std::time::Duration,
     };
+
+    #[test]
+    fn test_poh_progress_pacing_after_records() {
+        let target_ns_per_tick = 80;
+        let mut poh = Poh::new(Hash::default(), Some(8));
+        let wall_clock = poh.target_poh_time(target_ns_per_tick);
+
+        // Records are accepted even though each one advances PoH ahead of this fixed wall clock.
+        for _ in 0..3 {
+            assert!(poh.record(Hash::new_unique()).is_some());
+            assert_eq!(
+                PohService::poh_wait_target(&poh, target_ns_per_tick, wall_clock),
+                Some(poh.target_poh_time(target_ns_per_tick)),
+            );
+        }
+
+        // Hashing resumes only once wall clock justifies the progress made by the records.
+        let recorded_progress_time = poh.target_poh_time(target_ns_per_tick);
+        assert_eq!(
+            PohService::poh_wait_target(&poh, target_ns_per_tick, recorded_progress_time),
+            None,
+        );
+
+        // After one bounded hash batch, the service re-evaluates the new progress target.
+        assert!(!poh.hash(1));
+        let hashed_progress_time = poh.target_poh_time(target_ns_per_tick);
+        assert_eq!(
+            PohService::poh_wait_target(&poh, target_ns_per_tick, recorded_progress_time),
+            Some(hashed_progress_time),
+        );
+        assert_eq!(
+            PohService::poh_wait_target(&poh, target_ns_per_tick, hashed_progress_time),
+            None,
+        );
+    }
 
     #[test]
     fn test_poh_service_record_race() {
@@ -728,7 +785,7 @@ mod tests {
             PohConfig::default().target_tick_duration.as_micros() as u64;
         let target_tick_duration = Duration::from_micros(default_target_tick_duration);
         let poh_config = PohConfig {
-            hashes_per_tick: *bank.hashes_per_tick(),
+            hashes_per_tick: bank.hashes_per_tick(),
             target_tick_duration,
             target_tick_count: None,
         };
@@ -758,8 +815,8 @@ mod tests {
         poh_controller.reset(bank.clone(), None).unwrap();
         record_sender
             .try_send(Record {
-                mixins: vec![Hash::new_unique()],
-                transaction_batches: vec![vec![VersionedTransaction::from(test_tx())]],
+                mixin: Hash::new_unique(),
+                transactions: vec![VersionedTransaction::from(test_tx())],
                 bank_id: bank.bank_id(),
             })
             .unwrap();
@@ -790,5 +847,76 @@ mod tests {
         // Shutdown.
         exit.store(true, Ordering::Relaxed);
         poh_service.join().unwrap();
+    }
+
+    #[test]
+    fn test_handle_service_messages_notify_replay_after_completion() {
+        let GenesisConfigInfo { genesis_config, .. } = create_genesis_config(2);
+        let bank = Arc::new(Bank::new_for_tests(&genesis_config));
+        let ledger_path = get_tmp_ledger_path_auto_delete!();
+        let blockstore = Arc::new(
+            Blockstore::open(ledger_path.path())
+                .expect("Expected to be able to open database ledger"),
+        );
+        let leader_schedule_cache = Arc::new(LeaderScheduleCache::new_from_bank(&bank));
+        let (replay_wakeup_sender, replay_wakeup_receiver) = bounded(1);
+        let (poh_recorder, _entry_receiver) = PohRecorder::new_with_clear_signal(
+            bank.tick_height(),
+            bank.last_blockhash(),
+            bank.clone(),
+            None,
+            bank.ticks_per_slot(),
+            false,
+            blockstore,
+            Some(replay_wakeup_sender),
+            &leader_schedule_cache,
+            &genesis_config.poh_config,
+            Arc::new(AtomicBool::default()),
+        );
+        let poh_recorder = Arc::new(RwLock::new(poh_recorder));
+        let (mut poh_controller, poh_service_message_receiver) = PohController::new();
+        let (_record_sender, mut record_receiver) = record_channels(false);
+
+        poh_controller
+            .set_bank(BankWithScheduler::new_without_scheduler(bank.clone()))
+            .unwrap();
+        let service_message = poh_service_message_receiver.try_recv().unwrap();
+        PohService::handle_service_message(&poh_recorder, service_message, &mut record_receiver);
+
+        // ReplayStage treats either a pending controller message or a working bank as
+        // `tpu_has_bank`, so SetBank completion must clear the former and publish the latter.
+        assert!(!poh_controller.has_pending_message());
+        assert!(
+            poh_recorder
+                .read()
+                .unwrap()
+                .shared_leader_state()
+                .load()
+                .working_bank()
+                .is_some()
+        );
+        // Controller completion must also queue the signal consumed by ReplayStage's
+        // ledger-signal select branch.
+        assert!(replay_wakeup_receiver.try_recv().is_ok());
+
+        poh_controller.reset(bank, None).unwrap();
+        let service_message = poh_service_message_receiver.try_recv().unwrap();
+        PohService::handle_service_message(&poh_recorder, service_message, &mut record_receiver);
+
+        // Once Reset clears both ReplayStage gates, the validator is eligible to start its
+        // next leader bank.
+        assert!(!poh_controller.has_pending_message());
+        assert!(
+            poh_recorder
+                .read()
+                .unwrap()
+                .shared_leader_state()
+                .load()
+                .working_bank()
+                .is_none()
+        );
+        // This queued wake prevents ReplayStage from falling through to its 100 ms timeout
+        // with the stale pre-reset `tpu_has_bank` snapshot.
+        assert!(replay_wakeup_receiver.try_recv().is_ok());
     }
 }

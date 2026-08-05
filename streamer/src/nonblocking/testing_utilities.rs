@@ -10,7 +10,7 @@ use {
         quic_socket::QuicSocket,
         streamer::StakedNodes,
     },
-    crossbeam_channel::{Receiver, Sender, unbounded},
+    crossbeam_channel::{Receiver, Sender, bounded},
     quinn::{
         ClientConfig, Connection, EndpointConfig, IdleTimeout, TokioRuntime, TransportConfig,
         crypto::rustls::QuicClientConfig,
@@ -121,7 +121,7 @@ pub fn setup_quic_server(
     qos_config: SwQosConfig,
 ) -> SpawnTestServerResult {
     let sockets = create_quic_server_sockets();
-    let (sender, receiver) = unbounded();
+    let (sender, receiver) = bounded(1024);
     let keypair = Keypair::new();
     let server_address = sockets[0].local_addr().unwrap();
     let staked_nodes = Arc::new(RwLock::new(option_staked_nodes.unwrap_or_default()));

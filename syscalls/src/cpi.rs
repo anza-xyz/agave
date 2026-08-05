@@ -4,7 +4,6 @@ use {
     solana_program_runtime::cpi::{
         SyscallInvokeSigned, TranslatedAccount, cpi_common, translate_accounts_c,
         translate_accounts_rust, translate_instruction_c, translate_instruction_rust,
-        translate_signers_c, translate_signers_rust,
     },
 };
 
@@ -45,20 +44,6 @@ impl SyscallInvokeSigned for SyscallInvokeSignedRust {
     ) -> Result<Vec<TranslatedAccount<'a>>, Error> {
         translate_accounts_rust(account_infos_addr, account_infos_len, invoke_context)
     }
-
-    fn translate_signers(
-        program_id: &Pubkey,
-        signers_seeds_addr: u64,
-        signers_seeds_len: u64,
-        invoke_context: &InvokeContext,
-    ) -> Result<Vec<Pubkey>, Error> {
-        translate_signers_rust(
-            program_id,
-            signers_seeds_addr,
-            signers_seeds_len,
-            invoke_context,
-        )
-    }
 }
 
 declare_builtin_function!(
@@ -97,19 +82,5 @@ impl SyscallInvokeSigned for SyscallInvokeSignedC {
         invoke_context: &InvokeContext,
     ) -> Result<Vec<TranslatedAccount<'a>>, Error> {
         translate_accounts_c(account_infos_addr, account_infos_len, invoke_context)
-    }
-
-    fn translate_signers(
-        program_id: &Pubkey,
-        signers_seeds_addr: u64,
-        signers_seeds_len: u64,
-        invoke_context: &InvokeContext,
-    ) -> Result<Vec<Pubkey>, Error> {
-        translate_signers_c(
-            program_id,
-            signers_seeds_addr,
-            signers_seeds_len,
-            invoke_context,
-        )
     }
 }

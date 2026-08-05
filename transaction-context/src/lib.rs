@@ -1,7 +1,7 @@
 #![cfg(feature = "agave-unstable-api")]
 //! Data shared between program runtime and built-in programs as well as SBF programs.
 #![deny(clippy::indexing_slicing)]
-#![cfg_attr(docsrs, feature(doc_auto_cfg))]
+#![cfg_attr(docsrs, feature(doc_cfg))]
 
 pub mod instruction;
 pub mod instruction_accounts;

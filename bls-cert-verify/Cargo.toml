@@ -8,6 +8,12 @@ repository = { workspace = true }
 homepage = { workspace = true }
 license = { workspace = true }
 edition = { workspace = true }
+rust-version = { workspace = true }
+
+[package.metadata.docs.rs]
+targets = ["x86_64-unknown-linux-gnu"]
+all-features = true
+rustdoc-args = ["--cfg=docsrs"]
 
 [features]
 agave-unstable-api = []
@@ -24,11 +30,9 @@ thiserror = { workspace = true }
 wincode = { workspace = true }
 
 [dev-dependencies]
-# See order-crates-for-publishing.py for using this unusual `path = "."`
 agave-bls-cert-verify = { path = ".", features = ["agave-unstable-api", "dev-context-only-utils"] }
-# See order-crates-for-publishing.py for using this unusual `path`
-agave-votor = { path = "../votor" }
 criterion = { workspace = true }
+rand = { workspace = true }
 solana-hash = { workspace = true }
 
 [[bench]]

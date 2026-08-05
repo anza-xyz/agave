@@ -44,6 +44,7 @@ fn create_stake_account(vote_pubkey: &Pubkey, rent_exempt_reserve: u64) -> Accou
     let total_lamports = rent_exempt_reserve + DELEGATED_STAKE_LAMPORTS;
 
     let meta = Meta {
+        #[expect(deprecated)]
         rent_exempt_reserve,
         ..Meta::default()
     };

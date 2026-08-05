@@ -24,6 +24,7 @@ agave-feature-set = { workspace = true }
 agave-logger = { workspace = true }
 agave-reserved-account-keys = { workspace = true }
 agave-snapshots = { workspace = true }
+bincode = { workspace = true }
 chrono = { workspace = true, features = ["default"] }
 clap = { workspace = true }
 crossbeam-channel = { workspace = true }
@@ -50,6 +51,7 @@ solana-cluster-type = { workspace = true }
 solana-core = { workspace = true, features = ["dev-context-only-utils"] }
 solana-cost-model = { workspace = true }
 solana-entry = { workspace = true }
+solana-epoch-schedule = { workspace = true, features = ["wincode"] }
 solana-feature-gate-interface = { workspace = true }
 solana-genesis-config = { workspace = true }
 solana-genesis-utils = { workspace = true }
@@ -73,6 +75,7 @@ solana-sbpf = { workspace = true, features = ["debugger", "jit"] }
 solana-sdk-ids = { workspace = true }
 solana-shred-version = { workspace = true }
 solana-signature = { workspace = true }
+solana-signer-store = { workspace = true }
 solana-stake-interface = { workspace = true }
 solana-storage-bigtable = { workspace = true }
 solana-svm-callback = { workspace = true }
@@ -89,6 +92,7 @@ solana-vote = { workspace = true }
 solana-vote-program = { workspace = true }
 thiserror = { workspace = true }
 tokio = { workspace = true, features = ["full"] }
+wincode = { workspace = true }
 
 [target.'cfg(not(any(target_env = "msvc", target_os = "freebsd")))'.dependencies]
 jemallocator = { workspace = true }
@@ -98,3 +102,8 @@ signal-hook = { workspace = true }
 
 [dev-dependencies]
 assert_cmd = { workspace = true }
+solana-bls-signatures = { workspace = true }
+tempfile = { workspace = true }
+
+[lints]
+workspace = true

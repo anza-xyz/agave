@@ -72,12 +72,14 @@ impl LeaderScheduleCache {
         let new_max_epoch = self
             .epoch_schedule
             .get_leader_schedule_epoch(root_bank.slot());
-        let old_max_epoch = self.max_epoch.swap(new_max_epoch, Ordering::AcqRel);
+        let old_max_epoch = self.max_epoch.load(Ordering::Acquire);
         assert!(new_max_epoch >= old_max_epoch);
 
-        // Calculate the epoch as soon as it's rooted
         if new_max_epoch > old_max_epoch {
+            // Install the rooted schedule before publishing the epoch to readers.
             self.compute_leader_schedule(new_max_epoch, root_bank);
+            let old_max_epoch = self.max_epoch.swap(new_max_epoch, Ordering::AcqRel);
+            assert!(new_max_epoch >= old_max_epoch);
         }
     }
 
@@ -243,13 +245,13 @@ mod tests {
             },
             staking_utils::tests::setup_vote_and_stake_accounts,
         },
-        crossbeam_channel::unbounded,
-        solana_clock::{DEFAULT_SLOTS_PER_EPOCH, NUM_CONSECUTIVE_LEADER_SLOTS},
+        crossbeam_channel::bounded,
+        solana_clock::DEFAULT_SLOTS_PER_EPOCH,
         solana_epoch_schedule::{
             DEFAULT_LEADER_SCHEDULE_SLOT_OFFSET, EpochSchedule, MINIMUM_SLOTS_PER_EPOCH,
         },
         solana_keypair::Keypair,
-        solana_leader_schedule::{LeaderSchedule, SlotLeader},
+        solana_leader_schedule::{LeaderSchedule, NUM_CONSECUTIVE_LEADER_SLOTS, SlotLeader},
         solana_runtime::stake_utils,
         solana_signer::Signer,
         std::{sync::Arc, thread::Builder},
@@ -337,7 +339,7 @@ mod tests {
             .map(|_| {
                 let cache = cache.clone();
                 let bank = bank.clone();
-                let (sender, receiver) = unbounded();
+                let (sender, receiver) = bounded(1024);
                 (
                     Builder::new()
                         .name("test_thread_race_leader_schedule_cache".to_string())
@@ -457,7 +459,7 @@ mod tests {
         // Write a shred into slot 2 that chains to slot 1,
         // but slot 1 is empty so should not be skipped
         let (shreds, _) = make_slot_entries(2, 1, 1);
-        blockstore.insert_shreds(shreds, None, false).unwrap();
+        blockstore.insert_shreds(shreds, false).unwrap();
         assert_eq!(
             cache
                 .next_leader_slot(&pubkey, 0, &bank, Some(&blockstore), u64::MAX)
@@ -470,7 +472,7 @@ mod tests {
         let (shreds, _) = make_slot_entries(1, 0, 1);
 
         // Check that slot 1 and 2 are skipped
-        blockstore.insert_shreds(shreds, None, false).unwrap();
+        blockstore.insert_shreds(shreds, false).unwrap();
         assert_eq!(
             cache
                 .next_leader_slot(&pubkey, 0, &bank, Some(&blockstore), u64::MAX)
@@ -571,7 +573,7 @@ mod tests {
             .unwrap();
 
         assert_eq!(res.0, expected_slot);
-        assert!(res.1 >= expected_slot + NUM_CONSECUTIVE_LEADER_SLOTS - 1);
+        assert!(res.1 >= expected_slot + NUM_CONSECUTIVE_LEADER_SLOTS.get() as Slot - 1);
 
         let res = cache
             .next_leader_slot(
@@ -579,12 +581,15 @@ mod tests {
                 0,
                 &bank,
                 None,
-                NUM_CONSECUTIVE_LEADER_SLOTS - 1,
+                NUM_CONSECUTIVE_LEADER_SLOTS.get() as Slot - 1,
             )
             .unwrap();
 
         assert_eq!(res.0, expected_slot);
-        assert_eq!(res.1, expected_slot + NUM_CONSECUTIVE_LEADER_SLOTS - 2);
+        assert_eq!(
+            res.1,
+            expected_slot + NUM_CONSECUTIVE_LEADER_SLOTS.get() as Slot - 2
+        );
     }
 
     #[test]

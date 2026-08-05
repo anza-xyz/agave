@@ -3,7 +3,6 @@
 use std::{
     path::{Path, PathBuf},
     sync::{Arc, LazyLock, RwLock},
-    thread::JoinHandle,
 };
 
 static LOGGER: LazyLock<Arc<RwLock<env_logger::Logger>>> =
@@ -102,51 +101,5 @@ pub fn initialize_logging(logfile: Option<PathBuf>) {
     #[cfg(not(unix))]
     {
         setup_file_with_default_filter(&logfile);
-    }
-}
-
-/// Redirect stderr to a file with support for logrotate by sending a SIGUSR1 to the process.
-///
-/// Upon success, future `log` macros and `eprintln!()` can be found in the specified log file.
-pub fn redirect_stderr_to_file(logfile: Option<PathBuf>) -> Option<JoinHandle<()>> {
-    match logfile {
-        None => {
-            setup_with_default_filter();
-            None
-        }
-        Some(logfile) => {
-            #[cfg(unix)]
-            {
-                use log::info;
-                let mut signals =
-                    signal_hook::iterator::Signals::new([signal_hook::consts::SIGUSR1])
-                        .unwrap_or_else(|err| {
-                            eprintln!("Unable to register SIGUSR1 handler: {err:?}");
-                            std::process::exit(1);
-                        });
-
-                setup_with_default_filter();
-                redirect_stderr(&logfile);
-                Some(
-                    std::thread::Builder::new()
-                        .name("solSigUsr1".into())
-                        .spawn(move || {
-                            for signal in signals.forever() {
-                                info!(
-                                    "received SIGUSR1 ({signal}), reopening log file: {logfile:?}",
-                                );
-                                redirect_stderr(&logfile);
-                            }
-                        })
-                        .unwrap(),
-                )
-            }
-            #[cfg(not(unix))]
-            {
-                println!("logrotate is not supported on this platform");
-                setup_file_with_default_filter(&logfile);
-                None
-            }
-        }
     }
 }

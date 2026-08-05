@@ -108,7 +108,7 @@ pub(crate) mod tests {
 
         let account = AccountSharedData::create_from_existing_shared_data(
             1,
-            Arc::new(bincode::serialize(&stake_account).unwrap()),
+            Arc::new(wincode::serialize(&stake_account).unwrap()),
             stake_program::id(),
             false,
             u64::MAX,

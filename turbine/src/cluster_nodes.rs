@@ -17,7 +17,7 @@ use {
         weighted_shuffle::WeightedShuffle,
     },
     solana_keypair::Keypair,
-    solana_ledger::shred::ShredId,
+    solana_ledger::shred::{ShredId, filter::check_feature_activation_from_bank},
     solana_native_token::LAMPORTS_PER_SOL,
     solana_net_utils::SocketAddrSpace,
     solana_pubkey::Pubkey,
@@ -582,7 +582,7 @@ impl<T: 'static> ClusterNodesCache<T> {
             let cache = self.cache.read().unwrap();
             get_epoch_entry(&cache, epoch, self.ttl)
         };
-        let use_cha_cha_8 = check_feature_activation(
+        let use_cha_cha_8 = check_feature_activation_from_bank(
             &feature_set::switch_to_chacha8_turbine::ID,
             shred_slot,
             root_bank,
@@ -715,20 +715,6 @@ pub fn make_test_cluster<R: Rng>(
         }
     }
     (nodes, stakes, cluster_info)
-}
-
-// Returns true if the feature is effective for the shred slot.
-#[must_use]
-pub fn check_feature_activation(feature: &Pubkey, shred_slot: Slot, root_bank: &Bank) -> bool {
-    match root_bank.feature_set.activated_slot(feature) {
-        None => false,
-        Some(feature_slot) => {
-            let epoch_schedule = root_bank.epoch_schedule();
-            let feature_epoch = epoch_schedule.get_epoch(feature_slot);
-            let shred_epoch = epoch_schedule.get_epoch(shred_slot);
-            feature_epoch < shred_epoch
-        }
-    }
 }
 
 #[cfg(test)]

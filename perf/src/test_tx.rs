@@ -23,12 +23,6 @@ pub fn test_tx() -> Transaction {
     solana_system_transaction::transfer(&keypair1, &pubkey1, 42, zero)
 }
 
-pub fn test_invalid_tx() -> Transaction {
-    let mut tx = test_tx();
-    tx.signatures = vec![Transaction::get_invalid_signature()];
-    tx
-}
-
 pub fn test_multisig_tx() -> Transaction {
     let keypair0 = Keypair::new();
     let keypair1 = Keypair::new();

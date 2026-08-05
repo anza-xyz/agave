@@ -28,6 +28,7 @@ pub struct MaxAge {
     pub alt_invalidation_slot: Slot,
 }
 
+#[cfg(test)]
 impl MaxAge {
     pub const MAX: Self = Self {
         sanitized_epoch: Epoch::MAX,

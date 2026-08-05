@@ -10,14 +10,15 @@ use {
         serve_repair::{AncestorHashesResponse, BlockIdRepairResponse, MAX_ANCESTOR_RESPONSES},
     },
     agave_votor_messages::migration::MigrationStatus,
-    bincode::serialize,
     solana_clock::Slot,
     solana_gossip::cluster_info::ClusterInfo,
     solana_hash::Hash,
+    solana_keypair::Keypair,
     solana_ledger::{
         ancestor_iterator::{AncestorIterator, AncestorIteratorWithHash},
         blockstore::Blockstore,
-        shred::{DATA_SHREDS_PER_FEC_BLOCK, ErasureSetId, Nonce},
+        leader_schedule_cache::LeaderScheduleCache,
+        shred::{DATA_SHREDS_PER_FEC_BLOCK, Nonce},
     },
     solana_perf::packet::{Packet, PacketBatch, PacketBatchRecycler, RecycledPacketBatch},
     solana_poh::poh_recorder::SharedLeaderState,
@@ -28,16 +29,20 @@ use {
         net::SocketAddr,
         sync::{Arc, RwLock},
     },
+    wincode::{SchemaWrite, serialize},
 };
 
 /// Helper function to create a PacketBatch from a serializable response
-fn create_response_packet_batch<T: serde::Serialize>(
+fn create_response_packet_batch<T>(
     recycler: &PacketBatchRecycler,
     response: &T,
     from_addr: &SocketAddr,
     nonce: Nonce,
     debug_label: &'static str,
-) -> Option<PacketBatch> {
+) -> Option<PacketBatch>
+where
+    T: SchemaWrite<wincode::config::DefaultConfig, Src = T>,
+{
     let serialized_response = serialize(response).ok()?;
     let packet =
         repair_response::repair_response_packet_from_bytes(serialized_response, from_addr, nonce)?;
@@ -84,13 +89,9 @@ pub trait RepairHandler {
         block_id: Hash,
         nonce: Nonce,
     ) -> Option<PacketBatch> {
-        let location = self
-            .blockstore()
-            .get_block_location(slot, block_id)
-            .ok()??;
         let shred = self
             .blockstore()
-            .get_data_shred_from_location(slot, shred_index, location)
+            .get_data_shred_for_block_id(slot, shred_index, block_id)
             .ok()??;
         let packet = repair_response_packet_from_bytes(shred, from_addr, nonce)?;
         Some(
@@ -165,22 +166,18 @@ pub trait RepairHandler {
         block_id: Hash,
         nonce: Nonce,
     ) -> Option<PacketBatch> {
-        let (double_merkle_meta, location) = self
+        let (double_merkle_meta, slot_meta) = self
             .blockstore()
-            .get_double_merkle_meta_maybe_populate_proofs_for_block_id(slot, block_id)
-            .ok()??;
-
-        let slot_meta = self
-            .blockstore()
-            .meta_from_location(slot, location)
+            .get_parent_repair_metadata(slot, block_id)
             .ok()??;
 
         let parent_slot = slot_meta.parent_slot?;
+        let parent_block_id = slot_meta.parent_block_id;
         let parent_proof = double_merkle_meta.get_parent_info_proof()?.to_vec();
 
         let response = BlockIdRepairResponse::ParentFecSetCount {
             fec_set_count: double_merkle_meta.fec_set_count(),
-            parent_info: (parent_slot, Hash::default()),
+            parent_info: (parent_slot, parent_block_id),
             parent_proof,
         };
         create_response_packet_batch(
@@ -201,16 +198,12 @@ pub trait RepairHandler {
         fec_set_index: u32,
         nonce: Nonce,
     ) -> Option<PacketBatch> {
-        let (double_merkle_meta, location) = self
+        let (double_merkle_meta, merkle_root_meta) = self
             .blockstore()
-            .get_double_merkle_meta_maybe_populate_proofs_for_block_id(slot, block_id)
+            .get_fec_set_root_repair_metadata(slot, block_id, fec_set_index)
             .ok()??;
 
-        let fec_set_root = self
-            .blockstore()
-            .merkle_root_meta_from_location(ErasureSetId::new(slot, fec_set_index), location)
-            .ok()??
-            .merkle_root()?;
+        let fec_set_root = merkle_root_meta.merkle_root()?;
         let proof_index = fec_set_index.checked_div(DATA_SHREDS_PER_FEC_BLOCK as u32)?;
         let fec_set_proof = double_merkle_meta.get_fec_set_proof(proof_index)?.to_vec();
 
@@ -230,12 +223,20 @@ pub enum RepairHandlerType {
 }
 
 impl RepairHandlerType {
-    pub fn to_handler(&self, blockstore: Arc<Blockstore>) -> Box<dyn RepairHandler + Send + Sync> {
+    pub fn to_handler(
+        &self,
+        blockstore: Arc<Blockstore>,
+        identity: Arc<Keypair>,
+        leader_schedule_cache: Arc<LeaderScheduleCache>,
+    ) -> Box<dyn RepairHandler + Send + Sync> {
         match self {
             RepairHandlerType::Standard => Box::new(StandardRepairHandler::new(blockstore)),
-            RepairHandlerType::Malicious(config) => {
-                Box::new(MaliciousRepairHandler::new(blockstore, *config))
-            }
+            RepairHandlerType::Malicious(config) => Box::new(MaliciousRepairHandler::new(
+                blockstore,
+                identity,
+                leader_schedule_cache,
+                *config,
+            )),
         }
     }
 
@@ -246,13 +247,15 @@ impl RepairHandlerType {
         sharable_banks: SharableBanks,
         serve_repair_whitelist: Arc<RwLock<HashSet<Pubkey>>>,
         leader_state: SharedLeaderState,
+        leader_schedule_cache: Arc<LeaderScheduleCache>,
         migration_status: Arc<MigrationStatus>,
     ) -> ServeRepair {
+        let identity_keypair = cluster_info.keypair();
         ServeRepair::new_with_leader_state(
             cluster_info,
             sharable_banks,
             serve_repair_whitelist,
-            self.to_handler(blockstore),
+            self.to_handler(blockstore, identity_keypair, leader_schedule_cache),
             leader_state,
             migration_status,
         )
@@ -320,7 +323,6 @@ mod tests {
                     .into_iter()
                     .chain(parent_coding_shreds)
                     .collect::<Vec<_>>(),
-                None,
                 true,
             )
             .unwrap();
@@ -343,7 +345,6 @@ mod tests {
                     .into_iter()
                     .chain(coding_shreds)
                     .collect::<Vec<_>>(),
-                None,
                 true, // is_trusted
             )
             .unwrap();
@@ -410,7 +411,7 @@ mod tests {
 
             let packet = packet_batch.iter().next().unwrap();
             let (response, response_nonce): (BlockIdRepairResponse, Nonce) =
-                bincode::deserialize(packet.data(..packet.meta().size).unwrap()).unwrap();
+                wincode::deserialize(packet.data(..packet.meta().size).unwrap()).unwrap();
 
             assert_eq!(response_nonce, nonce);
             match response {
@@ -477,7 +478,7 @@ mod tests {
 
         let packet = packet_batch.iter().next().unwrap();
         let (response, response_nonce): (BlockIdRepairResponse, Nonce) =
-            bincode::deserialize(packet.data(..packet.meta().size).unwrap()).unwrap();
+            wincode::deserialize(packet.data(..packet.meta().size).unwrap()).unwrap();
 
         assert_eq!(response_nonce, nonce);
         match response {

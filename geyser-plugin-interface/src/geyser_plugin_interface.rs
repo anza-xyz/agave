@@ -3,13 +3,14 @@
 //! In addition, the dynamic library must export a "C" function _create_plugin which
 //! creates the implementation of the plugin.
 use {
-    solana_clock::{Slot, UnixTimestamp},
+    solana_clock::{BankId, Slot, UnixTimestamp},
+    solana_entry::block_component::VersionedBlockFooter,
     solana_hash::Hash,
     solana_message::v0::LoadedAddresses,
     solana_signature::Signature,
     solana_transaction::{sanitized::SanitizedTransaction, versioned::VersionedTransaction},
     solana_transaction_status::{Reward, RewardsAndNumPartitions, TransactionStatusMeta},
-    std::{any::Any, error, io},
+    std::{any::Any, error, io, net::SocketAddr},
     thiserror::Error,
 };
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -296,6 +297,68 @@ pub enum ReplicaEntryInfoVersions<'a> {
     V0_0_2(&'a ReplicaEntryInfoV2<'a>),
 }
 
+/// Information about a bank cleared by an Alpenglow UpdateParent marker.
+#[derive(Clone, Debug)]
+#[repr(C)]
+pub struct ReplicaEntryUpdateParentInfo<'a> {
+    /// The slot of the cleared bank.
+    pub slot: Slot,
+
+    /// The bank cleared after processing the UpdateParent marker.
+    pub cleared_bank_id: BankId,
+
+    /// The parent slot selected by the UpdateParent marker.
+    pub parent_slot: Slot,
+
+    /// The parent block ID selected by the UpdateParent marker.
+    pub parent_block_id: &'a Hash,
+}
+
+/// A wrapper to future-proof ReplicaEntryUpdateParentInfo handling.
+#[repr(u32)]
+pub enum ReplicaEntryUpdateParentInfoVersions<'a> {
+    V0_0_1(&'a ReplicaEntryUpdateParentInfo<'a>),
+}
+
+/// Information about an Alpenglow UpdateParent marker in the deshred stream.
+#[derive(Clone, Debug)]
+#[repr(C)]
+pub struct ReplicaDeshredUpdateParentInfo<'a> {
+    /// The slot containing the UpdateParent marker.
+    pub slot: Slot,
+
+    /// The FEC set index of the UpdateParent marker.
+    pub update_parent_fec_set_index: u32,
+
+    /// The parent slot selected by the UpdateParent marker.
+    pub parent_slot: Slot,
+
+    /// The parent block ID selected by the UpdateParent marker.
+    pub parent_block_id: &'a Hash,
+}
+
+/// A wrapper to future-proof ReplicaDeshredUpdateParentInfo handling.
+#[repr(u32)]
+pub enum ReplicaDeshredUpdateParentInfoVersions<'a> {
+    V0_0_1(&'a ReplicaDeshredUpdateParentInfo<'a>),
+}
+
+/// Information about an Alpenglow block footer.
+#[derive(Clone, Debug)]
+#[repr(C)]
+pub struct ReplicaBlockFooterInfo<'a> {
+    /// The slot containing the block footer.
+    pub slot: Slot,
+    /// The versioned block footer.
+    pub block_footer: &'a VersionedBlockFooter,
+}
+
+/// A wrapper to future-proof ReplicaBlockFooterInfo handling.
+#[repr(u32)]
+pub enum ReplicaBlockFooterInfoVersions<'a> {
+    V0_0_1(&'a ReplicaBlockFooterInfo<'a>),
+}
+
 #[derive(Clone, Debug)]
 #[repr(C)]
 pub struct ReplicaBlockInfo<'a> {
@@ -356,6 +419,104 @@ pub enum ReplicaBlockInfoVersions<'a> {
     V0_0_2(&'a ReplicaBlockInfoV2<'a>),
     V0_0_3(&'a ReplicaBlockInfoV3<'a>),
     V0_0_4(&'a ReplicaBlockInfoV4<'a>),
+}
+
+/// A snapshot of a validator's gossip contact info at a point in time.
+///
+/// Delivered to plugins that opt into contact info notifications. Every
+/// field is an owned/borrowed plain value — no internal Agave types leak
+/// into the plugin ABI.
+///
+/// `pubkey` is the 32-byte validator identity. Socket fields are `None`
+/// when the validator has not advertised that endpoint.
+#[derive(Clone, Debug, PartialEq, Eq)]
+#[repr(C)]
+pub struct ReplicaContactInfoV0_0_1<'a> {
+    /// The 32-byte validator identity pubkey.
+    pub pubkey: &'a [u8],
+
+    /// Logical timestamp (milliseconds since UNIX epoch) advertised by the
+    /// validator. Advances on every contact info republish.
+    pub wallclock: u64,
+
+    /// The time (microseconds since UNIX epoch) at which this validator
+    /// instance was created. Combined with `wallclock`, forms the tuple
+    /// used by gossip to order contact info versions.
+    pub outset: u64,
+
+    /// Cluster shred version the validator is running.
+    pub shred_version: u16,
+
+    /// Major component of the validator's software version (e.g. `1` in
+    /// `1.18.25`). Plain integers are used rather than a formatted string
+    /// so that the dispatch path is allocation-free; consumers can
+    /// `format!("{}.{}.{}", major, minor, patch)` if they want a string.
+    pub version_major: u16,
+
+    /// Minor component of the validator's software version.
+    pub version_minor: u16,
+
+    /// Patch component of the validator's software version.
+    pub version_patch: u16,
+
+    /// First four bytes of the build commit hash advertised by the
+    /// validator (`0` when unset).
+    pub version_commit: u32,
+
+    /// Active feature set (gossip-advertised). Used by consumers to
+    /// determine which protocol features the validator supports without
+    /// querying RPC.
+    pub version_feature_set: u32,
+
+    /// Client identifier as defined by `solana_version::ClientId`'s
+    /// `u16` encoding (0 = SolanaLabs, 3 = Agave, 5 = Firedancer, ...).
+    /// Consumers should treat unknown values as opaque.
+    pub version_client_id: u16,
+
+    /// Gossip endpoint.
+    pub gossip: Option<SocketAddr>,
+
+    /// TPU QUIC endpoint (where clients send transactions).
+    pub tpu_quic: Option<SocketAddr>,
+
+    /// TPU forwards QUIC endpoint.
+    pub tpu_forwards_quic: Option<SocketAddr>,
+
+    /// TPU vote UDP endpoint.
+    pub tpu_vote_udp: Option<SocketAddr>,
+
+    /// TPU vote QUIC endpoint.
+    pub tpu_vote_quic: Option<SocketAddr>,
+
+    /// TVU UDP endpoint.
+    pub tvu_udp: Option<SocketAddr>,
+
+    /// TVU QUIC endpoint.
+    pub tvu_quic: Option<SocketAddr>,
+
+    /// Serve-repair UDP endpoint.
+    pub serve_repair_udp: Option<SocketAddr>,
+
+    /// Serve-repair QUIC endpoint.
+    pub serve_repair_quic: Option<SocketAddr>,
+
+    /// JSON-RPC endpoint, if advertised.
+    pub rpc: Option<SocketAddr>,
+
+    /// JSON-RPC pubsub (websocket) endpoint, if advertised.
+    pub rpc_pubsub: Option<SocketAddr>,
+
+    /// Alpenglow consensus endpoint, if advertised.
+    pub alpenglow: Option<SocketAddr>,
+}
+
+/// A wrapper to future-proof ReplicaContactInfo handling.
+/// If there were a change to the structure of ReplicaContactInfo,
+/// there would be a new enum entry for the newer version, forcing
+/// plugin implementations to handle the change.
+#[repr(u32)]
+pub enum ReplicaContactInfoVersions<'a> {
+    V0_0_1(&'a ReplicaContactInfoV0_0_1<'a>),
 }
 
 /// Errors returned by plugin calls
@@ -486,6 +647,10 @@ pub trait GeyserPlugin: Any + Send + Sync + std::fmt::Debug {
     /// When `is_startup` is true, it indicates the account is loaded from
     /// snapshots when the validator starts up. When `is_startup` is false,
     /// the account is updated during transaction processing.
+    #[deprecated(
+        since = "4.3.0",
+        note = "Callers should instead use update_account_from_snapshot or update_account_for_bank"
+    )]
     #[allow(unused_variables)]
     fn update_account(
         &self,
@@ -496,12 +661,42 @@ pub trait GeyserPlugin: Any + Send + Sync + std::fmt::Debug {
         Ok(())
     }
 
+    /// Called when an account is loaded from snapshots when the validator starts up.
+    #[allow(deprecated)]
+    #[allow(unused_variables)]
+    fn update_account_from_snapshot(
+        &self,
+        account: ReplicaAccountInfoVersions,
+        slot: Slot,
+    ) -> Result<()> {
+        self.update_account(account, slot, true)
+    }
+
+    /// Called when an account is updated at a slot during transaction processing.
+    ///
+    /// `bank_id` identifies the concrete bank instance associated with the
+    /// account update.
+    #[allow(deprecated)]
+    #[allow(unused_variables)]
+    fn update_account_for_bank(
+        &self,
+        account: ReplicaAccountInfoVersions,
+        slot: Slot,
+        bank_id: BankId,
+    ) -> Result<()> {
+        self.update_account(account, slot, false)
+    }
+
     /// Called when all accounts are notified of during startup.
     fn notify_end_of_startup(&self) -> Result<()> {
         Ok(())
     }
 
-    /// Called when a slot status is updated
+    /// Called when a slot status is updated.
+    ///
+    /// The validator calls this directly for statuses that are not associated
+    /// with a concrete bank instance: `FirstShredReceived`, `Completed`, and
+    /// `Dead`.
     #[allow(unused_variables)]
     fn update_slot_status(
         &self,
@@ -512,7 +707,27 @@ pub trait GeyserPlugin: Any + Send + Sync + std::fmt::Debug {
         Ok(())
     }
 
+    /// Called when a bank-scoped slot status is updated.
+    ///
+    /// `bank_id` identifies the concrete bank instance associated with this
+    /// status update. This method is called for statuses tied to a particular
+    /// `Bank`: `Confirmed`, `Processed`, `Rooted`, and `CreatedBank`.
+    #[allow(unused_variables)]
+    fn update_bank_status(
+        &self,
+        slot: Slot,
+        parent: Option<u64>,
+        status: &SlotStatus,
+        bank_id: BankId,
+    ) -> Result<()> {
+        self.update_slot_status(slot, parent, status)
+    }
+
     /// Called when a transaction is processed in a slot.
+    #[deprecated(
+        since = "4.3.0",
+        note = "Callers should instead use notify_transaction_for_bank"
+    )]
     #[allow(unused_variables)]
     fn notify_transaction(
         &self,
@@ -522,15 +737,124 @@ pub trait GeyserPlugin: Any + Send + Sync + std::fmt::Debug {
         Ok(())
     }
 
+    /// Called when a transaction is processed in a slot.
+    ///
+    /// `bank_id` identifies the concrete bank instance that processed the
+    /// transaction.
+    #[allow(deprecated)]
+    #[allow(unused_variables)]
+    fn notify_transaction_for_bank(
+        &self,
+        transaction: ReplicaTransactionInfoVersions,
+        slot: Slot,
+        bank_id: BankId,
+    ) -> Result<()> {
+        self.notify_transaction(transaction, slot)
+    }
+
     /// Called when an entry is executed.
+    #[deprecated(
+        since = "4.3.0",
+        note = "Callers should instead use notify_entry_for_bank"
+    )]
     #[allow(unused_variables)]
     fn notify_entry(&self, entry: ReplicaEntryInfoVersions) -> Result<()> {
         Ok(())
     }
 
+    /// Called when an entry is executed.
+    ///
+    /// `bank_id` identifies the concrete bank instance that executed the entry.
+    #[allow(deprecated)]
+    #[allow(unused_variables)]
+    fn notify_entry_for_bank(
+        &self,
+        entry: ReplicaEntryInfoVersions,
+        bank_id: BankId,
+    ) -> Result<()> {
+        self.notify_entry(entry)
+    }
+
+    /// Called when an Alpenglow block footer is processed.
+    ///
+    /// `bank_id` identifies the concrete bank instance associated with the
+    /// footer. This callback is ordered with entry notifications and is only
+    /// called when `block_footer_notifications_enabled()` returns true.
+    #[allow(unused_variables)]
+    fn notify_block_footer(
+        &self,
+        block_footer: ReplicaBlockFooterInfoVersions,
+        bank_id: BankId,
+    ) -> Result<()> {
+        Ok(())
+    }
+
     /// Called when block's metadata is updated.
+    #[deprecated(
+        since = "4.3.0",
+        note = "Callers should instead use notify_block_metadata_for_bank"
+    )]
     #[allow(unused_variables)]
     fn notify_block_metadata(&self, blockinfo: ReplicaBlockInfoVersions) -> Result<()> {
+        Ok(())
+    }
+
+    /// Called when block's metadata is updated.
+    ///
+    /// `bank_id` identifies the concrete bank instance associated with the block
+    /// metadata.
+    #[allow(deprecated)]
+    #[allow(unused_variables)]
+    fn notify_block_metadata_for_bank(
+        &self,
+        blockinfo: ReplicaBlockInfoVersions,
+        bank_id: BankId,
+    ) -> Result<()> {
+        self.notify_block_metadata(blockinfo)
+    }
+
+    /// Called when a validator's gossip contact info is learned or updated.
+    ///
+    /// `is_startup` is true when this call is part of the initial state
+    /// dump delivered synchronously after the plugin is loaded (every
+    /// currently-known validator's latest contact info is delivered once
+    /// with `is_startup=true` before any live updates). Subsequent live
+    /// updates driven by gossip activity are delivered with `is_startup=false`.
+    ///
+    /// Delivery is best-effort: under extreme load, updates may be dropped
+    /// to keep the gossip subsystem unaffected. Contact info is rebroadcast
+    /// on a multi-second cadence by validators, so consumers self-heal on
+    /// the next republish.
+    ///
+    /// Only called when `contact_info_notifications_enabled()` returns true.
+    #[allow(unused_variables)]
+    fn notify_contact_info(
+        &self,
+        info: ReplicaContactInfoVersions,
+        is_startup: bool,
+    ) -> Result<()> {
+        Ok(())
+    }
+
+    /// Called when a validator's gossip contact info is removed from CRDS.
+    /// Plugins that maintain a cache keyed on validator identity should
+    /// invalidate the entry for `pubkey` on receipt of this notification.
+    ///
+    /// Fires for both timeout-based purges (the validator stopped
+    /// gossiping; their entry aged out per stake-aware CRDS timeouts) and
+    /// size-based trims (CRDS exceeded its capacity and evicted older
+    /// entries). The pubkey is the 32-byte validator identity that was
+    /// last seen via `notify_contact_info`.
+    ///
+    /// Like `notify_contact_info`, this is best-effort: under extreme
+    /// load a removal event may be dropped (the `gossip_contact_info_dropped`
+    /// counter is bumped when this happens). Consumers that need strict
+    /// liveness guarantees should pair this notification with their own
+    /// wallclock-staleness check on cached entries.
+    ///
+    /// Only called when `contact_info_notifications_enabled()` returns true.
+    #[allow(unused_variables)]
+    fn notify_contact_info_removed(&self, pubkey: &[u8]) -> Result<()> {
         Ok(())
     }
 
@@ -563,6 +887,22 @@ pub trait GeyserPlugin: Any + Send + Sync + std::fmt::Debug {
         false
     }
 
+    /// Check if the plugin is interested in Alpenglow block footer data.
+    /// Default is false -- if the plugin is interested in
+    /// Alpenglow block footer data, return true.
+    fn block_footer_notifications_enabled(&self) -> bool {
+        false
+    }
+
+    /// Check if the plugin is interested in validator contact info updates
+    /// sourced from gossip. Default is false — if the plugin wants contact
+    /// info notifications, return true. When no loaded plugin returns true,
+    /// the validator bypasses all contact-info notification machinery
+    /// (no dispatch thread, no channel, zero hot-path overhead).
+    fn contact_info_notifications_enabled(&self) -> bool {
+        false
+    }
+
     /// Called when a transaction is deshredded (entries formed from shreds).
     /// This is triggered before any execution occurs. Unlike notify_transaction,
     /// this does not include execution metadata (TransactionStatusMeta).
@@ -590,5 +930,27 @@ pub trait GeyserPlugin: Any + Send + Sync + std::fmt::Debug {
     /// that only need the raw transaction should leave this disabled.
     fn deshred_transaction_alt_resolution_enabled(&self) -> bool {
         false
+    }
+
+    /// Called when an Alpenglow UpdateParent marker clears a bank.
+    /// Entry notifications may race with this callback; plugins should use the
+    /// cleared bank ID to reconcile them. The replacement bank ID is reported
+    /// separately through `SlotStatus::CreatedBank`.
+    #[allow(unused_variables)]
+    fn notify_entry_update_parent(
+        &self,
+        update_parent: ReplicaEntryUpdateParentInfoVersions,
+    ) -> Result<()> {
+        Ok(())
+    }
+
+    /// Called before deshred transaction notifications from the completed data
+    /// set beginning at the UpdateParent FEC-set boundary.
+    #[allow(unused_variables)]
+    fn notify_deshred_update_parent(
+        &self,
+        update_parent: ReplicaDeshredUpdateParentInfoVersions,
+    ) -> Result<()> {
+        Ok(())
     }
 }

@@ -14,6 +14,9 @@ pub enum LedgerToolError {
     TransactionEncode(#[from] solana_transaction_status::EncodeError),
 
     #[error("{0}")]
+    BitmapDecode(String),
+
+    #[error("{0}")]
     Io(#[from] std::io::Error),
 
     #[error("{0}")]
