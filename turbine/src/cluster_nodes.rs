@@ -95,6 +95,7 @@ pub struct ClusterNodes<T> {
 // Epoch-stable broadcast routing state. Gossip contacts are refreshed
 // separately and mapped back to these indices.
 struct BroadcastTopology {
+    self_pubkey: Pubkey,
     nodes: Box<[(Pubkey, /*stake:*/ u64)]>,
     index: HashMap<Pubkey, /*index:*/ usize, PubkeyHasherBuilder>,
     weighted_shuffle: Arc<WeightedShuffle>,
@@ -420,6 +421,7 @@ impl BroadcastTopology {
             weighted_shuffle.remove_index(*index);
         }
         Some(Self {
+            self_pubkey,
             nodes: nodes.into_boxed_slice(),
             index,
             weighted_shuffle: Arc::new(weighted_shuffle),
@@ -700,7 +702,9 @@ impl<T: 'static> ClusterNodesCache<T> {
                 && let Some(topology) = entry.topology.get_or_init(|| {
                     BroadcastTopology::new(cluster_type, epoch_staked_nodes, cluster_info.id())
                         .map(Arc::new)
-                }) {
+                })
+                && topology.self_pubkey == cluster_info.id()
+            {
                 new_cluster_nodes_from_topology::<T>(topology, cluster_info, use_cha_cha_8)
             } else {
                 let epoch_staked_nodes = epoch_staked_nodes.unwrap_or_else(|| {
@@ -1056,9 +1060,10 @@ mod tests {
 
     #[test]
     fn test_cluster_nodes_cache_refreshes_broadcast_contacts() {
-        let validator = Pubkey::new_unique();
+        let validator = Arc::new(Keypair::new());
         let mut genesis =
-            create_genesis_config_with_leader(10_000, &validator, LAMPORTS_PER_SOL).genesis_config;
+            create_genesis_config_with_leader(10_000, &validator.pubkey(), LAMPORTS_PER_SOL)
+                .genesis_config;
         genesis.cluster_type = ClusterType::MainnetBeta;
         let bank = Bank::new_for_tests(&genesis);
 
@@ -1067,7 +1072,7 @@ mod tests {
         let this_node = GossipContactInfo::new_localhost(&keypair.pubkey(), now);
         let cluster_info = ClusterInfo::new(this_node, keypair, SocketAddrSpace::Unspecified);
         let old_addr = SocketAddr::from(([10, 0, 0, 2], 8_001));
-        let mut node = GossipContactInfo::new_localhost(&validator, now);
+        let mut node = GossipContactInfo::new_localhost(&validator.pubkey(), now);
         node.set_tvu(Protocol::UDP, old_addr).unwrap();
         cluster_info.insert_info(node.clone());
 
@@ -1092,6 +1097,10 @@ mod tests {
         };
         assert_eq!(get_addr(&before), Some(old_addr));
         assert_eq!(get_addr(&after), Some(new_addr));
+
+        cluster_info.set_keypair(validator);
+        let after_identity_change = cache.get(0, &bank, &bank, &cluster_info);
+        assert_eq!(get_addr(&after_identity_change), None);
     }
 
     // Checks (1) computed retransmit children against expected children and
