@@ -7,10 +7,10 @@ use {
     },
 };
 
-/// The latest Alpenglow slot start observed by Votor on this validator.
+/// The latest Alpenglow leader-window start observed by Votor on this validator.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct AlpenglowSlotInfo {
-    /// The slot that started.
+    /// The first slot in the leader window.
     pub slot: Slot,
     /// When the slot start was observed locally.
     pub started_at: Instant,
@@ -18,15 +18,15 @@ pub struct AlpenglowSlotInfo {
     pub slot_duration: Duration,
 }
 
-/// Lock-free shared access to Votor's latest observed Alpenglow slot.
+/// Lock-free shared access to Votor's latest observed Alpenglow leader window.
 #[derive(Clone, Default)]
 pub struct SharedAlpenglowSlotClock(Arc<ArcSwapOption<AlpenglowSlotInfo>>);
 
 impl SharedAlpenglowSlotClock {
-    /// Updates the latest observed slot.
+    /// Updates the latest observed leader window.
     ///
     /// Votor's event handler is the sole writer. Duplicate or out-of-order
-    /// events must not restart progress for the current slot.
+    /// events must not restart progress for the current window.
     pub fn update(&self, slot: Slot, started_at: Instant, slot_duration: Duration) {
         let current = self.0.load();
         if current.as_ref().is_some_and(|current| current.slot >= slot) {
@@ -40,7 +40,7 @@ impl SharedAlpenglowSlotClock {
         })));
     }
 
-    /// Loads the latest observed slot, if Votor has reported one.
+    /// Loads the latest observed leader window, if Votor has reported one.
     pub fn load(&self) -> Option<AlpenglowSlotInfo> {
         self.0.load().as_ref().map(|slot_info| **slot_info)
     }

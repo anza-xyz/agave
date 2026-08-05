@@ -1723,6 +1723,7 @@ impl Validator {
             node.info.shred_version(),
             vote_tracker,
             bank_forks.clone(),
+            alpenglow_slot_clock,
             verified_vote_sender,
             gossip_verified_vote_hash_sender,
             replay_vote_receiver,

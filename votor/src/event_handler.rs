@@ -282,7 +282,6 @@ impl EventHandler {
             VotorEvent::Block(CompletedBlock { slot, bank }) => {
                 debug_assert!(bank.is_frozen());
                 let now = Instant::now();
-                Self::record_slot_start(slot, now, ctx, vctx);
                 let mut consensus_metrics_events =
                     vec![ConsensusMetricsEvent::StartOfSlot { slot }];
                 if slot == first_of_consecutive_leader_slots(slot) {
@@ -375,7 +374,7 @@ impl EventHandler {
             // Received a parent ready notification for `slot`
             VotorEvent::ParentReady { slot, parent_block } => {
                 let now = Instant::now();
-                Self::record_slot_start(slot, now, ctx, vctx);
+                Self::record_window_start(slot, now, ctx, vctx);
                 nonblocking_send(
                     &local_context.my_pubkey,
                     &vctx.consensus_metrics_sender,
@@ -408,7 +407,6 @@ impl EventHandler {
                 if slot != last_of_consecutive_leader_slots(slot) {
                     let next_slot = slot.saturating_add(1);
                     let now = Instant::now();
-                    Self::record_slot_start(next_slot, now, ctx, vctx);
                     nonblocking_send(
                         &local_context.my_pubkey,
                         &vctx.consensus_metrics_sender,
@@ -594,7 +592,7 @@ impl EventHandler {
         Ok(votes)
     }
 
-    fn record_slot_start(
+    fn record_window_start(
         slot: Slot,
         started_at: Instant,
         ctx: &SharedContext,
@@ -1673,7 +1671,7 @@ mod tests {
 
         let slot = 2;
         let bank2 = test_context.create_block_and_send_block_event(slot, bank1.clone());
-        test_context.check_alpenglow_slot(slot);
+        test_context.check_alpenglow_slot(1);
         let block_id_2 = bank2.block_id().unwrap();
 
         // Because 2 is middle of window, we should see Notarize vote for block 2 even without parentready
@@ -1824,7 +1822,7 @@ mod tests {
         let slot = 4;
         let bank4 = test_context.create_block_only(slot, bank3);
         test_context.send_timeout_event(slot);
-        test_context.check_alpenglow_slot(slot + 1);
+        test_context.check_alpenglow_slot(1);
         // We did eventually complete replay for 4
         test_context.send_block_event(slot, bank4.clone());
         // There should be a skip vote for 4 to 7 each
