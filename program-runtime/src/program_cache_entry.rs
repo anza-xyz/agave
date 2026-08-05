@@ -148,6 +148,11 @@ impl ProgramCacheEntryType {
             _ => None,
         }
     }
+
+    /// Returns `true` if this entry is in the `Unloaded` state (verified, but executable not currently resident/compiled).
+    pub fn is_unloaded(&self) -> bool {
+        matches!(self, ProgramCacheEntryType::Unloaded(_))
+    }
 }
 
 /// Holds a program version at a specific address and on a specific slot / fork.
