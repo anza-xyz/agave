@@ -13,7 +13,7 @@ use {
     solana_stake_history::{StakeHistory, StakeHistoryGetEntry, sysvar::StakeHistorySysvar},
     solana_sysvar::{
         Sysvar, clock::Clock, epoch_rewards::EpochRewards, epoch_schedule::EpochSchedule,
-        rent::Rent, slot_hashes::PodSlotHashes,
+        rent::Rent, slot_hashes::PodSlotHashes, slot_history::SlotHistory,
     },
     solana_sysvar_id::SysvarId,
 };
@@ -194,9 +194,14 @@ pub fn process_instruction(
             {
                 msg!("SlotHashes identifier:");
                 sysvar::slot_hashes::id().log();
-                // Syscall `sol_get_sysvar`.
-                let pod_slot_hashes = PodSlotHashes::fetch()?;
-                assert!(pod_slot_hashes.get(/* slot */ &0)?.is_some());
+                // Account deserialization is unsupported.
+                // Inspecting first entry and comparing with the syscall value.
+                assert_eq!(accounts[7].data_len(), solana_sysvar::slot_hashes::SIZE);
+                let data = accounts[7].data.borrow();
+                let account_slot = u64::from_le_bytes(data[8..16].try_into().unwrap());
+                let account_hash = &data[16..48];
+                let syscall_hash = PodSlotHashes::fetch()?.get(&account_slot)?.unwrap();
+                assert_eq!(syscall_hash.as_ref(), account_hash);
             }
 
             Ok(())
