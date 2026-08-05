@@ -35,6 +35,7 @@ use {
     std::{
         cmp,
         collections::{HashMap, HashSet, hash_map::Entry},
+        ops::RangeInclusive,
         sync::{
             Arc,
             atomic::{AtomicBool, Ordering},
@@ -157,11 +158,9 @@ impl SigVerifier {
 
     fn run(mut self, exit: Arc<AtomicBool>) {
         while !exit.load(Ordering::Relaxed) {
-            const SOFT_RECEIVE_CAP: usize = 5000;
             let Ok((datagrams, certificates)) = recv_inputs(
                 &self.channels.packet_receiver,
                 &self.channels.certificate_receiver,
-                SOFT_RECEIVE_CAP,
             ) else {
                 error!("sigverifier input channel disconnected: Exiting.");
                 break;
@@ -446,12 +445,21 @@ impl SigVerifier {
 fn recv_inputs(
     packet_receiver: &Receiver<Datagram>,
     certificate_receiver: &Receiver<(Slot, UnverifiedCertificate)>,
-    soft_receive_cap: usize,
 ) -> Result<SigVerifierInputs, ()> {
-    let mut datagrams = Vec::with_capacity(soft_receive_cap);
+    const RECEIVE_BATCH_SIZE_RANGE: RangeInclusive<usize> = 8usize..=5000;
+    let mut datagrams = Vec::new();
     let mut certificates = vec![];
     select! {
         recv(packet_receiver) -> datagram => {
+            datagrams.reserve(
+                packet_receiver
+                    .len()
+                    .saturating_add(1) // +1 for the packet we just fetched
+                    .clamp(
+                        *RECEIVE_BATCH_SIZE_RANGE.start(),
+                        *RECEIVE_BATCH_SIZE_RANGE.end(),
+                    ),
+            );
             datagrams.push(datagram.map_err(|_| ())?);
         }
         recv(certificate_receiver) -> certificate => {
@@ -459,7 +467,8 @@ fn recv_inputs(
         },
         default(Duration::from_secs(1)) => return Ok((datagrams, certificates)),
     }
-    while datagrams.len() < soft_receive_cap {
+    // Take what fits into the preallocated Vec, the rest waits for the next iteration.
+    while datagrams.len() < datagrams.capacity().min(*RECEIVE_BATCH_SIZE_RANGE.end()) {
         match packet_receiver.try_recv() {
             Ok(datagram) => {
                 datagrams.push(datagram);
