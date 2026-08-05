@@ -196,9 +196,15 @@ impl AggregateCommitmentService {
             AlpenglowCommitmentType::Rooted => {
                 // There is no distinction of OC, root, or finalized in Alpengow commitment.
                 // Once votor selects a finalized bank as root, set all of these values.
+                // Guard highest_super_majority_root against regression, mirroring the
+                // monotonicity guard the tower path applies in update_commitment_cache
+                // below: a late or out-of-order Rooted update must never move the
+                // super-majority root backwards.
+                let highest_super_majority_root =
+                    max(slot, w_block_commitment_cache.highest_super_majority_root());
                 w_block_commitment_cache.set_highest_confirmed_slot(slot);
                 w_block_commitment_cache.set_root(slot);
-                w_block_commitment_cache.set_highest_super_majority_root(slot);
+                w_block_commitment_cache.set_highest_super_majority_root(highest_super_majority_root);
             }
         }
         w_block_commitment_cache.commitment_slots()
