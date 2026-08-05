@@ -25,7 +25,7 @@ use {
     solana_transaction_error::TransactionError, tokio::time::Duration,
 };
 
-pub const DEFAULT_VOTE_USE_QUIC: bool = false;
+pub const DEFAULT_VOTE_USE_QUIC: bool = true;
 
 /// The default connection count is set to 1 -- it should
 /// be sufficient for most use cases. Validators can use
