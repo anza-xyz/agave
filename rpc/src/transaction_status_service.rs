@@ -12,7 +12,9 @@ use {
     solana_runtime::{
         bank::{Bank, KeyedRewardsAndNumPartitions},
         dependency_tracker::DependencyTracker,
-        transaction_execution::{TransactionStatusBatch, TransactionStatusMessage},
+        transaction_execution::{
+            TransactionHistoryPurgeInput, TransactionStatusBatch, TransactionStatusMessage,
+        },
     },
     solana_svm::transaction_commit_result::CommittedTransaction,
     solana_transaction_status::{
@@ -34,6 +36,16 @@ use {
 enum Error {
     #[error("blockstore operation failed: {0}")]
     Blockstore(#[from] BlockstoreError),
+
+    #[error(
+        "failed to purge transaction history for slot {slot} requested by {purge_source}: {source}"
+    )]
+    PurgeTransactionHistory {
+        slot: Slot,
+        purge_source: &'static str,
+        #[source]
+        source: BlockstoreError,
+    },
 
     #[error("received nonfrozen bank: {0}")]
     NonFrozenBank(Slot),
@@ -272,6 +284,46 @@ impl TransactionStatusService {
                 Self::write_block_meta(&bank, blockstore)?;
                 max_complete_transaction_status_slot.fetch_max(bank.slot(), Ordering::SeqCst);
             }
+            TransactionStatusMessage::PurgeTransactionHistory {
+                slot,
+                source,
+                purge_input,
+                requested_at,
+                done_sender,
+            } => {
+                if enable_rpc_transaction_history {
+                    let queue_wait_us = requested_at.elapsed().as_micros();
+                    let stats = match &purge_input {
+                        TransactionHistoryPurgeInput::ReplayStage => {
+                            blockstore.purge_transaction_history_for_replay_slot_exact(slot)
+                        }
+                        TransactionHistoryPurgeInput::SwitchBank => {
+                            blockstore.purge_transaction_history_for_switch_bank_slot_exact(slot)
+                        }
+                        TransactionHistoryPurgeInput::Leader(transactions) => blockstore
+                            .purge_transaction_history_for_leader_slot_exact(
+                                slot,
+                                transactions.as_slice(),
+                            ),
+                    }
+                    .map_err(|error| Error::PurgeTransactionHistory {
+                        slot,
+                        purge_source: source.as_str(),
+                        source: error,
+                    })?;
+
+                    stats.report(
+                        slot,
+                        source.as_str(),
+                        queue_wait_us,
+                        requested_at.elapsed().as_micros(),
+                    );
+                }
+
+                if let Some(done_sender) = done_sender {
+                    let _ = done_sender.send(());
+                }
+            }
         }
         Ok(())
     }
@@ -364,7 +416,10 @@ pub(crate) mod tests {
         solana_nonce::{self as nonce, state::DurableNonce},
         solana_nonce_account as nonce_account,
         solana_pubkey::Pubkey,
-        solana_runtime::bank::{Bank, TransactionBalancesSet},
+        solana_runtime::{
+            bank::{Bank, TransactionBalancesSet},
+            transaction_execution::{TransactionHistoryPurgeSource, TransactionStatusSender},
+        },
         solana_signature::Signature,
         solana_signer::Signer,
         solana_svm::transaction_execution_result::TransactionLoadedAccountsStats,
@@ -703,5 +758,41 @@ pub(crate) mod tests {
             expected_transaction2.message_hash(),
             &result2.transaction.message.hash(),
         );
+    }
+
+    #[test]
+    fn test_purge_transaction_history_error_stops_service() {
+        let (transaction_status_sender, transaction_status_receiver) = bounded(1);
+        let transaction_status_sender = TransactionStatusSender {
+            sender: transaction_status_sender,
+            dependency_tracker: None,
+        };
+        let ledger_path = get_tmp_ledger_path_auto_delete!();
+        let blockstore = Arc::new(Blockstore::open(ledger_path.path()).unwrap());
+        let exit = Arc::new(AtomicBool::new(false));
+        let transaction_status_service = TransactionStatusService::new(
+            transaction_status_receiver,
+            Arc::new(AtomicU64::default()),
+            true,
+            None,
+            blockstore,
+            false,
+            None,
+            exit.clone(),
+        );
+
+        // With no UpdateParent marker, the purge must fail without acknowledging completion.
+        assert!(
+            transaction_status_sender
+                .send_purge_transaction_history_for_slot(
+                    42,
+                    TransactionHistoryPurgeSource::UpdateParentSignal,
+                    TransactionHistoryPurgeInput::ReplayStage,
+                )
+                .is_err()
+        );
+
+        transaction_status_service.join().unwrap();
+        assert!(exit.load(Ordering::Relaxed));
     }
 }
