@@ -657,8 +657,19 @@ impl EventHandler {
         if *my_pubkey != new_pubkey || vctx.vote_history.node_pubkey != new_pubkey {
             let my_old_pubkey = vctx.vote_history.node_pubkey;
             *my_pubkey = new_pubkey;
-            vctx.vote_history = VoteHistory::restore(ctx.vote_history_storage.as_ref(), my_pubkey)
-                .unwrap_or_else(|_| VoteHistory::new(new_pubkey, 0));
+            // A missing file is benign (e.g. a fresh identity that has never
+            // voted): start from an empty history. Any other error (corrupt,
+            // I/O, or signature mismatch) must NOT be silently collapsed into an
+            // empty history, which would drop equivocation protection for the
+            // new identity. Surface it instead, mirroring the startup
+            // require_vote_history guard; both callers already treat a returned
+            // error as a controlled exit.
+            vctx.vote_history =
+                match VoteHistory::restore(ctx.vote_history_storage.as_ref(), my_pubkey) {
+                    Ok(vote_history) => vote_history,
+                    Err(e) if e.is_file_missing() => VoteHistory::new(new_pubkey, 0),
+                    Err(e) => return Err(e),
+                };
             vctx.identity_keypair = new_identity;
             warn!("set-identity: from {my_old_pubkey} to {my_pubkey}");
         }
