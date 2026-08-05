@@ -85,7 +85,7 @@ pub const MAX_INFLIGHT_HANDSHAKES: usize = MAX_ALPENGLOW_VOTE_ACCOUNTS;
 /// Hard timeout for an inbound handshake, enforced regardless of what
 /// the peer sends. ~1s suffices for a 300ms-RTT handshake with no packet
 /// loss, so we use 2s to have margin for losses & retransmits.
-pub(crate) const HANDSHAKE_TIMEOUT: Duration = Duration::from_secs(2);
+pub(crate) const SERVER_HANDSHAKE_TIMEOUT: Duration = Duration::from_secs(2);
 
 /// How often endpoint metrics are reported.
 pub(crate) const METRICS_INTERVAL: Duration = Duration::from_secs(1);

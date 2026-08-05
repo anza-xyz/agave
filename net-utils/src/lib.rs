@@ -14,6 +14,8 @@ pub(crate) mod test_port_allocator;
 #[cfg(not(any(target_os = "android", target_os = "windows")))]
 pub(crate) mod test_port_allocator;
 pub mod token_bucket;
+#[cfg(feature = "dev-context-only-utils")]
+pub mod udp_relay;
 
 #[cfg(feature = "dev-context-only-utils")]
 pub mod tooling_for_tests;

@@ -387,13 +387,21 @@ pub fn stub_ban_channel_for_tests(capacity: usize) -> (BanSender, mpsc::Receiver
 mod tests {
     use {
         super::{BanSender, Datagram, QuicDatagramEndpoint},
-        crate::{METRICS_INTERVAL, PeerListSender, transport::MAX_IDLE_TIMEOUT},
+        crate::{
+            METRICS_INTERVAL, PeerListSender,
+            client::{CLIENT_HANDSHAKE_TIMEOUT, RECONCILE_INTERVAL},
+            stats::ServerStats,
+            transport::{KEEP_ALIVE_INTERVAL, MAX_IDLE_TIMEOUT},
+        },
         bytes::Bytes,
         crossbeam_channel::{Receiver, bounded},
         solana_keypair::{Keypair, Signer},
-        solana_net_utils::sockets::{
-            SocketConfiguration, bind_more_with_config, bind_to, bind_to_localhost_unique,
-            unique_port_range_for_tests,
+        solana_net_utils::{
+            sockets::{
+                SocketConfiguration, bind_more_with_config, bind_to, bind_to_localhost_unique,
+                unique_port_range_for_tests,
+            },
+            udp_relay::UdpRelay,
         },
         solana_pubkey::Pubkey,
         solana_tls_utils::NotifyKeyUpdate,
@@ -517,16 +525,27 @@ mod tests {
         once((peer, None)).collect()
     }
 
-    /// Re-send `payload` until `cond` matches a received datagram or the delivery
-    /// window elapses.
+    /// Re-send `payload` until `cond` matches a received datagram or the default
+    /// delivery window elapses.
     fn send_until_received<T>(
         sender: &Node,
         payload: &Bytes,
         receiver: &Receiver<Datagram>,
+        cond: impl FnMut(&Datagram) -> Option<T>,
+    ) -> Result<T, ()> {
+        send_until_received_within(sender, payload, receiver, cond, Duration::from_secs(5))
+    }
+
+    /// [`send_until_received`] with an explicit delivery window.
+    fn send_until_received_within<T>(
+        sender: &Node,
+        payload: &Bytes,
+        receiver: &Receiver<Datagram>,
         mut cond: impl FnMut(&Datagram) -> Option<T>,
+        budget: Duration,
     ) -> Result<T, ()> {
         let start = Instant::now();
-        while start.elapsed() < Duration::from_secs(5) {
+        while start.elapsed() < budget {
             sender.send(payload);
             if let Ok(item) = receiver.recv_timeout(Duration::from_millis(100))
                 && let Some(t) = cond(&item)
@@ -558,6 +577,51 @@ mod tests {
             if let Ok(d) = receiver.recv_timeout(Duration::from_millis(150)) {
                 assert_ne!(&d.message, payload, "payload must not be delivered");
             }
+        }
+    }
+
+    /// Keep sending `payload` until deliveries dry up for `quiet` in a row,
+    /// panics if traffic was still arriving when `timeout` elapsed.
+    ///
+    /// `quiet` must sit well above the delivery latency of a healthy connection
+    /// (sub-millisecond on loopback) and below `MAX_IDLE_TIMEOUT`, so that a
+    /// gap this long can only mean the sender's connection is gone rather than
+    /// merely stalled.
+    fn wait_until_delivery_stops(
+        sender: &Node,
+        payload: &Bytes,
+        receiver: &Receiver<Datagram>,
+        quiet: Duration,
+        timeout: Duration,
+    ) {
+        let start = Instant::now();
+        while start.elapsed() < timeout {
+            std::thread::sleep(Duration::from_millis(50));
+            sender.send(payload);
+            if receiver.recv_timeout(quiet).is_err() {
+                return;
+            }
+        }
+        panic!("Connection still live after timeout");
+    }
+
+    /// Server-side count of connections that went away, however they ended.
+    fn connections_reaped(stats: &ServerStats) -> u64 {
+        stats.connection_lost.load(Ordering::Relaxed)
+            + stats.connection_failed.load(Ordering::Relaxed)
+    }
+
+    /// Wait until the server has torn down at least one more connection than
+    /// `before`, panicking if it still holds the dead one after `timeout`.
+    /// See [`reap_timeout`] for how long that legitimately takes.
+    fn wait_for_reap(stats: &ServerStats, before: u64, timeout: Duration) {
+        let deadline = Instant::now() + timeout;
+        while connections_reaped(stats) <= before {
+            assert!(
+                Instant::now() < deadline,
+                "server must reap the blackholed connection instead of holding it open"
+            );
+            std::thread::sleep(Duration::from_millis(50));
         }
     }
 
@@ -1310,6 +1374,239 @@ mod tests {
             (d.peer_pubkey == client_pubkey && d.message == after).then_some(())
         })
         .expect("client did not reconnect and resume delivery after server restart");
+    }
+
+    /// Worst-case time from reopening a blackholed direction to a datagram going across:
+    ///
+    /// - `MAX_IDLE_TIMEOUT`: the client may still believe the connection is up at
+    ///   the moment we reopen. Both peers run `KEEP_ALIVE_INTERVAL`, so while only
+    ///   the send path is broken the server's keep-alives keep resetting the
+    ///   client's idle timer until the server itself times out; only then does the
+    ///   client's own timer start running out.
+    /// - `CLIENT_HANDSHAKE_TIMEOUT`: a doomed attempt spawned just before we
+    ///   reopened holds the peer in `Connecting`.
+    /// - `RECONCILE_INTERVAL`: until the tick that spawns the next attempt.
+    /// - `CLIENT_HANDSHAKE_TIMEOUT` again: the attempt that has to succeed.
+    ///
+    /// Delivery itself then takes one send cycle, which the poll loop covers.
+    fn reconnect_timeout() -> Duration {
+        MAX_IDLE_TIMEOUT + CLIENT_HANDSHAKE_TIMEOUT * 2 + RECONCILE_INTERVAL
+    }
+
+    /// Worst-case time for the server to tear down a connection whose peer went silent,
+    /// measured from the last packet the server received:
+    /// idle timer expires MAX_IDLE_TIMEOUT later,
+    /// KEEP_ALIVE_INTERVAL its own keep-alive buys it (the idle timer is also restarted by
+    /// sending an ack-eliciting packet while none is outstanding). Doubled, because this
+    /// budget is only ever spent when the test is about to fail anyway.
+    fn reap_timeout() -> Duration {
+        (MAX_IDLE_TIMEOUT + KEEP_ALIVE_INTERVAL) * 2
+    }
+
+    /// Matches a datagram carrying exactly `payload` from `peer`.
+    fn datagram_from(peer: Pubkey, payload: Bytes) -> impl FnMut(&Datagram) -> Option<()> {
+        move |d: &Datagram| (d.peer_pubkey == peer && d.message == payload).then_some(())
+    }
+
+    /// A client and a server that can only reach each other through a relay,
+    /// either direction of which can be blackholed independently.
+    struct BlackholedPair {
+        client: Node,
+        server: Node,
+        blackhole: UdpRelay,
+        _rt: Runtime,
+    }
+
+    impl BlackholedPair {
+        /// Spawn the pair and establish the baseline: a single connection through
+        /// the relay, over which datagrams demonstrably arrive.
+        fn spawn() -> BlackholedPair {
+            let rt = make_runtime_for_tests();
+            let client_keypair = Keypair::new();
+            let client_pubkey = client_keypair.pubkey();
+            let server = Node::spawn_node(
+                &rt,
+                Keypair::new(),
+                peer_list_with_unknown_addr(client_pubkey),
+                HIGH_PPS,
+            );
+            // Counters must stay cumulative: these tests outlive several
+            // reporting ticks.
+            server
+                .endpoint
+                .server_stats
+                .report_frozen
+                .store(true, Ordering::Relaxed);
+
+            // The client can only reach the server through the relay. Delivery is
+            // asserted on peer_pubkey, never on peer_address: from the server's
+            // side every packet now originates at the relay's back socket.
+            let blackhole = UdpRelay::spawn(server.addr);
+            let client = Node::spawn_node(
+                &rt,
+                client_keypair,
+                peer_list_of(server.pubkey(), blackhole.client_facing_address()),
+                HIGH_PPS,
+            );
+
+            let probe = Bytes::from_static(b"pre-blackhole");
+            send_until_received(
+                &client,
+                &probe,
+                &server.ingress_receiver,
+                datagram_from(client_pubkey, probe.clone()),
+            )
+            .expect("server never received the pre-blackhole probe");
+            assert_eq!(
+                server
+                    .endpoint
+                    .server_stats
+                    .handshakes_completed
+                    .load(Ordering::Relaxed),
+                1,
+                "baseline must be a single established connection"
+            );
+            drain_backlog(&server.ingress_receiver);
+
+            BlackholedPair {
+                client,
+                blackhole,
+                server,
+                _rt: rt,
+            }
+        }
+
+        fn stats(&self) -> &ServerStats {
+            &self.server.endpoint.server_stats
+        }
+
+        /// Assert that `payload` cannot reach the server while the path is broken,
+        /// and that the relay is what caused it.
+        /// `dropped` chooses the metric to probe to confirm drop source.
+        fn assert_silenced(&self, payload: &Bytes, dropped: fn(&UdpRelay) -> u64) {
+            let dropped_before = dropped(&self.blackhole);
+            assert_not_delivered(&self.client, payload, &self.server.ingress_receiver, 10);
+            assert!(
+                dropped(&self.blackhole) > dropped_before,
+                "the relay, not a client that stopped sending, must be what silenced the path"
+            );
+        }
+
+        /// Broadcast `payload` until the server receives it.
+        fn expect_recovery(&self, payload: Bytes, context: &str) {
+            send_until_received_within(
+                &self.client,
+                &payload,
+                &self.server.ingress_receiver,
+                datagram_from(self.client.pubkey(), payload.clone()),
+                reconnect_timeout(),
+            )
+            .unwrap_or_else(|_| panic!("client must rebuild the connection: {context}"));
+        }
+
+        /// Recovery must have gone through a fresh handshake, and the server must
+        /// have treated it as the same peer coming back rather than a new one.
+        fn assert_reconnected(&self) {
+            assert!(
+                self.stats().handshakes_completed.load(Ordering::Relaxed) >= 2,
+                "recovery must go through a fresh handshake, not a surviving connection"
+            );
+            assert_eq!(
+                self.stats()
+                    .handshake_rejected_overload
+                    .load(Ordering::Relaxed),
+                0,
+                "reconnecting after a blackhole must not be refused for lack of slots"
+            );
+            assert_eq!(
+                self.stats().peak_unique_peers.load(Ordering::Relaxed),
+                1,
+                "every reconnect must land on the same peer entry"
+            );
+        }
+    }
+
+    /// Only server->client is lost: datagrams still reach the server and
+    /// `send_datagram` still returns Ok, so nothing but the idle timeout can tell
+    /// the client that its connection is sending to nowhere.
+    #[test]
+    fn test_client_recovers_from_return_path_blackhole() {
+        let pair = BlackholedPair::spawn();
+        let reaped_before = connections_reaped(pair.stats());
+
+        pair.blackhole.set_drop_towards_client(true);
+        let payload = Bytes::from_static(b"return-path-blackhole");
+        // The client only learns of the break when its idle timer expires, so
+        // silence must appear within MAX_IDLE_TIMEOUT plus the quiet window, and
+        // the budget leaves room for a slow CI machine on top of that.
+        wait_until_delivery_stops(
+            &pair.client,
+            &payload,
+            &pair.server.ingress_receiver,
+            Duration::from_secs(2),
+            MAX_IDLE_TIMEOUT * 3,
+        );
+        // Nothing may sneak through afterwards either: the handshake response
+        // travels the broken direction, so no reconnect can succeed yet. By now
+        // the client has no live connection left to send datagrams on, so what
+        // must keep being swallowed is the server's side of those doomed
+        // handshakes.
+        pair.assert_silenced(&payload, UdpRelay::dropped_towards_client);
+        wait_for_reap(pair.stats(), reaped_before, reap_timeout());
+
+        pair.blackhole.set_drop_towards_client(false);
+        pair.expect_recovery(
+            Bytes::from_static(b"after-return-path"),
+            "the return path is restored",
+        );
+        pair.assert_reconnected();
+    }
+
+    /// Both directions lose all packets: nothing arrives from the first packet onwards.
+    #[test]
+    fn test_client_recovers_from_symmetric_blackhole() {
+        let pair = BlackholedPair::spawn();
+        let reaped_before = connections_reaped(pair.stats());
+
+        pair.blackhole.set_drop_towards_server(true);
+        pair.blackhole.set_drop_towards_client(true);
+        pair.assert_silenced(
+            &Bytes::from_static(b"symmetric-blackhole"),
+            UdpRelay::dropped_towards_server,
+        );
+        wait_for_reap(pair.stats(), reaped_before, reap_timeout());
+
+        pair.blackhole.set_drop_towards_server(false);
+        pair.blackhole.set_drop_towards_client(false);
+        pair.expect_recovery(
+            Bytes::from_static(b"after-symmetric"),
+            "the path is restored",
+        );
+        pair.assert_reconnected();
+    }
+
+    /// Client->server packets are lost: the return path stays intact, so the client
+    /// keeps hearing from the server while everything it sends vanishes, its
+    /// reconnect attempts included, since the handshake's Initial packets travel
+    /// the broken direction.
+    #[test]
+    fn test_client_recovers_from_send_path_blackhole() {
+        let pair = BlackholedPair::spawn();
+        let reaped_before = connections_reaped(pair.stats());
+
+        pair.blackhole.set_drop_towards_server(true);
+        pair.assert_silenced(
+            &Bytes::from_static(b"send-path-blackhole"),
+            UdpRelay::dropped_towards_server,
+        );
+        wait_for_reap(pair.stats(), reaped_before, reap_timeout());
+
+        pair.blackhole.set_drop_towards_server(false);
+        pair.expect_recovery(
+            Bytes::from_static(b"after-send-path"),
+            "its send path is restored",
+        );
+        pair.assert_reconnected();
     }
 
     /// The client verifies the server's attested identity against the pubkey it
