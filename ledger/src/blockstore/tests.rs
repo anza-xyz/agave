@@ -7225,6 +7225,7 @@ fn write_transaction_statuses_for_entries(
 pub(crate) struct UpdateParentSlotFixture {
     previous_blockhash: String,
     post_update_blockhash: String,
+    pre_update_address: Pubkey,
     pub(crate) post_update_address: Pubkey,
     pre_update_signatures: Vec<Signature>,
     pub(crate) post_update_signatures: Vec<Signature>,
@@ -7257,10 +7258,14 @@ pub(crate) fn insert_complete_update_parent_slot(
 
     let pre_update_entries = make_slot_entries_with_transactions(1);
     let post_update_entries = make_slot_entries_with_transactions(2);
+    let pre_update_address = pre_update_entries[0].transactions[0]
+        .message
+        .static_account_keys()[0];
     let post_update_address = post_update_entries[0].transactions[0]
         .message
         .static_account_keys()[0];
-    let pre_update_signatures = transaction_signatures(&pre_update_entries);
+    let pre_update_signatures =
+        write_transaction_statuses_for_entries(blockstore, slot, &pre_update_entries);
     let post_update_signatures =
         write_transaction_statuses_for_entries(blockstore, slot, &post_update_entries);
     let post_update_blockhash = post_update_entries.last().unwrap().hash.to_string();
@@ -7305,6 +7310,7 @@ pub(crate) fn insert_complete_update_parent_slot(
     UpdateParentSlotFixture {
         previous_blockhash,
         post_update_blockhash,
+        pre_update_address,
         post_update_address,
         pre_update_signatures,
         post_update_signatures,
@@ -7386,6 +7392,156 @@ fn test_get_transaction_uses_post_update_parent_indexes() {
             .unwrap();
         assert_eq!(transaction.index, expected_index as u32);
     }
+}
+
+#[test]
+fn test_get_transaction_status_skips_pre_update_parent_transactions() {
+    let ledger_path = get_tmp_ledger_path_auto_delete!();
+    let blockstore = Blockstore::open(ledger_path.path()).unwrap();
+
+    let slot = 104;
+    let fixture = insert_complete_update_parent_slot(&blockstore, slot, 103, 100);
+    blockstore.set_roots([slot].iter()).unwrap();
+
+    for signature in fixture.pre_update_signatures {
+        assert!(
+            blockstore
+                .read_transaction_status((signature, slot))
+                .unwrap()
+                .is_some()
+        );
+        assert!(
+            blockstore
+                .find_transaction_in_slot(slot, signature)
+                .unwrap()
+                .is_none()
+        );
+        assert!(
+            blockstore
+                .get_rooted_transaction_status(signature)
+                .unwrap()
+                .is_none()
+        );
+    }
+
+    for signature in fixture.post_update_signatures {
+        let status = blockstore
+            .read_transaction_status((signature, slot))
+            .unwrap()
+            .unwrap();
+        assert!(
+            blockstore
+                .find_transaction_in_slot(slot, signature)
+                .unwrap()
+                .is_some()
+        );
+        assert_eq!(
+            blockstore.get_rooted_transaction_status(signature).unwrap(),
+            Some((slot, status))
+        );
+    }
+}
+
+#[test]
+fn test_get_signatures_for_address_skips_pre_update_parent_transactions() {
+    let ledger_path = get_tmp_ledger_path_auto_delete!();
+    let blockstore = Blockstore::open(ledger_path.path()).unwrap();
+
+    let slot = 104;
+    let fixture = insert_complete_update_parent_slot(&blockstore, slot, 103, 100);
+    let post_update_signature = fixture.post_update_signatures[0];
+    let stale_loaded_address = solana_pubkey::new_rand();
+    let post_update_loaded_address = solana_pubkey::new_rand();
+    let mut post_update_status = blockstore
+        .read_transaction_status((post_update_signature, slot))
+        .unwrap()
+        .unwrap();
+    post_update_status.loaded_addresses.writable = vec![stale_loaded_address];
+    blockstore
+        .write_transaction_status(
+            slot,
+            post_update_signature,
+            std::iter::once((&stale_loaded_address, true)),
+            post_update_status.clone(),
+            0,
+        )
+        .unwrap();
+    post_update_status.loaded_addresses.writable = vec![post_update_loaded_address];
+    blockstore
+        .write_transaction_status(
+            slot,
+            post_update_signature,
+            std::iter::once((&post_update_loaded_address, true)),
+            post_update_status,
+            0,
+        )
+        .unwrap();
+
+    let older_slot = 101;
+    let older_transaction = Transaction::new_with_compiled_instructions(
+        &[&Keypair::new()],
+        &[fixture.pre_update_address],
+        Hash::default(),
+        vec![solana_pubkey::new_rand()],
+        vec![CompiledInstruction::new(1, &(), vec![0])],
+    );
+    let mut older_entries = vec![next_entry_mut(
+        &mut Hash::default(),
+        0,
+        vec![older_transaction],
+    )];
+    older_entries.append(&mut create_ticks(1, 0, Hash::new_unique()));
+    let older_signature =
+        write_transaction_statuses_for_entries(&blockstore, older_slot, &older_entries)[0];
+    blockstore
+        .insert_shreds(
+            entries_to_test_shreds(&older_entries, older_slot, 100, true, 0),
+            true,
+        )
+        .unwrap();
+    let child_slot = slot + 1;
+    let (child_shreds, _) = make_slot_entries(child_slot, slot, 1);
+    blockstore.insert_shreds(child_shreds, true).unwrap();
+    let pre_update_signature = fixture.pre_update_signatures[0];
+    assert!(
+        blockstore
+            .address_signatures_cf
+            .get((fixture.pre_update_address, slot, 0, pre_update_signature,))
+            .unwrap()
+            .is_some()
+    );
+
+    blockstore
+        .set_roots([100, older_slot, slot, child_slot].iter())
+        .unwrap();
+    assert!(
+        blockstore
+            .find_address_signatures_for_slot(fixture.pre_update_address, slot)
+            .unwrap()
+            .is_empty()
+    );
+    let get_signatures = |address, limit| {
+        blockstore
+            .get_confirmed_signatures_for_address2(address, child_slot, None, None, limit)
+            .unwrap()
+            .infos
+            .into_iter()
+            .map(|info| info.signature)
+            .collect::<Vec<_>>()
+    };
+    assert_eq!(
+        get_signatures(fixture.pre_update_address, 1),
+        vec![older_signature]
+    );
+    assert_eq!(
+        get_signatures(fixture.post_update_address, usize::MAX),
+        vec![post_update_signature]
+    );
+    assert!(get_signatures(stale_loaded_address, usize::MAX).is_empty());
+    assert_eq!(
+        get_signatures(post_update_loaded_address, usize::MAX),
+        vec![post_update_signature]
+    );
 }
 
 #[test]
