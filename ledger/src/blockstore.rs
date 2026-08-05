@@ -4531,6 +4531,15 @@ impl Blockstore {
             if !self.is_root(slot) && !confirmed_unrooted_slots.contains(&slot) {
                 continue;
             }
+
+            if self
+                .meta(slot)?
+                .is_some_and(|slot_meta| slot_meta.has_update_parent())
+                && self.find_transaction_in_slot(slot, signature)?.is_none()
+            {
+                continue;
+            }
+
             let status = self
                 .transaction_status_cf
                 .get_protobuf((signature, slot))?
@@ -4640,6 +4649,48 @@ impl Blockstore {
             .map(|(index, transaction)| (transaction, index as u32)))
     }
 
+    fn get_transactions_if_update_parent(
+        &self,
+        slot: Slot,
+    ) -> Result<Option<Vec<VersionedTransaction>>> {
+        let Some(slot_meta) = self.meta(slot)? else {
+            return Ok(None);
+        };
+        if !slot_meta.has_update_parent() {
+            return Ok(None);
+        }
+        Ok(Some(
+            self.get_slot_entries(slot, u64::from(slot_meta.replay_fec_set_index))?
+                .into_iter()
+                .flat_map(|entry| entry.transactions)
+                .collect(),
+        ))
+    }
+
+    fn address_signature_matches_transaction(
+        &self,
+        address: &Pubkey,
+        slot: Slot,
+        transaction_index: u32,
+        signature: Signature,
+        transactions: &[VersionedTransaction],
+    ) -> Result<bool> {
+        let Some(transaction) = transactions.get(transaction_index as usize) else {
+            return Ok(false);
+        };
+        if transaction.signatures.first() != Some(&signature) {
+            return Ok(false);
+        }
+        if transaction.message.static_account_keys().contains(address) {
+            return Ok(true);
+        }
+        let Some(status) = self.read_transaction_status((signature, slot))? else {
+            return Ok(false);
+        };
+        Ok(status.loaded_addresses.writable.contains(address)
+            || status.loaded_addresses.readonly.contains(address))
+    }
+
     // Returns all signatures for an address in a particular slot, regardless of whether that slot
     // has been rooted. The transactions will be ordered by their occurrence in the block
     fn find_address_signatures_for_slot(
@@ -4652,6 +4703,7 @@ impl Blockstore {
         if slot < lowest_available_slot {
             return Ok(signatures);
         }
+        let update_parent_transactions = self.get_transactions_if_update_parent(slot)?;
         let index_iterator = self.address_signatures_cf.iter(IteratorMode::From(
             (
                 pubkey,
@@ -4664,6 +4716,17 @@ impl Blockstore {
         for ((address, transaction_slot, transaction_index, signature), _) in index_iterator {
             if transaction_slot > slot || address != pubkey {
                 break;
+            }
+            if let Some(transactions) = update_parent_transactions.as_deref()
+                && !self.address_signature_matches_transaction(
+                    &pubkey,
+                    transaction_slot,
+                    transaction_index,
+                    signature,
+                    transactions,
+                )?
+            {
+                continue;
             }
             signatures.push((transaction_slot, signature, transaction_index));
         }
@@ -4787,6 +4850,8 @@ impl Blockstore {
             (address, slot, 0, Signature::default()),
             IteratorDirection::Reverse,
         ))?;
+        let mut transactions_slot = None;
+        let mut update_parent_transactions = None;
 
         // Iterate until limit is reached
         while address_signatures.len() < limit {
@@ -4796,6 +4861,22 @@ impl Blockstore {
                 }
                 if key_address == address {
                     if self.is_root(slot) || confirmed_unrooted_slots.contains(&slot) {
+                        if transactions_slot != Some(slot) {
+                            transactions_slot = Some(slot);
+                            update_parent_transactions =
+                                self.get_transactions_if_update_parent(slot)?;
+                        }
+                        if let Some(transactions) = update_parent_transactions.as_deref()
+                            && !self.address_signature_matches_transaction(
+                                &address,
+                                slot,
+                                transaction_index,
+                                signature,
+                                transactions,
+                            )?
+                        {
+                            continue;
+                        }
                         address_signatures.push((slot, signature, transaction_index));
                     }
                     continue;
