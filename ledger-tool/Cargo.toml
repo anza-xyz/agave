@@ -51,7 +51,7 @@ solana-cluster-type = { workspace = true }
 solana-core = { workspace = true, features = ["dev-context-only-utils"] }
 solana-cost-model = { workspace = true }
 solana-entry = { workspace = true }
-solana-epoch-schedule = { version = "3.2.0", features = ["wincode"] }
+solana-epoch-schedule = { workspace = true, features = ["wincode"] }
 solana-feature-gate-interface = { workspace = true }
 solana-genesis-config = { workspace = true }
 solana-genesis-utils = { workspace = true }

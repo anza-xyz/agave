@@ -88,6 +88,7 @@ solana-connection-cache = { path = "../connection-cache", version = "=4.3.0-alph
 solana-core = { path = "../core", version = "=4.3.0-alpha.2", features = ["agave-unstable-api"] }
 solana-cost-model = { path = "../cost-model", version = "=4.3.0-alpha.2", features = ["agave-unstable-api"] }
 solana-entry = { path = "../entry", version = "=4.3.0-alpha.2", features = ["agave-unstable-api"] }
+solana-epoch-schedule = "3.3.0"
 solana-faucet = { path = "../faucet", version = "=4.3.0-alpha.2", features = ["agave-unstable-api"] }
 solana-feature-gate-interface = "4.0.0"
 solana-fee-calculator = "3.2.2"
