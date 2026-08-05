@@ -52,8 +52,6 @@ pub(super) struct SigVerifierStats {
     pub(super) extract_filter_msgs_us: WelfordStats,
     /// Number of packets received.
     pub(super) num_pkts: WelfordStats,
-    /// Number of discarded packets received from the streamer.
-    pub(super) num_discarded_pkts: Saturating<u64>,
     /// Number of times we failed to deserialize a packet.
     pub(super) num_malformed_pkts: Saturating<u64>,
     /// Number of votes discarded due to an invalid rank.
@@ -83,7 +81,6 @@ impl SigVerifierStats {
             extract_filter_msgs_us: WelfordStats::default(),
             num_pkts: WelfordStats::default(),
             discard_vote_invalid_rank: Saturating(0),
-            num_discarded_pkts: Saturating(0),
             num_malformed_pkts: Saturating(0),
             discard_vote_no_epoch_stakes: Saturating(0),
             num_old_votes_received: Saturating(0),
@@ -114,7 +111,6 @@ impl SigVerifierStats {
             cert_stats,
             extract_filter_msgs_us,
             num_pkts,
-            num_discarded_pkts,
             num_malformed_pkts,
             num_old_votes_received,
             num_old_certs_received,
@@ -148,7 +144,6 @@ impl SigVerifierStats {
                 discard_vote_invalid_rank.0,
                 i64
             ),
-            ("num_discarded_pkts", num_discarded_pkts.0, i64),
             ("num_old_votes_received", num_old_votes_received.0, i64),
             (
                 "num_verified_certs_received",

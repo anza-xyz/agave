@@ -99,6 +99,7 @@ dependencies = [
  "agave-votor-transport",
  "bincode",
  "bitvec",
+ "bytes",
  "criterion",
  "crossbeam-channel",
  "log",

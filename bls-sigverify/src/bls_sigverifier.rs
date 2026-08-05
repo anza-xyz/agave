@@ -29,7 +29,7 @@ use {
     solana_gossip::cluster_info::ClusterInfo,
     solana_ledger::leader_schedule_cache::LeaderScheduleCache,
     solana_measure::measure_us,
-    solana_perf::packet::{BytesPacket, Meta, PacketBatch, packet_config},
+    solana_perf::packet::packet_config,
     solana_pubkey::Pubkey,
     solana_runtime::{bank::Bank, bank_forks::SharableBanks, epoch_stakes::BLSPubkeyToRankMap},
     std::{
@@ -58,7 +58,7 @@ pub const NUM_SLOTS_FOR_VERIFY: Slot = 30_000;
 /// sender for 2 days, which roughly corresponds to an epoch.
 pub(super) const BAN_TIMEOUT: Duration = Duration::from_hours(48);
 
-type SigVerifierInputs = (Vec<PacketBatch>, Vec<(Slot, UnverifiedCertificate)>);
+type SigVerifierInputs = (Vec<Datagram>, Vec<(Slot, UnverifiedCertificate)>);
 
 pub struct SigVerifierContext {
     pub migration_status: Arc<MigrationStatus>,
@@ -158,7 +158,7 @@ impl SigVerifier {
     fn run(mut self, exit: Arc<AtomicBool>) {
         while !exit.load(Ordering::Relaxed) {
             const SOFT_RECEIVE_CAP: usize = 5000;
-            let Ok((batches, certificates)) = recv_inputs(
+            let Ok((datagrams, certificates)) = recv_inputs(
                 &self.channels.packet_receiver,
                 &self.channels.certificate_receiver,
                 SOFT_RECEIVE_CAP,
@@ -169,12 +169,12 @@ impl SigVerifier {
             if self.migration_status.is_pre_feature_activation() {
                 continue;
             }
-            if batches.is_empty() && certificates.is_empty() {
+            if datagrams.is_empty() && certificates.is_empty() {
                 continue;
             }
 
             let (verify_res, verify_time_us) =
-                measure_us!(self.verify_and_send_inputs(batches, certificates));
+                measure_us!(self.verify_and_send_inputs(datagrams, certificates));
             self.stats
                 .verify_and_send_batch_us
                 .add_sample(verify_time_us);
@@ -188,20 +188,23 @@ impl SigVerifier {
     }
 
     #[cfg(test)]
-    fn verify_and_send_batches(&mut self, batches: Vec<PacketBatch>) -> Result<(), SigVerifyError> {
-        self.verify_and_send_inputs(batches, vec![])
+    fn verify_and_send_datagrams(
+        &mut self,
+        datagrams: Vec<Datagram>,
+    ) -> Result<(), SigVerifyError> {
+        self.verify_and_send_inputs(datagrams, vec![])
     }
 
     fn verify_and_send_inputs(
         &mut self,
-        batches: Vec<PacketBatch>,
+        datagrams: Vec<Datagram>,
         certificates: Vec<(Slot, UnverifiedCertificate)>,
     ) -> Result<(), SigVerifyError> {
         let root_bank = self.sharable_banks.root();
         self.maybe_prune_caches(&root_bank);
 
         let (extracted_msgs, extract_msgs_us) =
-            measure_us!(self.extract_and_filter_msgs(batches, certificates, &root_bank));
+            measure_us!(self.extract_and_filter_msgs(datagrams, certificates, &root_bank));
         self.stats
             .extract_filter_msgs_us
             .add_sample(extract_msgs_us);
@@ -280,7 +283,7 @@ impl SigVerifier {
 
     fn extract_and_filter_msgs(
         &mut self,
-        batches: Vec<PacketBatch>,
+        datagrams: Vec<Datagram>,
         certificates: Vec<(Slot, UnverifiedCertificate)>,
         root_bank: &Bank,
     ) -> ExtractedMsgs {
@@ -289,22 +292,18 @@ impl SigVerifier {
         let mut votes: HashMap<VotePayloadToSign, Vec<UnverifiedVotePayload>> = HashMap::new();
         let mut num_pkts = 0u64;
         let my_shred_version = self.cluster_info.my_shred_version();
-        for packet in batches.iter().flatten() {
+        for Datagram {
+            peer_pubkey: sender_identity_pubkey,
+            message,
+            ..
+        } in datagrams
+        {
             num_pkts = num_pkts.saturating_add(1);
-            if packet.meta().discard() {
-                self.stats.num_discarded_pkts += 1;
-                continue;
-            }
             let Ok(msg) = VersionedWireConsensusMessage::deserialize_with_expected_shred_version(
-                packet.data(..).unwrap_or_default(),
+                &*message,
                 packet_config(),
                 my_shred_version,
             ) else {
-                self.stats.num_malformed_pkts += 1;
-                continue;
-            };
-            let Some(sender_identity_pubkey) = packet.meta().remote_pubkey() else {
-                debug_assert!(false, "BLS packet missing remote pubkey");
                 self.stats.num_malformed_pkts += 1;
                 continue;
             };
@@ -442,21 +441,6 @@ impl SigVerifier {
     }
 }
 
-/// Wraps [`Datagram`] as a one-packet [`PacketBatch`] so the
-/// rest of the sigverifier can keep operating on the `PacketBatch` abstraction.
-fn datagram_to_batch(datagram: Datagram) -> PacketBatch {
-    let Datagram {
-        peer_pubkey,
-        peer_address,
-        message,
-    } = datagram;
-    let mut meta = Meta::default();
-    meta.size = message.len();
-    meta.set_socket_addr(&peer_address);
-    meta.set_remote_pubkey(peer_pubkey);
-    PacketBatch::Single(BytesPacket::new(message, meta))
-}
-
 /// Receives BLS datagrams and certificates recovered from blockstore. Certificate-only
 /// traffic wakes the verifier immediately; datagrams retain their existing soft receive cap.
 fn recv_inputs(
@@ -464,21 +448,21 @@ fn recv_inputs(
     certificate_receiver: &Receiver<(Slot, UnverifiedCertificate)>,
     soft_receive_cap: usize,
 ) -> Result<SigVerifierInputs, ()> {
-    let mut batches = Vec::with_capacity(soft_receive_cap);
+    let mut datagrams = Vec::with_capacity(soft_receive_cap);
     let mut certificates = vec![];
     select! {
         recv(packet_receiver) -> datagram => {
-            batches.push(datagram_to_batch(datagram.map_err(|_| ())?))
+            datagrams.push(datagram.map_err(|_| ())?);
         }
         recv(certificate_receiver) -> certificate => {
             certificates.push(certificate.map_err(|_| ())?);
         },
-        default(Duration::from_secs(1)) => return Ok((batches, certificates)),
+        default(Duration::from_secs(1)) => return Ok((datagrams, certificates)),
     }
-    while batches.len() < soft_receive_cap {
+    while datagrams.len() < soft_receive_cap {
         match packet_receiver.try_recv() {
-            Ok(b) => {
-                batches.push(datagram_to_batch(b));
+            Ok(datagram) => {
+                datagrams.push(datagram);
             }
             Err(TryRecvError::Empty) => break,
             Err(TryRecvError::Disconnected) => return Err(()),
@@ -486,7 +470,7 @@ fn recv_inputs(
     }
     // Certificates from blockstore are very low throughput (1 per slot), so no need for a cap here
     certificates.extend(certificate_receiver.try_iter());
-    Ok((batches, certificates))
+    Ok((datagrams, certificates))
 }
 
 #[cfg(test)]
@@ -508,6 +492,7 @@ mod tests {
         },
         agave_votor_transport::endpoint::{BanCommand, stub_ban_channel_for_tests},
         bitvec::prelude::{BitVec, Lsb0},
+        bytes::Bytes,
         crossbeam_channel::{Receiver, TryRecvError, bounded},
         solana_bls_signatures::{BLS_SIGNATURE_AFFINE_SIZE, Keypair as BLSKeypair, Signature},
         solana_epoch_schedule::EpochSchedule,
@@ -515,7 +500,6 @@ mod tests {
         solana_hash::Hash,
         solana_keypair::Keypair,
         solana_net_utils::SocketAddrSpace,
-        solana_perf::packet::{BytesPacket, BytesPacketBatch, Packet, RecycledPacketBatch},
         solana_pubkey::Pubkey,
         solana_runtime::{
             bank::{Bank, SlotLeader},
@@ -526,7 +510,11 @@ mod tests {
         },
         solana_signer::Signer,
         solana_signer_store::encode_base2,
-        std::{num::NonZero, sync::RwLock},
+        std::{
+            net::{Ipv4Addr, SocketAddr},
+            num::NonZero,
+            sync::RwLock,
+        },
         tokio::sync::mpsc,
     };
 
@@ -691,15 +679,22 @@ mod tests {
         }
     }
 
-    fn message_to_packet(
+    /// Builds a fake datagram carrying `message`, matching what transport would deliver to us.
+    fn message_to_datagram(
         message: &ConsensusMessage,
         shred_version: u16,
-        remote_pubkey: Pubkey,
-    ) -> BytesPacket {
+        peer_pubkey: Pubkey,
+    ) -> Datagram {
         let msg = VersionedWireConsensusMessage::new(message.clone(), shred_version);
-        let mut packet = BytesPacket::from_data(&msg).unwrap();
-        packet.meta_mut().set_remote_pubkey(remote_pubkey);
-        packet
+        datagram_from_bytes(wincode::serialize(&msg).unwrap(), peer_pubkey)
+    }
+
+    fn datagram_from_bytes(message: impl Into<Bytes>, peer_pubkey: Pubkey) -> Datagram {
+        Datagram {
+            peer_pubkey,
+            peer_address: SocketAddr::from((Ipv4Addr::LOCALHOST, 1)), // this does not bind
+            message: message.into(),
+        }
     }
 
     #[test]
@@ -790,7 +785,7 @@ mod tests {
         ];
 
         ctx.verifier
-            .verify_and_send_batches(messages_to_batches(
+            .verify_and_send_datagrams(messages_to_datagrams(
                 &messages1,
                 ctx.verifier.cluster_info.my_shred_version(),
             ))
@@ -824,7 +819,7 @@ mod tests {
         )];
         ctx.verifier.stats = SigVerifierStats::new(ctx.verifier.sharable_banks.root().slot());
         ctx.verifier
-            .verify_and_send_batches(messages_to_batches(
+            .verify_and_send_datagrams(messages_to_datagrams(
                 &messages2,
                 ctx.verifier.cluster_info.my_shred_version(),
             ))
@@ -859,7 +854,7 @@ mod tests {
         )];
         ctx.verifier.stats = SigVerifierStats::new(ctx.verifier.sharable_banks.root().slot());
         ctx.verifier
-            .verify_and_send_batches(messages_to_batches(
+            .verify_and_send_datagrams(messages_to_datagrams(
                 &messages3,
                 ctx.verifier.cluster_info.my_shred_version(),
             ))
@@ -881,11 +876,8 @@ mod tests {
     fn test_blssigverifier_verify_malformed() {
         let mut ctx = TestContext::new();
 
-        let packets = vec![Packet::default()];
-        let packet_batches = vec![RecycledPacketBatch::new(packets).into()];
-        ctx.verifier
-            .verify_and_send_batches(packet_batches)
-            .unwrap();
+        let datagrams = vec![datagram_from_bytes(Bytes::new(), Pubkey::new_unique())];
+        ctx.verifier.verify_and_send_datagrams(datagrams).unwrap();
         assert_eq!(ctx.verifier.stats.vote_stats.pool_sent.0, 0);
         assert_eq!(ctx.verifier.stats.cert_stats.pool_sent.0, 0);
         assert_eq!(ctx.verifier.stats.num_malformed_pkts.0, 1);
@@ -908,7 +900,7 @@ mod tests {
         )];
 
         ctx.verifier
-            .verify_and_send_batches(messages_to_batches(
+            .verify_and_send_datagrams(messages_to_datagrams(
                 &messages_no_stakes,
                 ctx.verifier.cluster_info.my_shred_version(),
             ))
@@ -930,7 +922,7 @@ mod tests {
             Pubkey::new_unique(),
         )];
         ctx.verifier
-            .verify_and_send_batches(messages_to_batches(
+            .verify_and_send_datagrams(messages_to_datagrams(
                 &messages_invalid_rank,
                 ctx.verifier.cluster_info.my_shred_version(),
             ))
@@ -955,9 +947,10 @@ mod tests {
             )),
             ctx.validator_keypairs[rank].node_keypair.pubkey(),
         )];
-        // creating a packet with the wrong shred version
-        let packets = messages_to_batches(&msgs, ctx.verifier.cluster_info.my_shred_version() + 1);
-        ctx.verifier.verify_and_send_batches(packets).unwrap();
+        // creating a datagram with the wrong shred version
+        let datagrams =
+            messages_to_datagrams(&msgs, ctx.verifier.cluster_info.my_shred_version() + 1);
+        ctx.verifier.verify_and_send_datagrams(datagrams).unwrap();
         assert_eq!(ctx.verifier.stats.vote_stats.pool_sent.0, 0);
         assert_eq!(ctx.verifier.stats.cert_stats.pool_sent.0, 0);
         assert_eq!(ctx.verifier.stats.num_malformed_pkts.0, 1);
@@ -989,7 +982,7 @@ mod tests {
             msg2_rank,
         );
         ctx.verifier
-            .verify_and_send_batches(messages_to_batches(
+            .verify_and_send_datagrams(messages_to_datagrams(
                 &[(
                     ConsensusMessage::Vote(msg1.clone()),
                     ctx.validator_keypairs[msg1_rank].node_keypair.pubkey(),
@@ -1014,7 +1007,7 @@ mod tests {
         });
 
         ctx.verifier
-            .verify_and_send_batches(messages_to_batches(
+            .verify_and_send_datagrams(messages_to_datagrams(
                 &[(
                     ConsensusMessage::Vote(msg2.clone()),
                     ctx.validator_keypairs[msg2_rank].node_keypair.pubkey(),
@@ -1051,40 +1044,13 @@ mod tests {
             rank,
         ));
         let messages = [(msg, ctx.validator_keypairs[rank].node_keypair.pubkey())];
-        let result = ctx.verifier.verify_and_send_batches(messages_to_batches(
-            &messages,
-            ctx.verifier.cluster_info.my_shred_version(),
-        ));
+        let result = ctx
+            .verifier
+            .verify_and_send_datagrams(messages_to_datagrams(
+                &messages,
+                ctx.verifier.cluster_info.my_shred_version(),
+            ));
         assert!(result.is_err());
-    }
-
-    #[test]
-    fn test_blssigverifier_send_discarded_packets() {
-        let mut ctx = TestContext::new();
-
-        let rank = 0;
-        let message = ConsensusMessage::Vote(create_signed_vote_message(
-            &ctx.verifier.sharable_banks.root(),
-            &ctx.validator_keypairs,
-            ctx.verifier.cluster_info.my_shred_version(),
-            Vote::new_finalization_vote(5),
-            rank,
-        ));
-        let mut packet = message_to_packet(
-            &message,
-            ctx.verifier.cluster_info.my_shred_version(),
-            ctx.validator_keypairs[rank].node_keypair.pubkey(),
-        );
-        packet.meta_mut().set_discard(true); // Manually discard
-
-        let packet_batches = vec![BytesPacketBatch::from(vec![packet]).into()];
-
-        ctx.verifier
-            .verify_and_send_batches(packet_batches)
-            .unwrap();
-        expect_no_receive(&ctx.pool_receiver);
-        assert_eq!(ctx.verifier.stats.vote_stats.pool_sent.0, 0);
-        assert_eq!(ctx.verifier.stats.num_discarded_pkts.0, 1);
     }
 
     #[test]
@@ -1107,17 +1073,14 @@ mod tests {
                 rank,
                 stake: NonZero::new(123).unwrap(),
             });
-            packets.push(message_to_packet(
+            packets.push(message_to_datagram(
                 &consensus_message,
                 ctx.verifier.cluster_info.my_shred_version(),
                 validator_keypair.node_keypair.pubkey(),
             ));
         }
 
-        let packet_batches = vec![BytesPacketBatch::from(packets).into()];
-        ctx.verifier
-            .verify_and_send_batches(packet_batches)
-            .unwrap();
+        ctx.verifier.verify_and_send_datagrams(packets).unwrap();
         let batches = ctx.pool_receiver.try_iter().collect::<Vec<_>>();
         assert_eq!(batches.len(), 1);
         match &batches[0] {
@@ -1158,7 +1121,7 @@ mod tests {
                 vote1,
                 i,
             ));
-            packets.push(message_to_packet(
+            packets.push(message_to_datagram(
                 &msg,
                 ctx.verifier.cluster_info.my_shred_version(),
                 validator_keypair.node_keypair.pubkey(),
@@ -1180,17 +1143,14 @@ mod tests {
                 vote2,
                 i,
             ));
-            packets.push(message_to_packet(
+            packets.push(message_to_datagram(
                 &msg,
                 ctx.verifier.cluster_info.my_shred_version(),
                 validator_keypair.node_keypair.pubkey(),
             ));
         }
 
-        let packet_batches = vec![BytesPacketBatch::from(packets).into()];
-        ctx.verifier
-            .verify_and_send_batches(packet_batches)
-            .unwrap();
+        ctx.verifier.verify_and_send_datagrams(packets).unwrap();
         let batches = ctx.pool_receiver.try_iter().collect::<Vec<_>>();
         assert_eq!(batches.len(), 2);
         let total_votes_verified = batches
@@ -1261,17 +1221,14 @@ mod tests {
                 rank,
                 stake: NonZero::new(123).unwrap(),
             });
-            packets.push(message_to_packet(
+            packets.push(message_to_datagram(
                 &consensus_message,
                 ctx.verifier.cluster_info.my_shred_version(),
                 validator_keypair.node_keypair.pubkey(),
             ));
         }
 
-        let packet_batches = vec![BytesPacketBatch::from(packets).into()];
-        ctx.verifier
-            .verify_and_send_batches(packet_batches)
-            .unwrap();
+        ctx.verifier.verify_and_send_datagrams(packets).unwrap();
         let batches = ctx.pool_receiver.try_iter().collect::<Vec<_>>();
         assert_eq!(batches.len(), 2);
         let total_votes_verified = batches
@@ -1329,17 +1286,14 @@ mod tests {
 
             consensus_messages.push(consensus_message.clone());
 
-            packets.push(message_to_packet(
+            packets.push(message_to_datagram(
                 &consensus_message,
                 ctx.verifier.cluster_info.my_shred_version(),
                 validator_keypair.node_keypair.pubkey(),
             ));
         }
 
-        let packet_batches = vec![BytesPacketBatch::from(packets).into()];
-        ctx.verifier
-            .verify_and_send_batches(packet_batches)
-            .unwrap();
+        ctx.verifier.verify_and_send_datagrams(packets).unwrap();
         let batches: Vec<_> = ctx.pool_receiver.try_iter().collect();
         assert_eq!(batches.len(), 1);
         match &batches[0] {
@@ -1382,14 +1336,12 @@ mod tests {
             &(0..num_signers).collect::<Vec<_>>(),
         );
         let consensus_message = ConsensusMessage::Certificate(cert);
-        let packet_batches = messages_to_batches(
+        let datagrams = messages_to_datagrams(
             &[(consensus_message, Pubkey::new_unique())],
             ctx.verifier.cluster_info.my_shred_version(),
         );
 
-        ctx.verifier
-            .verify_and_send_batches(packet_batches)
-            .unwrap();
+        ctx.verifier.verify_and_send_datagrams(datagrams).unwrap();
         assert_eq!(
             ctx.pool_receiver.try_iter().count(),
             1,
@@ -1414,14 +1366,12 @@ mod tests {
             &(0..num_signers).collect::<Vec<_>>(),
         );
         let consensus_message = ConsensusMessage::Certificate(cert);
-        let packet_batches = messages_to_batches(
+        let datagrams = messages_to_datagrams(
             &[(consensus_message, Pubkey::new_unique())],
             ctx.verifier.cluster_info.my_shred_version(),
         );
 
-        ctx.verifier
-            .verify_and_send_batches(packet_batches)
-            .unwrap();
+        ctx.verifier.verify_and_send_datagrams(datagrams).unwrap();
         assert_eq!(
             ctx.pool_receiver.try_iter().count(),
             1,
@@ -1448,14 +1398,12 @@ mod tests {
             &[4, 5, 6],
         );
         let consensus_message = ConsensusMessage::Certificate(cert);
-        let packet_batches = messages_to_batches(
+        let datagrams = messages_to_datagrams(
             &[(consensus_message, Pubkey::new_unique())],
             ctx.verifier.cluster_info.my_shred_version(),
         );
 
-        ctx.verifier
-            .verify_and_send_batches(packet_batches)
-            .unwrap();
+        ctx.verifier.verify_and_send_datagrams(datagrams).unwrap();
         assert_eq!(
             ctx.pool_receiver.try_iter().count(),
             1,
@@ -1481,14 +1429,12 @@ mod tests {
             &[4, 5],
         );
         let consensus_message = ConsensusMessage::Certificate(cert);
-        let packet_batches = messages_to_batches(
+        let datagrams = messages_to_datagrams(
             &[(consensus_message, Pubkey::new_unique())],
             ctx.verifier.cluster_info.my_shred_version(),
         );
 
-        ctx.verifier
-            .verify_and_send_batches(packet_batches)
-            .unwrap();
+        ctx.verifier.verify_and_send_datagrams(datagrams).unwrap();
         assert_eq!(
             ctx.pool_receiver.try_iter().count(),
             1,
@@ -1521,14 +1467,12 @@ mod tests {
             bitmap: encoded_bitmap,
         };
         let consensus_message = ConsensusMessage::Certificate(cert);
-        let packet_batches = messages_to_batches(
+        let datagrams = messages_to_datagrams(
             &[(consensus_message, Pubkey::new_unique())],
             ctx.verifier.cluster_info.my_shred_version(),
         );
 
-        ctx.verifier
-            .verify_and_send_batches(packet_batches)
-            .unwrap();
+        ctx.verifier.verify_and_send_datagrams(datagrams).unwrap();
         expect_no_receive(&ctx.pool_receiver);
         assert_eq!(
             ctx.verifier
@@ -1560,7 +1504,7 @@ mod tests {
                 rank,
                 stake: NonZero::new(123).unwrap(),
             });
-            packets.push(message_to_packet(
+            packets.push(message_to_datagram(
                 &consensus_message,
                 ctx.verifier.cluster_info.my_shred_version(),
                 validator_keypair.node_keypair.pubkey(),
@@ -1580,16 +1524,13 @@ mod tests {
             &(0..num_signers).into_iter().collect::<Vec<_>>(),
         );
         let consensus_message_cert = ConsensusMessage::Certificate(cert);
-        packets.push(message_to_packet(
+        packets.push(message_to_datagram(
             &consensus_message_cert,
             ctx.verifier.cluster_info.my_shred_version(),
             Pubkey::new_unique(),
         ));
 
-        let packet_batches = vec![BytesPacketBatch::from(packets).into()];
-        ctx.verifier
-            .verify_and_send_batches(packet_batches)
-            .unwrap();
+        ctx.verifier.verify_and_send_datagrams(packets).unwrap();
         let batches = ctx.pool_receiver.try_iter().collect::<Vec<_>>();
         assert_eq!(batches.len(), 2);
 
@@ -1638,13 +1579,11 @@ mod tests {
             stake: NonZero::new(123).unwrap(),
         });
 
-        let packet_batches = messages_to_batches(
+        let datagrams = messages_to_datagrams(
             &[(consensus_message, Pubkey::new_unique())],
             ctx.verifier.cluster_info.my_shred_version(),
         );
-        ctx.verifier
-            .verify_and_send_batches(packet_batches)
-            .unwrap();
+        ctx.verifier.verify_and_send_datagrams(datagrams).unwrap();
         expect_no_receive(&ctx.pool_receiver);
         assert_eq!(ctx.verifier.stats.discard_vote_invalid_rank.0, 1);
     }
@@ -1717,7 +1656,7 @@ mod tests {
             rank: rank.try_into().unwrap(),
             stake: NonZero::new(123).unwrap(),
         });
-        let packet_batches_vote = messages_to_batches(
+        let datagrams_vote = messages_to_datagrams(
             &[(
                 consensus_message_vote,
                 validator_keypairs[rank].node_keypair.pubkey(),
@@ -1726,7 +1665,7 @@ mod tests {
         );
 
         sig_verifier
-            .verify_and_send_batches(packet_batches_vote)
+            .verify_and_send_datagrams(datagrams_vote)
             .unwrap();
         expect_no_receive(&message_receiver);
         assert_eq!(sig_verifier.stats.num_old_votes_received.0, 1);
@@ -1741,13 +1680,13 @@ mod tests {
             &[0], // Signer rank 0
         );
         let consensus_message_cert = ConsensusMessage::Certificate(cert);
-        let packet_batches_cert = messages_to_batches(
+        let datagrams_cert = messages_to_datagrams(
             &[(consensus_message_cert, Pubkey::new_unique())],
             sig_verifier.cluster_info.my_shred_version(),
         );
 
         sig_verifier
-            .verify_and_send_batches(packet_batches_cert)
+            .verify_and_send_datagrams(datagrams_cert)
             .unwrap();
         expect_no_receive(&message_receiver);
         assert_eq!(sig_verifier.stats.num_old_certs_received.0, 1);
@@ -1774,14 +1713,12 @@ mod tests {
             &(0..num_signers).into_iter().collect::<Vec<_>>(),
         );
         let consensus_message1 = ConsensusMessage::Certificate(cert1);
-        let packet_batches1 = messages_to_batches(
+        let datagrams1 = messages_to_datagrams(
             &[(consensus_message1, Pubkey::new_unique())],
             ctx.verifier.cluster_info.my_shred_version(),
         );
 
-        ctx.verifier
-            .verify_and_send_batches(packet_batches1)
-            .unwrap();
+        ctx.verifier.verify_and_send_datagrams(datagrams1).unwrap();
 
         assert_eq!(ctx.pool_receiver.try_iter().count(), 1);
         assert_eq!(ctx.verifier.stats.num_verified_certs_received.0, 0);
@@ -1794,15 +1731,13 @@ mod tests {
             &(0..num_signers - 1).into_iter().collect::<Vec<_>>(),
         );
         let consensus_message2 = ConsensusMessage::Certificate(cert2);
-        let packet_batches2 = messages_to_batches(
+        let datagrams2 = messages_to_datagrams(
             &[(consensus_message2, Pubkey::new_unique())],
             ctx.verifier.cluster_info.my_shred_version(),
         );
 
         ctx.verifier.stats = SigVerifierStats::new(ctx.verifier.sharable_banks.root().slot());
-        ctx.verifier
-            .verify_and_send_batches(packet_batches2)
-            .unwrap();
+        ctx.verifier.verify_and_send_datagrams(datagrams2).unwrap();
         expect_no_receive(&ctx.pool_receiver);
         assert_eq!(ctx.verifier.stats.num_verified_certs_received.0, 1);
         assert_eq!(ctx.verifier.stats.cert_stats.certs_to_sig_verify.0, 0);
@@ -1828,7 +1763,7 @@ mod tests {
             cert_type,
             &(1..8).collect::<Vec<_>>(),
         );
-        let packet_batches = messages_to_batches(
+        let datagrams = messages_to_datagrams(
             &[
                 (ConsensusMessage::Certificate(cert1), Pubkey::new_unique()),
                 (ConsensusMessage::Certificate(cert2), Pubkey::new_unique()),
@@ -1836,9 +1771,7 @@ mod tests {
             ctx.verifier.cluster_info.my_shred_version(),
         );
 
-        ctx.verifier
-            .verify_and_send_batches(packet_batches)
-            .unwrap();
+        ctx.verifier.verify_and_send_datagrams(datagrams).unwrap();
 
         let batches = ctx.pool_receiver.try_iter().collect::<Vec<_>>();
         assert_eq!(batches.len(), 1);
@@ -1883,7 +1816,7 @@ mod tests {
         let invalid_sender = Pubkey::new_unique();
         let valid_sender = Pubkey::new_unique();
         let redundant_sender = Pubkey::new_unique();
-        let packet_batches = messages_to_batches(
+        let datagrams = messages_to_datagrams(
             &[
                 (ConsensusMessage::Certificate(invalid_cert), invalid_sender),
                 (
@@ -1895,9 +1828,7 @@ mod tests {
             ctx.verifier.cluster_info.my_shred_version(),
         );
 
-        ctx.verifier
-            .verify_and_send_batches(packet_batches)
-            .unwrap();
+        ctx.verifier.verify_and_send_datagrams(datagrams).unwrap();
 
         let batches = ctx.pool_receiver.try_iter().collect::<Vec<_>>();
         assert_eq!(batches.len(), 1);
@@ -1945,14 +1876,12 @@ mod tests {
         ));
         let vote_sender = ctx.validator_keypairs[rank].node_keypair.pubkey();
         let cert_sender = Pubkey::new_unique();
-        let packet_batches = messages_to_batches(
+        let datagrams = messages_to_datagrams(
             &[(vote_message, vote_sender), (cert_message, cert_sender)],
             ctx.verifier.cluster_info.my_shred_version(),
         );
 
-        ctx.verifier
-            .verify_and_send_batches(packet_batches)
-            .unwrap();
+        ctx.verifier.verify_and_send_datagrams(datagrams).unwrap();
         assert_eq!(ctx.pool_receiver.try_iter().count(), 2);
         let banned = ctx.banned_pubkeys();
         assert!(!banned.contains(&vote_sender));
@@ -1993,7 +1922,7 @@ mod tests {
             .collect();
 
         ctx.verifier
-            .verify_and_send_batches(messages_to_batches(
+            .verify_and_send_datagrams(messages_to_datagrams(
                 &messages,
                 ctx.verifier.cluster_info.my_shred_version(),
             ))
@@ -2049,7 +1978,7 @@ mod tests {
             .collect();
 
         ctx.verifier
-            .verify_and_send_batches(messages_to_batches(
+            .verify_and_send_datagrams(messages_to_datagrams(
                 &messages,
                 ctx.verifier.cluster_info.my_shred_version(),
             ))
@@ -2092,13 +2021,11 @@ mod tests {
             &(0..ctx.validator_keypairs.len()).collect::<Vec<usize>>(),
         );
         let consensus_message = ConsensusMessage::Certificate(cert);
-        let packet_batches = messages_to_batches(
+        let datagrams = messages_to_datagrams(
             &[(consensus_message, Pubkey::new_unique())],
             ctx.verifier.cluster_info.my_shred_version(),
         );
-        ctx.verifier
-            .verify_and_send_batches(packet_batches)
-            .unwrap();
+        ctx.verifier.verify_and_send_datagrams(datagrams).unwrap();
         assert_eq!(ctx.verifier.stats.num_generated_certs_received.0, 1);
     }
 
@@ -2122,30 +2049,25 @@ mod tests {
             Vote::new_skip_vote(slot),
             rank,
         ));
-        let packet_batches = messages_to_batches(
+        let datagrams = messages_to_datagrams(
             &[
                 (cert, Pubkey::new_unique()),
                 (vote, ctx.validator_keypairs[rank].node_keypair.pubkey()),
             ],
             ctx.verifier.cluster_info.my_shred_version(),
         );
-        ctx.verifier
-            .verify_and_send_batches(packet_batches)
-            .unwrap();
+        ctx.verifier.verify_and_send_datagrams(datagrams).unwrap();
         assert_eq!(ctx.verifier.stats.cert_stats.too_far_in_future.0, 1);
         assert_eq!(ctx.verifier.stats.vote_too_far_in_future.0, 1);
     }
 
-    fn messages_to_batches(
+    fn messages_to_datagrams(
         messages: &[(ConsensusMessage, Pubkey)],
         shred_version: u16,
-    ) -> Vec<PacketBatch> {
-        let packets: Vec<_> = messages
+    ) -> Vec<Datagram> {
+        messages
             .iter()
-            .map(|(message, remote_pubkey)| {
-                message_to_packet(message, shred_version, *remote_pubkey)
-            })
-            .collect();
-        vec![BytesPacketBatch::from(packets).into()]
+            .map(|(message, peer_pubkey)| message_to_datagram(message, shred_version, *peer_pubkey))
+            .collect()
     }
 }
