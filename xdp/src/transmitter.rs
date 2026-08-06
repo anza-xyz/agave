@@ -5,6 +5,7 @@ use {
     bytes::Bytes,
     std::{
         error::Error,
+        io,
         net::{SocketAddr, SocketAddrV4},
         sync::{Arc, atomic::AtomicBool},
         thread,
@@ -244,6 +245,58 @@ impl AsRef<[SocketAddr]> for XdpAddrs {
 }
 
 impl XdpSender {
+    /// Validate positions for a sender subset before an `XdpSender` is available.
+    pub fn validate_subset_positions(
+        positions: &[usize],
+        sender_count: usize,
+    ) -> Result<(), io::Error> {
+        fn invalid_input(message: impl Into<String>) -> io::Error {
+            io::Error::new(io::ErrorKind::InvalidInput, message.into())
+        }
+
+        if positions.is_empty() {
+            return Err(invalid_input("XDP sender subset cannot be empty"));
+        }
+        if let Some(&position) = positions.iter().find(|&&position| position >= sender_count) {
+            return Err(invalid_input(format!(
+                "XDP sender subset position {position} is out of range for {sender_count} \
+                 configured XDP sender(s)"
+            )));
+        }
+        if let Some((_, &position)) = positions
+            .iter()
+            .enumerate()
+            .find(|(i, position)| positions[..*i].contains(position))
+        {
+            return Err(invalid_input(format!(
+                "XDP sender subset position {position} is repeated"
+            )));
+        }
+        Ok(())
+    }
+
+    /// Return a sender restricted to `positions` in this sender's queue list, in the given order.
+    ///
+    /// `positions` must be non-empty and free of duplicates, and each element must be less than
+    /// `self.len()`. Position `i` of the returned sender maps to `positions[i]` of this one, so
+    /// the order determines which queue each `try_send` index lands on.
+    #[cfg(target_os = "linux")]
+    pub fn subset(&self, positions: &[usize]) -> Result<XdpSender, io::Error> {
+        Self::validate_subset_positions(positions, self.len())?;
+
+        Ok(XdpSender {
+            senders: positions.iter().map(|&i| self.senders[i].clone()).collect(),
+        })
+    }
+
+    #[cfg(not(target_os = "linux"))]
+    pub fn subset(&self, _positions: &[usize]) -> Result<XdpSender, io::Error> {
+        Err(io::Error::new(
+            io::ErrorKind::Unsupported,
+            "XDP is only supported on Linux",
+        ))
+    }
+
     #[inline]
     pub fn try_send(
         &self,
@@ -449,6 +502,14 @@ impl TransmitterBuilder {
         })
     }
 
+    pub fn sender_count(&self) -> usize {
+        #[cfg(target_os = "linux")]
+        return self.tx_loops.len();
+
+        #[cfg(not(target_os = "linux"))]
+        0
+    }
+
     #[cfg(not(target_os = "linux"))]
     pub fn build(self) -> (Transmitter, XdpSender) {
         (Transmitter { threads: vec![] }, XdpSender {})
@@ -615,5 +676,61 @@ impl Drop for CapGuard {
             caps::drop(None, caps::CapSet::Effective, *capability)
                 .unwrap_or_else(|err| panic!("drop {capability:?} capability: {err}"));
         }
+    }
+}
+
+#[cfg(all(test, target_os = "linux"))]
+mod tests {
+    use {
+        super::*,
+        crate::tx_loop::{Receiver, TryRecvError, TxReceiver},
+    };
+
+    /// The receivers are returned so they stay connected for the lifetime of the test.
+    fn sender_with_receivers(sender_count: usize) -> (XdpSender, Vec<TxReceiver<BytesTxPacket>>) {
+        let (senders, receivers) = (0..sender_count).map(|_| tx_loop::channel(1)).unzip();
+        (XdpSender { senders }, receivers)
+    }
+
+    fn packet() -> BytesTxPacket {
+        BytesTxPacket::new(
+            SocketAddrV4::new(Ipv4Addr::LOCALHOST, 1),
+            SocketAddr::from((Ipv4Addr::LOCALHOST, 2)),
+            None,
+            Bytes::new(),
+        )
+    }
+
+    #[test]
+    fn subset_rejects_invalid_positions() {
+        let (sender, _receivers) = sender_with_receivers(2);
+        for (positions, expected) in [
+            (&[][..], "cannot be empty"),
+            (&[0, 2][..], "out of range"),
+            (&[1, 0, 1][..], "is repeated"),
+        ] {
+            let Err(error) = sender.subset(positions) else {
+                panic!("invalid subset {positions:?} must fail");
+            };
+            assert_eq!(error.kind(), io::ErrorKind::InvalidInput);
+            assert!(
+                error.to_string().contains(expected),
+                "unexpected error for {positions:?}: {error}"
+            );
+        }
+    }
+
+    #[test]
+    fn subset_maps_positions_in_order() {
+        let (sender, receivers) = sender_with_receivers(3);
+        let subset = sender.subset(&[2, 0]).unwrap();
+        assert_eq!(subset.len(), 2);
+
+        subset.try_send(0, packet()).unwrap();
+        subset.try_send(1, packet()).unwrap();
+
+        assert!(receivers[2].try_recv().is_ok());
+        assert!(receivers[0].try_recv().is_ok());
+        assert!(matches!(receivers[1].try_recv(), Err(TryRecvError::Empty)));
     }
 }

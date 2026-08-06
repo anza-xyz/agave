@@ -371,7 +371,7 @@ pub fn execute(
             .map(|mut xdp_config| {
                 use {
                     agave_xdp::{device::NetworkDevice, interface_ipv4},
-                    solana_core::validator::XdpTransmitSetup,
+                    solana_core::validator::{XdpModules, XdpTransmitSetup},
                 };
 
                 let device = if let Some(interface) = xdp_config.interface.as_ref() {
@@ -393,11 +393,20 @@ pub fn execute(
                     ),
                     _ => panic!("IPv6 not supported"),
                 };
+                // Nothing can express per-module queue assignments yet, so every
+                // module transmits over the whole queue set.
+                let all_positions: Vec<usize> = (0..xdp_config.queues.len()).collect();
                 (
                     XdpTransmitSetup {
                         transmitter_builder: TransmitterBuilder::new(xdp_config, exit.clone())
                             .expect("failed to create xdp transmitter"),
                         src_ip,
+                        modules: XdpModules {
+                            tpu: Some(all_positions.clone()),
+                            turbine: Some(all_positions.clone()),
+                            repair: Some(all_positions.clone()),
+                            gossip: Some(all_positions),
+                        },
                     },
                     XdpNetworkConfigReport {
                         zero_copy,
@@ -1408,6 +1417,9 @@ fn build_xdp_config(
     let cpus = if let Some(cpu_str) = xdp_cpu_cores {
         let parsed =
             parse_cpu_ranges(cpu_str).expect("clap validator already accepted this CPU list");
+        if parsed.is_empty() {
+            return Err(format!("--xdp-cpu-cores `{cpu_str}` selects no CPUs"));
+        }
         if let Some(poh_core) = poh_pinned_cpu_core
             && parsed.contains(&poh_core)
         {
@@ -1488,6 +1500,18 @@ mod xdp_tests {
         let matches = app.get_matches_from(vec!["agave-validator", "--no-xdp"]);
         let result = build_xdp_config(&matches, &Operation::Run, &single_ip_bind());
         assert!(result.unwrap().is_none(), "--no-xdp must disable XDP");
+    }
+
+    #[test]
+    fn test_empty_xdp_cpu_cores_is_error() {
+        let default_args = DefaultArgs::default();
+        let app = add_args(clap::App::new("agave-validator"), &default_args);
+        let matches = app.get_matches_from(vec!["agave-validator", "--xdp-cpu-cores", "5-3"]);
+        let result = build_xdp_config(&matches, &Operation::Run, &single_ip_bind());
+        assert!(
+            result.unwrap_err().contains("selects no CPUs"),
+            "empty XDP CPU core selection must produce an error"
+        );
     }
 
     #[test]
