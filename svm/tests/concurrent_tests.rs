@@ -113,8 +113,8 @@ fn program_cache_execution(threads: usize) {
                     &feature_set,
                     0,
                 );
-                let upcoming_environment =
-                    processor.program_runtime_environment_for_epoch(processor.epoch + 1);
+                let upcoming_environment = processor
+                    .program_runtime_environment_for_epoch(processor.epoch.saturating_add(1));
                 processor.prepare_one_program_for_upcoming_feature_set(
                     &account_loader,
                     false,
