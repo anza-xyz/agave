@@ -369,7 +369,9 @@ macro_rules! impl_merkle_shred {
 
         fn set_chained_merkle_root(&mut self, chained_merkle_root: &Hash) -> Result<(), Error> {
             let offset = self.chained_merkle_root_offset()?;
-            let Some(mut buffer) = self.payload.get_mut(offset..offset + SIZE_OF_MERKLE_ROOT)
+            let Some(mut buffer) = self
+                .payload
+                .make_mut_range(offset..offset + SIZE_OF_MERKLE_ROOT)
             else {
                 return Err(Error::InvalidPayloadSize(self.payload.len()));
             };
@@ -405,7 +407,7 @@ macro_rules! impl_merkle_shred {
             let proof_offset = self.proof_offset()?;
             let mut slice = self
                 .payload
-                .get_mut(proof_offset..)
+                .make_mut_range(proof_offset..)
                 .ok_or(Error::InvalidProofSize(proof_size))?;
             let mut cursor = Cursor::new(slice.as_mut());
             let proof_size = usize::from(proof_size);
@@ -433,7 +435,10 @@ macro_rules! impl_merkle_shred {
 
         fn set_retransmitter_signature(&mut self, signature: &Signature) -> Result<(), Error> {
             let offset = self.retransmitter_signature_offset()?;
-            let Some(mut buffer) = self.payload.get_mut(offset..offset + SIZE_OF_SIGNATURE) else {
+            let Some(mut buffer) = self
+                .payload
+                .make_mut_range(offset..offset + SIZE_OF_SIGNATURE)
+            else {
                 return Err(Error::InvalidPayloadSize(self.payload.len()));
             };
             buffer.copy_from_slice(signature.as_ref());
@@ -490,7 +495,7 @@ macro_rules! impl_merkle_shred {
             let offsets = self.erasure_shard_offsets()?;
             let payload_size = self.payload.len();
             self.payload
-                .get_mut(offsets)
+                .make_mut_range(offsets)
                 .ok_or(Error::InvalidPayloadSize(payload_size))
         }
     };
@@ -1246,11 +1251,11 @@ fn finish_erasure_batch(
     fn write_headers(shred: &mut Shred) -> Result<(), wincode::WriteError> {
         match shred {
             Shred::ShredCode(shred) => {
-                let mut dst = &mut shred.payload.as_mut()[..];
+                let mut dst = &mut shred.payload.make_mut()[..];
                 wincode::serialize_into(&mut dst, &(&shred.common_header, &shred.coding_header))
             }
             Shred::ShredData(shred) => {
-                let mut dst = &mut shred.payload.as_mut()[..];
+                let mut dst = &mut shred.payload.make_mut()[..];
                 wincode::serialize_into(&mut dst, &(&shred.common_header, &shred.data_header))
             }
         }

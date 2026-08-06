@@ -19,33 +19,23 @@ pub struct Payload {
 }
 
 impl Payload {
-    /// Convert the payload's inner [`Bytes`] into a [`BytesMut`], consuming the [`Payload`].
-    ///
-    /// If the payload is unique (single reference), this will return a [`BytesMut`] with the
-    /// contents of the payload without copying. If the payload is not unique, this will make a copy
-    /// of the payload in a new [`BytesMut`]. As such, take care to avoid performing this conversion
-    /// if the payload is not unique.
-    #[inline]
-    pub fn into_bytes_mut(self) -> BytesMut {
-        self.bytes.into()
-    }
-
     /// Get a mutable reference via [`PayloadMutGuard`] to the payload's _full_ inner bytes.
-    /// See [`Payload::get_mut`] for selecting a subset of the payload's inner bytes.
+    /// See [`Payload::make_mut_range`] for selecting a subset of the payload's inner bytes.
     ///
-    /// If the payload is unique (single reference), this will not perform any copying. Otherwise it
-    /// will. As such, take care to avoid performing this conversion if the payload is not unique.
+    /// This is copy-on-write, in the vein of [`std::sync::Arc::make_mut`]: if the payload is unique
+    /// (single reference) it mutates in place, and otherwise it silently mutates a *copy*, which no
+    /// other holder of the payload will observe. Take care to avoid calling this if the payload is
+    /// not unique.
     #[inline]
-    pub fn as_mut(&mut self) -> PayloadMutGuard<'_, RangeFull> {
+    pub fn make_mut(&mut self) -> PayloadMutGuard<'_, RangeFull> {
         PayloadMutGuard::new(self, ..)
     }
 
     #[inline]
     /// Get a mutable reference via [`PayloadMutGuard`] to a subset of the payload's inner bytes.
     ///
-    /// If the payload is unique (single reference), this will not perform any copying. Otherwise it
-    /// will. As such, take care to avoid performing this conversion if the payload is not unique.
-    pub fn get_mut<I>(&mut self, index: I) -> Option<PayloadMutGuard<'_, I>>
+    /// This is copy-on-write; see [`Payload::make_mut`] for the caveats.
+    pub fn make_mut_range<I>(&mut self, index: I) -> Option<PayloadMutGuard<'_, I>>
     where
         I: RangeBounds<usize>,
     {
@@ -241,7 +231,7 @@ mod test {
     fn test_guard_write_back() {
         let mut payload = Payload::from(vec![1, 2, 3, 4, 5]);
         {
-            let mut guard = payload.get_mut(..).unwrap();
+            let mut guard = payload.make_mut_range(..).unwrap();
             assert_eq!(guard[0], 1);
             assert_eq!(guard[1], 2);
             guard[0] = 10;

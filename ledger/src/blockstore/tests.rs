@@ -4788,7 +4788,7 @@ fn test_recovery_discards_unexpected_data_complete_shreds() {
 
     for shred in first_fec_set.iter_mut().take(DATA_SHREDS_PER_FEC_BLOCK) {
         let mut payload = shred.payload().clone();
-        payload.as_mut()[DATA_SHRED_FLAGS_OFFSET] |= ShredFlags::DATA_COMPLETE_SHRED.bits();
+        payload.make_mut()[DATA_SHRED_FLAGS_OFFSET] |= ShredFlags::DATA_COMPLETE_SHRED.bits();
         *shred = Shred::new_from_serialized_shred(payload).unwrap();
     }
     finish_erasure_batch_for_tests(

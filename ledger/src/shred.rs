@@ -1327,7 +1327,7 @@ mod tests {
             let mut signature = [0u8; SIGNATURE_BYTES];
             rng.fill(&mut signature[..]);
             let out = layout::set_retransmitter_signature(
-                &mut shred.as_mut(),
+                &mut shred.make_mut(),
                 &Signature::from(signature),
             );
             if is_last_in_slot {
@@ -1377,7 +1377,7 @@ mod tests {
         // (ignoring retransmitter signature) are duplicate.
         for shred in &shreds {
             let mut other = shred.payload().clone();
-            other.as_mut()[90] = other[90].wrapping_add(1);
+            other.make_mut()[90] = other[90].wrapping_add(1);
             let other = Shred::new_from_serialized_shred(other).unwrap();
             assert_ne!(shred.payload(), other.payload());
             assert_eq!(
