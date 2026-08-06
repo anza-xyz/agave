@@ -2,6 +2,7 @@
 use {
     crate::{
         METRICS_INTERVAL, PeerListReceiver, close_codes,
+        endpoint::KeyUpdateListener,
         error::Error,
         stats::{self, ClientStats, record_client_error},
         transport::new_client_config,
@@ -19,7 +20,7 @@ use {
         time::Duration,
     },
     tokio::{
-        sync::{mpsc, watch},
+        sync::mpsc,
         task::JoinSet,
         time::{MissedTickBehavior, interval, timeout},
     },
@@ -91,7 +92,7 @@ pub(crate) struct OutboundLoop {
     local_pubkey: Pubkey,
     /// Channel for outbound messages to be broadcast
     egress_receiver: mpsc::Receiver<Bytes>,
-    identity_receiver: watch::Receiver<Keypair>,
+    key_updates: KeyUpdateListener,
     peer_list_receiver: PeerListReceiver,
     /// Per-peer send-only connection state.
     /// Size is limited to the peer_list size by reconcile task.
@@ -107,7 +108,7 @@ impl OutboundLoop {
         endpoint: Endpoint,
         local_pubkey: Pubkey,
         egress_receiver: mpsc::Receiver<Bytes>,
-        identity_receiver: watch::Receiver<Keypair>,
+        key_updates: KeyUpdateListener,
         peer_list_receiver: PeerListReceiver,
         cancel: CancellationToken,
         max_datagrams_per_second_per_peer: usize,
@@ -116,7 +117,7 @@ impl OutboundLoop {
             endpoint,
             local_pubkey,
             egress_receiver,
-            identity_receiver,
+            key_updates,
             peer_list_receiver,
             peer_state: HashMap::with_hasher(PubkeyHasherBuilder::default()),
             in_flight_handshakes: JoinSet::new(),
@@ -139,14 +140,14 @@ impl OutboundLoop {
         info!("Votor QUIC transport client ready.");
         loop {
             tokio::select! {
-                changed = self.identity_receiver.changed() => {
+                changed = self.key_updates.receiver.changed() => {
                     if changed.is_err() {
                         // Unreachable: endpoint holds the identity sender for this loop's lifetime.
                         error!("OutboundLoop: identity channel closed while running, exiting.");
                         debug_assert!(false, "identity channel closed while running");
                         break;
                     }
-                    let new_keypair = self.identity_receiver.borrow_and_update().insecure_clone();
+                    let new_keypair = self.key_updates.receiver.borrow_and_update().insecure_clone();
                     self.apply_identity_change(new_keypair);
                     self.reconcile();
                 }
@@ -222,6 +223,9 @@ impl OutboundLoop {
         self.stats
             .connection_closed_identity_changed
             .fetch_add(closed, Ordering::Relaxed);
+        // Never blocks, and a dropped ack only matters at shutdown, when the
+        // updater is gone anyway.
+        let _ = self.key_updates.ack.try_send(());
         info!(
             "outbound identity changed to {} ({} connection(s) closed)",
             self.local_pubkey, closed
@@ -385,8 +389,10 @@ impl OutboundLoop {
 #[cfg(test)]
 mod tests {
     use {
-        super::*, solana_net_utils::sockets::unique_port_range_for_tests, std::net::Ipv4Addr,
-        tokio::time::sleep,
+        super::*,
+        solana_net_utils::sockets::unique_port_range_for_tests,
+        std::net::Ipv4Addr,
+        tokio::{sync::watch, time::sleep},
     };
 
     /// Recreates an edge case when client identity changes while a peer is in `Connecting`
@@ -402,13 +408,17 @@ mod tests {
 
         let (_egress_tx, egress_rx) = mpsc::channel(1);
         let (_identity_tx, identity_rx) = watch::channel(Keypair::new());
+        let (ack, _acks) = crossbeam_channel::unbounded();
         let (_peer_list_tx, peer_list_rx) = watch::channel(Arc::new(HashMap::default()));
 
         let mut outbound = OutboundLoop::new(
             endpoint,
             old_pubkey,
             egress_rx,
-            identity_rx,
+            KeyUpdateListener {
+                receiver: identity_rx,
+                ack,
+            },
             peer_list_rx,
             CancellationToken::new(),
             50,

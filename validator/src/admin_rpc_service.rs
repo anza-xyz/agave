@@ -988,10 +988,27 @@ impl AdminRpcImpl {
                 }
             }
 
-            for (key, notifier) in &*post_init.notifies.read().unwrap() {
-                if let Err(err) = notifier.update_key(&identity_keypair) {
+            // Updaters block until the new key is in effect, so take a copy of the
+            // list instead of running them under the lock.
+            let notifiers = {
+                let notifies = post_init.notifies.read().unwrap();
+                notifies
+                    .into_iter()
+                    .map(|(key, notifier)| (key.clone(), Arc::clone(notifier)))
+                    .collect::<Vec<_>>()
+            };
+            // Bail out rather than switch identity on top of a network layer that
+            // may still be running under the old one. Updaters already run at this
+            // point keep the new key, so the operator must retry to converge.
+            for (key, notifier) in notifiers {
+                notifier.update_key(&identity_keypair).map_err(|err| {
                     error!("Error updating network layer keypair: {err} on {key:?}");
-                }
+                    jsonrpc_core::error::Error {
+                        code: ErrorCode::InternalError,
+                        message: format!("Failed to apply new identity to {key:?}: {err}"),
+                        data: None,
+                    }
+                })?;
             }
 
             let old_identity = post_init.cluster_info.id();
@@ -1375,6 +1392,10 @@ mod tests {
         meta: AdminRpcRequestMetadata,
         io: MetaIoHandler<AdminRpcRequestMetadata>,
         validator_ledger_path: PathBuf,
+        /// Kept alive for the lifetime of the test: `set_identity` reaches into
+        /// live network services, which are gone once the validator is dropped.
+        /// `Option` only so `Drop` can call the consuming `close()`.
+        validator: Option<Validator>,
     }
 
     impl TestValidatorWithAdminRpc {
@@ -1418,7 +1439,7 @@ mod tests {
                 rpc_to_plugin_manager_sender: None,
             };
 
-            let _validator = Validator::new(
+            let validator = Validator::new(
                 validator_node,
                 Arc::new(validator_keypair),
                 &validator_ledger_path,
@@ -1463,6 +1484,7 @@ mod tests {
                 meta,
                 io,
                 validator_ledger_path,
+                validator: Some(validator),
             }
         }
 
@@ -1473,6 +1495,10 @@ mod tests {
 
     impl Drop for TestValidatorWithAdminRpc {
         fn drop(&mut self) {
+            self.validator
+                .take()
+                .expect("validator is only taken here")
+                .close();
             remove_dir_all(self.validator_ledger_path.clone()).unwrap();
         }
     }

@@ -11,7 +11,7 @@ use {
         transport::{new_client_config, new_server_config},
     },
     bytes::Bytes,
-    crossbeam_channel::Sender,
+    crossbeam_channel::{Receiver, Sender, bounded},
     log::{error, warn},
     qualifier_attr::qualifiers,
     quinn::{Endpoint, EndpointConfig, TokioRuntime},
@@ -21,7 +21,7 @@ use {
     solana_tls_utils::NotifyKeyUpdate,
     std::{
         net::{SocketAddr, UdpSocket},
-        sync::Arc,
+        sync::{Arc, Mutex, TryLockError},
         time::Duration,
     },
     tokio::{
@@ -50,7 +50,7 @@ pub struct QuicDatagramEndpoint {
     /// that tokio would otherwise swallow is surfaced.
     task_handles: JoinSet<()>,
     /// Identity rotation sender kept here so we control when the channel closes.
-    key_updater: Arc<KeyUpdater>,
+    key_updater: Arc<KeyUpdateNotifier>,
     ban_sender: BanSender,
     /// Inbound stats, exposed so integration tests can assert on them.
     #[cfg(any(test, feature = "dev-context-only-utils"))]
@@ -96,11 +96,9 @@ impl QuicDatagramEndpoint {
         let (egress_sender, egress_receiver) = mpsc::channel(egress_channel_capacity);
         let (ban_command_sender, ban_commands) = mpsc::channel(BAN_CHANNEL_CAPACITY);
         let ban_sender = BanSender(ban_command_sender);
-        // The dummy keypair here is never observed.
-        let (identity_sender, identity_receiver) = watch::channel(Keypair::new_from_array([0; 32]));
-        let key_updater = Arc::new(KeyUpdater {
-            sender: identity_sender,
-        });
+        let (key_updater, client_key_updates, server_key_updates) =
+            KeyUpdateNotifier::make_with_listeners();
+        let key_updater = Arc::new(key_updater);
         let local_pubkey = keypair.pubkey();
 
         let server_config = new_server_config(keypair, max_datagrams_per_second_per_peer);
@@ -139,7 +137,7 @@ impl QuicDatagramEndpoint {
             outbound_endpoint,
             local_pubkey,
             egress_receiver,
-            identity_receiver.clone(),
+            client_key_updates,
             peer_list.clone(),
             cancel.clone(),
             max_datagrams_per_second_per_peer,
@@ -189,7 +187,7 @@ impl QuicDatagramEndpoint {
             inbound_endpoints,
             inbound_events_sender,
             inbound_events_receiver,
-            identity_receiver,
+            server_key_updates,
             server_stats,
             cancel.clone(),
             max_datagrams_per_second_per_peer,
@@ -209,7 +207,7 @@ impl QuicDatagramEndpoint {
         Ok((egress_sender, endpoint))
     }
 
-    pub fn key_updater(&self) -> Arc<KeyUpdater> {
+    pub fn key_updater(&self) -> Arc<KeyUpdateNotifier> {
         self.key_updater.clone()
     }
 
@@ -268,21 +266,80 @@ impl Drop for QuicDatagramEndpoint {
     }
 }
 
-/// Handle for caller-driven identity rotation.
-pub struct KeyUpdater {
+pub struct KeyUpdateNotifier {
     sender: watch::Sender<Keypair>,
+    ack_sender: Sender<()>,
+    /// Both transport loops acknowledge here. Holding the lock ensures only one
+    /// update can be in progress at a time.
+    acks: Mutex<Receiver<()>>,
 }
 
-impl NotifyKeyUpdate for KeyUpdater {
+impl KeyUpdateNotifier {
+    /// Builds the notifier together with the listener for each transport loop.
+    /// The only place listeners are made, so we know there can be only 2.
+    pub(crate) fn make_with_listeners() -> (Self, KeyUpdateListener, KeyUpdateListener) {
+        // The initial value is never observed.
+        let (sender, _receiver) = watch::channel(Keypair::new_from_array([0; 32]));
+        // The bound is 2 because each loop acknowledges exactly once per update.
+        let (ack_sender, acks) = bounded(2);
+        let notifier = Self {
+            sender,
+            ack_sender,
+            acks: Mutex::new(acks),
+        };
+        let client_listener = KeyUpdateListener {
+            receiver: notifier.sender.subscribe(),
+            ack: notifier.ack_sender.clone(),
+        };
+        let server_listener = KeyUpdateListener {
+            receiver: notifier.sender.subscribe(),
+            ack: notifier.ack_sender.clone(),
+        };
+        (notifier, client_listener, server_listener)
+    }
+}
+
+impl NotifyKeyUpdate for KeyUpdateNotifier {
+    /// Publishes `keypair` to the transport loops and blocks until all have ack'd.
+    /// Outbound connections guaranteed to be gone when this returns.
+    ///
+    /// Rejects the update outright if an update is already in progress.
     fn update_key(&self, keypair: &Keypair) -> Result<(), Box<dyn std::error::Error>> {
-        let new_keypair = keypair.insecure_clone();
+        let acks = match self.acks.try_lock() {
+            Ok(acks) => acks,
+            Err(TryLockError::WouldBlock) => {
+                return Err("an identity update is already in progress".into());
+            }
+            // The validator aborts on panic, so nothing observes a poisoned lock.
+            // Never continue here, a stale ack would make the next update return
+            // before the transport has adopted it.
+            Err(TryLockError::Poisoned(err)) => {
+                unreachable!("ack receiver was poisoned while an update was in flight: {err}")
+            }
+        };
         self.sender
-            .send(new_keypair)
+            .send(keypair.insecure_clone())
             .map_err(|_| -> Box<dyn std::error::Error> {
                 "quic-datagram endpoint has shut down; identity update rejected".into()
             })?;
+        // Adopting takes milliseconds, so wait until we get acks. Channel is sized
+        // to exactly match number of listeners at construction.
+        for _ in 0..acks
+            .capacity()
+            .expect("ack channel is bounded to the number of listeners")
+        {
+            acks.recv()
+                .expect("ack channel cannot disconnect while the notifier holds a sender");
+        }
         Ok(())
     }
+}
+
+/// Bundles key update reception and ACK channels.
+/// These should only be constructed by KeyUpdateNotifier.
+pub(crate) struct KeyUpdateListener {
+    pub(crate) receiver: watch::Receiver<Keypair>,
+    pub(crate) ack: Sender<()>,
 }
 
 /// Command to temporarily ban a peer.
@@ -910,7 +967,6 @@ mod tests {
             .key_updater()
             .update_key(&keypair2)
             .expect("identity rotation accepted");
-        std::thread::sleep(Duration::from_millis(500));
 
         let payload2 = Bytes::from_static(b"under-K2");
         send_until_received(&client, &payload2, &server.ingress_receiver, |d| {
@@ -954,16 +1010,14 @@ mod tests {
             .key_updater()
             .update_key(&server_keypair2)
             .expect("server identity rotation must be accepted");
-        let evicted = wait_for_stat(
-            &server
+        // update_key returns only once the rotation has been applied.
+        assert!(
+            server
                 .endpoint
                 .server_stats
-                .connection_closed_identity_changed,
-            1,
-            METRICS_INTERVAL * 2,
-        );
-        assert!(
-            evicted > 0,
+                .connection_closed_identity_changed
+                .load(Ordering::Relaxed)
+                > 0,
             "server identity rotation must evict the inbound table"
         );
 
@@ -979,6 +1033,40 @@ mod tests {
             (d.message == payload2).then_some(())
         })
         .expect("server never received datagram under new identity");
+    }
+
+    /// Each id change waits for its own application, so back-to-back updates succeed.
+    #[test]
+    fn test_back_to_back_identity_updates() {
+        let rt = make_runtime_for_tests();
+        let client_keypair = Keypair::new();
+        let client_pubkey = client_keypair.pubkey();
+        let server = Node::spawn_node(
+            &rt,
+            Keypair::new(),
+            peer_list_with_unknown_addr(client_pubkey),
+            HIGH_PPS,
+        );
+        let client = Node::spawn_node(
+            &rt,
+            client_keypair,
+            peer_list_of(server.pubkey(), server.addr),
+            HIGH_PPS,
+        );
+
+        let payload = Bytes::from_static(b"pre-rotation");
+        send_until_received(&client, &payload, &server.ingress_receiver, |d| {
+            (d.message == payload).then_some(())
+        })
+        .expect("server never received datagram under original identity");
+
+        for _ in 0..3 {
+            server
+                .endpoint
+                .key_updater()
+                .update_key(&Keypair::new())
+                .expect("every rotation must be applied");
+        }
     }
 
     /// When a peer's address changes in the peer_list, the outbound
