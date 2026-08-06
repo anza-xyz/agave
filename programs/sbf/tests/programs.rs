@@ -14,7 +14,7 @@ use solana_runtime::loader_utils::load_upgradeable_program_and_advance_slot;
 #[cfg(feature = "sbf_rust")]
 use {
     agave_feature_set::{self as feature_set, FeatureSet},
-    borsh::{BorshDeserialize, BorshSerialize, from_slice, to_vec},
+    borsh::{from_slice, to_vec, BorshDeserialize, BorshSerialize},
     solana_account::{AccountSharedData, ReadableAccount},
     solana_account_info::MAX_PERMITTED_DATA_INCREASE,
     solana_client_traits::SyncClient,
@@ -26,12 +26,12 @@ use {
     solana_fee_calculator::FeeRateGovernor,
     solana_fee_structure::{FeeBin, FeeStructure},
     solana_hash::Hash,
-    solana_instruction::{AccountMeta, Instruction, error::InstructionError},
+    solana_instruction::{error::InstructionError, AccountMeta, Instruction},
     solana_keypair::Keypair,
     solana_loader_v3_interface::{
         instruction as loader_v3_instruction, state::UpgradeableLoaderState,
     },
-    solana_message::{Message, inner_instruction::InnerInstruction},
+    solana_message::{inner_instruction::InnerInstruction, Message},
     solana_pubkey::Pubkey,
     solana_rent::Rent,
     solana_runtime::{
@@ -39,8 +39,9 @@ use {
         bank_client::BankClient,
         bank_forks::BankForks,
         genesis_utils::{
-            GenesisConfigInfo, bootstrap_validator_stake_lamports, create_genesis_config,
+            bootstrap_validator_stake_lamports, create_genesis_config,
             create_genesis_config_with_leader, create_genesis_config_with_leader_ex,
+            GenesisConfigInfo,
         },
         loader_utils::{create_program, load_upgradeable_buffer},
     },
@@ -58,7 +59,7 @@ use {
     solana_svm_timings::ExecuteTimings,
     solana_svm_transaction::svm_message::SVMStaticMessage,
     solana_svm_type_overrides::rand,
-    solana_system_interface::{MAX_PERMITTED_DATA_LENGTH, program as system_program},
+    solana_system_interface::{program as system_program, MAX_PERMITTED_DATA_LENGTH},
     solana_transaction::Transaction,
     solana_transaction_error::TransactionError,
     std::{
@@ -757,21 +758,17 @@ fn test_return_data_and_log_data_syscall() {
 
         assert!(effects.result.is_none());
 
-        assert!(
-            effects
-                .logs
-                .iter()
-                .any(|log| log == "Program data: AQID BAUG")
-        );
+        assert!(effects
+            .logs
+            .iter()
+            .any(|log| log == "Program data: AQID BAUG"));
 
         assert_eq!(effects.return_data, vec![0x08, 0x01, 0x44]);
 
-        assert!(
-            effects
-                .logs
-                .iter()
-                .any(|log| log == &format!("Program return: {} CAFE", program_id))
-        );
+        assert!(effects
+            .logs
+            .iter()
+            .any(|log| log == &format!("Program return: {} CAFE", program_id)));
     }
 }
 
@@ -2554,7 +2551,7 @@ fn test_program_sbf_upgrade() {
         &mut program_cache,
         &sysvar_cache,
     );
-    assert_eq!(effects.status, Ok(()), "{:?}", effects.logs);
+    assert_eq!(effects.status, Ok(()));
     transaction_accounts = effects.resulting_accounts;
 
     // Upgrade program
@@ -2592,7 +2589,7 @@ fn test_program_sbf_upgrade() {
         &mut program_cache,
         &sysvar_cache,
     );
-    assert_eq!(effects.status, Ok(()), "{:?}", effects.logs);
+    assert_eq!(effects.status, Ok(()));
     transaction_accounts = effects.resulting_accounts;
 
     let modified_programs = program_cache.drain_modified_entries();
@@ -3913,11 +3910,9 @@ fn test_program_sbf_processed_inner_instruction() {
         &[instruction2, instruction1, instruction0],
         Some(&mint_keypair.pubkey()),
     );
-    assert!(
-        bank_client
-            .send_and_confirm_message(&[&mint_keypair], message)
-            .is_ok()
-    );
+    assert!(bank_client
+        .send_and_confirm_message(&[&mint_keypair], message)
+        .is_ok());
 }
 
 #[test]
