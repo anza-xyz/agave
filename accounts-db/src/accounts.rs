@@ -202,6 +202,20 @@ impl Accounts {
         )
     }
 
+    pub fn load_without_fixed_root_with_populate_option(
+        &self,
+        ancestors: &Ancestors,
+        pubkey: &Pubkey,
+        populate_read_cache: PopulateReadCache,
+    ) -> Option<(AccountSharedData, Slot)> {
+        self.accounts_db.load(
+            ancestors,
+            pubkey,
+            LoadHint::Unspecified,
+            populate_read_cache,
+        )
+    }
+
     /// scans underlying accounts_db for this delta (slot) with a map function
     ///   from LoadedAccount to B
     /// returns only the latest/current version of B for this slot

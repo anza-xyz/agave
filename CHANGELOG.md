@@ -38,6 +38,9 @@ still accepted for backwards compatibility but slated for full removal in the fu
   * `--limit-blockstore-size` may occupy more disk footprint at steady state with current cluster
   activity; however, disk usage should be more stable during abnormal cluster activity.
 #### Changes
+* Added `--rpc-populate-read-cache` flag. RPC `getAccountInfo` and `getMultipleAccounts`
+  no longer populate the AccountsDb read-only cache by default. Pass this flag to restore
+  cache population for workloads that benefit from it.
 * Validators running without `--full-rpc-api` and with snapshot generation disabled no longer
   store transaction signature keys in the status cache. Message hashes remain cached for duplicate
   transaction detection.
