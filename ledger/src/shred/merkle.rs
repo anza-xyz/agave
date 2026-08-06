@@ -7,13 +7,14 @@ use {
             DataShredHeader, Error, ProcessShredsStats, SHREDS_PER_FEC_BLOCK,
             SIZE_OF_CODING_SHRED_HEADERS, SIZE_OF_DATA_SHRED_HEADERS, SIZE_OF_NONCE,
             SIZE_OF_SIGNATURE, ShredCommonHeader, ShredFlags, ShredVariant,
-            common::impl_shred_common,
+            common::{impl_shred_common_payload, impl_shred_common_read},
             dispatch,
             merkle_tree::*,
             payload::{Payload, PayloadMutGuard},
             shred_code, shred_data,
             traits::{
                 Shred as ShredTrait, ShredCode as ShredCodeTrait, ShredData as ShredDataTrait,
+                ShredWithPayload as ShredWithPayloadTrait,
             },
         },
         shredder::ReedSolomonCache,
@@ -424,6 +425,12 @@ macro_rules! impl_merkle_shred {
             Ok(())
         }
 
+        #[inline]
+        pub(super) fn set_signature(&mut self, signature: Signature) {
+            self.payload.make_mut()[..SIZE_OF_SIGNATURE].copy_from_slice(signature.as_ref());
+            self.common_header.signature = signature;
+        }
+
         pub(super) fn retransmitter_signature(&self) -> Result<Signature, Error> {
             let offset = self.retransmitter_signature_offset()?;
             self.payload
@@ -503,10 +510,8 @@ macro_rules! impl_merkle_shred {
 
 use impl_merkle_shred;
 
-impl<'a> ShredTrait<'a> for ShredData {
-    type SignedData = Hash;
-
-    impl_shred_common!();
+impl ShredTrait for ShredData {
+    impl_shred_common_read!();
 
     // Also equal to:
     // ShredData::SIZE_OF_HEADERS
@@ -517,6 +522,32 @@ impl<'a> ShredTrait<'a> for ShredData {
     const SIZE_OF_PAYLOAD: usize =
         ShredCode::SIZE_OF_PAYLOAD - ShredCode::SIZE_OF_HEADERS + SIZE_OF_SIGNATURE;
     const SIZE_OF_HEADERS: usize = SIZE_OF_DATA_SHRED_HEADERS;
+
+    fn erasure_shard_index(&self) -> Result<usize, Error> {
+        shred_data::erasure_shard_index(self).ok_or_else(|| {
+            let headers = Box::new((self.common_header, self.data_header));
+            Error::InvalidErasureShardIndex(headers)
+        })
+    }
+
+    fn erasure_shard(&self) -> Result<&[u8], Error> {
+        Self::erasure_shard(self)
+    }
+
+    fn sanitize(&self) -> Result<(), Error> {
+        let shred_variant = self.common_header.shred_variant;
+        if !matches!(shred_variant, ShredVariant::MerkleData { .. }) {
+            return Err(Error::InvalidShredVariant);
+        }
+        let _ = self.merkle_proof()?;
+        shred_data::sanitize(self)
+    }
+}
+
+impl<'a> ShredWithPayloadTrait<'a> for ShredData {
+    type SignedData = Hash;
+
+    impl_shred_common_payload!();
 
     fn from_payload<T>(payload: T) -> Result<Self, Error>
     where
@@ -542,9 +573,20 @@ impl<'a> ShredTrait<'a> for ShredData {
         Ok(shred)
     }
 
+    fn signed_data(&'a self) -> Result<Self::SignedData, Error> {
+        self.merkle_root()
+    }
+}
+
+impl ShredTrait for ShredCode {
+    impl_shred_common_read!();
+
+    const SIZE_OF_PAYLOAD: usize = solana_packet::PACKET_DATA_SIZE - SIZE_OF_NONCE;
+    const SIZE_OF_HEADERS: usize = SIZE_OF_CODING_SHRED_HEADERS;
+
     fn erasure_shard_index(&self) -> Result<usize, Error> {
-        shred_data::erasure_shard_index(self).ok_or_else(|| {
-            let headers = Box::new((self.common_header, self.data_header));
+        shred_code::erasure_shard_index(self).ok_or_else(|| {
+            let headers = Box::new((self.common_header, self.coding_header));
             Error::InvalidErasureShardIndex(headers)
         })
     }
@@ -555,24 +597,18 @@ impl<'a> ShredTrait<'a> for ShredData {
 
     fn sanitize(&self) -> Result<(), Error> {
         let shred_variant = self.common_header.shred_variant;
-        if !matches!(shred_variant, ShredVariant::MerkleData { .. }) {
+        if !matches!(shred_variant, ShredVariant::MerkleCode { .. }) {
             return Err(Error::InvalidShredVariant);
         }
         let _ = self.merkle_proof()?;
-        shred_data::sanitize(self)
-    }
-
-    fn signed_data(&'a self) -> Result<Self::SignedData, Error> {
-        self.merkle_root()
+        shred_code::sanitize(self)
     }
 }
 
-impl<'a> ShredTrait<'a> for ShredCode {
+impl<'a> ShredWithPayloadTrait<'a> for ShredCode {
     type SignedData = Hash;
 
-    impl_shred_common!();
-    const SIZE_OF_PAYLOAD: usize = solana_packet::PACKET_DATA_SIZE - SIZE_OF_NONCE;
-    const SIZE_OF_HEADERS: usize = SIZE_OF_CODING_SHRED_HEADERS;
+    impl_shred_common_payload!();
 
     fn from_payload<T>(payload: T) -> Result<Self, Error>
     where
@@ -596,26 +632,6 @@ impl<'a> ShredTrait<'a> for ShredCode {
         };
         shred.sanitize()?;
         Ok(shred)
-    }
-
-    fn erasure_shard_index(&self) -> Result<usize, Error> {
-        shred_code::erasure_shard_index(self).ok_or_else(|| {
-            let headers = Box::new((self.common_header, self.coding_header));
-            Error::InvalidErasureShardIndex(headers)
-        })
-    }
-
-    fn erasure_shard(&self) -> Result<&[u8], Error> {
-        Self::erasure_shard(self)
-    }
-
-    fn sanitize(&self) -> Result<(), Error> {
-        let shred_variant = self.common_header.shred_variant;
-        if !matches!(shred_variant, ShredVariant::MerkleCode { .. }) {
-            return Err(Error::InvalidShredVariant);
-        }
-        let _ = self.merkle_proof()?;
-        shred_code::sanitize(self)
     }
 
     fn signed_data(&'a self) -> Result<Self::SignedData, Error> {

@@ -53,7 +53,7 @@ pub(crate) use self::merkle_tree::PROOF_ENTRIES_FOR_32_32_BATCH;
 #[cfg(test)]
 use rand::Rng;
 use {
-    self::traits::{Shred as _, ShredData as _},
+    self::traits::{Shred as _, ShredData as _, ShredWithPayload as _},
     bitflags::bitflags,
     num_enum::{IntoPrimitive, TryFromPrimitive},
     serde::{Deserialize, Serialize},

@@ -11,8 +11,8 @@ pub(super) fn erasure_shard_index<T: ShredDataTrait>(shred: &T) -> Option<usize>
 
 pub(super) fn sanitize<T: ShredDataTrait>(shred: &T) -> Result<(), Error> {
     use crate::shred::ShredFlags;
-    if shred.payload().len() != T::SIZE_OF_PAYLOAD {
-        return Err(Error::InvalidPayloadSize(shred.payload().len()));
+    if shred.payload_bytes().len() != T::SIZE_OF_PAYLOAD {
+        return Err(Error::InvalidPayloadSize(shred.payload_bytes().len()));
     }
     let common_header = shred.common_header();
     let data_header = shred.data_header();

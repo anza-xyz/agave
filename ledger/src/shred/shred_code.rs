@@ -32,8 +32,8 @@ pub(super) fn erasure_shard_index<T: ShredCodeTrait>(shred: &T) -> Option<usize>
 }
 
 pub(super) fn sanitize<T: ShredCodeTrait>(shred: &T) -> Result<(), Error> {
-    if shred.payload().len() != T::SIZE_OF_PAYLOAD {
-        return Err(Error::InvalidPayloadSize(shred.payload().len()));
+    if shred.payload_bytes().len() != T::SIZE_OF_PAYLOAD {
+        return Err(Error::InvalidPayloadSize(shred.payload_bytes().len()));
     }
     let common_header = shred.common_header();
     let coding_header = shred.coding_header();
