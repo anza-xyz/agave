@@ -6,6 +6,7 @@ use {
     solana_ledger::shred::{
         self,
         filter::{ShredFilterContext, TurbineMode},
+        tracer as shred_tracer,
     },
     solana_perf::packet::{PacketBatch, PacketBatchRecycler, PacketFlags, PacketRef},
     solana_runtime::bank_forks::{BankForks, SharableBanks},
@@ -105,6 +106,7 @@ impl ShredFetchStage {
                 if shred_filter_ctx.should_discard_packet(packet.as_ref()) {
                     packet.meta_mut().set_discard(true);
                 } else {
+                    shred_tracer::maybe_trace_ingest_packet(packet.as_ref());
                     packet.meta_mut().flags.insert(flags);
                 }
             }
