@@ -1668,6 +1668,7 @@ impl Validator {
                 votor_event_sender: votor_event_sender.clone(),
                 votor_event_receiver,
                 cancel: cancel.child_token(),
+                validator_exit: config.validator_exit.clone(),
                 key_notifiers: key_notifiers.clone(),
                 votor_server_sockets: node.sockets.votor_server,
                 votor_client_socket: node.sockets.quic_votor_client,

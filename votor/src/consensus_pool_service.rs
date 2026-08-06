@@ -16,6 +16,7 @@ use {
         },
         event::{LeaderWindowInfo, RepairEvent, RepairEventSender, VotorEvent, VotorEventSender},
         voting_service::BLSOp,
+        votor::ExitOnDrop,
     },
     agave_bls_sigverify::generated_cert_types::GeneratedCertTypes,
     agave_votor_messages::{
@@ -36,6 +37,7 @@ use {
         leader_schedule_utils::last_of_consecutive_leader_slots,
         validated_block_finalization::ValidatedBlockFinalizationCert,
     },
+    solana_validator_exit::Exit,
     stats::ConsensusPoolServiceStats,
     std::{
         collections::HashSet,
@@ -79,6 +81,7 @@ const ADDITIONAL_MESSAGES_PER_RECEIVE: usize = MAX_MESSAGES_PER_RECEIVE - 1;
 /// Inputs for the consensus pool and consensus pool service
 pub(crate) struct ConsensusPoolContext {
     pub(crate) exit: Arc<AtomicBool>,
+    pub(crate) validator_exit: Arc<RwLock<Exit>>,
     pub(crate) migration_status: Arc<MigrationStatus>,
     pub(crate) generated_cert_types: Arc<GeneratedCertTypes>,
 
@@ -159,6 +162,8 @@ impl ConsensusPoolService {
         let t_consensus_pool_service = Builder::new()
             .name("solVotorPoolSvc".to_string())
             .spawn(move || {
+                // Dropped before `ctx`, so the channel senders it owns outlive the shutdown.
+                let _exit_on_drop = ExitOnDrop::new(ctx.validator_exit.clone());
                 // Unlike the other votor threads, consensus pool starts even before Alpenglow is enabled
                 // because it must track the genesis vote.
                 let mut consensus_pool = ctx.new_consensus_pool();
@@ -173,7 +178,6 @@ impl ConsensusPoolService {
                 }
                 consensus_pool.do_report();
                 stats.do_report();
-                ctx.exit.store(true, Ordering::Relaxed);
                 info!("consensus pool service exited.");
             })
             .unwrap();
@@ -813,6 +817,7 @@ mod tests {
 
             let ctx = ConsensusPoolContext {
                 exit: Arc::new(AtomicBool::new(false)),
+                validator_exit: Arc::default(),
                 migration_status,
                 generated_cert_types,
                 cluster_info,

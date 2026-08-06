@@ -1144,7 +1144,7 @@ pub fn execute(
     }
     info!("Validator initialized");
     validator.listen_for_signals()?;
-    validator.join();
+    validator.close();
     info!("Validator exiting...");
 
     Ok(())

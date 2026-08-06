@@ -428,6 +428,7 @@ dependencies = [
  "solana-time-utils",
  "solana-tls-utils",
  "solana-transaction",
+ "solana-validator-exit",
  "thiserror 2.0.19",
  "tokio",
  "wincode",

@@ -517,6 +517,7 @@ dependencies = [
  "solana-time-utils",
  "solana-tls-utils",
  "solana-transaction",
+ "solana-validator-exit",
  "tempfile",
  "test-case",
  "thiserror 2.0.19",
