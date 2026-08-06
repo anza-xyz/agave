@@ -513,7 +513,11 @@ impl ShredRecoveryContext {
         // The same signature also verifies for recovered shreds because when
         // reconstructing the Merkle tree for the erasure batch, we will obtain the
         // same Merkle root.
-        let shreds = merkle::recover(shreds, &self.reed_solomon_cache)?;
+        let shreds = merkle::recover(
+            shreds,
+            &self.reed_solomon_cache,
+            &mut self.shred_filter_ctx.stats,
+        )?;
         shreds
             .filter_map(|shred| shred.ok().map(Shred::from))
             .filter(|shred| !self.should_discard_shred(shred))

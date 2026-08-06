@@ -53,39 +53,12 @@ impl Payload {
     pub fn truncate(&mut self, len: usize) {
         self.bytes.truncate(len);
     }
-}
 
-#[cfg(any(test, feature = "dev-context-only-utils"))]
-impl Payload {
-    pub fn copy_to_packet(&self, packet: &mut Packet) {
-        let size = self.len();
-        packet.buffer_mut()[..size].copy_from_slice(&self[..]);
-        packet.meta_mut().size = size;
-    }
-
-    pub fn to_packet(&self, nonce: Option<Nonce>) -> Packet {
-        let mut packet = Packet::default();
-        let size = self.len();
-        packet.buffer_mut()[..size].copy_from_slice(self);
-        let size = if let Some(nonce) = nonce {
-            let full_size = size + mem::size_of::<Nonce>();
-            packet.buffer_mut()[size..full_size].copy_from_slice(&nonce.to_le_bytes());
-            full_size
-        } else {
-            size
-        };
-        packet.meta_mut().size = size;
-        packet
-    }
-
-    pub fn to_bytes_packet(&self, nonce: Option<Nonce>) -> BytesPacket {
-        let cap = self.len() + nonce.map(|_| mem::size_of::<Nonce>()).unwrap_or(0);
-        let mut buffer = BytesMut::with_capacity(cap);
-        buffer.put_slice(&self[..]);
-        if let Some(nonce) = nonce {
-            buffer.put_u32_le(nonce);
-        }
-        BytesPacket::new(buffer.freeze(), Meta::default())
+    /// Returns true if this is the only handle to the payload's buffer, i.e. if reopening it for
+    /// mutation via [`PayloadBuilder::from`] would not have to copy.
+    #[inline]
+    pub fn is_unique(&self) -> bool {
+        self.bytes.is_unique()
     }
 }
 
@@ -134,6 +107,124 @@ impl Deref for Payload {
     #[inline]
     fn deref(&self) -> &Self::Target {
         self.bytes.deref()
+    }
+}
+
+/// A shred payload under construction.
+///
+/// Deliberately not [`Clone`]: a payload being built has exactly one owner,
+/// which guarantee mutations to be in-place both copy-free. Once it is fully
+/// populated, [`Self::build`] turns it into an (immutable) [`Payload`] that is
+/// cheap to share.
+#[derive(Debug)]
+pub struct PayloadBuilder {
+    bytes: BytesMut,
+}
+
+impl PayloadBuilder {
+    /// Allocates a zero-filled payload of `len` bytes.
+    #[inline]
+    pub fn zeroed(len: usize) -> Self {
+        Self {
+            bytes: BytesMut::zeroed(len),
+        }
+    }
+
+    /// Builds the payload, making it immutable and cheaply shareable. Never copies.
+    #[inline]
+    pub fn build(self) -> Payload {
+        Payload {
+            bytes: self.bytes.freeze(),
+        }
+    }
+}
+
+impl From<Payload> for PayloadBuilder {
+    /// Reopens a frozen payload for mutation.
+    ///
+    /// This does not copy if `payload` is the only handle to the *entire* underlying buffer, which
+    /// is the case for a payload that was just frozen and never cloned. Otherwise the payload is
+    /// copied, so that the mutation stays invisible to the other holders — see [`Payload::is_unique`]
+    /// if you need to know which of the two happened.
+    #[inline]
+    fn from(payload: Payload) -> Self {
+        Self {
+            bytes: payload.bytes.into(),
+        }
+    }
+}
+
+impl From<&Payload> for PayloadBuilder {
+    /// Copies `payload` into a new buffer for mutation, leaving the original untouched.
+    #[inline]
+    fn from(payload: &Payload) -> Self {
+        Self {
+            bytes: BytesMut::from(payload.as_ref()),
+        }
+    }
+}
+
+impl Deref for PayloadBuilder {
+    type Target = [u8];
+
+    #[inline]
+    fn deref(&self) -> &Self::Target {
+        self.bytes.deref()
+    }
+}
+
+impl DerefMut for PayloadBuilder {
+    #[inline]
+    fn deref_mut(&mut self) -> &mut Self::Target {
+        self.bytes.deref_mut()
+    }
+}
+
+impl AsRef<[u8]> for PayloadBuilder {
+    #[inline]
+    fn as_ref(&self) -> &[u8] {
+        self.bytes.as_ref()
+    }
+}
+
+impl AsMut<[u8]> for PayloadBuilder {
+    #[inline]
+    fn as_mut(&mut self) -> &mut [u8] {
+        self.bytes.as_mut()
+    }
+}
+
+#[cfg(any(test, feature = "dev-context-only-utils"))]
+impl Payload {
+    pub fn copy_to_packet(&self, packet: &mut Packet) {
+        let size = self.len();
+        packet.buffer_mut()[..size].copy_from_slice(&self[..]);
+        packet.meta_mut().size = size;
+    }
+
+    pub fn to_packet(&self, nonce: Option<Nonce>) -> Packet {
+        let mut packet = Packet::default();
+        let size = self.len();
+        packet.buffer_mut()[..size].copy_from_slice(self);
+        let size = if let Some(nonce) = nonce {
+            let full_size = size + mem::size_of::<Nonce>();
+            packet.buffer_mut()[size..full_size].copy_from_slice(&nonce.to_le_bytes());
+            full_size
+        } else {
+            size
+        };
+        packet.meta_mut().size = size;
+        packet
+    }
+
+    pub fn to_bytes_packet(&self, nonce: Option<Nonce>) -> BytesPacket {
+        let cap = self.len() + nonce.map(|_| mem::size_of::<Nonce>()).unwrap_or(0);
+        let mut buffer = BytesMut::with_capacity(cap);
+        buffer.put_slice(&self[..]);
+        if let Some(nonce) = nonce {
+            buffer.put_u32_le(nonce);
+        }
+        BytesPacket::new(buffer.freeze(), Meta::default())
     }
 }
 
