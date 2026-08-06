@@ -1,3 +1,11 @@
+#[cfg(target_os = "linux")]
+use {
+    crate::commands::run::config_file,
+    agave_cpu_utils::cpu_affinity,
+    agave_xdp::transmitter::{QueueCpuBinding, XdpConfig},
+    solana_clap_utils::input_parsers::parse_cpu_ranges,
+    solana_core::validator::XdpModules,
+};
 use {
     crate::{
         admin_rpc_service::{self, StakedNodesOverrides, load_staked_nodes_overrides},
@@ -83,12 +91,6 @@ use {
         sync::{Arc, RwLock, atomic::AtomicBool},
     },
 };
-#[cfg(target_os = "linux")]
-use {
-    agave_cpu_utils::cpu_affinity,
-    agave_xdp::transmitter::{QueueCpuBinding, XdpConfig},
-    solana_clap_utils::input_parsers::parse_cpu_ranges,
-};
 
 #[derive(Debug, PartialEq, Eq)]
 pub enum Operation {
@@ -172,8 +174,14 @@ pub fn execute(
     // XDP is not needed for init — it only initializes the ledger and exits.
     // Also, init drops all Linux capabilities in main() so XDP setup would fail.
     #[cfg(target_os = "linux")]
-    let xdp_transmit_config: Option<XdpConfig> =
+    let xdp_transmit_config: Option<(XdpConfig, XdpModules)> =
         build_xdp_config(matches, &operation, &bind_addresses)?;
+    // The config file covers Linux-only settings and is not even parsed on other
+    // platforms; reject it rather than silently ignoring it.
+    #[cfg(not(target_os = "linux"))]
+    if matches.value_of("experimental_config_file").is_some() {
+        Err("--experimental-config-file is only supported on Linux".to_string())?;
+    }
 
     let dynamic_port_range =
         solana_net_utils::parse_port_range(matches.value_of("dynamic_port_range").unwrap())
@@ -310,7 +318,7 @@ pub fn execute(
         required_caps.extend(primordial_caps.clone());
         retained_caps.extend(primordial_caps.clone());
 
-        if let Some(xdp_config) = xdp_transmit_config.as_ref() {
+        if let Some((xdp_config, _modules)) = xdp_transmit_config.as_ref() {
             required_caps.insert(CAP_NET_ADMIN);
             required_caps.insert(CAP_NET_RAW);
             if xdp_config.zero_copy {
@@ -368,7 +376,7 @@ pub fn execute(
         // potentially be used as a privilege escalation gadget
         let (xdp_transmit_setup, report) = xdp_transmit_config
             .clone()
-            .map(|mut xdp_config| {
+            .map(|(mut xdp_config, modules)| {
                 use {
                     agave_xdp::{device::NetworkDevice, interface_ipv4},
                     solana_core::validator::XdpTransmitSetup,
@@ -398,6 +406,7 @@ pub fn execute(
                         transmitter_builder: TransmitterBuilder::new(xdp_config, exit.clone())
                             .expect("failed to create xdp transmitter"),
                         src_ip,
+                        modules,
                     },
                     XdpNetworkConfigReport {
                         zero_copy,
@@ -1385,8 +1394,30 @@ fn build_xdp_config(
     matches: &ArgMatches,
     operation: &Operation,
     bind_addresses: &BindIpAddrs,
-) -> Result<Option<XdpConfig>, String> {
+) -> Result<Option<(XdpConfig, XdpModules)>, String> {
+    // Always parse and validate the config file (if provided) so errors surface
+    // even when XDP is disabled (--no-xdp) or during ledger init.
+    let file = config_file::resolve_xdp_config(
+        matches.value_of("experimental_config_file").map(Path::new),
+    )?;
+
     if matches.is_present("no_xdp") || *operation == Operation::Initialize {
+        return Ok(None);
+    }
+
+    let config_file::XdpFileConfig {
+        tpu,
+        turbine,
+        repair,
+        gossip,
+        interface: file_interface,
+        queues: file_queues,
+        zero_copy: file_zero_copy,
+    } = file;
+
+    // CLI flags do not override per-module use_xdp; a fully-disabled config
+    // skips the multihoming XDP guard.
+    if !(tpu.enabled || turbine.enabled || repair.enabled || gossip.enabled) {
         return Ok(None);
     }
     if bind_addresses.len() > 1 {
@@ -1394,60 +1425,52 @@ fn build_xdp_config(
             "XDP cannot be used in a multihoming context; pass --no-xdp to disable XDP".to_string(),
         );
     }
-    let xdp_interface = matches
+
+    let cli_interface = matches
         .value_of("xdp_interface")
         .or_else(|| matches.value_of("experimental_retransmit_xdp_interface"));
-    let xdp_zero_copy = matches.is_present("xdp_zero_copy")
+    let cli_zero_copy = matches.is_present("xdp_zero_copy")
         || matches.is_present("experimental_retransmit_xdp_zero_copy");
+    let cli_cpu_cores = matches
+        .value_of("xdp_cpu_cores")
+        .or_else(|| matches.value_of("experimental_retransmit_xdp_cpu_cores"));
+
     let poh_pinned_cpu_core = value_of(matches, "poh_pinned_cpu_core")
         .or_else(|| value_of(matches, "experimental_poh_pinned_cpu_core"))
         .or(poh_service::DEFAULT_PINNED_CPU_CORE);
-    let xdp_cpu_cores = matches
-        .value_of("xdp_cpu_cores")
-        .or_else(|| matches.value_of("experimental_retransmit_xdp_cpu_cores"));
-    let cpus = if let Some(cpu_str) = xdp_cpu_cores {
-        let parsed =
-            parse_cpu_ranges(cpu_str).expect("clap validator already accepted this CPU list");
-        if let Some(poh_core) = poh_pinned_cpu_core
-            && parsed.contains(&poh_core)
-        {
-            return Err(format!(
-                "--xdp-cpu-cores includes PoH core {poh_core}; XDP and PoH must not share a CPU \
-                 core"
-            ));
-        }
-        Some(parsed)
-    } else {
-        // Auto-select a single core, avoiding the PoH core.
-        match cpu_affinity(None) {
-            Ok(allowed) => {
-                match allowed
-                    .iter()
-                    .rev()
-                    .map(|cpu| **cpu)
-                    .find(|cpu| Some(*cpu) != poh_pinned_cpu_core)
-                {
-                    Some(cpu) => Some(vec![cpu]),
-                    None => {
-                        return Err(format!(
-                            "XDP requires a dedicated CPU core separate from PoH (core \
-                             {poh_pinned_cpu_core:?}), but none is available. Pass --no-xdp to \
-                             disable XDP."
-                        ));
-                    }
-                }
-            }
-            Err(e) => {
-                return Err(format!(
-                    "failed to query CPU affinity: {e}. Pass --no-xdp to disable XDP, or provide \
-                     --xdp-cpu-cores explicitly."
-                ));
-            }
-        }
+
+    let file_interface_overridden = match (cli_interface, file_interface.as_deref()) {
+        (Some(cli), Some(file)) => cli != file,
+        _ => false,
     };
-    Ok(cpus.map(|cpus| {
-        info!("XDP enabled on CPU cores: {cpus:?}");
-        // Map the CPU list onto hardware queues sequentially (queue i -> cpus[i]).
+    if file_interface_overridden {
+        warn!(
+            "--xdp-interface overrides the config file interface; ignoring config file XDP queues \
+             and zero_copy"
+        );
+    }
+
+    let interface = cli_interface.map(str::to_string).or(file_interface);
+    let zero_copy = cli_zero_copy || (!file_interface_overridden && file_zero_copy);
+
+    // Queue source precedence: CLI CPU list, file tx union when the CLI did not
+    // select a different interface, then auto-selection. File-sourced queues
+    // preserve per-module scoping; global sources do not.
+    let (queues, file_tx_mode): (Vec<QueueCpuBinding>, bool) = if let Some(cpu_str) = cli_cpu_cores
+    {
+        let cpus =
+            parse_cpu_ranges(cpu_str).expect("clap validator already accepted this CPU list");
+        // An empty (e.g. reversed) range would build a transmitter with no
+        // queues, panicking on the first send instead of failing here.
+        if cpus.is_empty() {
+            return Err(format!("--xdp-cpu-cores `{cpu_str}` selects no CPUs"));
+        }
+        if !file_queues.is_empty() {
+            warn!(
+                "--xdp-cpu-cores overrides the config file queue mapping; ignoring its queue ids \
+                 and per-module tx scoping"
+            );
+        }
         let queues = cpus
             .into_iter()
             .enumerate()
@@ -1456,8 +1479,74 @@ fn build_xdp_config(
                 cpu,
             })
             .collect();
-        XdpConfig::new(xdp_interface, queues, xdp_zero_copy)
-    }))
+        (queues, false)
+    } else if !file_interface_overridden && !file_queues.is_empty() {
+        (file_queues, true)
+    } else {
+        let allowed = cpu_affinity(None).map_err(|e| {
+            format!(
+                "failed to query CPU affinity: {e}. Pass --no-xdp to disable XDP, or provide \
+                 --xdp-cpu-cores explicitly."
+            )
+        })?;
+        let cpu = allowed
+            .iter()
+            .rev()
+            .map(|cpu| **cpu)
+            .find(|cpu| Some(*cpu) != poh_pinned_cpu_core)
+            .ok_or_else(|| {
+                format!(
+                    "XDP requires a dedicated CPU core separate from PoH (core \
+                     {poh_pinned_cpu_core:?}), but none is available. Pass --no-xdp to disable \
+                     XDP."
+                )
+            })?;
+        (vec![QueueCpuBinding { queue: 0, cpu }], false)
+    };
+
+    // XDP and PoH must never share a CPU core, whatever the mapping's source.
+    if let Some(poh_core) = poh_pinned_cpu_core
+        && queues.iter().any(|binding| binding.cpu == poh_core)
+    {
+        return Err(format!(
+            "XDP maps a worker to PoH core {poh_core}; XDP and PoH must not share a CPU core"
+        ));
+    }
+
+    // Convert per-module config to sender positions. `None` uses OS sockets;
+    // unscoped modules use all configured XDP senders.
+    let all_positions: Vec<usize> = (0..queues.len()).collect();
+    let module_positions = |module: &config_file::ModuleXdp| -> Option<Vec<usize>> {
+        if !module.enabled {
+            return None;
+        }
+        if file_tx_mode && !module.tx_queues.is_empty() {
+            let positions = queues
+                .iter()
+                .enumerate()
+                .filter(|(_, binding)| module.tx_queues.contains(&binding.queue))
+                .map(|(i, _)| i)
+                .collect();
+            Some(positions)
+        } else {
+            Some(all_positions.clone())
+        }
+    };
+    let modules = XdpModules {
+        tpu: module_positions(&tpu),
+        turbine: module_positions(&turbine),
+        repair: module_positions(&repair),
+        gossip: module_positions(&gossip),
+    };
+
+    info!(
+        "XDP enabled on CPU cores: {:?}",
+        queues.iter().map(|b| b.cpu).collect::<Vec<_>>()
+    );
+    Ok(Some((
+        XdpConfig::new(interface, queues, zero_copy),
+        modules,
+    )))
 }
 
 #[cfg(all(target_os = "linux", test))]
@@ -1488,6 +1577,20 @@ mod xdp_tests {
         let matches = app.get_matches_from(vec!["agave-validator", "--no-xdp"]);
         let result = build_xdp_config(&matches, &Operation::Run, &single_ip_bind());
         assert!(result.unwrap().is_none(), "--no-xdp must disable XDP");
+    }
+
+    #[test]
+    fn test_empty_cpu_range_is_error() {
+        // A reversed range parses to an empty CPU list; it must fail at startup
+        // rather than build a transmitter with no queues.
+        let default_args = DefaultArgs::default();
+        let app = add_args(clap::App::new("agave-validator"), &default_args);
+        let matches = app.get_matches_from(vec!["agave-validator", "--xdp-cpu-cores", "5-3"]);
+        let result = build_xdp_config(&matches, &Operation::Run, &single_ip_bind());
+        assert!(
+            result.unwrap_err().contains("selects no CPUs"),
+            "an empty CPU range must be a startup error"
+        );
     }
 
     #[test]
@@ -1524,5 +1627,242 @@ mod xdp_tests {
             result.unwrap_err().contains("PoH core"),
             "XDP core overlapping PoH core must produce an error"
         );
+    }
+
+    fn write_config(contents: &str) -> tempfile::NamedTempFile {
+        use std::io::Write;
+        let mut file = tempfile::NamedTempFile::new().unwrap();
+        file.write_all(contents.as_bytes()).unwrap();
+        file.flush().unwrap();
+        file
+    }
+
+    #[test]
+    fn test_config_file_interface_and_queues_are_used() {
+        let default_args = DefaultArgs::default();
+        let app = add_args(clap::App::new("agave-validator"), &default_args);
+        let file = write_config(
+            "[interfaces.\"eth0\"]\nzero_copy = true\nqueue_to_cpu_mapping = [{ queue = 0, cpu = \
+             3 }, { queue = 1, cpu = 4 }]\n\n[turbine.xdp]\ntx = { eth0 = [0, 1] }\n",
+        );
+        let matches = app.get_matches_from(vec![
+            "agave-validator",
+            "--experimental-config-file",
+            file.path().to_str().unwrap(),
+        ]);
+        let (config, modules) = build_xdp_config(&matches, &Operation::Run, &single_ip_bind())
+            .unwrap()
+            .expect("config file must enable XDP");
+        assert_eq!(config.interface.as_deref(), Some("eth0"));
+        assert!(config.zero_copy);
+        assert_eq!(
+            config.queues,
+            vec![
+                QueueCpuBinding { queue: 0, cpu: 3 },
+                QueueCpuBinding { queue: 1, cpu: 4 },
+            ]
+        );
+        // turbine named queues 0 and 1 via tx; modules without a tx block use
+        // all queues.
+        assert_eq!(modules.turbine, Some(vec![0, 1]));
+        assert_eq!(modules.tpu, Some(vec![0, 1]));
+        assert_eq!(modules.repair, Some(vec![0, 1]));
+        assert_eq!(modules.gossip, Some(vec![0, 1]));
+    }
+
+    #[test]
+    fn test_per_module_tx_scopes_queues() {
+        let default_args = DefaultArgs::default();
+        let app = add_args(clap::App::new("agave-validator"), &default_args);
+        // tpu and turbine each name one queue; repair/gossip name none.
+        let file = write_config(
+            "[interfaces.\"eth0\"]\nqueue_to_cpu_mapping = [{ queue = 0, cpu = 3 }, { queue = 1, \
+             cpu = 4 }]\n\n[tpu.xdp]\ntx = { eth0 = [0] }\n\n[turbine.xdp]\ntx = { eth0 = [1] }\n",
+        );
+        let matches = app.get_matches_from(vec![
+            "agave-validator",
+            "--experimental-config-file",
+            file.path().to_str().unwrap(),
+        ]);
+        let (config, modules) = build_xdp_config(&matches, &Operation::Run, &single_ip_bind())
+            .unwrap()
+            .expect("config file must enable XDP");
+        // The transmitter carries the union of both queues.
+        assert_eq!(
+            config.queues,
+            vec![
+                QueueCpuBinding { queue: 0, cpu: 3 },
+                QueueCpuBinding { queue: 1, cpu: 4 },
+            ]
+        );
+        // tpu -> queue 0 (position 0); turbine -> queue 1 (position 1).
+        assert_eq!(modules.tpu, Some(vec![0]));
+        assert_eq!(modules.turbine, Some(vec![1]));
+        // repair/gossip named no queues, so they use all of them.
+        assert_eq!(modules.repair, Some(vec![0, 1]));
+        assert_eq!(modules.gossip, Some(vec![0, 1]));
+    }
+
+    #[test]
+    fn test_config_file_validated_even_when_xdp_disabled() {
+        let default_args = DefaultArgs::default();
+        let app = add_args(clap::App::new("agave-validator"), &default_args);
+        // References an interface with no [interfaces.<name>] section.
+        let file = write_config("[turbine.xdp]\ntx = { eth0 = [0] }\n");
+        let matches = app.get_matches_from(vec![
+            "agave-validator",
+            "--experimental-config-file",
+            file.path().to_str().unwrap(),
+            "--no-xdp",
+        ]);
+        let result = build_xdp_config(&matches, &Operation::Run, &single_ip_bind());
+        assert!(
+            result.unwrap_err().contains("undeclared interface"),
+            "config file must be validated even with --no-xdp"
+        );
+    }
+
+    #[test]
+    fn test_config_file_can_disable_xdp() {
+        let default_args = DefaultArgs::default();
+        let app = add_args(clap::App::new("agave-validator"), &default_args);
+        let file = write_config(
+            "[tpu]\nuse_xdp = false\n[turbine]\nuse_xdp = false\n[repair]\nuse_xdp = \
+             false\n[gossip]\nuse_xdp = false\n",
+        );
+        let matches = app.get_matches_from(vec![
+            "agave-validator",
+            "--experimental-config-file",
+            file.path().to_str().unwrap(),
+        ]);
+        let result = build_xdp_config(&matches, &Operation::Run, &single_ip_bind());
+        assert!(
+            result.unwrap().is_none(),
+            "a config disabling every module must disable XDP"
+        );
+    }
+
+    #[test]
+    fn test_config_file_can_disable_xdp_with_multihoming() {
+        let default_args = DefaultArgs::default();
+        let app = add_args(clap::App::new("agave-validator"), &default_args);
+        let file = write_config(
+            "[tpu]\nuse_xdp = false\n[turbine]\nuse_xdp = false\n[repair]\nuse_xdp = \
+             false\n[gossip]\nuse_xdp = false\n",
+        );
+        let matches = app.get_matches_from(vec![
+            "agave-validator",
+            "--experimental-config-file",
+            file.path().to_str().unwrap(),
+        ]);
+        let result = build_xdp_config(&matches, &Operation::Run, &multihoming_bind());
+        assert!(
+            result.unwrap().is_none(),
+            "a config disabling XDP must skip the multihoming XDP error"
+        );
+    }
+
+    #[test]
+    fn test_cli_cpu_cores_override_config_file_queues() {
+        let default_args = DefaultArgs::default();
+        let app = add_args(clap::App::new("agave-validator"), &default_args);
+        let file = write_config(
+            "[interfaces.\"eth0\"]\nqueue_to_cpu_mapping = [{ queue = 0, cpu = 3 \
+             }]\n\n[turbine.xdp]\ntx = { eth0 = [0] }\n",
+        );
+        let matches = app.get_matches_from(vec![
+            "agave-validator",
+            "--experimental-config-file",
+            file.path().to_str().unwrap(),
+            "--xdp-cpu-cores",
+            "5,7",
+        ]);
+        let (config, modules) = build_xdp_config(&matches, &Operation::Run, &single_ip_bind())
+            .unwrap()
+            .expect("XDP must be enabled");
+        assert_eq!(config.interface.as_deref(), Some("eth0"));
+        assert_eq!(
+            config.queues,
+            vec![
+                QueueCpuBinding { queue: 0, cpu: 5 },
+                QueueCpuBinding { queue: 1, cpu: 7 },
+            ]
+        );
+        // --xdp-cpu-cores is a global queue source, so every enabled module
+        // (all of them, by default) uses all queues.
+        assert_eq!(modules.turbine, Some(vec![0, 1]));
+        assert_eq!(modules.tpu, Some(vec![0, 1]));
+    }
+
+    #[test]
+    fn test_cli_interface_override_ignores_config_file_interface_settings() {
+        let default_args = DefaultArgs::default();
+        let app = add_args(clap::App::new("agave-validator"), &default_args);
+        let file = write_config(
+            "[interfaces.\"eth0\"]\nzero_copy = true\nqueue_to_cpu_mapping = [{ queue = 7, cpu = \
+             3 }]\n\n[turbine.xdp]\ntx = { eth0 = [7] }\n",
+        );
+        let matches = app.get_matches_from(vec![
+            "agave-validator",
+            "--experimental-config-file",
+            file.path().to_str().unwrap(),
+            "--xdp-interface",
+            "eth1",
+        ]);
+        let (config, modules) = build_xdp_config(&matches, &Operation::Run, &single_ip_bind())
+            .unwrap()
+            .expect("XDP must be enabled");
+        assert_eq!(config.interface.as_deref(), Some("eth1"));
+        assert!(
+            !config.zero_copy,
+            "file zero_copy belongs to eth0 and must not apply to eth1"
+        );
+        assert_eq!(
+            config.queues[0].queue, 0,
+            "eth0's configured queue must be ignored for eth1"
+        );
+        // Without file-sourced queues, per-module tx scoping falls back to the
+        // selected global queue set.
+        assert_eq!(modules.turbine, Some(vec![0]));
+        assert_eq!(modules.tpu, Some(vec![0]));
+    }
+
+    #[test]
+    fn test_config_file_per_module_disable() {
+        let default_args = DefaultArgs::default();
+        let app = add_args(clap::App::new("agave-validator"), &default_args);
+        let file = write_config("[turbine]\nuse_xdp = false\n");
+        let matches = app.get_matches_from(vec![
+            "agave-validator",
+            "--experimental-config-file",
+            file.path().to_str().unwrap(),
+        ]);
+        let (_config, modules) = build_xdp_config(&matches, &Operation::Run, &single_ip_bind())
+            .unwrap()
+            .expect("other modules still enable XDP");
+        assert!(modules.turbine.is_none(), "turbine must be disabled");
+        assert!(modules.tpu.is_some() && modules.repair.is_some() && modules.gossip.is_some());
+    }
+
+    #[test]
+    fn test_cli_xdp_flags_do_not_reenable_disabled_modules() {
+        let default_args = DefaultArgs::default();
+        let app = add_args(clap::App::new("agave-validator"), &default_args);
+        let file = write_config("[gossip]\nuse_xdp = false\n");
+        let matches = app.get_matches_from(vec![
+            "agave-validator",
+            "--experimental-config-file",
+            file.path().to_str().unwrap(),
+            "--xdp-cpu-cores",
+            "5",
+        ]);
+        let (_config, modules) = build_xdp_config(&matches, &Operation::Run, &single_ip_bind())
+            .unwrap()
+            .expect("other modules still enable XDP");
+        assert!(
+            modules.gossip.is_none(),
+            "CLI XDP flags must not re-enable gossip"
+        );
+        assert!(modules.tpu.is_some() && modules.turbine.is_some() && modules.repair.is_some());
     }
 }

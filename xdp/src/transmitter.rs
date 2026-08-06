@@ -244,6 +244,24 @@ impl AsRef<[SocketAddr]> for XdpAddrs {
 }
 
 impl XdpSender {
+    /// Return a sender restricted to positions in this sender's queue list.
+    ///
+    /// On Linux, each element of `positions` must be less than `self.len()`;
+    /// out-of-range indices panic.
+    pub fn subset(&self, positions: &[usize]) -> XdpSender {
+        #[cfg(target_os = "linux")]
+        {
+            XdpSender {
+                senders: positions.iter().map(|&i| self.senders[i].clone()).collect(),
+            }
+        }
+        #[cfg(not(target_os = "linux"))]
+        {
+            let _ = positions;
+            XdpSender {}
+        }
+    }
+
     #[inline]
     pub fn try_send(
         &self,
