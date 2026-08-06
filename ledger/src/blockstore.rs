@@ -4165,9 +4165,10 @@ impl Blockstore {
         slot_transaction_iterator: impl Iterator<Item = VersionedTransaction>,
     ) -> Result<VersionedConfirmedBlock> {
         let previous_blockhash = slot_meta.parent_slot.and_then(|parent_slot| {
+            let parent_slot_meta = self.meta(parent_slot).ok().flatten()?;
             self.get_slot_components_with_shred_info(
                 parent_slot,
-                /*shred_start_index:*/ 0,
+                u64::from(parent_slot_meta.replay_fec_set_index),
                 allow_dead_slots,
             )
             .ok()

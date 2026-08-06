@@ -21,7 +21,7 @@ use {
     solana_ledger::{
         ancestor_iterator::AncestorIterator,
         blockstore::{
-            Blockstore, PurgeType,
+            Blockstore, BlockstoreError, PurgeType,
             column::{Column, ColumnName},
         },
         blockstore_options::AccessType,
@@ -712,7 +712,14 @@ fn do_blockstore_process_command(ledger_path: &Path, matches: &ArgMatches<'_>) -
                 .into_iter()
                 .rev()
             {
-                let blockhash = blockstore.get_slot_entries(slot, 0)?.last().unwrap().hash;
+                let slot_meta = blockstore
+                    .meta(slot)?
+                    .ok_or(BlockstoreError::SlotUnavailable)?;
+                let blockhash = blockstore
+                    .get_slot_entries(slot, u64::from(slot_meta.replay_fec_set_index))?
+                    .last()
+                    .unwrap()
+                    .hash;
                 println!("{slot}: {blockhash:?}");
             }
         }
