@@ -102,15 +102,6 @@ fn create_store_for_shrink_tests(
 }
 
 #[test]
-fn test_new_for_tests_single_threaded_uses_single_thread_pools() {
-    let accounts_db = AccountsDb::new_for_tests_single_threaded();
-
-    assert!(accounts_db.skip_initial_hash_calc);
-    assert_eq!(accounts_db.thread_pool_foreground.current_num_threads(), 1);
-    assert_eq!(accounts_db.thread_pool_background.current_num_threads(), 1);
-}
-
-#[test]
 #[should_panic(expected = "Accounts may only be stored once per slot:")]
 fn test_generate_index_duplicates_within_slot() {
     let db = AccountsDb::new_for_tests_with_config(Vec::new(), DEFAULT_ACCOUNTS_DB_CONFIG);

@@ -20,13 +20,12 @@ use {
     solana_svm::conformance::account_state::account_from_proto,
 };
 use {
-    solana_accounts_db::{accounts::Accounts, accounts_db::AccountsDb},
-    std::sync::Arc,
+    solana_accounts_db::{
+        accounts::Accounts,
+        accounts_db::{ACCOUNTS_DB_CONFIG_FOR_TESTING, AccountsDb, AccountsDbConfig},
+    },
+    std::{num::NonZeroUsize, sync::Arc},
 };
-
-pub(crate) fn new_accounts_for_tests_single_threaded() -> Accounts {
-    Accounts::new(Arc::new(AccountsDb::new_for_tests_single_threaded()))
-}
 
 /// Parse the input accounts into keyed `AccountSharedData`, dropping zero-lamport
 /// accounts (treated as nonexistent).
@@ -65,5 +64,52 @@ pub(crate) fn fee_rate_governor_from_proto(
         min_lamports_per_signature: value.min_lamports_per_signature,
         max_lamports_per_signature: value.max_lamports_per_signature,
         burn_percent: value.burn_percent as u8,
+    }
+}
+
+pub(crate) fn new_accounts_for_tests_single_threaded() -> Accounts {
+    Accounts::new(Arc::new(AccountsDb::new_for_tests_with_config(
+        Vec::new(),
+        new_accounts_db_config_for_tests_single_threaded(),
+    )))
+}
+
+pub(crate) fn new_accounts_db_config_for_tests_single_threaded() -> AccountsDbConfig {
+    let single_thread = NonZeroUsize::new(1).unwrap();
+    AccountsDbConfig {
+        num_background_threads: Some(single_thread),
+        num_foreground_threads: Some(single_thread),
+        read_cache_num_shards: Some(2),
+        skip_initial_hash_calc: true,
+        ..ACCOUNTS_DB_CONFIG_FOR_TESTING
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use {super::*, solana_accounts_db::accounts_index::IndexLimit};
+
+    #[test]
+    fn test_new_accounts_for_tests_single_threaded() {
+        let accounts = new_accounts_for_tests_single_threaded();
+        let accounts_db = &accounts.accounts_db;
+        assert!(accounts_db.skip_initial_hash_calc);
+        assert_eq!(accounts_db.thread_pool_foreground.current_num_threads(), 1);
+        assert_eq!(accounts_db.thread_pool_background.current_num_threads(), 1);
+    }
+
+    #[test]
+    fn test_new_accounts_db_config_for_tests_single_threaded_config() {
+        let one = NonZeroUsize::new(1).unwrap();
+        let config = new_accounts_db_config_for_tests_single_threaded();
+        let index = config.index.unwrap();
+        assert_eq!(index.bins, Some(2));
+        assert_eq!(index.num_flush_threads, Some(one));
+        assert!(matches!(index.index_limit, IndexLimit::InMemOnly));
+        assert!(config.skip_initial_hash_calc);
+        assert!(!config.exhaustively_verify_refcounts);
+        assert_eq!(config.read_cache_num_shards, Some(2));
+        assert_eq!(config.num_background_threads, Some(one));
+        assert_eq!(config.num_foreground_threads, Some(one));
     }
 }
