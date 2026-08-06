@@ -373,7 +373,7 @@ solana-cli-output = { path = "cli-output", version = "=4.3.0-alpha.3", features 
 solana-client = { path = "client", version = "=4.3.0-alpha.3" }
 solana-client-traits = "4.1.0"
 solana-clock = "3.2.0"
-solana-cluster-type = "3.1.0"
+solana-cluster-type = "3.2.0"
 solana-commitment-config = "3.1.1"
 solana-compute-budget = { path = "compute-budget", version = "=4.3.0-alpha.3", features = ["agave-unstable-api"] }
 solana-compute-budget-instruction = { path = "compute-budget-instruction", version = "=4.3.0-alpha.3", features = ["agave-unstable-api"] }
