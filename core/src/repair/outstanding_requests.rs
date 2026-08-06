@@ -93,6 +93,16 @@ where
         response
     }
 
+    /// Returns true if `nonce` corresponds to an outstanding request that is still
+    /// expecting at least one response. Useful for distinguishing "unsolicited /
+    /// already-consumed nonce" from "valid nonce, response failed verification" at
+    /// the call site, without changing the success path of `register_response`.
+    pub fn is_pending(&mut self, nonce: u32) -> bool {
+        self.requests
+            .get(&nonce)
+            .is_some_and(|status| status.num_expected_responses > 0)
+    }
+
     /// Fetches metadata associated with the nonce
     pub fn fetch_metadata_for_nonce(&self, nonce: u32) -> Option<U>
     where

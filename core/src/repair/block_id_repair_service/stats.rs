@@ -9,8 +9,17 @@ pub(super) struct BlockIdRepairResponsesStats {
     /// Dropped due to throttling responses
     pub dropped_packets: usize,
 
-    /// Invalid response (failed deserialization or nonce)
+    /// Packets that failed deserialization (malformed, no nonce, etc).
     pub invalid_packets: usize,
+    /// Packets that deserialized OK but carried a nonce we are not tracking
+    /// (never sent, already consumed, or expired).
+    pub unknown_nonce_responses: usize,
+    /// ParentFecSetCount responses for an active nonce whose Merkle proof
+    /// failed verification — possible adversarial peer.
+    pub verify_failed_parent_fec_set_count: usize,
+    /// FecSetRoot responses for an active nonce whose Merkle proof failed
+    /// verification — possible adversarial peer.
+    pub verify_failed_fec_set_root: usize,
 
     /// Ping challenges
     pub ping_responses: usize,
@@ -35,6 +44,21 @@ impl BlockIdRepairResponsesStats {
             ("processed", self.processed, i64),
             ("dropped_packets", self.dropped_packets, i64),
             ("invalid_packets", self.invalid_packets, i64),
+            (
+                "unknown_nonce_responses",
+                self.unknown_nonce_responses,
+                i64
+            ),
+            (
+                "verify_failed_parent_fec_set_count",
+                self.verify_failed_parent_fec_set_count,
+                i64
+            ),
+            (
+                "verify_failed_fec_set_root",
+                self.verify_failed_fec_set_root,
+                i64
+            ),
             ("ping_responses", self.ping_responses, i64),
             (
                 "unexpected_ping_responses",
