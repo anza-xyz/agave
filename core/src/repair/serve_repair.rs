@@ -231,6 +231,9 @@ pub enum BlockIdRepairType {
         slot: Slot,
         block_id: Hash,
         fec_set_index: u32,
+        // Authenticated by the ParentAndFecSetCount response and retained locally
+        // to verify the depth of the FEC-set proof. This is not sent on the wire.
+        fec_set_count: u32,
     },
 }
 
@@ -298,7 +301,7 @@ impl RequestResponse for BlockIdRepairType {
                     parent_proof,
                 },
             ) => {
-                if *fec_set_count > MAX_FEC_SETS_PER_SLOT {
+                if *fec_set_count == 0 || *fec_set_count > MAX_FEC_SETS_PER_SLOT {
                     return false;
                 }
 
@@ -329,20 +332,31 @@ impl RequestResponse for BlockIdRepairType {
                     slot: _slot,
                     block_id,
                     fec_set_index,
+                    fec_set_count,
                 },
                 Self::Response::FecSetRoot {
                     fec_set_root,
                     fec_set_proof,
                 },
             ) => {
-                // The double-Merkle tree contains at least one FEC-set root and
-                // the parent-info leaf, so a valid proof cannot be empty.
-                if fec_set_proof.is_empty() {
+                if *fec_set_count == 0 || *fec_set_count > MAX_FEC_SETS_PER_SLOT {
                     return false;
                 }
-                debug_assert_eq!(*fec_set_index as usize % DATA_SHREDS_PER_FEC_BLOCK, 0);
+                if !(*fec_set_index as usize).is_multiple_of(DATA_SHREDS_PER_FEC_BLOCK) {
+                    return false;
+                }
                 // Convert from shred-space to leaf-index
                 let leaf_index = *fec_set_index as usize / DATA_SHREDS_PER_FEC_BLOCK;
+                if leaf_index >= *fec_set_count as usize {
+                    return false;
+                }
+                // + 1 here to account for the parent info which is the final leaf of the tree.
+                let proof_size = merkle_tree::get_proof_size(*fec_set_count as usize + 1);
+                if fec_set_proof.len()
+                    != proof_size as usize * merkle_tree::SIZE_OF_MERKLE_PROOF_ENTRY
+                {
+                    return false;
+                }
                 merkle_tree::verify_merkle_proof(
                     *fec_set_root,
                     leaf_index,
@@ -1873,6 +1887,7 @@ impl ServeRepair {
                 slot,
                 block_id,
                 fec_set_index,
+                fec_set_count: _,
             } => RepairProtocol::FecSetRoot {
                 header,
                 slot: *slot,
@@ -3310,6 +3325,7 @@ mod tests {
             slot: 100,
             block_id,
             fec_set_index: 0,
+            fec_set_count: 1,
         };
         let response = BlockIdRepairResponse::FecSetRoot {
             fec_set_root: block_id,
@@ -3317,5 +3333,49 @@ mod tests {
         };
 
         assert!(!request.verify_response(&response));
+    }
+
+    #[test]
+    fn test_verify_fec_set_root_rejects_shortened_proof() {
+        let fec_set_roots = [Hash::new_unique(), Hash::new_unique()];
+        let parent_info_leaf = Hash::new_unique();
+        let leaves = [fec_set_roots[0], fec_set_roots[1], parent_info_leaf];
+        let tree =
+            merkle_tree::MerkleTree::try_new_with_len(leaves.into_iter().map(Ok), leaves.len())
+                .unwrap();
+        let block_id = *tree.root();
+        let fec_set_proof: Vec<u8> = tree
+            .make_merkle_proof(0, leaves.len())
+            .flat_map(|entry| entry.unwrap().iter().copied())
+            .collect();
+        let internal_node = *merkle_tree::MerkleTree::try_new_with_len(
+            fec_set_roots.into_iter().map(Ok),
+            fec_set_roots.len(),
+        )
+        .unwrap()
+        .root();
+        let shortened_proof = fec_set_proof[merkle_tree::SIZE_OF_MERKLE_PROOF_ENTRY..].to_vec();
+
+        // The generic verifier cannot distinguish an internal node from a leaf.
+        assert!(
+            merkle_tree::verify_merkle_proof(internal_node, 0, &shortened_proof, block_id).is_ok()
+        );
+
+        let request = BlockIdRepairType::FecSetRoot {
+            slot: 100,
+            block_id,
+            fec_set_index: 0,
+            fec_set_count: 2,
+        };
+        assert!(request.verify_response(&BlockIdRepairResponse::FecSetRoot {
+            fec_set_root: fec_set_roots[0],
+            fec_set_proof,
+        }));
+        assert!(
+            !request.verify_response(&BlockIdRepairResponse::FecSetRoot {
+                fec_set_root: internal_node,
+                fec_set_proof: shortened_proof,
+            })
+        );
     }
 }

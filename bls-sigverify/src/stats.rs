@@ -68,6 +68,8 @@ pub(super) struct SigVerifierStats {
     pub(super) num_generated_certs_received: Saturating<u64>,
     /// Number of times a vote was too far in the future and discarded.
     pub(super) vote_too_far_in_future: Saturating<u64>,
+    pub(super) num_keep_vote_failed: Saturating<u64>,
+    pub(super) vote_pool_duplicate: Saturating<u64>,
     pub(super) invalid_vote_banning_validator: Saturating<u64>,
     /// Last time the stats were reported.
     last_report: Reporting,
@@ -90,6 +92,8 @@ impl SigVerifierStats {
             vote_too_far_in_future: Saturating(0),
             verify_and_send_batch_us: WelfordStats::default(),
             invalid_vote_banning_validator: Saturating(0),
+            num_keep_vote_failed: Saturating(0),
+            vote_pool_duplicate: Saturating(0),
             last_report: Reporting::new(root_slot),
         }
     }
@@ -121,6 +125,8 @@ impl SigVerifierStats {
             verify_and_send_batch_us,
             vote_too_far_in_future,
             invalid_vote_banning_validator,
+            num_keep_vote_failed,
+            vote_pool_duplicate,
             last_report: _,
         } = self;
 
@@ -183,6 +189,8 @@ impl SigVerifierStats {
                 invalid_vote_banning_validator.0,
                 i64
             ),
+            ("num_keep_vote_failed", num_keep_vote_failed.0, i64),
+            ("vote_pool_duplicate", vote_pool_duplicate.0, i64),
             ("num_pkts_max", num_pkts.maximum().unwrap_or(0), i64),
             ("num_pkts_mean", num_pkts.mean().unwrap_or(0), i64),
             ("num_pkts_count", num_pkts.count(), i64),

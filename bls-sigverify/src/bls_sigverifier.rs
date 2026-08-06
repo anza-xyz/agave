@@ -61,10 +61,9 @@ fn max_admitted_vote_slot(root_slot: Slot, highest_parent_ready_slot: Slot) -> S
         .saturating_add(MAX_VOTE_SLOT_DISTANCE_FROM_PARENT_READY)
 }
 
-/// If we receive an invalid certificate or vote, we ban its attributed sender. For certificates
-/// received from blockstore, that sender is the scheduled leader for the carrier slot. We ban the
-/// sender for 2 days, which roughly corresponds to an epoch.
-pub(super) const BAN_TIMEOUT: Duration = Duration::from_hours(48);
+/// If we receive an invalid certificate or vote from a QUIC connection, we ban the sender.
+/// We ban the sender for 10 seconds which prevents DoS but allows for recovery in case of instability.
+pub(super) const BAN_TIMEOUT: Duration = Duration::from_secs(10);
 
 pub struct SigVerifierContext {
     pub migration_status: Arc<MigrationStatus>,
@@ -337,6 +336,8 @@ impl SigVerifier {
                             payload.vote_message.shred_version,
                         );
                         votes.entry(vote_payload_to_sign).or_default().push(payload);
+                    } else {
+                        self.stats.num_keep_vote_failed += 1;
                     }
                 }
                 DecodedWireConsensusMessage::Certificate(cert) => {
@@ -447,7 +448,10 @@ impl SigVerifier {
                 stake: entry.stake,
                 rank,
             }),
-            Err(VotePoolError::Duplicate) => None,
+            Err(VotePoolError::Duplicate) => {
+                self.stats.vote_pool_duplicate += 1;
+                None
+            }
             Err(VotePoolError::Invalid) => {
                 self.stats.invalid_vote_banning_validator += 1;
                 self.ban_sender.ban(sender_identity_pubkey, BAN_TIMEOUT);

@@ -1072,7 +1072,7 @@ pub fn add_args<'a>(app: App<'a, 'a>, default_args: &'a DefaultArgs) -> App<'a, 
                  index may use up to 50 GB of memory. The \"unlimited\" option keeps the entire \
                  accounts index in memory. All index entries that are not in memory are kept in \
                  the disk-backed index. The disk-backed index has lower performance; prefer \
-                 higher explicit limits here.",
+                 higher explicit limits here. \"minimal\" is deprecated and behaves as \"25GB\".",
             ),
     )
     .arg(

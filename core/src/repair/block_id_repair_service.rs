@@ -625,6 +625,7 @@ impl BlockIdRepairService {
                             slot,
                             block_id,
                             fec_set_index,
+                            fec_set_count,
                         })
                     }));
 
@@ -1316,6 +1317,7 @@ mod tests {
             slot: 102,
             block_id: Hash::new_unique(),
             fec_set_index: 0,
+            fec_set_count: 1,
         });
         state
             .sent_requests
@@ -1443,6 +1445,13 @@ mod tests {
 
         // Verify: FecSetRoot requests were added to pending
         assert_eq!(state.pending_repair_requests.len(), fec_set_count_usize);
+        assert!(state.pending_repair_requests.iter().all(|request| matches!(
+            request,
+            OutgoingMessage::Metadata(BlockIdRepairType::FecSetRoot {
+                fec_set_count: count,
+                ..
+            }) if *count == fec_set_count
+        )));
 
         // Verify: request was removed from sent_requests
         assert!(
@@ -1482,6 +1491,7 @@ mod tests {
             slot,
             block_id,
             fec_set_index,
+            fec_set_count: u32::try_from(fec_set_count).unwrap(),
         };
 
         // Register the request in outstanding_requests and get the nonce
