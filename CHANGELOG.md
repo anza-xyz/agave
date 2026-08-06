@@ -18,6 +18,9 @@ Release channels have their own copy of this changelog:
 ### RPC
 #### Breaking
 #### Changes
+* `getLeaderSchedule` now accepts a `keyByVoteAccount` config option to key the returned
+  schedule by vote account instead of validator identity. The `identity` filter continues
+  to match on validator identity in both modes.
 ### Validator
 #### Breaking
 * Loading a snapshot that contains an invalid vote account is now a hard error. Previously such

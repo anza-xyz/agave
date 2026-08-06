@@ -2968,9 +2968,12 @@ pub mod rpc_minimal {
             let (slot, maybe_config) = options.map(|options| options.unzip()).unwrap_or_default();
             let config = maybe_config.or(config).unwrap_or_default();
 
-            if let Some(ref identity) = config.identity {
-                let _ = verify_pubkey(identity)?;
-            }
+            let identity = config
+                .identity
+                .as_ref()
+                .map(|identity| verify_pubkey(identity))
+                .transpose()?;
+            let key_by_vote_account = config.key_by_vote_account.unwrap_or_default();
 
             let bank = meta.bank(config.commitment);
             let slot = slot.unwrap_or_else(|| bank.slot());
@@ -2982,17 +2985,23 @@ pub mod rpc_minimal {
                 .leader_schedule_cache
                 .get_epoch_leader_schedule(epoch)
                 .map(|leader_schedule| {
-                    let mut schedule_by_identity =
+                    let slot_leaders = leader_schedule.get_slot_leaders().enumerate().filter(
+                        |(_, slot_leader)| {
+                            identity.is_none_or(|identity| slot_leader.id == identity)
+                        },
+                    );
+                    if key_by_vote_account {
                         solana_runtime::leader_schedule_utils::leader_schedule_by_identity(
-                            leader_schedule
-                                .get_slot_leaders()
-                                .map(|slot_leader| &slot_leader.id)
-                                .enumerate(),
-                        );
-                    if let Some(identity) = config.identity {
-                        schedule_by_identity.retain(|k, _| *k == identity);
+                            slot_leaders.map(|(slot_index, slot_leader)| {
+                                (slot_index, &slot_leader.vote_address)
+                            }),
+                        )
+                    } else {
+                        solana_runtime::leader_schedule_utils::leader_schedule_by_identity(
+                            slot_leaders
+                                .map(|(slot_index, slot_leader)| (slot_index, &slot_leader.id)),
+                        )
                     }
-                    schedule_by_identity
                 }))
         }
     }
@@ -5155,6 +5164,10 @@ pub mod tests {
         fn leader_pubkey(&self) -> Pubkey {
             *self.working_bank().leader_id()
         }
+
+        fn leader_vote_pubkey(&self) -> Pubkey {
+            self.leader_vote_keypair.pubkey()
+        }
     }
 
     #[test]
@@ -5559,6 +5572,50 @@ pub mod tests {
         let request = create_test_request(
             "getLeaderSchedule",
             Some(json!([{"identity": Pubkey::new_unique().to_string() }])),
+        );
+        let result: Option<RpcLeaderSchedule> =
+            parse_success_result(rpc.handle_request_sync(request));
+        let expected = Some(HashMap::default());
+        assert_eq!(result, expected);
+
+        // `keyByVoteAccount` keys the schedule by vote account; the `identity`
+        // filter continues to match on validator identity
+        for params in [
+            Some(json!([null, {"keyByVoteAccount": true}])),
+            Some(json!([{"keyByVoteAccount": true}])),
+            Some(json!([
+                {"keyByVoteAccount": true, "identity": rpc.leader_pubkey().to_string()}
+            ])),
+        ] {
+            let request = create_test_request("getLeaderSchedule", params);
+            let result: Option<RpcLeaderSchedule> =
+                parse_success_result(rpc.handle_request_sync(request));
+            let expected = Some(HashMap::from_iter(std::iter::once((
+                rpc.leader_vote_pubkey().to_string(),
+                Vec::from_iter(0..TEST_SLOTS_PER_EPOCH as usize),
+            ))));
+            assert_eq!(result, expected);
+        }
+
+        let request = create_test_request(
+            "getLeaderSchedule",
+            Some(json!([
+                {"keyByVoteAccount": false, "identity": rpc.leader_pubkey().to_string()}
+            ])),
+        );
+        let result: Option<RpcLeaderSchedule> =
+            parse_success_result(rpc.handle_request_sync(request));
+        let expected = Some(HashMap::from_iter(std::iter::once((
+            rpc.leader_pubkey().to_string(),
+            Vec::from_iter(0..TEST_SLOTS_PER_EPOCH as usize),
+        ))));
+        assert_eq!(result, expected);
+
+        let request = create_test_request(
+            "getLeaderSchedule",
+            Some(json!([
+                {"keyByVoteAccount": true, "identity": Pubkey::new_unique().to_string()}
+            ])),
         );
         let result: Option<RpcLeaderSchedule> =
             parse_success_result(rpc.handle_request_sync(request));
