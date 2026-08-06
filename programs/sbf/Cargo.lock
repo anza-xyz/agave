@@ -7987,6 +7987,7 @@ dependencies = [
 name = "solana-quic-client"
 version = "4.3.0-alpha.3"
 dependencies = [
+ "arc-swap",
  "async-lock",
  "async-trait",
  "futures 0.3.33",
