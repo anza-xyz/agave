@@ -504,7 +504,20 @@ impl<FG: ForkGraph> ProgramCache<FG> {
     ) {
         match &mut self.index {
             IndexImplementation::V1 { entries, .. } => {
-                for second_level in entries.values_mut() {
+                entries.retain(|_id, second_level| {
+                    // Clean up tombstones and unloaded entries
+                    if second_level.len() == 1 {
+                        let candidate = second_level.first().unwrap();
+                        match candidate.program {
+                            ProgramCacheEntryType::Builtin(_)
+                            | ProgramCacheEntryType::Loaded(_) => {}
+                            _ => {
+                                if candidate.deployment_slot <= self.latest_root_slot {
+                                    return false;
+                                }
+                            }
+                        }
+                    }
                     // Remove entries un/re/deployed on orphan forks
                     let mut first_ancestor_found = false;
                     let mut first_ancestor_env = None;
@@ -559,7 +572,8 @@ impl<FG: ForkGraph> ProgramCache<FG> {
                         .cloned()
                         .collect();
                     second_level.reverse();
-                }
+                    true
+                });
             }
         }
         self.remove_programs_with_no_entries();
