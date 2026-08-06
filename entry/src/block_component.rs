@@ -479,6 +479,25 @@ impl VersionedBlockMarker {
             Self::V1(_) => false,
         }
     }
+
+    pub fn is_parent_marker(&self) -> bool {
+        match self {
+            Self::V1(BlockMarkerV1::UpdateParent(_)) | Self::V1(BlockMarkerV1::BlockHeader(_)) => {
+                true
+            }
+            Self::V1(_) => false,
+        }
+    }
+
+    pub fn as_update_parent(&self) -> Option<&UpdateParentV1> {
+        match self {
+            Self::V1(BlockMarkerV1::UpdateParent(update_parent)) => {
+                let VersionedUpdateParent::V1(update_parent) = update_parent.inner();
+                Some(update_parent)
+            }
+            Self::V1(_) => None,
+        }
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
