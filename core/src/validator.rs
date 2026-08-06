@@ -584,8 +584,6 @@ struct TransactionHistoryServices {
 pub struct ValidatorTpuConfig {
     /// Controls if to use QUIC for sending TPU votes
     pub vote_use_quic: bool,
-    /// Controls the connection cache pool size
-    pub tpu_connection_pool_size: usize,
     /// QUIC server config for regular TPU
     pub tpu_quic_server_config: SwQosQuicStreamerConfig,
     /// QUIC server config for TPU forward
@@ -635,7 +633,6 @@ impl ValidatorTpuConfig {
 
         ValidatorTpuConfig {
             vote_use_quic: DEFAULT_VOTE_USE_QUIC,
-            tpu_connection_pool_size: DEFAULT_TPU_CONNECTION_POOL_SIZE,
             tpu_quic_server_config,
             tpu_fwd_quic_server_config,
             vote_quic_server_config,
@@ -747,7 +744,6 @@ impl Validator {
 
         let ValidatorTpuConfig {
             vote_use_quic,
-            tpu_connection_pool_size,
             tpu_quic_server_config,
             tpu_fwd_quic_server_config,
             vote_quic_server_config,
@@ -1179,7 +1175,7 @@ impl Validator {
         let vote_connection_cache = if vote_use_quic {
             let vote_connection_cache = ConnectionCache::new_with_client_options(
                 "connection_cache_vote_quic",
-                tpu_connection_pool_size,
+                DEFAULT_TPU_CONNECTION_POOL_SIZE,
                 Some(node.sockets.quic_vote_client),
                 Some((
                     &identity_keypair,
@@ -1196,7 +1192,7 @@ impl Validator {
         } else {
             Arc::new(ConnectionCache::with_udp(
                 "connection_cache_vote_udp",
-                tpu_connection_pool_size,
+                DEFAULT_TPU_CONNECTION_POOL_SIZE,
             ))
         };
 
