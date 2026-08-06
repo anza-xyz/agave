@@ -9,8 +9,6 @@
 
 #[cfg(not(feature = "sbf_sanity_list"))]
 use solana_program_runtime::execution_budget::MAX_COMPUTE_UNIT_LIMIT;
-#[cfg(all(feature = "sbf_rust", feature = "sbpf-v3"))]
-use solana_runtime::loader_utils::load_upgradeable_program_and_advance_slot;
 #[cfg(feature = "sbf_rust")]
 use {
     agave_feature_set::{self as feature_set, FeatureSet},
@@ -88,6 +86,7 @@ use {
 #[cfg(all(feature = "sbf_rust", feature = "sbpf-v3"))]
 use {
     solana_program_runtime::loaded_programs::ProgramCacheForTxBatch,
+    solana_runtime::loader_utils::load_upgradeable_program_and_advance_slot,
     solana_svm::conformance::{
         programs::keyed_account_for_bpf_loader_upgradeable_program,
         setup::sysvar_cache_from_accounts,
