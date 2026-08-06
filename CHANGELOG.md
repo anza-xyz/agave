@@ -36,6 +36,7 @@ and follows a [Backwards Compatibility Policy](https://docs.anza.xyz/backwards-c
 #### Changes
 * Turbine shred ingestion now rejects shreds more than half an epoch in the future (previously up to 2 full epochs ahead was accepted).
 * When XDP is enabled, gossip egress does not support private and loopback addresses. Operators running with `--allow-private-addr` must also pass `--no-xdp`.
+* The default incremental snapshot interval is now 200 slots.
 ### CLI
 #### Breaking
 #### Changes
