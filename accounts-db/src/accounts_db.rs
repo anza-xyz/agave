@@ -3845,6 +3845,7 @@ impl AccountsDb {
         }
     }
 
+    #[cfg_attr(test, qualifiers(pub(crate)))]
     fn create_store(&self, slot: Slot, size: u64) -> AccountStorageEntry {
         self.stats
             .create_store_count

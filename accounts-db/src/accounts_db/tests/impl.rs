@@ -19,7 +19,6 @@ use {
     solana_pubkey::{PUBKEY_BYTES, Pubkey},
     std::{
         iter,
-        ops::Range,
         str::FromStr as _,
         sync::{
             Arc, RwLock,
@@ -6574,82 +6573,8 @@ pub fn get_account_from_account_from_storage(
         .unwrap()
 }
 
-fn populate_index(db: &AccountsDb, slots: Range<Slot>) {
-    slots.into_iter().for_each(|slot| {
-        if let Some(storage) = db.get_storage_for_slot(slot) {
-            let mut reader = crate::append_vec::new_scan_accounts_reader();
-            storage
-                .scan_accounts(&mut reader, |offset, account| {
-                    let info = AccountInfo::new(
-                        StorageLocation::AccountsFile(storage.id(), offset),
-                        account.is_zero_lamport(),
-                    );
-                    db.accounts_index.upsert(
-                        slot,
-                        slot,
-                        account.pubkey(),
-                        info,
-                        &mut ReclaimsSlotList::new(),
-                        UpsertReclaim::IgnoreReclaims,
-                    );
-                })
-                .expect("must scan accounts storage");
-        }
-    })
-}
-
 pub(crate) fn remove_account_for_tests(storage: &AccountStorageEntry, num_bytes: usize) {
     storage.remove_accounts(num_bytes, 1);
-}
-
-pub(crate) fn create_storages_and_update_index(
-    db: &AccountsDb,
-    starting_slot: Slot,
-    num_slots: usize,
-    alive: bool,
-    account_data_size: Option<u64>,
-) {
-    if num_slots == 0 {
-        return;
-    }
-
-    let account_data_size = account_data_size.unwrap_or(48);
-    let file_size = account_data_size + 1_000_000;
-    for i in 0..num_slots {
-        let slot = starting_slot + i as Slot;
-        let storage = db.create_store(slot, file_size);
-        let pubkey = solana_pubkey::new_rand();
-        let account = AccountSharedData::new(1, account_data_size as usize, &Pubkey::default());
-        append_single_account_with_default_hash(&storage, &pubkey, &account, alive, None);
-        db.storage.insert(Arc::new(storage));
-    }
-
-    let storage = db.get_storage_for_slot(starting_slot).unwrap();
-    let created_accounts = db.get_unique_accounts_from_storage(&storage);
-    assert_eq!(created_accounts.stored_accounts.len(), 1);
-
-    if alive {
-        populate_index(db, starting_slot..(starting_slot + (num_slots as Slot) + 1));
-    }
-}
-
-pub(crate) fn create_db_with_storages_and_index(
-    alive: bool,
-    num_slots: usize,
-    account_data_size: Option<u64>,
-) -> (AccountsDb, Slot) {
-    let db = AccountsDb::new_for_tests_with_config(Vec::new(), DEFAULT_ACCOUNTS_DB_CONFIG);
-
-    // create a single append vec with a single account in a slot
-    // add the pubkey to index if alive
-    // call combine_ancient_slots with the slot
-    // verify we create an ancient appendvec that has alive accounts and does not have dead accounts
-
-    let slot1 = 1;
-    create_storages_and_update_index(&db, slot1, num_slots, alive, account_data_size);
-
-    let slot1 = slot1 as Slot;
-    (db, slot1)
 }
 
 /// Ensure the calculating capitalization produces the correct value
