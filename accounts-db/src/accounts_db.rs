@@ -310,7 +310,7 @@ impl AccountFromStorage {
         let storage_id = 0;
         AccountFromStorage {
             index_info: AccountInfo::new(
-                StorageLocation::AppendVec(storage_id, offset),
+                StorageLocation::AccountsFile(storage_id, offset),
                 account.is_zero_lamport(),
             ),
             pubkey: *account.pubkey(),
@@ -2512,7 +2512,7 @@ impl AccountsDb {
                 let file_id = 0;
                 stored_accounts.push(AccountFromStorage {
                     index_info: AccountInfo::new(
-                        StorageLocation::AppendVec(file_id, offset),
+                        StorageLocation::AccountsFile(file_id, offset),
                         account.is_zero_lamport(),
                     ),
                     pubkey: *account.pubkey(),
@@ -3835,7 +3835,7 @@ impl AccountsDb {
         storage_location: &StorageLocation,
     ) -> LoadedAccountAccessor {
         match storage_location {
-            StorageLocation::AppendVec(store_id, offset) => {
+            StorageLocation::AccountsFile(store_id, offset) => {
                 let maybe_storage_entry = self
                     .storage
                     .get_account_storage_entry(slot, *store_id)
@@ -5478,7 +5478,7 @@ impl AccountsDb {
 
         for (i, offset) in stored_accounts_info.offsets.iter().enumerate() {
             infos.push(AccountInfo::new(
-                StorageLocation::AppendVec(store_id, *offset),
+                StorageLocation::AccountsFile(store_id, *offset),
                 accounts_and_meta_to_store.is_zero_lamport(i),
             ));
         }
@@ -5729,7 +5729,7 @@ impl AccountsDb {
                 keyed_account_infos.push((
                     *account.pubkey,
                     AccountInfo::new(
-                        StorageLocation::AppendVec(store_id, offset), // will never be cached
+                        StorageLocation::AccountsFile(store_id, offset), // will never be cached
                         is_account_zero_lamport,
                     ),
                 ));
@@ -5974,7 +5974,7 @@ impl AccountsDb {
                                 if *slot2 == slot {
                                     count += 1;
                                     let ai = AccountInfo::new(
-                                        StorageLocation::AppendVec(store_id, offset), // will never be cached
+                                        StorageLocation::AccountsFile(store_id, offset), // will never be cached
                                         account.is_zero_lamport(),
                                     );
                                     assert_eq!(&ai, account_info2);
