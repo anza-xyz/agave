@@ -98,6 +98,17 @@ impl VoteHistory {
         self.voted.contains(&slot)
     }
 
+    /// Initialize vote history at the Alpenglow genesis slot. The genesis vote
+    /// is cast and refreshed outside Votor during migration, so it is marked as
+    /// voted without being added to `votes_cast`.
+    pub fn initialize_genesis(&mut self, genesis_slot: Slot) {
+        if genesis_slot < self.root {
+            return;
+        }
+        self.set_root(genesis_slot);
+        self.voted.insert(genesis_slot);
+    }
+
     /// The block for which we voted notarize in slot `slot`
     pub fn voted_notar(&self, slot: Slot) -> Option<Hash> {
         assert!(slot >= self.root);
@@ -474,6 +485,23 @@ mod test {
         );
         // set_root doesn't automatically set its_over to true
         assert!(!vote_history.its_over(2));
+    }
+
+    #[test]
+    fn test_initialize_genesis() {
+        let mut vote_history = VoteHistory::new(Pubkey::new_unique(), 0);
+        vote_history.add_vote(Vote::new_skip_vote(1));
+        vote_history.initialize_genesis(2);
+        vote_history.initialize_genesis(2);
+
+        assert_eq!(vote_history.root(), 2);
+        assert!(vote_history.voted(2));
+        assert!(!vote_history.skipped(2));
+        assert!(vote_history.votes_cast_since(0).is_empty());
+
+        vote_history.initialize_genesis(1);
+        assert_eq!(vote_history.root(), 2);
+        assert!(vote_history.voted(2));
     }
 
     #[test]
