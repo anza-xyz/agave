@@ -1,5 +1,5 @@
 use {
-    super::receive_and_buffer::{CheckResult, check_transaction},
+    super::receive_and_buffer::{PrecheckResult, precheck_transaction},
     crossbeam_channel::{Receiver, Sender},
     solana_perf::packet::bytes::Bytes,
     solana_pubkey::Pubkey,
@@ -15,7 +15,7 @@ use {
 pub(crate) fn spawn_check_workers(
     num_workers: NonZeroUsize,
     work_receiver: Receiver<Bytes>,
-    result_sender: Sender<CheckResult>,
+    result_sender: Sender<PrecheckResult>,
     sharable_banks: SharableBanks,
     filter_keys: Arc<HashSet<Pubkey>>,
 ) -> Vec<JoinHandle<()>> {
@@ -37,13 +37,14 @@ pub(crate) fn spawn_check_workers(
 
 fn run_check_worker(
     work_receiver: Receiver<Bytes>,
-    result_sender: Sender<CheckResult>,
+    result_sender: Sender<PrecheckResult>,
     sharable_banks: SharableBanks,
     filter_keys: Arc<HashSet<Pubkey>>,
 ) {
     while let Ok(bytes) = work_receiver.recv() {
         let banks = sharable_banks.load();
-        let result = check_transaction(bytes, &banks.root_bank, &banks.working_bank, &filter_keys);
+        let result =
+            precheck_transaction(bytes, &banks.root_bank, &banks.working_bank, &filter_keys);
 
         // A result queue at capacity applies backpressure to check workers. Accepted
         // work is never dropped by a worker.

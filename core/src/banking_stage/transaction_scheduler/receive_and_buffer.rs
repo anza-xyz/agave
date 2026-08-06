@@ -55,19 +55,19 @@ pub(crate) enum PacketHandlingError {
     FilterKey,
 }
 
-pub(crate) struct CheckedTransaction {
+pub(crate) struct PrecheckedTransaction {
     pub(crate) state: TransactionViewState,
     pub(crate) is_validated_nonce: bool,
 }
 
-pub(crate) type CheckResult = Result<CheckedTransaction, IngressCheckError>;
+pub(crate) type PrecheckResult = Result<PrecheckedTransaction, IngressCheckError>;
 
-pub(crate) fn check_transaction(
+pub(crate) fn precheck_transaction(
     bytes: Bytes,
     root_bank: &Bank,
     working_bank: &Bank,
     filter_keys: &HashSet<Pubkey>,
-) -> CheckResult {
+) -> PrecheckResult {
     let sanitize_config = sanitize_config();
     let transaction_account_lock_limit = working_bank.get_transaction_account_lock_limit();
     let (view, deactivation_slot) = translate_to_runtime_view(
@@ -109,7 +109,7 @@ pub(crate) fn check_transaction(
     Consumer::check_fee_payer_unlocked(working_bank, state.transaction(), &mut error_counters)
         .map_err(|_| IngressCheckError::FeePayer)?;
 
-    Ok(CheckedTransaction {
+    Ok(PrecheckedTransaction {
         state,
         is_validated_nonce: validated_nonce_address.is_some(),
     })
@@ -300,14 +300,14 @@ pub(crate) trait ReceiveAndBuffer {
 pub(crate) struct TransactionViewReceiveAndBuffer {
     receiver: BankingPacketReceiver,
     check_work_sender: Sender<Bytes>,
-    check_result_receiver: Receiver<CheckResult>,
+    check_result_receiver: Receiver<PrecheckResult>,
 }
 
 impl TransactionViewReceiveAndBuffer {
     pub(crate) fn new(
         receiver: BankingPacketReceiver,
         check_work_sender: Sender<Bytes>,
-        check_result_receiver: Receiver<CheckResult>,
+        check_result_receiver: Receiver<PrecheckResult>,
     ) -> Self {
         Self {
             receiver,
@@ -409,7 +409,7 @@ impl ReceiveAndBuffer for TransactionViewReceiveAndBuffer {
 
             match result {
                 Ok(transaction) => {
-                    Self::admit_checked_transaction(transaction, container, &mut stats)
+                    Self::admit_prechecked_transaction(transaction, container, &mut stats)
                 }
                 Err(err) => stats.add_ingress_check_error(&err),
             }
@@ -458,15 +458,15 @@ impl TransactionViewReceiveAndBuffer {
         Ok(())
     }
 
-    fn admit_checked_transaction(
-        checked_transaction: CheckedTransaction,
+    fn admit_prechecked_transaction(
+        prechecked_transaction: PrecheckedTransaction,
         container: &mut TransactionViewStateContainer,
         stats: &mut ReceivingStats,
     ) {
-        let CheckedTransaction {
+        let PrecheckedTransaction {
             state,
             is_validated_nonce,
-        } = checked_transaction;
+        } = prechecked_transaction;
         let priority = state.priority();
 
         // Reject a nonce-like transaction if a higher-or-equal-priority conflict
@@ -607,7 +607,7 @@ mod tests {
     fn assert_runtime_view(_: &RuntimeTransactionView) {}
 
     #[test]
-    fn checked_transaction_owns_packet_bytes() {
+    fn prechecked_transaction_owns_packet_bytes() {
         let GenesisConfigInfo {
             genesis_config,
             mint_keypair,
@@ -625,10 +625,10 @@ mod tests {
         let bytes_ptr = bytes.as_ptr();
         drop(packet);
 
-        let CheckedTransaction {
+        let PrecheckedTransaction {
             state,
             is_validated_nonce,
-        } = check_transaction(bytes, &bank, &bank, &HashSet::new()).unwrap();
+        } = precheck_transaction(bytes, &bank, &bank, &HashSet::new()).unwrap();
 
         assert_runtime_view(state.transaction());
         assert_eq!(state.transaction().data().as_ptr(), bytes_ptr);
