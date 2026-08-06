@@ -2584,7 +2584,6 @@ fn test_program_sbf_upgrade() {
             rent_epoch: 0,
         },
     ));
-
     let sysvar_cache = sysvar_cache_from_accounts(&transaction_accounts);
 
     let upgrade_instruction = loader_v3_instruction::upgrade(
@@ -2608,13 +2607,16 @@ fn test_program_sbf_upgrade() {
 
     program_cache.merge(&modified_programs);
     program_cache.set_slot_for_tests(UPGRADE_EFFECTIVE_SLOT);
+    add_program_to_program_cache(
+        &mut program_cache,
+        &program_id,
+        &bpf_loader_upgradeable::id(),
+        &upgraded_program_elf,
+        &feature_set.runtime_features(),
+    );
 
-    let clock_account = &mut transaction_accounts
-        .iter_mut()
-        .find(|(pubkey, _)| pubkey == &clock::id())
-        .unwrap()
-        .1;
-    clock_account.data = bincode::serialize(&solana_clock::Clock {
+    let clock_account = &mut transaction_accounts[6];
+    clock_account.1.data = bincode::serialize(&solana_clock::Clock {
         slot: UPGRADE_EFFECTIVE_SLOT,
         ..solana_clock::Clock::default()
     })
