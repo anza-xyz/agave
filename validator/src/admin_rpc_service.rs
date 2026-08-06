@@ -949,6 +949,25 @@ impl AdminRpcImpl {
         require_vote_history: bool,
     ) -> Result<()> {
         meta.with_post_init(|post_init| {
+            let old_identity = post_init.cluster_info.id();
+            let new_identity = identity_keypair.pubkey();
+            if old_identity != new_identity {
+                let root_bank = post_init.bank_forks.read().unwrap().root_bank();
+                let epoch = root_bank.epoch();
+                let staked_nodes = root_bank.epoch_staked_nodes(epoch).ok_or_else(|| {
+                    error!("Missing epoch stakes for root bank epoch {epoch}");
+                    jsonrpc_core::Error::internal_error()
+                })?;
+                let is_staked =
+                    |identity| staked_nodes.get(identity).is_some_and(|stake| *stake > 0);
+                if is_staked(&old_identity) && is_staked(&new_identity) {
+                    return Err(jsonrpc_core::error::Error::invalid_params(format!(
+                        "Changing identity from staked node {old_identity} to staked node \
+                         {new_identity} is not supported"
+                    )));
+                }
+            }
+
             if require_tower {
                 let _ = Tower::restore(meta.tower_storage.as_ref(), &identity_keypair.pubkey())
                     .map_err(|err| {
@@ -994,8 +1013,6 @@ impl AdminRpcImpl {
                 }
             }
 
-            let old_identity = post_init.cluster_info.id();
-            let new_identity = identity_keypair.pubkey();
             solana_metrics::set_host_id(new_identity.to_string());
             // Emit the datapoint after updating metrics to emit the new pubkey
             datapoint_info!(
@@ -1176,6 +1193,7 @@ mod tests {
         solana_runtime::{
             bank::{Bank, BankTestConfig},
             bank_forks::BankForks,
+            genesis_utils::{ValidatorVoteKeypairs, create_genesis_config_with_vote_accounts},
         },
         std::{collections::HashSet, fs::remove_dir_all, sync::atomic::AtomicBool},
         tokio::sync::mpsc,
@@ -1336,6 +1354,51 @@ mod tests {
             .recv()
             .expect("Failed to receive SetIdentity event");
         assert_matches!(event, VotorEvent::SetIdentity);
+    }
+
+    #[test]
+    fn test_set_identity_rejects_staked_to_staked_transition() {
+        let rpc = RpcHandler::_start();
+        let validators = [
+            ValidatorVoteKeypairs::new_rand(),
+            ValidatorVoteKeypairs::new_rand(),
+        ];
+        let old_identity = validators[0].node_keypair.pubkey();
+        let GenesisConfigInfo { genesis_config, .. } =
+            create_genesis_config_with_vote_accounts(1_000_000_000, &validators, vec![1, 1]);
+        let bank = Bank::new_for_tests(&genesis_config);
+        {
+            let mut post_init = rpc.meta.post_init.write().unwrap();
+            let post_init = post_init.as_mut().unwrap();
+            post_init
+                .cluster_info
+                .set_keypair(Arc::new(validators[0].node_keypair.insecure_clone()));
+            post_init.bank_forks = BankForks::new_rw_arc(bank);
+        }
+
+        assert_matches!(
+            AdminRpcImpl::set_identity_keypair(
+                rpc.meta.clone(),
+                validators[1].node_keypair.insecure_clone(),
+                false,
+                false,
+            ),
+            Err(jsonrpc_core::Error {
+                code: ErrorCode::InvalidParams,
+                ..
+            })
+        );
+        assert_eq!(
+            rpc.meta
+                .post_init
+                .read()
+                .unwrap()
+                .as_ref()
+                .unwrap()
+                .cluster_info
+                .id(),
+            old_identity
+        );
     }
 
     #[test]
