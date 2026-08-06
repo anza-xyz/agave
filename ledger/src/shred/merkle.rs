@@ -123,7 +123,7 @@ impl ShredBuilder {
     dispatch!(fn merkle_root(&self) -> Result<Hash, Error>);
     dispatch!(fn sanitize(&self) -> Result<(), Error>);
     dispatch!(fn set_chained_merkle_root(&mut self, chained_merkle_root: &Hash) -> Result<(), Error>);
-    dispatch!(fn set_signature(&mut self, signature: Signature));
+    dispatch!(pub(super) fn set_signature(&mut self, signature: Signature));
     dispatch!(fn write_headers(&mut self) -> Result<(), Error>);
     dispatch!(pub(super) fn common_header(&self) -> &ShredCommonHeader);
     dispatch!(pub(super) fn set_retransmitter_signature(&mut self, signature: &Signature) -> Result<(), Error>);
@@ -211,13 +211,41 @@ impl From<ShredCode> for ShredCodeBuilder {
     }
 }
 
+// Methods to mutate a shred. Test only.
+#[cfg(any(test, feature = "dev-context-only-utils"))]
+impl Shred {
+    pub(super) fn set_signature(&mut self, signature: Signature) -> Result<(), Error> {
+        self.rebuild(|shred| {
+            shred.set_signature(signature);
+            Ok(())
+        })
+    }
+
+    #[cfg(test)]
+    pub(super) fn set_retransmitter_signature(
+        &mut self,
+        signature: &Signature,
+    ) -> Result<(), Error> {
+        self.rebuild(|shred| shred.set_retransmitter_signature(signature))
+    }
+
+    fn rebuild<F>(&mut self, mutate: F) -> Result<(), Error>
+    where
+        F: FnOnce(&mut ShredBuilder) -> Result<(), Error>,
+    {
+        let mut shred = ShredBuilder::from(self.clone());
+        mutate(&mut shred)?;
+        *self = shred.build()?;
+        Ok(())
+    }
+}
+
 #[cfg(test)]
 impl Shred {
     dispatch!(fn proof_size(&self) -> Result<u8, Error>);
     dispatch!(fn sanitize(&self) -> Result<(), Error>);
     dispatch!(fn signed_data(&self) -> Result<Hash, Error>);
     dispatch!(pub(super) fn chained_merkle_root(&self) -> Result<Hash, Error>);
-    dispatch!(pub(super) fn set_retransmitter_signature(&mut self, signature: &Signature) -> Result<(), Error>);
     dispatch!(pub(super) fn merkle_root(&self) -> Result<Hash, Error>);
     dispatch!(pub(super) fn retransmitter_signature(&self) -> Result<Signature, Error>);
     dispatch!(pub(super) fn retransmitter_signature_offset(&self) -> Result<usize, Error>);
@@ -579,28 +607,6 @@ macro_rules! impl_merkle_shred {
                 .map(|bytes| <[u8; SIZE_OF_SIGNATURE]>::try_from(bytes).unwrap())
                 .map(Signature::from)
                 .ok_or(Error::InvalidPayloadSize(self.payload.len()))
-        }
-
-        // The only remaining mutator on a finished shred, kept alive solely by the dev-only
-        // `crate::shred::Shred::sign`. TODO: remove along with it.
-        #[cfg(any(test, feature = "dev-context-only-utils"))]
-        #[inline]
-        pub(super) fn set_signature(&mut self, signature: Signature) {
-            self.payload.make_mut()[..SIZE_OF_SIGNATURE].copy_from_slice(signature.as_ref());
-            self.common_header.signature = signature;
-        }
-
-        #[cfg(test)]
-        fn set_retransmitter_signature(&mut self, signature: &Signature) -> Result<(), Error> {
-            let offset = self.retransmitter_signature_offset()?;
-            let Some(mut buffer) = self
-                .payload
-                .make_mut_range(offset..offset + SIZE_OF_SIGNATURE)
-            else {
-                return Err(Error::InvalidPayloadSize(self.payload.len()));
-            };
-            buffer.copy_from_slice(signature.as_ref());
-            Ok(())
         }
     };
 }
