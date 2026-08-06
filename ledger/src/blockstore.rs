@@ -26,10 +26,14 @@ use {
         transaction_address_lookup_table_scanner::scan_transaction,
     },
     agave_snapshots::unpack_genesis_archive,
+    agave_transaction_view::{
+        transaction_data::TransactionData, transaction_view::UnsanitizedTransactionView,
+    },
     agave_votor_messages::{
         migration::MigrationStatus, unverified_vote_message::UnverifiedCertificate,
     },
     assert_matches::{assert_matches, debug_assert_matches},
+    bytes::Bytes,
     crossbeam_channel::{Receiver, Sender, TrySendError, bounded},
     dashmap::DashSet,
     itertools::Itertools,
@@ -44,11 +48,12 @@ use {
     solana_clock::{Slot, UnixTimestamp},
     solana_entry::{
         block_component::{
-            BlockComponent, VersionedBlockFooter, VersionedBlockHeader, VersionedBlockMarker,
-            VersionedUpdateParent, finalization_certificates_from_footer,
+            BlockComponent, BlockComponentView, VersionedBlockFooter, VersionedBlockHeader,
+            VersionedBlockMarker, VersionedUpdateParent, finalization_certificates_from_footer,
             genesis_certificate_from_shred,
         },
-        entry::{Entry, create_ticks},
+        block_component_parser,
+        entry::{Entry, EntryView, create_ticks},
     },
     solana_genesis_config::{DEFAULT_GENESIS_ARCHIVE, DEFAULT_GENESIS_FILE, GenesisConfig},
     solana_hash::{HASH_BYTES, Hash},
@@ -57,14 +62,12 @@ use {
     solana_metrics::datapoint_error,
     solana_pubkey::Pubkey,
     solana_runtime::{bank::Bank, leader_schedule_utils::leader_slot_index},
+    solana_runtime_transaction::sanitize_config::sanitize_config,
     solana_sha256_hasher::hashv,
     solana_signature::Signature,
     solana_signer::Signer,
     solana_time_utils::timestamp,
-    solana_transaction::{
-        TransactionVerificationMode,
-        versioned::{VersionedTransaction, sanitized::SanitizedVersionedTransaction},
-    },
+    solana_transaction::{TransactionVerificationMode, versioned::VersionedTransaction},
     solana_transaction_status::{
         ConfirmedTransactionStatusWithSignature, ConfirmedTransactionWithStatusMeta, EntrySummary,
         RewardsAndNumPartitions, TransactionStatusMeta, TransactionWithStatusMeta,
@@ -94,7 +97,7 @@ use {
     tar,
     tempfile::{Builder, TempDir},
     thiserror::Error,
-    wincode::config::DefaultConfig,
+    wincode::{Deserialize, config::DefaultConfig},
 };
 
 pub mod blockstore_purge;
@@ -4479,10 +4482,19 @@ impl Blockstore {
                 .ok_or(BlockstoreError::TransactionStatusSlotMismatch)?; // Should not happen
 
             let block_time = self.get_block_time(slot)?;
+
+            // TODO: change this is as follow up, it's only used in RPCs
+            let tx_serialized = transaction.data();
+            let versioned_tx = VersionedTransaction::deserialize(tx_serialized)
+                .map_err(BlockstoreError::WincodeRead)?;
+
             Ok(Some(ConfirmedTransactionWithStatusMeta {
                 slot,
                 tx_with_meta: TransactionWithStatusMeta::Complete(
-                    VersionedTransactionWithStatusMeta { transaction, meta },
+                    VersionedTransactionWithStatusMeta {
+                        transaction: versioned_tx,
+                        meta,
+                    },
                 ),
                 block_time,
                 index,
@@ -4502,14 +4514,18 @@ impl Blockstore {
         &self,
         slot: Slot,
         signature: Signature,
-    ) -> Result<Option<(VersionedTransaction, u32)>> {
+    ) -> Result<Option<(UnsanitizedTransactionView<Bytes>, u32)>> {
         let slot_entries = self.get_slot_entries(slot, 0)?;
         Ok(slot_entries
             .into_iter()
             .flat_map(|entry| entry.transactions)
             .enumerate()
             .map(|(index, transaction)| {
-                if let Err(err) = transaction.sanitize() {
+                // TODO: return back the transaction in the error to avoid clone
+                if let Err(err) = transaction
+                    .clone()
+                    .sanitize(&solana_runtime_transaction::sanitize_config::sanitize_config())
+                {
                     warn!(
                         "Blockstore::find_transaction_in_slot sanitize failed: {err:?}, slot: \
                          {slot:?}, {transaction:?}",
@@ -4517,7 +4533,12 @@ impl Blockstore {
                 }
                 (index, transaction)
             })
-            .find(|(_, transaction)| transaction.signatures[0] == signature)
+            .find(|(_, transaction)| {
+                transaction
+                    .signatures()
+                    .first()
+                    .is_some_and(|s| *s == signature)
+            })
             .map(|(index, transaction)| (transaction, index as u32)))
     }
 
@@ -4780,8 +4801,12 @@ impl Blockstore {
     }
 
     /// Returns the entry vector for the slot starting with `shred_start_index`
-    pub fn get_slot_entries(&self, slot: Slot, shred_start_index: u64) -> Result<Vec<Entry>> {
-        self.get_slot_entries_with_shred_info(slot, shred_start_index, false)
+    pub fn get_slot_entries(
+        &self,
+        slot: Slot,
+        shred_start_index: u64,
+    ) -> Result<Vec<EntryView<Bytes>>> {
+        self.get_slot_entry_views_with_shred_info(slot, shred_start_index, false)
             .map(|x| x.0)
     }
 
@@ -4815,19 +4840,20 @@ impl Blockstore {
 
     /// Returns the entry vector for the slot starting with `shred_start_index`, the number of
     /// shreds that comprise the entry vector, and whether the slot is full (consumed all shreds).
-    pub fn get_slot_entries_with_shred_info(
+    pub fn get_slot_entry_views_with_shred_info(
         &self,
         slot: Slot,
         start_index: u64,
         allow_dead_slots: bool,
-    ) -> Result<(Vec<Entry>, u64, bool)> {
+    ) -> Result<(Vec<EntryView<Bytes>>, u64, bool)> {
         let Some((completed_ranges, slot_meta, num_shreds)) =
             self.get_slot_data_with_shred_info_common(slot, start_index, allow_dead_slots)?
         else {
             return Ok((vec![], 0, false));
         };
 
-        let entries = self.get_slot_entries_in_block(slot, &completed_ranges, Some(&slot_meta))?;
+        let entries =
+            self.get_slot_entry_views_in_block(slot, &completed_ranges, Some(&slot_meta))?;
         Ok((entries, num_shreds, slot_meta.is_full()))
     }
 
@@ -4848,6 +4874,24 @@ impl Blockstore {
 
         let components =
             self.get_slot_components_in_block(slot, &completed_ranges, Some(&slot_meta))?;
+        debug_assert_eq!(completed_ranges.len(), components.len());
+        Ok((components, completed_ranges, slot_meta.is_full()))
+    }
+
+    pub fn get_slot_component_views_with_shred_info(
+        &self,
+        slot: Slot,
+        start_index: u64,
+        allow_dead_slots: bool,
+    ) -> Result<(Vec<BlockComponentView>, Vec<Range<u32>>, bool)> {
+        let Some((completed_ranges, slot_meta, _)) =
+            self.get_slot_data_with_shred_info_common(slot, start_index, allow_dead_slots)?
+        else {
+            return Ok((vec![], vec![], false));
+        };
+
+        let components =
+            self.get_slot_component_views_in_block(slot, &completed_ranges, Some(&slot_meta))?;
         debug_assert_eq!(completed_ranges.len(), components.len());
         Ok((components, completed_ranges, slot_meta.is_full()))
     }
@@ -4877,23 +4921,25 @@ impl Blockstore {
                 if let Ok(entries) = self.get_slot_entries(slot, 0) {
                     entries.into_par_iter().for_each(|entry| {
                         entry.transactions.into_iter().for_each(|tx| {
-                            if let Some(lookups) = tx.message.address_table_lookups() {
-                                add_to_set(
-                                    &lookup_tables,
-                                    lookups.iter().map(|lookup| &lookup.account_key),
-                                );
-                            }
+                            add_to_set(
+                                &lookup_tables,
+                                tx.address_table_lookup_iter()
+                                    .map(|lookup| lookup.account_key),
+                            );
+
                             // Attempt to verify transaction and load addresses from the current bank,
                             // or manually scan the transaction for addresses if the transaction.
-                            if let Ok(tx) = bank.verify_transaction(
+                            if let Ok(_tx) = bank.verify_transaction(
                                 tx.clone(),
                                 TransactionVerificationMode::FullVerification,
                             ) {
-                                add_to_set(&result, tx.message().account_keys().iter());
+                                // neeed equivelant of tx.message().account_keys().iter()
+                                todo!("add_to_set(&result, tx.static_account_keys());")
                             } else {
-                                add_to_set(&result, tx.message.static_account_keys());
+                                add_to_set(&result, tx.static_account_keys());
 
-                                let tx = SanitizedVersionedTransaction::try_from(tx)
+                                let tx = tx
+                                    .sanitize(&sanitize_config())
                                     .expect("transaction failed to sanitize");
 
                                 let alt_scan_extensions = scan_transaction(&tx);
@@ -5053,6 +5099,30 @@ impl Blockstore {
         })
     }
 
+    fn get_slot_component_views_in_block(
+        &self,
+        slot: Slot,
+        completed_ranges: &CompletedRanges,
+        slot_meta: Option<&SlotMeta>,
+    ) -> Result<Vec<BlockComponentView>> {
+        self.get_slot_data_in_block(slot, completed_ranges, slot_meta, |payload| {
+            let payload = Bytes::from(payload);
+            let is_empty_entry_batch = BlockComponent::infer_is_empty_entry_batch(&payload);
+
+            block_component_parser::parse(payload)
+                .map(|component| vec![component])
+                .map_err(|error| {
+                    if is_empty_entry_batch {
+                        BlockstoreError::BlockAborted(slot)
+                    } else {
+                        BlockstoreError::InvalidShredData(format!(
+                            "could not reconstruct block component view: {error}"
+                        ))
+                    }
+                })
+        })
+    }
+
     /// Fetch the entries corresponding to all of the shred indices in `completed_ranges`.
     /// Block markers are skipped because they do not contain entries.
     fn get_slot_entries_in_block(
@@ -5076,6 +5146,17 @@ impl Blockstore {
                         ))
                     }
                 })
+        })
+    }
+
+    fn get_slot_entry_views_in_block(
+        &self,
+        slot: Slot,
+        completed_ranges: &CompletedRanges,
+        slot_meta: Option<&SlotMeta>,
+    ) -> Result<Vec<EntryView<Bytes>>> {
+        self.get_slot_data_in_block(slot, completed_ranges, slot_meta, |_payload| {
+            todo!("need custom deserializer here");
         })
     }
 

@@ -66,6 +66,7 @@ agave-fs = { workspace = true }
 agave-precompiles = { workspace = true }
 agave-reserved-account-keys = { workspace = true }
 agave-snapshots = { workspace = true }
+agave-transaction-view = { workspace = true }
 agave-votor-messages = { workspace = true }
 ahash = { workspace = true }
 arc-swap = { workspace = true }
@@ -75,6 +76,7 @@ base64 = { workspace = true }
 bincode = { workspace = true }
 bitvec = { workspace = true }
 bytemuck = { workspace = true }
+bytes = { workspace = true }
 crossbeam-channel = { workspace = true }
 crossbeam-utils = { workspace = true }
 dashmap = { workspace = true, features = ["rayon", "raw-api", "serde"] }
@@ -198,6 +200,7 @@ wincode = { workspace = true, features = ["smallvec"] }
 agave-logger = { path = "../logger", features = ["agave-unstable-api"] }
 agave-transaction-view = { workspace = true }
 bitvec = { workspace = true }
+bytes = { workspace = true }
 criterion = { workspace = true }
 libsecp256k1 = { workspace = true }
 proptest = { workspace = true }

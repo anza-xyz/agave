@@ -23,9 +23,11 @@ serde = ["serde/derive", "solana-pubkey/serde"]
 wincode = ["dep:wincode", "solana-pubkey/wincode"]
 
 [dependencies]
+agave-transaction-view = { workspace = true }
 solana-account = { workspace = true }
 solana-instruction = { workspace = true, features = ["std"] }
 solana-instructions-sysvar = { workspace = true }
+solana-program-entrypoint = { workspace = true }
 solana-pubkey = { workspace = true }
 wincode = { workspace = true, optional = true }
 

@@ -278,8 +278,7 @@ dependencies = [
 [[package]]
 name = "agave-transaction-view"
 version = "5.1.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "025bb5f7b6dd4a5545a9edd6ce42b896836b8dbc8600ad9f99de041bd65601ef"
+source = "git+https://github.com/dsharifi/agave-sdk?rev=6ddd119a424048b5131044bd22af6de6f8e4b21e#6ddd119a424048b5131044bd22af6de6f8e4b21e"
 dependencies = [
  "bytes",
  "solana-hash 4.6.0",
@@ -6802,7 +6801,9 @@ dependencies = [
 name = "solana-entry"
 version = "4.3.0-alpha.3"
 dependencies = [
+ "agave-transaction-view",
  "agave-votor-messages",
+ "bytes",
  "crossbeam-channel",
  "log",
  "num_cpus",
@@ -7329,6 +7330,7 @@ dependencies = [
  "agave-feature-set",
  "agave-reserved-account-keys",
  "agave-snapshots",
+ "agave-transaction-view",
  "agave-votor-messages",
  "anyhow",
  "assert_matches",
@@ -8253,6 +8255,7 @@ dependencies = [
  "agave-precompiles",
  "agave-reserved-account-keys",
  "agave-snapshots",
+ "agave-transaction-view",
  "agave-votor-messages",
  "ahash 0.8.12",
  "arc-swap",
@@ -8262,6 +8265,7 @@ dependencies = [
  "bincode",
  "bitvec",
  "bytemuck",
+ "bytes",
  "crossbeam-channel",
  "crossbeam-utils",
  "dashmap",
@@ -9948,11 +9952,13 @@ dependencies = [
 name = "solana-transaction-context"
 version = "4.3.0-alpha.3"
 dependencies = [
+ "agave-transaction-view",
  "bincode",
  "serde",
  "solana-account 4.5.0",
  "solana-instruction",
  "solana-instructions-sysvar 4.0.0",
+ "solana-program-entrypoint",
  "solana-pubkey 4.3.0",
  "solana-rent",
  "solana-sbpf",
@@ -10100,11 +10106,13 @@ dependencies = [
 name = "solana-unified-scheduler-logic"
 version = "4.3.0-alpha.3"
 dependencies = [
+ "agave-transaction-view",
  "assert_matches",
  "solana-clock",
  "solana-hash 4.6.0",
  "solana-pubkey 4.3.0",
  "solana-runtime-transaction",
+ "solana-svm-transaction",
  "solana-transaction",
  "static_assertions",
 ]
@@ -10114,7 +10122,9 @@ name = "solana-unified-scheduler-pool"
 version = "4.3.0-alpha.3"
 dependencies = [
  "agave-banking-stage-ingress-types",
+ "agave-transaction-view",
  "assert_matches",
+ "bytes",
  "crossbeam-channel",
  "dashmap",
  "derive-where",

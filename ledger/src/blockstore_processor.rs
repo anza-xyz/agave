@@ -1,3 +1,5 @@
+#[cfg(any(test, feature = "dev-context-only-utils"))]
+use solana_entry::{block_component::BlockComponent, entry::Entry};
 use {
     crate::{
         block_error::BlockError,
@@ -10,7 +12,12 @@ use {
         use_snapshot_archives_at_startup::UseSnapshotArchivesAtStartup,
     },
     ExecuteTimingType::{NumExecuteBatches, TotalBatchesLen},
+    agave_transaction_view::{
+        resolved_transaction_view::ResolvedTransactionView, transaction_data::TransactionData,
+        transaction_view::UnsanitizedTransactionView,
+    },
     agave_votor_messages::{certificate::Certificate, migration::MigrationStatus},
+    bytes::Bytes,
     chrono_humanize::{Accuracy, HumanTime, Tense},
     crossbeam_channel::{Receiver, Sender},
     itertools::Itertools,
@@ -24,8 +31,11 @@ use {
     },
     solana_clock::{BankId, Slot},
     solana_entry::{
-        block_component::{BlockComponent, VersionedBlockMarker},
-        entry::{self, Entry, EntrySlice, EntryType, UnverifiedSignatures, create_ticks},
+        block_component::{BlockComponentView, VersionedBlockMarker},
+        entry::{
+            self, EntrySlice, EntrySliceTickCheck as _, EntryType, EntryView, UnverifiedSignatures,
+            create_ticks,
+        },
     },
     solana_genesis_config::GenesisConfig,
     solana_hash::Hash,
@@ -48,10 +58,7 @@ use {
     solana_shred_version::compute_shred_version,
     solana_svm_timings::{ExecuteTimingType, ExecuteTimings, report_execute_timings},
     solana_svm_transaction::svm_message::SVMMessage,
-    solana_transaction::{
-        TransactionVerificationMode, sanitized::SanitizedTransaction,
-        versioned::VersionedTransaction,
-    },
+    solana_transaction::TransactionVerificationMode,
     solana_transaction_error::{TransactionError, TransactionResult as Result},
     solana_vote::{vote_account::VoteAccountsHashMap, vote_parser::is_valid_vote_only_transaction},
     std::{
@@ -74,7 +81,7 @@ use {
 use {qualifier_attr::qualifiers, solana_runtime::bank::HashOverrides};
 
 struct ReplayEntry {
-    entry: EntryType<RuntimeTransaction<SanitizedTransaction>>,
+    entry: EntryType<RuntimeTransaction<ResolvedTransactionView<Bytes>>>,
     starting_index: usize,
 }
 
@@ -140,6 +147,7 @@ impl ExecuteBatchesInternalMetrics {
 ///
 /// This method is for use testing against a single Bank, and assumes `Bank::transaction_count()`
 /// represents the number of transactions executed in this Bank
+#[cfg(feature = "dev-context-only-utils")]
 pub fn process_entries_for_tests(bank: &BankWithScheduler, entries: Vec<Entry>) -> Result<()> {
     let result = schedule_entries_for_tests(bank, entries);
 
@@ -153,13 +161,14 @@ pub fn process_entries_for_tests(bank: &BankWithScheduler, entries: Vec<Entry>) 
     result.and(wait_result)
 }
 
+#[cfg(feature = "dev-context-only-utils")]
 fn schedule_entries_for_tests(bank: &BankWithScheduler, entries: Vec<Entry>) -> Result<()> {
     let validate_and_hash_transaction = {
         let bank = bank.clone_with_scheduler();
         move |versioned_tx: VersionedTransaction,
               serialized_message: &[u8]|
               -> Result<RuntimeTransaction<SanitizedTransaction>> {
-            bank.verify_transaction_with_serialized_message(
+            bank.verify_transaction(
                 versioned_tx,
                 serialized_message,
                 TransactionVerificationMode::HashOnly,
@@ -244,7 +253,7 @@ fn process_entries(bank: &BankWithScheduler, entries: Vec<ReplayEntry>) -> Resul
 /// Validate an entry's transactions before scheduling: each transaction's account
 /// locks (count and duplicates). Does not take account locks - the unified scheduler orders conflicts.
 fn validate_entry_transactions(
-    transactions: &[RuntimeTransaction<SanitizedTransaction>],
+    transactions: &[RuntimeTransaction<ResolvedTransactionView<Bytes>>],
     tx_account_lock_limit: usize,
 ) -> Result<()> {
     for transaction in transactions {
@@ -491,9 +500,9 @@ pub fn process_blockstore_from_root(
 
 /// Verify that a segment of entries has the correct number of ticks and hashes
 #[cfg_attr(feature = "dev-context-only-utils", qualifiers(pub))]
-fn verify_ticks(
+fn verify_ticks<D: TransactionData>(
     bank: &Bank,
-    entries: &[Entry],
+    entries: &[EntryView<D>],
     slot_full: bool,
     tick_hash_count: &mut u64,
     migration_status: &MigrationStatus,
@@ -1053,7 +1062,7 @@ impl PohVerificationJob {
 }
 
 struct SignaturesVerificationJob {
-    signatures: Arc<VerificationBatch<UnverifiedSignatures>>,
+    signatures: Arc<VerificationBatch<UnverifiedSignatures<Bytes>>>,
     range: Range<usize>,
     slot: Slot,
     bank_id: BankId,
@@ -1204,7 +1213,7 @@ impl AsyncVerificationProgress {
     fn spawn_signature_verification(
         &mut self,
         worker_pool: &ReplayVerificationWorkerPool,
-        signatures: UnverifiedSignatures,
+        signatures: UnverifiedSignatures<Bytes>,
         slot: Slot,
         bank_id: BankId,
         replay_vote_sender: Option<ReplayVoteSender>,
@@ -1363,7 +1372,7 @@ pub fn confirm_slot(
     let (slot_components, completed_ranges, slot_full) = {
         let mut load_elapsed = Measure::start("load_elapsed");
         let load_result = blockstore
-            .get_slot_components_with_shred_info(slot, progress.num_shreds, allow_dead_slots)
+            .get_slot_component_views_with_shred_info(slot, progress.num_shreds, allow_dead_slots)
             .map_err(BlockstoreProcessorError::FailedToLoadEntries);
         load_elapsed.stop();
         if load_result.is_err() {
@@ -1406,7 +1415,7 @@ pub fn confirm_slot(
     // Find the index of the last EntryBatch in slot_components
     let last_entry_batch_index = slot_components
         .iter()
-        .rposition(|bc| matches!(bc, BlockComponent::EntryBatch(_)));
+        .rposition(|bc| matches!(bc, BlockComponentView::EntryBatch(_)));
 
     for (ix, (completed_range, component)) in
         completed_ranges.iter().zip(slot_components).enumerate()
@@ -1415,7 +1424,7 @@ pub fn confirm_slot(
         let is_final = slot_full && ix == completed_ranges.len() - 1;
 
         match component {
-            BlockComponent::EntryBatch(entries) => {
+            BlockComponentView::EntryBatch(entries) => {
                 let slot_full = slot_full && ix == last_entry_batch_index.unwrap();
 
                 // Skip block component validation for genesis block. Slot 0 is handled specially,
@@ -1443,7 +1452,7 @@ pub fn confirm_slot(
                     migration_status,
                 )?;
             }
-            BlockComponent::BlockMarker(marker) => {
+            BlockComponentView::BlockMarker(marker) => {
                 let block_footer = match &marker {
                     VersionedBlockMarker::V1(marker) => marker.as_block_footer().cloned(),
                 };
@@ -1510,7 +1519,7 @@ pub fn confirm_slot(
 fn confirm_slot_entries(
     bank: &BankWithScheduler,
     replay_verification_worker_pool: &ReplayVerificationWorkerPool,
-    slot_entries_load_result: (Vec<Entry>, u64, bool),
+    slot_entries_load_result: (Vec<EntryView<Bytes>>, u64, bool),
     timing: &mut ConfirmationTiming,
     progress: &mut ConfirmationProgress,
     skip_verification: bool,
@@ -1592,7 +1601,7 @@ fn confirm_slot_entries(
     let last_entry_hash = entries.last().map(|e| e.hash);
     if !skip_verification {
         let start_hash = progress.last_entry;
-        let verify_entries = entry::entries_to_verification_data(&entries);
+        let verify_entries = entry::entry_views_to_verification_data(&entries);
         datapoint_debug!(
             "verify-batch-size",
             ("size", verify_entries.len() as i64, i64)
@@ -1609,12 +1618,8 @@ fn confirm_slot_entries(
 
     let validate_and_hash_transaction = {
         let bank = bank.clone_with_scheduler();
-        move |versioned_tx: VersionedTransaction, serialized_message: &[u8]| {
-            bank.verify_transaction_with_serialized_message(
-                versioned_tx,
-                serialized_message,
-                TransactionVerificationMode::HashOnly,
-            )
+        move |versioned_tx: UnsanitizedTransactionView<Bytes>| {
+            bank.verify_transaction(versioned_tx, TransactionVerificationMode::HashOnly)
         }
     };
 

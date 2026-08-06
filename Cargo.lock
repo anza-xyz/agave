@@ -362,8 +362,7 @@ dependencies = [
 [[package]]
 name = "agave-transaction-view"
 version = "5.1.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "025bb5f7b6dd4a5545a9edd6ce42b896836b8dbc8600ad9f99de041bd65601ef"
+source = "git+https://github.com/dsharifi/agave-sdk?rev=6ddd119a424048b5131044bd22af6de6f8e4b21e#6ddd119a424048b5131044bd22af6de6f8e4b21e"
 dependencies = [
  "bytes",
  "solana-hash 4.6.0",
@@ -1407,7 +1406,7 @@ checksum = "90dbd31c98227229239363921e60fcf5e558e43ec69094d46fc4996f08d1d5bc"
 dependencies = [
  "bitcoin_hashes 0.14.100",
  "rand 0.8.6",
- "rand_core 0.6.4",
+ "rand_core 0.5.1",
  "serde",
  "unicode-normalization",
 ]
@@ -8347,8 +8346,10 @@ version = "4.3.0-alpha.3"
 dependencies = [
  "agave-logger",
  "agave-reserved-account-keys",
+ "agave-transaction-view",
  "agave-votor-messages",
  "assert_matches",
+ "bytes",
  "criterion",
  "crossbeam-channel",
  "log",
@@ -8377,6 +8378,7 @@ dependencies = [
  "solana-system-transaction",
  "solana-transaction",
  "solana-transaction-error",
+ "test-case",
  "thiserror 2.0.19",
  "wincode",
 ]
@@ -9068,6 +9070,7 @@ dependencies = [
  "agave-logger",
  "agave-reserved-account-keys",
  "agave-snapshots",
+ "agave-transaction-view",
  "agave-votor-messages",
  "anyhow",
  "assert_matches",
@@ -10284,6 +10287,7 @@ dependencies = [
  "bincode",
  "bitvec",
  "bytemuck",
+ "bytes",
  "criterion",
  "crossbeam-channel",
  "crossbeam-utils",
@@ -11446,6 +11450,7 @@ dependencies = [
 name = "solana-transaction-context"
 version = "4.3.0-alpha.3"
 dependencies = [
+ "agave-transaction-view",
  "bincode",
  "qualifier_attr",
  "serde",
@@ -11621,6 +11626,7 @@ dependencies = [
 name = "solana-unified-scheduler-logic"
 version = "4.3.0-alpha.3"
 dependencies = [
+ "agave-transaction-view",
  "assert_matches",
  "solana-clock",
  "solana-hash 4.6.0",
@@ -11628,6 +11634,7 @@ dependencies = [
  "solana-message",
  "solana-pubkey 4.3.0",
  "solana-runtime-transaction",
+ "solana-svm-transaction",
  "solana-transaction",
  "static_assertions",
  "test-case",
@@ -11639,7 +11646,9 @@ version = "4.3.0-alpha.3"
 dependencies = [
  "agave-banking-stage-ingress-types",
  "agave-logger",
+ "agave-transaction-view",
  "assert_matches",
+ "bytes",
  "crossbeam-channel",
  "dashmap",
  "derive-where",

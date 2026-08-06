@@ -14,7 +14,9 @@
 //! regarding to pooling and the actual use.
 
 use {
+    agave_transaction_view::resolved_transaction_view::ResolvedTransactionView,
     assert_matches::assert_matches,
+    bytes::Bytes,
     crossbeam_channel::{
         self, Receiver, RecvError, RecvTimeoutError, SendError, Sender, never, select_biased,
     },
@@ -38,7 +40,6 @@ use {
     },
     solana_runtime_transaction::runtime_transaction::RuntimeTransaction,
     solana_svm_timings::ExecuteTimings,
-    solana_transaction::sanitized::SanitizedTransaction,
     solana_transaction_error::{TransactionError, TransactionResult as Result},
     solana_unified_scheduler_logic::{
         BlockSize, Capability, OrderedTaskId, SchedulingStateMachine, Task, UsageQueue,
@@ -544,7 +545,7 @@ pub trait TaskHandler: Send + Sync + Debug + Sized + 'static {
         result: &mut Result<()>,
         timings: &mut ExecuteTimings,
         scheduling_context: &SchedulingContext,
-        task: &Task,
+        task: &Task<Bytes>,
         handler_context: &HandlerContext,
     );
 }
@@ -557,7 +558,7 @@ impl TaskHandler for DefaultTaskHandler {
         result: &mut Result<()>,
         timings: &mut ExecuteTimings,
         scheduling_context: &SchedulingContext,
-        task: &Task,
+        task: &Task<Bytes>,
         handler_context: &HandlerContext,
     ) {
         let bank = scheduling_context.bank();
@@ -590,12 +591,12 @@ impl TaskHandler for DefaultTaskHandler {
 }
 
 struct ExecutedTask {
-    task: Task,
+    task: Task<Bytes>,
     result_with_timings: ResultWithTimings,
 }
 
 impl ExecutedTask {
-    fn new_boxed(task: Task) -> Box<Self> {
+    fn new_boxed(task: Task<Bytes>) -> Box<Self> {
         Box::new(Self {
             task,
             result_with_timings: initialized_result_with_timings(),
@@ -622,7 +623,7 @@ enum SubchanneledPayload<P1, P2> {
     Disconnect,
 }
 
-type NewTaskPayload = SubchanneledPayload<Task, Box<(SchedulingContext, ResultWithTimings)>>;
+type NewTaskPayload = SubchanneledPayload<Task<Bytes>, Box<(SchedulingContext, ResultWithTimings)>>;
 const_assert_eq!(mem::size_of::<NewTaskPayload>(), 16);
 
 // A tiny generic message type to synchronize multiple threads everytime some contextual data needs
@@ -789,7 +790,7 @@ mod chained_channel {
 #[derive(Debug)]
 struct UsageQueueLoaderInner {
     capability: Capability,
-    usage_queues: DashMap<Pubkey, UsageQueue>,
+    usage_queues: DashMap<Pubkey, UsageQueue<Bytes>>,
 }
 
 impl UsageQueueLoaderInner {
@@ -800,7 +801,7 @@ impl UsageQueueLoaderInner {
         }
     }
 
-    fn load(&self, address: Pubkey) -> UsageQueue {
+    fn load(&self, address: Pubkey) -> UsageQueue<Bytes> {
         self.usage_queues
             .entry(address)
             .or_insert_with(|| UsageQueue::new(&self.capability))
@@ -832,7 +833,7 @@ impl UsageQueueLoader {
         }
     }
 
-    fn load(&self, pubkey: Pubkey) -> UsageQueue {
+    fn load(&self, pubkey: Pubkey) -> UsageQueue<Bytes> {
         self.usage_queue_loader().load(pubkey)
     }
 
@@ -1049,14 +1050,17 @@ impl<S: SpawnableScheduler<TH>, TH: TaskHandler> ThreadManager<S, TH> {
         None
     }
 
-    fn can_receive_unblocked_task(state_machine: &SchedulingStateMachine) -> bool {
+    fn can_receive_unblocked_task(state_machine: &SchedulingStateMachine<Bytes>) -> bool {
         // Always take as much as possible out of SchedulingStateMachine to avoid crossbeam
         // channel internal message buffering depletion with much relaxed condition than
         // block production.
         state_machine.has_unblocked_task()
     }
 
-    fn can_finish_session(session_ending: bool, state_machine: &SchedulingStateMachine) -> bool {
+    fn can_finish_session(
+        session_ending: bool,
+        state_machine: &SchedulingStateMachine<Bytes>,
+    ) -> bool {
         // It's needed to wait to execute all active tasks without any short-circuiting,
         // even if the session has been signalled for ending; otherwise verification
         // outcome could differ.
@@ -1203,7 +1207,7 @@ impl<S: SpawnableScheduler<TH>, TH: TaskHandler> ThreadManager<S, TH> {
         // prioritization further. Consequently, this also contributes to alleviate the known
         // heuristic's caveat for the first task of linearized runs, which is described above.
         let (mut runnable_task_sender, runnable_task_receiver) =
-            chained_channel::unbounded::<Task, SchedulingContext>(context);
+            chained_channel::unbounded::<Task<Bytes>, SchedulingContext>(context);
         // Create two handler-to-scheduler channels to prioritize the finishing of blocked tasks,
         // because it is more likely that a blocked task will have more blocked tasks behind it,
         // which should be scheduled while minimizing the delay to clear buffered linearized runs
@@ -1572,7 +1576,7 @@ impl<S: SpawnableScheduler<TH>, TH: TaskHandler> ThreadManager<S, TH> {
             .collect();
     }
 
-    fn send_task(&self, task: Task) -> ScheduleResult {
+    fn send_task(&self, task: Task<Bytes>) -> ScheduleResult {
         debug!("send_task()");
         self.new_task_sender
             .send(NewTaskPayload::Payload(task))
@@ -1808,7 +1812,7 @@ impl<TH: TaskHandler> InstalledScheduler for PooledScheduler<TH> {
 
     fn schedule_execution(
         &self,
-        transaction: RuntimeTransaction<SanitizedTransaction>,
+        transaction: RuntimeTransaction<ResolvedTransactionView<Bytes>>,
         task_id: OrderedTaskId,
     ) -> ScheduleResult {
         let task = SchedulingStateMachine::create_task(transaction, task_id, &mut |pubkey| {

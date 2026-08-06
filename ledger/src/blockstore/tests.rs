@@ -3019,7 +3019,7 @@ fn test_get_complete_block_with_block_markers() {
     blockstore.set_roots([parent_slot, slot].iter()).unwrap();
 
     let (slot_entries, num_shreds, is_full) = blockstore
-        .get_slot_entries_with_shred_info(slot, 0, false)
+        .get_slot_entry_views_with_shred_info(slot, 0, false)
         .unwrap();
     assert_eq!(slot_entries, entries);
     assert_eq!(num_shreds, u64::from(slot_end_index));
@@ -5626,7 +5626,7 @@ fn test_get_slot_entries_dead_slot_race() {
         std::thread::scope(|scope| {
             scope.spawn(|| {
                 while let Ok(slot) = slot_receiver.recv() {
-                    match blockstore.get_slot_entries_with_shred_info(slot, 0, false) {
+                    match blockstore.get_slot_entry_views_with_shred_info(slot, 0, false) {
                         Ok((_entries, _num_shreds, is_full)) => {
                             if is_full {
                                 signal_sender

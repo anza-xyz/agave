@@ -10,6 +10,7 @@ use {
         },
         validated_reward_certificate::{Error as ValidatedRewardCertError, ValidatedRewardCert},
     },
+    agave_transaction_view::transaction_data::TransactionData,
     agave_votor_messages::{
         certificate::{CertSignature, Certificate, CertificateType, GenesisCert},
         consensus_message::Block,
@@ -25,7 +26,7 @@ use {
             BlockFooterV1, BlockMarkerV1, GenesisCertBlockMarker, VersionedBlockFooter,
             VersionedBlockHeader, VersionedBlockMarker, VersionedUpdateParent,
         },
-        entry::Entry,
+        entry::EntryView,
     },
     solana_hash::Hash,
     solana_pubkey::Pubkey,
@@ -357,11 +358,11 @@ impl BlockComponentProcessor {
     /// Validates that a parent marker (header or update parent) has been processed
     /// before any entry batches. The terminal Alpenglow tick is the only entry
     /// batch allowed after the block footer.
-    pub fn on_entry_batch(
+    pub fn on_entry_batch<D: TransactionData>(
         &mut self,
         migration_status: &MigrationStatus,
         slot: Slot,
-        entries: &[Entry],
+        entries: &[EntryView<D>],
         is_final_component: bool,
     ) -> Result<(), BlockComponentProcessorError> {
         if !migration_status.should_allow_block_markers(slot) {
