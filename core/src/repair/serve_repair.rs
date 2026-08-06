@@ -105,6 +105,28 @@ const SIGNED_REPAIR_TIME_WINDOW: Duration = Duration::from_secs(60 * 10); // 10 
 #[cfg(test)]
 static_assertions::const_assert_eq!(MAX_ANCESTOR_RESPONSES, 30);
 
+/// The portion of an FEC-set Merkle root committed to by the double-Merkle tree.
+#[cfg_attr(
+    feature = "frozen-abi",
+    derive(AbiExample, StableAbi, StableAbiSample, Deserialize, Serialize)
+)]
+#[repr(transparent)]
+#[derive(Clone, Copy, Debug, Eq, Hash, PartialEq, SchemaRead, SchemaWrite)]
+pub struct FecSetRoot(merkle_tree::MerkleProofEntry);
+
+impl FecSetRoot {
+    /// Returns the authenticated bytes of the FEC-set root.
+    pub fn as_bytes(&self) -> &merkle_tree::MerkleProofEntry {
+        &self.0
+    }
+}
+
+impl From<Hash> for FecSetRoot {
+    fn from(root: Hash) -> Self {
+        Self(*merkle_tree::hash_as_merkle_proof_entry(&root))
+    }
+}
+
 #[derive(Debug, Clone, Copy, Hash, PartialEq, Eq)]
 pub enum ShredRepairType {
     /// Requesting `MAX_ORPHAN_REPAIR_RESPONSES ` parent shreds
@@ -117,7 +139,7 @@ pub enum ShredRepairType {
     ShredForBlockId {
         slot: Slot,
         index: u32,
-        fec_set_merkle_root: Hash,
+        fec_set_merkle_root: FecSetRoot,
         // Double merkle block id
         block_id: Hash,
     },
@@ -178,7 +200,10 @@ impl RequestResponse for ShredRepairType {
                 shred_slot == *slot
                     && matches!(shred::layout::get_shred_type(shred), Ok(ShredType::Data))
                     && shred::layout::get_index(shred) == Some(*index)
-                    && get_merkle_root(shred) == Some(*fec_set_merkle_root)
+                    && get_merkle_root(shred).is_some_and(|root| {
+                        merkle_tree::hash_as_merkle_proof_entry(&root)
+                            == fec_set_merkle_root.as_bytes()
+                    })
             }
         }
     }
@@ -254,7 +279,7 @@ impl BlockIdRepairType {
     feature = "frozen-abi",
     derive(StableAbi, StableAbiSample, Deserialize, Serialize, PartialEq),
     frozen_abi(
-        abi_digest = "4UwjM1HevzQRxGkh6L9vXhf1db7y2ioQYTXRUaKZ4iNo",
+        abi_digest = "CfbU7jxf8EKXfJYEveg2StWVK8MYbLovaQZitXsHMYLz",
         abi_serializer = ["bincode", "wincode"],
         test_roundtrip = "eq_and_wire",
     )
@@ -268,7 +293,7 @@ pub enum BlockIdRepairResponse {
     },
 
     FecSetRoot {
-        fec_set_root: Hash,
+        fec_set_root: FecSetRoot,
         fec_set_proof: Vec<u8>,
     },
 
@@ -319,7 +344,7 @@ impl RequestResponse for BlockIdRepairType {
                     &fec_set_count.to_le_bytes(),
                 ]);
                 merkle_tree::verify_merkle_proof(
-                    parent_info_leaf,
+                    merkle_tree::hash_as_merkle_proof_entry(&parent_info_leaf),
                     *fec_set_count as usize,
                     parent_proof,
                     *block_id,
@@ -358,7 +383,7 @@ impl RequestResponse for BlockIdRepairType {
                     return false;
                 }
                 merkle_tree::verify_merkle_proof(
-                    *fec_set_root,
+                    fec_set_root.as_bytes(),
                     leaf_index,
                     fec_set_proof,
                     *block_id,
@@ -2006,6 +2031,7 @@ mod tests {
             get_tmp_ledger_path_auto_delete,
             shred::{
                 ProcessShredsStats, ReedSolomonCache, Shred, Shredder, max_ticks_per_n_shreds,
+                merkle_tree::hash_as_merkle_proof_entry,
             },
         },
         solana_net_utils::SocketAddrSpace,
@@ -3183,18 +3209,26 @@ mod tests {
         // ShredForBlockId
         let shred = new_test_data_shred(slot, index);
         let merkle_root = shred.merkle_root().expect("No more legacy shreds");
+        let mut poisoned_merkle_root = merkle_root.to_bytes();
+        poisoned_merkle_root[merkle_tree::SIZE_OF_MERKLE_PROOF_ENTRY] ^= 0xff;
+        let poisoned_merkle_root = Hash::new_from_array(poisoned_merkle_root);
+        assert_ne!(poisoned_merkle_root, merkle_root);
+        let fec_set_merkle_root = FecSetRoot::from(merkle_root);
+        assert_eq!(FecSetRoot::from(poisoned_merkle_root), fec_set_merkle_root);
         let request = ShredRepairType::ShredForBlockId {
             slot,
             index,
-            fec_set_merkle_root: merkle_root,
+            fec_set_merkle_root,
             block_id: Hash::new_unique(),
         };
         assert!(request.verify_response(shred.payload()));
-        // bad fec set root
+        // bad FEC-set root prefix
+        let mut bad_merkle_root = merkle_root.to_bytes();
+        bad_merkle_root[0] ^= 0xff;
         let request = ShredRepairType::ShredForBlockId {
             slot,
             index,
-            fec_set_merkle_root: Hash::new_unique(),
+            fec_set_merkle_root: Hash::new_from_array(bad_merkle_root).into(),
             block_id: Hash::new_unique(),
         };
         assert!(!request.verify_response(shred.payload()));
@@ -3328,7 +3362,7 @@ mod tests {
             fec_set_count: 1,
         };
         let response = BlockIdRepairResponse::FecSetRoot {
-            fec_set_root: block_id,
+            fec_set_root: block_id.into(),
             fec_set_proof: vec![],
         };
 
@@ -3358,7 +3392,13 @@ mod tests {
 
         // The generic verifier cannot distinguish an internal node from a leaf.
         assert!(
-            merkle_tree::verify_merkle_proof(internal_node, 0, &shortened_proof, block_id).is_ok()
+            merkle_tree::verify_merkle_proof(
+                hash_as_merkle_proof_entry(&internal_node),
+                0,
+                &shortened_proof,
+                block_id
+            )
+            .is_ok()
         );
 
         let request = BlockIdRepairType::FecSetRoot {
@@ -3368,12 +3408,12 @@ mod tests {
             fec_set_count: 2,
         };
         assert!(request.verify_response(&BlockIdRepairResponse::FecSetRoot {
-            fec_set_root: fec_set_roots[0],
+            fec_set_root: FecSetRoot::from(fec_set_roots[0]),
             fec_set_proof,
         }));
         assert!(
             !request.verify_response(&BlockIdRepairResponse::FecSetRoot {
-                fec_set_root: internal_node,
+                fec_set_root: FecSetRoot::from(internal_node),
                 fec_set_proof: shortened_proof,
             })
         );
