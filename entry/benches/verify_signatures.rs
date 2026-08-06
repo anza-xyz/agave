@@ -1,43 +1,51 @@
 use {
     agave_reserved_account_keys::ReservedAccountKeys,
+    agave_transaction_view::transaction_view::{
+        SanitizedTransactionView, UnsanitizedTransactionView,
+    },
+    bytes::Bytes,
     criterion::{Criterion, Throughput, criterion_group, criterion_main},
-    solana_entry::entry::{Entry, UnverifiedSignatures, validate_and_hash_transactions},
+    solana_entry::entry::{
+        Entry, UnverifiedSignatures, entry_views_for_tests, validate_and_hash_transactions,
+    },
     solana_hash::Hash,
     solana_keypair::Keypair,
-    solana_message::SimpleAddressLoader,
-    solana_runtime_transaction::runtime_transaction::RuntimeTransaction,
+    solana_runtime_transaction::{
+        runtime_transaction::{ReplayTransaction, RuntimeTransaction},
+        sanitize_config::sanitize_config,
+    },
     solana_signer::Signer,
     solana_system_transaction::transfer,
-    solana_transaction::{
-        sanitized::{MessageHash, SanitizedTransaction},
-        versioned::VersionedTransaction,
-    },
-    solana_transaction_error::TransactionResult as Result,
+    solana_transaction::sanitized::MessageHash,
+    solana_transaction_error::{TransactionError, TransactionResult as Result},
     std::hint::black_box,
 };
 
-fn build_unverified_signatures(num_transactions: usize) -> UnverifiedSignatures {
+fn build_unverified_signatures(num_transactions: usize) -> UnverifiedSignatures<Bytes> {
     let thread_pool = solana_entry::entry::thread_pool_for_benches();
     let hash = Hash::default();
     let keypair = Keypair::new();
     let transactions = (0..num_transactions)
         .map(|lamports| transfer(&keypair, &keypair.pubkey(), lamports as u64, hash))
         .collect();
-    let entries = vec![Entry::new(&hash, 0, transactions)];
+    let entries = entry_views_for_tests(vec![Entry::new(&hash, 0, transactions)]);
 
-    let validate_transaction = move |versioned_tx: VersionedTransaction,
-                                     message_bytes: &[u8]|
-          -> Result<RuntimeTransaction<SanitizedTransaction>> {
-        RuntimeTransaction::try_create(
-            versioned_tx,
-            MessageHash::Precomputed(solana_message::VersionedMessage::hash_raw_message(
-                message_bytes,
-            )),
-            None,
-            SimpleAddressLoader::Disabled,
-            &ReservedAccountKeys::empty_key_set(),
-        )
-    };
+    let validate_transaction =
+        move |unsanitized: UnsanitizedTransactionView<Bytes>| -> Result<ReplayTransaction> {
+            let sanitized = unsanitized
+                .sanitize(&sanitize_config())
+                .map_err(|_| TransactionError::SanitizeFailure)?;
+            let statically_loaded = RuntimeTransaction::<SanitizedTransactionView<Bytes>>::try_new(
+                sanitized,
+                MessageHash::Compute,
+                None,
+            )?;
+            ReplayTransaction::try_new(
+                statically_loaded,
+                None,
+                &ReservedAccountKeys::empty_key_set(),
+            )
+        };
 
     validate_and_hash_transactions(
         entries,

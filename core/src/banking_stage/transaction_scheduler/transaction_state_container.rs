@@ -324,9 +324,7 @@ mod tests {
         solana_keypair::Keypair,
         solana_message::Message,
         solana_perf::packet::Packet,
-        solana_runtime_transaction::{
-            runtime_transaction::RuntimeTransaction, sanitize_config::sanitize_config,
-        },
+        solana_runtime_transaction::sanitize_config::sanitize_config,
         solana_signer::Signer,
         solana_system_interface::instruction as system_instruction,
         solana_transaction::{

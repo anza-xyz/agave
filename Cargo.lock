@@ -8845,6 +8845,7 @@ dependencies = [
  "agave-logger",
  "agave-reserved-account-keys",
  "agave-snapshots",
+ "agave-transaction-view",
  "agave-votor-messages",
  "anyhow",
  "assert_matches",
@@ -10057,6 +10058,7 @@ dependencies = [
  "bincode",
  "bitvec",
  "bytemuck",
+ "bytes",
  "criterion",
  "crossbeam-channel",
  "crossbeam-queue",
@@ -10188,6 +10190,7 @@ dependencies = [
  "agave-feature-set",
  "agave-reserved-account-keys",
  "agave-transaction-view",
+ "bytes",
  "criterion",
  "rand 0.9.4",
  "solana-compute-budget",
@@ -11398,16 +11401,21 @@ dependencies = [
 name = "solana-unified-scheduler-logic"
 version = "4.4.0-alpha.0"
 dependencies = [
+ "agave-transaction-view",
  "assert_matches",
+ "bytes",
  "solana-clock",
  "solana-hash 4.6.0",
  "solana-instruction",
  "solana-message",
  "solana-pubkey 4.3.0",
  "solana-runtime-transaction",
+ "solana-signature",
+ "solana-svm-transaction",
  "solana-transaction",
  "static_assertions",
  "test-case",
+ "wincode",
 ]
 
 [[package]]

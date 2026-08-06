@@ -460,13 +460,13 @@ impl Blockstore {
         }
 
         for slot in from_slot..=to_slot {
-            let mut slot_components =
-                self.get_slot_components_with_shred_info(slot, 0, /*allow_dead_slots:*/ true);
+            let mut slot_components = self
+                .get_slot_component_views_with_shred_info(slot, 0, /*allow_dead_slots:*/ true);
             if slot_components.is_err()
                 && let Ok(Some(slot_meta)) = self.meta(slot)
                 && slot_meta.has_update_parent()
             {
-                slot_components = self.get_slot_components_with_shred_info(
+                slot_components = self.get_slot_component_views_with_shred_info(
                     slot,
                     u64::from(slot_meta.replay_fec_set_index),
                     /*allow_dead_slots:*/ true,
@@ -478,10 +478,10 @@ impl Blockstore {
             let mut transaction_index = 0usize;
             for component in slot_components {
                 match component {
-                    BlockComponent::EntryBatch(entries) => {
+                    ParsedBlockComponent::EntryBatch(entries) => {
                         for transaction in entries.into_iter().flat_map(|entry| entry.transactions)
                         {
-                            if let Some(&signature) = transaction.signatures.first() {
+                            if let Some(&signature) = transaction.signatures().first() {
                                 self.transaction_status_cf
                                     .delete_in_batch(batch, (signature, slot));
                                 self.transaction_memos_cf
@@ -490,7 +490,7 @@ impl Blockstore {
                                 let meta = self.read_transaction_status((signature, slot))?;
                                 let loaded_addresses = meta.map(|meta| meta.loaded_addresses);
                                 let account_keys = AccountKeys::new(
-                                    transaction.message.static_account_keys(),
+                                    transaction.static_account_keys(),
                                     loaded_addresses.as_ref(),
                                 );
 
@@ -506,10 +506,10 @@ impl Blockstore {
                             transaction_index += 1;
                         }
                     }
-                    BlockComponent::BlockMarker(marker) if marker.is_update_parent() => {
+                    ParsedBlockComponent::BlockMarker(marker) if marker.is_update_parent() => {
                         transaction_index = 0;
                     }
-                    BlockComponent::BlockMarker(_) => {}
+                    ParsedBlockComponent::BlockMarker(_) => {}
                 }
             }
         }

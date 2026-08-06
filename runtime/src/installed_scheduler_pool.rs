@@ -25,9 +25,8 @@ use {
     log::*,
     solana_clock::Slot,
     solana_hash::Hash,
-    solana_runtime_transaction::runtime_transaction::RuntimeTransaction,
+    solana_runtime_transaction::runtime_transaction::ReplayTransaction,
     solana_svm_timings::ExecuteTimings,
-    solana_transaction::sanitized::SanitizedTransaction,
     solana_transaction_error::{TransactionError, TransactionResult as Result},
     solana_unified_scheduler_logic::OrderedTaskId,
     std::{
@@ -129,7 +128,7 @@ pub trait InstalledScheduler: Send + Sync + Debug + 'static {
     /// having &mut.
     fn schedule_execution(
         &self,
-        transaction: RuntimeTransaction<SanitizedTransaction>,
+        transaction: ReplayTransaction,
         task_id: OrderedTaskId,
     ) -> ScheduleResult;
 
@@ -437,9 +436,7 @@ impl BankWithScheduler {
     /// wait_for_termination()-ed or the unified scheduler is disabled in the first place).
     pub fn schedule_transaction_executions(
         &self,
-        transaction_with_task_ids: impl ExactSizeIterator<
-            Item = (RuntimeTransaction<SanitizedTransaction>, OrderedTaskId),
-        >,
+        transaction_with_task_ids: impl ExactSizeIterator<Item = (ReplayTransaction, OrderedTaskId)>,
     ) -> Result<()> {
         trace!(
             "schedule_transaction_executions(): {} txs",
@@ -853,7 +850,7 @@ mod tests {
             mint_keypair,
             ..
         } = create_genesis_config(10_000);
-        let tx0 = RuntimeTransaction::from_transaction_for_tests(system_transaction::transfer(
+        let tx0 = ReplayTransaction::from(system_transaction::transfer(
             &mint_keypair,
             &solana_pubkey::new_rand(),
             2,

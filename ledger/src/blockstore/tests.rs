@@ -13,7 +13,9 @@ use {
     },
     assert_matches::assert_matches,
     rand::{rng, seq::SliceRandom},
-    solana_entry::entry::next_entry_mut,
+    solana_entry::entry::{
+        entries_to_verification_data, entry_views_to_verification_data, next_entry_mut,
+    },
     solana_genesis_utils::{MAX_GENESIS_ARCHIVE_UNPACKED_SIZE, open_genesis_config},
     solana_hash::Hash,
     solana_message::{compiled_instruction::CompiledInstruction, v0::LoadedAddresses},
@@ -28,7 +30,7 @@ use {
     solana_transaction_context::transaction::TransactionReturnData,
     solana_transaction_error::TransactionError,
     solana_transaction_status::{InnerInstruction, InnerInstructions},
-    std::{cmp::Ordering, time::Duration},
+    std::{borrow::Cow, cmp::Ordering, time::Duration},
     test_case::{test_case, test_matrix},
 };
 
@@ -3071,9 +3073,12 @@ fn test_get_complete_block_with_block_markers() {
     blockstore.set_roots([parent_slot, slot].iter()).unwrap();
 
     let (slot_entries, num_shreds, is_full) = blockstore
-        .get_slot_entries_with_shred_info(slot, 0, false)
+        .get_slot_entry_views_with_shred_info(slot, 0, false)
         .unwrap();
-    assert_eq!(slot_entries, entries);
+    assert_eq!(
+        entry_views_to_verification_data(&slot_entries),
+        entries_to_verification_data(&entries)
+    );
     assert_eq!(num_shreds, u64::from(slot_end_index));
     assert!(is_full);
 
@@ -5692,7 +5697,7 @@ fn test_get_slot_entries_dead_slot_race() {
         std::thread::scope(|scope| {
             scope.spawn(|| {
                 while let Ok(slot) = slot_receiver.recv() {
-                    match blockstore.get_slot_entries_with_shred_info(slot, 0, false) {
+                    match blockstore.get_slot_entry_views_with_shred_info(slot, 0, false) {
                         Ok((_entries, _num_shreds, is_full)) => {
                             if is_full {
                                 signal_sender
