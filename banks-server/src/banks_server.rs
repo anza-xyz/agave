@@ -1,6 +1,6 @@
 use {
     bincode::{deserialize, serialize},
-    crossbeam_channel::{Receiver, Sender, unbounded},
+    crossbeam_channel::{Receiver, Sender, bounded, unbounded},
     futures::{future, prelude::stream::StreamExt},
     solana_account::Account,
     solana_banks_interface::{
@@ -116,7 +116,7 @@ impl BanksServer {
         block_commitment_cache: Arc<RwLock<BlockCommitmentCache>>,
         poll_signature_status_sleep_duration: Duration,
     ) -> Self {
-        let (transaction_sender, transaction_receiver) = unbounded();
+        let (transaction_sender, transaction_receiver) = bounded(1024);
         let bank = bank_forks.read().unwrap().working_bank();
         let slot = bank.slot();
         {
