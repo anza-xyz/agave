@@ -66,8 +66,6 @@ fn max_admitted_vote_slot(root_slot: Slot, highest_parent_ready_slot: Slot) -> S
 /// sender for 2 days, which roughly corresponds to an epoch.
 pub(super) const BAN_TIMEOUT: Duration = Duration::from_hours(48);
 
-type SigVerifierInputs = (Vec<Datagram>, Vec<(Slot, UnverifiedCertificate)>);
-
 pub struct SigVerifierContext {
     pub migration_status: Arc<MigrationStatus>,
     /// Sends peer ban commands to the transport endpoint.
@@ -168,12 +166,15 @@ impl SigVerifier {
     }
 
     fn run(mut self, exit: Arc<AtomicBool>) {
+        let mut datagrams_buffer = Vec::new();
         while !exit.load(Ordering::Relaxed) {
             const SOFT_RECEIVE_CAP: usize = 5000;
-            let Ok((datagrams, certificates)) = recv_inputs(
+            datagrams_buffer.clear();
+            let Ok(certificates) = recv_inputs(
                 &self.channels.packet_receiver,
                 &self.channels.certificate_receiver,
                 SOFT_RECEIVE_CAP,
+                &mut datagrams_buffer,
             ) else {
                 error!("sigverifier input channel disconnected: Exiting.");
                 break;
@@ -181,12 +182,12 @@ impl SigVerifier {
             if self.migration_status.is_pre_feature_activation() {
                 continue;
             }
-            if datagrams.is_empty() && certificates.is_empty() {
+            if datagrams_buffer.is_empty() && certificates.is_empty() {
                 continue;
             }
 
             let (verify_res, verify_time_us) =
-                measure_us!(self.verify_and_send_inputs(datagrams, certificates));
+                measure_us!(self.verify_and_send_inputs(&datagrams_buffer, certificates));
             self.stats
                 .verify_and_send_batch_us
                 .add_sample(verify_time_us);
@@ -204,12 +205,12 @@ impl SigVerifier {
         &mut self,
         datagrams: Vec<Datagram>,
     ) -> Result<(), SigVerifyError> {
-        self.verify_and_send_inputs(datagrams, vec![])
+        self.verify_and_send_inputs(&datagrams, vec![])
     }
 
     fn verify_and_send_inputs(
         &mut self,
-        datagrams: Vec<Datagram>,
+        datagrams: &[Datagram],
         certificates: Vec<(Slot, UnverifiedCertificate)>,
     ) -> Result<(), SigVerifyError> {
         let root_bank = self.sharable_banks.root();
@@ -295,7 +296,7 @@ impl SigVerifier {
 
     fn extract_and_filter_msgs(
         &mut self,
-        datagrams: Vec<Datagram>,
+        datagrams: &[Datagram],
         certificates: Vec<(Slot, UnverifiedCertificate)>,
         root_bank: &Bank,
     ) -> ExtractedMsgs {
@@ -314,7 +315,7 @@ impl SigVerifier {
         {
             num_pkts = num_pkts.saturating_add(1);
             let Ok(msg) = VersionedWireConsensusMessage::deserialize_with_expected_shred_version(
-                &*message,
+                message.as_ref(),
                 packet_config(),
                 my_shred_version,
             ) else {
@@ -327,7 +328,7 @@ impl SigVerifier {
                 DecodedWireConsensusMessage::Vote(unverified_vote) => {
                     if let Some(payload) = self.keep_vote(
                         unverified_vote,
-                        sender_identity_pubkey,
+                        *sender_identity_pubkey,
                         root_bank,
                         max_vote_slot,
                     ) {
@@ -343,7 +344,7 @@ impl SigVerifier {
                         self.stats.num_old_certs_received += 1;
                         continue;
                     }
-                    self.add_certificate_to_group(&mut cert_groups, cert, sender_identity_pubkey);
+                    self.add_certificate_to_group(&mut cert_groups, cert, *sender_identity_pubkey);
                 }
             }
         }
@@ -465,22 +466,22 @@ fn recv_inputs(
     packet_receiver: &Receiver<Datagram>,
     certificate_receiver: &Receiver<(Slot, UnverifiedCertificate)>,
     soft_receive_cap: usize,
-) -> Result<SigVerifierInputs, ()> {
-    let mut datagrams = Vec::with_capacity(soft_receive_cap);
+    datagrams_buffer: &mut Vec<Datagram>,
+) -> Result<Vec<(Slot, UnverifiedCertificate)>, ()> {
     let mut certificates = vec![];
     select! {
         recv(packet_receiver) -> datagram => {
-            datagrams.push(datagram.map_err(|_| ())?);
+            datagrams_buffer.push(datagram.map_err(|_| ())?);
         }
         recv(certificate_receiver) -> certificate => {
             certificates.push(certificate.map_err(|_| ())?);
         },
-        default(Duration::from_secs(1)) => return Ok((datagrams, certificates)),
+        default(Duration::from_secs(1)) => return Ok(certificates),
     }
-    while datagrams.len() < soft_receive_cap {
+    while datagrams_buffer.len() < soft_receive_cap {
         match packet_receiver.try_recv() {
             Ok(datagram) => {
-                datagrams.push(datagram);
+                datagrams_buffer.push(datagram);
             }
             Err(TryRecvError::Empty) => break,
             Err(TryRecvError::Disconnected) => return Err(()),
@@ -488,7 +489,7 @@ fn recv_inputs(
     }
     // Certificates from blockstore are very low throughput (1 per slot), so no need for a cap here
     certificates.extend(certificate_receiver.try_iter());
-    Ok((datagrams, certificates))
+    Ok(certificates)
 }
 
 #[cfg(test)]
@@ -740,13 +741,13 @@ mod tests {
         let slot = 2;
 
         ctx.verifier
-            .verify_and_send_inputs(vec![], vec![(slot, certificate.clone())])
+            .verify_and_send_inputs(&[], vec![(slot, certificate.clone())])
             .unwrap();
         expect_no_receive(&ctx.pool_receiver);
 
         ctx.verifier.migration_status.enable_alpenglow_for_tests();
         ctx.verifier
-            .verify_and_send_inputs(vec![], vec![(slot, certificate)])
+            .verify_and_send_inputs(&[], vec![(slot, certificate)])
             .unwrap();
         let SigVerifiedBatch::Certificates(certs) = ctx.pool_receiver.try_recv().unwrap() else {
             panic!("expected a certificate batch");
@@ -776,7 +777,7 @@ mod tests {
 
         let extracted_msgs =
             ctx.verifier
-                .extract_and_filter_msgs(vec![], vec![(slot, certificate)], &root_bank);
+                .extract_and_filter_msgs(&[], vec![(slot, certificate)], &root_bank);
         assert!(extracted_msgs.certs.is_empty());
         assert!(extracted_msgs.votes.is_empty());
         assert_eq!(ctx.verifier.stats.num_old_certs_received.0, 1);
