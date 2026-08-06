@@ -1181,9 +1181,8 @@ mod tests {
 
             // Consume the harness cell after Shuttle exits so extraction does
             // not call `shuttle::sync::Mutex::lock` outside the scheduler.
-            let mut result = match shuttle::sync::Arc::try_unwrap(result) {
-                Ok(result) => result,
-                Err(_) => panic!("shuttle test result still has outstanding references"),
+            let Ok(mut result) = shuttle::sync::Arc::try_unwrap(result) else {
+                panic!("shuttle test result still has outstanding references")
             };
             result
                 .get_mut()
