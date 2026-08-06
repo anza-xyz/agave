@@ -1,5 +1,6 @@
 #![cfg(feature = "agave-unstable-api")]
 
+pub mod cost_pacer;
 pub mod error;
 pub mod thread_aware_account_locks;
 
