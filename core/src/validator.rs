@@ -40,7 +40,7 @@ use {
         vote_history_storage::{NullVoteHistoryStorage, VoteHistoryStorage},
         voting_service::VotingServiceOverride,
     },
-    agave_xdp::transmitter::{Transmitter, TransmitterBuilder},
+    agave_xdp::transmitter::{Transmitter, TransmitterBuilder, XdpSender},
     anyhow::{Result, anyhow},
     crossbeam_channel::{Receiver, bounded, unbounded},
     serde::{Deserialize, Serialize},
@@ -541,6 +541,38 @@ pub enum ValidatorStartProgress {
 pub struct XdpTransmitSetup {
     pub transmitter_builder: TransmitterBuilder,
     pub src_ip: Ipv4Addr,
+    pub modules: XdpModules,
+}
+
+/// Per-module XDP sender positions. `None` means the module uses OS sockets.
+///
+/// Positions index into the configured queue list (`XdpConfig::queues`), not into NIC hardware
+/// queue ids.
+#[derive(Clone, Debug)]
+pub struct XdpModules {
+    pub tpu: Option<Box<[usize]>>,
+    pub turbine: Option<Box<[usize]>>,
+    pub repair: Option<Box<[usize]>>,
+    pub gossip: Option<Box<[usize]>>,
+}
+
+impl XdpModules {
+    fn validate_sender_positions(&self, sender_count: usize) -> Result<()> {
+        for (module, positions) in [
+            ("tpu", &self.tpu),
+            ("turbine", &self.turbine),
+            ("repair", &self.repair),
+            ("gossip", &self.gossip),
+        ] {
+            let Some(positions) = positions else {
+                continue;
+            };
+            if let Err(err) = XdpSender::validate_subset_positions(positions, sender_count) {
+                return Err(anyhow!("invalid XDP sender positions for {module}: {err}"));
+            }
+        }
+        Ok(())
+    }
 }
 
 struct BlockstoreRootScan {
@@ -1414,6 +1446,7 @@ impl Validator {
         ) = if let Some(XdpTransmitSetup {
             transmitter_builder,
             src_ip,
+            modules,
         }) = xdp_transmit_setup
         {
             let turbine_src_port = node.sockets.retransmit_sockets[0]
@@ -1433,22 +1466,43 @@ impl Validator {
                 .expect("gossip socket should have local address")
                 .port();
 
+            modules.validate_sender_positions(transmitter_builder.sender_count())?;
             let (transmitter, sender) = transmitter_builder.build();
+
             (
                 Some(transmitter),
-                Some(PinnedXdpSender::new(
-                    sender.clone(),
-                    SocketAddrV4::new(src_ip, turbine_src_port),
-                )),
-                Some((sender.clone(), src_ip)),
-                Some(PinnedXdpSender::new(
-                    sender.clone(),
-                    SocketAddrV4::new(src_ip, repair_src_port),
-                )),
-                Some(PinnedXdpSender::new(
-                    sender,
-                    SocketAddrV4::new(src_ip, gossip_src_port),
-                )),
+                modules.turbine.map(|positions| {
+                    PinnedXdpSender::new(
+                        sender
+                            .subset(&positions)
+                            .expect("XDP sender positions were validated"),
+                        SocketAddrV4::new(src_ip, turbine_src_port),
+                    )
+                }),
+                modules.tpu.map(|positions| {
+                    (
+                        sender
+                            .subset(&positions)
+                            .expect("XDP sender positions were validated"),
+                        src_ip,
+                    )
+                }),
+                modules.repair.map(|positions| {
+                    PinnedXdpSender::new(
+                        sender
+                            .subset(&positions)
+                            .expect("XDP sender positions were validated"),
+                        SocketAddrV4::new(src_ip, repair_src_port),
+                    )
+                }),
+                modules.gossip.map(|positions| {
+                    PinnedXdpSender::new(
+                        sender
+                            .subset(&positions)
+                            .expect("XDP sender positions were validated"),
+                        SocketAddrV4::new(src_ip, gossip_src_port),
+                    )
+                }),
             )
         } else {
             (None, None, None, None, None)
@@ -3139,6 +3193,21 @@ mod tests {
         solana_vote_program::vote_state::{LandedVote, Lockout, VoteStateVersions},
         std::{fs::remove_dir_all, num::NonZeroU64, thread, time::Duration},
     };
+
+    #[test]
+    fn test_xdp_modules_validate_sender_positions_with_module_context() {
+        let modules = XdpModules {
+            tpu: Some([0].into()),
+            turbine: None,
+            repair: Some([1, 1].into()),
+            gossip: None,
+        };
+        let error = modules.validate_sender_positions(2).unwrap_err();
+        assert!(
+            error.to_string().contains("repair") && error.to_string().contains("is repeated"),
+            "unexpected error: {error}"
+        );
+    }
 
     #[test]
     fn test_should_require_vote_history_file() {
