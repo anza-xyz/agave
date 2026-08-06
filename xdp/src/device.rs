@@ -200,10 +200,10 @@ impl NetworkDevice {
             return Err(io::Error::last_os_error());
         }
 
-        Ok(RingSizes {
-            rx: rp.rx_pending as usize,
-            tx: rp.tx_pending as usize,
-        })
+        Ok(RingSizes::new(
+            rp.rx_pending as usize,
+            rp.tx_pending as usize,
+        ))
     }
 }
 
@@ -213,11 +213,34 @@ pub struct RingSizes {
     pub tx: usize,
 }
 
+impl RingSizes {
+    /// Sizes are rounded up to a power of two, which AF_XDP requires of every ring. Hardware ring
+    /// depths carry no such constraint and are not always a power of two: bnxt_en reports 511, and
+    /// a 511-entry TX ring yields a 1022-entry completion ring, both of which the kernel rejects
+    /// with EINVAL. Rounding up rather than down keeps each ring at least as deep as the hardware
+    /// ring it mirrors, which zero-copy mode depends on.
+    pub fn new(rx: usize, tx: usize) -> Self {
+        Self {
+            rx: round_up_ring_size(rx),
+            tx: round_up_ring_size(tx),
+        }
+    }
+}
+
 impl Default for RingSizes {
     fn default() -> Self {
         // These are reasonable defaults for devices which don't have a set ring size. Values must
         // be a power of two.
         Self { rx: 1024, tx: 1024 }
+    }
+}
+
+/// Zero is preserved: it means "no ring", not "a ring of one".
+fn round_up_ring_size(size: usize) -> usize {
+    if size == 0 {
+        0
+    } else {
+        size.next_power_of_two()
     }
 }
 
@@ -496,6 +519,24 @@ pub(crate) unsafe fn mmap_ring<T>(
 #[cfg(test)]
 mod test {
     use super::*;
+
+    #[test]
+    fn test_ring_sizes_rounded_to_power_of_two() {
+        // bnxt_en reports 511/511, which the kernel rejects as an AF_XDP ring size.
+        let sizes = RingSizes::new(511, 511);
+        assert_eq!(sizes, RingSizes { rx: 512, tx: 512 });
+        // The completion ring is twice the TX ring, so it must stay a power of two too.
+        assert!((sizes.tx * 2).is_power_of_two());
+
+        // Powers of two are left alone.
+        assert_eq!(RingSizes::new(1024, 4096), RingSizes { rx: 1024, tx: 4096 });
+
+        // Zero means "no ring" and must not become a one-entry ring.
+        assert_eq!(RingSizes::new(0, 511), RingSizes { rx: 0, tx: 512 });
+
+        assert!(RingSizes::default().rx.is_power_of_two());
+        assert!(RingSizes::default().tx.is_power_of_two());
+    }
 
     #[test]
     fn test_ring_producer() {
