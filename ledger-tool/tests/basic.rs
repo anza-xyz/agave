@@ -16,6 +16,17 @@ fn run_ledger_tool(args: &[&str]) -> Output {
         .unwrap()
 }
 
+fn assert_ledger_tool_success(args: &[&str], output: &Output) {
+    assert!(
+        output.status.success(),
+        "`ledger-tool {}` failed with {}\n--- stdout ---\n{}\n--- stderr ---\n{}",
+        args.join(" "),
+        output.status,
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr),
+    );
+}
+
 #[test]
 fn bad_arguments() {
     // At least a ledger path is required
@@ -30,11 +41,13 @@ fn bad_arguments() {
 }
 
 fn nominal_test_helper(ledger_path: &str) {
-    let output = run_ledger_tool(&["-l", ledger_path, "verify"]);
-    assert!(output.status.success());
+    let args = &["-l", ledger_path, "verify"];
+    let output = run_ledger_tool(args);
+    assert_ledger_tool_success(args, &output);
 
-    let output = run_ledger_tool(&["-l", ledger_path, "print", "-vv"]);
-    assert!(output.status.success());
+    let args = &["-l", ledger_path, "print", "-vv"];
+    let output = run_ledger_tool(args);
+    assert_ledger_tool_success(args, &output);
 }
 
 #[test]
