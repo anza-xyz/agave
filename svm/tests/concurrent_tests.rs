@@ -5,7 +5,7 @@ use {
     assert_matches::assert_matches,
     mock_bank::MockBankCallback,
     shuttle::{
-        Runner,
+        Config, Runner,
         sync::{Arc, RwLock},
         thread,
     },
@@ -113,8 +113,8 @@ fn program_cache_execution(threads: usize) {
                     &feature_set,
                     0,
                 );
-                let upcoming_environment =
-                    processor.program_runtime_environment_for_epoch(processor.epoch + 1);
+                let upcoming_environment = processor
+                    .program_runtime_environment_for_epoch(processor.epoch.saturating_add(1));
                 processor.prepare_one_program_for_upcoming_feature_set(
                     &account_loader,
                     false,
@@ -164,7 +164,7 @@ fn test_program_cache_with_exhaustive_scheduler() {
     // Since this is not the case for the execution of jitted program, we can still run the test
     // but with decreased accuracy.
     let scheduler = shuttle::scheduler::DfsScheduler::new(Some(MAX_ITERATIONS), true);
-    let runner = Runner::new(scheduler, Default::default());
+    let runner = Runner::new(scheduler, Config::default());
     runner.run(move || program_cache_execution(4));
 }
 
