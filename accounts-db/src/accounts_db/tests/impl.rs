@@ -933,7 +933,7 @@ fn test_clean_zero_lamport_and_dead_slot() {
 // When a dead slot is cleaned, the pubkeys it held are unreffed.
 #[test]
 fn test_clean_dead_slot_unrefs_reclaimed_pubkeys() {
-    let accounts = AccountsDb::default_for_tests();
+    let accounts = AccountsDb::new_for_tests_with_config(Vec::new(), DEFAULT_ACCOUNTS_DB_CONFIG);
     let pubkey = Pubkey::new_unique();
     let account = AccountSharedData::new(1, 0, &Pubkey::default());
     let updated_account = AccountSharedData::new(2, 0, &Pubkey::default());
@@ -965,7 +965,7 @@ fn test_clean_dead_slot_unrefs_reclaimed_pubkeys() {
 
 #[test]
 fn test_clean_marks_reclaims_obsolete_at_new_slot() {
-    let accounts = AccountsDb::default_for_tests();
+    let accounts = AccountsDb::new_for_tests_with_config(Vec::new(), DEFAULT_ACCOUNTS_DB_CONFIG);
     let pubkey1 = Pubkey::new_unique();
     let pubkey2 = Pubkey::new_unique();
     let pubkey3 = Pubkey::new_unique();
@@ -1013,7 +1013,7 @@ fn test_clean_marks_reclaims_obsolete_at_new_slot() {
 
 #[test]
 fn test_clean_reclaim_tombstones_zero_lamport_single_ref() {
-    let accounts = AccountsDb::default_for_tests();
+    let accounts = AccountsDb::new_for_tests_with_config(Vec::new(), DEFAULT_ACCOUNTS_DB_CONFIG);
     let pubkey1 = Pubkey::new_unique();
     let pubkey2 = Pubkey::new_unique();
     let account = AccountSharedData::new(1, 0, &Pubkey::default());
@@ -1191,7 +1191,7 @@ fn test_remove_zero_lamport_single_ref_accounts_after_shrink() {
 /// older version of it is later shrunk.
 #[test]
 fn test_shrink_does_not_resurrect_dead_account() {
-    let accounts = AccountsDb::default_for_tests();
+    let accounts = AccountsDb::new_for_tests_with_config(Vec::new(), DEFAULT_ACCOUNTS_DB_CONFIG);
     let pubkey = Pubkey::new_unique();
     let pubkey2 = Pubkey::new_unique();
     let pubkey3 = Pubkey::new_unique();
@@ -1249,7 +1249,7 @@ fn test_shrink_does_not_resurrect_dead_account() {
 /// snapshot is dead: reclaiming its last live account purges the storage.
 #[test]
 fn test_reclaiming_last_live_account_purges_tombstone_only_storage() {
-    let accounts = AccountsDb::default_for_tests();
+    let accounts = AccountsDb::new_for_tests_with_config(Vec::new(), DEFAULT_ACCOUNTS_DB_CONFIG);
     let tombstone_pubkey = Pubkey::new_unique();
     let live_pubkey = Pubkey::new_unique();
     let slot = 1;
