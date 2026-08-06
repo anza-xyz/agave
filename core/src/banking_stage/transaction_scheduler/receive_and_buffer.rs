@@ -57,7 +57,7 @@ pub(crate) enum PacketHandlingError {
 
 pub(crate) struct PrecheckedTransaction {
     pub(crate) state: TransactionViewState,
-    pub(crate) is_validated_nonce: bool,
+    pub(crate) validated_nonce_address: Option<Pubkey>,
 }
 
 pub(crate) type PrecheckResult = Result<PrecheckedTransaction, IngressCheckError>;
@@ -111,7 +111,7 @@ pub(crate) fn precheck_transaction(
 
     Ok(PrecheckedTransaction {
         state,
-        is_validated_nonce: validated_nonce_address.is_some(),
+        validated_nonce_address,
     })
 }
 
@@ -465,7 +465,7 @@ impl TransactionViewReceiveAndBuffer {
     ) {
         let PrecheckedTransaction {
             state,
-            is_validated_nonce,
+            validated_nonce_address,
         } = prechecked_transaction;
         let priority = state.priority();
 
@@ -480,12 +480,6 @@ impl TransactionViewReceiveAndBuffer {
             return;
         }
 
-        let validated_nonce_address = is_validated_nonce.then(|| {
-            *state
-                .transaction()
-                .get_durable_nonce()
-                .expect("validated nonce transaction must contain a nonce address")
-        });
         let transaction_id = container.insert_map_only(state);
         let priority_id = TransactionPriorityId::new(priority, transaction_id);
 
@@ -627,13 +621,13 @@ mod tests {
 
         let PrecheckedTransaction {
             state,
-            is_validated_nonce,
+            validated_nonce_address,
         } = precheck_transaction(bytes, &bank, &bank, &HashSet::new()).unwrap();
 
         assert_runtime_view(state.transaction());
         assert_eq!(state.transaction().data().as_ptr(), bytes_ptr);
         assert_eq!(state.transaction().get_durable_nonce(), None);
-        assert!(!is_validated_nonce);
+        assert_eq!(validated_nonce_address, None);
         assert_eq!(state.nonce_address(), None);
     }
 
