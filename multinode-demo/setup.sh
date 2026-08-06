@@ -32,7 +32,7 @@ else
   $solana_keygen new --no-passphrase -so "$SOLANA_CONFIG_DIR"/bootstrap-validator/vote-account.json
 fi
 
-bls_pubkey=$($solana_keygen bls_pubkey "$SOLANA_CONFIG_DIR"/bootstrap-validator/identity.json)
+bls_pubkey=$($solana_keygen bls-pubkey "$SOLANA_CONFIG_DIR"/bootstrap-validator/identity.json)
 
 args=(
   "$@"
