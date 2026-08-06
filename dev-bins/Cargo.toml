@@ -82,7 +82,7 @@ solana-clock = "3.1.1"
 solana-cluster-type = "3.2.0"
 solana-commitment-config = "3.0.0"
 solana-compute-budget = { path = "../compute-budget", version = "=4.3.0-alpha.3", features = ["agave-unstable-api"] }
-solana-compute-budget-interface = "3.0.0"
+solana-compute-budget-interface = "3.1.0"
 solana-compute-budget-program = { path = "../programs/compute-budget", version = "=4.3.0-alpha.3", features = ["agave-unstable-api"] }
 solana-connection-cache = { path = "../connection-cache", version = "=4.3.0-alpha.3", default-features = false, features = ["agave-unstable-api"] }
 solana-core = { path = "../core", version = "=4.3.0-alpha.3", features = ["agave-unstable-api"] }

@@ -197,7 +197,7 @@ solana-compute-budget = { workspace = true }
 solana-compute-budget-instruction = { workspace = true, features = [
     "dev-context-only-utils",
 ] }
-solana-compute-budget-interface = "3.0.0"
+solana-compute-budget-interface = "3.1.0"
 solana-fee = { workspace = true }
 solana-fee-calculator = "3.2.0"
 solana-fee-structure = "4.0.0"
