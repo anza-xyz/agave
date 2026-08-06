@@ -17,6 +17,10 @@ Release channels have their own copy of this changelog:
 ## 4.3.0-Unreleased
 ### RPC
 #### Breaking
+* Failing to successfully establish a Bigtable connection will now result in a
+  fatal error when running with either `--enable-rpc-bigtable-ledger-storage` or
+  `--enable-bigtable-ledger-upload`. Previously, the error would be logged and
+  the process would continue without a Bigtable connection.
 #### Changes
 ### Validator
 #### Breaking

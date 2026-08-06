@@ -654,10 +654,9 @@ impl JsonRpcService {
                             bigtable_ledger_upload_service,
                         )
                     })
-                    .unwrap_or_else(|err| {
-                        error!("Failed to initialize BigTable ledger storage: {err:?}");
-                        (None, None)
-                    })
+                    .map_err(|err| {
+                        format!("Failed to initialize BigTable ledger storage: {err:?}")
+                    })?
             } else {
                 (None, None)
             };
