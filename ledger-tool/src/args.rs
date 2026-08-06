@@ -8,7 +8,7 @@ use {
         accounts_file::AccountsFileProvider,
         accounts_index::{
             AccountsIndexConfig, DEFAULT_NUM_ENTRIES_OVERHEAD, DEFAULT_NUM_ENTRIES_TO_EVICT,
-            IndexLimit, IndexLimitThreshold, ScanFilter,
+            IndexLimit, IndexLimitThreshold, MINIMAL_THRESHOLD_NUM_BYTES, ScanFilter,
         },
         partitioned_rewards::PartitionedEpochRewardsConfig,
     },
@@ -300,7 +300,7 @@ pub fn get_accounts_db_config(
                     "Using `minimal` for `--accounts-index-limit` is deprecated. Using 25GB \
                      instead."
                 );
-                CliIndexLimit::Threshold(25_000_000_000)
+                CliIndexLimit::Threshold(MINIMAL_THRESHOLD_NUM_BYTES)
             }
             "unlimited" => CliIndexLimit::Unlimited,
             "25GB" => CliIndexLimit::Threshold(25_000_000_000),

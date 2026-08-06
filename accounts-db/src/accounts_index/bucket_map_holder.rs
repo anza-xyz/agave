@@ -48,6 +48,9 @@ pub const DEFAULT_NUM_ENTRIES_OVERHEAD: usize = 5_000;
 /// This value is used to compute the low watermark.
 pub const DEFAULT_NUM_ENTRIES_TO_EVICT: usize = 10_000;
 
+/// Byte threshold used when the deprecated `minimal` index limit is specified.
+pub const MINIMAL_THRESHOLD_NUM_BYTES: u64 = 25_000_000_000;
+
 pub struct BucketMapHolder<T: IndexValue, U: DiskIndexValue + From<T> + Into<T>> {
     pub disk: Option<BucketMap<(Slot, U)>>,
 

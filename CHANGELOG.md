@@ -40,7 +40,7 @@ still accepted for backwards compatibility but slated for full removal in the fu
 * External scheduler execution responses now report `PARTIAL_BATCH_CANCELLED` for
   `CommitCancelled` errors in non-all-or-nothing batches. All-or-nothing batches continue to use
   `ALL_OR_NOTHING_BATCH_FAILURE`.
-* Using the deprecated `minimal` for `--accounts-index-limit` now defaults to 25GB
+* Using the deprecated value `minimal` for `--accounts-index-limit` now defaults to 25GB.
 ### Geyser
 #### Deprecations
 * The legacy `GeyserPlugin` methods `update_account`, `notify_transaction`, `notify_entry`, and

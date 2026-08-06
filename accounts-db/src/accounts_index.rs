@@ -40,7 +40,9 @@ use {
     },
 };
 pub use {
-    bucket_map_holder::{DEFAULT_NUM_ENTRIES_OVERHEAD, DEFAULT_NUM_ENTRIES_TO_EVICT},
+    bucket_map_holder::{
+        DEFAULT_NUM_ENTRIES_OVERHEAD, DEFAULT_NUM_ENTRIES_TO_EVICT, MINIMAL_THRESHOLD_NUM_BYTES,
+    },
     secondary::{
         AccountIndex, AccountSecondaryIndexes, AccountSecondaryIndexesIncludeExclude, IndexKey,
     },
