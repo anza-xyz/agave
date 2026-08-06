@@ -210,6 +210,7 @@ pub(crate) struct ReceivingStats {
     pub num_dropped_on_already_processed: usize,
     pub num_dropped_on_fee_payer: usize,
     pub num_dropped_on_filter_key: usize,
+    pub num_dropped_on_check_work_queue_full: usize,
     pub num_dropped_on_capacity: usize,
     pub num_dropped_on_nonce_dedup: usize,
 
@@ -269,6 +270,7 @@ impl ReceivingStats {
         self.num_dropped_on_already_processed += other.num_dropped_on_already_processed;
         self.num_dropped_on_fee_payer += other.num_dropped_on_fee_payer;
         self.num_dropped_on_filter_key += other.num_dropped_on_filter_key;
+        self.num_dropped_on_check_work_queue_full += other.num_dropped_on_check_work_queue_full;
         self.num_dropped_on_capacity += other.num_dropped_on_capacity;
         self.num_dropped_on_nonce_dedup += other.num_dropped_on_nonce_dedup;
         self.num_buffered += other.num_buffered;
@@ -448,7 +450,9 @@ impl TransactionViewReceiveAndBuffer {
             let work = packet_bytes(packet, packet_data);
             match self.check_work_sender.try_send(work) {
                 Ok(()) => {}
-                Err(TrySendError::Full(_)) => stats.num_dropped_on_capacity += 1,
+                Err(TrySendError::Full(_)) => {
+                    stats.num_dropped_on_check_work_queue_full += 1;
+                }
                 Err(TrySendError::Disconnected(_)) => {
                     return Err(DisconnectedError::CheckWorker);
                 }
@@ -809,7 +813,8 @@ mod tests {
             .receive_and_buffer_packets(&mut container, &BufferedPacketsDecision::Hold)
             .unwrap();
         assert_eq!(first.num_received, 2);
-        assert_eq!(first.num_dropped_on_capacity, 1);
+        assert_eq!(first.num_dropped_on_check_work_queue_full, 1);
+        assert_eq!(first.num_dropped_on_capacity, 0);
         assert!(receive_and_buffer.receiver.is_empty());
         assert_eq!(work_receiver.len(), 1);
     }
@@ -840,6 +845,7 @@ mod tests {
             num_dropped_on_already_processed,
             num_dropped_on_fee_payer,
             num_dropped_on_filter_key: _,
+            num_dropped_on_check_work_queue_full: _,
             num_dropped_on_capacity,
             num_dropped_on_nonce_dedup,
             num_buffered,
@@ -899,6 +905,7 @@ mod tests {
             num_dropped_on_already_processed,
             num_dropped_on_fee_payer,
             num_dropped_on_filter_key: _,
+            num_dropped_on_check_work_queue_full: _,
             num_dropped_on_capacity,
             num_dropped_on_nonce_dedup,
             num_buffered,
@@ -945,6 +952,7 @@ mod tests {
             num_dropped_on_already_processed,
             num_dropped_on_fee_payer,
             num_dropped_on_filter_key: _,
+            num_dropped_on_check_work_queue_full: _,
             num_dropped_on_capacity,
             num_dropped_on_nonce_dedup,
             num_buffered,
@@ -990,6 +998,7 @@ mod tests {
             num_dropped_on_already_processed,
             num_dropped_on_fee_payer,
             num_dropped_on_filter_key: _,
+            num_dropped_on_check_work_queue_full: _,
             num_dropped_on_capacity,
             num_dropped_on_nonce_dedup,
             num_buffered,
@@ -1040,6 +1049,7 @@ mod tests {
             num_dropped_on_already_processed,
             num_dropped_on_fee_payer,
             num_dropped_on_filter_key: _,
+            num_dropped_on_check_work_queue_full: _,
             num_dropped_on_capacity,
             num_dropped_on_nonce_dedup,
             num_buffered,
@@ -1105,6 +1115,7 @@ mod tests {
             num_dropped_on_already_processed,
             num_dropped_on_fee_payer,
             num_dropped_on_filter_key: _,
+            num_dropped_on_check_work_queue_full: _,
             num_dropped_on_capacity,
             num_dropped_on_nonce_dedup,
             num_buffered,
@@ -1155,6 +1166,7 @@ mod tests {
             num_dropped_on_already_processed,
             num_dropped_on_fee_payer,
             num_dropped_on_filter_key: _,
+            num_dropped_on_check_work_queue_full: _,
             num_dropped_on_capacity,
             num_dropped_on_nonce_dedup,
             num_buffered,
@@ -1349,6 +1361,7 @@ mod tests {
             num_dropped_on_already_processed,
             num_dropped_on_fee_payer,
             num_dropped_on_filter_key: _,
+            num_dropped_on_check_work_queue_full: _,
             num_dropped_on_capacity,
             num_dropped_on_nonce_dedup,
             num_buffered,
@@ -1431,6 +1444,7 @@ mod tests {
             num_dropped_on_already_processed,
             num_dropped_on_fee_payer,
             num_dropped_on_filter_key: _,
+            num_dropped_on_check_work_queue_full: _,
             num_dropped_on_capacity,
             num_dropped_on_nonce_dedup,
             num_buffered,
