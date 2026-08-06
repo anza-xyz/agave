@@ -4,7 +4,7 @@
 #![allow(clippy::arithmetic_side_effects)]
 use {
     crate::{
-        connection_workers_scheduler::select_unique_leaders,
+        connection_workers_scheduler::append_unique_leaders,
         logging::{debug, error, info, warn},
         node_address_service::SlotReceiver,
     },
@@ -75,7 +75,7 @@ impl LeaderUpdateReceiver {
         } else {
             lookahead_leaders
         };
-        select_unique_leaders(&tpu_info.leaders, lookahead_leaders, leaders);
+        append_unique_leaders(&tpu_info.leaders, lookahead_leaders, leaders);
     }
 }
 

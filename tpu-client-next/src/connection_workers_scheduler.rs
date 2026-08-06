@@ -234,7 +234,7 @@ impl ConnectionWorkersScheduler {
         let mut identity_updater_is_active = true;
 
         let mut send_leaders = Vec::with_capacity(leaders_fanout.send);
-        let mut connect_leaders = Vec::with_capacity(leaders_fanout.connect);
+        let mut connect_leaders = Vec::with_capacity(leaders_fanout.connect.saturating_add(1));
 
         loop {
             let transaction: WireTransaction = tokio::select! {
@@ -273,13 +273,15 @@ impl ConnectionWorkersScheduler {
                 }
             };
 
+            connect_leaders.clear();
             leader_updater.next_leaders(leaders_fanout.connect, &mut connect_leaders);
-            select_unique_leaders(&connect_leaders, leaders_fanout.send, &mut send_leaders);
+            send_leaders.clear();
+            append_unique_leaders(&connect_leaders, leaders_fanout.send, &mut send_leaders);
 
             // add future leaders to the cache to hide the latency of opening the connection.
-            for peer in connect_leaders.drain(..) {
+            for peer in &connect_leaders {
                 if let Some(evicted_worker) = workers.ensure_worker(
-                    peer,
+                    *peer,
                     &endpoint,
                     worker_channel_size,
                     max_reconnect_attempts,
@@ -360,16 +362,15 @@ impl WorkersBroadcaster for NonblockingBroadcaster {
     }
 }
 
-/// Clears `selected_leaders` and fills it with up to `max_leaders` unique TPU addresses.
+/// Appends up to `max_leaders` unique TPU addresses to `selected_leaders`.
 ///
-/// This function selects up to `send_fanout` addresses from the `leaders` list, ensuring that only
+/// This function selects up to `max_leaders` addresses from the `leaders` list, ensuring that only
 /// unique addresses are included while maintaining their original order.
-pub fn select_unique_leaders(
+pub fn append_unique_leaders(
     leaders: &[SocketAddr],
     max_leaders: usize,
     selected_leaders: &mut Vec<SocketAddr>,
 ) {
-    selected_leaders.clear();
     for address in leaders.iter().take(max_leaders) {
         if !selected_leaders.contains(address) {
             selected_leaders.push(*address);

@@ -189,8 +189,6 @@ where
     T: TpuInfoWithSendStatic,
 {
     fn next_leaders(&mut self, lookahead_leaders: usize, leaders: &mut Vec<SocketAddr>) {
-        leaders.clear();
-
         if let Some(tpu_peers) = &self.tpu_peers {
             leaders.extend_from_slice(tpu_peers);
         }

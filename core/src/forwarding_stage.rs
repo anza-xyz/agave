@@ -487,7 +487,6 @@ impl ForwardingClient for VoteClient {
 
 impl LeaderUpdater for ForwardAddressGetter {
     fn next_leaders(&mut self, lookahead_slots: usize, leaders: &mut Vec<SocketAddr>) {
-        leaders.clear();
         leaders
             .extend(self.get_non_vote_forwarding_addresses(lookahead_slots as u64, Protocol::QUIC));
     }

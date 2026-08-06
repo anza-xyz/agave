@@ -13,10 +13,11 @@ use {
 /// [`ConnectionWorkersScheduler`](crate::ConnectionWorkersScheduler) to
 /// identify next leaders to send transactions to.
 pub trait LeaderUpdater: Send {
-    /// Clears `leaders` and fills it with up to `lookahead_leaders` upcoming leaders starting from the
-    /// current estimated slot.
+    /// Appends TPU addresses for upcoming leader windows to `leaders`.
     ///
-    /// Leaders are returned per [`NUM_CONSECUTIVE_LEADER_SLOTS`] to avoid unnecessary repetition.
+    /// `lookahead_leaders` controls how many scheduled leader windows are inspected. The number of
+    /// appended addresses may differ because of unavailable addresses, duplicate leaders,
+    /// configured peers, or an additional leader at a leader-window boundary.
     ///
     /// If the current leader estimation is incorrect and transactions are sent to
     /// only one estimated leader, there is a risk of losing all the transactions,
@@ -57,7 +58,6 @@ struct PinnedLeaderUpdater {
 #[cfg(feature = "dev-context-only-utils")]
 impl LeaderUpdater for PinnedLeaderUpdater {
     fn next_leaders(&mut self, _lookahead_leaders: usize, leaders: &mut Vec<SocketAddr>) {
-        leaders.clear();
         leaders.extend_from_slice(&self.address);
     }
 }
