@@ -64,6 +64,7 @@ use {
     solana_sha256_hasher::hashv,
     solana_signature::Signature,
     solana_signer::Signer,
+    solana_svm_transaction::svm_message::SVMMessage,
     solana_time_utils::timestamp,
     solana_transaction::{TransactionVerificationMode, versioned::VersionedTransaction},
     solana_transaction_status::{
@@ -4927,12 +4928,11 @@ impl Blockstore {
 
                             // Attempt to verify transaction and load addresses from the current bank,
                             // or manually scan the transaction for addresses if the transaction.
-                            if let Ok(_tx) = bank.verify_transaction(
+                            if let Ok(tx) = bank.verify_transaction(
                                 tx.clone(),
                                 TransactionVerificationMode::FullVerification,
                             ) {
-                                // neeed equivelant of tx.message().account_keys().iter()
-                                todo!("add_to_set(&result, tx.static_account_keys());")
+                                add_to_set(&result, tx.account_keys().iter());
                             } else {
                                 add_to_set(&result, tx.static_account_keys());
 

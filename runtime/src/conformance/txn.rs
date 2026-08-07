@@ -161,12 +161,9 @@ pub fn execute_txn(
     let bank = Bank::new_for_txn_tests(bank_rc, bank_fields, feature_set, epoch_stakes);
     let (bank, _bank_forks) = bank.wrap_with_bank_forks_for_tests();
 
-    // TODO: hard expect here/panic instead of return error
     let transaction_bytes = Bytes::from(wincode::serialize(&transaction).unwrap());
-    let Ok(transaction_view) = UnsanitizedTransactionView::try_new_unsanitized(transaction_bytes)
-    else {
-        return BankTxnProcessingResult::FailedVerification(TransactionError::SanitizeFailure);
-    };
+    let transaction_view = UnsanitizedTransactionView::try_new_unsanitized(transaction_bytes)
+        .expect("transaction_view accepts serialized representation of VersionedTransaction");
 
     let runtime_transaction = match bank.verify_transaction(
         transaction_view,

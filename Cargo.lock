@@ -11635,10 +11635,12 @@ dependencies = [
  "solana-message",
  "solana-pubkey 4.3.0",
  "solana-runtime-transaction",
+ "solana-signature",
  "solana-svm-transaction",
  "solana-transaction",
  "static_assertions",
  "test-case",
+ "wincode",
 ]
 
 [[package]]

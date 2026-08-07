@@ -1381,7 +1381,7 @@ impl<D: TransactionData + 'static> SchedulingStateMachine<D> {
         // This redundancy is known. It was just left as-is out of abundance
         // of caution.
         let lock_contexts = transaction
-            .static_account_keys()
+            .account_keys()
             .iter()
             .enumerate()
             .map(|(task_id, address)| {
@@ -1529,11 +1529,16 @@ impl<D: TransactionData + 'static> SchedulingStateMachine<D> {
 mod tests {
     use {
         super::*,
+        agave_transaction_view::transaction_view::SanitizedTransactionView,
         solana_instruction::{AccountMeta, Instruction},
-        solana_message::Message,
+        solana_message::{AddressLookupTableAccount, Message, VersionedMessage, v0},
         solana_pubkey::Pubkey,
+        solana_runtime_transaction::sanitize_config::sanitize_config,
+        solana_signature::Signature,
         solana_svm_transaction::{svm_message::SVMStaticMessage, svm_transaction::SVMTransaction},
-        solana_transaction::Transaction,
+        solana_transaction::{
+            Transaction, sanitized::MessageHash, versioned::VersionedTransaction,
+        },
         std::{
             cell::RefCell,
             collections::HashMap,
@@ -1598,6 +1603,54 @@ mod tests {
         let message = Message::new(&[instruction], Some(payer));
         let unsigned = Transaction::new_unsigned(message);
         RuntimeTransaction::from_transaction_view_for_tests(unsigned)
+    }
+
+    /// Builds a v0 transaction whose only reference to `loaded_address` is through an address
+    /// lookup table, i.e. `loaded_address` never appears in `static_account_keys()`.
+    /// `RuntimeTransaction::from_transaction_view_for_tests` can't express this since it always
+    /// resolves with `loaded_addresses: None`, so this goes through the same
+    /// sanitize/statically-load/resolve pipeline by hand, providing the loaded address explicitly.
+    fn transaction_with_loaded_writable_address_with_payer(
+        loaded_address: Pubkey,
+        payer: &Pubkey,
+    ) -> RuntimeTransaction<ResolvedTransactionView<Data>> {
+        let instruction = Instruction {
+            program_id: Pubkey::default(),
+            accounts: vec![AccountMeta::new(loaded_address, false)],
+            data: vec![],
+        };
+        let message = v0::Message::try_compile(
+            payer,
+            &[instruction],
+            &[AddressLookupTableAccount {
+                key: Pubkey::new_unique(),
+                addresses: vec![loaded_address],
+            }],
+            Hash::default(),
+        )
+        .unwrap();
+        let versioned_transaction = VersionedTransaction {
+            signatures: vec![Signature::default()],
+            message: VersionedMessage::V0(message),
+        };
+        let data: Data = Arc::new(wincode::serialize(&versioned_transaction).unwrap());
+        let sanitized_view =
+            SanitizedTransactionView::try_new_sanitized(data, &sanitize_config()).unwrap();
+        let static_runtime_tx = RuntimeTransaction::<SanitizedTransactionView<_>>::try_new(
+            sanitized_view,
+            MessageHash::Compute,
+            None,
+        )
+        .unwrap();
+        RuntimeTransaction::<ResolvedTransactionView<_>>::try_new(
+            static_runtime_tx,
+            Some(v0::LoadedAddresses {
+                writable: vec![loaded_address],
+                readonly: vec![],
+            }),
+            &HashSet::new(),
+        )
+        .unwrap()
     }
 
     #[allow(clippy::type_complexity)]
@@ -1751,6 +1804,55 @@ mod tests {
             Some(103)
         );
         state_machine.deschedule_task(&task3);
+        assert!(state_machine.has_no_active_task());
+    }
+
+    /// `do_create_task` must lock every account a transaction touches, including ones only
+    /// reachable through an address lookup table - not just its static account keys. task1 and
+    /// task2 below share no static keys at all; `loaded_address` is their only common account,
+    /// and it's resolved purely through each transaction's address lookup table. If
+    /// `do_create_task` only walked `static_account_keys()`, `loaded_address` would never get a
+    /// `LockContext`, and task2 would be incorrectly treated as non-conflicting.
+    #[test_matrix([Capability::FifoQueueing, Capability::PriorityQueueing])]
+    fn test_conflicting_tasks_sharing_only_a_loaded_address(capability: Capability) {
+        let loaded_address = Pubkey::new_unique();
+        let address_loader = &mut create_address_loader(None, &capability);
+        let task1 = SchedulingStateMachine::create_task(
+            transaction_with_loaded_writable_address_with_payer(
+                loaded_address,
+                &Pubkey::new_unique(),
+            ),
+            101,
+            address_loader,
+        );
+        let task2 = SchedulingStateMachine::create_task(
+            transaction_with_loaded_writable_address_with_payer(
+                loaded_address,
+                &Pubkey::new_unique(),
+            ),
+            102,
+            address_loader,
+        );
+
+        let mut state_machine = unsafe {
+            SchedulingStateMachine::exclusively_initialize_current_thread_for_scheduling_for_test()
+        };
+        assert_matches!(
+            state_machine
+                .schedule_task(task1.clone())
+                .map(|t| t.task_id()),
+            Some(101)
+        );
+        assert_matches!(state_machine.schedule_task(task2.clone()), None);
+
+        state_machine.deschedule_task(&task1);
+        assert_matches!(
+            state_machine
+                .schedule_next_unblocked_task()
+                .map(|t| t.task_id()),
+            Some(102)
+        );
+        state_machine.deschedule_task(&task2);
         assert!(state_machine.has_no_active_task());
     }
 

@@ -1616,8 +1616,8 @@ fn confirm_slot_entries(
 
     let validate_and_hash_transaction = {
         let bank = bank.clone_with_scheduler();
-        move |versioned_tx: UnsanitizedTransactionView<Bytes>| {
-            bank.verify_transaction(versioned_tx, TransactionVerificationMode::HashOnly)
+        move |unsanitized: UnsanitizedTransactionView<Bytes>| {
+            bank.verify_transaction(unsanitized, TransactionVerificationMode::HashOnly)
         }
     };
 
