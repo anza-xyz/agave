@@ -4,8 +4,9 @@
 
 use {
     crate::{
-        banking_trace::BankingPacketSender, sigverify_stage::SigVerifyServiceError,
-        transaction_priority::calculate_priority_from_bytes,
+        banking_trace::BankingPacketSender,
+        sigverify_stage::SigVerifyServiceError,
+        transaction_priority::{TransactionPriorityResourceLimits, calculate_priority_from_bytes},
     },
     agave_banking_stage_ingress_types::{BankingPacketBatch, SchedulerPriorityFloor},
     crossbeam_channel::{Receiver, Sender, TrySendError, bounded},
@@ -415,6 +416,7 @@ fn apply_priority_floor_to_batch(
     floor: u64,
     bank: &Bank,
 ) -> (usize, bool) {
+    let priority_resource_limits = TransactionPriorityResourceLimits::for_bank(bank);
     let mut dropped: usize = 0;
     let mut any_kept = false;
     for mut packet in batch.iter_mut() {
@@ -428,7 +430,7 @@ fn apply_priority_floor_to_batch(
             continue;
         };
         // Unparseable packets are kept and left for downstream rejection.
-        match calculate_priority_from_bytes(bank, data) {
+        match calculate_priority_from_bytes(bank, data, priority_resource_limits) {
             Some(priority) if priority <= floor => {
                 packet.meta_mut().set_discard(true);
                 dropped = dropped.saturating_add(1);

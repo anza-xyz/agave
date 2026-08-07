@@ -2,7 +2,12 @@
 //! packets to a node that is or will be leader soon.
 
 use {
-    crate::next_leader::next_leaders,
+    crate::{
+        next_leader::next_leaders,
+        transaction_priority::{
+            TransactionPriorityResourceLimits, calculate_priority_for_transaction,
+        },
+    },
     agave_banking_stage_ingress_types::BankingPacketBatch,
     agave_transaction_view::transaction_view::SanitizedTransactionView,
     async_trait::async_trait,
@@ -274,6 +279,7 @@ impl<VoteClient: ForwardingClient, NonVoteClient: ForwardingClient>
         bank: &Bank,
     ) {
         let sanitize_config = sanitize_config();
+        let priority_resource_limits = TransactionPriorityResourceLimits::for_bank(bank);
         for packet in packet_batch
             .iter()
             .filter(|p| initial_packet_meta_filter(p.meta()))
@@ -305,7 +311,14 @@ impl<VoteClient: ForwardingClient, NonVoteClient: ForwardingClient>
                         .map_err(|_| ())
                     })
                     .ok()
-                    .and_then(|transaction| calculate_priority(&transaction, bank))
+                    .and_then(|transaction| {
+                        calculate_priority(
+                            &transaction,
+                            bank,
+                            packet_data.len() as u64,
+                            priority_resource_limits,
+                        )
+                    })
             else {
                 self.metrics.votes_dropped_on_receive += vote_count;
                 self.metrics.non_votes_dropped_on_receive += non_vote_count;
@@ -587,20 +600,21 @@ impl NotifyKeyUpdate for TpuClientNextClient {
 /// Calculate priority for a transaction:
 ///
 /// The priority is calculated as:
-/// P = R / (1 + C)
+/// P = R / (1 + C + B * L_C / L_B)
 /// where P is the priority, R is the reward,
-/// and C is the cost towards block-limits.
+/// C is the cost towards the block cost limit, B is the prioritized transaction
+/// size, L_C is the block cost limit, and L_B is the block entry-bytes limit.
+/// Once txv1 is enabled, B includes a 32-byte penalty for each pubkey loaded
+/// through an address lookup table.
 ///
-/// Current minimum costs are on the order of several hundred,
-/// so the denominator is effectively C, and the +1 is simply
-/// to avoid any division by zero due to a bug - these costs
-/// are estimate by the cost-model and are not direct
-/// from user input. They should never be zero.
-/// Any difference in the prioritization is negligible for
-/// the current transaction costs.
+/// The +1 explicitly avoids division by zero. Giving the normalized resource
+/// terms equal weight means that consuming the same fraction of either block
+/// limit contributes the same amount to the denominator.
 fn calculate_priority(
     transaction: &RuntimeTransaction<SanitizedTransactionView<&[u8]>>,
     bank: &Bank,
+    transaction_bytes: u64,
+    resource_limits: TransactionPriorityResourceLimits,
 ) -> Option<u64> {
     let transaction_configuration = transaction
         .transaction_configuration(&bank.feature_set)
@@ -626,17 +640,13 @@ fn calculate_priority(
         &bank.feature_set,
     );
 
-    // We need a multiplier here to avoid rounding down too aggressively.
-    // For many transactions, the cost will be greater than the fees in terms of raw lamports.
-    // For the purposes of calculating prioritization, we multiply the fees by a large number so that
-    // the cost is a small fraction.
-    // An offset of 1 is used in the denominator to explicitly avoid division by zero.
-    const MULTIPLIER: u64 = 1_000_000;
-    Some(
-        MULTIPLIER
-            .saturating_mul(reward)
-            .wrapping_div(cost.sum().saturating_add(1)),
-    )
+    Some(calculate_priority_for_transaction(
+        transaction,
+        reward,
+        cost.sum(),
+        transaction_bytes,
+        resource_limits,
+    ))
 }
 
 fn send_batch_if_full(
