@@ -1,9 +1,8 @@
 use {
-    crossbeam_channel::Receiver,
-    solana_rpc::{
-        optimistically_confirmed_bank_tracker::SlotNotification,
-        slot_status_notifier::SlotStatusNotifier,
+    agave_geyser_notifier_interface::{
+        slot_notification::SlotNotification, slot_status_notifier::SlotStatusNotifier,
     },
+    crossbeam_channel::Receiver,
     std::{
         sync::{
             Arc,

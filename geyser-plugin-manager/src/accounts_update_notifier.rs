@@ -1,15 +1,15 @@
 /// Module responsible for notifying plugins of account updates
 use {
     crate::geyser_plugin_manager::GeyserPluginManager,
+    agave_geyser_notifier_interface::accounts_update_notifier_interface::{
+        AccountForGeyser, AccountsUpdateNotifierInterface,
+    },
     agave_geyser_plugin_interface::geyser_plugin_interface::{
         ReplicaAccountInfoV3, ReplicaAccountInfoVersions,
     },
     arc_swap::ArcSwap,
     log::*,
     solana_account::{AccountSharedData, ReadableAccount},
-    solana_accounts_db::accounts_update_notifier_interface::{
-        AccountForGeyser, AccountsUpdateNotifierInterface,
-    },
     solana_clock::{BankId, Slot},
     solana_pubkey::Pubkey,
     solana_transaction::sanitized::SanitizedTransaction,
@@ -208,12 +208,12 @@ mod tests {
     use {
         super::*,
         crate::geyser_plugin_manager::{GeyserPluginManager, LoadedGeyserPlugin},
+        agave_geyser_notifier_interface::accounts_update_notifier_interface::AccountsUpdateNotifierInterface,
         agave_geyser_plugin_interface::geyser_plugin_interface::{
             GeyserPlugin, ReplicaAccountInfoVersions,
         },
         arc_swap::ArcSwap,
         libloading::Library,
-        solana_accounts_db::accounts_update_notifier_interface::AccountsUpdateNotifierInterface,
         std::sync::{
             Arc, Mutex,
             atomic::{AtomicUsize, Ordering},

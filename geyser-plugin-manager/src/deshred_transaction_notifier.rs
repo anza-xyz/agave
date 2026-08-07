@@ -1,6 +1,9 @@
 /// Module responsible for notifying plugins of transactions when deshredded
 use {
     crate::geyser_plugin_manager::GeyserPluginManager,
+    agave_geyser_notifier_interface::deshred_transaction_notifier_interface::{
+        DeshredTransactionNotifier, UpdateParentInfo,
+    },
     agave_geyser_plugin_interface::geyser_plugin_interface::{
         ReplicaDeshredTransactionInfoV2, ReplicaDeshredTransactionInfoVersions,
         ReplicaDeshredUpdateParentInfo, ReplicaDeshredUpdateParentInfoVersions,
@@ -8,10 +11,6 @@ use {
     arc_swap::ArcSwap,
     log::*,
     solana_clock::Slot,
-    solana_ledger::{
-        blockstore_meta::UpdateParentInfo,
-        deshred_transaction_notifier_interface::DeshredTransactionNotifier,
-    },
     solana_measure::measure::Measure,
     solana_message::v0::LoadedAddresses,
     solana_signature::Signature,

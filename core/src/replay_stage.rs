@@ -53,7 +53,9 @@ use {
     smallvec::SmallVec,
     solana_accounts_db::contains::Contains,
     solana_clock::{BankId, Slot},
-    solana_geyser_plugin_manager::block_metadata_notifier_interface::BlockMetadataNotifierArc,
+    solana_geyser_plugin_manager::block_metadata_notifier_interface::{
+        BlockMetadataNotifierArc, BlockRewardInfo,
+    },
     solana_gossip::cluster_info::ClusterInfo,
     solana_hash::Hash,
     solana_keypair::Keypair,
@@ -4243,13 +4245,30 @@ impl ReplayStage {
                         .unwrap_or_default();
                     let commission_rate_in_basis_points =
                         bank.feature_set.snapshot().commission_rate_in_basis_points;
+                    let rewards_and_num_partitions = bank.get_rewards_and_num_partitions();
+                    let keyed_rewards: Vec<_> = rewards_and_num_partitions
+                        .keyed_rewards
+                        .iter()
+                        .map(|(pubkey, reward)| {
+                            (
+                                *pubkey,
+                                BlockRewardInfo {
+                                    reward_type: reward.reward_type,
+                                    lamports: reward.lamports,
+                                    post_balance: reward.post_balance,
+                                    commission_bps: reward.commission_bps,
+                                },
+                            )
+                        })
+                        .collect();
                     block_metadata_notifier.notify_block_metadata(
                         bank.parent_slot(),
                         &parent_blockhash.to_string(),
                         bank.slot(),
                         bank.bank_id(),
                         &bank.last_blockhash().to_string(),
-                        &bank.get_rewards_and_num_partitions(),
+                        &keyed_rewards,
+                        rewards_and_num_partitions.num_partitions,
                         Some(bank.clock().unix_timestamp),
                         Some(bank.block_height()),
                         bank.executed_transaction_count(),
