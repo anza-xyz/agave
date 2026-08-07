@@ -5563,14 +5563,6 @@ impl Bank {
             )
             .map_err(|_| TransactionError::SanitizeFailure)?;
 
-            // The deactivation slot is intentionally unused here: block verification's
-            // `SchedulingStateMachine::create_task` always hardcodes `MAX_ALT_INVALIDATION_SLOT`
-            // (this transaction has already been fixed in the ledger, so there's no later point
-            // in time at which its ALT resolution needs to be re-checked), matching the same
-            // discard in `resanitize_transaction_minimally` above. Block production instead calls
-            // `load_addresses_for_view` directly from `receive_and_buffer.rs` and threads the real
-            // deactivation slot through to `create_block_production_task`, since a buffered
-            // transaction there can wait across slot boundaries.
             let (loaded_addresses, _deactivation_slot) =
                 self.load_addresses_for_view(&sanitized_tx)?;
 
