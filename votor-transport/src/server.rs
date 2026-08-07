@@ -396,7 +396,7 @@ impl InboundLoop {
                         break;
                     }
                     let keypair = identity_receiver.borrow_and_update().insecure_clone();
-                    let server_config = new_server_config(&keypair, self.max_datagrams_per_second_per_peer);
+                    let server_config = new_server_config(&keypair, self.max_datagrams_per_second_per_peer, self.endpoints.len());
                     for endpoint in &self.endpoints {
                         endpoint.set_server_config(Some(server_config.clone()));
                     }
@@ -605,16 +605,107 @@ mod tests {
     use {
         super::*,
         crate::{
-            ALPENGLOW_ALPN, HANDSHAKE_BURST, HANDSHAKE_GLOBAL_RATE, MAX_INFLIGHT_HANDSHAKES,
-            transport::new_client_config,
+            ALPENGLOW_ALPN, HANDSHAKE_BURST, HANDSHAKE_GLOBAL_RATE, MAX_ENDPOINTS,
+            MAX_INFLIGHT_HANDSHAKES,
+            transport::{compute_max_incoming, new_client_config, new_transport_config},
         },
-        quinn::{ClientConfig, crypto::rustls::QuicClientConfig},
+        quinn::{ClientConfig, IdleTimeout, crypto::rustls::QuicClientConfig},
         solana_keypair::Keypair,
         solana_net_utils::sockets::{bind_to_localhost_async, unique_port_range_for_tests},
         solana_tls_utils::{new_dummy_x509_certificate, tls_client_config_builder},
         std::{net::Ipv4Addr, time::Duration},
         tokio::{spawn, time::sleep},
     };
+
+    /// Connection attempts arriving at a server whose incoming queue is already
+    /// full must be dropped with no reply at all, and must not displace attempts
+    /// that are already queued.
+    #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+    async fn saturated_incoming_queue_drops_silently() {
+        // The largest supported endpoint count yields the smallest per-endpoint
+        // queue, so the test opens as few connections as it can get away with.
+        let queue_capacity = compute_max_incoming(MAX_ENDPOINTS);
+        let overflow_attempts = 8;
+
+        let mut ports = unique_port_range_for_tests(2);
+        let server_addr = SocketAddr::from((Ipv4Addr::LOCALHOST, ports.next().unwrap()));
+        let server_kp = Keypair::new();
+        // Deliberately no AcceptLoop: nothing drains the queue, so it fills and stays full.
+        let server = Endpoint::server(
+            new_server_config(&server_kp, 50, MAX_ENDPOINTS),
+            server_addr,
+        )
+        .expect("bind server endpoint");
+
+        let client_kp = Keypair::new();
+        let mut client = Endpoint::client(SocketAddr::from((
+            Ipv4Addr::LOCALHOST,
+            ports.next().unwrap(),
+        )))
+        .expect("bind client endpoint");
+        let mut client_cfg = new_client_config(&client_kp, 50);
+        let mut transport = new_transport_config(50);
+        // We want to send Initial exactly once and never give up on it. With production
+        // timings a client retransmits after ~1s and abandons the attempt after
+        // MAX_IDLE_TIMEOUT, either of which could race the assertions below. So we
+        // configure the client to have insane RTT estimate and idle timeout.
+        transport
+            .initial_rtt(Duration::from_secs(30))
+            .max_idle_timeout(Some(
+                IdleTimeout::try_from(Duration::from_secs(30)).expect("30s fits IdleTimeout"),
+            ));
+        client_cfg.transport_config(Arc::new(transport));
+        client.set_default_client_config(client_cfg);
+
+        // Fill the queue. The endpoint driver sends each Initial without the
+        // `Connecting` being polled; we only need to keep them alive, since
+        // dropping one would close the attempt.
+        let _filling = (0..queue_capacity)
+            .map(|_| {
+                client
+                    .connect(server_addr, "votor")
+                    .expect("client connect to fill queue")
+            })
+            .collect::<Vec<_>>();
+        // Let the server's driver enqueue them. Nothing expires or retransmits
+        // while we wait, so this bound only has to beat scheduling delay.
+        sleep(Duration::from_secs(1)).await;
+
+        // These arrive at a saturated queue. Poll them so we can tell whether the
+        // server answered: a refusal resolves them, a silent drop leaves them pending.
+        let overflow = (0..overflow_attempts)
+            .map(|_| {
+                let connecting = client
+                    .connect(server_addr, "votor")
+                    .expect("client connect to overflow queue");
+                spawn(async move { connecting.await.map(|_| ()) })
+            })
+            .collect::<Vec<_>>();
+        sleep(Duration::from_secs(1)).await;
+        for (i, handle) in overflow.iter().enumerate() {
+            assert!(
+                !handle.is_finished(),
+                "overflow attempt {i} got a reply from a saturated server; excess Initials must \
+                 be dropped not refused",
+            );
+        }
+
+        // Exactly the attempts that fit should have been queued; the rest were
+        // dropped outright. `ignore()` frees the slot without answering the peer.
+        let mut queued = 0;
+        while let Ok(Some(incoming)) = timeout(Duration::from_millis(100), server.accept()).await {
+            incoming.ignore();
+            queued += 1;
+        }
+        assert_eq!(
+            queued, queue_capacity,
+            "server queued {queued} attempts but max_incoming is {queue_capacity}",
+        );
+
+        for handle in overflow {
+            handle.abort();
+        }
+    }
 
     /// A peer that completes the QUIC Initial but never finishes the handshake
     /// must not pin an in-flight slot indefinitely.
@@ -627,7 +718,7 @@ mod tests {
         // timeout lives). The control loop is not needed: the handshake never
         // completes, so no Accepted event is ever forwarded.
         let server_kp = Keypair::new();
-        let server_cfg = new_server_config(&server_kp, 50);
+        let server_cfg = new_server_config(&server_kp, 50, 1);
         let endpoint = Endpoint::server(server_cfg, server_addr).expect("bind server endpoint");
         let server_addr = endpoint.local_addr().expect("server local addr");
 
@@ -640,7 +731,11 @@ mod tests {
             events_sender,
             stats.clone(),
             cancel.clone(),
-            TokenBucket::new(HANDSHAKE_BURST, HANDSHAKE_BURST, HANDSHAKE_GLOBAL_RATE),
+            TokenBucket::new(
+                HANDSHAKE_BURST,
+                HANDSHAKE_BURST,
+                HANDSHAKE_GLOBAL_RATE as f64,
+            ),
             MAX_INFLIGHT_HANDSHAKES,
         );
         let loop_handle = spawn(accept.run());
@@ -703,7 +798,7 @@ mod tests {
         let server_addr = SocketAddr::from((Ipv4Addr::LOCALHOST, ports.next().unwrap()));
 
         let server_kp = Keypair::new();
-        let server_cfg = new_server_config(&server_kp, 50);
+        let server_cfg = new_server_config(&server_kp, 50, 1);
         let server_endpoint =
             Endpoint::server(server_cfg, server_addr).expect("bind server endpoint");
 
@@ -715,7 +810,11 @@ mod tests {
             events_sender,
             stats.clone(),
             cancel.clone(),
-            TokenBucket::new(HANDSHAKE_BURST, HANDSHAKE_BURST, HANDSHAKE_GLOBAL_RATE),
+            TokenBucket::new(
+                HANDSHAKE_BURST,
+                HANDSHAKE_BURST,
+                HANDSHAKE_GLOBAL_RATE as f64,
+            ),
             MAX_INFLIGHT_HANDSHAKES,
         );
         let accept_loop_handle = spawn(accept.run());
@@ -784,7 +883,7 @@ mod tests {
         let server_addr = SocketAddr::from((Ipv4Addr::LOCALHOST, ports.next().unwrap()));
 
         let server_kp = Keypair::new();
-        let server_cfg = new_server_config(&server_kp, 50);
+        let server_cfg = new_server_config(&server_kp, 50, 1);
         let endpoint = Endpoint::server(server_cfg, server_addr).expect("bind server endpoint");
 
         let (events_sender, mut events_receiver) = mpsc::channel(1);
@@ -795,7 +894,11 @@ mod tests {
             events_sender,
             stats.clone(),
             cancel.clone(),
-            TokenBucket::new(HANDSHAKE_BURST, HANDSHAKE_BURST, HANDSHAKE_GLOBAL_RATE),
+            TokenBucket::new(
+                HANDSHAKE_BURST,
+                HANDSHAKE_BURST,
+                HANDSHAKE_GLOBAL_RATE as f64,
+            ),
             MAX_INFLIGHT_HANDSHAKES,
         );
         let accept_loop_handle = spawn(accept.run());

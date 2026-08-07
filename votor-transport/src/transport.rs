@@ -1,6 +1,6 @@
 //! Transport tuning constants for a votor-style workload.
 use {
-    crate::{ALPENGLOW_ALPN, MAX_ALPENGLOW_VOTE_ACCOUNTS},
+    crate::{ALPENGLOW_ALPN, HANDSHAKE_DRAIN_RATE, MAX_INCOMING_DELAY},
     quinn::{
         ClientConfig, IdleTimeout, ServerConfig, TransportConfig, VarInt,
         crypto::rustls::{QuicClientConfig, QuicServerConfig},
@@ -22,9 +22,14 @@ const KEEP_ALIVE_INTERVAL: Duration = Duration::from_secs(2);
 /// MTU used for all datagrams. Path-MTU discovery is disabled, so the initial
 /// and minimum MTU are the same; 1280 is the QUIC-spec floor.
 const DATAGRAM_MTU: u16 = 1280;
-/// Max number of buffered connection requests we will keep.
-/// Sized such that a cluster-wide simultaneous reconnect fits.
-const MAX_INCOMING: usize = MAX_ALPENGLOW_VOTE_ACCOUNTS;
+/// Max number of connection attempts quinn buffers *per endpoint* before it starts
+/// dropping Initials outright.
+#[allow(clippy::arithmetic_side_effects)]
+pub(crate) fn compute_max_incoming(num_endpoints: usize) -> usize {
+    debug_assert!(num_endpoints > 0, "an endpoint needs at least one socket");
+    let per_endpoint_rate = HANDSHAKE_DRAIN_RATE / num_endpoints;
+    (per_endpoint_rate * MAX_INCOMING_DELAY.as_millis() as usize / 1000).max(1)
+}
 
 /// Creates a new transport config for datagram mode.
 ///
@@ -54,6 +59,7 @@ pub(crate) fn new_transport_config(max_datagrams_per_second_per_peer: usize) -> 
 pub(crate) fn new_server_config(
     keypair: &Keypair,
     max_datagrams_per_second_per_peer: usize,
+    num_endpoints: usize,
 ) -> ServerConfig {
     let (cert, key) = new_dummy_x509_certificate(keypair);
     let mut tls = tls_server_config_builder()
@@ -64,9 +70,10 @@ pub(crate) fn new_server_config(
     let quic = QuicServerConfig::try_from(tls)
         .expect("TLS 1.3-only config yields an initial cipher suite");
     let mut cfg = ServerConfig::with_crypto(Arc::new(quic));
-    cfg.incoming_buffer_size((DATAGRAM_MTU * 2) as u64);
-    cfg.incoming_buffer_size_total(MAX_INCOMING as u64 * DATAGRAM_MTU as u64);
-    cfg.max_incoming(MAX_INCOMING);
+    // Do not buffer anything for a connection attempt that has not been accepted yet.
+    cfg.incoming_buffer_size(0);
+    cfg.incoming_buffer_size_total(0);
+    cfg.max_incoming(compute_max_incoming(num_endpoints));
     cfg.retry_token_lifetime(MAX_IDLE_TIMEOUT);
     cfg.transport_config(Arc::new(new_transport_config(
         max_datagrams_per_second_per_peer,
