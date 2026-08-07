@@ -18,7 +18,7 @@ use {
     },
     std::{
         collections::{HashMap, hash_map::Entry},
-        sync::Weak,
+        sync::{Weak, atomic::Ordering::Relaxed},
     },
 };
 
@@ -114,6 +114,7 @@ pub fn get_mock_program_runtime_environment() -> ProgramRuntimeEnvironment {
 }
 
 pub const MAX_LOADED_ENTRY_COUNT: usize = 512;
+pub const MAX_TOMBSTONE_AGE_IN_SLOTS: u64 = 2250; // 15 Minutes at 400ms slot time
 
 /// A percentage, expected to be in the range `0..=100`.
 pub type Percent = u8;
@@ -510,7 +511,25 @@ impl<FG: ForkGraph> ProgramCache<FG> {
     ) {
         match &mut self.index {
             IndexImplementation::V1 { entries, .. } => {
-                for second_level in entries.values_mut() {
+                let tombstone_slot_cutoff =
+                    new_root_slot.saturating_sub(MAX_TOMBSTONE_AGE_IN_SLOTS);
+                entries.retain(|_id, second_level| {
+                    // Clean up tombstones and unloaded entries
+                    if second_level.len() == 1 {
+                        let candidate = second_level.first().unwrap();
+                        match candidate.program {
+                            ProgramCacheEntryType::Builtin(_)
+                            | ProgramCacheEntryType::Loaded(_) => {}
+                            _ => {
+                                if candidate.deployment_slot <= self.latest_root_slot
+                                    && candidate.latest_access_slot.load(Relaxed)
+                                        < tombstone_slot_cutoff
+                                {
+                                    return false;
+                                }
+                            }
+                        }
+                    }
                     // Remove entries un/re/deployed on orphan forks
                     let mut first_ancestor_found = false;
                     let mut first_ancestor_env = None;
@@ -597,7 +616,8 @@ impl<FG: ForkGraph> ProgramCache<FG> {
                             retain_flag
                         });
                     }
-                }
+                    true
+                });
             }
         }
         self.remove_programs_with_no_entries();
@@ -1003,9 +1023,9 @@ pub(crate) mod tests {
     use {
         crate::{
             loaded_programs::{
-                BlockRelation, ForkGraph, Percent, ProgramCache, ProgramCacheForTxBatch,
-                ProgramCacheMatchCriteria, ProgramRuntimeEnvironment, ProgramToLoad,
-                get_mock_program_runtime_environment,
+                BlockRelation, ForkGraph, MAX_TOMBSTONE_AGE_IN_SLOTS, Percent, ProgramCache,
+                ProgramCacheForTxBatch, ProgramCacheMatchCriteria, ProgramRuntimeEnvironment,
+                ProgramToLoad, get_mock_program_runtime_environment,
             },
             program_cache_entry::{
                 ProgramCacheEntry, ProgramCacheEntryOwner, ProgramCacheEntryType,
@@ -1723,6 +1743,42 @@ pub(crate) mod tests {
         assert!(cache.get_flattened_entries_for_tests().is_empty());
 
         cache.prune(10, None, &fork_graph.read().unwrap());
+        assert!(cache.get_flattened_entries_for_tests().is_empty());
+    }
+
+    #[test]
+    fn test_prune_tombstones() {
+        let mut cache = ProgramCache::<TestForkGraph>::new(0);
+        let env = get_mock_program_runtime_environment();
+        let fork_graph = Arc::new(RwLock::new(TestForkGraph {
+            relation: BlockRelation::Ancestor,
+        }));
+        cache.set_fork_graph(Arc::downgrade(&fork_graph));
+
+        let program1 = Pubkey::new_unique();
+        cache.assign_program(&env, program1, 10, new_test_entry(10));
+        cache.assign_program(
+            &env,
+            program1,
+            20,
+            Arc::new(ProgramCacheEntry::new_closed_tombstone(
+                20,
+                ProgramCacheEntryOwner::LoaderV3,
+            )),
+        );
+
+        cache.prune(100, None, &fork_graph.read().unwrap());
+        let slot_versions = cache.get_slot_versions_for_tests(&program1);
+        assert!(matches!(
+            &slot_versions.first().unwrap().program,
+            ProgramCacheEntryType::Closed,
+        ));
+
+        cache.prune(
+            MAX_TOMBSTONE_AGE_IN_SLOTS.saturating_add(1),
+            None,
+            &fork_graph.read().unwrap(),
+        );
         assert!(cache.get_flattened_entries_for_tests().is_empty());
     }
 
