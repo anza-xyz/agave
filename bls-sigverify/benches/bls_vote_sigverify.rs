@@ -4,10 +4,9 @@
 */
 
 use {
-    agave_bls_sigverify::bls_vote_sigverify::{UnverifiedVotePayload, verify_individual_votes},
+    agave_bls_sigverify::unverified_vote_group::UnverifiedVoteGroup,
     agave_votor_messages::{
         consensus_message::Block,
-        unverified_vote_message::UnverifiedVoteMessage,
         vote::Vote,
         wire::{VotePayloadToSign, get_vote_payload_to_sign},
     },
@@ -16,10 +15,8 @@ use {
     solana_bls_signatures::{Keypair as BLSKeypair, PreparedHashedMessage, VerifySignature},
     solana_genesis_config::GenesisConfig,
     solana_hash::Hash,
-    solana_keypair::Keypair,
     solana_runtime::bank::{Bank, SlotLeader},
-    solana_signer::Signer,
-    std::{hint::black_box, num::NonZero},
+    std::hint::black_box,
 };
 
 static BATCH_SIZES: &[usize] = &[8, 16, 32, 64, 128];
@@ -35,7 +32,7 @@ fn get_thread_pool() -> ThreadPool {
 fn generate_test_data(
     shred_version: u16,
     batch_size: usize,
-) -> (VotePayloadToSign, Vec<UnverifiedVotePayload>) {
+) -> (VotePayloadToSign, UnverifiedVoteGroup) {
     // Pre-calculate the payloads to ensure exact distinctness
     let slot = 100;
     let vote = Vote::new_notarization_vote(Block {
@@ -43,28 +40,14 @@ fn generate_test_data(
         block_id: Hash::new_unique(),
     });
     let payload = get_vote_payload_to_sign(vote, shred_version);
-    (
-        VotePayloadToSign::new_from_vote(vote, shred_version),
-        (0..batch_size)
-            .map(|_| {
-                let bls_keypair = BLSKeypair::new();
-                let signature = bls_keypair.sign(&payload);
-                let vote_message = UnverifiedVoteMessage {
-                    vote,
-                    signature: signature.into(),
-                    shred_version,
-                };
-                UnverifiedVotePayload {
-                    vote_message,
-                    sender_bls_pubkey: bls_keypair.public,
-                    sender_vote_account_pubkey: Keypair::new().pubkey(),
-                    sender_identity_pubkey: Keypair::new().pubkey(),
-                    rank: 0,
-                    stake: NonZero::new(1234).unwrap(),
-                }
-            })
-            .collect(),
-    )
+    let vote_payload_to_sign = VotePayloadToSign::new_from_vote(vote, shred_version);
+    let mut group = UnverifiedVoteGroup::default();
+    for _ in 0..batch_size {
+        let bls_keypair = BLSKeypair::new();
+        let signature = bls_keypair.sign(&payload);
+        group.push(signature.into(), 0);
+    }
+    (vote_payload_to_sign, group)
 }
 
 // Single Signature Verification
@@ -121,7 +104,7 @@ fn bench_verify_individual_votes(c: &mut Criterion) {
 
     for &batch_size in BATCH_SIZES {
         // Distinctness doesn't affect the cost of N individual verifications.
-        let (vote_payload_to_sign, unverified_votes) =
+        let (vote_payload_to_sign, unverified_group) =
             generate_test_data(shred_version, batch_size);
         let label = format!("batch_{batch_size}");
 
@@ -129,17 +112,17 @@ fn bench_verify_individual_votes(c: &mut Criterion) {
             b.iter_batched(
                 || {
                     let rank_map = bank
-                        .epoch_stakes_from_slot(unverified_votes[0].vote_message.vote.slot())
+                        .epoch_stakes_from_slot(vote_payload_to_sign.slot())
                         .unwrap()
                         .bls_pubkey_to_rank_map();
                     let serialized_vote = wincode::serialize(&vote_payload_to_sign).unwrap();
                     let prepared_hash_msg = PreparedHashedMessage::new(&serialized_vote);
-                    (unverified_votes.clone(), prepared_hash_msg, rank_map.len())
+                    (rank_map, prepared_hash_msg)
                 },
-                |(votes, prepared_hash_map, max_validators)| {
-                    let res = verify_individual_votes(
-                        max_validators,
-                        black_box(votes),
+                |(rank_map, prepared_hash_map)| {
+                    let res = unverified_group.verify_individual_votes(
+                        rank_map,
+                        black_box(vote_payload_to_sign),
                         black_box(prepared_hash_map),
                         &thread_pool,
                     );
