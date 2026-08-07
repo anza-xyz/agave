@@ -550,6 +550,18 @@ impl<FG: ForkGraph> ProgramCache<FG> {
                                 false
                             }
                         })
+                        .filter(|entry| {
+                            // Remove outdated environment of previous feature set
+                            if let Some(new_environment) = new_environment.as_ref()
+                                && !Self::matches_environment(entry, new_environment)
+                            {
+                                self.stats
+                                    .prunes_environment
+                                    .fetch_add(1, Ordering::Relaxed);
+                                return false;
+                            }
+                            true
+                        })
                         .cloned()
                         .collect();
                     second_level.reverse();
