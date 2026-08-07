@@ -7016,12 +7016,12 @@ fn write_transaction_statuses_for_entries(
         .collect()
 }
 
-struct UpdateParentSlotFixture {
+pub(crate) struct UpdateParentSlotFixture {
     previous_blockhash: String,
     post_update_blockhash: String,
-    post_update_address: Pubkey,
+    pub(crate) post_update_address: Pubkey,
     pre_update_signatures: Vec<Signature>,
-    post_update_signatures: Vec<Signature>,
+    pub(crate) post_update_signatures: Vec<Signature>,
     post_update_starting_transaction_indexes: Vec<usize>,
     post_update_num_entries: usize,
     update_parent_fec_set_index: u32,
@@ -7039,7 +7039,7 @@ fn expected_starting_transaction_indexes(entries: &[Entry]) -> Vec<usize> {
         .collect()
 }
 
-fn insert_complete_update_parent_slot(
+pub(crate) fn insert_complete_update_parent_slot(
     blockstore: &Blockstore,
     slot: Slot,
     original_parent: Slot,
@@ -7180,39 +7180,6 @@ fn test_get_transaction_uses_post_update_parent_indexes() {
             .unwrap();
         assert_eq!(transaction.index, expected_index as u32);
     }
-}
-
-#[test]
-fn test_purge_update_parent_transaction_indexes() {
-    let ledger_path = get_tmp_ledger_path_auto_delete!();
-    let blockstore = Blockstore::open(ledger_path.path()).unwrap();
-
-    let slot = 104;
-    let fixture = insert_complete_update_parent_slot(&blockstore, slot, 103, 100);
-    let address_signature = (
-        fixture.post_update_address,
-        slot,
-        0,
-        fixture.post_update_signatures[0],
-    );
-    assert!(
-        blockstore
-            .address_signatures_cf
-            .get(address_signature)
-            .unwrap()
-            .is_some()
-    );
-
-    blockstore
-        .purge_slots(slot, slot, PurgeType::Exact)
-        .unwrap();
-    assert!(
-        blockstore
-            .address_signatures_cf
-            .get(address_signature)
-            .unwrap()
-            .is_none()
-    );
 }
 
 #[test]

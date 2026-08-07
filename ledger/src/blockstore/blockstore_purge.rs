@@ -545,7 +545,10 @@ pub mod tests {
     use {
         super::*,
         crate::{
-            blockstore::tests::make_slot_entries_with_transactions, get_tmp_ledger_path_auto_delete,
+            blockstore::tests::{
+                insert_complete_update_parent_slot, make_slot_entries_with_transactions,
+            },
+            get_tmp_ledger_path_auto_delete,
         },
         solana_entry::entry::next_entry_mut,
         solana_hash::Hash,
@@ -1050,6 +1053,39 @@ pub mod tests {
             .iter(IteratorMode::Start)
             .unwrap();
         assert_eq!(status_entry_iterator.next(), None);
+    }
+
+    #[test]
+    fn test_purge_update_parent_transaction_indexes() {
+        let ledger_path = get_tmp_ledger_path_auto_delete!();
+        let blockstore = Blockstore::open(ledger_path.path()).unwrap();
+
+        let slot = 104;
+        let fixture = insert_complete_update_parent_slot(&blockstore, slot, 103, 100);
+        let address_signature = (
+            fixture.post_update_address,
+            slot,
+            0,
+            fixture.post_update_signatures[0],
+        );
+        assert!(
+            blockstore
+                .address_signatures_cf
+                .get(address_signature)
+                .unwrap()
+                .is_some()
+        );
+
+        blockstore
+            .purge_slots(slot, slot, PurgeType::Exact)
+            .unwrap();
+        assert!(
+            blockstore
+                .address_signatures_cf
+                .get(address_signature)
+                .unwrap()
+                .is_none()
+        );
     }
 
     fn purge_exact(blockstore: &Blockstore, oldest_slot: Slot) {
