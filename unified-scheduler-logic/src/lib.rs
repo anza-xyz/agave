@@ -1600,6 +1600,7 @@ mod tests {
         RuntimeTransaction::from_transaction_view_for_tests(unsigned)
     }
 
+    #[allow(clippy::type_complexity)]
     fn create_address_loader(
         usage_queues: Option<Rc<RefCell<HashMap<Pubkey, UsageQueue<Data>>>>>,
         capability: &Capability,
@@ -2161,6 +2162,7 @@ mod tests {
             };
         }
 
+        #[allow(clippy::type_complexity)]
         fn setup() -> (
             SchedulingStateMachine<Data>,
             impl FnMut((RequestedUsage, Pubkey), OrderedTaskId) -> Task<Data>,

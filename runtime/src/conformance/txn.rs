@@ -163,12 +163,9 @@ pub fn execute_txn(
 
     // TODO: hard expect here/panic instead of return error
     let transaction_bytes = Bytes::from(wincode::serialize(&transaction).unwrap());
-    let transaction_view = match UnsanitizedTransactionView::try_new_unsanitized(transaction_bytes)
-    {
-        Ok(transaction_view) => transaction_view,
-        Err(_) => {
-            return BankTxnProcessingResult::FailedVerification(TransactionError::SanitizeFailure);
-        }
+    let Ok(transaction_view) = UnsanitizedTransactionView::try_new_unsanitized(transaction_bytes)
+    else {
+        return BankTxnProcessingResult::FailedVerification(TransactionError::SanitizeFailure);
     };
 
     let runtime_transaction = match bank.verify_transaction(
