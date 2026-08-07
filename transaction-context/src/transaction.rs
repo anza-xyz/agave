@@ -83,12 +83,13 @@ pub struct TransactionContext<'ix_data> {
 #[cfg(not(any(target_arch = "bpf", target_arch = "sbf")))]
 impl<'ix_data> TransactionContext<'ix_data> {
     /// Constructs a new TransactionContext
-    pub fn new(
+    pub fn new_with_feature_flags(
         transaction_accounts: Vec<KeyedAccountSharedData>,
         rent: Rent,
         instruction_stack_capacity: usize,
         instruction_trace_capacity: usize,
         number_of_top_level_instructions: usize,
+        is_in_replay: bool,
     ) -> Self {
         let transaction_frame = TransactionFrame {
             return_data_pubkey: Pubkey::default(),
@@ -120,7 +121,10 @@ impl<'ix_data> TransactionContext<'ix_data> {
         );
 
         Self {
-            accounts: Rc::new(TransactionAccounts::new(transaction_accounts)),
+            accounts: Rc::new(TransactionAccounts::new_with_feature_flags(
+                transaction_accounts,
+                is_in_replay,
+            )),
             instruction_stack_capacity,
             instruction_trace_capacity,
             instruction_stack: Vec::with_capacity(instruction_stack_capacity),
@@ -133,6 +137,25 @@ impl<'ix_data> TransactionContext<'ix_data> {
             deduplication_maps: Vec::with_capacity(instruction_trace_capacity),
             instruction_data: Vec::with_capacity(instruction_trace_capacity),
         }
+    }
+
+    /// Constructs a new TransactionContext with all features active
+    #[cfg(feature = "dev-context-only-utils")]
+    pub fn new(
+        transaction_accounts: Vec<KeyedAccountSharedData>,
+        rent: Rent,
+        instruction_stack_capacity: usize,
+        instruction_trace_capacity: usize,
+        number_of_top_level_instructions: usize,
+    ) -> Self {
+        Self::new_with_feature_flags(
+            transaction_accounts,
+            rent,
+            instruction_stack_capacity,
+            instruction_trace_capacity,
+            number_of_top_level_instructions,
+            true,
+        )
     }
 
     /// Used in mock_process_instruction
