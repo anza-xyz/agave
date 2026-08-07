@@ -2093,6 +2093,7 @@ fn load_frozen_forks(
                     supermajority_root_from_vote_accounts(
                         bank.total_epoch_stake(),
                         &bank.vote_accounts(),
+                        &migration_status,
                     ).and_then(|supermajority_root| {
                         if supermajority_root > root {
                             // If there's a cluster confirmed root greater than our last
@@ -2239,6 +2240,7 @@ fn supermajority_root(roots: &[(Slot, u64)], total_epoch_stake: u64) -> Option<S
 fn supermajority_root_from_vote_accounts(
     total_epoch_stake: u64,
     vote_accounts: &VoteAccountsHashMap,
+    migration_status: &MigrationStatus,
 ) -> Option<Slot> {
     let mut roots_stakes: Vec<(Slot, u64)> = vote_accounts
         .values()
@@ -2254,8 +2256,11 @@ fn supermajority_root_from_vote_accounts(
     // Sort from greatest to smallest slot
     roots_stakes.sort_unstable_by_key(|a| cmp::Reverse(a.0));
 
-    // Find latest root
+    // Vote state identifies a root by slot only, so it can only be used to infer TowerBFT roots.
+    // In particular, reject the migration slot itself before the caller performs any rooting side
+    // effects.
     supermajority_root(&roots_stakes, total_epoch_stake)
+        .filter(|slot| migration_status.should_report_commitment_or_root(*slot))
 }
 
 /// Validates the chained block ID for a child slot against its parent.
@@ -4934,18 +4939,30 @@ pub mod tests {
         let total_stake = 10;
 
         // Supermajority root should be None
-        assert!(supermajority_root_from_vote_accounts(total_stake, &HashMap::default()).is_none());
+        let migration_status = MigrationStatus::default();
+        assert!(
+            supermajority_root_from_vote_accounts(
+                total_stake,
+                &HashMap::default(),
+                &migration_status,
+            )
+            .is_none()
+        );
 
         // Supermajority root should be None
         let roots_stakes = vec![(8, 1), (3, 1), (4, 1), (8, 1)];
         let accounts = convert_to_vote_accounts(roots_stakes);
-        assert!(supermajority_root_from_vote_accounts(total_stake, &accounts).is_none());
+        assert!(
+            supermajority_root_from_vote_accounts(total_stake, &accounts, &migration_status)
+                .is_none()
+        );
 
         // Supermajority root should be 4, has 7/10 of the stake
         let roots_stakes = vec![(8, 1), (3, 1), (4, 1), (8, 5)];
         let accounts = convert_to_vote_accounts(roots_stakes);
         assert_eq!(
-            supermajority_root_from_vote_accounts(total_stake, &accounts).unwrap(),
+            supermajority_root_from_vote_accounts(total_stake, &accounts, &migration_status)
+                .unwrap(),
             4
         );
 
@@ -4953,8 +4970,45 @@ pub mod tests {
         let roots_stakes = vec![(8, 1), (3, 1), (4, 1), (8, 6)];
         let accounts = convert_to_vote_accounts(roots_stakes);
         assert_eq!(
-            supermajority_root_from_vote_accounts(total_stake, &accounts).unwrap(),
+            supermajority_root_from_vote_accounts(total_stake, &accounts, &migration_status)
+                .unwrap(),
             8
+        );
+
+        // Vote-state roots do not identify an Alpenglow block. Once migration starts, only
+        // pre-migration roots may be inferred from vote accounts.
+        let migration_slot = migration_status.record_feature_activation(0);
+        let accounts = convert_to_vote_accounts(vec![(migration_slot - 1, total_stake)]);
+        assert_eq!(
+            supermajority_root_from_vote_accounts(total_stake, &accounts, &migration_status),
+            Some(migration_slot - 1),
+        );
+        let accounts = convert_to_vote_accounts(vec![(migration_slot, total_stake)]);
+        assert!(
+            supermajority_root_from_vote_accounts(total_stake, &accounts, &migration_status)
+                .is_none()
+        );
+
+        // After the migrationary phase, no vote-account root may be inferred, including a root
+        // whose slot predates migration.
+        let genesis_block = Block {
+            slot: migration_slot - 1,
+            block_id: Hash::new_unique(),
+        };
+        migration_status.set_genesis_block(genesis_block);
+        migration_status.set_genesis_certificate(genesis_certificate(genesis_block));
+        assert!(migration_status.is_ready_to_enable());
+        let accounts = convert_to_vote_accounts(vec![(migration_slot - 1, total_stake)]);
+        assert!(
+            supermajority_root_from_vote_accounts(total_stake, &accounts, &migration_status)
+                .is_none()
+        );
+
+        migration_status.enable_alpenglow_during_startup();
+        assert!(migration_status.is_alpenglow_enabled());
+        assert!(
+            supermajority_root_from_vote_accounts(total_stake, &accounts, &migration_status)
+                .is_none()
         );
     }
 

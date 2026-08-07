@@ -28,7 +28,7 @@ dev-context-only-utils = [
     "dep:solana-signer",
     "dep:solana-stake-interface",
     "dep:solana-vote-program",
-    "solana-account/dev-context-only-utils",
+    "solana-account/bincode",
     "solana-transaction/dev-context-only-utils",
 ]
 frozen-abi = [

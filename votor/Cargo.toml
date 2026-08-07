@@ -75,6 +75,7 @@ solana-streamer = { workspace = true }
 solana-time-utils = { workspace = true }
 solana-tls-utils = { workspace = true, features = ["agave-unstable-api"] }
 solana-transaction = { workspace = true }
+solana-validator-exit = { workspace = true }
 thiserror = { workspace = true }
 tokio = { workspace = true, features = ["sync", "rt"] }
 wincode = { workspace = true, features = ["alloc"] }

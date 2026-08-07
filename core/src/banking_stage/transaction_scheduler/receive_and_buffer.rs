@@ -20,17 +20,14 @@ use {
         transaction_view::SanitizedTransactionView,
     },
     core::time::Duration,
-    crossbeam_channel::{RecvTimeoutError, TryRecvError},
+    crossbeam_channel::{Receiver, RecvTimeoutError, Sender, TryRecvError, TrySendError},
     solana_accounts_db::account_locks::validate_account_locks,
     solana_address_lookup_table_interface::state::estimate_last_valid_slot,
     solana_clock::{Epoch, Slot},
     solana_message::v0::LoadedAddresses,
     solana_perf::packet::bytes::Bytes,
     solana_pubkey::Pubkey,
-    solana_runtime::{
-        bank::Bank,
-        bank_forks::{BankPair, SharableBanks},
-    },
+    solana_runtime::bank::Bank,
     solana_runtime_transaction::{
         runtime_transaction::RuntimeTransaction, sanitize_config::sanitize_config,
         transaction_meta::TransactionMeta, transaction_with_meta::TransactionWithMeta,
@@ -39,11 +36,163 @@ use {
     solana_svm_transaction::svm_message::SVMMessage,
     solana_transaction::sanitized::MessageHash,
     solana_transaction_error::TransactionError,
-    std::{collections::HashSet, sync::Arc, time::Instant},
+    std::{collections::HashSet, time::Instant},
 };
 
 #[derive(Debug)]
-pub(crate) struct DisconnectedError;
+pub(crate) enum IngressCheckError {
+    PacketHandling(PacketHandlingError),
+    Transaction(TransactionError),
+    FeePayer,
+}
+
+#[derive(Debug, PartialEq, Eq)]
+pub(crate) enum PacketHandlingError {
+    Sanitization,
+    LockValidation,
+    ComputeBudget,
+    ALTResolution,
+    FilterKey,
+}
+
+pub(crate) struct PrecheckedTransaction {
+    pub(crate) state: TransactionViewState,
+    pub(crate) validated_nonce_address: Option<Pubkey>,
+}
+
+pub(crate) type PrecheckResult = Result<PrecheckedTransaction, IngressCheckError>;
+
+pub(crate) fn precheck_transaction(
+    bytes: Bytes,
+    root_bank: &Bank,
+    working_bank: &Bank,
+    filter_keys: &HashSet<Pubkey>,
+) -> PrecheckResult {
+    let sanitize_config = sanitize_config();
+    let transaction_account_lock_limit = working_bank.get_transaction_account_lock_limit();
+    let (view, deactivation_slot) = translate_to_runtime_view(
+        bytes,
+        root_bank,
+        transaction_account_lock_limit,
+        &sanitize_config,
+    )
+    .map_err(IngressCheckError::PacketHandling)?;
+
+    if !filter_keys.is_empty()
+        && view
+            .account_keys()
+            .iter()
+            .any(|key| filter_keys.contains(key))
+    {
+        return Err(IngressCheckError::PacketHandling(
+            PacketHandlingError::FilterKey,
+        ));
+    }
+
+    let transaction_configuration = view
+        .transaction_configuration(&working_bank.feature_set)
+        .map_err(|_| IngressCheckError::PacketHandling(PacketHandlingError::ComputeBudget))?;
+    let max_age = calculate_max_age(root_bank.epoch(), deactivation_slot, root_bank.slot());
+    let (priority, cost) =
+        calculate_priority_and_cost(working_bank, &view, &transaction_configuration);
+    let state = TransactionState::new(view, max_age, priority, cost);
+
+    let mut error_counters = TransactionErrorMetrics::default();
+    let validated_nonce_address = working_bank
+        .check_transaction_without_status_cache(
+            state.transaction(),
+            working_bank.max_processing_age(),
+            &mut error_counters,
+        )
+        .map_err(IngressCheckError::Transaction)?;
+
+    Consumer::check_fee_payer_unlocked(working_bank, state.transaction(), &mut error_counters)
+        .map_err(|_| IngressCheckError::FeePayer)?;
+
+    Ok(PrecheckedTransaction {
+        state,
+        validated_nonce_address,
+    })
+}
+
+/// Perform sanitization checks and transition from data to an executable
+/// [`RuntimeTransaction`]. This additionally returns the minimum slot for
+/// ALT deactivation, if any. If no minimum slot, Slot::MAX is returned.
+pub(crate) fn translate_to_runtime_view<D: TransactionData>(
+    data: D,
+    bank: &Bank,
+    transaction_account_lock_limit: usize,
+    sanitize_config: &SanitizeConfig,
+) -> Result<(RuntimeTransaction<ResolvedTransactionView<D>>, u64), PacketHandlingError> {
+    let Ok(view) = SanitizedTransactionView::try_new_sanitized(data, sanitize_config) else {
+        return Err(PacketHandlingError::Sanitization);
+    };
+
+    let Ok(view) = RuntimeTransaction::<SanitizedTransactionView<_>>::try_new(
+        view,
+        MessageHash::Compute,
+        None,
+    ) else {
+        return Err(PacketHandlingError::Sanitization);
+    };
+
+    if bank.vote_only_bank() && !view.is_simple_vote_transaction() {
+        return Err(PacketHandlingError::Sanitization);
+    }
+
+    if usize::from(view.total_num_accounts()) > transaction_account_lock_limit {
+        return Err(PacketHandlingError::LockValidation);
+    }
+
+    let (loaded_addresses, deactivation_slot) = load_addresses_for_view(&view, bank)?;
+
+    let Ok(view) = RuntimeTransaction::<ResolvedTransactionView<_>>::try_new(
+        view,
+        loaded_addresses,
+        bank.get_reserved_account_keys(),
+    ) else {
+        return Err(PacketHandlingError::Sanitization);
+    };
+
+    if validate_account_locks(view.account_keys(), transaction_account_lock_limit).is_err() {
+        return Err(PacketHandlingError::LockValidation);
+    }
+
+    Ok((view, deactivation_slot))
+}
+
+fn load_addresses_for_view<D: TransactionData>(
+    view: &SanitizedTransactionView<D>,
+    bank: &Bank,
+) -> Result<(Option<LoadedAddresses>, Slot), PacketHandlingError> {
+    match view.version() {
+        TransactionVersion::Legacy | TransactionVersion::V1 => Ok((None, u64::MAX)),
+        TransactionVersion::V0 => bank
+            .load_addresses_from_ref(view.address_table_lookup_iter())
+            .map(|(loaded_addresses, deactivation_slot)| {
+                (Some(loaded_addresses), deactivation_slot)
+            })
+            .map_err(|_| PacketHandlingError::ALTResolution),
+    }
+}
+
+fn calculate_max_age(
+    sanitized_epoch: Epoch,
+    deactivation_slot: Slot,
+    current_slot: Slot,
+) -> MaxAge {
+    let alt_min_expire_slot = estimate_last_valid_slot(deactivation_slot.min(current_slot));
+    MaxAge {
+        sanitized_epoch,
+        alt_invalidation_slot: alt_min_expire_slot,
+    }
+}
+
+#[derive(Debug)]
+pub(crate) enum DisconnectedError {
+    Receiver,
+    CheckWorker,
+}
 
 /// Stats/metrics returned by `receive_and_buffer_packets`.
 #[derive(Debug, Default)]
@@ -61,6 +210,7 @@ pub(crate) struct ReceivingStats {
     pub num_dropped_on_already_processed: usize,
     pub num_dropped_on_fee_payer: usize,
     pub num_dropped_on_filter_key: usize,
+    pub num_dropped_on_check_work_queue_full: usize,
     pub num_dropped_on_capacity: usize,
     pub num_dropped_on_nonce_dedup: usize,
 
@@ -72,6 +222,14 @@ pub(crate) struct ReceivingStats {
 }
 
 impl ReceivingStats {
+    fn add_ingress_check_error(&mut self, err: &IngressCheckError) {
+        match err {
+            IngressCheckError::PacketHandling(err) => self.add_packet_handling_error(err),
+            IngressCheckError::Transaction(err) => self.add_transaction_error(err),
+            IngressCheckError::FeePayer => self.num_dropped_on_fee_payer += 1,
+        }
+    }
+
     fn add_packet_handling_error(&mut self, err: &PacketHandlingError) {
         match err {
             PacketHandlingError::Sanitization | PacketHandlingError::ALTResolution => {
@@ -101,7 +259,7 @@ impl ReceivingStats {
         }
     }
 
-    fn accumulate(&mut self, other: ReceivingStats) {
+    pub(crate) fn accumulate(&mut self, other: ReceivingStats) {
         self.num_received += other.num_received;
         self.num_dropped_without_parsing += other.num_dropped_without_parsing;
         self.num_dropped_on_parsing_and_sanitization +=
@@ -112,11 +270,11 @@ impl ReceivingStats {
         self.num_dropped_on_already_processed += other.num_dropped_on_already_processed;
         self.num_dropped_on_fee_payer += other.num_dropped_on_fee_payer;
         self.num_dropped_on_filter_key += other.num_dropped_on_filter_key;
+        self.num_dropped_on_check_work_queue_full += other.num_dropped_on_check_work_queue_full;
         self.num_dropped_on_capacity += other.num_dropped_on_capacity;
         self.num_dropped_on_nonce_dedup += other.num_dropped_on_nonce_dedup;
         self.num_buffered += other.num_buffered;
         self.num_evicted_on_nonce_dedup += other.num_evicted_on_nonce_dedup;
-
         self.receive_time_us += other.receive_time_us;
         self.buffer_time_us += other.buffer_time_us;
     }
@@ -133,12 +291,32 @@ pub(crate) trait ReceiveAndBuffer {
         container: &mut Self::Container,
         decision: &BufferedPacketsDecision,
     ) -> Result<ReceivingStats, DisconnectedError>;
+
+    fn drain_check_results(
+        &mut self,
+        container: &mut Self::Container,
+        decision: &BufferedPacketsDecision,
+    ) -> ReceivingStats;
 }
 
 pub(crate) struct TransactionViewReceiveAndBuffer {
-    pub receiver: BankingPacketReceiver,
-    pub sharable_banks: SharableBanks,
-    pub filter_keys: Arc<HashSet<Pubkey>>,
+    receiver: BankingPacketReceiver,
+    check_work_sender: Sender<Bytes>,
+    check_result_receiver: Receiver<PrecheckResult>,
+}
+
+impl TransactionViewReceiveAndBuffer {
+    pub(crate) fn new(
+        receiver: BankingPacketReceiver,
+        check_work_sender: Sender<Bytes>,
+        check_result_receiver: Receiver<PrecheckResult>,
+    ) -> Self {
+        Self {
+            receiver,
+            check_work_sender,
+            check_result_receiver,
+        }
+    }
 }
 
 impl ReceiveAndBuffer for TransactionViewReceiveAndBuffer {
@@ -150,78 +328,59 @@ impl ReceiveAndBuffer for TransactionViewReceiveAndBuffer {
         container: &mut Self::Container,
         decision: &BufferedPacketsDecision,
     ) -> Result<ReceivingStats, DisconnectedError> {
-        let BankPair {
-            root_bank,
-            working_bank,
-        } = self.sharable_banks.load();
-
-        // Receive packet batches.
         const RECV_TIMEOUT: Duration = Duration::from_millis(10);
-        const PACKET_BURST_TIMEOUT: Duration = Duration::from_millis(1);
-        const PACKET_BURST_LIMIT: usize = 1000;
-        let start = Instant::now();
+        const MAX_PACKET_RECEIVES: usize = 512;
 
         let mut received_message = false;
         let mut stats = ReceivingStats::default();
+        let should_check = !matches!(decision, BufferedPacketsDecision::Forward);
 
         // If not leader/unknown, do a blocking-receive initially. This lets
         // the thread sleep until a message is received, or until the timeout.
-        // Additionally, only sleep if the container is empty.
+        // Do not pop from ingress when the check-work queue is full.
         let mut timed_out = false;
-        if container.is_empty()
-            && matches!(
-                decision,
-                BufferedPacketsDecision::Forward | BufferedPacketsDecision::ForwardAndHold
-            )
-        {
+        let should_block = match decision {
+            BufferedPacketsDecision::Forward => true,
+            BufferedPacketsDecision::ForwardAndHold => self.check_capacity() > 0,
+            BufferedPacketsDecision::Consume(_) | BufferedPacketsDecision::Hold => false,
+        };
+        if container.is_empty() && should_block {
             // TODO: Is it better to manually sleep instead, avoiding the locking
             //       overhead for wakers? But then risk not waking up when message
             //       received - as long as sleep is somewhat short, this should be
             //       fine.
             match self.receiver.recv_timeout(RECV_TIMEOUT) {
-                Ok(packet_batch_message) => {
+                Ok(batch) => {
                     received_message = true;
-                    stats.accumulate(self.handle_packet_batch_message(
-                        container,
-                        decision,
-                        &root_bank,
-                        &working_bank,
-                        packet_batch_message,
-                    ));
+                    self.process_packet_batch(batch, should_check, &mut stats)?;
                 }
                 Err(RecvTimeoutError::Timeout) => timed_out = true,
                 Err(RecvTimeoutError::Disconnected) => {
-                    if !received_message {
-                        return Err(DisconnectedError);
-                    }
+                    return Err(DisconnectedError::Receiver);
                 }
             }
         }
 
         if !timed_out {
-            while start.elapsed() < PACKET_BURST_TIMEOUT && stats.num_received < PACKET_BURST_LIMIT
-            {
+            // This is a soft limit: finish the current batch before checking it again.
+            while stats.num_received < MAX_PACKET_RECEIVES {
+                if should_check && self.check_capacity() == 0 {
+                    break;
+                }
+
                 let receive_start = Instant::now();
                 match self.receiver.try_recv() {
-                    Ok(packet_batch_message) => {
+                    Ok(batch) => {
                         stats.receive_time_us += receive_start.elapsed().as_micros() as u64;
                         received_message = true;
-                        let batch_stats = self.handle_packet_batch_message(
-                            container,
-                            decision,
-                            &root_bank,
-                            &working_bank,
-                            packet_batch_message,
-                        );
-                        stats.accumulate(batch_stats);
+                        self.process_packet_batch(batch, should_check, &mut stats)?;
                     }
-                    Err(TryRecvError::Empty) => {
-                        break;
-                    }
+                    Err(TryRecvError::Empty) => break,
                     Err(TryRecvError::Disconnected) => {
-                        if !received_message {
-                            return Err(DisconnectedError);
+                        if !received_message && stats.num_received == 0 {
+                            return Err(DisconnectedError::Receiver);
                         }
+                        break;
                     }
                 }
             }
@@ -229,272 +388,133 @@ impl ReceiveAndBuffer for TransactionViewReceiveAndBuffer {
 
         Ok(stats)
     }
-}
 
-pub(crate) enum PacketHandlingError {
-    Sanitization,
-    LockValidation,
-    ComputeBudget,
-    ALTResolution,
-    FilterKey,
+    fn drain_check_results(
+        &mut self,
+        container: &mut Self::Container,
+        decision: &BufferedPacketsDecision,
+    ) -> ReceivingStats {
+        const MAX_CHECK_RESULTS: usize = 1024;
+
+        let start = Instant::now();
+        let mut stats = ReceivingStats::default();
+        let should_buffer = !matches!(decision, BufferedPacketsDecision::Forward);
+
+        for _ in 0..MAX_CHECK_RESULTS {
+            let Ok(result) = self.check_result_receiver.try_recv() else {
+                break;
+            };
+            if !should_buffer {
+                stats.num_dropped_without_parsing += 1;
+                continue;
+            }
+
+            match result {
+                Ok(transaction) => {
+                    Self::admit_prechecked_transaction(transaction, container, &mut stats)
+                }
+                Err(err) => stats.add_ingress_check_error(&err),
+            }
+        }
+
+        stats.buffer_time_us = start.elapsed().as_micros() as u64;
+        stats
+    }
 }
 
 impl TransactionViewReceiveAndBuffer {
-    /// Return number of received packets.
-    fn handle_packet_batch_message(
-        &mut self,
-        container: &mut TransactionViewStateContainer,
-        decision: &BufferedPacketsDecision,
-        root_bank: &Bank,
-        working_bank: &Bank,
-        packet_batch_message: BankingPacketBatch,
-    ) -> ReceivingStats {
-        let start = Instant::now();
-        // If outside holding window, do not parse.
-        let should_parse = !matches!(decision, BufferedPacketsDecision::Forward);
+    fn check_capacity(&self) -> usize {
+        self.check_work_sender
+            .capacity()
+            .expect("check-work queue must be bounded")
+            .saturating_sub(self.check_work_sender.len())
+    }
 
-        let sanitize_config = sanitize_config();
-        let transaction_account_lock_limit = working_bank.get_transaction_account_lock_limit();
-
-        let mut error_counters = TransactionErrorMetrics::default();
-        let mut receiving_stats = ReceivingStats::default();
-
-        for packet in packet_batch_message.iter() {
+    fn process_packet_batch(
+        &self,
+        batch: BankingPacketBatch,
+        should_check: bool,
+        stats: &mut ReceivingStats,
+    ) -> Result<(), DisconnectedError> {
+        for packet in batch.iter() {
             let Some(packet_data) = packet.data(..) else {
                 continue;
             };
 
-            receiving_stats.num_received += 1;
-            if !should_parse {
-                receiving_stats.num_dropped_without_parsing += 1;
+            stats.num_received += 1;
+            if !should_check {
+                stats.num_dropped_without_parsing += 1;
                 continue;
             }
 
-            let bytes = packet_bytes(packet, packet_data);
-            let state = match Self::try_handle_packet(
-                bytes,
-                root_bank,
-                working_bank,
-                transaction_account_lock_limit,
-                &sanitize_config,
-                &self.filter_keys,
-            ) {
-                // Successful parse, ALTs resolved, and no obvious static issues.
-                Ok(state) => state,
-
-                // Parsing or some other static checks failed.
-                Err(ref err) => {
-                    receiving_stats.add_packet_handling_error(err);
-                    continue;
+            let work = packet_bytes(packet, packet_data);
+            match self.check_work_sender.try_send(work) {
+                Ok(()) => {}
+                Err(TrySendError::Full(_)) => {
+                    stats.num_dropped_on_check_work_queue_full += 1;
                 }
-            };
+                Err(TrySendError::Disconnected(_)) => {
+                    return Err(DisconnectedError::CheckWorker);
+                }
+            }
+        }
 
-            let priority = state.priority();
-            let raw_nonce_address = state.transaction().get_durable_nonce().cloned();
+        Ok(())
+    }
 
-            // When we first receive a transaction, we drop it if a) it looks nonce-like, AND
-            // b) there is a higher-priority nonce transaction using the same nonce in the queue
-            // or any in-flight nonce transaction using the same nonce. This means we discard
-            // blockhash transactions structured like nonce transactions; this is acceptable because
-            // they would fail after the earlier nonce transaction is processed, and it allows us to
-            // prefilter without loading from accounts-db.
-            let drop_incoming_nonce_tx = raw_nonce_address
-                .and_then(|address| container.get_nonce_transaction_priority_id(&address))
+    fn admit_prechecked_transaction(
+        prechecked_transaction: PrecheckedTransaction,
+        container: &mut TransactionViewStateContainer,
+        stats: &mut ReceivingStats,
+    ) {
+        let PrecheckedTransaction {
+            state,
+            validated_nonce_address,
+        } = prechecked_transaction;
+        let priority = state.priority();
+
+        // Reject a nonce-like transaction if a higher-or-equal-priority conflict
+        // is queued, or any conflict is already in flight.
+        let nonce_priority = state
+            .transaction()
+            .get_durable_nonce()
+            .map(|address| (*address, priority));
+        if Self::should_drop_nonce(nonce_priority, container) {
+            stats.num_dropped_on_nonce_dedup += 1;
+            return;
+        }
+
+        let transaction_id = container.insert_map_only(state);
+        let priority_id = TransactionPriorityId::new(priority, transaction_id);
+
+        // A validated nonce transaction is higher priority than any queued
+        // conflict. Evict that conflict only after all ingress checks passed.
+        if let Some(nonce_address) = validated_nonce_address {
+            if let Some(existing_nonce_priority_id) =
+                container.get_nonce_transaction_priority_id(&nonce_address)
+            {
+                stats.num_evicted_on_nonce_dedup += 1;
+                container.remove_by_id(existing_nonce_priority_id.id);
+            }
+            container.set_nonce_transaction_priority_id(&nonce_address, priority_id);
+        }
+
+        stats.num_dropped_on_capacity +=
+            container.push_ids_into_queue(std::iter::once(priority_id));
+        stats.num_buffered += 1;
+    }
+
+    fn should_drop_nonce(
+        nonce_priority: Option<(Pubkey, u64)>,
+        container: &TransactionViewStateContainer,
+    ) -> bool {
+        nonce_priority.is_some_and(|(address, priority)| {
+            container
+                .get_nonce_transaction_priority_id(&address)
                 .is_some_and(|existing| {
                     existing.priority >= priority || !container.is_queued(existing)
-                });
-
-            if drop_incoming_nonce_tx {
-                receiving_stats.num_dropped_on_nonce_dedup += 1;
-                continue;
-            }
-
-            // Check blockhash transaction age is ok, or nonce transaction has a valid nonce.
-            // Only a fully validated nonce address can be used for priority queue eviction.
-            let validated_nonce_address = match working_bank.check_transaction_without_status_cache(
-                state.transaction(),
-                working_bank.max_processing_age(),
-                &mut error_counters,
-            ) {
-                // Valid nonce transaction
-                Ok(Some(nonce_address)) => Some(nonce_address),
-
-                // Valid blockhash transaction
-                Ok(None) => None,
-
-                // Invalid
-                Err(ref err) => {
-                    receiving_stats.add_transaction_error(err);
-                    continue;
-                }
-            };
-
-            // Check the transaction's fee-payer validates.
-            if let Err(_err) = Consumer::check_fee_payer_unlocked(
-                working_bank,
-                state.transaction(),
-                &mut error_counters,
-            ) {
-                receiving_stats.num_dropped_on_fee_payer += 1;
-                continue;
-            };
-
-            let transaction_id = container.insert_map_only(state);
-            let priority_id = TransactionPriorityId::new(priority, transaction_id);
-
-            // Now, if this is a nonce transaction, we know it is validated and higher-priority than any
-            // which may exist in the priority queue. If one is queued, evict it. Regardless, record the
-            // incoming nonce transaction's nonce as in-use.
-            if let Some(nonce_address) = validated_nonce_address {
-                if let Some(existing_nonce_priority_id) =
-                    container.get_nonce_transaction_priority_id(&nonce_address)
-                {
-                    receiving_stats.num_evicted_on_nonce_dedup += 1;
-                    container.remove_by_id(existing_nonce_priority_id.id);
-                }
-                container.set_nonce_transaction_priority_id(&nonce_address, priority_id);
-            }
-
-            // Transaction is already fully validated and can be inserted into priority queue.
-            receiving_stats.num_dropped_on_capacity +=
-                container.push_ids_into_queue(std::iter::once(priority_id));
-
-            receiving_stats.num_buffered += 1;
-        }
-
-        // `receive_time_us` is set outside this function
-        receiving_stats.buffer_time_us = start.elapsed().as_micros() as u64;
-        receiving_stats
-    }
-
-    fn try_handle_packet(
-        bytes: Bytes,
-        root_bank: &Bank,
-        working_bank: &Bank,
-        transaction_account_lock_limit: usize,
-        sanitize_config: &SanitizeConfig,
-        filter_keys: &HashSet<Pubkey>,
-    ) -> Result<TransactionViewState, PacketHandlingError> {
-        let (view, deactivation_slot) = translate_to_runtime_view(
-            bytes,
-            root_bank,
-            transaction_account_lock_limit,
-            sanitize_config,
-        )?;
-
-        if !filter_keys.is_empty()
-            && view
-                .account_keys()
-                .iter()
-                .any(|key| filter_keys.contains(key))
-        {
-            return Err(PacketHandlingError::FilterKey);
-        }
-
-        let Ok(transaction_configuration) =
-            view.transaction_configuration(&working_bank.feature_set)
-        else {
-            return Err(PacketHandlingError::ComputeBudget);
-        };
-
-        let max_age = calculate_max_age(root_bank.epoch(), deactivation_slot, root_bank.slot());
-        let (priority, cost) =
-            calculate_priority_and_cost(working_bank, &view, &transaction_configuration);
-
-        Ok(TransactionState::new(view, max_age, priority, cost))
-    }
-}
-
-/// Perform sanitization checks and transition from data to an executable
-/// [`RuntimeTransaction`]. This additionally returns the minimum slot for
-/// ALT deactivation, if any. If no minimum slot, Slot::MAX is returned.
-pub(crate) fn translate_to_runtime_view<D: TransactionData>(
-    data: D,
-    bank: &Bank,
-    transaction_account_lock_limit: usize,
-    sanitize_config: &SanitizeConfig,
-) -> Result<(RuntimeTransaction<ResolvedTransactionView<D>>, u64), PacketHandlingError> {
-    // Parsing and basic sanitization checks
-    let Ok(view) = SanitizedTransactionView::try_new_sanitized(data, sanitize_config) else {
-        return Err(PacketHandlingError::Sanitization);
-    };
-
-    let Ok(view) = RuntimeTransaction::<SanitizedTransactionView<_>>::try_new(
-        view,
-        MessageHash::Compute,
-        None,
-    ) else {
-        return Err(PacketHandlingError::Sanitization);
-    };
-
-    // Discard non-vote packets if in vote-only mode.
-    if bank.vote_only_bank() && !view.is_simple_vote_transaction() {
-        return Err(PacketHandlingError::Sanitization);
-    }
-
-    if usize::from(view.total_num_accounts()) > transaction_account_lock_limit {
-        return Err(PacketHandlingError::LockValidation);
-    }
-
-    let (loaded_addresses, deactivation_slot) = load_addresses_for_view(&view, bank)?;
-
-    let Ok(view) = RuntimeTransaction::<ResolvedTransactionView<_>>::try_new(
-        view,
-        loaded_addresses,
-        bank.get_reserved_account_keys(),
-    ) else {
-        return Err(PacketHandlingError::Sanitization);
-    };
-
-    // Validate no duplicate accounts (must be after resolution to catch ALT duplicates)
-    if validate_account_locks(view.account_keys(), transaction_account_lock_limit).is_err() {
-        return Err(PacketHandlingError::LockValidation);
-    }
-
-    Ok((view, deactivation_slot))
-}
-
-/// Load addresses from ALTs (if necessary) and return the
-/// [`LoadedAddresses`] with the minimum deactivation slot.
-pub(crate) fn load_addresses_for_view<D: TransactionData>(
-    view: &SanitizedTransactionView<D>,
-    bank: &Bank,
-) -> Result<(Option<LoadedAddresses>, Slot), PacketHandlingError> {
-    match view.version() {
-        TransactionVersion::Legacy | TransactionVersion::V1 => Ok((None, u64::MAX)),
-        TransactionVersion::V0 => bank
-            .load_addresses_from_ref(view.address_table_lookup_iter())
-            .map(|(loaded_addresses, deactivation_slot)| {
-                (Some(loaded_addresses), deactivation_slot)
-            })
-            .map_err(|_| PacketHandlingError::ALTResolution),
-    }
-}
-
-/// Given the epoch, the minimum deactivation slot, and the current slot,
-/// return the `MaxAge` that should be used for the transaction. This is used
-/// to determine the maximum slot that a transaction will be considered valid
-/// for, without re-resolving addresses or resanitizing.
-///
-/// This function considers the deactivation period of Address Table
-/// accounts. If the deactivation period runs past the end of the epoch,
-/// then the transaction is considered valid until the end of the epoch.
-/// Otherwise, the transaction is considered valid until the deactivation
-/// period.
-///
-/// Since the deactivation period technically uses blocks rather than
-/// slots, the value used here is the lower-bound on the deactivation
-/// period, i.e. the transaction's address lookups are valid until
-/// AT LEAST this slot.
-fn calculate_max_age(
-    sanitized_epoch: Epoch,
-    deactivation_slot: Slot,
-    current_slot: Slot,
-) -> MaxAge {
-    let alt_min_expire_slot = estimate_last_valid_slot(deactivation_slot.min(current_slot));
-    MaxAge {
-        sanitized_epoch,
-        alt_invalidation_slot: alt_min_expire_slot,
+                })
+        })
     }
 }
 
@@ -502,7 +522,13 @@ fn calculate_max_age(
 mod tests {
     use {
         super::*,
-        crate::banking_stage::tests::create_slow_genesis_config,
+        crate::banking_stage::{
+            tests::create_slow_genesis_config,
+            transaction_scheduler::{
+                check_worker::spawn_check_workers,
+                transaction_state_container::RuntimeTransactionView,
+            },
+        },
         agave_banking_stage_ingress_types::{
             BankingPacketBatch, to_banking_packet_batch, to_single_banking_packet_batch,
         },
@@ -518,15 +544,20 @@ mod tests {
         },
         solana_nonce::{self as nonce, state::DurableNonce},
         solana_packet::{Meta, PACKET_DATA_SIZE},
-        solana_perf::packet::{Packet, PacketBatch, RecycledPacketBatch},
+        solana_perf::packet::{BytesPacket, Packet, PacketBatch, RecycledPacketBatch},
         solana_pubkey::Pubkey,
-        solana_runtime::bank_forks::BankForks,
+        solana_runtime::{bank::Bank, bank_forks::BankForks},
         solana_sdk_ids::system_program,
         solana_signer::Signer,
+        solana_slot_hashes::get_entries,
         solana_system_interface::instruction as system_instruction,
         solana_system_transaction::transfer,
         solana_transaction::{Transaction, versioned::VersionedTransaction},
-        std::sync::{Arc, RwLock},
+        std::{
+            collections::HashSet,
+            num::NonZeroUsize,
+            sync::{Arc, RwLock},
+        },
         test_case::test_case,
     };
 
@@ -548,6 +579,60 @@ mod tests {
 
         let (_bank, bank_forks) = Bank::new_with_bank_forks_for_tests(&genesis_config);
         (bank_forks, mint_keypair)
+    }
+
+    #[test]
+    fn test_calculate_max_age() {
+        let current_slot = 100;
+        let sanitized_epoch = 10;
+
+        assert_eq!(
+            calculate_max_age(sanitized_epoch, current_slot - 1, current_slot),
+            MaxAge {
+                sanitized_epoch,
+                alt_invalidation_slot: current_slot - 1 + get_entries() as u64,
+            }
+        );
+        assert_eq!(
+            calculate_max_age(sanitized_epoch, u64::MAX, current_slot),
+            MaxAge {
+                sanitized_epoch,
+                alt_invalidation_slot: current_slot + get_entries() as u64,
+            }
+        );
+    }
+
+    fn assert_runtime_view(_: &RuntimeTransactionView) {}
+
+    #[test]
+    fn prechecked_transaction_owns_packet_bytes() {
+        let GenesisConfigInfo {
+            genesis_config,
+            mint_keypair,
+            ..
+        } = create_slow_genesis_config(u64::MAX);
+        let (bank, _bank_forks) = Bank::new_with_bank_forks_for_tests(&genesis_config);
+        let transaction = transfer(
+            &mint_keypair,
+            &Pubkey::new_unique(),
+            1,
+            bank.last_blockhash(),
+        );
+        let packet = BytesPacket::from_data(transaction).unwrap();
+        let bytes = packet.buffer().clone();
+        let bytes_ptr = bytes.as_ptr();
+        drop(packet);
+
+        let PrecheckedTransaction {
+            state,
+            validated_nonce_address,
+        } = precheck_transaction(bytes, &bank, &bank, &HashSet::new()).unwrap();
+
+        assert_runtime_view(state.transaction());
+        assert_eq!(state.transaction().data().as_ptr(), bytes_ptr);
+        assert_eq!(state.transaction().get_durable_nonce(), None);
+        assert_eq!(validated_nonce_address, None);
+        assert_eq!(state.nonce_address(), None);
     }
 
     const TEST_CONTAINER_CAPACITY: usize = 100;
@@ -574,11 +659,20 @@ mod tests {
         TransactionViewReceiveAndBuffer,
         TransactionViewStateContainer,
     ) {
-        let receive_and_buffer = TransactionViewReceiveAndBuffer {
-            receiver,
-            sharable_banks: bank_forks.read().unwrap().sharable_banks(),
+        let (check_work_sender, check_work_receiver) = bounded(10_000);
+        let (check_result_sender, check_result_receiver) = bounded(10_000);
+        let _check_worker_handles = spawn_check_workers(
+            NonZeroUsize::new(1).unwrap(),
+            check_work_receiver,
+            check_result_sender,
+            bank_forks.read().unwrap().sharable_banks(),
             filter_keys,
-        };
+        );
+        let receive_and_buffer = TransactionViewReceiveAndBuffer::new(
+            receiver,
+            check_work_sender,
+            check_result_receiver,
+        );
         let container = TransactionViewStateContainer::with_capacity(TEST_CONTAINER_CAPACITY);
         (receive_and_buffer, container)
     }
@@ -617,37 +711,47 @@ mod tests {
         sender.send(to_banking_packet_batch(transactions)).unwrap();
     }
 
+    fn num_check_results(stats: &ReceivingStats) -> usize {
+        stats.num_dropped_without_parsing
+            + stats.num_dropped_on_parsing_and_sanitization
+            + stats.num_dropped_on_lock_validation
+            + stats.num_dropped_on_compute_budget
+            + stats.num_dropped_on_age
+            + stats.num_dropped_on_already_processed
+            + stats.num_dropped_on_fee_payer
+            + stats.num_dropped_on_filter_key
+            + stats.num_dropped_on_nonce_dedup
+            + stats.num_buffered
+    }
+
     fn receive(
         receive_and_buffer: &mut TransactionViewReceiveAndBuffer,
         container: &mut TransactionViewStateContainer,
     ) -> ReceivingStats {
-        receive_and_buffer
-            .receive_and_buffer_packets(container, &BufferedPacketsDecision::Hold)
-            .unwrap()
-    }
+        let deadline = Instant::now() + Duration::from_secs(5);
+        let mut stats = ReceivingStats::default();
+        loop {
+            stats.accumulate(
+                receive_and_buffer.drain_check_results(container, &BufferedPacketsDecision::Hold),
+            );
+            stats.accumulate(
+                receive_and_buffer
+                    .receive_and_buffer_packets(container, &BufferedPacketsDecision::Hold)
+                    .unwrap(),
+            );
 
-    #[test]
-    fn test_calculate_max_age() {
-        let current_slot = 100;
-        let sanitized_epoch = 10;
-
-        // ALT deactivation slot is delayed
-        assert_eq!(
-            calculate_max_age(sanitized_epoch, current_slot - 1, current_slot),
-            MaxAge {
-                sanitized_epoch,
-                alt_invalidation_slot: current_slot - 1 + solana_slot_hashes::get_entries() as u64,
+            if receive_and_buffer.receiver.is_empty()
+                && num_check_results(&stats) == stats.num_received
+            {
+                return stats;
             }
-        );
 
-        // no deactivation slot
-        assert_eq!(
-            calculate_max_age(sanitized_epoch, u64::MAX, current_slot),
-            MaxAge {
-                sanitized_epoch,
-                alt_invalidation_slot: current_slot + solana_slot_hashes::get_entries() as u64,
-            }
-        );
+            assert!(
+                Instant::now() < deadline,
+                "timed out waiting for check-worker results"
+            );
+            std::thread::yield_now();
+        }
     }
 
     #[test]
@@ -661,6 +765,58 @@ mod tests {
         let r = receive_and_buffer
             .receive_and_buffer_packets(&mut container, &BufferedPacketsDecision::Hold);
         assert!(r.is_err());
+    }
+
+    #[test]
+    fn full_check_queue_does_not_pop_ingress() {
+        let (packet_sender, receiver) = bounded(1);
+        packet_sender
+            .send(to_single_banking_packet_batch(&Transaction::default()))
+            .unwrap();
+        let (work_sender, _work_receiver) = bounded(1);
+        work_sender.send(Bytes::new()).unwrap();
+        let (_result_sender, result_receiver) = bounded(1);
+        let mut receive_and_buffer = TransactionViewReceiveAndBuffer {
+            receiver,
+            check_work_sender: work_sender,
+            check_result_receiver: result_receiver,
+        };
+        let mut container = TransactionViewStateContainer::with_capacity(1);
+
+        let stats = receive_and_buffer
+            .receive_and_buffer_packets(&mut container, &BufferedPacketsDecision::Hold)
+            .unwrap();
+
+        assert_eq!(stats.num_received, 0);
+        assert_eq!(receive_and_buffer.receiver.len(), 1);
+    }
+
+    #[test]
+    fn partial_batch_tail_is_dropped_when_check_queue_fills() {
+        let (packet_sender, receiver) = bounded(1);
+        packet_sender
+            .send(to_banking_packet_batch(&[
+                Transaction::default(),
+                Transaction::default(),
+            ]))
+            .unwrap();
+        let (work_sender, work_receiver) = bounded(1);
+        let (_result_sender, result_receiver) = bounded(1);
+        let mut receive_and_buffer = TransactionViewReceiveAndBuffer {
+            receiver,
+            check_work_sender: work_sender,
+            check_result_receiver: result_receiver,
+        };
+        let mut container = TransactionViewStateContainer::with_capacity(1);
+
+        let first = receive_and_buffer
+            .receive_and_buffer_packets(&mut container, &BufferedPacketsDecision::Hold)
+            .unwrap();
+        assert_eq!(first.num_received, 2);
+        assert_eq!(first.num_dropped_on_check_work_queue_full, 1);
+        assert_eq!(first.num_dropped_on_capacity, 0);
+        assert!(receive_and_buffer.receiver.is_empty());
+        assert_eq!(work_receiver.len(), 1);
     }
 
     #[test]
@@ -689,6 +845,7 @@ mod tests {
             num_dropped_on_already_processed,
             num_dropped_on_fee_payer,
             num_dropped_on_filter_key: _,
+            num_dropped_on_check_work_queue_full: _,
             num_dropped_on_capacity,
             num_dropped_on_nonce_dedup,
             num_buffered,
@@ -748,15 +905,14 @@ mod tests {
             num_dropped_on_already_processed,
             num_dropped_on_fee_payer,
             num_dropped_on_filter_key: _,
+            num_dropped_on_check_work_queue_full: _,
             num_dropped_on_capacity,
             num_dropped_on_nonce_dedup,
             num_buffered,
             num_evicted_on_nonce_dedup,
             receive_time_us: _,
             buffer_time_us: _,
-        } = receive_and_buffer
-            .receive_and_buffer_packets(&mut container, &BufferedPacketsDecision::Hold)
-            .unwrap();
+        } = receive(&mut receive_and_buffer, &mut container);
 
         assert_eq!(num_received, 0);
         assert_eq!(num_dropped_without_parsing, 0);
@@ -796,15 +952,14 @@ mod tests {
             num_dropped_on_already_processed,
             num_dropped_on_fee_payer,
             num_dropped_on_filter_key: _,
+            num_dropped_on_check_work_queue_full: _,
             num_dropped_on_capacity,
             num_dropped_on_nonce_dedup,
             num_buffered,
             num_evicted_on_nonce_dedup,
             receive_time_us: _,
             buffer_time_us: _,
-        } = receive_and_buffer
-            .receive_and_buffer_packets(&mut container, &BufferedPacketsDecision::Hold)
-            .unwrap();
+        } = receive(&mut receive_and_buffer, &mut container);
 
         assert_eq!(num_received, 1);
         assert_eq!(num_dropped_without_parsing, 0);
@@ -843,15 +998,14 @@ mod tests {
             num_dropped_on_already_processed,
             num_dropped_on_fee_payer,
             num_dropped_on_filter_key: _,
+            num_dropped_on_check_work_queue_full: _,
             num_dropped_on_capacity,
             num_dropped_on_nonce_dedup,
             num_buffered,
             num_evicted_on_nonce_dedup,
             receive_time_us: _,
             buffer_time_us: _,
-        } = receive_and_buffer
-            .receive_and_buffer_packets(&mut container, &BufferedPacketsDecision::Hold)
-            .unwrap();
+        } = receive(&mut receive_and_buffer, &mut container);
 
         assert_eq!(num_received, 1);
         assert_eq!(num_dropped_without_parsing, 0);
@@ -895,15 +1049,14 @@ mod tests {
             num_dropped_on_already_processed,
             num_dropped_on_fee_payer,
             num_dropped_on_filter_key: _,
+            num_dropped_on_check_work_queue_full: _,
             num_dropped_on_capacity,
             num_dropped_on_nonce_dedup,
             num_buffered,
             num_evicted_on_nonce_dedup,
             receive_time_us: _,
             buffer_time_us: _,
-        } = receive_and_buffer
-            .receive_and_buffer_packets(&mut container, &BufferedPacketsDecision::Hold)
-            .unwrap();
+        } = receive(&mut receive_and_buffer, &mut container);
 
         assert_eq!(num_received, 1);
         assert_eq!(num_dropped_without_parsing, 0);
@@ -962,15 +1115,14 @@ mod tests {
             num_dropped_on_already_processed,
             num_dropped_on_fee_payer,
             num_dropped_on_filter_key: _,
+            num_dropped_on_check_work_queue_full: _,
             num_dropped_on_capacity,
             num_dropped_on_nonce_dedup,
             num_buffered,
             num_evicted_on_nonce_dedup,
             receive_time_us: _,
             buffer_time_us: _,
-        } = receive_and_buffer
-            .receive_and_buffer_packets(&mut container, &BufferedPacketsDecision::Hold)
-            .unwrap();
+        } = receive(&mut receive_and_buffer, &mut container);
 
         assert_eq!(num_received, 1);
         assert_eq!(num_dropped_without_parsing, 0);
@@ -1014,15 +1166,14 @@ mod tests {
             num_dropped_on_already_processed,
             num_dropped_on_fee_payer,
             num_dropped_on_filter_key: _,
+            num_dropped_on_check_work_queue_full: _,
             num_dropped_on_capacity,
             num_dropped_on_nonce_dedup,
             num_buffered,
             num_evicted_on_nonce_dedup,
             receive_time_us: _,
             buffer_time_us: _,
-        } = receive_and_buffer
-            .receive_and_buffer_packets(&mut container, &BufferedPacketsDecision::Hold)
-            .unwrap();
+        } = receive(&mut receive_and_buffer, &mut container);
 
         assert_eq!(num_received, 1);
         assert_eq!(num_dropped_without_parsing, 0);
@@ -1086,9 +1237,7 @@ mod tests {
         let packet_batch = to_single_banking_packet_batch(&transaction);
         sender.send(packet_batch).unwrap();
 
-        let stats = receive_and_buffer
-            .receive_and_buffer_packets(&mut container, &BufferedPacketsDecision::Hold)
-            .unwrap();
+        let stats = receive(&mut receive_and_buffer, &mut container);
 
         assert_eq!(stats.num_received, 1);
         assert_eq!(stats.num_dropped_on_age, 0);
@@ -1117,9 +1266,7 @@ mod tests {
         let packet_batch = to_single_banking_packet_batch(&transaction);
         sender.send(packet_batch).unwrap();
 
-        let stats = receive_and_buffer
-            .receive_and_buffer_packets(&mut container, &BufferedPacketsDecision::Hold)
-            .unwrap();
+        let stats = receive(&mut receive_and_buffer, &mut container);
 
         assert_eq!(stats.num_received, 1);
         assert_eq!(stats.num_dropped_on_filter_key, 1);
@@ -1148,9 +1295,7 @@ mod tests {
         let packet_batch = to_single_banking_packet_batch(&transaction);
         sender.send(packet_batch).unwrap();
 
-        let stats = receive_and_buffer
-            .receive_and_buffer_packets(&mut container, &BufferedPacketsDecision::Hold)
-            .unwrap();
+        let stats = receive(&mut receive_and_buffer, &mut container);
 
         assert_eq!(stats.num_received, 1);
         assert_eq!(stats.num_dropped_on_filter_key, 1);
@@ -1178,9 +1323,7 @@ mod tests {
         let packet_batch = to_single_banking_packet_batch(&transaction);
         sender.send(packet_batch).unwrap();
 
-        let stats = receive_and_buffer
-            .receive_and_buffer_packets(&mut container, &BufferedPacketsDecision::Hold)
-            .unwrap();
+        let stats = receive(&mut receive_and_buffer, &mut container);
 
         assert_eq!(stats.num_received, 1);
         assert_eq!(stats.num_dropped_on_filter_key, 0);
@@ -1218,15 +1361,14 @@ mod tests {
             num_dropped_on_already_processed,
             num_dropped_on_fee_payer,
             num_dropped_on_filter_key: _,
+            num_dropped_on_check_work_queue_full: _,
             num_dropped_on_capacity,
             num_dropped_on_nonce_dedup,
             num_buffered,
             num_evicted_on_nonce_dedup,
             receive_time_us: _,
             buffer_time_us: _,
-        } = receive_and_buffer
-            .receive_and_buffer_packets(&mut container, &BufferedPacketsDecision::Hold)
-            .unwrap();
+        } = receive(&mut receive_and_buffer, &mut container);
 
         assert_eq!(num_received, num_transactions);
         assert_eq!(num_dropped_without_parsing, 0);
@@ -1302,15 +1444,14 @@ mod tests {
             num_dropped_on_already_processed,
             num_dropped_on_fee_payer,
             num_dropped_on_filter_key: _,
+            num_dropped_on_check_work_queue_full: _,
             num_dropped_on_capacity,
             num_dropped_on_nonce_dedup,
             num_buffered,
             num_evicted_on_nonce_dedup,
             receive_time_us: _,
             buffer_time_us: _,
-        } = receive_and_buffer
-            .receive_and_buffer_packets(&mut container, &BufferedPacketsDecision::Hold)
-            .unwrap();
+        } = receive(&mut receive_and_buffer, &mut container);
 
         assert_eq!(num_received, 1);
         assert_eq!(num_dropped_without_parsing, 0);
@@ -1491,6 +1632,47 @@ mod tests {
 
         assert!(container.is_queued(&current_nonce_entry));
 
+        verify_container(&mut container, 1);
+    }
+
+    // Workers validate the blockhash/nonce before scheduler-side nonce deduplication.
+    #[test]
+    fn test_receive_and_buffer_bank_validation_precedes_nonce_dedup() {
+        let (sender, receiver) = bounded(1024);
+        let (bank_forks, mint_keypair) = test_bank_forks_with_fee();
+        let (mut receive_and_buffer, mut container) =
+            setup_transaction_view_receive_and_buffer(receiver, bank_forks.clone());
+        let (nonce_pubkey, durable) = create_nonce_identity(&bank_forks, &mint_keypair.pubkey());
+
+        send_transactions(
+            &sender,
+            &[create_nonce_transaction(
+                &mint_keypair,
+                &nonce_pubkey,
+                HIGH_FEE,
+                durable,
+            )],
+        );
+        assert_eq!(
+            receive(&mut receive_and_buffer, &mut container).num_buffered,
+            1
+        );
+
+        send_transactions(
+            &sender,
+            &[create_nonce_transaction(
+                &mint_keypair,
+                &nonce_pubkey,
+                LOW_FEE,
+                Hash::new_unique(),
+            )],
+        );
+        let stats = receive(&mut receive_and_buffer, &mut container);
+
+        assert_eq!(stats.num_dropped_on_nonce_dedup, 0);
+        assert_eq!(stats.num_dropped_on_age, 1);
+        assert_eq!(stats.num_dropped_on_fee_payer, 0);
+        assert_eq!(stats.num_buffered, 0);
         verify_container(&mut container, 1);
     }
 

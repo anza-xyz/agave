@@ -414,6 +414,7 @@ dependencies = [
  "solana-time-utils",
  "solana-tls-utils",
  "solana-transaction",
+ "solana-validator-exit",
  "thiserror 2.0.19",
  "tokio",
  "wincode",
@@ -5808,7 +5809,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "4c4dec15c69d94074ef92131303fed68dbccae2472cf09409d9205c180fe5258"
 dependencies = [
  "bincode",
- "qualifier_attr",
  "serde",
  "serde_bytes",
  "serde_derive",

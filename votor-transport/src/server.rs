@@ -3,7 +3,7 @@ use {
     crate::{
         HANDSHAKE_TIMEOUT, MAX_INBOUND_CONNECTIONS_PER_PEER, METRICS_INTERVAL,
         PEER_RATE_LIMIT_BURST_WINDOW, PEER_RATE_LIMIT_DOS_WINDOW, PeerListReceiver, close_codes,
-        endpoint::{BanCommand, Datagram},
+        endpoint::{BanCommand, Datagram, KeyUpdateListener},
         error::Error,
         stats::{self, ServerStats, record_server_error},
         transport::new_server_config,
@@ -12,7 +12,7 @@ use {
     crossbeam_channel::{Sender, TrySendError},
     log::{debug, error, info, warn},
     quinn::{Connecting, Connection, Endpoint},
-    solana_keypair::{Keypair, Signer},
+    solana_keypair::Signer,
     solana_net_utils::{banlist::Banlist, token_bucket::TokenBucket},
     solana_pubkey::{Pubkey, PubkeyHasherBuilder},
     solana_tls_utils::get_remote_pubkey,
@@ -23,7 +23,7 @@ use {
         time::Duration,
     },
     tokio::{
-        sync::{mpsc, watch},
+        sync::mpsc,
         task::JoinSet,
         time::{Instant, MissedTickBehavior, interval, sleep, timeout},
     },
@@ -296,7 +296,7 @@ pub(crate) struct InboundLoop {
     /// Latest version of the admitted peer list.
     peer_list_receiver: PeerListReceiver,
     /// Identity-rotation notification channel.
-    identity_receiver: watch::Receiver<Keypair>,
+    key_updates: KeyUpdateListener,
     /// Endpoints that handle connections. On identity rotation we need to
     /// configure them with the updated TLS config.
     endpoints: Vec<Endpoint>,
@@ -327,7 +327,7 @@ impl InboundLoop {
         endpoints: Vec<Endpoint>,
         inbound_events_sender: mpsc::Sender<InboundConnectionEvent>,
         inbound_events_receiver: mpsc::Receiver<InboundConnectionEvent>,
-        identity_receiver: watch::Receiver<Keypair>,
+        key_updates: KeyUpdateListener,
         stats: Arc<ServerStats>,
         cancel: CancellationToken,
         max_datagrams_per_second_per_peer: usize,
@@ -343,7 +343,7 @@ impl InboundLoop {
             banlist: Banlist::default(),
             ban_receiver,
             peer_list_receiver,
-            identity_receiver,
+            key_updates,
             endpoints,
             peer_state: HashMap::with_hasher(PubkeyHasherBuilder::default()),
             connection_reader_tasks: JoinSet::new(),
@@ -371,7 +371,7 @@ impl InboundLoop {
         metrics.set_missed_tick_behavior(MissedTickBehavior::Delay);
 
         let mut peer_list_receiver = self.peer_list_receiver.clone();
-        let mut identity_receiver = self.identity_receiver.clone();
+        let mut identity_receiver = self.key_updates.receiver.clone();
 
         info!("Votor QUIC transport server ready.");
         loop {
@@ -405,6 +405,9 @@ impl InboundLoop {
                     let total_closed = self.close_all(close_codes::IDENTITY_CHANGED);
                     self.stats.connection_closed_identity_changed.fetch_add(total_closed, Ordering::Relaxed);
                     info!("InboundLoop: identity changed ({total_closed} connection(s) closed)");
+                    // Never blocks, and a dropped ack only matters at shutdown,
+                    // when the updater is gone anyway.
+                    let _ = self.key_updates.ack.try_send(());
                 }
                 // The admitted-peer set changed.
                 changed = peer_list_receiver.changed() => {
@@ -606,6 +609,7 @@ mod tests {
             transport::new_client_config,
         },
         quinn::{ClientConfig, crypto::rustls::QuicClientConfig},
+        solana_keypair::Keypair,
         solana_net_utils::sockets::{bind_to_localhost_async, unique_port_range_for_tests},
         solana_tls_utils::{new_dummy_x509_certificate, tls_client_config_builder},
         std::{net::Ipv4Addr, time::Duration},

@@ -24,19 +24,21 @@ impl EntryBytesBudget {
     }
 
     pub fn reserve(&self, bytes: u64) -> std::result::Result<(), EntryBytesReserveError> {
+        let mut current = self.consumed.load(Ordering::Acquire);
         loop {
-            let current = self.consumed.load(Ordering::Acquire);
             let next = current.saturating_add(bytes);
             if next > self.slot_limit {
                 return Err(EntryBytesReserveError::ExceedsSlotLimit);
             }
 
-            if self
-                .consumed
-                .compare_exchange(current, next, Ordering::AcqRel, Ordering::Acquire)
-                .is_ok()
-            {
-                return Ok(());
+            match self.consumed.compare_exchange_weak(
+                current,
+                next,
+                Ordering::AcqRel,
+                Ordering::Acquire,
+            ) {
+                Ok(_) => return Ok(()),
+                Err(actual) => current = actual,
             }
         }
     }

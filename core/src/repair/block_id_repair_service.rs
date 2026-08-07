@@ -644,6 +644,9 @@ impl BlockIdRepairService {
                 };
                 let start_index = fec_set_index;
                 let end_index = fec_set_index + DATA_SHREDS_PER_FEC_BLOCK as u32;
+                // The proof authenticates only the first 20 bytes of a leaf. Shred response
+                // verification compares that prefix, and the returned shred's leader
+                // signature authenticates its complete FEC-set root.
 
                 // Queue ShredForBlockId requests
                 state
@@ -1055,6 +1058,7 @@ impl BlockIdRepairService {
 mod tests {
     use {
         super::*,
+        crate::repair::request_response::RequestResponse as _,
         solana_gossip::{cluster_info::ClusterInfo, contact_info::ContactInfo, ping_pong::Ping},
         solana_hash::Hash,
         solana_keypair::{Keypair, Signer},
@@ -1246,7 +1250,7 @@ mod tests {
 
     #[test]
     fn test_deserialize_fec_set_root_response() {
-        let fec_set_root = Hash::new_unique();
+        let fec_set_root = Hash::new_unique().into();
         let fec_set_proof = vec![2u8; SIZE_OF_MERKLE_PROOF_ENTRY * 3];
 
         let response = BlockIdRepairResponse::FecSetRoot {
@@ -1255,6 +1259,13 @@ mod tests {
         };
 
         let data = wincode::serialize(&response).unwrap();
+        assert_eq!(
+            data.len(),
+            std::mem::size_of::<u32>()
+                + SIZE_OF_MERKLE_PROOF_ENTRY
+                + std::mem::size_of::<u64>()
+                + fec_set_proof.len()
+        );
         let packet = make_packet(&data);
         let packet_data = packet.data(..).unwrap();
 
@@ -1327,7 +1338,7 @@ mod tests {
         let expired_shred_not_received = OutgoingMessage::Shred(ShredRepairType::ShredForBlockId {
             slot: 103,
             index: 5,
-            fec_set_merkle_root: Hash::new_unique(),
+            fec_set_merkle_root: Hash::new_unique().into(),
             block_id: Hash::new_unique(),
         });
         state
@@ -1349,7 +1360,7 @@ mod tests {
             OutgoingMessage::Shred(ShredRepairType::ShredForBlockId {
                 slot: received_slot,
                 index: received_shred_index,
-                fec_set_merkle_root: Hash::new_unique(),
+                fec_set_merkle_root: Hash::new_unique().into(),
                 block_id: received_block_id,
             });
         state
@@ -1360,7 +1371,7 @@ mod tests {
         let recent_shred = OutgoingMessage::Shred(ShredRepairType::ShredForBlockId {
             slot: 105,
             index: 15,
-            fec_set_merkle_root: Hash::new_unique(),
+            fec_set_merkle_root: Hash::new_unique().into(),
             block_id: Hash::new_unique(),
         });
         state.sent_requests.insert(recent_shred.clone(), now);
@@ -1483,7 +1494,7 @@ mod tests {
 
         // The FEC set root for fec_set_index=32 corresponds to leaf index 1 (32/32=1)
         let fec_set_leaf_index = fec_set_index as usize / DATA_SHREDS_PER_FEC_BLOCK;
-        let fec_set_root = fec_set_roots[fec_set_leaf_index];
+        let fec_set_root = fec_set_roots[fec_set_leaf_index].into();
         let fec_set_proof = proofs[fec_set_leaf_index].clone();
 
         // Create the request that would have been sent
@@ -1502,11 +1513,11 @@ mod tests {
             .sent_requests
             .insert(OutgoingMessage::Metadata(request), timestamp());
 
-        // Build the response
         let response = BlockIdRepairResponse::FecSetRoot {
             fec_set_root,
             fec_set_proof,
         };
+        assert!(request.verify_response(&response));
 
         // Serialize and create packet
         let data = serialize_response(&response, nonce);

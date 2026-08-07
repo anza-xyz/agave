@@ -888,7 +888,7 @@ mod tests {
         let data = address_lookup_table.serialize_for_tests().unwrap();
         let mut account =
             AccountSharedData::new(1, data.len(), &address_lookup_table::program::id());
-        account.set_data(data);
+        account.set_data_from_slice(&data);
         bank.store_account(&account_address, &account);
 
         account

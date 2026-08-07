@@ -369,7 +369,7 @@ mod tests {
         let state = UpgradeableLoaderState::Program {
             programdata_address: Pubkey::new_unique(),
         };
-        account_data.set_data(bincode::serialize(&state).unwrap());
+        account_data.set_data_from_slice(&bincode::serialize(&state).unwrap());
         mock_bank
             .account_shared_data
             .borrow_mut()
@@ -381,7 +381,7 @@ mod tests {
             Some((ProgramAccountLoadResult::InvalidAccountData(_), _))
         ));
 
-        account_data.set_data(Vec::new());
+        account_data.set_data_from_slice(&[]);
         mock_bank
             .account_shared_data
             .borrow_mut()
@@ -429,7 +429,7 @@ mod tests {
         let state = UpgradeableLoaderState::Program {
             programdata_address: key2,
         };
-        account_data.set_data(bincode::serialize(&state).unwrap());
+        account_data.set_data_from_slice(&bincode::serialize(&state).unwrap());
         mock_bank
             .account_shared_data
             .borrow_mut()
@@ -441,7 +441,7 @@ mod tests {
         };
         let mut account_data2 = AccountSharedData::default();
         account_data2.set_owner(bpf_loader_upgradeable::id());
-        account_data2.set_data(bincode::serialize(&state).unwrap());
+        account_data2.set_data_from_slice(&bincode::serialize(&state).unwrap());
         mock_bank
             .account_shared_data
             .borrow_mut()
@@ -571,7 +571,7 @@ mod tests {
         assert_eq!(result.unwrap(), (Arc::new(loaded_program), 0));
 
         let buffer = load_test_program();
-        account_data.set_data(buffer);
+        account_data.set_data_from_slice(&buffer);
 
         mock_bank
             .account_shared_data
@@ -612,7 +612,7 @@ mod tests {
         let state = UpgradeableLoaderState::Program {
             programdata_address: key2,
         };
-        account_data.set_data(bincode::serialize(&state).unwrap());
+        account_data.set_data_from_slice(&bincode::serialize(&state).unwrap());
         mock_bank
             .account_shared_data
             .borrow_mut()
@@ -623,7 +623,7 @@ mod tests {
             upgrade_authority_address: None,
         };
         let mut account_data2 = AccountSharedData::default();
-        account_data2.set_data(bincode::serialize(&state).unwrap());
+        account_data2.set_data_from_slice(&bincode::serialize(&state).unwrap());
         mock_bank
             .account_shared_data
             .borrow_mut()
@@ -655,7 +655,7 @@ mod tests {
         ];
         header.append(&mut complement);
         header.append(&mut buffer);
-        account_data.set_data(header);
+        account_data.set_data_from_slice(&header);
 
         mock_bank
             .account_shared_data
@@ -670,9 +670,9 @@ mod tests {
             &mut ExecuteTimings::default(),
         );
 
-        let data = account_data.data();
+        let data = account_data.data().to_vec();
         account_data
-            .set_data(data[UpgradeableLoaderState::size_of_programdata_metadata()..].to_vec());
+            .set_data_from_slice(&data[UpgradeableLoaderState::size_of_programdata_metadata()..]);
 
         let program_runtime_environment = get_mock_program_runtime_environment();
         let expected = ProgramCacheEntry::load(
@@ -748,7 +748,7 @@ mod tests {
         let state = UpgradeableLoaderState::Program {
             programdata_address: Pubkey::new_unique(),
         };
-        account_data.set_data(bincode::serialize(&state).unwrap());
+        account_data.set_data_from_slice(&bincode::serialize(&state).unwrap());
         mock_bank
             .account_shared_data
             .borrow_mut()
@@ -858,7 +858,7 @@ mod tests {
             programdata_address,
         };
         let mut program = AccountSharedData::new(1, 1, &loader_ids[2]);
-        program.set_data(bincode::serialize(&state).unwrap());
+        program.set_data_from_slice(&bincode::serialize(&state).unwrap());
         mock_bank
             .account_shared_data
             .borrow_mut()
@@ -868,7 +868,7 @@ mod tests {
             upgrade_authority_address: None,
         };
         let mut programdata = AccountSharedData::new(1, 1, &loader_ids[2]);
-        programdata.set_data(bincode::serialize(&state).unwrap());
+        programdata.set_data_from_slice(&bincode::serialize(&state).unwrap());
         mock_bank
             .account_shared_data
             .borrow_mut()

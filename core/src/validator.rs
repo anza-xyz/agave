@@ -14,6 +14,7 @@ use {
         consensus::{
             ExternalRootSource, Tower, reconcile_blockstore_roots_with_external_source,
             tower_storage::{NullTowerStorage, TowerStorage},
+            verify_blockstore_root_with_vote_history,
         },
         forwarding_stage::ForwardingClientConfig,
         repair::{
@@ -584,8 +585,6 @@ struct TransactionHistoryServices {
 pub struct ValidatorTpuConfig {
     /// Controls if to use QUIC for sending TPU votes
     pub vote_use_quic: bool,
-    /// Controls the connection cache pool size
-    pub tpu_connection_pool_size: usize,
     /// QUIC server config for regular TPU
     pub tpu_quic_server_config: SwQosQuicStreamerConfig,
     /// QUIC server config for TPU forward
@@ -635,7 +634,6 @@ impl ValidatorTpuConfig {
 
         ValidatorTpuConfig {
             vote_use_quic: DEFAULT_VOTE_USE_QUIC,
-            tpu_connection_pool_size: DEFAULT_TPU_CONNECTION_POOL_SIZE,
             tpu_quic_server_config,
             tpu_fwd_quic_server_config,
             vote_quic_server_config,
@@ -747,7 +745,6 @@ impl Validator {
 
         let ValidatorTpuConfig {
             vote_use_quic,
-            tpu_connection_pool_size,
             tpu_quic_server_config,
             tpu_fwd_quic_server_config,
             vote_quic_server_config,
@@ -1179,7 +1176,7 @@ impl Validator {
         let vote_connection_cache = if vote_use_quic {
             let vote_connection_cache = ConnectionCache::new_with_client_options(
                 "connection_cache_vote_quic",
-                tpu_connection_pool_size,
+                DEFAULT_TPU_CONNECTION_POOL_SIZE,
                 Some(node.sockets.quic_vote_client),
                 Some((
                     &identity_keypair,
@@ -1196,7 +1193,7 @@ impl Validator {
         } else {
             Arc::new(ConnectionCache::with_udp(
                 "connection_cache_vote_udp",
-                tpu_connection_pool_size,
+                DEFAULT_TPU_CONNECTION_POOL_SIZE,
             ))
         };
 
@@ -1668,6 +1665,7 @@ impl Validator {
                 votor_event_sender: votor_event_sender.clone(),
                 votor_event_receiver,
                 cancel: cancel.child_token(),
+                validator_exit: config.validator_exit.clone(),
                 key_notifiers: key_notifiers.clone(),
                 votor_server_sockets: node.sockets.votor_server,
                 votor_client_socket: node.sockets.quic_votor_client,
@@ -2591,14 +2589,11 @@ impl<'a> ProcessBlockStore<'a> {
         let vote_history = {
             let vote_history =
                 restore_vote_history(self.config, self.bank_forks, self.id, self.vote_account)?;
-            // reconciliation attempt 1 of 2 with vote history
-            reconcile_blockstore_roots_with_external_source(
-                ExternalRootSource::VoteHistory(vote_history.root()),
+            verify_blockstore_root_with_vote_history(
+                vote_history.root(),
                 self.blockstore,
-                &mut self.original_blockstore_root,
-            )
-            .map_err(|err| format!("Failed to reconcile blockstore with vote history: {err:?}"))?;
-
+                self.original_blockstore_root,
+            );
             post_process_restored_vote_history(
                 vote_history,
                 self.id,
@@ -2612,7 +2607,7 @@ impl<'a> ProcessBlockStore<'a> {
             self.bank_forks.read().unwrap().root(),
         ) {
             // reconciliation attempt 2 of 2 with hard fork
-            // it is intentional that we do this second, as having the hard fork root < tower/vote_history root
+            // it is intentional that we do this second, as having the hard fork root < tower root
             // is invalid! This means we've hard forked and missed a finalized slot
             reconcile_blockstore_roots_with_external_source(
                 ExternalRootSource::HardFork(hard_fork_restart_slot),

@@ -1045,6 +1045,15 @@ impl ReplayStage {
                 }
 
                 if migration_status.is_alpenglow_enabled() {
+                    // These channels feed Tower-only state machines below. Their producers are
+                    // disabled when Alpenglow is enabled, but drain anything queued before the
+                    // transition (or raced with it) so the old state is not retained forever.
+                    for _ in ancestor_duplicate_slots_receiver.try_iter() {}
+                    for _ in duplicate_confirmed_slots_receiver.try_iter() {}
+                    for _ in gossip_verified_vote_hash_receiver.try_iter() {}
+                    for _ in popular_pruned_forks_receiver.try_iter() {}
+                    for _ in duplicate_slots_receiver.try_iter() {}
+
                     if my_pubkey != cluster_info.id() {
                         identity_keypair = cluster_info.keypair();
                         let my_old_pubkey = my_pubkey;

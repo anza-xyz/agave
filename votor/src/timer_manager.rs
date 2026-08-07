@@ -8,15 +8,17 @@ use {
     crate::{
         common::{DELTA_TIMEOUT, blocking_send},
         event::VotorEvent,
+        votor::ExitOnDrop,
     },
     agave_votor_messages::migration::MigrationStatus,
     crossbeam_channel::Sender,
     parking_lot::RwLock as PlRwLock,
     solana_clock::Slot,
     solana_gossip::cluster_info::ClusterInfo,
+    solana_validator_exit::Exit,
     std::{
         sync::{
-            Arc,
+            Arc, RwLock,
             atomic::{AtomicBool, Ordering},
         },
         thread::{self, JoinHandle},
@@ -37,12 +39,16 @@ impl TimerManager {
         cluster_info: Arc<ClusterInfo>,
         event_sender: Sender<VotorEvent>,
         exit: Arc<AtomicBool>,
+        validator_exit: Arc<RwLock<Exit>>,
         migration_status: Arc<MigrationStatus>,
     ) -> Self {
         let timers = Arc::new(PlRwLock::new(Timers::new(DELTA_TIMEOUT)));
         let handle = {
             let timers = Arc::clone(&timers);
             thread::spawn(move || {
+                // Dropped before `event_sender`, so the shutdown runs while the
+                // event channel is still open.
+                let _exit_on_drop = ExitOnDrop::new(validator_exit);
                 let _ = migration_status.wait_for_migration_or_exit(exit.as_ref());
                 while !exit.load(Ordering::Relaxed) {
                     let (duration, events) = timers.write().progress(Instant::now());
@@ -52,7 +58,6 @@ impl TimerManager {
                             blocking_send(my_pubkey, &event_sender, event, "votor_event_sender")
                         {
                             warn!("{my_pubkey}: {channel_name} disconnected. Exiting");
-                            exit.store(true, Ordering::Relaxed);
                             return;
                         }
                     }
@@ -124,6 +129,7 @@ mod tests {
             cluster_info,
             event_sender,
             exit.clone(),
+            Arc::default(),
             Arc::new(MigrationStatus::post_migration_status()),
         );
         let delta_block = Duration::from_millis(DEFAULT_MS_PER_SLOT);
@@ -175,6 +181,7 @@ mod tests {
             cluster_info,
             event_sender,
             exit.clone(),
+            Arc::default(),
             Arc::new(MigrationStatus::post_migration_status()),
         );
 

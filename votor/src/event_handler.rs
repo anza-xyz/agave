@@ -18,7 +18,7 @@ use {
             VoteError, VotingContext, create_and_send_own_vote_message,
             generate_refresh_vote_message, insert_vote_and_create_bls_message,
         },
-        votor::SharedContext,
+        votor::{ExitOnDrop, SharedContext},
     },
     agave_votor_messages::{
         consensus_message::Block, metric_types::ConsensusMetricsEvent, migration::MigrationStatus,
@@ -37,6 +37,7 @@ use {
         },
     },
     solana_signer::Signer,
+    solana_validator_exit::Exit,
     std::{
         collections::{BTreeMap, BTreeSet},
         sync::{
@@ -58,6 +59,7 @@ pub(crate) type PendingBlocks = BTreeMap<Slot, Vec<(Block, Block)>>;
 /// Inputs for the event handler thread
 pub(crate) struct EventHandlerContext {
     pub(crate) exit: Arc<AtomicBool>,
+    pub(crate) validator_exit: Arc<std::sync::RwLock<Exit>>,
     pub(crate) migration_status: Arc<MigrationStatus>,
 
     pub(crate) event_receiver: VotorEventReceiver,
@@ -85,7 +87,7 @@ pub(crate) struct EventHandler {
 
 struct LocalContext {
     pub(crate) my_pubkey: Pubkey,
-    pub(crate) genesis_slot: Slot,
+    pub(crate) genesis_block: Block,
     pub(crate) pending_blocks: PendingBlocks,
     pub(crate) finalized_blocks: BTreeSet<Block>,
     pub(crate) received_shred: BTreeSet<Slot>,
@@ -98,13 +100,11 @@ struct LocalContext {
 
 impl EventHandler {
     pub(crate) fn new(ctx: EventHandlerContext) -> Self {
-        let exit = ctx.exit.clone();
         let t_event_handler = Builder::new()
             .name("solVotorEvLoop".to_string())
             .spawn(move || {
                 if let Err(e) = Self::event_loop(ctx) {
                     info!("Event loop exited: {e:?}. Shutting down");
-                    exit.store(true, Ordering::Relaxed);
                 }
             })
             .unwrap();
@@ -115,6 +115,7 @@ impl EventHandler {
     fn event_loop(context: EventHandlerContext) -> Result<(), EventLoopError> {
         let EventHandlerContext {
             exit,
+            validator_exit,
             migration_status,
             event_receiver,
             timer_manager,
@@ -122,101 +123,105 @@ impl EventHandler {
             voting_context: mut vctx,
             root_context: rctx,
         } = context;
-        let mut local_context = LocalContext {
-            my_pubkey: ctx.cluster_info.keypair().pubkey(),
-            genesis_slot: 0,
-            pending_blocks: PendingBlocks::default(),
-            finalized_blocks: BTreeSet::default(),
-            received_shred: BTreeSet::default(),
-            stats: EventHandlerStats::new(),
-            standstill_slot: None,
-        };
-
-        // Wait until migration has completed
-        info!("{}: Event loop initialized", local_context.my_pubkey);
-        let Some(genesis_block) = migration_status.wait_for_migration_or_exit(&exit) else {
-            // Exited during migration
-            return Ok(());
-        };
-        local_context.genesis_slot = genesis_block.slot;
-        let root_slot = vctx.sharable_banks.root().slot();
-        info!(
-            "{}: Event loop starting genesis {genesis_block:?} root {root_slot}",
-            local_context.my_pubkey
-        );
-
-        // Check for set identity
-        if let Err(e) = Self::handle_set_identity(
-            &mut local_context.my_pubkey,
-            local_context.genesis_slot,
-            &ctx,
-            &mut vctx,
-        ) {
-            error!(
-                "Unable to load new vote history when attempting to change identity at startup \
-                 from {} to {} on voting loop startup, Exiting: {}",
-                vctx.vote_history.node_pubkey,
-                ctx.cluster_info.id(),
-                e
-            );
-            return Err(EventLoopError::SetIdentityError(e));
-        }
-        Self::send_vote_history_to_consensus_pool(&local_context.my_pubkey, &mut vctx)?;
-
-        while !exit.load(Ordering::Relaxed) {
-            let mut receive_event_time = Measure::start("receive_event");
-            let event = select! {
-                recv(event_receiver) -> msg => {
-                    msg
-                },
-                default(Duration::from_secs(1))  => continue
+        {
+            // consumers have to observe the shutdown before they observe a closed channel.
+            let _exit_on_drop = ExitOnDrop::new(validator_exit);
+            let mut local_context = LocalContext {
+                my_pubkey: ctx.cluster_info.keypair().pubkey(),
+                genesis_block: Block::default(),
+                pending_blocks: PendingBlocks::default(),
+                finalized_blocks: BTreeSet::default(),
+                received_shred: BTreeSet::default(),
+                stats: EventHandlerStats::new(),
+                standstill_slot: None,
             };
-            let event =
-                event.map_err(|_| EventLoopError::ChannelDisconnected("votor_event_receiver"))?;
-            receive_event_time.stop();
-            local_context.stats.receive_event_time_us = local_context
-                .stats
-                .receive_event_time_us
-                .saturating_add(receive_event_time.as_us() as u32);
 
-            let root_bank = vctx.sharable_banks.root();
-            if event.should_ignore(root_bank.slot().max(vctx.vote_history.root())) {
-                local_context.stats.ignored = local_context.stats.ignored.saturating_add(1);
-                continue;
-            }
+            // Wait until migration has completed
+            info!("{}: Event loop initialized", local_context.my_pubkey);
+            let Some(genesis_block) = migration_status.wait_for_migration_or_exit(&exit) else {
+                // Exited during migration
+                return Ok(());
+            };
+            local_context.genesis_block = genesis_block;
+            let root_slot = vctx.sharable_banks.root().slot();
+            info!(
+                "{}: Event loop starting genesis {genesis_block:?} root {root_slot}",
+                local_context.my_pubkey
+            );
 
-            let mut event_processing_time = Measure::start("event_processing");
-            let stats_event = local_context.stats.handle_event_arrival(&event);
-            let votes = Self::handle_event(
-                event,
-                &timer_manager,
+            // Check for set identity
+            if let Err(e) = Self::handle_set_identity(
+                &mut local_context.my_pubkey,
+                local_context.genesis_block,
                 &ctx,
                 &mut vctx,
-                &rctx,
-                &mut local_context,
-            )?;
-            event_processing_time.stop();
-            local_context
-                .stats
-                .incr_event_with_timing(stats_event, event_processing_time.as_us());
-
-            let mut send_votes_batch_time = Measure::start("send_votes_batch");
-            for vote in votes {
-                local_context.stats.incr_vote(&vote);
-                nonblocking_send(
-                    &local_context.my_pubkey,
-                    &vctx.bls_sender,
-                    vote,
-                    "bls_sender",
-                )
-                .map_err(EventLoopError::ChannelDisconnected)?;
+            ) {
+                error!(
+                    "Unable to load new vote history when attempting to change identity at \
+                     startup from {} to {} on voting loop startup, Exiting: {}",
+                    vctx.vote_history.node_pubkey,
+                    ctx.cluster_info.id(),
+                    e
+                );
+                return Err(EventLoopError::SetIdentityError(e));
             }
-            send_votes_batch_time.stop();
-            local_context.stats.send_votes_batch_time_us = local_context
-                .stats
-                .send_votes_batch_time_us
-                .saturating_add(send_votes_batch_time.as_us() as u32);
-            local_context.stats.maybe_report();
+            Self::send_vote_history_to_consensus_pool(&local_context.my_pubkey, &mut vctx)?;
+
+            while !exit.load(Ordering::Relaxed) {
+                let mut receive_event_time = Measure::start("receive_event");
+                let event = select! {
+                    recv(event_receiver) -> msg => {
+                        msg
+                    },
+                    default(Duration::from_secs(1))  => continue
+                };
+                let event = event
+                    .map_err(|_| EventLoopError::ChannelDisconnected("votor_event_receiver"))?;
+                receive_event_time.stop();
+                local_context.stats.receive_event_time_us = local_context
+                    .stats
+                    .receive_event_time_us
+                    .saturating_add(receive_event_time.as_us() as u32);
+
+                let root_bank = vctx.sharable_banks.root();
+                if event.should_ignore(root_bank.slot().max(vctx.vote_history.root())) {
+                    local_context.stats.ignored = local_context.stats.ignored.saturating_add(1);
+                    continue;
+                }
+
+                let mut event_processing_time = Measure::start("event_processing");
+                let stats_event = local_context.stats.handle_event_arrival(&event);
+                let votes = Self::handle_event(
+                    event,
+                    &timer_manager,
+                    &ctx,
+                    &mut vctx,
+                    &rctx,
+                    &mut local_context,
+                )?;
+                event_processing_time.stop();
+                local_context
+                    .stats
+                    .incr_event_with_timing(stats_event, event_processing_time.as_us());
+
+                let mut send_votes_batch_time = Measure::start("send_votes_batch");
+                for vote in votes {
+                    local_context.stats.incr_vote(&vote);
+                    nonblocking_send(
+                        &local_context.my_pubkey,
+                        &vctx.bls_sender,
+                        vote,
+                        "bls_sender",
+                    )
+                    .map_err(EventLoopError::ChannelDisconnected)?;
+                }
+                send_votes_batch_time.stop();
+                local_context.stats.send_votes_batch_time_us = local_context
+                    .stats
+                    .send_votes_batch_time_us
+                    .saturating_add(send_votes_batch_time.as_us() as u32);
+                local_context.stats.maybe_report();
+            }
         }
 
         Ok(())
@@ -569,7 +574,7 @@ impl EventHandler {
                 info!("{}: SetIdentity", local_context.my_pubkey);
                 if let Err(e) = Self::handle_set_identity(
                     &mut local_context.my_pubkey,
-                    local_context.genesis_slot,
+                    local_context.genesis_block,
                     ctx,
                     vctx,
                 ) {
@@ -659,7 +664,7 @@ impl EventHandler {
 
     fn handle_set_identity(
         my_pubkey: &mut Pubkey,
-        genesis_slot: Slot,
+        genesis_block: Block,
         ctx: &SharedContext,
         vctx: &mut VotingContext,
     ) -> Result<(), VoteHistoryError> {
@@ -676,7 +681,7 @@ impl EventHandler {
             vctx.identity_keypair = new_identity;
             warn!("set-identity: from {my_old_pubkey} to {my_pubkey}");
         }
-        vctx.vote_history.initialize_genesis(genesis_slot);
+        vctx.vote_history.initialize_genesis(genesis_block);
         Ok(())
     }
 
@@ -1158,6 +1163,7 @@ mod tests {
             cluster_info.clone(),
             event_sender,
             exit,
+            Arc::default(),
             Arc::new(MigrationStatus::default()),
         )));
         let blockstore = Arc::new(
@@ -1195,7 +1201,7 @@ mod tests {
         };
 
         let mut vote_history = VoteHistory::new(my_node_keypair.pubkey(), 0);
-        vote_history.initialize_genesis(0);
+        vote_history.initialize_genesis(Block::default());
         let voting_context = VotingContext {
             cluster_info: cluster_info.clone(),
             identity_keypair: Arc::new(my_node_keypair.insecure_clone()),
@@ -1221,7 +1227,7 @@ mod tests {
 
         let local_context = LocalContext {
             my_pubkey: my_node_keypair.pubkey(),
-            genesis_slot: 0,
+            genesis_block: Block::default(),
             pending_blocks: BTreeMap::new(),
             finalized_blocks: BTreeSet::new(),
             received_shred: BTreeSet::new(),
@@ -1822,10 +1828,14 @@ mod tests {
     fn test_try_skip_window_starts_after_unaligned_genesis() {
         let mut test_context = setup();
         let genesis_slot = 1;
+        let genesis_block = Block {
+            slot: genesis_slot,
+            block_id: Hash::new_unique(),
+        };
         test_context
             .voting_context
             .vote_history
-            .initialize_genesis(genesis_slot);
+            .initialize_genesis(genesis_block);
 
         test_context.send_timeout_event(2);
 
@@ -2369,7 +2379,7 @@ mod tests {
         vote_history_storage
             .store(&SavedVoteHistoryVersions::from(saved_vote_history))
             .unwrap();
-        old_vote_history.initialize_genesis(0);
+        old_vote_history.initialize_genesis(Block::default());
 
         test_context
             .cluster_info

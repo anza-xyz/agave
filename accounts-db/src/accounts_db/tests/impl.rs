@@ -19,7 +19,6 @@ use {
     solana_pubkey::{PUBKEY_BYTES, Pubkey},
     std::{
         iter,
-        ops::Range,
         str::FromStr as _,
         sync::{
             Arc, RwLock,
@@ -181,7 +180,7 @@ pub(crate) fn append_single_account_with_default_hash(
 
     if let Some(index) = add_to_index {
         let account_info = AccountInfo::new(
-            StorageLocation::AppendVec(storage.id(), stored_accounts_info.offsets[0]),
+            StorageLocation::AccountsFile(storage.id(), stored_accounts_info.offsets[0]),
             account.lamports() == 0,
         );
         index.upsert(
@@ -933,7 +932,7 @@ fn test_clean_zero_lamport_and_dead_slot() {
 // When a dead slot is cleaned, the pubkeys it held are unreffed.
 #[test]
 fn test_clean_dead_slot_unrefs_reclaimed_pubkeys() {
-    let accounts = AccountsDb::default_for_tests();
+    let accounts = AccountsDb::new_for_tests_with_config(Vec::new(), DEFAULT_ACCOUNTS_DB_CONFIG);
     let pubkey = Pubkey::new_unique();
     let account = AccountSharedData::new(1, 0, &Pubkey::default());
     let updated_account = AccountSharedData::new(2, 0, &Pubkey::default());
@@ -965,7 +964,7 @@ fn test_clean_dead_slot_unrefs_reclaimed_pubkeys() {
 
 #[test]
 fn test_clean_marks_reclaims_obsolete_at_new_slot() {
-    let accounts = AccountsDb::default_for_tests();
+    let accounts = AccountsDb::new_for_tests_with_config(Vec::new(), DEFAULT_ACCOUNTS_DB_CONFIG);
     let pubkey1 = Pubkey::new_unique();
     let pubkey2 = Pubkey::new_unique();
     let pubkey3 = Pubkey::new_unique();
@@ -1013,7 +1012,7 @@ fn test_clean_marks_reclaims_obsolete_at_new_slot() {
 
 #[test]
 fn test_clean_reclaim_tombstones_zero_lamport_single_ref() {
-    let accounts = AccountsDb::default_for_tests();
+    let accounts = AccountsDb::new_for_tests_with_config(Vec::new(), DEFAULT_ACCOUNTS_DB_CONFIG);
     let pubkey1 = Pubkey::new_unique();
     let pubkey2 = Pubkey::new_unique();
     let account = AccountSharedData::new(1, 0, &Pubkey::default());
@@ -1198,7 +1197,7 @@ fn test_remove_zero_lamport_single_ref_accounts_after_shrink() {
 /// older version of it is later shrunk.
 #[test]
 fn test_shrink_does_not_resurrect_dead_account() {
-    let accounts = AccountsDb::default_for_tests();
+    let accounts = AccountsDb::new_for_tests_with_config(Vec::new(), DEFAULT_ACCOUNTS_DB_CONFIG);
     let pubkey = Pubkey::new_unique();
     let pubkey2 = Pubkey::new_unique();
     let pubkey3 = Pubkey::new_unique();
@@ -1256,7 +1255,7 @@ fn test_shrink_does_not_resurrect_dead_account() {
 /// snapshot is dead: reclaiming its last live account purges the storage.
 #[test]
 fn test_reclaiming_last_live_account_purges_tombstone_only_storage() {
-    let accounts = AccountsDb::default_for_tests();
+    let accounts = AccountsDb::new_for_tests_with_config(Vec::new(), DEFAULT_ACCOUNTS_DB_CONFIG);
     let tombstone_pubkey = Pubkey::new_unique();
     let live_pubkey = Pubkey::new_unique();
     let slot = 1;
@@ -1930,10 +1929,10 @@ fn test_clean_old_with_both_normal_and_zero_lamport_accounts() {
 
     let mut normal_account = AccountSharedData::new(1, 0, AccountSharedData::default().owner());
     normal_account.set_owner(spl_generic_token::token::id());
-    normal_account.set_data(account_data_with_mint.clone());
+    normal_account.set_data_from_slice(&account_data_with_mint);
     let mut zero_account = AccountSharedData::new(0, 0, AccountSharedData::default().owner());
     zero_account.set_owner(spl_generic_token::token::id());
-    zero_account.set_data(account_data_with_mint);
+    zero_account.set_data_from_slice(&account_data_with_mint);
 
     //store an account
     accounts.store_for_tests((0, [(&pubkey1, &normal_account)].as_slice()));
@@ -2062,7 +2061,7 @@ fn test_clean_retains_secondary_index_for_still_cached_key() {
     account_data_with_mint[..PUBKEY_BYTES].clone_from_slice(&(mint_key.to_bytes()));
     account_data_with_mint[SPL_TOKEN_INITIALIZED_OFFSET] = 1;
     let mut token_account = AccountSharedData::new(1, 0, &spl_generic_token::token::id());
-    token_account.set_data(account_data_with_mint);
+    token_account.set_data_from_slice(&account_data_with_mint);
 
     let zero_account = AccountSharedData::new(0, 0, &Pubkey::default());
 
@@ -3208,10 +3207,10 @@ fn test_delete_dependencies() {
     let key0 = Pubkey::new_from_array([0u8; 32]);
     let key1 = Pubkey::new_from_array([1u8; 32]);
     let key2 = Pubkey::new_from_array([2u8; 32]);
-    let info0 = AccountInfo::new(StorageLocation::AppendVec(0, 0), true);
-    let info1 = AccountInfo::new(StorageLocation::AppendVec(1, 0), true);
-    let info2 = AccountInfo::new(StorageLocation::AppendVec(2, 0), true);
-    let info3 = AccountInfo::new(StorageLocation::AppendVec(3, 0), true);
+    let info0 = AccountInfo::new(StorageLocation::AccountsFile(0, 0), true);
+    let info1 = AccountInfo::new(StorageLocation::AccountsFile(1, 0), true);
+    let info2 = AccountInfo::new(StorageLocation::AccountsFile(2, 0), true);
+    let info3 = AccountInfo::new(StorageLocation::AccountsFile(3, 0), true);
     let mut reclaims = ReclaimsSlotList::new();
     accounts_index.upsert(
         0,
@@ -3494,9 +3493,9 @@ fn test_flush_purged_zero_lamport_account_purges_secondary_index() {
     account_data_with_mint[SPL_TOKEN_INITIALIZED_OFFSET] = 1;
 
     let mut live_account = AccountSharedData::new(1, 0, &spl_generic_token::token::id());
-    live_account.set_data(account_data_with_mint.clone());
+    live_account.set_data_from_slice(&account_data_with_mint);
     let mut zero_account = AccountSharedData::new(0, 0, &spl_generic_token::token::id());
-    zero_account.set_data(account_data_with_mint);
+    zero_account.set_data_from_slice(&account_data_with_mint);
 
     // Storing into the cache adds the secondary index entries for all three accounts
     accounts.store_for_tests((
@@ -3551,9 +3550,9 @@ fn test_clean_tombstone_purges_secondary_index() {
     account_data_with_mint[SPL_TOKEN_INITIALIZED_OFFSET] = 1;
 
     let mut live_account = AccountSharedData::new(1, 0, &spl_generic_token::token::id());
-    live_account.set_data(account_data_with_mint.clone());
+    live_account.set_data_from_slice(&account_data_with_mint);
     let mut zero_account = AccountSharedData::new(0, 0, &spl_generic_token::token::id());
-    zero_account.set_data(account_data_with_mint);
+    zero_account.set_data_from_slice(&account_data_with_mint);
 
     // Slot 1: nonzero version; slot 2: zero-lamport version. Flush without clean so the
     // slot 1 entry stays in the slot list for clean to reclaim
@@ -5729,7 +5728,7 @@ fn test_filter_zero_lamport_clean_for_incremental_snapshots() {
     }
 
     let do_test = |test_params: TestParameters| {
-        let account_info = AccountInfo::new(StorageLocation::AppendVec(42, 128), true);
+        let account_info = AccountInfo::new(StorageLocation::AccountsFile(42, 128), true);
         let pubkey = solana_pubkey::new_rand();
         let mut key_set = HashSet::default();
         key_set.insert(pubkey);
@@ -6574,82 +6573,8 @@ pub fn get_account_from_account_from_storage(
         .unwrap()
 }
 
-fn populate_index(db: &AccountsDb, slots: Range<Slot>) {
-    slots.into_iter().for_each(|slot| {
-        if let Some(storage) = db.get_storage_for_slot(slot) {
-            let mut reader = crate::append_vec::new_scan_accounts_reader();
-            storage
-                .scan_accounts(&mut reader, |offset, account| {
-                    let info = AccountInfo::new(
-                        StorageLocation::AppendVec(storage.id(), offset),
-                        account.is_zero_lamport(),
-                    );
-                    db.accounts_index.upsert(
-                        slot,
-                        slot,
-                        account.pubkey(),
-                        info,
-                        &mut ReclaimsSlotList::new(),
-                        UpsertReclaim::IgnoreReclaims,
-                    );
-                })
-                .expect("must scan accounts storage");
-        }
-    })
-}
-
 pub(crate) fn remove_account_for_tests(storage: &AccountStorageEntry, num_bytes: usize) {
     storage.remove_accounts(num_bytes, 1);
-}
-
-pub(crate) fn create_storages_and_update_index(
-    db: &AccountsDb,
-    starting_slot: Slot,
-    num_slots: usize,
-    alive: bool,
-    account_data_size: Option<u64>,
-) {
-    if num_slots == 0 {
-        return;
-    }
-
-    let account_data_size = account_data_size.unwrap_or(48);
-    let file_size = account_data_size + 1_000_000;
-    for i in 0..num_slots {
-        let slot = starting_slot + i as Slot;
-        let storage = db.create_store(slot, file_size);
-        let pubkey = solana_pubkey::new_rand();
-        let account = AccountSharedData::new(1, account_data_size as usize, &Pubkey::default());
-        append_single_account_with_default_hash(&storage, &pubkey, &account, alive, None);
-        db.storage.insert(Arc::new(storage));
-    }
-
-    let storage = db.get_storage_for_slot(starting_slot).unwrap();
-    let created_accounts = db.get_unique_accounts_from_storage(&storage);
-    assert_eq!(created_accounts.stored_accounts.len(), 1);
-
-    if alive {
-        populate_index(db, starting_slot..(starting_slot + (num_slots as Slot) + 1));
-    }
-}
-
-pub(crate) fn create_db_with_storages_and_index(
-    alive: bool,
-    num_slots: usize,
-    account_data_size: Option<u64>,
-) -> (AccountsDb, Slot) {
-    let db = AccountsDb::new_for_tests_with_config(Vec::new(), DEFAULT_ACCOUNTS_DB_CONFIG);
-
-    // create a single append vec with a single account in a slot
-    // add the pubkey to index if alive
-    // call combine_ancient_slots with the slot
-    // verify we create an ancient appendvec that has alive accounts and does not have dead accounts
-
-    let slot1 = 1;
-    create_storages_and_update_index(&db, slot1, num_slots, alive, account_data_size);
-
-    let slot1 = slot1 as Slot;
-    (db, slot1)
 }
 
 /// Ensure the calculating capitalization produces the correct value
@@ -7248,7 +7173,7 @@ fn test_index_scan_accounts_excludes_roots_added_during_scan() {
             spl_generic_token::token::Account::get_packed_len(),
             &spl_generic_token::token::id(),
         );
-        acct.set_data(account_data.clone());
+        acct.set_data_from_slice(&account_data);
         acct
     };
 

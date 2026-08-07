@@ -81,6 +81,7 @@ use {
     },
     solana_streamer::evicting_sender::EvictingSender,
     solana_turbine::{XdpSender as TurbineXdpSender, retransmit_stage::RetransmitStage},
+    solana_validator_exit::Exit,
     std::{
         collections::{HashMap, HashSet},
         net::UdpSocket,
@@ -195,6 +196,7 @@ pub struct AlpenglowInitializationState {
     pub votor_event_receiver: VotorEventReceiver,
 
     pub cancel: CancellationToken,
+    pub validator_exit: Arc<RwLock<Exit>>,
     pub key_notifiers: Arc<RwLock<KeyUpdaters>>,
 
     // server sockets for Alpenglow consensus traffic
@@ -278,6 +280,7 @@ impl Tvu {
             votor_event_sender,
             votor_event_receiver,
             cancel,
+            validator_exit,
             key_notifiers,
             votor_server_sockets,
             votor_client_socket,
@@ -518,6 +521,7 @@ impl Tvu {
 
         let votor_config = VotorConfig {
             exit: exit.clone(),
+            validator_exit,
             vote_account: *vote_account,
             wait_to_vote_slot,
             vote_history,
@@ -914,6 +918,7 @@ pub mod tests {
                 votor_event_sender,
                 votor_event_receiver,
                 cancel: CancellationToken::new(),
+                validator_exit: Arc::default(),
                 key_notifiers,
                 votor_server_sockets: vec![
                     bind_to_localhost_unique().expect("bind votor server socket"),

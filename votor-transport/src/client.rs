@@ -2,6 +2,7 @@
 use {
     crate::{
         METRICS_INTERVAL, PeerListReceiver, close_codes,
+        endpoint::KeyUpdateListener,
         error::Error,
         stats::{self, ClientStats, record_client_error},
         transport::new_client_config,
@@ -19,7 +20,7 @@ use {
         time::Duration,
     },
     tokio::{
-        sync::{mpsc, watch},
+        sync::mpsc,
         task::JoinSet,
         time::{MissedTickBehavior, interval, timeout},
     },
@@ -51,6 +52,14 @@ pub(crate) enum PeerState {
 /// `Ok` carries the peer and its newly established connection; `Err` carries
 /// the peer we tried (and failed) to connect to.
 type HandshakeOutcome = Result<(Pubkey, Connection), Pubkey>;
+
+/// Enforce the send-only contract of an outbound connection.
+async fn reject_reverse_datagrams(peer: Pubkey, connection: Connection) {
+    if connection.read_datagram().await.is_ok() {
+        warn!("Peer {peer} sent a datagram on a send-only connection; closing.");
+        close_codes::FLOODING.close(&connection);
+    }
+}
 
 /// Open and authenticate a new connection to `peer` at `addr`.
 async fn connect(
@@ -91,12 +100,13 @@ pub(crate) struct OutboundLoop {
     local_pubkey: Pubkey,
     /// Channel for outbound messages to be broadcast
     egress_receiver: mpsc::Receiver<Bytes>,
-    identity_receiver: watch::Receiver<Keypair>,
+    key_updates: KeyUpdateListener,
     peer_list_receiver: PeerListReceiver,
     /// Per-peer send-only connection state.
     /// Size is limited to the peer_list size by reconcile task.
     peer_state: HashMap<Pubkey, PeerState, PubkeyHasherBuilder>,
     in_flight_handshakes: JoinSet<HandshakeOutcome>,
+    reverse_datagram_readers: JoinSet<()>,
     cancel: CancellationToken,
     stats: Arc<ClientStats>,
     max_datagrams_per_second_per_peer: usize,
@@ -107,7 +117,7 @@ impl OutboundLoop {
         endpoint: Endpoint,
         local_pubkey: Pubkey,
         egress_receiver: mpsc::Receiver<Bytes>,
-        identity_receiver: watch::Receiver<Keypair>,
+        key_updates: KeyUpdateListener,
         peer_list_receiver: PeerListReceiver,
         cancel: CancellationToken,
         max_datagrams_per_second_per_peer: usize,
@@ -116,10 +126,11 @@ impl OutboundLoop {
             endpoint,
             local_pubkey,
             egress_receiver,
-            identity_receiver,
+            key_updates,
             peer_list_receiver,
             peer_state: HashMap::with_hasher(PubkeyHasherBuilder::default()),
             in_flight_handshakes: JoinSet::new(),
+            reverse_datagram_readers: JoinSet::new(),
             cancel,
             stats: Arc::default(),
             max_datagrams_per_second_per_peer,
@@ -139,14 +150,14 @@ impl OutboundLoop {
         info!("Votor QUIC transport client ready.");
         loop {
             tokio::select! {
-                changed = self.identity_receiver.changed() => {
+                changed = self.key_updates.receiver.changed() => {
                     if changed.is_err() {
                         // Unreachable: endpoint holds the identity sender for this loop's lifetime.
                         error!("OutboundLoop: identity channel closed while running, exiting.");
                         debug_assert!(false, "identity channel closed while running");
                         break;
                     }
-                    let new_keypair = self.identity_receiver.borrow_and_update().insecure_clone();
+                    let new_keypair = self.key_updates.receiver.borrow_and_update().insecure_clone();
                     self.apply_identity_change(new_keypair);
                     self.reconcile();
                 }
@@ -165,6 +176,9 @@ impl OutboundLoop {
                     // and panics are fatal in the validator.
                     let outcome = joined.expect("outbound handshake task panicked or was aborted");
                     self.handle_handshake_outcome(outcome);
+                }
+                Some(joined) = self.reverse_datagram_readers.join_next() => {
+                    joined.expect("outbound reverse-datagram reader task panicked or was aborted");
                 }
                 maybe_message = self.egress_receiver.recv() => {
                     let Some(message) = maybe_message else {
@@ -207,6 +221,7 @@ impl OutboundLoop {
         // Dropping the JoinSet aborts every in-flight handshake. We do not
         // want them as they began under the old identity.
         self.in_flight_handshakes = JoinSet::new();
+        self.reverse_datagram_readers = JoinSet::new();
         let closed = self
             .peer_state
             .drain()
@@ -222,6 +237,9 @@ impl OutboundLoop {
         self.stats
             .connection_closed_identity_changed
             .fetch_add(closed, Ordering::Relaxed);
+        // Never blocks, and a dropped ack only matters at shutdown, when the
+        // updater is gone anyway.
+        let _ = self.key_updates.ack.try_send(());
         info!(
             "outbound identity changed to {} ({} connection(s) closed)",
             self.local_pubkey, closed
@@ -330,6 +348,8 @@ impl OutboundLoop {
                 }
                 Err(SendDatagramError::UnsupportedByPeer) => {
                     debug!("OutboundLoop: peer {peer} does not support datagrams.");
+                    // The wrong-direction reader holds a clone, so close explicitly before removal.
+                    close_codes::NORMAL_CLOSE.close(connection);
                     // reconnecting is not likely to help, but it is the least we can do
                     self.stats.connect_failed.fetch_add(1, Ordering::Relaxed);
                     dead_peers.push(*peer);
@@ -356,6 +376,7 @@ impl OutboundLoop {
         match outcome {
             Ok((peer, connection)) => {
                 let target_address = connection.remote_address();
+                let reverse_datagram_reader = connection.clone();
                 let previous = self.peer_state.insert(
                     peer,
                     PeerState::Established {
@@ -367,6 +388,8 @@ impl OutboundLoop {
                     matches!(previous, Some(PeerState::Connecting)),
                     "handshake success for {peer} whose state was {previous:?}, not Connecting."
                 );
+                self.reverse_datagram_readers
+                    .spawn(reject_reverse_datagrams(peer, reverse_datagram_reader));
                 info!("OutboundLoop: established connection to {peer}.");
                 stats::record_connection_count(&self.stats.peak_connections, self.total_peers());
             }
@@ -385,8 +408,10 @@ impl OutboundLoop {
 #[cfg(test)]
 mod tests {
     use {
-        super::*, solana_net_utils::sockets::unique_port_range_for_tests, std::net::Ipv4Addr,
-        tokio::time::sleep,
+        super::*,
+        solana_net_utils::sockets::unique_port_range_for_tests,
+        std::net::Ipv4Addr,
+        tokio::{sync::watch, time::sleep},
     };
 
     /// Recreates an edge case when client identity changes while a peer is in `Connecting`
@@ -402,13 +427,17 @@ mod tests {
 
         let (_egress_tx, egress_rx) = mpsc::channel(1);
         let (_identity_tx, identity_rx) = watch::channel(Keypair::new());
+        let (ack, _acks) = crossbeam_channel::unbounded();
         let (_peer_list_tx, peer_list_rx) = watch::channel(Arc::new(HashMap::default()));
 
         let mut outbound = OutboundLoop::new(
             endpoint,
             old_pubkey,
             egress_rx,
-            identity_rx,
+            KeyUpdateListener {
+                receiver: identity_rx,
+                ack,
+            },
             peer_list_rx,
             CancellationToken::new(),
             50,
@@ -423,6 +452,10 @@ mod tests {
             sleep(Duration::from_secs(10)).await;
             unreachable!("This future should never resolve");
         });
+        outbound.reverse_datagram_readers.spawn(async {
+            sleep(Duration::from_secs(10)).await;
+            unreachable!("This future should never resolve");
+        });
 
         let new_kp = Keypair::new();
         let new_pubkey = new_kp.pubkey();
@@ -430,6 +463,10 @@ mod tests {
         assert!(
             outbound.in_flight_handshakes.is_empty(),
             "identity change must clear in_flight_handshakes"
+        );
+        assert!(
+            outbound.reverse_datagram_readers.is_empty(),
+            "identity change must clear reverse_datagram_readers"
         );
         assert!(
             outbound.peer_state.is_empty(),
@@ -447,5 +484,56 @@ mod tests {
             outbound.local_pubkey, new_pubkey,
             "identity change must adopt the new pubkey",
         );
+    }
+
+    #[tokio::test]
+    async fn reverse_datagram_closes_connection() {
+        use crate::transport::new_server_config;
+
+        const MAX_DATAGRAMS_PER_SECOND: usize = 50;
+        let mut ports = unique_port_range_for_tests(2);
+
+        let server_keypair = Keypair::new();
+        let server = Endpoint::server(
+            new_server_config(&server_keypair, MAX_DATAGRAMS_PER_SECOND),
+            SocketAddr::from((Ipv4Addr::LOCALHOST, ports.next().unwrap())),
+        )
+        .expect("bind server endpoint");
+        let server_addr = server.local_addr().unwrap();
+
+        let client_keypair = Keypair::new();
+        let mut client = Endpoint::client(SocketAddr::from((
+            Ipv4Addr::LOCALHOST,
+            ports.next().unwrap(),
+        )))
+        .expect("bind client endpoint");
+        client.set_default_client_config(new_client_config(
+            &client_keypair,
+            MAX_DATAGRAMS_PER_SECOND,
+        ));
+
+        let connecting = client
+            .connect(server_addr, &socket_addr_to_quic_server_name(server_addr))
+            .unwrap();
+        let incoming = server.accept().await.unwrap();
+        let (client_connection, server_connection) = tokio::join!(connecting, incoming);
+        let client_connection = client_connection.unwrap();
+        let server_connection = server_connection.unwrap();
+
+        let reader = tokio::spawn(reject_reverse_datagrams(
+            server_keypair.pubkey(),
+            client_connection,
+        ));
+        server_connection
+            .send_datagram(Bytes::new())
+            .expect("client advertised datagram support");
+        reader.await.unwrap();
+        let reason = timeout(Duration::from_secs(5), server_connection.closed())
+            .await
+            .expect("client did not close after the reverse datagram");
+        let quinn::ConnectionError::ApplicationClosed(close) = reason else {
+            panic!("unexpected client close reason: {reason:?}");
+        };
+        assert_eq!(close.error_code, close_codes::FLOODING.code);
     }
 }

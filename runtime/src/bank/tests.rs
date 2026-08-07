@@ -601,7 +601,7 @@ fn test_store_account_and_update_capitalization_accounts_data_size() {
 
     // test 2: change the account's data
     let data_size_delta = 42;
-    account.set_data(vec![0; data_size + data_size_delta]);
+    account.set_data_from_slice(&vec![0; data_size + data_size_delta]);
     let accounts_data_size_pre = bank.load_accounts_data_size();
     bank.store_account_and_update_capitalization(&address, &account);
     let accounts_data_size_post = bank.load_accounts_data_size();

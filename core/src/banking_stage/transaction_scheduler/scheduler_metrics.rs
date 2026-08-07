@@ -83,7 +83,9 @@ pub struct SchedulerCountMetricsInner {
     pub num_dropped_on_clear: Saturating<usize>,
     /// Number of transactions that were dropped during cleaning.
     pub num_dropped_on_clean: Saturating<usize>,
-    /// Number of transactions that were dropped due to exceeded capacity.
+    /// Number of packets dropped because the check-work queue was full.
+    pub num_dropped_on_check_work_queue_full: Saturating<usize>,
+    /// Number of transactions dropped due to exceeded scheduler container capacity.
     pub num_dropped_on_capacity: Saturating<usize>,
     pub num_dropped_on_nonce_dedup: Saturating<usize>,
     pub num_evicted_on_nonce_dedup: Saturating<usize>,
@@ -141,6 +143,7 @@ impl SchedulerCountMetricsInner {
             num_dropped_on_receive_fee_payer: Saturating(num_dropped_on_receive_fee_payer),
             num_dropped_on_clear: Saturating(num_dropped_on_clear),
             num_dropped_on_clean: Saturating(num_dropped_on_clean),
+            num_dropped_on_check_work_queue_full: Saturating(num_dropped_on_check_work_queue_full),
             num_dropped_on_capacity: Saturating(num_dropped_on_capacity),
             num_dropped_on_nonce_dedup: Saturating(num_dropped_on_nonce_dedup),
             num_evicted_on_nonce_dedup: Saturating(num_evicted_on_nonce_dedup),
@@ -190,6 +193,11 @@ impl SchedulerCountMetricsInner {
                 num_dropped_on_clean,
                 i64
             ),
+            (
+                "num_dropped_on_check_work_queue_full",
+                num_dropped_on_check_work_queue_full,
+                i64
+            ),
             ("num_dropped_on_capacity", num_dropped_on_capacity, i64),
             ("num_dropped_on_nonce_dedup", num_dropped_on_nonce_dedup, i64),
             ("num_evicted_on_nonce_dedup", num_evicted_on_nonce_dedup, i64),
@@ -231,6 +239,7 @@ impl SchedulerCountMetricsInner {
         self.num_dropped_on_receive_fee_payer = Saturating(0);
         self.num_dropped_on_clear = Saturating(0);
         self.num_dropped_on_clean = Saturating(0);
+        self.num_dropped_on_check_work_queue_full = Saturating(0);
         self.num_dropped_on_capacity = Saturating(0);
         self.num_dropped_on_nonce_dedup = Saturating(0);
         self.num_evicted_on_nonce_dedup = Saturating(0);

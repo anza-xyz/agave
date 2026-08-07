@@ -81,6 +81,7 @@ use {
         validated_block_finalization::ValidatedBlockFinalizationCert,
     },
     solana_streamer::evicting_sender::EvictingSender,
+    solana_validator_exit::Exit,
     std::{
         collections::HashMap,
         sync::{Arc, RwLock, atomic::AtomicBool},
@@ -89,9 +90,29 @@ use {
     },
 };
 
+/// Brings the whole validator down when a votor thread stops.
+pub(crate) struct ExitOnDrop {
+    validator_exit: Arc<RwLock<Exit>>,
+}
+
+impl ExitOnDrop {
+    pub(crate) fn new(validator_exit: Arc<RwLock<Exit>>) -> Self {
+        Self { validator_exit }
+    }
+}
+
+impl Drop for ExitOnDrop {
+    fn drop(&mut self) {
+        if let Ok(mut validator_exit) = self.validator_exit.write() {
+            validator_exit.exit();
+        }
+    }
+}
+
 /// Inputs to Votor
 pub struct VotorConfig {
     pub exit: Arc<AtomicBool>,
+    pub validator_exit: Arc<RwLock<Exit>>,
     // Validator config
     pub vote_account: Pubkey,
     pub wait_to_vote_slot: Option<Slot>,
@@ -152,6 +173,7 @@ impl Votor {
     pub fn new(config: VotorConfig) -> Self {
         let VotorConfig {
             exit,
+            validator_exit,
             vote_account,
             wait_to_vote_slot,
             vote_history,
@@ -227,11 +249,13 @@ impl Votor {
             cluster_info.clone(),
             event_sender.clone(),
             exit.clone(),
+            validator_exit.clone(),
             migration_status.clone(),
         )));
 
         let event_handler_context = EventHandlerContext {
             exit: exit.clone(),
+            validator_exit: validator_exit.clone(),
             migration_status: migration_status.clone(),
             event_receiver,
             timer_manager: Arc::clone(&timer_manager),
@@ -244,6 +268,7 @@ impl Votor {
 
         let consensus_pool_context = ConsensusPoolContext {
             exit: exit.clone(),
+            validator_exit,
             migration_status,
             generated_cert_types,
             cluster_info: cluster_info.clone(),

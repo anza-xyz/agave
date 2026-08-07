@@ -54,7 +54,7 @@ use {
         state::{Authorized, Lockup, StakeStateV2},
     },
     solana_system_transaction as system_transaction,
-    solana_tpu_client::tpu_client::{DEFAULT_TPU_CONNECTION_POOL_SIZE, DEFAULT_VOTE_USE_QUIC},
+    solana_tpu_client::tpu_client::DEFAULT_VOTE_USE_QUIC,
     solana_transaction::Transaction,
     solana_transaction_error::TransportError,
     solana_vote_program::{
@@ -111,7 +111,6 @@ pub struct ClusterConfig {
     pub cluster_type: ClusterType,
     pub poh_config: PohConfig,
     pub additional_accounts: Vec<(Pubkey, AccountSharedData)>,
-    pub tpu_connection_pool_size: usize,
     pub vote_use_quic: bool,
 }
 
@@ -149,7 +148,6 @@ impl Default for ClusterConfig {
             poh_config: PohConfig::default(),
             skip_warmup_slots: false,
             additional_accounts: vec![],
-            tpu_connection_pool_size: DEFAULT_TPU_CONNECTION_POOL_SIZE,
             vote_use_quic: DEFAULT_VOTE_USE_QUIC,
         }
     }

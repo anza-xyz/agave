@@ -239,15 +239,6 @@ fn deprecated_arguments() -> Vec<DeprecatedArg> {
             .help("Keep this amount of shreds in root slots."),
         replaced_by: "limit-blockstore-size",
     );
-    add_arg!(
-        // deprecated in v4.0.0
-        Arg::with_name("tpu_connection_pool_size")
-            .long("tpu-connection-pool-size")
-            .takes_value(true)
-            .validator(is_parsable::<usize>)
-            .help("Controls the TPU connection pool size per remote address"),
-         usage_warning:"This parameter is misleading, avoid setting it",
-    );
     res
 }
 

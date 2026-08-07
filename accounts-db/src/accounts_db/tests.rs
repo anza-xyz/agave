@@ -12,7 +12,6 @@ mod append_vec;
 // re-export these fns that live in impl.rs because ancient append vec tests use them...
 pub(crate) use append_vec::r#impl::{
     append_single_account_with_default_hash, compare_all_accounts,
-    create_db_with_storages_and_index, create_storages_and_update_index,
     get_account_from_account_from_storage, get_all_accounts, remove_account_for_tests,
 };
 
