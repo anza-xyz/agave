@@ -1605,18 +1605,28 @@ mod tests {
         RuntimeTransaction::from_transaction_view_for_tests(unsigned)
     }
 
+    #[derive(Clone, Copy)]
+    enum LoadedAddressAccess {
+        Writable,
+        Readable,
+    }
+
     /// Builds a v0 transaction whose only reference to `loaded_address` is through an address
     /// lookup table, i.e. `loaded_address` never appears in `static_account_keys()`.
     /// `RuntimeTransaction::from_transaction_view_for_tests` can't express this since it always
     /// resolves with `loaded_addresses: None`, so this goes through the same
     /// sanitize/statically-load/resolve pipeline by hand, providing the loaded address explicitly.
-    fn transaction_with_loaded_writable_address_with_payer(
+    fn transaction_with_loaded_address_with_payer(
         loaded_address: Pubkey,
         payer: &Pubkey,
+        access: LoadedAddressAccess,
     ) -> RuntimeTransaction<ResolvedTransactionView<Data>> {
         let instruction = Instruction {
             program_id: Pubkey::default(),
-            accounts: vec![AccountMeta::new(loaded_address, false)],
+            accounts: vec![match access {
+                LoadedAddressAccess::Writable => AccountMeta::new(loaded_address, false),
+                LoadedAddressAccess::Readable => AccountMeta::new_readonly(loaded_address, false),
+            }],
             data: vec![],
         };
         let message = v0::Message::try_compile(
@@ -1642,12 +1652,19 @@ mod tests {
             None,
         )
         .unwrap();
-        RuntimeTransaction::<ResolvedTransactionView<_>>::try_new(
-            static_runtime_tx,
-            Some(v0::LoadedAddresses {
+        let loaded_addresses = match access {
+            LoadedAddressAccess::Writable => v0::LoadedAddresses {
                 writable: vec![loaded_address],
                 readonly: vec![],
-            }),
+            },
+            LoadedAddressAccess::Readable => v0::LoadedAddresses {
+                writable: vec![],
+                readonly: vec![loaded_address],
+            },
+        };
+        RuntimeTransaction::<ResolvedTransactionView<_>>::try_new(
+            static_runtime_tx,
+            Some(loaded_addresses),
             &HashSet::new(),
         )
         .unwrap()
@@ -1807,28 +1824,123 @@ mod tests {
         assert!(state_machine.has_no_active_task());
     }
 
-    /// `do_create_task` must lock every account a transaction touches, including ones only
-    /// reachable through an address lookup table - not just its static account keys. task1 and
-    /// task2 below share no static keys at all; `loaded_address` is their only common account,
-    /// and it's resolved purely through each transaction's address lookup table. If
-    /// `do_create_task` only walked `static_account_keys()`, `loaded_address` would never get a
-    /// `LockContext`, and task2 would be incorrectly treated as non-conflicting.
+    /// `do_create_task` must lock accounts resolved through an address lookup table, not just
+    /// `static_account_keys()`. task1 and task2 share `loaded_address` as their only common
+    /// writable account, resolved purely via each transaction's lookup table, so they must
+    /// conflict.
     #[test_matrix([Capability::FifoQueueing, Capability::PriorityQueueing])]
     fn test_conflicting_tasks_sharing_only_a_loaded_address(capability: Capability) {
         let loaded_address = Pubkey::new_unique();
         let address_loader = &mut create_address_loader(None, &capability);
         let task1 = SchedulingStateMachine::create_task(
-            transaction_with_loaded_writable_address_with_payer(
+            transaction_with_loaded_address_with_payer(
                 loaded_address,
                 &Pubkey::new_unique(),
+                LoadedAddressAccess::Writable,
             ),
             101,
             address_loader,
         );
         let task2 = SchedulingStateMachine::create_task(
-            transaction_with_loaded_writable_address_with_payer(
+            transaction_with_loaded_address_with_payer(
                 loaded_address,
                 &Pubkey::new_unique(),
+                LoadedAddressAccess::Writable,
+            ),
+            102,
+            address_loader,
+        );
+
+        let mut state_machine = unsafe {
+            SchedulingStateMachine::exclusively_initialize_current_thread_for_scheduling_for_test()
+        };
+        assert_matches!(
+            state_machine
+                .schedule_task(task1.clone())
+                .map(|t| t.task_id()),
+            Some(101)
+        );
+        assert_matches!(state_machine.schedule_task(task2.clone()), None);
+
+        state_machine.deschedule_task(&task1);
+        assert_matches!(
+            state_machine
+                .schedule_next_unblocked_task()
+                .map(|t| t.task_id()),
+            Some(102)
+        );
+        state_machine.deschedule_task(&task2);
+        assert!(state_machine.has_no_active_task());
+    }
+
+    /// task1 and task2 share `loaded_address` as a *readonly* lookup-table entry only, so they
+    /// must not conflict.
+    #[test_matrix([Capability::FifoQueueing, Capability::PriorityQueueing])]
+    fn test_readonly_tasks_sharing_only_a_loaded_address_do_not_conflict(capability: Capability) {
+        let loaded_address = Pubkey::new_unique();
+        let address_loader = &mut create_address_loader(None, &capability);
+        let task1 = SchedulingStateMachine::create_task(
+            transaction_with_loaded_address_with_payer(
+                loaded_address,
+                &Pubkey::new_unique(),
+                LoadedAddressAccess::Readable,
+            ),
+            101,
+            address_loader,
+        );
+        let task2 = SchedulingStateMachine::create_task(
+            transaction_with_loaded_address_with_payer(
+                loaded_address,
+                &Pubkey::new_unique(),
+                LoadedAddressAccess::Readable,
+            ),
+            102,
+            address_loader,
+        );
+
+        let mut state_machine = unsafe {
+            SchedulingStateMachine::exclusively_initialize_current_thread_for_scheduling_for_test()
+        };
+        assert_matches!(
+            state_machine
+                .schedule_task(task1.clone())
+                .map(|t| t.task_id()),
+            Some(101)
+        );
+        assert_matches!(
+            state_machine
+                .schedule_task(task2.clone())
+                .map(|t| t.task_id()),
+            Some(102)
+        );
+
+        state_machine.deschedule_task(&task1);
+        state_machine.deschedule_task(&task2);
+        assert!(state_machine.has_no_active_task());
+    }
+
+    /// task1 writes `loaded_address` via a lookup table; task2 only reads it via the same
+    /// lookup table. They must still conflict.
+    #[test_matrix([Capability::FifoQueueing, Capability::PriorityQueueing])]
+    fn test_writable_task_blocks_readonly_task_sharing_only_a_loaded_address(
+        capability: Capability,
+    ) {
+        let loaded_address = Pubkey::new_unique();
+        let address_loader = &mut create_address_loader(None, &capability);
+        let task1 = SchedulingStateMachine::create_task(
+            transaction_with_loaded_address_with_payer(
+                loaded_address,
+                &Pubkey::new_unique(),
+                LoadedAddressAccess::Writable,
+            ),
+            101,
+            address_loader,
+        );
+        let task2 = SchedulingStateMachine::create_task(
+            transaction_with_loaded_address_with_payer(
+                loaded_address,
+                &Pubkey::new_unique(),
+                LoadedAddressAccess::Readable,
             ),
             102,
             address_loader,
