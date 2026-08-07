@@ -211,25 +211,26 @@ pub struct SlotMetaV3 {
 
 pub type SlotMeta = SlotMetaV3;
 
-#[derive(Debug, Eq, PartialEq)]
-pub struct UpdateParentInfo {
-    pub slot: Slot,
-    pub update_parent_fec_set_index: u32,
-    pub parent_slot: Slot,
-    pub parent_block_id: Hash,
-}
+pub use agave_geyser_notifier_interface::deshred_transaction_notifier_interface::UpdateParentInfo;
 
-impl UpdateParentInfo {
-    pub fn from_slot_meta(slot: Slot, slot_meta: &SlotMeta) -> Option<Self> {
-        Some(Self {
-            slot,
-            update_parent_fec_set_index: slot_meta
-                .has_update_parent()
-                .then_some(slot_meta.replay_fec_set_index)?,
-            parent_slot: slot_meta.parent_slot?,
-            parent_block_id: slot_meta.parent_block_id,
-        })
-    }
+/// Builds the [`UpdateParentInfo`] for a slot from its [`SlotMeta`], or `None`
+/// if the slot has no UpdateParent marker or no known parent.
+///
+/// Free function rather than a constructor because [`UpdateParentInfo`] is
+/// defined in `agave-geyser-notifier-interface`, which cannot know about
+/// [`SlotMeta`].
+pub fn update_parent_info_from_slot_meta(
+    slot: Slot,
+    slot_meta: &SlotMeta,
+) -> Option<UpdateParentInfo> {
+    Some(UpdateParentInfo {
+        slot,
+        update_parent_fec_set_index: slot_meta
+            .has_update_parent()
+            .then_some(slot_meta.replay_fec_set_index)?,
+        parent_slot: slot_meta.parent_slot?,
+        parent_block_id: slot_meta.parent_block_id,
+    })
 }
 
 /// Lighter-weight version of [`SlotMeta`] containing just the set

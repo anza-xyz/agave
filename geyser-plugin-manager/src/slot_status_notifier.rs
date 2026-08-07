@@ -1,10 +1,10 @@
 use {
     crate::geyser_plugin_manager::GeyserPluginManager,
+    agave_geyser_notifier_interface::slot_status_notifier::SlotStatusNotifierInterface,
     agave_geyser_plugin_interface::geyser_plugin_interface::SlotStatus,
     arc_swap::ArcSwap,
     log::*,
     solana_clock::{BankId, Slot},
-    solana_rpc::slot_status_notifier::SlotStatusNotifierInterface,
     std::sync::Arc,
 };
 

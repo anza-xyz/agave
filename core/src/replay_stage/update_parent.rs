@@ -17,7 +17,7 @@ use {
     solana_entry::block_component::VersionedUpdateParent,
     solana_ledger::{
         blockstore::{Blockstore, UpdateParentReceiver},
-        blockstore_meta::{SlotMeta, UpdateParentInfo},
+        blockstore_meta::{SlotMeta, update_parent_info_from_slot_meta},
         blockstore_processor::AsyncVerificationProgress,
         entry_notifier_interface::EntryUpdateParentInfo,
         entry_notifier_service::{EntryNotification, EntryNotifierSender},
@@ -194,7 +194,7 @@ fn try_restart_slot_from_update_parent(
     });
     ReplayStage::clear_slots([slot], bank_forks, progress, async_verification_freelist);
     if let Some(cleared_bank_id) = cleared_bank_id {
-        let update_parent = UpdateParentInfo::from_slot_meta(slot, &slot_meta)
+        let update_parent = update_parent_info_from_slot_meta(slot, &slot_meta)
             .expect("UpdateParent metadata must include a parent slot");
         notify_entry_update_parent(
             entry_notification_sender,

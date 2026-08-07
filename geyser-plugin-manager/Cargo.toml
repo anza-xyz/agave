@@ -19,6 +19,7 @@ rustdoc-args = ["--cfg=docsrs"]
 agave-unstable-api = []
 
 [dependencies]
+agave-geyser-notifier-interface = { workspace = true }
 agave-geyser-plugin-interface = { workspace = true }
 arc-swap.workspace = true
 bs58 = { workspace = true }
@@ -30,7 +31,6 @@ libloading = { workspace = true }
 log = { workspace = true }
 serde_json = { workspace = true }
 solana-account = { workspace = true }
-solana-accounts-db = { workspace = true }
 solana-clock = { workspace = true }
 solana-entry = { workspace = true }
 solana-gossip = { workspace = true }
@@ -39,8 +39,8 @@ solana-ledger = { workspace = true }
 solana-measure = { workspace = true }
 solana-message = { workspace = true }
 solana-pubkey = { workspace = true }
+solana-reward-info = { workspace = true }
 solana-rpc = { workspace = true }
-solana-runtime = { workspace = true }
 solana-signature = { workspace = true }
 solana-transaction = { workspace = true }
 solana-transaction-status = { workspace = true }
