@@ -1215,7 +1215,7 @@ checksum = "90dbd31c98227229239363921e60fcf5e558e43ec69094d46fc4996f08d1d5bc"
 dependencies = [
  "bitcoin_hashes",
  "rand 0.8.6",
- "rand_core 0.5.1",
+ "rand_core 0.6.4",
  "serde",
  "unicode-normalization",
 ]
@@ -4711,11 +4711,11 @@ dependencies = [
 
 [[package]]
 name = "protosol"
-version = "11.0.0"
+version = "12.0.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "69385b9321a454c4d168688ef83877e4fd7b92af510b33c34e131151ca765048"
+checksum = "e8fccd898e44663e984bf80ea74ab110e869db50e42c7229ea14a2d833cae1d6"
 dependencies = [
- "prost 0.11.9",
+ "prost 0.14.4",
 ]
 
 [[package]]
