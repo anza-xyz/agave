@@ -142,7 +142,7 @@ assert_matches = { workspace = true }
 env_logger = { workspace = true }
 libsecp256k1 = { workspace = true }
 rand = { workspace = true }
-solana-account = { workspace = true, features = ["dev-context-only-utils"] }
+solana-account = { workspace = true }
 solana-bpf-loader-program = { path = "../programs/bpf_loader", default-features = false, features = ["agave-unstable-api"] }
 solana-clock = { workspace = true }
 solana-compute-budget = { path = "../compute-budget", features = ["agave-unstable-api"] }
