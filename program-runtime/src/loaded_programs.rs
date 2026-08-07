@@ -550,53 +550,21 @@ impl<FG: ForkGraph> ProgramCache<FG> {
                                 false
                             }
                         })
+                        .filter(|entry| {
+                            // Remove outdated environment of previous feature set
+                            if let Some(new_environment) = new_environment.as_ref()
+                                && !Self::matches_environment(entry, new_environment)
+                            {
+                                self.stats
+                                    .prunes_environment
+                                    .fetch_add(1, Ordering::Relaxed);
+                                return false;
+                            }
+                            true
+                        })
                         .cloned()
                         .collect();
                     second_level.reverse();
-                    // Remove or adjust entries with outdated environment of previous feature set
-                    if let Some(new_environment) = new_environment.as_ref() {
-                        let retain_flags = (0..second_level.len())
-                            .map(|index_in_second_level| {
-                                let entry = second_level.get(index_in_second_level).unwrap();
-                                if Self::matches_environment(entry, new_environment) {
-                                    return true;
-                                }
-                                // second_level is sorted by deployment_slot first,
-                                // thus if the neighbors have a different deployment_slot
-                                // then no other entry with the same deployment_slot exists.
-                                let prev_entry = index_in_second_level
-                                    .checked_sub(1)
-                                    .and_then(|idx| second_level.get(idx));
-                                let next_entry = index_in_second_level
-                                    .checked_add(1)
-                                    .and_then(|idx| second_level.get(idx));
-                                let other_entry_with_same_deployment_slot_exists = prev_entry
-                                    .map(|e| e.deployment_slot)
-                                    == Some(entry.deployment_slot)
-                                    || next_entry.map(|e| e.deployment_slot)
-                                        == Some(entry.deployment_slot);
-                                if other_entry_with_same_deployment_slot_exists {
-                                    self.stats
-                                        .prunes_environment
-                                        .fetch_add(1, Ordering::Relaxed);
-                                    return false;
-                                } else if let Some(unloaded_entry) = entry.to_unloaded_in_env(
-                                    ProgramRuntimeEnvironment::clone(new_environment),
-                                ) && let Some(entry) =
-                                    second_level.get_mut(index_in_second_level)
-                                {
-                                    *entry = Arc::new(unloaded_entry);
-                                }
-                                true
-                            })
-                            .collect::<Vec<bool>>();
-                        let mut index_in_second_level = 0;
-                        second_level.retain(|_entry| {
-                            let retain_flag = *retain_flags.get(index_in_second_level).unwrap();
-                            index_in_second_level = index_in_second_level.saturating_add(1);
-                            retain_flag
-                        });
-                    }
                 }
             }
         }
@@ -1780,11 +1748,6 @@ pub(crate) mod tests {
             deployment_slot: 20,
             ..Default::default()
         });
-        let new_program_new_env = Arc::new(ProgramCacheEntry {
-            program: new_loaded_entry(new_env.clone()),
-            deployment_slot: 20,
-            ..Default::default()
-        });
         cache.assign_program(&env, program1, 10, old_program_old_env.clone());
         cache.assign_program(&env, program1, 10, old_program_new_env.clone());
         cache.assign_program(&env, program1, 20, new_program_old_env.clone());
@@ -1800,17 +1763,10 @@ pub(crate) mod tests {
 
         cache.prune(21, Some(new_env.clone()), &fork_graph.read().unwrap());
         let slot_versions = cache.get_slot_versions_for_tests(&program1);
-        assert_eq!(
-            &slot_versions,
-            &[old_program_new_env.clone(), new_program_new_env.clone()],
-        );
+        assert_eq!(&slot_versions, &[old_program_new_env]);
         assert!(matches!(
             &slot_versions.first().unwrap().program,
             ProgramCacheEntryType::Loaded(_)
-        ));
-        assert!(matches!(
-            &slot_versions.get(1).unwrap().program,
-            ProgramCacheEntryType::Unloaded(_)
         ));
     }
 
