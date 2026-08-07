@@ -7,5 +7,6 @@ mod errors;
 pub mod generated_cert_types;
 pub mod rewards;
 pub mod stats;
+pub mod unverified_vote_group;
 mod utils;
 mod vote_pool;

@@ -441,7 +441,7 @@ impl VersionedWireConsensusMessage {
         test_roundtrip = "eq_and_wire",
     )
 )]
-#[derive(Debug, Copy, Clone, PartialEq, Eq, Hash, SchemaWrite, SchemaRead)]
+#[derive(Debug, Copy, Clone, PartialEq, Eq, PartialOrd, Ord, Hash, SchemaWrite, SchemaRead)]
 #[wincode(tag_encoding = "u8")]
 /// Vote payload that must be signed
 pub enum VotePayloadToSign {
