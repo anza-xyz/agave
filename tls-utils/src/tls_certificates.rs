@@ -1,9 +1,6 @@
 use {
-    solana_keypair::Keypair,
-    solana_pubkey::Pubkey,
-    solana_signer::Signer,
-    std::net::SocketAddr,
-    x509_parser::{prelude::*, public_key::PublicKey},
+    rustls::pki_types::CertificateDer, solana_keypair::Keypair, solana_pubkey::Pubkey,
+    solana_signer::Signer, std::net::SocketAddr, webpki::EndEntityCert,
 };
 
 pub fn new_dummy_x509_certificate(
@@ -117,14 +114,33 @@ pub fn new_dummy_x509_certificate(
     )
 }
 
-pub fn get_pubkey_from_tls_certificate(
-    der_cert: &rustls::pki_types::CertificateDer,
-) -> Option<Pubkey> {
-    let (_, cert) = X509Certificate::from_der(der_cert.as_ref()).ok()?;
-    match cert.public_key().parsed().ok()? {
-        PublicKey::Unknown(key) => Pubkey::try_from(key).ok(),
-        _ => None,
-    }
+/// DER header of an RFC 5280 `SubjectPublicKeyInfo` carrying one Ed25519 key:
+/// `SEQUENCE(42) { SEQUENCE(5) { OID 1.3.101.112 }, BIT STRING(33) { 0 unused bits } }`.
+/// The 32 raw key bytes follow immediately, so a full Ed25519 SPKI is 44 bytes.
+const ED25519_SPKI_PREFIX: [u8; 12] = [
+    0x30, 0x2a, 0x30, 0x05, 0x06, 0x03, 0x2b, 0x65, 0x70, 0x03, 0x21, 0x00,
+];
+
+pub fn get_pubkey_from_tls_certificate(der_cert: &CertificateDer) -> Option<Pubkey> {
+    // Parse with webpki, the exact same DER parser rustls uses internally for
+    // the TLS 1.3 possession check (`rustls::crypto::verify_tls13_signature`).
+    // Using one parser for both the possession check and identity extraction
+    // guarantees the verified key and the attributed identity cannot diverge.
+    //
+    // webpki hands back the `SubjectPublicKeyInfo` as an opaque blob and
+    // exposes no parsed-key accessor, so the 32 key bytes have to be sliced out
+    // by hand.
+    //
+    // Hardcoding the header is not ideal, but should be sound because RFC 8410 pins the
+    // Ed25519 SPKI to a single encoding: no algorithm parameters, fixed 32-byte key.
+    // A valid Ed25519 SPKI cannot be encoded any other way, and
+    // `test_ed25519_spki_layout_matches_webpki_output` pins that against webpki's
+    // actual output. Any other key algorithm fails the prefix match and yields
+    // `None`, which is the correct answer for a non-Solana identity.
+    let cert = EndEntityCert::try_from(der_cert).ok()?;
+    let spki = cert.subject_public_key_info();
+    let key = spki.as_ref().strip_prefix(&ED25519_SPKI_PREFIX)?;
+    Pubkey::try_from(key).ok()
 }
 
 /// Recover the peer's Solana pubkey from a `quinn::Connection`. Accepts
@@ -136,7 +152,7 @@ pub fn get_pubkey_from_tls_certificate(
 pub fn get_remote_pubkey(connection: &quinn::Connection) -> Option<Pubkey> {
     connection
         .peer_identity()?
-        .downcast::<Vec<rustls::pki_types::CertificateDer>>()
+        .downcast::<Vec<CertificateDer>>()
         .ok()
         .filter(|certs| certs.len() == 1)?
         .first()
@@ -175,5 +191,17 @@ mod tests {
         } else {
             panic!("Failed to get certificate pubkey");
         }
+    }
+
+    #[test]
+    fn test_ed25519_spki_layout_matches_webpki_output() {
+        let keypair = Keypair::new();
+        let (cert, _) = new_dummy_x509_certificate(&keypair);
+        let parsed = EndEntityCert::try_from(&cert).expect("dummy cert must parse with webpki");
+        assert_eq!(
+            parsed.subject_public_key_info().as_ref(),
+            [ED25519_SPKI_PREFIX.as_slice(), keypair.pubkey().as_ref()].concat(),
+            "RFC 8410 fixes an Ed25519 SPKI to the 12-byte prefix plus 32 raw key bytes"
+        );
     }
 }
