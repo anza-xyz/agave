@@ -9140,6 +9140,7 @@ dependencies = [
  "solana-shred-version",
  "solana-signature",
  "solana-signer",
+ "solana-slot-hashes",
  "solana-stake-interface",
  "solana-storage-bigtable",
  "solana-storage-proto",
@@ -11451,7 +11452,6 @@ dependencies = [
 name = "solana-transaction-context"
 version = "4.3.0-alpha.3"
 dependencies = [
- "agave-transaction-view",
  "bincode",
  "qualifier_attr",
  "serde",

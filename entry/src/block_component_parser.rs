@@ -31,7 +31,7 @@ pub fn parse<B: Into<Bytes>>(bytes: B) -> Result<BlockComponentView, ParseError>
 
     if entry_count == 0 {
         let remaining = &bytes[BlockComponent::ENTRY_COUNT_SIZE..];
-        let marker = wincode::deserialize_exact::<VersionedBlockMarker>(remaining)
+        let marker = wincode::deserialize::<VersionedBlockMarker>(remaining)
             .map_err(ParseError::BlockMarker)?;
         return Ok(BlockComponentView::BlockMarker(marker));
     }
@@ -109,12 +109,8 @@ pub fn parse<B: Into<Bytes>>(bytes: B) -> Result<BlockComponentView, ParseError>
         });
     }
 
-    if offset != bytes.len() {
-        return Err(ParseError::TrailingBytes {
-            remaining: bytes.len() - offset,
-        });
-    }
-
+    // Trailing bytes after the last entry are intentionally ignored, matching
+    // legacy `wincode::deserialize` behavior.
     Ok(BlockComponentView::EntryBatch(entry_views))
 }
 
@@ -148,9 +144,6 @@ pub enum ParseError {
 
     #[error("failed to deserialize block marker: {0}")]
     BlockMarker(wincode::ReadError),
-
-    #[error("{remaining} trailing byte(s) remain after parsing a complete entry batch")]
-    TrailingBytes { remaining: usize },
 }
 #[cfg(test)]
 mod tests {
@@ -381,27 +374,28 @@ mod tests {
     }
 
     #[test]
-    fn parse_rejects_extra_trailing_byte_appended_after_valid_entry_batch() {
+    fn parse_ignores_extra_trailing_byte_appended_after_valid_entry_batch() {
         // Given
-        let component = BlockComponent::new_entry_batch(tick_entries(1)).unwrap();
+        let source_entries = tick_entries(1);
+        let component = BlockComponent::new_entry_batch(source_entries.clone()).unwrap();
         let mut entry_batch_bytes_with_trailing_byte = wincode::serialize(&component).unwrap();
         entry_batch_bytes_with_trailing_byte.push(0);
 
         // When
         let parse_result = parse(Bytes::from(entry_batch_bytes_with_trailing_byte));
 
-        // Then
-        assert!(matches!(
-            parse_result,
-            Err(ParseError::TrailingBytes { .. })
-        ));
+        // Then: trailing bytes are ignored matching legacy `wincode::deserialize`
+        let Ok(BlockComponentView::EntryBatch(views)) = parse_result else {
+            panic!("expected EntryBatch");
+        };
+        assert_eq!(views.len(), source_entries.len());
     }
 
     #[test]
-    fn parse_rejects_extra_trailing_byte_appended_after_valid_block_marker() {
+    fn parse_ignores_extra_trailing_byte_appended_after_valid_block_marker() {
         // Given
         let marker = VersionedBlockMarker::from_block_footer(sample_footer());
-        let component = BlockComponent::new_block_marker(marker);
+        let component = BlockComponent::new_block_marker(marker.clone());
         let mut block_marker_bytes_with_trailing_byte = wincode::serialize(&component).unwrap();
         block_marker_bytes_with_trailing_byte.push(0);
 
@@ -409,9 +403,9 @@ mod tests {
         let parse_result = parse(Bytes::from(block_marker_bytes_with_trailing_byte));
 
         // Then
-        assert!(matches!(
-            parse_result,
-            Err(ParseError::BlockMarker(wincode::ReadError::TrailingBytes))
-        ));
+        let Ok(BlockComponentView::BlockMarker(parsed_marker)) = parse_result else {
+            panic!("expected BlockMarker");
+        };
+        assert_eq!(parsed_marker, marker);
     }
 }

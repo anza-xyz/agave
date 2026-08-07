@@ -9952,13 +9952,11 @@ dependencies = [
 name = "solana-transaction-context"
 version = "4.3.0-alpha.3"
 dependencies = [
- "agave-transaction-view",
  "bincode",
  "serde",
  "solana-account 4.5.0",
  "solana-instruction",
  "solana-instructions-sysvar 4.0.0",
- "solana-program-entrypoint",
  "solana-pubkey 4.3.0",
  "solana-rent",
  "solana-sbpf",

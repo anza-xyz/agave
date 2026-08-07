@@ -78,7 +78,7 @@ where
     D: TransactionData,
 {
     fn fmt(&self, f: &mut Formatter<'_>) -> core::fmt::Result {
-        f.debug_struct("TransactionView")
+        f.debug_struct("EntryView")
             .field("num_hashes", &self.num_hashes)
             .field("hash", &self.hash)
             .field("transactions", &self.transactions)
