@@ -125,8 +125,8 @@ impl TxLoopBuilder<OwnedUmem> {
             RingSizes::default()
         });
 
-        // In copy mode the AF_XDP rings are decoupled from the hardware rings, so a hardware depth
-        // the kernel would reject can be rounded up. In zero copy mode it can't.
+        // Align the ring sizes reported by buggy drivers. Only in copy mode, where the AF_XDP rings
+        // are decoupled from the hardware rings.
         let ring_sizes = if zero_copy {
             ring_sizes
         } else {
@@ -207,9 +207,8 @@ impl TxLoopBuilder<OwnedUmem> {
     }
 }
 
-/// Rounds ring sizes up to the power of two AF_XDP requires of every ring. Hardware ring depths
-/// carry no such constraint: bnxt_en reports 511, and the 1022 entry completion ring derived from
-/// it is rejected too. A size of zero means "no ring" and is left alone.
+/// Rounds up ring sizes from drivers that report a depth AF_XDP rejects, like bnxt_en's 511. Zero
+/// means "no ring" and is left alone.
 fn align_ring_sizes(RingSizes { rx, tx }: RingSizes) -> RingSizes {
     fn align(size: usize) -> usize {
         if size == 0 {
@@ -735,18 +734,16 @@ mod tests {
 
     #[test]
     fn test_align_ring_sizes() {
-        // bnxt_en reports 511/511, which the kernel rejects as an AF_XDP ring size.
+        // bnxt_en reports 511/511.
         let aligned = align_ring_sizes(RingSizes { rx: 511, tx: 511 });
         assert_eq!(aligned, RingSizes { rx: 512, tx: 512 });
-        // The completion ring is twice the TX ring, so it must stay a power of two too.
+        // The completion ring is twice the TX ring.
         assert!((aligned.tx * 2).is_power_of_two());
 
-        // Powers of two are left alone.
         let sizes = RingSizes { rx: 1024, tx: 4096 };
         assert_eq!(align_ring_sizes(sizes), sizes);
         assert_eq!(align_ring_sizes(RingSizes::default()), RingSizes::default());
 
-        // Zero means "no ring" and must not become a one entry ring.
         assert_eq!(
             align_ring_sizes(RingSizes { rx: 0, tx: 511 }),
             RingSizes { rx: 0, tx: 512 }
