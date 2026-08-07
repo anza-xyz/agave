@@ -7054,7 +7054,8 @@ pub(crate) fn insert_complete_update_parent_slot(
     let post_update_address = post_update_entries[0].transactions[0]
         .message
         .static_account_keys()[0];
-    let pre_update_signatures = transaction_signatures(&pre_update_entries);
+    let pre_update_signatures =
+        write_transaction_statuses_for_entries(blockstore, slot, &pre_update_entries);
     let post_update_signatures =
         write_transaction_statuses_for_entries(blockstore, slot, &post_update_entries);
     let post_update_blockhash = post_update_entries.last().unwrap().hash.to_string();
@@ -7179,6 +7180,54 @@ fn test_get_transaction_uses_post_update_parent_indexes() {
             .unwrap()
             .unwrap();
         assert_eq!(transaction.index, expected_index as u32);
+    }
+}
+
+#[test]
+fn test_get_transaction_status_skips_pre_update_parent_transactions() {
+    let ledger_path = get_tmp_ledger_path_auto_delete!();
+    let blockstore = Blockstore::open(ledger_path.path()).unwrap();
+
+    let slot = 104;
+    let fixture = insert_complete_update_parent_slot(&blockstore, slot, 103, 100);
+    blockstore.set_roots([slot].iter()).unwrap();
+
+    for signature in fixture.pre_update_signatures {
+        assert!(
+            blockstore
+                .read_transaction_status((signature, slot))
+                .unwrap()
+                .is_some()
+        );
+        assert!(
+            blockstore
+                .find_transaction_in_slot(slot, signature)
+                .unwrap()
+                .is_none()
+        );
+        assert!(
+            blockstore
+                .get_rooted_transaction_status(signature)
+                .unwrap()
+                .is_none()
+        );
+    }
+
+    for signature in fixture.post_update_signatures {
+        let status = blockstore
+            .read_transaction_status((signature, slot))
+            .unwrap()
+            .unwrap();
+        assert!(
+            blockstore
+                .find_transaction_in_slot(slot, signature)
+                .unwrap()
+                .is_some()
+        );
+        assert_eq!(
+            blockstore.get_rooted_transaction_status(signature).unwrap(),
+            Some((slot, status))
+        );
     }
 }
 

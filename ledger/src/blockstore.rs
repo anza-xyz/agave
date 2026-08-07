@@ -4415,6 +4415,15 @@ impl Blockstore {
             if !self.is_root(slot) && !confirmed_unrooted_slots.contains(&slot) {
                 continue;
             }
+
+            if self
+                .meta(slot)?
+                .is_some_and(|slot_meta| slot_meta.has_update_parent())
+                && self.find_transaction_in_slot(slot, signature)?.is_none()
+            {
+                continue;
+            }
+
             let status = self
                 .transaction_status_cf
                 .get_protobuf((signature, slot))?
