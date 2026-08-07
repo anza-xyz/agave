@@ -783,7 +783,7 @@ fn record_and_complete_block(
             validators,
         } = reward_certs;
         let reward_cert =
-            ValidatedRewardCert::try_new_for_leader(bank.slot(), &skip, &notar, validators)?;
+            ValidatedRewardCert::try_new_for_leader(&bank, &skip, &notar, validators)?;
         let guard = ctx.highest_finalized.read().unwrap();
         let footer = produce_block_footer(&bank, skip, notar, guard.as_ref());
         let final_cert_input = guard.as_ref().map(|c| c.vote_rewards_input());
