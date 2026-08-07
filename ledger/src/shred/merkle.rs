@@ -1,12 +1,12 @@
 #[cfg(test)]
-use crate::shred::ShredType;
+use {crate::shred::ShredType, qualifier_attr::qualifiers};
 use {
     crate::{
         shred::{
             self, CODING_SHREDS_PER_FEC_BLOCK, CodingShredHeader, DATA_SHREDS_PER_FEC_BLOCK,
             DataShredHeader, Error, ProcessShredsStats, SHREDS_PER_FEC_BLOCK,
             SIZE_OF_CODING_SHRED_HEADERS, SIZE_OF_DATA_SHRED_HEADERS, SIZE_OF_NONCE,
-            SIZE_OF_SIGNATURE, ShredCommonHeader, ShredFlags, ShredVariant,
+            SIZE_OF_SIGNATURE, Shred, ShredCommonHeader, ShredFlags, ShredVariant,
             common::impl_shred_common,
             dispatch,
             merkle_tree::*,
@@ -24,7 +24,6 @@ use {
     solana_clock::Slot,
     solana_hash::Hash,
     solana_keypair::Keypair,
-    solana_pubkey::Pubkey,
     solana_sha256_hasher::hashv,
     solana_signature::Signature,
     solana_signer::Signer,
@@ -40,55 +39,81 @@ use {
 const_assert_eq!(ShredData::SIZE_OF_PAYLOAD, 1203);
 const_assert_eq!(ShredCode::SIZE_OF_PAYLOAD, 1228);
 
-// Layout: {common, data} headers | data buffer
-//     | [Merkle root of the previous erasure batch if chained]
-//     | Merkle proof
-//     | [Retransmitter's signature if resigned]
-// The slice past signature till the end of the data buffer is erasure coded.
-// The slice past signature and before the merkle proof is hashed to generate
-// the Merkle tree. The root of the Merkle tree is signed.
+/// A data shred: one MTU-sized frame of a slot's serialized ledger entries.
+///
+/// Layout: {common, data} headers | data buffer
+///     | [Merkle root of the previous erasure batch if chained]
+///     | Merkle proof
+///     | [Retransmitter's signature if resigned]
+///
+/// The slice past signature till the end of the data buffer is erasure coded.
+/// The slice past signature and before the merkle proof is hashed to generate
+/// the Merkle tree. The root of the Merkle tree is signed.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct ShredData {
+    /// Deserialized copy of the common header stored in the first
+    /// `SIZE_OF_COMMON_SHRED_HEADER` bytes of `payload`.
+    ///
+    /// The struct field and the `payload` bytes are two representations of the
+    /// same data and are kept in sync: `from_payload` decodes the field out of
+    /// the bytes, while shreds built in memory get their headers written back
+    /// into the payload by `finish_erasure_batch`. Mutators that touch the
+    /// header (e.g. `set_signature`) must update both.
     common_header: ShredCommonHeader,
+    /// Deserialized copy of the data header, stored in `payload` immediately
+    /// after the common header. Kept in sync with the bytes just like
+    /// `common_header`.
+    ///
+    /// For a shred recovered by erasure coding this header is re-read from the
+    /// reconstructed payload, since only the signature precedes the erasure
+    /// coded region and the header bytes themselves are recovered, not known
+    /// up front.
     data_header: DataShredHeader,
+    /// The shred exactly as it appears on the wire, always
+    /// `ShredData::SIZE_OF_PAYLOAD` bytes; longer buffers are truncated on
+    /// parse and shorter ones rejected.
+    ///
+    /// Cheaply cloneable, so a recovered shred's bytes can be shared between
+    /// the blockstore-insert and retransmit paths without copying.
     payload: Payload,
 }
 
-// Layout: {common, coding} headers | erasure coded shard
-//     | [Merkle root of the previous erasure batch if chained]
-//     | Merkle proof
-//     | [Retransmitter's signature if resigned]
-// The slice past signature and before the merkle proof is hashed to generate
-// the Merkle tree. The root of the Merkle tree is signed.
+/// A coding shred: one Reed-Solomon parity shard protecting an erasure batch.
+///
+/// Layout: {common, coding} headers | erasure coded shard
+///     | [Merkle root of the previous erasure batch if chained]
+///     | Merkle proof
+///     | [Retransmitter's signature if resigned]
+///
+/// The slice past signature and before the merkle proof is hashed to generate
+/// the Merkle tree. The root of the Merkle tree is signed.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct ShredCode {
+    /// Deserialized copy of the common header stored at the front of
+    /// `payload`, kept in sync with those bytes. See
+    /// [`ShredData::common_header`].
     common_header: ShredCommonHeader,
+    /// Deserialized copy of the coding header, stored in `payload` immediately
+    /// after the common header.
+    ///
+    /// Unlike a data shred's header, this one is *not* covered by the erasure
+    /// coding — the parity bytes start after it.
     coding_header: CodingShredHeader,
+    /// The shred exactly as it appears on the wire, always
+    /// `ShredCode::SIZE_OF_PAYLOAD` bytes. See [`ShredData::payload`].
     payload: Payload,
 }
 
-#[derive(Clone, Debug, Eq, PartialEq)]
-pub(crate) enum Shred {
-    ShredCode(ShredCode),
-    ShredData(ShredData),
-}
-
+// Merkle specific operations on the `Shred` enum defined in the parent module.
+// These live here, rather than alongside the rest of `Shred`'s methods, so that
+// they can reach the private helpers generated by `impl_merkle_shred!` without
+// widening the visibility of the Merkle internals.
 impl Shred {
     dispatch!(fn erasure_shard_index(&self) -> Result<usize, Error>);
     dispatch!(fn erasure_shard_mut(&mut self) -> Result<PayloadMutGuard<'_, Range<usize>>, Error>);
     dispatch!(fn merkle_node(&self) -> Result<Hash, Error>);
-    dispatch!(fn sanitize(&self) -> Result<(), Error>);
     dispatch!(fn set_chained_merkle_root(&mut self, chained_merkle_root: &Hash) -> Result<(), Error>);
-    dispatch!(fn set_signature(&mut self, signature: Signature));
-    dispatch!(fn signed_data(&self) -> Result<Hash, Error>);
-    dispatch!(pub(super) fn common_header(&self) -> &ShredCommonHeader);
-    dispatch!(pub(super) fn payload(&self) -> &Payload);
     dispatch!(pub(super) fn set_retransmitter_signature(&mut self, signature: &Signature) -> Result<(), Error>);
-
-    #[inline]
-    fn fec_set_index(&self) -> u32 {
-        self.common_header().fec_set_index
-    }
 
     #[inline]
     fn merkle_proof(&self) -> Result<impl Iterator<Item = &MerkleProofEntry>, Error> {
@@ -108,47 +133,12 @@ impl Shred {
             Self::ShredData(shred) => shred.set_merkle_proof(proof),
         }
     }
-
-    #[must_use]
-    fn verify(&self, pubkey: &Pubkey) -> bool {
-        match self.signed_data() {
-            Ok(data) => self.signature().verify(pubkey.as_ref(), data.as_ref()),
-            Err(_) => false,
-        }
-    }
-
-    #[inline]
-    fn signature(&self) -> &Signature {
-        &self.common_header().signature
-    }
-
-    pub(super) fn from_payload<T: AsRef<[u8]>>(shred: T) -> Result<Self, Error>
-    where
-        Payload: From<T>,
-    {
-        match shred::layout::get_shred_variant(shred.as_ref())? {
-            ShredVariant::MerkleCode { .. } => Ok(Self::ShredCode(ShredCode::from_payload(shred)?)),
-            ShredVariant::MerkleData { .. } => Ok(Self::ShredData(ShredData::from_payload(shred)?)),
-        }
-    }
 }
 
 #[cfg(test)]
 impl Shred {
     dispatch!(fn erasure_shard(&self) -> Result<&[u8], Error>);
     dispatch!(fn proof_size(&self) -> Result<u8, Error>);
-    dispatch!(pub(super) fn chained_merkle_root(&self) -> Result<Hash, Error>);
-    dispatch!(pub(super) fn merkle_root(&self) -> Result<Hash, Error>);
-    dispatch!(pub(super) fn retransmitter_signature(&self) -> Result<Signature, Error>);
-    dispatch!(pub(super) fn retransmitter_signature_offset(&self) -> Result<usize, Error>);
-
-    fn index(&self) -> u32 {
-        self.common_header().index
-    }
-
-    fn shred_type(&self) -> ShredType {
-        ShredType::from(self.common_header().shred_variant)
-    }
 }
 
 impl ShredData {
@@ -851,7 +841,7 @@ pub(super) fn recover(
             // Assert that shred payload is fully populated.
             debug_assert_eq!(shred, {
                 let shred = shred.payload().clone();
-                Shred::from_payload(shred).unwrap()
+                Shred::new_from_serialized_shred(shred).unwrap()
             });
             Ok(Some(shred))
         }
@@ -1234,6 +1224,7 @@ fn shred_leftover_data(
 // - Signs the root of the Merkle tree.
 // - Populates Merkle proof for each shred and attaches the signature.
 // Returns the root of the Merkle tree.
+#[cfg_attr(test, qualifiers(pub(crate)))]
 fn finish_erasure_batch(
     keypair: &Keypair,
     shreds: &mut [Shred],
@@ -1298,31 +1289,11 @@ fn finish_erasure_batch(
         #[cfg(debug_assertions)]
         {
             // Assert that shred payload is fully populated.
-            let expected_shred = Shred::from_payload(shred.payload().clone()).unwrap();
+            let expected_shred = Shred::new_from_serialized_shred(shred.payload().clone()).unwrap();
             debug_assert_eq!(shred, &expected_shred);
         }
     }
     Ok(*tree.root())
-}
-
-#[cfg(test)]
-pub(crate) fn finish_erasure_batch_for_tests(
-    keypair: &Keypair,
-    shreds: &mut [crate::shred::Shred],
-    chained_merkle_root: Hash,
-    reed_solomon_cache: &ReedSolomonCache,
-) -> Result<Hash, Error> {
-    let mut batch: Vec<_> = shreds
-        .iter()
-        .cloned()
-        .map(crate::shred::Shred::try_into)
-        .collect::<Result<_, _>>()?;
-    let chained_merkle_root =
-        finish_erasure_batch(keypair, &mut batch, chained_merkle_root, reed_solomon_cache)?;
-    for (dst, src) in shreds.iter_mut().zip(batch) {
-        *dst = crate::shred::Shred::from(src);
-    }
-    Ok(chained_merkle_root)
 }
 
 #[cfg(test)]

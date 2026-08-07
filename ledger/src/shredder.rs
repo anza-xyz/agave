@@ -138,7 +138,7 @@ impl Shredder {
             reed_solomon_cache,
             stats,
         )?;
-        Ok(shreds.into_iter().map(Shred::from))
+        Ok(shreds.into_iter())
     }
 
     pub fn entries_to_merkle_shreds_for_tests(
