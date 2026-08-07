@@ -495,7 +495,7 @@ mod tests {
 
         let server_keypair = Keypair::new();
         let server = Endpoint::server(
-            new_server_config(&server_keypair, MAX_DATAGRAMS_PER_SECOND),
+            new_server_config(&server_keypair, MAX_DATAGRAMS_PER_SECOND, 1),
             SocketAddr::from((Ipv4Addr::LOCALHOST, ports.next().unwrap())),
         )
         .expect("bind server endpoint");
