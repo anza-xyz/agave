@@ -87,7 +87,7 @@ pub(crate) struct EventHandler {
 
 struct LocalContext {
     pub(crate) my_pubkey: Pubkey,
-    pub(crate) genesis_slot: Slot,
+    pub(crate) genesis_block: Block,
     pub(crate) pending_blocks: PendingBlocks,
     pub(crate) finalized_blocks: BTreeSet<Block>,
     pub(crate) received_shred: BTreeSet<Slot>,
@@ -128,7 +128,7 @@ impl EventHandler {
             let _exit_on_drop = ExitOnDrop::new(validator_exit);
             let mut local_context = LocalContext {
                 my_pubkey: ctx.cluster_info.keypair().pubkey(),
-                genesis_slot: 0,
+                genesis_block: Block::default(),
                 pending_blocks: PendingBlocks::default(),
                 finalized_blocks: BTreeSet::default(),
                 received_shred: BTreeSet::default(),
@@ -142,7 +142,7 @@ impl EventHandler {
                 // Exited during migration
                 return Ok(());
             };
-            local_context.genesis_slot = genesis_block.slot;
+            local_context.genesis_block = genesis_block;
             let root_slot = vctx.sharable_banks.root().slot();
             info!(
                 "{}: Event loop starting genesis {genesis_block:?} root {root_slot}",
@@ -152,7 +152,7 @@ impl EventHandler {
             // Check for set identity
             if let Err(e) = Self::handle_set_identity(
                 &mut local_context.my_pubkey,
-                local_context.genesis_slot,
+                local_context.genesis_block,
                 &ctx,
                 &mut vctx,
             ) {
@@ -574,7 +574,7 @@ impl EventHandler {
                 info!("{}: SetIdentity", local_context.my_pubkey);
                 if let Err(e) = Self::handle_set_identity(
                     &mut local_context.my_pubkey,
-                    local_context.genesis_slot,
+                    local_context.genesis_block,
                     ctx,
                     vctx,
                 ) {
@@ -664,7 +664,7 @@ impl EventHandler {
 
     fn handle_set_identity(
         my_pubkey: &mut Pubkey,
-        genesis_slot: Slot,
+        genesis_block: Block,
         ctx: &SharedContext,
         vctx: &mut VotingContext,
     ) -> Result<(), VoteHistoryError> {
@@ -681,7 +681,7 @@ impl EventHandler {
             vctx.identity_keypair = new_identity;
             warn!("set-identity: from {my_old_pubkey} to {my_pubkey}");
         }
-        vctx.vote_history.initialize_genesis(genesis_slot);
+        vctx.vote_history.initialize_genesis(genesis_block);
         Ok(())
     }
 
@@ -1201,7 +1201,7 @@ mod tests {
         };
 
         let mut vote_history = VoteHistory::new(my_node_keypair.pubkey(), 0);
-        vote_history.initialize_genesis(0);
+        vote_history.initialize_genesis(Block::default());
         let voting_context = VotingContext {
             cluster_info: cluster_info.clone(),
             identity_keypair: Arc::new(my_node_keypair.insecure_clone()),
@@ -1227,7 +1227,7 @@ mod tests {
 
         let local_context = LocalContext {
             my_pubkey: my_node_keypair.pubkey(),
-            genesis_slot: 0,
+            genesis_block: Block::default(),
             pending_blocks: BTreeMap::new(),
             finalized_blocks: BTreeSet::new(),
             received_shred: BTreeSet::new(),
@@ -1828,10 +1828,14 @@ mod tests {
     fn test_try_skip_window_starts_after_unaligned_genesis() {
         let mut test_context = setup();
         let genesis_slot = 1;
+        let genesis_block = Block {
+            slot: genesis_slot,
+            block_id: Hash::new_unique(),
+        };
         test_context
             .voting_context
             .vote_history
-            .initialize_genesis(genesis_slot);
+            .initialize_genesis(genesis_block);
 
         test_context.send_timeout_event(2);
 
@@ -2375,7 +2379,7 @@ mod tests {
         vote_history_storage
             .store(&SavedVoteHistoryVersions::from(saved_vote_history))
             .unwrap();
-        old_vote_history.initialize_genesis(0);
+        old_vote_history.initialize_genesis(Block::default());
 
         test_context
             .cluster_info

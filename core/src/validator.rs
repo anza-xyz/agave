@@ -2588,14 +2588,6 @@ impl<'a> ProcessBlockStore<'a> {
         let vote_history = {
             let vote_history =
                 restore_vote_history(self.config, self.bank_forks, self.id, self.vote_account)?;
-            // reconciliation attempt 1 of 2 with vote history
-            reconcile_blockstore_roots_with_external_source(
-                ExternalRootSource::VoteHistory(vote_history.root()),
-                self.blockstore,
-                &mut self.original_blockstore_root,
-            )
-            .map_err(|err| format!("Failed to reconcile blockstore with vote history: {err:?}"))?;
-
             post_process_restored_vote_history(
                 vote_history,
                 self.id,
@@ -2609,7 +2601,7 @@ impl<'a> ProcessBlockStore<'a> {
             self.bank_forks.read().unwrap().root(),
         ) {
             // reconciliation attempt 2 of 2 with hard fork
-            // it is intentional that we do this second, as having the hard fork root < tower/vote_history root
+            // it is intentional that we do this second, as having the hard fork root < tower root
             // is invalid! This means we've hard forked and missed a finalized slot
             reconcile_blockstore_roots_with_external_source(
                 ExternalRootSource::HardFork(hard_fork_restart_slot),
