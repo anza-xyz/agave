@@ -162,8 +162,10 @@ pub fn execute_txn(
     let (bank, _bank_forks) = bank.wrap_with_bank_forks_for_tests();
 
     let transaction_bytes = Bytes::from(wincode::serialize(&transaction).unwrap());
-    let transaction_view = UnsanitizedTransactionView::try_new_unsanitized(transaction_bytes)
-        .expect("transaction_view accepts serialized representation of VersionedTransaction");
+    let Ok(transaction_view) = UnsanitizedTransactionView::try_new_unsanitized(transaction_bytes)
+    else {
+        return BankTxnProcessingResult::FailedVerification(TransactionError::SanitizeFailure);
+    };
 
     let runtime_transaction = match bank.verify_transaction(
         transaction_view,
