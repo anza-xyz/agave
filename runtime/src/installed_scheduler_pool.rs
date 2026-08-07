@@ -22,12 +22,13 @@
 
 use {
     crate::bank::Bank,
+    agave_transaction_view::resolved_transaction_view::ResolvedTransactionView,
+    bytes::Bytes,
     log::*,
     solana_clock::Slot,
     solana_hash::Hash,
     solana_runtime_transaction::runtime_transaction::RuntimeTransaction,
     solana_svm_timings::ExecuteTimings,
-    solana_transaction::sanitized::SanitizedTransaction,
     solana_transaction_error::{TransactionError, TransactionResult as Result},
     solana_unified_scheduler_logic::OrderedTaskId,
     std::{
@@ -129,7 +130,7 @@ pub trait InstalledScheduler: Send + Sync + Debug + 'static {
     /// having &mut.
     fn schedule_execution(
         &self,
-        transaction: RuntimeTransaction<SanitizedTransaction>,
+        transaction: RuntimeTransaction<ResolvedTransactionView<Bytes>>,
         task_id: OrderedTaskId,
     ) -> ScheduleResult;
 
@@ -438,7 +439,10 @@ impl BankWithScheduler {
     pub fn schedule_transaction_executions(
         &self,
         transaction_with_task_ids: impl ExactSizeIterator<
-            Item = (RuntimeTransaction<SanitizedTransaction>, OrderedTaskId),
+            Item = (
+                RuntimeTransaction<ResolvedTransactionView<Bytes>>,
+                OrderedTaskId,
+            ),
         >,
     ) -> Result<()> {
         trace!(
@@ -853,12 +857,13 @@ mod tests {
             mint_keypair,
             ..
         } = create_genesis_config(10_000);
-        let tx0 = RuntimeTransaction::from_transaction_for_tests(system_transaction::transfer(
-            &mint_keypair,
-            &solana_pubkey::new_rand(),
-            2,
-            genesis_config.hash(),
-        ));
+        let tx0 =
+            RuntimeTransaction::from_transaction_view_for_tests(system_transaction::transfer(
+                &mint_keypair,
+                &solana_pubkey::new_rand(),
+                2,
+                genesis_config.hash(),
+            ));
         let bank = Arc::new(Bank::new_for_tests(&genesis_config));
         let mocked_scheduler = setup_mocked_scheduler_with_extra(
             bank.clone(),

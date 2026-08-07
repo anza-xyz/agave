@@ -25,6 +25,11 @@ use {
         stakes::{DeserializableDelegationStakes, SerdeStakesToStakeFormat, Stakes},
     },
     agave_feature_set::FeatureSet,
+    agave_transaction_view::{
+        resolved_transaction_view::ResolvedTransactionView,
+        transaction_view::UnsanitizedTransactionView,
+    },
+    bytes::Bytes,
     solana_account::AccountSharedData,
     solana_accounts_db::{ancestors::Ancestors, blockhash_queue::BlockhashQueue},
     solana_clock::{BankId, Clock, DEFAULT_TICKS_PER_SLOT, Epoch, MAX_PROCESSING_AGE},
@@ -41,10 +46,7 @@ use {
         transaction_processor::{ExecutionRecordingConfig, TransactionProcessingConfig},
     },
     solana_svm_timings::ExecuteTimings,
-    solana_transaction::{
-        TransactionVerificationMode, sanitized::SanitizedTransaction,
-        versioned::VersionedTransaction,
-    },
+    solana_transaction::{TransactionVerificationMode, versioned::VersionedTransaction},
     solana_transaction_error::TransactionError,
     solana_vote::vote_account::VoteAccounts,
     std::collections::HashMap,
@@ -61,6 +63,7 @@ use {
     },
     solana_instruction::error::InstructionError,
     solana_message::SanitizedMessage,
+    solana_runtime_transaction::transaction_with_meta::TransactionWithMeta,
     solana_signature::Signature,
     solana_svm::conformance::{
         account_state::account_to_proto, direct_mapping::direct_mapping_handle_cu_exhaustion,
@@ -86,7 +89,7 @@ pub enum BankTxnProcessingResult {
     /// processing result and transaction for effect extraction.
     Processed {
         result: TransactionProcessingResult,
-        runtime_transaction: Box<RuntimeTransaction<SanitizedTransaction>>,
+        runtime_transaction: Box<RuntimeTransaction<ResolvedTransactionView<Bytes>>>,
     },
 }
 
@@ -158,8 +161,14 @@ pub fn execute_txn(
     let bank = Bank::new_for_txn_tests(bank_rc, bank_fields, feature_set, epoch_stakes);
     let (bank, _bank_forks) = bank.wrap_with_bank_forks_for_tests();
 
+    let transaction_bytes = Bytes::from(wincode::serialize(&transaction).unwrap());
+    let Ok(transaction_view) = UnsanitizedTransactionView::try_new_unsanitized(transaction_bytes)
+    else {
+        return BankTxnProcessingResult::FailedVerification(TransactionError::SanitizeFailure);
+    };
+
     let runtime_transaction = match bank.verify_transaction(
-        transaction,
+        transaction_view,
         TransactionVerificationMode::HashAndVerifyPrecompiles,
     ) {
         Ok(tx) => tx,
@@ -455,7 +464,8 @@ pub fn execute_txn_proto(context: &ProtoTxnContext) -> ProtoTxnResult {
             runtime_transaction,
         } => (result, runtime_transaction),
     };
-    let sanitized_message = runtime_transaction.message();
+    let sanitized_transaction = runtime_transaction.as_sanitized_transaction();
+    let sanitized_message = sanitized_transaction.message();
 
     let mut txn_result = output_txn_result(&result, sanitized_message);
 
@@ -560,6 +570,7 @@ mod tests {
             v0::{self, MessageAddressTableLookup},
         },
         solana_pubkey::Pubkey,
+        solana_runtime_transaction::transaction_with_meta::TransactionWithMeta,
         solana_sdk_ids::{bpf_loader_upgradeable, native_loader, sysvar},
         solana_signature::Signature,
         solana_slot_hashes::SlotHashes,
@@ -733,14 +744,18 @@ mod tests {
             BankTxnProcessingResult::Processed {
                 result: Ok(ProcessedTransaction::Executed(executed_tx)),
                 runtime_transaction,
-            } => executed_tx
-                .loaded_transaction
-                .accounts
-                .iter()
-                .enumerate()
-                .filter(|(index, _)| runtime_transaction.message().is_writable(*index))
-                .find(|(_, (key, _))| key == pubkey)
-                .map(|(_, (_, account))| account.lamports()),
+            } => {
+                let sanitized_transaction = runtime_transaction.as_sanitized_transaction();
+                let sanitized_message = sanitized_transaction.message();
+                executed_tx
+                    .loaded_transaction
+                    .accounts
+                    .iter()
+                    .enumerate()
+                    .filter(|(index, _)| sanitized_message.is_writable(*index))
+                    .find(|(_, (key, _))| key == pubkey)
+                    .map(|(_, (_, account))| account.lamports())
+            }
             _ => None,
         }
     }

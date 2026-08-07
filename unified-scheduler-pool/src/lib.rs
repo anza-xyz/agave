@@ -14,7 +14,9 @@
 //! regarding to pooling and the actual use.
 
 use {
+    agave_transaction_view::resolved_transaction_view::ResolvedTransactionView,
     assert_matches::assert_matches,
+    bytes::Bytes,
     crossbeam_channel::{
         self, Receiver, RecvError, RecvTimeoutError, SendError, Sender, never, select_biased,
     },
@@ -38,7 +40,6 @@ use {
     },
     solana_runtime_transaction::runtime_transaction::RuntimeTransaction,
     solana_svm_timings::ExecuteTimings,
-    solana_transaction::sanitized::SanitizedTransaction,
     solana_transaction_error::{TransactionError, TransactionResult as Result},
     solana_unified_scheduler_logic::{
         BlockSize, Capability, OrderedTaskId, SchedulingStateMachine, Task, UsageQueue,
@@ -544,7 +545,7 @@ pub trait TaskHandler: Send + Sync + Debug + Sized + 'static {
         result: &mut Result<()>,
         timings: &mut ExecuteTimings,
         scheduling_context: &SchedulingContext,
-        task: &Task,
+        task: &Task<Bytes>,
         handler_context: &HandlerContext,
     );
 }
@@ -557,7 +558,7 @@ impl TaskHandler for DefaultTaskHandler {
         result: &mut Result<()>,
         timings: &mut ExecuteTimings,
         scheduling_context: &SchedulingContext,
-        task: &Task,
+        task: &Task<Bytes>,
         handler_context: &HandlerContext,
     ) {
         let bank = scheduling_context.bank();
@@ -590,12 +591,12 @@ impl TaskHandler for DefaultTaskHandler {
 }
 
 struct ExecutedTask {
-    task: Task,
+    task: Task<Bytes>,
     result_with_timings: ResultWithTimings,
 }
 
 impl ExecutedTask {
-    fn new_boxed(task: Task) -> Box<Self> {
+    fn new_boxed(task: Task<Bytes>) -> Box<Self> {
         Box::new(Self {
             task,
             result_with_timings: initialized_result_with_timings(),
@@ -622,7 +623,7 @@ enum SubchanneledPayload<P1, P2> {
     Disconnect,
 }
 
-type NewTaskPayload = SubchanneledPayload<Task, Box<(SchedulingContext, ResultWithTimings)>>;
+type NewTaskPayload = SubchanneledPayload<Task<Bytes>, Box<(SchedulingContext, ResultWithTimings)>>;
 const_assert_eq!(mem::size_of::<NewTaskPayload>(), 16);
 
 // A tiny generic message type to synchronize multiple threads everytime some contextual data needs
@@ -789,7 +790,7 @@ mod chained_channel {
 #[derive(Debug)]
 struct UsageQueueLoaderInner {
     capability: Capability,
-    usage_queues: DashMap<Pubkey, UsageQueue>,
+    usage_queues: DashMap<Pubkey, UsageQueue<Bytes>>,
 }
 
 impl UsageQueueLoaderInner {
@@ -800,7 +801,7 @@ impl UsageQueueLoaderInner {
         }
     }
 
-    fn load(&self, address: Pubkey) -> UsageQueue {
+    fn load(&self, address: Pubkey) -> UsageQueue<Bytes> {
         self.usage_queues
             .entry(address)
             .or_insert_with(|| UsageQueue::new(&self.capability))
@@ -832,7 +833,7 @@ impl UsageQueueLoader {
         }
     }
 
-    fn load(&self, pubkey: Pubkey) -> UsageQueue {
+    fn load(&self, pubkey: Pubkey) -> UsageQueue<Bytes> {
         self.usage_queue_loader().load(pubkey)
     }
 
@@ -1049,14 +1050,17 @@ impl<S: SpawnableScheduler<TH>, TH: TaskHandler> ThreadManager<S, TH> {
         None
     }
 
-    fn can_receive_unblocked_task(state_machine: &SchedulingStateMachine) -> bool {
+    fn can_receive_unblocked_task(state_machine: &SchedulingStateMachine<Bytes>) -> bool {
         // Always take as much as possible out of SchedulingStateMachine to avoid crossbeam
         // channel internal message buffering depletion with much relaxed condition than
         // block production.
         state_machine.has_unblocked_task()
     }
 
-    fn can_finish_session(session_ending: bool, state_machine: &SchedulingStateMachine) -> bool {
+    fn can_finish_session(
+        session_ending: bool,
+        state_machine: &SchedulingStateMachine<Bytes>,
+    ) -> bool {
         // It's needed to wait to execute all active tasks without any short-circuiting,
         // even if the session has been signalled for ending; otherwise verification
         // outcome could differ.
@@ -1203,7 +1207,7 @@ impl<S: SpawnableScheduler<TH>, TH: TaskHandler> ThreadManager<S, TH> {
         // prioritization further. Consequently, this also contributes to alleviate the known
         // heuristic's caveat for the first task of linearized runs, which is described above.
         let (mut runnable_task_sender, runnable_task_receiver) =
-            chained_channel::unbounded::<Task, SchedulingContext>(context);
+            chained_channel::unbounded::<Task<Bytes>, SchedulingContext>(context);
         // Create two handler-to-scheduler channels to prioritize the finishing of blocked tasks,
         // because it is more likely that a blocked task will have more blocked tasks behind it,
         // which should be scheduled while minimizing the delay to clear buffered linearized runs
@@ -1572,7 +1576,7 @@ impl<S: SpawnableScheduler<TH>, TH: TaskHandler> ThreadManager<S, TH> {
             .collect();
     }
 
-    fn send_task(&self, task: Task) -> ScheduleResult {
+    fn send_task(&self, task: Task<Bytes>) -> ScheduleResult {
         debug!("send_task()");
         self.new_task_sender
             .send(NewTaskPayload::Payload(task))
@@ -1808,7 +1812,7 @@ impl<TH: TaskHandler> InstalledScheduler for PooledScheduler<TH> {
 
     fn schedule_execution(
         &self,
-        transaction: RuntimeTransaction<SanitizedTransaction>,
+        transaction: RuntimeTransaction<ResolvedTransactionView<Bytes>>,
         task_id: OrderedTaskId,
     ) -> ScheduleResult {
         let task = SchedulingStateMachine::create_task(transaction, task_id, &mut |pubkey| {
@@ -1896,7 +1900,6 @@ mod tests {
         },
         solana_svm_timings::ExecuteTimingType,
         solana_system_transaction as system_transaction,
-        solana_transaction::sanitized::SanitizedTransaction,
         solana_transaction_error::TransactionError,
         std::{
             num::Saturating,
@@ -2222,7 +2225,7 @@ mod tests {
                 _result: &mut Result<()>,
                 timings: &mut ExecuteTimings,
                 _scheduling_context: &SchedulingContext,
-                _task: &Task,
+                _task: &Task<Bytes>,
                 _handler_context: &HandlerContext,
             ) {
                 timings.metrics[ExecuteTimingType::CheckUs] += 123;
@@ -2245,7 +2248,7 @@ mod tests {
         pool.register_timeout_listener(bank.create_timeout_listener());
 
         let tx_before_stale =
-            RuntimeTransaction::from_transaction_for_tests(system_transaction::transfer(
+            RuntimeTransaction::from_transaction_view_for_tests(system_transaction::transfer(
                 &mint_keypair,
                 &solana_pubkey::new_rand(),
                 2,
@@ -2257,7 +2260,7 @@ mod tests {
 
         sleepless_testing::at(TestCheckPoint::AfterTimeoutListenerTriggered);
         let tx_after_stale =
-            RuntimeTransaction::from_transaction_for_tests(system_transaction::transfer(
+            RuntimeTransaction::from_transaction_view_for_tests(system_transaction::transfer(
                 &mint_keypair,
                 &solana_pubkey::new_rand(),
                 2,
@@ -2363,7 +2366,7 @@ mod tests {
         pool.register_timeout_listener(bank.create_timeout_listener());
 
         let tx_before_stale =
-            RuntimeTransaction::from_transaction_for_tests(system_transaction::transfer(
+            RuntimeTransaction::from_transaction_view_for_tests(system_transaction::transfer(
                 &mint_keypair,
                 &solana_pubkey::new_rand(),
                 2,
@@ -2376,7 +2379,7 @@ mod tests {
 
         sleepless_testing::at(TestCheckPoint::AfterTimeoutListenerTriggered);
         let tx_after_stale =
-            RuntimeTransaction::from_transaction_for_tests(system_transaction::transfer(
+            RuntimeTransaction::from_transaction_view_for_tests(system_transaction::transfer(
                 &mint_keypair,
                 &solana_pubkey::new_rand(),
                 2,
@@ -2402,7 +2405,7 @@ mod tests {
             result: &mut Result<()>,
             _timings: &mut ExecuteTimings,
             _scheduling_context: &SchedulingContext,
-            _task: &Task,
+            _task: &Task<Bytes>,
             _handler_context: &HandlerContext,
         ) {
             *result = Err(TransactionError::AccountNotFound);
@@ -2426,7 +2429,7 @@ mod tests {
             ..
         } = create_genesis_config(10_000);
 
-        let tx = RuntimeTransaction::from_transaction_for_tests(system_transaction::transfer(
+        let tx = RuntimeTransaction::from_transaction_view_for_tests(system_transaction::transfer(
             &mint_keypair,
             &solana_pubkey::new_rand(),
             2,
@@ -2507,7 +2510,7 @@ mod tests {
                 _result: &mut Result<()>,
                 _timings: &mut ExecuteTimings,
                 _scheduling_context: &SchedulingContext,
-                _task: &Task,
+                _task: &Task<Bytes>,
                 _handler_context: &HandlerContext,
             ) {
                 *TASK_COUNT.lock().unwrap() += 1;
@@ -2536,12 +2539,13 @@ mod tests {
         const MAX_TASK_COUNT: OrderedTaskId = 100;
 
         for i in 0..MAX_TASK_COUNT {
-            let tx = RuntimeTransaction::from_transaction_for_tests(system_transaction::transfer(
-                &mint_keypair,
-                &solana_pubkey::new_rand(),
-                2,
-                genesis_config.hash(),
-            ));
+            let tx =
+                RuntimeTransaction::from_transaction_view_for_tests(system_transaction::transfer(
+                    &mint_keypair,
+                    &solana_pubkey::new_rand(),
+                    2,
+                    genesis_config.hash(),
+                ));
             scheduler.schedule_execution(tx, i).unwrap();
         }
 
@@ -2684,12 +2688,13 @@ mod tests {
             mint_keypair,
             ..
         } = create_genesis_config(10_000);
-        let tx0 = RuntimeTransaction::from_transaction_for_tests(system_transaction::transfer(
-            &mint_keypair,
-            &solana_pubkey::new_rand(),
-            2,
-            genesis_config.hash(),
-        ));
+        let tx0 =
+            RuntimeTransaction::from_transaction_view_for_tests(system_transaction::transfer(
+                &mint_keypair,
+                &solana_pubkey::new_rand(),
+                2,
+                genesis_config.hash(),
+            ));
         let bank = Bank::new_for_tests(&genesis_config);
         let (bank, _bank_forks) = setup_dummy_fork_graph(bank);
         let pool = DefaultSchedulerPool::new_dyn_for_verification(None, None, None, None, None);
@@ -2740,19 +2745,20 @@ mod tests {
         let context = SchedulingContext::new(bank.clone());
         let scheduler = pool.take_scheduler(context).unwrap();
 
-        let bad_tx = RuntimeTransaction::from_transaction_for_tests(system_transaction::transfer(
-            &mint_keypair,
-            &solana_pubkey::new_rand(),
-            2,
-            Hash::new_unique(),
-        ));
+        let bad_tx =
+            RuntimeTransaction::from_transaction_view_for_tests(system_transaction::transfer(
+                &mint_keypair,
+                &solana_pubkey::new_rand(),
+                2,
+                Hash::new_unique(),
+            ));
         assert_eq!(bank.transaction_count(), 0);
         scheduler.schedule_execution(bad_tx, 0).unwrap();
         sleepless_testing::at(TestCheckPoint::AfterTaskHandled);
         assert_eq!(bank.transaction_count(), 0);
 
         let good_tx_after_bad_tx =
-            RuntimeTransaction::from_transaction_for_tests(system_transaction::transfer(
+            RuntimeTransaction::from_transaction_view_for_tests(system_transaction::transfer(
                 &mint_keypair,
                 &solana_pubkey::new_rand(),
                 3,
@@ -2831,7 +2837,7 @@ mod tests {
                 _result: &mut Result<()>,
                 _timings: &mut ExecuteTimings,
                 _scheduling_context: &SchedulingContext,
-                task: &Task,
+                task: &Task<Bytes>,
                 _handler_context: &HandlerContext,
             ) {
                 let task_id = task.task_id();
@@ -2869,12 +2875,13 @@ mod tests {
 
         for task_id in 0..TX_COUNT {
             // Use 2 non-conflicting txes to exercise the channel disconnected case as well.
-            let tx = RuntimeTransaction::from_transaction_for_tests(system_transaction::transfer(
-                &Keypair::new(),
-                &solana_pubkey::new_rand(),
-                1,
-                genesis_config.hash(),
-            ));
+            let tx =
+                RuntimeTransaction::from_transaction_view_for_tests(system_transaction::transfer(
+                    &Keypair::new(),
+                    &solana_pubkey::new_rand(),
+                    1,
+                    genesis_config.hash(),
+                ));
             scheduler.schedule_execution(tx, task_id).unwrap();
         }
         // finally unblock the scheduler thread; otherwise the above schedule_execution could
@@ -2910,7 +2917,7 @@ mod tests {
                 result: &mut Result<()>,
                 _timings: &mut ExecuteTimings,
                 _scheduling_context: &SchedulingContext,
-                task: &Task,
+                task: &Task<Bytes>,
                 _handler_context: &HandlerContext,
             ) {
                 let task_id = task.task_id();
@@ -2937,12 +2944,13 @@ mod tests {
         let scheduler = pool.do_take_scheduler(context);
 
         for i in 0..10 {
-            let tx = RuntimeTransaction::from_transaction_for_tests(system_transaction::transfer(
-                &mint_keypair,
-                &solana_pubkey::new_rand(),
-                2,
-                genesis_config.hash(),
-            ));
+            let tx =
+                RuntimeTransaction::from_transaction_view_for_tests(system_transaction::transfer(
+                    &mint_keypair,
+                    &solana_pubkey::new_rand(),
+                    2,
+                    genesis_config.hash(),
+                ));
             scheduler.schedule_execution(tx, i).unwrap();
         }
         // finally unblock the scheduler thread; otherwise the above schedule_execution could
@@ -2994,7 +3002,7 @@ mod tests {
                 result: &mut Result<()>,
                 timings: &mut ExecuteTimings,
                 scheduling_context: &SchedulingContext,
-                task: &Task,
+                task: &Task<Bytes>,
                 handler_context: &HandlerContext,
             ) {
                 let task_id = task.task_id();
@@ -3023,18 +3031,20 @@ mod tests {
         } = create_genesis_config_for_block_production(10_000);
 
         // tx0 and tx1 is definitely conflicting to write-lock the mint address
-        let tx0 = RuntimeTransaction::from_transaction_for_tests(system_transaction::transfer(
-            &mint_keypair,
-            &solana_pubkey::new_rand(),
-            2,
-            genesis_config.hash(),
-        ));
-        let tx1 = RuntimeTransaction::from_transaction_for_tests(system_transaction::transfer(
-            &mint_keypair,
-            &solana_pubkey::new_rand(),
-            2,
-            genesis_config.hash(),
-        ));
+        let tx0 =
+            RuntimeTransaction::from_transaction_view_for_tests(system_transaction::transfer(
+                &mint_keypair,
+                &solana_pubkey::new_rand(),
+                2,
+                genesis_config.hash(),
+            ));
+        let tx1 =
+            RuntimeTransaction::from_transaction_view_for_tests(system_transaction::transfer(
+                &mint_keypair,
+                &solana_pubkey::new_rand(),
+                2,
+                genesis_config.hash(),
+            ));
 
         let bank = Bank::new_for_tests(&genesis_config);
         let (bank, _bank_forks) = setup_dummy_fork_graph(bank);
@@ -3100,7 +3110,7 @@ mod tests {
                 _result: &mut Result<()>,
                 _timings: &mut ExecuteTimings,
                 scheduling_context: &SchedulingContext,
-                task: &Task,
+                task: &Task<Bytes>,
                 _handler_context: &HandlerContext,
             ) {
                 // The task task_id must always be matched to the slot.
@@ -3131,14 +3141,15 @@ mod tests {
             None,
         );
 
-        // Create a dummy tx and two contexts
-        let dummy_tx =
-            RuntimeTransaction::from_transaction_for_tests(system_transaction::transfer(
+        // Create a dummy tx builder and two contexts
+        let dummy_tx = || {
+            RuntimeTransaction::from_transaction_view_for_tests(system_transaction::transfer(
                 &mint_keypair,
                 &solana_pubkey::new_rand(),
                 2,
                 genesis_config.hash(),
-            ));
+            ))
+        };
         let context0 = &SchedulingContext::new(bank0.clone());
         let context1 = &SchedulingContext::new(bank1.clone());
 
@@ -3149,9 +3160,7 @@ mod tests {
             .take(10000)
         {
             let scheduler = pool.take_scheduler(context.clone()).unwrap();
-            scheduler
-                .schedule_execution(dummy_tx.clone(), task_id)
-                .unwrap();
+            scheduler.schedule_execution(dummy_tx(), task_id).unwrap();
             scheduler.wait_for_termination(false).1.return_to_pool();
         }
     }
@@ -3193,7 +3202,7 @@ mod tests {
 
         fn schedule_execution(
             &self,
-            transaction: RuntimeTransaction<SanitizedTransaction>,
+            transaction: RuntimeTransaction<ResolvedTransactionView<Bytes>>,
             task_id: OrderedTaskId,
         ) -> ScheduleResult {
             let context = self.context().clone();
@@ -3323,7 +3332,7 @@ mod tests {
             ..
         } = create_genesis_config(10_000);
         let very_old_valid_tx =
-            RuntimeTransaction::from_transaction_for_tests(system_transaction::transfer(
+            RuntimeTransaction::from_transaction_view_for_tests(system_transaction::transfer(
                 &mint_keypair,
                 &solana_pubkey::new_rand(),
                 2,
@@ -3420,7 +3429,7 @@ mod tests {
         );
         // mangle the transfer tx to try to lock fee_payer (= mint_keypair) address twice!
         tx.message.account_keys.push(tx.message.account_keys[0]);
-        let tx = RuntimeTransaction::from_transaction_for_tests(tx);
+        let tx = RuntimeTransaction::from_transaction_view_for_tests(tx);
 
         // this internally should call SanitizedTransaction::get_account_locks().
         let result = &mut Ok(());

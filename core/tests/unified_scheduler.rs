@@ -1,4 +1,5 @@
 use {
+    bytes::Bytes,
     crossbeam_channel::bounded,
     itertools::Itertools,
     log::*,
@@ -49,7 +50,7 @@ fn test_scheduler_waited_by_drop_bank_service() {
             result: &mut Result<()>,
             timings: &mut ExecuteTimings,
             scheduling_context: &SchedulingContext,
-            task: &Task,
+            task: &Task<Bytes>,
             handler_context: &HandlerContext,
         ) {
             info!("Stalling at StallingHandler::handle()...");
@@ -92,7 +93,7 @@ fn test_scheduler_waited_by_drop_bank_service() {
     let root_hash = root_bank.hash();
     bank_forks.write().unwrap().insert(root_bank);
 
-    let tx = RuntimeTransaction::from_transaction_for_tests(system_transaction::transfer(
+    let tx = RuntimeTransaction::from_transaction_view_for_tests(system_transaction::transfer(
         &mint_keypair,
         &solana_pubkey::new_rand(),
         2,

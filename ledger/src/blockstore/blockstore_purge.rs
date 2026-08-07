@@ -461,7 +461,7 @@ impl Blockstore {
 
         for slot in from_slot..=to_slot {
             let Ok((slot_entries, _, _)) =
-                self.get_slot_entries_with_shred_info(slot, 0, /*allow_dead_slots:*/ true)
+                self.get_slot_entry_views_with_shred_info(slot, 0, /*allow_dead_slots:*/ true)
             else {
                 continue;
             };
@@ -469,7 +469,7 @@ impl Blockstore {
                 .into_iter()
                 .flat_map(|entry| entry.transactions);
             for (i, transaction) in transactions.enumerate() {
-                if let Some(&signature) = transaction.signatures.first() {
+                if let Some(&signature) = transaction.signatures().first() {
                     self.transaction_status_cf
                         .delete_in_batch(batch, (signature, slot));
                     self.transaction_memos_cf
@@ -478,7 +478,7 @@ impl Blockstore {
                     let meta = self.read_transaction_status((signature, slot))?;
                     let loaded_addresses = meta.map(|meta| meta.loaded_addresses);
                     let account_keys = AccountKeys::new(
-                        transaction.message.static_account_keys(),
+                        transaction.static_account_keys(),
                         loaded_addresses.as_ref(),
                     );
 

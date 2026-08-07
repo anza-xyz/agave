@@ -673,7 +673,7 @@ mod test {
         super::*,
         assert_matches::assert_matches,
         rand::Rng,
-        solana_entry::entry::create_ticks,
+        solana_entry::entry::{create_ticks, entry_views_for_tests},
         solana_genesis_config::GenesisConfig,
         solana_gossip::{cluster_info::ClusterInfo, node::Node},
         solana_hash::Hash,
@@ -930,7 +930,7 @@ mod test {
         let header_shred_offset = (shred_multiplier - 1) * num_shreds_per_slot;
         assert_eq!(
             blockstore.get_slot_entries(1, header_shred_offset).unwrap(),
-            ticks0
+            entry_views_for_tests(ticks0)
         );
         assert_eq!(
             blockstore

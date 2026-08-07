@@ -37,10 +37,12 @@ agave-logger = { path = "../logger", version = "=4.3.0-alpha.3", features = ["ag
 agave-precompiles = { path = "../precompiles", version = "=4.3.0-alpha.3", features = ["agave-unstable-api"] }
 agave-reserved-account-keys = { path = "../reserved-account-keys", version = "=4.3.0-alpha.3", features = ["agave-unstable-api"] }
 agave-snapshots = { path = "../snapshots", version = "=4.3.0-alpha.3", features = ["agave-unstable-api"] }
+agave-transaction-view = { git = "https://github.com/dsharifi/agave-sdk", rev = "dd2d267ebc57efd763688301573a72eb6fc2bd15" }
 agave-votor = { path = "../votor", version = "=4.3.0-alpha.3", features = ["agave-unstable-api"] }
 ahash = "0.8.11"
 assert_cmd = "2.2.2"
 bincode = "1.3.3"
+bytes = "1.12.1"
 chrono = { version = "0.4.42", default-features = false }
 clap = { version = "2.33.1", default-features = false, features = ["suggestions"] }
 crossbeam-channel = "0.5.16"

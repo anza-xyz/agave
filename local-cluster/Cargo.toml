@@ -33,6 +33,7 @@ agave-votor = { workspace = true }
 agave-votor-messages = { workspace = true }
 agave-votor-transport = { workspace = true }
 arc-swap = { workspace = true }
+bytes = { workspace = true }
 crossbeam-channel = { workspace = true }
 itertools = { workspace = true }
 log = { workspace = true }

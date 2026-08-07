@@ -127,12 +127,7 @@ members = [
     "xdp-ebpf",
 ]
 
-exclude = [
-    "ci/xtask",
-    "dev-bins",
-    "programs/sbf",
-    "svm/tests/example-programs",
-]
+exclude = ["ci/xtask", "dev-bins", "programs/sbf", "svm/tests/example-programs"]
 
 resolver = "2"
 
@@ -184,7 +179,7 @@ agave-reserved-account-keys = { path = "reserved-account-keys", version = "=4.3.
 agave-scheduler-bindings = "5.0.0"
 agave-scheduling-utils = { path = "scheduling-utils", version = "=4.3.0-alpha.3", features = ["agave-unstable-api"] }
 agave-snapshots = { path = "snapshots", version = "=4.3.0-alpha.3", features = ["agave-unstable-api"] }
-agave-transaction-view = "5.1.0"
+agave-transaction-view = { git = "https://github.com/dsharifi/agave-sdk", rev = "dd2d267ebc57efd763688301573a72eb6fc2bd15" }
 agave-votor = { path = "votor", version = "=4.3.0-alpha.3", features = ["agave-unstable-api"] }
 agave-votor-messages = { path = "votor-messages", version = "=4.3.0-alpha.3", features = ["agave-unstable-api"] }
 agave-votor-transport = { path = "votor-transport", version = "=4.3.0-alpha.3", features = ["agave-unstable-api"] }

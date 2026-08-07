@@ -11,6 +11,7 @@ use {
         wire::VersionedWireConsensusMessage,
     },
     agave_votor_transport::endpoint::{Datagram, QuicDatagramEndpoint},
+    bytes::Bytes,
     crossbeam_channel::{Receiver, bounded},
     rand::{Rng, rng},
     rayon::{ThreadPool, prelude::*},
@@ -19,7 +20,9 @@ use {
     solana_core::consensus::tower_storage::{
         FileTowerStorage, SavedTower, SavedTowerVersions, TowerStorage,
     },
-    solana_entry::entry::{self, Entry, EntrySlice},
+    solana_entry::entry::{
+        self, EntryView, entry_views_to_verification_data, verify_entries_cpu_in_pool,
+    },
     solana_epoch_schedule::MINIMUM_SLOTS_PER_EPOCH,
     solana_gossip::{
         cluster_info::{self, ClusterInfo},
@@ -982,9 +985,10 @@ fn get_and_verify_slot_entries(
     thread_pool: &ThreadPool,
     slot: Slot,
     last_entry: &Hash,
-) -> Vec<Entry> {
+) -> Vec<EntryView<Bytes>> {
     let entries = blockstore.get_slot_entries(slot, 0).unwrap();
-    assert!(entries.verify(last_entry, thread_pool).status());
+    let verification_data = entry_views_to_verification_data(&entries);
+    assert!(verify_entries_cpu_in_pool(&verification_data, last_entry, thread_pool).status());
     entries
 }
 

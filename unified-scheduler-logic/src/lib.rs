@@ -98,12 +98,17 @@
 //! scheduler pool.
 use {
     crate::utils::{ShortCounter, Token, TokenCell},
+    agave_transaction_view::{
+        resolved_transaction_view::ResolvedTransactionView, transaction_data::TransactionData,
+    },
     assert_matches::assert_matches,
     solana_clock::{Epoch, Slot},
     solana_hash::Hash,
     solana_pubkey::Pubkey,
-    solana_runtime_transaction::runtime_transaction::RuntimeTransaction,
-    solana_transaction::sanitized::SanitizedTransaction,
+    solana_runtime_transaction::{
+        runtime_transaction::RuntimeTransaction, transaction_meta::TransactionMeta,
+    },
+    solana_svm_transaction::svm_message::SVMMessage,
     static_assertions::const_assert_eq,
     std::{
         cmp::Ordering,
@@ -444,8 +449,8 @@ type LockResult = Result<(), ()>;
 const_assert_eq!(mem::size_of::<LockResult>(), 1);
 
 /// Something to be scheduled; usually a wrapper of [`SanitizedTransaction`].
-pub type Task = Arc<TaskInner>;
-const_assert_eq!(mem::size_of::<Task>(), 8);
+pub type Task<D> = Arc<TaskInner<D>>;
+const_assert_eq!(mem::size_of::<Task<&'static [u8]>>(), 8);
 
 pub type BlockSize = usize;
 pub const NO_CONSUMED_BLOCK_SIZE: BlockSize = 0;
@@ -453,8 +458,8 @@ pub const MAX_SANITIZED_EPOCH: Epoch = Epoch::MAX;
 pub const MAX_ALT_INVALIDATION_SLOT: Slot = Slot::MAX;
 
 /// [`Token`] for [`UsageQueue`].
-type UsageQueueToken = Token<UsageQueueInner>;
-const_assert_eq!(mem::size_of::<UsageQueueToken>(), 0);
+type UsageQueueToken<D> = Token<UsageQueueInner<D>>;
+const_assert_eq!(mem::size_of::<UsageQueueToken<&'static [u8]>>(), 0);
 
 /// [`Token`] for [task](Task)'s [internal mutable data](`TaskInner::blocked_usage_count`).
 type BlockedUsageCountToken = Token<ShortCounter>;
@@ -462,15 +467,15 @@ const_assert_eq!(mem::size_of::<BlockedUsageCountToken>(), 0);
 
 /// Internal scheduling data about a particular task.
 #[derive(Debug)]
-pub struct TaskInner {
-    transaction: RuntimeTransaction<SanitizedTransaction>,
+pub struct TaskInner<D: TransactionData + 'static> {
+    transaction: RuntimeTransaction<ResolvedTransactionView<D>>,
     /// For block verification, the index of a transaction in ledger entries. Carrying this along
     /// with the transaction is needed to properly record the execution result of it.
     /// For block production, the priority of a transaction for reordering with
     /// Capability::PriorityQueueing. Note that the index of a transaction in ledger entries is
     /// dynamically generated from the poh in the case of block production.
     task_id: OrderedTaskId,
-    lock_contexts: Vec<LockContext>,
+    lock_contexts: Vec<LockContext<D>>,
     /// The number of remaining usages which are currently occupied by other tasks. In other words,
     /// the task is said to be _blocked_ and needs to be _unblocked_ exactly this number of times
     /// before running.
@@ -480,7 +485,7 @@ pub struct TaskInner {
     alt_invalidation_slot: Slot,
 }
 
-impl TaskInner {
+impl<D: TransactionData + 'static> TaskInner<D> {
     pub fn task_id(&self) -> OrderedTaskId {
         self.task_id
     }
@@ -505,7 +510,7 @@ impl TaskInner {
         self.alt_invalidation_slot
     }
 
-    pub fn transaction(&self) -> &RuntimeTransaction<SanitizedTransaction> {
+    pub fn transaction(&self) -> &RuntimeTransaction<ResolvedTransactionView<D>> {
         &self.transaction
     }
 
@@ -513,7 +518,7 @@ impl TaskInner {
         self.transaction.message_hash()
     }
 
-    fn lock_contexts(&self) -> &[LockContext] {
+    fn lock_contexts(&self) -> &[LockContext<D>] {
         &self.lock_contexts
     }
 
@@ -532,7 +537,7 @@ impl TaskInner {
     /// to be the last (i.e. [`Self::blocked_usage_count`] reaches to 0), this task should be run
     /// by consuming the returned task itself properly.
     #[must_use]
-    fn try_unblock(self: Task, token: &mut BlockedUsageCountToken) -> Option<Task> {
+    fn try_unblock(self: Task<D>, token: &mut BlockedUsageCountToken) -> Option<Task<D>> {
         let did_unblock = self
             .blocked_usage_count
             .with_borrow_mut(token, |usage_count| usage_count.decrement_self().is_zero());
@@ -563,7 +568,7 @@ impl TaskInner {
             })
     }
 
-    pub fn into_transaction(self: Task) -> RuntimeTransaction<SanitizedTransaction> {
+    pub fn into_transaction(self: Task<D>) -> RuntimeTransaction<ResolvedTransactionView<D>> {
         Task::into_inner(self).unwrap().transaction
     }
 }
@@ -571,14 +576,14 @@ impl TaskInner {
 /// [`Task`]'s per-address context to lock a [usage_queue](UsageQueue) with [certain kind of
 /// request](RequestedUsage).
 #[derive(Debug)]
-struct LockContext {
-    usage_queue: UsageQueue,
+struct LockContext<D: TransactionData + 'static> {
+    usage_queue: UsageQueue<D>,
     requested_usage: RequestedUsage,
 }
-const_assert_eq!(mem::size_of::<LockContext>(), 16);
+const_assert_eq!(mem::size_of::<LockContext<&'static [u8]>>(), 16);
 
-impl LockContext {
-    fn new(usage_queue: UsageQueue, requested_usage: RequestedUsage) -> Self {
+impl<D: TransactionData + 'static> LockContext<D> {
+    fn new(usage_queue: UsageQueue<D>, requested_usage: RequestedUsage) -> Self {
         Self {
             usage_queue,
             requested_usage,
@@ -587,8 +592,8 @@ impl LockContext {
 
     fn with_usage_queue_mut<R>(
         &self,
-        usage_queue_token: &mut UsageQueueToken,
-        f: impl FnOnce(&mut UsageQueueInner) -> R,
+        usage_queue_token: &mut UsageQueueToken<D>,
+        f: impl FnOnce(&mut UsageQueueInner<D>) -> R,
     ) -> R {
         self.usage_queue.0.with_borrow_mut(usage_queue_token, f)
     }
@@ -624,8 +629,8 @@ const_assert_eq!(mem::size_of::<FifoUsage>(), 8);
 // and the ranged query to handle reblocking of current readonly usages (if any). Currently,
 // BTreeMap is chosen mainly for its implementation simplicity and acceptable efficiency. This
 // might be replaced with more efficient implementation in the future.
-type PriorityUsage = Usage<BTreeMap<OrderedTaskId, Task>, Task>;
-const_assert_eq!(mem::size_of::<PriorityUsage>(), 32);
+type PriorityUsage<D> = Usage<BTreeMap<OrderedTaskId, Task<D>>, Task<D>>;
+const_assert_eq!(mem::size_of::<PriorityUsage<&'static [u8]>>(), 32);
 
 impl From<RequestedUsage> for FifoUsage {
     fn from(requested_usage: RequestedUsage) -> Self {
@@ -636,8 +641,8 @@ impl From<RequestedUsage> for FifoUsage {
     }
 }
 
-impl PriorityUsage {
-    fn from(task: Task, requested_usage: RequestedUsage) -> Self {
+impl<D: TransactionData + 'static> PriorityUsage<D> {
+    fn from(task: Task<D>, requested_usage: RequestedUsage) -> Self {
         match requested_usage {
             RequestedUsage::Readonly => Self::Readonly(BTreeMap::from([(task.task_id(), task)])),
             RequestedUsage::Writable => Self::Writable(task),
@@ -651,7 +656,7 @@ impl PriorityUsage {
         assert!(tasks.is_empty());
     }
 
-    fn take_writable(maybe_usage: &mut Option<Self>) -> Task {
+    fn take_writable(maybe_usage: &mut Option<Self>) -> Task<D> {
         let Some(Self::Writable(task)) = maybe_usage.take() else {
             panic!();
         };
@@ -667,27 +672,27 @@ enum RequestedUsage {
 }
 
 // BTreeMap is needed for now for efficient manipulation...
-type PriorityUsageQueue = BTreeMap<OrderedTaskId, UsageFromTask>;
+type PriorityUsageQueue<D> = BTreeMap<OrderedTaskId, UsageFromTask<D>>;
 
-trait PriorityUsageQueueExt: Sized {
-    fn insert_usage_from_task(&mut self, usage_from_task: UsageFromTask);
-    fn pop_first_usage_from_task(&mut self) -> Option<UsageFromTask>;
-    fn first_usage_from_task(&self) -> Option<&UsageFromTask>;
+trait PriorityUsageQueueExt<D: TransactionData + 'static>: Sized {
+    fn insert_usage_from_task(&mut self, usage_from_task: UsageFromTask<D>);
+    fn pop_first_usage_from_task(&mut self) -> Option<UsageFromTask<D>>;
+    fn first_usage_from_task(&self) -> Option<&UsageFromTask<D>>;
 }
 
-impl PriorityUsageQueueExt for PriorityUsageQueue {
-    fn insert_usage_from_task(&mut self, usage_from_task: UsageFromTask) {
+impl<D: TransactionData + 'static> PriorityUsageQueueExt<D> for PriorityUsageQueue<D> {
+    fn insert_usage_from_task(&mut self, usage_from_task: UsageFromTask<D>) {
         assert!(
             self.insert(usage_from_task.1.task_id(), usage_from_task)
                 .is_none()
         );
     }
 
-    fn pop_first_usage_from_task(&mut self) -> Option<UsageFromTask> {
+    fn pop_first_usage_from_task(&mut self) -> Option<UsageFromTask<D>> {
         self.pop_first().map(|(_index, usage)| usage)
     }
 
-    fn first_usage_from_task(&self) -> Option<&UsageFromTask> {
+    fn first_usage_from_task(&self) -> Option<&UsageFromTask<D>> {
         self.first_key_value().map(|(_index, usage)| usage)
     }
 }
@@ -698,20 +703,20 @@ impl PriorityUsageQueueExt for PriorityUsageQueue {
 /// [`Task`]s are blocked to be executed after the current task is notified to be finished via
 /// [`::deschedule_task`](`SchedulingStateMachine::deschedule_task`)
 #[derive(Debug)]
-enum UsageQueueInner {
+enum UsageQueueInner<D: TransactionData + 'static> {
     Fifo {
         current_usage: Option<FifoUsage>,
-        blocked_usages_from_tasks: VecDeque<UsageFromTask>,
+        blocked_usages_from_tasks: VecDeque<UsageFromTask<D>>,
     },
     Priority {
-        current_usage: Option<PriorityUsage>,
-        blocked_usages_from_tasks: PriorityUsageQueue,
+        current_usage: Option<PriorityUsage<D>>,
+        blocked_usages_from_tasks: PriorityUsageQueue<D>,
     },
 }
 
-type UsageFromTask = (RequestedUsage, Task);
+type UsageFromTask<D> = (RequestedUsage, Task<D>);
 
-impl UsageQueueInner {
+impl<D: TransactionData + 'static> UsageQueueInner<D> {
     fn with_fifo() -> Self {
         Self::Fifo {
             current_usage: None,
@@ -748,8 +753,8 @@ impl UsageQueueInner {
     }
 }
 
-impl UsageQueueInner {
-    fn try_lock(&mut self, new_task: &Task, requested_usage: RequestedUsage) -> LockResult {
+impl<D: TransactionData + 'static> UsageQueueInner<D> {
+    fn try_lock(&mut self, new_task: &Task<D>, requested_usage: RequestedUsage) -> LockResult {
         match self {
             Self::Fifo { current_usage, .. } => match current_usage {
                 None => Ok(FifoUsage::from(requested_usage)),
@@ -781,7 +786,11 @@ impl UsageQueueInner {
     }
 
     #[must_use]
-    fn unlock(&mut self, task: &Task, requested_usage: RequestedUsage) -> Option<UsageFromTask> {
+    fn unlock(
+        &mut self,
+        task: &Task<D>,
+        requested_usage: RequestedUsage,
+    ) -> Option<UsageFromTask<D>> {
         let mut is_newly_lockable = false;
         match self {
             Self::Fifo { current_usage, .. } => {
@@ -833,13 +842,13 @@ impl UsageQueueInner {
         if is_newly_lockable { self.pop() } else { None }
     }
 
-    fn push_blocked(&mut self, usage_from_task: UsageFromTask) {
+    fn push_blocked(&mut self, usage_from_task: UsageFromTask<D>) {
         assert_matches!(self.current_usage(), Some(_));
         self.push(usage_from_task);
     }
 
     #[must_use]
-    fn pop_lockable_readonly(&mut self) -> Option<UsageFromTask> {
+    fn pop_lockable_readonly(&mut self) -> Option<UsageFromTask<D>> {
         if matches!(self.peek_blocked(), Some((RequestedUsage::Readonly, _))) {
             assert_matches!(self.current_usage(), Some(RequestedUsage::Readonly));
             self.pop()
@@ -860,7 +869,7 @@ impl UsageQueueInner {
     }
 
     #[cfg(test)]
-    fn update_current_usage(&mut self, requested_usage: RequestedUsage, task: &Task) {
+    fn update_current_usage(&mut self, requested_usage: RequestedUsage, task: &Task<D>) {
         match self {
             Self::Fifo { current_usage, .. } => {
                 *current_usage = Some(FifoUsage::from(requested_usage));
@@ -871,7 +880,7 @@ impl UsageQueueInner {
         }
     }
 
-    fn pop(&mut self) -> Option<UsageFromTask> {
+    fn pop(&mut self) -> Option<UsageFromTask<D>> {
         match self {
             Self::Fifo {
                 blocked_usages_from_tasks,
@@ -884,7 +893,7 @@ impl UsageQueueInner {
         }
     }
 
-    fn push(&mut self, usage_from_task: UsageFromTask) {
+    fn push(&mut self, usage_from_task: UsageFromTask<D>) {
         match self {
             Self::Fifo {
                 blocked_usages_from_tasks,
@@ -897,7 +906,7 @@ impl UsageQueueInner {
         }
     }
 
-    fn peek_blocked(&self) -> Option<&UsageFromTask> {
+    fn peek_blocked(&self) -> Option<&UsageFromTask<D>> {
         match self {
             Self::Fifo {
                 blocked_usages_from_tasks,
@@ -913,7 +922,7 @@ impl UsageQueueInner {
     fn prepare_lock(
         &mut self,
         token: &mut BlockedUsageCountToken,
-        new_task: &Task,
+        new_task: &Task<D>,
         requested_usage: RequestedUsage,
     ) -> LockResult {
         match self {
@@ -1014,7 +1023,10 @@ impl UsageQueueInner {
     }
 }
 
-const_assert_eq!(mem::size_of::<TokenCell<UsageQueueInner>>(), 56);
+const_assert_eq!(
+    mem::size_of::<TokenCell<UsageQueueInner<&'static [u8]>>>(),
+    56
+);
 
 /// Scheduler's internal data for each address ([`Pubkey`](`solana_pubkey::Pubkey`)). Very
 /// opaque wrapper type; no methods just with [`::clone()`](Clone::clone) and
@@ -1022,11 +1034,17 @@ const_assert_eq!(mem::size_of::<TokenCell<UsageQueueInner>>(), 56);
 ///
 /// It's the higher layer's responsibility to ensure to associate the same instance of UsageQueue
 /// for given Pubkey at the time of [task](Task) creation.
-#[derive(Debug, Clone)]
-pub struct UsageQueue(Arc<TokenCell<UsageQueueInner>>);
-const_assert_eq!(mem::size_of::<UsageQueue>(), 8);
+#[derive(Debug)]
+pub struct UsageQueue<D: TransactionData + 'static>(Arc<TokenCell<UsageQueueInner<D>>>);
+const_assert_eq!(mem::size_of::<UsageQueue<&'static [u8]>>(), 8);
 
-impl UsageQueue {
+impl<D: TransactionData + 'static> Clone for UsageQueue<D> {
+    fn clone(&self) -> Self {
+        Self(Arc::clone(&self.0))
+    }
+}
+
+impl<D: TransactionData + 'static> UsageQueue<D> {
     pub fn new(capability: &Capability) -> Self {
         Self(Arc::new(TokenCell::new(UsageQueueInner::new(capability))))
     }
@@ -1036,8 +1054,8 @@ type TaskHash = Hash;
 
 /// A high-level `struct`, managing the overall scheduling of [tasks](Task), to be used by
 /// `solana-unified-scheduler-pool`.
-pub struct SchedulingStateMachine {
-    unblocked_task_queue: VecDeque<Task>,
+pub struct SchedulingStateMachine<D: TransactionData + 'static> {
+    unblocked_task_queue: VecDeque<Task<D>>,
     /// The number of all tasks which aren't `deschedule_task()`-ed yet while their ownership has
     /// already been transferred to SchedulingStateMachine by `schedule_or_buffer_task()`. In other
     /// words, they are running right now or buffered by explicit request or by implicit blocking
@@ -1058,11 +1076,11 @@ pub struct SchedulingStateMachine {
     unblocked_task_count: ShortCounter,
     total_task_count: ShortCounter,
     count_token: BlockedUsageCountToken,
-    usage_queue_token: UsageQueueToken,
+    usage_queue_token: UsageQueueToken<D>,
 }
-const_assert_eq!(mem::size_of::<SchedulingStateMachine>(), 128);
+const_assert_eq!(mem::size_of::<SchedulingStateMachine<&'static [u8]>>(), 128);
 
-impl SchedulingStateMachine {
+impl<D: TransactionData + 'static> SchedulingStateMachine<D> {
     pub fn has_no_running_task(&self) -> bool {
         self.running_task_count.is_zero()
     }
@@ -1125,7 +1143,7 @@ impl SchedulingStateMachine {
     /// Note that this function takes ownership of the task to allow for future optimizations.
     #[cfg(any(test, doc))]
     #[must_use]
-    pub fn schedule_task(&mut self, task: Task) -> Option<Task> {
+    pub fn schedule_task(&mut self, task: Task<D>) -> Option<Task<D>> {
         self.schedule_or_buffer_task(task, false)
     }
 
@@ -1142,7 +1160,7 @@ impl SchedulingStateMachine {
     /// [`SchedulingStateMachine`] is capped with max_unique_active_task_count.
     ///
     /// Note that this function takes ownership of the task to allow for future optimizations.
-    pub fn buffer_task(&mut self, task: Task) {
+    pub fn buffer_task(&mut self, task: Task<D>) {
         assert!(self.schedule_or_buffer_task(task, true).is_none());
     }
 
@@ -1157,7 +1175,11 @@ impl SchedulingStateMachine {
     ///
     /// Note that this function takes ownership of the task to allow for future optimizations.
     #[must_use]
-    pub fn schedule_or_buffer_task(&mut self, task: Task, force_buffering: bool) -> Option<Task> {
+    pub fn schedule_or_buffer_task(
+        &mut self,
+        task: Task<D>,
+        force_buffering: bool,
+    ) -> Option<Task<D>> {
         self.total_task_count.increment_self();
         if let Some(max_unique_active_task_count) = self.max_unique_active_task_count {
             let is_excess = self.unique_active_task_hashes.len() >= max_unique_active_task_count;
@@ -1190,7 +1212,7 @@ impl SchedulingStateMachine {
     }
 
     #[must_use]
-    pub fn schedule_next_unblocked_task(&mut self) -> Option<Task> {
+    pub fn schedule_next_unblocked_task(&mut self) -> Option<Task<D>> {
         if !self.is_task_runnable() {
             return None;
         }
@@ -1211,7 +1233,7 @@ impl SchedulingStateMachine {
     /// Note that this function intentionally doesn't take ownership of the task to avoid dropping
     /// tasks inside `SchedulingStateMachine` to provide an offloading-based optimization
     /// opportunity for callers.
-    pub fn deschedule_task(&mut self, task: &Task) {
+    pub fn deschedule_task(&mut self, task: &Task<D>) {
         self.running_task_count.decrement_self();
         if self.max_unique_active_task_count.is_some() {
             assert!(self.unique_active_task_hashes.remove(task.hash()));
@@ -1222,7 +1244,7 @@ impl SchedulingStateMachine {
     }
 
     #[must_use]
-    fn try_lock_usage_queues(&mut self, task: Task) -> Option<Task> {
+    fn try_lock_usage_queues(&mut self, task: Task<D>) -> Option<Task<D>> {
         let mut blocked_usage_count = ShortCounter::zero();
 
         for context in task.lock_contexts() {
@@ -1247,7 +1269,7 @@ impl SchedulingStateMachine {
         }
     }
 
-    fn unlock_usage_queues(&mut self, task: &Task) {
+    fn unlock_usage_queues(&mut self, task: &Task<D>) {
         for context in task.lock_contexts() {
             context.with_usage_queue_mut(&mut self.usage_queue_token, |usage_queue| {
                 let mut newly_lockable = usage_queue.unlock(task, context.requested_usage);
@@ -1289,10 +1311,10 @@ impl SchedulingStateMachine {
     /// after created, if `has_no_active_task()` is `true`. Also note that this is desired for
     /// separation of concern.
     pub fn create_task(
-        transaction: RuntimeTransaction<SanitizedTransaction>,
+        transaction: RuntimeTransaction<ResolvedTransactionView<D>>,
         task_id: OrderedTaskId,
-        usage_queue_loader: &mut impl FnMut(Pubkey) -> UsageQueue,
-    ) -> Task {
+        usage_queue_loader: &mut impl FnMut(Pubkey) -> UsageQueue<D>,
+    ) -> Task<D> {
         Self::do_create_task(
             transaction,
             task_id,
@@ -1304,13 +1326,13 @@ impl SchedulingStateMachine {
     }
 
     pub fn create_block_production_task(
-        transaction: RuntimeTransaction<SanitizedTransaction>,
+        transaction: RuntimeTransaction<ResolvedTransactionView<D>>,
         task_id: OrderedTaskId,
         consumed_block_size: BlockSize,
         sanitized_epoch: Epoch,
         alt_invalidation_slot: Slot,
-        usage_queue_loader: &mut impl FnMut(Pubkey) -> UsageQueue,
-    ) -> Task {
+        usage_queue_loader: &mut impl FnMut(Pubkey) -> UsageQueue<D>,
+    ) -> Task<D> {
         Self::do_create_task(
             transaction,
             task_id,
@@ -1322,13 +1344,13 @@ impl SchedulingStateMachine {
     }
 
     fn do_create_task(
-        transaction: RuntimeTransaction<SanitizedTransaction>,
+        transaction: RuntimeTransaction<ResolvedTransactionView<D>>,
         task_id: OrderedTaskId,
         consumed_block_size: BlockSize,
         sanitized_epoch: Epoch,
         alt_invalidation_slot: Slot,
-        usage_queue_loader: &mut impl FnMut(Pubkey) -> UsageQueue,
-    ) -> Task {
+        usage_queue_loader: &mut impl FnMut(Pubkey) -> UsageQueue<D>,
+    ) -> Task<D> {
         // It's crucial for tasks to be validated with
         // `account_locks::validate_account_locks()` prior to the creation.
         // That's because it's part of protocol consensus regarding the
@@ -1359,14 +1381,13 @@ impl SchedulingStateMachine {
         // This redundancy is known. It was just left as-is out of abundance
         // of caution.
         let lock_contexts = transaction
-            .message()
             .account_keys()
             .iter()
             .enumerate()
             .map(|(task_id, address)| {
                 LockContext::new(
                     usage_queue_loader(*address),
-                    if transaction.message().is_writable(task_id) {
+                    if transaction.is_writable(task_id) {
                         RequestedUsage::Writable
                     } else {
                         RequestedUsage::Readonly
@@ -1508,35 +1529,52 @@ impl SchedulingStateMachine {
 mod tests {
     use {
         super::*,
+        agave_transaction_view::transaction_view::SanitizedTransactionView,
         solana_instruction::{AccountMeta, Instruction},
-        solana_message::Message,
+        solana_message::{AddressLookupTableAccount, Message, VersionedMessage, v0},
         solana_pubkey::Pubkey,
-        solana_transaction::{Transaction, sanitized::SanitizedTransaction},
+        solana_runtime_transaction::sanitize_config::sanitize_config,
+        solana_signature::Signature,
+        solana_svm_transaction::{svm_message::SVMStaticMessage, svm_transaction::SVMTransaction},
+        solana_transaction::{
+            Transaction, sanitized::MessageHash, versioned::VersionedTransaction,
+        },
         std::{
             cell::RefCell,
             collections::HashMap,
             panic::{AssertUnwindSafe, catch_unwind, resume_unwind},
             rc::Rc,
+            sync::Arc,
         },
         test_case::test_matrix,
     };
 
-    fn simplest_transaction() -> RuntimeTransaction<SanitizedTransaction> {
-        let message = Message::new(&[], Some(&Pubkey::new_unique()));
+    // Any `TransactionData` impl works for these tests; `Arc<Vec<u8>>` avoids pulling in the
+    // `bytes` crate just for test code.
+    type Data = Arc<Vec<u8>>;
+
+    fn simplest_transaction() -> RuntimeTransaction<ResolvedTransactionView<Data>> {
+        simplest_transaction_with_payer(&Pubkey::new_unique())
+    }
+
+    fn simplest_transaction_with_payer(
+        payer: &Pubkey,
+    ) -> RuntimeTransaction<ResolvedTransactionView<Data>> {
+        let message = Message::new(&[], Some(payer));
         let unsigned = Transaction::new_unsigned(message);
-        RuntimeTransaction::from_transaction_for_tests(unsigned)
+        RuntimeTransaction::from_transaction_view_for_tests(unsigned)
     }
 
     fn transaction_with_readonly_address(
         address: Pubkey,
-    ) -> RuntimeTransaction<SanitizedTransaction> {
+    ) -> RuntimeTransaction<ResolvedTransactionView<Data>> {
         transaction_with_readonly_address_with_payer(address, &Pubkey::new_unique())
     }
 
     fn transaction_with_readonly_address_with_payer(
         address: Pubkey,
         payer: &Pubkey,
-    ) -> RuntimeTransaction<SanitizedTransaction> {
+    ) -> RuntimeTransaction<ResolvedTransactionView<Data>> {
         let instruction = Instruction {
             program_id: Pubkey::default(),
             accounts: vec![AccountMeta::new_readonly(address, false)],
@@ -1544,19 +1582,19 @@ mod tests {
         };
         let message = Message::new(&[instruction], Some(payer));
         let unsigned = Transaction::new_unsigned(message);
-        RuntimeTransaction::from_transaction_for_tests(unsigned)
+        RuntimeTransaction::from_transaction_view_for_tests(unsigned)
     }
 
     fn transaction_with_writable_address(
         address: Pubkey,
-    ) -> RuntimeTransaction<SanitizedTransaction> {
+    ) -> RuntimeTransaction<ResolvedTransactionView<Data>> {
         transaction_with_writable_address_with_payer(address, &Pubkey::new_unique())
     }
 
     fn transaction_with_writable_address_with_payer(
         address: Pubkey,
         payer: &Pubkey,
-    ) -> RuntimeTransaction<SanitizedTransaction> {
+    ) -> RuntimeTransaction<ResolvedTransactionView<Data>> {
         let instruction = Instruction {
             program_id: Pubkey::default(),
             accounts: vec![AccountMeta::new(address, false)],
@@ -1564,13 +1602,79 @@ mod tests {
         };
         let message = Message::new(&[instruction], Some(payer));
         let unsigned = Transaction::new_unsigned(message);
-        RuntimeTransaction::from_transaction_for_tests(unsigned)
+        RuntimeTransaction::from_transaction_view_for_tests(unsigned)
     }
 
+    #[derive(Clone, Copy)]
+    enum LoadedAddressAccess {
+        Writable,
+        Readable,
+    }
+
+    /// Builds a v0 transaction whose only reference to `loaded_address` is through an address
+    /// lookup table, i.e. `loaded_address` never appears in `static_account_keys()`.
+    /// `RuntimeTransaction::from_transaction_view_for_tests` can't express this since it always
+    /// resolves with `loaded_addresses: None`, so this goes through the same
+    /// sanitize/statically-load/resolve pipeline by hand, providing the loaded address explicitly.
+    fn transaction_with_loaded_address_with_payer(
+        loaded_address: Pubkey,
+        payer: &Pubkey,
+        access: LoadedAddressAccess,
+    ) -> RuntimeTransaction<ResolvedTransactionView<Data>> {
+        let instruction = Instruction {
+            program_id: Pubkey::default(),
+            accounts: vec![match access {
+                LoadedAddressAccess::Writable => AccountMeta::new(loaded_address, false),
+                LoadedAddressAccess::Readable => AccountMeta::new_readonly(loaded_address, false),
+            }],
+            data: vec![],
+        };
+        let message = v0::Message::try_compile(
+            payer,
+            &[instruction],
+            &[AddressLookupTableAccount {
+                key: Pubkey::new_unique(),
+                addresses: vec![loaded_address],
+            }],
+            Hash::default(),
+        )
+        .unwrap();
+        let versioned_transaction = VersionedTransaction {
+            signatures: vec![Signature::default()],
+            message: VersionedMessage::V0(message),
+        };
+        let data: Data = Arc::new(wincode::serialize(&versioned_transaction).unwrap());
+        let sanitized_view =
+            SanitizedTransactionView::try_new_sanitized(data, &sanitize_config()).unwrap();
+        let static_runtime_tx = RuntimeTransaction::<SanitizedTransactionView<_>>::try_new(
+            sanitized_view,
+            MessageHash::Compute,
+            None,
+        )
+        .unwrap();
+        let loaded_addresses = match access {
+            LoadedAddressAccess::Writable => v0::LoadedAddresses {
+                writable: vec![loaded_address],
+                readonly: vec![],
+            },
+            LoadedAddressAccess::Readable => v0::LoadedAddresses {
+                writable: vec![],
+                readonly: vec![loaded_address],
+            },
+        };
+        RuntimeTransaction::<ResolvedTransactionView<_>>::try_new(
+            static_runtime_tx,
+            Some(loaded_addresses),
+            &HashSet::new(),
+        )
+        .unwrap()
+    }
+
+    #[allow(clippy::type_complexity)]
     fn create_address_loader(
-        usage_queues: Option<Rc<RefCell<HashMap<Pubkey, UsageQueue>>>>,
+        usage_queues: Option<Rc<RefCell<HashMap<Pubkey, UsageQueue<Data>>>>>,
         capability: &Capability,
-    ) -> impl FnMut(Pubkey) -> UsageQueue + use<'_> {
+    ) -> impl FnMut(Pubkey) -> UsageQueue<Data> + use<'_> {
         let usage_queues = usage_queues.unwrap_or_default();
         move |address| {
             usage_queues
@@ -1583,7 +1687,7 @@ mod tests {
 
     #[test]
     fn test_scheduling_state_machine_creation() {
-        let state_machine = unsafe {
+        let state_machine: SchedulingStateMachine<Data> = unsafe {
             SchedulingStateMachine::exclusively_initialize_current_thread_for_scheduling_for_test()
         };
         assert_eq!(state_machine.active_task_count(), 0);
@@ -1593,7 +1697,7 @@ mod tests {
 
     #[test]
     fn test_scheduling_state_machine_good_reinitialization() {
-        let mut state_machine = unsafe {
+        let mut state_machine: SchedulingStateMachine<Data> = unsafe {
             SchedulingStateMachine::exclusively_initialize_current_thread_for_scheduling_for_test()
         };
         state_machine.total_task_count.increment_self();
@@ -1655,11 +1759,26 @@ mod tests {
 
     #[test_matrix([Capability::FifoQueueing, Capability::PriorityQueueing])]
     fn test_conflicting_task_related_counts(capability: Capability) {
-        let sanitized = simplest_transaction();
+        // All three tasks must contend for the same (payer) address, so build them from the
+        // same payer rather than relying on `RuntimeTransaction` being `Clone` (it isn't, since
+        // `ResolvedTransactionView` isn't).
+        let payer = Pubkey::new_unique();
         let address_loader = &mut create_address_loader(None, &capability);
-        let task1 = SchedulingStateMachine::create_task(sanitized.clone(), 101, address_loader);
-        let task2 = SchedulingStateMachine::create_task(sanitized.clone(), 102, address_loader);
-        let task3 = SchedulingStateMachine::create_task(sanitized.clone(), 103, address_loader);
+        let task1 = SchedulingStateMachine::create_task(
+            simplest_transaction_with_payer(&payer),
+            101,
+            address_loader,
+        );
+        let task2 = SchedulingStateMachine::create_task(
+            simplest_transaction_with_payer(&payer),
+            102,
+            address_loader,
+        );
+        let task3 = SchedulingStateMachine::create_task(
+            simplest_transaction_with_payer(&payer),
+            103,
+            address_loader,
+        );
 
         let mut state_machine = unsafe {
             SchedulingStateMachine::exclusively_initialize_current_thread_for_scheduling_for_test()
@@ -1705,13 +1824,172 @@ mod tests {
         assert!(state_machine.has_no_active_task());
     }
 
+    /// `do_create_task` must lock accounts resolved through an address lookup table, not just
+    /// `static_account_keys()`. task1 and task2 share `loaded_address` as their only common
+    /// writable account, resolved purely via each transaction's lookup table, so they must
+    /// conflict.
+    #[test_matrix([Capability::FifoQueueing, Capability::PriorityQueueing])]
+    fn test_conflicting_tasks_sharing_only_a_loaded_address(capability: Capability) {
+        let loaded_address = Pubkey::new_unique();
+        let address_loader = &mut create_address_loader(None, &capability);
+        let task1 = SchedulingStateMachine::create_task(
+            transaction_with_loaded_address_with_payer(
+                loaded_address,
+                &Pubkey::new_unique(),
+                LoadedAddressAccess::Writable,
+            ),
+            101,
+            address_loader,
+        );
+        let task2 = SchedulingStateMachine::create_task(
+            transaction_with_loaded_address_with_payer(
+                loaded_address,
+                &Pubkey::new_unique(),
+                LoadedAddressAccess::Writable,
+            ),
+            102,
+            address_loader,
+        );
+
+        let mut state_machine = unsafe {
+            SchedulingStateMachine::exclusively_initialize_current_thread_for_scheduling_for_test()
+        };
+        assert_matches!(
+            state_machine
+                .schedule_task(task1.clone())
+                .map(|t| t.task_id()),
+            Some(101)
+        );
+        assert_matches!(state_machine.schedule_task(task2.clone()), None);
+
+        state_machine.deschedule_task(&task1);
+        assert_matches!(
+            state_machine
+                .schedule_next_unblocked_task()
+                .map(|t| t.task_id()),
+            Some(102)
+        );
+        state_machine.deschedule_task(&task2);
+        assert!(state_machine.has_no_active_task());
+    }
+
+    /// task1 and task2 share `loaded_address` as a *readonly* lookup-table entry only, so they
+    /// must not conflict.
+    #[test_matrix([Capability::FifoQueueing, Capability::PriorityQueueing])]
+    fn test_readonly_tasks_sharing_only_a_loaded_address_do_not_conflict(capability: Capability) {
+        let loaded_address = Pubkey::new_unique();
+        let address_loader = &mut create_address_loader(None, &capability);
+        let task1 = SchedulingStateMachine::create_task(
+            transaction_with_loaded_address_with_payer(
+                loaded_address,
+                &Pubkey::new_unique(),
+                LoadedAddressAccess::Readable,
+            ),
+            101,
+            address_loader,
+        );
+        let task2 = SchedulingStateMachine::create_task(
+            transaction_with_loaded_address_with_payer(
+                loaded_address,
+                &Pubkey::new_unique(),
+                LoadedAddressAccess::Readable,
+            ),
+            102,
+            address_loader,
+        );
+
+        let mut state_machine = unsafe {
+            SchedulingStateMachine::exclusively_initialize_current_thread_for_scheduling_for_test()
+        };
+        assert_matches!(
+            state_machine
+                .schedule_task(task1.clone())
+                .map(|t| t.task_id()),
+            Some(101)
+        );
+        assert_matches!(
+            state_machine
+                .schedule_task(task2.clone())
+                .map(|t| t.task_id()),
+            Some(102)
+        );
+
+        state_machine.deschedule_task(&task1);
+        state_machine.deschedule_task(&task2);
+        assert!(state_machine.has_no_active_task());
+    }
+
+    /// task1 writes `loaded_address` via a lookup table; task2 only reads it via the same
+    /// lookup table. They must still conflict.
+    #[test_matrix([Capability::FifoQueueing, Capability::PriorityQueueing])]
+    fn test_writable_task_blocks_readonly_task_sharing_only_a_loaded_address(
+        capability: Capability,
+    ) {
+        let loaded_address = Pubkey::new_unique();
+        let address_loader = &mut create_address_loader(None, &capability);
+        let task1 = SchedulingStateMachine::create_task(
+            transaction_with_loaded_address_with_payer(
+                loaded_address,
+                &Pubkey::new_unique(),
+                LoadedAddressAccess::Writable,
+            ),
+            101,
+            address_loader,
+        );
+        let task2 = SchedulingStateMachine::create_task(
+            transaction_with_loaded_address_with_payer(
+                loaded_address,
+                &Pubkey::new_unique(),
+                LoadedAddressAccess::Readable,
+            ),
+            102,
+            address_loader,
+        );
+
+        let mut state_machine = unsafe {
+            SchedulingStateMachine::exclusively_initialize_current_thread_for_scheduling_for_test()
+        };
+        assert_matches!(
+            state_machine
+                .schedule_task(task1.clone())
+                .map(|t| t.task_id()),
+            Some(101)
+        );
+        assert_matches!(state_machine.schedule_task(task2.clone()), None);
+
+        state_machine.deschedule_task(&task1);
+        assert_matches!(
+            state_machine
+                .schedule_next_unblocked_task()
+                .map(|t| t.task_id()),
+            Some(102)
+        );
+        state_machine.deschedule_task(&task2);
+        assert!(state_machine.has_no_active_task());
+    }
+
     #[test_matrix([Capability::FifoQueueing, Capability::PriorityQueueing])]
     fn test_existing_blocking_task_then_newly_scheduled_task(capability: Capability) {
-        let sanitized = simplest_transaction();
+        // All three tasks must contend for the same (payer) address, so build them from the
+        // same payer rather than relying on `RuntimeTransaction` being `Clone` (it isn't, since
+        // `ResolvedTransactionView` isn't).
+        let payer = Pubkey::new_unique();
         let address_loader = &mut create_address_loader(None, &capability);
-        let task1 = SchedulingStateMachine::create_task(sanitized.clone(), 101, address_loader);
-        let task2 = SchedulingStateMachine::create_task(sanitized.clone(), 102, address_loader);
-        let task3 = SchedulingStateMachine::create_task(sanitized.clone(), 103, address_loader);
+        let task1 = SchedulingStateMachine::create_task(
+            simplest_transaction_with_payer(&payer),
+            101,
+            address_loader,
+        );
+        let task2 = SchedulingStateMachine::create_task(
+            simplest_transaction_with_payer(&payer),
+            102,
+            address_loader,
+        );
+        let task3 = SchedulingStateMachine::create_task(
+            simplest_transaction_with_payer(&payer),
+            103,
+            address_loader,
+        );
 
         let mut state_machine = unsafe {
             SchedulingStateMachine::exclusively_initialize_current_thread_for_scheduling_for_test()
@@ -2008,7 +2286,7 @@ mod tests {
             });
         // task2's fee payer should have been locked already even if task2 is blocked still via the
         // above the schedule_task(task2) call
-        let fee_payer = task2.transaction().message().fee_payer();
+        let fee_payer = task2.transaction().fee_payer();
         let usage_queue = usage_queues.get(fee_payer).unwrap();
         usage_queue
             .0
@@ -2088,7 +2366,7 @@ mod tests {
         use super::{RequestedUsage::*, *};
 
         #[track_caller]
-        fn assert_task_index(actual: Option<Task>, expected: Option<OrderedTaskId>) {
+        fn assert_task_index(actual: Option<Task<Data>>, expected: Option<OrderedTaskId>) {
             assert_eq!(actual.map(|task| task.task_id()), expected);
         }
 
@@ -2098,10 +2376,11 @@ mod tests {
             };
         }
 
+        #[allow(clippy::type_complexity)]
         fn setup() -> (
-            SchedulingStateMachine,
-            impl FnMut((RequestedUsage, Pubkey), OrderedTaskId) -> Task,
-            Task,
+            SchedulingStateMachine<Data>,
+            impl FnMut((RequestedUsage, Pubkey), OrderedTaskId) -> Task<Data>,
+            Task<Data>,
         ) {
             let mut state_machine = unsafe {
                 SchedulingStateMachine::exclusively_initialize_current_thread_for_scheduling_for_test()
@@ -2331,11 +2610,18 @@ mod tests {
             )
         };
         let sanitized1 = transaction_with_readonly_address(Pubkey::new_unique());
-        let sanitized2 = transaction_with_readonly_address(Pubkey::new_unique());
+        // task2a and task2b must be built from byte-identical transactions (same address *and*
+        // payer) so the state machine's duplicate-hash detection actually triggers on them.
+        let duplicated_address = Pubkey::new_unique();
+        let duplicated_payer = Pubkey::new_unique();
+        let sanitized2a =
+            transaction_with_readonly_address_with_payer(duplicated_address, &duplicated_payer);
+        let sanitized2b =
+            transaction_with_readonly_address_with_payer(duplicated_address, &duplicated_payer);
         let address_loader = &mut create_address_loader(None, &capability);
         let task1 = SchedulingStateMachine::create_task(sanitized1, 101, address_loader);
-        let task2a = SchedulingStateMachine::create_task(sanitized2.clone(), 102, address_loader);
-        let task2b = SchedulingStateMachine::create_task(sanitized2, 103, address_loader);
+        let task2a = SchedulingStateMachine::create_task(sanitized2a, 102, address_loader);
+        let task2b = SchedulingStateMachine::create_task(sanitized2b, 103, address_loader);
 
         assert_matches!(
             state_machine
