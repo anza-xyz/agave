@@ -345,6 +345,7 @@ pub(super) fn mark_replay_dead_slot(
     progress: &mut ProgressMap,
     dead_slot_context: &mut DeadSlotContext<'_>,
 ) {
+    bank.clear_accounts_lt_hash_async_progress_is_at_end();
     if should_mark_soft_dead(
         dead_slot_context.notifications.blockstore.as_ref(),
         bank,
