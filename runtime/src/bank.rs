@@ -5563,8 +5563,7 @@ impl Bank {
             )
             .map_err(|_| TransactionError::SanitizeFailure)?;
 
-            let (loaded_addresses, _) =
-                self.load_addresses_for_view(&sanitized_tx)?;
+            let (loaded_addresses, _) = self.load_addresses_for_view(&sanitized_tx)?;
 
             RuntimeTransaction::<ResolvedTransactionView<_>>::try_new(
                 sanitized_tx,
