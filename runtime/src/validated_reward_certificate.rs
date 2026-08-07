@@ -39,10 +39,11 @@ pub enum Error {
 /// Returns Ok(None) if no certs were provided.
 /// Returns Error if the reward slot is invalid.
 fn extract_slot(
-    current_slot: Slot,
+    bank: &Bank,
     skip: &Option<SkipRewardCertificate>,
     notar: &Option<NotarRewardCertificate>,
 ) -> Result<Option<Slot>, Error> {
+    let current_slot = bank.slot();
     let slot = match (skip, notar) {
         (None, None) => return Ok(None),
         (Some(s), None) => s.slot,
@@ -58,9 +59,11 @@ fn extract_slot(
             s.slot
         }
     };
-    if slot.saturating_add(NUM_SLOTS_FOR_REWARD) != current_slot {
+    if slot.saturating_add(NUM_SLOTS_FOR_REWARD) != current_slot
+        || slot <= bank.get_alpenglow_migration_slot().unwrap_or(slot)
+    {
         return Err(Error::InvalidSlotNumbers {
-            current_slot,
+            current_slot: bank.slot(),
             notar_slot: notar.as_ref().map(|c| c.slot),
             skip_slot: skip.as_ref().map(|c| c.slot),
         });
@@ -85,7 +88,7 @@ impl ValidatedRewardCert {
         skip: &Option<SkipRewardCertificate>,
         notar: &Option<NotarRewardCertificate>,
     ) -> Result<Option<Self>, Error> {
-        let Some(reward_slot) = extract_slot(bank.slot(), skip, notar)? else {
+        let Some(reward_slot) = extract_slot(bank, skip, notar)? else {
             return Ok(None);
         };
         let rank_map = bank
@@ -143,12 +146,12 @@ impl ValidatedRewardCert {
     /// only needs the reward slot and validator set for bank reward
     /// calculation.
     pub fn try_new_for_leader(
-        current_slot: Slot,
+        bank: &Bank,
         skip: &Option<SkipRewardCertificate>,
         notar: &Option<NotarRewardCertificate>,
         validators: impl IntoIterator<Item = Pubkey>,
     ) -> Result<Option<Self>, Error> {
-        let Some(reward_slot) = extract_slot(current_slot, skip, notar)? else {
+        let Some(reward_slot) = extract_slot(bank, skip, notar)? else {
             return Ok(None);
         };
         let validators: HashSet<_> = validators.into_iter().collect();
