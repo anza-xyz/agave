@@ -4,7 +4,6 @@ use {
         SnapshotArchiveKind, SnapshotInterval, paths as snapshot_paths,
         snapshot_archive_info::SnapshotArchiveInfoGetter, snapshot_config::SnapshotConfig,
     },
-    agave_votor::voting_service::VotingServiceOverride,
     agave_votor_messages::migration::MIGRATION_SLOT_OFFSET,
     arc_swap::ArcSwap,
     assert_matches::assert_matches,
@@ -6050,12 +6049,11 @@ fn test_alpenglow_imbalanced_stakes_catchup() {
 
     let mut validator_config = ValidatorConfig::default_for_test();
     validator_config.fixed_leader_schedule = Some(leader_schedule);
-    validator_config.voting_service_test_override = Some(VotingServiceOverride {
-        override_listeners: Arc::new(ArcSwap::from_pointee(HashMap::from_iter([(
+    validator_config.votor_peer_overrides =
+        Arc::new(ArcSwap::from_pointee(HashMap::from_iter([(
             listener_pubkey,
-            vote_listener_addr.local_addr().unwrap(),
-        )]))),
-    });
+            Some(vote_listener_addr.local_addr().unwrap()),
+        )])));
     validator_config.wait_for_supermajority = Some(0);
 
     // Cluster config
@@ -6233,12 +6231,11 @@ fn test_alpenglow_migration(
     let vote_listener_socket = bind_to_localhost_unique().unwrap();
     let vote_listener_addr = vote_listener_socket.try_clone().unwrap();
     let mut validator_config = ValidatorConfig::default_for_test();
-    validator_config.voting_service_test_override = Some(VotingServiceOverride {
-        override_listeners: Arc::new(ArcSwap::from_pointee(HashMap::from_iter([(
+    validator_config.votor_peer_overrides =
+        Arc::new(ArcSwap::from_pointee(HashMap::from_iter([(
             listener_keypair.pubkey(),
-            vote_listener_addr.local_addr().unwrap(),
-        )]))),
-    });
+            Some(vote_listener_addr.local_addr().unwrap()),
+        )])));
     validator_config.wait_for_supermajority = Some(0);
 
     let (leader_schedule, keys) = create_custom_leader_schedule_with_random_keys(leader_schedule);

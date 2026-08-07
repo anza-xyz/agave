@@ -304,6 +304,7 @@ dependencies = [
  "agave-votor",
  "agave-votor-transport",
  "agave-xdp",
+ "arc-swap",
  "bytesize",
  "caps",
  "chrono",

@@ -1,9 +1,8 @@
-#[cfg(feature = "dev-context-only-utils")]
-use {crate::voting_service::VotingServiceOverride, arc_swap::ArcSwap};
 use {
     agave_bls_sigverify::bls_sigverifier::NUM_SLOTS_FOR_VERIFY,
     agave_votor_messages::reward_certificate::NUM_SLOTS_FOR_REWARD,
     agave_votor_transport::PeerListSender,
+    arc_swap::ArcSwap,
     crossbeam_channel::{RecvTimeoutError, Sender, bounded},
     solana_gossip::cluster_info::ClusterInfo,
     solana_keypair::Keypair,
@@ -34,36 +33,23 @@ pub struct PeerListUpdater {
     sharable_banks: SharableBanks,
     /// Publisher for the endpoint's peer_list snapshot.
     peer_list_sender: PeerListSender,
-    /// Live, shared override of the (pubkey -> socket) set
-    #[cfg(feature = "dev-context-only-utils")]
-    test_overrides: Arc<ArcSwap<HashMap<Pubkey, SocketAddr>>>,
+    /// Set of peers plugged into the peer_list regardless of stake.
+    /// `None` resolves the address from gossip like any other peer, `Some` forces it,
+    ///  which local-cluster tests use to blackhole peers or point them at a spy listener.
+    peer_overrides: Arc<ArcSwap<HashMap<Pubkey, Option<SocketAddr>>>>,
 }
 
 impl PeerListUpdater {
     pub fn new(
         sharable_banks: SharableBanks,
         peer_list_sender: PeerListSender,
-        #[cfg(feature = "dev-context-only-utils")] test_overrides: Arc<
-            ArcSwap<HashMap<Pubkey, SocketAddr>>,
-        >,
+        peer_overrides: Arc<ArcSwap<HashMap<Pubkey, Option<SocketAddr>>>>,
     ) -> Self {
         Self {
             sharable_banks,
             peer_list_sender,
-            #[cfg(feature = "dev-context-only-utils")]
-            test_overrides,
+            peer_overrides,
         }
-    }
-
-    /// Augments the `peer_list` with test overrides (in DCOU builds only).
-    /// Does nothing in release builds.
-    fn apply_test_overrides(&self, peer_list: &mut HashMap<Pubkey, Option<SocketAddr>>) {
-        #[cfg(feature = "dev-context-only-utils")]
-        for (pubkey, socket) in self.test_overrides.load().iter() {
-            peer_list.insert(*pubkey, Some(*socket));
-        }
-        // Silences the unused `&mut` warning when the DCOU-only override loop is compiled out.
-        let _ = peer_list;
     }
 
     /// Publish the peer_list for the votor transport endpoint.
@@ -75,7 +61,10 @@ impl PeerListUpdater {
     /// - from `epoch(root_slot) + 1` when within [`NUM_SLOTS_FOR_VERIFY`] of the epoch end.
     ///   `NUM_SLOTS_FOR_VERIFY` is the furthest ahead of root a vote/cert is accepted.
     ///
-    /// Each peer's votor socket is resolved from gossip (or a test override).
+    /// Peer overrides join the set regardless of stake, which both admits their
+    /// inbound connections and makes us push to them.
+    ///
+    /// Each peer's votor socket is resolved from gossip, unless an override pins it.
     /// Peers that have no address yet are added with `None`.
     pub fn refresh_peer_list(&self, cluster_info: &ClusterInfo, my_identity: &Pubkey) {
         let root = self.sharable_banks.root();
@@ -109,20 +98,30 @@ impl PeerListUpdater {
             staked_nodes.extend(next.keys());
         }
 
-        // Participate in votor only if this node is itself in the merged peer set.
-        // An unstaked node publishes an empty peer_list, so the transport neither
-        // connects to staked peers nor admits inbound connections.
-        if !staked_nodes.contains(my_identity) {
+        let overrides = self.peer_overrides.load();
+
+        // Join the votor mesh at large only if this node is itself in the merged peer set.
+        // An unstaked node talks solely to its overrides, so listing one peer never pulls
+        // in the whole staked set.
+        let staked_peers = staked_nodes.contains(my_identity).then_some(&staked_nodes);
+
+        // An unstaked node with no overrides publishes an empty peer_list, so the transport
+        // neither connects to staked peers nor admits inbound connections.
+        if staked_peers.is_none() && overrides.is_empty() {
             self.peer_list_sender.send_replace(Arc::new(HashMap::new()));
             return;
         }
 
-        let mut new_peer_list = cluster_info
-            .query_contact_infos(staked_nodes.iter(), |node| node.alpenglow())
+        let peers = staked_peers.into_iter().flatten().chain(overrides.keys());
+        let mut new_peer_list: HashMap<_, _> = cluster_info
+            .query_contact_infos(peers, |node| node.alpenglow())
             .into_iter()
             .map(|(pubkey, socket)| (pubkey, socket.flatten()))
             .collect();
-        self.apply_test_overrides(&mut new_peer_list);
+        // An override that pins an address wins over whatever gossip resolved to.
+        for (pubkey, socket) in overrides.iter().filter(|(_, socket)| socket.is_some()) {
+            new_peer_list.insert(*pubkey, *socket);
+        }
         // Publish the latest version - this neither blocks nor fails.
         self.peer_list_sender.send_replace(Arc::new(new_peer_list));
     }
@@ -152,7 +151,7 @@ impl PeerListService {
         cluster_info: Arc<ClusterInfo>,
         peer_list: PeerListSender,
         sharable_banks: SharableBanks,
-        #[cfg(feature = "dev-context-only-utils")] test_override: Option<VotingServiceOverride>,
+        peer_overrides: Arc<ArcSwap<HashMap<Pubkey, Option<SocketAddr>>>>,
     ) -> Self {
         let (key_updater_sender, key_updater_receiver) = bounded(16);
         let key_updater = Arc::new(PeerListKeyUpdater {
@@ -161,14 +160,8 @@ impl PeerListService {
         let thread_hdl = Builder::new()
             .name("solVotorPeerUpd".to_string())
             .spawn(move || {
-                let peer_list_updater = PeerListUpdater::new(
-                    sharable_banks,
-                    peer_list,
-                    #[cfg(feature = "dev-context-only-utils")]
-                    test_override
-                        .map(|v| v.override_listeners)
-                        .unwrap_or_default(),
-                );
+                let peer_list_updater =
+                    PeerListUpdater::new(sharable_banks, peer_list, peer_overrides);
 
                 info!("AlpenglowPeerListService has started");
                 let mut my_identity = cluster_info.id();
@@ -214,7 +207,6 @@ impl PeerListService {
 mod tests {
     use {
         super::*,
-        arc_swap::ArcSwap,
         rand::Rng,
         solana_gossip::{
             cluster_info::ClusterInfo, contact_info::ContactInfo, crds::GossipRoute,
@@ -364,7 +356,7 @@ mod tests {
         let svc = PeerListUpdater::new(
             bank_forks.read().unwrap().sharable_banks(),
             sender,
-            Arc::new(ArcSwap::default()),
+            Arc::default(),
         );
 
         svc.refresh_peer_list(&cluster_info, &cluster_info.id());
@@ -388,7 +380,7 @@ mod tests {
         let svc = PeerListUpdater::new(
             bank_forks.read().unwrap().sharable_banks(),
             peerlist_sender,
-            Arc::new(ArcSwap::default()),
+            Arc::default(),
         );
 
         let unstaked = node_pubkeys[0];
@@ -406,6 +398,146 @@ mod tests {
         assert!(
             snapshot.values().all(|addr| addr.is_some()),
             "every staked peer resolves to its gossip socket"
+        );
+    }
+
+    /// Overrides whose address is resolved from gossip, as `--votor-forwards` produces.
+    fn gossip_resolved_overrides(
+        peers: impl IntoIterator<Item = Pubkey>,
+    ) -> Arc<ArcSwap<HashMap<Pubkey, Option<SocketAddr>>>> {
+        Arc::new(ArcSwap::from_pointee(
+            peers.into_iter().map(|peer| (peer, None)).collect(),
+        ))
+    }
+
+    /// The RPC-node side: an unstaked node listing staked identities admits exactly
+    /// those, and does not pull in the staked set.
+    #[test]
+    fn test_overrides_admit_peers_on_unstaked_node() {
+        let slot_num = 123456789;
+        let num_nodes = 10;
+        let num_zero_stake_nodes = 2;
+
+        let (bank_forks, cluster_info, node_pubkeys) =
+            create_bank_forks_and_cluster_info(num_nodes, num_zero_stake_nodes, slot_num);
+
+        let admitted = HashSet::from([
+            node_pubkeys[num_zero_stake_nodes],
+            node_pubkeys[num_zero_stake_nodes + 1],
+        ]);
+        let (peerlist_sender, peerlist_receiver) = watch::channel(Arc::new(HashMap::new()));
+        let svc = PeerListUpdater::new(
+            bank_forks.read().unwrap().sharable_banks(),
+            peerlist_sender,
+            gossip_resolved_overrides(admitted.iter().copied()),
+        );
+
+        let unstaked = node_pubkeys[0];
+        svc.refresh_peer_list(&cluster_info, &unstaked);
+
+        let snapshot = peerlist_receiver.borrow().clone();
+        assert_eq!(
+            snapshot.keys().copied().collect::<HashSet<_>>(),
+            admitted,
+            "an unstaked node admits its overrides and nothing else"
+        );
+        assert!(
+            snapshot.values().all(|addr| addr.is_some()),
+            "overridden peers resolve to their gossip sockets"
+        );
+    }
+
+    /// The validator side: a staked node pushes to overridden peers that hold no stake,
+    /// on top of the full staked set.
+    #[test]
+    fn test_overrides_extend_staked_peer_list() {
+        let slot_num = 123456789;
+        let num_nodes = 10;
+        let num_zero_stake_nodes = 2;
+
+        let (bank_forks, cluster_info, node_pubkeys) =
+            create_bank_forks_and_cluster_info(num_nodes, num_zero_stake_nodes, slot_num);
+
+        // One zero-stake peer present in gossip, plus one staked peer that is already
+        // in the merged set and must not be double counted.
+        let unstaked_peer = node_pubkeys[0];
+        let redundant_peer = node_pubkeys[num_zero_stake_nodes];
+        let (peerlist_sender, peerlist_receiver) = watch::channel(Arc::new(HashMap::new()));
+        let svc = PeerListUpdater::new(
+            bank_forks.read().unwrap().sharable_banks(),
+            peerlist_sender,
+            gossip_resolved_overrides([unstaked_peer, redundant_peer]),
+        );
+
+        let staked = node_pubkeys[num_zero_stake_nodes];
+        svc.refresh_peer_list(&cluster_info, &staked);
+
+        let snapshot = peerlist_receiver.borrow().clone();
+        assert_eq!(
+            snapshot.len(),
+            num_nodes - num_zero_stake_nodes + 1,
+            "the staked set gains exactly the one unstaked override"
+        );
+        assert!(
+            snapshot.get(&unstaked_peer).copied().flatten().is_some(),
+            "an unstaked override is admitted and resolves to its gossip socket"
+        );
+    }
+
+    /// An override that has not appeared in gossip yet is retained with no address,
+    /// exactly as an unresolved staked peer would be.
+    #[test]
+    fn test_override_missing_from_gossip_has_no_address() {
+        let slot_num = 123456789;
+        let (bank_forks, cluster_info, node_pubkeys) =
+            create_bank_forks_and_cluster_info(10, 2, slot_num);
+
+        let absent = Pubkey::new_unique();
+        let (peerlist_sender, peerlist_receiver) = watch::channel(Arc::new(HashMap::new()));
+        let svc = PeerListUpdater::new(
+            bank_forks.read().unwrap().sharable_banks(),
+            peerlist_sender,
+            gossip_resolved_overrides([absent]),
+        );
+
+        svc.refresh_peer_list(&cluster_info, &node_pubkeys[0]);
+
+        let snapshot = peerlist_receiver.borrow().clone();
+        assert_eq!(
+            snapshot.get(&absent),
+            Some(&None),
+            "an override absent from gossip is desired but has no address yet"
+        );
+    }
+
+    /// A pinned address wins over the one gossip advertises, which is how local-cluster
+    /// tests blackhole a staked peer or redirect it to a spy listener.
+    #[test]
+    fn test_override_pins_address_over_gossip() {
+        let slot_num = 123456789;
+        let num_zero_stake_nodes = 2;
+        let (bank_forks, cluster_info, node_pubkeys) =
+            create_bank_forks_and_cluster_info(10, num_zero_stake_nodes, slot_num);
+
+        let staked_peer = node_pubkeys[num_zero_stake_nodes + 1];
+        let pinned = SocketAddr::new(IpAddr::V4(Ipv4Addr::LOCALHOST), 65001);
+        let (peerlist_sender, peerlist_receiver) = watch::channel(Arc::new(HashMap::new()));
+        let svc = PeerListUpdater::new(
+            bank_forks.read().unwrap().sharable_banks(),
+            peerlist_sender,
+            Arc::new(ArcSwap::from_pointee(HashMap::from([(
+                staked_peer,
+                Some(pinned),
+            )]))),
+        );
+
+        svc.refresh_peer_list(&cluster_info, &node_pubkeys[num_zero_stake_nodes]);
+
+        let snapshot = peerlist_receiver.borrow().clone();
+        assert_eq!(
+            snapshot.get(&staked_peer),
+            Some(&Some(pinned)),
+            "a pinned address replaces the peer's gossip socket"
         );
     }
 }

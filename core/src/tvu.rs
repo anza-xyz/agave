@@ -44,6 +44,7 @@ use {
         metric_types::MAX_IN_FLIGHT_CONSENSUS_EVENTS,
     },
     agave_votor_transport::endpoint::QuicDatagramEndpoint,
+    arc_swap::ArcSwap,
     crossbeam_channel::{Receiver, Sender, bounded, unbounded},
     solana_client::connection_cache::ConnectionCache,
     solana_clock::Slot,
@@ -84,7 +85,7 @@ use {
     solana_validator_exit::Exit,
     std::{
         collections::{HashMap, HashSet},
-        net::UdpSocket,
+        net::{SocketAddr, UdpSocket},
         num::NonZeroUsize,
         sync::{Arc, RwLock, atomic::AtomicBool},
         thread::{self, JoinHandle},
@@ -203,8 +204,8 @@ pub struct AlpenglowInitializationState {
     pub votor_server_sockets: Vec<UdpSocket>,
     // client socket for Alpenglow consensus traffic
     pub votor_client_socket: UdpSocket,
-    #[cfg(feature = "dev-context-only-utils")]
-    pub voting_service_test_override: Option<agave_votor::voting_service::VotingServiceOverride>,
+    // peers plugged into the votor peer_list regardless of stake
+    pub votor_peer_overrides: Arc<ArcSwap<HashMap<Pubkey, Option<SocketAddr>>>>,
 }
 
 impl Tvu {
@@ -284,8 +285,7 @@ impl Tvu {
             key_notifiers,
             votor_server_sockets,
             votor_client_socket,
-            #[cfg(feature = "dev-context-only-utils")]
-            voting_service_test_override,
+            votor_peer_overrides,
             highest_finalized,
         } = votor_init;
 
@@ -324,8 +324,7 @@ impl Tvu {
             cluster_info.clone(),
             votor_peer_list_sender,
             sharable_banks.clone(),
-            #[cfg(feature = "dev-context-only-utils")]
-            voting_service_test_override,
+            votor_peer_overrides,
         );
         let (votor_egress, endpoint) = QuicDatagramEndpoint::spawn(
             &votor_rt_handle,
@@ -925,7 +924,7 @@ pub mod tests {
                     bind_to_localhost_unique().expect("bind votor server socket"),
                 ],
                 votor_client_socket: bind_to_localhost_unique().expect("bind votor client socket"),
-                voting_service_test_override: None,
+                votor_peer_overrides: Arc::default(),
                 highest_finalized: Arc::new(RwLock::new(None)),
                 bank_forks_controller,
                 bank_forks_controller_receiver,

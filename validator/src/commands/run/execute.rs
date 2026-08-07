@@ -5,6 +5,7 @@ use {
         cli::{self},
         commands::{FromClapArgMatches, run::args::RunArgs},
         ledger_lockfile, lock_ledger,
+        votor_forwards::load_votor_forwards,
     },
     agave_snapshots::{
         ArchiveFormat, SnapshotInterval, SnapshotVersion,
@@ -13,6 +14,7 @@ use {
     },
     agave_votor::vote_history_storage,
     agave_votor_transport::MAX_ENDPOINTS,
+    arc_swap::ArcSwap,
     bytesize::ByteSize,
     clap::{ArgMatches, crate_name, value_t, value_t_or_exit, values_t, values_t_or_exit},
     crossbeam_channel::unbounded,
@@ -452,6 +454,24 @@ pub fn execute(
         .staked_map_id,
     ));
 
+    // Forwarded identities carry no address: the peer list resolves them from gossip.
+    let votor_peer_overrides = Arc::new(ArcSwap::from_pointee(
+        match matches.value_of("votor_forwards").map(Path::new) {
+            None => HashSet::new(),
+            Some(path) => load_votor_forwards(path).unwrap_or_else(|err| {
+                error!("Failed to load votor-forwards: {err}");
+                clap::Error::with_description(
+                    "Failed to load configuration of votor-forwards argument",
+                    clap::ErrorKind::InvalidValue,
+                )
+                .exit()
+            }),
+        }
+        .into_iter()
+        .map(|identity| (identity, None))
+        .collect(),
+    ));
+
     let init_complete_file = matches.value_of("init_complete_file");
 
     let private_rpc = matches.is_present("private_rpc");
@@ -795,6 +815,7 @@ pub fn execute(
         repair_validators,
         should_check_duplicate_instance: true,
         repair_whitelist,
+        votor_peer_overrides,
         repair_handler_type: RepairHandlerType::default(),
         gossip_validators,
         blockstore_cleanup_strategy,
@@ -877,7 +898,6 @@ pub fn execute(
             Arc::new(AtomicBool::new(false)),
         )]
         .into(),
-        voting_service_test_override: None,
         snapshot_packager_niceness_adj: value_t_or_exit!(
             matches,
             "snapshot_packager_niceness_adj",
