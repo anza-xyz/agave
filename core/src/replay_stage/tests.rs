@@ -3261,12 +3261,7 @@ fn test_headerless_update_parent() {
         bank_forks.read().unwrap().get(slot).is_some(),
         "headerless UpdateParent should create a replay bank from the marker"
     );
-    let replay_progress = progress
-        .get(&slot)
-        .unwrap()
-        .replay_progress
-        .read()
-        .unwrap();
+    let replay_progress = progress.get(&slot).unwrap().replay_progress.read().unwrap();
     assert_eq!(replay_progress.num_shreds, 32);
     assert_eq!(replay_progress.num_txs, 0);
 }
