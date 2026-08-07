@@ -83,6 +83,7 @@ pub struct FeatureSnapshot {
     pub define_ltds_fee_only_semantics: bool,
     pub upgrade_bpf_stake_program_to_v5_1: bool,
     pub relax_fee_payer_constraint: bool,
+    pub remove_inactive_stakes: bool,
 }
 
 impl From<&AHashMap<Pubkey, u64>> for FeatureSnapshot {
@@ -186,6 +187,7 @@ impl From<&AHashMap<Pubkey, u64>> for FeatureSnapshot {
             define_ltds_fee_only_semantics: is_active(&define_ltds_fee_only_semantics::ID),
             upgrade_bpf_stake_program_to_v5_1: is_active(&upgrade_bpf_stake_program_to_v5_1::ID),
             relax_fee_payer_constraint: is_active(&relax_fee_payer_constraint::ID),
+            remove_inactive_stakes: is_active(&remove_inactive_stakes::ID),
         }
     }
 }
@@ -1540,6 +1542,10 @@ pub mod double_disinflation_rate {
     pub const TAPER: f64 = 0.30;
 }
 
+pub mod remove_inactive_stakes {
+    solana_pubkey::declare_id!("ris3UX1af9F46fZdQ5Dx3CzrwGT3e6J4YH3iHqzT5YL");
+}
+
 pub static FEATURE_NAMES: LazyLock<AHashMap<Pubkey, &'static str>> = LazyLock::new(|| {
     [
         (secp256k1_program_enabled::id(), "secp256k1 program"),
@@ -2625,6 +2631,10 @@ pub static FEATURE_NAMES: LazyLock<AHashMap<Pubkey, &'static str>> = LazyLock::n
         (
             double_disinflation_rate::id(),
             "SIMD-0550: Double disinflation rate",
+        ),
+        (
+            remove_inactive_stakes::id(),
+            "Remove inactive stakes from stake delegations",
         ),
         /*************** ADD NEW FEATURES HERE ***************/
         /***** ADD NEW FEATURE BOOL TO `FeatureSnapshot` *****/
