@@ -14,6 +14,7 @@ use {
         consensus::{
             ExternalRootSource, Tower, reconcile_blockstore_roots_with_external_source,
             tower_storage::{NullTowerStorage, TowerStorage},
+            verify_blockstore_root_with_vote_history,
         },
         forwarding_stage::ForwardingClientConfig,
         repair::{
@@ -2588,6 +2589,11 @@ impl<'a> ProcessBlockStore<'a> {
         let vote_history = {
             let vote_history =
                 restore_vote_history(self.config, self.bank_forks, self.id, self.vote_account)?;
+            verify_blockstore_root_with_vote_history(
+                vote_history.root(),
+                self.blockstore,
+                self.original_blockstore_root,
+            );
             post_process_restored_vote_history(
                 vote_history,
                 self.id,
