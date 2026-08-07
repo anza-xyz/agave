@@ -21,7 +21,7 @@ use {
         transaction_processing_result::{ProcessedTransaction, TransactionProcessingResult},
     },
     log::debug,
-    solana_account::{AccountSharedData, ReadableAccount, state_traits::StateMut},
+    solana_account::{AccountSharedData, ReadableAccount, state_traits::StateMutWincode as _},
     solana_clock::{Epoch, Slot},
     solana_hash::Hash,
     solana_instruction::TRANSACTION_LEVEL_STACK_HEIGHT,
