@@ -1,5 +1,5 @@
 #[cfg(any(test, feature = "dev-context-only-utils"))]
-use solana_entry::{block_component::BlockComponent, entry::Entry};
+use solana_entry::entry::Entry;
 use {
     crate::{
         block_error::BlockError,
@@ -33,7 +33,7 @@ use {
     solana_entry::{
         block_component::{BlockComponentView, VersionedBlockMarker},
         entry::{
-            self, EntrySlice, EntrySliceTickCheck as _, EntryType, EntryView, UnverifiedSignatures,
+            self, EntrySliceTickCheck as _, EntryType, EntryView, UnverifiedSignatures,
             create_ticks,
         },
     },
@@ -162,21 +162,19 @@ pub fn process_entries_for_tests(bank: &BankWithScheduler, entries: Vec<Entry>) 
 }
 
 #[cfg(feature = "dev-context-only-utils")]
+use solana_entry::entry::entry_views_for_tests;
+
+#[cfg(feature = "dev-context-only-utils")]
 fn schedule_entries_for_tests(bank: &BankWithScheduler, entries: Vec<Entry>) -> Result<()> {
     let validate_and_hash_transaction = {
         let bank = bank.clone_with_scheduler();
-        move |versioned_tx: VersionedTransaction,
-              serialized_message: &[u8]|
-              -> Result<RuntimeTransaction<SanitizedTransaction>> {
-            bank.verify_transaction(
-                versioned_tx,
-                serialized_message,
-                TransactionVerificationMode::HashOnly,
-            )
+        move |unsanitized: UnsanitizedTransactionView<Bytes>| {
+            bank.verify_transaction(unsanitized, TransactionVerificationMode::HashOnly)
         }
     };
 
     let num_txs = entries.iter().map(|entry| entry.transactions.len()).sum();
+    let entries = entry_views_for_tests(entries);
     let entry::ValidatedHashedTransactions {
         entries,
         unverified_signatures,
@@ -2466,6 +2464,7 @@ pub mod tests {
             certificate::{CertSignature, GenesisCert},
             consensus_message::Block,
         },
+        agave_transaction_view::transaction_view::SanitizedTransactionView,
         assert_matches::assert_matches,
         crossbeam_channel::bounded,
         rand::{Rng, rng},
@@ -2503,7 +2502,7 @@ pub mod tests {
         solana_signer::Signer,
         solana_system_interface::error::SystemError,
         solana_system_transaction as system_transaction,
-        solana_transaction::Transaction,
+        solana_transaction::{Transaction, sanitized::MessageHash},
         solana_transaction_error::TransactionError,
         solana_unified_scheduler_pool::DefaultSchedulerPool,
         solana_vote::{vote_account::VoteAccount, vote_transaction},
@@ -4975,7 +4974,7 @@ pub mod tests {
         let result = confirm_slot_entries(
             &bank,
             &replay_verification_worker_pool,
-            (slot_entries, 0, slot_full),
+            (entry_views_for_tests(slot_entries), 0, slot_full),
             &mut ConfirmationTiming::default(),
             progress,
             false,
@@ -5009,7 +5008,7 @@ pub mod tests {
     fn create_test_transactions(
         mint_keypair: &Keypair,
         genesis_hash: &Hash,
-    ) -> Vec<RuntimeTransaction<SanitizedTransaction>> {
+    ) -> Vec<RuntimeTransaction<ResolvedTransactionView<Bytes>>> {
         let pubkey = solana_pubkey::new_rand();
         let keypair2 = Keypair::new();
         let pubkey2 = solana_pubkey::new_rand();
@@ -5017,19 +5016,19 @@ pub mod tests {
         let pubkey3 = solana_pubkey::new_rand();
 
         vec![
-            RuntimeTransaction::from_transaction_for_tests(system_transaction::transfer(
+            RuntimeTransaction::from_transaction_view_for_tests(system_transaction::transfer(
                 mint_keypair,
                 &pubkey,
                 1,
                 *genesis_hash,
             )),
-            RuntimeTransaction::from_transaction_for_tests(system_transaction::transfer(
+            RuntimeTransaction::from_transaction_view_for_tests(system_transaction::transfer(
                 &keypair2,
                 &pubkey2,
                 1,
                 *genesis_hash,
             )),
-            RuntimeTransaction::from_transaction_for_tests(system_transaction::transfer(
+            RuntimeTransaction::from_transaction_view_for_tests(system_transaction::transfer(
                 &keypair3,
                 &pubkey3,
                 1,
@@ -5235,13 +5234,24 @@ pub mod tests {
                     )
                     .unwrap();
                 let unverified_signatures = entry::validate_and_hash_transactions(
-                    vec![entry.clone()],
+                    entry_views_for_tests(vec![entry.clone()]),
                     num_items,
                     transaction_hash_verify_thread_pool(),
-                    |transaction, _| {
-                        Ok(RuntimeTransaction::from_transaction_for_tests(
-                            transaction.into_legacy_transaction().unwrap(),
-                        ))
+                    |unsanitized: UnsanitizedTransactionView<Bytes>| {
+                        let sanitized = unsanitized
+                            .sanitize(&solana_runtime_transaction::sanitize_config::sanitize_config())
+                            .map_err(|_| TransactionError::SanitizeFailure)?;
+                        let statically_loaded =
+                            RuntimeTransaction::<SanitizedTransactionView<Bytes>>::try_new(
+                                sanitized,
+                                MessageHash::Compute,
+                                None,
+                            )?;
+                        RuntimeTransaction::<ResolvedTransactionView<Bytes>>::try_new(
+                            statically_loaded,
+                            None,
+                            &agave_reserved_account_keys::ReservedAccountKeys::empty_key_set(),
+                        )
                     },
                 )
                 .unwrap()
@@ -6240,13 +6250,13 @@ pub mod tests {
         let payer = Keypair::new();
         let hash = Hash::new_unique();
         let txs = vec![
-            RuntimeTransaction::from_transaction_for_tests(system_transaction::transfer(
+            RuntimeTransaction::from_transaction_view_for_tests(system_transaction::transfer(
                 &payer,
                 &Pubkey::new_unique(),
                 1,
                 hash,
             )),
-            RuntimeTransaction::from_transaction_for_tests(system_transaction::transfer(
+            RuntimeTransaction::from_transaction_view_for_tests(system_transaction::transfer(
                 &payer,
                 &Pubkey::new_unique(),
                 1,
@@ -6258,7 +6268,7 @@ pub mod tests {
 
     #[test]
     fn test_validate_entry_transactions_too_many_locks() {
-        let txs = vec![RuntimeTransaction::from_transaction_for_tests(
+        let txs = vec![RuntimeTransaction::from_transaction_view_for_tests(
             system_transaction::transfer(
                 &Keypair::new(),
                 &Pubkey::new_unique(),
@@ -6293,7 +6303,7 @@ pub mod tests {
             recent_blockhash: Hash::new_unique(),
             instructions: vec![CompiledInstruction::new(2, &(), vec![0, 1])],
         };
-        let txs = vec![RuntimeTransaction::from_transaction_for_tests(
+        let txs = vec![RuntimeTransaction::from_transaction_view_for_tests(
             Transaction::new(&[&payer], message, Hash::new_unique()),
         )];
         assert_eq!(

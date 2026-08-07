@@ -26,9 +26,7 @@ use {
         transaction_address_lookup_table_scanner::scan_transaction,
     },
     agave_snapshots::unpack_genesis_archive,
-    agave_transaction_view::{
-        transaction_data::TransactionData, transaction_view::UnsanitizedTransactionView,
-    },
+    agave_transaction_view::transaction_view::UnsanitizedTransactionView,
     agave_votor_messages::{
         migration::MigrationStatus, unverified_vote_message::UnverifiedCertificate,
     },
@@ -5106,7 +5104,6 @@ impl Blockstore {
         slot_meta: Option<&SlotMeta>,
     ) -> Result<Vec<BlockComponentView>> {
         self.get_slot_data_in_block(slot, completed_ranges, slot_meta, |payload| {
-            let payload = Bytes::from(payload);
             let is_empty_entry_batch = BlockComponent::infer_is_empty_entry_batch(&payload);
 
             block_component_parser::parse(payload)
@@ -5155,8 +5152,23 @@ impl Blockstore {
         completed_ranges: &CompletedRanges,
         slot_meta: Option<&SlotMeta>,
     ) -> Result<Vec<EntryView<Bytes>>> {
-        self.get_slot_data_in_block(slot, completed_ranges, slot_meta, |_payload| {
-            todo!("need custom deserializer here");
+        self.get_slot_data_in_block(slot, completed_ranges, slot_meta, |payload| {
+            let is_empty_entry_batch = BlockComponent::infer_is_empty_entry_batch(&payload);
+
+            block_component_parser::parse(payload)
+                .map(|component| match component {
+                    BlockComponentView::BlockMarker(_) => vec![],
+                    BlockComponentView::EntryBatch(entries) => entries,
+                })
+                .map_err(|error| {
+                    if is_empty_entry_batch {
+                        BlockstoreError::BlockAborted(slot)
+                    } else {
+                        BlockstoreError::InvalidShredData(format!(
+                            "could not reconstruct block component: {error}"
+                        ))
+                    }
+                })
         })
     }
 

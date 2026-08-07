@@ -13,7 +13,7 @@ use {
     },
     assert_matches::assert_matches,
     rand::{rng, seq::SliceRandom},
-    solana_entry::entry::next_entry_mut,
+    solana_entry::entry::{entry_views_for_tests, next_entry_mut},
     solana_genesis_utils::{MAX_GENESIS_ARCHIVE_UNPACKED_SIZE, open_genesis_config},
     solana_hash::Hash,
     solana_message::{compiled_instruction::CompiledInstruction, v0::LoadedAddresses},
@@ -200,7 +200,7 @@ fn test_create_new_ledger() {
     let ticks = create_ticks(genesis_config.ticks_per_slot, 0, genesis_config.hash());
     let entries = blockstore.get_slot_entries(0, 0).unwrap();
 
-    assert_eq!(ticks, entries);
+    assert_eq!(entry_views_for_tests(ticks), entries);
     assert!(
         Path::new(ledger_path.path())
             .join(BLOCKSTORE_DIRECTORY_ROCKS_LEVEL)
@@ -282,6 +282,7 @@ fn test_write_entries() {
         ticks.append(&mut new_ticks);
     }
 
+    let tick_views = entry_views_for_tests(ticks);
     for i in 0..num_slots {
         let meta = blockstore.meta(i).unwrap().unwrap();
         let num_shreds = shreds_per_slot[i as usize];
@@ -300,7 +301,7 @@ fn test_write_entries() {
         }
 
         assert_eq!(
-            &ticks[(i * ticks_per_slot) as usize..((i + 1) * ticks_per_slot) as usize],
+            &tick_views[(i * ticks_per_slot) as usize..((i + 1) * ticks_per_slot) as usize],
             &blockstore.get_slot_entries(i, 0).unwrap()[..]
         );
     }
@@ -494,7 +495,7 @@ fn test_insert_data_shreds_basic() {
     blockstore.insert_shreds(shreds, false).unwrap();
     let result = blockstore.get_slot_entries(0, 0).unwrap();
 
-    assert_eq!(result, entries);
+    assert_eq!(result, entry_views_for_tests(entries));
 
     let meta = blockstore
         .meta(0)
@@ -538,7 +539,7 @@ fn test_insert_data_shreds_reverse() {
             assert!(meta.consumed == 0 && meta.received == num_shreds);
         } else {
             assert_eq!(meta.parent_slot, Some(0));
-            assert_eq!(result, entries);
+            assert_eq!(result, entry_views_for_tests(entries.clone()));
             assert!(meta.consumed == num_shreds && meta.received == num_shreds);
         }
     }
@@ -562,7 +563,7 @@ fn test_get_slot_entries1() {
 
     assert_eq!(
         blockstore.get_slot_entries(1, 0).unwrap()[2..4],
-        entries[2..4],
+        entry_views_for_tests(entries)[2..4],
     );
 }
 
@@ -586,7 +587,10 @@ fn test_get_slot_entries3() {
         blockstore
             .insert_shreds(shreds, false)
             .expect("Expected successful write of shreds");
-        assert_eq!(blockstore.get_slot_entries(slot, 0).unwrap(), entries);
+        assert_eq!(
+            blockstore.get_slot_entries(slot, 0).unwrap(),
+            entry_views_for_tests(entries)
+        );
     }
 }
 
@@ -638,7 +642,7 @@ fn test_insert_data_shreds_consecutive() {
 
         assert_eq!(
             blockstore.get_slot_entries(slot, 0).unwrap(),
-            original_entries,
+            entry_views_for_tests(original_entries),
         );
 
         let meta = blockstore.meta(slot).unwrap().unwrap();
@@ -1430,6 +1434,7 @@ fn test_insert_data_shreds_slots(should_bulk_write: bool) {
         }
     }
 
+    let entries = entry_views_for_tests(entries);
     for i in 0..num_slots - 1 {
         assert_eq!(
             blockstore.get_slot_entries(i, 0).unwrap()[0],
@@ -3021,7 +3026,7 @@ fn test_get_complete_block_with_block_markers() {
     let (slot_entries, num_shreds, is_full) = blockstore
         .get_slot_entry_views_with_shred_info(slot, 0, false)
         .unwrap();
-    assert_eq!(slot_entries, entries);
+    assert_eq!(slot_entries, entry_views_for_tests(entries.clone()));
     assert_eq!(num_shreds, u64::from(slot_end_index));
     assert!(is_full);
 
@@ -5413,7 +5418,10 @@ fn test_insert_data_shreds_same_slot_last_index() {
     let num_shreds = duplicate_shreds.len() as u64;
     blockstore.insert_shreds(duplicate_shreds, false).unwrap();
 
-    assert_eq!(blockstore.get_slot_entries(0, 0).unwrap(), original_entries);
+    assert_eq!(
+        blockstore.get_slot_entries(0, 0).unwrap(),
+        entry_views_for_tests(original_entries)
+    );
 
     let meta = blockstore.meta(0).unwrap().unwrap();
     assert_eq!(meta.consumed, num_shreds);

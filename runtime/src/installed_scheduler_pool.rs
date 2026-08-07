@@ -857,7 +857,7 @@ mod tests {
             mint_keypair,
             ..
         } = create_genesis_config(10_000);
-        let tx0 = RuntimeTransaction::from_transaction_for_tests(system_transaction::transfer(
+        let tx0 = RuntimeTransaction::from_transaction_view_for_tests(system_transaction::transfer(
             &mint_keypair,
             &solana_pubkey::new_rand(),
             2,

@@ -59,6 +59,7 @@ pub struct Entry {
     pub transactions: Vec<VersionedTransaction>,
 }
 
+#[derive(PartialEq, Eq)]
 pub struct EntryView<D: TransactionData> {
     /// The number of hashes since the previous Entry ID.
     pub num_hashes: u64,
@@ -89,6 +90,21 @@ impl<D: TransactionData> EntryView<D> {
     pub fn is_tick(&self) -> bool {
         self.transactions.is_empty()
     }
+}
+
+/// Serializes `entries` and re-parses them through [`crate::block_component_parser::parse`] to
+/// get byte-backed [`EntryView`]s, reusing the same parsing path production uses rather than
+/// hand-constructing transaction views.
+#[cfg(feature = "dev-context-only-utils")]
+pub fn entry_views_for_tests(entries: Vec<Entry>) -> Vec<EntryView<bytes::Bytes>> {
+    let component = crate::block_component::BlockComponent::new_entry_batch(entries).unwrap();
+    let bytes = wincode::serialize(&component).unwrap();
+    let crate::block_component::BlockComponentView::EntryBatch(views) =
+        crate::block_component_parser::parse(bytes).unwrap()
+    else {
+        panic!("expected EntryBatch");
+    };
+    views
 }
 
 // The data needed to verify an Entry.
@@ -751,7 +767,7 @@ mod tests {
     /// rather than hand-constructing transaction views.
     fn entry_view_from_entry(entry: Entry) -> EntryView<Bytes> {
         let component = BlockComponent::new_entry_batch(vec![entry]).unwrap();
-        let bytes = Bytes::from(wincode::serialize(&component).unwrap());
+        let bytes = wincode::serialize(&component).unwrap();
         let BlockComponentView::EntryBatch(mut views) =
             crate::block_component_parser::parse(bytes).unwrap()
         else {

@@ -1532,32 +1532,44 @@ mod tests {
         solana_instruction::{AccountMeta, Instruction},
         solana_message::Message,
         solana_pubkey::Pubkey,
-        solana_transaction::{Transaction, sanitized::SanitizedTransaction},
+        solana_svm_transaction::{svm_message::SVMStaticMessage, svm_transaction::SVMTransaction},
+        solana_transaction::Transaction,
         std::{
             cell::RefCell,
             collections::HashMap,
             panic::{AssertUnwindSafe, catch_unwind, resume_unwind},
             rc::Rc,
+            sync::Arc,
         },
         test_case::test_matrix,
     };
 
-    fn simplest_transaction() -> RuntimeTransaction<SanitizedTransaction> {
-        let message = Message::new(&[], Some(&Pubkey::new_unique()));
+    // Any `TransactionData` impl works for these tests; `Arc<Vec<u8>>` avoids pulling in the
+    // `bytes` crate just for test code.
+    type Data = Arc<Vec<u8>>;
+
+    fn simplest_transaction() -> RuntimeTransaction<ResolvedTransactionView<Data>> {
+        simplest_transaction_with_payer(&Pubkey::new_unique())
+    }
+
+    fn simplest_transaction_with_payer(
+        payer: &Pubkey,
+    ) -> RuntimeTransaction<ResolvedTransactionView<Data>> {
+        let message = Message::new(&[], Some(payer));
         let unsigned = Transaction::new_unsigned(message);
-        RuntimeTransaction::from_transaction_for_tests(unsigned)
+        RuntimeTransaction::from_transaction_view_for_tests(unsigned)
     }
 
     fn transaction_with_readonly_address(
         address: Pubkey,
-    ) -> RuntimeTransaction<SanitizedTransaction> {
+    ) -> RuntimeTransaction<ResolvedTransactionView<Data>> {
         transaction_with_readonly_address_with_payer(address, &Pubkey::new_unique())
     }
 
     fn transaction_with_readonly_address_with_payer(
         address: Pubkey,
         payer: &Pubkey,
-    ) -> RuntimeTransaction<SanitizedTransaction> {
+    ) -> RuntimeTransaction<ResolvedTransactionView<Data>> {
         let instruction = Instruction {
             program_id: Pubkey::default(),
             accounts: vec![AccountMeta::new_readonly(address, false)],
@@ -1565,19 +1577,19 @@ mod tests {
         };
         let message = Message::new(&[instruction], Some(payer));
         let unsigned = Transaction::new_unsigned(message);
-        RuntimeTransaction::from_transaction_for_tests(unsigned)
+        RuntimeTransaction::from_transaction_view_for_tests(unsigned)
     }
 
     fn transaction_with_writable_address(
         address: Pubkey,
-    ) -> RuntimeTransaction<SanitizedTransaction> {
+    ) -> RuntimeTransaction<ResolvedTransactionView<Data>> {
         transaction_with_writable_address_with_payer(address, &Pubkey::new_unique())
     }
 
     fn transaction_with_writable_address_with_payer(
         address: Pubkey,
         payer: &Pubkey,
-    ) -> RuntimeTransaction<SanitizedTransaction> {
+    ) -> RuntimeTransaction<ResolvedTransactionView<Data>> {
         let instruction = Instruction {
             program_id: Pubkey::default(),
             accounts: vec![AccountMeta::new(address, false)],
@@ -1585,13 +1597,13 @@ mod tests {
         };
         let message = Message::new(&[instruction], Some(payer));
         let unsigned = Transaction::new_unsigned(message);
-        RuntimeTransaction::from_transaction_for_tests(unsigned)
+        RuntimeTransaction::from_transaction_view_for_tests(unsigned)
     }
 
     fn create_address_loader(
-        usage_queues: Option<Rc<RefCell<HashMap<Pubkey, UsageQueue>>>>,
+        usage_queues: Option<Rc<RefCell<HashMap<Pubkey, UsageQueue<Data>>>>>,
         capability: &Capability,
-    ) -> impl FnMut(Pubkey) -> UsageQueue + use<'_> {
+    ) -> impl FnMut(Pubkey) -> UsageQueue<Data> + use<'_> {
         let usage_queues = usage_queues.unwrap_or_default();
         move |address| {
             usage_queues
@@ -1604,7 +1616,7 @@ mod tests {
 
     #[test]
     fn test_scheduling_state_machine_creation() {
-        let state_machine = unsafe {
+        let state_machine: SchedulingStateMachine<Data> = unsafe {
             SchedulingStateMachine::exclusively_initialize_current_thread_for_scheduling_for_test()
         };
         assert_eq!(state_machine.active_task_count(), 0);
@@ -1614,7 +1626,7 @@ mod tests {
 
     #[test]
     fn test_scheduling_state_machine_good_reinitialization() {
-        let mut state_machine = unsafe {
+        let mut state_machine: SchedulingStateMachine<Data> = unsafe {
             SchedulingStateMachine::exclusively_initialize_current_thread_for_scheduling_for_test()
         };
         state_machine.total_task_count.increment_self();
@@ -1676,11 +1688,17 @@ mod tests {
 
     #[test_matrix([Capability::FifoQueueing, Capability::PriorityQueueing])]
     fn test_conflicting_task_related_counts(capability: Capability) {
-        let sanitized = simplest_transaction();
+        // All three tasks must contend for the same (payer) address, so build them from the
+        // same payer rather than relying on `RuntimeTransaction` being `Clone` (it isn't, since
+        // `ResolvedTransactionView` isn't).
+        let payer = Pubkey::new_unique();
         let address_loader = &mut create_address_loader(None, &capability);
-        let task1 = SchedulingStateMachine::create_task(sanitized.clone(), 101, address_loader);
-        let task2 = SchedulingStateMachine::create_task(sanitized.clone(), 102, address_loader);
-        let task3 = SchedulingStateMachine::create_task(sanitized.clone(), 103, address_loader);
+        let task1 =
+            SchedulingStateMachine::create_task(simplest_transaction_with_payer(&payer), 101, address_loader);
+        let task2 =
+            SchedulingStateMachine::create_task(simplest_transaction_with_payer(&payer), 102, address_loader);
+        let task3 =
+            SchedulingStateMachine::create_task(simplest_transaction_with_payer(&payer), 103, address_loader);
 
         let mut state_machine = unsafe {
             SchedulingStateMachine::exclusively_initialize_current_thread_for_scheduling_for_test()
@@ -1728,11 +1746,17 @@ mod tests {
 
     #[test_matrix([Capability::FifoQueueing, Capability::PriorityQueueing])]
     fn test_existing_blocking_task_then_newly_scheduled_task(capability: Capability) {
-        let sanitized = simplest_transaction();
+        // All three tasks must contend for the same (payer) address, so build them from the
+        // same payer rather than relying on `RuntimeTransaction` being `Clone` (it isn't, since
+        // `ResolvedTransactionView` isn't).
+        let payer = Pubkey::new_unique();
         let address_loader = &mut create_address_loader(None, &capability);
-        let task1 = SchedulingStateMachine::create_task(sanitized.clone(), 101, address_loader);
-        let task2 = SchedulingStateMachine::create_task(sanitized.clone(), 102, address_loader);
-        let task3 = SchedulingStateMachine::create_task(sanitized.clone(), 103, address_loader);
+        let task1 =
+            SchedulingStateMachine::create_task(simplest_transaction_with_payer(&payer), 101, address_loader);
+        let task2 =
+            SchedulingStateMachine::create_task(simplest_transaction_with_payer(&payer), 102, address_loader);
+        let task3 =
+            SchedulingStateMachine::create_task(simplest_transaction_with_payer(&payer), 103, address_loader);
 
         let mut state_machine = unsafe {
             SchedulingStateMachine::exclusively_initialize_current_thread_for_scheduling_for_test()
@@ -2029,7 +2053,7 @@ mod tests {
             });
         // task2's fee payer should have been locked already even if task2 is blocked still via the
         // above the schedule_task(task2) call
-        let fee_payer = task2.transaction().message().fee_payer();
+        let fee_payer = task2.transaction().fee_payer();
         let usage_queue = usage_queues.get(fee_payer).unwrap();
         usage_queue
             .0
@@ -2109,7 +2133,7 @@ mod tests {
         use super::{RequestedUsage::*, *};
 
         #[track_caller]
-        fn assert_task_index(actual: Option<Task>, expected: Option<OrderedTaskId>) {
+        fn assert_task_index(actual: Option<Task<Data>>, expected: Option<OrderedTaskId>) {
             assert_eq!(actual.map(|task| task.task_id()), expected);
         }
 
@@ -2120,9 +2144,9 @@ mod tests {
         }
 
         fn setup() -> (
-            SchedulingStateMachine,
-            impl FnMut((RequestedUsage, Pubkey), OrderedTaskId) -> Task<D>,
-            Task<D>,
+            SchedulingStateMachine<Data>,
+            impl FnMut((RequestedUsage, Pubkey), OrderedTaskId) -> Task<Data>,
+            Task<Data>,
         ) {
             let mut state_machine = unsafe {
                 SchedulingStateMachine::exclusively_initialize_current_thread_for_scheduling_for_test()
@@ -2352,11 +2376,18 @@ mod tests {
             )
         };
         let sanitized1 = transaction_with_readonly_address(Pubkey::new_unique());
-        let sanitized2 = transaction_with_readonly_address(Pubkey::new_unique());
+        // task2a and task2b must be built from byte-identical transactions (same address *and*
+        // payer) so the state machine's duplicate-hash detection actually triggers on them.
+        let duplicated_address = Pubkey::new_unique();
+        let duplicated_payer = Pubkey::new_unique();
+        let sanitized2a =
+            transaction_with_readonly_address_with_payer(duplicated_address, &duplicated_payer);
+        let sanitized2b =
+            transaction_with_readonly_address_with_payer(duplicated_address, &duplicated_payer);
         let address_loader = &mut create_address_loader(None, &capability);
         let task1 = SchedulingStateMachine::create_task(sanitized1, 101, address_loader);
-        let task2a = SchedulingStateMachine::create_task(sanitized2.clone(), 102, address_loader);
-        let task2b = SchedulingStateMachine::create_task(sanitized2, 103, address_loader);
+        let task2a = SchedulingStateMachine::create_task(sanitized2a, 102, address_loader);
+        let task2b = SchedulingStateMachine::create_task(sanitized2b, 103, address_loader);
 
         assert_matches!(
             state_machine

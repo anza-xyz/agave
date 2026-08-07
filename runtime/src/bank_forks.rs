@@ -793,6 +793,7 @@ mod tests {
             },
         },
         agave_feature_set::FeatureSet,
+        agave_transaction_view::resolved_transaction_view::ResolvedTransactionView,
         agave_votor_messages::{
             certificate::{CertSignature, GenesisCert},
             consensus_message::Block,
@@ -811,7 +812,6 @@ mod tests {
         solana_runtime_transaction::runtime_transaction::RuntimeTransaction,
         solana_sdk_ids::system_program,
         solana_signer::Signer,
-        solana_transaction::sanitized::SanitizedTransaction,
         solana_transaction_error::TransactionError,
         solana_unified_scheduler_logic::OrderedTaskId,
         solana_vote_program::vote_state::BlockTimestamp,
@@ -843,7 +843,7 @@ mod tests {
 
         fn schedule_execution(
             &self,
-            _transaction: RuntimeTransaction<SanitizedTransaction>,
+            _transaction: RuntimeTransaction<ResolvedTransactionView<bytes::Bytes>>,
             _task_id: OrderedTaskId,
         ) -> ScheduleResult {
             Ok(())

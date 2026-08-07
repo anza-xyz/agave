@@ -502,7 +502,7 @@ mod test {
         super::*,
         crossbeam_channel::bounded,
         rand::Rng,
-        solana_entry::entry::{Entry, create_ticks},
+        solana_entry::entry::{Entry, create_ticks, entry_views_for_tests},
         solana_gossip::contact_info::ContactInfo,
         solana_hash::Hash,
         solana_keypair::Keypair,
@@ -551,7 +551,10 @@ mod test {
             .insert_shreds(shreds, false)
             .expect("Expect successful processing of shred");
 
-        assert_eq!(blockstore.get_slot_entries(0, 0).unwrap(), original_entries);
+        assert_eq!(
+            blockstore.get_slot_entries(0, 0).unwrap(),
+            entry_views_for_tests(original_entries)
+        );
     }
 
     #[test]

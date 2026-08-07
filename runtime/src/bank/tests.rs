@@ -9477,6 +9477,22 @@ fn test_failed_compute_request_instruction() {
     assert_eq!(bank.signature_count(), 3);
 }
 
+/// Parses `transaction` into a view and runs it through `bank.verify_transaction()`, treating a
+/// parse failure the same as any other sanitize failure (e.g. malformed transactions that don't
+/// even parse, such as a mismatched signature count, are rejected at the parsing stage in
+/// production rather than at `Bank::verify_transaction()`).
+fn verify_transaction_for_tests(
+    bank: &Bank,
+    transaction: impl Into<VersionedTransaction>,
+    verification_mode: TransactionVerificationMode,
+) -> Result<RuntimeTransaction<ResolvedTransactionView<bytes::Bytes>>> {
+    let versioned_transaction = transaction.into();
+    let data = bytes::Bytes::from(wincode::serialize(&versioned_transaction).unwrap());
+    let transaction_view = UnsanitizedTransactionView::try_new_unsanitized(data)
+        .map_err(|_| TransactionError::SanitizeFailure)?;
+    bank.verify_transaction(transaction_view, verification_mode)
+}
+
 #[test]
 fn test_verify_and_hash_transaction_sig_len() {
     let GenesisConfigInfo {
@@ -9521,7 +9537,7 @@ fn test_verify_and_hash_transaction_sig_len() {
     {
         let tx = make_transaction(TestCase::RemoveSignature);
         assert_matches!(
-            bank.verify_transaction(tx.into(), TransactionVerificationMode::FullVerification),
+            verify_transaction_for_tests(&bank, tx, TransactionVerificationMode::FullVerification),
             Err(TransactionError::SanitizeFailure)
         );
     }
@@ -9529,7 +9545,7 @@ fn test_verify_and_hash_transaction_sig_len() {
     {
         let tx = make_transaction(TestCase::AddSignature);
         assert_matches!(
-            bank.verify_transaction(tx.into(), TransactionVerificationMode::FullVerification),
+            verify_transaction_for_tests(&bank, tx, TransactionVerificationMode::FullVerification),
             Err(TransactionError::SanitizeFailure)
         );
     }
@@ -9558,7 +9574,7 @@ fn test_verify_transactions_packet_data_size() {
         let tx = make_transaction(5);
         assert!(bincode::serialized_size(&tx).unwrap() <= PACKET_DATA_SIZE as u64);
         assert!(
-            bank.verify_transaction(tx.into(), TransactionVerificationMode::FullVerification)
+            verify_transaction_for_tests(&bank, tx, TransactionVerificationMode::FullVerification)
                 .is_ok(),
         );
     }
@@ -9567,7 +9583,7 @@ fn test_verify_transactions_packet_data_size() {
         let tx = make_transaction(25);
         assert!(bincode::serialized_size(&tx).unwrap() > PACKET_DATA_SIZE as u64);
         assert_matches!(
-            bank.verify_transaction(tx.into(), TransactionVerificationMode::FullVerification),
+            verify_transaction_for_tests(&bank, tx, TransactionVerificationMode::FullVerification),
             Err(TransactionError::SanitizeFailure)
         );
     }
@@ -9577,7 +9593,7 @@ fn test_verify_transactions_packet_data_size() {
         let tx = make_transaction(size);
         assert_eq!(
             bincode::serialized_size(&tx).unwrap() <= PACKET_DATA_SIZE as u64,
-            bank.verify_transaction(tx.into(), TransactionVerificationMode::FullVerification)
+            verify_transaction_for_tests(&bank, tx, TransactionVerificationMode::FullVerification)
                 .is_ok(),
         );
     }
@@ -9626,19 +9642,19 @@ fn test_verify_transactions_tx_v1_size_gate_does_not_relax_legacy_or_v0() {
 
     let legacy_tx = oversized_but_tx_v1_sized(&make_legacy_transaction);
     assert_matches!(
-        bank.verify_transaction(legacy_tx, TransactionVerificationMode::FullVerification),
+        verify_transaction_for_tests(&bank, legacy_tx, TransactionVerificationMode::FullVerification),
         Err(TransactionError::SanitizeFailure)
     );
 
     let v0_tx = oversized_but_tx_v1_sized(&make_v0_transaction);
     assert_matches!(
-        bank.verify_transaction(v0_tx, TransactionVerificationMode::FullVerification),
+        verify_transaction_for_tests(&bank, v0_tx, TransactionVerificationMode::FullVerification),
         Err(TransactionError::SanitizeFailure)
     );
 
     let v1_tx = oversized_but_tx_v1_sized(&make_v1_transaction);
     assert!(
-        bank.verify_transaction(v1_tx, TransactionVerificationMode::FullVerification)
+        verify_transaction_for_tests(&bank, v1_tx, TransactionVerificationMode::FullVerification)
             .is_ok()
     );
 }
@@ -9676,7 +9692,7 @@ fn test_verify_transactions_tx_v1_precompile_program_id_index_above_packet_limit
     let tx = VersionedTransaction::try_new(VersionedMessage::V1(message), &[&keypair]).unwrap();
 
     assert!(
-        bank.verify_transaction(tx, TransactionVerificationMode::FullVerification)
+        verify_transaction_for_tests(&bank, tx, TransactionVerificationMode::FullVerification)
             .is_ok()
     );
 }
@@ -9711,7 +9727,7 @@ fn test_verify_transactions_instruction_limit() {
     assert!(bincode::serialized_size(&tx).unwrap() <= PACKET_DATA_SIZE as u64);
 
     assert_matches!(
-        bank.verify_transaction(tx.into(), TransactionVerificationMode::FullVerification),
+        verify_transaction_for_tests(&bank, tx, TransactionVerificationMode::FullVerification),
         Err(TransactionError::SanitizeFailure)
     );
 }
@@ -9745,7 +9761,7 @@ fn test_verify_transactions_accounts_limit() {
     let tx = Transaction::new(&[&keypair], message, recent_blockhash);
 
     assert_matches!(
-        bank.verify_transaction(tx.into(), TransactionVerificationMode::FullVerification),
+        verify_transaction_for_tests(&bank, tx, TransactionVerificationMode::FullVerification),
         Err(TransactionError::SanitizeFailure)
     );
 }

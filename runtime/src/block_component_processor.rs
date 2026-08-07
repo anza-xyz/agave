@@ -786,6 +786,7 @@ mod tests {
             bank_forks::BankForks,
             genesis_utils::{activate_all_features_alpenglow, create_genesis_config},
         },
+        bytes::Bytes,
         rand::Rng,
         solana_bls_signatures::{BLS_SIGNATURE_AFFINE_SIZE, Signature as BLSSignature},
         solana_clock::DEFAULT_MS_PER_SLOT,
@@ -885,13 +886,15 @@ mod tests {
         [Entry::new(&Hash::default(), num_hashes, vec![])]
     }
 
+    use solana_entry::entry::entry_views_for_tests as entry_views_from_entries;
+
     #[test]
     fn test_missing_header_error_on_entry_batch() {
         let migration_status = MigrationStatus::post_migration_status();
         let mut processor = BlockComponentProcessor::default();
 
         // Try to process entry batch without header - should fail
-        let result = processor.on_entry_batch(&migration_status, 1, &[], false);
+        let result = processor.on_entry_batch::<Bytes>(&migration_status, 1, &[], false);
         assert!(matches!(
             result,
             Err(BlockComponentProcessorError::MissingParentMarker)
@@ -948,7 +951,7 @@ mod tests {
             )
             .unwrap();
         processor
-            .on_entry_batch(&migration_status, bank.slot(), &[], false)
+            .on_entry_batch::<Bytes>(&migration_status, bank.slot(), &[], false)
             .unwrap();
 
         let marker =
@@ -1322,7 +1325,7 @@ mod tests {
 
         // Process some entry batches (not full yet)
         processor
-            .on_entry_batch(&migration_status, 1, &[], false)
+            .on_entry_batch::<Bytes>(&migration_status, 1, &[], false)
             .unwrap();
 
         // Process footer with valid timestamp
@@ -1349,7 +1352,7 @@ mod tests {
         assert_eq!(bank.clock().unix_timestamp, expected_time_secs);
 
         // Entry batch after footer should fail because the footer is terminal.
-        let result = processor.on_entry_batch(&migration_status, 1, &[], false);
+        let result = processor.on_entry_batch::<Bytes>(&migration_status, 1, &[], false);
         assert_matches!(
             result,
             Err(BlockComponentProcessorError::EntryBatchAfterBlockFooter)
@@ -1363,30 +1366,55 @@ mod tests {
         let good_alpentick = alpentick(1);
 
         processor
-            .on_entry_batch(&migration_status, 1, &good_alpentick, true)
+            .on_entry_batch(
+                &migration_status,
+                1,
+                &entry_views_from_entries(good_alpentick.to_vec()),
+                true,
+            )
             .unwrap();
         assert_matches!(
-            processor.on_entry_batch(&migration_status, 1, &good_alpentick, true),
+            processor.on_entry_batch(
+                &migration_status,
+                1,
+                &entry_views_from_entries(good_alpentick.to_vec()),
+                true,
+            ),
             Err(BlockComponentProcessorError::InvalidAlpentickPosition)
         );
 
         let mut processor = BlockComponentProcessor::default();
         assert_matches!(
-            processor.on_entry_batch(&migration_status, 1, &good_alpentick, true),
+            processor.on_entry_batch(
+                &migration_status,
+                1,
+                &entry_views_from_entries(good_alpentick.to_vec()),
+                true,
+            ),
             Err(BlockComponentProcessorError::MissingParentMarker)
         );
 
         let mut processor = processor_after_footer();
         let bad_alpentick = alpentick(2);
         assert_matches!(
-            processor.on_entry_batch(&migration_status, 1, &bad_alpentick, true),
+            processor.on_entry_batch(
+                &migration_status,
+                1,
+                &entry_views_from_entries(bad_alpentick.to_vec()),
+                true,
+            ),
             Err(BlockComponentProcessorError::EntryBatchAfterBlockFooter)
         );
 
         let migration_status = MigrationStatus::default();
         let mut processor = BlockComponentProcessor::default();
         processor
-            .on_entry_batch(&migration_status, 1, &good_alpentick, true)
+            .on_entry_batch(
+                &migration_status,
+                1,
+                &entry_views_from_entries(good_alpentick.to_vec()),
+                true,
+            )
             .unwrap();
     }
 
@@ -1482,11 +1510,11 @@ mod tests {
         let mut processor = BlockComponentProcessor::default();
 
         // Processing entry batches pre-migration (without markers) should succeed
-        let result = processor.on_entry_batch(&migration_status, 1, &[], false);
+        let result = processor.on_entry_batch::<Bytes>(&migration_status, 1, &[], false);
         assert!(result.is_ok());
 
         // Even with slot full
-        let result = processor.on_entry_batch(&migration_status, 1, &[], false);
+        let result = processor.on_entry_batch::<Bytes>(&migration_status, 1, &[], false);
         assert!(result.is_ok());
     }
 
@@ -1517,7 +1545,7 @@ mod tests {
 
         // Process entry batches
         processor
-            .on_entry_batch(&migration_status, 1, &[], false)
+            .on_entry_batch::<Bytes>(&migration_status, 1, &[], false)
             .unwrap();
 
         // Calculate valid timestamp based on parent's time
@@ -1550,7 +1578,7 @@ mod tests {
         assert_eq!(bank.clock().unix_timestamp, expected_time_secs);
 
         // Entry batch after footer should fail because the footer is terminal.
-        let result = processor.on_entry_batch(&migration_status, 1, &[], false);
+        let result = processor.on_entry_batch::<Bytes>(&migration_status, 1, &[], false);
         assert_matches!(
             result,
             Err(BlockComponentProcessorError::EntryBatchAfterBlockFooter)
@@ -1631,7 +1659,7 @@ mod tests {
         let mut processor = processor_after_header();
 
         // Process entry batch with header but not full - should succeed even without footer
-        let result = processor.on_entry_batch(&migration_status, 1, &[], false);
+        let result = processor.on_entry_batch::<Bytes>(&migration_status, 1, &[], false);
         assert!(result.is_ok());
     }
 
@@ -2057,7 +2085,7 @@ mod tests {
             .unwrap();
 
         processor
-            .on_entry_batch(&migration_status, slot, &[], false)
+            .on_entry_batch::<Bytes>(&migration_status, slot, &[], false)
             .unwrap();
 
         let parent_time_nanos = parent.clock().unix_timestamp.saturating_mul(1_000_000_000);
@@ -2082,7 +2110,12 @@ mod tests {
 
         let good_alpentick = alpentick(1);
         processor
-            .on_entry_batch(&migration_status, slot, &good_alpentick, true)
+            .on_entry_batch(
+                &migration_status,
+                slot,
+                &entry_views_from_entries(good_alpentick.to_vec()),
+                true,
+            )
             .unwrap();
 
         processor.on_final(&migration_status, slot, 0).unwrap();

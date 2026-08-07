@@ -9222,6 +9222,7 @@ dependencies = [
  "agave-votor-transport",
  "arc-swap",
  "assert_matches",
+ "bytes",
  "crossbeam-channel",
  "fs_extra",
  "gag",

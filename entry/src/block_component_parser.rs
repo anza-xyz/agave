@@ -22,7 +22,9 @@ use {
 
 /// Parses a [`BlockComponentView`] from `bytes`, using the same wire format
 /// as [`BlockComponent`].
-pub fn parse(bytes: Bytes) -> Result<BlockComponentView, ParseError> {
+pub fn parse<B: Into<Bytes>>(bytes: B) -> Result<BlockComponentView, ParseError> {
+    let bytes: Bytes = bytes.into();
+
     let mut header: &[u8] = bytes.as_ref();
     let entry_count =
         <u64 as SchemaRead<DefaultConfig>>::get(header.by_ref()).map_err(ParseError::EntryCount)?;
@@ -204,7 +206,7 @@ mod tests {
     /// Serializes `entries` as a `BlockComponent` entry batch and parses it back.
     fn parse_entry_batch(entries: Vec<Entry>) -> Vec<EntryView<Bytes>> {
         let component = BlockComponent::new_entry_batch(entries).unwrap();
-        let bytes = Bytes::from(wincode::serialize(&component).unwrap());
+        let bytes = wincode::serialize(&component).unwrap();
         let BlockComponentView::EntryBatch(views) = parse(bytes).unwrap() else {
             panic!("expected EntryBatch");
         };
@@ -337,7 +339,7 @@ mod tests {
     ) {
         // Given
         let component = BlockComponent::new_block_marker(source_marker.clone());
-        let bytes = Bytes::from(wincode::serialize(&component).unwrap());
+        let bytes = wincode::serialize(&component).unwrap();
 
         // When
         let view = parse(bytes).unwrap();
