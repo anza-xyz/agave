@@ -7502,7 +7502,9 @@ dependencies = [
  "solana-syscalls",
  "solana-system-interface 3.3.0",
  "solana-system-program",
+ "solana-sysvar-id",
  "solana-transaction-context",
+ "wincode",
 ]
 
 [[package]]
@@ -10992,6 +10994,7 @@ dependencies = [
  "spl-token-interface",
  "test-case",
  "thiserror 2.0.19",
+ "wincode",
  "xxhash-rust",
 ]
 
@@ -11161,7 +11164,9 @@ dependencies = [
  "solana-system-interface 3.3.0",
  "solana-system-program",
  "solana-sysvar",
+ "solana-sysvar-id",
  "solana-transaction-context",
+ "wincode",
 ]
 
 [[package]]
@@ -11789,10 +11794,12 @@ dependencies = [
  "solana-svm-feature-set",
  "solana-system-interface 3.3.0",
  "solana-system-program",
+ "solana-sysvar-id",
  "solana-transaction-context",
  "solana-vote-interface",
  "solana-vote-program",
  "test-case",
+ "wincode",
 ]
 
 [[package]]

@@ -578,10 +578,7 @@ mod tests {
     };
     #[allow(deprecated)]
     use {
-        solana_account::{
-            self as account, Account, AccountSharedData, DUMMY_INHERITABLE_ACCOUNT_FIELDS,
-            ReadableAccount, create_account_shared_data_with_fields, to_account,
-        },
+        solana_account::{Account, AccountSharedData, ReadableAccount, WritableAccount},
         solana_fee_calculator::FeeCalculator,
         solana_hash::Hash,
         solana_instruction::{AccountMeta, Instruction, error::InstructionError},
@@ -598,7 +595,25 @@ mod tests {
             recent_blockhashes::{IntoIterSorted, IterItem, MAX_ENTRIES, RecentBlockhashes},
             rent::Rent,
         },
+        solana_sysvar_id::SysvarId,
     };
+
+    fn create_sysvar_account<T>(value: &T) -> AccountSharedData
+    where
+        T: wincode::Serialize<Src = T> + SysvarId,
+    {
+        let serialized_len = wincode::serialized_size(value).unwrap() as usize;
+        let canonical_data_len = match T::id() {
+            sysvar::recent_blockhashes::ID => sysvar::recent_blockhashes::SIZE,
+            sysvar::rent::ID => solana_rent::SIZE,
+            id => panic!("unsupported sysvar: {id}"),
+        };
+        let required_data_len = canonical_data_len.max(serialized_len);
+        let mut account =
+            AccountSharedData::new(1, required_data_len, &solana_sdk_ids::sysvar::id());
+        wincode::serialize_into(account.data_as_mut_slice(), value).unwrap();
+        account
+    }
 
     impl From<Pubkey> for Address {
         fn from(address: Pubkey) -> Self {
@@ -637,16 +652,11 @@ mod tests {
     where
         I: IntoIterator<Item = IterItem<'a>>,
     {
-        let mut account = create_account_shared_data_with_fields::<RecentBlockhashes>(
-            &RecentBlockhashes::default(),
-            DUMMY_INHERITABLE_ACCOUNT_FIELDS,
-        );
         let sorted = BinaryHeap::from_iter(recent_blockhash_iter);
         let sorted_iter = IntoIterSorted::new(sorted);
         let recent_blockhash_iter = sorted_iter.take(MAX_ENTRIES);
         let recent_blockhashes: RecentBlockhashes = recent_blockhash_iter.collect();
-        to_account(&recent_blockhashes, &mut account);
-        account
+        create_sysvar_account(&recent_blockhashes)
     }
     fn create_default_recent_blockhashes_account() -> AccountSharedData {
         #[allow(deprecated)]
@@ -656,7 +666,7 @@ mod tests {
         ])
     }
     fn create_default_rent_account() -> AccountSharedData {
-        account::create_account_shared_data_for_test(&Rent::free())
+        create_sysvar_account(&Rent::free())
     }
 
     #[test]
@@ -1524,7 +1534,7 @@ mod tests {
                     if sysvar::recent_blockhashes::check_id(&meta.pubkey) {
                         create_default_recent_blockhashes_account()
                     } else if sysvar::rent::check_id(&meta.pubkey) {
-                        account::create_account_shared_data_for_test(&Rent::free())
+                        create_sysvar_account(&Rent::free())
                     } else {
                         AccountSharedData::new(0, 0, &Pubkey::new_unique())
                     },

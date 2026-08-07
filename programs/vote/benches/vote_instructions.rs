@@ -2,7 +2,7 @@ use {
     agave_feature_set::{FeatureSet, deprecate_legacy_vote_ixs},
     bincode::serialize,
     criterion::{Criterion, criterion_group, criterion_main},
-    solana_account::{self as account, Account, AccountSharedData, create_account_for_test},
+    solana_account::{Account, AccountSharedData, WritableAccount},
     solana_clock::{Clock, Slot},
     solana_epoch_schedule::EpochSchedule,
     solana_hash::Hash,
@@ -15,6 +15,7 @@ use {
     solana_rent::Rent,
     solana_sdk_ids::{sysvar, vote::id},
     solana_slot_hashes::{MAX_ENTRIES, SlotHashes},
+    solana_sysvar_id::SysvarId,
     solana_transaction_context::transaction_accounts::KeyedAccountSharedData,
     solana_vote_interface::state::BLS_PUBLIC_KEY_COMPRESSED_SIZE,
     solana_vote_program::{
@@ -30,12 +31,30 @@ use {
     },
 };
 
+fn create_sysvar_account<T>(value: &T) -> AccountSharedData
+where
+    T: wincode::Serialize<Src = T> + SysvarId,
+{
+    let serialized_len = wincode::serialized_size(value).unwrap() as usize;
+    let canonical_data_len = match T::id() {
+        sysvar::clock::ID => solana_clock::SIZE,
+        sysvar::epoch_schedule::ID => solana_epoch_schedule::SIZE,
+        sysvar::rent::ID => solana_rent::SIZE,
+        sysvar::slot_hashes::ID => solana_slot_hashes::SIZE,
+        id => panic!("unsupported sysvar: {id}"),
+    };
+    let required_data_len = canonical_data_len.max(serialized_len);
+    let mut account = AccountSharedData::new(1, required_data_len, &sysvar::id());
+    wincode::serialize_into(account.data_as_mut_slice(), value).unwrap();
+    account
+}
+
 fn create_default_rent_account() -> AccountSharedData {
-    account::create_account_shared_data_for_test(&Rent::free())
+    create_sysvar_account(&Rent::free())
 }
 
 fn create_default_clock_account() -> AccountSharedData {
-    account::create_account_shared_data_for_test(&Clock::default())
+    create_sysvar_account(&Clock::default())
 }
 
 fn create_accounts() -> (
@@ -90,12 +109,9 @@ fn create_accounts() -> (
         (vote_pubkey, AccountSharedData::from(vote_account)),
         (
             sysvar::slot_hashes::id(),
-            AccountSharedData::from(create_account_for_test(&slot_hashes)),
+            create_sysvar_account(&slot_hashes),
         ),
-        (
-            sysvar::clock::id(),
-            AccountSharedData::from(create_account_for_test(&clock)),
-        ),
+        (sysvar::clock::id(), create_sysvar_account(&clock)),
         (authority_pubkey, AccountSharedData::default()),
     ];
     let instruction_account_metas = vec![
@@ -247,7 +263,7 @@ impl BenchAuthorize {
             leader_schedule_epoch: 2,
             ..Clock::default()
         };
-        let clock_account = account::create_account_shared_data_for_test(&clock);
+        let clock_account = create_sysvar_account(&clock);
         let instruction_data = serialize(&VoteInstruction::Authorize(
             authorized_voter_pubkey,
             voter_with_bls(&vote_pubkey),
@@ -521,11 +537,11 @@ impl BenchUpdateCommission {
             // Add the sysvar accounts so they're in the cache for mock processing
             (
                 sysvar::clock::id(),
-                account::create_account_shared_data_for_test(&Clock::default()),
+                create_sysvar_account(&Clock::default()),
             ),
             (
                 sysvar::epoch_schedule::id(),
-                account::create_account_shared_data_for_test(&EpochSchedule::without_warmup()),
+                create_sysvar_account(&EpochSchedule::without_warmup()),
             ),
         ];
         let instruction_accounts = vec![
@@ -630,7 +646,7 @@ impl BenchAuthorizeChecked {
             100,
         );
         let clock_address = sysvar::clock::id();
-        let clock_account = account::create_account_shared_data_for_test(&Clock::default());
+        let clock_account = create_sysvar_account(&Clock::default());
         let authorized_account = AccountSharedData::new(0, 0, &Pubkey::new_unique());
         let new_authorized_account = AccountSharedData::new(0, 0, &Pubkey::new_unique());
         let transaction_accounts = vec![
@@ -778,7 +794,7 @@ impl BenchAuthorizeWithSeed {
             &node_pubkey,
             100,
         );
-        let clock_account = account::create_account_shared_data_for_test(&clock);
+        let clock_account = create_sysvar_account(&clock);
         let transaction_accounts = vec![
             (vote_pubkey, vote_account),
             (sysvar::clock::id(), clock_account),
@@ -877,7 +893,7 @@ impl BenchAuthorizeCheckedWithSeed {
             leader_schedule_epoch: 2,
             ..Clock::default()
         };
-        let clock_account = account::create_account_shared_data_for_test(&clock);
+        let clock_account = create_sysvar_account(&clock);
         let transaction_accounts = vec![
             (vote_pubkey, vote_account),
             (sysvar::clock::id(), clock_account),
@@ -946,7 +962,7 @@ impl BenchCompactUpdateVoteState {
         let vote = Vote::new(vec![1], Hash::default());
         let vote_state_update = VoteStateUpdate::from(vec![(1, 1)]);
         let slot_hashes = SlotHashes::new(&[(*vote.slots.last().unwrap(), vote.hash)]);
-        let slot_hashes_account = account::create_account_shared_data_for_test(&slot_hashes);
+        let slot_hashes_account = create_sysvar_account(&slot_hashes);
         let instruction_accounts = vec![
             AccountMeta {
                 pubkey: vote_pubkey,
@@ -1008,7 +1024,7 @@ impl BenchTowerSync {
         let (vote_pubkey, vote_account) = create_test_account();
         let vote = Vote::new(vec![1], Hash::default());
         let slot_hashes = SlotHashes::new(&[(*vote.slots.last().unwrap(), vote.hash)]);
-        let slot_hashes_account = account::create_account_shared_data_for_test(&slot_hashes);
+        let slot_hashes_account = create_sysvar_account(&slot_hashes);
         let instruction_accounts = vec![
             AccountMeta {
                 pubkey: vote_pubkey,
