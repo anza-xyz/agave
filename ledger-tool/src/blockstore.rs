@@ -4,7 +4,6 @@ use {
     crate::{
         error::{LedgerToolError, Result},
         ledger_path::canonicalize_ledger_path,
-        ledger_utils::get_program_ids,
         output::{CliDuplicateSlotProof, SlotBounds, SlotInfo, output_ledger, output_slot},
     },
     chrono::{DateTime, Utc},
@@ -165,13 +164,17 @@ fn raw_key_to_slot(key: &[u8], column_name: &str) -> Option<Slot> {
 /// Returns true if the supplied slot contains any nonvote transactions
 fn slot_contains_nonvote_tx(blockstore: &Blockstore, slot: Slot) -> bool {
     let (entries, _, _) = blockstore
-        .get_slot_entries_with_shred_info(slot, 0, false)
+        .get_slot_entry_views_with_shred_info(slot, 0, false)
         .expect("Failed to get slot entries");
 
     entries
         .iter()
         .flat_map(|entry| entry.transactions.iter())
-        .flat_map(get_program_ids)
+        .flat_map(|tx| {
+            let static_account_keys = tx.static_account_keys();
+            tx.instructions_iter()
+                .map(move |ix| &static_account_keys[usize::from(ix.program_id_index)])
+        })
         .any(|program_id| *program_id != solana_vote_program::id())
 }
 
