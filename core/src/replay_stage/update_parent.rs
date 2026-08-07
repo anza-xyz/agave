@@ -153,12 +153,15 @@ fn try_restart_slot_from_update_parent(
     }) {
         return false;
     }
-    if progress.get(&slot).is_some_and(|progress| {
-        progress.dead_reason.is_some()
-            && !matches!(
-                progress.dead_reason,
-                Some(DeadSlotReason::ReplayFailureBeforeUpdateParent)
-            )
+    let dead_reason = progress
+        .get(&slot)
+        .and_then(|progress| progress.dead_reason.clone());
+    if dead_reason.as_ref().is_some_and(|reason| {
+        !matches!(
+            reason,
+            DeadSlotReason::ReplayFailureBeforeUpdateParent
+                | DeadSlotReason::ReplayFailureAtUpdateParent(_)
+        )
     }) {
         return false;
     }
@@ -168,8 +171,15 @@ fn try_restart_slot_from_update_parent(
         .get(&slot)
         .map(|p| p.replay_progress.read().unwrap().num_shreds)
         .unwrap_or(0);
+    let failed_at_replay_fec_set_index = matches!(
+        dead_reason,
+        Some(DeadSlotReason::ReplayFailureAtUpdateParent(failed_index))
+            if failed_index == replay_fec_set_index
+    );
 
-    if current_num_shreds >= replay_fec_set_index {
+    if current_num_shreds > replay_fec_set_index
+        || (current_num_shreds == replay_fec_set_index && !failed_at_replay_fec_set_index)
+    {
         return false;
     }
 
@@ -222,7 +232,10 @@ pub(super) fn process_soft_dead_slots(
         .filter_map(|(&slot, progress)| {
             matches!(
                 progress.dead_reason,
-                Some(DeadSlotReason::ReplayFailureBeforeUpdateParent)
+                Some(
+                    DeadSlotReason::ReplayFailureBeforeUpdateParent
+                        | DeadSlotReason::ReplayFailureAtUpdateParent(_)
+                )
             )
             .then_some(slot)
         })

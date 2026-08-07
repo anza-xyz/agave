@@ -3134,17 +3134,24 @@ fn test_update_parent_restart() {
     let bank0 = bank_forks.read().unwrap().get(0).unwrap();
 
     // Slot 4: 5 shreds, replay_fec_set_index=32; 5 < 32 so cleared.
-    // Slot 8: 40 shreds, replay_fec_set_index=32; 40 >= 32 so skipped.
-    for (slot, shreds) in [(4, 5), (8, 40)] {
+    // Slot 8: 40 shreds, replay_fec_set_index=32; 40 > 32 so skipped.
+    // Slot 12: 32 shreds, replay_fec_set_index=32, but no boundary replay
+    // failure; a late signal must not clear this healthy bank.
+    // Slot 16: 32 shreds and a boundary failure recorded for a different
+    // replay offset; stale failure state must not authorize this restart.
+    for (slot, shreds) in [(4, 5), (8, 40), (12, 32), (16, 32)] {
         let bank = Bank::new_from_parent(bank0.clone(), SlotLeader::default(), slot);
         bank_forks.write().unwrap().insert(bank);
-        let p = ForkProgress::new(Hash::default(), Some(0), None, 0, 0, None);
+        let mut p = ForkProgress::new(Hash::default(), Some(0), None, 0, 0, None);
         p.replay_progress.write().unwrap().num_shreds = shreds;
+        if slot == 16 {
+            p.mark_dead(DeadSlotReason::ReplayFailureAtUpdateParent(64));
+        }
         progress.insert(slot, p);
     }
 
     let (tx, rx) = bounded(1024);
-    for slot in [4, 8] {
+    for slot in [4, 8, 12, 16] {
         let parent_block_id = Hash::new_unique();
         insert_update_parent_slot(
             &blockstore,
@@ -3174,7 +3181,9 @@ fn test_update_parent_restart() {
     );
 
     assert!(progress.get(&4).is_none()); // cleared: 5 < 32
-    assert!(progress.get(&8).is_some()); // skipped: 40 >= 32
+    assert!(progress.get(&8).is_some()); // skipped: 40 > 32
+    assert!(progress.get(&12).is_some()); // skipped: 32 == 32 without a replay failure
+    assert!(progress.get(&16).is_some()); // skipped: boundary failure was recorded for 64
     assert_eq!(
         replay_vote_receiver.try_recv(),
         Ok(ReplayVoteMessage::InvalidBank {
@@ -3522,6 +3531,109 @@ fn test_after_update_hard_dead() {
         progress.get(&slot).unwrap().dead_reason,
         Some(DeadSlotReason::Hard)
     ));
+}
+
+#[test_case(31, false; "before_update_parent_restarts")]
+#[test_case(32, false; "at_update_parent_restarts")]
+#[test_case(33, true; "after_update_parent_is_hard_dead")]
+fn test_spurious_update_parent_boundary(replayed_shreds: u64, should_be_hard: bool) {
+    let ReplayBlockstoreComponents {
+        blockstore,
+        vote_simulator,
+        ..
+    } = replay_blockstore_components(Some(tr(0)), 1, None::<GenerateVotes>);
+    let VoteSimulator {
+        bank_forks,
+        mut progress,
+        ..
+    } = vote_simulator;
+
+    let slot = 4;
+    let bank0 = bank_forks.read().unwrap().get(0).unwrap();
+    let bank = Bank::new_from_parent(bank0, SlotLeader::default(), slot);
+    let bank = bank_forks.write().unwrap().insert(bank);
+    let header = VersionedBlockMarker::from_block_header(BlockHeaderV1 {
+        parent_slot: 0,
+        parent_block_id: Hash::default(),
+    });
+    let update_parent = VersionedBlockMarker::from_update_parent(UpdateParentV1 {
+        new_parent_slot: 0,
+        new_parent_block_id: Hash::default(),
+    });
+    let mut shreds = block_marker_shreds(slot, 0, header, 0);
+    shreds.retain(|shred| !shred.is_data() || shred.index() != 0);
+    shreds.extend(block_marker_shreds(slot, 0, update_parent, 32));
+    blockstore.insert_shreds(shreds, true).unwrap();
+    let meta = blockstore.meta(slot).unwrap().unwrap();
+    assert!(meta.has_update_parent());
+
+    let replay_fec_set_index = u64::from(meta.replay_fec_set_index);
+    assert_eq!(replay_fec_set_index, 32);
+    let p = ForkProgress::new(bank.last_blockhash(), Some(0), None, 0, 0, None);
+    p.replay_progress.write().unwrap().num_shreds = replayed_shreds;
+    progress.insert(slot, p);
+
+    let (replay_vote_sender, _replay_vote_receiver) = bounded(1024);
+    let (ancestor_hashes_replay_update_sender, _) = bounded(1024);
+    let mut duplicate_slots_to_repair = DuplicateSlotsToRepair::default();
+    let mut purge_repair_slot_counter = PurgeRepairSlotCounter::default();
+    let migration_status = post_migration_status_for_tests();
+    let mut dead_slot_context = dead_slot_context_for_tests(
+        blockstore.clone(),
+        replay_vote_sender.clone(),
+        &ancestor_hashes_replay_update_sender,
+        &mut duplicate_slots_to_repair,
+        &mut purge_repair_slot_counter,
+        None,
+        &migration_status,
+    );
+    mark_replay_dead_slot(
+        &bank,
+        &BlockstoreProcessorError::BlockComponentProcessor(
+            BlockComponentProcessorError::SpuriousUpdateParent,
+        ),
+        &mut progress,
+        &mut dead_slot_context,
+    );
+    drop(dead_slot_context);
+
+    if should_be_hard {
+        assert!(blockstore.is_dead(slot));
+        assert!(matches!(
+            progress.get(&slot).unwrap().dead_reason,
+            Some(DeadSlotReason::Hard)
+        ));
+        return;
+    }
+
+    assert!(!blockstore.is_dead(slot));
+    let expected_reason = if replayed_shreds < replay_fec_set_index {
+        DeadSlotReason::ReplayFailureBeforeUpdateParent
+    } else {
+        DeadSlotReason::ReplayFailureAtUpdateParent(replay_fec_set_index)
+    };
+    assert_eq!(
+        progress.get(&slot).unwrap().dead_reason.as_ref(),
+        Some(&expected_reason)
+    );
+
+    let mut async_verification_freelist = Vec::new();
+    process_soft_dead_slots(
+        &Pubkey::new_unique(),
+        &blockstore,
+        &bank_forks,
+        &None,
+        &None,
+        &mut progress,
+        &mut async_verification_freelist,
+        &replay_vote_sender,
+        &migration_status,
+        None,
+    );
+
+    assert!(!blockstore.is_dead(slot));
+    assert!(progress.get(&slot).is_none());
+    assert!(bank_forks.read().unwrap().get(slot).is_none());
 }
 
 #[test]

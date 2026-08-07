@@ -88,6 +88,9 @@ pub enum DeadSlotReason {
     /// Replay execution failed, but an `UpdateParent` marker could still make
     /// the failed prefix obsolete.
     ReplayFailureBeforeUpdateParent,
+    /// Replay rejected the `UpdateParent` marker exactly at its FEC-set
+    /// boundary. Restarting from the marker can discard the stale prefix state.
+    ReplayFailureAtUpdateParent(u64),
 }
 
 pub struct ForkProgress {
