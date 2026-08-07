@@ -1,7 +1,7 @@
 use {
     agave_feature_set::{FeatureSet, deprecate_legacy_vote_ixs},
     criterion::{BatchSize, Criterion, criterion_group, criterion_main},
-    solana_account::{Account, AccountSharedData, create_account_for_test},
+    solana_account::{Account, AccountSharedData, WritableAccount},
     solana_clock::{Clock, Slot},
     solana_hash::Hash,
     solana_instruction::AccountMeta,
@@ -12,6 +12,7 @@ use {
     solana_pubkey::Pubkey,
     solana_sdk_ids::sysvar,
     solana_slot_hashes::{MAX_ENTRIES, SlotHashes},
+    solana_sysvar_id::SysvarId,
     solana_transaction_context::transaction_accounts::KeyedAccountSharedData,
     solana_vote_program::{
         vote_instruction::VoteInstruction,
@@ -22,6 +23,22 @@ use {
     },
     std::time::Duration,
 };
+
+fn create_sysvar_account<T>(value: &T) -> AccountSharedData
+where
+    T: wincode::Serialize<Src = T> + SysvarId,
+{
+    let serialized_len = wincode::serialized_size(value).unwrap() as usize;
+    let canonical_data_len = match T::id() {
+        sysvar::clock::ID => solana_clock::SIZE,
+        sysvar::slot_hashes::ID => solana_slot_hashes::SIZE,
+        id => panic!("unsupported sysvar: {id}"),
+    };
+    let required_data_len = canonical_data_len.max(serialized_len);
+    let mut account = AccountSharedData::new(1, required_data_len, &sysvar::id());
+    wincode::serialize_into(account.data_as_mut_slice(), value).unwrap();
+    account
+}
 
 fn create_accounts() -> (
     Slot,
@@ -75,12 +92,9 @@ fn create_accounts() -> (
         (vote_pubkey, AccountSharedData::from(vote_account)),
         (
             sysvar::slot_hashes::id(),
-            AccountSharedData::from(create_account_for_test(&slot_hashes)),
+            create_sysvar_account(&slot_hashes),
         ),
-        (
-            sysvar::clock::id(),
-            AccountSharedData::from(create_account_for_test(&clock)),
-        ),
+        (sysvar::clock::id(), create_sysvar_account(&clock)),
         (authority_pubkey, AccountSharedData::default()),
     ];
     let mut instruction_account_metas = (0..4)
