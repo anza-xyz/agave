@@ -392,7 +392,7 @@ impl SendTransactionService {
                 stats.nonced_transactions.fetch_add(1, Ordering::Relaxed);
             }
             if root_bank
-                .get_committed_transaction_status_and_slot(
+                .get_transaction_status_and_slot_from_status_cache(
                     &transaction_info.message_hash,
                     &transaction_info.blockhash,
                 )
@@ -403,7 +403,7 @@ impl SendTransactionService {
                 stats.rooted_transactions.fetch_add(1, Ordering::Relaxed);
                 return false;
             }
-            let signature_status = working_bank.get_committed_transaction_status_and_slot(
+            let signature_status = working_bank.get_transaction_status_and_slot_from_status_cache(
                 &transaction_info.message_hash,
                 &transaction_info.blockhash,
             );
