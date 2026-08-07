@@ -3144,7 +3144,7 @@ mod tests {
     fn test_should_require_vote_history_file() {
         use {
             agave_votor_messages::consensus_message::Block,
-            solana_account::{AccountSharedData, state_traits::StateMut},
+            solana_account::{AccountSharedData, state_traits::StateMutWincode as _},
             solana_bls_signatures::{BLS_SIGNATURE_AFFINE_SIZE, Signature as BLSSignature},
         };
 

@@ -13,7 +13,9 @@ use {
     },
     log::error,
     serde::{Deserialize, Serialize},
-    solana_account::{AccountSharedData, ReadableAccount, WritableAccount, state_traits::StateMut},
+    solana_account::{
+        AccountSharedData, ReadableAccount, WritableAccount, state_traits::StateMutWincode as _,
+    },
     solana_accounts_db::stake_rewards::{StakeReward, StakeRewardInfo},
     solana_clock::Epoch,
     solana_measure::measure_us,

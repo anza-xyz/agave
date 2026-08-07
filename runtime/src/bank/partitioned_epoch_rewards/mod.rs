@@ -450,7 +450,7 @@ mod tests {
         },
         assert_matches::assert_matches,
         rand::Rng,
-        solana_account::{Account, state_traits::StateMut},
+        solana_account::{Account, state_traits::StateMutWincode as _},
         solana_accounts_db::{
             accounts_db::{ACCOUNTS_DB_CONFIG_FOR_TESTING, AccountsDbConfig},
             partitioned_rewards::PartitionedEpochRewardsConfig,

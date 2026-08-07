@@ -276,7 +276,7 @@ pub mod tests {
         super::*,
         crate::genesis_utils::{create_genesis_config, create_genesis_config_with_leader},
         agave_feature_set::FeatureSet,
-        solana_account::state_traits::StateMut,
+        solana_account::state_traits::StateMutWincode as _,
         solana_pubkey as pubkey,
         solana_rent::Rent,
         solana_signer::Signer,
