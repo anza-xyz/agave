@@ -176,7 +176,7 @@ dependencies = [
  "agave-logger",
  "agave-reserved-account-keys",
  "agave-snapshots",
- "agave-transaction-view 5.1.0 (git+https://github.com/dsharifi/agave-sdk?rev=6ddd119a424048b5131044bd22af6de6f8e4b21e)",
+ "agave-transaction-view",
  "assert_cmd",
  "bincode",
  "bytes",
@@ -318,7 +318,7 @@ version = "4.3.0-alpha.3"
 dependencies = [
  "agave-feature-set",
  "agave-scheduler-bindings",
- "agave-transaction-view 5.1.0 (git+https://github.com/dsharifi/agave-sdk?rev=dd2d267ebc57efd763688301573a72eb6fc2bd15)",
+ "agave-transaction-view",
  "ahash 0.8.12",
  "libc",
  "nix",
@@ -373,23 +373,6 @@ dependencies = [
  "solana-pubkey 4.3.0",
  "solana-system-interface 3.3.0",
  "solana-version",
-]
-
-[[package]]
-name = "agave-transaction-view"
-version = "5.1.0"
-source = "git+https://github.com/dsharifi/agave-sdk?rev=6ddd119a424048b5131044bd22af6de6f8e4b21e#6ddd119a424048b5131044bd22af6de6f8e4b21e"
-dependencies = [
- "bytes",
- "solana-hash 4.6.0",
- "solana-message",
- "solana-packet 4.3.0",
- "solana-pubkey 4.3.0",
- "solana-sdk-ids",
- "solana-short-vec",
- "solana-signature",
- "solana-svm-transaction",
- "solana-transaction",
 ]
 
 [[package]]
@@ -6485,7 +6468,7 @@ dependencies = [
  "agave-scheduler-bindings",
  "agave-scheduling-utils",
  "agave-snapshots",
- "agave-transaction-view 5.1.0 (git+https://github.com/dsharifi/agave-sdk?rev=dd2d267ebc57efd763688301573a72eb6fc2bd15)",
+ "agave-transaction-view",
  "agave-votor",
  "agave-votor-messages",
  "agave-votor-transport",
@@ -6730,7 +6713,7 @@ dependencies = [
 name = "solana-entry"
 version = "4.3.0-alpha.3"
 dependencies = [
- "agave-transaction-view 5.1.0 (git+https://github.com/dsharifi/agave-sdk?rev=dd2d267ebc57efd763688301573a72eb6fc2bd15)",
+ "agave-transaction-view",
  "agave-votor-messages",
  "bytes",
  "crossbeam-channel",
@@ -7230,7 +7213,7 @@ dependencies = [
  "agave-feature-set",
  "agave-reserved-account-keys",
  "agave-snapshots",
- "agave-transaction-view 5.1.0 (git+https://github.com/dsharifi/agave-sdk?rev=dd2d267ebc57efd763688301573a72eb6fc2bd15)",
+ "agave-transaction-view",
  "agave-votor-messages",
  "anyhow",
  "assert_matches",
@@ -7527,7 +7510,7 @@ dependencies = [
 name = "solana-perf"
 version = "4.3.0-alpha.3"
 dependencies = [
- "agave-transaction-view 5.1.0 (git+https://github.com/dsharifi/agave-sdk?rev=dd2d267ebc57efd763688301573a72eb6fc2bd15)",
+ "agave-transaction-view",
  "ahash 0.8.12",
  "arc-swap",
  "bincode",
@@ -8045,7 +8028,7 @@ dependencies = [
  "agave-precompiles",
  "agave-reserved-account-keys",
  "agave-snapshots",
- "agave-transaction-view 5.1.0 (git+https://github.com/dsharifi/agave-sdk?rev=dd2d267ebc57efd763688301573a72eb6fc2bd15)",
+ "agave-transaction-view",
  "agave-votor-messages",
  "ahash 0.8.12",
  "arc-swap",
@@ -8172,7 +8155,7 @@ name = "solana-runtime-transaction"
 version = "4.3.0-alpha.3"
 dependencies = [
  "agave-feature-set",
- "agave-transaction-view 5.1.0 (git+https://github.com/dsharifi/agave-sdk?rev=dd2d267ebc57efd763688301573a72eb6fc2bd15)",
+ "agave-transaction-view",
  "solana-compute-budget",
  "solana-compute-budget-instruction",
  "solana-hash 4.6.0",
@@ -9143,7 +9126,7 @@ dependencies = [
 name = "solana-unified-scheduler-logic"
 version = "4.3.0-alpha.3"
 dependencies = [
- "agave-transaction-view 5.1.0 (git+https://github.com/dsharifi/agave-sdk?rev=dd2d267ebc57efd763688301573a72eb6fc2bd15)",
+ "agave-transaction-view",
  "assert_matches",
  "solana-clock",
  "solana-hash 4.6.0",
@@ -9159,7 +9142,7 @@ name = "solana-unified-scheduler-pool"
 version = "4.3.0-alpha.3"
 dependencies = [
  "agave-banking-stage-ingress-types",
- "agave-transaction-view 5.1.0 (git+https://github.com/dsharifi/agave-sdk?rev=dd2d267ebc57efd763688301573a72eb6fc2bd15)",
+ "agave-transaction-view",
  "assert_matches",
  "bytes",
  "crossbeam-channel",
