@@ -113,7 +113,7 @@ impl StatsEvent {
             VotorEvent::Block(_) => StatsEvent::Block,
             VotorEvent::BlockNotarized(_) => StatsEvent::BlockNotarized,
             VotorEvent::BlockNotarFallback(_) => StatsEvent::BlockNotarFallback,
-            VotorEvent::FirstShred(_) => StatsEvent::FirstShred,
+            VotorEvent::FirstShred { .. } => StatsEvent::FirstShred,
             VotorEvent::ParentReady { .. } => StatsEvent::ParentReady,
             VotorEvent::TimeoutCrashedLeader(_) => StatsEvent::TimeoutCrashedLeader,
             VotorEvent::Timeout(_) => StatsEvent::Timeout,
@@ -146,9 +146,9 @@ impl EventHandlerStats {
 
     pub fn handle_event_arrival(&mut self, event: &VotorEvent) -> StatsEvent {
         match event {
-            VotorEvent::FirstShred(slot) => {
+            VotorEvent::FirstShred { slot, received_at } => {
                 let entry = self.slot_tracking_map.entry(*slot).or_default();
-                entry.first_shred = Some(Instant::now());
+                entry.first_shred = Some(*received_at);
             }
             VotorEvent::ParentReady { slot, .. } => {
                 let entry = self.slot_tracking_map.entry(*slot).or_default();

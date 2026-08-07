@@ -36,6 +36,7 @@ use {
         snapshot_config::SnapshotConfig, snapshot_hash::StartingSnapshotHashes,
     },
     agave_votor::{
+        slot_clock::SharedAlpenglowSlotClock,
         vote_history::{VoteHistory, VoteHistoryError},
         vote_history_storage::{NullVoteHistoryStorage, VoteHistoryStorage},
         voting_service::VotingServiceOverride,
@@ -1515,6 +1516,7 @@ impl Validator {
         );
 
         let replay_highest_frozen = Arc::new(ReplayHighestFrozen::default());
+        let alpenglow_slot_clock = SharedAlpenglowSlotClock::default();
         let highest_parent_ready = Arc::new(RwLock::default());
         // Shared state for highest finalized certificates (updated by Votor, read by block creation loop)
         let highest_finalized = Arc::new(RwLock::new(None));
@@ -1531,6 +1533,7 @@ impl Validator {
         let block_creation_loop_config = BlockCreationLoopConfig {
             exit: exit.clone(),
             bank_forks: bank_forks.clone(),
+            alpenglow_slot_clock: alpenglow_slot_clock.clone(),
             bank_forks_controller: bank_forks_controller.clone(),
             blockstore: blockstore.clone(),
             cluster_info: cluster_info.clone(),
@@ -1655,6 +1658,7 @@ impl Validator {
             slot_status_notifier,
             vote_connection_cache,
             AlpenglowInitializationState {
+                alpenglow_slot_clock: alpenglow_slot_clock.clone(),
                 leader_window_info_sender,
                 optimistic_parent_sender,
                 optimistic_parent_receiver,
@@ -1717,6 +1721,7 @@ impl Validator {
             node.info.shred_version(),
             vote_tracker,
             bank_forks.clone(),
+            alpenglow_slot_clock,
             verified_vote_sender,
             gossip_verified_vote_hash_sender,
             replay_vote_receiver,

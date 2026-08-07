@@ -925,8 +925,10 @@ fn notify_subscribers(
     if notifiers.migration_status.should_send_first_shred(slot) {
         match notifiers
             .votor_event_sender
-            .try_send(VotorEvent::FirstShred(slot))
-        {
+            .try_send(VotorEvent::FirstShred {
+                slot,
+                received_at: Instant::now(),
+            }) {
             Ok(()) => (),
             Err(TrySendError::Full(event)) => {
                 error!(
@@ -1126,7 +1128,10 @@ mod tests {
 
         assert!(matches!(
             votor_event_receiver.try_recv(),
-            Ok(VotorEvent::FirstShred(received_slot)) if received_slot == slot
+            Ok(VotorEvent::FirstShred {
+                slot: received_slot,
+                ..
+            }) if received_slot == slot
         ));
         assert!(pending_first_shred_event.is_none());
 
