@@ -170,6 +170,7 @@ impl AccountStorageEntry {
 
     /// Insert offsets into the zero lamport single ref account offset set.
     /// Return the number of new offsets that were inserted.
+    #[cfg(test)]
     pub(crate) fn batch_insert_zero_lamport_single_ref_account_offsets(
         &self,
         offsets: &[Offset],

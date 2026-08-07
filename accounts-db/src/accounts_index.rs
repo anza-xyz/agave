@@ -936,12 +936,9 @@ impl<T: IndexValue, U: DiskIndexValue + From<T> + Into<T>> AccountsIndex<T, U> {
             self.purge_older_root_entries(&mut slot_list, reclaims, max_clean_root_inclusive);
             let mut unref_count = (reclaims.len() - reclaims_start) as RefCount;
 
-            // If reclaiming leaves a single ref zero lamport account, it is safe to delete
-            // the account entirely and mark it as a tombstone. An untouched single-entry
-            // zero-lamport account stays on the classic zero-lamport purge path: its offset
-            // is already marked zero-lamport single-ref at flush or index generation.
-            if unref_count > 0
-                && entry.ref_count() == unref_count + 1
+            // If only a zero lamport single ref account remains, then reclaim it. It will be converted
+            // into a tombstone
+            if entry.ref_count() == unref_count + 1
                 && let &[(slot, account_info)] = &*slot_list
                 && account_info.is_zero_lamport()
             {

@@ -143,6 +143,9 @@ fn test_generate_index_for_single_ref_zero_lamport_slot() {
     db.storage.insert(Arc::clone(&append_vec));
     assert!(!db.accounts_index.contains(&pubkey));
     let result = db.generate_index(None, false);
+
+    // The zero-lamport account stays alive in the index; its pubkey is added to
+    // `uncleaned_pubkeys` for clean to handle
     let slot_list_len = db.accounts_index.get_and_then(&pubkey, |entry| {
         (false, entry.unwrap().slot_list_lock_read_len())
     });
@@ -154,11 +157,17 @@ fn test_generate_index_for_single_ref_zero_lamport_slot() {
     assert_eq!(append_vec.accounts_count(), 1);
     assert_eq!(append_vec.count(), 1);
     assert_eq!(result.accounts_data_len, 0);
-    assert_eq!(1, append_vec.num_zero_lamport_single_ref_accounts());
+    assert_eq!(0, append_vec.num_zero_lamport_single_ref_accounts());
     assert_eq!(
-        0,
-        append_vec.alive_bytes_exclude_zero_lamport_single_ref_accounts()
+        db.uncleaned_pubkeys.get(&slot0).unwrap().value(),
+        &vec![pubkey]
     );
+
+    // Clean removes the account: the index entry is deleted, and the storage, now fully dead,
+    // is removed.
+    db.clean_accounts_for_tests();
+    assert!(!db.accounts_index.contains(&pubkey));
+    assert!(db.storage.get_slot_storage_entry(slot0).is_none());
 }
 
 pub(crate) fn append_single_account_with_default_hash(

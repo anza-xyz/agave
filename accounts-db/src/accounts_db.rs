@@ -422,6 +422,8 @@ struct IndexGenerationAccumulator {
     /// The number of accounts in this slot that were skipped when generating the index as they
     /// were already marked obsolete in the account storage entry
     num_obsolete_accounts_skipped: u64,
+    /// The number of zero-lamport pubkeys found in this slot
+    num_zero_lamport_pubkeys: u64,
     slot_arena: IndexGenerationSlotArena,
 }
 impl IndexGenerationAccumulator {
@@ -439,6 +441,7 @@ impl IndexGenerationAccumulator {
             lt_hash_acc: batch::Accumulator::new(),
             capitalization: 0,
             num_obsolete_accounts_skipped: 0,
+            num_zero_lamport_pubkeys: 0,
             slot_arena: IndexGenerationSlotArena::default(),
         }
     }
@@ -458,6 +461,7 @@ impl IndexGenerationAccumulator {
             .checked_add(other.capitalization)
             .expect("capitalization cannot overflow");
         self.num_obsolete_accounts_skipped += other.num_obsolete_accounts_skipped;
+        self.num_zero_lamport_pubkeys += other.num_zero_lamport_pubkeys;
         self.storage_info.append(&mut other.storage_info);
     }
 }
@@ -468,14 +472,12 @@ impl IndexGenerationAccumulator {
 #[derive(Debug, Default)]
 struct IndexGenerationSlotArena {
     keyed_account_infos: Vec<(Pubkey, AccountInfo)>,
-    zero_lamport_offsets: Vec<usize>,
 }
 
 impl IndexGenerationSlotArena {
     /// Makes sure no actual items are stored in the allocated data structures
     fn ensure_empty(&mut self) {
         assert!(self.keyed_account_infos.is_empty(), "should be drained");
-        self.zero_lamport_offsets.clear();
     }
 }
 
@@ -513,6 +515,7 @@ struct GenerateIndexTimings {
     pub num_obsolete_accounts_marked: u64,
     pub num_slots_removed_as_obsolete: u64,
     pub num_obsolete_accounts_skipped: u64,
+    pub num_zero_lamport_pubkeys: u64,
 }
 
 #[derive(Default, Debug, PartialEq, Eq)]
@@ -593,6 +596,11 @@ impl GenerateIndexTimings {
             (
                 "num_obsolete_accounts_skipped",
                 self.num_obsolete_accounts_skipped,
+                i64
+            ),
+            (
+                "num_zero_lamport_pubkeys",
+                self.num_zero_lamport_pubkeys,
                 i64
             ),
         );
@@ -1959,6 +1967,9 @@ impl AccountsDb {
                                                     max_clean_root_inclusive,
                                                 );
                                             candidate_info.ref_count = ref_count;
+                                            // Even if the slot list length is 1, this may be
+                                            // reclaimable as it is a zero lamport account
+                                            should_collect_reclaims = true;
                                         } else {
                                             found_not_zero += 1;
                                         }
@@ -5662,7 +5673,7 @@ impl AccountsDb {
         let mut all_accounts_are_zero_lamports = true;
         accum.slot_arena.ensure_empty();
         let keyed_account_infos = &mut accum.slot_arena.keyed_account_infos;
-        let zero_lamport_offsets = &mut accum.slot_arena.zero_lamport_offsets;
+        let mut zero_lamport_pubkeys = Vec::new();
         // Batches this thread's account lt-hashes across all its storages; merged
         // into other accumulators in `accumulate`.
         let lt_hash_acc = &mut accum.lt_hash_acc;
@@ -5691,9 +5702,9 @@ impl AccountsDb {
                     accounts_data_len += data_len as u64;
                     all_accounts_are_zero_lamports = false;
                 } else {
-                    // All zero lamport accounts are obsolete or single ref by the end of index
-                    // generation. Store the offsets so they can be batch inserted later
-                    zero_lamport_offsets.push(offset);
+                    // Collect zero-lamport pubkeys so they can be added to `uncleaned_pubkeys`
+                    // after the scan, for clean to examine and remove.
+                    zero_lamport_pubkeys.push(*account.pubkey);
                 }
                 keyed_account_infos.push((
                     *account.pubkey,
@@ -5782,10 +5793,14 @@ impl AccountsDb {
             accum.storage_info.push((store_id, info));
         }
 
-        // Add all zero lamport accounts as zero lamport single refs to avoid having to revisit
-        // them later. This is safe as all zero lamport accounts will be single ref or obsolete
-        // by the end of index generation
-        storage.batch_insert_zero_lamport_single_ref_account_offsets(zero_lamport_offsets);
+        // Zero-lamport accounts stay alive in the index until clean removes them. Their storages
+        // are not otherwise dirty, so add the pubkeys into `uncleaned_pubkeys` for the first
+        // clean to examine them.
+        if !zero_lamport_pubkeys.is_empty() {
+            accum.num_zero_lamport_pubkeys += zero_lamport_pubkeys.len() as u64;
+            // Each slot has exactly one storage, so this is the only insert for `slot`.
+            self.uncleaned_pubkeys.insert(slot, zero_lamport_pubkeys);
+        }
 
         accum.num_accounts += insert_info.count as u64;
         accum.insert_time_us += insert_time_us;
@@ -6107,6 +6122,7 @@ impl AccountsDb {
         timings.mark_obsolete_accounts_us = mark_obsolete_accounts_time.as_us();
         timings.num_obsolete_accounts_marked = obsolete_account_stats.accounts_marked_obsolete;
         timings.num_slots_removed_as_obsolete = obsolete_account_stats.slots_removed;
+        timings.num_zero_lamport_pubkeys = total_accum.num_zero_lamport_pubkeys;
         total_time.stop();
         timings.total_time_us = total_time.as_us();
         timings.report(self.accounts_index.get_startup_stats());

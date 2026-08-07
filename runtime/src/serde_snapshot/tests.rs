@@ -11,7 +11,6 @@ mod serde_snapshot_tests {
             snapshot_utils::StorageAndNextAccountsFileId,
         },
         agave_fs::{FileInfo, buffered_reader::FileBufRead as _, io_setup::IoSetupState},
-        log::info,
         rand::{Rng, rng},
         solana_account::{AccountSharedData, ReadableAccount},
         solana_accounts_db::{
@@ -704,38 +703,24 @@ mod serde_snapshot_tests {
         // So, prevent that from happening by introducing refcount
         ((current_slot - 1)..=current_slot).for_each(|slot| accounts.flush_root_write_cache(slot));
         accounts.clean_accounts_for_tests();
+
+        // Reconstruct the database from the snapshot to simulate a restore
         let accounts = reconstruct_accounts_db_via_serialization(
             &accounts,
             current_slot,
             ACCOUNTS_DB_CONFIG_FOR_TESTING,
         );
 
-        // Set snapshot to zero to avoid cleaning zero-lamport pubkey1
-        accounts.set_latest_full_snapshot_slot(0);
-        accounts.clean_accounts_for_tests();
-
-        info!("pubkey: {pubkey1}");
-        accounts.print_accounts_stats("pre_clean");
+        // At this point pubkey 1 has been restored as a zero lamport account
         accounts.assert_load_account(current_slot, pubkey1, zero_lamport);
         accounts.assert_load_account(current_slot, pubkey2, old_lamport);
         accounts.assert_load_account(current_slot, dummy_pubkey, dummy_lamport);
 
-        // F: Finally, make Step A cleanable
-        current_slot += 1;
-        accounts.store_for_tests((current_slot, [(&pubkey2, &account)].as_slice()));
-        accounts.add_root(current_slot);
-
-        // Do clean
-        accounts.flush_root_write_cache(current_slot);
-
-        // Make zero-lamport pubkey1 cleanable by setting the latest snapshot slot
-        accounts.set_latest_full_snapshot_slot(current_slot);
+        // Regardless of the snapshot slot the zero-lamport pubkey1 is turned into a tombstone
+        // by clean
+        accounts.set_latest_full_snapshot_slot(0);
         accounts.clean_accounts_for_tests();
 
-        // 2nd clean needed to clean-up pubkey1
-        accounts.clean_accounts_for_tests();
-
-        // Ensure pubkey2 is cleaned from the index finally
         accounts.assert_not_load_account(current_slot, pubkey1);
         accounts.assert_load_account(current_slot, pubkey2, old_lamport);
         accounts.assert_load_account(current_slot, dummy_pubkey, dummy_lamport);
