@@ -18,7 +18,6 @@ targets = ["x86_64-unknown-linux-gnu"]
 agave-unstable-api = []
 
 [dependencies]
-async-trait = { workspace = true }
 bincode = { workspace = true }
 bs58 = { workspace = true }
 crossbeam-channel = { workspace = true }
@@ -47,6 +46,7 @@ solana-signature = { workspace = true }
 solana-signer = { workspace = true }
 solana-system-transaction = { workspace = true }
 solana-test-validator = { workspace = true, features = ["agave-unstable-api", "dev-context-only-utils"] }
+solana-tpu-client-next = { workspace = true, features = ["dev-context-only-utils"] }
 solana-transaction = { workspace = true }
 tokio-util = { workspace = true }
 

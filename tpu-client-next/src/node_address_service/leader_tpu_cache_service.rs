@@ -4,7 +4,7 @@
 #![allow(clippy::arithmetic_side_effects)]
 use {
     crate::{
-        connection_workers_scheduler::extract_send_leaders,
+        connection_workers_scheduler::append_unique_leaders,
         logging::{debug, error, info, warn},
         node_address_service::SlotReceiver,
     },
@@ -68,14 +68,14 @@ pub struct LeaderUpdateReceiver {
 }
 
 impl LeaderUpdateReceiver {
-    pub fn leaders(&self, lookahead_leaders: usize) -> Vec<SocketAddr> {
-        let NodesTpuInfo { leaders, extend } = self.receiver.borrow().clone();
-        let lookahead_leaders = if extend {
+    pub fn next_leaders(&self, lookahead_leaders: usize, leaders: &mut Vec<SocketAddr>) {
+        let tpu_info = self.receiver.borrow();
+        let lookahead_leaders = if tpu_info.extend {
             lookahead_leaders.saturating_add(1)
         } else {
             lookahead_leaders
         };
-        extract_send_leaders(&leaders, lookahead_leaders)
+        append_unique_leaders(&tpu_info.leaders, lookahead_leaders, leaders);
     }
 }
 

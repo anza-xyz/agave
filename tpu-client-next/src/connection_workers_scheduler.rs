@@ -233,6 +233,9 @@ impl ConnectionWorkersScheduler {
         // channel is dropped.
         let mut identity_updater_is_active = true;
 
+        let mut send_leaders = Vec::with_capacity(leaders_fanout.send);
+        let mut connect_leaders = Vec::with_capacity(leaders_fanout.connect.saturating_add(1));
+
         loop {
             let transaction: WireTransaction = tokio::select! {
                 recv_res = transaction_receiver.recv() => match recv_res {
@@ -270,14 +273,15 @@ impl ConnectionWorkersScheduler {
                 }
             };
 
-            let connect_leaders = leader_updater.next_leaders(leaders_fanout.connect);
-            let send_leaders = extract_send_leaders(&connect_leaders, leaders_fanout.send);
+            connect_leaders.clear();
+            leader_updater.next_leaders(leaders_fanout.connect, &mut connect_leaders);
+            send_leaders.clear();
+            append_unique_leaders(&connect_leaders, leaders_fanout.send, &mut send_leaders);
 
-            // add future leaders to the cache to hide the latency of opening
-            // the connection.
-            for peer in connect_leaders {
+            // add future leaders to the cache to hide the latency of opening the connection.
+            for peer in &connect_leaders {
                 if let Some(evicted_worker) = workers.ensure_worker(
-                    peer,
+                    *peer,
                     &endpoint,
                     worker_channel_size,
                     max_reconnect_attempts,
@@ -300,7 +304,6 @@ impl ConnectionWorkersScheduler {
         workers.shutdown().await;
 
         endpoint.close(0u32.into(), b"Closing connection");
-        leader_updater.stop().await;
         if let Some(error) = last_error {
             return Err(error);
         }
@@ -359,23 +362,18 @@ impl WorkersBroadcaster for NonblockingBroadcaster {
     }
 }
 
-/// Extracts a list of unique leader addresses to which transactions will be sent.
+/// Appends up to `max_leaders` unique TPU addresses to `selected_leaders`.
 ///
-/// This function selects up to `send_fanout` addresses from the `leaders` list, ensuring that
-/// only unique addresses are included while maintaining their original order.
-pub fn extract_send_leaders(leaders: &[SocketAddr], send_fanout: usize) -> Vec<SocketAddr> {
-    let send_count = send_fanout.min(leaders.len());
-    remove_duplicates(&leaders[..send_count])
-}
-
-/// Removes duplicate `SocketAddr` elements from the given slice while
-/// preserving their original order.
-fn remove_duplicates(input: &[SocketAddr]) -> Vec<SocketAddr> {
-    let mut res = Vec::with_capacity(input.len());
-    for address in input {
-        if !res.contains(address) {
-            res.push(*address);
+/// This function selects up to `max_leaders` addresses from the `leaders` list, ensuring that only
+/// unique addresses are included while maintaining their original order.
+pub fn append_unique_leaders(
+    leaders: &[SocketAddr],
+    max_leaders: usize,
+    selected_leaders: &mut Vec<SocketAddr>,
+) {
+    for address in leaders.iter().take(max_leaders) {
+        if !selected_leaders.contains(address) {
+            selected_leaders.push(*address);
         }
     }
-    res
 }
