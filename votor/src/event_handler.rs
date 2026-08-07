@@ -32,6 +32,7 @@ use {
     solana_pubkey::Pubkey,
     solana_runtime::{
         bank::Bank,
+        bank_forks::BankForks,
         leader_schedule_utils::{
             first_of_consecutive_leader_slots, last_of_consecutive_leader_slots, leader_slot_index,
         },
@@ -83,6 +84,10 @@ enum EventLoopError {
 
 pub(crate) struct EventHandler {
     t_event_handler: JoinHandle<()>,
+    // Keep BankForks teardown on the thread that owns and joins the event handler. If the event
+    // loop owns the last reference, BankForks drop glue can block this thread while Tvu::join is
+    // waiting for it to exit.
+    bank_forks_keepalive: Arc<std::sync::RwLock<BankForks>>,
 }
 
 struct LocalContext {
@@ -100,6 +105,7 @@ struct LocalContext {
 
 impl EventHandler {
     pub(crate) fn new(ctx: EventHandlerContext) -> Self {
+        let bank_forks_keepalive = ctx.shared_context.bank_forks.clone();
         let t_event_handler = Builder::new()
             .name("solVotorEvLoop".to_string())
             .spawn(move || {
@@ -109,7 +115,10 @@ impl EventHandler {
             })
             .unwrap();
 
-        Self { t_event_handler }
+        Self {
+            t_event_handler,
+            bank_forks_keepalive,
+        }
     }
 
     fn event_loop(context: EventHandlerContext) -> Result<(), EventLoopError> {
@@ -978,7 +987,11 @@ impl EventHandler {
     }
 
     pub(crate) fn join(self) -> thread::Result<()> {
-        self.t_event_handler.join()
+        let Self {
+            t_event_handler,
+            bank_forks_keepalive: _bank_forks_keepalive,
+        } = self;
+        t_event_handler.join()
     }
 }
 
@@ -1257,6 +1270,22 @@ mod tests {
             vote_history_storage,
             _vote_history_storage_dir: vote_history_storage_dir,
         }
+    }
+
+    #[test]
+    fn test_event_handler_keeps_bank_forks_alive_until_joined() {
+        let genesis = solana_runtime::genesis_utils::create_genesis_config(1);
+        let bank = Bank::new_for_tests(&genesis.genesis_config);
+        let bank_forks = BankForks::new_rw_arc(bank);
+        let weak_bank_forks = Arc::downgrade(&bank_forks);
+        let event_handler = EventHandler {
+            t_event_handler: thread::spawn(|| {}),
+            bank_forks_keepalive: bank_forks,
+        };
+
+        assert!(weak_bank_forks.upgrade().is_some());
+        event_handler.join().unwrap();
+        assert!(weak_bank_forks.upgrade().is_none());
     }
 
     impl EventHandlerTestContext {
