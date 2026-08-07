@@ -1163,6 +1163,12 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "72b3254f16251a8381aa12e40e3c4d2f0199f8c6508fbecb9d91f575e0fbb8c6"
 
 [[package]]
+name = "base64"
+version = "0.23.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "ac07cdecf99051d9a5238b80f35af32cdeba5b336e55d957b318b50137e18da5"
+
+[[package]]
 name = "base64ct"
 version = "1.7.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -5827,7 +5833,7 @@ name = "solana-account-decoder"
 version = "4.3.0-alpha.3"
 dependencies = [
  "Inflector",
- "base64 0.22.1",
+ "base64 0.23.1",
  "bincode",
  "bs58",
  "bv",
@@ -5869,7 +5875,7 @@ dependencies = [
 name = "solana-account-decoder-client-types"
 version = "4.3.0-alpha.3"
 dependencies = [
- "base64 0.22.1",
+ "base64 0.23.1",
  "bs58",
  "serde",
  "serde_json",
@@ -6329,7 +6335,7 @@ dependencies = [
  "Inflector",
  "agave-reserved-account-keys",
  "agave-votor-messages",
- "base64 0.22.1",
+ "base64 0.23.1",
  "bitvec",
  "chrono",
  "clap",
@@ -7304,7 +7310,7 @@ dependencies = [
 name = "solana-lattice-hash"
 version = "4.3.0-alpha.3"
 dependencies = [
- "base64 0.22.1",
+ "base64 0.23.1",
  "blake3",
  "bs58",
  "bytemuck",
@@ -7839,7 +7845,7 @@ dependencies = [
 name = "solana-program-runtime"
 version = "4.3.0-alpha.3"
 dependencies = [
- "base64 0.22.1",
+ "base64 0.23.1",
  "bincode",
  "cfg-if 1.0.4",
  "itertools 0.14.0",
@@ -7889,7 +7895,7 @@ dependencies = [
  "agave-logger",
  "assert_matches",
  "async-trait",
- "base64 0.22.1",
+ "base64 0.23.1",
  "bincode",
  "chrono-humanize",
  "log",
@@ -8070,7 +8076,7 @@ dependencies = [
  "agave-feature-set",
  "agave-snapshots",
  "agave-votor-messages",
- "base64 0.22.1",
+ "base64 0.23.1",
  "bs58",
  "crossbeam-channel",
  "dashmap",
@@ -8151,7 +8157,7 @@ version = "4.3.0-alpha.3"
 dependencies = [
  "agave-votor-messages",
  "async-trait",
- "base64 0.22.1",
+ "base64 0.23.1",
  "bincode",
  "bs58",
  "futures 0.3.33",
@@ -8224,7 +8230,7 @@ dependencies = [
 name = "solana-rpc-client-types"
 version = "4.3.0-alpha.3"
 dependencies = [
- "base64 0.22.1",
+ "base64 0.23.1",
  "bs58",
  "semver",
  "serde",
@@ -8258,7 +8264,7 @@ dependencies = [
  "arc-swap",
  "arrayref",
  "assert_matches",
- "base64 0.22.1",
+ "base64 0.23.1",
  "bincode",
  "bitvec",
  "bytemuck",
@@ -9435,7 +9441,7 @@ name = "solana-storage-bigtable"
 version = "4.3.0-alpha.3"
 dependencies = [
  "agave-reserved-account-keys",
- "base64 0.22.1",
+ "base64 0.23.1",
  "bincode",
  "bzip2",
  "flate2",
@@ -9798,7 +9804,7 @@ dependencies = [
  "agave-snapshots",
  "agave-votor-messages",
  "arc-swap",
- "base64 0.22.1",
+ "base64 0.23.1",
  "bincode",
  "crossbeam-channel",
  "log",
@@ -9979,7 +9985,7 @@ version = "4.3.0-alpha.3"
 dependencies = [
  "Inflector",
  "agave-reserved-account-keys",
- "base64 0.22.1",
+ "base64 0.23.1",
  "bincode",
  "borsh",
  "bs58",
@@ -10020,7 +10026,7 @@ dependencies = [
 name = "solana-transaction-status-client-types"
 version = "4.3.0-alpha.3"
 dependencies = [
- "base64 0.22.1",
+ "base64 0.23.1",
  "bincode",
  "bs58",
  "serde",
