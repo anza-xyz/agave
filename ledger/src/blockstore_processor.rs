@@ -1306,6 +1306,9 @@ fn confirm_slot_entries(
     let slot = bank.slot();
     let bank_id = bank.bank_id();
     let (entries, num_shreds, slot_full) = slot_entries_load_result;
+    if slot_full {
+        bank.set_accounts_lt_hash_async_progress_is_at_end();
+    }
     let num_entries = entries.len();
     let mut entry_tx_starting_indexes = Vec::with_capacity(num_entries);
     let mut entry_tx_starting_index = progress.num_txs;

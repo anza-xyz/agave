@@ -299,6 +299,7 @@ pub(super) fn handle_abandoned_bank(
     purge_repair_slot_counter: &mut PurgeRepairSlotCounter,
     tbft_structs: Option<&mut TowerBFTStructures>,
 ) {
+    bank.clear_accounts_lt_hash_async_progress_is_at_end();
     // Handle UpdateParent marker during fast leader handover. The leader
     // built on an optimistic parent that didn't match the ParentReady event.
     //
