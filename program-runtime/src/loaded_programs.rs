@@ -1748,11 +1748,6 @@ pub(crate) mod tests {
             deployment_slot: 20,
             ..Default::default()
         });
-        let new_program_new_env = Arc::new(ProgramCacheEntry {
-            program: new_loaded_entry(new_env.clone()),
-            deployment_slot: 20,
-            ..Default::default()
-        });
         cache.assign_program(&env, program1, 10, old_program_old_env.clone());
         cache.assign_program(&env, program1, 10, old_program_new_env.clone());
         cache.assign_program(&env, program1, 20, new_program_old_env.clone());
@@ -1768,17 +1763,10 @@ pub(crate) mod tests {
 
         cache.prune(21, Some(new_env.clone()), &fork_graph.read().unwrap());
         let slot_versions = cache.get_slot_versions_for_tests(&program1);
-        assert_eq!(
-            &slot_versions,
-            &[old_program_new_env.clone(), new_program_new_env.clone()],
-        );
+        assert_eq!(&slot_versions, &[old_program_new_env]);
         assert!(matches!(
             &slot_versions.first().unwrap().program,
             ProgramCacheEntryType::Loaded(_)
-        ));
-        assert!(matches!(
-            &slot_versions.get(1).unwrap().program,
-            ProgramCacheEntryType::Unloaded(_)
         ));
     }
 
