@@ -359,7 +359,7 @@ mod tests {
             },
         },
         solana_account::{
-            AccountSharedData, ReadableAccount, WritableAccount, state_traits::StateMut,
+            AccountSharedData, ReadableAccount, WritableAccount, state_traits::StateMutWincode as _,
         },
         solana_hash::Hash,
         solana_keypair::Keypair,

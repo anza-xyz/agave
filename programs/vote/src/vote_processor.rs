@@ -450,7 +450,7 @@ mod tests {
         bincode::serialize,
         solana_account::{
             self as account, Account, AccountSharedData, ReadableAccount, WritableAccount,
-            state_traits::StateMut,
+            state_traits::StateMutWincode as _,
         },
         solana_clock::Clock,
         solana_epoch_schedule::EpochSchedule,

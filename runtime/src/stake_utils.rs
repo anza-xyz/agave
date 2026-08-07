@@ -1,5 +1,5 @@
 use {
-    solana_account::{AccountSharedData, ReadableAccount, state_traits::StateMut},
+    solana_account::{AccountSharedData, ReadableAccount, state_traits::StateMutWincode as _},
     solana_clock::Epoch,
     solana_native_token::LAMPORTS_PER_SOL,
     solana_pubkey::Pubkey,

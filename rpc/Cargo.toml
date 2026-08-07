@@ -50,7 +50,7 @@ regex = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }
 soketto = { workspace = true }
-solana-account = { workspace = true }
+solana-account = { workspace = true, features = ["wincode"] }
 solana-account-decoder = { workspace = true }
 solana-accounts-db = { workspace = true }
 solana-cli-output = { workspace = true }
@@ -119,7 +119,7 @@ solana-fee-calculator = { workspace = true }
 solana-fee-structure = { workspace = true }
 solana-gossip = { path = "../gossip", features = ["agave-unstable-api", "dev-context-only-utils"] }
 solana-instruction = { workspace = true }
-solana-nonce = { workspace = true }
+solana-nonce = { workspace = true, features = ["wincode"] }
 solana-nonce-account = { workspace = true }
 solana-program-option = { workspace = true }
 solana-program-runtime = { path = "../program-runtime", features = ["agave-unstable-api"] }
@@ -132,7 +132,7 @@ solana-send-transaction-service = { path = "../send-transaction-service", featur
 solana-sha256-hasher = { workspace = true }
 solana-stake-interface = { workspace = true }
 solana-svm-log-collector = { path = "../svm-log-collector", features = ["agave-unstable-api"] }
-solana-vote-interface = { workspace = true }
+solana-vote-interface = { workspace = true, features = ["wincode"] }
 symlink = { workspace = true }
 test-case = { workspace = true }
 

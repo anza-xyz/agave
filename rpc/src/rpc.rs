@@ -4600,7 +4600,7 @@ pub mod tests {
         jsonrpc_core::{ErrorCode, MetaIoHandler, Output, Response, Value, futures},
         jsonrpc_core_client::transports::local,
         serde::de::DeserializeOwned,
-        solana_account::{Account, state_traits::StateMut},
+        solana_account::{Account, state_traits::StateMutWincode as _},
         solana_accounts_db::accounts_db::{ACCOUNTS_DB_CONFIG_FOR_TESTING, AccountsDbConfig},
         solana_address_lookup_table_interface::{
             self as address_lookup_table,

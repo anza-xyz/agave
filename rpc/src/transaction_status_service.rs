@@ -351,7 +351,7 @@ pub(crate) mod tests {
         agave_reserved_account_keys::ReservedAccountKeys,
         crossbeam_channel::bounded,
         dashmap::DashMap,
-        solana_account::state_traits::StateMut,
+        solana_account::state_traits::StateMutWincode as _,
         solana_account_decoder::{
             parse_account_data::SplTokenAdditionalDataV2, parse_token::token_amount_to_ui_amount_v3,
         },

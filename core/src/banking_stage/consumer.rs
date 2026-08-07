@@ -746,7 +746,7 @@ mod tests {
         crate::banking_stage::tests::{create_slow_genesis_config, sanitize_transactions},
         agave_reserved_account_keys::ReservedAccountKeys,
         crossbeam_channel::bounded,
-        solana_account::{AccountSharedData, state_traits::StateMut},
+        solana_account::{AccountSharedData, state_traits::StateMutWincode as _},
         solana_address_lookup_table_interface::{
             self as address_lookup_table,
             state::{AddressLookupTable, LookupTableMeta},

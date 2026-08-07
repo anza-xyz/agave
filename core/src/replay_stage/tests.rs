@@ -21,7 +21,7 @@ use {
     },
     crossbeam_channel::bounded,
     itertools::Itertools,
-    solana_account::{ReadableAccount, state_traits::StateMut},
+    solana_account::{ReadableAccount, state_traits::StateMutWincode as _},
     solana_accounts_db::accounts_db::{ACCOUNTS_DB_CONFIG_FOR_TESTING, AccountsDbConfig},
     solana_bls_signatures::{BLS_SIGNATURE_AFFINE_SIZE, Signature as BLSSignature},
     solana_client::connection_cache::ConnectionCache,

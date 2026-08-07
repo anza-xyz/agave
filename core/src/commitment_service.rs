@@ -327,7 +327,7 @@ impl AggregateCommitmentService {
 mod tests {
     use {
         super::*,
-        solana_account::{Account, ReadableAccount, state_traits::StateMut},
+        solana_account::{Account, ReadableAccount, state_traits::StateMutWincode as _},
         solana_leader_schedule::SlotLeader,
         solana_ledger::genesis_utils::{GenesisConfigInfo, create_genesis_config},
         solana_pubkey::Pubkey,
