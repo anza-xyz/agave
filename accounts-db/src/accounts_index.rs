@@ -53,6 +53,12 @@ pub const BINS_FOR_TESTING: usize = 2; // we want > 1, but each bin is a few dis
 pub const BINS_FOR_BENCHMARKS: usize = 8192;
 // The unsafe is safe because we're using a fixed, known non-zero value
 pub const FLUSH_THREADS_TESTING: NonZeroUsize = NonZeroUsize::new(1).unwrap();
+pub const INDEX_LIMIT_THRESHOLD_FOR_TESTING: IndexLimit =
+    IndexLimit::Threshold(IndexLimitThreshold {
+        num_bytes: 1_000_000_000,
+        num_entries_overhead: 100,
+        num_entries_to_evict: 100,
+    });
 pub const ACCOUNTS_INDEX_CONFIG_FOR_TESTING: AccountsIndexConfig = AccountsIndexConfig {
     bins: Some(BINS_FOR_TESTING),
     num_flush_threads: Some(FLUSH_THREADS_TESTING),
@@ -140,9 +146,6 @@ pub trait DiskIndexValue:
 /// specification of how much memory the in-mem portion of account index can hold
 #[derive(Debug, Clone)]
 pub enum IndexLimit {
-    /// use disk index while keeping a minimal amount in-mem
-    /// deprecated in v4.1.0
-    Minimal,
     /// in-mem-only was specified, no disk index
     InMemOnly,
     /// evict from in-mem when usage exceeds threshold in bytes
@@ -1420,7 +1423,7 @@ mod tests {
 
         let mut config = ACCOUNTS_INDEX_CONFIG_FOR_TESTING;
         config.index_limit = if use_disk {
-            IndexLimit::Minimal
+            INDEX_LIMIT_THRESHOLD_FOR_TESTING
         } else {
             IndexLimit::InMemOnly
         };

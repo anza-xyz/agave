@@ -1,6 +1,6 @@
 use {
     super::{
-        DiskIndexValue, IndexValue, SlotListItem,
+        DiskIndexValue, IndexValue,
         bucket_map_holder::{Age, AtomicAge, BucketMapHolder},
         in_mem_accounts_index::InMemAccountsIndex,
     },
@@ -18,16 +18,7 @@ use {
 const STATS_INTERVAL_MS: u64 = 10_000;
 
 #[derive(Debug, Default)]
-pub struct HeldInMemStats {
-    pub clean: AtomicU64,
-    pub age: AtomicU64,
-    pub ref_count: AtomicU64,
-    pub slot_list_len: AtomicU64,
-}
-
-#[derive(Debug, Default)]
 pub struct Stats {
-    pub held_in_mem: HeldInMemStats,
     pub get_mem_us: AtomicU64,
     pub gets_from_mem: AtomicU64,
     pub get_missing_us: AtomicU64,
@@ -52,21 +43,17 @@ pub struct Stats {
     pub count_in_mem: AtomicUsize,
     pub capacity_in_mem: AtomicUsize,
     pub flush_entries_updated_on_disk_immediate: AtomicU64,
-    pub flush_entries_updated_on_disk_background: AtomicU64,
     pub flush_entries_evicted_from_mem_immediate: AtomicU64,
     pub flush_entries_evicted_from_mem_background: AtomicU64,
     pub active_threads: AtomicU64,
     last_age: AtomicAge,
     last_ages_flushed: AtomicU64,
-    pub flush_scan_us: AtomicU64,
-    pub flush_update_us: AtomicU64,
+    pub evict_scan_us: AtomicU64,
     pub flush_evict_us: AtomicU64,
     pub flush_grow_us: AtomicU64,
     last_was_startup: AtomicBool,
     last_time: AtomicInterval,
     bins: u64,
-    pub flush_should_evict_us: AtomicU64,
-    pub flush_read_lock_us: AtomicU64,
     pub num_hashmap_reallocates: AtomicU64,
     pub hashmap_reallocate_us: AtomicU64,
     pub evict_triggered_by_low_free_entries: AtomicU64,
@@ -260,11 +247,6 @@ impl Stats {
                     ),
                 );
             }
-            let held_in_mem_clean = self.held_in_mem.clean.swap(0, Ordering::Relaxed);
-            let held_in_mem_age = self.held_in_mem.age.swap(0, Ordering::Relaxed);
-            let held_in_mem_ref_count = self.held_in_mem.ref_count.swap(0, Ordering::Relaxed);
-            let held_in_mem_slot_list_len =
-                self.held_in_mem.slot_list_len.swap(0, Ordering::Relaxed);
             // If an entry is held in-mem due to ref count or slot list length,
             // then assume it has two slot list entries.
             // Since `approx_size_of_one_entry()` assumes 'regular' entries
@@ -276,20 +258,10 @@ impl Stats {
                 // (we ignore other hash map details, such as load factor)
                 capacity_in_mem * InMemAccountsIndex::<T, U>::size_of_uninitialized()
                 // each value in use we assume has a single entry in the slot list
-                + count_in_mem * InMemAccountsIndex::<T, U>::size_of_single_entry()
-                // and for entries held in mem due to ref count or slot list length, assume
-                // conservatively a slot list with two entries
-                + (held_in_mem_ref_count + held_in_mem_slot_list_len) as usize
-                    * size_of::<SlotListItem<T>>() // <-- size of one slot list entry
-                    * 2; // <-- and assume there are two entries
+                + count_in_mem * InMemAccountsIndex::<T, U>::size_of_single_entry();
             datapoint_info!(
                 datapoint_name,
                 ("estimate_mem_bytes", estimate_mem_bytes, i64),
-                (
-                    "flush_should_evict_us",
-                    self.flush_should_evict_us.swap(0, Ordering::Relaxed),
-                    i64
-                ),
                 ("count_in_mem", count_in_mem, i64),
                 ("capacity_in_mem", capacity_in_mem, i64),
                 ("count", self.total_count(), i64),
@@ -308,14 +280,6 @@ impl Stats {
                         thread_time_elapsed_ms
                     ),
                     f64
-                ),
-                ("num_not_flushed_clean", held_in_mem_clean, i64),
-                ("num_not_flushed_age", held_in_mem_age, i64),
-                ("num_not_flushed_ref_count", held_in_mem_ref_count, i64),
-                (
-                    "num_not_flushed_slot_list_len",
-                    held_in_mem_slot_list_len,
-                    i64
                 ),
                 ("min_in_bin_disk", disk_stats.0, i64),
                 ("max_in_bin_disk", disk_stats.1, i64),
@@ -410,13 +374,8 @@ impl Stats {
                     i64
                 ),
                 (
-                    "flush_scan_us",
-                    self.flush_scan_us.swap(0, Ordering::Relaxed),
-                    i64
-                ),
-                (
-                    "flush_update_us",
-                    self.flush_update_us.swap(0, Ordering::Relaxed),
+                    "evict_scan_us",
+                    self.evict_scan_us.swap(0, Ordering::Relaxed),
                     i64
                 ),
                 (
@@ -427,11 +386,6 @@ impl Stats {
                 (
                     "flush_evict_us",
                     self.flush_evict_us.swap(0, Ordering::Relaxed),
-                    i64
-                ),
-                (
-                    "flush_read_lock_us",
-                    self.flush_read_lock_us.swap(0, Ordering::Relaxed),
                     i64
                 ),
                 (
@@ -563,12 +517,6 @@ impl Stats {
                 (
                     "flush_entries_updated_on_disk_immediate",
                     self.flush_entries_updated_on_disk_immediate
-                        .swap(0, Ordering::Relaxed),
-                    i64
-                ),
-                (
-                    "flush_entries_updated_on_disk_background",
-                    self.flush_entries_updated_on_disk_background
                         .swap(0, Ordering::Relaxed),
                     i64
                 ),
