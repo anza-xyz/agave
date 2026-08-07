@@ -278,7 +278,7 @@ dependencies = [
 [[package]]
 name = "agave-transaction-view"
 version = "5.1.0"
-source = "git+https://github.com/dsharifi/agave-sdk?rev=6ddd119a424048b5131044bd22af6de6f8e4b21e#6ddd119a424048b5131044bd22af6de6f8e4b21e"
+source = "git+https://github.com/dsharifi/agave-sdk?rev=dd2d267ebc57efd763688301573a72eb6fc2bd15#dd2d267ebc57efd763688301573a72eb6fc2bd15"
 dependencies = [
  "bytes",
  "solana-hash 4.6.0",
