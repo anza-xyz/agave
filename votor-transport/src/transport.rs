@@ -1,6 +1,6 @@
 //! Transport tuning constants for a votor-style workload.
 use {
-    crate::{ALPENGLOW_ALPN, MAX_ALPENGLOW_VOTE_ACCOUNTS},
+    crate::{ALPENGLOW_ALPN, HANDSHAKE_DRAIN_RATE, MAX_INCOMING_DELAY},
     quinn::{
         ClientConfig, IdleTimeout, ServerConfig, TransportConfig, VarInt,
         crypto::rustls::{QuicClientConfig, QuicServerConfig},
@@ -22,9 +22,14 @@ const KEEP_ALIVE_INTERVAL: Duration = Duration::from_secs(2);
 /// MTU used for all datagrams. Path-MTU discovery is disabled, so the initial
 /// and minimum MTU are the same; 1280 is the QUIC-spec floor.
 const DATAGRAM_MTU: u16 = 1280;
-/// Max number of buffered connection requests we will keep.
-/// Sized such that a cluster-wide simultaneous reconnect fits.
-const MAX_INCOMING: usize = MAX_ALPENGLOW_VOTE_ACCOUNTS;
+/// Max number of connection attempts quinn buffers *per endpoint* before it starts
+/// dropping Initials outright.
+#[allow(clippy::arithmetic_side_effects)]
+pub(crate) fn compute_max_incoming(num_endpoints: usize) -> usize {
+    debug_assert!(num_endpoints > 0, "an endpoint needs at least one socket");
+    let per_endpoint_rate = HANDSHAKE_DRAIN_RATE / num_endpoints;
+    (per_endpoint_rate * MAX_INCOMING_DELAY.as_millis() as usize / 1000).max(1)
+}
 
 /// Creates a new transport config for datagram mode.
 ///
@@ -54,6 +59,7 @@ pub(crate) fn new_transport_config(max_datagrams_per_second_per_peer: usize) -> 
 pub(crate) fn new_server_config(
     keypair: &Keypair,
     max_datagrams_per_second_per_peer: usize,
+    num_endpoints: usize,
 ) -> ServerConfig {
     let (cert, key) = new_dummy_x509_certificate(keypair);
     let mut tls = tls_server_config_builder()
@@ -65,8 +71,9 @@ pub(crate) fn new_server_config(
         .expect("TLS 1.3-only config yields an initial cipher suite");
     let mut cfg = ServerConfig::with_crypto(Arc::new(quic));
     cfg.incoming_buffer_size((DATAGRAM_MTU * 2) as u64);
-    cfg.incoming_buffer_size_total(MAX_INCOMING as u64 * DATAGRAM_MTU as u64);
-    cfg.max_incoming(MAX_INCOMING);
+    let max_incoming = compute_max_incoming(num_endpoints);
+    cfg.incoming_buffer_size_total(max_incoming as u64 * DATAGRAM_MTU as u64);
+    cfg.max_incoming(max_incoming);
     cfg.retry_token_lifetime(MAX_IDLE_TIMEOUT);
     cfg.transport_config(Arc::new(new_transport_config(
         max_datagrams_per_second_per_peer,
@@ -92,4 +99,50 @@ pub(crate) fn new_client_config(
         max_datagrams_per_second_per_peer,
     )));
     cfg
+}
+
+#[cfg(test)]
+mod tests {
+    use {
+        super::compute_max_incoming,
+        crate::{
+            HANDSHAKE_DRAIN_RATE, HANDSHAKE_GLOBAL_RATE, HANDSHAKE_WORKERS_PER_ENDPOINT,
+            MAX_ENDPOINTS, MAX_INCOMING_DELAY,
+        },
+    };
+
+    #[test]
+    fn max_incoming_splits_across_endpoints() {
+        // One endpoint owns the entire drain budget for one full delay window.
+        let total_buffered_handshakes = HANDSHAKE_DRAIN_RATE
+            .saturating_mul(MAX_INCOMING_DELAY.as_millis() as usize)
+            .saturating_div(1000);
+        assert_eq!(
+            compute_max_incoming(1),
+            total_buffered_handshakes,
+            "a lone endpoint should buffer MAX_INCOMING_DELAY worth of the HANDSHAKE_DRAIN_RATE \
+             drain budget",
+        );
+
+        for num_endpoints in 1..=MAX_ENDPOINTS {
+            let queue_length = compute_max_incoming(num_endpoints);
+
+            let even_share = total_buffered_handshakes as f32 / num_endpoints as f32;
+            assert!(
+                (queue_length as f32 - even_share).abs() < 2.0,
+                "each of {num_endpoints} should buffer ~{even_share} Initials, got {queue_length}",
+            );
+            assert!(even_share > 8.0, "sanity");
+
+            let num_accept_loops = num_endpoints.saturating_mul(HANDSHAKE_WORKERS_PER_ENDPOINT);
+            let per_loop_rate = HANDSHAKE_GLOBAL_RATE as f64 / num_accept_loops as f64;
+            let per_endpoint_rate = per_loop_rate * HANDSHAKE_WORKERS_PER_ENDPOINT as f64;
+            let delay_secs = queue_length as f64 / per_endpoint_rate;
+            assert!(
+                delay_secs <= MAX_INCOMING_DELAY.as_secs_f64(),
+                "with {num_endpoints} endpoints a queued attempt waits up to {delay_secs}s, over \
+                 the MAX_INCOMING_DELAY budget",
+            );
+        }
+    }
 }

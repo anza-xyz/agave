@@ -101,7 +101,11 @@ impl QuicDatagramEndpoint {
         let key_updater = Arc::new(key_updater);
         let local_pubkey = keypair.pubkey();
 
-        let server_config = new_server_config(keypair, max_datagrams_per_second_per_peer);
+        // Queue and rate limits are global budgets that get split across the endpoints,
+        // so the config has to know how many there will be.
+        let num_endpoints = inbound_sockets.len();
+        let server_config =
+            new_server_config(keypair, max_datagrams_per_second_per_peer, num_endpoints);
         // Spawn a quinn endpoint for each socket.
         let (inbound_endpoints, mut outbound_endpoint) = {
             // Endpoint::new requires the runtime context.
@@ -150,7 +154,6 @@ impl QuicDatagramEndpoint {
             mpsc::channel(CONN_EVENT_CHANNEL_CAP);
         // To run multiple AcceptLoops per endpoint, we split the global handshake budget
         // evenly across all loops so the aggregate rate is constrained.
-        let num_endpoints = inbound_endpoints.len();
         let num_accept_loops = num_endpoints
             .checked_mul(HANDSHAKE_WORKERS_PER_ENDPOINT)
             .expect("HANDSHAKE_WORKERS_PER_ENDPOINT should be small");
@@ -163,7 +166,7 @@ impl QuicDatagramEndpoint {
         let rate_limiter = TokenBucket::new(
             handshake_burst,
             handshake_burst,
-            HANDSHAKE_GLOBAL_RATE / num_accept_loops as f64,
+            HANDSHAKE_GLOBAL_RATE as f64 / num_accept_loops as f64,
         );
         for endpoint in &inbound_endpoints {
             for _ in 0..HANDSHAKE_WORKERS_PER_ENDPOINT {

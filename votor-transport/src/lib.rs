@@ -64,9 +64,13 @@ pub const PEER_RATE_LIMIT_DOS_WINDOW: Duration = Duration::from_secs(10);
 
 /// Sustained rate at which we start inbound TLS handshakes (handshakes/second),
 /// consulted before `Endpoint::accept()` so it bounds when we begin handshake
-/// crypto at all. Sized to the validator set: the whole set may (re)connect at
-/// once after a coordinated restart and should be admitted within ~1 second.
-pub const HANDSHAKE_GLOBAL_RATE: f64 = MAX_ALPENGLOW_VOTE_ACCOUNTS as f64;
+/// crypto at all. Sized to the validator set, which may (re)connect all at once
+/// after a coordinated restart.
+///
+/// This is a ceiling, not a rate we sustain. Whenever attempts stop completing
+/// promptly [`MAX_INFLIGHT_HANDSHAKES`] may get saturated first, so the achievable
+/// rate is [`HANDSHAKE_DRAIN_RATE`]. Size queues from that constant, not this one.
+pub const HANDSHAKE_GLOBAL_RATE: usize = MAX_ALPENGLOW_VOTE_ACCOUNTS;
 
 /// Burst of inbound handshakes tolerated above allowed rate before
 /// new attempts are shed. Chosen to align with 200ms at [`HANDSHAKE_GLOBAL_RATE`].
@@ -88,7 +92,26 @@ pub(crate) const HANDSHAKE_TIMEOUT: Duration = Duration::from_secs(2);
 /// under sustained [`HANDSHAKE_GLOBAL_RATE`] load, so admission is governed by
 /// the rate limiter rather than by this cap.
 pub const MAX_INFLIGHT_HANDSHAKES: usize =
-    (HANDSHAKE_GLOBAL_RATE * HANDSHAKE_TIMEOUT.as_secs_f64()) as usize;
+    HANDSHAKE_GLOBAL_RATE * HANDSHAKE_TIMEOUT.as_millis() as usize / 1000;
+
+/// Rate at which the accept loops actually take connection attempts off the
+/// endpoints under sustained load, aggregated over all endpoints
+/// (handshakes/second).
+pub(crate) const HANDSHAKE_DRAIN_RATE: usize = {
+    let inflight_bound = MAX_INFLIGHT_HANDSHAKES * 1000 / (HANDSHAKE_TIMEOUT.as_millis() as usize);
+    if inflight_bound < HANDSHAKE_GLOBAL_RATE {
+        inflight_bound
+    } else {
+        HANDSHAKE_GLOBAL_RATE
+    }
+};
+
+/// Longest an inbound attempt that we are going to serve may sit queued inside
+/// quinn before an accept loop reaches it. This is what sizes quinn's `max_incoming`:
+/// a deeper queue does not admit more handshakes (the drain rate is fixed), it only
+/// adds latency to the attempts we do serve, so we keep it short and let the excess
+/// be shed by quinn.
+pub(crate) const MAX_INCOMING_DELAY: Duration = Duration::from_millis(1000);
 
 /// How often endpoint metrics are reported.
 pub(crate) const METRICS_INTERVAL: Duration = Duration::from_secs(1);
