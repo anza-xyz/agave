@@ -9140,7 +9140,6 @@ dependencies = [
  "solana-shred-version",
  "solana-signature",
  "solana-signer",
- "solana-slot-hashes",
  "solana-stake-interface",
  "solana-storage-bigtable",
  "solana-storage-proto",
