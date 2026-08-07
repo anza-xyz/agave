@@ -18,7 +18,7 @@ use {
     },
     std::{
         collections::{HashMap, hash_map::Entry},
-        sync::Weak,
+        sync::{Weak, atomic::Ordering::Relaxed},
     },
 };
 
@@ -114,6 +114,7 @@ pub fn get_mock_program_runtime_environment() -> ProgramRuntimeEnvironment {
 }
 
 pub const MAX_LOADED_ENTRY_COUNT: usize = 1024;
+pub const MAX_TOMBSTONE_AGE_IN_SLOTS: u64 = 2250; // 15 Minutes at 400ms slot time
 
 /// A percentage, expected to be in the range `0..=100`.
 pub type Percent = u8;
@@ -504,6 +505,8 @@ impl<FG: ForkGraph> ProgramCache<FG> {
     ) {
         match &mut self.index {
             IndexImplementation::V1 { entries, .. } => {
+                let tombstone_slot_cutoff =
+                    new_root_slot.saturating_sub(MAX_TOMBSTONE_AGE_IN_SLOTS);
                 entries.retain(|_id, second_level| {
                     // Clean up tombstones and unloaded entries
                     if second_level.len() == 1 {
@@ -512,7 +515,10 @@ impl<FG: ForkGraph> ProgramCache<FG> {
                             ProgramCacheEntryType::Builtin(_)
                             | ProgramCacheEntryType::Loaded(_) => {}
                             _ => {
-                                if candidate.deployment_slot <= self.latest_root_slot {
+                                if candidate.deployment_slot <= self.latest_root_slot
+                                    && candidate.latest_access_slot.load(Relaxed)
+                                        < tombstone_slot_cutoff
+                                {
                                     return false;
                                 }
                             }
