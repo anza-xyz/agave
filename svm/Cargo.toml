@@ -81,7 +81,7 @@ protosol = { workspace = true, optional = true }
 qualifier_attr = { workspace = true, optional = true }
 serde = { workspace = true, features = ["rc"] }
 shuttle = { workspace = true, optional = true }
-solana-account = { workspace = true }
+solana-account = { workspace = true, features = ["wincode"] }
 solana-address-lookup-table-interface = { workspace = true, optional = true, features = [
     "bincode",
     "bytemuck",
@@ -105,7 +105,7 @@ solana-instructions-sysvar = { workspace = true }
 solana-loader-v3-interface = { workspace = true, features = ["bincode"] }
 solana-loader-v4-interface = { workspace = true }
 solana-message = { workspace = true }
-solana-nonce = { workspace = true }
+solana-nonce = { workspace = true, features = ["wincode"] }
 solana-nonce-account = { workspace = true, features = ["wincode"] }
 solana-poseidon = { workspace = true, optional = true }
 solana-precompile-error = { workspace = true, optional = true }
