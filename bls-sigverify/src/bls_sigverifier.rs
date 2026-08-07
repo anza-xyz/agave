@@ -78,12 +78,32 @@ pub struct SigVerifierContext {
 }
 
 pub struct SigVerifierChannels {
-    pub packet_receiver: Receiver<Datagram>,
-    pub certificate_receiver: Receiver<(Slot, UnverifiedCertificate)>,
-    pub channel_to_repair: VerifiedVoterSlotsSender,
-    pub channel_to_reward: Sender<RewardInput>,
-    pub channel_to_pool: Sender<SigVerifiedBatch>,
-    pub channel_to_metrics: ConsensusMetricsEventSender,
+    pub(crate) packet_receiver: Receiver<Datagram>,
+    pub(crate) certificate_receiver: Receiver<(Slot, UnverifiedCertificate)>,
+    pub(crate) channel_to_repair: VerifiedVoterSlotsSender,
+    pub(crate) channel_to_reward: Sender<RewardInput>,
+    pub(crate) channel_to_pool: Sender<SigVerifiedBatch>,
+    pub(crate) channel_to_metrics: ConsensusMetricsEventSender,
+}
+
+impl SigVerifierChannels {
+    pub fn new(
+        packet_receiver: Receiver<Datagram>,
+        certificate_receiver: Receiver<(Slot, UnverifiedCertificate)>,
+        channel_to_repair: VerifiedVoterSlotsSender,
+        channel_to_reward: Sender<RewardInput>,
+        channel_to_pool: Sender<SigVerifiedBatch>,
+        channel_to_metrics: ConsensusMetricsEventSender,
+    ) -> Self {
+        Self {
+            packet_receiver,
+            certificate_receiver,
+            channel_to_repair,
+            channel_to_reward,
+            channel_to_pool,
+            channel_to_metrics,
+        }
+    }
 }
 
 /// Starts the BLS sigverifier service in its own dedicated thread.
@@ -639,14 +659,14 @@ mod tests {
                     num_threads: 4,
                     generated_cert_types: generated_cert_types.clone(),
                 },
-                SigVerifierChannels {
+                SigVerifierChannels::new(
                     packet_receiver,
                     certificate_receiver,
                     channel_to_repair,
                     channel_to_reward,
                     channel_to_pool,
                     channel_to_metrics,
-                },
+                ),
             );
             Self {
                 validator_keypairs,
@@ -822,8 +842,8 @@ mod tests {
             ))
             .unwrap();
         assert_eq!(ctx.pool_receiver.try_iter().count(), 2);
-        assert_eq!(ctx.verifier.stats.vote_stats.pool_sent.0, 1);
-        assert_eq!(ctx.verifier.stats.cert_stats.pool_sent.0, 1);
+        assert_eq!(ctx.verifier.stats.vote_stats.senders.pool_sender.sent.0, 1);
+        assert_eq!(ctx.verifier.stats.cert_stats.pool_sender.sent.0, 1);
         let received_verified_votes1 = ctx.repair_receiver.try_recv().unwrap();
         assert_eq!(
             received_verified_votes1,
@@ -857,8 +877,8 @@ mod tests {
             .unwrap();
 
         assert_eq!(ctx.pool_receiver.try_iter().count(), 1);
-        assert_eq!(ctx.verifier.stats.vote_stats.pool_sent.0, 1);
-        assert_eq!(ctx.verifier.stats.cert_stats.pool_sent.0, 0);
+        assert_eq!(ctx.verifier.stats.vote_stats.senders.pool_sender.sent.0, 1);
+        assert_eq!(ctx.verifier.stats.cert_stats.pool_sender.sent.0, 0);
         let received_verified_votes2 = ctx.repair_receiver.try_recv().unwrap();
         assert_eq!(
             received_verified_votes2,
@@ -891,8 +911,8 @@ mod tests {
             ))
             .unwrap();
         assert_eq!(ctx.pool_receiver.try_iter().count(), 1);
-        assert_eq!(ctx.verifier.stats.vote_stats.pool_sent.0, 1);
-        assert_eq!(ctx.verifier.stats.cert_stats.pool_sent.0, 0);
+        assert_eq!(ctx.verifier.stats.vote_stats.senders.pool_sender.sent.0, 1);
+        assert_eq!(ctx.verifier.stats.cert_stats.pool_sender.sent.0, 0);
         let received_verified_votes3 = ctx.repair_receiver.try_recv().unwrap();
         assert_eq!(
             received_verified_votes3,
@@ -909,8 +929,8 @@ mod tests {
 
         let datagrams = vec![datagram_from_bytes(Bytes::new(), Pubkey::new_unique())];
         ctx.verifier.verify_and_send_datagrams(datagrams).unwrap();
-        assert_eq!(ctx.verifier.stats.vote_stats.pool_sent.0, 0);
-        assert_eq!(ctx.verifier.stats.cert_stats.pool_sent.0, 0);
+        assert_eq!(ctx.verifier.stats.vote_stats.senders.pool_sender.sent.0, 0);
+        assert_eq!(ctx.verifier.stats.cert_stats.pool_sender.sent.0, 0);
         assert_eq!(ctx.verifier.stats.num_malformed_pkts.0, 1);
 
         // Expect no messages since the packet was malformed
@@ -982,8 +1002,8 @@ mod tests {
         let datagrams =
             messages_to_datagrams(&msgs, ctx.verifier.cluster_info.my_shred_version() + 1);
         ctx.verifier.verify_and_send_datagrams(datagrams).unwrap();
-        assert_eq!(ctx.verifier.stats.vote_stats.pool_sent.0, 0);
-        assert_eq!(ctx.verifier.stats.cert_stats.pool_sent.0, 0);
+        assert_eq!(ctx.verifier.stats.vote_stats.senders.pool_sender.sent.0, 0);
+        assert_eq!(ctx.verifier.stats.cert_stats.pool_sender.sent.0, 0);
         assert_eq!(ctx.verifier.stats.num_malformed_pkts.0, 1);
     }
 
@@ -1056,7 +1076,7 @@ mod tests {
         assert_eq!(m2_recv, batch2);
         // pool_sent counts every message that made it onto the channel,
         // whether via try_send or the blocking fallback.
-        assert_eq!(ctx.verifier.stats.vote_stats.pool_sent.0, 2);
+        assert_eq!(ctx.verifier.stats.vote_stats.senders.pool_sender.sent.0, 2);
     }
 
     #[test]
@@ -1183,13 +1203,16 @@ mod tests {
 
         ctx.verifier.verify_and_send_datagrams(packets).unwrap();
         let batches = ctx.pool_receiver.try_iter().collect::<Vec<_>>();
-        assert_eq!(batches.len(), 2);
+        assert_eq!(batches.len(), 1);
         let total_votes_verified = batches
             .into_iter()
             .map(|batch| match batch {
                 SigVerifiedBatch::Votes(aggregates) => {
-                    assert_eq!(aggregates.len(), 1);
-                    aggregates[0].num_votes()
+                    assert_eq!(aggregates.len(), 2);
+                    aggregates
+                        .iter()
+                        .map(|aggregate| aggregate.num_votes())
+                        .sum::<usize>()
                 }
                 rest => panic!("unexpected type: {rest:?}"),
             })
@@ -1261,11 +1284,12 @@ mod tests {
 
         ctx.verifier.verify_and_send_datagrams(packets).unwrap();
         let batches = ctx.pool_receiver.try_iter().collect::<Vec<_>>();
-        assert_eq!(batches.len(), 2);
+        assert_eq!(batches.len(), 1);
         let total_votes_verified = batches
             .into_iter()
             .map(|batch| match batch {
                 SigVerifiedBatch::Votes(aggregates) => {
+                    assert_eq!(aggregates.len(), 3);
                     for aggregate in &aggregates {
                         if aggregate.vote() == &vote2
                             && *aggregate.ranks().get(invalid_rank as usize).unwrap()
@@ -1588,8 +1612,8 @@ mod tests {
                 assert_eq!(certs.len(), 1);
             }
         }
-        assert_eq!(ctx.verifier.stats.vote_stats.pool_sent.0, 1);
-        assert_eq!(ctx.verifier.stats.cert_stats.pool_sent.0, 1);
+        assert_eq!(ctx.verifier.stats.vote_stats.senders.pool_sender.sent.0, 1);
+        assert_eq!(ctx.verifier.stats.cert_stats.pool_sender.sent.0, 1);
     }
 
     #[test]
@@ -1621,10 +1645,10 @@ mod tests {
 
     #[test]
     fn test_verify_old_vote_and_cert() {
-        let (message_sender, message_receiver) = bounded(1024);
-        let (votes_for_repair_sender, _) = bounded(1024);
-        let (consensus_metrics_sender, _) = bounded(1024);
-        let (reward_votes_sender, _reward_votes_receiver) = bounded(1024);
+        let (channel_to_pool, pool_receiver) = bounded(1024);
+        let (channel_to_repair, _repair_receiver) = bounded(1024);
+        let (channel_to_metrics, _metrics_receiver) = bounded(1024);
+        let (channel_to_reward, _reward_receiver) = bounded(1024);
         let validator_keypairs = (0..10)
             .map(|_| ValidatorVoteKeypairs::new_rand())
             .collect::<Vec<_>>();
@@ -1666,14 +1690,14 @@ mod tests {
                 num_threads: 4,
                 generated_cert_types: Arc::new(GeneratedCertTypes::default()),
             },
-            SigVerifierChannels {
+            SigVerifierChannels::new(
                 packet_receiver,
                 certificate_receiver,
-                channel_to_repair: votes_for_repair_sender,
-                channel_to_reward: reward_votes_sender,
-                channel_to_pool: message_sender,
-                channel_to_metrics: consensus_metrics_sender,
-            },
+                channel_to_repair,
+                channel_to_reward,
+                channel_to_pool,
+                channel_to_metrics,
+            ),
         );
 
         let rank = 0;
@@ -1699,7 +1723,7 @@ mod tests {
         sig_verifier
             .verify_and_send_datagrams(datagrams_vote)
             .unwrap();
-        expect_no_receive(&message_receiver);
+        expect_no_receive(&pool_receiver);
         assert_eq!(sig_verifier.stats.num_old_votes_received.0, 1);
 
         let cert = test_create_base2_certificate(
@@ -1720,7 +1744,7 @@ mod tests {
         sig_verifier
             .verify_and_send_datagrams(datagrams_cert)
             .unwrap();
-        expect_no_receive(&message_receiver);
+        expect_no_receive(&pool_receiver);
         assert_eq!(sig_verifier.stats.num_old_certs_received.0, 1);
         assert_eq!(sig_verifier.stats.num_old_votes_received.0, 1);
     }
@@ -2123,9 +2147,9 @@ mod tests {
         ctx.verifier.verify_and_send_datagrams(datagrams).unwrap();
 
         assert_eq!(ctx.verifier.stats.vote_too_far_in_future.0, 1);
-        assert_eq!(ctx.verifier.stats.vote_stats.pool_sent.0, 1);
+        assert_eq!(ctx.verifier.stats.vote_stats.senders.pool_sender.sent.0, 1);
         assert_eq!(ctx.verifier.stats.cert_stats.too_far_in_future.0, 0);
-        assert_eq!(ctx.verifier.stats.cert_stats.pool_sent.0, 1);
+        assert_eq!(ctx.verifier.stats.cert_stats.pool_sender.sent.0, 1);
         assert_eq!(ctx.pool_receiver.try_iter().count(), 2);
         assert_eq!(
             ctx.repair_receiver.try_recv().unwrap(),

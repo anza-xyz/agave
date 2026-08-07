@@ -358,14 +358,14 @@ impl Tvu {
                 num_threads: tvu_config.bls_sigverify_threads.get(),
                 generated_cert_types: generated_cert_types.clone(),
             },
-            SigVerifierChannels {
-                packet_receiver: votor_ingress_receiver,
+            SigVerifierChannels::new(
+                votor_ingress_receiver,
                 certificate_receiver,
-                channel_to_repair: verified_voter_slots_sender,
-                channel_to_reward: reward_aggregates_sender.clone(),
-                channel_to_pool: consensus_message_sender,
-                channel_to_metrics: consensus_metrics_sender.clone(),
-            },
+                verified_voter_slots_sender,
+                reward_aggregates_sender.clone(),
+                consensus_message_sender,
+                consensus_metrics_sender.clone(),
+            ),
         );
 
         let (fetch_sender, fetch_receiver) = EvictingSender::new_bounded(SHRED_FETCH_CHANNEL_SIZE);
