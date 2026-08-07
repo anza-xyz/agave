@@ -13,8 +13,18 @@ use {
     wincode::{SchemaRead, SchemaWrite},
 };
 
+/// The wire bytes of a single shred.
+///
+/// A thin wrapper over [`Bytes`] so that a shred's payload can be cloned and
+/// shared between concurrent consumers without copying the buffer. Mutation
+/// goes through `PayloadMutGuard`, which copies only when the buffer is not
+/// uniquely owned.
 #[derive(Clone, Debug, Eq, SchemaRead, SchemaWrite)]
 pub struct Payload {
+    /// The shred's serialized bytes: headers, then type-specific body, then
+    /// Merkle root, proof and (if resigned) the retransmitter signature. Always
+    /// exactly `SIZE_OF_PAYLOAD` bytes for the owning shred type once the shred
+    /// has been parsed or built.
     pub bytes: Bytes,
 }
 
