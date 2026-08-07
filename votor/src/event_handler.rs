@@ -238,6 +238,7 @@ impl EventHandler {
     ) -> Result<(), EventLoopError> {
         let my_pubkey = &local_context.my_pubkey;
         info!("{my_pubkey}: Parent ready {slot} {parent_block:?}");
+        Self::record_window_start(slot, Instant::now(), ctx, vctx);
 
         // We need to ensure that we've replayed the parent bank.
         if parent_block.slot > vctx.sharable_banks.root().slot() {
@@ -374,7 +375,6 @@ impl EventHandler {
             // Received a parent ready notification for `slot`
             VotorEvent::ParentReady { slot, parent_block } => {
                 let now = Instant::now();
-                Self::record_window_start(slot, now, ctx, vctx);
                 nonblocking_send(
                     &local_context.my_pubkey,
                     &vctx.consensus_metrics_sender,
@@ -1855,6 +1855,10 @@ mod tests {
         // Now if we received one shred for slot 8, then we should not do anything when
         // receiving timeout_crashed_leader_event for slot 8
         test_context.send_first_shred_event(8);
+        assert_eq!(
+            test_context.shared_context.alpenglow_slot_clock.load(),
+            None
+        );
         test_context.send_timeout_crashed_leader_event(8);
         test_context.check_no_vote_or_commitment();
     }
