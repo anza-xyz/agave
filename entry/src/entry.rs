@@ -736,19 +736,21 @@ pub fn thread_pool_for_benches() -> ThreadPool {
 mod tests {
     use {
         super::*,
+        crate::block_component::{BlockComponent, BlockComponentView},
         agave_reserved_account_keys::ReservedAccountKeys,
         agave_transaction_view::{
             resolved_transaction_view::ResolvedTransactionView,
             transaction_view::SanitizedTransactionView,
         },
         bytes::Bytes,
-        crate::block_component::{BlockComponent, BlockComponentView},
         rand::{Rng, rng},
         rayon::ThreadPoolBuilder,
         solana_hash::Hash,
         solana_keypair::Keypair,
         solana_measure::measure::Measure,
-        solana_message::{MessageHeader, VersionedMessage, compiled_instruction::CompiledInstruction, v1},
+        solana_message::{
+            MessageHeader, VersionedMessage, compiled_instruction::CompiledInstruction, v1,
+        },
         solana_perf::test_tx::test_tx,
         solana_pubkey::Pubkey,
         solana_runtime_transaction::{
@@ -885,24 +887,26 @@ mod tests {
         let tx = system_transaction::transfer(&keypair, &keypair.pubkey(), 1, zero);
         let entries = vec![entry_view_from_entry(Entry::new(&zero, 0, vec![tx]))];
 
-        let validate_and_hash_transaction =
-            move |unsanitized: UnsanitizedTransactionView<Bytes>|
-                  -> Result<RuntimeTransaction<ResolvedTransactionView<Bytes>>> {
-                let sanitized = unsanitized
-                    .sanitize(&sanitize_config())
-                    .map_err(|_| TransactionError::SanitizeFailure)?;
-                let statically_loaded =
-                    RuntimeTransaction::<SanitizedTransactionView<Bytes>>::try_new(
-                        sanitized,
-                        MessageHash::Compute,
-                        None,
-                    )?;
-                RuntimeTransaction::<ResolvedTransactionView<Bytes>>::try_new(
-                    statically_loaded,
-                    None,
-                    &ReservedAccountKeys::empty_key_set(),
-                )
-            };
+        let validate_and_hash_transaction = move |unsanitized: UnsanitizedTransactionView<
+            Bytes,
+        >|
+              -> Result<
+            RuntimeTransaction<ResolvedTransactionView<Bytes>>,
+        > {
+            let sanitized = unsanitized
+                .sanitize(&sanitize_config())
+                .map_err(|_| TransactionError::SanitizeFailure)?;
+            let statically_loaded = RuntimeTransaction::<SanitizedTransactionView<Bytes>>::try_new(
+                sanitized,
+                MessageHash::Compute,
+                None,
+            )?;
+            RuntimeTransaction::<ResolvedTransactionView<Bytes>>::try_new(
+                statically_loaded,
+                None,
+                &ReservedAccountKeys::empty_key_set(),
+            )
+        };
         let txs =
             validate_and_hash_transactions(entries, 1, &thread_pool, validate_and_hash_transaction)
                 .expect("transaction validation and hashing must not verify signatures");

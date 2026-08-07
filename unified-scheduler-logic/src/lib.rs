@@ -1693,12 +1693,21 @@ mod tests {
         // `ResolvedTransactionView` isn't).
         let payer = Pubkey::new_unique();
         let address_loader = &mut create_address_loader(None, &capability);
-        let task1 =
-            SchedulingStateMachine::create_task(simplest_transaction_with_payer(&payer), 101, address_loader);
-        let task2 =
-            SchedulingStateMachine::create_task(simplest_transaction_with_payer(&payer), 102, address_loader);
-        let task3 =
-            SchedulingStateMachine::create_task(simplest_transaction_with_payer(&payer), 103, address_loader);
+        let task1 = SchedulingStateMachine::create_task(
+            simplest_transaction_with_payer(&payer),
+            101,
+            address_loader,
+        );
+        let task2 = SchedulingStateMachine::create_task(
+            simplest_transaction_with_payer(&payer),
+            102,
+            address_loader,
+        );
+        let task3 = SchedulingStateMachine::create_task(
+            simplest_transaction_with_payer(&payer),
+            103,
+            address_loader,
+        );
 
         let mut state_machine = unsafe {
             SchedulingStateMachine::exclusively_initialize_current_thread_for_scheduling_for_test()
@@ -1751,12 +1760,21 @@ mod tests {
         // `ResolvedTransactionView` isn't).
         let payer = Pubkey::new_unique();
         let address_loader = &mut create_address_loader(None, &capability);
-        let task1 =
-            SchedulingStateMachine::create_task(simplest_transaction_with_payer(&payer), 101, address_loader);
-        let task2 =
-            SchedulingStateMachine::create_task(simplest_transaction_with_payer(&payer), 102, address_loader);
-        let task3 =
-            SchedulingStateMachine::create_task(simplest_transaction_with_payer(&payer), 103, address_loader);
+        let task1 = SchedulingStateMachine::create_task(
+            simplest_transaction_with_payer(&payer),
+            101,
+            address_loader,
+        );
+        let task2 = SchedulingStateMachine::create_task(
+            simplest_transaction_with_payer(&payer),
+            102,
+            address_loader,
+        );
+        let task3 = SchedulingStateMachine::create_task(
+            simplest_transaction_with_payer(&payer),
+            103,
+            address_loader,
+        );
 
         let mut state_machine = unsafe {
             SchedulingStateMachine::exclusively_initialize_current_thread_for_scheduling_for_test()

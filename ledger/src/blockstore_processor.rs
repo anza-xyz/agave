@@ -2460,11 +2460,11 @@ pub mod tests {
             },
             shred::{ProcessShredsStats, ReedSolomonCache, Shred, Shredder},
         },
+        agave_transaction_view::transaction_view::SanitizedTransactionView,
         agave_votor_messages::{
             certificate::{CertSignature, GenesisCert},
             consensus_message::Block,
         },
-        agave_transaction_view::transaction_view::SanitizedTransactionView,
         assert_matches::assert_matches,
         crossbeam_channel::bounded,
         rand::{Rng, rng},
@@ -5239,14 +5239,15 @@ pub mod tests {
                     transaction_hash_verify_thread_pool(),
                     |unsanitized: UnsanitizedTransactionView<Bytes>| {
                         let sanitized = unsanitized
-                            .sanitize(&solana_runtime_transaction::sanitize_config::sanitize_config())
+                            .sanitize(
+                                &solana_runtime_transaction::sanitize_config::sanitize_config(),
+                            )
                             .map_err(|_| TransactionError::SanitizeFailure)?;
-                        let statically_loaded =
-                            RuntimeTransaction::<SanitizedTransactionView<Bytes>>::try_new(
-                                sanitized,
-                                MessageHash::Compute,
-                                None,
-                            )?;
+                        let statically_loaded = RuntimeTransaction::<
+                            SanitizedTransactionView<Bytes>,
+                        >::try_new(
+                            sanitized, MessageHash::Compute, None
+                        )?;
                         RuntimeTransaction::<ResolvedTransactionView<Bytes>>::try_new(
                             statically_loaded,
                             None,

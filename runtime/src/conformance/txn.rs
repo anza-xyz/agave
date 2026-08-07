@@ -166,7 +166,9 @@ pub fn execute_txn(
     let transaction_view = match UnsanitizedTransactionView::try_new_unsanitized(transaction_bytes)
     {
         Ok(transaction_view) => transaction_view,
-        Err(_) => return BankTxnProcessingResult::FailedVerification(TransactionError::SanitizeFailure),
+        Err(_) => {
+            return BankTxnProcessingResult::FailedVerification(TransactionError::SanitizeFailure);
+        }
     };
 
     let runtime_transaction = match bank.verify_transaction(
@@ -572,9 +574,9 @@ mod tests {
             v0::{self, MessageAddressTableLookup},
         },
         solana_pubkey::Pubkey,
+        solana_runtime_transaction::transaction_with_meta::TransactionWithMeta,
         solana_sdk_ids::{bpf_loader_upgradeable, native_loader, sysvar},
         solana_signature::Signature,
-        solana_runtime_transaction::transaction_with_meta::TransactionWithMeta,
         solana_slot_hashes::SlotHashes,
         solana_svm::transaction_processing_result::{
             ProcessedTransaction, TransactionProcessingResultExtensions,

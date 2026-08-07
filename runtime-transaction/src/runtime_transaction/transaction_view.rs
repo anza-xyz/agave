@@ -147,9 +147,11 @@ impl<D: TransactionData + From<Vec<u8>>> RuntimeTransaction<ResolvedTransactionV
     pub fn from_transaction_view_for_tests(transaction: solana_transaction::Transaction) -> Self {
         let versioned_transaction = VersionedTransaction::from(transaction);
         let data = D::from(wincode::serialize(&versioned_transaction).unwrap());
-        let sanitized_view =
-            SanitizedTransactionView::try_new_sanitized(data, &crate::sanitize_config::sanitize_config())
-                .expect("failed to create SanitizedTransactionView from Transaction");
+        let sanitized_view = SanitizedTransactionView::try_new_sanitized(
+            data,
+            &crate::sanitize_config::sanitize_config(),
+        )
+        .expect("failed to create SanitizedTransactionView from Transaction");
         let static_runtime_tx = RuntimeTransaction::<SanitizedTransactionView<_>>::try_new(
             sanitized_view,
             MessageHash::Compute,

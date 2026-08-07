@@ -9642,7 +9642,11 @@ fn test_verify_transactions_tx_v1_size_gate_does_not_relax_legacy_or_v0() {
 
     let legacy_tx = oversized_but_tx_v1_sized(&make_legacy_transaction);
     assert_matches!(
-        verify_transaction_for_tests(&bank, legacy_tx, TransactionVerificationMode::FullVerification),
+        verify_transaction_for_tests(
+            &bank,
+            legacy_tx,
+            TransactionVerificationMode::FullVerification
+        ),
         Err(TransactionError::SanitizeFailure)
     );
 

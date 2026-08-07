@@ -6,7 +6,9 @@ use {
     },
     bytes::Bytes,
     criterion::{Criterion, Throughput, criterion_group, criterion_main},
-    solana_entry::entry::{Entry, UnverifiedSignatures, entry_views_for_tests, validate_and_hash_transactions},
+    solana_entry::entry::{
+        Entry, UnverifiedSignatures, entry_views_for_tests, validate_and_hash_transactions,
+    },
     solana_hash::Hash,
     solana_keypair::Keypair,
     solana_runtime_transaction::{
@@ -28,8 +30,9 @@ fn build_unverified_signatures(num_transactions: usize) -> UnverifiedSignatures<
         .collect();
     let entries = entry_views_for_tests(vec![Entry::new(&hash, 0, transactions)]);
 
-    let validate_transaction = move |unsanitized: UnsanitizedTransactionView<Bytes>|
-          -> Result<RuntimeTransaction<ResolvedTransactionView<Bytes>>> {
+    let validate_transaction = move |unsanitized: UnsanitizedTransactionView<Bytes>| -> Result<
+        RuntimeTransaction<ResolvedTransactionView<Bytes>>,
+    > {
         let sanitized = unsanitized
             .sanitize(&sanitize_config())
             .map_err(|_| TransactionError::SanitizeFailure)?;
