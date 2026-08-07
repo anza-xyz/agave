@@ -441,6 +441,7 @@ pub struct ReplayStageConfig {
     pub banking_tracer: Arc<BankingTracer>,
     pub snapshot_controller: Option<Arc<SnapshotController>>,
     pub replay_highest_frozen: Arc<ReplayHighestFrozen>,
+    pub highest_parent_ready: Arc<RwLock<(Slot, Block)>>,
 }
 
 pub struct ReplaySenders {
@@ -761,6 +762,7 @@ impl ReplayStage {
             banking_tracer,
             snapshot_controller,
             replay_highest_frozen,
+            highest_parent_ready,
         } = config;
 
         let ReplaySenders {
@@ -806,7 +808,7 @@ impl ReplayStage {
         let mut identity_keypair = cluster_info.keypair().clone();
         let mut my_pubkey = identity_keypair.pubkey();
 
-        let mut highest_frozen_slot = bank_forks
+        let highest_frozen_slot = bank_forks
             .read()
             .unwrap()
             .highest_frozen_bank()
@@ -1083,8 +1085,8 @@ impl ReplayStage {
                         &leader_schedule_cache,
                         &optimistic_parent_sender,
                         &optimistic_parent_receiver,
+                        &highest_parent_ready,
                         &replay_highest_frozen,
-                        &mut highest_frozen_slot,
                     );
                     let mut process_switch_bank_events_time =
                         Measure::start("process_switch_bank_events_time");
@@ -1617,8 +1619,8 @@ impl ReplayStage {
         leader_schedule_cache: &LeaderScheduleCache,
         optimistic_parent_sender: &Sender<LeaderWindowInfo>,
         optimistic_parent_receiver: &Receiver<LeaderWindowInfo>,
+        highest_parent_ready: &RwLock<(Slot, Block)>,
         replay_highest_frozen: &ReplayHighestFrozen,
-        highest_frozen_slot: &mut Slot,
     ) {
         let flh_candidate_banks = {
             let bank_forks_r = bank_forks.read().unwrap();
@@ -1631,6 +1633,7 @@ impl ReplayStage {
                 })
                 .collect_vec()
         };
+        let highest_parent_ready_slot = highest_parent_ready.read().unwrap().0;
         for bank in flh_candidate_banks {
             Self::maybe_notify_of_optimistic_parent(
                 &bank,
@@ -1638,17 +1641,17 @@ impl ReplayStage {
                 leader_schedule_cache,
                 optimistic_parent_sender,
                 optimistic_parent_receiver,
+                highest_parent_ready_slot,
             );
         }
 
-        if let Some(highest) = new_frozen_slots.iter().max()
-            && *highest > *highest_frozen_slot
-        {
-            *highest_frozen_slot = *highest;
+        if let Some(highest) = new_frozen_slots.iter().max() {
             let mut l_highest_frozen = replay_highest_frozen.highest_frozen_slot.lock().unwrap();
-            // Let the block creation loop know about this new frozen slot
-            *l_highest_frozen = *highest;
-            replay_highest_frozen.freeze_notification.notify_one();
+            if *highest > *l_highest_frozen {
+                // Let the block creation loop know about this new frozen slot
+                *l_highest_frozen = *highest;
+                replay_highest_frozen.freeze_notification.notify_one();
+            }
         }
     }
 
@@ -4335,18 +4338,31 @@ impl ReplayStage {
         leader_schedule_cache: &LeaderScheduleCache,
         optimistic_parent_sender: &Sender<LeaderWindowInfo>,
         optimistic_parent_receiver: &Receiver<LeaderWindowInfo>,
+        highest_parent_ready_slot: Slot,
     ) {
         let next_slot = bank.slot().saturating_add(1);
+        if next_slot != first_of_consecutive_leader_slots(next_slot) {
+            return;
+        }
+
+        // Make sure we're not getting tricked into sending an optimistic parent for a
+        // leader window that is too far in the future.
+        let parent_window_start = first_of_consecutive_leader_slots(bank.slot());
+        if highest_parent_ready_slot < parent_window_start {
+            trace!(
+                "suppressing optimistic parent {} for window starting at {next_slot}: highest \
+                 ParentReady {highest_parent_ready_slot} is before parent window \
+                 {parent_window_start}",
+                bank.slot()
+            );
+            return;
+        }
 
         let is_next_leader = leader_schedule_cache
             .slot_leader_at(next_slot, Some(bank))
             .is_some_and(|leader| Self::leader_is_me(&leader.id, my_pubkey));
 
         if !is_next_leader {
-            return;
-        }
-
-        if next_slot != first_of_consecutive_leader_slots(next_slot) {
             return;
         }
 

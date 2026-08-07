@@ -32,6 +32,7 @@ use {
         },
         entry::{self, Entry},
     },
+    solana_epoch_schedule::EpochSchedule,
     solana_genesis_config as genesis_config,
     solana_gossip::{crds::Cursor, node::Node},
     solana_hash::Hash,
@@ -89,6 +90,55 @@ use {
 const NUM_CONSECUTIVE_LEADER_SLOTS: Slot = NUM_CONSECUTIVE_LEADER_SLOTS_NZ.get() as Slot;
 
 static_assertions::const_assert!(REFRESH_VOTE_BLOCKHEIGHT < solana_clock::MAX_PROCESSING_AGE);
+
+#[test]
+fn test_far_future_optimistic_parent_requires_parent_window_ready() {
+    let my_pubkey = Pubkey::new_unique();
+    let mut genesis = create_genesis_config_with_leader(10_000, &my_pubkey, 1_000);
+    genesis.genesis_config.epoch_schedule = EpochSchedule::without_warmup();
+    let root_bank = Bank::new_for_tests(&genesis.genesis_config);
+    root_bank.freeze();
+    let bank_forks = BankForks::new_rw_arc(root_bank);
+    let root_bank = bank_forks.read().unwrap().root_bank();
+    let leader_schedule_cache = LeaderScheduleCache::new_from_bank(&root_bank);
+
+    let parent_slot = 65_531;
+    let parent_window_start = 65_528;
+    let parent_leader = leader_schedule_cache
+        .slot_leader_at(parent_slot, Some(&root_bank))
+        .unwrap();
+    let parent_bank =
+        Bank::new_from_parent_with_bank_forks(&bank_forks, root_bank, parent_leader, parent_slot);
+    let parent_block_id = Hash::new_unique();
+    parent_bank.set_block_id(Some(parent_block_id));
+    parent_bank.freeze();
+
+    let (sender, receiver) = bounded(1);
+    for highest_parent_ready_slot in [4, parent_window_start - 1] {
+        ReplayStage::maybe_notify_of_optimistic_parent(
+            &parent_bank,
+            &my_pubkey,
+            &leader_schedule_cache,
+            &sender,
+            &receiver,
+            highest_parent_ready_slot,
+        );
+        assert!(receiver.try_recv().is_err());
+    }
+
+    ReplayStage::maybe_notify_of_optimistic_parent(
+        &parent_bank,
+        &my_pubkey,
+        &leader_schedule_cache,
+        &sender,
+        &receiver,
+        parent_window_start,
+    );
+    let notification = receiver.try_recv().unwrap();
+    assert_eq!(notification.start_slot, 65_532);
+    assert_eq!(notification.parent_block.slot, parent_slot);
+    assert_eq!(notification.parent_block.block_id, parent_block_id);
+}
 
 impl ProcessActiveBanksContext {
     fn new_for_tests(

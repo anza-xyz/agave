@@ -539,7 +539,7 @@ impl Tvu {
             commitment_sender: votor_commitment_sender,
             bank_notification_sender: bank_notification_sender.clone(),
             leader_window_info_sender,
-            highest_parent_ready,
+            highest_parent_ready: highest_parent_ready.clone(),
             event_sender: votor_event_sender.clone(),
             latest_switch_request: latest_switch_request.clone(),
             own_vote_sender: own_votes_sender.clone(),
@@ -611,6 +611,7 @@ impl Tvu {
             banking_tracer,
             snapshot_controller,
             replay_highest_frozen,
+            highest_parent_ready,
         };
 
         let voting_service = VotingService::new(
