@@ -37,10 +37,10 @@ use {
     agave_votor::{
         vote_history::{VoteHistory, VoteHistoryError},
         vote_history_storage::{NullVoteHistoryStorage, VoteHistoryStorage},
-        voting_service::VotingServiceOverride,
     },
     agave_xdp::transmitter::{Transmitter, TransmitterBuilder},
     anyhow::{Result, anyhow},
+    arc_swap::ArcSwap,
     crossbeam_channel::{Receiver, bounded, unbounded},
     serde::{Deserialize, Serialize},
     solana_account::ReadableAccount,
@@ -345,6 +345,11 @@ pub struct ValidatorConfig {
     pub known_validators: Option<HashSet<Pubkey>>, // None = trust all
     pub repair_validators: Option<HashSet<Pubkey>>, // None = repair from all
     pub repair_whitelist: Arc<RwLock<HashSet<Pubkey>>>, // Empty = repair with all
+    /// Peers plugged into the votor peer_list regardless of stake, admitting their
+    /// inbound connections and pushing consensus messages to them. Set by
+    /// `--votor-peer-overrides`.
+    /// `None` resolves the address from gossip, `Some` pins it.
+    pub votor_peer_overrides: Arc<ArcSwap<HashMap<Pubkey, Option<SocketAddr>>>>,
     pub gossip_validators: Option<HashSet<Pubkey>>, // None = gossip with all
     pub should_check_duplicate_instance: bool,
     pub max_genesis_archive_unpacked_size: u64,
@@ -397,7 +402,6 @@ pub struct ValidatorConfig {
     pub tvu_shred_sigverify_threads: NonZeroUsize,
     pub tvu_bls_sigverify_threads: NonZeroUsize,
     pub delay_leader_block_for_pending_fork: bool,
-    pub voting_service_test_override: Option<VotingServiceOverride>,
     pub repair_handler_type: RepairHandlerType,
     // Thread niceness adjustment for snapshot packager service
     pub snapshot_packager_niceness_adj: i8,
@@ -430,6 +434,7 @@ impl ValidatorConfig {
             repair_validators: None,
             should_check_duplicate_instance: true,
             repair_whitelist: Arc::new(RwLock::new(HashSet::default())),
+            votor_peer_overrides: Arc::default(),
             gossip_validators: None,
             max_genesis_archive_unpacked_size: MAX_GENESIS_ARCHIVE_UNPACKED_SIZE,
             run_verification: true,
@@ -483,7 +488,6 @@ impl ValidatorConfig {
             tvu_shred_sigverify_threads: NonZeroUsize::new(2).expect("2 is non-zero"),
             tvu_bls_sigverify_threads: NonZeroUsize::new(2).expect("2 is non-zero"),
             delay_leader_block_for_pending_fork: true,
-            voting_service_test_override: None,
             repair_handler_type: RepairHandlerType::default(),
             snapshot_packager_niceness_adj: 0,
         }
@@ -1668,8 +1672,7 @@ impl Validator {
                 key_notifiers: key_notifiers.clone(),
                 votor_server_sockets: node.sockets.votor_server,
                 votor_client_socket: node.sockets.quic_votor_client,
-                #[cfg(feature = "dev-context-only-utils")]
-                voting_service_test_override: config.voting_service_test_override.clone(),
+                votor_peer_overrides: config.votor_peer_overrides.clone(),
                 highest_finalized,
             },
             reward_aggregates_sender,

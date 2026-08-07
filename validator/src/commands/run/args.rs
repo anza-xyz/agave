@@ -808,6 +808,20 @@ pub fn add_args<'a>(app: App<'a, 'a>, default_args: &'a DefaultArgs) -> App<'a, 
             .help("The number of QUIC endpoints used for the votor transport."),
     )
     .arg(
+        Arg::with_name("votor_peer_overrides")
+            .long("votor-peer-overrides")
+            .validator(is_pubkey)
+            .value_name("VALIDATOR IDENTITY")
+            .multiple(true)
+            .takes_value(true)
+            .hidden(hidden_unless_forced())
+            .help(
+                "A list of validator identities that this node admits into the votor transport \
+                 and pushes consensus messages to, regardless of their stake. Their addresses are \
+                 resolved from gossip. [default: staked validators only]",
+            ),
+    )
+    .arg(
         Arg::with_name("staked_nodes_overrides")
             .long("staked-nodes-overrides")
             .value_name("PATH")

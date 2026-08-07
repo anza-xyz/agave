@@ -17,7 +17,6 @@ use {
         validator_configs::*,
     },
     agave_snapshots::{SnapshotInterval, snapshot_config::SnapshotConfig},
-    agave_votor::voting_service::VotingServiceOverride,
     arc_swap::ArcSwap,
     log::*,
     solana_account::AccountSharedData,
@@ -485,9 +484,7 @@ pub fn run_cluster_partition<C>(
     // Every validator's cache reads this same handle on each refresh.
     let alpenglow_port_override = Arc::new(ArcSwap::from_pointee(HashMap::new()));
     for config in &mut validator_configs {
-        config.voting_service_test_override = Some(VotingServiceOverride {
-            override_listeners: alpenglow_port_override.clone(),
-        });
+        config.votor_peer_overrides = alpenglow_port_override.clone();
     }
     let mut config = ClusterConfig {
         mint_lamports,
@@ -555,7 +552,7 @@ pub fn run_cluster_partition<C>(
     let new_override = HashMap::from_iter(
         cluster_nodes
             .iter()
-            .map(|node| (*node.pubkey(), blackhole_addr)),
+            .map(|node| (*node.pubkey(), Some(blackhole_addr))),
     );
     alpenglow_port_override.store(Arc::new(new_override));
     sleep(partition_duration);

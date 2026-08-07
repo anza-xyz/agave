@@ -13,6 +13,7 @@ use {
     },
     agave_votor::vote_history_storage,
     agave_votor_transport::MAX_ENDPOINTS,
+    arc_swap::ArcSwap,
     bytesize::ByteSize,
     clap::{ArgMatches, crate_name, value_t, value_t_or_exit, values_t, values_t_or_exit},
     crossbeam_channel::unbounded,
@@ -489,6 +490,21 @@ pub fn execute(
         "gossip_validators",
         "--gossip-validator",
     )?;
+    let votor_peer_overrides = validators_set(
+        &identity_keypair.pubkey(),
+        matches,
+        "votor_peer_overrides",
+        "--votor-peer-overrides",
+    )?;
+    // Identities named on the command line carry no address: the peer list resolves
+    // them from gossip.
+    let votor_peer_overrides = Arc::new(ArcSwap::from_pointee(
+        votor_peer_overrides
+            .unwrap_or_default()
+            .into_iter()
+            .map(|identity| (identity, None))
+            .collect(),
+    ));
 
     if bind_addresses.len() > 1 {
         for (flag, msg) in [
@@ -795,6 +811,7 @@ pub fn execute(
         repair_validators,
         should_check_duplicate_instance: true,
         repair_whitelist,
+        votor_peer_overrides,
         repair_handler_type: RepairHandlerType::default(),
         gossip_validators,
         blockstore_cleanup_strategy,
@@ -877,7 +894,6 @@ pub fn execute(
             Arc::new(AtomicBool::new(false)),
         )]
         .into(),
-        voting_service_test_override: None,
         snapshot_packager_niceness_adj: value_t_or_exit!(
             matches,
             "snapshot_packager_niceness_adj",
