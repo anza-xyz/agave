@@ -421,7 +421,6 @@ use {dispatch, wincode::config::ConfigCore};
 
 impl Shred {
     dispatch!(fn common_header(&self) -> &ShredCommonHeader);
-    #[cfg(any(test, feature = "dev-context-only-utils"))]
     dispatch!(fn set_signature(&mut self, signature: Signature));
     dispatch!(fn signed_data(&self) -> Result<Hash, Error>);
 
@@ -605,26 +604,6 @@ impl Shred {
                 .unwrap_or_else(|| shred.payload())
         }
         get_payload(self) != get_payload(other)
-    }
-}
-
-impl From<merkle::Shred> for Shred {
-    fn from(shred: merkle::Shred) -> Self {
-        match shred {
-            merkle::Shred::ShredCode(shred) => Self::ShredCode(shred),
-            merkle::Shred::ShredData(shred) => Self::ShredData(shred),
-        }
-    }
-}
-
-impl TryFrom<Shred> for merkle::Shred {
-    type Error = Error;
-
-    fn try_from(shred: Shred) -> Result<Self, Self::Error> {
-        match shred {
-            Shred::ShredCode(shred) => Ok(Self::ShredCode(shred)),
-            Shred::ShredData(shred) => Ok(Self::ShredData(shred)),
-        }
     }
 }
 
@@ -813,7 +792,7 @@ pub(crate) fn make_merkle_shreds_for_tests<R: Rng>(
     slot: Slot,
     data_size: usize,
     is_last_in_slot: bool,
-) -> Result<Vec<merkle::Shred>, Error> {
+) -> Result<Vec<Shred>, Error> {
     let chained_merkle_root = Hash::new_from_array(rng.random());
     let parent_offset = rng.random_range(1..=u16::try_from(slot).unwrap_or(u16::MAX));
     let parent_slot = slot.checked_sub(u64::from(parent_offset)).unwrap();
@@ -1348,7 +1327,6 @@ mod tests {
         )
         .unwrap()
         .into_iter()
-        .map(Shred::from)
         .map(|shred| fill_retransmitter_signature(&mut rng, shred, is_last_in_slot))
         .collect();
         {

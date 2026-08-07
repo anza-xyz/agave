@@ -582,7 +582,7 @@ mod tests {
                     let signature = make_dummy_signature(&mut rng);
                     assert_matches!(set_retransmitter_signature(&mut bytes, &signature), Ok(()));
                     assert_eq!(get_retransmitter_signature(&bytes).unwrap(), signature);
-                    let shred = shred::merkle::Shred::from_payload(bytes).unwrap();
+                    let shred = shred::Shred::new_from_serialized_shred(bytes).unwrap();
                     assert_eq!(shred.retransmitter_signature().unwrap(), signature);
                 }
                 {
@@ -591,7 +591,7 @@ mod tests {
                     let signature = keypair.sign_message(shred.merkle_root().unwrap().as_ref());
                     assert_matches!(resign_shred(&mut bytes, &keypair), Ok(()));
                     assert_eq!(get_retransmitter_signature(&bytes).unwrap(), signature);
-                    let shred = shred::merkle::Shred::from_payload(bytes).unwrap();
+                    let shred = shred::Shred::new_from_serialized_shred(bytes).unwrap();
                     assert_eq!(shred.retransmitter_signature().unwrap(), signature);
                 }
             } else {
@@ -617,12 +617,12 @@ mod tests {
                 );
                 assert_eq!(bytes, shred.payload().as_ref());
             }
-            if let shred::merkle::Shred::ShredCode(_) = shred {
+            if let shred::Shred::ShredCode(_) = shred {
                 assert_matches!(get_flags(bytes), Err(Error::InvalidShredType));
                 assert_matches!(get_data(bytes), Err(Error::InvalidShredType));
                 assert_matches!(get_reference_tick(bytes), Err(Error::InvalidShredType));
             }
-            if let shred::merkle::Shred::ShredData(shred) = shred {
+            if let shred::Shred::ShredData(shred) = shred {
                 let shred_data_header = shred.data_header();
                 assert_eq!(
                     get_parent_offset(bytes).unwrap(),

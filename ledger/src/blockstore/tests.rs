@@ -4,7 +4,7 @@ use {
         genesis_utils::{GenesisConfigInfo, create_genesis_config},
         shred::{
             ShredFlags, max_ticks_per_n_shreds,
-            merkle::finish_erasure_batch_for_tests,
+            merkle::finish_erasure_batch,
             merkle_tree::{
                 SIZE_OF_MERKLE_PROOF_ENTRY, get_proof_size, hash_as_merkle_proof_entry,
                 verify_merkle_proof,
@@ -4780,7 +4780,7 @@ fn test_recovery_discards_unexpected_data_complete_shreds() {
         payload.as_mut()[DATA_SHRED_FLAGS_OFFSET] |= ShredFlags::DATA_COMPLETE_SHRED.bits();
         *shred = Shred::new_from_serialized_shred(payload).unwrap();
     }
-    finish_erasure_batch_for_tests(
+    finish_erasure_batch(
         &leader_keypair,
         &mut first_fec_set,
         chained_merkle_root,
