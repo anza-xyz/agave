@@ -808,6 +808,19 @@ pub fn add_args<'a>(app: App<'a, 'a>, default_args: &'a DefaultArgs) -> App<'a, 
             .help("The number of QUIC endpoints used for the votor transport."),
     )
     .arg(
+        Arg::with_name("votor_forwards")
+            .long("votor-forwards")
+            .value_name("PATH")
+            .takes_value(true)
+            .hidden(hidden_unless_forced())
+            .help(
+                "Path to a file listing validator identities, one base58 pubkey per line, that \
+                 this node admits into the votor transport and pushes consensus messages to, \
+                 regardless of their stake. Their addresses are resolved from gossip. Blank lines \
+                 and lines beginning with '#' are ignored.",
+            ),
+    )
+    .arg(
         Arg::with_name("staked_nodes_overrides")
             .long("staked-nodes-overrides")
             .value_name("PATH")
