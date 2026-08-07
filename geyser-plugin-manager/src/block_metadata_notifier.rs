@@ -1,6 +1,6 @@
 use {
     crate::{
-        block_metadata_notifier_interface::BlockMetadataNotifier,
+        block_metadata_notifier_interface::{BlockMetadataNotifier, BlockRewardInfo},
         geyser_plugin_manager::GeyserPluginManager,
     },
     agave_geyser_plugin_interface::geyser_plugin_interface::{
@@ -9,7 +9,7 @@ use {
     arc_swap::ArcSwap,
     log::*,
     solana_clock::{BankId, UnixTimestamp},
-    solana_runtime::bank::KeyedRewardsAndNumPartitions,
+    solana_pubkey::Pubkey,
     solana_transaction_status::{Reward, RewardsAndNumPartitions},
     std::sync::Arc,
 };
@@ -27,7 +27,8 @@ impl BlockMetadataNotifier for BlockMetadataNotifierImpl {
         slot: u64,
         bank_id: BankId,
         blockhash: &str,
-        rewards: &KeyedRewardsAndNumPartitions,
+        keyed_rewards: &[(Pubkey, BlockRewardInfo)],
+        num_partitions: Option<u64>,
         block_time: Option<UnixTimestamp>,
         block_height: Option<u64>,
         executed_transaction_count: u64,
@@ -39,7 +40,11 @@ impl BlockMetadataNotifier for BlockMetadataNotifierImpl {
             return;
         }
 
-        let rewards = Self::build_rewards(rewards, commission_rate_in_basis_points);
+        let rewards = Self::build_rewards(
+            keyed_rewards,
+            num_partitions,
+            commission_rate_in_basis_points,
+        );
         let block_info = Self::build_replica_block_info(
             parent_slot,
             parent_blockhash,
@@ -77,12 +82,12 @@ impl BlockMetadataNotifier for BlockMetadataNotifierImpl {
 
 impl BlockMetadataNotifierImpl {
     fn build_rewards(
-        rewards: &KeyedRewardsAndNumPartitions,
+        keyed_rewards: &[(Pubkey, BlockRewardInfo)],
+        num_partitions: Option<u64>,
         commission_rate_in_basis_points: bool,
     ) -> RewardsAndNumPartitions {
         RewardsAndNumPartitions {
-            rewards: rewards
-                .keyed_rewards
+            rewards: keyed_rewards
                 .iter()
                 .map(|(pubkey, reward)| Reward {
                     pubkey: pubkey.to_string(),
@@ -101,7 +106,7 @@ impl BlockMetadataNotifierImpl {
                     },
                 })
                 .collect(),
-            num_partitions: rewards.num_partitions,
+            num_partitions,
         }
     }
 
@@ -198,18 +203,14 @@ mod tests {
             })],
         })));
         let notifier = BlockMetadataNotifierImpl::new(plugin_manager);
-        let rewards = KeyedRewardsAndNumPartitions {
-            keyed_rewards: Vec::new(),
-            num_partitions: None,
-        };
-
         notifier.notify_block_metadata(
             41,
             "parent-blockhash",
             42,
             9,
             "blockhash",
-            &rewards,
+            &[],
+            None,
             Some(123),
             Some(10),
             7,

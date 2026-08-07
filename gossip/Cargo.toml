@@ -43,6 +43,7 @@ conformance = ["dep:prost", "dep:protosol", "dev-context-only-utils"]
 dummy-for-ci-check = ["conformance"]
 
 [dependencies]
+agave-geyser-notifier-interface = { workspace = true }
 agave-logger = { workspace = true }
 agave-random = { workspace = true }
 agave-votor-messages = { workspace = true }

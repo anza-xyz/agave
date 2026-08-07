@@ -46,15 +46,15 @@
 
 use {
     crate::geyser_plugin_manager::GeyserPluginManager,
+    agave_geyser_notifier_interface::contact_info_notifier::{
+        ContactInfoEvent, ContactInfoReceiver, ContactInfoSender, ContactInfoSnapshot,
+    },
     agave_geyser_plugin_interface::geyser_plugin_interface::{
         ReplicaContactInfoV0_0_1, ReplicaContactInfoVersions,
     },
     arc_swap::ArcSwap,
     lazy_lru::LruCache,
     log::*,
-    solana_gossip::contact_info_notifier::{
-        ContactInfoEvent, ContactInfoReceiver, ContactInfoSender, ContactInfoSnapshot,
-    },
     solana_pubkey::Pubkey,
     std::{
         collections::hash_map::DefaultHasher,

@@ -12,7 +12,7 @@ use {
     solana_entry::entry::Entry,
     solana_ledger::{
         blockstore::{Blockstore, CompletedDataSetInfo},
-        blockstore_meta::UpdateParentInfo,
+        blockstore_meta::update_parent_info_from_slot_meta,
         deshred_transaction_notifier_interface::{
             DeshredTransactionNotifier, DeshredTransactionNotifierArc,
         },
@@ -176,7 +176,7 @@ impl CompletedDataSetsService {
                                 .ok()
                                 .flatten()
                                 .and_then(|slot_meta| {
-                                    UpdateParentInfo::from_slot_meta(slot, &slot_meta)
+                                    update_parent_info_from_slot_meta(slot, &slot_meta)
                                 })
                             && update_parent.update_parent_fec_set_index
                                 == completed_data_set_starting_shred_index
@@ -328,6 +328,7 @@ pub mod test {
         solana_ledger::{
             blockstore,
             blockstore::Blockstore,
+            blockstore_meta::UpdateParentInfo,
             get_tmp_ledger_path_auto_delete,
             shred::{ProcessShredsStats, ReedSolomonCache, Shredder, max_ticks_per_n_shreds},
         },
