@@ -1536,6 +1536,7 @@ impl Validator {
         let block_creation_loop_config = BlockCreationLoopConfig {
             exit: exit.clone(),
             bank_forks: bank_forks.clone(),
+            alpenglow_slot_clock: alpenglow_slot_clock.clone(),
             bank_forks_controller: bank_forks_controller.clone(),
             blockstore: blockstore.clone(),
             cluster_info: cluster_info.clone(),

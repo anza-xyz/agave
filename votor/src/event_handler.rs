@@ -238,6 +238,7 @@ impl EventHandler {
     ) -> Result<(), EventLoopError> {
         let my_pubkey = &local_context.my_pubkey;
         info!("{my_pubkey}: Parent ready {slot} {parent_block:?}");
+        Self::record_window_start(slot, Instant::now(), ctx, vctx);
 
         // We need to ensure that we've replayed the parent bank.
         if parent_block.slot > vctx.sharable_banks.root().slot() {
@@ -366,15 +367,15 @@ impl EventHandler {
                 request_repair(&ctx.repair_event_sender, &local_context.my_pubkey, block)?;
             }
 
-            VotorEvent::FirstShred(slot) => {
+            VotorEvent::FirstShred { slot, received_at } => {
                 info!("{}: First shred {slot}", local_context.my_pubkey);
+                Self::record_window_start(slot, received_at, ctx, vctx);
                 local_context.received_shred.insert(slot);
             }
 
             // Received a parent ready notification for `slot`
             VotorEvent::ParentReady { slot, parent_block } => {
                 let now = Instant::now();
-                Self::record_window_start(slot, now, ctx, vctx);
                 nonblocking_send(
                     &local_context.my_pubkey,
                     &vctx.consensus_metrics_sender,
@@ -1341,7 +1342,10 @@ mod tests {
 
         fn send_first_shred_event(&mut self, slot: Slot) {
             let mut new_ops = EventHandler::handle_event(
-                VotorEvent::FirstShred(slot),
+                VotorEvent::FirstShred {
+                    slot,
+                    received_at: Instant::now(),
+                },
                 &self.timer_manager,
                 &self.shared_context,
                 &mut self.voting_context,
@@ -1855,6 +1859,7 @@ mod tests {
         // Now if we received one shred for slot 8, then we should not do anything when
         // receiving timeout_crashed_leader_event for slot 8
         test_context.send_first_shred_event(8);
+        test_context.check_alpenglow_slot(8);
         test_context.send_timeout_crashed_leader_event(8);
         test_context.check_no_vote_or_commitment();
     }

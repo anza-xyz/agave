@@ -43,7 +43,7 @@ pub enum VotorEvent {
     BlockNotarFallback(Block),
 
     /// Received the first shred for the slot.
-    FirstShred(Slot),
+    FirstShred { slot: Slot, received_at: Instant },
 
     /// The pool has marked the given block as a ready parent for `slot`
     ParentReady { slot: Slot, parent_block: Block },
@@ -85,7 +85,6 @@ impl VotorEvent {
             VotorEvent::Timeout(s)
             | VotorEvent::SafeToSkip(s)
             | VotorEvent::TimeoutCrashedLeader(s)
-            | VotorEvent::FirstShred(s)
             | VotorEvent::SafeToNotar(Block {
                 slot: s,
                 block_id: _,
@@ -109,6 +108,10 @@ impl VotorEvent {
                 slot: s,
                 parent_block: _,
             } => s <= &root,
+            VotorEvent::FirstShred {
+                slot,
+                received_at: _,
+            } => slot <= &root,
             VotorEvent::Standstill(s) => s < &root,
             VotorEvent::ProduceWindow(info) => info.start_slot <= root,
             VotorEvent::SetIdentity => false,
