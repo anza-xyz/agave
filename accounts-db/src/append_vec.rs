@@ -1264,7 +1264,7 @@ mod tests {
             let data = std::iter::from_fn(|| Some(rng.random::<u8>()))
                 .take(data_len)
                 .collect::<Vec<_>>();
-            account.set_data(data);
+            account.set_data_from_slice(&data);
             (pubkey, account)
         };
 
@@ -1479,7 +1479,7 @@ mod tests {
             let owner = Pubkey::default();
             let data_len = 3_u64;
             let mut account = AccountSharedData::new(0, data_len as usize, &owner);
-            account.set_data(b"abc".to_vec());
+            account.set_data_from_slice(b"abc");
             let stored_meta = StoredMeta {
                 write_version: 0,
                 pubkey,

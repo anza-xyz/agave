@@ -1451,7 +1451,9 @@ mod tests {
                             .map(|_| {
                                 let pk = solana_pubkey::new_rand();
                                 let mut account = account_template.clone();
-                                account.set_data((0..data_size).map(|x| (x % 256) as u8).collect());
+                                account.set_data_from_slice(
+                                    &(0..data_size).map(|x| (x % 256) as u8).collect::<Vec<_>>(),
+                                );
                                 data_size += 1;
                                 append_single_account_with_default_hash(
                                     storage,
