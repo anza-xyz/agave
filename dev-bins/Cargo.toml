@@ -93,7 +93,7 @@ solana-faucet = { path = "../faucet", version = "=4.3.0-alpha.3", features = ["a
 solana-feature-gate-interface = "4.0.0"
 solana-fee-calculator = "3.2.2"
 solana-genesis = { path = "../genesis", version = "=4.3.0-alpha.3", features = ["agave-unstable-api"] }
-solana-genesis-config = "4.0.0"
+solana-genesis-config = "4.1.0"
 solana-genesis-utils = { path = "../genesis-utils", version = "=4.3.0-alpha.3", features = ["agave-unstable-api"] }
 solana-geyser-plugin-manager = { path = "../geyser-plugin-manager", version = "=4.3.0-alpha.3", features = ["agave-unstable-api"] }
 solana-hash = "4.5.0"
