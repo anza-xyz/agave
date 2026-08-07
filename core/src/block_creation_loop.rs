@@ -1034,7 +1034,7 @@ fn update_leader_window_clock(ctx: &LeaderContext, slot: Slot, started_at: Insta
     let slot_duration =
         Duration::from_nanos_u128(ctx.sharable_banks.root().ns_per_slot_at_slot(slot));
     ctx.alpenglow_slot_clock
-        .update_leader(slot, started_at, slot_duration);
+        .set(slot, started_at, slot_duration);
 }
 
 /// Shut down record intake and synchronously process all already-reserved records.

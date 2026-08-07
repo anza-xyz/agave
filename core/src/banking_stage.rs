@@ -756,7 +756,10 @@ mod external {
 
                 (poh.shared_leader_state(), poh.ticks_per_slot())
             };
-            let migration_status = self.bank_forks.read().unwrap().migration_status();
+            let (migration_status, sharable_banks) = {
+                let bank_forks = self.bank_forks.read().unwrap();
+                (bank_forks.migration_status(), bank_forks.sharable_banks())
+            };
             threads.push(progress_tracker::spawn(
                 self.worker_exit_signal.clone(),
                 progress_tracker,
@@ -765,6 +768,7 @@ mod external {
                 ticks_per_slot,
                 migration_status,
                 self.alpenglow_slot_clock.clone(),
+                sharable_banks,
             ));
 
             Ok(threads)

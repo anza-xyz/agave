@@ -9,7 +9,9 @@ use {
     solana_clock::{BankId, Slot},
     solana_cost_model::cost_tracker::SharedBlockCost,
     solana_poh::poh_recorder::SharedLeaderState,
-    solana_runtime::leader_schedule_utils::last_of_consecutive_leader_slots,
+    solana_runtime::{
+        bank_forks::SharableBanks, leader_schedule_utils::last_of_consecutive_leader_slots,
+    },
     std::{
         sync::{
             Arc,
@@ -32,6 +34,7 @@ pub fn spawn(
     ticks_per_slot: u64,
     migration_status: Arc<MigrationStatus>,
     alpenglow_slot_clock: SharedAlpenglowSlotClock,
+    sharable_banks: SharableBanks,
 ) -> JoinHandle<()> {
     std::thread::Builder::new()
         .name("solProgTrker".to_string())
@@ -43,6 +46,7 @@ pub fn spawn(
                 ticks_per_slot,
                 migration_status,
                 alpenglow_slot_clock,
+                sharable_banks,
             )
             .run(&mut producer);
         })
@@ -56,6 +60,7 @@ struct ProgressTracker {
     ticks_per_slot: u64,
     migration_status: Arc<MigrationStatus>,
     alpenglow_slot_clock: SharedAlpenglowSlotClock,
+    sharable_banks: SharableBanks,
 
     last_observed_bank_id: Option<BankId>,
     limit_and_shared_block_cost: Option<(u64, SharedBlockCost)>,
@@ -69,6 +74,7 @@ impl ProgressTracker {
         ticks_per_slot: u64,
         migration_status: Arc<MigrationStatus>,
         alpenglow_slot_clock: SharedAlpenglowSlotClock,
+        sharable_banks: SharableBanks,
     ) -> Self {
         Self {
             exit,
@@ -77,6 +83,7 @@ impl ProgressTracker {
             ticks_per_slot,
             migration_status,
             alpenglow_slot_clock,
+            sharable_banks,
 
             last_observed_bank_id: None,
             limit_and_shared_block_cost: None,
@@ -155,6 +162,7 @@ impl ProgressTracker {
 
     /// Gets current progress and formats into expected message type.
     fn produce_progress_message(&mut self) -> Option<(ProgressMessage, u64)> {
+        self.maybe_restart_alpenglow_clock();
         let leader_state = self.shared_leader_state.load();
         let tick_height = leader_state.tick_height();
         let (next_leader_range_start, next_leader_range_end) = leader_state
@@ -239,6 +247,15 @@ impl ProgressTracker {
         };
 
         Some((progress_message, tick_height))
+    }
+
+    fn maybe_restart_alpenglow_clock(&mut self) {
+        if !self.migration_status.is_alpenglow_enabled() {
+            return;
+        }
+        let bank = self.sharable_banks.working();
+        self.alpenglow_slot_clock
+            .observe_bank(bank.slot(), bank.bank_id(), Instant::now());
     }
 
     /// If leader get the remaining block cost. Otherwise 0.
@@ -346,6 +363,13 @@ mod tests {
         solana_poh::poh_recorder::LeaderState, solana_runtime::bank::Bank,
     };
 
+    fn sharable_banks_for_tests() -> SharableBanks {
+        let (_, bank_forks) =
+            Bank::new_for_tests(&solana_genesis_config::create_genesis_config(1).0)
+                .wrap_with_bank_forks_for_tests();
+        bank_forks.read().unwrap().sharable_banks()
+    }
+
     #[test]
     fn test_progress_tracker_produce_progress_message() {
         let mut shared_leader_state = SharedLeaderState::new(0, None, None);
@@ -358,6 +382,7 @@ mod tests {
             ticks_per_slot,
             Arc::default(),
             SharedAlpenglowSlotClock::default(),
+            sharable_banks_for_tests(),
         );
 
         let (message, tick_height) = progress_tracker.produce_progress_message().unwrap();
@@ -643,6 +668,7 @@ mod tests {
             DEFAULT_TICKS_PER_SLOT,
             Arc::new(MigrationStatus::post_migration_status()),
             alpenglow_slot_clock.clone(),
+            sharable_banks_for_tests(),
         );
 
         assert!(progress_tracker.produce_progress_message().is_none());
@@ -669,6 +695,7 @@ mod tests {
             DEFAULT_TICKS_PER_SLOT,
             Arc::default(),
             SharedAlpenglowSlotClock::default(),
+            sharable_banks_for_tests(),
         );
 
         // No bank - no block cost set (0).
