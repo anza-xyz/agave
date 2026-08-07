@@ -460,34 +460,46 @@ impl Blockstore {
         }
 
         for slot in from_slot..=to_slot {
-            let Ok((slot_entries, _, _)) =
-                self.get_slot_entries_with_shred_info(slot, 0, /*allow_dead_slots:*/ true)
+            let Ok((slot_components, _, _)) =
+                self.get_slot_components_with_shred_info(slot, 0, /*allow_dead_slots:*/ true)
             else {
                 continue;
             };
-            let transactions = slot_entries
-                .into_iter()
-                .flat_map(|entry| entry.transactions);
-            for (i, transaction) in transactions.enumerate() {
-                if let Some(&signature) = transaction.signatures.first() {
-                    self.transaction_status_cf
-                        .delete_in_batch(batch, (signature, slot));
-                    self.transaction_memos_cf
-                        .delete_in_batch(batch, (signature, slot));
+            let mut transaction_index = 0usize;
+            for component in slot_components {
+                match component {
+                    BlockComponent::EntryBatch(entries) => {
+                        for transaction in entries.into_iter().flat_map(|entry| entry.transactions)
+                        {
+                            if let Some(&signature) = transaction.signatures.first() {
+                                self.transaction_status_cf
+                                    .delete_in_batch(batch, (signature, slot));
+                                self.transaction_memos_cf
+                                    .delete_in_batch(batch, (signature, slot));
 
-                    let meta = self.read_transaction_status((signature, slot))?;
-                    let loaded_addresses = meta.map(|meta| meta.loaded_addresses);
-                    let account_keys = AccountKeys::new(
-                        transaction.message.static_account_keys(),
-                        loaded_addresses.as_ref(),
-                    );
+                                let meta = self.read_transaction_status((signature, slot))?;
+                                let loaded_addresses = meta.map(|meta| meta.loaded_addresses);
+                                let account_keys = AccountKeys::new(
+                                    transaction.message.static_account_keys(),
+                                    loaded_addresses.as_ref(),
+                                );
 
-                    let transaction_index =
-                        u32::try_from(i).map_err(|_| BlockstoreError::TransactionIndexOverflow)?;
-                    for pubkey in account_keys.iter() {
-                        self.address_signatures_cf
-                            .delete_in_batch(batch, (*pubkey, slot, transaction_index, signature));
+                                let transaction_index = u32::try_from(transaction_index)
+                                    .map_err(|_| BlockstoreError::TransactionIndexOverflow)?;
+                                for pubkey in account_keys.iter() {
+                                    self.address_signatures_cf.delete_in_batch(
+                                        batch,
+                                        (*pubkey, slot, transaction_index, signature),
+                                    );
+                                }
+                            }
+                            transaction_index += 1;
+                        }
                     }
+                    BlockComponent::BlockMarker(marker) if marker.is_update_parent() => {
+                        transaction_index = 0;
+                    }
+                    BlockComponent::BlockMarker(_) => {}
                 }
             }
         }
@@ -533,7 +545,10 @@ pub mod tests {
     use {
         super::*,
         crate::{
-            blockstore::tests::make_slot_entries_with_transactions, get_tmp_ledger_path_auto_delete,
+            blockstore::tests::{
+                insert_complete_update_parent_slot, make_slot_entries_with_transactions,
+            },
+            get_tmp_ledger_path_auto_delete,
         },
         solana_entry::entry::next_entry_mut,
         solana_hash::Hash,
@@ -1038,6 +1053,39 @@ pub mod tests {
             .iter(IteratorMode::Start)
             .unwrap();
         assert_eq!(status_entry_iterator.next(), None);
+    }
+
+    #[test]
+    fn test_purge_update_parent_transaction_indexes() {
+        let ledger_path = get_tmp_ledger_path_auto_delete!();
+        let blockstore = Blockstore::open(ledger_path.path()).unwrap();
+
+        let slot = 104;
+        let fixture = insert_complete_update_parent_slot(&blockstore, slot, 103, 100);
+        let address_signature = (
+            fixture.post_update_address,
+            slot,
+            0,
+            fixture.post_update_signatures[0],
+        );
+        assert!(
+            blockstore
+                .address_signatures_cf
+                .get(address_signature)
+                .unwrap()
+                .is_some()
+        );
+
+        blockstore
+            .purge_slots(slot, slot, PurgeType::Exact)
+            .unwrap();
+        assert!(
+            blockstore
+                .address_signatures_cf
+                .get(address_signature)
+                .unwrap()
+                .is_none()
+        );
     }
 
     fn purge_exact(blockstore: &Blockstore, oldest_slot: Slot) {
