@@ -1291,9 +1291,9 @@ fn create_and_insert_leader_bank(
         );
     }
 
-    if ctx.poh_recorder.read().unwrap().start_slot() != parent_slot {
-        // Important to keep Poh somewhat accurate for
-        // parts of the system relying on PohRecorder::would_be_leader()
+    if ctx.poh_recorder.read().unwrap().start_bank_id() != parent_bank.bank_id() {
+        // PoH must be based on the exact parent bank. Comparing slots is insufficient because
+        // fast leader handover can switch between parent banks in the same slot.
         reset_poh_recorder(&parent_bank, ctx);
     }
 
@@ -1853,7 +1853,16 @@ mod tests {
     }
 
     #[test]
-    fn test_sad_leader_handover() {
+    fn test_sad_leader_handover_same_parent_slot() {
+        test_sad_leader_handover(1);
+    }
+
+    #[test]
+    fn test_sad_leader_handover_different_parent_slot() {
+        test_sad_leader_handover(3);
+    }
+
+    fn test_sad_leader_handover(optimistic_parent_slot: Slot) {
         let ledger_path = get_tmp_ledger_path_auto_delete!();
         let blockstore = Arc::new(Blockstore::open(ledger_path.path()).unwrap());
         let my_pubkey = Pubkey::new_unique();
@@ -1874,19 +1883,35 @@ mod tests {
             SlotLeader::new_unique(),
             new_parent_slot,
         );
+        new_parent.register_unique_recent_blockhash_for_test();
         new_parent.freeze();
         new_parent.set_block_id(Some(new_parent_hash));
+        let new_parent_bank_id = new_parent.bank_id();
 
-        let optimistic_parent_slot = 3;
         let optimistic_parent_hash = Hash::new_unique();
-        let optimistic_parent = Bank::new_from_parent_with_bank_forks(
-            &bank_forks,
-            root_bank.clone(),
-            SlotLeader::new_unique(),
-            optimistic_parent_slot,
-        );
+        let optimistic_parent = if optimistic_parent_slot == new_parent_slot {
+            Arc::new(Bank::new_from_parent(
+                root_bank.clone(),
+                SlotLeader::new_unique(),
+                optimistic_parent_slot,
+            ))
+        } else {
+            Bank::new_from_parent_with_bank_forks(
+                &bank_forks,
+                root_bank.clone(),
+                SlotLeader::new_unique(),
+                optimistic_parent_slot,
+            )
+        };
+        optimistic_parent.register_unique_recent_blockhash_for_test();
         optimistic_parent.freeze();
         optimistic_parent.set_block_id(Some(optimistic_parent_hash));
+        let optimistic_parent_bank_id = optimistic_parent.bank_id();
+        assert_ne!(optimistic_parent_bank_id, new_parent_bank_id);
+        assert_ne!(
+            optimistic_parent.last_blockhash(),
+            new_parent.last_blockhash()
+        );
 
         let exit = Arc::new(AtomicBool::new(false));
         let poh_config = PohConfig::default();
@@ -1951,6 +1976,10 @@ mod tests {
             .entry_bytes_budget()
             .reserve(ENTRY_BYTES_CONSUMED_BEFORE_HANDOVER)
             .unwrap();
+        assert_eq!(
+            ctx.poh_recorder.read().unwrap().start_bank_id(),
+            optimistic_parent_bank_id
+        );
 
         let accumulated_tx = versioned_transfer(1);
         let drained_tx = versioned_transfer(2);
@@ -1997,6 +2026,11 @@ mod tests {
                 .is_ok()
         );
         assert!(new_bank.entry_bytes_budget().reserve(1).is_err());
+        assert_eq!(new_bank.parent().unwrap().bank_id(), new_parent_bank_id);
+        assert_eq!(
+            ctx.poh_recorder.read().unwrap().start_bank_id(),
+            new_parent_bank_id
+        );
         let EntryNotification::UpdateParent(update_parent) =
             entry_notification_receiver.try_recv().unwrap()
         else {
