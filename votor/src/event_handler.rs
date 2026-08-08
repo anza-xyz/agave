@@ -94,7 +94,8 @@ struct LocalContext {
     pub(crate) stats: EventHandlerStats,
     /// When in standstill, tracks the highest finalized slot at the time standstill was detected.
     /// Used to calculate dynamic timeout extensions (5% per leader window since standstill).
-    /// Reset to `None` when a new finalization event is received.
+    /// Reset to `None` when a later finalization is observed, including through identity root
+    /// reconciliation.
     pub(crate) standstill_slot: Option<Slot>,
 }
 
@@ -150,12 +151,7 @@ impl EventHandler {
             );
 
             // Check for set identity
-            if let Err(e) = Self::handle_set_identity(
-                &mut local_context.my_pubkey,
-                local_context.genesis_block,
-                &ctx,
-                &mut vctx,
-            ) {
+            if let Err(e) = Self::handle_set_identity(&ctx, &mut vctx, &mut local_context) {
                 error!(
                     "Unable to load new vote history when attempting to change identity at \
                      startup from {} to {} on voting loop startup, Exiting: {}",
@@ -572,12 +568,7 @@ impl EventHandler {
             // Operator called set identity make sure that our keypair is updated for voting
             VotorEvent::SetIdentity => {
                 info!("{}: SetIdentity", local_context.my_pubkey);
-                if let Err(e) = Self::handle_set_identity(
-                    &mut local_context.my_pubkey,
-                    local_context.genesis_block,
-                    ctx,
-                    vctx,
-                ) {
+                if let Err(e) = Self::handle_set_identity(ctx, vctx, local_context) {
                     error!(
                         "Unable to load new vote history when attempting to change identity from \
                          {} to {} in voting loop, Exiting: {}",
@@ -663,25 +654,52 @@ impl EventHandler {
     }
 
     fn handle_set_identity(
-        my_pubkey: &mut Pubkey,
-        genesis_block: Block,
         ctx: &SharedContext,
         vctx: &mut VotingContext,
+        local_context: &mut LocalContext,
     ) -> Result<(), VoteHistoryError> {
         let new_identity = ctx.cluster_info.keypair();
         let new_pubkey = new_identity.pubkey();
         // This covers both:
         // - startup set-identity so that vote_history is outdated but my_pubkey == new_pubkey
         // - set-identity during normal operation, vote_history == my_pubkey != new_pubkey
-        if *my_pubkey != new_pubkey || vctx.vote_history.node_pubkey != new_pubkey {
+        if local_context.my_pubkey != new_pubkey || vctx.vote_history.node_pubkey != new_pubkey {
             let my_old_pubkey = vctx.vote_history.node_pubkey;
-            *my_pubkey = new_pubkey;
-            vctx.vote_history = VoteHistory::restore(ctx.vote_history_storage.as_ref(), my_pubkey)
-                .unwrap_or_else(|_| VoteHistory::new(new_pubkey, 0));
+            local_context.my_pubkey = new_pubkey;
+            vctx.vote_history =
+                VoteHistory::restore(ctx.vote_history_storage.as_ref(), &local_context.my_pubkey)
+                    .unwrap_or_else(|_| VoteHistory::new(new_pubkey, 0));
             vctx.identity_keypair = new_identity;
-            warn!("set-identity: from {my_old_pubkey} to {my_pubkey}");
+            warn!(
+                "set-identity: from {my_old_pubkey} to {}",
+                local_context.my_pubkey
+            );
         }
-        vctx.vote_history.initialize_genesis(genesis_block);
+        vctx.vote_history
+            .initialize_genesis(local_context.genesis_block);
+
+        let effective_root = vctx
+            .vote_history
+            .root()
+            .max(vctx.sharable_banks.root().slot());
+        // Block events at or below the effective root are ignored. Keep pending blocks consistent
+        // with that boundary and with votes restored for the new identity.
+        local_context
+            .pending_blocks
+            .retain(|slot, _| *slot > effective_root && !vctx.vote_history.voted(*slot));
+
+        // Advancing past the slot where standstill was detected is equivalent to observing the
+        // later finalization that normally clears it.
+        if let Some(standstill_slot) = local_context.standstill_slot
+            && standstill_slot < effective_root
+        {
+            local_context.standstill_slot = None;
+            info!(
+                "{}: Standstill initially detected at slot={standstill_slot} has ended at \
+                 restored effective root {effective_root}",
+                local_context.my_pubkey
+            );
+        }
         Ok(())
     }
 
@@ -2354,6 +2372,158 @@ mod tests {
         for file in files_to_remove {
             let _ = remove_file(file);
         }
+    }
+
+    #[test]
+    fn test_set_identity_reconciles_local_state_with_restored_history() {
+        let mut test_context = setup();
+        let new_identity = Keypair::new();
+        let restored_root = 2;
+        let voted_slot = restored_root + 2;
+        let mut restored_vote_history = VoteHistory::new(new_identity.pubkey(), 0);
+        restored_vote_history.add_vote(Vote::new_skip_vote(restored_root));
+        restored_vote_history.set_root(restored_root);
+        restored_vote_history.add_vote(Vote::new_skip_vote(voted_slot));
+        let saved_vote_history =
+            SavedVoteHistory::new(&restored_vote_history, &new_identity).unwrap();
+        test_context
+            .vote_history_storage
+            .store(&SavedVoteHistoryVersions::from(saved_vote_history))
+            .unwrap();
+
+        let parent_block = Block::default();
+        for slot in [
+            restored_root - 1,
+            restored_root,
+            restored_root + 1,
+            voted_slot,
+        ] {
+            test_context.local_context.pending_blocks.insert(
+                slot,
+                vec![(
+                    Block {
+                        slot,
+                        block_id: Hash::new_unique(),
+                    },
+                    parent_block,
+                )],
+            );
+        }
+        test_context.local_context.standstill_slot = Some(restored_root - 1);
+
+        test_context
+            .cluster_info
+            .set_keypair(Arc::new(new_identity.insecure_clone()));
+        test_context.send_set_identity_event();
+
+        assert_eq!(
+            test_context.voting_context.vote_history.root(),
+            restored_root
+        );
+        assert_eq!(
+            test_context
+                .local_context
+                .pending_blocks
+                .keys()
+                .copied()
+                .collect::<Vec<_>>(),
+            vec![restored_root + 1],
+        );
+        assert!(test_context.local_context.standstill_slot.is_none());
+
+        // Any event that rechecks pending blocks used to query the stale slot and panic.
+        test_context.send_parent_ready_event(restored_root + 1, parent_block);
+
+        // Standstill at the restored root is not stale and must establish a new baseline without
+        // comparing against the superseded slot. Reprocessing SetIdentity must preserve baselines
+        // at or above the root.
+        test_context.send_standstill_event(restored_root);
+        test_context.send_set_identity_event();
+        assert_eq!(
+            test_context.local_context.standstill_slot,
+            Some(restored_root)
+        );
+        test_context.local_context.standstill_slot = Some(restored_root + 1);
+        test_context.send_set_identity_event();
+        assert_eq!(
+            test_context.local_context.standstill_slot,
+            Some(restored_root + 1)
+        );
+    }
+
+    #[test]
+    fn test_set_identity_reconciles_pending_blocks_with_effective_bank_root() {
+        let mut test_context = setup();
+        let root_bank = test_context
+            .bank_forks
+            .read()
+            .unwrap()
+            .sharable_banks()
+            .root();
+        let effective_root = 4;
+        let rooted_bank = test_context.create_block_and_send_block_event(effective_root, root_bank);
+        let rooted_block = Block {
+            slot: effective_root,
+            block_id: rooted_bank.block_id().unwrap(),
+        };
+        test_context.send_parent_ready_event(effective_root, Block::default());
+        test_context.send_finalized_event(rooted_block, true);
+        assert_eq!(
+            test_context.bank_forks.read().unwrap().root(),
+            effective_root
+        );
+
+        let new_identity = Keypair::new();
+        let restored_root = 2;
+        let voted_slot = effective_root + 2;
+        let mut restored_vote_history = VoteHistory::new(new_identity.pubkey(), 0);
+        restored_vote_history.add_vote(Vote::new_skip_vote(restored_root));
+        restored_vote_history.set_root(restored_root);
+        restored_vote_history.add_vote(Vote::new_skip_vote(voted_slot));
+        let saved_vote_history =
+            SavedVoteHistory::new(&restored_vote_history, &new_identity).unwrap();
+        test_context
+            .vote_history_storage
+            .store(&SavedVoteHistoryVersions::from(saved_vote_history))
+            .unwrap();
+
+        let parent_block = Block::default();
+        for slot in [
+            effective_root - 1,
+            effective_root,
+            effective_root + 1,
+            voted_slot,
+        ] {
+            test_context.local_context.pending_blocks.insert(
+                slot,
+                vec![(
+                    Block {
+                        slot,
+                        block_id: Hash::new_unique(),
+                    },
+                    parent_block,
+                )],
+            );
+        }
+
+        test_context
+            .cluster_info
+            .set_keypair(Arc::new(new_identity.insecure_clone()));
+        test_context.send_set_identity_event();
+
+        assert_eq!(
+            test_context.voting_context.vote_history.root(),
+            restored_root
+        );
+        assert_eq!(
+            test_context
+                .local_context
+                .pending_blocks
+                .keys()
+                .copied()
+                .collect::<Vec<_>>(),
+            vec![effective_root + 1],
+        );
     }
 
     #[test]
