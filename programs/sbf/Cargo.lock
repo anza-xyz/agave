@@ -6994,9 +6994,9 @@ dependencies = [
 
 [[package]]
 name = "solana-genesis-config"
-version = "4.0.0"
+version = "4.1.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "5415e781581524a972a3de931d1716d90c0ee08beaa1f34e3108339caf9ee450"
+checksum = "21a20bc18be6e6eab28a6a0265437bfdd62d773f88820ef0b82489c7f0a3ce19"
 dependencies = [
  "bincode",
  "chrono",
