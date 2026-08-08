@@ -1260,7 +1260,7 @@ mod tests {
         rand::Rng,
         rayon::ThreadPoolBuilder,
         solana_account::{
-            AccountSharedData, ReadableAccount, accounts_equal, state_traits::StateMut,
+            AccountSharedData, ReadableAccount, accounts_equal, state_traits::StateMutWincode as _,
         },
         solana_accounts_db::{
             accounts_db::{ACCOUNTS_DB_CONFIG_FOR_TESTING, AccountsDbConfig},

@@ -55,13 +55,13 @@ solana-sdk-ids = { workspace = true }
 solana-slot-hashes = { workspace = true }
 solana-system-interface = { workspace = true }
 solana-transaction-context = { workspace = true, features = ["bincode"] }
-solana-vote-interface = { workspace = true, features = ["bincode"] }
+solana-vote-interface = { workspace = true, features = ["bincode", "wincode"] }
 
 [dev-dependencies]
 agave-logger = { path = "../../logger", features = ["agave-unstable-api"] }
 assert_matches = { workspace = true }
 criterion = { workspace = true }
-solana-account = { workspace = true }
+solana-account = { workspace = true, features = ["wincode"] }
 solana-clock = { workspace = true }
 solana-fee-calculator = { workspace = true }
 solana-hash = { workspace = true, features = ["atomic"] }
