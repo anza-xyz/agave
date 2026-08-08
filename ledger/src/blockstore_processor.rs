@@ -293,6 +293,19 @@ pub enum BlockstoreProcessorError {
     BankHashMismatch(Slot, Hash, Hash),
 }
 
+impl BlockstoreProcessorError {
+    /// Returns whether replay stopped because a verified genesis certificate advanced the
+    /// migration to `ReadyToEnable`. This is control flow, not an invalid block.
+    pub fn is_alpenglow_migration_transition(&self) -> bool {
+        matches!(
+            self,
+            Self::BlockComponentProcessor(
+                BlockComponentProcessorError::AlpenglowMigrationTransition
+            )
+        )
+    }
+}
+
 /// Callback for accessing bank state after each slot is confirmed while
 /// processing the blockstore
 pub type ProcessSlotCallback = Arc<dyn Fn(&Bank) + Sync + Send>;
@@ -1469,7 +1482,11 @@ pub fn confirm_slot(
                             migration_status,
                         )
                         .inspect_err(|err| {
-                            if !matches!(err, BlockComponentProcessorError::AbandonedBank(_)) {
+                            if !matches!(
+                                err,
+                                BlockComponentProcessorError::AbandonedBank(_)
+                                    | BlockComponentProcessorError::AlpenglowMigrationTransition
+                            ) {
                                 warn!(
                                     "BlockComponentProcessor::on_marker() for slot {slot} failed \
                                      with {err}"
@@ -2048,15 +2065,12 @@ fn load_frozen_forks(
                 &migration_status,
             ) {
                 assert!(bank_forks.write().unwrap().remove(bank.slot()).is_some());
-                if opts.abort_on_invalid_block {
-                    return Err(error);
-                }
-
-                // If this block was the first alpenglow block and advanced the migration phase, we can enable alpenglow.
-                //
-                // This bank must have failed to freeze as it is an Alpenglow block being verified as a TowerBFT one.
-                // We are safe to cleanly transition to alpenglow here
-                if migration_status.is_ready_to_enable() {
+                if error.is_alpenglow_migration_transition() {
+                    assert!(migration_status.is_ready_to_enable());
+                    // This was the first Alpenglow block. Enable Alpenglow and replay it with
+                    // Alpenglow rules. Handle the transition even when `abort_on_invalid_block`
+                    // is set because the bank is not invalid; it was deliberately interrupted
+                    // while configured for TowerBFT.
                     let genesis_slot = migration_status.enable_alpenglow_during_startup();
 
                     // We need to clear pending_slots as it might contain Alpenglow blocks initialized as TowerBFT banks.
@@ -2071,6 +2085,11 @@ fn load_frozen_forks(
                         opts,
                         &migration_status,
                     )?;
+                    continue;
+                }
+
+                if opts.abort_on_invalid_block {
+                    return Err(error);
                 }
 
                 continue;
@@ -2380,8 +2399,12 @@ pub fn process_single_slot(
         migration_status,
     )
     .map_err(|err| {
-        warn!("slot {slot} failed to verify: {err}");
-        mark_dead_if_primary_access(blockstore, slot);
+        if err.is_alpenglow_migration_transition() {
+            info!("slot {slot} replay interrupted to enable Alpenglow");
+        } else {
+            warn!("slot {slot} failed to verify: {err}");
+            mark_dead_if_primary_access(blockstore, slot);
+        }
         err
     })?;
 

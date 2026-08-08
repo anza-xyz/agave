@@ -1004,7 +1004,7 @@ impl ReplayStage {
                     let r_bank_forks = bank_forks.read().unwrap();
                     (r_bank_forks.ancestors(), r_bank_forks.descendants())
                 };
-                let new_frozen_slots = Self::process_active_banks(
+                let mut new_frozen_slots = Self::process_active_banks(
                     cluster_info.my_shred_version(),
                     &process_active_banks_context,
                     &mut progress,
@@ -1043,6 +1043,8 @@ impl ReplayStage {
                         &mut ancestors,
                         &mut descendants,
                         &mut progress,
+                        &replay_highest_frozen,
+                        &mut new_frozen_slots,
                     );
                 }
 
@@ -1675,6 +1677,8 @@ impl ReplayStage {
         ancestors: &mut HashMap<Slot, HashSet<Slot>>,
         descendants: &mut HashMap<Slot, HashSet<Slot>>,
         progress: &mut ProgressMap,
+        replay_highest_frozen: &ReplayHighestFrozen,
+        new_frozen_slots: &mut Vec<Slot>,
     ) {
         let root_bank = bank_forks.read().unwrap().root_bank();
 
@@ -1734,6 +1738,13 @@ impl ReplayStage {
                 bank_forks,
                 blockstore,
             );
+        }
+
+        // Reset highest frozen to genesis
+        {
+            let mut l_highest_frozen = replay_highest_frozen.highest_frozen_slot.lock().unwrap();
+            *l_highest_frozen = genesis_block.slot;
+            new_frozen_slots.clear()
         }
 
         // Purge any partial slots greater than the genesis slot
@@ -3018,9 +3029,10 @@ impl ReplayStage {
         let mut w_replay_stats = replay_stats.write().unwrap();
         let mut w_replay_progress = replay_progress.write().unwrap();
         let tx_count_before = w_replay_progress.num_txs;
-        // All errors must lead to marking the slot as dead, otherwise,
-        // the `check_slot_agrees_with_cluster()` called by `replay_active_banks()`
-        // will break!
+        // All errors except an Alpenglow migration transition must lead to marking the slot as
+        // dead, otherwise `check_slot_agrees_with_cluster()` in `replay_active_banks()` will
+        // break. A migration transition is handled synchronously after replay results are
+        // processed; enabling Alpenglow purges this interrupted TowerBFT bank.
         blockstore_processor::confirm_slot(
             &process_active_banks_context.blockstore,
             bank,
@@ -3958,6 +3970,20 @@ impl ReplayStage {
                             tbft_structs.as_deref_mut(),
                         );
                         continue;
+                    }
+                    Err(BlockstoreProcessorError::BlockComponentProcessor(
+                        BlockComponentProcessorError::AlpenglowMigrationTransition,
+                    )) => {
+                        assert!(
+                            process_active_banks_context
+                                .migration_status
+                                .is_ready_to_enable()
+                        );
+                        info!(
+                            "Stopping replay of slot {bank_slot} to enable Alpenglow and rebuild \
+                             the bank"
+                        );
+                        return vec![];
                     }
                     Err(err) => {
                         mark_replay_dead_slot(

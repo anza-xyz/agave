@@ -53,6 +53,8 @@ pub enum BlockComponentProcessorError {
     GenesisCertificateOnNonChild,
     #[error("GenesisCertificate was invalid and failed to verify")]
     GenesisCertificateFailedVerification,
+    #[error("Alpenglow migration became ready; aborting the TowerBFT bank")]
+    AlpenglowMigrationTransition,
     #[error("GenesisCertificate marker must immediately follow the block header")]
     GenesisCertificateOutOfOrder,
     #[error("FinalizationCertificate was invalid or failed to verify {0}")]
@@ -128,6 +130,7 @@ impl BlockComponentProcessorError {
             | BlockComponentProcessorError::MissingBlockFooter
             | BlockComponentProcessorError::MissingGenesisCertificateMarker
             | BlockComponentProcessorError::MultipleUpdateParents
+            | BlockComponentProcessorError::AlpenglowMigrationTransition
             | BlockComponentProcessorError::UpdateParentNotFirstInLeaderWindow(_) => false,
         }
     }
@@ -521,11 +524,11 @@ impl BlockComponentProcessor {
         }
 
         bank.set_alpenglow_genesis_certificate(&genesis_cert);
-        bank.set_hashes_per_tick(None);
         self.has_genesis_certificate_marker = true;
 
         if migration_status.is_alpenglow_enabled() {
             // We participated in the migration, nothing to do
+            bank.set_hashes_per_tick(None);
             return Ok(());
         }
 
@@ -544,7 +547,9 @@ impl BlockComponentProcessor {
         migration_status.set_genesis_certificate(Arc::new(genesis_cert));
         assert!(migration_status.is_ready_to_enable());
 
-        Ok(())
+        // This bank was created with TowerBFT tick configuration. Stop processing it immediately;
+        // replay will discard it, enable Alpenglow, and rebuild it with Alpenglow tick rules.
+        Err(BlockComponentProcessorError::AlpenglowMigrationTransition)
     }
 
     fn verify_genesis_certificate(
@@ -1048,12 +1053,49 @@ mod tests {
             bitmap: vec![],
         };
         let mut processor = processor_after_header();
+        bank.set_hashes_per_tick(Some(42));
+        assert!(bank.hashes_per_tick().is_some());
 
         processor
-            .on_genesis_cert_block_marker_leader(bank, genesis_marker, &migration_status)
+            .on_genesis_cert_block_marker_leader(bank.clone(), genesis_marker, &migration_status)
             .unwrap();
+        assert!(bank.hashes_per_tick().is_none());
         processor.stage = BlockComponentStage::Done;
         assert!(processor.on_final(&migration_status, 2, 1).is_ok());
+    }
+
+    #[test]
+    fn test_genesis_certificate_marker_aborts_tower_bank_during_migration() {
+        let migration_status = MigrationStatus::default();
+        migration_status.record_feature_activation(0);
+        let (genesis_bank, bank_forks) = create_test_bank();
+        let parent = create_child_bank(&bank_forks, &genesis_bank, 1);
+        let parent_block_id = Hash::new_unique();
+        parent.set_block_id(Some(parent_block_id));
+        let bank = create_child_bank(&bank_forks, &parent, 2);
+        let genesis_marker = GenesisCertBlockMarker {
+            slot: parent.slot(),
+            block_id: parent_block_id,
+            bls_signature: BLSSignature([0; BLS_SIGNATURE_AFFINE_SIZE]),
+            bitmap: vec![],
+        };
+        let mut processor = processor_after_header();
+        bank.set_hashes_per_tick(Some(42));
+        let tower_hashes_per_tick = bank.hashes_per_tick();
+        assert!(tower_hashes_per_tick.is_some());
+
+        assert_matches!(
+            processor.on_genesis_cert_block_marker_leader(
+                bank.clone(),
+                genesis_marker,
+                &migration_status,
+            ),
+            Err(BlockComponentProcessorError::AlpenglowMigrationTransition)
+        );
+
+        assert!(migration_status.is_ready_to_enable());
+        assert_eq!(bank.hashes_per_tick(), tower_hashes_per_tick);
+        assert!(bank.get_alpenglow_genesis_certificate().is_some());
     }
 
     #[test]

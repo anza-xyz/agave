@@ -1368,6 +1368,83 @@ fn test_cmr_mismatch_hard_dead() {
 }
 
 #[test]
+fn test_alpenglow_migration_transition_does_not_mark_bank_dead() {
+    let ReplayBlockstoreComponents {
+        blockstore,
+        vote_simulator,
+        ..
+    } = replay_blockstore_components(Some(tr(0) / tr(1)), 1, None::<GenerateVotes>);
+    let VoteSimulator {
+        bank_forks,
+        mut progress,
+        ..
+    } = vote_simulator;
+
+    let slot = 1;
+    let bank = bank_forks.read().unwrap().get(slot).unwrap();
+    progress.insert(
+        slot,
+        ForkProgress::new(bank.last_blockhash(), Some(0), None, 0, 0, None),
+    );
+
+    let (replay_vote_sender, replay_vote_receiver) = bounded(1024);
+    let process_active_banks_context = ProcessActiveBanksContext::new_for_tests(
+        bank_forks.clone(),
+        blockstore.clone(),
+        replay_vote_sender,
+    );
+    let genesis_block = Block {
+        slot: 0,
+        block_id: Hash::default(),
+    };
+    process_active_banks_context
+        .migration_status
+        .record_feature_activation(0);
+    process_active_banks_context
+        .migration_status
+        .set_genesis_block(genesis_block);
+    process_active_banks_context
+        .migration_status
+        .set_genesis_certificate(Arc::new(GenesisCert {
+            block: genesis_block,
+            signature: CertSignature {
+                signature: BLSSignature([0; BLS_SIGNATURE_AFFINE_SIZE]),
+                bitmap: vec![],
+            },
+        }));
+    assert!(
+        process_active_banks_context
+            .migration_status
+            .is_ready_to_enable()
+    );
+
+    let replay_result = ReplaySlotFromBlockstore {
+        is_slot_dead: false,
+        bank_slot: slot,
+        replay_result: Some(Err(BlockstoreProcessorError::BlockComponentProcessor(
+            BlockComponentProcessorError::AlpenglowMigrationTransition,
+        ))),
+    };
+
+    ReplayStage::process_replay_results(
+        &process_active_banks_context,
+        &mut progress,
+        &mut Vec::new(),
+        &mut LatestValidatorVotesForFrozenBanks::default(),
+        &mut DuplicateSlotsToRepair::default(),
+        &mut PurgeRepairSlotCounter::default(),
+        None,
+        &[replay_result],
+        &Pubkey::new_unique(),
+    );
+
+    assert!(!blockstore.is_dead(slot));
+    assert!(progress.get(&slot).unwrap().dead_reason.is_none());
+    assert!(bank_forks.read().unwrap().get(slot).is_some());
+    assert!(replay_vote_receiver.try_recv().is_err());
+}
+
+#[test]
 fn test_abandon_invalidates() {
     let ReplayBlockstoreComponents {
         blockstore,
