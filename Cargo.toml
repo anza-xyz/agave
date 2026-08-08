@@ -623,3 +623,33 @@ codegen-units = 1
 crossbeam-epoch = { git = "https://github.com/anza-xyz/crossbeam", rev = "5ee1c6ec671d94db14ed9238eb99e59a84555aad" }
 librocksdb-sys = { git = "https://github.com/anza-xyz/rust-rocksdb", rev = "5052db128eafdc8b2c6e96a2e8c9d45e485679d4" }
 rocksdb = { git = "https://github.com/anza-xyz/rust-rocksdb", rev = "5052db128eafdc8b2c6e96a2e8c9d45e485679d4" }
+
+# BEGIN sdk override: transitive path-dep closure of
+# solana-svm-transaction, plus agave-transaction-view from anza-xyz/agave-sdk,
+# which is the only SVMMessage/SVMTransaction impl living outside this repo and
+# solana-sdk. All entries must point at the same two checkouts or cargo will
+# resolve some of these from the registry and the duplicate copies will make the
+# impls fail to unify.
+agave-transaction-view = { git = "https://github.com/2501babe/agave-sdk", branch = "hana-alt-dep" }
+solana-address = { git = "https://github.com/2501babe/solana-sdk", branch = "hana-alt-dep" }
+solana-atomic-u64 = { git = "https://github.com/2501babe/solana-sdk", branch = "hana-alt-dep" }
+solana-define-syscall = { git = "https://github.com/2501babe/solana-sdk", branch = "hana-alt-dep" }
+solana-frozen-abi = { git = "https://github.com/2501babe/solana-sdk", branch = "hana-alt-dep" }
+solana-frozen-abi-macro = { git = "https://github.com/2501babe/solana-sdk", branch = "hana-alt-dep" }
+solana-hash = { git = "https://github.com/2501babe/solana-sdk", branch = "hana-alt-dep" }
+solana-instruction = { git = "https://github.com/2501babe/solana-sdk", branch = "hana-alt-dep" }
+solana-instruction-error = { git = "https://github.com/2501babe/solana-sdk", branch = "hana-alt-dep" }
+solana-message = { git = "https://github.com/2501babe/solana-sdk", branch = "hana-alt-dep" }
+solana-nullable = { git = "https://github.com/2501babe/solana-sdk", branch = "hana-alt-dep" }
+solana-program-error = { git = "https://github.com/2501babe/solana-sdk", branch = "hana-alt-dep" }
+solana-pubkey = { git = "https://github.com/2501babe/solana-sdk", branch = "hana-alt-dep" }
+solana-sanitize = { git = "https://github.com/2501babe/solana-sdk", branch = "hana-alt-dep" }
+solana-sdk-ids = { git = "https://github.com/2501babe/solana-sdk", branch = "hana-alt-dep" }
+solana-sha256-hasher = { git = "https://github.com/2501babe/solana-sdk", branch = "hana-alt-dep" }
+solana-short-vec = { git = "https://github.com/2501babe/solana-sdk", branch = "hana-alt-dep" }
+solana-signature = { git = "https://github.com/2501babe/solana-sdk", branch = "hana-alt-dep" }
+solana-signer = { git = "https://github.com/2501babe/solana-sdk", branch = "hana-alt-dep" }
+solana-svm-transaction = { git = "https://github.com/2501babe/solana-sdk", branch = "hana-alt-dep" }
+solana-transaction = { git = "https://github.com/2501babe/solana-sdk", branch = "hana-alt-dep" }
+solana-transaction-error = { git = "https://github.com/2501babe/solana-sdk", branch = "hana-alt-dep" }
+# END sdk override

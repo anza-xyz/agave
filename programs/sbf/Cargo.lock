@@ -278,8 +278,7 @@ dependencies = [
 [[package]]
 name = "agave-transaction-view"
 version = "5.1.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "025bb5f7b6dd4a5545a9edd6ce42b896836b8dbc8600ad9f99de041bd65601ef"
+source = "git+https://github.com/2501babe/agave-sdk?branch=hana-alt-dep#07514f3a1343573e885c173e22bc1b56884006f3"
 dependencies = [
  "bytes",
  "solana-hash 4.6.0",
@@ -5966,8 +5965,7 @@ dependencies = [
 [[package]]
 name = "solana-address"
 version = "2.7.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "01332a01c0a3098404d55a724c8d9a92aed4a50fe40a7dd0c7a51e29274c14de"
+source = "git+https://github.com/2501babe/solana-sdk?branch=hana-alt-dep#10592ba6f81394a27bd39278feecb008b554a461"
 dependencies = [
  "borsh",
  "bytemuck",
@@ -6010,8 +6008,7 @@ dependencies = [
 [[package]]
 name = "solana-atomic-u64"
 version = "3.0.1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "085db4906d89324cef2a30840d59eaecf3d4231c560ec7c9f6614a93c652f501"
+source = "git+https://github.com/2501babe/solana-sdk?branch=hana-alt-dep#10592ba6f81394a27bd39278feecb008b554a461"
 dependencies = [
  "parking_lot 0.12.2",
 ]
@@ -6739,8 +6736,7 @@ checksum = "57e5b1c0bc1d4a4d10c88a4100499d954c09d3fecfae4912c1a074dff68b1738"
 [[package]]
 name = "solana-define-syscall"
 version = "5.2.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "bf8209ece2bd9f1450e672858ffc0e5c8c786ff6916d2a862b126dd0128f380f"
+source = "git+https://github.com/2501babe/solana-sdk?branch=hana-alt-dep#10592ba6f81394a27bd39278feecb008b554a461"
 
 [[package]]
 name = "solana-derivation-path"
@@ -7159,8 +7155,7 @@ dependencies = [
 [[package]]
 name = "solana-hash"
 version = "4.6.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "0df9b01495ed31100aca97a7f5862d5e19ab1636d60d1a9f02391408dd9dec84"
+source = "git+https://github.com/2501babe/solana-sdk?branch=hana-alt-dep#10592ba6f81394a27bd39278feecb008b554a461"
 dependencies = [
  "borsh",
  "bytemuck",
@@ -7194,8 +7189,7 @@ dependencies = [
 [[package]]
 name = "solana-instruction"
 version = "3.5.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "d70cf6ece1070a66d25e68274f338f29664794669c175223940a298645ef3495"
+source = "git+https://github.com/2501babe/solana-sdk?branch=hana-alt-dep#10592ba6f81394a27bd39278feecb008b554a461"
 dependencies = [
  "bincode",
  "borsh",
@@ -7210,8 +7204,7 @@ dependencies = [
 [[package]]
 name = "solana-instruction-error"
 version = "2.5.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "e8e7db78c122d02189619490b1fef04a2a042c389662920617c0e6381fdf8fdd"
+source = "git+https://github.com/2501babe/solana-sdk?branch=hana-alt-dep#10592ba6f81394a27bd39278feecb008b554a461"
 dependencies = [
  "num-traits",
  "serde",
@@ -7470,8 +7463,7 @@ dependencies = [
 [[package]]
 name = "solana-message"
 version = "4.5.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "188f4df6f4f4d5bd8b9d82aee0f053b6c37826dcd96933f7b59f684b406a7b3c"
+source = "git+https://github.com/2501babe/solana-sdk?branch=hana-alt-dep#10592ba6f81394a27bd39278feecb008b554a461"
 dependencies = [
  "blake3",
  "serde",
@@ -7574,8 +7566,7 @@ dependencies = [
 [[package]]
 name = "solana-nullable"
 version = "1.3.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "889194d8c5faec648f2f6fadddb60566249921ebb074e2707e7095458d5864e2"
+source = "git+https://github.com/2501babe/solana-sdk?branch=hana-alt-dep#10592ba6f81394a27bd39278feecb008b554a461"
 dependencies = [
  "borsh",
  "bytemuck",
@@ -7802,8 +7793,7 @@ dependencies = [
 [[package]]
 name = "solana-program-error"
 version = "3.0.1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "4f04fa578707b3612b095f0c8e19b66a1233f7c42ca8082fcb3b745afcc0add6"
+source = "git+https://github.com/2501babe/solana-sdk?branch=hana-alt-dep#10592ba6f81394a27bd39278feecb008b554a461"
 dependencies = [
  "borsh",
  "serde",
@@ -7954,8 +7944,7 @@ dependencies = [
 [[package]]
 name = "solana-pubkey"
 version = "4.3.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "10f71b7a414de2ced1071f015834e9be581592d013432adbd06d02e4af11eba9"
+source = "git+https://github.com/2501babe/solana-sdk?branch=hana-alt-dep#10592ba6f81394a27bd39278feecb008b554a461"
 dependencies = [
  "rand 0.9.4",
  "solana-address 2.7.0",
@@ -8396,8 +8385,7 @@ dependencies = [
 [[package]]
 name = "solana-sanitize"
 version = "3.0.1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "dcf09694a0fc14e5ffb18f9b7b7c0f15ecb6eac5b5610bf76a1853459d19daf9"
+source = "git+https://github.com/2501babe/solana-sdk?branch=hana-alt-dep#10592ba6f81394a27bd39278feecb008b554a461"
 
 [[package]]
 name = "solana-sbf-programs"
@@ -9148,8 +9136,7 @@ dependencies = [
 [[package]]
 name = "solana-sdk-ids"
 version = "3.1.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "def234c1956ff616d46c9dd953f251fa7096ddbaa6d52b165218de97882b7280"
+source = "git+https://github.com/2501babe/solana-sdk?branch=hana-alt-dep#10592ba6f81394a27bd39278feecb008b554a461"
 dependencies = [
  "solana-address 2.7.0",
 ]
@@ -9278,11 +9265,10 @@ dependencies = [
 [[package]]
 name = "solana-sha256-hasher"
 version = "3.1.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "db7dc3011ea4c0334aaaa7e7128cb390ecf546b28d412e9bf2064680f57f588f"
+source = "git+https://github.com/2501babe/solana-sdk?branch=hana-alt-dep#10592ba6f81394a27bd39278feecb008b554a461"
 dependencies = [
  "sha2 0.10.9",
- "solana-define-syscall 4.0.1",
+ "solana-define-syscall 5.2.0",
  "solana-hash 4.6.0",
 ]
 
@@ -9300,8 +9286,7 @@ dependencies = [
 [[package]]
 name = "solana-short-vec"
 version = "3.3.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "c75782529cc4521114c1ecd71c7e2cdebd41a6fe9844b5d088fd36ef08c57c36"
+source = "git+https://github.com/2501babe/solana-sdk?branch=hana-alt-dep#10592ba6f81394a27bd39278feecb008b554a461"
 dependencies = [
  "serde_core",
  "wincode",
@@ -9321,8 +9306,7 @@ dependencies = [
 [[package]]
 name = "solana-signature"
 version = "3.5.1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "6843d39c97ac1e6ef7ae06c676183e1c2d427aaa7cfdec8a61982342eb86fc2d"
+source = "git+https://github.com/2501babe/solana-sdk?branch=hana-alt-dep#10592ba6f81394a27bd39278feecb008b554a461"
 dependencies = [
  "five8",
  "serde",
@@ -9336,8 +9320,7 @@ dependencies = [
 [[package]]
 name = "solana-signer"
 version = "3.0.1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "520bd6021163ee517f4bdc7ae03ded904f97e11320001ba0b3355f45eb14f558"
+source = "git+https://github.com/2501babe/solana-sdk?branch=hana-alt-dep#10592ba6f81394a27bd39278feecb008b554a461"
 dependencies = [
  "solana-pubkey 4.3.0",
  "solana-signature",
@@ -9615,8 +9598,7 @@ dependencies = [
 [[package]]
 name = "solana-svm-transaction"
 version = "4.3.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "260eeb3e9542372a1b52710cd48e3b45802a2c4533205eaa286029e52f3785c3"
+source = "git+https://github.com/2501babe/solana-sdk?branch=hana-alt-dep#10592ba6f81394a27bd39278feecb008b554a461"
 dependencies = [
  "solana-hash 4.6.0",
  "solana-message",
@@ -9924,8 +9906,7 @@ dependencies = [
 [[package]]
 name = "solana-transaction"
 version = "4.2.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "1e8eb7c4143b2e453af994fafd68ece93bccedab8975d42e6a0b081fb727d784"
+source = "git+https://github.com/2501babe/solana-sdk?branch=hana-alt-dep#10592ba6f81394a27bd39278feecb008b554a461"
 dependencies = [
  "serde",
  "serde_derive",
@@ -9962,8 +9943,7 @@ dependencies = [
 [[package]]
 name = "solana-transaction-error"
 version = "3.4.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "8a37cf28c58b03878d38c38411f0414d3a99a9e3b7e5ebb0f83f3317b2796d18"
+source = "git+https://github.com/2501babe/solana-sdk?branch=hana-alt-dep#10592ba6f81394a27bd39278feecb008b554a461"
 dependencies = [
  "serde",
  "serde_derive",
@@ -12247,3 +12227,13 @@ dependencies = [
  "cc",
  "pkg-config",
 ]
+
+[[patch.unused]]
+name = "solana-frozen-abi"
+version = "3.8.0"
+source = "git+https://github.com/2501babe/solana-sdk?branch=hana-alt-dep#10592ba6f81394a27bd39278feecb008b554a461"
+
+[[patch.unused]]
+name = "solana-frozen-abi-macro"
+version = "3.6.0"
+source = "git+https://github.com/2501babe/solana-sdk?branch=hana-alt-dep#10592ba6f81394a27bd39278feecb008b554a461"

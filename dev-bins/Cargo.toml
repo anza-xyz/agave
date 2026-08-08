@@ -194,3 +194,31 @@ lto = "thin"
 inherits = "release"
 lto = "fat"
 codegen-units = 1
+
+# BEGIN sdk override: must stay identical to the block in the root
+# Cargo.toml. Separate workspace, separate lockfile, built by
+# ci/feature-check/test-feature-dev-bins.sh and ci/coverage/part-3.sh.
+[patch.crates-io]
+agave-transaction-view = { git = "https://github.com/2501babe/agave-sdk", branch = "hana-alt-dep" }
+solana-address = { git = "https://github.com/2501babe/solana-sdk", branch = "hana-alt-dep" }
+solana-atomic-u64 = { git = "https://github.com/2501babe/solana-sdk", branch = "hana-alt-dep" }
+solana-define-syscall = { git = "https://github.com/2501babe/solana-sdk", branch = "hana-alt-dep" }
+solana-frozen-abi = { git = "https://github.com/2501babe/solana-sdk", branch = "hana-alt-dep" }
+solana-frozen-abi-macro = { git = "https://github.com/2501babe/solana-sdk", branch = "hana-alt-dep" }
+solana-hash = { git = "https://github.com/2501babe/solana-sdk", branch = "hana-alt-dep" }
+solana-instruction = { git = "https://github.com/2501babe/solana-sdk", branch = "hana-alt-dep" }
+solana-instruction-error = { git = "https://github.com/2501babe/solana-sdk", branch = "hana-alt-dep" }
+solana-message = { git = "https://github.com/2501babe/solana-sdk", branch = "hana-alt-dep" }
+solana-nullable = { git = "https://github.com/2501babe/solana-sdk", branch = "hana-alt-dep" }
+solana-program-error = { git = "https://github.com/2501babe/solana-sdk", branch = "hana-alt-dep" }
+solana-pubkey = { git = "https://github.com/2501babe/solana-sdk", branch = "hana-alt-dep" }
+solana-sanitize = { git = "https://github.com/2501babe/solana-sdk", branch = "hana-alt-dep" }
+solana-sdk-ids = { git = "https://github.com/2501babe/solana-sdk", branch = "hana-alt-dep" }
+solana-sha256-hasher = { git = "https://github.com/2501babe/solana-sdk", branch = "hana-alt-dep" }
+solana-short-vec = { git = "https://github.com/2501babe/solana-sdk", branch = "hana-alt-dep" }
+solana-signature = { git = "https://github.com/2501babe/solana-sdk", branch = "hana-alt-dep" }
+solana-signer = { git = "https://github.com/2501babe/solana-sdk", branch = "hana-alt-dep" }
+solana-svm-transaction = { git = "https://github.com/2501babe/solana-sdk", branch = "hana-alt-dep" }
+solana-transaction = { git = "https://github.com/2501babe/solana-sdk", branch = "hana-alt-dep" }
+solana-transaction-error = { git = "https://github.com/2501babe/solana-sdk", branch = "hana-alt-dep" }
+# END sdk override
