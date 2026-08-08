@@ -106,12 +106,12 @@ impl<T: SVMStaticMessage> SVMStaticMessage for RuntimeTransaction<T> {
         self.transaction.num_write_locks()
     }
 
-    fn num_readonly_signed_accounts(&self) -> u8 {
-        self.transaction.num_readonly_signed_accounts()
+    fn num_readonly_signed_static_accounts(&self) -> u8 {
+        self.transaction.num_readonly_signed_static_accounts()
     }
 
-    fn num_readonly_unsigned_accounts(&self) -> u8 {
-        self.transaction.num_readonly_unsigned_accounts()
+    fn num_readonly_unsigned_static_accounts(&self) -> u8 {
+        self.transaction.num_readonly_unsigned_static_accounts()
     }
 
     fn recent_blockhash(&self) -> &Hash {

@@ -117,12 +117,12 @@ impl solana_svm_transaction::svm_message::SVMStaticMessage for WritableKeysTrans
         unimplemented!("WritableKeysTransaction::num_write_locks")
     }
 
-    fn num_readonly_signed_accounts(&self) -> u8 {
-        unimplemented!("WritableKeysTransaction::num_readonly_signed_accounts")
+    fn num_readonly_signed_static_accounts(&self) -> u8 {
+        unimplemented!("WritableKeysTransaction::num_readonly_signed_static_accounts")
     }
 
-    fn num_readonly_unsigned_accounts(&self) -> u8 {
-        unimplemented!("WritableKeysTransaction::num_readonly_unsigned_accounts")
+    fn num_readonly_unsigned_static_accounts(&self) -> u8 {
+        unimplemented!("WritableKeysTransaction::num_readonly_unsigned_static_accounts")
     }
 
     fn recent_blockhash(&self) -> &solana_hash::Hash {
@@ -170,6 +170,10 @@ impl solana_svm_transaction::svm_message::SVMStaticMessage for WritableKeysTrans
         >,
     > {
         core::iter::empty()
+    }
+
+    fn is_requested_writable(&self, _index: usize) -> bool {
+        unimplemented!("WritableKeysTransaction::is_requested_writable")
     }
 
     fn is_signer(&self, _index: usize) -> bool {
