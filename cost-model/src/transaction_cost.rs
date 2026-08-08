@@ -117,6 +117,14 @@ impl solana_svm_transaction::svm_message::SVMStaticMessage for WritableKeysTrans
         unimplemented!("WritableKeysTransaction::num_write_locks")
     }
 
+    fn num_readonly_signed_accounts(&self) -> u8 {
+        unimplemented!("WritableKeysTransaction::num_readonly_signed_accounts")
+    }
+
+    fn num_readonly_unsigned_accounts(&self) -> u8 {
+        unimplemented!("WritableKeysTransaction::num_readonly_unsigned_accounts")
+    }
+
     fn recent_blockhash(&self) -> &solana_hash::Hash {
         unimplemented!("WritableKeysTransaction::recent_blockhash")
     }
@@ -163,17 +171,6 @@ impl solana_svm_transaction::svm_message::SVMStaticMessage for WritableKeysTrans
     > {
         core::iter::empty()
     }
-}
-
-#[cfg(feature = "dev-context-only-utils")]
-impl solana_svm_transaction::svm_message::SVMMessage for WritableKeysTransaction {
-    fn account_keys(&self) -> solana_message::AccountKeys<'_> {
-        solana_message::AccountKeys::new(&self.writable_keys, None)
-    }
-
-    fn is_writable(&self, _index: usize) -> bool {
-        true
-    }
 
     fn is_signer(&self, _index: usize) -> bool {
         unimplemented!("WritableKeysTransaction::is_signer")
@@ -185,7 +182,18 @@ impl solana_svm_transaction::svm_message::SVMMessage for WritableKeysTransaction
 }
 
 #[cfg(feature = "dev-context-only-utils")]
-impl solana_svm_transaction::svm_transaction::SVMTransaction for WritableKeysTransaction {
+impl solana_svm_transaction::svm_message::SVMMessage for WritableKeysTransaction {
+    fn account_keys(&self) -> solana_message::AccountKeys<'_> {
+        solana_message::AccountKeys::new(&self.writable_keys, None)
+    }
+
+    fn is_writable(&self, _index: usize) -> bool {
+        true
+    }
+}
+
+#[cfg(feature = "dev-context-only-utils")]
+impl solana_svm_transaction::svm_transaction::SVMStaticTransaction for WritableKeysTransaction {
     fn signature(&self) -> &solana_signature::Signature {
         unimplemented!("WritableKeysTransaction::signature")
     }
@@ -227,6 +235,19 @@ impl solana_runtime_transaction::transaction_meta::TransactionMeta for WritableK
 }
 
 #[cfg(feature = "dev-context-only-utils")]
+impl solana_runtime_transaction::transaction_with_meta::StaticTransactionWithMeta
+    for WritableKeysTransaction
+{
+    fn to_versioned_transaction(&self) -> solana_transaction::versioned::VersionedTransaction {
+        unimplemented!("WritableKeysTransaction::to_versioned_transaction")
+    }
+
+    fn serialized_size(&self) -> usize {
+        unimplemented!("WritableKeysTransaction::serialized_size")
+    }
+}
+
+#[cfg(feature = "dev-context-only-utils")]
 impl solana_runtime_transaction::transaction_with_meta::TransactionWithMeta
     for WritableKeysTransaction
 {
@@ -235,14 +256,6 @@ impl solana_runtime_transaction::transaction_with_meta::TransactionWithMeta
         &self,
     ) -> std::borrow::Cow<'_, solana_transaction::sanitized::SanitizedTransaction> {
         unimplemented!("WritableKeysTransaction::as_sanitized_transaction");
-    }
-
-    fn to_versioned_transaction(&self) -> solana_transaction::versioned::VersionedTransaction {
-        unimplemented!("WritableKeysTransaction::to_versioned_transaction")
-    }
-
-    fn serialized_size(&self) -> usize {
-        unimplemented!("WritableKeysTransaction::serialized_size")
     }
 }
 
