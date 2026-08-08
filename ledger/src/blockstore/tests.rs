@@ -4676,6 +4676,72 @@ fn test_recovery() {
 }
 
 #[test]
+fn test_data_shred_recovery_after_absent_erasure_meta() {
+    let ledger_path = get_tmp_ledger_path_auto_delete!();
+    let blockstore = Blockstore::open(ledger_path.path()).unwrap();
+
+    let slot = 1;
+    let (data_shreds, coding_shreds) = setup_erasure_shreds(slot, 0, 100);
+    let fec_set_index = data_shreds[0].fec_set_index();
+    let data_shreds: Vec<_> = data_shreds
+        .into_iter()
+        .filter(|shred| shred.fec_set_index() == fec_set_index)
+        .collect();
+    let coding_shred = coding_shreds
+        .into_iter()
+        .find(|shred| shred.fec_set_index() == fec_set_index)
+        .unwrap();
+    let num_data = data_shreds.len();
+
+    // All data shreds of the set but the last two. No erasure meta exists in
+    // the database for this set, so every insertion probes and misses.
+    blockstore
+        .insert_shreds(data_shreds[..num_data - 2].to_vec(), false)
+        .unwrap();
+
+    // One coding shred creates the erasure meta and commits it to the
+    // database. Not enough shreds are present yet for recovery.
+    blockstore.insert_shreds(vec![coding_shred], false).unwrap();
+
+    // One more data shred completes the set minus one. Recovery of the final
+    // missing data shred is only possible if this insertion loads the erasure
+    // meta the coding shred created after the first batch found it absent.
+    let genesis_config = create_genesis_config(2).genesis_config;
+    let root_bank = Arc::new(Bank::new_for_tests(&genesis_config));
+    let (dummy_retransmit_sender, _) = EvictingSender::new_bounded(0);
+    let mut metrics = BlockstoreInsertionMetrics::default();
+    blockstore
+        .do_insert_shreds(
+            std::iter::once((
+                Cow::Owned(data_shreds[num_data - 2].clone()),
+                false, // is_repaired
+                BlockLocation::Original,
+            )),
+            false, // is_trusted
+            Some(&mut ShredRecoveryContext::new(
+                ReedSolomonCache::default(),
+                dummy_retransmit_sender,
+                root_bank,
+                0, // shred_version
+            )),
+            &mut metrics,
+        )
+        .unwrap();
+
+    assert_eq!(metrics.num_recovered, 1);
+    let recovered = data_shreds.last().unwrap();
+    assert_eq!(
+        blockstore
+            .get_data_shred(slot, u64::from(recovered.index()))
+            .unwrap()
+            .unwrap(),
+        recovered.payload().as_ref(),
+    );
+
+    verify_index_integrity(&blockstore, slot);
+}
+
+#[test]
 fn test_skip_alt_recovery() {
     let ledger_path = get_tmp_ledger_path_auto_delete!();
     let blockstore = Blockstore::open(ledger_path.path()).unwrap();
