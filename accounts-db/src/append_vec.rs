@@ -267,12 +267,43 @@ impl AppendVec {
         Self::calculate_stored_size(0) * count
     }
 
+    /// Returns `true` if this AppendVec is opened in read-only mode.
+    pub(crate) fn is_readonly(&self) -> bool {
+        matches!(self.read_write_state, ReadWriteState::ReadOnly)
+    }
+
     /// Flushes contents to disk
     pub fn flush(&self) -> Result<()> {
         // Check to see if we're actually dirty before flushing.
         let should_flush = self.is_dirty.swap(false, Ordering::AcqRel);
         if should_flush {
-            self.file.sync_all()?;
+            #[cfg(not(windows))]
+            {
+                self.file.sync_all()?;
+            }
+            #[cfg(windows)]
+            {
+                // On Windows, `std::fs::File::sync_all()` calls `FlushFileBuffers`,
+                // which requires a handle opened with `GENERIC_WRITE`. Read-only
+                // AppendVecs (e.g. those created by `reopen_as_readonly_file_io()`
+                // or reconstructed from a snapshot) lack write access, so
+                // `sync_all()` fails with `ERROR_ACCESS_DENIED` (os error 5). This
+                // is not a data-loss condition: any dirty data was already flushed
+                // through the original writable AppendVec before it was re-opened
+                // read-only. POSIX `fsync()` permits read-only file descriptors,
+                // so this only affects Windows. Degrade gracefully instead of
+                // failing the whole snapshot.
+                if let Err(err) = self.file.sync_all() {
+                    if !(self.is_readonly() && err.raw_os_error() == Some(5)) {
+                        return Err(err.into());
+                    }
+                    warn!(
+                        "ignoring ERROR_ACCESS_DENIED while flushing read-only AppendVec '{}': {}",
+                        self.path.display(),
+                        err
+                    );
+                }
+            }
             APPEND_VEC_STATS.files_dirty.fetch_sub(1, Ordering::Relaxed);
         }
         Ok(())
@@ -287,7 +318,7 @@ impl AppendVec {
 
     /// Return AppendVec opened in read-only file-io mode or `None` if it already is such
     pub(crate) fn reopen_as_readonly_file_io(&self) -> Option<Self> {
-        if matches!(self.read_write_state, ReadWriteState::ReadOnly) {
+        if self.is_readonly() {
             // Already in read-only mode; nothing to do.
             return None;
         }
@@ -2133,5 +2164,35 @@ mod tests {
         assert!(av1.flush().is_ok());
         // and now should not be dirty
         assert!(!*av1.is_dirty.get_mut());
+    }
+
+    // On Windows, `std::fs::File::sync_all()` calls `FlushFileBuffers`, which
+    // requires `GENERIC_WRITE`. Flushing a read-only AppendVec (as created by
+    // `reopen_as_readonly_file_io()`) therefore fails with `ERROR_ACCESS_DENIED`
+    // (os error 5). `flush()` must tolerate this and return `Ok` rather than
+    // fail the whole snapshot. On other platforms `fsync()` is legal on
+    // read-only descriptors, so this test is Windows-only.
+    #[cfg(windows)]
+    #[test]
+    fn test_flush_readonly_file_io() {
+        let file = get_append_vec_path("test_flush_readonly_file_io");
+
+        let mut av1 = AppendVec::new(&file.path, 1024 * 1024);
+        // don't delete the file when the AppendVec is dropped (let TempFile do it)
+        *av1.remove_file_on_drop.get_mut() = false;
+
+        // make the AppendVec dirty, then re-open it read-only (moves `is_dirty`)
+        av1.append_account_test(&create_test_account(10)).unwrap();
+        let mut av2 = av1.reopen_as_readonly_file_io().unwrap();
+        // don't delete the file when the AppendVec is dropped (let TempFile do it)
+        *av2.remove_file_on_drop.get_mut() = false;
+        assert!(*av2.is_dirty.get_mut());
+
+        // flushing the read-only AppendVec must not fail on Windows
+        assert!(av2.flush().is_ok());
+        assert!(!*av2.is_dirty.get_mut());
+
+        // the original AppendVec must still flush fine too
+        assert!(av1.flush().is_ok());
     }
 }
