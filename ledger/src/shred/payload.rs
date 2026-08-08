@@ -23,13 +23,6 @@ impl Payload {
     pub fn truncate(&mut self, len: usize) {
         self.bytes.truncate(len);
     }
-
-    /// Returns true if this is the only handle to the payload's buffer, i.e. if reopening it for
-    /// mutation via [`PayloadBuilder::from`] would not have to copy.
-    #[inline]
-    pub fn is_unique(&self) -> bool {
-        self.bytes.is_unique()
-    }
 }
 
 impl PartialEq for Payload {
@@ -109,13 +102,13 @@ impl PayloadBuilder {
     }
 }
 
+#[cfg(any(test, feature = "dev-context-only-utils"))]
 impl From<Payload> for PayloadBuilder {
     /// Reopens a frozen payload for mutation.
     ///
     /// This does not copy if `payload` is the only handle to the *entire* underlying buffer, which
     /// is the case for a payload that was just frozen and never cloned. Otherwise the payload is
-    /// copied, so that the mutation stays invisible to the other holders — see [`Payload::is_unique`]
-    /// if you need to know which of the two happened.
+    /// copied, so that the mutation stays invisible to the other holders.
     #[inline]
     fn from(payload: Payload) -> Self {
         Self {
@@ -124,6 +117,7 @@ impl From<Payload> for PayloadBuilder {
     }
 }
 
+#[cfg(any(test, feature = "dev-context-only-utils"))]
 impl From<&Payload> for PayloadBuilder {
     /// Copies `payload` into a new buffer for mutation, leaving the original untouched.
     #[inline]
@@ -200,49 +194,7 @@ impl Payload {
 
 #[cfg(test)]
 mod test {
-    use {
-        super::{Payload, PayloadBuilder},
-        crate::shred::wire,
-    };
-
-    #[test]
-    fn test_builder_freeze_round_trip() {
-        let mut builder = PayloadBuilder::zeroed(5);
-        builder.copy_from_slice(&[1, 2, 3, 4, 5]);
-        let payload = builder.build();
-        assert_eq!(payload.bytes[..], [1, 2, 3, 4, 5]);
-        // A payload which was just frozen is the only handle on its buffer, so reopening it for
-        // mutation hands back the very same allocation.
-        assert!(payload.is_unique());
-        let ptr = payload.as_ref().as_ptr();
-        let mut builder = PayloadBuilder::from(payload);
-        assert_eq!(builder.as_ref().as_ptr(), ptr);
-        builder[0] = 10;
-        assert_eq!(builder.build().bytes[..], [10, 2, 3, 4, 5]);
-    }
-
-    #[test]
-    fn test_builder_from_shared_payload_copies() {
-        let payload = Payload::from(vec![1, 2, 3, 4, 5]);
-        let clone = payload.clone();
-        assert!(!payload.is_unique());
-        // Reopening a payload which is still referenced elsewhere copies it, so that the mutation
-        // stays invisible to the other holder.
-        let mut builder = PayloadBuilder::from(payload);
-        builder[0] = 10;
-        assert_eq!(builder.build().bytes[..], [10, 2, 3, 4, 5]);
-        assert_eq!(clone.bytes[..], [1, 2, 3, 4, 5]);
-    }
-
-    #[test]
-    fn test_builder_from_payload_ref_always_copies() {
-        let payload = Payload::from(vec![1, 2, 3, 4, 5]);
-        assert!(payload.is_unique());
-        let mut builder = PayloadBuilder::from(&payload);
-        builder[0] = 10;
-        assert_eq!(builder.build().bytes[..], [10, 2, 3, 4, 5]);
-        assert_eq!(payload.bytes[..], [1, 2, 3, 4, 5]);
-    }
+    use crate::shred::wire;
 
     #[test]
     fn test_to_bytes_packet_nonce_endianness() {

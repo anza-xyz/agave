@@ -6,7 +6,7 @@ use {
             self, CODING_SHREDS_PER_FEC_BLOCK, CodingShredHeader, DATA_SHREDS_PER_FEC_BLOCK,
             DataShredHeader, Error, ProcessShredsStats, SHREDS_PER_FEC_BLOCK,
             SIZE_OF_CODING_SHRED_HEADERS, SIZE_OF_DATA_SHRED_HEADERS, SIZE_OF_NONCE,
-            SIZE_OF_SIGNATURE, ShredCommonHeader, ShredFetchStats, ShredFlags, ShredVariant,
+            SIZE_OF_SIGNATURE, ShredCommonHeader, ShredFlags, ShredVariant,
             common::{impl_shred_common_payload, impl_shred_common_read},
             dispatch,
             merkle_tree::*,
@@ -21,7 +21,10 @@ use {
     },
     assert_matches::debug_assert_matches,
     itertools::{Either, Itertools},
-    reed_solomon_erasure::Error::{InvalidIndex, TooFewParityShards},
+    reed_solomon_erasure::{
+        Error::{InvalidIndex, TooFewParityShards},
+        ReconstructShard, Shard as ReconstructedShard, galois_8,
+    },
     solana_clock::Slot,
     solana_hash::Hash,
     solana_keypair::Keypair,
@@ -105,9 +108,18 @@ pub(super) enum ShredBuilder {
 }
 
 impl Shred {
+    dispatch!(fn erasure_shard(&self) -> Result<&[u8], Error>);
     dispatch!(fn erasure_shard_index(&self) -> Result<usize, Error>);
+    dispatch!(fn merkle_node(&self) -> Result<Hash, Error>);
     dispatch!(pub(super) fn common_header(&self) -> &ShredCommonHeader);
-    dispatch!(pub(super) fn payload(&self) -> &Payload);
+
+    #[inline]
+    fn merkle_proof(&self) -> Result<impl Iterator<Item = &MerkleProofEntry>, Error> {
+        match self {
+            Self::ShredCode(shred) => shred.merkle_proof().map(Either::Left),
+            Self::ShredData(shred) => shred.merkle_proof().map(Either::Right),
+        }
+    }
 
     #[inline]
     fn signature(&self) -> &Signature {
@@ -131,14 +143,6 @@ impl ShredBuilder {
     #[inline]
     fn fec_set_index(&self) -> u32 {
         self.common_header().fec_set_index
-    }
-
-    #[inline]
-    fn merkle_proof(&self) -> Result<impl Iterator<Item = &MerkleProofEntry>, Error> {
-        match self {
-            Self::ShredCode(shred) => shred.merkle_proof().map(Either::Left),
-            Self::ShredData(shred) => shred.merkle_proof().map(Either::Right),
-        }
     }
 
     #[inline]
@@ -178,10 +182,8 @@ impl ShredBuilder {
     }
 }
 
-// Reopens a finished shred for mutation.
-//
-// This copies the payload unless the shred holds the only reference to it, so prefer to keep a shred
-// in builder form for as long as it still has to be mutated. See `PayloadBuilder::from`.
+// Reopens a finished shred for mutation. Test only.
+#[cfg(any(test, feature = "dev-context-only-utils"))]
 impl From<Shred> for ShredBuilder {
     fn from(shred: Shred) -> Self {
         match shred {
@@ -191,6 +193,8 @@ impl From<Shred> for ShredBuilder {
     }
 }
 
+// Reopens a finished shred data for mutation. Test only.
+#[cfg(any(test, feature = "dev-context-only-utils"))]
 impl From<ShredData> for ShredDataBuilder {
     fn from(shred: ShredData) -> Self {
         Self {
@@ -201,6 +205,8 @@ impl From<ShredData> for ShredDataBuilder {
     }
 }
 
+// Reopens a finished shred code for mutation. Test only.
+#[cfg(any(test, feature = "dev-context-only-utils"))]
 impl From<ShredCode> for ShredCodeBuilder {
     fn from(shred: ShredCode) -> Self {
         Self {
@@ -243,6 +249,8 @@ impl Shred {
 #[cfg(test)]
 impl Shred {
     dispatch!(fn proof_size(&self) -> Result<u8, Error>);
+    dispatch!(pub(super) fn payload(&self) -> &Payload);
+
     dispatch!(fn sanitize(&self) -> Result<(), Error>);
     dispatch!(fn signed_data(&self) -> Result<Hash, Error>);
     dispatch!(pub(super) fn chained_merkle_root(&self) -> Result<Hash, Error>);
@@ -503,6 +511,12 @@ macro_rules! impl_merkle_shred_layout {
             get_merkle_proof(&self.payload, proof_offset, proof_size)
         }
 
+        // The Merkle node this shred contributes to the erasure batch's tree.
+        fn merkle_node(&self) -> Result<Hash, Error> {
+            let proof_offset = self.proof_offset()?;
+            get_merkle_node(&self.payload, SIZE_OF_SIGNATURE..proof_offset)
+        }
+
         pub(super) fn retransmitter_signature_offset(&self) -> Result<usize, Error> {
             let ShredVariant::$variant {
                 proof_size,
@@ -616,12 +630,6 @@ macro_rules! impl_merkle_shred {
 macro_rules! impl_merkle_shred_builder {
     ($variant:ident, $shred:ident, $header:ident) => {
         impl_merkle_shred_layout!($variant, $shred);
-
-        // The Merkle node this shred contributes to the erasure batch's tree.
-        fn merkle_node(&self) -> Result<Hash, Error> {
-            let proof_offset = self.proof_offset()?;
-            get_merkle_node(&self.payload, SIZE_OF_SIGNATURE..proof_offset)
-        }
 
         fn set_chained_merkle_root(&mut self, chained_merkle_root: &Hash) -> Result<(), Error> {
             let offset = self.chained_merkle_root_offset()?;
@@ -909,35 +917,55 @@ fn get_merkle_node(shred: &[u8], offsets: Range<usize>) -> Result<Hash, Error> {
     Ok(hashv(&[MERKLE_HASH_PREFIX_LEAF, node]))
 }
 
+// A shred of the erasure batch, tracking whether it was received or has to be reconstructed.
+//
+// Reconstruction only ever reads the shards which are already present, so received shreds stay
+// immutable and are never reopened for mutation; only the missing ones are held as builders.
+// Received shreds are dropped once the Merkle tree has confirmed them, and only the
+// reconstructed ones are returned to the caller.
+enum ShredForRecovery {
+    Received(Shred),
+    Recovered(ShredBuilder),
+}
+
+impl ReconstructShard<galois_8::Field> for ShredForRecovery {
+    fn len(&self) -> Option<usize> {
+        match self {
+            Self::Received(shred) => shred.erasure_shard().ok().map(<[u8]>::len),
+            // A shard which has yet to be reconstructed holds no data.
+            Self::Recovered(_) => None,
+        }
+    }
+
+    fn get_or_initialize(
+        &mut self,
+        len: usize,
+    ) -> Result<ReconstructedShard<'_, galois_8::Field>, reed_solomon_erasure::Error> {
+        use reed_solomon_erasure::Error::IncorrectShardSize;
+
+        match self {
+            Self::Received(shred) => {
+                let shard = shred.erasure_shard().map_err(|_| IncorrectShardSize)?;
+                if shard.len() != len {
+                    return Err(IncorrectShardSize);
+                }
+                Ok(ReconstructedShard::Present(shard))
+            }
+            Self::Recovered(shred) => {
+                let shard = shred.erasure_shard_mut().map_err(|_| IncorrectShardSize)?;
+                if shard.len() != len {
+                    return Err(IncorrectShardSize);
+                }
+                Ok(ReconstructedShard::Initialized(shard))
+            }
+        }
+    }
+}
+
 pub(super) fn recover(
     mut shreds: Vec<Shred>,
     reed_solomon_cache: &ReedSolomonCache,
-    stats: &mut ShredFetchStats,
 ) -> Result<impl Iterator<Item = Result<Shred, Error>> + use<>, Error> {
-    // A shred of the erasure batch, tracking whether it was received or has to be reconstructed.
-    //
-    // Both variants hold a builder, because Reed-Solomon reconstruction needs mutable access to
-    // every shard and not just to the missing ones. Only the reconstructed shreds are returned to
-    // the caller; the received ones are dropped once the Merkle tree has confirmed them.
-    enum ShredForRecovery {
-        Received(ShredBuilder),
-        Recovered(ShredBuilder),
-    }
-
-    impl ShredForRecovery {
-        fn builder(&self) -> &ShredBuilder {
-            match self {
-                Self::Received(shred) | Self::Recovered(shred) => shred,
-            }
-        }
-
-        fn builder_mut(&mut self) -> &mut ShredBuilder {
-            match self {
-                Self::Received(shred) | Self::Recovered(shred) => shred,
-            }
-        }
-    }
-
     // Sort shreds by their erasure shard index.
     // In particular this places all data shreds before coding shreds.
     let is_sorted = |(a, b)| cmp_shred_erasure_shard_index(a, b).is_le();
@@ -1055,12 +1083,7 @@ pub(super) fn recover(
             while batch.len() < erasure_shard_index {
                 batch.push(recovered(batch.len())?);
             }
-            // Reconstruction needs mutable access to every shard, including the received ones, so
-            // the payloads of the received shreds have to be reopened for mutation here. That copies
-            // the payload of any shred which is also referenced elsewhere, e.g. because it is
-            // concurrently being retransmitted.
-            stats.num_recovery_payload_copies += usize::from(!shred.payload().is_unique());
-            batch.push(ShredForRecovery::Received(ShredBuilder::from(shred)));
+            batch.push(ShredForRecovery::Received(shred));
         }
         // Fill in the shreds missing at the end.
         while batch.len() < num_shards {
@@ -1068,39 +1091,35 @@ pub(super) fn recover(
         }
         batch
     };
-    // Obtain erasure encoded shards from the shreds and reconstruct shreds.
-    let mut erasure_shards = shreds
-        .iter_mut()
-        .map(|shred| {
-            let received = matches!(shred, ShredForRecovery::Received(_));
-            Ok((shred.builder_mut().erasure_shard_mut()?, received))
-        })
-        .collect::<Result<Vec<_>, Error>>()?;
+    // Reconstruct the missing shreds in place.
     reed_solomon_cache
         .get(num_data_shreds, num_coding_shreds)?
-        .reconstruct(&mut erasure_shards)?;
-    // Release the borrows on the shreds' payloads to allow further mutation below.
-    drop(erasure_shards);
+        .reconstruct(&mut shreds)?;
+
     // Verify and sanitize recovered shreds, re-compute the Merkle tree and set
     // the merkle proof on the recovered shreds.
-    let nodes = shreds.iter_mut().enumerate().map(|(index, shred)| {
-        if let ShredForRecovery::Recovered(shred) = shred {
-            if index < num_data_shreds {
-                let ShredBuilder::ShredData(shred) = shred else {
-                    return Err(Error::InvalidRecoveredShred);
-                };
-                let (common_header, data_header) = wincode::deserialize(&shred.payload[..])?;
-                if shred.common_header != common_header {
+    let nodes = shreds
+        .iter_mut()
+        .enumerate()
+        .map(|(index, shred)| match shred {
+            ShredForRecovery::Received(shred) => shred.merkle_node(),
+            ShredForRecovery::Recovered(shred) => {
+                if index < num_data_shreds {
+                    let ShredBuilder::ShredData(shred) = shred else {
+                        return Err(Error::InvalidRecoveredShred);
+                    };
+                    let (common_header, data_header) = wincode::deserialize(&shred.payload[..])?;
+                    if shred.common_header != common_header {
+                        return Err(Error::InvalidRecoveredShred);
+                    }
+                    shred.data_header = data_header;
+                } else if !matches!(shred, ShredBuilder::ShredCode(_)) {
                     return Err(Error::InvalidRecoveredShred);
                 }
-                shred.data_header = data_header;
-            } else if !matches!(shred, ShredBuilder::ShredCode(_)) {
-                return Err(Error::InvalidRecoveredShred);
+                shred.sanitize()?;
+                shred.merkle_node()
             }
-            shred.sanitize()?;
-        }
-        shred.builder().merkle_node()
-    });
+        });
     let tree = MerkleTree::try_new(nodes)?;
     // The attached signature verifies only if we obtain the same Merkle root.
     // Because shreds obtained from turbine or repair are sig-verified, this
@@ -1110,8 +1129,8 @@ pub(super) fn recover(
     }
     let set_merkle_proof = move |(index, shred): (_, ShredForRecovery)| match shred {
         ShredForRecovery::Received(shred) => {
-            // The shred was already present, so it is discarded rather than returned; it only had
-            // to be reopened so that reconstruction could borrow its erasure coded slice.
+            // The shred was already present, so it is discarded rather than returned; it only took
+            // part in reconstruction as an input, and in the Merkle tree as a leaf.
             debug_assert!({
                 let proof = tree.make_merkle_proof(index, num_shards);
                 shred.merkle_proof()?.map(Some).eq(proof.map(Result::ok))
@@ -1820,23 +1839,22 @@ mod test {
                 )
             }) {
                 assert_matches!(
-                    recover(shreds, reed_solomon_cache, &mut ShredFetchStats::default()).err(),
+                    recover(shreds, reed_solomon_cache).err(),
                     Some(Error::Erasure(TooFewParityShards))
                 );
                 continue;
             }
             if shreds.len() < num_data_shreds {
                 assert_matches!(
-                    recover(shreds, reed_solomon_cache, &mut ShredFetchStats::default()).err(),
+                    recover(shreds, reed_solomon_cache).err(),
                     Some(Error::Erasure(TooFewShardsPresent))
                 );
                 continue;
             }
-            let recovered_shreds: Vec<_> =
-                recover(shreds, reed_solomon_cache, &mut ShredFetchStats::default())
-                    .unwrap()
-                    .map(Result::unwrap)
-                    .collect();
+            let recovered_shreds: Vec<_> = recover(shreds, reed_solomon_cache)
+                .unwrap()
+                .map(Result::unwrap)
+                .collect();
             assert_eq!(size + recovered_shreds.len(), num_shreds);
             assert_eq!(recovered_shreds.len(), removed_shreds.len());
             removed_shreds.sort_by(|a, b| {
@@ -2100,13 +2118,9 @@ mod test {
             .chunk_by(|shred| shred.common_header().fec_set_index)
             .into_iter()
             .flat_map(|(_, shreds)| {
-                recover(
-                    shreds.collect(),
-                    reed_solomon_cache,
-                    &mut ShredFetchStats::default(),
-                )
-                .unwrap()
-                .map(Result::unwrap)
+                recover(shreds.collect(), reed_solomon_cache)
+                    .unwrap()
+                    .map(Result::unwrap)
             })
             .collect();
         assert_eq!(recovered_data_shreds.len(), data_shreds.len());

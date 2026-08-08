@@ -4991,8 +4991,7 @@ dependencies = [
 [[package]]
 name = "reed-solomon-erasure"
 version = "6.0.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "7263373d500d4d4f505d43a2a662d475a894aa94503a1ee28e9188b5f3960d4f"
+source = "git+https://github.com/plafer/reed-solomon-erasure?rev=56c86263037b458daf5d411b7e6da33c06ffe780#56c86263037b458daf5d411b7e6da33c06ffe780"
 dependencies = [
  "cc",
  "libc",

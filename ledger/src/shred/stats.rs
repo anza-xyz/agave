@@ -63,9 +63,6 @@ pub struct ShredFetchStats {
     pub(super) shred_flags_bad_deserialize: usize,
     pub(super) misaligned_last_data_index: usize,
     pub(super) unexpected_data_complete_shred: usize,
-    // Number of shreds whose payload had to be copied when reopened for mutation during erasure
-    // recovery, because some other handle on the payload was still alive.
-    pub(super) num_recovery_payload_copies: usize,
     since: Option<Instant>,
     pub overflow_shreds: usize,
 }
@@ -207,11 +204,6 @@ impl ShredFetchStats {
             (
                 "unexpected_data_complete_shred",
                 self.unexpected_data_complete_shred,
-                i64
-            ),
-            (
-                "num_recovery_payload_copies",
-                self.num_recovery_payload_copies,
                 i64
             )
         );

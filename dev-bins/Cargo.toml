@@ -197,4 +197,5 @@ codegen-units = 1
 
 [patch.crates-io]
 librocksdb-sys = { git = "https://github.com/anza-xyz/rust-rocksdb", rev = "2c0ffd79c1b2e1f5220ee5f7c71af5080a5309e3" }
+reed-solomon-erasure = { git = "https://github.com/plafer/reed-solomon-erasure", rev = "56c86263037b458daf5d411b7e6da33c06ffe780" }
 rocksdb = { git = "https://github.com/anza-xyz/rust-rocksdb", rev = "2c0ffd79c1b2e1f5220ee5f7c71af5080a5309e3" }
