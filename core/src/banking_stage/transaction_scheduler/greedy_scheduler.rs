@@ -301,7 +301,10 @@ mod test {
         solana_keypair::Keypair,
         solana_message::{Message, v1::MAX_TRANSACTION_SIZE},
         solana_pubkey::Pubkey,
-        solana_runtime_transaction::runtime_transaction::RuntimeTransaction,
+        solana_runtime_transaction::{
+            runtime_transaction::RuntimeTransaction,
+            transaction_with_meta::StaticTransactionWithMeta,
+        },
         solana_signer::Signer,
         solana_system_interface::instruction as system_instruction,
         solana_transaction::{Transaction, sanitized::SanitizedTransaction},

@@ -6,7 +6,7 @@ use {
             CachedTransactionMeta, TransactionConfiguration, TransactionMeta,
             VersionedTransactionConfiguration,
         },
-        transaction_with_meta::TransactionWithMeta,
+        transaction_with_meta::{StaticTransactionWithMeta, TransactionWithMeta},
     },
     agave_transaction_view::{
         resolved_transaction_view::ResolvedTransactionView, transaction_data::TransactionData,
@@ -142,6 +142,94 @@ impl<D: TransactionData> RuntimeTransaction<ResolvedTransactionView<D>> {
     }
 }
 
+fn to_versioned_transaction<D: TransactionData>(
+    view: &SanitizedTransactionView<D>,
+) -> VersionedTransaction {
+    let header = MessageHeader {
+        num_required_signatures: view.num_required_signatures(),
+        num_readonly_signed_accounts: view.num_readonly_signed_static_accounts(),
+        num_readonly_unsigned_accounts: view.num_readonly_unsigned_static_accounts(),
+    };
+    let static_account_keys = view.static_account_keys().to_vec();
+    let recent_blockhash = *view.recent_blockhash();
+    let instructions = view
+        .instructions_iter()
+        .map(|ix| CompiledInstruction {
+            program_id_index: ix.program_id_index,
+            accounts: ix.accounts.to_vec(),
+            data: ix.data.to_vec(),
+        })
+        .collect();
+
+    let message = match view.version() {
+        TransactionVersion::Legacy => VersionedMessage::Legacy(solana_message::legacy::Message {
+            header,
+            account_keys: static_account_keys,
+            recent_blockhash,
+            instructions,
+        }),
+        TransactionVersion::V0 => VersionedMessage::V0(solana_message::v0::Message {
+            header,
+            account_keys: static_account_keys,
+            recent_blockhash,
+            instructions,
+            address_table_lookups: view
+                .address_table_lookup_iter()
+                .map(|atl| MessageAddressTableLookup {
+                    account_key: *atl.account_key,
+                    writable_indexes: atl.writable_indexes.to_vec(),
+                    readonly_indexes: atl.readonly_indexes.to_vec(),
+                })
+                .collect(),
+        }),
+        TransactionVersion::V1 => {
+            let config_view = view.transaction_config().expect("V1 must have config_view");
+            let config = solana_message::v1::TransactionConfig {
+                priority_fee: config_view.priority_fee_lamports(),
+                compute_unit_limit: config_view.compute_unit_limit(),
+                loaded_accounts_data_size_limit: config_view.loaded_accounts_data_size_limit(),
+                heap_size: config_view.requested_heap_size(),
+            };
+            VersionedMessage::V1(solana_message::v1::Message {
+                header,
+                config,
+                lifetime_specifier: recent_blockhash,
+                account_keys: static_account_keys,
+                instructions,
+            })
+        }
+    };
+
+    VersionedTransaction {
+        signatures: view.signatures().to_vec(),
+        message,
+    }
+}
+
+impl<D: TransactionData> StaticTransactionWithMeta
+    for RuntimeTransaction<SanitizedTransactionView<D>>
+{
+    fn to_versioned_transaction(&self) -> VersionedTransaction {
+        to_versioned_transaction(&self.transaction)
+    }
+
+    fn serialized_size(&self) -> usize {
+        self.transaction.data().len()
+    }
+}
+
+impl<D: TransactionData> StaticTransactionWithMeta
+    for RuntimeTransaction<ResolvedTransactionView<D>>
+{
+    fn to_versioned_transaction(&self) -> VersionedTransaction {
+        to_versioned_transaction(&self.transaction)
+    }
+
+    fn serialized_size(&self) -> usize {
+        self.transaction.data().len()
+    }
+}
+
 impl<D: TransactionData> TransactionWithMeta for RuntimeTransaction<ResolvedTransactionView<D>> {
     fn as_sanitized_transaction(&self) -> Cow<'_, SanitizedTransaction> {
         let VersionedTransaction {
@@ -199,74 +287,6 @@ impl<D: TransactionData> TransactionWithMeta for RuntimeTransaction<ResolvedTran
             )
             .expect("transaction view is sanitized"),
         )
-    }
-
-    fn to_versioned_transaction(&self) -> VersionedTransaction {
-        let header = MessageHeader {
-            num_required_signatures: self.num_required_signatures(),
-            num_readonly_signed_accounts: self.num_readonly_signed_static_accounts(),
-            num_readonly_unsigned_accounts: self.num_readonly_unsigned_static_accounts(),
-        };
-        let static_account_keys = self.static_account_keys().to_vec();
-        let recent_blockhash = *self.recent_blockhash();
-        let instructions = self
-            .instructions_iter()
-            .map(|ix| CompiledInstruction {
-                program_id_index: ix.program_id_index,
-                accounts: ix.accounts.to_vec(),
-                data: ix.data.to_vec(),
-            })
-            .collect();
-
-        let message = match self.version() {
-            TransactionVersion::Legacy => {
-                VersionedMessage::Legacy(solana_message::legacy::Message {
-                    header,
-                    account_keys: static_account_keys,
-                    recent_blockhash,
-                    instructions,
-                })
-            }
-            TransactionVersion::V0 => VersionedMessage::V0(solana_message::v0::Message {
-                header,
-                account_keys: static_account_keys,
-                recent_blockhash,
-                instructions,
-                address_table_lookups: self
-                    .address_table_lookup_iter()
-                    .map(|atl| MessageAddressTableLookup {
-                        account_key: *atl.account_key,
-                        writable_indexes: atl.writable_indexes.to_vec(),
-                        readonly_indexes: atl.readonly_indexes.to_vec(),
-                    })
-                    .collect(),
-            }),
-            TransactionVersion::V1 => {
-                let config_view = self.transaction_config().expect("V1 must have config_view");
-                let config = solana_message::v1::TransactionConfig {
-                    priority_fee: config_view.priority_fee_lamports(),
-                    compute_unit_limit: config_view.compute_unit_limit(),
-                    loaded_accounts_data_size_limit: config_view.loaded_accounts_data_size_limit(),
-                    heap_size: config_view.requested_heap_size(),
-                };
-                VersionedMessage::V1(solana_message::v1::Message {
-                    header,
-                    config,
-                    lifetime_specifier: recent_blockhash,
-                    account_keys: static_account_keys,
-                    instructions,
-                })
-            }
-        };
-
-        VersionedTransaction {
-            signatures: self.signatures().to_vec(),
-            message,
-        }
-    }
-
-    fn serialized_size(&self) -> usize {
-        self.transaction.data().len()
     }
 }
 

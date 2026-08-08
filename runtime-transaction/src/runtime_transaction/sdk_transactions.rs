@@ -5,7 +5,7 @@ use {
         transaction_meta::{
             CachedTransactionMeta, TransactionMeta, VersionedTransactionConfiguration,
         },
-        transaction_with_meta::TransactionWithMeta,
+        transaction_with_meta::{StaticTransactionWithMeta, TransactionWithMeta},
     },
     solana_message::{AddressLoader, TransactionSignatureDetails},
     solana_pubkey::Pubkey,
@@ -134,12 +134,7 @@ impl RuntimeTransaction<SanitizedTransaction> {
     }
 }
 
-impl TransactionWithMeta for RuntimeTransaction<SanitizedTransaction> {
-    #[inline]
-    fn as_sanitized_transaction(&self) -> Cow<'_, SanitizedTransaction> {
-        Cow::Borrowed(self)
-    }
-
+impl StaticTransactionWithMeta for RuntimeTransaction<SanitizedTransaction> {
     #[inline]
     fn to_versioned_transaction(&self) -> VersionedTransaction {
         self.transaction.to_versioned_transaction()
@@ -148,6 +143,13 @@ impl TransactionWithMeta for RuntimeTransaction<SanitizedTransaction> {
     fn serialized_size(&self) -> usize {
         wincode::serialized_size(&self.to_versioned_transaction())
             .expect("versioned transaction serialization should succeed") as usize
+    }
+}
+
+impl TransactionWithMeta for RuntimeTransaction<SanitizedTransaction> {
+    #[inline]
+    fn as_sanitized_transaction(&self) -> Cow<'_, SanitizedTransaction> {
+        Cow::Borrowed(self)
     }
 }
 

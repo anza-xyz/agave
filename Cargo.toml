@@ -184,7 +184,7 @@ agave-reserved-account-keys = { path = "reserved-account-keys", version = "=4.3.
 agave-scheduler-bindings = "5.0.0"
 agave-scheduling-utils = { path = "scheduling-utils", version = "=4.3.0-alpha.3", features = ["agave-unstable-api"] }
 agave-snapshots = { path = "snapshots", version = "=4.3.0-alpha.3", features = ["agave-unstable-api"] }
-agave-transaction-view = "5.1.0"
+agave-transaction-view = "6.0.0"
 agave-votor = { path = "votor", version = "=4.3.0-alpha.3", features = ["agave-unstable-api"] }
 agave-votor-messages = { path = "votor-messages", version = "=4.3.0-alpha.3", features = ["agave-unstable-api"] }
 agave-votor-transport = { path = "votor-transport", version = "=4.3.0-alpha.3", features = ["agave-unstable-api"] }
@@ -498,7 +498,7 @@ solana-svm-feature-set = { path = "svm-feature-set", version = "=4.3.0-alpha.3",
 solana-svm-log-collector = { path = "svm-log-collector", version = "=4.3.0-alpha.3", features = ["agave-unstable-api"] }
 solana-svm-measure = { path = "svm-measure", version = "=4.3.0-alpha.3", features = ["agave-unstable-api"] }
 solana-svm-timings = { path = "svm-timings", version = "=4.3.0-alpha.3", features = ["agave-unstable-api"] }
-solana-svm-transaction = "4.3.0"
+solana-svm-transaction = "5.0.0"
 solana-svm-type-overrides = { path = "svm-type-overrides", version = "=4.3.0-alpha.3", features = ["agave-unstable-api"] }
 solana-syscalls = { path = "syscalls", version = "=4.3.0-alpha.3", default-features = false, features = ["agave-unstable-api"] }
 solana-system-interface = { version = "3.3.0", features = ["alloc", "bincode", "serde", "wincode"] }

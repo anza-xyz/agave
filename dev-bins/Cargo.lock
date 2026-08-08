@@ -375,9 +375,9 @@ dependencies = [
 
 [[package]]
 name = "agave-transaction-view"
-version = "5.1.0"
+version = "6.0.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "025bb5f7b6dd4a5545a9edd6ce42b896836b8dbc8600ad9f99de041bd65601ef"
+checksum = "e64c87da66381a05df06a264b42f8df59521d26be773b3d64efc008d27e96e8c"
 dependencies = [
  "bytes",
  "solana-hash 4.6.0",
@@ -8691,9 +8691,9 @@ dependencies = [
 
 [[package]]
 name = "solana-svm-transaction"
-version = "4.3.0"
+version = "5.0.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "260eeb3e9542372a1b52710cd48e3b45802a2c4533205eaa286029e52f3785c3"
+checksum = "0afde938e0d3f06e87853e6e189396d67256e3b600675d867a47d066f8cebadb"
 dependencies = [
  "solana-hash 4.6.0",
  "solana-message",
