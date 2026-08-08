@@ -2,6 +2,7 @@ use {
     super::{ComputeBudgetInstructionDetails, RuntimeTransaction},
     crate::{
         instruction_meta::InstructionMeta,
+        simple_vote_transaction_checker::is_simple_vote_transaction as check_simple_vote_transaction,
         transaction_meta::{
             CachedTransactionMeta, TransactionConfiguration, TransactionMeta,
             VersionedTransactionConfiguration,
@@ -24,7 +25,6 @@ use {
     solana_svm_transaction::svm_message::SVMMessage,
     solana_transaction::{
         sanitized::{MessageHash, SanitizedTransaction},
-        simple_vote_transaction_checker::is_simple_vote_transaction_impl,
         versioned::VersionedTransaction,
     },
     solana_transaction_error::{TransactionError, TransactionResult as Result},
@@ -34,13 +34,12 @@ use {
 fn is_simple_vote_transaction<D: TransactionData>(
     transaction: &SanitizedTransactionView<D>,
 ) -> bool {
-    let signatures = transaction.signatures();
     let is_legacy_message = matches!(transaction.version(), TransactionVersion::Legacy);
-    let instruction_programs = transaction
-        .program_instructions_iter()
-        .map(|(program_id, _ix)| program_id);
-
-    is_simple_vote_transaction_impl(signatures, is_legacy_message, instruction_programs)
+    check_simple_vote_transaction(
+        transaction.signatures().len(),
+        is_legacy_message,
+        transaction.program_instructions_iter(),
+    )
 }
 
 impl<D: TransactionData> RuntimeTransaction<SanitizedTransactionView<D>> {

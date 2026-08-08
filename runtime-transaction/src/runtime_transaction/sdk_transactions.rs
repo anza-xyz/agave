@@ -2,6 +2,7 @@ use {
     super::RuntimeTransaction,
     crate::{
         instruction_meta::InstructionMeta,
+        simple_vote_transaction_checker::is_simple_vote_transaction as check_simple_vote_transaction,
         transaction_meta::{
             CachedTransactionMeta, TransactionMeta, VersionedTransactionConfiguration,
         },
@@ -12,12 +13,33 @@ use {
     solana_svm_transaction::instruction::SVMInstruction,
     solana_transaction::{
         sanitized::{MessageHash, SanitizedTransaction},
-        simple_vote_transaction_checker::is_simple_vote_transaction,
         versioned::{VersionedTransaction, sanitized::SanitizedVersionedTransaction},
     },
     solana_transaction_error::TransactionResult as Result,
     std::{borrow::Cow, collections::HashSet},
 };
+
+fn is_simple_vote_transaction(sanitized_versioned_tx: &SanitizedVersionedTransaction) -> bool {
+    let num_signatures = usize::from(
+        sanitized_versioned_tx
+            .get_message()
+            .message
+            .header()
+            .num_required_signatures,
+    );
+    let is_legacy_message = matches!(
+        sanitized_versioned_tx.get_message().message,
+        solana_message::VersionedMessage::Legacy(_)
+    );
+    check_simple_vote_transaction(
+        num_signatures,
+        is_legacy_message,
+        sanitized_versioned_tx
+            .get_message()
+            .program_instructions_iter()
+            .map(|(program_id, ix)| (program_id, SVMInstruction::from(ix))),
+    )
+}
 
 impl RuntimeTransaction<SanitizedVersionedTransaction> {
     pub fn try_from(
@@ -188,6 +210,12 @@ mod tests {
     };
 
     fn vote_sanitized_versioned_transaction() -> SanitizedVersionedTransaction {
+        vote_sanitized_versioned_transaction_with_extra_instructions(vec![])
+    }
+
+    fn vote_sanitized_versioned_transaction_with_extra_instructions(
+        extra_instructions: Vec<Instruction>,
+    ) -> SanitizedVersionedTransaction {
         let block_hash = Hash::new_unique();
         let vote_keypair = Keypair::new();
         let node_keypair = Keypair::new();
@@ -200,7 +228,9 @@ mod tests {
                 AccountMeta::new_readonly(auth_keypair.pubkey(), true),
             ],
         );
-        let mut vote_tx = Transaction::new_with_payer(&[vote_ix], Some(&node_keypair.pubkey()));
+        let mut instructions = vec![vote_ix];
+        instructions.extend(extra_instructions);
+        let mut vote_tx = Transaction::new_with_payer(&instructions, Some(&node_keypair.pubkey()));
         vote_tx.partial_sign(&[&node_keypair], block_hash);
         vote_tx.partial_sign(&[&auth_keypair], block_hash);
 
@@ -293,6 +323,37 @@ mod tests {
         assert!(!get_is_simple_vote(
             vote_sanitized_versioned_transaction(),
             Some(false), // override
+        ));
+
+        assert!(get_is_simple_vote(
+            vote_sanitized_versioned_transaction_with_extra_instructions(vec![
+                ComputeBudgetInstruction::set_compute_unit_limit(1),
+            ]),
+            None
+        ));
+
+        assert!(get_is_simple_vote(
+            vote_sanitized_versioned_transaction_with_extra_instructions(vec![
+                ComputeBudgetInstruction::set_compute_unit_limit(1),
+                ComputeBudgetInstruction::set_loaded_accounts_data_size_limit(1),
+            ]),
+            None
+        ));
+
+        assert!(!get_is_simple_vote(
+            vote_sanitized_versioned_transaction_with_extra_instructions(vec![
+                ComputeBudgetInstruction::set_loaded_accounts_data_size_limit(1),
+            ]),
+            None
+        ));
+
+        assert!(!get_is_simple_vote(
+            vote_sanitized_versioned_transaction_with_extra_instructions(vec![
+                ComputeBudgetInstruction::set_compute_unit_limit(1),
+                ComputeBudgetInstruction::set_loaded_accounts_data_size_limit(1),
+                ComputeBudgetInstruction::set_compute_unit_price(1),
+            ]),
+            None
         ));
     }
 

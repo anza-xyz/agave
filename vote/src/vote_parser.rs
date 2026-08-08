@@ -1,7 +1,11 @@
 use {
-    crate::vote_transaction::VoteTransaction, solana_bincode::limited_deserialize,
-    solana_hash::Hash, solana_pubkey::Pubkey, solana_signature::Signature,
-    solana_svm_transaction::svm_transaction::SVMTransaction, solana_transaction::Transaction,
+    crate::vote_transaction::VoteTransaction,
+    solana_bincode::limited_deserialize,
+    solana_hash::Hash,
+    solana_pubkey::Pubkey,
+    solana_signature::Signature,
+    solana_svm_transaction::{instruction::SVMInstruction, svm_transaction::SVMTransaction},
+    solana_transaction::Transaction,
     solana_vote_interface::instruction::VoteInstruction,
 };
 
@@ -9,27 +13,75 @@ pub type ParsedVote = (Pubkey, VoteTransaction, Option<Hash>, Signature);
 
 /// Check if a transaction is a valid vote-only transaction.
 /// A valid vote-only transaction must:
-/// 1. Have exactly one instruction
-/// 2. That instruction must be to the vote program
-/// 3. That instruction must be a single vote state update (UpdateVoteState, TowerSync, etc.)
-pub fn is_valid_vote_only_transaction(tx: &impl SVMTransaction) -> bool {
+/// 1. Have 1 to 3 instructions
+/// 2. The first instruction must be to the vote program
+/// 3. The first instruction must be a single vote state update (UpdateVoteState, TowerSync, etc.)
+/// If `is_expanded_version` is true, then:
+/// 4. The optional second instruction must be `SetComputeUnitLimit`
+/// 5. The optional third instruction must be `SetLoadedAccountsDataSizeLimit`
+pub fn is_valid_vote_only_transaction(tx: &impl SVMTransaction, is_expanded_version: bool) -> bool {
     let mut instructions = tx.program_instructions_iter();
 
     let Some((program_id, instruction)) = instructions.next() else {
         return false;
     };
 
-    if instructions.next().is_some() {
-        return false;
-    }
-
     if !solana_sdk_ids::vote::check_id(program_id) {
         return false;
     }
 
-    limited_deserialize::<VoteInstruction>(instruction.data, solana_packet::PACKET_DATA_SIZE as u64)
-        .map(|ix| ix.is_single_vote_state_update())
-        .unwrap_or(false)
+    if !limited_deserialize::<VoteInstruction>(
+        instruction.data,
+        solana_packet::PACKET_DATA_SIZE as u64,
+    )
+    .map(|ix| ix.is_single_vote_state_update())
+    .unwrap_or(false)
+    {
+        return false;
+    }
+
+    if !is_expanded_version {
+        return instructions.next().is_none();
+    }
+
+    let Some((program_id, instruction)) = instructions.next() else {
+        return true;
+    };
+    if !is_compute_budget_instruction(
+        program_id,
+        &instruction,
+        SET_COMPUTE_UNIT_LIMIT_DISCRIMINATOR,
+    ) {
+        return false;
+    }
+
+    let Some((program_id, instruction)) = instructions.next() else {
+        return true;
+    };
+    is_compute_budget_instruction(
+        program_id,
+        &instruction,
+        SET_LOADED_ACCOUNTS_DATA_SIZE_LIMIT_DISCRIMINATOR,
+    ) && instructions.next().is_none()
+}
+
+// Local wire-format discriminators for the compute-budget instructions accepted
+// by the temporary vote-only simple-vote layout. These mirror
+// `solana_compute_budget_interface::ComputeBudgetInstruction` serialization.
+const SET_COMPUTE_UNIT_LIMIT_DISCRIMINATOR: u8 = 2;
+const SET_LOADED_ACCOUNTS_DATA_SIZE_LIMIT_DISCRIMINATOR: u8 = 4;
+
+fn is_compute_budget_instruction(
+    program_id: &Pubkey,
+    instruction: &SVMInstruction,
+    discriminator: u8,
+) -> bool {
+    // Both SetComputeUnitLimit and SetLoadedAccountsDataSizeLimit have `u32` data.
+    const COMPUTE_BUDGET_INSTRUCTION_DATA_LEN: usize = 1 + core::mem::size_of::<u32>();
+
+    solana_sdk_ids::compute_budget::check_id(program_id)
+        && instruction.data.len() == COMPUTE_BUDGET_INSTRUCTION_DATA_LEN
+        && instruction.data[0] == discriminator
 }
 
 // Used for locally forwarding processed vote transactions to consensus
@@ -110,6 +162,7 @@ mod test {
     use {
         super::*,
         solana_clock::Slot,
+        solana_instruction::Instruction,
         solana_keypair::Keypair,
         solana_sha256_hasher::hash,
         solana_signer::Signer,
@@ -211,7 +264,7 @@ mod test {
         );
         let sanitized = SanitizedTransaction::from_transaction_for_tests(vote_tx);
         assert!(
-            is_valid_vote_only_transaction(&sanitized),
+            is_valid_vote_only_transaction(&sanitized, false),
             "TowerSync transaction should be valid"
         );
 
@@ -231,7 +284,7 @@ mod test {
         );
         let sanitized = SanitizedTransaction::from_transaction_for_tests(vote_tx);
         assert!(
-            is_valid_vote_only_transaction(&sanitized),
+            is_valid_vote_only_transaction(&sanitized, false),
             "TowerSyncSwitch transaction should be valid"
         );
 
@@ -242,7 +295,7 @@ mod test {
             solana_system_transaction::transfer(&from_keypair, &to_pubkey, 1, blockhash);
         let sanitized = SanitizedTransaction::from_transaction_for_tests(transfer_tx);
         assert!(
-            !is_valid_vote_only_transaction(&sanitized),
+            !is_valid_vote_only_transaction(&sanitized, false),
             "System transfer should not be valid vote-only transaction"
         );
 
@@ -265,8 +318,8 @@ mod test {
         );
         let sanitized = SanitizedTransaction::from_transaction_for_tests(multi_ix_tx);
         assert!(
-            !is_valid_vote_only_transaction(&sanitized),
-            "Transaction with multiple instructions should not be valid"
+            !is_valid_vote_only_transaction(&sanitized, false),
+            "Transaction with multiple vote instructions should not be valid"
         );
 
         // Vote program accounting instructions should fail
@@ -284,8 +337,116 @@ mod test {
         );
         let sanitized = SanitizedTransaction::from_transaction_for_tests(authorize_tx);
         assert!(
-            !is_valid_vote_only_transaction(&sanitized),
+            !is_valid_vote_only_transaction(&sanitized, false),
             "Vote Authorize instruction should not be valid vote-only transaction"
+        );
+    }
+
+    fn compute_budget_instruction(discriminator: u8, value: u32) -> Instruction {
+        let mut data = vec![discriminator];
+        data.extend_from_slice(&value.to_le_bytes());
+        Instruction {
+            program_id: solana_sdk_ids::compute_budget::id(),
+            accounts: vec![],
+            data,
+        }
+    }
+
+    fn tower_sync_instruction(vote_keypair: &Keypair) -> Instruction {
+        vote_instruction::tower_sync(
+            &vote_keypair.pubkey(),
+            &vote_keypair.pubkey(),
+            TowerSync::new_from_slot(1, Hash::default()),
+        )
+    }
+
+    fn is_valid_vote_only_instructions(
+        vote_keypair: &Keypair,
+        instructions: &[Instruction],
+        is_expanded_version: bool,
+    ) -> bool {
+        let tx = Transaction::new_signed_with_payer(
+            instructions,
+            Some(&vote_keypair.pubkey()),
+            &[&vote_keypair],
+            Hash::default(),
+        );
+        let sanitized = SanitizedTransaction::from_transaction_for_tests(tx);
+        is_valid_vote_only_transaction(&sanitized, is_expanded_version)
+    }
+
+    #[test]
+    fn test_is_valid_vote_only_transaction_with_compute_budget_instructions() {
+        let vote_keypair = Keypair::new();
+        let vote_ix = tower_sync_instruction(&vote_keypair);
+        let set_compute_unit_limit_ix =
+            compute_budget_instruction(SET_COMPUTE_UNIT_LIMIT_DISCRIMINATOR, 1);
+        let set_loaded_accounts_data_size_limit_ix =
+            compute_budget_instruction(SET_LOADED_ACCOUNTS_DATA_SIZE_LIMIT_DISCRIMINATOR, 1);
+
+        assert!(
+            is_valid_vote_only_instructions(
+                &vote_keypair,
+                &[vote_ix.clone(), set_compute_unit_limit_ix.clone()],
+                true,
+            ),
+            "vote followed by SetComputeUnitLimit should be valid"
+        );
+        assert!(
+            !is_valid_vote_only_instructions(
+                &vote_keypair,
+                &[vote_ix.clone(), set_compute_unit_limit_ix.clone()],
+                false,
+            ),
+            "compute-budget instructions should require the expanded vote-only gate"
+        );
+        assert!(
+            is_valid_vote_only_instructions(
+                &vote_keypair,
+                &[
+                    vote_ix.clone(),
+                    set_compute_unit_limit_ix.clone(),
+                    set_loaded_accounts_data_size_limit_ix.clone(),
+                ],
+                true,
+            ),
+            "vote followed by accepted compute-budget layout should be valid"
+        );
+        assert!(
+            !is_valid_vote_only_instructions(
+                &vote_keypair,
+                &[
+                    vote_ix.clone(),
+                    set_loaded_accounts_data_size_limit_ix.clone(),
+                ],
+                true,
+            ),
+            "vote followed by SetLoadedAccountsDataSizeLimit without SetComputeUnitLimit should \
+             not be valid"
+        );
+        assert!(
+            !is_valid_vote_only_instructions(
+                &vote_keypair,
+                &[
+                    vote_ix.clone(),
+                    set_loaded_accounts_data_size_limit_ix,
+                    set_compute_unit_limit_ix.clone(),
+                ],
+                true,
+            ),
+            "reordered compute-budget instructions should not be valid"
+        );
+        assert!(
+            !is_valid_vote_only_instructions(
+                &vote_keypair,
+                &[
+                    vote_ix.clone(),
+                    set_compute_unit_limit_ix.clone(),
+                    set_compute_unit_limit_ix,
+                ],
+                true,
+            ),
+            "duplicate SetComputeUnitLimit instructions should not be valid"
         );
     }
 }

@@ -3775,7 +3775,13 @@ impl Bank {
         sanitized_epoch: Epoch,
         alt_invalidation_slot: Slot,
     ) -> Result<()> {
-        if self.vote_only_bank() && !vote_parser::is_valid_vote_only_transaction(transaction) {
+        let is_expanded_vote_only_transaction = false; // TODO read bank.feature_set.snapshot()...
+        if self.vote_only_bank()
+            && !vote_parser::is_valid_vote_only_transaction(
+                transaction,
+                is_expanded_vote_only_transaction,
+            )
+        {
             return Err(TransactionError::SanitizeFailure);
         }
 

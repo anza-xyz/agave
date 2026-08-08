@@ -1663,6 +1663,7 @@ fn confirm_slot_entries(
 
     let mut replay_timer = Measure::start("replay_elapsed");
     let is_vote_only_bank = bank.vote_only_bank();
+    let is_expanded_vote_only_transaction = false; // TODO read bank.feature_set.snapshot()...
     let replay_entries: Vec<_> = entries
         .into_iter()
         .zip(entry_tx_starting_indexes)
@@ -1676,9 +1677,9 @@ fn confirm_slot_entries(
 
             // If bank is in vote-only mode, validate that entries contain only vote transactions
             if let EntryType::Transactions(ref transactions) = entry
-                && transactions
-                    .iter()
-                    .any(|tx| !is_valid_vote_only_transaction(tx))
+                && transactions.iter().any(|tx| {
+                    !is_valid_vote_only_transaction(tx, is_expanded_vote_only_transaction)
+                })
             {
                 return Err(BlockstoreProcessorError::UserTransactionsInVoteOnlyBank(
                     bank.slot(),

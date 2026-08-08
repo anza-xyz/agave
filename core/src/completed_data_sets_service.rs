@@ -22,12 +22,12 @@ use {
     solana_metrics::*,
     solana_rpc::{max_slots::MaxSlots, rpc_subscriptions::RpcSubscriptions},
     solana_runtime::bank_forks::BankForks,
+    solana_runtime_transaction::simple_vote_transaction_checker::is_simple_vote_transaction as check_simple_vote_transaction,
     solana_signature::Signature,
-    solana_svm_transaction::message_address_table_lookup::SVMMessageAddressTableLookup,
-    solana_transaction::{
-        simple_vote_transaction_checker::is_simple_vote_transaction_impl,
-        versioned::VersionedTransaction,
+    solana_svm_transaction::{
+        instruction::SVMInstruction, message_address_table_lookup::SVMMessageAddressTableLookup,
     },
+    solana_transaction::versioned::VersionedTransaction,
     std::{
         sync::{
             Arc, RwLock,
@@ -44,13 +44,21 @@ pub type CompletedDataSetsSender = Sender<Vec<CompletedDataSetInfo>>;
 /// Check if a versioned transaction is a simple vote transaction.
 /// This avoids cloning by extracting the required data directly.
 fn is_simple_vote_transaction(tx: &VersionedTransaction) -> bool {
+    // simple vote transaction has all program as static accounts
     let is_legacy = matches!(&tx.message, VersionedMessage::Legacy(_));
-    let instruction_programs = tx.message.instructions().iter().filter_map(|ix| {
-        tx.message
-            .static_account_keys()
+    let static_account_keys = tx.message.static_account_keys();
+    if tx.message.instructions().iter().any(|ix| {
+        static_account_keys
             .get(ix.program_id_index as usize)
+            .is_none()
+    }) {
+        return false;
+    }
+    let instruction_programs = tx.message.instructions().iter().map(|ix| {
+        let program_id = &static_account_keys[ix.program_id_index as usize];
+        (program_id, SVMInstruction::from(ix))
     });
-    is_simple_vote_transaction_impl(&tx.signatures, is_legacy, instruction_programs)
+    check_simple_vote_transaction(tx.signatures.len(), is_legacy, instruction_programs)
 }
 
 /// Result of attempting to load addresses from address lookup tables.
@@ -408,12 +416,34 @@ pub mod test {
     }
 
     fn legacy_transaction(instruction: Instruction) -> VersionedTransaction {
+        legacy_transaction_with_instructions(vec![instruction])
+    }
+
+    fn legacy_transaction_with_instructions(
+        instructions: Vec<Instruction>,
+    ) -> VersionedTransaction {
         let keypair = Keypair::new();
         VersionedTransaction::try_new(
-            VersionedMessage::Legacy(Message::new(&[instruction], Some(&keypair.pubkey()))),
+            VersionedMessage::Legacy(Message::new(&instructions, Some(&keypair.pubkey()))),
             &[&keypair],
         )
         .unwrap()
+    }
+
+    fn set_compute_unit_limit_instruction() -> Instruction {
+        Instruction::new_with_bytes(
+            solana_sdk_ids::compute_budget::ID,
+            &[2, 0, 0, 0, 0],
+            Vec::new(),
+        )
+    }
+
+    fn set_loaded_accounts_data_size_limit_instruction() -> Instruction {
+        Instruction::new_with_bytes(
+            solana_sdk_ids::compute_budget::ID,
+            &[4, 0, 0, 0, 0],
+            Vec::new(),
+        )
     }
 
     fn versioned_v0_transaction(instruction: Instruction) -> VersionedTransaction {
@@ -465,6 +495,34 @@ pub mod test {
         assert!(!is_simple_vote_transaction(&versioned_v0_transaction(
             Instruction::new_with_bytes(solana_sdk_ids::vote::ID, &[], Vec::new()),
         )));
+
+        assert!(is_simple_vote_transaction(
+            &legacy_transaction_with_instructions(vec![
+                Instruction::new_with_bytes(solana_sdk_ids::vote::ID, &[], Vec::new()),
+                set_compute_unit_limit_instruction(),
+            ])
+        ));
+        assert!(is_simple_vote_transaction(
+            &legacy_transaction_with_instructions(vec![
+                Instruction::new_with_bytes(solana_sdk_ids::vote::ID, &[], Vec::new()),
+                set_compute_unit_limit_instruction(),
+                set_loaded_accounts_data_size_limit_instruction(),
+            ])
+        ));
+        assert!(!is_simple_vote_transaction(
+            &legacy_transaction_with_instructions(vec![
+                Instruction::new_with_bytes(solana_sdk_ids::vote::ID, &[], Vec::new()),
+                set_loaded_accounts_data_size_limit_instruction(),
+            ])
+        ));
+        assert!(!is_simple_vote_transaction(
+            &legacy_transaction_with_instructions(vec![
+                Instruction::new_with_bytes(solana_sdk_ids::vote::ID, &[], Vec::new()),
+                set_compute_unit_limit_instruction(),
+                set_loaded_accounts_data_size_limit_instruction(),
+                set_compute_unit_limit_instruction(),
+            ])
+        ));
     }
 
     #[test]

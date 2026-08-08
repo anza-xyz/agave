@@ -6,5 +6,6 @@ pub(crate) mod instruction_meta;
 pub mod runtime_transaction;
 pub mod sanitize_config;
 pub mod signature_details;
+pub mod simple_vote_transaction_checker;
 pub mod transaction_meta;
 pub mod transaction_with_meta;

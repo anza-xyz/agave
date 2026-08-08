@@ -144,12 +144,18 @@ impl Consumer {
             true,
             &mut error_counters,
         );
+        let is_expanded_vote_only_transaction = false; // TODO read bank.feature_set.snapshot()...
         let check_results = check_results
             .into_iter()
             .zip(txs.iter())
             .map(|(result, tx)| match result {
                 Ok(_) => {
-                    if bank.vote_only_bank() && !vote_parser::is_valid_vote_only_transaction(tx) {
+                    if bank.vote_only_bank()
+                        && !vote_parser::is_valid_vote_only_transaction(
+                            tx,
+                            is_expanded_vote_only_transaction,
+                        )
+                    {
                         Err(TransactionError::SanitizeFailure)
                     } else {
                         Ok(())
