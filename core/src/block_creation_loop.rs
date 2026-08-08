@@ -1259,9 +1259,9 @@ fn create_and_insert_leader_bank(
         );
     }
 
-    if ctx.poh_recorder.read().unwrap().start_slot() != parent_slot {
-        // Important to keep Poh somewhat accurate for
-        // parts of the system relying on PohRecorder::would_be_leader()
+    if ctx.poh_recorder.read().unwrap().start_bank_id() != parent_bank.bank_id() {
+        // PoH must be based on the exact parent bank. Comparing slots is insufficient because
+        // fast leader handover can switch between parent banks in the same slot.
         reset_poh_recorder(&parent_bank, ctx);
     }
 
@@ -1811,7 +1811,7 @@ mod tests {
     }
 
     #[test]
-    fn test_sad_leader_handover() {
+    fn test_sad_leader_handover_same_parent_slot() {
         let ledger_path = get_tmp_ledger_path_auto_delete!();
         let blockstore = Arc::new(Blockstore::open(ledger_path.path()).unwrap());
         let my_pubkey = Pubkey::new_unique();
@@ -1824,27 +1824,34 @@ mod tests {
 
         let leader_schedule_cache = fixed_leader_schedule(my_pubkey, &root_bank);
 
-        let new_parent_slot = 1;
+        let parent_slot = 1;
         let new_parent_hash = Hash::new_unique();
         let new_parent = Bank::new_from_parent_with_bank_forks(
             &bank_forks,
             root_bank.clone(),
             SlotLeader::new_unique(),
-            new_parent_slot,
+            parent_slot,
         );
+        new_parent.register_unique_recent_blockhash_for_test();
         new_parent.freeze();
         new_parent.set_block_id(Some(new_parent_hash));
+        let new_parent_bank_id = new_parent.bank_id();
 
-        let optimistic_parent_slot = 3;
         let optimistic_parent_hash = Hash::new_unique();
-        let optimistic_parent = Bank::new_from_parent_with_bank_forks(
-            &bank_forks,
+        let optimistic_parent = Arc::new(Bank::new_from_parent(
             root_bank.clone(),
             SlotLeader::new_unique(),
-            optimistic_parent_slot,
-        );
+            parent_slot,
+        ));
+        optimistic_parent.register_unique_recent_blockhash_for_test();
         optimistic_parent.freeze();
         optimistic_parent.set_block_id(Some(optimistic_parent_hash));
+        let optimistic_parent_bank_id = optimistic_parent.bank_id();
+        assert_ne!(optimistic_parent_bank_id, new_parent_bank_id);
+        assert_ne!(
+            optimistic_parent.last_blockhash(),
+            new_parent.last_blockhash()
+        );
 
         let exit = Arc::new(AtomicBool::new(false));
         let poh_config = PohConfig::default();
@@ -1877,7 +1884,7 @@ mod tests {
             highest_parent_ready: Arc::new(RwLock::new((
                 4,
                 Block {
-                    slot: new_parent_slot,
+                    slot: parent_slot,
                     block_id: new_parent_hash,
                 },
             ))),
@@ -1903,6 +1910,10 @@ mod tests {
         let leader_slot = 4;
         create_and_insert_leader_bank(leader_slot, optimistic_parent, &mut ctx).unwrap();
         let optimistic_bank_id = ctx.poh_recorder.read().unwrap().bank().unwrap().bank_id();
+        assert_eq!(
+            ctx.poh_recorder.read().unwrap().start_bank_id(),
+            optimistic_parent_bank_id
+        );
 
         let accumulated_tx = versioned_transfer(1);
         let drained_tx = versioned_transfer(2);
@@ -1918,7 +1929,7 @@ mod tests {
             start_slot: leader_slot,
             end_slot: 7,
             parent_block: Block {
-                slot: new_parent_slot,
+                slot: parent_slot,
                 block_id: new_parent_hash,
             },
             block_timer: Instant::now(),
@@ -1927,7 +1938,7 @@ mod tests {
             &mut ctx,
             parent_ready,
             Block {
-                slot: optimistic_parent_slot,
+                slot: parent_slot,
                 block_id: optimistic_parent_hash,
             },
             vec![accumulated_tx.clone()],
@@ -1937,7 +1948,12 @@ mod tests {
         .expect("sad handover should recreate the leader bank");
 
         assert_eq!(new_bank.slot(), leader_slot);
-        assert_eq!(new_bank.parent_slot(), new_parent_slot);
+        assert_eq!(new_bank.parent_slot(), parent_slot);
+        assert_eq!(new_bank.parent().unwrap().bank_id(), new_parent_bank_id);
+        assert_eq!(
+            ctx.poh_recorder.read().unwrap().start_bank_id(),
+            new_parent_bank_id
+        );
         let EntryNotification::UpdateParent(update_parent) =
             entry_notification_receiver.try_recv().unwrap()
         else {
@@ -1948,7 +1964,7 @@ mod tests {
             EntryUpdateParentInfo {
                 slot: leader_slot,
                 cleared_bank_id: optimistic_bank_id,
-                parent_slot: new_parent_slot,
+                parent_slot,
                 parent_block_id: new_parent_hash,
             }
         );
@@ -1959,7 +1975,7 @@ mod tests {
                 .get(leader_slot)
                 .unwrap()
                 .parent_slot(),
-            new_parent_slot
+            parent_slot
         );
         assert_eq!(
             ctx.poh_recorder
@@ -1968,11 +1984,11 @@ mod tests {
                 .bank()
                 .unwrap()
                 .parent_slot(),
-            new_parent_slot
+            parent_slot
         );
 
         let update_parent = recv_update_parent_marker(&entry_receiver);
-        assert_eq!(update_parent.new_parent_slot, new_parent_slot);
+        assert_eq!(update_parent.new_parent_slot, parent_slot);
         assert_eq!(update_parent.new_parent_block_id, new_parent_hash);
 
         let rescheduled = recv_rescheduled_transactions(&banking_stage_receiver);
