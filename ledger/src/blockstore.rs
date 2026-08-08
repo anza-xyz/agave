@@ -431,6 +431,9 @@ struct ShredInsertionTracker<'a> {
     // In-memory map that maintains the dirty copy of the erasure meta.  It will
     // later be written to `cf::ErasureMeta`
     erasure_metas: BTreeMap<ErasureSetId, WorkingEntry<ErasureMeta>>,
+    // Negative cache for `cf::ErasureMeta` lookups. It remains valid because the
+    // insert lock prevents concurrent writes and this tracker's writes are buffered.
+    erasure_metas_absent: HashSet<ErasureSetId>,
     // In-memory map that maintains the dirty copy of the merkle root meta. It
     // will later be written to `cf::MerkleRootMeta` or `cf::AlternateMerkleRootMeta`
     merkle_root_metas: HashMap<(BlockLocation, ErasureSetId), WorkingEntry<MerkleRootMeta>>,
@@ -455,6 +458,7 @@ impl ShredInsertionTracker<'_> {
         Self {
             just_inserted_shreds: HashMap::with_capacity(shred_num),
             erasure_metas: BTreeMap::new(),
+            erasure_metas_absent: HashSet::new(),
             merkle_root_metas: HashMap::new(),
             slot_meta_working_set: HashMap::new(),
             index_working_set: HashMap::new(),
@@ -2722,7 +2726,7 @@ impl Blockstore {
 
         merkle_root_metas
             .entry((BlockLocation::Original, erasure_set))
-            .or_insert(WorkingEntry::Dirty(MerkleRootMeta::from_shred(&shred)));
+            .or_insert_with(|| WorkingEntry::Dirty(MerkleRootMeta::from_shred(&shred)));
 
         if let HashMapEntry::Vacant(entry) =
             just_inserted_shreds.entry((BlockLocation::Original, shred.id()))
@@ -2825,6 +2829,7 @@ impl Blockstore {
             duplicate_shreds,
             index_meta_time_us,
             erasure_metas,
+            erasure_metas_absent,
             write_batch,
             newly_completed_data_sets,
         } = shred_insertion_tracker;
@@ -2940,14 +2945,21 @@ impl Blockstore {
         }
         merkle_root_metas
             .entry((location, erasure_set))
-            .or_insert(WorkingEntry::Dirty(MerkleRootMeta::from_shred(&shred)));
+            .or_insert_with(|| WorkingEntry::Dirty(MerkleRootMeta::from_shred(&shred)));
         just_inserted_shreds.insert((location, shred.id()), shred);
         index_meta_working_set_entry.did_insert_occur = true;
         slot_meta_entry.did_insert_occur = true;
         if let BTreeMapEntry::Vacant(entry) = erasure_metas.entry(erasure_set)
-            && let Some(meta) = self.erasure_meta(erasure_set).unwrap()
+            && !erasure_metas_absent.contains(&erasure_set)
         {
-            entry.insert(WorkingEntry::Clean(meta));
+            match self.erasure_meta(erasure_set).unwrap() {
+                Some(meta) => {
+                    entry.insert(WorkingEntry::Clean(meta));
+                }
+                None => {
+                    erasure_metas_absent.insert(erasure_set);
+                }
+            }
         }
         Ok(())
     }
