@@ -943,25 +943,37 @@ impl<FG: ForkGraph> ProgramCache<FG> {
         match &mut self.index {
             IndexImplementation::V1 { entries, .. } => {
                 let second_level = entries.get_mut(&id).expect("Cache lookup failed");
+                let is_a_single_entry = second_level.len() == 1;
                 let candidate = second_level
                     .iter_mut()
                     .find(|entry| Arc::ptr_eq(entry, remove_entry))
                     .expect("Program entry not found");
-
-                // Only loaded entries shall be unloaded by eviction.
-                if let ProgramCacheEntryType::Loaded(_) = candidate.program
-                    && let Some(unloaded) = candidate.to_unloaded()
-                {
-                    if candidate.stats.uses.load(Ordering::Relaxed) == 1 {
-                        self.stats.one_hit_wonders.fetch_add(1, Ordering::Relaxed);
+                match candidate.program {
+                    ProgramCacheEntryType::Builtin(_) => {
+                        // Built-ins must be retained and never be deleted
+                        return;
                     }
-                    self.stats
-                        .evictions
-                        .entry(id)
-                        .and_modify(|c| *c = c.saturating_add(1))
-                        .or_insert(1);
-                    *candidate = Arc::new(unloaded);
+                    ProgramCacheEntryType::Loaded(_) => {
+                        let unloaded = candidate.to_unloaded().unwrap();
+                        if candidate.stats.uses.load(Ordering::Relaxed) == 1 {
+                            self.stats.one_hit_wonders.fetch_add(1, Ordering::Relaxed);
+                        }
+                        *candidate = Arc::new(unloaded);
+                    }
+                    _ => {
+                        if !is_a_single_entry || candidate.deployment_slot > self.latest_root_slot {
+                            // Potentially multiple versions of the program on different forks,
+                            // wait for the next prune() instead.
+                            return;
+                        }
+                        entries.remove(&id);
+                    }
                 }
+                self.stats
+                    .evictions
+                    .entry(id)
+                    .and_modify(|c| *c = c.saturating_add(1))
+                    .or_insert(1);
             }
         }
     }
@@ -2302,26 +2314,21 @@ pub(crate) mod tests {
     fn test_unloaded() {
         let mut cache = ProgramCache::<TestForkGraph>::new(0);
         let env = get_mock_program_runtime_environment();
-        for program_cache_entry_type in [
-            ProgramCacheEntryType::Closed,
-            ProgramCacheEntryType::Builtin(BuiltinProgram::new_mock()),
-        ] {
-            let entry = Arc::new(ProgramCacheEntry {
-                program: program_cache_entry_type,
-                account_owner: ProgramCacheEntryOwner::LoaderV2,
-                deployment_slot: 0,
-                stats: Arc::default(),
-                latest_access_slot: AtomicU64::default(),
-            });
-            assert!(entry.to_unloaded().is_none());
+        let entry = Arc::new(ProgramCacheEntry {
+            program: ProgramCacheEntryType::Builtin(BuiltinProgram::new_mock()),
+            account_owner: ProgramCacheEntryOwner::LoaderV2,
+            deployment_slot: 0,
+            stats: Arc::default(),
+            latest_access_slot: AtomicU64::default(),
+        });
+        assert!(entry.to_unloaded().is_none());
 
-            // Check that unload_program_entry() does nothing for this entry
-            let program_id = Pubkey::new_unique();
-            cache.assign_program(&env, program_id, entry.deployment_slot, entry.clone());
-            cache.unload_program_entry(program_id, entry.deployment_slot, &entry);
-            assert_eq!(cache.get_slot_versions_for_tests(&program_id).len(), 1);
-            assert!(cache.stats.evictions.is_empty());
-        }
+        // Check that unload_program_entry() does nothing for built-ins
+        let program_id = Pubkey::new_unique();
+        cache.assign_program(&env, program_id, entry.deployment_slot, entry.clone());
+        cache.unload_program_entry(program_id, entry.deployment_slot, &entry);
+        assert_eq!(cache.get_slot_versions_for_tests(&program_id).len(), 1);
+        assert!(cache.stats.evictions.is_empty());
 
         let stats = ProgramStatistics {
             uses: 3.into(),
